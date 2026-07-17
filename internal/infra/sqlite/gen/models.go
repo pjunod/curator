@@ -14,6 +14,63 @@ type AppMetum struct {
 	UpdatedAt int64
 }
 
+type Episode struct {
+	ID            int64
+	MediaItemID   int64
+	SeasonNumber  int64
+	EpisodeNumber int64
+	AbsoluteNum   int64
+	Title         string
+	AirDate       string
+	Monitored     int64
+}
+
+type MediaFile struct {
+	ID          int64
+	MediaItemID sql.NullInt64
+	Path        string
+	Size        int64
+	AddedAt     int64
+}
+
+type MediaFileEpisode struct {
+	MediaFileID int64
+	EpisodeID   int64
+}
+
+type MediaItem struct {
+	ID           int64
+	Kind         string
+	Title        string
+	SortTitle    string
+	Year         int64
+	TmdbID       int64
+	ImdbID       string
+	TvdbID       int64
+	Isbn13       string
+	Olid         string
+	Asin         string
+	Overview     string
+	PosterPath   string
+	BackdropPath string
+	Genres       string
+	Status       string
+	ReleaseDate  string
+	Runtime      int64
+	Monitored    int64
+	RootFolderID sql.NullInt64
+	Path         string
+	Ended        int64
+	AddedAt      int64
+	UpdatedAt    int64
+}
+
+type RootFolder struct {
+	ID      int64
+	Path    string
+	AddedAt int64
+}
+
 type ScheduledTask struct {
 	Name            string
 	IntervalSeconds int64
@@ -22,4 +79,11 @@ type ScheduledTask struct {
 	LastError       sql.NullString
 	NextRunAt       sql.NullInt64
 	UpdatedAt       int64
+}
+
+type Season struct {
+	ID          int64
+	MediaItemID int64
+	Number      int64
+	Monitored   int64
 }
