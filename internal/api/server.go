@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"time"
 
-	apigen "github.com/monarr/monarr/internal/api/gen"
-	"github.com/monarr/monarr/internal/app/health"
-	"github.com/monarr/monarr/internal/infra/bus"
-	"github.com/monarr/monarr/internal/infra/scheduler"
+	apigen "github.com/monarr-media/monarr/internal/api/gen"
+	"github.com/monarr-media/monarr/internal/app/health"
+	"github.com/monarr-media/monarr/internal/infra/bus"
+	"github.com/monarr-media/monarr/internal/infra/scheduler"
 )
 
 // SchemaVersioner reports the database schema version; satisfied by

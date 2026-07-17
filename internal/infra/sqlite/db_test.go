@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr/monarr/internal/infra/scheduler"
-	sqlitegen "github.com/monarr/monarr/internal/infra/sqlite/gen"
+	"github.com/monarr-media/monarr/internal/infra/scheduler"
+	sqlitegen "github.com/monarr-media/monarr/internal/infra/sqlite/gen"
 )
 
 func sqlitegenSetMeta(key, value string) sqlitegen.SetMetaParams {

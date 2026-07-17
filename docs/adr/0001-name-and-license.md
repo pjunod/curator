@@ -17,8 +17,9 @@ corpora, no lifting custom-format scoring rules later.
 ## Decision
 
 - **Name: Monarr.** A July 2026 web/GitHub sweep found no collisions (runners-up Singularr
-  and Omniarr were also clean). Before the repo goes public: register the `monarr` GitHub org,
-  the Docker Hub namespace, and a domain. The Go module path is `github.com/monarr/monarr`.
+  and Omniarr were also clean). Before the repo goes public: register the GitHub org, the
+  Docker Hub namespace, and a domain. The Go module path is
+  `github.com/monarr-media/monarr` (see Amendment below).
 - **License: GPL-3.0**, matching upstream.
 
 ## Consequences
@@ -30,3 +31,15 @@ corpora, no lifting custom-format scoring rules later.
   essentially nothing.
 - Default HTTP port chosen alongside the name: **7676** — free in the *arr ecosystem and
   deliberately not 8989/7878, since Monarr will run next to Sonarr/Radarr during migration.
+
+## Amendment (2026-07-17): GitHub org is `monarr-media`
+
+The bare `monarr` GitHub handle turned out to be occupied by a **dormant user account**
+(created July 2011, zero repositories, no profile) — invisible to a project-collision sweep,
+but GitHub user and org names share one namespace, so the org could not be created. The
+product name is unaffected.
+
+Decision: the GitHub org is **`monarr-media`** and the module path is
+**`github.com/monarr-media/monarr`**. Claim the matching `monarr-media` namespace on Docker
+Hub. A dormant-username release request to GitHub Support remains worth filing; if granted,
+transfer the repo (GitHub redirects old URLs) and update the module path in one commit.

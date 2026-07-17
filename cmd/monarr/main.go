@@ -15,13 +15,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/monarr/monarr/internal/api"
-	"github.com/monarr/monarr/internal/app/health"
-	"github.com/monarr/monarr/internal/infra/bus"
-	"github.com/monarr/monarr/internal/infra/config"
-	"github.com/monarr/monarr/internal/infra/logging"
-	"github.com/monarr/monarr/internal/infra/scheduler"
-	"github.com/monarr/monarr/internal/infra/sqlite"
+	"github.com/monarr-media/monarr/internal/api"
+	"github.com/monarr-media/monarr/internal/app/health"
+	"github.com/monarr-media/monarr/internal/infra/bus"
+	"github.com/monarr-media/monarr/internal/infra/config"
+	"github.com/monarr-media/monarr/internal/infra/logging"
+	"github.com/monarr-media/monarr/internal/infra/scheduler"
+	"github.com/monarr-media/monarr/internal/infra/sqlite"
 )
 
 // Injected via -ldflags at build time (see Makefile / Dockerfile).

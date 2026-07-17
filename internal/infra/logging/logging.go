@@ -5,7 +5,7 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/monarr/monarr/internal/infra/config"
+	"github.com/monarr-media/monarr/internal/infra/config"
 )
 
 // New returns a slog.Logger writing to w per the config's level and format.

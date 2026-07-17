@@ -18,7 +18,7 @@ import (
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
-	sqlitegen "github.com/monarr/monarr/internal/infra/sqlite/gen"
+	sqlitegen "github.com/monarr-media/monarr/internal/infra/sqlite/gen"
 )
 
 //go:embed migrations/*.sql

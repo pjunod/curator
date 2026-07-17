@@ -1,4 +1,4 @@
-module github.com/monarr/monarr
+module github.com/monarr-media/monarr
 
 go 1.25.7
 

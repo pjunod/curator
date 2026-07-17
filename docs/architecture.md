@@ -349,7 +349,7 @@ Domain must not import app/infra/adapters; adapters import ports+domain only; co
 
 ## 13. Resolved decisions (v0.2/v0.3 — were open questions)
 
-1. **Name: Monarr.** Committed. A web/GitHub sweep found no collisions (runners-up Singularr and Omniarr were also clean) — register the `monarr` GitHub org, Docker Hub namespace, and a domain before the repo goes public.
+1. **Name: Monarr.** Committed. A web/GitHub sweep found no collisions (runners-up Singularr and Omniarr were also clean) — register the GitHub org, Docker Hub namespace, and a domain before the repo goes public. *(v0.3 note: the bare `monarr` GitHub handle is a dormant 2011 user account, so the org and module path are `monarr-media` / `github.com/monarr-media/monarr` — see ADR 0001 amendment.)*
 2. **License: GPL-3.0**, matching upstream — the golden parser corpus port (§8) is unlocked.
 3. **Migration: filesystem adoption** is the committed path (§9); the *arr DB importer drops to a Phase 4 stretch item.
 4. **Anime: minimal.** TMDB-only metadata holds long-term; absolute numbering and AniDB/TVDB mapping stay parked in Phase 5.

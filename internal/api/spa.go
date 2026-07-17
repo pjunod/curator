@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/monarr/monarr/web"
+	"github.com/monarr-media/monarr/web"
 )
 
 // fallbackHTML is served when the binary was built without the web UI

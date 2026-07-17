@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr/monarr/internal/infra/bus"
+	"github.com/monarr-media/monarr/internal/infra/bus"
 )
 
 func TestOverallIsWorst(t *testing.T) {
