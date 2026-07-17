@@ -12,6 +12,7 @@ import {
   triggerScan,
   updateSettings,
 } from '../api'
+import { AcquisitionSettings } from './SettingsAcquisition'
 
 export function SettingsPage() {
   const qc = useQueryClient()
@@ -137,6 +138,8 @@ export function SettingsPage() {
         </div>
         {addRoot.isError && <div className="banner warning">{String((addRoot.error as Error).message)}</div>}
       </section>
+
+      <AcquisitionSettings />
 
       <section className="panel">
         <h2>Disk scan</h2>

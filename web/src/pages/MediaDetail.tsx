@@ -2,11 +2,14 @@ import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from '@tanstack/react-router'
 import { deleteLibraryItem, fmtBytes, getLibraryItem, posterUrl } from '../api'
+import { ReleaseSearch } from './ReleaseSearch'
 
 export function MediaDetailPage() {
   const { id } = useParams({ from: '/library/$id' })
   const navigate = useNavigate()
   const [confirming, setConfirming] = useState(false)
+  // Interactive search target: null = closed; {season?, episode?} = open.
+  const [searching, setSearching] = useState<{ season?: number; episode?: number } | null>(null)
 
   const item = useQuery({
     queryKey: ['library-item', id],
@@ -52,6 +55,11 @@ export function MediaDetailPage() {
             {m.ids.imdb && <span className="mono">{m.ids.imdb}</span>}
           </div>
           <div className="detail-actions">
+            {m.kind === 'movie' && (
+              <button className="btn-accent" onClick={() => setSearching({})}>
+                Search releases
+              </button>
+            )}
             {!confirming ? (
               <button onClick={() => setConfirming(true)}>Remove from library</button>
             ) : (
@@ -66,6 +74,15 @@ export function MediaDetailPage() {
         </div>
       </div>
 
+      {searching && (
+        <ReleaseSearch
+          mediaItemId={m.id}
+          season={searching.season}
+          episode={searching.episode}
+          onClose={() => setSearching(null)}
+        />
+      )}
+
       {m.kind === 'series' && (
         <section className="panel">
           <h2>Seasons</h2>
@@ -78,6 +95,15 @@ export function MediaDetailPage() {
                   <span className="muted">
                     {have}/{s.episodes.length} on disk{s.monitored ? '' : ' · unmonitored'}
                   </span>
+                  <button
+                    className="summary-action"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      setSearching({ season: s.number })
+                    }}
+                  >
+                    Search pack
+                  </button>
                 </summary>
                 <table>
                   <thead>
@@ -86,6 +112,7 @@ export function MediaDetailPage() {
                       <th>Title</th>
                       <th>Air date</th>
                       <th>File</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -97,6 +124,13 @@ export function MediaDetailPage() {
                         <td>{e.title || <span className="muted">TBA</span>}</td>
                         <td className="muted">{e.airDate || '—'}</td>
                         <td>{e.hasFile ? <span className="pill pill-ok">✓</span> : <span className="muted">—</span>}</td>
+                        <td>
+                          <button
+                            onClick={() => setSearching({ season: e.seasonNumber, episode: e.episodeNumber })}
+                          >
+                            Search
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

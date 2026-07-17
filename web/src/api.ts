@@ -197,6 +197,108 @@ export const getScanReport = async (): Promise<ScanReport | null> => {
   return res.json() as Promise<ScanReport>
 }
 
+// ---- Phase 2: acquisition ----
+
+export interface QualityProfile {
+  id: number
+  name: string
+  cutoff: string
+  upgradesAllowed: boolean
+  qualities: string[]
+}
+
+export interface IndexerInput {
+  name: string
+  url: string
+  apiKey?: string
+  protocol: 'torrent' | 'usenet'
+  categories?: number[]
+  enabled?: boolean
+}
+
+export interface Indexer extends IndexerInput {
+  id: number
+}
+
+export interface DownloadClientInput {
+  type: 'qbittorrent' | 'sabnzbd'
+  name: string
+  url: string
+  username?: string
+  password?: string
+  category?: string
+  enabled?: boolean
+}
+
+export interface DownloadClientConfig extends DownloadClientInput {
+  id: number
+}
+
+export interface Rejection {
+  code: string
+  reason: string
+}
+
+export interface ReleaseCandidate {
+  title: string
+  downloadUrl: string
+  infoUrl?: string
+  indexer: string
+  protocol: string
+  size: number
+  seeders: number
+  age: string
+  quality: string
+  accepted: boolean
+  isUpgrade: boolean
+  rejections: Rejection[]
+}
+
+export interface GrabRequest {
+  mediaItemId: number
+  season?: number
+  episode?: number
+  title: string
+  downloadUrl: string
+  indexer?: string
+  protocol: string
+  size?: number
+}
+
+export interface QueueItem {
+  id: number
+  mediaItemId: number
+  title: string
+  state: string
+  progress: number
+  protocol: string
+  quality: string
+  error?: string
+  addedAt: string
+}
+
+export const getProfiles = () => get<QualityProfile[]>('/profiles')
+export const getIndexers = () => get<Indexer[]>('/indexers')
+export const addIndexer = (i: IndexerInput) => send<Indexer>('POST', '/indexers', i)
+export const testIndexer = (i: IndexerInput) => send('POST', '/indexers/test', i)
+export const deleteIndexer = (id: number) => send('DELETE', `/indexers/${id}`)
+export const getDownloadClients = () => get<DownloadClientConfig[]>('/downloadclients')
+export const addDownloadClient = (c: DownloadClientInput) =>
+  send<DownloadClientConfig>('POST', '/downloadclients', c)
+export const testDownloadClient = (c: DownloadClientInput) => send('POST', '/downloadclients/test', c)
+export const deleteDownloadClient = (id: number) => send('DELETE', `/downloadclients/${id}`)
+export const searchReleases = (itemId: number, season?: number, episode?: number) => {
+  const p = new URLSearchParams()
+  if (season !== undefined) p.set('season', String(season))
+  if (episode !== undefined) p.set('episode', String(episode))
+  const qs = p.toString()
+  return get<ReleaseCandidate[]>(`/library/${itemId}/releases${qs ? `?${qs}` : ''}`)
+}
+export const grabRelease = (req: GrabRequest) => send<{ id: number }>('POST', '/grab', req)
+export const getQueue = () => get<QueueItem[]>('/queue')
+export const removeQueueItem = (id: number, fromClient: boolean) =>
+  send('DELETE', `/queue/${id}?fromClient=${fromClient}`)
+
 export function posterUrl(path: string, size: 'w185' | 'w342' | 'w500' = 'w342'): string {
   return path ? `https://image.tmdb.org/t/p/${size}${path}` : ''
 }

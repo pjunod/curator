@@ -13,6 +13,7 @@ import { LibraryPage } from './pages/Library'
 import { AddMediaPage } from './pages/AddMedia'
 import { MediaDetailPage } from './pages/MediaDetail'
 import { SettingsPage } from './pages/Settings'
+import { ActivityPage } from './pages/Activity'
 import type { MediaKind } from './api'
 import { getHealth, getStatus } from './api'
 
@@ -30,6 +31,9 @@ function Layout() {
         <nav>
           <Link to="/" activeOptions={{ exact: true }} activeProps={{ className: 'active' }}>
             Library
+          </Link>
+          <Link to="/activity" activeProps={{ className: 'active' }}>
+            Activity
           </Link>
           <Link to="/dashboard" activeProps={{ className: 'active' }}>
             Dashboard
@@ -92,6 +96,12 @@ const addRoute = createRoute({
   }),
 })
 
+const activityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/activity',
+  component: ActivityPage,
+})
+
 const systemRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/system',
@@ -109,6 +119,7 @@ const routeTree = rootRoute.addChildren([
   dashboardRoute,
   mediaDetailRoute,
   addRoute,
+  activityRoute,
   systemRoute,
   settingsRoute,
 ])

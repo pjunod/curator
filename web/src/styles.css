@@ -637,6 +637,30 @@ h3.muted {
   margin: 16px 0 6px;
 }
 
+/* ---- acquisition ---- */
+.progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(139, 124, 246, 0.16);
+  overflow: hidden;
+}
+
+.progress-track > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.row-rejected {
+  opacity: 0.72;
+}
+
+.summary-action {
+  margin-left: 10px;
+  font-size: 12px;
+  padding: 2px 10px;
+}
+
 @media (max-width: 720px) {
   .app {
     grid-template-columns: 1fr;
