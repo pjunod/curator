@@ -6,6 +6,7 @@
 package apigen
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -34,9 +35,56 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
+// Defines values for MediaKind.
+const (
+	Book   MediaKind = "book"
+	Movie  MediaKind = "movie"
+	Series MediaKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the MediaKind enum.
+func (e MediaKind) Valid() bool {
+	switch e {
+	case Book:
+		return true
+	case Movie:
+		return true
+	case Series:
+		return true
+	default:
+		return false
+	}
+}
+
+// AddMediaRequest defines model for AddMediaRequest.
+type AddMediaRequest struct {
+	Kind         MediaKind `json:"kind"`
+	Monitored    *bool     `json:"monitored,omitempty"`
+	RootFolderId *int64    `json:"rootFolderId,omitempty"`
+	TmdbId       int64     `json:"tmdbId"`
+}
+
+// EpisodeInfo defines model for EpisodeInfo.
+type EpisodeInfo struct {
+	AirDate       string `json:"airDate"`
+	EpisodeNumber int    `json:"episodeNumber"`
+	HasFile       bool   `json:"hasFile"`
+	Id            int64  `json:"id"`
+	Monitored     bool   `json:"monitored"`
+	SeasonNumber  int    `json:"seasonNumber"`
+	Title         string `json:"title"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Message string `json:"message"`
+}
+
+// ExternalIds defines model for ExternalIds.
+type ExternalIds struct {
+	Imdb *string `json:"imdb,omitempty"`
+	Tmdb int64   `json:"tmdb"`
+	Tvdb *int64  `json:"tvdb,omitempty"`
 }
 
 // HealthCheck defines model for HealthCheck.
@@ -55,6 +103,99 @@ type HealthReport struct {
 
 // HealthStatus defines model for HealthStatus.
 type HealthStatus string
+
+// MediaFileInfo defines model for MediaFileInfo.
+type MediaFileInfo struct {
+	EpisodeIds []int64 `json:"episodeIds"`
+	Id         int64   `json:"id"`
+	Path       string  `json:"path"`
+	Size       int64   `json:"size"`
+}
+
+// MediaItemDetail defines model for MediaItemDetail.
+type MediaItemDetail struct {
+	AddedAt      time.Time       `json:"addedAt"`
+	BackdropPath string          `json:"backdropPath"`
+	Ended        bool            `json:"ended"`
+	Files        []MediaFileInfo `json:"files"`
+	Genres       []string        `json:"genres"`
+	Id           int64           `json:"id"`
+	Ids          ExternalIds     `json:"ids"`
+	Kind         MediaKind       `json:"kind"`
+	Monitored    bool            `json:"monitored"`
+	Overview     string          `json:"overview"`
+	Path         string          `json:"path"`
+	PosterPath   string          `json:"posterPath"`
+	ReleaseDate  string          `json:"releaseDate"`
+	RootFolderId int64           `json:"rootFolderId"`
+	Runtime      int             `json:"runtime"`
+	Seasons      []SeasonInfo    `json:"seasons"`
+	Status       string          `json:"status"`
+	Title        string          `json:"title"`
+	Year         int             `json:"year"`
+}
+
+// MediaItemSummary defines model for MediaItemSummary.
+type MediaItemSummary struct {
+	Id         int64     `json:"id"`
+	Kind       MediaKind `json:"kind"`
+	Monitored  bool      `json:"monitored"`
+	Path       string    `json:"path"`
+	PosterPath string    `json:"posterPath"`
+	Title      string    `json:"title"`
+	Year       int       `json:"year"`
+}
+
+// MediaKind defines model for MediaKind.
+type MediaKind string
+
+// RootFolder defines model for RootFolder.
+type RootFolder struct {
+	Accessible bool   `json:"accessible"`
+	FreeBytes  int64  `json:"freeBytes"`
+	Id         int64  `json:"id"`
+	Path       string `json:"path"`
+}
+
+// ScanReport defines model for ScanReport.
+type ScanReport struct {
+	FilesLinked   int            `json:"filesLinked"`
+	FilesRemoved  int            `json:"filesRemoved"`
+	ItemsScanned  int            `json:"itemsScanned"`
+	MissingPaths  []string       `json:"missingPaths"`
+	RootsScanned  int            `json:"rootsScanned"`
+	ScannedAt     time.Time      `json:"scannedAt"`
+	UnmatchedDirs []UnmatchedDir `json:"unmatchedDirs"`
+}
+
+// SearchResult defines model for SearchResult.
+type SearchResult struct {
+	InLibrary  bool      `json:"inLibrary"`
+	Kind       MediaKind `json:"kind"`
+	Overview   string    `json:"overview"`
+	PosterPath string    `json:"posterPath"`
+	Title      string    `json:"title"`
+	TmdbId     int64     `json:"tmdbId"`
+	Year       int       `json:"year"`
+}
+
+// SeasonInfo defines model for SeasonInfo.
+type SeasonInfo struct {
+	Episodes  []EpisodeInfo `json:"episodes"`
+	Monitored bool          `json:"monitored"`
+	Number    int           `json:"number"`
+}
+
+// Settings defines model for Settings.
+type Settings struct {
+	TmdbApiKeyConfigured bool   `json:"tmdbApiKeyConfigured"`
+	TmdbApiKeyHint       string `json:"tmdbApiKeyHint"`
+}
+
+// SettingsUpdate defines model for SettingsUpdate.
+type SettingsUpdate struct {
+	TmdbApiKey *string `json:"tmdbApiKey,omitempty"`
+}
 
 // SystemStatus defines model for SystemStatus.
 type SystemStatus struct {
@@ -84,6 +225,38 @@ type TaskState struct {
 	Running         bool       `json:"running"`
 }
 
+// UnmatchedDir defines model for UnmatchedDir.
+type UnmatchedDir struct {
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	RootFolderId int64  `json:"rootFolderId"`
+}
+
+// ListLibraryParams defines parameters for ListLibrary.
+type ListLibraryParams struct {
+	Kind *MediaKind `form:"kind,omitempty" json:"kind,omitempty"`
+}
+
+// SearchMetadataParams defines parameters for SearchMetadata.
+type SearchMetadataParams struct {
+	Kind  MediaKind `form:"kind" json:"kind"`
+	Query string    `form:"query" json:"query"`
+}
+
+// AddRootFolderJSONBody defines parameters for AddRootFolder.
+type AddRootFolderJSONBody struct {
+	Path string `json:"path"`
+}
+
+// AddLibraryItemJSONRequestBody defines body for AddLibraryItem for application/json ContentType.
+type AddLibraryItemJSONRequestBody = AddMediaRequest
+
+// AddRootFolderJSONRequestBody defines body for AddRootFolder for application/json ContentType.
+type AddRootFolderJSONRequestBody AddRootFolderJSONBody
+
+// UpdateSettingsJSONRequestBody defines body for UpdateSettings for application/json ContentType.
+type UpdateSettingsJSONRequestBody = SettingsUpdate
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// StreamEvents Server-sent events
@@ -92,6 +265,42 @@ type ServerInterface interface {
 	// GetHealth Run health checks and report results
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// ListLibrary List library items
+	// (GET /library)
+	ListLibrary(w http.ResponseWriter, r *http.Request, params ListLibraryParams)
+	// AddLibraryItem Add a media item (hydrates metadata from the provider)
+	// (POST /library)
+	AddLibraryItem(w http.ResponseWriter, r *http.Request)
+	// ScanLibrary Trigger a disk scan / reconcile
+	// (POST /library/scan)
+	ScanLibrary(w http.ResponseWriter, r *http.Request)
+	// GetScanReport Result of the most recent scan
+	// (GET /library/scan/report)
+	GetScanReport(w http.ResponseWriter, r *http.Request)
+	// DeleteLibraryItem Remove an item from the library (files on disk are untouched)
+	// (DELETE /library/{id})
+	DeleteLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// GetLibraryItem Get one item with seasons, episodes, and files
+	// (GET /library/{id})
+	GetLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// SearchMetadata Search the metadata provider
+	// (GET /metadata/search)
+	SearchMetadata(w http.ResponseWriter, r *http.Request, params SearchMetadataParams)
+	// ListRootFolders List library root folders
+	// (GET /rootfolders)
+	ListRootFolders(w http.ResponseWriter, r *http.Request)
+	// AddRootFolder Register a library root folder
+	// (POST /rootfolders)
+	AddRootFolder(w http.ResponseWriter, r *http.Request)
+	// DeleteRootFolder Remove a root folder registration (disk untouched)
+	// (DELETE /rootfolders/{id})
+	DeleteRootFolder(w http.ResponseWriter, r *http.Request, id int64)
+	// GetSettings Read settings (secrets masked)
+	// (GET /settings)
+	GetSettings(w http.ResponseWriter, r *http.Request)
+	// UpdateSettings Update settings
+	// (PUT /settings)
+	UpdateSettings(w http.ResponseWriter, r *http.Request)
 	// GetSystemStatus System status
 	// (GET /system/status)
 	GetSystemStatus(w http.ResponseWriter, r *http.Request)
@@ -131,6 +340,261 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListLibrary operation middleware
+func (siw *ServerInterfaceWrapper) ListLibrary(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListLibraryParams
+
+	// ------------- Optional query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListLibrary(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddLibraryItem operation middleware
+func (siw *ServerInterfaceWrapper) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddLibraryItem(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ScanLibrary operation middleware
+func (siw *ServerInterfaceWrapper) ScanLibrary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ScanLibrary(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetScanReport operation middleware
+func (siw *ServerInterfaceWrapper) GetScanReport(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetScanReport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteLibraryItem operation middleware
+func (siw *ServerInterfaceWrapper) DeleteLibraryItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteLibraryItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetLibraryItem operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SearchMetadata operation middleware
+func (siw *ServerInterfaceWrapper) SearchMetadata(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchMetadataParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "query" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "query", r.URL.Query(), &params.Query, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "query"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "query", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SearchMetadata(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRootFolders operation middleware
+func (siw *ServerInterfaceWrapper) ListRootFolders(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRootFolders(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddRootFolder operation middleware
+func (siw *ServerInterfaceWrapper) AddRootFolder(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddRootFolder(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteRootFolder operation middleware
+func (siw *ServerInterfaceWrapper) DeleteRootFolder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteRootFolder(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateSettings operation middleware
+func (siw *ServerInterfaceWrapper) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateSettings(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -318,6 +782,18 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/tasks", wrapper.ListTasks)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/tasks/{name}/run", wrapper.RunTask)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/health", wrapper.GetHealth)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library", wrapper.ListLibrary)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library", wrapper.AddLibraryItem)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}", wrapper.DeleteLibraryItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}", wrapper.GetLibraryItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan", wrapper.ScanLibrary)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/report", wrapper.GetScanReport)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/search", wrapper.SearchMetadata)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders", wrapper.ListRootFolders)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rootfolders", wrapper.AddRootFolder)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/rootfolders/{id}", wrapper.DeleteRootFolder)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/settings", wrapper.GetSettings)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/settings", wrapper.UpdateSettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/events", wrapper.StreamEvents)
 
 	return m

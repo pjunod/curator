@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,8 +16,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/tmdb"
 	"github.com/monarr-media/monarr/internal/api"
 	"github.com/monarr-media/monarr/internal/app/health"
+	"github.com/monarr-media/monarr/internal/app/library"
 	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/config"
 	"github.com/monarr-media/monarr/internal/infra/logging"
@@ -80,6 +83,21 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	b := bus.New(log)
 	defer b.Close()
 
+	// Metadata provider: TMDB, key read live from settings so it can be
+	// set in the UI without a restart. MONARR_TMDB_BASE_URL is an
+	// internal override for tests.
+	tmdbKey := func(ctx context.Context) (string, error) {
+		v, err := db.GetMeta(ctx, api.TMDBKeySetting)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return v, err
+	}
+	meta := tmdb.New(os.Getenv("MONARR_TMDB_BASE_URL"), tmdbKey)
+
+	// Library service.
+	lib := library.New(db, meta, b, log)
+
 	// Health checks.
 	reg := health.NewRegistry(b)
 	reg.Register("database", func(ctx context.Context) health.Result {
@@ -104,6 +122,16 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		}
 		return health.OK()
 	})
+	reg.Register("metadata-provider", func(ctx context.Context) health.Result {
+		key, err := tmdbKey(ctx)
+		if err != nil {
+			return health.Errorf("cannot read settings: %v", err)
+		}
+		if key == "" {
+			return health.Warn("TMDB API key not set — add it under Settings to search and add media")
+		}
+		return health.OK()
+	})
 
 	// Scheduler.
 	sched := scheduler.New(sqlite.NewTaskStore(db), b, log)
@@ -125,6 +153,16 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}); err != nil {
 		return err
 	}
+	if err := sched.Register(scheduler.Task{
+		Name:     api.ScanTaskName,
+		Interval: 12 * time.Hour,
+		Fn: func(ctx context.Context) error {
+			_, err := lib.Scan(ctx)
+			return err
+		},
+	}); err != nil {
+		return err
+	}
 	if err := sched.Start(ctx); err != nil {
 		return err
 	}
@@ -136,6 +174,8 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Health:    reg,
 		Scheduler: sched,
 		DB:        db,
+		Library:   lib,
+		Settings:  db,
 		Version:   version,
 		Commit:    commit,
 		DataDir:   cfg.DataDir,

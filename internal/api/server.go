@@ -11,6 +11,7 @@ import (
 
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
 	"github.com/monarr-media/monarr/internal/app/health"
+	"github.com/monarr-media/monarr/internal/app/library"
 	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/scheduler"
 )
@@ -21,6 +22,16 @@ type SchemaVersioner interface {
 	SchemaVersion(ctx context.Context) (int64, error)
 }
 
+// SettingsStore reads and writes settings key-values; satisfied by
+// *sqlite.DB (app_meta).
+type SettingsStore interface {
+	GetMeta(ctx context.Context, key string) (string, error)
+	SetMeta(ctx context.Context, key, value string) error
+}
+
+// ScanTaskName is the scheduler task POST /library/scan triggers.
+const ScanTaskName = "library.reconcile"
+
 // Deps is everything the server needs, wired in cmd/monarr.
 type Deps struct {
 	Log       *slog.Logger
@@ -28,6 +39,8 @@ type Deps struct {
 	Health    *health.Registry
 	Scheduler *scheduler.Scheduler
 	DB        SchemaVersioner
+	Library   *library.Service
+	Settings  SettingsStore
 	Version   string
 	Commit    string
 	DataDir   string

@@ -68,6 +68,252 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthReport"
 
+  /library:
+    get:
+      operationId: listLibrary
+      summary: List library items
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MediaKind"
+      responses:
+        "200":
+          description: Item summaries, sorted by title.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MediaItemSummary"
+    post:
+      operationId: addLibraryItem
+      summary: Add a media item (hydrates metadata from the provider)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMediaRequest"
+      responses:
+        "201":
+          description: The newly added, fully hydrated item.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaItemDetail"
+        "400":
+          description: Unsupported kind or invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Item already in the library.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Metadata provider not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /library/{id}:
+    get:
+      operationId: getLibraryItem
+      summary: Get one item with seasons, episodes, and files
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: The item.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaItemDetail"
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteLibraryItem
+      summary: Remove an item from the library (files on disk are untouched)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "204":
+          description: Removed.
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /library/scan:
+    post:
+      operationId: scanLibrary
+      summary: Trigger a disk scan / reconcile
+      responses:
+        "202":
+          description: Scan requested (runs via the scheduler; watch SSE).
+
+  /library/scan/report:
+    get:
+      operationId: getScanReport
+      summary: Result of the most recent scan
+      responses:
+        "200":
+          description: The last scan report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanReport"
+        "404":
+          description: No scan has run yet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /metadata/search:
+    get:
+      operationId: searchMetadata
+      summary: Search the metadata provider
+      parameters:
+        - name: kind
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/MediaKind"
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Candidates from the provider.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchResult"
+        "400":
+          description: Unsupported kind.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Metadata provider not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /rootfolders:
+    get:
+      operationId: listRootFolders
+      summary: List library root folders
+      responses:
+        "200":
+          description: Registered roots with disk info.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RootFolder"
+    post:
+      operationId: addRootFolder
+      summary: Register a library root folder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+      responses:
+        "201":
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RootFolder"
+        "400":
+          description: Path invalid or not accessible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /rootfolders/{id}:
+    delete:
+      operationId: deleteRootFolder
+      summary: Remove a root folder registration (disk untouched)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "204":
+          description: Removed.
+        "404":
+          description: No such root folder.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /settings:
+    get:
+      operationId: getSettings
+      summary: Read settings (secrets masked)
+      responses:
+        "200":
+          description: Current settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+    put:
+      operationId: updateSettings
+      summary: Update settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsUpdate"
+      responses:
+        "204":
+          description: Saved.
+
   /events:
     get:
       operationId: streamEvents
@@ -184,4 +430,272 @@ components:
       required: [message]
       properties:
         message:
+          type: string
+
+    MediaKind:
+      type: string
+      enum: [movie, series, book]
+
+    MediaItemSummary:
+      type: object
+      required: [id, kind, title, year, posterPath, monitored, path]
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          $ref: "#/components/schemas/MediaKind"
+        title:
+          type: string
+        year:
+          type: integer
+        posterPath:
+          type: string
+        monitored:
+          type: boolean
+        path:
+          type: string
+
+    ExternalIds:
+      type: object
+      required: [tmdb]
+      properties:
+        tmdb:
+          type: integer
+          format: int64
+        imdb:
+          type: string
+        tvdb:
+          type: integer
+          format: int64
+
+    EpisodeInfo:
+      type: object
+      required: [id, seasonNumber, episodeNumber, title, airDate, monitored, hasFile]
+      properties:
+        id:
+          type: integer
+          format: int64
+        seasonNumber:
+          type: integer
+        episodeNumber:
+          type: integer
+        title:
+          type: string
+        airDate:
+          type: string
+        monitored:
+          type: boolean
+        hasFile:
+          type: boolean
+
+    SeasonInfo:
+      type: object
+      required: [number, monitored, episodes]
+      properties:
+        number:
+          type: integer
+        monitored:
+          type: boolean
+        episodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/EpisodeInfo"
+
+    MediaFileInfo:
+      type: object
+      required: [id, path, size, episodeIds]
+      properties:
+        id:
+          type: integer
+          format: int64
+        path:
+          type: string
+        size:
+          type: integer
+          format: int64
+        episodeIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+
+    MediaItemDetail:
+      type: object
+      required:
+        - id
+        - kind
+        - title
+        - year
+        - posterPath
+        - backdropPath
+        - overview
+        - genres
+        - status
+        - releaseDate
+        - runtime
+        - monitored
+        - path
+        - rootFolderId
+        - ended
+        - ids
+        - seasons
+        - files
+        - addedAt
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          $ref: "#/components/schemas/MediaKind"
+        title:
+          type: string
+        year:
+          type: integer
+        posterPath:
+          type: string
+        backdropPath:
+          type: string
+        overview:
+          type: string
+        genres:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+        releaseDate:
+          type: string
+        runtime:
+          type: integer
+        monitored:
+          type: boolean
+        path:
+          type: string
+        rootFolderId:
+          type: integer
+          format: int64
+        ended:
+          type: boolean
+        ids:
+          $ref: "#/components/schemas/ExternalIds"
+        seasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/SeasonInfo"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaFileInfo"
+        addedAt:
+          type: string
+          format: date-time
+
+    AddMediaRequest:
+      type: object
+      required: [kind, tmdbId]
+      properties:
+        kind:
+          $ref: "#/components/schemas/MediaKind"
+        tmdbId:
+          type: integer
+          format: int64
+        rootFolderId:
+          type: integer
+          format: int64
+        monitored:
+          type: boolean
+          default: true
+
+    SearchResult:
+      type: object
+      required: [kind, tmdbId, title, year, overview, posterPath, inLibrary]
+      properties:
+        kind:
+          $ref: "#/components/schemas/MediaKind"
+        tmdbId:
+          type: integer
+          format: int64
+        title:
+          type: string
+        year:
+          type: integer
+        overview:
+          type: string
+        posterPath:
+          type: string
+        inLibrary:
+          type: boolean
+
+    RootFolder:
+      type: object
+      required: [id, path, freeBytes, accessible]
+      properties:
+        id:
+          type: integer
+          format: int64
+        path:
+          type: string
+        freeBytes:
+          type: integer
+          format: int64
+        accessible:
+          type: boolean
+
+    UnmatchedDir:
+      type: object
+      required: [rootFolderId, path, name]
+      properties:
+        rootFolderId:
+          type: integer
+          format: int64
+        path:
+          type: string
+        name:
+          type: string
+
+    ScanReport:
+      type: object
+      required:
+        - scannedAt
+        - rootsScanned
+        - itemsScanned
+        - filesLinked
+        - filesRemoved
+        - unmatchedDirs
+        - missingPaths
+      properties:
+        scannedAt:
+          type: string
+          format: date-time
+        rootsScanned:
+          type: integer
+        itemsScanned:
+          type: integer
+        filesLinked:
+          type: integer
+        filesRemoved:
+          type: integer
+        unmatchedDirs:
+          type: array
+          items:
+            $ref: "#/components/schemas/UnmatchedDir"
+        missingPaths:
+          type: array
+          items:
+            type: string
+
+    Settings:
+      type: object
+      required: [tmdbApiKeyConfigured, tmdbApiKeyHint]
+      properties:
+        tmdbApiKeyConfigured:
+          type: boolean
+        tmdbApiKeyHint:
+          type: string
+
+    SettingsUpdate:
+      type: object
+      properties:
+        tmdbApiKey:
           type: string
