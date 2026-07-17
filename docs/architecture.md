@@ -267,7 +267,7 @@ The shim is a **translation layer only** — compat handlers map v3 DTOs onto na
 | Frontend | React + TypeScript + Vite; TanStack Query/Router; served via `go:embed` | User preference; largest ecosystem; one deployable |
 | Live updates | SSE from the event bus | Simpler than websockets, proxies love it; queue/activity update live |
 | Auth | API key (native + compat) + session login for UI | Matches ecosystem expectations (X-Api-Key); reverse-proxy/forward-auth friendly |
-| Packaging | goreleaser: binaries + minimal container image | `docker run -v /data -v /media -p PORT` and done |
+| Packaging | goreleaser: binaries + minimal container image on ghcr.io | `docker run -v /data -v /media -p PORT` and done; GHCR is free for public images |
 | Observability | health-check registry (surfaced in UI like upstream), optional Prometheus `/metrics` | Homelab-appropriate |
 
 ## 8. Testing strategy
@@ -349,7 +349,7 @@ Domain must not import app/infra/adapters; adapters import ports+domain only; co
 
 ## 13. Resolved decisions (v0.2/v0.3 — were open questions)
 
-1. **Name: Monarr.** Committed. A web/GitHub sweep found no collisions (runners-up Singularr and Omniarr were also clean) — register the GitHub org, Docker Hub namespace, and a domain before the repo goes public. *(v0.3 note: the bare `monarr` GitHub handle is a dormant 2011 user account, so the org and module path are `monarr-media` / `github.com/monarr-media/monarr` — see ADR 0001 amendment.)*
+1. **Name: Monarr.** Committed. A web/GitHub sweep found no collisions (runners-up Singularr and Omniarr were also clean) — register the GitHub org, Docker Hub namespace, and a domain before the repo goes public. *(v0.3 note: the bare `monarr` GitHub handle is a dormant 2011 user account, so the org and module path are `monarr-media` / `github.com/monarr-media/monarr`; container images publish to `ghcr.io/monarr-media/monarr` rather than Docker Hub, whose orgs require a paid plan — see ADR 0001 amendment.)*
 2. **License: GPL-3.0**, matching upstream — the golden parser corpus port (§8) is unlocked.
 3. **Migration: filesystem adoption** is the committed path (§9); the *arr DB importer drops to a Phase 4 stretch item.
 4. **Anime: minimal.** TMDB-only metadata holds long-term; absolute numbering and AniDB/TVDB mapping stay parked in Phase 5.

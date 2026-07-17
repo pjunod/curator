@@ -39,7 +39,13 @@ The bare `monarr` GitHub handle turned out to be occupied by a **dormant user ac
 but GitHub user and org names share one namespace, so the org could not be created. The
 product name is unaffected.
 
-Decision: the GitHub org is **`monarr-media`** and the module path is
-**`github.com/monarr-media/monarr`**. Claim the matching `monarr-media` namespace on Docker
-Hub. A dormant-username release request to GitHub Support remains worth filing; if granted,
-transfer the repo (GitHub redirects old URLs) and update the module path in one commit.
+Decision: the GitHub org is **`monarr-media`** (GitHub orgs are free) and the module path is
+**`github.com/monarr-media/monarr`**. A dormant-username release request to GitHub Support
+remains worth filing; if granted, transfer the repo (GitHub redirects old URLs) and update
+the module path in one commit.
+
+Container images: **publish to GitHub Container Registry** —
+`ghcr.io/monarr-media/monarr` — not Docker Hub. Docker Hub organizations require a paid
+subscription, while GHCR is free for public images, lives next to the repo, and pushes from
+GitHub Actions with the built-in `GITHUB_TOKEN`. (If a Docker Hub presence is ever wanted,
+a free *personal* account named `monarr-media` can hold the namespace at no cost.)
