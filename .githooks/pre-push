@@ -1,0 +1,16 @@
+#!/bin/sh
+# Full unit-test gate before anything leaves the machine. E2E stays in CI
+# (it needs a built binary + browser); run it manually with:
+#   make build && cd test/e2e && npm test
+# Install once with: make hooks
+set -e
+
+echo "pre-push: go test ./..."
+go test ./...
+
+if [ -d web/node_modules ]; then
+    echo "pre-push: web unit tests"
+    npm --prefix web run -s test
+else
+    echo "pre-push: skipping web tests (web/node_modules missing; run npm ci in web/)" >&2
+fi

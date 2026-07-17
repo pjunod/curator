@@ -5,9 +5,18 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-test:
+  test:
+    name: Unit tests (Go + web)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -17,10 +26,11 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Build web UI
+      - name: Web install + unit tests + build
         working-directory: web
         run: |
           npm ci
+          npm run -s test
           npm run build
 
       - uses: actions/setup-go@v5
@@ -41,14 +51,75 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: go test (includes architecture rules)
-        run: go test -race ./...
+      - name: go test (race, coverage; includes architecture rules)
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          echo '### Go coverage' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.out | tail -1 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: go build
         run: make go-build
 
-  docker:
+  lint:
+    name: golangci-lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: golangci-lint (same pinned version as `make lint`)
+        run: make lint
+
+  e2e:
+    name: End-to-end (real binary + browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            test/e2e/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary with embedded UI
+        run: make build
+
+      - name: Install Playwright
+        working-directory: test/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run E2E suite
+        working-directory: test/e2e
+        run: npm test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: test/e2e/playwright-report/
+          retention-days: 7
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: docker build

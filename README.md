@@ -42,11 +42,33 @@ make build          # builds web UI, embeds it, compiles ./bin/monarr
 ### Development
 
 ```sh
+make hooks          # once per clone: installs the git pre-commit/pre-push hooks
 make dev-api        # terminal 1: go run (API on :7676, serves fallback page)
 make dev-web        # terminal 2: vite dev server on :5173, proxies /api → :7676
-make test           # go tests (unit + architecture rules)
 make gen            # regenerate sqlc + oapi-codegen output after editing SQL/spec
 ```
+
+## Testing
+
+The suite is a pyramid; every layer runs in CI and the fast layers run in git hooks:
+
+```sh
+make test           # Go unit tests, incl. the architecture-rules test (internal/arch_test.go)
+make test-web       # web unit tests (vitest)
+make lint           # golangci-lint (pinned version, same as CI)
+make test-e2e       # end-to-end: builds the real binary with embedded UI, boots it
+                    # against a throwaway data dir, drives it with Playwright
+                    # (first run: npx playwright install chromium in test/e2e)
+```
+
+Git hooks (installed by `make hooks`, versioned in `.githooks/`): **pre-commit** runs gofmt +
+`go vet` on staged Go files and typechecks staged web sources; **pre-push** runs the full Go
+and web unit suites. E2E stays in CI to keep pushes fast.
+
+CI (`.github/workflows/ci.yml`) runs four parallel jobs on every push/PR: unit tests
+(Go with `-race` and a coverage summary, web with vitest, plus a check that sqlc/oapi-codegen
+output is up to date), golangci-lint, the Playwright E2E suite against the compiled binary,
+and a Docker image build. Least-privilege permissions, per-ref concurrency cancellation.
 
 ## Configuration
 

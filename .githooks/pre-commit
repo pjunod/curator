@@ -1,0 +1,34 @@
+#!/bin/sh
+# Fast checks on every commit. Full tests run on pre-push and in CI.
+# Install once with: make hooks
+set -e
+
+staged() {
+    git diff --cached --name-only --diff-filter=ACMR
+}
+
+go_files=$(staged | grep '\.go$' | grep -v '/gen/' || true)
+if [ -n "$go_files" ]; then
+    unformatted=$(gofmt -l $go_files)
+    if [ -n "$unformatted" ]; then
+        echo "pre-commit: gofmt needed on:" >&2
+        echo "$unformatted" >&2
+        echo "run: make fmt" >&2
+        exit 1
+    fi
+    echo "pre-commit: go vet"
+    go vet ./...
+fi
+
+if staged | grep -q '^web/src/'; then
+    if [ -d web/node_modules ]; then
+        echo "pre-commit: web typecheck"
+        npm --prefix web run -s typecheck
+    else
+        echo "pre-commit: skipping web typecheck (web/node_modules missing; run npm ci in web/)" >&2
+    fi
+fi
+
+if staged | grep -Eq '^(internal/infra/sqlite/(migrations|queries)/|internal/api/openapi\.yaml)'; then
+    echo "pre-commit: SQL or API spec changed — remember 'make gen' (CI enforces it)" >&2
+fi

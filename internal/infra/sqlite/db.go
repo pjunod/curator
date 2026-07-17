@@ -58,7 +58,7 @@ func Open(dataDir string) (*DB, error) {
 
 	r, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		w.Close()
+		_ = w.Close()
 		return nil, fmt.Errorf("sqlite: opening read pool: %w", err)
 	}
 	r.SetMaxOpenConns(4)
@@ -71,7 +71,7 @@ func Open(dataDir string) (*DB, error) {
 		Path:  path,
 	}
 	if err := w.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
 	return db, nil

@@ -59,7 +59,11 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+		if cerr := db.Close(); cerr != nil {
+			log.Warn("closing database", "err", cerr)
+		}
+	}()
 	if err := db.Migrate(ctx); err != nil {
 		return err
 	}

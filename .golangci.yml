@@ -1,0 +1,22 @@
+version: "2"
+
+# Standard set = errcheck, govet, ineffassign, staticcheck, unused.
+# Architecture rules (the §12 dependency arrows) are enforced separately by
+# internal/arch_test.go, so they run everywhere `go test` runs.
+linters:
+  default: standard
+  enable:
+    - misspell
+  settings:
+    errcheck:
+      exclude-functions:
+        # Best-effort SSE/stream writes; a failed write ends with the client.
+        - (net/http.ResponseWriter).Write
+        - fmt.Fprint
+        - fmt.Fprintf
+  exclusions:
+    rules:
+      # Tests may ignore error returns for brevity; production code may not.
+      - path: _test\.go
+        linters:
+          - errcheck
