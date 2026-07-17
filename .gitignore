@@ -1,0 +1,16 @@
+# binaries & runtime state
+/bin/
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# web
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+
+# tooling noise
+coverage.out
+*.log
+.DS_Store

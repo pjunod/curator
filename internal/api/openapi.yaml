@@ -1,0 +1,187 @@
+openapi: 3.0.3
+info:
+  title: Monarr API
+  version: "1"
+  description: >
+    Native Monarr API (spec-first; blueprint §7). Served under /api/v1.
+    This is the only API the web UI uses. Phase 0 surface: system status,
+    health, scheduler tasks, and the SSE event stream.
+  license:
+    name: GPL-3.0
+
+paths:
+  /system/status:
+    get:
+      operationId: getSystemStatus
+      summary: System status
+      responses:
+        "200":
+          description: Current system status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+
+  /system/tasks:
+    get:
+      operationId: listTasks
+      summary: Scheduler task states
+      responses:
+        "200":
+          description: All registered scheduled tasks with their run state.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskState"
+
+  /system/tasks/{name}/run:
+    post:
+      operationId: runTask
+      summary: Trigger an immediate run of a scheduled task
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Run requested (requests coalesce if one is pending).
+        "404":
+          description: No task with that name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /health:
+    get:
+      operationId: getHealth
+      summary: Run health checks and report results
+      responses:
+        "200":
+          description: Health report; overall is the worst check status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthReport"
+
+  /events:
+    get:
+      operationId: streamEvents
+      summary: Server-sent events
+      description: >
+        Streams every bus event as SSE `data:` lines. Each message is a JSON
+        envelope `{type, ts, payload}` where `type` is the event type (e.g.
+        `health.changed`, `task.completed`). Comment lines are sent
+        periodically as heartbeats.
+      responses:
+        "200":
+          description: An SSE stream (stays open).
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+components:
+  schemas:
+    SystemStatus:
+      type: object
+      required:
+        - appName
+        - version
+        - commit
+        - goVersion
+        - os
+        - arch
+        - startedAt
+        - uptimeSeconds
+        - dataDir
+        - dbSchemaVersion
+      properties:
+        appName:
+          type: string
+          example: Monarr
+        version:
+          type: string
+          example: 0.1.0
+        commit:
+          type: string
+        goVersion:
+          type: string
+        os:
+          type: string
+        arch:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        uptimeSeconds:
+          type: integer
+          format: int64
+        dataDir:
+          type: string
+        dbSchemaVersion:
+          type: integer
+          format: int64
+
+    HealthStatus:
+      type: string
+      enum: [ok, warning, error]
+
+    HealthCheck:
+      type: object
+      required: [name, status, checkedAt]
+      properties:
+        name:
+          type: string
+        status:
+          $ref: "#/components/schemas/HealthStatus"
+        message:
+          type: string
+        checkedAt:
+          type: string
+          format: date-time
+
+    HealthReport:
+      type: object
+      required: [overall, checks]
+      properties:
+        overall:
+          $ref: "#/components/schemas/HealthStatus"
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthCheck"
+
+    TaskState:
+      type: object
+      required: [name, intervalSeconds, running]
+      properties:
+        name:
+          type: string
+        intervalSeconds:
+          type: integer
+          format: int64
+        running:
+          type: boolean
+        lastRunAt:
+          type: string
+          format: date-time
+        lastDurationMs:
+          type: integer
+          format: int64
+        lastError:
+          type: string
+        nextRunAt:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
