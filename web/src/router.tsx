@@ -9,6 +9,11 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { Dashboard } from './pages/Dashboard'
 import { SystemPage } from './pages/System'
+import { LibraryPage } from './pages/Library'
+import { AddMediaPage } from './pages/AddMedia'
+import { MediaDetailPage } from './pages/MediaDetail'
+import { SettingsPage } from './pages/Settings'
+import type { MediaKind } from './api'
 import { getHealth, getStatus } from './api'
 
 function Layout() {
@@ -24,16 +29,22 @@ function Layout() {
         </div>
         <nav>
           <Link to="/" activeOptions={{ exact: true }} activeProps={{ className: 'active' }}>
+            Library
+          </Link>
+          <Link to="/dashboard" activeProps={{ className: 'active' }}>
             Dashboard
           </Link>
           <Link to="/system" activeProps={{ className: 'active' }}>
             System
             {overall !== 'ok' && <span className={`dot dot-${overall}`} aria-label={overall} />}
           </Link>
+          <Link to="/settings" activeProps={{ className: 'active' }}>
+            Settings
+          </Link>
         </nav>
         <div className="sidebar-foot">
           <div>v{status.data?.version ?? '…'}</div>
-          <div className="muted">phase 0 · walking skeleton</div>
+          <div className="muted">phase 1 · library</div>
         </div>
       </aside>
       <main className="content">
@@ -45,10 +56,40 @@ function Layout() {
 
 const rootRoute = createRootRoute({ component: Layout })
 
-const indexRoute = createRoute({
+const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
+  component: LibraryPage,
+})
+
+const dashboardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/dashboard',
   component: Dashboard,
+})
+
+const mediaDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/library/$id',
+  component: MediaDetailPage,
+})
+
+interface AddSearch {
+  q?: string
+  kind?: MediaKind
+}
+
+const addRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/add',
+  component: AddMediaPage,
+  validateSearch: (search: Record<string, unknown>): AddSearch => ({
+    q: typeof search.q === 'string' ? search.q : undefined,
+    kind:
+      search.kind === 'movie' || search.kind === 'series' || search.kind === 'book'
+        ? search.kind
+        : undefined,
+  }),
 })
 
 const systemRoute = createRoute({
@@ -57,7 +98,20 @@ const systemRoute = createRoute({
   component: SystemPage,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, systemRoute])
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: SettingsPage,
+})
+
+const routeTree = rootRoute.addChildren([
+  libraryRoute,
+  dashboardRoute,
+  mediaDetailRoute,
+  addRoute,
+  systemRoute,
+  settingsRoute,
+])
 
 export const router = createRouter({ routeTree })
 

@@ -45,10 +45,172 @@ export interface BusEvent {
   payload: unknown
 }
 
+// ---- Phase 1: library ----
+
+export type MediaKind = 'movie' | 'series' | 'book'
+
+export interface MediaItemSummary {
+  id: number
+  kind: MediaKind
+  title: string
+  year: number
+  posterPath: string
+  monitored: boolean
+  path: string
+}
+
+export interface ExternalIds {
+  tmdb: number
+  imdb?: string
+  tvdb?: number
+}
+
+export interface EpisodeInfo {
+  id: number
+  seasonNumber: number
+  episodeNumber: number
+  title: string
+  airDate: string
+  monitored: boolean
+  hasFile: boolean
+}
+
+export interface SeasonInfo {
+  number: number
+  monitored: boolean
+  episodes: EpisodeInfo[]
+}
+
+export interface MediaFileInfo {
+  id: number
+  path: string
+  size: number
+  episodeIds: number[]
+}
+
+export interface MediaItemDetail extends MediaItemSummary {
+  backdropPath: string
+  overview: string
+  genres: string[]
+  status: string
+  releaseDate: string
+  runtime: number
+  rootFolderId: number
+  ended: boolean
+  ids: ExternalIds
+  seasons: SeasonInfo[]
+  files: MediaFileInfo[]
+  addedAt: string
+}
+
+export interface SearchResult {
+  kind: MediaKind
+  tmdbId: number
+  title: string
+  year: number
+  overview: string
+  posterPath: string
+  inLibrary: boolean
+}
+
+export interface AddMediaRequest {
+  kind: MediaKind
+  tmdbId: number
+  rootFolderId?: number
+  monitored?: boolean
+}
+
+export interface RootFolder {
+  id: number
+  path: string
+  freeBytes: number
+  accessible: boolean
+}
+
+export interface UnmatchedDir {
+  rootFolderId: number
+  path: string
+  name: string
+}
+
+export interface ScanReport {
+  scannedAt: string
+  rootsScanned: number
+  itemsScanned: number
+  filesLinked: number
+  filesRemoved: number
+  unmatchedDirs: UnmatchedDir[]
+  missingPaths: string[]
+}
+
+export interface Settings {
+  tmdbApiKeyConfigured: boolean
+  tmdbApiKeyHint: string
+}
+
+async function parseError(res: Response, fallback: string): Promise<never> {
+  let msg = fallback
+  try {
+    const body = (await res.json()) as { message?: string }
+    if (body.message) msg = body.message
+  } catch {
+    /* keep fallback */
+  }
+  throw new Error(msg)
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`/api/v1${path}`)
-  if (!res.ok) throw new Error(`GET ${path}: ${res.status} ${res.statusText}`)
+  if (!res.ok) await parseError(res, `GET ${path}: ${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
+}
+
+async function send<T = void>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`/api/v1${path}`, {
+    method,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) await parseError(res, `${method} ${path}: ${res.status} ${res.statusText}`)
+  if (res.status === 204 || res.status === 202) return undefined as T
+  return res.json() as Promise<T>
+}
+
+export const getLibrary = (kind?: MediaKind) =>
+  get<MediaItemSummary[]>(`/library${kind ? `?kind=${kind}` : ''}`)
+export const getLibraryItem = (id: number) => get<MediaItemDetail>(`/library/${id}`)
+export const addLibraryItem = (req: AddMediaRequest) =>
+  send<MediaItemDetail>('POST', '/library', req)
+export const deleteLibraryItem = (id: number) => send('DELETE', `/library/${id}`)
+export const searchMetadata = (kind: MediaKind, query: string) =>
+  get<SearchResult[]>(`/metadata/search?kind=${kind}&query=${encodeURIComponent(query)}`)
+export const getRootFolders = () => get<RootFolder[]>('/rootfolders')
+export const addRootFolder = (path: string) => send<RootFolder>('POST', '/rootfolders', { path })
+export const deleteRootFolder = (id: number) => send('DELETE', `/rootfolders/${id}`)
+export const getSettings = () => get<Settings>('/settings')
+export const updateSettings = (patch: { tmdbApiKey?: string }) => send('PUT', '/settings', patch)
+export const triggerScan = () => send('POST', '/library/scan')
+export const getScanReport = async (): Promise<ScanReport | null> => {
+  const res = await fetch('/api/v1/library/scan/report')
+  if (res.status === 404) return null
+  if (!res.ok) await parseError(res, `scan report: ${res.status}`)
+  return res.json() as Promise<ScanReport>
+}
+
+export function posterUrl(path: string, size: 'w185' | 'w342' | 'w500' = 'w342'): string {
+  return path ? `https://image.tmdb.org/t/p/${size}${path}` : ''
+}
+
+export function fmtBytes(n: number): string {
+  if (n <= 0) return '—'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
 }
 
 export const getStatus = () => get<SystemStatus>('/system/status')

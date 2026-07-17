@@ -1,0 +1,124 @@
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate } from '@tanstack/react-router'
+import type { MediaKind } from '../api'
+import { getLibrary, getScanReport, getSettings, posterUrl, triggerScan } from '../api'
+
+const KIND_TABS: { label: string; kind?: MediaKind }[] = [
+  { label: 'All' },
+  { label: 'Movies', kind: 'movie' },
+  { label: 'Series', kind: 'series' },
+]
+
+export function LibraryPage() {
+  const [kind, setKind] = useState<MediaKind | undefined>(undefined)
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+
+  const items = useQuery({
+    queryKey: ['library', kind ?? 'all'],
+    queryFn: () => getLibrary(kind),
+    refetchInterval: 30_000,
+  })
+  const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+  const report = useQuery({ queryKey: ['scan-report'], queryFn: getScanReport })
+
+  const scan = useMutation({
+    mutationFn: triggerScan,
+    onSuccess: () => {
+      // The scan runs async; refresh the report and library shortly after.
+      setTimeout(() => {
+        void qc.invalidateQueries({ queryKey: ['scan-report'] })
+        void qc.invalidateQueries({ queryKey: ['library'] })
+      }, 1500)
+    },
+  })
+
+  const unmatched = report.data?.unmatchedDirs ?? []
+
+  return (
+    <>
+      <header className="page-head">
+        <h1>Library</h1>
+        <div className="tabs" role="tablist">
+          {KIND_TABS.map((t) => (
+            <button
+              key={t.label}
+              role="tab"
+              aria-selected={kind === t.kind}
+              className={kind === t.kind ? 'tab active' : 'tab'}
+              onClick={() => setKind(t.kind)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="head-actions">
+          <button onClick={() => scan.mutate()} disabled={scan.isPending}>
+            Scan disk
+          </button>
+          <Link to="/add" className="btn-accent">
+            + Add media
+          </Link>
+        </div>
+      </header>
+
+      {settings.data && !settings.data.tmdbApiKeyConfigured && (
+        <div className="banner warning">
+          No TMDB API key configured — searching and adding media won't work yet.{' '}
+          <Link to="/settings">Set it in Settings →</Link>
+        </div>
+      )}
+
+      {unmatched.length > 0 && (
+        <div className="banner">
+          <strong>{unmatched.length}</strong> unmatched folder{unmatched.length > 1 ? 's' : ''} found
+          on disk:
+          <ul className="unmatched-list">
+            {unmatched.slice(0, 5).map((d) => (
+              <li key={d.path}>
+                <span className="mono">{d.name}</span>
+                <button
+                  onClick={() => navigate({ to: '/add', search: { q: d.name, kind: 'series' } })}
+                >
+                  Match…
+                </button>
+              </li>
+            ))}
+            {unmatched.length > 5 && <li className="muted">…and {unmatched.length - 5} more</li>}
+          </ul>
+        </div>
+      )}
+
+      {items.data && items.data.length === 0 && (
+        <div className="empty-state">
+          <p>The library is empty.</p>
+          <p className="muted">
+            Add a root folder and your TMDB key under <Link to="/settings">Settings</Link>, then{' '}
+            <Link to="/add">add your first movie or series</Link>.
+          </p>
+        </div>
+      )}
+
+      <div className="poster-grid">
+        {items.data?.map((m) => (
+          <Link key={m.id} to="/library/$id" params={{ id: String(m.id) }} className="poster-card">
+            {m.posterPath ? (
+              <img src={posterUrl(m.posterPath)} alt="" loading="lazy" />
+            ) : (
+              <div className="poster-fallback">{m.title.slice(0, 1)}</div>
+            )}
+            <div className="poster-meta">
+              <div className="poster-title" title={m.title}>
+                {m.title}
+              </div>
+              <div className="muted">
+                {m.year || '—'} · {m.kind}
+              </div>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </>
+  )
+}
