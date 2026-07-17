@@ -16,8 +16,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/qbittorrent"
+	"github.com/monarr-media/monarr/internal/adapters/sabnzbd"
 	"github.com/monarr-media/monarr/internal/adapters/tmdb"
+	"github.com/monarr-media/monarr/internal/adapters/torznab"
 	"github.com/monarr-media/monarr/internal/api"
+	"github.com/monarr-media/monarr/internal/app/acquisition"
 	"github.com/monarr-media/monarr/internal/app/health"
 	"github.com/monarr-media/monarr/internal/app/library"
 	"github.com/monarr-media/monarr/internal/infra/bus"
@@ -25,6 +29,7 @@ import (
 	"github.com/monarr-media/monarr/internal/infra/logging"
 	"github.com/monarr-media/monarr/internal/infra/scheduler"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
+	"github.com/monarr-media/monarr/internal/ports"
 )
 
 // Injected via -ldflags at build time (see Makefile / Dockerfile).
@@ -98,6 +103,16 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// Library service.
 	lib := library.New(db, meta, b, log)
 
+	// Acquisition: real adapters injected as factories.
+	indexerFactory := func(cfg ports.IndexerConfig) ports.Indexer { return torznab.New(cfg) }
+	clientFactory := func(cfg ports.ClientConfig) ports.DownloadClient {
+		if cfg.Type == "sabnzbd" {
+			return sabnzbd.New(cfg)
+		}
+		return qbittorrent.New(cfg)
+	}
+	acq := acquisition.New(db, b, log, indexerFactory, clientFactory)
+
 	// Health checks.
 	reg := health.NewRegistry(b)
 	reg.Register("database", func(ctx context.Context) health.Result {
@@ -163,23 +178,34 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}); err != nil {
 		return err
 	}
+	if err := sched.Register(scheduler.Task{
+		Name:     "queue.refresh",
+		Interval: 30 * time.Second,
+		Fn:       acq.RefreshQueue,
+	}); err != nil {
+		return err
+	}
 	if err := sched.Start(ctx); err != nil {
 		return err
 	}
 
 	// HTTP.
 	srv := api.New(api.Deps{
-		Log:       log,
-		Bus:       b,
-		Health:    reg,
-		Scheduler: sched,
-		DB:        db,
-		Library:   lib,
-		Settings:  db,
-		Version:   version,
-		Commit:    commit,
-		DataDir:   cfg.DataDir,
-		StartedAt: startedAt,
+		Log:            log,
+		Bus:            b,
+		Health:         reg,
+		Scheduler:      sched,
+		DB:             db,
+		Library:        lib,
+		Acquisition:    acq,
+		Store:          db,
+		IndexerFactory: indexerFactory,
+		ClientFactory:  clientFactory,
+		Settings:       db,
+		Version:        version,
+		Commit:         commit,
+		DataDir:        cfg.DataDir,
+		StartedAt:      startedAt,
 	})
 	httpServer := &http.Server{
 		Addr:              cfg.Addr(),

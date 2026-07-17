@@ -10,10 +10,12 @@ import (
 	"time"
 
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
+	"github.com/monarr-media/monarr/internal/app/acquisition"
 	"github.com/monarr-media/monarr/internal/app/health"
 	"github.com/monarr-media/monarr/internal/app/library"
 	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/scheduler"
+	"github.com/monarr-media/monarr/internal/infra/sqlite"
 )
 
 // SchemaVersioner reports the database schema version; satisfied by
@@ -34,17 +36,23 @@ const ScanTaskName = "library.reconcile"
 
 // Deps is everything the server needs, wired in cmd/monarr.
 type Deps struct {
-	Log       *slog.Logger
-	Bus       *bus.Bus
-	Health    *health.Registry
-	Scheduler *scheduler.Scheduler
-	DB        SchemaVersioner
-	Library   *library.Service
-	Settings  SettingsStore
-	Version   string
-	Commit    string
-	DataDir   string
-	StartedAt time.Time
+	Log         *slog.Logger
+	Bus         *bus.Bus
+	Health      *health.Registry
+	Scheduler   *scheduler.Scheduler
+	DB          SchemaVersioner
+	Library     *library.Service
+	Acquisition *acquisition.Service
+	// Store is the config storage for profiles/indexers/clients.
+	Store *sqlite.DB
+	// Factories used by the /test endpoints to probe unsaved configs.
+	IndexerFactory acquisition.IndexerFactory
+	ClientFactory  acquisition.ClientFactory
+	Settings       SettingsStore
+	Version        string
+	Commit         string
+	DataDir        string
+	StartedAt      time.Time
 }
 
 // Server implements apigen.ServerInterface.

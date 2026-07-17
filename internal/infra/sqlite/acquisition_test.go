@@ -68,7 +68,7 @@ func TestDownloadQueueRoundTrip(t *testing.T) {
 	id, err := db.InsertDownload(ctx, Download{
 		MediaItemID: itemID, WantableIDs: []string{"episode:1:1:1", "episode:1:1:2"},
 		Season: 1, ReleaseTitle: "Test.Show.S01.1080p", Protocol: "torrent",
-		Quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		Quality:  quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
 		ClientID: 1, Handle: "abc123", State: "grabbed",
 	})
 	if err != nil {

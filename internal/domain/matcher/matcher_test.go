@@ -10,7 +10,10 @@ import (
 	"github.com/monarr-media/monarr/internal/domain/quality"
 )
 
-func q(s quality.Source, r int) *quality.Quality { qq := quality.Quality{Source: s, Resolution: r}; return &qq }
+func q(s quality.Source, r int) *quality.Quality {
+	qq := quality.Quality{Source: s, Resolution: r}
+	return &qq
+}
 
 func TestNormalizeTitle(t *testing.T) {
 	cases := [][2]string{

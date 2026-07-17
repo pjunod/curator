@@ -14,6 +14,42 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for DownloadClientConfigType.
+const (
+	DownloadClientConfigTypeQbittorrent DownloadClientConfigType = "qbittorrent"
+	DownloadClientConfigTypeSabnzbd     DownloadClientConfigType = "sabnzbd"
+)
+
+// Valid indicates whether the value is a known member of the DownloadClientConfigType enum.
+func (e DownloadClientConfigType) Valid() bool {
+	switch e {
+	case DownloadClientConfigTypeQbittorrent:
+		return true
+	case DownloadClientConfigTypeSabnzbd:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DownloadClientInputType.
+const (
+	DownloadClientInputTypeQbittorrent DownloadClientInputType = "qbittorrent"
+	DownloadClientInputTypeSabnzbd     DownloadClientInputType = "sabnzbd"
+)
+
+// Valid indicates whether the value is a known member of the DownloadClientInputType enum.
+func (e DownloadClientInputType) Valid() bool {
+	switch e {
+	case DownloadClientInputTypeQbittorrent:
+		return true
+	case DownloadClientInputTypeSabnzbd:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusError   HealthStatus = "error"
@@ -29,6 +65,42 @@ func (e HealthStatus) Valid() bool {
 	case HealthStatusOk:
 		return true
 	case HealthStatusWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IndexerProtocol.
+const (
+	IndexerProtocolTorrent IndexerProtocol = "torrent"
+	IndexerProtocolUsenet  IndexerProtocol = "usenet"
+)
+
+// Valid indicates whether the value is a known member of the IndexerProtocol enum.
+func (e IndexerProtocol) Valid() bool {
+	switch e {
+	case IndexerProtocolTorrent:
+		return true
+	case IndexerProtocolUsenet:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IndexerInputProtocol.
+const (
+	IndexerInputProtocolTorrent IndexerInputProtocol = "torrent"
+	IndexerInputProtocolUsenet  IndexerInputProtocol = "usenet"
+)
+
+// Valid indicates whether the value is a known member of the IndexerInputProtocol enum.
+func (e IndexerInputProtocol) Valid() bool {
+	switch e {
+	case IndexerInputProtocolTorrent:
+		return true
+	case IndexerInputProtocolUsenet:
 		return true
 	default:
 		return false
@@ -64,6 +136,35 @@ type AddMediaRequest struct {
 	TmdbId       int64     `json:"tmdbId"`
 }
 
+// DownloadClientConfig defines model for DownloadClientConfig.
+type DownloadClientConfig struct {
+	Category *string                  `json:"category,omitempty"`
+	Enabled  *bool                    `json:"enabled,omitempty"`
+	Id       int64                    `json:"id"`
+	Name     string                   `json:"name"`
+	Password *string                  `json:"password,omitempty"`
+	Type     DownloadClientConfigType `json:"type"`
+	Url      string                   `json:"url"`
+	Username *string                  `json:"username,omitempty"`
+}
+
+// DownloadClientConfigType defines model for DownloadClientConfig.Type.
+type DownloadClientConfigType string
+
+// DownloadClientInput defines model for DownloadClientInput.
+type DownloadClientInput struct {
+	Category *string                 `json:"category,omitempty"`
+	Enabled  *bool                   `json:"enabled,omitempty"`
+	Name     string                  `json:"name"`
+	Password *string                 `json:"password,omitempty"`
+	Type     DownloadClientInputType `json:"type"`
+	Url      string                  `json:"url"`
+	Username *string                 `json:"username,omitempty"`
+}
+
+// DownloadClientInputType defines model for DownloadClientInput.Type.
+type DownloadClientInputType string
+
 // EpisodeInfo defines model for EpisodeInfo.
 type EpisodeInfo struct {
 	AirDate       string `json:"airDate"`
@@ -87,6 +188,18 @@ type ExternalIds struct {
 	Tvdb *int64  `json:"tvdb,omitempty"`
 }
 
+// GrabRequest defines model for GrabRequest.
+type GrabRequest struct {
+	DownloadUrl string  `json:"downloadUrl"`
+	Episode     *int    `json:"episode,omitempty"`
+	Indexer     *string `json:"indexer,omitempty"`
+	MediaItemId int64   `json:"mediaItemId"`
+	Protocol    string  `json:"protocol"`
+	Season      *int    `json:"season,omitempty"`
+	Size        *int64  `json:"size,omitempty"`
+	Title       string  `json:"title"`
+}
+
 // HealthCheck defines model for HealthCheck.
 type HealthCheck struct {
 	CheckedAt time.Time    `json:"checkedAt"`
@@ -103,6 +216,33 @@ type HealthReport struct {
 
 // HealthStatus defines model for HealthStatus.
 type HealthStatus string
+
+// Indexer defines model for Indexer.
+type Indexer struct {
+	ApiKey     *string         `json:"apiKey,omitempty"`
+	Categories *[]int          `json:"categories,omitempty"`
+	Enabled    *bool           `json:"enabled,omitempty"`
+	Id         int64           `json:"id"`
+	Name       string          `json:"name"`
+	Protocol   IndexerProtocol `json:"protocol"`
+	Url        string          `json:"url"`
+}
+
+// IndexerProtocol defines model for Indexer.Protocol.
+type IndexerProtocol string
+
+// IndexerInput defines model for IndexerInput.
+type IndexerInput struct {
+	ApiKey     *string              `json:"apiKey,omitempty"`
+	Categories *[]int               `json:"categories,omitempty"`
+	Enabled    *bool                `json:"enabled,omitempty"`
+	Name       string               `json:"name"`
+	Protocol   IndexerInputProtocol `json:"protocol"`
+	Url        string               `json:"url"`
+}
+
+// IndexerInputProtocol defines model for IndexerInput.Protocol.
+type IndexerInputProtocol string
 
 // MediaFileInfo defines model for MediaFileInfo.
 type MediaFileInfo struct {
@@ -148,6 +288,50 @@ type MediaItemSummary struct {
 
 // MediaKind defines model for MediaKind.
 type MediaKind string
+
+// QualityProfile defines model for QualityProfile.
+type QualityProfile struct {
+	Cutoff          string   `json:"cutoff"`
+	Id              int64    `json:"id"`
+	Name            string   `json:"name"`
+	Qualities       []string `json:"qualities"`
+	UpgradesAllowed bool     `json:"upgradesAllowed"`
+}
+
+// QueueItem defines model for QueueItem.
+type QueueItem struct {
+	AddedAt     time.Time `json:"addedAt"`
+	Error       *string   `json:"error,omitempty"`
+	Id          int64     `json:"id"`
+	MediaItemId int64     `json:"mediaItemId"`
+	Progress    float32   `json:"progress"`
+	Protocol    string    `json:"protocol"`
+	Quality     string    `json:"quality"`
+	State       string    `json:"state"`
+	Title       string    `json:"title"`
+}
+
+// Rejection defines model for Rejection.
+type Rejection struct {
+	Code   string `json:"code"`
+	Reason string `json:"reason"`
+}
+
+// ReleaseCandidate defines model for ReleaseCandidate.
+type ReleaseCandidate struct {
+	Accepted    bool        `json:"accepted"`
+	Age         string      `json:"age"`
+	DownloadUrl string      `json:"downloadUrl"`
+	Indexer     string      `json:"indexer"`
+	InfoUrl     *string     `json:"infoUrl,omitempty"`
+	IsUpgrade   bool        `json:"isUpgrade"`
+	Protocol    string      `json:"protocol"`
+	Quality     string      `json:"quality"`
+	Rejections  []Rejection `json:"rejections"`
+	Seeders     int         `json:"seeders"`
+	Size        int64       `json:"size"`
+	Title       string      `json:"title"`
+}
 
 // RootFolder defines model for RootFolder.
 type RootFolder struct {
@@ -237,16 +421,42 @@ type ListLibraryParams struct {
 	Kind *MediaKind `form:"kind,omitempty" json:"kind,omitempty"`
 }
 
+// SearchReleasesParams defines parameters for SearchReleases.
+type SearchReleasesParams struct {
+	Season  *int `form:"season,omitempty" json:"season,omitempty"`
+	Episode *int `form:"episode,omitempty" json:"episode,omitempty"`
+}
+
 // SearchMetadataParams defines parameters for SearchMetadata.
 type SearchMetadataParams struct {
 	Kind  MediaKind `form:"kind" json:"kind"`
 	Query string    `form:"query" json:"query"`
 }
 
+// RemoveQueueItemParams defines parameters for RemoveQueueItem.
+type RemoveQueueItemParams struct {
+	FromClient *bool `form:"fromClient,omitempty" json:"fromClient,omitempty"`
+}
+
 // AddRootFolderJSONBody defines parameters for AddRootFolder.
 type AddRootFolderJSONBody struct {
 	Path string `json:"path"`
 }
+
+// AddDownloadClientJSONRequestBody defines body for AddDownloadClient for application/json ContentType.
+type AddDownloadClientJSONRequestBody = DownloadClientInput
+
+// TestDownloadClientJSONRequestBody defines body for TestDownloadClient for application/json ContentType.
+type TestDownloadClientJSONRequestBody = DownloadClientInput
+
+// GrabReleaseJSONRequestBody defines body for GrabRelease for application/json ContentType.
+type GrabReleaseJSONRequestBody = GrabRequest
+
+// AddIndexerJSONRequestBody defines body for AddIndexer for application/json ContentType.
+type AddIndexerJSONRequestBody = IndexerInput
+
+// TestIndexerJSONRequestBody defines body for TestIndexer for application/json ContentType.
+type TestIndexerJSONRequestBody = IndexerInput
 
 // AddLibraryItemJSONRequestBody defines body for AddLibraryItem for application/json ContentType.
 type AddLibraryItemJSONRequestBody = AddMediaRequest
@@ -259,12 +469,39 @@ type UpdateSettingsJSONRequestBody = SettingsUpdate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListDownloadClients List download clients
+	// (GET /downloadclients)
+	ListDownloadClients(w http.ResponseWriter, r *http.Request)
+	// AddDownloadClient Add a download client
+	// (POST /downloadclients)
+	AddDownloadClient(w http.ResponseWriter, r *http.Request)
+	// TestDownloadClient Test a download client config
+	// (POST /downloadclients/test)
+	TestDownloadClient(w http.ResponseWriter, r *http.Request)
+	// DeleteDownloadClient Remove a download client
+	// (DELETE /downloadclients/{id})
+	DeleteDownloadClient(w http.ResponseWriter, r *http.Request, id int64)
 	// StreamEvents Server-sent events
 	// (GET /events)
 	StreamEvents(w http.ResponseWriter, r *http.Request)
+	// GrabRelease Send a release to a download client
+	// (POST /grab)
+	GrabRelease(w http.ResponseWriter, r *http.Request)
 	// GetHealth Run health checks and report results
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// ListIndexers List indexers
+	// (GET /indexers)
+	ListIndexers(w http.ResponseWriter, r *http.Request)
+	// AddIndexer Add an indexer
+	// (POST /indexers)
+	AddIndexer(w http.ResponseWriter, r *http.Request)
+	// TestIndexer Test an indexer config (t=caps)
+	// (POST /indexers/test)
+	TestIndexer(w http.ResponseWriter, r *http.Request)
+	// DeleteIndexer Remove an indexer
+	// (DELETE /indexers/{id})
+	DeleteIndexer(w http.ResponseWriter, r *http.Request, id int64)
 	// ListLibrary List library items
 	// (GET /library)
 	ListLibrary(w http.ResponseWriter, r *http.Request, params ListLibraryParams)
@@ -283,9 +520,21 @@ type ServerInterface interface {
 	// GetLibraryItem Get one item with seasons, episodes, and files
 	// (GET /library/{id})
 	GetLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// SearchReleases Interactive search for a movie, episode, or season pack
+	// (GET /library/{id}/releases)
+	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
 	// SearchMetadata Search the metadata provider
 	// (GET /metadata/search)
 	SearchMetadata(w http.ResponseWriter, r *http.Request, params SearchMetadataParams)
+	// ListProfiles List quality profiles
+	// (GET /profiles)
+	ListProfiles(w http.ResponseWriter, r *http.Request)
+	// ListQueue Recent downloads (all states)
+	// (GET /queue)
+	ListQueue(w http.ResponseWriter, r *http.Request)
+	// RemoveQueueItem Remove a queue row (optionally from the client too)
+	// (DELETE /queue/{id})
+	RemoveQueueItem(w http.ResponseWriter, r *http.Request, id int64, params RemoveQueueItemParams)
 	// ListRootFolders List library root folders
 	// (GET /rootfolders)
 	ListRootFolders(w http.ResponseWriter, r *http.Request)
@@ -321,6 +570,74 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// ListDownloadClients operation middleware
+func (siw *ServerInterfaceWrapper) ListDownloadClients(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDownloadClients(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddDownloadClient operation middleware
+func (siw *ServerInterfaceWrapper) AddDownloadClient(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddDownloadClient(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestDownloadClient operation middleware
+func (siw *ServerInterfaceWrapper) TestDownloadClient(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestDownloadClient(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteDownloadClient operation middleware
+func (siw *ServerInterfaceWrapper) DeleteDownloadClient(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteDownloadClient(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StreamEvents operation middleware
 func (siw *ServerInterfaceWrapper) StreamEvents(w http.ResponseWriter, r *http.Request) {
 
@@ -335,11 +652,93 @@ func (siw *ServerInterfaceWrapper) StreamEvents(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// GrabRelease operation middleware
+func (siw *ServerInterfaceWrapper) GrabRelease(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GrabRelease(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListIndexers operation middleware
+func (siw *ServerInterfaceWrapper) ListIndexers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListIndexers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddIndexer operation middleware
+func (siw *ServerInterfaceWrapper) AddIndexer(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddIndexer(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestIndexer operation middleware
+func (siw *ServerInterfaceWrapper) TestIndexer(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestIndexer(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteIndexer operation middleware
+func (siw *ServerInterfaceWrapper) DeleteIndexer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteIndexer(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -476,6 +875,61 @@ func (siw *ServerInterfaceWrapper) GetLibraryItem(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// SearchReleases operation middleware
+func (siw *ServerInterfaceWrapper) SearchReleases(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchReleasesParams
+
+	// ------------- Optional query parameter "season" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "season", r.URL.Query(), &params.Season, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "season"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "season", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "episode" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "episode", r.URL.Query(), &params.Episode, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "episode"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "episode", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SearchReleases(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SearchMetadata operation middleware
 func (siw *ServerInterfaceWrapper) SearchMetadata(w http.ResponseWriter, r *http.Request) {
 
@@ -513,6 +967,76 @@ func (siw *ServerInterfaceWrapper) SearchMetadata(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SearchMetadata(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListProfiles operation middleware
+func (siw *ServerInterfaceWrapper) ListProfiles(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProfiles(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListQueue operation middleware
+func (siw *ServerInterfaceWrapper) ListQueue(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListQueue(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveQueueItem operation middleware
+func (siw *ServerInterfaceWrapper) RemoveQueueItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RemoveQueueItemParams
+
+	// ------------- Optional query parameter "fromClient" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "fromClient", r.URL.Query(), &params.FromClient, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "fromClient"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fromClient", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveQueueItem(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -794,6 +1318,19 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/rootfolders/{id}", wrapper.DeleteRootFolder)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/settings", wrapper.GetSettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/settings", wrapper.UpdateSettings)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/profiles", wrapper.ListProfiles)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/indexers", wrapper.ListIndexers)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/indexers", wrapper.AddIndexer)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/indexers/test", wrapper.TestIndexer)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/indexers/{id}", wrapper.DeleteIndexer)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloadclients", wrapper.ListDownloadClients)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloadclients", wrapper.AddDownloadClient)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloadclients/test", wrapper.TestDownloadClient)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloadclients/{id}", wrapper.DeleteDownloadClient)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/releases", wrapper.SearchReleases)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/grab", wrapper.GrabRelease)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue", wrapper.ListQueue)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/events", wrapper.StreamEvents)
 
 	return m

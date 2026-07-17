@@ -314,6 +314,253 @@ paths:
         "204":
           description: Saved.
 
+  /profiles:
+    get:
+      operationId: listProfiles
+      summary: List quality profiles
+      responses:
+        "200":
+          description: Profiles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/QualityProfile"
+
+  /indexers:
+    get:
+      operationId: listIndexers
+      summary: List indexers
+      responses:
+        "200":
+          description: Indexers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Indexer"
+    post:
+      operationId: addIndexer
+      summary: Add an indexer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndexerInput"
+      responses:
+        "201":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Indexer"
+        "400":
+          description: Invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /indexers/test:
+    post:
+      operationId: testIndexer
+      summary: Test an indexer config (t=caps)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndexerInput"
+      responses:
+        "200":
+          description: Reachable.
+        "400":
+          description: Failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /indexers/{id}:
+    delete:
+      operationId: deleteIndexer
+      summary: Remove an indexer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Removed. }
+
+  /downloadclients:
+    get:
+      operationId: listDownloadClients
+      summary: List download clients
+      responses:
+        "200":
+          description: Clients.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DownloadClientConfig"
+    post:
+      operationId: addDownloadClient
+      summary: Add a download client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadClientInput"
+      responses:
+        "201":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadClientConfig"
+        "400":
+          description: Invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /downloadclients/test:
+    post:
+      operationId: testDownloadClient
+      summary: Test a download client config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadClientInput"
+      responses:
+        "200": { description: Reachable. }
+        "400":
+          description: Failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /downloadclients/{id}:
+    delete:
+      operationId: deleteDownloadClient
+      summary: Remove a download client
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Removed. }
+
+  /library/{id}/releases:
+    get:
+      operationId: searchReleases
+      summary: Interactive search for a movie, episode, or season pack
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: season
+          in: query
+          required: false
+          schema: { type: integer }
+        - name: episode
+          in: query
+          required: false
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Ranked candidates with rejection reasons attached.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReleaseCandidate"
+        "404":
+          description: Unknown item/season/episode.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: No enabled indexers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /grab:
+    post:
+      operationId: grabRelease
+      summary: Send a release to a download client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrabRequest"
+      responses:
+        "201":
+          description: Queued; returns the download row id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: integer, format: int64 }
+        "400":
+          description: Invalid or no client for protocol.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /queue:
+    get:
+      operationId: listQueue
+      summary: Recent downloads (all states)
+      responses:
+        "200":
+          description: Queue.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/QueueItem"
+
+  /queue/{id}:
+    delete:
+      operationId: removeQueueItem
+      summary: Remove a queue row (optionally from the client too)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: fromClient
+          in: query
+          required: false
+          schema: { type: boolean }
+      responses:
+        "204": { description: Removed. }
+        "404":
+          description: Unknown row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /events:
     get:
       operationId: streamEvents
@@ -684,6 +931,112 @@ components:
           type: array
           items:
             type: string
+
+    QualityProfile:
+      type: object
+      required: [id, name, cutoff, upgradesAllowed, qualities]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        cutoff: { type: string }
+        upgradesAllowed: { type: boolean }
+        qualities:
+          type: array
+          items: { type: string }
+
+    IndexerInput:
+      type: object
+      required: [name, url, protocol]
+      properties:
+        name: { type: string }
+        url: { type: string }
+        apiKey: { type: string }
+        protocol: { type: string, enum: [torrent, usenet] }
+        categories:
+          type: array
+          items: { type: integer }
+        enabled: { type: boolean, default: true }
+
+    Indexer:
+      allOf:
+        - $ref: "#/components/schemas/IndexerInput"
+        - type: object
+          required: [id]
+          properties:
+            id: { type: integer, format: int64 }
+
+    DownloadClientInput:
+      type: object
+      required: [type, name, url]
+      properties:
+        type: { type: string, enum: [qbittorrent, sabnzbd] }
+        name: { type: string }
+        url: { type: string }
+        username: { type: string }
+        password: { type: string }
+        category: { type: string, default: monarr }
+        enabled: { type: boolean, default: true }
+
+    DownloadClientConfig:
+      allOf:
+        - $ref: "#/components/schemas/DownloadClientInput"
+        - type: object
+          required: [id]
+          properties:
+            id: { type: integer, format: int64 }
+
+    Rejection:
+      type: object
+      required: [code, reason]
+      properties:
+        code: { type: string }
+        reason: { type: string }
+
+    ReleaseCandidate:
+      type: object
+      required: [title, downloadUrl, indexer, protocol, size, seeders, age, quality, accepted, isUpgrade, rejections]
+      properties:
+        title: { type: string }
+        downloadUrl: { type: string }
+        infoUrl: { type: string }
+        indexer: { type: string }
+        protocol: { type: string }
+        size: { type: integer, format: int64 }
+        seeders: { type: integer }
+        age: { type: string }
+        quality: { type: string }
+        accepted: { type: boolean }
+        isUpgrade: { type: boolean }
+        rejections:
+          type: array
+          items: { $ref: "#/components/schemas/Rejection" }
+
+    GrabRequest:
+      type: object
+      required: [mediaItemId, title, downloadUrl, protocol]
+      properties:
+        mediaItemId: { type: integer, format: int64 }
+        season: { type: integer }
+        episode: { type: integer }
+        title: { type: string }
+        downloadUrl: { type: string }
+        indexer: { type: string }
+        protocol: { type: string }
+        size: { type: integer, format: int64 }
+
+    QueueItem:
+      type: object
+      required: [id, mediaItemId, title, state, progress, protocol, quality, addedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        mediaItemId: { type: integer, format: int64 }
+        title: { type: string }
+        state: { type: string }
+        progress: { type: number }
+        protocol: { type: string }
+        quality: { type: string }
+        error: { type: string }
+        addedAt: { type: string, format: date-time }
 
     Settings:
       type: object
