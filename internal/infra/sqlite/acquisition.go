@@ -287,6 +287,22 @@ func (d *DB) BestQualityForItem(ctx context.Context, itemID int64) (quality.Qual
 	return *best, true, nil
 }
 
+// FileQualities maps file id → parsed quality for an item's files (files
+// with unknown quality are omitted).
+func (d *DB) FileQualities(ctx context.Context, itemID int64) (map[int64]quality.Quality, error) {
+	rows, err := d.Read.ListFileQualitiesForItem(ctx, sql.NullInt64{Int64: itemID, Valid: true})
+	if err != nil {
+		return nil, err
+	}
+	out := map[int64]quality.Quality{}
+	for _, r := range rows {
+		if r.Quality != "" {
+			out[r.ID] = quality.FromString(r.Quality)
+		}
+	}
+	return out, nil
+}
+
 // AddHistory appends an event (grabbed | imported | failed).
 func (d *DB) AddHistory(ctx context.Context, eventType string, mediaItemID int64, releaseTitle string, data any) error {
 	raw, _ := json.Marshal(data)

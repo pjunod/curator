@@ -68,9 +68,10 @@ type MediaItem struct {
 	ReleaseDate  string // ISO date; first air date for series
 	Runtime      int    // minutes; per-episode average for series
 
-	Monitored    bool
-	RootFolderID int64  // 0 = none assigned
-	Path         string // absolute on-disk folder; "" if unassigned
+	Monitored        bool
+	QualityProfileID int64
+	RootFolderID     int64  // 0 = none assigned
+	Path             string // absolute on-disk folder; "" if unassigned
 
 	// Series-only.
 	Ended   bool

@@ -1,0 +1,295 @@
+package acquisition
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/monarr-media/monarr/internal/domain/filename"
+	"github.com/monarr-media/monarr/internal/domain/naming"
+	"github.com/monarr-media/monarr/internal/domain/parser"
+	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/monarr-media/monarr/internal/infra/sqlite"
+)
+
+// importDownload moves a completed payload into the library: parse each
+// video file, map it to wantables, apply per-file upgrade decisions,
+// hardlink-or-copy into the Renamer layout, link MediaFile rows, and clean
+// up replaced files (blueprint §5.1 grab → import).
+func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePath string) error {
+	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
+	if err != nil {
+		return err
+	}
+	if item.Path == "" {
+		return fmt.Errorf("item has no library folder assigned")
+	}
+
+	videos, err := collectVideos(savePath)
+	if err != nil {
+		return err
+	}
+	if len(videos) == 0 {
+		return fmt.Errorf("no video files in %s", savePath)
+	}
+
+	epQuals, err := s.episodeQualities(ctx, item)
+	if err != nil {
+		return err
+	}
+	profile, err := s.db.GetProfile(ctx, item.QualityProfileID)
+	if err != nil {
+		return err
+	}
+
+	imported, upgraded := 0, false
+	for _, src := range videos {
+		p := parser.Parse(filepath.Base(src))
+		q := p.Quality
+		if q.Source == quality.SourceUnknown && q.Resolution == 0 {
+			// Single files often carry the quality only on the release name.
+			q = dl.Quality
+		}
+
+		var err error
+		var wasUpgrade bool
+		if item.Kind == domain.KindMovie {
+			wasUpgrade, err = s.importMovieFile(ctx, item, profile, src, q)
+		} else {
+			wasUpgrade, err = s.importEpisodeFile(ctx, item, profile, epQuals, src, p, q)
+		}
+		if err != nil {
+			s.log.Warn("import: file skipped", "file", filepath.Base(src), "reason", err)
+			continue
+		}
+		imported++
+		upgraded = upgraded || wasUpgrade
+	}
+	if imported == 0 {
+		return fmt.Errorf("no files imported from %s", savePath)
+	}
+
+	_ = s.db.AddHistory(ctx, "imported", item.ID, dl.ReleaseTitle,
+		map[string]any{"files": imported, "upgrade": upgraded})
+	s.publish(ImportCompleted{MediaItemID: item.ID, Release: dl.ReleaseTitle,
+		Files: imported, Upgrade: upgraded})
+	s.log.Info("imported", "item", item.Title, "files", imported)
+	return nil
+}
+
+func collectVideos(savePath string) ([]string, error) {
+	info, err := os.Stat(savePath)
+	if err != nil {
+		return nil, fmt.Errorf("payload missing: %w", err)
+	}
+	if !info.IsDir() {
+		if filename.IsVideo(savePath) {
+			return []string{savePath}, nil
+		}
+		return nil, nil
+	}
+	var out []string
+	err = filepath.WalkDir(savePath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !filename.IsVideo(path) {
+			return err
+		}
+		// Skip samples.
+		if strings.Contains(strings.ToLower(filepath.Base(path)), "sample") {
+			return nil
+		}
+		out = append(out, path)
+		return nil
+	})
+	return out, err
+}
+
+func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, profile quality.Profile, src string, q quality.Quality) (bool, error) {
+	current, have, err := s.db.BestQualityForItem(ctx, item.ID)
+	if err != nil {
+		return false, err
+	}
+	upgrade := false
+	if have {
+		if !quality.Better(q, current) {
+			return false, fmt.Errorf("%s does not improve on %s", q.Display(), current.Display())
+		}
+		upgrade = true
+	}
+	_ = profile
+
+	name := naming.Render(naming.MovieFileTemplate, map[string]string{
+		"Movie Title": item.Title, "Release Year": strconv.Itoa(item.Year),
+		"Quality Full": q.Display(),
+	})
+	dest := filepath.Join(item.Path, naming.SafeFileName(name)+filepath.Ext(src))
+	if err := place(src, dest); err != nil {
+		return false, err
+	}
+	if upgrade {
+		s.removeExistingFiles(ctx, item, nil, dest)
+	}
+	fileID, err := s.db.UpsertFile(ctx, item.ID, dest, sizeOf(dest))
+	if err != nil {
+		return false, err
+	}
+	return upgrade, s.db.SetFileQuality(ctx, fileID, q)
+}
+
+func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, profile quality.Profile, epQuals map[int64]*quality.Quality, src string, p parser.Parsed, q quality.Quality) (bool, error) {
+	season, eps := p.Season, p.Episodes
+	if len(eps) == 0 {
+		if fx, ok := filename.Extract(filepath.Base(src)); ok {
+			season, eps = fx.Season, fx.Episodes
+		}
+	}
+	if len(eps) == 0 || season < 0 {
+		return false, fmt.Errorf("cannot determine episodes from %q", filepath.Base(src))
+	}
+
+	// Resolve episode ids + titles; per-file upgrade check against the
+	// WORST current quality among covered episodes.
+	var epIDs []int64
+	var epTitles []string
+	var worst *quality.Quality
+	missing := false
+	for _, epNum := range eps {
+		epID, err := s.db.GetEpisodeID(ctx, item.ID, season, epNum)
+		if err != nil {
+			continue // unknown episode; still import the known ones
+		}
+		epIDs = append(epIDs, epID)
+		for _, se := range item.Seasons {
+			if se.Number != season {
+				continue
+			}
+			for _, e := range se.Episodes {
+				if e.ID == epID {
+					epTitles = append(epTitles, e.Title)
+				}
+			}
+		}
+		if cur := epQuals[epID]; cur == nil {
+			missing = true
+		} else if worst == nil || quality.Better(*worst, *cur) {
+			worst = cur
+		}
+	}
+	if len(epIDs) == 0 {
+		return false, fmt.Errorf("no known episodes for S%02d %v", season, eps)
+	}
+	upgrade := false
+	if !missing && worst != nil {
+		if !quality.Better(q, *worst) {
+			return false, fmt.Errorf("%s does not improve on %s", q.Display(), worst.Display())
+		}
+		upgrade = true
+	}
+	_ = profile
+
+	epToken := fmt.Sprintf("S%02dE%02d", season, eps[0])
+	if len(eps) > 1 {
+		epToken += fmt.Sprintf("-E%02d", eps[len(eps)-1])
+	}
+	title := ""
+	if len(epTitles) > 0 {
+		title = epTitles[0]
+	}
+	base := fmt.Sprintf("%s - %s - %s [%s]", item.Title, epToken, title, q.Display())
+	dest := filepath.Join(item.Path,
+		naming.Render(naming.SeasonFolderTemplate, map[string]string{"season": strconv.Itoa(season)}),
+		naming.SafeFileName(base)+filepath.Ext(src))
+	if err := place(src, dest); err != nil {
+		return false, err
+	}
+	if upgrade {
+		s.removeExistingFiles(ctx, item, epIDs, dest)
+	}
+	fileID, err := s.db.UpsertFile(ctx, item.ID, dest, sizeOf(dest))
+	if err != nil {
+		return false, err
+	}
+	if err := s.db.SetFileQuality(ctx, fileID, q); err != nil {
+		return false, err
+	}
+	return upgrade, s.db.ReplaceFileEpisodeLinks(ctx, fileID, epIDs)
+}
+
+// removeExistingFiles deletes replaced files (rows + disk) for the target
+// scope: all item files for movies, or files linked to the given episodes.
+func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem, episodeIDs []int64, keep string) {
+	files, err := s.db.ListFilesForItem(ctx, item.ID)
+	if err != nil {
+		return
+	}
+	covered := map[int64]bool{}
+	for _, id := range episodeIDs {
+		covered[id] = true
+	}
+	for _, f := range files {
+		if f.Path == keep {
+			continue
+		}
+		if episodeIDs != nil {
+			hit := false
+			for _, id := range f.EpisodeIDs {
+				if covered[id] {
+					hit = true
+				}
+			}
+			if !hit {
+				continue
+			}
+		}
+		if err := s.db.DeleteFile(ctx, f.ID); err == nil {
+			if rmErr := os.Remove(f.Path); rmErr != nil && !os.IsNotExist(rmErr) {
+				s.log.Warn("import: could not remove replaced file", "path", f.Path, "err", rmErr)
+			}
+		}
+	}
+}
+
+// place hardlinks src to dest, falling back to copy across filesystems.
+func place(src, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(dest); err == nil {
+		return nil // already imported (idempotent re-poll)
+	}
+	if err := os.Link(src, dest); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.CreateTemp(filepath.Dir(dest), ".monarr-import-*")
+	if err != nil {
+		return err
+	}
+	tmp := out.Name()
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dest)
+}
+
+func sizeOf(path string) int64 {
+	if info, err := os.Stat(path); err == nil {
+		return info.Size()
+	}
+	return 0
+}

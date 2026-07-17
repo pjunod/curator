@@ -54,9 +54,10 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		Status:       r.Status,
 		ReleaseDate:  r.ReleaseDate,
 		Runtime:      int(r.Runtime),
-		Monitored:    r.Monitored != 0,
-		Path:         r.Path,
-		Ended:        r.Ended != 0,
+		Monitored:        r.Monitored != 0,
+		QualityProfileID: r.QualityProfileID,
+		Path:             r.Path,
+		Ended:            r.Ended != 0,
 		AddedAt:      time.UnixMilli(r.AddedAt),
 		UpdatedAt:    time.UnixMilli(r.UpdatedAt),
 	}
