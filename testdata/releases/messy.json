@@ -1,0 +1,10 @@
+[
+ {"title":"","expect":{"title":""}},
+ {"title":"...","expect":{"title":""}},
+ {"title":"[SubsPlease] Anime Show - 05 (1080p)","expect":{"title":"Anime Show - 05","resolution":1080,"group":"SubsPlease"}},
+ {"title":"Show   Name    S01E01","expect":{"title":"Show Name","season":1,"episodes":[1]}},
+ {"title":"Show.Name.S01E01.mkv","expect":{"title":"Show Name","season":1,"episodes":[1]}},
+ {"title":"random text with no structure at all","expect":{"title":"random text with no structure at all"}},
+ {"title":"Show.Name.S01E00.720p","expect":{"title":"Show Name","season":1,"episodes":[0],"resolution":720}},
+ {"title":"UPPERCASE.SHOW.S02E04.1080P.WEB-DL","expect":{"title":"UPPERCASE SHOW","season":2,"episodes":[4],"source":"webdl","resolution":1080}}
+]

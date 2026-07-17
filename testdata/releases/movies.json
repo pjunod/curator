@@ -1,0 +1,14 @@
+[
+ {"title":"The.Matrix.1999.1080p.BluRay.x264-GRP","expect":{"title":"The Matrix","year":1999,"source":"bluray","resolution":1080,"group":"GRP"}},
+ {"title":"Inception.2010.2160p.UHD.BluRay.REMUX-FraMeSToR","expect":{"title":"Inception","year":2010,"source":"remux","resolution":2160,"group":"FraMeSToR"}},
+ {"title":"1917.2019.720p.WEB-DL","expect":{"title":"1917","year":2019,"source":"webdl","resolution":720}},
+ {"title":"2001.A.Space.Odyssey.1968.1080p.BluRay","expect":{"title":"2001 A Space Odyssey","year":1968,"source":"bluray","resolution":1080}},
+ {"title":"Some Movie (2024) 1080p WEBRip","expect":{"title":"Some Movie","year":2024,"source":"webrip","resolution":1080}},
+ {"title":"Movie.Name.2023.PROPER.1080p.WEB.H264-GRP","expect":{"title":"Movie Name","year":2023,"proper":true,"source":"webdl","resolution":1080,"group":"GRP"}},
+ {"title":"Old.Film.1954.DVDRip.XviD","expect":{"title":"Old Film","year":1954,"source":"dvd"}},
+ {"title":"Cam.Job.2025.HDCAM.x264","expect":{"title":"Cam Job","year":2025,"source":"cam"}},
+ {"title":"Indie.Film.2021.480p.DVD","expect":{"title":"Indie Film","year":2021,"source":"dvd","resolution":480}},
+ {"title":"Inception 2010","expect":{"title":"Inception","year":2010}},
+ {"title":"Big.Release.2024.REPACK.2160p.WEB-DL.AV1","expect":{"title":"Big Release","year":2024,"repack":true,"source":"webdl","resolution":2160}},
+ {"title":"Movie.2020.1080p.BDRip","expect":{"title":"Movie","year":2020,"source":"bluray","resolution":1080}}
+]

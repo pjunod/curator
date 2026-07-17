@@ -1,0 +1,14 @@
+[
+ {"title":"Show.Name.S01E02.1080p.WEB-DL.x264-GROUP","expect":{"title":"Show Name","season":1,"episodes":[2],"source":"webdl","resolution":1080,"group":"GROUP"}},
+ {"title":"Show Name - S03E11 - Episode Title.mkv","expect":{"title":"Show Name","season":3,"episodes":[11]}},
+ {"title":"show.name.s01e01.720p.hdtv.x264-lol","expect":{"title":"show name","season":1,"episodes":[1],"source":"hdtv","resolution":720,"group":"lol"}},
+ {"title":"Show.Name.1x05.HDTV.XviD-GRP","expect":{"title":"Show Name","season":1,"episodes":[5],"source":"hdtv","group":"GRP"}},
+ {"title":"Show_Name_S10E23_480p","expect":{"title":"Show Name","season":10,"episodes":[23],"resolution":480}},
+ {"title":"Fargo.2014.S01E01.720p.BluRay","expect":{"title":"Fargo","year":2014,"season":1,"episodes":[1],"source":"bluray","resolution":720}},
+ {"title":"The.Expanse.S05E09.2160p.AMZN.WEB-DL.x265-XXX","expect":{"title":"The Expanse","season":5,"episodes":[9],"source":"webdl","resolution":2160,"group":"XXX"}},
+ {"title":"Show.S02E15.REPACK.720p.HDTV","expect":{"title":"Show","season":2,"episodes":[15],"repack":true,"source":"hdtv","resolution":720}},
+ {"title":"Show.S01E01.PROPER.1080p.WEB.h264-GRP","expect":{"title":"Show","season":1,"episodes":[1],"proper":true,"source":"webdl","resolution":1080,"group":"GRP"}},
+ {"title":"Some.Show.S09E100.1080p","expect":{"title":"Some Show","season":9,"episodes":[100],"resolution":1080}},
+ {"title":"Show S1E1","expect":{"title":"Show","season":1,"episodes":[1]}},
+ {"title":"Show.Name.S04E07.WEBRip.x264","expect":{"title":"Show Name","season":4,"episodes":[7],"source":"webrip"}}
+]

@@ -1,0 +1,10 @@
+[
+ {"title":"Show.S01E01.4K.WEB-DL","expect":{"title":"Show","season":1,"episodes":[1],"source":"webdl","resolution":2160}},
+ {"title":"Show.S01E01.REMUX","expect":{"title":"Show","season":1,"episodes":[1],"source":"remux","resolution":1080}},
+ {"title":"Movie.2024.Blu-Ray.1080p","expect":{"title":"Movie","year":2024,"source":"bluray","resolution":1080}},
+ {"title":"Show.S01E01.WEBDL.720p","expect":{"title":"Show","season":1,"episodes":[1],"resolution":720}},
+ {"title":"Show.S01E01.WEB","expect":{"title":"Show","season":1,"episodes":[1],"source":"webdl"}},
+ {"title":"Show.S01E01.PDTV.x264","expect":{"title":"Show","season":1,"episodes":[1],"source":"hdtv"}},
+ {"title":"Movie.2023.TELESYNC.x264","expect":{"title":"Movie","year":2023,"source":"telesync"}},
+ {"title":"Movie.2023.BRRip.720p","expect":{"title":"Movie","year":2023,"source":"bluray","resolution":720}}
+]

@@ -1,0 +1,8 @@
+[
+ {"title":"Show.Name.S01E01E02.1080p.WEB-DL","expect":{"title":"Show Name","season":1,"episodes":[1,2],"source":"webdl","resolution":1080}},
+ {"title":"Show.Name.S01E01-03.720p","expect":{"title":"Show Name","season":1,"episodes":[1,2,3],"resolution":720}},
+ {"title":"Show.Name.S01E01-E03.720p","expect":{"title":"Show Name","season":1,"episodes":[1,2,3],"resolution":720}},
+ {"title":"Show.S02E05.E06.HDTV","expect":{"title":"Show","season":2,"episodes":[5,6],"source":"hdtv"}},
+ {"title":"Show.Name.3x01-02.DVDRip","expect":{"title":"Show Name","season":3,"episodes":[1,2],"source":"dvd"}},
+ {"title":"Show.S01E01E02E03E04.1080p.BluRay","expect":{"title":"Show","season":1,"episodes":[1,2,3,4],"source":"bluray","resolution":1080}}
+]

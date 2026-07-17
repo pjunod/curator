@@ -1,0 +1,7 @@
+[
+ {"title":"Show.Name.S02.1080p.WEB-DL.x264-GRP","expect":{"title":"Show Name","season":2,"seasonPack":true,"source":"webdl","resolution":1080,"group":"GRP"}},
+ {"title":"Show.Name.Season.3.Complete.720p","expect":{"title":"Show Name","season":3,"seasonPack":true,"resolution":720}},
+ {"title":"Show Name Season 1 COMPLETE BluRay","expect":{"title":"Show Name","season":1,"seasonPack":true,"source":"bluray"}},
+ {"title":"Show.S05.2160p.REMUX","expect":{"title":"Show","season":5,"seasonPack":true,"source":"remux","resolution":2160}},
+ {"title":"The.Wire.S04.1080p.BluRay.x265","expect":{"title":"The Wire","season":4,"seasonPack":true,"source":"bluray","resolution":1080}}
+]
