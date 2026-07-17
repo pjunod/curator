@@ -1,0 +1,7 @@
+{
+  "season_number": 1,
+  "episodes": [
+    { "season_number": 1, "episode_number": 1, "name": "Pilot", "air_date": "2020-01-01" },
+    { "season_number": 1, "episode_number": 2, "name": "The Second One", "air_date": "2020-01-08" }
+  ]
+}

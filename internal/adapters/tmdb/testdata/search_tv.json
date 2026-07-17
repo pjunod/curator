@@ -1,0 +1,14 @@
+{
+  "page": 1,
+  "results": [
+    {
+      "id": 100,
+      "name": "The Test Show",
+      "first_air_date": "2020-01-01",
+      "overview": "A show for testing.",
+      "poster_path": "/testshow.jpg"
+    }
+  ],
+  "total_pages": 1,
+  "total_results": 1
+}

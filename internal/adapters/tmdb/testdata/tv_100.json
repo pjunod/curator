@@ -1,0 +1,17 @@
+{
+  "id": 100,
+  "name": "The Test Show",
+  "overview": "A show for testing.",
+  "first_air_date": "2020-01-01",
+  "status": "Ended",
+  "poster_path": "/testshow.jpg",
+  "backdrop_path": "/testshow-back.jpg",
+  "genres": [{ "id": 18, "name": "Drama" }],
+  "episode_run_time": [42],
+  "number_of_seasons": 1,
+  "seasons": [
+    { "season_number": 0, "episode_count": 1, "name": "Specials" },
+    { "season_number": 1, "episode_count": 2, "name": "Season 1" }
+  ],
+  "external_ids": { "imdb_id": "tt9999999", "tvdb_id": 424242 }
+}

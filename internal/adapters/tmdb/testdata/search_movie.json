@@ -1,0 +1,21 @@
+{
+  "page": 1,
+  "results": [
+    {
+      "id": 550,
+      "title": "Fight Club",
+      "release_date": "1999-10-15",
+      "overview": "A ticking-time-bomb insomniac...",
+      "poster_path": "/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg"
+    },
+    {
+      "id": 551,
+      "title": "Fight Club 2",
+      "release_date": "",
+      "overview": "",
+      "poster_path": null
+    }
+  ],
+  "total_pages": 1,
+  "total_results": 2
+}
