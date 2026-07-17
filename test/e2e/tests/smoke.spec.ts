@@ -4,6 +4,12 @@ import { expect, test } from '@playwright/test'
 // UI, the API answers, health is green, the scheduler is alive, and events
 // flow bus → SSE → browser.
 
+// Health includes the metadata-provider check; give it a key so the suite
+// is order-independent with library.spec.ts.
+test.beforeAll(async ({ request }) => {
+  await request.put('/api/v1/settings', { data: { tmdbApiKey: 'e2e-test-key' } })
+})
+
 test.describe('API', () => {
   test('system status reports the essentials', async ({ request }) => {
     const res = await request.get('/api/v1/system/status')
@@ -21,7 +27,7 @@ test.describe('API', () => {
     const body = await res.json()
     expect(body.overall).toBe('ok')
     const names = body.checks.map((c: { name: string }) => c.name).sort()
-    expect(names).toEqual(['data-directory', 'database', 'web-ui'])
+    expect(names).toEqual(['data-directory', 'database', 'metadata-provider', 'web-ui'])
   })
 
   test('unknown task returns 404 with an error body', async ({ request }) => {
@@ -36,7 +42,7 @@ test.describe('UI', () => {
   test('dashboard renders live status from the API', async ({ page, request }) => {
     const status = await (await request.get('/api/v1/system/status')).json()
 
-    await page.goto('/')
+    await page.goto('/dashboard')
     await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible()
     // The version card shows the real version reported by the API.
     await expect(page.locator('.card-value').first()).toHaveText(status.version)
@@ -48,10 +54,10 @@ test.describe('UI', () => {
     await page.goto('/system')
     await expect(page.getByRole('heading', { name: 'System' })).toBeVisible()
 
-    for (const check of ['database', 'data-directory', 'web-ui']) {
+    for (const check of ['database', 'data-directory', 'web-ui', 'metadata-provider']) {
       await expect(page.getByRole('cell', { name: check, exact: true })).toBeVisible()
     }
-    await expect(page.locator('.pill-ok')).toHaveCount(3)
+    await expect(page.locator('.pill-ok')).toHaveCount(4)
 
     await expect(page.getByRole('cell', { name: 'health.check' })).toBeVisible()
     await expect(page.getByRole('cell', { name: 'db.wal-checkpoint' })).toBeVisible()
