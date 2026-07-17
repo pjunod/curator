@@ -14,6 +14,37 @@ type AppMetum struct {
 	UpdatedAt int64
 }
 
+type Download struct {
+	ID           int64
+	MediaItemID  int64
+	Wantables    string
+	Season       int64
+	ReleaseTitle string
+	Indexer      string
+	Protocol     string
+	Quality      string
+	Size         int64
+	ClientID     int64
+	Handle       string
+	State        string
+	Progress     float64
+	Error        string
+	AddedAt      int64
+	UpdatedAt    int64
+}
+
+type DownloadClient struct {
+	ID       int64
+	Type     string
+	Name     string
+	Url      string
+	Username string
+	Password string
+	Category string
+	Enabled  int64
+	AddedAt  int64
+}
+
 type Episode struct {
 	ID            int64
 	MediaItemID   int64
@@ -25,12 +56,33 @@ type Episode struct {
 	Monitored     int64
 }
 
+type HistoryEvent struct {
+	ID           int64
+	Ts           int64
+	Type         string
+	MediaItemID  int64
+	ReleaseTitle string
+	Data         string
+}
+
+type Indexer struct {
+	ID         int64
+	Name       string
+	Url        string
+	ApiKey     string
+	Protocol   string
+	Categories string
+	Enabled    int64
+	AddedAt    int64
+}
+
 type MediaFile struct {
 	ID          int64
 	MediaItemID sql.NullInt64
 	Path        string
 	Size        int64
 	AddedAt     int64
+	Quality     string
 }
 
 type MediaFileEpisode struct {
@@ -39,30 +91,38 @@ type MediaFileEpisode struct {
 }
 
 type MediaItem struct {
-	ID           int64
-	Kind         string
-	Title        string
-	SortTitle    string
-	Year         int64
-	TmdbID       int64
-	ImdbID       string
-	TvdbID       int64
-	Isbn13       string
-	Olid         string
-	Asin         string
-	Overview     string
-	PosterPath   string
-	BackdropPath string
-	Genres       string
-	Status       string
-	ReleaseDate  string
-	Runtime      int64
-	Monitored    int64
-	RootFolderID sql.NullInt64
-	Path         string
-	Ended        int64
-	AddedAt      int64
-	UpdatedAt    int64
+	ID               int64
+	Kind             string
+	Title            string
+	SortTitle        string
+	Year             int64
+	TmdbID           int64
+	ImdbID           string
+	TvdbID           int64
+	Isbn13           string
+	Olid             string
+	Asin             string
+	Overview         string
+	PosterPath       string
+	BackdropPath     string
+	Genres           string
+	Status           string
+	ReleaseDate      string
+	Runtime          int64
+	Monitored        int64
+	RootFolderID     sql.NullInt64
+	Path             string
+	Ended            int64
+	AddedAt          int64
+	UpdatedAt        int64
+	QualityProfileID int64
+}
+
+type QualityProfile struct {
+	ID              int64
+	Name            string
+	Definition      string
+	UpgradesAllowed int64
 }
 
 type RootFolder struct {
