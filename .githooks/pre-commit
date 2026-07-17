@@ -1,5 +1,8 @@
 #!/bin/sh
 # Fast checks on every commit. Full tests run on pre-push and in CI.
+#
+# If a toolchain is missing locally, that check is SKIPPED with a warning —
+# CI is the enforcing gate, hooks are the fast local courtesy.
 # Install once with: make hooks
 set -e
 
@@ -9,23 +12,27 @@ staged() {
 
 go_files=$(staged | grep '\.go$' | grep -v '/gen/' || true)
 if [ -n "$go_files" ]; then
-    unformatted=$(gofmt -l $go_files)
-    if [ -n "$unformatted" ]; then
-        echo "pre-commit: gofmt needed on:" >&2
-        echo "$unformatted" >&2
-        echo "run: make fmt" >&2
-        exit 1
+    if command -v go >/dev/null 2>&1; then
+        unformatted=$(gofmt -l $go_files)
+        if [ -n "$unformatted" ]; then
+            echo "pre-commit: gofmt needed on:" >&2
+            echo "$unformatted" >&2
+            echo "run: make fmt" >&2
+            exit 1
+        fi
+        echo "pre-commit: go vet"
+        go vet ./...
+    else
+        echo "pre-commit: WARNING — go not installed; skipping gofmt/vet (CI will check)" >&2
     fi
-    echo "pre-commit: go vet"
-    go vet ./...
 fi
 
 if staged | grep -q '^web/src/'; then
-    if [ -d web/node_modules ]; then
+    if command -v npm >/dev/null 2>&1 && [ -d web/node_modules ]; then
         echo "pre-commit: web typecheck"
         npm --prefix web run -s typecheck
     else
-        echo "pre-commit: skipping web typecheck (web/node_modules missing; run npm ci in web/)" >&2
+        echo "pre-commit: WARNING — npm or web/node_modules missing; skipping typecheck (CI will check)" >&2
     fi
 fi
 

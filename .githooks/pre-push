@@ -1,16 +1,22 @@
 #!/bin/sh
 # Full unit-test gate before anything leaves the machine. E2E stays in CI
-# (it needs a built binary + browser); run it manually with:
-#   make build && cd test/e2e && npm test
+# (it needs a built binary + browser); run it manually with: make test-e2e
+#
+# If a toolchain is missing locally, that suite is SKIPPED with a warning —
+# CI is the enforcing gate, hooks are the fast local courtesy.
 # Install once with: make hooks
 set -e
 
-echo "pre-push: go test ./..."
-go test ./...
+if command -v go >/dev/null 2>&1; then
+    echo "pre-push: go test ./..."
+    go test ./...
+else
+    echo "pre-push: WARNING — go not installed; skipping Go tests (CI will run them)" >&2
+fi
 
-if [ -d web/node_modules ]; then
+if command -v npm >/dev/null 2>&1 && [ -d web/node_modules ]; then
     echo "pre-push: web unit tests"
     npm --prefix web run -s test
 else
-    echo "pre-push: skipping web tests (web/node_modules missing; run npm ci in web/)" >&2
+    echo "pre-push: WARNING — npm or web/node_modules missing; skipping web tests (CI will run them)" >&2
 fi
