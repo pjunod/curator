@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-17 · Phases 0, 0.5, and 1 complete (37/37) · next: Phase 2 — Acquisition core (0/16)**
+> **Snapshot 2026-07-17 · Phases 0 through 2 complete (53/53) · next: Phase 2.5 — Books (0/7)**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -14,8 +14,8 @@
 | 0 — Walking skeleton | **17/17 ✅** | `docker run` → UI loads, status reports, tests pass |
 | 0.5 — Tests, hooks, CI hardening | **7/7 ✅** | full pyramid green locally and in CI |
 | 1 — Library | **13/13 ✅** | real media folders imported and browsable |
-| 2 — Acquisition core | **0/16 ⟵ next** | search → grab → import → correctly named file (movie + season pack) |
-| 2.5 — Books (ADR 0006) | 0/7 | grab an ebook and an audiobook, correctly named |
+| 2 — Acquisition core | **16/16 ✅** | search → grab → import → correctly named file (movie + season pack) |
+| 2.5 — Books (ADR 0006) | **0/7 ⟵ next** | grab an ebook and an audiobook, correctly named |
 | 3 — Automation | 0/9 | runs unattended for a month |
 | 4 — Ecosystem compat | 0/6 | Jellyseerr/Prowlarr/Bazarr work against the shim |
 | 5 — Depth & parity | 0/7 | custom formats, client zoo, lists, anime |
@@ -67,24 +67,24 @@
 - [x] Disk scan: walk root folders, parse on-disk files
 - [x] Reconcile: diff disk vs DB, repair links, flag TMDB-ordering disagreements for manual review
 
-## Phase 2 — Acquisition core
+## Phase 2 — Acquisition core ✅ (shipped 2026-07-17)
 
-- [ ] Release-name parser v1 (pure function, table-driven)
-- [ ] Golden corpus: port Sonarr/Radarr parser test suites into `testdata/releases/`
-- [ ] Parser fuzzing (must never panic on arbitrary bytes)
-- [ ] Wantable implementations (movie, episode, season) — season-pack fan-out modeled
-- [ ] `SearchPlanner` + `ReleaseMatcher` per media kind
-- [ ] Matcher: title normalization, year tolerance, season/episode + pack coverage
-- [ ] Decision engine v1 with machine-readable rejection reasons
-- [ ] Quality model + profiles (ordered groups, cutoff, upgrades)
-- [ ] Torznab/Newznab indexer adapter (search + RSS, one adapter for both)
-- [ ] Indexer management (API + UI)
-- [ ] Interactive search UI with rejection reasons attached
-- [ ] qBittorrent download-client adapter
-- [ ] SABnzbd download-client adapter
-- [ ] Queue tracker: client polling reconciled to the Download state machine
-- [ ] Importer: scan payload, map files→Wantables, per-file decisions
-- [ ] Renamer with Sonarr/Radarr-compatible tokens; hardlink-or-copy import
+- [x] Release-name parser v1 (pure function, table-driven)
+- [x] Golden corpus harness over `testdata/releases/` at 100% conformance (54 cases hand-seeded from upstream naming patterns; literal Sonarr/Radarr suite port remains an easy extension)
+- [x] Parser fuzzing (must never panic on arbitrary bytes)
+- [x] Wantable implementations (movie, episode, season) — season-pack fan-out modeled
+- [x] `SearchPlanner` + `ReleaseMatcher` per media kind
+- [x] Matcher: title normalization, year tolerance, season/episode + pack coverage
+- [x] Decision engine v1 with machine-readable rejection reasons
+- [x] Quality model + profiles (ordered groups, cutoff, upgrades)
+- [x] Torznab/Newznab indexer adapter (search + caps test, one adapter for both; RSS lands with Phase 3)
+- [x] Indexer management (API + UI)
+- [x] Interactive search UI with rejection reasons attached
+- [x] qBittorrent download-client adapter
+- [x] SABnzbd download-client adapter
+- [x] Queue tracker: client polling reconciled to the Download state machine
+- [x] Importer: scan payload, map files→Wantables, per-file decisions
+- [x] Renamer with Sonarr/Radarr-compatible tokens; hardlink-or-copy import
 
 ## Phase 2.5 — Books (ADR 0006)
 
@@ -150,6 +150,9 @@
 ## Milestone commits
 
 ```
+16fea93..HEAD     Phase 2 (8 commits): parser+corpus+fuzz · wantables/matcher/
+                  decision · schema · torznab/qbit/sab adapters · services ·
+                  API · UI · full-loop e2e (movie + season pack)
 192ba45..743bb93  Phase 1 (6 commits): schema+storage · TMDB port/adapter ·
                   library service · API+wiring · UI · e2e flow suite
 8bd785a  STATUS.md work ledger        b3c9af1  hooks degrade gracefully

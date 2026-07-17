@@ -13,6 +13,8 @@ import { defineConfig } from '@playwright/test'
 
 const PORT = Number(process.env.E2E_PORT ?? 7677)
 const TMDB_PORT = Number(process.env.FAKE_TMDB_PORT ?? 7788)
+const ARR_PORT = Number(process.env.FAKE_ARR_PORT ?? 7799)
+process.env.FAKE_ARR_PORT = String(ARR_PORT)
 const dataDir = mkdtempSync(join(tmpdir(), 'monarr-e2e-'))
 
 // Shared with specs via env: a scratch root folder for library tests.
@@ -40,6 +42,13 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 10_000,
       env: { FAKE_TMDB_PORT: String(TMDB_PORT) },
+    },
+    {
+      command: `node ${join(import.meta.dirname, 'fake-arr.mjs')}`,
+      url: `http://127.0.0.1:${ARR_PORT}/api/v2/app/version`,
+      reuseExistingServer: false,
+      timeout: 10_000,
+      env: { FAKE_ARR_PORT: String(ARR_PORT) },
     },
     {
       command: join(import.meta.dirname, '..', '..', 'bin', 'monarr'),

@@ -11,6 +11,8 @@ import (
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/filename"
+	"github.com/monarr-media/monarr/internal/domain/parser"
+	"github.com/monarr-media/monarr/internal/domain/quality"
 )
 
 const scanReportKey = "last_scan_report"
@@ -161,6 +163,11 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem) (linked, 
 		fileID, err := s.db.UpsertFile(ctx, item.ID, path, size)
 		if err != nil {
 			return linked, removed, err
+		}
+		// Record quality parsed from the file name so upgrade decisions
+		// work for adopted libraries too.
+		if q := parser.Parse(filepath.Base(path)).Quality; q.Resolution != 0 || q.Source != quality.SourceUnknown {
+			_ = s.db.SetFileQuality(ctx, fileID, q)
 		}
 		if item.Kind == domain.KindSeries {
 			if eps, ok := filename.Extract(path); ok {
