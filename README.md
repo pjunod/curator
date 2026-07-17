@@ -4,9 +4,11 @@
 acquisition pipeline — for TV, movies, and (Phase 2.5) books, filling the gap left by
 Readarr's retirement.
 
-> **Status: Phase 0 — walking skeleton.** The scaffold runs, serves the embedded React shell,
-> reports system status and health, persists scheduler state in SQLite, and streams live events
-> over SSE. It does not manage any media yet. See the [roadmap](#roadmap).
+> **Status: Phase 0 — walking skeleton — complete.** The scaffold runs, serves the embedded
+> React shell, reports system status and health, persists scheduler state in SQLite, and
+> streams live events over SSE. It does not manage any media yet. **Current state, phase
+> ledger, and next steps live in [STATUS.md](STATUS.md)** (updated every working session);
+> the long-range plan is in the [roadmap](#roadmap).
 
 ## Why
 
