@@ -15,10 +15,12 @@
 //   - The Wantable contract — "a thing the system wants on disk at a given
 //     quality". A movie is one Wantable; an episode is one Wantable; a season
 //     is also a Wantable (the season-pack search target) that satisfies many
-//     episode Wantables at import time. The entire acquisition pipeline is
-//     built against this interface and never against movies or episodes
-//     directly. Media-kind knowledge is quarantined behind exactly two
-//     interfaces: SearchPlanner and ReleaseMatcher.
+//     episode Wantables at import time. A book (kind three, ADR 0006) is the
+//     degenerate case: one standalone Wantable, typically one file. The
+//     entire acquisition pipeline is built against this interface and never
+//     against movies, episodes, or books directly. Media-kind knowledge is
+//     quarantined behind exactly two interfaces: SearchPlanner and
+//     ReleaseMatcher.
 //   - parser/   — ParseReleaseTitle(string) → ParsedRelease. Table-driven,
 //     golden-tested against the upstream corpus in testdata/releases/.
 //   - decision/ — Decide(release, profile, currentFiles, blocklist, queue) →

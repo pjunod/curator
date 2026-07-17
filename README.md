@@ -1,7 +1,8 @@
 # Monarr
 
 **A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one
-acquisition pipeline — for both TV and movies.
+acquisition pipeline — for TV, movies, and (Phase 2.5) books, filling the gap left by
+Readarr's retirement.
 
 > **Status: Phase 0 — walking skeleton.** The scaffold runs, serves the embedded React shell,
 > reports system status and health, persists scheduler state in SQLite, and streams live events
@@ -97,6 +98,7 @@ adapters import only ports+domain, compat never touches infra/adapters directly.
 | **0 — Walking skeleton** *(this)* | repo+CI, embedded UI, status API, SQLite+sqlc+goose, config, slog, bus, scheduler, health | `docker run` → UI loads, status reports, tests pass |
 | 1 — Library | TMDB, add/browse movies & series, root folders, disk reconcile | real folders imported and browsable |
 | 2 — Acquisition core | parser+golden corpus, matcher, decisions, Torznab, qBit+SABnzbd, import+rename | search → grab → correctly named file |
+| 2.5 — Books ([ADR 0006](docs/adr/0006-books-third-media-kind.md)) | `book` kind end-to-end: ebooks + audiobooks, book metadata adapter, book parser rules, format quality ladder | grab an ebook and an audiobook, correctly named |
 | 3 — Automation | wanted index, RSS loop, failed-download handling, calendar, notifiers | runs unattended for a month |
 | 4 — Ecosystem | Sonarr/Radarr v3 compat shim, conformance vs real tools | Jellyseerr/Prowlarr/Bazarr don't notice the swap |
 | 5 — Depth | custom formats, more clients, import lists, anime numbering | parity tail |

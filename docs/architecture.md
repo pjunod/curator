@@ -1,10 +1,10 @@
 # Monarr — Architecture Blueprint
 
-**A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one acquisition pipeline — for both TV and movies.
+**A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one acquisition pipeline — for TV, movies, and (Phase 2.5) books.
 
 *Name: **Monarr** (committed — no collisions found on GitHub as of July 2026; register the org, Docker Hub namespace, and domain before going public). License: **GPL-3.0**.*
 
-*Status: Draft v0.2 — open questions resolved · July 2026*
+*Status: Draft v0.3 — books promoted from non-goal to roadmap (ADR 0006) · July 2026*
 
 ---
 
@@ -23,7 +23,7 @@ This project rebuilds that shared machinery **once**, in Go, as a modular monoli
 
 **Non-goals (initially)**
 
-- Music, books, comics (Lidarr/Readarr territory) — but the domain model deliberately leaves the door open.
+- Music, comics (Lidarr territory) — but the domain model deliberately leaves the door open. *(Books were listed here in v0.2; they were promoted to the roadmap in v0.3 after Readarr's retirement left the niche unserved — see §10 Phase 2.5 and ADR 0006.)*
 - Native indexer/tracker definitions — we speak Newznab/Torznab and let Prowlarr or Jackett own the several-hundred-tracker zoo.
 - Anime absolute-numbering perfection, custom-format parity, and the long tail of 15 download clients — these are roadmap phases, not MVP.
 - Distributed anything. This is a homelab app; a modular monolith is the modern choice, not a compromise.
@@ -36,6 +36,7 @@ Before designing, it's worth confirming this niche is actually open. It is.
 - **bobarr** was the notable earlier "all-in-one Sonarr/Radarr/Jackett alternative" (TypeScript, GraphQL + Next.js, multi-container). It validated the demand but never left beta and has been dormant for years.
 - **Prismarr** (2026, PHP/Symfony) unifies the *experience* — one dashboard, one calendar, one search across Radarr + Sonarr + Prowlarr + Jellyseerr — but it sits *on top of* the existing apps rather than replacing them. Same story for the various multi-instance dashboards (e.g. arr-dashboard). Their existence is evidence that users want unification; none of them removes the underlying duplication.
 - Adjacent modern rewrites exist at other layers (e.g. Rust usenet downloaders, Go tools like autobrr) but nothing actively maintained replaces the Sonarr+Radarr pair itself with a single modern app.
+- **Readarr (books) was retired by the Servarr team** and as of mid-2026 has no maintained *arr-class successor — users cobble together LazyLibrarian, shelfmark, and metadata shims. Its post-mortem lesson: the pipeline was fine; the bespoke metadata-scraping backend killed it. This vacancy is why books moved onto Monarr's roadmap (v0.3, ADR 0006).
 
 **Licensing.** Sonarr and Radarr are both GPL-3.0. **Decision (v0.2): Monarr is GPL-3.0 as well.** That keeps every option open — reading upstream source while designing, porting their release-parser test corpora as golden tests (hugely valuable, see §8), and lifting scoring rules for custom formats later. A permissive license (MIT/Apache) would force a strict clean-room approach and make parser fidelity much slower to achieve. GPL costs a hobby project essentially nothing.
 
@@ -92,17 +93,19 @@ type ReleaseMatcher interface {
 }
 ```
 
-A movie is one Wantable. An episode is one Wantable. A season is *also* a Wantable (the season-pack search target) that, when grabbed, satisfies many episode Wantables at import time. This asymmetry — one download covering many wanted units — is Sonarr's hardest structural feature, and modeling it from day one is what keeps the design honest. It also happens to generalize cleanly later (an album covering many tracks is the same shape).
+A movie is one Wantable. An episode is one Wantable. A season is *also* a Wantable (the season-pack search target) that, when grabbed, satisfies many episode Wantables at import time. This asymmetry — one download covering many wanted units — is Sonarr's hardest structural feature, and modeling it from day one is what keeps the design honest. It also happens to generalize cleanly later (an album covering many tracks is the same shape). A **book** (v0.3, ADR 0006) is the degenerate case from the other direction: one standalone Wantable, typically one file — which is exactly why books make a cheap third kind and a good proof that the pipeline never branches on media kind.
 
 ### 4.2 Entities
 
 ```text
 MediaItem (aggregate root — one library entry)
-├─ kind: movie | series          ├─ monitored, tags[]
+├─ kind: movie | series | book   ├─ monitored, tags[]
 ├─ title, sortTitle, year        ├─ qualityProfileID
-├─ ids: {tmdb, imdb, tvdb?}      ├─ rootFolderID, path
+├─ ids: {tmdb, imdb, tvdb?,      ├─ rootFolderID, path
+│        isbn?, olid?, asin?}
 ├─ metadata cache (overview, images, genres, status, runtime)
 ├─ movie-only: collection, minimumAvailability (announced|inCinemas|released)
+├─ book-only: authors[], bookSeries? (name + position) — see ADR 0006
 └─ series-only: seriesType (standard|daily|anime), ended
    └─ Season (number, monitored)
       └─ Episode (seasonNum, epNum, absoluteNum?, airDateUTC, title, monitored)
@@ -130,7 +133,8 @@ Notable choices, stated as decisions:
 - **One `media_items` table, not two.** A `kind` column plus nullable kind-specific columns (they are few) beats parallel `movies`/`series` tables everywhere downstream: one tag system, one root-folder system, one history FK, one search index, one UI list endpoint. Episodes/seasons live in child tables that are simply empty for movies.
 - **Files link to episodes many-to-many.** A season pack import produces files spanning episodes; a double-episode file (`S01E01E02`) links to two episodes. Radarr's 1:1 movie↔file is just the degenerate case. Getting this wrong is unfixable later without painful migrations.
 - **History is append-only events.** Upstream got this right; it powers the activity UI, failure handling ("this release already failed, skip it"), and debuggability for free.
-- **TMDB as the single metadata provider for both kinds.** TMDB has full TV series/season/episode data, which collapses Sonarr's TVDB dependency and Radarr's TMDB dependency into one adapter, one API key, one rate-limit policy. The `MetadataProvider` port keeps TVDB/AniDB addable later (anime numbering will eventually want them — see §11). TVDB↔TMDB episode-ordering differences are a known wrinkle called out in the risk register.
+- **TMDB as the single metadata provider for both video kinds.** TMDB has full TV series/season/episode data, which collapses Sonarr's TVDB dependency and Radarr's TMDB dependency into one adapter, one API key, one rate-limit policy. The `MetadataProvider` port keeps TVDB/AniDB addable later (anime numbering will eventually want them — see §11). TVDB↔TMDB episode-ordering differences are a known wrinkle called out in the risk register.
+- **Books get their own metadata adapter behind the same port** (Phase 2.5, ADR 0006): bake-off between Open Library, Google Books, and Hardcover at implementation time. Hard constraint from Readarr's post-mortem: no bespoke scraping middleman we have to operate — a public API spoken directly, cached aggressively. Ebook vs audiobook is **not** a new kind: both are quality groups in ordinary QualityProfiles ("Ebook", "Audiobook", or "Either" is just a profile choice).
 
 ### 4.3 The functional core
 
@@ -295,6 +299,8 @@ Each phase ends in something you actually run at home; value arrives at Phase 2,
 
 **Phase 2 — Acquisition core (first real value).** Parser v1 + golden corpus harness, matcher, decision engine v1, quality profiles, Torznab/Newznab adapter, interactive search UI with rejection reasons, qBittorrent + SABnzbd adapters, queue tracking, importer + renamer. Success: search → grab → auto-import → correctly named file → visible in Plex/Jellyfin, for both a movie and a season pack.
 
+**Phase 2.5 — Books (v0.3 addition, ADR 0006).** The `book` kind end-to-end, ebooks **and** audiobooks: metadata adapter (Open Library / Google Books / Hardcover bake-off) behind the existing port, book-mode parser rules + Readarr's GPL corpus ported into testdata, book `SearchPlanner`/`ReleaseMatcher` (author+title queries; Torznab 7000-series + 3030 categories), format-based quality ladder (EPUB/AZW3/MOBI/PDF/M4B/MP3), `{Author Name}/{Book Title}` naming with a Calibre-friendly layout. Conservative defaults at launch: interactive-search-first before trusting auto-grab for books. Success: request an ebook and an audiobook → correctly named files appear in the library. Doubles as the proof that the acquisition pipeline is genuinely kind-agnostic.
+
 **Phase 3 — Automation.** Wanted index + RSS sync loop, backlog search, failed-download handling + blocklist + auto-retry, calendar, webhook/Discord notifiers, Plex/Jellyfin refresh, backups. Success: monarr runs unattended for a month and new episodes/movies just appear.
 
 **Phase 4 — Ecosystem.** v3 compat personalities scoped per §6, conformance harness green against real Jellyseerr/Prowlarr/Bazarr; *arr DB migration importer as a stretch item (filesystem adoption is the committed path). Success: your existing stack swaps Sonarr+Radarr for Monarr without the neighbors noticing.
@@ -312,6 +318,8 @@ Honest sizing: solo at nights-and-weekends pace, Phase 2 is roughly the 3–6 mo
 5. **Scope creep toward parity** — custom formats alone is a mini-language. Mitigation: phased roadmap with "runs unattended" (P3) before "ecosystem" (P4) before "parity" (P5); non-goals list.
 6. **Metadata-source mismatch** — TMDB vs TVDB episode ordering; daily shows and anime are the worst offenders. Mitigation: importer flags disagreements; provider port keeps TVDB addable; anime explicitly deferred.
 7. **Solo-maintainer sustainability** — the real killer of rewrites. Mitigation: boring tech, stdlib bias, pure core with dense tests, modular monolith (no infra to babysit), and the compat shim making it personally useful early.
+8. **Book metadata source quality** (v0.3) — the thing that actually killed Readarr. No book provider matches TMDB's completeness; coverage/dedup across editions is messy everywhere. Mitigation: provider bake-off behind the port, aggressive caching, no operated scraping middleman, and manual-match UI as the escape hatch.
+9. **Book release naming & matching** (v0.3) — book releases are far less standardized than scene TV/movie naming (author packs, collections, retail vs. scan, format soup). Mitigation: Readarr corpus port, author+title normalized matching, and conservative defaults (interactive search before auto-grab) until conformance numbers earn trust.
 
 ## 12. Repository layout
 
@@ -339,15 +347,16 @@ monarr/
 
 Domain must not import app/infra/adapters; adapters import ports+domain only; compat imports app only. A CI lint (`go vet` + depguard rules) enforces the arrows.
 
-## 13. Resolved decisions (v0.2 — were open questions)
+## 13. Resolved decisions (v0.2/v0.3 — were open questions)
 
 1. **Name: Monarr.** Committed. A web/GitHub sweep found no collisions (runners-up Singularr and Omniarr were also clean) — register the `monarr` GitHub org, Docker Hub namespace, and a domain before the repo goes public.
 2. **License: GPL-3.0**, matching upstream — the golden parser corpus port (§8) is unlocked.
 3. **Migration: filesystem adoption** is the committed path (§9); the *arr DB importer drops to a Phase 4 stretch item.
 4. **Anime: minimal.** TMDB-only metadata holds long-term; absolute numbering and AniDB/TVDB mapping stay parked in Phase 5.
 5. **Database: SQLite only.** No dual-dialect tax; Postgres reconsidered only on demonstrated need.
+6. **Books: in (v0.3).** A third `kind` (reserved in the Phase 1 schema from the first migration), standalone-Wantable shape, ebooks + audiobooks together via the quality ladder, metadata provider bake-off behind the port, landing as Phase 2.5. Prompted by Readarr's retirement leaving the niche unserved.
 
-Each of these becomes an ADR when the repo is scaffolded (`docs/adr/0001-name-and-license.md`, `0002-single-media-table.md`, `0003-compat-personalities.md`, `0004-sqlite-only.md`, `0005-filesystem-adoption.md`).
+Each of these is an ADR (`docs/adr/0001-name-and-license.md`, `0002-single-media-table.md`, `0003-compat-personalities.md`, `0004-sqlite-only.md`, `0005-filesystem-adoption.md`, `0006-books-third-media-kind.md`).
 
 ## 14. References
 
@@ -356,3 +365,4 @@ Each of these becomes an ADR when the repo is scaffolded (`docs/adr/0001-name-an
 - Seerr ↔ *arr integration surface: deepwiki.com/seerr-team/seerr (Radarr and Sonarr Integration; ServarrBase)
 - Prior art: github.com/iam4x/bobarr · github.com/Shoshuo/Prismarr · wiki.servarr.com
 - Official API docs: sonarr.tv/docs/api · radarr.video/docs/api (published OpenAPI specs)
+- Books (v0.3): Readarr retirement — wiki.servarr.com/readarr/status · book metadata APIs: openlibrary.org/developers/api · developers.google.com/books · hardcover.app (API) · post-Readarr community tools: LazyLibrarian, github.com/calibrain/shelfmark, rreading-glasses
