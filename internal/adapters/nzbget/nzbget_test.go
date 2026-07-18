@@ -83,3 +83,20 @@ func TestBareHostURLNormalized(t *testing.T) {
 		t.Fatalf("bare host: %v", err)
 	}
 }
+
+func TestNoAuthConfiguredSendsNoCredentials(t *testing.T) {
+	// NZBGet with an empty ControlPassword runs unauthenticated; blank
+	// username/password must mean "send no Authorization header at all".
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("unexpected Authorization header: %q", r.Header.Get("Authorization"))
+		}
+		_, _ = w.Write([]byte(`{"result":"21.1"}`))
+	}))
+	defer srv.Close()
+
+	c := New(ports.ClientConfig{URL: srv.URL})
+	if err := c.Test(context.Background()); err != nil {
+		t.Fatalf("no-auth test: %v", err)
+	}
+}

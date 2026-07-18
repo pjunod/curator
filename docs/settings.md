@@ -39,11 +39,14 @@ sync pushes them in.
 
 | Type | Protocol | Credentials |
 |---|---|---|
-| qBittorrent | torrent | username + password (WebUI) |
-| Transmission | torrent | username + password (RPC; blank if auth off) |
+| qBittorrent | torrent | username + password (WebUI); blank if auth bypassed |
+| Transmission | torrent | username + password (RPC); blank if auth off |
 | Deluge | torrent | web password only |
 | SABnzbd | usenet | API key (in the password field) |
-| NZBGet | usenet | username + password (`nzbget`/`tegbzn6789` by default) |
+| NZBGet | usenet | username + password (defaults `nzbget`/`tegbzn6789`); **leave both blank if you've disabled auth** (empty `ControlPassword`) |
+
+Blank credentials mean "send no auth at all" — valid whenever the client
+itself doesn't require it.
 
 `Category` (default `monarr`) tags/labels downloads where the client
 supports it. Grabs route by protocol: a torrent release goes to the first

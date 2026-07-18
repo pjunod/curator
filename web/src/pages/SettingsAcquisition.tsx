@@ -163,8 +163,8 @@ export function AcquisitionSettings() {
             <input type="password" placeholder="Web password" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
           ) : (
             <>
-              <input placeholder="Username" value={cli.username} onChange={(e) => setCli({ ...cli, username: e.target.value })} />
-              <input type="password" placeholder="Password" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
+              <input placeholder="Username (blank if no auth)" value={cli.username} onChange={(e) => setCli({ ...cli, username: e.target.value })} />
+              <input type="password" placeholder="Password (blank if no auth)" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
             </>
           )}
           <input placeholder="Category" value={cli.category} onChange={(e) => setCli({ ...cli, category: e.target.value })} style={{ minWidth: 110 }} />
