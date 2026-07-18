@@ -127,3 +127,22 @@ func TestFileQualityAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestEveryClientTypeInsertable guards schema/code drift: every type the
+// factory knows must pass the download_clients CHECK constraint. (The
+// Phase 5 client zoo once outran the Phase 2 CHECK — never again.)
+func TestEveryClientTypeInsertable(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	for _, typ := range []string{"qbittorrent", "sabnzbd", "transmission", "deluge", "nzbget"} {
+		if _, err := db.AddDownloadClient(ctx, ports.ClientConfig{
+			Type: typ, Name: typ + "-test", URL: "http://x:1", Enabled: true,
+		}); err != nil {
+			t.Errorf("type %q rejected by schema: %v", typ, err)
+		}
+	}
+	list, err := db.ListDownloadClients(ctx)
+	if err != nil || len(list) != 5 {
+		t.Fatalf("clients = %d err %v", len(list), err)
+	}
+}

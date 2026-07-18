@@ -121,3 +121,54 @@ func TestBackupAndRetention(t *testing.T) {
 		t.Fatalf("backups = %+v err %v", list, err)
 	}
 }
+
+// TestSchemaEnumsMatchCode is the drift guard for every CHECK constraint:
+// each value the code can write must pass its column's CHECK. When a new
+// enum value lands in code, this test fails until the schema follows
+// (see migration 0007 for what forgetting looks like).
+func TestSchemaEnumsMatchCode(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// media_items.kind — all three kinds insert.
+	for i, kind := range []domain.MediaKind{domain.KindMovie, domain.KindSeries, domain.KindBook} {
+		if _, err := db.CreateMediaItem(ctx, domain.MediaItem{
+			Kind: kind, Title: string(kind) + " item", SortTitle: string(kind),
+			IDs: domain.ExternalIDs{TMDB: int64(1000 + i), OLID: map[bool]string{true: "OLDRIFT" + string(kind), false: ""}[kind == domain.KindBook]},
+		}); err != nil {
+			t.Errorf("kind %q rejected: %v", kind, err)
+		}
+	}
+
+	// indexers.protocol — both protocols insert.
+	for _, proto := range []string{"torrent", "usenet"} {
+		if _, err := db.AddIndexer(ctx, ports.IndexerConfig{
+			Name: proto + "-idx", URL: "http://x", Protocol: proto, Enabled: true,
+		}); err != nil {
+			t.Errorf("protocol %q rejected: %v", proto, err)
+		}
+	}
+
+	// notifiers.type — every type the notify factory knows inserts.
+	for _, typ := range []string{"webhook", "discord", "plex", "jellyfin"} {
+		if _, err := db.AddNotifier(ctx, ports.NotifierConfig{
+			Type: typ, Name: typ + "-n", Enabled: true,
+		}); err != nil {
+			t.Errorf("notifier type %q rejected: %v", typ, err)
+		}
+	}
+
+	// downloads.state — walk every state the queue code writes.
+	dlID, err := db.InsertDownload(ctx, Download{
+		MediaItemID: 1, WantableIDs: []string{"movie:1"}, ReleaseTitle: "X",
+		Protocol: "torrent", State: "grabbed",
+	})
+	if err != nil {
+		t.Fatalf("insert grabbed: %v", err)
+	}
+	for _, state := range []string{"downloading", "completed", "importing", "imported", "failed"} {
+		if err := db.UpdateDownloadState(ctx, dlID, state, 1, ""); err != nil {
+			t.Errorf("state %q rejected: %v", state, err)
+		}
+	}
+}

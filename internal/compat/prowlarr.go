@@ -95,7 +95,10 @@ func (b v3IndexerPayload) toConfig() ports.IndexerConfig {
 	cfg := ports.IndexerConfig{Name: b.Name, Protocol: b.Protocol, Enabled: true}
 	if strings.EqualFold(b.Implementation, "newznab") {
 		cfg.Protocol = "usenet"
-	} else if cfg.Protocol == "" {
+	}
+	// Clamp to the schema's vocabulary: anything that isn't usenet is a
+	// torrent feed as far as grab routing goes.
+	if cfg.Protocol != "usenet" {
 		cfg.Protocol = "torrent"
 	}
 	if b.EnableRss != nil {

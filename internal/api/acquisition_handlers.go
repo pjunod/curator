@@ -102,6 +102,10 @@ func (s *Server) AddIndexer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name, url, and protocol are required")
 		return
 	}
+	if !in.Protocol.Valid() {
+		writeError(w, http.StatusBadRequest, "protocol must be torrent or usenet")
+		return
+	}
 	cfg := indexerInputToConfig(in)
 	id, err := s.deps.Store.AddIndexer(r.Context(), cfg)
 	if err != nil {
@@ -188,6 +192,10 @@ func (s *Server) AddDownloadClient(w http.ResponseWriter, r *http.Request) {
 	var in apigen.DownloadClientInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Name == "" || in.Url == "" {
 		writeError(w, http.StatusBadRequest, "type, name, and url are required")
+		return
+	}
+	if !in.Type.Valid() {
+		writeError(w, http.StatusBadRequest, "unknown download client type "+string(in.Type))
 		return
 	}
 	cfg := clientInputToConfig(in)
