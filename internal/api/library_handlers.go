@@ -42,10 +42,18 @@ func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 		Kind:       apigen.MediaKind(m.Kind),
 		Title:      m.Title,
 		Year:       m.Year,
+		Author:     m.Author,
 		PosterPath: m.PosterPath,
 		Monitored:  m.Monitored,
 		Path:       m.Path,
 	}
+}
+
+func optStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
@@ -75,10 +83,11 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 	if m.Genres == nil {
 		d.Genres = []string{}
 	}
-	if m.IDs.IMDB != "" {
-		imdb := m.IDs.IMDB
-		d.Ids.Imdb = &imdb
-	}
+	d.Author = m.Author
+	d.Ids.Imdb = optStr(m.IDs.IMDB)
+	d.Ids.Isbn13 = optStr(m.IDs.ISBN13)
+	d.Ids.Olid = optStr(m.IDs.OLID)
+	d.Ids.Asin = optStr(m.IDs.ASIN)
 	if m.IDs.TVDB != 0 {
 		tvdb := m.IDs.TVDB
 		d.Ids.Tvdb = &tvdb
@@ -143,14 +152,22 @@ func (s *Server) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
 	}
 	req := library.AddRequest{
 		Kind:      domain.MediaKind(body.Kind),
-		TMDBID:    body.TmdbId,
 		Monitored: true,
+	}
+	if body.TmdbId != nil {
+		req.TMDBID = *body.TmdbId
+	}
+	if body.Olid != nil {
+		req.OLID = *body.Olid
 	}
 	if body.Monitored != nil {
 		req.Monitored = *body.Monitored
 	}
 	if body.RootFolderId != nil {
 		req.RootFolderID = *body.RootFolderId
+	}
+	if body.QualityProfileId != nil {
+		req.QualityProfileID = *body.QualityProfileId
 	}
 	item, err := s.deps.Library.Add(r.Context(), req)
 	if err != nil {
@@ -210,24 +227,36 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 		s.libraryErr(w, err)
 		return
 	}
-	// Mark results already in the library.
+	// Mark results already in the library (movies/series by TMDB id,
+	// books by Open Library work id).
 	inLib := map[int64]bool{}
+	inLibOlid := map[string]bool{}
 	if items, err := s.deps.Library.List(r.Context(), domain.MediaKind(params.Kind)); err == nil {
 		for _, it := range items {
 			inLib[it.IDs.TMDB] = true
+			if it.IDs.OLID != "" {
+				inLibOlid[it.IDs.OLID] = true
+			}
 		}
 	}
 	out := make([]apigen.SearchResult, 0, len(results))
 	for _, res := range results {
-		out = append(out, apigen.SearchResult{
+		sr := apigen.SearchResult{
 			Kind:       apigen.MediaKind(res.Kind),
 			TmdbId:     res.TMDBID,
+			Olid:       optStr(res.OLID),
+			Author:     optStr(res.Author),
 			Title:      res.Title,
 			Year:       res.Year,
 			Overview:   res.Overview,
 			PosterPath: res.PosterPath,
-			InLibrary:  inLib[res.TMDBID],
-		})
+		}
+		if res.OLID != "" {
+			sr.InLibrary = inLibOlid[res.OLID]
+		} else {
+			sr.InLibrary = inLib[res.TMDBID]
+		}
+		out = append(out, sr)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

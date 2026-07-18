@@ -17,7 +17,9 @@ export function AddMediaPage() {
   const search = useSearch({ from: '/add' })
   const navigate = useNavigate()
 
-  const [kind, setKind] = useState<MediaKind>(search.kind === 'series' ? 'series' : 'movie')
+  const [kind, setKind] = useState<MediaKind>(
+    search.kind === 'series' || search.kind === 'book' ? search.kind : 'movie',
+  )
   const [query, setQuery] = useState(search.q ?? '')
   const debouncedQuery = useDebounced(query, 400)
 
@@ -40,7 +42,11 @@ export function AddMediaPage() {
 
   const add = useMutation({
     mutationFn: (r: SearchResult) =>
-      addLibraryItem({ kind: r.kind, tmdbId: r.tmdbId, rootFolderId: rootId, monitored }),
+      addLibraryItem(
+        r.kind === 'book'
+          ? { kind: r.kind, olid: r.olid, rootFolderId: rootId, monitored }
+          : { kind: r.kind, tmdbId: r.tmdbId, rootFolderId: rootId, monitored },
+      ),
     onSuccess: (item) => navigate({ to: '/library/$id', params: { id: String(item.id) } }),
   })
 
@@ -49,7 +55,7 @@ export function AddMediaPage() {
       <header className="page-head">
         <h1>Add media</h1>
         <div className="tabs" role="tablist">
-          {(['movie', 'series'] as MediaKind[]).map((k) => (
+          {(['movie', 'series', 'book'] as MediaKind[]).map((k) => (
             <button
               key={k}
               role="tab"
@@ -57,7 +63,7 @@ export function AddMediaPage() {
               className={kind === k ? 'tab active' : 'tab'}
               onClick={() => setKind(k)}
             >
-              {k === 'movie' ? 'Movie' : 'Series'}
+              {k === 'movie' ? 'Movie' : k === 'series' ? 'Series' : 'Book'}
             </button>
           ))}
         </div>
@@ -67,7 +73,13 @@ export function AddMediaPage() {
         <input
           autoFocus
           type="search"
-          placeholder={kind === 'movie' ? 'Search movies on TMDB…' : 'Search series on TMDB…'}
+          placeholder={
+            kind === 'movie'
+              ? 'Search movies on TMDB…'
+              : kind === 'series'
+                ? 'Search series on TMDB…'
+                : 'Search books on Open Library…'
+          }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -100,7 +112,7 @@ export function AddMediaPage() {
 
       <ul className="result-list">
         {results.data?.map((r) => (
-          <li key={`${r.kind}-${r.tmdbId}`} className="result">
+          <li key={`${r.kind}-${r.olid ?? r.tmdbId}`} className="result">
             {r.posterPath ? (
               <img src={posterUrl(r.posterPath, 'w185')} alt="" loading="lazy" />
             ) : (
@@ -109,6 +121,7 @@ export function AddMediaPage() {
             <div className="result-body">
               <div className="result-title">
                 {r.title} <span className="muted">({r.year || '—'})</span>
+                {r.author && <span className="muted"> · {r.author}</span>}
               </div>
               <p className="muted clamp">{r.overview}</p>
             </div>

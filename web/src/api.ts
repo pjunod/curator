@@ -54,6 +54,7 @@ export interface MediaItemSummary {
   kind: MediaKind
   title: string
   year: number
+  author: string // books only; '' otherwise
   posterPath: string
   monitored: boolean
   path: string
@@ -63,6 +64,9 @@ export interface ExternalIds {
   tmdb: number
   imdb?: string
   tvdb?: number
+  isbn13?: string
+  olid?: string
+  asin?: string
 }
 
 export interface EpisodeInfo {
@@ -106,6 +110,8 @@ export interface MediaItemDetail extends MediaItemSummary {
 export interface SearchResult {
   kind: MediaKind
   tmdbId: number
+  olid?: string
+  author?: string
   title: string
   year: number
   overview: string
@@ -115,8 +121,10 @@ export interface SearchResult {
 
 export interface AddMediaRequest {
   kind: MediaKind
-  tmdbId: number
+  tmdbId?: number
+  olid?: string
   rootFolderId?: number
+  qualityProfileId?: number
   monitored?: boolean
 }
 
@@ -300,7 +308,10 @@ export const removeQueueItem = (id: number, fromClient: boolean) =>
   send('DELETE', `/queue/${id}?fromClient=${fromClient}`)
 
 export function posterUrl(path: string, size: 'w185' | 'w342' | 'w500' = 'w342'): string {
-  return path ? `https://image.tmdb.org/t/p/${size}${path}` : ''
+  if (!path) return ''
+  // Book covers (Open Library) arrive as absolute URLs; TMDB paths are relative.
+  if (path.startsWith('http')) return path
+  return `https://image.tmdb.org/t/p/${size}${path}`
 }
 
 export function fmtBytes(n: number): string {

@@ -41,6 +41,7 @@ export function MediaDetailPage() {
           </h1>
           <div className="detail-facts muted">
             <span className="pill pill-neutral">{m.kind}</span>
+            {m.author && <span>by {m.author}</span>}
             {m.status && <span>{m.status}</span>}
             {m.runtime > 0 && <span>{m.runtime} min</span>}
             {m.genres.length > 0 && <span>{m.genres.join(', ')}</span>}
@@ -53,9 +54,11 @@ export function MediaDetailPage() {
               {fileCount} file{fileCount === 1 ? '' : 's'}
             </span>
             {m.ids.imdb && <span className="mono">{m.ids.imdb}</span>}
+            {m.ids.isbn13 && <span className="mono">ISBN {m.ids.isbn13}</span>}
+            {m.ids.olid && <span className="mono">{m.ids.olid}</span>}
           </div>
           <div className="detail-actions">
-            {m.kind === 'movie' && (
+            {(m.kind === 'movie' || m.kind === 'book') && (
               <button className="btn-accent" onClick={() => setSearching({})}>
                 Search releases
               </button>

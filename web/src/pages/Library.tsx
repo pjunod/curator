@@ -8,6 +8,7 @@ const KIND_TABS: { label: string; kind?: MediaKind }[] = [
   { label: 'All' },
   { label: 'Movies', kind: 'movie' },
   { label: 'Series', kind: 'series' },
+  { label: 'Books', kind: 'book' },
 ]
 
 export function LibraryPage() {
@@ -113,7 +114,7 @@ export function LibraryPage() {
                 {m.title}
               </div>
               <div className="muted">
-                {m.year || '—'} · {m.kind}
+                {m.kind === 'book' && m.author ? m.author : `${m.year || '—'} · ${m.kind}`}
               </div>
             </div>
           </Link>

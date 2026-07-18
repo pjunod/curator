@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-17 · Phases 0 through 2 complete (53/53) · next: Phase 2.5 — Books (0/7)**
+> **Snapshot 2026-07-18 · Phases 0 through 2.5 complete (60/60) · next: Phase 3 — Automation (0/9)**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -15,8 +15,8 @@
 | 0.5 — Tests, hooks, CI hardening | **7/7 ✅** | full pyramid green locally and in CI |
 | 1 — Library | **13/13 ✅** | real media folders imported and browsable |
 | 2 — Acquisition core | **16/16 ✅** | search → grab → import → correctly named file (movie + season pack) |
-| 2.5 — Books (ADR 0006) | **0/7 ⟵ next** | grab an ebook and an audiobook, correctly named |
-| 3 — Automation | 0/9 | runs unattended for a month |
+| 2.5 — Books (ADR 0006) | **7/7 ✅** | grab an ebook and an audiobook, correctly named |
+| 3 — Automation | **0/9 ⟵ next** | runs unattended for a month |
 | 4 — Ecosystem compat | 0/6 | Jellyseerr/Prowlarr/Bazarr work against the shim |
 | 5 — Depth & parity | 0/7 | custom formats, client zoo, lists, anime |
 | Launch logistics | 2/6 | public repo, releases, name housekeeping |
@@ -86,15 +86,15 @@
 - [x] Importer: scan payload, map files→Wantables, per-file decisions
 - [x] Renamer with Sonarr/Radarr-compatible tokens; hardlink-or-copy import
 
-## Phase 2.5 — Books (ADR 0006)
+## Phase 2.5 — Books (ADR 0006) ✅ (shipped 2026-07-18)
 
-- [ ] Metadata bake-off (Open Library vs Google Books vs Hardcover) → book adapter behind the same port
-- [ ] Book external IDs end-to-end (isbn10/13, olid, asin)
-- [ ] Book-mode parser rules + Readarr GPL corpus ported
-- [ ] Book `SearchPlanner`/`ReleaseMatcher` (author+title queries; Torznab 7000s + 3030)
-- [ ] Format quality ladder: EPUB/AZW3/MOBI/PDF + M4B/MP3 as profile quality groups
-- [ ] `{Author Name}/{Book Title}` naming, Calibre-friendly default layout
-- [ ] Add/browse books in the UI
+- [x] Metadata bake-off → **Open Library** (open data, no key, work-level ids, covers; Google Books rate-limits anonymous callers, Hardcover needs an account) — `BookProvider` port + adapter, fixture contract-tested
+- [x] Book external IDs end-to-end (isbn13 from editions, work OLID, asin column reserved) — unique `(kind, olid)`
+- [x] Book-mode parser rules + golden corpus (12 cases seeded from Readarr/scene naming patterns; literal Readarr suite port remains an easy extension) — author extraction, order-swap tolerant matching
+- [x] Book `SearchPlanner`/`ReleaseMatcher` (author+title queries; Torznab 7000/7020 + 3030)
+- [x] Format quality ladder: PDF<MOBI<AZW3<EPUB + MP3<M4B; seeded **Ebook** (id 4) and **Audiobook** (id 5) profiles; books default to Ebook
+- [x] `{Author Name}/{Book Title}` naming, Calibre-friendly (`Title - Author.ext`); import + scan grade book files by extension
+- [x] Add/browse books in the UI (Book tab in Add, Books library filter, author on detail, release search + grab) — e2e: search → add → grab EPUB → auto-import, M4B rejected by profile
 
 ## Phase 3 — Automation
 

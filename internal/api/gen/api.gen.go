@@ -130,10 +130,18 @@ func (e MediaKind) Valid() bool {
 
 // AddMediaRequest defines model for AddMediaRequest.
 type AddMediaRequest struct {
-	Kind         MediaKind `json:"kind"`
-	Monitored    *bool     `json:"monitored,omitempty"`
-	RootFolderId *int64    `json:"rootFolderId,omitempty"`
-	TmdbId       int64     `json:"tmdbId"`
+	Kind      MediaKind `json:"kind"`
+	Monitored *bool     `json:"monitored,omitempty"`
+
+	// Olid Open Library work id — identifies books (ADR 0006).
+	Olid *string `json:"olid,omitempty"`
+
+	// QualityProfileId 0/absent = kind default (Any; Ebook for books).
+	QualityProfileId *int64 `json:"qualityProfileId,omitempty"`
+	RootFolderId     *int64 `json:"rootFolderId,omitempty"`
+
+	// TmdbId Identifies movies/series.
+	TmdbId *int64 `json:"tmdbId,omitempty"`
 }
 
 // DownloadClientConfig defines model for DownloadClientConfig.
@@ -183,7 +191,12 @@ type Error struct {
 
 // ExternalIds defines model for ExternalIds.
 type ExternalIds struct {
-	Imdb *string `json:"imdb,omitempty"`
+	Asin   *string `json:"asin,omitempty"`
+	Imdb   *string `json:"imdb,omitempty"`
+	Isbn13 *string `json:"isbn13,omitempty"`
+
+	// Olid Open Library work id, e.g. OL17091839W.
+	Olid *string `json:"olid,omitempty"`
 	Tmdb int64   `json:"tmdb"`
 	Tvdb *int64  `json:"tvdb,omitempty"`
 }
@@ -254,7 +267,10 @@ type MediaFileInfo struct {
 
 // MediaItemDetail defines model for MediaItemDetail.
 type MediaItemDetail struct {
-	AddedAt      time.Time       `json:"addedAt"`
+	AddedAt time.Time `json:"addedAt"`
+
+	// Author Books only (ADR 0006); empty for movies/series.
+	Author       string          `json:"author"`
 	BackdropPath string          `json:"backdropPath"`
 	Ended        bool            `json:"ended"`
 	Files        []MediaFileInfo `json:"files"`
@@ -277,6 +293,8 @@ type MediaItemDetail struct {
 
 // MediaItemSummary defines model for MediaItemSummary.
 type MediaItemSummary struct {
+	// Author Books only (ADR 0006); empty for movies/series.
+	Author     string    `json:"author"`
 	Id         int64     `json:"id"`
 	Kind       MediaKind `json:"kind"`
 	Monitored  bool      `json:"monitored"`
@@ -354,13 +372,17 @@ type ScanReport struct {
 
 // SearchResult defines model for SearchResult.
 type SearchResult struct {
-	InLibrary  bool      `json:"inLibrary"`
-	Kind       MediaKind `json:"kind"`
-	Overview   string    `json:"overview"`
-	PosterPath string    `json:"posterPath"`
-	Title      string    `json:"title"`
-	TmdbId     int64     `json:"tmdbId"`
-	Year       int       `json:"year"`
+	Author    *string   `json:"author,omitempty"`
+	InLibrary bool      `json:"inLibrary"`
+	Kind      MediaKind `json:"kind"`
+
+	// Olid Present for book results (ADR 0006).
+	Olid       *string `json:"olid,omitempty"`
+	Overview   string  `json:"overview"`
+	PosterPath string  `json:"posterPath"`
+	Title      string  `json:"title"`
+	TmdbId     int64   `json:"tmdbId"`
+	Year       int     `json:"year"`
 }
 
 // SeasonInfo defines model for SeasonInfo.

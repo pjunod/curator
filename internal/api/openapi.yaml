@@ -685,7 +685,7 @@ components:
 
     MediaItemSummary:
       type: object
-      required: [id, kind, title, year, posterPath, monitored, path]
+      required: [id, kind, title, year, author, posterPath, monitored, path]
       properties:
         id:
           type: integer
@@ -696,6 +696,9 @@ components:
           type: string
         year:
           type: integer
+        author:
+          type: string
+          description: Books only (ADR 0006); empty for movies/series.
         posterPath:
           type: string
         monitored:
@@ -715,6 +718,13 @@ components:
         tvdb:
           type: integer
           format: int64
+        isbn13:
+          type: string
+        olid:
+          type: string
+          description: Open Library work id, e.g. OL17091839W.
+        asin:
+          type: string
 
     EpisodeInfo:
       type: object
@@ -777,6 +787,7 @@ components:
         - posterPath
         - backdropPath
         - overview
+        - author
         - genres
         - status
         - releaseDate
@@ -799,6 +810,9 @@ components:
           type: string
         year:
           type: integer
+        author:
+          type: string
+          description: Books only (ADR 0006); empty for movies/series.
         posterPath:
           type: string
         backdropPath:
@@ -840,16 +854,24 @@ components:
 
     AddMediaRequest:
       type: object
-      required: [kind, tmdbId]
+      required: [kind]
       properties:
         kind:
           $ref: "#/components/schemas/MediaKind"
         tmdbId:
           type: integer
           format: int64
+          description: Identifies movies/series.
+        olid:
+          type: string
+          description: Open Library work id — identifies books (ADR 0006).
         rootFolderId:
           type: integer
           format: int64
+        qualityProfileId:
+          type: integer
+          format: int64
+          description: 0/absent = kind default (Any; Ebook for books).
         monitored:
           type: boolean
           default: true
@@ -863,6 +885,11 @@ components:
         tmdbId:
           type: integer
           format: int64
+        olid:
+          type: string
+          description: Present for book results (ADR 0006).
+        author:
+          type: string
         title:
           type: string
         year:

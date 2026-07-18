@@ -38,6 +38,14 @@ const payloads = {
     name: 'The.Test.Show.S01.1080p.WEB-DL-E2E',
     files: ['The.Test.Show.S01E01.1080p.WEB-DL.mkv', 'The.Test.Show.S01E02.1080p.WEB-DL.mkv'],
   },
+  book900: {
+    name: 'Test Author - The Test Book (2024) EPUB',
+    files: ['Test Author - The Test Book.epub'],
+  },
+  book900m4b: {
+    name: 'The Test Book by Test Author M4B',
+    files: ['The Test Book.m4b'],
+  },
 }
 
 const torrents = [] // {hash, name, content_path}
@@ -62,6 +70,16 @@ createServer((req, res) => {
     if (q.get('t') === 'tvsearch') {
       res.end(releasesXML([
         item('The.Test.Show.S01E01.1080p.WEB-DL-E2E', 'pack700', 1000000, 12),
+      ]))
+      return
+    }
+    // book search: t=search with the Newznab book categories (7000s/3030).
+    // One EPUB (accepted by the Ebook profile) and one M4B audiobook
+    // (rejected: not in the Ebook profile's allowed set).
+    if ((q.get('cat') ?? '').includes('7000')) {
+      res.end(releasesXML([
+        item('Test Author - The Test Book (2024) EPUB', 'book900', 800000, 21),
+        item('The Test Book by Test Author M4B', 'book900m4b', 300000000, 9),
       ]))
       return
     }

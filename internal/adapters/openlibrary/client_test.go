@@ -27,17 +27,17 @@ func fixtureServer(t *testing.T) *httptest.Server {
 		if r.Header.Get("User-Agent") == "" {
 			t.Error("no User-Agent header (Open Library etiquette)")
 		}
-		switch {
-		case r.URL.Path == "/search.json":
+		switch r.URL.Path {
+		case "/search.json":
 			if q := r.URL.Query().Get("q"); !strings.Contains(q, "Hail Mary") {
 				t.Errorf("unexpected query %q", q)
 			}
 			serve(w, "search.json")
-		case r.URL.Path == "/works/OL17091839W.json":
+		case "/works/OL17091839W.json":
 			serve(w, "work.json")
-		case r.URL.Path == "/works/OL17091839W/editions.json":
+		case "/works/OL17091839W/editions.json":
 			serve(w, "editions.json")
-		case r.URL.Path == "/authors/OL7115219A.json":
+		case "/authors/OL7115219A.json":
 			serve(w, "author.json")
 		default:
 			http.NotFound(w, r)

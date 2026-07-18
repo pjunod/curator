@@ -42,12 +42,33 @@ const tv700season1 = {
   ],
 }
 
+// ---- Open Library (books, ADR 0006) — same fake server, distinct paths ----
+
 const routes = {
   '/search/movie': { results: [{ id: 601, title: movie601.title, release_date: movie601.release_date, overview: movie601.overview, poster_path: '' }] },
   '/search/tv': { results: [{ id: 700, name: tv700.name, first_air_date: tv700.first_air_date, overview: tv700.overview, poster_path: '' }] },
   '/movie/601': movie601,
   '/tv/700': tv700,
   '/tv/700/season/1': tv700season1,
+  '/search.json': {
+    numFound: 1,
+    docs: [{
+      key: '/works/OL900E2EW', title: 'The Test Book',
+      author_name: ['Test Author'], first_publish_year: 2024, cover_i: 0,
+    }],
+  },
+  '/works/OL900E2EW.json': {
+    title: 'The Test Book',
+    description: 'A book that exists only inside the e2e suite.',
+    covers: [],
+    subjects: ['Testing'],
+    first_publish_date: '2024',
+    authors: [{ author: { key: '/authors/OL900E2EA' } }],
+  },
+  '/authors/OL900E2EA.json': { name: 'Test Author' },
+  '/works/OL900E2EW/editions.json': {
+    entries: [{ publish_date: '2024', isbn_13: ['9781000000001'] }],
+  },
 }
 
 createServer((req, res) => {

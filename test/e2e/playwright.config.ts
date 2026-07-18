@@ -61,6 +61,8 @@ export default defineConfig({
         MONARR_DATA_DIR: dataDir,
         MONARR_LOG_LEVEL: 'warn',
         MONARR_TMDB_BASE_URL: `http://127.0.0.1:${TMDB_PORT}`,
+        // Open Library paths don't collide with TMDB's; one fake serves both.
+        MONARR_OPENLIBRARY_BASE_URL: `http://127.0.0.1:${TMDB_PORT}`,
       },
     },
   ],

@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/openlibrary"
 	"github.com/monarr-media/monarr/internal/adapters/qbittorrent"
 	"github.com/monarr-media/monarr/internal/adapters/sabnzbd"
 	"github.com/monarr-media/monarr/internal/adapters/tmdb"
@@ -99,9 +100,12 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		return v, err
 	}
 	meta := tmdb.New(os.Getenv("MONARR_TMDB_BASE_URL"), tmdbKey)
+	// Books (ADR 0006): Open Library needs no key; the env override serves
+	// tests, like the TMDB one.
+	books := openlibrary.New(os.Getenv("MONARR_OPENLIBRARY_BASE_URL"))
 
 	// Library service.
-	lib := library.New(db, meta, b, log)
+	lib := library.New(db, meta, b, log).WithBooks(books)
 
 	// Acquisition: real adapters injected as factories.
 	indexerFactory := func(cfg ports.IndexerConfig) ports.Indexer { return torznab.New(cfg) }
