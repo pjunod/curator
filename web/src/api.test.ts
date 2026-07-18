@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtDuration, fmtInterval, fmtRelative } from './api'
+import { addIndexer, fmtDuration, fmtInterval, fmtRelative, testIndexer } from './api'
 
 describe('fmtDuration', () => {
   it('formats seconds', () => {
@@ -50,5 +50,50 @@ describe('fmtInterval', () => {
   })
   it('falls back to seconds', () => {
     expect(fmtInterval(90)).toBe('every 90s')
+  })
+})
+
+describe('send tolerates empty success bodies', () => {
+  it('resolves on 200 with no body (the /test endpoints)', async () => {
+    const orig = globalThis.fetch
+    globalThis.fetch = (async () => new Response('', { status: 200 })) as typeof fetch
+    try {
+      await expect(
+        testIndexer({ name: 'x', url: 'http://idx', protocol: 'usenet' }),
+      ).resolves.toBeUndefined()
+    } finally {
+      globalThis.fetch = orig
+    }
+  })
+
+  it('still surfaces server error messages from JSON bodies', async () => {
+    const orig = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ message: 'indexer unreachable' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch
+    try {
+      await expect(
+        testIndexer({ name: 'x', url: 'http://idx', protocol: 'usenet' }),
+      ).rejects.toThrow('indexer unreachable')
+    } finally {
+      globalThis.fetch = orig
+    }
+  })
+
+  it('still parses real JSON success bodies', async () => {
+    const orig = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ id: 7, name: 'x', url: 'http://idx', protocol: 'usenet' }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch
+    try {
+      const created = await addIndexer({ name: 'x', url: 'http://idx', protocol: 'usenet' })
+      expect(created.id).toBe(7)
+    } finally {
+      globalThis.fetch = orig
+    }
   })
 })

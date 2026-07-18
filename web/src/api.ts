@@ -182,8 +182,12 @@ async function send<T = void>(method: string, path: string, body?: unknown): Pro
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) await parseError(res, `${method} ${path}: ${res.status} ${res.statusText}`)
-  if (res.status === 204 || res.status === 202) return undefined as T
-  return res.json() as Promise<T>
+  // Success bodies may be empty regardless of status (e.g. the /test
+  // endpoints return a bare 200) — never let JSON parsing turn a success
+  // into an error.
+  const text = await res.text()
+  if (!text) return undefined as T
+  return JSON.parse(text) as T
 }
 
 export const getLibrary = (kind?: MediaKind) =>
