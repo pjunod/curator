@@ -244,6 +244,35 @@ func (s *Server) TestDownloadClient(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// TestIndexerById implements POST /indexers/{id}/test: run the reachability
+// test against the SAVED config — no re-typing credentials.
+func (s *Server) TestIndexerById(w http.ResponseWriter, r *http.Request, id int64) {
+	cfg, err := s.deps.Store.GetIndexer(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	if err := s.deps.IndexerFactory(cfg).Test(r.Context()); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// TestDownloadClientById implements POST /downloadclients/{id}/test.
+func (s *Server) TestDownloadClientById(w http.ResponseWriter, r *http.Request, id int64) {
+	cfg, err := s.deps.Store.GetDownloadClient(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	if err := s.deps.ClientFactory(cfg).Test(r.Context()); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // DeleteDownloadClient implements DELETE /downloadclients/{id}.
 func (s *Server) DeleteDownloadClient(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := s.deps.Store.DeleteDownloadClient(r.Context(), id); err != nil {

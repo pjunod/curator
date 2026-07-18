@@ -435,6 +435,28 @@ paths:
       responses:
         "204": { description: Removed. }
 
+  /indexers/{id}/test:
+    post:
+      operationId: testIndexerById
+      summary: Test a saved indexer with its stored credentials
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Reachable. }
+        "400":
+          description: Test failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No such indexer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /downloadclients:
     get:
       operationId: listDownloadClients
@@ -501,6 +523,28 @@ paths:
           schema: { type: integer, format: int64 }
       responses:
         "204": { description: Removed. }
+
+  /downloadclients/{id}/test:
+    post:
+      operationId: testDownloadClientById
+      summary: Test a saved download client with its stored credentials
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Reachable. }
+        "400":
+          description: Test failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No such client.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /library/{id}/releases:
     get:

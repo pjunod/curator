@@ -944,12 +944,16 @@ a.pill-info:hover {
 }
 
 .global-search {
+  /* Sits directly under the nav links; the sidebar's own gap spaces it.
+     margin-top: -14px tucks it closer to the menu than to the content. */
   position: relative;
-  margin-bottom: 4px;
+  margin-top: -10px;
+  padding: 0 10px;
 }
 
 .global-search input {
   width: 100%;
+  min-width: 0; /* the global 240px input min-width would overflow the sidebar */
   box-sizing: border-box;
   padding: 6px 9px;
   font-size: 12px;
@@ -965,10 +969,11 @@ a.pill-info:hover {
 }
 
 .search-results {
+  /* Below the box now that it lives under the menu, matching its width. */
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  width: 240px;
+  top: calc(100% + 6px);
+  left: 10px;
+  right: 10px;
   max-height: 320px;
   overflow-y: auto;
   background: var(--bg-raised);
@@ -1031,4 +1036,8 @@ a.pill-info:hover {
   width: 18px;
   height: 18px;
   accent-color: var(--accent);
+}
+
+.row-test {
+  white-space: nowrap;
 }

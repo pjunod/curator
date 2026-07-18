@@ -1,7 +1,9 @@
 # Monarr — build orchestration.
 # `make build` produces ./bin/monarr with the web UI embedded.
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
+# Tag releases as vX.Y.Z; describe yields "v0.1.0" or "v0.1.0-3-gabc1234".
+# The leading v is stripped here because the UI adds its own.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo 0.0.0-dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 

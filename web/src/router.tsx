@@ -104,8 +104,8 @@ function Layout() {
             Settings
           </Link>
         </nav>
+        <GlobalSearch />
         <div className="sidebar-foot">
-          <GlobalSearch />
           <ThemePicker />
           <div>v{status.data?.version ?? '…'}</div>
           <div className="muted">movies · series · books</div>

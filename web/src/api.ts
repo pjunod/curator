@@ -322,6 +322,8 @@ export const getProfiles = () => get<QualityProfile[]>('/profiles')
 export const getIndexers = () => get<Indexer[]>('/indexers')
 export const addIndexer = (i: IndexerInput) => send<Indexer>('POST', '/indexers', i)
 export const testIndexer = (i: IndexerInput) => send('POST', '/indexers/test', i)
+export const testIndexerById = (id: number) => send('POST', `/indexers/${id}/test`)
+export const testDownloadClientById = (id: number) => send('POST', `/downloadclients/${id}/test`)
 export const deleteIndexer = (id: number) => send('DELETE', `/indexers/${id}`)
 export const getDownloadClients = () => get<DownloadClientConfig[]>('/downloadclients')
 export const addDownloadClient = (c: DownloadClientInput) =>

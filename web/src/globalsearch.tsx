@@ -119,9 +119,8 @@ export function GlobalSearch() {
               <span className="search-hit-sub">{p.sub}</span>
             </button>
           ))}
-          <button className="search-hit" onClick={goAdd}>
-            <span className="search-hit-label">Add “{q.trim()}”…</span>
-            <span className="search-hit-sub">search providers</span>
+          <button className="search-hit" onClick={goAdd} title={`Search TMDB / Open Library for “${q.trim()}”`}>
+            <span className="search-hit-label">Search providers for “{q.trim()}”…</span>
           </button>
         </div>
       )}

@@ -19,8 +19,38 @@ import {
   getDownloadClients,
   getIndexers,
   testDownloadClient,
+  testDownloadClientById,
   testIndexer,
+  testIndexerById,
 } from '../api'
+
+// RowTest is the per-row Test button for saved indexers/clients: runs the
+// reachability test against the STORED credentials and shows ✓/✕ inline.
+function RowTest(props: { run: () => Promise<unknown> }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'ok' | string>('idle')
+  const test = async () => {
+    setState('busy')
+    try {
+      await props.run()
+      setState('ok')
+    } catch (e) {
+      setState((e as Error).message || 'failed')
+    }
+  }
+  return (
+    <span className="row-test">
+      <button onClick={() => void test()} disabled={state === 'busy'}>
+        {state === 'busy' ? 'Testing…' : 'Test'}
+      </button>{' '}
+      {state === 'ok' && <span className="ok-text">✓</span>}
+      {state !== 'idle' && state !== 'busy' && state !== 'ok' && (
+        <span className="error-text" title={state}>
+          ✕
+        </span>
+      )}
+    </span>
+  )
+}
 
 // Indexer + download client management, embedded in the Settings page.
 export function AcquisitionSettings() {
@@ -107,6 +137,9 @@ export function AcquisitionSettings() {
                   <span className="pill pill-neutral">{i.protocol}</span>
                 </td>
                 <td>
+                  <RowTest run={() => testIndexerById(i.id)} />
+                </td>
+                <td>
                   <button onClick={() => delIdx.mutate(i.id)}>Remove</button>
                 </td>
               </tr>
@@ -159,6 +192,9 @@ export function AcquisitionSettings() {
                   {c.pathMappings?.length
                     ? `${c.pathMappings[0].remote} → ${c.pathMappings[0].local}`
                     : ''}
+                </td>
+                <td>
+                  <RowTest run={() => testDownloadClientById(c.id)} />
                 </td>
                 <td>
                   <button onClick={() => delCli.mutate(c.id)}>Remove</button>

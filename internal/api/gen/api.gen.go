@@ -872,6 +872,9 @@ type ServerInterface interface {
 	// DeleteDownloadClient Remove a download client
 	// (DELETE /downloadclients/{id})
 	DeleteDownloadClient(w http.ResponseWriter, r *http.Request, id int64)
+	// TestDownloadClientById Test a saved download client with its stored credentials
+	// (POST /downloadclients/{id}/test)
+	TestDownloadClientById(w http.ResponseWriter, r *http.Request, id int64)
 	// StreamEvents Server-sent events
 	// (GET /events)
 	StreamEvents(w http.ResponseWriter, r *http.Request)
@@ -902,6 +905,9 @@ type ServerInterface interface {
 	// DeleteIndexer Remove an indexer
 	// (DELETE /indexers/{id})
 	DeleteIndexer(w http.ResponseWriter, r *http.Request, id int64)
+	// TestIndexerById Test a saved indexer with its stored credentials
+	// (POST /indexers/{id}/test)
+	TestIndexerById(w http.ResponseWriter, r *http.Request, id int64)
 	// ListLibrary List library items
 	// (GET /library)
 	ListLibrary(w http.ResponseWriter, r *http.Request, params ListLibraryParams)
@@ -1236,6 +1242,32 @@ func (siw *ServerInterfaceWrapper) DeleteDownloadClient(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// TestDownloadClientById operation middleware
+func (siw *ServerInterfaceWrapper) TestDownloadClientById(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestDownloadClientById(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StreamEvents operation middleware
 func (siw *ServerInterfaceWrapper) StreamEvents(w http.ResponseWriter, r *http.Request) {
 
@@ -1391,6 +1423,32 @@ func (siw *ServerInterfaceWrapper) DeleteIndexer(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteIndexer(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestIndexerById operation middleware
+func (siw *ServerInterfaceWrapper) TestIndexerById(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestIndexerById(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2164,10 +2222,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/indexers", wrapper.AddIndexer)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/indexers/test", wrapper.TestIndexer)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/indexers/{id}", wrapper.DeleteIndexer)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/indexers/{id}/test", wrapper.TestIndexerById)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloadclients", wrapper.ListDownloadClients)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloadclients", wrapper.AddDownloadClient)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloadclients/test", wrapper.TestDownloadClient)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloadclients/{id}", wrapper.DeleteDownloadClient)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloadclients/{id}/test", wrapper.TestDownloadClientById)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/releases", wrapper.SearchReleases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/grab", wrapper.GrabRelease)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue", wrapper.ListQueue)

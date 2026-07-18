@@ -84,6 +84,26 @@ test('per-item edit updates monitoring and completeness fields exist', async ({ 
   expect((await res.json()).monitored).toBe(true)
 })
 
+test('saved indexers and clients: per-row Test with stored credentials', async ({ page, request }) => {
+  const idx = await (await request.get('/api/v1/indexers')).json()
+  expect(idx.length).toBeGreaterThan(0)
+  expect((await request.post(`/api/v1/indexers/${idx[0].id}/test`)).status()).toBe(200)
+
+  const clients = await (await request.get('/api/v1/downloadclients')).json()
+  expect(clients.length).toBeGreaterThan(0)
+  expect((await request.post(`/api/v1/downloadclients/${clients[0].id}/test`)).status()).toBe(200)
+
+  expect((await request.post('/api/v1/indexers/99999/test')).status()).toBe(404)
+
+  // And the buttons are on the saved rows in Settings.
+  await page.goto('/settings')
+  await page.locator('#indexers').getByRole('button', { name: 'Test' }).first().click()
+  await expect(page.locator('#indexers .ok-text').first()).toBeVisible()
+  await expect(
+    page.locator('#downloadclients tbody').getByRole('button', { name: 'Test', exact: true }).first(),
+  ).toBeVisible()
+})
+
 test('metadata refresh re-hydrates from the provider', async ({ request }) => {
   const movies = await (await request.get('/api/v1/library?kind=movie')).json()
   const res = await request.post(`/api/v1/library/${movies[0].id}/refresh`)
