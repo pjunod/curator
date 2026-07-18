@@ -27,10 +27,79 @@ ADRs in [docs/adr/](docs/adr/).
 
 ```sh
 docker build -t monarr .
-docker run -d --name monarr -p 7676:7676 -v monarr-data:/data monarr
+docker run -d --name monarr \
+  -p 7676:7676 \
+  --user 1000:1000 \
+  -v /srv/monarr:/data \
+  -v /srv/pool:/pool \
+  monarr
 ```
 
-Open http://localhost:7676.
+Open http://localhost:7676. Then in the UI: **Settings → add your TMDB API key**,
+add root folders (e.g. `/pool/media/movies`), and configure your indexer and
+download client.
+
+**The mounts:**
+
+| Mount | Purpose |
+|---|---|
+| `/data` | SQLite database, daily backups, runtime state — back this one up |
+| one shared pool (e.g. `/srv/pool:/pool`) | your media library **and** your download client's completed folder, under a single mount |
+
+A working pool layout:
+
+```
+/srv/pool/
+├── media/
+│   ├── movies/        ← root folder in Monarr
+│   ├── tv/            ← root folder in Monarr
+│   └── books/         ← root folder in Monarr
+└── downloads/         ← completed folder in qBittorrent/SABnzbd/…
+```
+
+**The one rule that makes imports work:** Monarr opens completed downloads at the
+literal path the download client reports. If qBittorrent says a torrent lives at
+`/pool/downloads/X`, Monarr must be able to open `/pool/downloads/X` *inside its
+own container* — so give the download client's container the **same** `-v
+/srv/pool:/pool` mapping. There is no remote-path-mapping translation layer
+(yet); identical mounts across containers is the requirement.
+
+The single shared pool mount is also what enables **hardlink imports**: downloads
+and media on one filesystem means importing a release is instant and costs no
+extra space (seeding continues from the original file). With separate mounts,
+Monarr silently falls back to copying — correct, just slower and double-space
+during seeding.
+
+**Permissions:** the image is distroless and runs as whatever `--user uid:gid`
+you pass (root if omitted). Run as the same user that owns your pool so imported
+files don't end up root-owned. Make sure `/srv/monarr` and `/srv/pool` are
+writable by that uid.
+
+Compose equivalent, side by side with a download client:
+
+```yaml
+services:
+  monarr:
+    image: monarr            # or ghcr.io/monarr-media/monarr once published
+    user: "1000:1000"
+    ports: ["7676:7676"]
+    volumes:
+      - /srv/monarr:/data
+      - /srv/pool:/pool
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment: [PUID=1000, PGID=1000, WEBUI_PORT=8080]
+    ports: ["8080:8080"]
+    volumes:
+      - /srv/qbittorrent:/config
+      - /srv/pool:/pool      # same pool, same path — this is the important part
+    restart: unless-stopped
+```
+
+In qBittorrent set the default save path to `/pool/downloads`; in Monarr add the
+client as `http://qbittorrent:8080` (same compose network) or `http://<host>:8080`.
 
 ### From source
 
