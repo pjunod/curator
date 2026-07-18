@@ -126,6 +126,7 @@ export interface AddMediaRequest {
   rootFolderId?: number
   qualityProfileId?: number
   monitored?: boolean
+  searchNow?: boolean
 }
 
 export interface RootFolder {
@@ -507,3 +508,5 @@ export function composeHostPort(host: string, port: string): string {
   if (hostPart.includes(':')) return scheme + h // port already present
   return `${scheme}${hostPart}:${p}${rest}`
 }
+
+export const autoSearchItem = (id: number) => send('POST', `/library/${id}/autosearch`)

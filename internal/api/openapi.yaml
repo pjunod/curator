@@ -655,6 +655,26 @@ paths:
       responses:
         "204": { description: Removed. }
 
+  /library/{id}/autosearch:
+    post:
+      operationId: autoSearchLibraryItem
+      summary: Search for everything this item wants and grab the best releases
+      description: >
+        Sonarr-style automatic search: runs in the background, no candidate
+        list — the decision engine picks. Series search per-season packs.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "202": { description: Search started in the background. }
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/bulk:
     post:
       operationId: bulkEditLibrary
@@ -1180,6 +1200,12 @@ components:
         monitored:
           type: boolean
           default: true
+        searchNow:
+          type: boolean
+          default: false
+          description: >
+            Kick an automatic search for the item right after adding
+            (Sonarr's "start search for missing" checkbox).
 
     SearchResult:
       type: object

@@ -26,8 +26,10 @@ above appears there as a warning.
 
 **+ Add media** (Library page) → pick the Movie / Series / Book tab →
 type a title. Movies and series search TMDB; books search Open Library and
-show the author next to each result. Pick a root folder and monitoring
-state, hit **Add**.
+show the author next to each result. Pick a root folder, a quality profile
+(or leave the kind default), monitoring state, and whether to **Search on
+add** (on by default: the best accepted release is grabbed automatically
+right after adding, Sonarr-style). Hit **Add**.
 
 - *Movies* arrive hydrated with year, overview, poster, runtime.
 - *Series* arrive with every season and episode; specials (season 0) start
@@ -56,18 +58,28 @@ Scans also run on a 12-hour schedule.
 
 ## Getting releases
 
-Two ways: do it yourself, or let the automation do it.
+Automatic is the default posture — the interactive search is the override
+for when you want to pick a specific release yourself.
 
-**Interactive search** — on any movie or book detail page, **Search
-releases**; on a series, each season has **Search pack** and each episode a
-**Search** button. Every release the indexers returned is shown — including
-rejected ones, with the reason attached (`quality not allowed`,
-`not an upgrade`, `does not match …`). Custom-format scores appear under
-the quality column. **Grab** sends a release to the right download client
-by protocol (torrent vs usenet).
+**Automatic** — three entry points, all using the decision engine (profile
+allowed-set, cutoff, upgrade rules, custom-format scores) to pick the best
+accepted release with no list to review:
 
-**Automation** — anything monitored and missing (or below its profile
-cutoff) is on the **wanted** list. Two loops work it:
+- **Search on add** (checkbox on the add form, on by default) fires the
+  moment an item is added.
+- **Auto search** (button on every detail page) does the same on demand —
+  for series it searches per-season packs.
+- The **Wanted** page lists everything still missing or below cutoff, shows
+  when the loops last ran, and has **Search all now**.
+
+**Interactive search** — **Interactive search** on movie/book detail pages;
+on a series, each season has **Search pack** and each episode a **Search**
+button. Every release the indexers returned is shown — including rejected
+ones, with the reason attached (`quality not allowed`, `not an upgrade`,
+`does not match …`). **Grab** sends your pick to the right client.
+
+**The loops** — anything monitored and missing (or below its profile
+cutoff) stays on the wanted list, and two loops work it unattended:
 
 - **RSS sync** (every ~15 min): pulls each indexer's newest releases and
   grabs whatever matches a wanted item and passes the decision engine.

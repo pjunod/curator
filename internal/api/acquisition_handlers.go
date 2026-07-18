@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
+	"time"
 
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
 	"github.com/monarr-media/monarr/internal/app/acquisition"
@@ -662,4 +664,21 @@ func (s *Server) BulkEditLibrary(w http.ResponseWriter, r *http.Request) {
 		s.deps.Acquisition.InvalidateWanted()
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"updated": updated})
+}
+
+// AutoSearchLibraryItem implements POST /library/{id}/autosearch: the
+// Sonarr-style "search automatically" — background, best-pick, no list.
+func (s *Server) AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, id int64) {
+	if _, err := s.deps.Library.Get(r.Context(), id); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	go func(itemID int64) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := s.deps.Acquisition.AutoSearchItem(ctx, itemID); err != nil {
+			s.deps.Log.Warn("auto search failed", "item", itemID, "err", err)
+		}
+	}(id)
+	w.WriteHeader(http.StatusAccepted)
 }

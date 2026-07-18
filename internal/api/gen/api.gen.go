@@ -248,6 +248,9 @@ type AddMediaRequest struct {
 	QualityProfileId *int64 `json:"qualityProfileId,omitempty"`
 	RootFolderId     *int64 `json:"rootFolderId,omitempty"`
 
+	// SearchNow Kick an automatic search for the item right after adding (Sonarr's "start search for missing" checkbox).
+	SearchNow *bool `json:"searchNow,omitempty"`
+
 	// TmdbId Identifies movies/series.
 	TmdbId *int64 `json:"tmdbId,omitempty"`
 }
@@ -868,6 +871,9 @@ type ServerInterface interface {
 	// GetLibraryItem Get one item with seasons, episodes, and files
 	// (GET /library/{id})
 	GetLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// AutoSearchLibraryItem Search for everything this item wants and grab the best releases
+	// (POST /library/{id}/autosearch)
+	AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
 	// SearchReleases Interactive search for a movie, episode, or season pack
 	// (GET /library/{id}/releases)
 	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
@@ -1477,6 +1483,32 @@ func (siw *ServerInterfaceWrapper) GetLibraryItem(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// AutoSearchLibraryItem operation middleware
+func (siw *ServerInterfaceWrapper) AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AutoSearchLibraryItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SearchReleases operation middleware
 func (siw *ServerInterfaceWrapper) SearchReleases(w http.ResponseWriter, r *http.Request) {
 
@@ -2035,6 +2067,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/importlists", wrapper.ListImportLists)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/importlists", wrapper.AddImportList)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/importlists/{id}", wrapper.DeleteImportList)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/autosearch", wrapper.AutoSearchLibraryItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/bulk", wrapper.BulkEditLibrary)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)

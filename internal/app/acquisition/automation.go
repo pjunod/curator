@@ -250,3 +250,55 @@ func (s *Service) isBlocklisted(ctx context.Context, title, indexer string) bool
 	}
 	return blocked
 }
+
+// AutoSearchItem searches for everything one item still wants and grabs
+// the best accepted release per wantable — Sonarr's "search on add" /
+// "automatic search" semantics: no candidate list, the decision engine
+// picks. Series search season packs (missing episodes fall to the RSS and
+// backlog loops if no pack exists).
+func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) error {
+	item, err := s.db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		return err
+	}
+	enabled, err := s.enabledIndexers(ctx)
+	if err != nil {
+		return err
+	}
+	if len(enabled) == 0 {
+		s.log.Info("auto search: no enabled indexers yet", "item", item.Title)
+		return ErrNoIndexers
+	}
+
+	var targets []domain.Wantable
+	switch item.Kind {
+	case domain.KindMovie, domain.KindBook:
+		w, err := s.target(ctx, item, 0, 0)
+		if err != nil {
+			return err
+		}
+		targets = append(targets, w)
+	case domain.KindSeries:
+		for _, season := range item.Seasons {
+			if season.Number == 0 || !season.Monitored || len(season.Episodes) == 0 {
+				continue
+			}
+			w, err := s.target(ctx, item, season.Number, 0)
+			if err != nil {
+				continue
+			}
+			targets = append(targets, w)
+		}
+	}
+
+	for _, w := range s.notInFlight(ctx, targets) {
+		if !w.Monitored() {
+			continue
+		}
+		if err := s.searchAndGrabBest(ctx, w, enabled); err != nil {
+			s.log.Warn("auto search: failed", "wantable", w.ID(), "err", err)
+		}
+	}
+	s.InvalidateWanted()
+	return nil
+}

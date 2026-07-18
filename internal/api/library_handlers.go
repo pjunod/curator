@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
 	"github.com/monarr-media/monarr/internal/app/library"
@@ -178,6 +179,17 @@ func (s *Server) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.libraryErr(w, err)
 		return
+	}
+	// Search on add (Sonarr semantics): fire-and-forget; failures land in
+	// the log and the item stays wanted for the RSS/backlog loops.
+	if body.SearchNow != nil && *body.SearchNow && item.Monitored && s.deps.Acquisition != nil {
+		go func(itemID int64) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			if err := s.deps.Acquisition.AutoSearchItem(ctx, itemID); err != nil {
+				s.deps.Log.Warn("search on add failed", "item", itemID, "err", err)
+			}
+		}(item.ID)
 	}
 	writeJSON(w, http.StatusCreated, detailDTO(item))
 }

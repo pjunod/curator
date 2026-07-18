@@ -145,3 +145,31 @@ func TestFailedDownloadBlocklistsAndResearches(t *testing.T) {
 		t.Errorf("blocklist = %+v err %v", list, err)
 	}
 }
+
+func TestAutoSearchItemGrabsBest(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, movieID := autoSetup(t, []ports.Release{
+		rel("Test.Movie.2024.720p.WEB-DL.x264-LOW", 90),
+		rel("Test.Movie.2024.1080p.BluRay.x264-BEST", 10),
+	}, client)
+	ctx := context.Background()
+
+	if err := svc.AutoSearchItem(ctx, movieID); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.added) != 1 || client.added[0] != "http://dl/Test.Movie.2024.1080p.BluRay.x264-BEST" {
+		t.Fatalf("auto search adds = %v, want the best release", client.added)
+	}
+	dls, _ := db.ListRecentDownloads(ctx)
+	if len(dls) != 1 || dls[0].State != "grabbed" {
+		t.Fatalf("downloads = %+v", dls)
+	}
+
+	// Second call: the wantable is in flight — nothing double-grabbed.
+	if err := svc.AutoSearchItem(ctx, movieID); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.added) != 1 {
+		t.Errorf("second auto search grabbed again: %v", client.added)
+	}
+}

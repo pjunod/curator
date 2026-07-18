@@ -16,6 +16,7 @@ import { SettingsPage } from './pages/Settings'
 import { ActivityPage } from './pages/Activity'
 import { CalendarPage } from './pages/Calendar'
 import { LoginPage } from './pages/Login'
+import { WantedPage } from './pages/Wanted'
 import type { MediaKind } from './api'
 import { getHealth, getStatus } from './api'
 
@@ -31,8 +32,15 @@ function Layout() {
           mon<span>arr</span>
         </div>
         <nav>
-          <Link to="/" activeOptions={{ exact: true }} activeProps={{ className: 'active' }}>
+          <Link
+            to="/"
+            activeOptions={{ exact: true }}
+            activeProps={{ className: 'active' }}
+          >
             Library
+          </Link>
+          <Link to="/wanted" activeProps={{ className: 'active' }}>
+            Wanted
           </Link>
           <Link to="/calendar" activeProps={{ className: 'active' }}>
             Calendar
@@ -53,7 +61,7 @@ function Layout() {
         </nav>
         <div className="sidebar-foot">
           <div>v{status.data?.version ?? '…'}</div>
-          <div className="muted">phase 1 · library</div>
+          <div className="muted">movies · series · books</div>
         </div>
       </aside>
       <main className="content">
@@ -107,6 +115,12 @@ const loginRoute = createRoute({
   component: LoginPage,
 })
 
+const wantedRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/wanted',
+  component: WantedPage,
+})
+
 const calendarRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/calendar',
@@ -137,6 +151,7 @@ const routeTree = rootRoute.addChildren([
   mediaDetailRoute,
   addRoute,
   loginRoute,
+  wantedRoute,
   calendarRoute,
   activityRoute,
   systemRoute,

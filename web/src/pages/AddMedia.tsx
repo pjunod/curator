@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import type { MediaKind, SearchResult } from '../api'
-import { addLibraryItem, getRootFolders, posterUrl, searchMetadata } from '../api'
+import { addLibraryItem, getProfiles, getRootFolders, posterUrl, searchMetadata } from '../api'
 
 function useDebounced<T>(value: T, ms: number): T {
   const [debounced, setDebounced] = useState(value)
@@ -24,8 +24,11 @@ export function AddMediaPage() {
   const debouncedQuery = useDebounced(query, 400)
 
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
+  const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
   const [rootId, setRootId] = useState<number | undefined>(undefined)
+  const [profileId, setProfileId] = useState<number | ''>('')
   const [monitored, setMonitored] = useState(true)
+  const [searchNow, setSearchNow] = useState(true)
 
   useEffect(() => {
     if (rootId === undefined && roots.data && roots.data.length > 0) {
@@ -41,12 +44,19 @@ export function AddMediaPage() {
   })
 
   const add = useMutation({
-    mutationFn: (r: SearchResult) =>
-      addLibraryItem(
+    mutationFn: (r: SearchResult) => {
+      const common = {
+        rootFolderId: rootId,
+        qualityProfileId: profileId === '' ? undefined : Number(profileId),
+        monitored,
+        searchNow: monitored && searchNow,
+      }
+      return addLibraryItem(
         r.kind === 'book'
-          ? { kind: r.kind, olid: r.olid, rootFolderId: rootId, monitored }
-          : { kind: r.kind, tmdbId: r.tmdbId, rootFolderId: rootId, monitored },
-      ),
+          ? { kind: r.kind, olid: r.olid, ...common }
+          : { kind: r.kind, tmdbId: r.tmdbId, ...common },
+      )
+    },
     onSuccess: (item) => navigate({ to: '/library/$id', params: { id: String(item.id) } }),
   })
 
@@ -98,12 +108,34 @@ export function AddMediaPage() {
           </select>
         </label>
         <label className="inline">
+          Profile{' '}
+          <select
+            value={profileId}
+            onChange={(e) => setProfileId(e.target.value ? Number(e.target.value) : '')}
+          >
+            <option value="">(default)</option>
+            {profiles.data?.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="inline">
           <input
             type="checkbox"
             checked={monitored}
             onChange={(e) => setMonitored(e.target.checked)}
           />{' '}
           Monitored
+        </label>
+        <label className="inline" title="Automatically search and grab the best release right after adding">
+          <input
+            type="checkbox"
+            checked={searchNow}
+            onChange={(e) => setSearchNow(e.target.checked)}
+          />{' '}
+          Search on add
         </label>
       </div>
 

@@ -118,3 +118,9 @@ test('calendar page renders the agenda', async ({ page }) => {
   await page.goto('/calendar')
   await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible()
 })
+
+test('wanted page renders with loop status', async ({ page }) => {
+  await page.goto('/wanted')
+  await expect(page.getByRole('heading', { name: 'Wanted' })).toBeVisible()
+  await expect(page.getByText('RSS sync')).toBeVisible()
+})

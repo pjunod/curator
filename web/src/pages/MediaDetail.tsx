@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useNavigate, useParams } from '@tanstack/react-router'
-import { deleteLibraryItem, fmtBytes, getLibraryItem, posterUrl } from '../api'
+import { Link, useNavigate, useParams } from '@tanstack/react-router'
+import { autoSearchItem, deleteLibraryItem, fmtBytes, getLibraryItem, posterUrl } from '../api'
 import { ReleaseSearch } from './ReleaseSearch'
 
 export function MediaDetailPage() {
@@ -20,6 +20,12 @@ export function MediaDetailPage() {
     mutationFn: () => deleteLibraryItem(Number(id)),
     onSuccess: () => navigate({ to: '/' }),
   })
+  const [autoMsg, setAutoMsg] = useState('')
+  const auto = useMutation({
+    mutationFn: () => autoSearchItem(Number(id)),
+    onSuccess: () => setAutoMsg('Searching in the background — grabs appear under Activity.'),
+    onError: (e) => setAutoMsg(`✕ ${(e as Error).message}`),
+  })
 
   if (item.isLoading) return <p className="muted">Loading…</p>
   if (item.isError || !item.data) return <div className="banner warning">Item not found.</div>
@@ -29,6 +35,11 @@ export function MediaDetailPage() {
 
   return (
     <>
+      <p style={{ marginTop: 0 }}>
+        <Link to="/" className="muted">
+          ← Library
+        </Link>
+      </p>
       <div className="detail-head">
         {m.posterPath ? (
           <img className="detail-poster" src={posterUrl(m.posterPath)} alt="" />
@@ -58,9 +69,17 @@ export function MediaDetailPage() {
             {m.ids.olid && <span className="mono">{m.ids.olid}</span>}
           </div>
           <div className="detail-actions">
+            <button
+              className="btn-accent"
+              title="Search all indexers and grab the best accepted release automatically"
+              disabled={auto.isPending}
+              onClick={() => auto.mutate()}
+            >
+              Auto search
+            </button>
             {(m.kind === 'movie' || m.kind === 'book') && (
-              <button className="btn-accent" onClick={() => setSearching({})}>
-                Search releases
+              <button onClick={() => setSearching({})}>
+                Interactive search
               </button>
             )}
             {!confirming ? (
@@ -76,6 +95,8 @@ export function MediaDetailPage() {
           </div>
         </div>
       </div>
+
+      {autoMsg && <div className="banner">{autoMsg}</div>}
 
       {searching && (
         <ReleaseSearch
