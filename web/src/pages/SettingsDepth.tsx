@@ -29,7 +29,7 @@ export function CustomFormatSettings() {
   })
 
   return (
-    <section className="panel">
+    <section className="panel" id="customformats">
       <h2>Custom formats</h2>
       <p className="muted">
         Regex rules scored against release titles; higher totals win ties between
@@ -95,7 +95,7 @@ export function ImportListSettings() {
   })
 
   return (
-    <section className="panel">
+    <section className="panel" id="importlists">
       <h2>Import lists</h2>
       <p className="muted">
         External lists synced every 12 hours; new entries are added to the library
@@ -178,7 +178,7 @@ export function SecuritySettings() {
 
   const authOn = settings.data?.authRequired ?? false
   return (
-    <section className="panel">
+    <section className="panel" id="security">
       <h2>Security</h2>
       <p className="muted">
         The API key authenticates external apps (X-Api-Key) — including the /sonarr and

@@ -146,6 +146,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateLibraryItem
+      summary: Edit an item's monitoring, quality profile, or location
+      description: >
+        Absent fields are left as they are. Setting rootFolderId recomputes
+        the item folder from the naming rules (path, when also given, wins);
+        rootFolderId 0 clears the assignment. Files on disk are never moved.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMediaItemRequest"
+      responses:
+        "200":
+          description: The updated item.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaItemDetail"
+        "400":
+          description: Invalid edit (e.g. relative path).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
       operationId: deleteLibraryItem
       summary: Remove an item from the library (files on disk are untouched)
@@ -675,6 +714,33 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /library/{id}/refresh:
+    post:
+      operationId: refreshLibraryItem
+      summary: Re-hydrate this item's metadata from its provider
+      description: >
+        Updates the cached metadata (overview, poster, status, rating, …)
+        and, for series, picks up newly announced seasons and episodes.
+        Monitored flags, quality profile, and folder are untouched; nothing
+        is deleted. The metadata.refresh task does this for the whole
+        library on a schedule.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The refreshed item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaItemDetail" }
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/bulk:
     post:
       operationId: bulkEditLibrary
@@ -1010,7 +1076,9 @@ components:
 
     MediaItemSummary:
       type: object
-      required: [id, kind, title, year, author, posterPath, monitored, path]
+      required:
+        [id, kind, title, year, author, posterPath, monitored, path,
+         rating, ratingVotes, episodeCount, episodeFileCount, fileCount]
       properties:
         id:
           type: integer
@@ -1030,6 +1098,21 @@ components:
           type: boolean
         path:
           type: string
+        rating:
+          type: number
+          description: Provider-scale community rating (TMDB /10, Open Library /5).
+        ratingVotes:
+          type: integer
+          description: 0 means no rating known.
+        episodeCount:
+          type: integer
+          description: Monitored episodes aired to date (series; 0 otherwise).
+        episodeFileCount:
+          type: integer
+          description: Of episodeCount, how many have a file.
+        fileCount:
+          type: integer
+          description: Files on disk for the item (movies/books completeness).
 
     ExternalIds:
       type: object
@@ -1117,7 +1200,10 @@ components:
         - status
         - releaseDate
         - runtime
+        - rating
+        - ratingVotes
         - monitored
+        - qualityProfileId
         - path
         - rootFolderId
         - ended
@@ -1154,8 +1240,17 @@ components:
           type: string
         runtime:
           type: integer
+        rating:
+          type: number
+          description: Provider-scale community rating (TMDB /10, Open Library /5).
+        ratingVotes:
+          type: integer
+          description: 0 means no rating known.
         monitored:
           type: boolean
+        qualityProfileId:
+          type: integer
+          format: int64
         path:
           type: string
         rootFolderId:
@@ -1206,6 +1301,23 @@ components:
           description: >
             Kick an automatic search for the item right after adding
             (Sonarr's "start search for missing" checkbox).
+
+    UpdateMediaItemRequest:
+      type: object
+      description: Per-item edit; absent fields are left as they are.
+      properties:
+        monitored:
+          type: boolean
+        qualityProfileId:
+          type: integer
+          format: int64
+        rootFolderId:
+          type: integer
+          format: int64
+          description: Recomputes the item folder; 0 clears the assignment.
+        path:
+          type: string
+          description: Explicit absolute folder; wins over rootFolderId. "" clears it.
 
     SearchResult:
       type: object
@@ -1323,6 +1435,17 @@ components:
           properties:
             id: { type: integer, format: int64 }
 
+    PathMapping:
+      type: object
+      required: [remote, local]
+      properties:
+        remote:
+          type: string
+          description: Path prefix as the download client reports it.
+        local:
+          type: string
+          description: Same location as Monarr sees it.
+
     DownloadClientInput:
       type: object
       required: [type, name, url]
@@ -1334,6 +1457,13 @@ components:
         password: { type: string }
         category: { type: string, default: monarr }
         enabled: { type: boolean, default: true }
+        pathMappings:
+          type: array
+          items: { $ref: "#/components/schemas/PathMapping" }
+          description: >
+            Remote path mappings: when the client runs on another host or
+            container, rewrite the completed-download path it reports into
+            the path Monarr sees the same files at.
 
     DownloadClientConfig:
       allOf:

@@ -35,7 +35,18 @@ export function AcquisitionSettings() {
   })
   const [cliPort, setCliPort] = useState(CLIENT_DEFAULT_PORTS.qbittorrent)
   const [cliMsg, setCliMsg] = useState('')
-  const cliPayload = (): DownloadClientInput => ({ ...cli, url: composeHostPort(cli.url, cliPort) })
+  // Remote path mapping (optional): the client's completed folder as IT
+  // reports it, and the path Monarr sees the same files at.
+  const [mapRemote, setMapRemote] = useState('')
+  const [mapLocal, setMapLocal] = useState('')
+  const cliPayload = (): DownloadClientInput => ({
+    ...cli,
+    url: composeHostPort(cli.url, cliPort),
+    pathMappings:
+      mapRemote.trim() && mapLocal.trim()
+        ? [{ remote: mapRemote.trim(), local: mapLocal.trim() }]
+        : undefined,
+  })
 
   const testIdx = useMutation({
     mutationFn: () => testIndexer(idx),
@@ -66,6 +77,8 @@ export function AcquisitionSettings() {
     onSuccess: () => {
       setCli({ type: cli.type, name: '', url: '', username: '', password: '', category: 'monarr' })
       setCliPort(CLIENT_DEFAULT_PORTS[cli.type])
+      setMapRemote('')
+      setMapLocal('')
       setCliMsg('')
       void qc.invalidateQueries({ queryKey: ['downloadclients'] })
     },
@@ -78,7 +91,7 @@ export function AcquisitionSettings() {
 
   return (
     <>
-      <section className="panel">
+      <section className="panel" id="indexers">
         <h2>Indexers</h2>
         <p className="muted">
           Newznab/Torznab endpoints — point these at Prowlarr or Jackett proxies, or directly at
@@ -123,8 +136,15 @@ export function AcquisitionSettings() {
         {idxMsg && <p className={idxMsg.startsWith('✓') ? 'ok-text' : 'error-text'}>{idxMsg}</p>}
       </section>
 
-      <section className="panel">
+      <section className="panel" id="downloadclients">
         <h2>Download clients</h2>
+        <p className="muted">
+          Downloads land wherever the client itself is configured to put finished files
+          (NZBGet's DestDir / category folder, qBittorrent's save path, …) — Monarr then
+          imports from the path the client reports. That path must be visible to Monarr; if
+          the client runs on another host or container and reports a different path than
+          Monarr mounts, set a remote path mapping below.
+        </p>
         <table>
           <tbody>
             {clients.data?.map((c) => (
@@ -135,6 +155,11 @@ export function AcquisitionSettings() {
                 </td>
                 <td className="mono muted">{c.url}</td>
                 <td className="muted">{c.category}</td>
+                <td className="mono muted">
+                  {c.pathMappings?.length
+                    ? `${c.pathMappings[0].remote} → ${c.pathMappings[0].local}`
+                    : ''}
+                </td>
                 <td>
                   <button onClick={() => delCli.mutate(c.id)}>Remove</button>
                 </td>
@@ -186,6 +211,23 @@ export function AcquisitionSettings() {
             </>
           )}
           <input placeholder="Category" value={cli.category} onChange={(e) => setCli({ ...cli, category: e.target.value })} style={{ minWidth: 110 }} />
+        </div>
+        <div className="form-row">
+          <input
+            placeholder="Remote path the client reports (optional, e.g. /data/completed)"
+            aria-label="Remote path"
+            value={mapRemote}
+            onChange={(e) => setMapRemote(e.target.value)}
+            style={{ minWidth: 260 }}
+          />
+          <span className="muted">→</span>
+          <input
+            placeholder="Same folder as Monarr sees it (e.g. /pool/downloads)"
+            aria-label="Local path"
+            value={mapLocal}
+            onChange={(e) => setMapLocal(e.target.value)}
+            style={{ minWidth: 260 }}
+          />
           <button onClick={() => testCli.mutate()} disabled={testCli.isPending || !cli.url}>
             Test
           </button>

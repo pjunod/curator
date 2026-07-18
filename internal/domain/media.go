@@ -68,6 +68,8 @@ type MediaItem struct {
 	Status       string // e.g. "Released", "Returning Series", "Ended"
 	ReleaseDate  string // ISO date; first air date for series
 	Runtime      int    // minutes; per-episode average for series
+	Rating       float64
+	RatingVotes  int // 0 = no rating known; Rating is provider-scale (TMDB /10, Open Library /5)
 
 	Monitored        bool
 	QualityProfileID int64
@@ -79,6 +81,13 @@ type MediaItem struct {
 	Seasons []Season
 
 	Files []MediaFile
+
+	// Completeness, derived for list views (hydrated by ListMediaItems, zero
+	// elsewhere): monitored aired episodes vs those with files, and the raw
+	// file count for movies/books.
+	EpisodeCount     int
+	EpisodeFileCount int
+	FileCount        int
 
 	AddedAt   time.Time
 	UpdatedAt time.Time

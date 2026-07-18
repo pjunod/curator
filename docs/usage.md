@@ -118,6 +118,41 @@ Failed downloads (client-reported failures or import errors) are
 **blocklisted** — never grabbed again — and a replacement search fires
 immediately.
 
+## The item page
+
+Click anything in the library to get its page. The fact grid answers the
+usual questions at a glance:
+
+- **Location** — the item's folder as a highlighted path chip (assigned
+  at add time; created on first import).
+- **Status** — monitored/unmonitored, a color-coded completeness pill
+  (green = everything wanted is on disk, yellow = partial, red =
+  nothing; series count monitored episodes aired to date), and a
+  **↓ downloading** pill whenever a grab for this item is in flight.
+- **Profile** — the quality profile driving grabs and upgrades.
+- **Rating** — the community rating from the provider (TMDB /10 for
+  movies & series, Open Library /5 for books), with vote count.
+- **Links** — IMDb / TMDB / TVDB / Open Library pages, opening in a new
+  tab.
+
+Actions up top:
+
+- **Auto search** — grab the best accepted release automatically.
+- **Interactive search** (movies/books; per-episode and per-season on
+  series) — the full candidate list with scores and rejection reasons.
+  Release titles link to the release's page on the indexer (new tab).
+- **Edit** — change monitoring, quality profile, root folder, or the
+  folder path itself. Changing the root recomputes the folder from the
+  naming rules; **files on disk are never moved** by an edit.
+- **Refresh metadata** — re-fetch from the provider right now: new
+  episodes for a continuing series, updated poster/status/rating. The
+  `metadata.refresh` task does this for the whole library every 12 h
+  (run it once from System → Tasks after upgrading to backfill ratings).
+
+The same completeness pill, rating, and ↓ badge appear on every library
+card, so the grid shows at a glance what's complete, what's partial, and
+what's moving right now.
+
 ## Activity, calendar, wanted
 
 - **Activity** shows the download queue with live progress; completed
@@ -126,10 +161,22 @@ immediately.
   `Movie (Year) [Quality].ext`, `Show - S01E02 - Title [Quality].ext`,
   `Author/Title/Title - Author.ext` — using hardlinks when the download and
   library share a filesystem.
-- **Calendar** is an agenda of upcoming/recent episode air dates and
-  movie/book release dates, with on-disk checkmarks.
-- **Wanted** is exposed at `GET /api/v1/wanted` (UI page coming later; the
-  System page's task list shows when the loops last ran).
+- **Calendar** is a month grid: episode air dates and movie/book release
+  dates land on their days, filled when the file is on disk, outlined when
+  it isn't. Page with ← / Today / →.
+- **Wanted** lists everything monitored that's missing or below cutoff,
+  shows when the RSS and backlog loops last ran / run next, and offers
+  **Search all now** plus a per-item **Search** button that grabs the best
+  accepted release for just that entry.
+
+## Finding things fast
+
+The search box at the bottom of the sidebar finds **library items by
+title or author** and **pages & settings sections by name** ("indexers",
+"notifications", "root folders", …) — Enter jumps to the first hit, and
+any query can fall through to "Add …" to search the metadata providers.
+Next to it, the **Auto / Light / Dark** picker overrides the theme (Auto
+follows the OS preference; the choice is remembered per browser).
 
 ## Upgrades
 
@@ -169,7 +216,8 @@ imports. **Test** delivers a test event immediately.
 
 - **"payload missing" on import** — Monarr can't open the path the
   download client reported. Fix the container mounts so both see the same
-  path (see the README's Docker section).
+  path, or set a **remote path mapping** on the client (Settings →
+  Download clients — see `docs/settings.md`).
 - **Search finds nothing** — check the indexer Test passes, and remember
   book searches need book categories (7000s/3030) supported by the indexer.
 - **Everything rejected** — read the rejection reasons; usually the

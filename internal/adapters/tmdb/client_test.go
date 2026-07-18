@@ -108,6 +108,9 @@ func TestGetMovieMapsFields(t *testing.T) {
 	if len(m.Genres) != 2 || m.Genres[0] != "Drama" {
 		t.Errorf("genres = %v", m.Genres)
 	}
+	if m.Rating != 8.438 || m.RatingVotes != 26280 {
+		t.Errorf("rating = %v (%d votes)", m.Rating, m.RatingVotes)
+	}
 }
 
 func TestGetSeriesHydratesSeasons(t *testing.T) {
@@ -124,6 +127,9 @@ func TestGetSeriesHydratesSeasons(t *testing.T) {
 	}
 	if s.IDs.TVDB != 424242 || s.IDs.IMDB != "tt9999999" {
 		t.Errorf("ids = %+v", s.IDs)
+	}
+	if s.Rating != 8.1 || s.RatingVotes != 1234 {
+		t.Errorf("rating = %v (%d votes)", s.Rating, s.RatingVotes)
 	}
 	if len(s.Seasons) != 2 {
 		t.Fatalf("seasons = %d", len(s.Seasons))

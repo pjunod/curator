@@ -18,6 +18,8 @@ const movie601 = {
   backdrop_path: '',
   genres: [{ id: 18, name: 'Drama' }],
   imdb_id: 'tt6010001',
+  vote_average: 7.6,
+  vote_count: 4321,
 }
 
 const tv700 = {
@@ -30,6 +32,8 @@ const tv700 = {
   backdrop_path: '',
   genres: [{ id: 35, name: 'Comedy' }],
   episode_run_time: [30],
+  vote_average: 8.2,
+  vote_count: 999,
   seasons: [{ season_number: 1, episode_count: 2, name: 'Season 1' }],
   external_ids: { imdb_id: 'tt7000001', tvdb_id: 700700 },
 }

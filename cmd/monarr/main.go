@@ -274,6 +274,19 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}); err != nil {
 		return err
 	}
+	// Metadata refresh: continuing series learn about newly announced
+	// episodes, and cached fields (status, poster, ratings) stay current.
+	if err := sched.Register(scheduler.Task{
+		Name:     "metadata.refresh",
+		Interval: 12 * time.Hour,
+		Fn: func(ctx context.Context) error {
+			err := lib.RefreshAll(ctx)
+			acq.InvalidateWanted()
+			return err
+		},
+	}); err != nil {
+		return err
+	}
 	if err := sched.Register(scheduler.Task{
 		Name:     "backup.run",
 		Interval: 24 * time.Hour,

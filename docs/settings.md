@@ -53,9 +53,29 @@ supports it. Grabs route by protocol: a torrent release goes to the first
 enabled torrent client, usenet to the first enabled usenet client. The
 queue is polled every 30 s; completed items import automatically.
 
-> Path rule: the client must report save paths that Monarr can open inside
-> its own container — identical volume mounts across containers. See the
-> README's Docker section.
+### Completed downloads: where files land, and how Monarr finds them
+
+The "download finished" folder is **configured in the client itself**, not
+in Monarr — NZBGet's `DestDir` (plus per-category dirs), SABnzbd's
+"Completed Download Folder", qBittorrent's save path. When a download
+finishes, the client reports that path over its API and Monarr imports the
+media files from it into the item's library folder (hardlink when both
+sides share a filesystem, copy otherwise).
+
+That reported path must be **openable by Monarr as-is**:
+
+- Same host / same container namespace: nothing to do.
+- Docker: mount the download folder into the Monarr container at the same
+  path the client reports (identical volume mounts across containers).
+- Client on a different host (or mounted differently): add a **remote
+  path mapping** on the client — `remote` is the prefix the client
+  reports, `local` is where Monarr sees the same files. Example: NZBGet on
+  another box says `/data/completed/...`, the share is mounted in Monarr's
+  container at `/pool/downloads/...` → map `/data/completed` →
+  `/pool/downloads`.
+
+A failed import with `payload missing` means the reported path wasn't
+visible — fix the mount or add a mapping.
 
 ## Quality profiles
 
@@ -127,6 +147,7 @@ Already-in-library entries are skipped, never duplicated.
 | `backlog.search` | 12 h | active search for wanted items |
 | `library.reconcile` | 12 h | disk scan |
 | `importlists.sync` | 12 h | import list sync |
+| `metadata.refresh` | 12 h | re-hydrates every item from its provider: new episodes for continuing series, poster/status/**rating** updates |
 | `backup.run` | 24 h | SQLite `VACUUM INTO` snapshot |
 | `db.wal-checkpoint` | 1 h | WAL checkpoint |
 

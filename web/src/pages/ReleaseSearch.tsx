@@ -78,7 +78,18 @@ export function ReleaseSearch(props: {
             {search.data.map((c) => (
               <tr key={`${c.indexer}-${c.title}`} className={c.accepted ? '' : 'row-rejected'}>
                 <td className="mono">
-                  {c.title}
+                  {c.infoUrl ? (
+                    <a
+                      href={c.infoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Open the release's page on the indexer (new tab)"
+                    >
+                      {c.title}
+                    </a>
+                  ) : (
+                    c.title
+                  )}
                   {c.rejections.map((r) => (
                     <div key={r.code} className="error-text">
                       ✕ {r.reason}

@@ -43,7 +43,8 @@ test('add a series with hydrated seasons and episodes', async ({ page }) => {
   await page.getByRole('button', { name: 'Add', exact: true }).click()
 
   await expect(page.getByRole('heading', { name: /The Test Show/ })).toBeVisible()
-  await expect(page.getByText('0/2 on disk')).toBeVisible()
+  // Appears twice now: the season summary and the Status completeness pill.
+  await expect(page.getByText('0/2 on disk').first()).toBeVisible()
   await expect(page.getByRole('cell', { name: 'Pilot' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'Finale' })).toBeVisible()
 })
@@ -102,7 +103,7 @@ test('disk scan links episode files and reports unmatched folders', async ({ pag
   // The series detail now shows the file against S01E01.
   await page.goto('/')
   await page.getByText('The Test Show').click()
-  await expect(page.getByText('1/2 on disk')).toBeVisible()
+  await expect(page.getByText('1/2 on disk').first()).toBeVisible()
   await expect(page.getByRole('cell', { name: /S01E01/ })).toBeVisible()
 
   // And the library page surfaces the unmatched folder.

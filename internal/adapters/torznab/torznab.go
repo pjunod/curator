@@ -43,6 +43,7 @@ type item struct {
 	Title     string `xml:"title"`
 	Link      string `xml:"link"`
 	GUID      string `xml:"guid"`
+	Comments  string `xml:"comments"`
 	PubDate   string `xml:"pubDate"`
 	Size      int64  `xml:"size"`
 	Enclosure struct {
@@ -139,7 +140,7 @@ func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Rele
 			Indexer:   c.cfg.Name,
 			IndexerID: c.cfg.ID,
 			Protocol:  c.cfg.Protocol,
-			InfoURL:   it.GUID,
+			InfoURL:   infoURL(it.Comments, it.GUID),
 		}
 		if r.DownloadURL = it.Enclosure.URL; r.DownloadURL == "" {
 			r.DownloadURL = it.Link
@@ -170,6 +171,18 @@ func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Rele
 		}
 	}
 	return out, nil
+}
+
+// infoURL picks the release's human details page: <comments> is the
+// canonical Newznab field, <guid> is usually a permalink too — but only
+// when it actually is a URL (isPermaLink="false" feeds carry opaque ids).
+func infoURL(comments, guid string) string {
+	for _, cand := range []string{strings.TrimSpace(comments), strings.TrimSpace(guid)} {
+		if strings.HasPrefix(cand, "http://") || strings.HasPrefix(cand, "https://") {
+			return cand
+		}
+	}
+	return ""
 }
 
 // Test implements ports.Indexer via t=caps, which every implementation

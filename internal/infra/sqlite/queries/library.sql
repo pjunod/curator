@@ -3,9 +3,21 @@ INSERT INTO media_items (
     kind, title, sort_title, year, author,
     tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin,
     overview, poster_path, backdrop_path, genres, status, release_date, runtime,
+    rating, rating_votes,
     monitored, quality_profile_id, root_folder_id, path, ended, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
+
+-- name: UpdateMediaItemMetadata :exec
+-- The metadata.refresh path: re-hydrated provider fields only. Library
+-- placement (monitored, profile, root folder, path) is never touched.
+UPDATE media_items SET
+    title = ?, sort_title = ?, year = ?, author = ?,
+    imdb_id = ?, tvdb_id = ?, isbn13 = ?, asin = ?,
+    overview = ?, poster_path = ?, backdrop_path = ?, genres = ?,
+    status = ?, release_date = ?, runtime = ?,
+    rating = ?, rating_votes = ?, ended = ?, updated_at = ?
+WHERE id = ?;
 
 -- name: GetMediaItem :one
 SELECT * FROM media_items WHERE id = ?;
@@ -22,11 +34,35 @@ SELECT * FROM media_items ORDER BY sort_title, year;
 -- name: ListMediaItemsByKind :many
 SELECT * FROM media_items WHERE kind = ? ORDER BY sort_title, year;
 
+-- name: ListMediaItemStats :many
+-- Completeness per item for list views: monitored aired episodes vs the
+-- subset with a file, plus the raw file count (movies/books use that).
+SELECT
+    m.id,
+    (SELECT COUNT(*) FROM episodes e
+      WHERE e.media_item_id = m.id AND e.monitored = 1
+        AND e.air_date != '' AND e.air_date <= sqlc.arg(today)) AS aired_episodes,
+    (SELECT COUNT(DISTINCT mfe.episode_id)
+       FROM media_file_episodes mfe
+       JOIN episodes e2 ON e2.id = mfe.episode_id
+      WHERE e2.media_item_id = m.id AND e2.monitored = 1
+        AND e2.air_date != '' AND e2.air_date <= sqlc.arg(today)) AS have_episodes,
+    (SELECT COUNT(*) FROM media_files f WHERE f.media_item_id = m.id) AS files
+FROM media_items m;
+
 -- name: DeleteMediaItem :exec
 DELETE FROM media_items WHERE id = ?;
 
 -- name: TouchMediaItem :exec
 UPDATE media_items SET updated_at = ? WHERE id = ?;
+
+-- name: UpdateMediaItemPlacement :exec
+-- Per-item edit: monitoring, profile, and where the item lives. Files on
+-- disk are never moved by this.
+UPDATE media_items SET
+    monitored = ?, quality_profile_id = ?, root_folder_id = ?, path = ?,
+    updated_at = ?
+WHERE id = ?;
 
 -- name: InsertSeason :one
 INSERT INTO seasons (media_item_id, number, monitored)
@@ -42,6 +78,24 @@ INSERT INTO episodes (
     title, air_date, monitored
 ) VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
+
+-- name: UpsertSeasonKeepFlags :exec
+-- Refresh path: new seasons appear, existing ones keep their monitored flag.
+INSERT INTO seasons (media_item_id, number, monitored)
+VALUES (?, ?, ?)
+ON CONFLICT (media_item_id, number) DO NOTHING;
+
+-- name: UpsertEpisodeMeta :exec
+-- Refresh path: provider metadata updates in place; the user's monitored
+-- flag survives, and rows are never deleted (files may point at them).
+INSERT INTO episodes (
+    media_item_id, season_number, episode_number, absolute_num,
+    title, air_date, monitored
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (media_item_id, season_number, episode_number) DO UPDATE SET
+    absolute_num = excluded.absolute_num,
+    title        = excluded.title,
+    air_date     = excluded.air_date;
 
 -- name: ListEpisodes :many
 SELECT * FROM episodes WHERE media_item_id = ?

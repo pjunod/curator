@@ -183,3 +183,63 @@ func TestFilesAndEpisodeLinks(t *testing.T) {
 		t.Errorf("after orphan upsert: %+v", all)
 	}
 }
+
+func TestListMediaItemStats(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Series: 2 monitored aired episodes (plus an unaired one and an
+	// unmonitored special), one episode has a file.
+	s := sampleSeries()
+	s.Seasons[1].Episodes = append(s.Seasons[1].Episodes,
+		domain.Episode{SeasonNumber: 1, EpisodeNumber: 3, Title: "Future", AirDate: "2999-01-01", Monitored: true})
+	seriesID, err := db.CreateMediaItem(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep1, err := db.GetEpisodeID(ctx, seriesID, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileID, err := db.UpsertFile(ctx, seriesID, "/library/tv/Test Show/S01E01.mkv", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReplaceFileEpisodeLinks(ctx, fileID, []int64{ep1}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Movie with a file, and a movie without.
+	movieID, err := db.CreateMediaItem(ctx, domain.MediaItem{
+		Kind: domain.KindMovie, Title: "Have", SortTitle: "have", IDs: domain.ExternalIDs{TMDB: 1}, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpsertFile(ctx, movieID, "/library/movies/Have/have.mkv", 200); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreateMediaItem(ctx, domain.MediaItem{
+		Kind: domain.KindMovie, Title: "Missing", SortTitle: "missing", IDs: domain.ExternalIDs{TMDB: 2}, Monitored: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := db.ListMediaItems(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := map[string]domain.MediaItem{}
+	for _, it := range items {
+		byTitle[it.Title] = it
+	}
+	show := byTitle["Test Show"]
+	if show.EpisodeCount != 2 || show.EpisodeFileCount != 1 || show.FileCount != 1 {
+		t.Errorf("series stats = %d/%d files=%d, want 1 of 2 aired with 1 file",
+			show.EpisodeFileCount, show.EpisodeCount, show.FileCount)
+	}
+	if byTitle["Have"].FileCount != 1 || byTitle["Missing"].FileCount != 0 {
+		t.Errorf("movie stats: have=%d missing=%d",
+			byTitle["Have"].FileCount, byTitle["Missing"].FileCount)
+	}
+}

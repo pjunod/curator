@@ -1,13 +1,145 @@
 import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
-import { autoSearchItem, deleteLibraryItem, fmtBytes, getLibraryItem, posterUrl } from '../api'
+import {
+  ACTIVE_DOWNLOAD_STATES,
+  autoSearchItem,
+  completeness,
+  deleteLibraryItem,
+  fmtBytes,
+  fmtRating,
+  getLibraryItem,
+  getProfiles,
+  getQueue,
+  getRootFolders,
+  posterUrl,
+  refreshLibraryItem,
+  updateLibraryItem,
+} from '../api'
+import type { MediaItemDetail } from '../api'
 import { ReleaseSearch } from './ReleaseSearch'
+
+// externalLinks builds the provider pages for an item — always new-tab.
+function externalLinks(m: MediaItemDetail): { label: string; href: string }[] {
+  const out: { label: string; href: string }[] = []
+  if (m.ids.imdb) out.push({ label: 'IMDb', href: `https://www.imdb.com/title/${m.ids.imdb}/` })
+  if (m.ids.tmdb) {
+    const kind = m.kind === 'series' ? 'tv' : 'movie'
+    if (m.kind !== 'book')
+      out.push({ label: 'TMDB', href: `https://www.themoviedb.org/${kind}/${m.ids.tmdb}` })
+  }
+  if (m.ids.tvdb)
+    out.push({ label: 'TVDB', href: `https://thetvdb.com/dereferrer/series/${m.ids.tvdb}` })
+  if (m.ids.olid)
+    out.push({ label: 'Open Library', href: `https://openlibrary.org/works/${m.ids.olid}` })
+  return out
+}
+
+// EditPanel: per-item edits — monitoring, quality profile, and location.
+function EditPanel(props: { item: MediaItemDetail; onClose: () => void }) {
+  const { item } = props
+  const qc = useQueryClient()
+  const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
+  const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
+
+  const [monitored, setMonitored] = useState(item.monitored)
+  const [profileId, setProfileId] = useState(item.qualityProfileId)
+  const [rootId, setRootId] = useState<number>(item.rootFolderId)
+  const [path, setPath] = useState(item.path)
+
+  const save = useMutation({
+    mutationFn: () => {
+      const req: Parameters<typeof updateLibraryItem>[1] = {
+        monitored,
+        qualityProfileId: profileId,
+      }
+      if (rootId !== item.rootFolderId) req.rootFolderId = rootId
+      // An explicit path edit wins over the root-folder recompute.
+      if (path !== item.path) req.path = path
+      return updateLibraryItem(item.id, req)
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+      props.onClose()
+    },
+  })
+
+  return (
+    <section className="panel">
+      <h2>
+        Edit
+        <button style={{ marginLeft: 'auto' }} onClick={props.onClose}>
+          Close
+        </button>
+      </h2>
+      {save.isError && <div className="banner warning">{String((save.error as Error).message)}</div>}
+      <div className="form-grid">
+        <label>
+          Monitored
+          <input
+            type="checkbox"
+            checked={monitored}
+            onChange={(e) => setMonitored(e.target.checked)}
+          />
+        </label>
+        <label>
+          Quality profile
+          <select value={profileId} onChange={(e) => setProfileId(Number(e.target.value))}>
+            {profiles.data?.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Root folder
+          <select
+            value={rootId}
+            onChange={(e) => {
+              const id = Number(e.target.value)
+              setRootId(id)
+              // Recomputing happens server-side; clear the manual path so
+              // the root choice takes effect unless the user retypes one.
+              if (id !== item.rootFolderId) setPath('')
+            }}
+          >
+            <option value={0}>(none)</option>
+            {roots.data?.map((rf) => (
+              <option key={rf.id} value={rf.id}>
+                {rf.path}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Folder path
+          <input
+            type="text"
+            placeholder={rootId !== item.rootFolderId ? '(recomputed from root folder)' : ''}
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+          />
+        </label>
+      </div>
+      <p className="muted">Files already on disk are never moved by an edit.</p>
+      <div className="head-actions">
+        <button className="btn-accent" disabled={save.isPending} onClick={() => save.mutate()}>
+          Save
+        </button>
+        <button onClick={props.onClose}>Cancel</button>
+      </div>
+    </section>
+  )
+}
 
 export function MediaDetailPage() {
   const { id } = useParams({ from: '/library/$id' })
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const [confirming, setConfirming] = useState(false)
+  const [editing, setEditing] = useState(false)
   // Interactive search target: null = closed; {season?, episode?} = open.
   const [searching, setSearching] = useState<{ season?: number; episode?: number } | null>(null)
 
@@ -15,6 +147,8 @@ export function MediaDetailPage() {
     queryKey: ['library-item', id],
     queryFn: () => getLibraryItem(Number(id)),
   })
+  const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
+  const queue = useQuery({ queryKey: ['queue'], queryFn: getQueue, refetchInterval: 15_000 })
 
   const del = useMutation({
     mutationFn: () => deleteLibraryItem(Number(id)),
@@ -26,12 +160,41 @@ export function MediaDetailPage() {
     onSuccess: () => setAutoMsg('Searching in the background — grabs appear under Activity.'),
     onError: (e) => setAutoMsg(`✕ ${(e as Error).message}`),
   })
+  const refresh = useMutation({
+    mutationFn: () => refreshLibraryItem(Number(id)),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['library-item', id] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+      setAutoMsg('Metadata refreshed from the provider.')
+    },
+    onError: (e) => setAutoMsg(`✕ ${(e as Error).message}`),
+  })
 
   if (item.isLoading) return <p className="muted">Loading…</p>
   if (item.isError || !item.data) return <div className="banner warning">Item not found.</div>
 
   const m = item.data
   const fileCount = m.files.length
+  const profileName = profiles.data?.find((p) => p.id === m.qualityProfileId)?.name
+  const inFlight =
+    queue.data?.filter(
+      (q) => q.mediaItemId === m.id && ACTIVE_DOWNLOAD_STATES.includes(q.state),
+    ).length ?? 0
+  const links = externalLinks(m)
+
+  // Completeness: for series count monitored episodes aired to date.
+  const today = new Date().toISOString().slice(0, 10)
+  let epAired = 0
+  let epHave = 0
+  for (const season of m.seasons) {
+    for (const e of season.episodes) {
+      if (e.monitored && e.airDate && e.airDate <= today) {
+        epAired++
+        if (e.hasFile) epHave++
+      }
+    }
+  }
+  const comp = completeness(m.kind, epHave, epAired, fileCount)
 
   return (
     <>
@@ -58,16 +221,72 @@ export function MediaDetailPage() {
             {m.genres.length > 0 && <span>{m.genres.join(', ')}</span>}
           </div>
           <p className="detail-overview">{m.overview}</p>
-          <div className="muted detail-facts">
-            {m.path ? <span className="mono">{m.path}</span> : <span>no folder assigned</span>}
-            <span>{m.monitored ? 'monitored' : 'unmonitored'}</span>
-            <span>
-              {fileCount} file{fileCount === 1 ? '' : 's'}
-            </span>
-            {m.ids.imdb && <span className="mono">{m.ids.imdb}</span>}
-            {m.ids.isbn13 && <span className="mono">ISBN {m.ids.isbn13}</span>}
-            {m.ids.olid && <span className="mono">{m.ids.olid}</span>}
+
+          <div className="fact-grid">
+            <div className="fact-label">Location</div>
+            <div>
+              {m.path ? (
+                <code className="path-chip" title="The folder this item's files live in (or will land in on import)">
+                  {m.path}
+                </code>
+              ) : (
+                <span className="muted">no folder assigned — set one via Edit</span>
+              )}
+            </div>
+
+            <div className="fact-label">Status</div>
+            <div className="fact-pills">
+              <span className={`pill ${m.monitored ? 'pill-ok' : 'pill-neutral'}`}>
+                {m.monitored ? 'monitored' : 'unmonitored'}
+              </span>
+              <span
+                className={`pill ${comp.cls}`}
+                title={
+                  m.kind === 'series'
+                    ? 'Monitored episodes aired to date that are on disk'
+                    : 'Whether the item is on disk'
+                }
+              >
+                {comp.total === 0 ? 'nothing aired yet' : `${comp.have}/${comp.total} on disk`}
+              </span>
+              {inFlight > 0 && (
+                <Link to="/activity" className="pill pill-info" title="Downloads in flight for this item">
+                  ↓ {inFlight} downloading
+                </Link>
+              )}
+            </div>
+
+            <div className="fact-label">Profile</div>
+            <div>
+              {profileName ?? `#${m.qualityProfileId}`}
+              <span className="muted"> — quality target for grabs and upgrades</span>
+            </div>
+
+            {m.ratingVotes > 0 && (
+              <>
+                <div className="fact-label">Rating</div>
+                <div>
+                  ★ {fmtRating(m.kind, m.rating)}{' '}
+                  <span className="muted">({m.ratingVotes.toLocaleString()} votes)</span>
+                </div>
+              </>
+            )}
+
+            {(links.length > 0 || m.ids.isbn13) && (
+              <>
+                <div className="fact-label">Links</div>
+                <div className="fact-pills">
+                  {links.map((l) => (
+                    <a key={l.label} href={l.href} target="_blank" rel="noreferrer">
+                      {l.label} ↗
+                    </a>
+                  ))}
+                  {m.ids.isbn13 && <span className="muted mono">ISBN {m.ids.isbn13}</span>}
+                </div>
+              </>
+            )}
           </div>
+
           <div className="detail-actions">
             <button
               className="btn-accent"
@@ -78,10 +297,16 @@ export function MediaDetailPage() {
               Auto search
             </button>
             {(m.kind === 'movie' || m.kind === 'book') && (
-              <button onClick={() => setSearching({})}>
-                Interactive search
-              </button>
+              <button onClick={() => setSearching({})}>Interactive search</button>
             )}
+            <button onClick={() => setEditing(true)}>Edit</button>
+            <button
+              title="Re-fetch metadata from the provider (new episodes, poster, rating, …)"
+              disabled={refresh.isPending}
+              onClick={() => refresh.mutate()}
+            >
+              {refresh.isPending ? 'Refreshing…' : 'Refresh metadata'}
+            </button>
             {!confirming ? (
               <button onClick={() => setConfirming(true)}>Remove from library</button>
             ) : (
@@ -97,6 +322,8 @@ export function MediaDetailPage() {
       </div>
 
       {autoMsg && <div className="banner">{autoMsg}</div>}
+
+      {editing && <EditPanel item={m} onClose={() => setEditing(false)} />}
 
       {searching && (
         <ReleaseSearch

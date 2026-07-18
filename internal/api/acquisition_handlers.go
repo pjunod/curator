@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
@@ -160,6 +161,17 @@ func clientInputToConfig(in apigen.DownloadClientInput) ports.ClientConfig {
 	if in.Enabled != nil {
 		cfg.Enabled = *in.Enabled
 	}
+	if in.PathMappings != nil {
+		for _, m := range *in.PathMappings {
+			// Blank halves are form noise, not a mapping.
+			if strings.TrimSpace(m.Remote) == "" || strings.TrimSpace(m.Local) == "" {
+				continue
+			}
+			cfg.PathMappings = append(cfg.PathMappings, ports.PathMapping{
+				Remote: strings.TrimSpace(m.Remote), Local: strings.TrimSpace(m.Local),
+			})
+		}
+	}
 	return cfg
 }
 
@@ -169,10 +181,18 @@ func clientDTO(c ports.ClientConfig) apigen.DownloadClientConfig {
 	if c.Password != "" {
 		masked = "••••"
 	}
-	return apigen.DownloadClientConfig{
+	out := apigen.DownloadClientConfig{
 		Id: c.ID, Type: apigen.DownloadClientConfigType(c.Type), Name: c.Name, Url: c.URL,
 		Username: &user, Password: &masked, Category: &cat, Enabled: &enabled,
 	}
+	if len(c.PathMappings) > 0 {
+		maps := make([]apigen.PathMapping, 0, len(c.PathMappings))
+		for _, m := range c.PathMappings {
+			maps = append(maps, apigen.PathMapping{Remote: m.Remote, Local: m.Local})
+		}
+		out.PathMappings = &maps
+	}
+	return out
 }
 
 // ListDownloadClients implements GET /downloadclients.

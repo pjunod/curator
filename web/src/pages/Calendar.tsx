@@ -5,25 +5,33 @@ import { getCalendar } from '../api'
 import type { CalendarEntry } from '../api'
 
 function iso(d: Date): string {
-  return d.toISOString().slice(0, 10)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-function shiftDays(base: Date, days: number): Date {
-  const d = new Date(base)
-  d.setDate(d.getDate() + days)
-  return d
-}
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
 
-// Agenda-style calendar: airing episodes and movie/book releases grouped by
-// day over a sliding window.
+// A real month-grid calendar (Sonarr-style): the grid always renders;
+// airing episodes and movie/book release dates land on their days.
 export function CalendarPage() {
-  const [anchor, setAnchor] = useState(() => new Date())
-  const start = shiftDays(anchor, -7)
-  const end = shiftDays(anchor, 30)
+  const [anchor, setAnchor] = useState(() => {
+    const d = new Date()
+    return new Date(d.getFullYear(), d.getMonth(), 1)
+  })
+
+  // Grid spans full weeks around the month.
+  const gridStart = new Date(anchor)
+  gridStart.setDate(1 - gridStart.getDay())
+  const monthEnd = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0)
+  const gridEnd = new Date(monthEnd)
+  gridEnd.setDate(monthEnd.getDate() + (6 - monthEnd.getDay()))
 
   const entries = useQuery({
-    queryKey: ['calendar', iso(start), iso(end)],
-    queryFn: () => getCalendar(iso(start), iso(end)),
+    queryKey: ['calendar', iso(gridStart), iso(gridEnd)],
+    queryFn: () => getCalendar(iso(gridStart), iso(gridEnd)),
   })
 
   const byDate = new Map<string, CalendarEntry[]>()
@@ -31,60 +39,76 @@ export function CalendarPage() {
     const key = e.date.slice(0, 10)
     byDate.set(key, [...(byDate.get(key) ?? []), e])
   }
-  const dates = [...byDate.keys()].sort()
+
+  const days: Date[] = []
+  for (let d = new Date(gridStart); d <= gridEnd; d.setDate(d.getDate() + 1)) {
+    days.push(new Date(d))
+  }
   const today = iso(new Date())
+  const shiftMonth = (n: number) =>
+    setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + n, 1))
 
   return (
     <>
       <header className="page-head">
         <h1>Calendar</h1>
         <div className="head-actions">
-          <button onClick={() => setAnchor(shiftDays(anchor, -30))}>← Earlier</button>
-          <button onClick={() => setAnchor(new Date())}>Today</button>
-          <button onClick={() => setAnchor(shiftDays(anchor, 30))}>Later →</button>
+          <button onClick={() => shiftMonth(-1)}>←</button>
+          <button
+            onClick={() => {
+              const d = new Date()
+              setAnchor(new Date(d.getFullYear(), d.getMonth(), 1))
+            }}
+          >
+            Today
+          </button>
+          <button onClick={() => shiftMonth(1)}>→</button>
         </div>
       </header>
-      <p className="muted">
-        {iso(start)} → {iso(end)}
-      </p>
-
-      {entries.isLoading && <p className="muted">Loading…</p>}
-      {entries.data?.length === 0 && (
-        <p className="muted">Nothing airing or releasing in this window.</p>
+      <h2 style={{ marginBottom: 10 }}>
+        {MONTHS[anchor.getMonth()]} {anchor.getFullYear()}
+        {entries.isFetching && <span className="muted"> · loading…</span>}
+      </h2>
+      {entries.isError && (
+        <div className="banner warning">{String((entries.error as Error).message)}</div>
       )}
 
-      {dates.map((date) => (
-        <section key={date} className="panel">
-          <h2>
-            {date}
-            {date === today && <span className="pill pill-ok" style={{ marginLeft: 8 }}>today</span>}
-          </h2>
-          <table>
-            <tbody>
-              {byDate.get(date)!.map((e, i) => (
-                <tr key={`${e.mediaItemId}-${e.detail}-${i}`}>
-                  <td style={{ width: 90 }}>
-                    <span className="pill pill-neutral">{e.kind}</span>
-                  </td>
-                  <td>
-                    <Link to="/library/$id" params={{ id: String(e.mediaItemId) }}>
-                      {e.title}
-                    </Link>{' '}
-                    {e.detail && <span className="muted">{e.detail}</span>}
-                  </td>
-                  <td style={{ width: 60 }}>
-                    {e.hasFile ? (
-                      <span className="pill pill-ok">✓</span>
-                    ) : (
-                      <span className="muted">—</span>
-                    )}
-                  </td>
-                </tr>
+      <div className="cal-grid">
+        {DOW.map((d) => (
+          <div key={d} className="cal-dow">
+            {d}
+          </div>
+        ))}
+        {days.map((d) => {
+          const key = iso(d)
+          const inMonth = d.getMonth() === anchor.getMonth()
+          const dayEntries = byDate.get(key) ?? []
+          return (
+            <div
+              key={key}
+              className={`cal-cell${inMonth ? '' : ' cal-out'}${key === today ? ' cal-today' : ''}`}
+            >
+              <div className="cal-daynum">{d.getDate()}</div>
+              {dayEntries.map((e, i) => (
+                <Link
+                  key={`${e.mediaItemId}-${i}`}
+                  to="/library/$id"
+                  params={{ id: String(e.mediaItemId) }}
+                  className={`cal-entry${e.hasFile ? ' cal-have' : ''}`}
+                  title={`${e.title}${e.detail ? ` — ${e.detail}` : ''} (${e.kind}${e.hasFile ? ', on disk' : ''})`}
+                >
+                  <span className="cal-entry-title">{e.title}</span>
+                  {e.detail && <span className="cal-entry-detail">{e.detail}</span>}
+                </Link>
               ))}
-            </tbody>
-          </table>
-        </section>
-      ))}
+            </div>
+          )
+        })}
+      </div>
+      <p className="muted" style={{ marginTop: 10 }}>
+        Episode air dates and movie/book release dates for items in your library.
+        Filled entries are on disk; outlined ones aren't (yet).
+      </p>
     </>
   )
 }

@@ -168,6 +168,8 @@ type movieResp struct {
 	BackdropPath string  `json:"backdrop_path"`
 	Genres       []genre `json:"genres"`
 	IMDBID       string  `json:"imdb_id"`
+	VoteAverage  float64 `json:"vote_average"`
+	VoteCount    int     `json:"vote_count"`
 }
 
 type tvResp struct {
@@ -180,6 +182,8 @@ type tvResp struct {
 	BackdropPath   string  `json:"backdrop_path"`
 	Genres         []genre `json:"genres"`
 	EpisodeRunTime []int   `json:"episode_run_time"`
+	VoteAverage    float64 `json:"vote_average"`
+	VoteCount      int     `json:"vote_count"`
 	Seasons        []struct {
 		SeasonNumber int `json:"season_number"`
 	} `json:"seasons"`
@@ -259,6 +263,8 @@ func (c *Client) GetMovie(ctx context.Context, tmdbID int64) (domain.MediaItem, 
 		Status:       resp.Status,
 		ReleaseDate:  resp.ReleaseDate,
 		Runtime:      resp.Runtime,
+		Rating:       resp.VoteAverage,
+		RatingVotes:  resp.VoteCount,
 	}, nil
 }
 
@@ -288,6 +294,8 @@ func (c *Client) GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem,
 		Status:       resp.Status,
 		ReleaseDate:  resp.FirstAirDate,
 		Runtime:      runtime,
+		Rating:       resp.VoteAverage,
+		RatingVotes:  resp.VoteCount,
 		Ended:        strings.EqualFold(resp.Status, "Ended") || strings.EqualFold(resp.Status, "Canceled"),
 	}
 

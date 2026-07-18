@@ -18,8 +18,10 @@
   --error: #e05d5d;
 }
 
+/* System light preference — unless the user forced dark. Keep this block
+   identical to :root[data-theme='light'] below. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme='dark']) {
     color-scheme: light;
     --bg: #f4f5f8;
     --bg-raised: #ffffff;
@@ -34,6 +36,23 @@
     --warning: #99660f;
     --error: #c23b3b;
   }
+}
+
+/* Forced light (theme picker), regardless of system preference. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f5f8;
+  --bg-raised: #ffffff;
+  --bg-hover: #e9ebf1;
+  --border: #d7dbe4;
+  --text: #1b212b;
+  --text-muted: #5b6472;
+  --accent: #6a58d8;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(106, 88, 216, 0.14);
+  --ok: #1f8e5c;
+  --warning: #99660f;
+  --error: #c23b3b;
 }
 
 * {
@@ -707,4 +726,309 @@ h3.muted {
   .content {
     padding: 20px 16px 40px;
   }
+}
+
+/* ---- calendar month grid ---- */
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.cal-dow {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 6px 8px;
+  text-align: center;
+}
+
+.cal-cell {
+  background: var(--bg-raised);
+  min-height: 92px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cal-out {
+  background: var(--bg);
+}
+
+.cal-out .cal-daynum {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.cal-today .cal-daynum {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cal-daynum {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.cal-entry {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.3;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  color: var(--text);
+  text-decoration: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cal-entry:hover {
+  background: var(--accent-soft);
+  text-decoration: none;
+}
+
+.cal-have {
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.cal-entry-title {
+  font-weight: 600;
+}
+
+.cal-entry-detail {
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+/* ---- pill-info (in-flight downloads) ---- */
+.pill-info {
+  background: var(--accent-soft);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a.pill-info:hover {
+  text-decoration: none;
+  filter: brightness(1.15);
+}
+
+/* ---- detail fact grid ---- */
+.fact-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 18px;
+  align-items: baseline;
+  margin: 12px 0 4px;
+  font-size: 13px;
+  max-width: 70ch;
+}
+
+.fact-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.fact-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.path-chip {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  word-break: break-all;
+}
+
+/* ---- poster card badges ---- */
+.poster-card {
+  position: relative;
+}
+
+.poster-chip {
+  position: absolute;
+  top: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(10, 12, 18, 0.72);
+  color: #fff;
+  backdrop-filter: blur(2px);
+}
+
+.chip-left {
+  left: 8px;
+}
+
+.chip-right {
+  right: 8px;
+  color: var(--accent);
+  background: rgba(10, 12, 18, 0.8);
+}
+
+.poster-sub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.poster-sub > span:first-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.poster-sub .pill {
+  flex: none;
+  padding: 1px 8px;
+  font-size: 11px;
+}
+
+/* ---- sidebar: theme picker + global search ---- */
+.theme-picker {
+  display: flex;
+  gap: 4px;
+  margin: 10px 0;
+}
+
+.theme-picker button {
+  flex: 1;
+  padding: 3px 0;
+  font-size: 11px;
+  text-transform: capitalize;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.theme-picker button:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.theme-picker button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.global-search {
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.global-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.global-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.search-results {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  padding: 4px;
+  z-index: 30;
+}
+
+.search-hit {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-hit:hover {
+  background: var(--bg-hover);
+}
+
+.search-hit-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.search-hit-sub {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* ---- edit panel form ---- */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.form-grid input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
 }

@@ -74,7 +74,7 @@ func (q *Queries) GetEpisodeByNumber(ctx context.Context, arg GetEpisodeByNumber
 }
 
 const getMediaItem = `-- name: GetMediaItem :one
-SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author FROM media_items WHERE id = ?
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes FROM media_items WHERE id = ?
 `
 
 func (q *Queries) GetMediaItem(ctx context.Context, id int64) (MediaItem, error) {
@@ -107,12 +107,14 @@ func (q *Queries) GetMediaItem(ctx context.Context, id int64) (MediaItem, error)
 		&i.UpdatedAt,
 		&i.QualityProfileID,
 		&i.Author,
+		&i.Rating,
+		&i.RatingVotes,
 	)
 	return i, err
 }
 
 const getMediaItemByKindOlid = `-- name: GetMediaItemByKindOlid :one
-SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author FROM media_items WHERE kind = ? AND olid = ?
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes FROM media_items WHERE kind = ? AND olid = ?
 `
 
 type GetMediaItemByKindOlidParams struct {
@@ -150,12 +152,14 @@ func (q *Queries) GetMediaItemByKindOlid(ctx context.Context, arg GetMediaItemBy
 		&i.UpdatedAt,
 		&i.QualityProfileID,
 		&i.Author,
+		&i.Rating,
+		&i.RatingVotes,
 	)
 	return i, err
 }
 
 const getMediaItemByKindTmdb = `-- name: GetMediaItemByKindTmdb :one
-SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author FROM media_items WHERE kind = ? AND tmdb_id = ?
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes FROM media_items WHERE kind = ? AND tmdb_id = ?
 `
 
 type GetMediaItemByKindTmdbParams struct {
@@ -193,6 +197,8 @@ func (q *Queries) GetMediaItemByKindTmdb(ctx context.Context, arg GetMediaItemBy
 		&i.UpdatedAt,
 		&i.QualityProfileID,
 		&i.Author,
+		&i.Rating,
+		&i.RatingVotes,
 	)
 	return i, err
 }
@@ -246,8 +252,9 @@ INSERT INTO media_items (
     kind, title, sort_title, year, author,
     tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin,
     overview, poster_path, backdrop_path, genres, status, release_date, runtime,
+    rating, rating_votes,
     monitored, quality_profile_id, root_folder_id, path, ended, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id
 `
 
@@ -270,6 +277,8 @@ type InsertMediaItemParams struct {
 	Status           string
 	ReleaseDate      string
 	Runtime          int64
+	Rating           float64
+	RatingVotes      int64
 	Monitored        int64
 	QualityProfileID int64
 	RootFolderID     sql.NullInt64
@@ -299,6 +308,8 @@ func (q *Queries) InsertMediaItem(ctx context.Context, arg InsertMediaItemParams
 		arg.Status,
 		arg.ReleaseDate,
 		arg.Runtime,
+		arg.Rating,
+		arg.RatingVotes,
 		arg.Monitored,
 		arg.QualityProfileID,
 		arg.RootFolderID,
@@ -498,8 +509,60 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.Nul
 	return items, nil
 }
 
+const listMediaItemStats = `-- name: ListMediaItemStats :many
+SELECT
+    m.id,
+    (SELECT COUNT(*) FROM episodes e
+      WHERE e.media_item_id = m.id AND e.monitored = 1
+        AND e.air_date != '' AND e.air_date <= ?1) AS aired_episodes,
+    (SELECT COUNT(DISTINCT mfe.episode_id)
+       FROM media_file_episodes mfe
+       JOIN episodes e2 ON e2.id = mfe.episode_id
+      WHERE e2.media_item_id = m.id AND e2.monitored = 1
+        AND e2.air_date != '' AND e2.air_date <= ?1) AS have_episodes,
+    (SELECT COUNT(*) FROM media_files f WHERE f.media_item_id = m.id) AS files
+FROM media_items m
+`
+
+type ListMediaItemStatsRow struct {
+	ID            int64
+	AiredEpisodes int64
+	HaveEpisodes  int64
+	Files         int64
+}
+
+// Completeness per item for list views: monitored aired episodes vs the
+// subset with a file, plus the raw file count (movies/books use that).
+func (q *Queries) ListMediaItemStats(ctx context.Context, today string) ([]ListMediaItemStatsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listMediaItemStats, today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMediaItemStatsRow
+	for rows.Next() {
+		var i ListMediaItemStatsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AiredEpisodes,
+			&i.HaveEpisodes,
+			&i.Files,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMediaItems = `-- name: ListMediaItems :many
-SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author FROM media_items ORDER BY sort_title, year
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes FROM media_items ORDER BY sort_title, year
 `
 
 func (q *Queries) ListMediaItems(ctx context.Context) ([]MediaItem, error) {
@@ -538,6 +601,8 @@ func (q *Queries) ListMediaItems(ctx context.Context) ([]MediaItem, error) {
 			&i.UpdatedAt,
 			&i.QualityProfileID,
 			&i.Author,
+			&i.Rating,
+			&i.RatingVotes,
 		); err != nil {
 			return nil, err
 		}
@@ -553,7 +618,7 @@ func (q *Queries) ListMediaItems(ctx context.Context) ([]MediaItem, error) {
 }
 
 const listMediaItemsByKind = `-- name: ListMediaItemsByKind :many
-SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author FROM media_items WHERE kind = ? ORDER BY sort_title, year
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes FROM media_items WHERE kind = ? ORDER BY sort_title, year
 `
 
 func (q *Queries) ListMediaItemsByKind(ctx context.Context, kind string) ([]MediaItem, error) {
@@ -592,6 +657,8 @@ func (q *Queries) ListMediaItemsByKind(ctx context.Context, kind string) ([]Medi
 			&i.UpdatedAt,
 			&i.QualityProfileID,
 			&i.Author,
+			&i.Rating,
+			&i.RatingVotes,
 		); err != nil {
 			return nil, err
 		}
@@ -679,6 +746,133 @@ func (q *Queries) TouchMediaItem(ctx context.Context, arg TouchMediaItemParams) 
 	return err
 }
 
+const updateMediaItemMetadata = `-- name: UpdateMediaItemMetadata :exec
+UPDATE media_items SET
+    title = ?, sort_title = ?, year = ?, author = ?,
+    imdb_id = ?, tvdb_id = ?, isbn13 = ?, asin = ?,
+    overview = ?, poster_path = ?, backdrop_path = ?, genres = ?,
+    status = ?, release_date = ?, runtime = ?,
+    rating = ?, rating_votes = ?, ended = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateMediaItemMetadataParams struct {
+	Title        string
+	SortTitle    string
+	Year         int64
+	Author       string
+	ImdbID       string
+	TvdbID       int64
+	Isbn13       string
+	Asin         string
+	Overview     string
+	PosterPath   string
+	BackdropPath string
+	Genres       string
+	Status       string
+	ReleaseDate  string
+	Runtime      int64
+	Rating       float64
+	RatingVotes  int64
+	Ended        int64
+	UpdatedAt    int64
+	ID           int64
+}
+
+// The metadata.refresh path: re-hydrated provider fields only. Library
+// placement (monitored, profile, root folder, path) is never touched.
+func (q *Queries) UpdateMediaItemMetadata(ctx context.Context, arg UpdateMediaItemMetadataParams) error {
+	_, err := q.db.ExecContext(ctx, updateMediaItemMetadata,
+		arg.Title,
+		arg.SortTitle,
+		arg.Year,
+		arg.Author,
+		arg.ImdbID,
+		arg.TvdbID,
+		arg.Isbn13,
+		arg.Asin,
+		arg.Overview,
+		arg.PosterPath,
+		arg.BackdropPath,
+		arg.Genres,
+		arg.Status,
+		arg.ReleaseDate,
+		arg.Runtime,
+		arg.Rating,
+		arg.RatingVotes,
+		arg.Ended,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const updateMediaItemPlacement = `-- name: UpdateMediaItemPlacement :exec
+UPDATE media_items SET
+    monitored = ?, quality_profile_id = ?, root_folder_id = ?, path = ?,
+    updated_at = ?
+WHERE id = ?
+`
+
+type UpdateMediaItemPlacementParams struct {
+	Monitored        int64
+	QualityProfileID int64
+	RootFolderID     sql.NullInt64
+	Path             string
+	UpdatedAt        int64
+	ID               int64
+}
+
+// Per-item edit: monitoring, profile, and where the item lives. Files on
+// disk are never moved by this.
+func (q *Queries) UpdateMediaItemPlacement(ctx context.Context, arg UpdateMediaItemPlacementParams) error {
+	_, err := q.db.ExecContext(ctx, updateMediaItemPlacement,
+		arg.Monitored,
+		arg.QualityProfileID,
+		arg.RootFolderID,
+		arg.Path,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const upsertEpisodeMeta = `-- name: UpsertEpisodeMeta :exec
+INSERT INTO episodes (
+    media_item_id, season_number, episode_number, absolute_num,
+    title, air_date, monitored
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (media_item_id, season_number, episode_number) DO UPDATE SET
+    absolute_num = excluded.absolute_num,
+    title        = excluded.title,
+    air_date     = excluded.air_date
+`
+
+type UpsertEpisodeMetaParams struct {
+	MediaItemID   int64
+	SeasonNumber  int64
+	EpisodeNumber int64
+	AbsoluteNum   int64
+	Title         string
+	AirDate       string
+	Monitored     int64
+}
+
+// Refresh path: provider metadata updates in place; the user's monitored
+// flag survives, and rows are never deleted (files may point at them).
+func (q *Queries) UpsertEpisodeMeta(ctx context.Context, arg UpsertEpisodeMetaParams) error {
+	_, err := q.db.ExecContext(ctx, upsertEpisodeMeta,
+		arg.MediaItemID,
+		arg.SeasonNumber,
+		arg.EpisodeNumber,
+		arg.AbsoluteNum,
+		arg.Title,
+		arg.AirDate,
+		arg.Monitored,
+	)
+	return err
+}
+
 const upsertMediaFile = `-- name: UpsertMediaFile :one
 INSERT INTO media_files (media_item_id, path, size, added_at)
 VALUES (?, ?, ?, ?)
@@ -705,4 +899,22 @@ func (q *Queries) UpsertMediaFile(ctx context.Context, arg UpsertMediaFileParams
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const upsertSeasonKeepFlags = `-- name: UpsertSeasonKeepFlags :exec
+INSERT INTO seasons (media_item_id, number, monitored)
+VALUES (?, ?, ?)
+ON CONFLICT (media_item_id, number) DO NOTHING
+`
+
+type UpsertSeasonKeepFlagsParams struct {
+	MediaItemID int64
+	Number      int64
+	Monitored   int64
+}
+
+// Refresh path: new seasons appear, existing ones keep their monitored flag.
+func (q *Queries) UpsertSeasonKeepFlags(ctx context.Context, arg UpsertSeasonKeepFlagsParams) error {
+	_, err := q.db.ExecContext(ctx, upsertSeasonKeepFlags, arg.MediaItemID, arg.Number, arg.Monitored)
+	return err
 }

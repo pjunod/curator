@@ -55,6 +55,8 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		Status:           r.Status,
 		ReleaseDate:      r.ReleaseDate,
 		Runtime:          int(r.Runtime),
+		Rating:           r.Rating,
+		RatingVotes:      int(r.RatingVotes),
 		Monitored:        r.Monitored != 0,
 		QualityProfileID: r.QualityProfileID,
 		Path:             r.Path,
@@ -97,6 +99,8 @@ func insertParams(m domain.MediaItem, now time.Time) sqlitegen.InsertMediaItemPa
 		Status:           m.Status,
 		ReleaseDate:      m.ReleaseDate,
 		Runtime:          int64(m.Runtime),
+		Rating:           m.Rating,
+		RatingVotes:      int64(m.RatingVotes),
 		Monitored:        boolInt(m.Monitored),
 		Path:             m.Path,
 		Ended:            boolInt(m.Ended),
@@ -241,7 +245,9 @@ func (d *DB) GetMediaItemByKindOlid(ctx context.Context, kind domain.MediaKind, 
 	return row.ID, nil
 }
 
-// ListMediaItems returns summaries (no children), optionally filtered by kind.
+// ListMediaItems returns summaries (no children), optionally filtered by
+// kind, with completeness stats hydrated (EpisodeCount / EpisodeFileCount /
+// FileCount).
 func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domain.MediaItem, error) {
 	var rows []sqlitegen.MediaItem
 	var err error
@@ -253,11 +259,104 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 	if err != nil {
 		return nil, err
 	}
+	stats, err := d.Read.ListMediaItemStats(ctx, time.Now().Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]sqlitegen.ListMediaItemStatsRow, len(stats))
+	for _, s := range stats {
+		byID[s.ID] = s
+	}
 	out := make([]domain.MediaItem, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, itemToDomain(r))
+		item := itemToDomain(r)
+		if s, ok := byID[r.ID]; ok {
+			item.EpisodeCount = int(s.AiredEpisodes)
+			item.EpisodeFileCount = int(s.HaveEpisodes)
+			item.FileCount = int(s.Files)
+		}
+		out = append(out, item)
 	}
 	return out, nil
+}
+
+// UpdateMediaItemPlacement stores a per-item edit: monitoring, quality
+// profile, root folder, and folder path. Disk is never touched.
+func (d *DB) UpdateMediaItemPlacement(ctx context.Context, m domain.MediaItem) error {
+	p := sqlitegen.UpdateMediaItemPlacementParams{
+		Monitored:        boolInt(m.Monitored),
+		QualityProfileID: m.QualityProfileID,
+		Path:             m.Path,
+		UpdatedAt:        time.Now().UnixMilli(),
+		ID:               m.ID,
+	}
+	if m.RootFolderID != 0 {
+		p.RootFolderID = sql.NullInt64{Int64: m.RootFolderID, Valid: true}
+	}
+	return d.Write.UpdateMediaItemPlacement(ctx, p)
+}
+
+// UpdateMediaItemMetadata rewrites the provider-hydrated fields of an item
+// (the metadata.refresh path). For series it also upserts seasons and
+// episodes: new ones appear, existing ones keep their monitored flags, and
+// nothing is ever deleted — files may point at episode rows.
+func (d *DB) UpdateMediaItemMetadata(ctx context.Context, id int64, m domain.MediaItem) error {
+	genres, _ := json.Marshal(m.Genres)
+	if m.Genres == nil {
+		genres = []byte("[]")
+	}
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+
+	if err := q.UpdateMediaItemMetadata(ctx, sqlitegen.UpdateMediaItemMetadataParams{
+		Title:        m.Title,
+		SortTitle:    m.SortTitle,
+		Year:         int64(m.Year),
+		Author:       m.Author,
+		ImdbID:       m.IDs.IMDB,
+		TvdbID:       m.IDs.TVDB,
+		Isbn13:       m.IDs.ISBN13,
+		Asin:         m.IDs.ASIN,
+		Overview:     m.Overview,
+		PosterPath:   m.PosterPath,
+		BackdropPath: m.BackdropPath,
+		Genres:       string(genres),
+		Status:       m.Status,
+		ReleaseDate:  m.ReleaseDate,
+		Runtime:      int64(m.Runtime),
+		Rating:       m.Rating,
+		RatingVotes:  int64(m.RatingVotes),
+		Ended:        boolInt(m.Ended),
+		UpdatedAt:    time.Now().UnixMilli(),
+		ID:           id,
+	}); err != nil {
+		return err
+	}
+	for _, s := range m.Seasons {
+		if err := q.UpsertSeasonKeepFlags(ctx, sqlitegen.UpsertSeasonKeepFlagsParams{
+			MediaItemID: id, Number: int64(s.Number), Monitored: boolInt(s.Monitored),
+		}); err != nil {
+			return err
+		}
+		for _, e := range s.Episodes {
+			if err := q.UpsertEpisodeMeta(ctx, sqlitegen.UpsertEpisodeMetaParams{
+				MediaItemID:   id,
+				SeasonNumber:  int64(e.SeasonNumber),
+				EpisodeNumber: int64(e.EpisodeNumber),
+				AbsoluteNum:   int64(e.AbsoluteNum),
+				Title:         e.Title,
+				AirDate:       e.AirDate,
+				Monitored:     boolInt(e.Monitored),
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 // DeleteMediaItem removes the item; children cascade.

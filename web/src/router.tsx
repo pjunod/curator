@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Link,
   Outlet,
@@ -7,6 +8,7 @@ import {
   createRouter,
 } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
+import { GlobalSearch } from './globalsearch'
 import { Dashboard } from './pages/Dashboard'
 import { SystemPage } from './pages/System'
 import { LibraryPage } from './pages/Library'
@@ -19,6 +21,49 @@ import { LoginPage } from './pages/Login'
 import { WantedPage } from './pages/Wanted'
 import type { MediaKind } from './api'
 import { getHealth, getStatus } from './api'
+
+type Theme = 'auto' | 'light' | 'dark'
+
+function savedTheme(): Theme {
+  try {
+    const t = localStorage.getItem('monarr-theme')
+    if (t === 'light' || t === 'dark') return t
+  } catch {
+    /* storage unavailable (private mode) — fall through to auto */
+  }
+  return 'auto'
+}
+
+// ThemePicker: manual light/dark override on top of the OS preference.
+// 'auto' clears the override so prefers-color-scheme decides again.
+function ThemePicker() {
+  const [theme, setTheme] = useState<Theme>(savedTheme)
+  const pick = (t: Theme) => {
+    setTheme(t)
+    if (t === 'auto') delete document.documentElement.dataset.theme
+    else document.documentElement.dataset.theme = t
+    try {
+      if (t === 'auto') localStorage.removeItem('monarr-theme')
+      else localStorage.setItem('monarr-theme', t)
+    } catch {
+      /* still applies for this page */
+    }
+  }
+  return (
+    <div className="theme-picker" role="group" aria-label="Theme">
+      {(['auto', 'light', 'dark'] as const).map((t) => (
+        <button
+          key={t}
+          className={t === theme ? 'active' : ''}
+          aria-pressed={t === theme}
+          onClick={() => pick(t)}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 function Layout() {
   const status = useQuery({ queryKey: ['status'], queryFn: getStatus, refetchInterval: 30_000 })
@@ -60,6 +105,8 @@ function Layout() {
           </Link>
         </nav>
         <div className="sidebar-foot">
+          <GlobalSearch />
+          <ThemePicker />
           <div>v{status.data?.version ?? '…'}</div>
           <div className="muted">movies · series · books</div>
         </div>

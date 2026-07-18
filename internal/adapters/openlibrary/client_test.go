@@ -37,6 +37,8 @@ func fixtureServer(t *testing.T) *httptest.Server {
 			serve(w, "work.json")
 		case "/works/OL17091839W/editions.json":
 			serve(w, "editions.json")
+		case "/works/OL17091839W/ratings.json":
+			serve(w, "ratings.json")
 		case "/authors/OL7115219A.json":
 			serve(w, "author.json")
 		default:
@@ -93,6 +95,9 @@ func TestGetBook(t *testing.T) {
 	}
 	if item.SortTitle != "project hail mary" {
 		t.Errorf("sort title = %q", item.SortTitle)
+	}
+	if item.Rating < 4.28 || item.Rating > 4.29 || item.RatingVotes != 206 {
+		t.Errorf("rating = %v (%d votes)", item.Rating, item.RatingVotes)
 	}
 
 	// The "/works/" prefix form works too (search hands back bare ids, but

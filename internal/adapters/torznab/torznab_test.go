@@ -25,9 +25,17 @@ const feed = `<?xml version="1.0" encoding="UTF-8"?>
 <item>
   <title>Test.Show.S01.1080p.BluRay.x264-PACK</title>
   <guid>http://idx/details/2</guid>
+  <comments>http://idx/details/2#comments</comments>
   <link>http://idx/dl/2.torrent</link>
   <size>5368709120</size>
   <pubDate>Thu, 16 Jul 2026 10:00:00 +0000</pubDate>
+</item>
+<item>
+  <title>Test.Show.S01E02.1080p.WEB-DL.x264-GRP</title>
+  <guid isPermaLink="false">opaque-id-3</guid>
+  <link>http://idx/dl/3.torrent</link>
+  <size>1073741824</size>
+  <pubDate>Thu, 16 Jul 2026 11:00:00 +0000</pubDate>
 </item>
 </channel>
 </rss>`
@@ -62,7 +70,7 @@ func TestSearchParsesFeed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rs) != 2 {
+	if len(rs) != 3 {
 		t.Fatalf("releases = %d", len(rs))
 	}
 	r := rs[0]
@@ -73,6 +81,17 @@ func TestSearchParsesFeed(t *testing.T) {
 	}
 	if rs[1].Size != 5368709120 {
 		t.Errorf("size from <size> element: %+v", rs[1])
+	}
+	// Info links: URL guid works, <comments> wins over guid, and an opaque
+	// (isPermaLink="false") guid must not leak into the UI as a dead link.
+	if rs[0].InfoURL != "http://idx/details/1" {
+		t.Errorf("guid info url = %q", rs[0].InfoURL)
+	}
+	if rs[1].InfoURL != "http://idx/details/2#comments" {
+		t.Errorf("comments should win: %q", rs[1].InfoURL)
+	}
+	if rs[2].InfoURL != "" {
+		t.Errorf("opaque guid should give no info url, got %q", rs[2].InfoURL)
 	}
 	// tvsearch with season/ep + categories requested.
 	q := (*queries)[0]

@@ -1,11 +1,42 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import type { MediaKind } from '../api'
+import type { MediaItemSummary, MediaKind } from '../api'
 import {
-  bulkEditLibrary, getLibrary, getProfiles, getScanReport, getSettings,
-  posterUrl, triggerScan,
+  ACTIVE_DOWNLOAD_STATES, bulkEditLibrary, completeness, fmtRating, getLibrary,
+  getProfiles, getQueue, getScanReport, getSettings, posterUrl, triggerScan,
 } from '../api'
+
+// CardBadges: at-a-glance state on a poster — rating, in-flight downloads,
+// and the green/yellow/red completeness pill.
+function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
+  const { m } = props
+  const comp = completeness(m.kind, m.episodeFileCount, m.episodeCount, m.fileCount)
+  return (
+    <>
+      {m.ratingVotes > 0 && (
+        <span className="poster-chip chip-left" title={`${m.ratingVotes.toLocaleString()} votes`}>
+          ★ {fmtRating(m.kind, m.rating)}
+        </span>
+      )}
+      {props.downloading && (
+        <span className="poster-chip chip-right" title="Download in flight">
+          ↓
+        </span>
+      )}
+      <span
+        className={`pill ${comp.cls}`}
+        title={
+          m.kind === 'series'
+            ? 'Monitored episodes aired to date that are on disk'
+            : 'On disk?'
+        }
+      >
+        {comp.total === 0 ? '—' : `${comp.have}/${comp.total}`}
+      </span>
+    </>
+  )
+}
 
 const KIND_TABS: { label: string; kind?: MediaKind }[] = [
   { label: 'All' },
@@ -26,6 +57,12 @@ export function LibraryPage() {
   })
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const report = useQuery({ queryKey: ['scan-report'], queryFn: getScanReport })
+  const queue = useQuery({ queryKey: ['queue'], queryFn: getQueue, refetchInterval: 30_000 })
+  const downloading = new Set(
+    (queue.data ?? [])
+      .filter((q) => ACTIVE_DOWNLOAD_STATES.includes(q.state))
+      .map((q) => q.mediaItemId),
+  )
 
   const scan = useMutation({
     mutationFn: triggerScan,
@@ -189,8 +226,11 @@ export function LibraryPage() {
                 <div className="poster-title" title={m.title}>
                   {m.title}
                 </div>
-                <div className="muted">
-                  {m.kind === 'book' && m.author ? m.author : `${m.year || '—'} · ${m.kind}`}
+                <div className="muted poster-sub">
+                  <span>
+                    {m.kind === 'book' && m.author ? m.author : `${m.year || '—'} · ${m.kind}`}
+                  </span>
+                  <CardBadges m={m} downloading={downloading.has(m.id)} />
                 </div>
               </div>
             </Link>

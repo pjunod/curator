@@ -305,14 +305,17 @@ type CustomFormatInput struct {
 
 // DownloadClientConfig defines model for DownloadClientConfig.
 type DownloadClientConfig struct {
-	Category *string                  `json:"category,omitempty"`
-	Enabled  *bool                    `json:"enabled,omitempty"`
-	Id       int64                    `json:"id"`
-	Name     string                   `json:"name"`
-	Password *string                  `json:"password,omitempty"`
-	Type     DownloadClientConfigType `json:"type"`
-	Url      string                   `json:"url"`
-	Username *string                  `json:"username,omitempty"`
+	Category *string `json:"category,omitempty"`
+	Enabled  *bool   `json:"enabled,omitempty"`
+	Id       int64   `json:"id"`
+	Name     string  `json:"name"`
+	Password *string `json:"password,omitempty"`
+
+	// PathMappings Remote path mappings: when the client runs on another host or container, rewrite the completed-download path it reports into the path Monarr sees the same files at.
+	PathMappings *[]PathMapping           `json:"pathMappings,omitempty"`
+	Type         DownloadClientConfigType `json:"type"`
+	Url          string                   `json:"url"`
+	Username     *string                  `json:"username,omitempty"`
 }
 
 // DownloadClientConfigType defines model for DownloadClientConfig.Type.
@@ -320,13 +323,16 @@ type DownloadClientConfigType string
 
 // DownloadClientInput defines model for DownloadClientInput.
 type DownloadClientInput struct {
-	Category *string                 `json:"category,omitempty"`
-	Enabled  *bool                   `json:"enabled,omitempty"`
-	Name     string                  `json:"name"`
-	Password *string                 `json:"password,omitempty"`
-	Type     DownloadClientInputType `json:"type"`
-	Url      string                  `json:"url"`
-	Username *string                 `json:"username,omitempty"`
+	Category *string `json:"category,omitempty"`
+	Enabled  *bool   `json:"enabled,omitempty"`
+	Name     string  `json:"name"`
+	Password *string `json:"password,omitempty"`
+
+	// PathMappings Remote path mappings: when the client runs on another host or container, rewrite the completed-download path it reports into the path Monarr sees the same files at.
+	PathMappings *[]PathMapping          `json:"pathMappings,omitempty"`
+	Type         DownloadClientInputType `json:"type"`
+	Url          string                  `json:"url"`
+	Username     *string                 `json:"username,omitempty"`
 }
 
 // DownloadClientInputType defines model for DownloadClientInput.Type.
@@ -462,38 +468,60 @@ type MediaItemDetail struct {
 	AddedAt time.Time `json:"addedAt"`
 
 	// Author Books only (ADR 0006); empty for movies/series.
-	Author       string          `json:"author"`
-	BackdropPath string          `json:"backdropPath"`
-	Ended        bool            `json:"ended"`
-	Files        []MediaFileInfo `json:"files"`
-	Genres       []string        `json:"genres"`
-	Id           int64           `json:"id"`
-	Ids          ExternalIds     `json:"ids"`
-	Kind         MediaKind       `json:"kind"`
-	Monitored    bool            `json:"monitored"`
-	Overview     string          `json:"overview"`
-	Path         string          `json:"path"`
-	PosterPath   string          `json:"posterPath"`
-	ReleaseDate  string          `json:"releaseDate"`
-	RootFolderId int64           `json:"rootFolderId"`
-	Runtime      int             `json:"runtime"`
-	Seasons      []SeasonInfo    `json:"seasons"`
-	Status       string          `json:"status"`
-	Title        string          `json:"title"`
-	Year         int             `json:"year"`
+	Author           string          `json:"author"`
+	BackdropPath     string          `json:"backdropPath"`
+	Ended            bool            `json:"ended"`
+	Files            []MediaFileInfo `json:"files"`
+	Genres           []string        `json:"genres"`
+	Id               int64           `json:"id"`
+	Ids              ExternalIds     `json:"ids"`
+	Kind             MediaKind       `json:"kind"`
+	Monitored        bool            `json:"monitored"`
+	Overview         string          `json:"overview"`
+	Path             string          `json:"path"`
+	PosterPath       string          `json:"posterPath"`
+	QualityProfileId int64           `json:"qualityProfileId"`
+
+	// Rating Provider-scale community rating (TMDB /10, Open Library /5).
+	Rating float32 `json:"rating"`
+
+	// RatingVotes 0 means no rating known.
+	RatingVotes  int          `json:"ratingVotes"`
+	ReleaseDate  string       `json:"releaseDate"`
+	RootFolderId int64        `json:"rootFolderId"`
+	Runtime      int          `json:"runtime"`
+	Seasons      []SeasonInfo `json:"seasons"`
+	Status       string       `json:"status"`
+	Title        string       `json:"title"`
+	Year         int          `json:"year"`
 }
 
 // MediaItemSummary defines model for MediaItemSummary.
 type MediaItemSummary struct {
 	// Author Books only (ADR 0006); empty for movies/series.
-	Author     string    `json:"author"`
+	Author string `json:"author"`
+
+	// EpisodeCount Monitored episodes aired to date (series; 0 otherwise).
+	EpisodeCount int `json:"episodeCount"`
+
+	// EpisodeFileCount Of episodeCount, how many have a file.
+	EpisodeFileCount int `json:"episodeFileCount"`
+
+	// FileCount Files on disk for the item (movies/books completeness).
+	FileCount  int       `json:"fileCount"`
 	Id         int64     `json:"id"`
 	Kind       MediaKind `json:"kind"`
 	Monitored  bool      `json:"monitored"`
 	Path       string    `json:"path"`
 	PosterPath string    `json:"posterPath"`
-	Title      string    `json:"title"`
-	Year       int       `json:"year"`
+
+	// Rating Provider-scale community rating (TMDB /10, Open Library /5).
+	Rating float32 `json:"rating"`
+
+	// RatingVotes 0 means no rating known.
+	RatingVotes int    `json:"ratingVotes"`
+	Title       string `json:"title"`
+	Year        int    `json:"year"`
 }
 
 // MediaKind defines model for MediaKind.
@@ -533,6 +561,15 @@ type NotifierInput struct {
 
 // NotifierInputType defines model for NotifierInput.Type.
 type NotifierInputType string
+
+// PathMapping defines model for PathMapping.
+type PathMapping struct {
+	// Local Same location as Monarr sees it.
+	Local string `json:"local"`
+
+	// Remote Path prefix as the download client reports it.
+	Remote string `json:"remote"`
+}
 
 // QualityProfile defines model for QualityProfile.
 type QualityProfile struct {
@@ -682,6 +719,18 @@ type UnmatchedDir struct {
 	RootFolderId int64  `json:"rootFolderId"`
 }
 
+// UpdateMediaItemRequest Per-item edit; absent fields are left as they are.
+type UpdateMediaItemRequest struct {
+	Monitored *bool `json:"monitored,omitempty"`
+
+	// Path Explicit absolute folder; wins over rootFolderId. "" clears it.
+	Path             *string `json:"path,omitempty"`
+	QualityProfileId *int64  `json:"qualityProfileId,omitempty"`
+
+	// RootFolderId Recomputes the item folder; 0 clears the assignment.
+	RootFolderId *int64 `json:"rootFolderId,omitempty"`
+}
+
 // WantedItem defines model for WantedItem.
 type WantedItem struct {
 	Current     string `json:"current"`
@@ -769,6 +818,9 @@ type AddLibraryItemJSONRequestBody = AddMediaRequest
 
 // BulkEditLibraryJSONRequestBody defines body for BulkEditLibrary for application/json ContentType.
 type BulkEditLibraryJSONRequestBody BulkEditLibraryJSONBody
+
+// UpdateLibraryItemJSONRequestBody defines body for UpdateLibraryItem for application/json ContentType.
+type UpdateLibraryItemJSONRequestBody = UpdateMediaItemRequest
 
 // AddNotifierJSONRequestBody defines body for AddNotifier for application/json ContentType.
 type AddNotifierJSONRequestBody = NotifierInput
@@ -871,9 +923,15 @@ type ServerInterface interface {
 	// GetLibraryItem Get one item with seasons, episodes, and files
 	// (GET /library/{id})
 	GetLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// UpdateLibraryItem Edit an item's monitoring, quality profile, or location
+	// (PATCH /library/{id})
+	UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
 	// AutoSearchLibraryItem Search for everything this item wants and grab the best releases
 	// (POST /library/{id}/autosearch)
 	AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// RefreshLibraryItem Re-hydrate this item's metadata from its provider
+	// (POST /library/{id}/refresh)
+	RefreshLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
 	// SearchReleases Interactive search for a movie, episode, or season pack
 	// (GET /library/{id}/releases)
 	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
@@ -1483,6 +1541,32 @@ func (siw *ServerInterfaceWrapper) GetLibraryItem(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateLibraryItem operation middleware
+func (siw *ServerInterfaceWrapper) UpdateLibraryItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateLibraryItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // AutoSearchLibraryItem operation middleware
 func (siw *ServerInterfaceWrapper) AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request) {
 
@@ -1500,6 +1584,32 @@ func (siw *ServerInterfaceWrapper) AutoSearchLibraryItem(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AutoSearchLibraryItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshLibraryItem operation middleware
+func (siw *ServerInterfaceWrapper) RefreshLibraryItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshLibraryItem(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2040,6 +2150,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library", wrapper.AddLibraryItem)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}", wrapper.DeleteLibraryItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}", wrapper.GetLibraryItem)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}", wrapper.UpdateLibraryItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan", wrapper.ScanLibrary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/report", wrapper.GetScanReport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/search", wrapper.SearchMetadata)
@@ -2068,6 +2179,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/importlists", wrapper.AddImportList)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/importlists/{id}", wrapper.DeleteImportList)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/autosearch", wrapper.AutoSearchLibraryItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/bulk", wrapper.BulkEditLibrary)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)

@@ -49,7 +49,7 @@ export function NotifierSettings() {
   })
 
   return (
-    <section className="panel">
+    <section className="panel" id="notifications">
       <h2>Notifications</h2>
       <p className="muted">
         Webhook and Discord targets get grab/import/failure events; Plex and Jellyfin are

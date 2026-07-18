@@ -58,6 +58,11 @@ export interface MediaItemSummary {
   posterPath: string
   monitored: boolean
   path: string
+  rating: number // provider scale: TMDB /10, Open Library /5
+  ratingVotes: number // 0 = no rating known
+  episodeCount: number // monitored episodes aired to date (series)
+  episodeFileCount: number // of those, how many have a file
+  fileCount: number // files on disk (movies/books completeness)
 }
 
 export interface ExternalIds {
@@ -92,19 +97,27 @@ export interface MediaFileInfo {
   episodeIds: number[]
 }
 
-export interface MediaItemDetail extends MediaItemSummary {
+export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' | 'episodeFileCount' | 'fileCount'> {
   backdropPath: string
   overview: string
   genres: string[]
   status: string
   releaseDate: string
   runtime: number
+  qualityProfileId: number
   rootFolderId: number
   ended: boolean
   ids: ExternalIds
   seasons: SeasonInfo[]
   files: MediaFileInfo[]
   addedAt: string
+}
+
+export interface UpdateMediaItemRequest {
+  monitored?: boolean
+  qualityProfileId?: number
+  rootFolderId?: number // recomputes the folder; 0 clears the assignment
+  path?: string // explicit absolute folder; wins over rootFolderId
 }
 
 export interface SearchResult {
@@ -240,6 +253,11 @@ export interface Indexer extends IndexerInput {
   id: number
 }
 
+export interface PathMapping {
+  remote: string // path prefix as the download client reports it
+  local: string // the same location as Monarr sees it
+}
+
 export interface DownloadClientInput {
   type: 'qbittorrent' | 'sabnzbd' | 'transmission' | 'deluge' | 'nzbget'
   name: string
@@ -248,6 +266,7 @@ export interface DownloadClientInput {
   password?: string
   category?: string
   enabled?: boolean
+  pathMappings?: PathMapping[]
 }
 
 export interface DownloadClientConfig extends DownloadClientInput {
@@ -510,3 +529,34 @@ export function composeHostPort(host: string, port: string): string {
 }
 
 export const autoSearchItem = (id: number) => send('POST', `/library/${id}/autosearch`)
+export const refreshLibraryItem = (id: number) =>
+  send<MediaItemDetail>('POST', `/library/${id}/refresh`)
+export const updateLibraryItem = (id: number, req: UpdateMediaItemRequest) =>
+  send<MediaItemDetail>('PATCH', `/library/${id}`, req)
+
+// States that mean a download for the item is in flight right now.
+export const ACTIVE_DOWNLOAD_STATES = ['grabbed', 'downloading', 'importing']
+
+// fmtRating renders a provider-scale rating for display: TMDB rates /10,
+// Open Library rates books /5.
+export function fmtRating(kind: MediaKind, rating: number): string {
+  return kind === 'book' ? `${rating.toFixed(1)}/5` : rating.toFixed(1)
+}
+
+// completeness reduces an item's have/want file state to a pill: green =
+// everything wanted is on disk, yellow = partial, red = nothing, gray =
+// nothing wanted (unaired / no episodes).
+export function completeness(
+  kind: MediaKind,
+  episodeFileCount: number,
+  episodeCount: number,
+  fileCount: number,
+): { have: number; total: number; cls: string } {
+  const total = kind === 'series' ? episodeCount : 1
+  const have = kind === 'series' ? episodeFileCount : fileCount > 0 ? 1 : 0
+  let cls = 'pill-neutral'
+  if (total > 0) {
+    cls = have >= total ? 'pill-ok' : have > 0 ? 'pill-warning' : 'pill-error'
+  }
+  return { have, total, cls }
+}

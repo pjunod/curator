@@ -7,6 +7,17 @@
   "status": "Released",
   "poster_path": "/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg",
   "backdrop_path": "/hZkgoQYus5vegHoetLkCJzb17zJ.jpg",
-  "genres": [{ "id": 18, "name": "Drama" }, { "id": 53, "name": "Thriller" }],
-  "imdb_id": "tt0137523"
+  "genres": [
+    {
+      "id": 18,
+      "name": "Drama"
+    },
+    {
+      "id": 53,
+      "name": "Thriller"
+    }
+  ],
+  "imdb_id": "tt0137523",
+  "vote_average": 8.438,
+  "vote_count": 26280
 }

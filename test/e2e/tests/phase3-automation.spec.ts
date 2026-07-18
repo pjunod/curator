@@ -114,9 +114,12 @@ test('backup task writes a snapshot listed by the API', async ({ request }) => {
     .toBe(true)
 })
 
-test('calendar page renders the agenda', async ({ page }) => {
+test('calendar page renders a month grid', async ({ page }) => {
   await page.goto('/calendar')
   await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible()
+  // The grid always renders: 7 day-of-week headers even with no entries.
+  await expect(page.locator('.cal-dow')).toHaveCount(7)
+  await expect(page.locator('.cal-cell').first()).toBeVisible()
 })
 
 test('wanted page renders with loop status', async ({ page }) => {

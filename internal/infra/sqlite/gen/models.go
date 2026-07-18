@@ -50,15 +50,16 @@ type Download struct {
 }
 
 type DownloadClient struct {
-	ID       int64
-	Type     string
-	Name     string
-	Url      string
-	Username string
-	Password string
-	Category string
-	Enabled  int64
-	AddedAt  int64
+	ID           int64
+	Type         string
+	Name         string
+	Url          string
+	Username     string
+	Password     string
+	Category     string
+	Enabled      int64
+	AddedAt      int64
+	PathMappings string
 }
 
 type Episode struct {
@@ -145,6 +146,8 @@ type MediaItem struct {
 	UpdatedAt        int64
 	QualityProfileID int64
 	Author           string
+	Rating           float64
+	RatingVotes      int64
 }
 
 type Notifier struct {

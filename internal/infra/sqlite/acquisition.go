@@ -118,18 +118,26 @@ func (d *DB) DeleteIndexer(ctx context.Context, id int64) error {
 // ---- download clients ----
 
 func clientFromRow(r sqlitegen.DownloadClient) ports.ClientConfig {
+	var maps []ports.PathMapping
+	_ = json.Unmarshal([]byte(r.PathMappings), &maps)
 	return ports.ClientConfig{
 		ID: r.ID, Type: r.Type, Name: r.Name, URL: r.Url,
 		Username: r.Username, Password: r.Password, Category: r.Category, Enabled: r.Enabled != 0,
+		PathMappings: maps,
 	}
 }
 
 // AddDownloadClient stores a client config.
 func (d *DB) AddDownloadClient(ctx context.Context, c ports.ClientConfig) (int64, error) {
+	maps, _ := json.Marshal(c.PathMappings)
+	if c.PathMappings == nil {
+		maps = []byte("[]")
+	}
 	return d.Write.InsertDownloadClient(ctx, sqlitegen.InsertDownloadClientParams{
 		Type: c.Type, Name: c.Name, Url: c.URL, Username: c.Username,
 		Password: c.Password, Category: c.Category, Enabled: boolInt(c.Enabled),
-		AddedAt: time.Now().UnixMilli(),
+		PathMappings: string(maps),
+		AddedAt:      time.Now().UnixMilli(),
 	})
 }
 

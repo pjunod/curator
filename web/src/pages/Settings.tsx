@@ -57,7 +57,7 @@ export function SettingsPage() {
         <h1>Settings</h1>
       </header>
 
-      <section className="panel">
+      <section className="panel" id="metadata">
         <h2>Metadata provider (TMDB)</h2>
         <p className="muted">
           One key serves movies and TV. Create a free API key at themoviedb.org → Settings → API
@@ -86,7 +86,7 @@ export function SettingsPage() {
         {saveKey.isError && <div className="banner warning">{String((saveKey.error as Error).message)}</div>}
       </section>
 
-      <section className="panel">
+      <section className="panel" id="rootfolders">
         <h2>Root folders</h2>
         <table>
           <thead>
@@ -147,7 +147,7 @@ export function SettingsPage() {
       <NotifierSettings />
       <SecuritySettings />
 
-      <section className="panel">
+      <section className="panel" id="scan">
         <h2>Disk scan</h2>
         <div className="form-row">
           <button onClick={() => scan.mutate()} disabled={scan.isPending}>

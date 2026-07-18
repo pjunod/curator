@@ -44,14 +44,19 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 
 func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 	return apigen.MediaItemSummary{
-		Id:         m.ID,
-		Kind:       apigen.MediaKind(m.Kind),
-		Title:      m.Title,
-		Year:       m.Year,
-		Author:     m.Author,
-		PosterPath: m.PosterPath,
-		Monitored:  m.Monitored,
-		Path:       m.Path,
+		Id:               m.ID,
+		Kind:             apigen.MediaKind(m.Kind),
+		Title:            m.Title,
+		Year:             m.Year,
+		Author:           m.Author,
+		PosterPath:       m.PosterPath,
+		Monitored:        m.Monitored,
+		Path:             m.Path,
+		Rating:           float32(m.Rating),
+		RatingVotes:      m.RatingVotes,
+		EpisodeCount:     m.EpisodeCount,
+		EpisodeFileCount: m.EpisodeFileCount,
+		FileCount:        m.FileCount,
 	}
 }
 
@@ -64,21 +69,24 @@ func optStr(s string) *string {
 
 func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 	d := apigen.MediaItemDetail{
-		Id:           m.ID,
-		Kind:         apigen.MediaKind(m.Kind),
-		Title:        m.Title,
-		Year:         m.Year,
-		PosterPath:   m.PosterPath,
-		BackdropPath: m.BackdropPath,
-		Overview:     m.Overview,
-		Genres:       m.Genres,
-		Status:       m.Status,
-		ReleaseDate:  m.ReleaseDate,
-		Runtime:      m.Runtime,
-		Monitored:    m.Monitored,
-		Path:         m.Path,
-		RootFolderId: m.RootFolderID,
-		Ended:        m.Ended,
+		Id:               m.ID,
+		Kind:             apigen.MediaKind(m.Kind),
+		Title:            m.Title,
+		Year:             m.Year,
+		PosterPath:       m.PosterPath,
+		BackdropPath:     m.BackdropPath,
+		Overview:         m.Overview,
+		Genres:           m.Genres,
+		Status:           m.Status,
+		ReleaseDate:      m.ReleaseDate,
+		Runtime:          m.Runtime,
+		Rating:           float32(m.Rating),
+		RatingVotes:      m.RatingVotes,
+		Monitored:        m.Monitored,
+		QualityProfileId: m.QualityProfileID,
+		Path:             m.Path,
+		RootFolderId:     m.RootFolderID,
+		Ended:            m.Ended,
 		Ids: apigen.ExternalIds{
 			Tmdb: m.IDs.TMDB,
 		},
@@ -200,6 +208,50 @@ func (s *Server) GetLibraryItem(w http.ResponseWriter, r *http.Request, id int64
 	if err != nil {
 		s.libraryErr(w, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, detailDTO(item))
+}
+
+// UpdateLibraryItem implements PATCH /library/{id}: per-item edit of
+// monitoring, quality profile, and location.
+func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id int64) {
+	var body apigen.UpdateLibraryItemJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	item, err := s.deps.Library.UpdateItem(r.Context(), id, library.UpdateRequest{
+		Monitored:        body.Monitored,
+		QualityProfileID: body.QualityProfileId,
+		RootFolderID:     body.RootFolderId,
+		Path:             body.Path,
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "path must be absolute") || strings.Contains(err.Error(), "root folder") {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.libraryErr(w, err)
+		return
+	}
+	// Monitoring and profile edits change what is wanted.
+	if s.deps.Acquisition != nil {
+		s.deps.Acquisition.InvalidateWanted()
+	}
+	writeJSON(w, http.StatusOK, detailDTO(item))
+}
+
+// RefreshLibraryItem implements POST /library/{id}/refresh: re-hydrate the
+// item's metadata from its provider and return the updated detail.
+func (s *Server) RefreshLibraryItem(w http.ResponseWriter, r *http.Request, id int64) {
+	item, err := s.deps.Library.RefreshItem(r.Context(), id)
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	// New episodes may have appeared — the wanted index must notice.
+	if s.deps.Acquisition != nil {
+		s.deps.Acquisition.InvalidateWanted()
 	}
 	writeJSON(w, http.StatusOK, detailDTO(item))
 }

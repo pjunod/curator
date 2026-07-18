@@ -138,6 +138,13 @@ type authorResp struct {
 	Name string `json:"name"`
 }
 
+type ratingsResp struct {
+	Summary struct {
+		Average *float64 `json:"average"` // null when the work has no ratings
+		Count   int      `json:"count"`
+	} `json:"summary"`
+}
+
 type editionsResp struct {
 	Entries []struct {
 		ISBN13      []string `json:"isbn_13"`
@@ -262,6 +269,15 @@ func (c *Client) GetBook(ctx context.Context, olid string) (domain.MediaItem, er
 		var a authorResp
 		if err := c.get(ctx, key+".json", nil, &a); err == nil {
 			item.Author = a.Name
+		}
+	}
+
+	// Community rating (0-5 scale), best-effort — absence is not an error.
+	var ratings ratingsResp
+	if err := c.get(ctx, "/works/"+url.PathEscape(olid)+"/ratings.json", nil, &ratings); err == nil {
+		if ratings.Summary.Average != nil && ratings.Summary.Count > 0 {
+			item.Rating = *ratings.Summary.Average
+			item.RatingVotes = ratings.Summary.Count
 		}
 	}
 

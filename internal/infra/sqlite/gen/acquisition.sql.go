@@ -66,7 +66,7 @@ func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
 }
 
 const getDownloadClient = `-- name: GetDownloadClient :one
-SELECT id, type, name, url, username, password, category, enabled, added_at FROM download_clients WHERE id = ?
+SELECT id, type, name, url, username, password, category, enabled, added_at, path_mappings FROM download_clients WHERE id = ?
 `
 
 func (q *Queries) GetDownloadClient(ctx context.Context, id int64) (DownloadClient, error) {
@@ -82,6 +82,7 @@ func (q *Queries) GetDownloadClient(ctx context.Context, id int64) (DownloadClie
 		&i.Category,
 		&i.Enabled,
 		&i.AddedAt,
+		&i.PathMappings,
 	)
 	return i, err
 }
@@ -167,19 +168,20 @@ func (q *Queries) InsertDownload(ctx context.Context, arg InsertDownloadParams) 
 }
 
 const insertDownloadClient = `-- name: InsertDownloadClient :one
-INSERT INTO download_clients (type, name, url, username, password, category, enabled, added_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+INSERT INTO download_clients (type, name, url, username, password, category, enabled, path_mappings, added_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
 `
 
 type InsertDownloadClientParams struct {
-	Type     string
-	Name     string
-	Url      string
-	Username string
-	Password string
-	Category string
-	Enabled  int64
-	AddedAt  int64
+	Type         string
+	Name         string
+	Url          string
+	Username     string
+	Password     string
+	Category     string
+	Enabled      int64
+	PathMappings string
+	AddedAt      int64
 }
 
 func (q *Queries) InsertDownloadClient(ctx context.Context, arg InsertDownloadClientParams) (int64, error) {
@@ -191,6 +193,7 @@ func (q *Queries) InsertDownloadClient(ctx context.Context, arg InsertDownloadCl
 		arg.Password,
 		arg.Category,
 		arg.Enabled,
+		arg.PathMappings,
 		arg.AddedAt,
 	)
 	var id int64
@@ -299,7 +302,7 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 }
 
 const listDownloadClients = `-- name: ListDownloadClients :many
-SELECT id, type, name, url, username, password, category, enabled, added_at FROM download_clients ORDER BY name
+SELECT id, type, name, url, username, password, category, enabled, added_at, path_mappings FROM download_clients ORDER BY name
 `
 
 func (q *Queries) ListDownloadClients(ctx context.Context) ([]DownloadClient, error) {
@@ -321,6 +324,7 @@ func (q *Queries) ListDownloadClients(ctx context.Context) ([]DownloadClient, er
 			&i.Category,
 			&i.Enabled,
 			&i.AddedAt,
+			&i.PathMappings,
 		); err != nil {
 			return nil, err
 		}

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/naming"
@@ -162,6 +163,158 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	s.log.Info("library: added", "kind", item.Kind, "title", item.Title, "id", id)
 	s.publish(MediaAdded{ID: id, Kind: string(item.Kind), Title: item.Title})
 	return s.db.GetMediaItemFull(ctx, id)
+}
+
+// UpdateRequest is a per-item edit; nil fields are left as they are.
+type UpdateRequest struct {
+	Monitored        *bool
+	QualityProfileID *int64
+	RootFolderID     *int64  // 0 clears the assignment (and the path)
+	Path             *string // explicit folder override; wins over RootFolderID's recompute
+}
+
+// UpdateItem applies a per-item edit: monitoring, quality profile, and
+// location. Changing the root folder recomputes the item folder from the
+// naming rules; files already on disk are never moved.
+func (s *Service) UpdateItem(ctx context.Context, id int64, req UpdateRequest) (domain.MediaItem, error) {
+	item, err := s.db.GetMediaItemFull(ctx, id)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	if req.Monitored != nil {
+		item.Monitored = *req.Monitored
+	}
+	if req.QualityProfileID != nil && *req.QualityProfileID != 0 {
+		item.QualityProfileID = *req.QualityProfileID
+	}
+	if req.RootFolderID != nil {
+		if *req.RootFolderID == 0 {
+			item.RootFolderID = 0
+			item.Path = ""
+		} else {
+			rf, err := s.db.GetRootFolder(ctx, *req.RootFolderID)
+			if err != nil {
+				return domain.MediaItem{}, fmt.Errorf("root folder: %w", err)
+			}
+			item.RootFolderID = rf.ID
+			if item.Kind == domain.KindBook {
+				item.Path = filepath.Join(rf.Path, naming.BookFolder(item.Author, item.Title))
+			} else {
+				item.Path = filepath.Join(rf.Path, naming.FolderName(item.Title, item.Year))
+			}
+		}
+	}
+	if req.Path != nil {
+		p := strings.TrimSpace(*req.Path)
+		if p != "" && !filepath.IsAbs(p) {
+			return domain.MediaItem{}, fmt.Errorf("path must be absolute")
+		}
+		item.Path = filepath.Clean(p)
+		if p == "" {
+			item.Path = ""
+		}
+	}
+	if err := s.db.UpdateMediaItemPlacement(ctx, item); err != nil {
+		return domain.MediaItem{}, err
+	}
+	s.log.Info("library: item updated", "id", id, "title", item.Title,
+		"monitored", item.Monitored, "profile", item.QualityProfileID, "path", item.Path)
+	return s.db.GetMediaItemFull(ctx, id)
+}
+
+// RefreshItem re-hydrates one item from its metadata provider: cached
+// fields (overview, poster, status, rating, …) update in place, series gain
+// newly announced seasons/episodes, and library placement (monitored flags,
+// profile, folder) is untouched. Nothing is ever deleted.
+func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, error) {
+	stored, err := s.db.GetMediaItemFull(ctx, id)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+
+	var fresh domain.MediaItem
+	switch stored.Kind {
+	case domain.KindMovie:
+		fresh, err = s.meta.GetMovie(ctx, stored.IDs.TMDB)
+	case domain.KindSeries:
+		fresh, err = s.meta.GetSeries(ctx, stored.IDs.TMDB)
+	case domain.KindBook:
+		if s.books == nil {
+			return domain.MediaItem{}, ports.ErrProviderNotConfigured
+		}
+		fresh, err = s.books.GetBook(ctx, stored.IDs.OLID)
+	default:
+		return domain.MediaItem{}, fmt.Errorf("%w: %q", ErrUnsupportedKind, stored.Kind)
+	}
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	if fresh.Title == "" {
+		return domain.MediaItem{}, fmt.Errorf("provider returned no title for %q — refresh aborted", stored.Title)
+	}
+
+	// Ids only ever enrich: a provider hiccup must not blank what we know.
+	if fresh.IDs.IMDB == "" {
+		fresh.IDs.IMDB = stored.IDs.IMDB
+	}
+	if fresh.IDs.TVDB == 0 {
+		fresh.IDs.TVDB = stored.IDs.TVDB
+	}
+	if fresh.IDs.ISBN13 == "" {
+		fresh.IDs.ISBN13 = stored.IDs.ISBN13
+	}
+	if fresh.IDs.ASIN == "" {
+		fresh.IDs.ASIN = stored.IDs.ASIN
+	}
+	if fresh.Author == "" {
+		fresh.Author = stored.Author
+	}
+	if fresh.PosterPath == "" {
+		fresh.PosterPath = stored.PosterPath
+	}
+
+	// New seasons default to monitored only while the series itself is.
+	if !stored.Monitored {
+		for i := range fresh.Seasons {
+			fresh.Seasons[i].Monitored = false
+			for j := range fresh.Seasons[i].Episodes {
+				fresh.Seasons[i].Episodes[j].Monitored = false
+			}
+		}
+	}
+
+	if err := s.db.UpdateMediaItemMetadata(ctx, id, fresh); err != nil {
+		return domain.MediaItem{}, err
+	}
+	s.log.Info("library: metadata refreshed", "kind", stored.Kind, "title", fresh.Title, "id", id)
+	return s.db.GetMediaItemFull(ctx, id)
+}
+
+// RefreshAll refreshes every library item (the metadata.refresh task).
+// Individual failures are logged and skipped so one delisted item cannot
+// wedge the loop; the first error is reported at the end for task health.
+func (s *Service) RefreshAll(ctx context.Context) error {
+	items, err := s.db.ListMediaItems(ctx, "")
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, item := range items {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if _, err := s.RefreshItem(ctx, item.ID); err != nil {
+			// No provider key yet is a setup state, not a task failure.
+			if errors.Is(err, ports.ErrProviderNotConfigured) {
+				continue
+			}
+			s.log.Warn("library: refresh failed", "id", item.ID, "title", item.Title, "err", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("refreshing %q: %w", item.Title, err)
+			}
+		}
+	}
+	return firstErr
 }
 
 // List returns item summaries, optionally filtered by kind ("" = all).

@@ -455,7 +455,9 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 					continue
 				}
 				_ = s.db.UpdateDownloadState(ctx, dl.ID, "importing", 1, "")
-				if err := s.importDownload(ctx, dl, st.SavePath); err != nil {
+				// The client reports its own path; remote path mappings
+				// translate it to where Monarr sees the same files.
+				if err := s.importDownload(ctx, dl, ports.MapRemotePath(cfg.PathMappings, st.SavePath)); err != nil {
 					s.handleFailure(ctx, dl, 1, err.Error())
 				} else {
 					_ = s.db.UpdateDownloadState(ctx, dl.ID, "imported", 1, "")
