@@ -1,0 +1,12 @@
+# sqlc code-gen config (run via `make gen-sqlc`, which passes -f this file).
+# Schema = the goose migrations; queries compile to type-safe Go in gen/.
+# Colocated with its subject matter, like internal/api/oapi-codegen.yaml.
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "migrations"
+    queries: "queries"
+    gen:
+      go:
+        package: "sqlitegen"
+        out: "gen"

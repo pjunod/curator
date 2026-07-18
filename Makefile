@@ -58,7 +58,7 @@ fmt:
 gen: gen-sqlc gen-api
 
 gen-sqlc:
-	go run $(SQLC) generate
+	go run $(SQLC) -f internal/infra/sqlite/sqlc.yaml generate
 
 gen-api:
 	go run $(OAPI_CODEGEN) -config internal/api/oapi-codegen.yaml internal/api/openapi.yaml
