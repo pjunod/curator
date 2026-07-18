@@ -17,8 +17,10 @@ All three ask for an API key: Monarr generates one on first start — find it
 in the Monarr UI under **Settings**, or:
 
 ```sh
-docker compose exec monarr wget -qO- localhost:7676/api/v1/settings
+curl http://localhost:7676/api/v1/settings
 ```
+
+(The image is distroless — there's no shell inside the container to exec.)
 
 ## What to verify
 

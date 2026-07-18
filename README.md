@@ -25,19 +25,23 @@ ADRs in [docs/adr/](docs/adr/).
 
 ### Docker
 
-Deployment files live in [`deploy/`](deploy/):
+Deployment files live in [`deploy/`](deploy/) — the Dockerfile and a
+compose *template* you copy once and customize (your copy is gitignored,
+so pulls never clobber it):
 
 ```sh
 cd deploy
+cp docker-compose.example.yml docker-compose.yml   # yours to edit
 # optionally: echo -e "MONARR_DATA=/srv/monarr\nMONARR_POOL=/srv/pool" > .env
 docker compose up -d --build
 ```
 
-Rebuild-and-swap after pulling changes is the same command. Plain
-`docker run` equivalent:
+Rebuild-and-swap after pulling changes is the same `up` command. Plain
+`docker run` equivalent (from the repo root — the build context is the
+repo, the Dockerfile just lives in deploy/):
 
 ```sh
-docker build -t monarr .
+docker build -f deploy/Dockerfile -t monarr .
 docker run -d --name monarr \
   -p 7676:7676 \
   --user 1000:1000 \
@@ -218,7 +222,7 @@ internal/
   api/                native /api/v1 (OpenAPI-first), SSE, auth, /metrics, SPA serving
   compat/             Sonarr/Radarr v3 personalities (translation-only over app)
 web/                  React + TypeScript + Vite UI, embedded via go:embed
-deploy/               docker-compose + .env-driven paths
+deploy/               Dockerfile + compose template (copy to docker-compose.yml, yours to edit)
 test/e2e/             Playwright suite booting the real binary against fake services
 test/conformance/     docker-compose harness vs real Jellyseerr/Prowlarr/Bazarr
 testdata/releases/    golden parser corpus (shared spec, 70 cases)
@@ -227,9 +231,10 @@ docs/                 architecture blueprint, ADRs, usage/settings/deployment gu
 STATUS.md             the per-item work ledger
 ```
 
-Root files stay at the root because tooling demands it: `go.mod`
-(module root), `Dockerfile` (`docker build .`, CI, registries),
-`Makefile`, `sqlc.yaml`, `.golangci.yml` (tool discovery).
+Root files stay at the root because tooling discovers them there:
+`go.mod` (module root), `Makefile`, `sqlc.yaml`, `.golangci.yml`, and
+`.dockerignore` (read at the build *context* root — the Dockerfile itself
+lives in deploy/ and builds with the repo as context).
 
 Dependency arrows are enforced by `internal/arch_test.go`: domain imports nothing but stdlib,
 adapters import only ports+domain, compat never touches infra/adapters directly.

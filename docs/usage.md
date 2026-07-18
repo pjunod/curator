@@ -4,6 +4,32 @@ A walkthrough of the UI, in the order you'll meet it. Setup reference for
 every knob lives in [settings.md](settings.md); deployment and storage
 guidance in [deployment.md](deployment.md).
 
+## Install & run
+
+With compose (recommended — your customized compose file is gitignored,
+pulls never touch it):
+
+```sh
+git clone https://github.com/monarr-media/monarr.git && cd monarr/deploy
+cp docker-compose.example.yml docker-compose.yml   # edit paths, or use .env
+docker compose up -d --build
+```
+
+Or plain Docker, from the repo root (the build context is the repo; the
+Dockerfile lives in `deploy/`):
+
+```sh
+docker build -f deploy/Dockerfile -t monarr .
+docker run -d --name monarr -p 7676:7676 --user 1000:1000 \
+  -v /srv/monarr:/data -v /srv/pool:/pool monarr
+```
+
+`/data` holds the database and backups; `/pool` holds your media library
+*and* your download client's completed folder — the mount rules and a
+worked pool layout are in the README's Docker section. After code updates:
+`docker compose up -d --build` again (it rebuilds and swaps the container
+only when the image changed).
+
 ## First run
 
 Open `http://<host>:7676`. Three things make the app functional, all under

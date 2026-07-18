@@ -1,6 +1,10 @@
-# Monarr — compose deployment.
+# Monarr — compose deployment TEMPLATE.
 #
-#   docker compose up -d --build      # build (or rebuild) and (re)start
+#   cp docker-compose.example.yml docker-compose.yml   # once; yours to edit
+#   docker compose up -d --build                       # build/rebuild + (re)start
+#
+# Your docker-compose.yml is gitignored — pulls update this example, never
+# your customized copy (diff against the example after big updates).
 #
 # Paths below come from environment variables with local-dir fallbacks, so
 # either export them / put them in a .env file:
@@ -25,6 +29,7 @@ services:
   monarr:
     build:
       context: ..
+      dockerfile: deploy/Dockerfile
     image: monarr
     container_name: monarr
     user: "${PUID:-1000}:${PGID:-1000}"

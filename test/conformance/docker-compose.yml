@@ -9,13 +9,15 @@
 #   #  Bazarr      http://localhost:6767  → Settings→Sonarr/Radarr with the same URLs
 #
 # Monarr's API key: open http://localhost:7676 → Settings (or:
-#   docker compose exec monarr wget -qO- localhost:7676/api/v1/settings)
+#   curl http://localhost:7676/api/v1/settings)
 #
 # The fake-consumer test suite in internal/compat/compat_test.go replays the
 # same request flows in-process; this compose file is the live-fire version.
 services:
   monarr:
-    build: ../..
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
     ports: ["7676:7676"]
     volumes:
       - monarr-data:/data

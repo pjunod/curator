@@ -20,7 +20,12 @@ test/e2e/node_modules/
 test/e2e/test-results/
 test/e2e/playwright-report/
 
-# local compose data (deploy/docker-compose.yml fallbacks)
+# deploy/: your customized compose + local data stay untracked; the
+# .example file is the tracked template
+deploy/docker-compose.yml
+deploy/docker-compose.yaml
+deploy/compose.yml
+deploy/compose.yaml
 deploy/monarr-data/
 deploy/pool/
 deploy/qbittorrent-config/
