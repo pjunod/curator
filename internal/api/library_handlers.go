@@ -17,6 +17,10 @@ import (
 // TMDBKeySetting is the app_meta key holding the metadata provider key.
 const TMDBKeySetting = "tmdb_api_key"
 
+// OMDBKeySetting is the app_meta key for the optional OMDb key, which
+// unlocks Rotten Tomatoes / IMDb / Metacritic ratings.
+const OMDBKeySetting = "omdb_api_key"
+
 // APIKeySetting is the app_meta key holding Monarr's own API key —
 // required by the compat personalities (X-Api-Key) and, from Phase 5,
 // the native API.
@@ -394,19 +398,26 @@ func (s *Server) DeleteRootFolder(w http.ResponseWriter, r *http.Request, id int
 
 // ---- settings ----
 
+func keyHint(key string) string {
+	if n := len(key); n > 4 {
+		return "…" + key[n-4:]
+	} else if n > 0 {
+		return strings.Repeat("•", n)
+	}
+	return ""
+}
+
 // GetSettings implements GET /settings (secrets masked).
 func (s *Server) GetSettings(w http.ResponseWriter, r *http.Request) {
 	key := s.readSetting(r.Context(), TMDBKeySetting)
-	hint := ""
-	if n := len(key); n > 4 {
-		hint = "…" + key[n-4:]
-	} else if n > 0 {
-		hint = strings.Repeat("•", n)
-	}
+	omdbKey := s.readSetting(r.Context(), OMDBKeySetting)
 	out := apigen.Settings{
 		TmdbApiKeyConfigured: key != "",
-		TmdbApiKeyHint:       hint,
+		TmdbApiKeyHint:       keyHint(key),
 	}
+	omdbConfigured, omdbHint := omdbKey != "", keyHint(omdbKey)
+	out.OmdbApiKeyConfigured = &omdbConfigured
+	out.OmdbApiKeyHint = &omdbHint
 	if apiKey := s.readSetting(r.Context(), APIKeySetting); apiKey != "" {
 		out.ApiKey = &apiKey
 	}
@@ -424,6 +435,12 @@ func (s *Server) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.TmdbApiKey != nil {
 		if err := s.deps.Settings.SetMeta(r.Context(), TMDBKeySetting, strings.TrimSpace(*body.TmdbApiKey)); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if body.OmdbApiKey != nil {
+		if err := s.deps.Settings.SetMeta(r.Context(), OMDBKeySetting, strings.TrimSpace(*body.OmdbApiKey)); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

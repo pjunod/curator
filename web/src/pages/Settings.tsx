@@ -23,6 +23,7 @@ export function SettingsPage() {
   const report = useQuery({ queryKey: ['scan-report'], queryFn: getScanReport })
 
   const [key, setKey] = useState('')
+  const [omdbKey, setOmdbKey] = useState('')
   const [newRoot, setNewRoot] = useState('')
 
   const saveKey = useMutation({
@@ -31,6 +32,13 @@ export function SettingsPage() {
       setKey('')
       void qc.invalidateQueries({ queryKey: ['settings'] })
       void qc.invalidateQueries({ queryKey: ['health'] })
+    },
+  })
+  const saveOmdbKey = useMutation({
+    mutationFn: () => updateSettings({ omdbApiKey: omdbKey }),
+    onSuccess: () => {
+      setOmdbKey('')
+      void qc.invalidateQueries({ queryKey: ['settings'] })
     },
   })
   const addRoot = useMutation({
@@ -84,6 +92,34 @@ export function SettingsPage() {
         </div>
         {saveKey.isSuccess && <p className="ok-text">Saved.</p>}
         {saveKey.isError && <div className="banner warning">{String((saveKey.error as Error).message)}</div>}
+
+        <h2 style={{ marginTop: 18 }}>Extra ratings (OMDb — optional)</h2>
+        <p className="muted">
+          An OMDb key adds Rotten Tomatoes, IMDb, and Metacritic scores next to the TMDB
+          rating. Free key at omdbapi.com (1000 requests/day). Ratings arrive on add and on
+          metadata refresh.
+        </p>
+        <div className="form-row">
+          <input
+            type="password"
+            placeholder={
+              settings.data?.omdbApiKeyConfigured
+                ? `Configured (${settings.data.omdbApiKeyHint}) — paste to replace`
+                : 'Paste your OMDb API key'
+            }
+            value={omdbKey}
+            onChange={(e) => setOmdbKey(e.target.value)}
+          />
+          <button
+            className="btn-accent"
+            disabled={omdbKey.trim() === '' || saveOmdbKey.isPending}
+            onClick={() => saveOmdbKey.mutate()}
+          >
+            Save key
+          </button>
+        </div>
+        {saveOmdbKey.isSuccess && <p className="ok-text">Saved.</p>}
+        {saveOmdbKey.isError && <div className="banner warning">{String((saveOmdbKey.error as Error).message)}</div>}
       </section>
 
       <section className="panel" id="rootfolders">

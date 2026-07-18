@@ -192,6 +192,8 @@ export interface ScanReport {
 export interface Settings {
   tmdbApiKeyConfigured: boolean
   tmdbApiKeyHint: string
+  omdbApiKeyConfigured?: boolean
+  omdbApiKeyHint?: string
   apiKey?: string
   authRequired?: boolean
 }
@@ -242,6 +244,7 @@ export const deleteRootFolder = (id: number) => send('DELETE', `/rootfolders/${i
 export const getSettings = () => get<Settings>('/settings')
 export const updateSettings = (patch: {
   tmdbApiKey?: string
+  omdbApiKey?: string
   authRequired?: boolean
   authUsername?: string
   authPassword?: string

@@ -21,6 +21,7 @@ import (
 	"github.com/monarr-media/monarr/internal/adapters/deluge"
 	"github.com/monarr-media/monarr/internal/adapters/notify"
 	"github.com/monarr-media/monarr/internal/adapters/nzbget"
+	"github.com/monarr-media/monarr/internal/adapters/omdb"
 	"github.com/monarr-media/monarr/internal/adapters/openlibrary"
 	"github.com/monarr-media/monarr/internal/adapters/qbittorrent"
 	"github.com/monarr-media/monarr/internal/adapters/sabnzbd"
@@ -113,9 +114,19 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// Books (ADR 0006): Open Library needs no key; the env override serves
 	// tests, like the TMDB one.
 	books := openlibrary.New(os.Getenv("MONARR_OPENLIBRARY_BASE_URL"))
+	// Extra ratings (Rotten Tomatoes / IMDb / Metacritic) via OMDb —
+	// optional, activated by setting the key in the UI.
+	omdbKey := func(ctx context.Context) (string, error) {
+		v, err := db.GetMeta(ctx, api.OMDBKeySetting)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return v, err
+	}
+	extraRatings := omdb.New(os.Getenv("MONARR_OMDB_BASE_URL"), omdbKey)
 
 	// Library service.
-	lib := library.New(db, meta, b, log).WithBooks(books)
+	lib := library.New(db, meta, b, log).WithBooks(books).WithRatings(extraRatings)
 
 	// Acquisition: real adapters injected as factories.
 	indexerFactory := func(cfg ports.IndexerConfig) ports.Indexer { return torznab.New(cfg) }

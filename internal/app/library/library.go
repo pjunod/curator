@@ -40,11 +40,12 @@ func (MediaAdded) EventType() string { return "media.added" }
 
 // Service wires storage, the metadata providers, and the bus.
 type Service struct {
-	db    *sqlite.DB
-	meta  ports.MetadataProvider
-	books ports.BookProvider
-	bus   *bus.Bus
-	log   *slog.Logger
+	db      *sqlite.DB
+	meta    ports.MetadataProvider
+	books   ports.BookProvider
+	ratings ports.RatingsProvider // optional (OMDb): RT/IMDb/Metacritic
+	bus     *bus.Bus
+	log     *slog.Logger
 }
 
 // New returns a Service. bus may be nil (tests).
@@ -59,6 +60,37 @@ func New(db *sqlite.DB, meta ports.MetadataProvider, b *bus.Bus, log *slog.Logge
 func (s *Service) WithBooks(books ports.BookProvider) *Service {
 	s.books = books
 	return s
+}
+
+// WithRatings attaches the extra-ratings provider (OMDb) and returns s.
+func (s *Service) WithRatings(rp ports.RatingsProvider) *Service {
+	s.ratings = rp
+	return s
+}
+
+// enrichRatings merges provider-external ratings (RT/IMDb/Metacritic via
+// OMDb) into the item, keyed by IMDb id. Best-effort by contract: no key,
+// no id, or an upstream hiccup all mean "no extra ratings".
+func (s *Service) enrichRatings(ctx context.Context, item *domain.MediaItem) {
+	if s.ratings == nil || item.IDs.IMDB == "" {
+		return
+	}
+	extra, err := s.ratings.Ratings(ctx, item.IDs.IMDB)
+	if err != nil {
+		if !errors.Is(err, ports.ErrProviderNotConfigured) {
+			s.log.Warn("library: ratings enrichment failed", "imdb", item.IDs.IMDB, "err", err)
+		}
+		return
+	}
+	have := map[string]bool{}
+	for _, r := range item.Ratings {
+		have[r.Source] = true
+	}
+	for _, r := range extra {
+		if !have[r.Source] {
+			item.Ratings = append(item.Ratings, r)
+		}
+	}
 }
 
 func (s *Service) publish(e bus.Event) {
@@ -135,6 +167,7 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 		return domain.MediaItem{}, err
 	}
 
+	s.enrichRatings(ctx, &item)
 	item.Monitored = req.Monitored
 	item.QualityProfileID = req.QualityProfileID
 	if item.QualityProfileID == 0 && item.Kind == domain.KindBook {
@@ -272,6 +305,7 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	if fresh.PosterPath == "" {
 		fresh.PosterPath = stored.PosterPath
 	}
+	s.enrichRatings(ctx, &fresh)
 
 	// New seasons default to monitored only while the series itself is.
 	if !stored.Monitored {

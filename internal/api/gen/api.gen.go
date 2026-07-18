@@ -687,9 +687,13 @@ type Settings struct {
 	ApiKey *string `json:"apiKey,omitempty"`
 
 	// AuthRequired Whether /api/v1 requires authentication.
-	AuthRequired         *bool  `json:"authRequired,omitempty"`
-	TmdbApiKeyConfigured bool   `json:"tmdbApiKeyConfigured"`
-	TmdbApiKeyHint       string `json:"tmdbApiKeyHint"`
+	AuthRequired *bool `json:"authRequired,omitempty"`
+
+	// OmdbApiKeyConfigured OMDb key present — enables Rotten Tomatoes / IMDb / Metacritic ratings.
+	OmdbApiKeyConfigured *bool   `json:"omdbApiKeyConfigured,omitempty"`
+	OmdbApiKeyHint       *string `json:"omdbApiKeyHint,omitempty"`
+	TmdbApiKeyConfigured bool    `json:"tmdbApiKeyConfigured"`
+	TmdbApiKeyHint       string  `json:"tmdbApiKeyHint"`
 }
 
 // SettingsUpdate defines model for SettingsUpdate.
@@ -700,7 +704,10 @@ type SettingsUpdate struct {
 	// AuthRequired Require API key or session for /api/v1 (Phase 5).
 	AuthRequired *bool   `json:"authRequired,omitempty"`
 	AuthUsername *string `json:"authUsername,omitempty"`
-	TmdbApiKey   *string `json:"tmdbApiKey,omitempty"`
+
+	// OmdbApiKey Optional — adds Rotten Tomatoes / IMDb / Metacritic ratings. "" clears it.
+	OmdbApiKey *string `json:"omdbApiKey,omitempty"`
+	TmdbApiKey *string `json:"tmdbApiKey,omitempty"`
 }
 
 // SystemStatus defines model for SystemStatus.

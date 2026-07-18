@@ -1768,6 +1768,11 @@ components:
           type: boolean
         tmdbApiKeyHint:
           type: string
+        omdbApiKeyConfigured:
+          type: boolean
+          description: OMDb key present — enables Rotten Tomatoes / IMDb / Metacritic ratings.
+        omdbApiKeyHint:
+          type: string
         apiKey:
           type: string
           description: >
@@ -1783,6 +1788,9 @@ components:
       properties:
         tmdbApiKey:
           type: string
+        omdbApiKey:
+          type: string
+          description: Optional — adds Rotten Tomatoes / IMDb / Metacritic ratings. "" clears it.
         authRequired:
           type: boolean
           description: Require API key or session for /api/v1 (Phase 5).

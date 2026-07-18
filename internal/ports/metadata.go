@@ -44,6 +44,14 @@ type MetadataProvider interface {
 	GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem, error)
 }
 
+// RatingsProvider enriches an item with additional labeled ratings keyed
+// by IMDb id — the OMDb adapter supplies Rotten Tomatoes, IMDb, and
+// Metacritic. Optional: callers treat ErrProviderNotConfigured (no key)
+// and failures as "no extra ratings", never as an error.
+type RatingsProvider interface {
+	Ratings(ctx context.Context, imdbID string) ([]domain.Rating, error)
+}
+
 // BookProvider hydrates book entries (ADR 0006) — a separate port because
 // book metadata comes from a different upstream (Open Library) with its own
 // identity scheme (work OLID), auth (none), and rate policy.
