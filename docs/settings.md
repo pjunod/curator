@@ -12,6 +12,13 @@ in the database, takes effect immediately (no restart), and is never
 returned by the API in full — only a last-4 hint. Books don't use TMDB;
 Open Library needs no key.
 
+### Extra ratings (OMDb — optional)
+
+A free OMDb key (omdbapi.com, 1000 req/day) adds Rotten Tomatoes, IMDb,
+and Metacritic scores to items with an IMDb id, on add and on every
+metadata refresh. Responses are cached for 12 h to respect the quota.
+Without a key, TMDB/Open Library ratings still work.
+
 ## Root folders
 
 Absolute paths, must exist and be directories when added. Each shows

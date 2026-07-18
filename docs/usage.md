@@ -130,8 +130,10 @@ usual questions at a glance:
   nothing; series count monitored episodes aired to date), and a
   **↓ downloading** pill whenever a grab for this item is in flight.
 - **Profile** — the quality profile driving grabs and upgrades.
-- **Rating** — the community rating from the provider (TMDB /10 for
-  movies & series, Open Library /5 for books), with vote count.
+- **Ratings** — labeled chips per source: TMDB (/10) for movies & series
+  and Open Library (/5) for books come free; add an OMDb key (Settings →
+  Metadata → Extra ratings) and Rotten Tomatoes, IMDb, and Metacritic
+  appear alongside. Percent sources render as percentages.
 - **Links** — IMDb / TMDB / TVDB / Open Library pages, opening in a new
   tab.
 
@@ -152,6 +154,31 @@ Actions up top:
 The same completeness pill, rating, and ↓ badge appear on every library
 card, so the grid shows at a glance what's complete, what's partial, and
 what's moving right now.
+
+## Monitoring: series, seasons, episodes
+
+Monitoring decides what the automation hunts, at three levels that all
+AND together: the series toggle (Edit / mass editor), a checkbox on
+every **season** header (cascades to its episodes), and a checkbox on
+every **episode** row (mixed states inside a season are fine — keep just
+the finale). Unmonitored rows dim. At add time, the Series tab offers
+**Seasons: all / latest only / none** — add a 20-season show with
+"latest only" and untick or tick the rest afterwards. Metadata refresh
+respects all of it: a newly announced episode in an unmonitored season
+arrives unmonitored.
+
+## Quality copies (the same thing at two qualities)
+
+The item page's **Quality copies** panel keeps a movie or series at more
+than one quality at once — the main copy at 4K plus a 720p copy for
+someone else. Each copy has its own quality profile and is a first-class
+automation target: it shows in Wanted under its label, both loops hunt
+it, it imports and upgrades independently, and upgrading one copy never
+touches another copy's files. A copy either lives in its **own folder**
+under a root you pick (a separate library for another person or device)
+or **shares the item's folder** — filenames carry the quality, and
+Jellyfin/Plex group same-folder versions as one entry. Removing a copy
+drops its records only; files on disk stay.
 
 ## Activity, calendar, wanted
 
