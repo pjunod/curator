@@ -257,3 +257,50 @@ func TestSeasonAndEpisodeMonitoring(t *testing.T) {
 		t.Errorf("bogus episode: %v", err)
 	}
 }
+
+func TestAddMonitorPresets(t *testing.T) {
+	multi := seriesV1()
+	multi.Seasons = append(multi.Seasons, domain.Season{
+		Number: 2, Monitored: true,
+		Episodes: []domain.Episode{
+			{SeasonNumber: 2, EpisodeNumber: 1, Title: "Return", AirDate: "2021-01-01", Monitored: true},
+		},
+	})
+
+	for _, tc := range []struct {
+		preset string
+		wantS1 bool
+		wantS2 bool
+	}{
+		{"all", true, true},
+		{"", true, true},
+		{"latest", false, true},
+		{"none", false, false},
+	} {
+		db, err := sqlite.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := context.Background()
+		if err := db.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		b := bus.New(nil)
+		svc := New(db, &mutableProvider{series: multi}, b, nil)
+
+		item, err := svc.Add(ctx, AddRequest{Kind: domain.KindSeries, TMDBID: 100, Monitored: true, Monitor: tc.preset})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s1, s2 := item.Seasons[0], item.Seasons[1]
+		if s1.Monitored != tc.wantS1 || s2.Monitored != tc.wantS2 {
+			t.Errorf("preset %q: s1=%v s2=%v", tc.preset, s1.Monitored, s2.Monitored)
+		}
+		if s2.Episodes[0].Monitored != tc.wantS2 || s1.Episodes[0].Monitored != tc.wantS1 {
+			t.Errorf("preset %q: episode flags s1=%v s2=%v", tc.preset,
+				s1.Episodes[0].Monitored, s2.Episodes[0].Monitored)
+		}
+		b.Close()
+		db.Close()
+	}
+}

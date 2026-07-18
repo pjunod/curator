@@ -129,6 +129,29 @@ type AddRequest struct {
 	RootFolderID     int64 // optional; 0 = no folder assigned yet
 	QualityProfileID int64 // optional; 0 = kind default (1, or Ebook for books)
 	Monitored        bool
+	// Monitor picks which seasons start monitored (series only):
+	// "all" (default), "latest" (newest season only), or "none".
+	Monitor string
+}
+
+// applyMonitorPreset flips season/episode flags per the add-time choice.
+func applyMonitorPreset(item *domain.MediaItem, preset string) {
+	if item.Kind != domain.KindSeries || preset == "" || preset == "all" {
+		return
+	}
+	latest := 0
+	for _, s := range item.Seasons {
+		if s.Number > latest {
+			latest = s.Number
+		}
+	}
+	for i := range item.Seasons {
+		mon := preset == "latest" && item.Seasons[i].Number == latest && latest != 0
+		item.Seasons[i].Monitored = mon
+		for j := range item.Seasons[i].Episodes {
+			item.Seasons[i].Episodes[j].Monitored = mon
+		}
+	}
 }
 
 // Add hydrates the item from the provider and stores it. The on-disk folder
@@ -168,6 +191,7 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	}
 
 	s.enrichRatings(ctx, &item)
+	applyMonitorPreset(&item, req.Monitor)
 	item.Monitored = req.Monitored
 	item.QualityProfileID = req.QualityProfileID
 	if item.QualityProfileID == 0 && item.Kind == domain.KindBook {

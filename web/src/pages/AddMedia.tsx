@@ -28,6 +28,7 @@ export function AddMediaPage() {
   const [rootId, setRootId] = useState<number | undefined>(undefined)
   const [profileId, setProfileId] = useState<number | ''>('')
   const [monitored, setMonitored] = useState(true)
+  const [monitor, setMonitor] = useState<'all' | 'latest' | 'none'>('all')
   const [searchNow, setSearchNow] = useState(true)
 
   useEffect(() => {
@@ -49,6 +50,7 @@ export function AddMediaPage() {
         rootFolderId: rootId,
         qualityProfileId: profileId === '' ? undefined : Number(profileId),
         monitored,
+        monitor: r.kind === 'series' ? monitor : undefined,
         searchNow: monitored && searchNow,
       }
       return addLibraryItem(
@@ -129,6 +131,16 @@ export function AddMediaPage() {
           />{' '}
           Monitored
         </label>
+        {kind === 'series' && (
+          <label className="inline" title="Which seasons start monitored — untick more later per season/episode">
+            Seasons:{' '}
+            <select value={monitor} onChange={(e) => setMonitor(e.target.value as typeof monitor)}>
+              <option value="all">all</option>
+              <option value="latest">latest only</option>
+              <option value="none">none</option>
+            </select>
+          </label>
+        )}
         <label className="inline" title="Automatically search and grab the best release right after adding">
           <input
             type="checkbox"

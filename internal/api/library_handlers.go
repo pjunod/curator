@@ -202,6 +202,9 @@ func (s *Server) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
 	if body.QualityProfileId != nil {
 		req.QualityProfileID = *body.QualityProfileId
 	}
+	if body.Monitor != nil {
+		req.Monitor = string(*body.Monitor)
+	}
 	item, err := s.deps.Library.Add(r.Context(), req)
 	if err != nil {
 		s.libraryErr(w, err)

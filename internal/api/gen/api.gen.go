@@ -14,6 +14,27 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AddMediaRequestMonitor.
+const (
+	All    AddMediaRequestMonitor = "all"
+	Latest AddMediaRequestMonitor = "latest"
+	None   AddMediaRequestMonitor = "none"
+)
+
+// Valid indicates whether the value is a known member of the AddMediaRequestMonitor enum.
+func (e AddMediaRequestMonitor) Valid() bool {
+	switch e {
+	case All:
+		return true
+	case Latest:
+		return true
+	case None:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DownloadClientConfigType.
 const (
 	DownloadClientConfigTypeDeluge       DownloadClientConfigType = "deluge"
@@ -238,8 +259,11 @@ func (e NotifierInputType) Valid() bool {
 
 // AddMediaRequest defines model for AddMediaRequest.
 type AddMediaRequest struct {
-	Kind      MediaKind `json:"kind"`
-	Monitored *bool     `json:"monitored,omitempty"`
+	Kind MediaKind `json:"kind"`
+
+	// Monitor Series only — which seasons start monitored: every season, only the latest, or none (add a 20-season show and hunt just the newest). Specials always start unmonitored.
+	Monitor   *AddMediaRequestMonitor `json:"monitor,omitempty"`
+	Monitored *bool                   `json:"monitored,omitempty"`
 
 	// Olid Open Library work id — identifies books (ADR 0006).
 	Olid *string `json:"olid,omitempty"`
@@ -254,6 +278,9 @@ type AddMediaRequest struct {
 	// TmdbId Identifies movies/series.
 	TmdbId *int64 `json:"tmdbId,omitempty"`
 }
+
+// AddMediaRequestMonitor Series only — which seasons start monitored: every season, only the latest, or none (add a 20-season show and hunt just the newest). Specials always start unmonitored.
+type AddMediaRequestMonitor string
 
 // BackupInfo defines model for BackupInfo.
 type BackupInfo struct {

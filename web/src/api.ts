@@ -163,6 +163,7 @@ export interface AddMediaRequest {
   rootFolderId?: number
   qualityProfileId?: number
   monitored?: boolean
+  monitor?: 'all' | 'latest' | 'none' // series: which seasons start monitored
   searchNow?: boolean
 }
 
