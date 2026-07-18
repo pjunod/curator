@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fmtDuration, getHealth, getStatus } from '../api'
+import { Link } from '@tanstack/react-router'
+import { fmtDuration, getHealth, getLibrary, getQueue, getStatus, getWanted } from '../api'
 
 function useNow(intervalMs = 1000): Date {
   const [now, setNow] = useState(() => new Date())
@@ -14,10 +15,16 @@ function useNow(intervalMs = 1000): Date {
 export function Dashboard() {
   const status = useQuery({ queryKey: ['status'], queryFn: getStatus, refetchInterval: 15_000 })
   const health = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
+  const library = useQuery({ queryKey: ['library', 'all'], queryFn: () => getLibrary(), refetchInterval: 60_000 })
+  const wanted = useQuery({ queryKey: ['wanted'], queryFn: getWanted, refetchInterval: 60_000 })
+  const queue = useQuery({ queryKey: ['queue'], queryFn: getQueue, refetchInterval: 30_000 })
   const now = useNow()
 
   const s = status.data
   const uptime = s ? (now.getTime() - new Date(s.startedAt).getTime()) / 1000 : undefined
+  const countKind = (k: string) => library.data?.filter((m) => m.kind === k).length ?? 0
+  const activeDownloads =
+    queue.data?.filter((q) => ['grabbed', 'downloading', 'importing'].includes(q.state)).length ?? 0
 
   return (
     <>
@@ -59,19 +66,24 @@ export function Dashboard() {
         </div>
       </section>
 
-      <section className="card prose">
-        <h2>Walking skeleton</h2>
-        <p>
-          This is <strong>Phase 0</strong> of Monarr — a unified rewrite of Sonarr + Radarr as one
-          Go binary. The scaffold you are looking at already runs the real spine: embedded React
-          shell, spec-first <code>/api/v1</code>, SQLite with migrations, a typed event bus
-          streaming to this UI over SSE, a persistent task scheduler, and health checks.
-        </p>
-        <p>
-          Next up — <em>Phase 1: Library</em> — TMDB metadata, adding movies &amp; series, root
-          folders, and disk reconcile. See <code>docs/architecture.md</code> in the repo for the
-          full blueprint.
-        </p>
+      <section className="cards">
+        <Link to="/" className="card" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <div className="card-label">Library</div>
+          <div className="card-value">{library.data?.length ?? '…'}</div>
+          <div className="card-sub">
+            {countKind('movie')} movies · {countKind('series')} series · {countKind('book')} books
+          </div>
+        </Link>
+        <Link to="/wanted" className="card" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <div className="card-label">Wanted</div>
+          <div className="card-value">{wanted.data?.length ?? '…'}</div>
+          <div className="card-sub">missing or below cutoff — the loops hunt these</div>
+        </Link>
+        <Link to="/activity" className="card" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <div className="card-label">Downloads</div>
+          <div className="card-value">{activeDownloads}</div>
+          <div className="card-sub">in flight (grabbed / downloading / importing)</div>
+        </Link>
       </section>
     </>
   )
