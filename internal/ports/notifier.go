@@ -17,13 +17,14 @@ type NotifierConfig struct {
 	Enabled  bool
 }
 
-// Notification is one event rendered for the outside world.
+// Notification is one event rendered for the outside world. The JSON shape
+// is the webhook wire format — lowercase, stable.
 type Notification struct {
-	Event string // grab | import | failed | health
-	Title string
-	Body  string
+	Event string `json:"event"` // grab | import | failed | health | test
+	Title string `json:"title"`
+	Body  string `json:"body"`
 	// Fields carries structured extras (release, quality, item title…).
-	Fields map[string]string
+	Fields map[string]string `json:"fields,omitempty"`
 }
 
 // Notifier delivers notifications. Library-refresh notifiers (Plex,

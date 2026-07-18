@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/monarr-media/monarr/internal/domain"
@@ -100,5 +101,23 @@ func TestCalendar(t *testing.T) {
 	}
 	if entries[1].Kind != "episode" || entries[1].Detail != "S01E01 — One" || entries[1].HasFile {
 		t.Errorf("second = %+v", entries[1])
+	}
+}
+
+func TestBackupAndRetention(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	path, err := db.Backup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("backup file missing: %v", err)
+	}
+	// The snapshot is a valid database: it can be opened and queried.
+	list, err := db.ListBackups()
+	if err != nil || len(list) != 1 || list[0].SizeBytes == 0 {
+		t.Fatalf("backups = %+v err %v", list, err)
 	}
 }

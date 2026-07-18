@@ -407,3 +407,32 @@ export const getCalendar = (start: string, end: string) =>
 export const getWanted = () => get<WantedItem[]>('/wanted')
 export const getBlocklist = () => get<BlocklistEntry[]>('/blocklist')
 export const removeBlocklistEntry = (id: number) => send('DELETE', `/blocklist/${id}`)
+
+export type NotifierType = 'webhook' | 'discord' | 'plex' | 'jellyfin'
+
+export interface NotifierInput {
+  type: NotifierType
+  name: string
+  settings?: Record<string, string>
+  onGrab?: boolean
+  onImport?: boolean
+  onFailed?: boolean
+  onHealth?: boolean
+  enabled?: boolean
+}
+
+export interface Notifier extends NotifierInput {
+  id: number
+}
+
+export interface BackupInfo {
+  name: string
+  sizeBytes: number
+  createdAt: string
+}
+
+export const getNotifiers = () => get<Notifier[]>('/notifiers')
+export const addNotifier = (n: NotifierInput) => send<Notifier>('POST', '/notifiers', n)
+export const testNotifier = (n: NotifierInput) => send('POST', '/notifiers/test', n)
+export const deleteNotifier = (id: number) => send('DELETE', `/notifiers/${id}`)
+export const getBackups = () => get<BackupInfo[]>('/system/backups')

@@ -13,6 +13,7 @@ import {
   updateSettings,
 } from '../api'
 import { AcquisitionSettings } from './SettingsAcquisition'
+import { NotifierSettings } from './SettingsNotifiers'
 
 export function SettingsPage() {
   const qc = useQueryClient()
@@ -140,6 +141,7 @@ export function SettingsPage() {
       </section>
 
       <AcquisitionSettings />
+      <NotifierSettings />
 
       <section className="panel">
         <h2>Disk scan</h2>

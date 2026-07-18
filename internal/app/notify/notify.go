@@ -1,0 +1,124 @@
+// Package notify is the Phase 3 notification dispatcher: it subscribes to
+// bus events and fans them out to every enabled notifier whose event flags
+// match. Adapters are injected as a factory, like indexers and clients.
+package notify
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/monarr-media/monarr/internal/app/acquisition"
+	"github.com/monarr-media/monarr/internal/app/health"
+	"github.com/monarr-media/monarr/internal/infra/bus"
+	"github.com/monarr-media/monarr/internal/infra/sqlite"
+	"github.com/monarr-media/monarr/internal/ports"
+)
+
+// Factory builds a Notifier from stored config (real adapters in main,
+// fakes in tests).
+type Factory func(ports.NotifierConfig) ports.Notifier
+
+// Dispatcher routes bus events to notifiers.
+type Dispatcher struct {
+	db  *sqlite.DB
+	bus *bus.Bus
+	log *slog.Logger
+	new Factory
+}
+
+// New returns a Dispatcher.
+func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, f Factory) *Dispatcher {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Dispatcher{db: db, bus: b, log: log, new: f}
+}
+
+// Run subscribes and dispatches until ctx ends. Call in a goroutine.
+func (d *Dispatcher) Run(ctx context.Context) {
+	grabs, cancelG := bus.Subscribe[acquisition.ReleaseGrabbed](d.bus, 32)
+	defer cancelG()
+	imports, cancelI := bus.Subscribe[acquisition.ImportCompleted](d.bus, 32)
+	defer cancelI()
+	fails, cancelF := bus.Subscribe[acquisition.ImportFailed](d.bus, 32)
+	defer cancelF()
+	healths, cancelH := bus.Subscribe[health.Changed](d.bus, 32)
+	defer cancelH()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e := <-grabs:
+			d.dispatch(ctx, "grab", ports.Notification{
+				Event: "grab", Title: "Release grabbed", Body: e.Title,
+				Fields: map[string]string{"indexer": e.Indexer, "protocol": e.Protocol},
+			})
+		case e := <-imports:
+			d.dispatch(ctx, "import", ports.Notification{
+				Event: "import", Title: "Import completed", Body: e.Release,
+				Fields: map[string]string{
+					"files":   fmt.Sprintf("%d", e.Files),
+					"upgrade": fmt.Sprintf("%v", e.Upgrade),
+				},
+			})
+		case e := <-fails:
+			d.dispatch(ctx, "failed", ports.Notification{
+				Event: "failed", Title: "Download failed", Body: e.Release,
+				Fields: map[string]string{"reason": e.Reason},
+			})
+		case e := <-healths:
+			d.dispatch(ctx, "health", ports.Notification{
+				Event: "health", Title: "Health changed",
+				Body: fmt.Sprintf("Overall status: %s", e.Overall),
+			})
+		}
+	}
+}
+
+// wants maps an event key to the notifier's opt-in flag.
+func wants(cfg ports.NotifierConfig, event string) bool {
+	switch event {
+	case "grab":
+		return cfg.OnGrab
+	case "import":
+		return cfg.OnImport
+	case "failed":
+		return cfg.OnFailed
+	case "health":
+		return cfg.OnHealth
+	}
+	return false
+}
+
+// refreshOnly reports whether this notifier type is a media-server poke —
+// those fire on imports regardless of payload, never on chatter.
+func refreshOnly(cfg ports.NotifierConfig) bool {
+	return cfg.Type == "plex" || cfg.Type == "jellyfin"
+}
+
+func (d *Dispatcher) dispatch(ctx context.Context, event string, n ports.Notification) {
+	configs, err := d.db.ListNotifiers(ctx)
+	if err != nil {
+		d.log.Warn("notify: cannot list notifiers", "err", err)
+		return
+	}
+	for _, cfg := range configs {
+		if !cfg.Enabled || !wants(cfg, event) {
+			continue
+		}
+		if refreshOnly(cfg) && event != "import" {
+			continue // media-server pokes only make sense after imports
+		}
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		err := d.new(cfg).Send(cctx, n)
+		cancel()
+		if err != nil {
+			d.log.Warn("notify: send failed", "notifier", cfg.Name, "type", cfg.Type, "err", err)
+			continue
+		}
+		d.log.Debug("notify: sent", "notifier", cfg.Name, "event", event)
+	}
+}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BusEvent } from '../api'
-import { fmtInterval, fmtRelative, getHealth, getTasks, runTask } from '../api'
+import { fmtBytes, fmtInterval, fmtRelative, getBackups, getHealth, getTasks, runTask } from '../api'
 
 const MAX_EVENTS = 50
 
@@ -36,6 +36,7 @@ export function SystemPage() {
   const qc = useQueryClient()
   const health = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
   const tasks = useQuery({ queryKey: ['tasks'], queryFn: getTasks, refetchInterval: 5_000 })
+  const backups = useQuery({ queryKey: ['backups'], queryFn: getBackups, refetchInterval: 60_000 })
   const { events, connected } = useEventStream()
 
   const trigger = useMutation({
@@ -130,6 +131,28 @@ export function SystemPage() {
             )}
           </tbody>
         </table>
+      </section>
+
+      <section className="panel">
+        <h2>Backups</h2>
+        <p className="muted">
+          Daily online snapshots (VACUUM INTO), newest first, last 7 kept. Run one now via
+          the <code>backup.run</code> task above.
+        </p>
+        {backups.data?.length === 0 ? (
+          <p className="muted">No backups yet.</p>
+        ) : (
+          <table>
+            <tbody>
+              {backups.data?.map((b) => (
+                <tr key={b.name}>
+                  <td className="mono">{b.name}</td>
+                  <td className="muted">{fmtBytes(b.sizeBytes)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
 
       <section className="panel">

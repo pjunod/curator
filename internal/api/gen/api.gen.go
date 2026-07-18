@@ -128,6 +128,54 @@ func (e MediaKind) Valid() bool {
 	}
 }
 
+// Defines values for NotifierType.
+const (
+	NotifierTypeDiscord  NotifierType = "discord"
+	NotifierTypeJellyfin NotifierType = "jellyfin"
+	NotifierTypePlex     NotifierType = "plex"
+	NotifierTypeWebhook  NotifierType = "webhook"
+)
+
+// Valid indicates whether the value is a known member of the NotifierType enum.
+func (e NotifierType) Valid() bool {
+	switch e {
+	case NotifierTypeDiscord:
+		return true
+	case NotifierTypeJellyfin:
+		return true
+	case NotifierTypePlex:
+		return true
+	case NotifierTypeWebhook:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NotifierInputType.
+const (
+	NotifierInputTypeDiscord  NotifierInputType = "discord"
+	NotifierInputTypeJellyfin NotifierInputType = "jellyfin"
+	NotifierInputTypePlex     NotifierInputType = "plex"
+	NotifierInputTypeWebhook  NotifierInputType = "webhook"
+)
+
+// Valid indicates whether the value is a known member of the NotifierInputType enum.
+func (e NotifierInputType) Valid() bool {
+	switch e {
+	case NotifierInputTypeDiscord:
+		return true
+	case NotifierInputTypeJellyfin:
+		return true
+	case NotifierInputTypePlex:
+		return true
+	case NotifierInputTypeWebhook:
+		return true
+	default:
+		return false
+	}
+}
+
 // AddMediaRequest defines model for AddMediaRequest.
 type AddMediaRequest struct {
 	Kind      MediaKind `json:"kind"`
@@ -142,6 +190,13 @@ type AddMediaRequest struct {
 
 	// TmdbId Identifies movies/series.
 	TmdbId *int64 `json:"tmdbId,omitempty"`
+}
+
+// BackupInfo defines model for BackupInfo.
+type BackupInfo struct {
+	CreatedAt time.Time `json:"createdAt"`
+	Name      string    `json:"name"`
+	SizeBytes int64     `json:"sizeBytes"`
 }
 
 // BlocklistEntry defines model for BlocklistEntry.
@@ -328,6 +383,41 @@ type MediaItemSummary struct {
 
 // MediaKind defines model for MediaKind.
 type MediaKind string
+
+// Notifier defines model for Notifier.
+type Notifier struct {
+	Enabled  *bool  `json:"enabled,omitempty"`
+	Id       int64  `json:"id"`
+	Name     string `json:"name"`
+	OnFailed *bool  `json:"onFailed,omitempty"`
+	OnGrab   *bool  `json:"onGrab,omitempty"`
+	OnHealth *bool  `json:"onHealth,omitempty"`
+	OnImport *bool  `json:"onImport,omitempty"`
+
+	// Settings Type-specific: webhook/discord {url}; plex {url, token}; jellyfin {url, apiKey}.
+	Settings *map[string]string `json:"settings,omitempty"`
+	Type     NotifierType       `json:"type"`
+}
+
+// NotifierType defines model for Notifier.Type.
+type NotifierType string
+
+// NotifierInput defines model for NotifierInput.
+type NotifierInput struct {
+	Enabled  *bool  `json:"enabled,omitempty"`
+	Name     string `json:"name"`
+	OnFailed *bool  `json:"onFailed,omitempty"`
+	OnGrab   *bool  `json:"onGrab,omitempty"`
+	OnHealth *bool  `json:"onHealth,omitempty"`
+	OnImport *bool  `json:"onImport,omitempty"`
+
+	// Settings Type-specific: webhook/discord {url}; plex {url, token}; jellyfin {url, apiKey}.
+	Settings *map[string]string `json:"settings,omitempty"`
+	Type     NotifierInputType  `json:"type"`
+}
+
+// NotifierInputType defines model for NotifierInput.Type.
+type NotifierInputType string
 
 // QualityProfile defines model for QualityProfile.
 type QualityProfile struct {
@@ -523,6 +613,12 @@ type TestIndexerJSONRequestBody = IndexerInput
 // AddLibraryItemJSONRequestBody defines body for AddLibraryItem for application/json ContentType.
 type AddLibraryItemJSONRequestBody = AddMediaRequest
 
+// AddNotifierJSONRequestBody defines body for AddNotifier for application/json ContentType.
+type AddNotifierJSONRequestBody = NotifierInput
+
+// TestNotifierJSONRequestBody defines body for TestNotifier for application/json ContentType.
+type TestNotifierJSONRequestBody = NotifierInput
+
 // AddRootFolderJSONRequestBody defines body for AddRootFolder for application/json ContentType.
 type AddRootFolderJSONRequestBody AddRootFolderJSONBody
 
@@ -597,6 +693,18 @@ type ServerInterface interface {
 	// SearchMetadata Search the metadata provider
 	// (GET /metadata/search)
 	SearchMetadata(w http.ResponseWriter, r *http.Request, params SearchMetadataParams)
+	// ListNotifiers List notification targets
+	// (GET /notifiers)
+	ListNotifiers(w http.ResponseWriter, r *http.Request)
+	// AddNotifier Add a notification target
+	// (POST /notifiers)
+	AddNotifier(w http.ResponseWriter, r *http.Request)
+	// TestNotifier Send a test notification with an unsaved config
+	// (POST /notifiers/test)
+	TestNotifier(w http.ResponseWriter, r *http.Request)
+	// DeleteNotifier Remove a notification target
+	// (DELETE /notifiers/{id})
+	DeleteNotifier(w http.ResponseWriter, r *http.Request, id int64)
 	// ListProfiles List quality profiles
 	// (GET /profiles)
 	ListProfiles(w http.ResponseWriter, r *http.Request)
@@ -621,6 +729,9 @@ type ServerInterface interface {
 	// UpdateSettings Update settings
 	// (PUT /settings)
 	UpdateSettings(w http.ResponseWriter, r *http.Request)
+	// ListBackups On-disk database backups (newest first)
+	// (GET /system/backups)
+	ListBackups(w http.ResponseWriter, r *http.Request)
 	// GetSystemStatus System status
 	// (GET /system/status)
 	GetSystemStatus(w http.ResponseWriter, r *http.Request)
@@ -1136,6 +1247,74 @@ func (siw *ServerInterfaceWrapper) SearchMetadata(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// ListNotifiers operation middleware
+func (siw *ServerInterfaceWrapper) ListNotifiers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNotifiers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddNotifier operation middleware
+func (siw *ServerInterfaceWrapper) AddNotifier(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddNotifier(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestNotifier operation middleware
+func (siw *ServerInterfaceWrapper) TestNotifier(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestNotifier(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteNotifier operation middleware
+func (siw *ServerInterfaceWrapper) DeleteNotifier(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteNotifier(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProfiles operation middleware
 func (siw *ServerInterfaceWrapper) ListProfiles(w http.ResponseWriter, r *http.Request) {
 
@@ -1279,6 +1458,20 @@ func (siw *ServerInterfaceWrapper) UpdateSettings(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBackups operation middleware
+func (siw *ServerInterfaceWrapper) ListBackups(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBackups(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1505,6 +1698,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/grab", wrapper.GrabRelease)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue", wrapper.ListQueue)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/notifiers", wrapper.ListNotifiers)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers", wrapper.AddNotifier)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/test", wrapper.TestNotifier)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/notifiers/{id}", wrapper.DeleteNotifier)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/backups", wrapper.ListBackups)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/calendar", wrapper.GetCalendar)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted", wrapper.ListWanted)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/blocklist", wrapper.ListBlocklist)

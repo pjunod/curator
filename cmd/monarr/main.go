@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/notify"
 	"github.com/monarr-media/monarr/internal/adapters/openlibrary"
 	"github.com/monarr-media/monarr/internal/adapters/qbittorrent"
 	"github.com/monarr-media/monarr/internal/adapters/sabnzbd"
@@ -25,6 +26,7 @@ import (
 	"github.com/monarr-media/monarr/internal/app/acquisition"
 	"github.com/monarr-media/monarr/internal/app/health"
 	"github.com/monarr-media/monarr/internal/app/library"
+	appnotify "github.com/monarr-media/monarr/internal/app/notify"
 	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/config"
 	"github.com/monarr-media/monarr/internal/infra/logging"
@@ -117,6 +119,11 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}
 	acq := acquisition.New(db, b, log, indexerFactory, clientFactory)
 
+	// Notifications (Phase 3): bus events fan out to configured targets.
+	notifierFactory := func(cfg ports.NotifierConfig) ports.Notifier { return notify.New(cfg) }
+	dispatcher := appnotify.New(db, b, log, notifierFactory)
+	go dispatcher.Run(ctx)
+
 	// Health checks.
 	reg := health.NewRegistry(b)
 	reg.Register("database", func(ctx context.Context) health.Result {
@@ -205,6 +212,19 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}); err != nil {
 		return err
 	}
+	if err := sched.Register(scheduler.Task{
+		Name:     "backup.run",
+		Interval: 24 * time.Hour,
+		Fn: func(ctx context.Context) error {
+			path, err := db.Backup(ctx)
+			if err == nil {
+				log.Info("backup written", "path", path)
+			}
+			return err
+		},
+	}); err != nil {
+		return err
+	}
 	if err := sched.Start(ctx); err != nil {
 		return err
 	}
@@ -229,21 +249,22 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 
 	// HTTP.
 	srv := api.New(api.Deps{
-		Log:            log,
-		Bus:            b,
-		Health:         reg,
-		Scheduler:      sched,
-		DB:             db,
-		Library:        lib,
-		Acquisition:    acq,
-		Store:          db,
-		IndexerFactory: indexerFactory,
-		ClientFactory:  clientFactory,
-		Settings:       db,
-		Version:        version,
-		Commit:         commit,
-		DataDir:        cfg.DataDir,
-		StartedAt:      startedAt,
+		Log:             log,
+		Bus:             b,
+		Health:          reg,
+		Scheduler:       sched,
+		DB:              db,
+		Library:         lib,
+		Acquisition:     acq,
+		Store:           db,
+		IndexerFactory:  indexerFactory,
+		ClientFactory:   clientFactory,
+		NotifierFactory: notifierFactory,
+		Settings:        db,
+		Version:         version,
+		Commit:          commit,
+		DataDir:         cfg.DataDir,
+		StartedAt:       startedAt,
 	})
 	httpServer := &http.Server{
 		Addr:              cfg.Addr(),

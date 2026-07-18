@@ -16,6 +16,7 @@ import (
 	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/scheduler"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
+	"github.com/monarr-media/monarr/internal/ports"
 )
 
 // SchemaVersioner reports the database schema version; satisfied by
@@ -46,13 +47,14 @@ type Deps struct {
 	// Store is the config storage for profiles/indexers/clients.
 	Store *sqlite.DB
 	// Factories used by the /test endpoints to probe unsaved configs.
-	IndexerFactory acquisition.IndexerFactory
-	ClientFactory  acquisition.ClientFactory
-	Settings       SettingsStore
-	Version        string
-	Commit         string
-	DataDir        string
-	StartedAt      time.Time
+	IndexerFactory  acquisition.IndexerFactory
+	ClientFactory   acquisition.ClientFactory
+	NotifierFactory func(ports.NotifierConfig) ports.Notifier
+	Settings        SettingsStore
+	Version         string
+	Commit          string
+	DataDir         string
+	StartedAt       time.Time
 }
 
 // Server implements apigen.ServerInterface.

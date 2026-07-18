@@ -561,6 +561,93 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /notifiers:
+    get:
+      operationId: listNotifiers
+      summary: List notification targets
+      responses:
+        "200":
+          description: Notifiers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Notifier"
+    post:
+      operationId: addNotifier
+      summary: Add a notification target
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotifierInput"
+      responses:
+        "201":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notifier"
+        "400":
+          description: Invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /notifiers/test:
+    post:
+      operationId: testNotifier
+      summary: Send a test notification with an unsaved config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotifierInput"
+      responses:
+        "200":
+          description: Delivered.
+        "400":
+          description: Failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /notifiers/{id}:
+    delete:
+      operationId: deleteNotifier
+      summary: Remove a notification target
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Removed. }
+        "404":
+          description: Unknown notifier.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /system/backups:
+    get:
+      operationId: listBackups
+      summary: On-disk database backups (newest first)
+      responses:
+        "200":
+          description: Backups.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BackupInfo"
+
   /calendar:
     get:
       operationId: getCalendar
@@ -1113,6 +1200,59 @@ components:
         indexer: { type: string }
         protocol: { type: string }
         size: { type: integer, format: int64 }
+
+    NotifierInput:
+      type: object
+      required: [type, name]
+      properties:
+        type:
+          type: string
+          enum: [webhook, discord, plex, jellyfin]
+        name:
+          type: string
+        settings:
+          type: object
+          additionalProperties:
+            type: string
+          description: "Type-specific: webhook/discord {url}; plex {url, token}; jellyfin {url, apiKey}."
+        onGrab:
+          type: boolean
+          default: true
+        onImport:
+          type: boolean
+          default: true
+        onFailed:
+          type: boolean
+          default: true
+        onHealth:
+          type: boolean
+          default: false
+        enabled:
+          type: boolean
+          default: true
+
+    Notifier:
+      allOf:
+        - $ref: "#/components/schemas/NotifierInput"
+        - type: object
+          required: [id]
+          properties:
+            id:
+              type: integer
+              format: int64
+
+    BackupInfo:
+      type: object
+      required: [name, sizeBytes, createdAt]
+      properties:
+        name:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
 
     CalendarEntry:
       type: object

@@ -380,3 +380,126 @@ func (s *Server) GetCalendar(w http.ResponseWriter, r *http.Request, params apig
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// ---- notifiers (Phase 3) ----
+
+func notifierFromInput(in apigen.NotifierInput) ports.NotifierConfig {
+	cfg := ports.NotifierConfig{
+		Type: string(in.Type), Name: in.Name,
+		OnGrab: true, OnImport: true, OnFailed: true, OnHealth: false, Enabled: true,
+	}
+	if in.Settings != nil {
+		cfg.Settings = *in.Settings
+	}
+	if in.OnGrab != nil {
+		cfg.OnGrab = *in.OnGrab
+	}
+	if in.OnImport != nil {
+		cfg.OnImport = *in.OnImport
+	}
+	if in.OnFailed != nil {
+		cfg.OnFailed = *in.OnFailed
+	}
+	if in.OnHealth != nil {
+		cfg.OnHealth = *in.OnHealth
+	}
+	if in.Enabled != nil {
+		cfg.Enabled = *in.Enabled
+	}
+	return cfg
+}
+
+func notifierDTO(cfg ports.NotifierConfig) apigen.Notifier {
+	settings := cfg.Settings
+	if settings == nil {
+		settings = map[string]string{}
+	}
+	return apigen.Notifier{
+		Id: cfg.ID, Type: apigen.NotifierType(cfg.Type), Name: cfg.Name,
+		Settings: &settings,
+		OnGrab:   &cfg.OnGrab, OnImport: &cfg.OnImport,
+		OnFailed: &cfg.OnFailed, OnHealth: &cfg.OnHealth, Enabled: &cfg.Enabled,
+	}
+}
+
+// ListNotifiers implements GET /notifiers.
+func (s *Server) ListNotifiers(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.deps.Store.ListNotifiers(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := make([]apigen.Notifier, 0, len(rows))
+	for _, cfg := range rows {
+		out = append(out, notifierDTO(cfg))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// AddNotifier implements POST /notifiers.
+func (s *Server) AddNotifier(w http.ResponseWriter, r *http.Request) {
+	var body apigen.AddNotifierJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if !body.Type.Valid() || body.Name == "" {
+		writeError(w, http.StatusBadRequest, "type and name are required")
+		return
+	}
+	cfg := notifierFromInput(body)
+	id, err := s.deps.Store.AddNotifier(r.Context(), cfg)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	cfg.ID = id
+	writeJSON(w, http.StatusCreated, notifierDTO(cfg))
+}
+
+// TestNotifier implements POST /notifiers/test.
+func (s *Server) TestNotifier(w http.ResponseWriter, r *http.Request) {
+	var body apigen.TestNotifierJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if !body.Type.Valid() {
+		writeError(w, http.StatusBadRequest, "unknown notifier type")
+		return
+	}
+	if err := s.deps.NotifierFactory(notifierFromInput(body)).Test(r.Context()); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// DeleteNotifier implements DELETE /notifiers/{id}.
+func (s *Server) DeleteNotifier(w http.ResponseWriter, r *http.Request, id int64) {
+	if _, err := s.deps.Store.GetNotifier(r.Context(), id); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	if err := s.deps.Store.DeleteNotifier(r.Context(), id); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListBackups implements GET /system/backups.
+func (s *Server) ListBackups(w http.ResponseWriter, r *http.Request) {
+	backups, err := s.deps.Store.ListBackups()
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := make([]apigen.BackupInfo, 0, len(backups))
+	for _, b := range backups {
+		out = append(out, apigen.BackupInfo{
+			Name: b.Name, SizeBytes: b.SizeBytes, CreatedAt: b.CreatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}

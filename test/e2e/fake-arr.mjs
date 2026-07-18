@@ -49,6 +49,7 @@ const payloads = {
 }
 
 const torrents = [] // {hash, name, content_path}
+const sinkLog = [] // webhook notifications received
 
 createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
@@ -88,6 +89,22 @@ createServer((req, res) => {
       item('The.Test.Movie.2024.1080p.WEB-DL.x264-E2E', 'movie601', 2000000, 50),
       item('The.Test.Movie.2024.HDCAM.x264-JUNK', 'movie601cam', 900000, 2),
     ]))
+    return
+  }
+
+  // ---- webhook sink (Phase 3 notifier target) ----
+  if (url.pathname === '/webhook-sink') {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      try { sinkLog.push(JSON.parse(body)) } catch { /* ignore */ }
+      res.end('ok')
+    })
+    return
+  }
+  if (url.pathname === '/webhook-sink/log') {
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify(sinkLog))
     return
   }
 

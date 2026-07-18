@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-18 · Phases 0 through 2.5 complete (60/60) · next: Phase 3 — Automation (0/9)**
+> **Snapshot 2026-07-18 · Phases 0 through 3 complete (69/69) · next: Phase 4 — Ecosystem compat (0/6)**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -16,8 +16,8 @@
 | 1 — Library | **13/13 ✅** | real media folders imported and browsable |
 | 2 — Acquisition core | **16/16 ✅** | search → grab → import → correctly named file (movie + season pack) |
 | 2.5 — Books (ADR 0006) | **7/7 ✅** | grab an ebook and an audiobook, correctly named |
-| 3 — Automation | **0/9 ⟵ next** | runs unattended for a month |
-| 4 — Ecosystem compat | 0/6 | Jellyseerr/Prowlarr/Bazarr work against the shim |
+| 3 — Automation | **9/9 ✅** | runs unattended for a month |
+| 4 — Ecosystem compat | **0/6 ⟵ next** | Jellyseerr/Prowlarr/Bazarr work against the shim |
 | 5 — Depth & parity | 0/7 | custom formats, client zoo, lists, anime |
 | Launch logistics | 2/6 | public repo, releases, name housekeeping |
 
@@ -96,17 +96,17 @@
 - [x] `{Author Name}/{Book Title}` naming, Calibre-friendly (`Title - Author.ext`); import + scan grade book files by extension
 - [x] Add/browse books in the UI (Book tab in Add, Books library filter, author on detail, release search + grab) — e2e: search → add → grab EPUB → auto-import, M4B rejected by profile
 
-## Phase 3 — Automation
+## Phase 3 — Automation ✅ (shipped 2026-07-18)
 
-- [ ] Wanted index (in-memory, rebuilt on library events)
-- [ ] RSS sync loop per indexer (~15 min, jittered)
-- [ ] Backlog search
-- [ ] Failed-download handling: blocklist + automatic re-search
-- [ ] Calendar (API + UI)
-- [ ] Webhook notifier
-- [ ] Discord notifier
-- [ ] Plex/Jellyfin library-refresh notifiers
-- [ ] Scheduled SQLite online backups
+- [x] Wanted index (in-memory, invalidated on add/scan/import/delete events, lazily rebuilt; in-flight downloads and pack-covered episodes excluded) — `GET /wanted`
+- [x] RSS sync loop per indexer (15 min, jittered): fetch → parse → match wanted → decide → auto-grab
+- [x] Backlog search (12 h + manual): planned queries per wantable, best accepted release grabbed, 20/run cap
+- [x] Failed-download handling: blocklist (unique release+indexer, `GET/DELETE /blocklist`) + automatic re-search on client failure or import error
+- [x] Calendar (API + UI): airing episodes + movie/book release dates, agenda view with -7/+30 day paging
+- [x] Webhook notifier (stable lowercase JSON wire format)
+- [x] Discord notifier (embeds via webhook URL)
+- [x] Plex/Jellyfin library-refresh notifiers (poked on imports only, never chatter)
+- [x] Scheduled SQLite online backups: daily `VACUUM INTO`, last 7 kept, listed on the System page — e2e proves the whole circle: delete file → rescan → wanted → RSS re-grab → re-import → webhook notified
 
 ## Phase 4 — Ecosystem compat
 
