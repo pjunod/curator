@@ -115,7 +115,7 @@ export function SettingsPage() {
             disabled={omdbKey.trim() === '' || saveOmdbKey.isPending}
             onClick={() => saveOmdbKey.mutate()}
           >
-            Save key
+            Save OMDb key
           </button>
         </div>
         {saveOmdbKey.isSuccess && <p className="ok-text">Saved.</p>}
