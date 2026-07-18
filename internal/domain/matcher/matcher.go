@@ -70,6 +70,17 @@ func Match(p parser.Parsed, candidates []domain.Wantable) []Result {
 				out = append(out, Result{Wantable: w})
 				continue
 			}
+			// Anime absolute numbering: "[Group] Show - 15" carries no
+			// season; match on the episode's absolute number.
+			if len(p.Absolute) > 0 && t.Absolute > 0 {
+				for _, abs := range p.Absolute {
+					if abs == t.Absolute {
+						out = append(out, Result{Wantable: w})
+						break
+					}
+				}
+				continue
+			}
 			if p.Season == t.Season {
 				for _, ep := range p.Episodes {
 					if ep == t.Episode {

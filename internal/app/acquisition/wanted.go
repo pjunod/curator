@@ -99,7 +99,7 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 							Item: item.ID, EpisodeID: e.ID, Profile: item.QualityProfileID,
 							Mon: true, Title: item.Title, Year: item.Year,
 							Season: e.SeasonNumber, Episode: e.EpisodeNumber,
-							Have: epQuals[e.ID],
+							Have: epQuals[e.ID], Absolute: e.AbsoluteNum,
 						})
 					}
 				}

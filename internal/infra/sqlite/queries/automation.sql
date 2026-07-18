@@ -41,3 +41,30 @@ SELECT m.id, m.kind, m.title, m.author, m.release_date,
 FROM media_items m
 WHERE m.kind != 'series' AND m.release_date >= ? AND m.release_date <= ?
 ORDER BY m.release_date, m.title;
+
+-- name: InsertCustomFormat :one
+INSERT INTO custom_formats (name, pattern, score) VALUES (?, ?, ?) RETURNING id;
+
+-- name: ListCustomFormats :many
+SELECT * FROM custom_formats ORDER BY name;
+
+-- name: DeleteCustomFormat :exec
+DELETE FROM custom_formats WHERE id = ?;
+
+-- name: InsertImportList :one
+INSERT INTO import_lists (name, type, config, kind, root_folder_id, quality_profile_id, monitored, enabled)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id;
+
+-- name: ListImportLists :many
+SELECT * FROM import_lists ORDER BY name;
+
+-- name: DeleteImportList :exec
+DELETE FROM import_lists WHERE id = ?;
+
+-- name: UpdateMediaItemBulk :exec
+UPDATE media_items SET
+    monitored          = COALESCE(sqlc.narg('monitored'), monitored),
+    quality_profile_id = COALESCE(sqlc.narg('quality_profile_id'), quality_profile_id),
+    updated_at         = sqlc.arg('updated_at')
+WHERE id = sqlc.arg('id');

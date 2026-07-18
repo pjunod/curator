@@ -1,0 +1,18 @@
+[
+  {
+    "title": "[SubsPlease] Frieren - Beyond Journeys End - 15 (1080p) [ABCD1234]",
+    "expect": { "title": "Frieren - Beyond Journeys End", "group": "SubsPlease", "resolution": 1080 }
+  },
+  {
+    "title": "[Erai-raws] Spy x Family - 25 [1080p][Multiple Subtitle]",
+    "expect": { "title": "Spy x Family", "group": "Erai-raws", "resolution": 1080 }
+  },
+  {
+    "title": "[Group] Show Title - 003v2 [720p]",
+    "expect": { "title": "Show Title", "group": "Group", "resolution": 720 }
+  },
+  {
+    "title": "[Judas] One Piece - 1071-1072 [1080p][HEVC x265]",
+    "expect": { "title": "One Piece", "group": "Judas", "resolution": 1080 }
+  }
+]

@@ -218,3 +218,26 @@ func TestBookPlannerAndNaming(t *testing.T) {
 		t.Errorf("authorless BookFileName = %q", got)
 	}
 }
+
+func TestAnimeAbsoluteMatching(t *testing.T) {
+	ep15 := domain.EpisodeWantable{
+		Item: 3, Title: "Frieren Beyond Journeys End", Season: 2, Episode: 3, Absolute: 15,
+	}
+	p := parser.Parse("[SubsPlease] Frieren Beyond Journeys End - 15 (1080p) [ABCD1234]")
+	if len(p.Absolute) != 1 || p.Absolute[0] != 15 {
+		t.Fatalf("parsed absolute = %v", p.Absolute)
+	}
+	if got := Match(p, []domain.Wantable{ep15}); len(got) != 1 {
+		t.Errorf("absolute match = %d, want 1", len(got))
+	}
+	// Wrong absolute number: no match.
+	other := domain.EpisodeWantable{Item: 3, Title: "Frieren Beyond Journeys End", Season: 2, Episode: 4, Absolute: 16}
+	if got := Match(p, []domain.Wantable{other}); len(got) != 0 {
+		t.Errorf("wrong absolute matched")
+	}
+	// Multi-episode absolute run covers both.
+	p2 := parser.Parse("[Judas] Frieren Beyond Journeys End - 15-16 [1080p]")
+	if got := Match(p2, []domain.Wantable{ep15, other}); len(got) != 2 {
+		t.Errorf("run matched %d, want 2 (parsed %v)", len(got), p2.Absolute)
+	}
+}

@@ -2,11 +2,13 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/domain/format"
 	sqlitegen "github.com/monarr-media/monarr/internal/infra/sqlite/gen"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -171,4 +173,103 @@ func (d *DB) Calendar(ctx context.Context, start, end string) ([]CalendarEntry, 
 		return out[i].Title < out[j].Title
 	})
 	return out, nil
+}
+
+// ---- custom formats (Phase 5) ----
+
+// AddCustomFormat stores a scoring rule.
+func (d *DB) AddCustomFormat(ctx context.Context, f format.CustomFormat) (int64, error) {
+	id, err := d.Write.InsertCustomFormat(ctx, sqlitegen.InsertCustomFormatParams{
+		Name: f.Name, Pattern: f.Pattern, Score: int64(f.Score),
+	})
+	if isConstraint(err) {
+		return 0, ErrDuplicate
+	}
+	return id, err
+}
+
+// ListCustomFormats returns every scoring rule.
+func (d *DB) ListCustomFormats(ctx context.Context) ([]format.CustomFormat, error) {
+	rows, err := d.Read.ListCustomFormats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]format.CustomFormat, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, format.CustomFormat{
+			ID: r.ID, Name: r.Name, Pattern: r.Pattern, Score: int(r.Score),
+		})
+	}
+	return out, nil
+}
+
+// DeleteCustomFormat removes a scoring rule.
+func (d *DB) DeleteCustomFormat(ctx context.Context, id int64) error {
+	return d.Write.DeleteCustomFormat(ctx, id)
+}
+
+// ---- import lists (Phase 5) ----
+
+// ImportList is one auto-add source.
+type ImportList struct {
+	ID               int64             `json:"id"`
+	Name             string            `json:"name"`
+	Type             string            `json:"type"`
+	Config           map[string]string `json:"config"`
+	Kind             string            `json:"kind"`
+	RootFolderID     int64             `json:"rootFolderId"`
+	QualityProfileID int64             `json:"qualityProfileId"`
+	Monitored        bool              `json:"monitored"`
+	Enabled          bool              `json:"enabled"`
+}
+
+// AddImportList stores a list source.
+func (d *DB) AddImportList(ctx context.Context, l ImportList) (int64, error) {
+	cfg, _ := json.Marshal(l.Config)
+	if l.Config == nil {
+		cfg = []byte("{}")
+	}
+	return d.Write.InsertImportList(ctx, sqlitegen.InsertImportListParams{
+		Name: l.Name, Type: l.Type, Config: string(cfg), Kind: l.Kind,
+		RootFolderID: l.RootFolderID, QualityProfileID: l.QualityProfileID,
+		Monitored: boolInt(l.Monitored), Enabled: boolInt(l.Enabled),
+	})
+}
+
+// ListImportLists returns every list source.
+func (d *DB) ListImportLists(ctx context.Context) ([]ImportList, error) {
+	rows, err := d.Read.ListImportLists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ImportList, 0, len(rows))
+	for _, r := range rows {
+		var cfg map[string]string
+		_ = json.Unmarshal([]byte(r.Config), &cfg)
+		out = append(out, ImportList{
+			ID: r.ID, Name: r.Name, Type: r.Type, Config: cfg, Kind: r.Kind,
+			RootFolderID: r.RootFolderID, QualityProfileID: r.QualityProfileID,
+			Monitored: r.Monitored != 0, Enabled: r.Enabled != 0,
+		})
+	}
+	return out, nil
+}
+
+// DeleteImportList removes a list source.
+func (d *DB) DeleteImportList(ctx context.Context, id int64) error {
+	return d.Write.DeleteImportList(ctx, id)
+}
+
+// ---- bulk edit (Phase 5) ----
+
+// BulkUpdateItem applies the non-nil fields to one media item.
+func (d *DB) BulkUpdateItem(ctx context.Context, id int64, monitored *bool, profileID *int64) error {
+	p := sqlitegen.UpdateMediaItemBulkParams{ID: id, UpdatedAt: time.Now().UnixMilli()}
+	if monitored != nil {
+		p.Monitored = sql.NullInt64{Int64: boolInt(*monitored), Valid: true}
+	}
+	if profileID != nil {
+		p.QualityProfileID = sql.NullInt64{Int64: *profileID, Valid: true}
+	}
+	return d.Write.UpdateMediaItemBulk(ctx, p)
 }

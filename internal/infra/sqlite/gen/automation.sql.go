@@ -7,6 +7,7 @@ package sqlitegen
 
 import (
 	"context"
+	"database/sql"
 )
 
 const countBlocklisted = `-- name: CountBlocklisted :one
@@ -31,6 +32,24 @@ DELETE FROM blocklist WHERE id = ?
 
 func (q *Queries) DeleteBlocklist(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteBlocklist, id)
+	return err
+}
+
+const deleteCustomFormat = `-- name: DeleteCustomFormat :exec
+DELETE FROM custom_formats WHERE id = ?
+`
+
+func (q *Queries) DeleteCustomFormat(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteCustomFormat, id)
+	return err
+}
+
+const deleteImportList = `-- name: DeleteImportList :exec
+DELETE FROM import_lists WHERE id = ?
+`
+
+func (q *Queries) DeleteImportList(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteImportList, id)
 	return err
 }
 
@@ -86,6 +105,56 @@ func (q *Queries) InsertBlocklist(ctx context.Context, arg InsertBlocklistParams
 		arg.Indexer,
 		arg.Reason,
 		arg.CreatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertCustomFormat = `-- name: InsertCustomFormat :one
+INSERT INTO custom_formats (name, pattern, score) VALUES (?, ?, ?) RETURNING id
+`
+
+type InsertCustomFormatParams struct {
+	Name    string
+	Pattern string
+	Score   int64
+}
+
+func (q *Queries) InsertCustomFormat(ctx context.Context, arg InsertCustomFormatParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, insertCustomFormat, arg.Name, arg.Pattern, arg.Score)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertImportList = `-- name: InsertImportList :one
+INSERT INTO import_lists (name, type, config, kind, root_folder_id, quality_profile_id, monitored, enabled)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id
+`
+
+type InsertImportListParams struct {
+	Name             string
+	Type             string
+	Config           string
+	Kind             string
+	RootFolderID     int64
+	QualityProfileID int64
+	Monitored        int64
+	Enabled          int64
+}
+
+func (q *Queries) InsertImportList(ctx context.Context, arg InsertImportListParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, insertImportList,
+		arg.Name,
+		arg.Type,
+		arg.Config,
+		arg.Kind,
+		arg.RootFolderID,
+		arg.QualityProfileID,
+		arg.Monitored,
+		arg.Enabled,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -159,6 +228,38 @@ func (q *Queries) ListBlocklist(ctx context.Context) ([]Blocklist, error) {
 	return items, nil
 }
 
+const listCustomFormats = `-- name: ListCustomFormats :many
+SELECT id, name, pattern, score FROM custom_formats ORDER BY name
+`
+
+func (q *Queries) ListCustomFormats(ctx context.Context) ([]CustomFormat, error) {
+	rows, err := q.db.QueryContext(ctx, listCustomFormats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CustomFormat
+	for rows.Next() {
+		var i CustomFormat
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Pattern,
+			&i.Score,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEpisodesAiring = `-- name: ListEpisodesAiring :many
 SELECT e.id, e.media_item_id, e.season_number, e.episode_number,
        e.title AS episode_title, e.air_date, m.title AS series_title,
@@ -202,6 +303,43 @@ func (q *Queries) ListEpisodesAiring(ctx context.Context, arg ListEpisodesAiring
 			&i.AirDate,
 			&i.SeriesTitle,
 			&i.HasFile,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listImportLists = `-- name: ListImportLists :many
+SELECT id, name, type, config, kind, root_folder_id, quality_profile_id, monitored, enabled FROM import_lists ORDER BY name
+`
+
+func (q *Queries) ListImportLists(ctx context.Context) ([]ImportList, error) {
+	rows, err := q.db.QueryContext(ctx, listImportLists)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ImportList
+	for rows.Next() {
+		var i ImportList
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Type,
+			&i.Config,
+			&i.Kind,
+			&i.RootFolderID,
+			&i.QualityProfileID,
+			&i.Monitored,
+			&i.Enabled,
 		); err != nil {
 			return nil, err
 		}
@@ -303,4 +441,29 @@ func (q *Queries) ListNotifiers(ctx context.Context) ([]Notifier, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateMediaItemBulk = `-- name: UpdateMediaItemBulk :exec
+UPDATE media_items SET
+    monitored          = COALESCE(?1, monitored),
+    quality_profile_id = COALESCE(?2, quality_profile_id),
+    updated_at         = ?3
+WHERE id = ?4
+`
+
+type UpdateMediaItemBulkParams struct {
+	Monitored        sql.NullInt64
+	QualityProfileID sql.NullInt64
+	UpdatedAt        int64
+	ID               int64
+}
+
+func (q *Queries) UpdateMediaItemBulk(ctx context.Context, arg UpdateMediaItemBulkParams) error {
+	_, err := q.db.ExecContext(ctx, updateMediaItemBulk,
+		arg.Monitored,
+		arg.QualityProfileID,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
 }

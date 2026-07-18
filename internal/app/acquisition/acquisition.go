@@ -15,6 +15,7 @@ import (
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/decision"
+	"github.com/monarr-media/monarr/internal/domain/format"
 	"github.com/monarr-media/monarr/internal/domain/matcher"
 	"github.com/monarr-media/monarr/internal/domain/parser"
 	"github.com/monarr-media/monarr/internal/domain/quality"
@@ -167,6 +168,7 @@ func (s *Service) target(ctx context.Context, item domain.MediaItem, season, epi
 			Item: item.ID, EpisodeID: e.ID, Profile: item.QualityProfileID,
 			Mon: item.Monitored && e.Monitored, Title: item.Title, Year: item.Year,
 			Season: e.SeasonNumber, Episode: e.EpisodeNumber, Have: epQuals[e.ID],
+			Absolute: e.AbsoluteNum,
 		}
 	}
 	if episode > 0 {
@@ -196,6 +198,8 @@ type Candidate struct {
 	Quality    quality.Quality      `json:"-"`
 	QualityStr string               `json:"quality"`
 	Age        string               `json:"age"`
+	Score      int                  `json:"score"`   // custom-format score sum
+	Formats    []string             `json:"formats"` // matched custom formats
 	Accepted   bool                 `json:"accepted"`
 	IsUpgrade  bool                 `json:"isUpgrade"`
 	Rejections []decision.Rejection `json:"rejections"`
@@ -257,6 +261,7 @@ func (s *Service) Search(ctx context.Context, itemID int64, season, episode int)
 	}
 	wg.Wait()
 
+	formats, _ := s.db.ListCustomFormats(ctx)
 	now := time.Now()
 	seen := map[string]bool{}
 	out := make([]Candidate, 0, len(releases))
@@ -268,7 +273,8 @@ func (s *Service) Search(ctx context.Context, itemID int64, season, episode int)
 		seen[key] = true
 
 		p := parser.Parse(r.Title)
-		c := Candidate{Release: r, Quality: p.Quality, QualityStr: p.Quality.Display()}
+		c := Candidate{Release: r, Quality: p.Quality, QualityStr: p.Quality.Display(),
+			Score: format.Score(r.Title, formats), Formats: format.Matches(r.Title, formats)}
 		if !r.PublishDate.IsZero() {
 			c.Age = age(now.Sub(r.PublishDate))
 		}
@@ -294,6 +300,10 @@ func (s *Service) Search(ctx context.Context, itemID int64, season, episode int)
 		ri, rj := quality.Rank(out[i].Quality), quality.Rank(out[j].Quality)
 		if ri != rj {
 			return ri > rj
+		}
+		// Same quality: custom-format score breaks the tie (Phase 5).
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
 		}
 		return out[i].Release.Seeders > out[j].Release.Seeders
 	})
@@ -343,7 +353,7 @@ type GrabRequest struct {
 }
 
 func protocolOfClient(clientType string) string {
-	if clientType == "sabnzbd" {
+	if clientType == "sabnzbd" || clientType == "nzbget" {
 		return "usenet"
 	}
 	return "torrent"

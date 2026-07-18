@@ -291,6 +291,11 @@ func (c *Client) GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem,
 		Ended:        strings.EqualFold(resp.Status, "Ended") || strings.EqualFold(resp.Status, "Canceled"),
 	}
 
+	// Absolute numbering: TMDB has no first-class absolute numbers, so
+	// derive them as the cumulative episode index across regular seasons —
+	// correct for the common continuously-numbered anime case (TVDB/AniDB
+	// mapping tables are the future refinement).
+	absolute := 0
 	for _, s := range resp.Seasons {
 		var sr seasonResp
 		if err := c.get(ctx, fmt.Sprintf("/tv/%d/season/%d", tmdbID, s.SeasonNumber), nil, &sr); err != nil {
@@ -302,17 +307,42 @@ func (c *Client) GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem,
 			Monitored: s.SeasonNumber != 0,
 		}
 		for _, e := range sr.Episodes {
-			season.Episodes = append(season.Episodes, domain.Episode{
+			ep := domain.Episode{
 				SeasonNumber:  e.SeasonNumber,
 				EpisodeNumber: e.EpisodeNumber,
 				Title:         e.Name,
 				AirDate:       e.AirDate,
 				Monitored:     s.SeasonNumber != 0,
-			})
+			}
+			if s.SeasonNumber != 0 {
+				absolute++
+				ep.AbsoluteNum = absolute
+			}
+			season.Episodes = append(season.Episodes, ep)
 		}
 		item.Seasons = append(item.Seasons, season)
 	}
 	return item, nil
+}
+
+// DiscoverMovies serves the import lists (Phase 5): kind is "popular" or
+// "top_rated"; results carry TMDB ids ready for library adds.
+func (c *Client) DiscoverMovies(ctx context.Context, kind string) ([]ports.SearchResult, error) {
+	if kind != "popular" && kind != "top_rated" {
+		return nil, fmt.Errorf("tmdb: unknown discover kind %q", kind)
+	}
+	var resp searchMovieResp
+	if err := c.get(ctx, "/movie/"+kind, nil, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]ports.SearchResult, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		out = append(out, ports.SearchResult{
+			Kind: domain.KindMovie, TMDBID: r.ID, Title: r.Title,
+			Year: yearOf(r.ReleaseDate), Overview: r.Overview, PosterPath: r.PosterPath,
+		})
+	}
+	return out, nil
 }
 
 // FindSeriesByTVDB resolves a TVDB id to a fully hydrated series via

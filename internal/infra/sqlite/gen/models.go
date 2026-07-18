@@ -23,6 +23,13 @@ type Blocklist struct {
 	CreatedAt    int64
 }
 
+type CustomFormat struct {
+	ID      int64
+	Name    string
+	Pattern string
+	Score   int64
+}
+
 type Download struct {
 	ID           int64
 	MediaItemID  int64
@@ -72,6 +79,18 @@ type HistoryEvent struct {
 	MediaItemID  int64
 	ReleaseTitle string
 	Data         string
+}
+
+type ImportList struct {
+	ID               int64
+	Name             string
+	Type             string
+	Config           string
+	Kind             string
+	RootFolderID     int64
+	QualityProfileID int64
+	Monitored        int64
+	Enabled          int64
 }
 
 type Indexer struct {

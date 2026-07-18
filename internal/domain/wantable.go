@@ -62,6 +62,7 @@ type EpisodeWantable struct {
 	Year      int
 	Season    int
 	Episode   int
+	Absolute  int // anime absolute number; 0 = unknown
 }
 
 // ID implements Wantable.

@@ -18,15 +18,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/deluge"
 	"github.com/monarr-media/monarr/internal/adapters/notify"
+	"github.com/monarr-media/monarr/internal/adapters/nzbget"
 	"github.com/monarr-media/monarr/internal/adapters/openlibrary"
 	"github.com/monarr-media/monarr/internal/adapters/qbittorrent"
 	"github.com/monarr-media/monarr/internal/adapters/sabnzbd"
 	"github.com/monarr-media/monarr/internal/adapters/tmdb"
 	"github.com/monarr-media/monarr/internal/adapters/torznab"
+	"github.com/monarr-media/monarr/internal/adapters/trakt"
+	"github.com/monarr-media/monarr/internal/adapters/transmission"
 	"github.com/monarr-media/monarr/internal/api"
 	"github.com/monarr-media/monarr/internal/app/acquisition"
 	"github.com/monarr-media/monarr/internal/app/health"
+	"github.com/monarr-media/monarr/internal/app/importlist"
 	"github.com/monarr-media/monarr/internal/app/library"
 	appnotify "github.com/monarr-media/monarr/internal/app/notify"
 	"github.com/monarr-media/monarr/internal/compat"
@@ -115,10 +120,18 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// Acquisition: real adapters injected as factories.
 	indexerFactory := func(cfg ports.IndexerConfig) ports.Indexer { return torznab.New(cfg) }
 	clientFactory := func(cfg ports.ClientConfig) ports.DownloadClient {
-		if cfg.Type == "sabnzbd" {
+		switch cfg.Type {
+		case "sabnzbd":
 			return sabnzbd.New(cfg)
+		case "nzbget":
+			return nzbget.New(cfg)
+		case "transmission":
+			return transmission.New(cfg)
+		case "deluge":
+			return deluge.New(cfg)
+		default:
+			return qbittorrent.New(cfg)
 		}
-		return qbittorrent.New(cfg)
 	}
 	acq := acquisition.New(db, b, log, indexerFactory, clientFactory)
 
@@ -149,6 +162,14 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		}
 		return v
 	}
+
+	// Import lists (Phase 5): external lists auto-add into the library.
+	lists := importlist.New(db, lib, importlist.Sources{
+		TMDBDiscover: meta.DiscoverMovies,
+		TraktList: func(ctx context.Context, clientID, user, slug string) ([]ports.SearchResult, error) {
+			return trakt.New(os.Getenv("MONARR_TRAKT_BASE_URL"), clientID).ListItems(ctx, user, slug)
+		},
+	}, log)
 
 	// Compat personalities (ADR 0003): Sonarr/Radarr v3 translation surfaces.
 	compatDeps := compat.Deps{
@@ -243,6 +264,13 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Name:     "backlog.search",
 		Interval: 12 * time.Hour,
 		Fn:       acq.BacklogSearch,
+	}); err != nil {
+		return err
+	}
+	if err := sched.Register(scheduler.Task{
+		Name:     "importlists.sync",
+		Interval: 12 * time.Hour,
+		Fn:       lists.Sync,
 	}); err != nil {
 		return err
 	}

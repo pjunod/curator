@@ -22,6 +22,9 @@ type Parsed struct {
 	// Complete") — one download satisfying many episode wantables.
 	SeasonPack bool
 	Daily      string // "2024-01-15" for date-based releases
+	// Absolute holds anime-style absolute episode numbers
+	// ("[Group] Show - 15" → [15]); empty otherwise.
+	Absolute []int
 	// Author is set for book-format releases (ADR 0006) when the name
 	// carries one ("Author - Title ... EPUB", "Title by Author ... M4B").
 	Author  string
@@ -39,15 +42,18 @@ var (
 	reEpCont        = regexp.MustCompile(`(?i)[E-](\d{1,3})`)
 	reNxx           = regexp.MustCompile(`\b(\d{1,2})x(\d{2,3})(?:-(\d{2,3}))?\b`)
 	reSeasonOnly    = regexp.MustCompile(`(?i)\b(?:S(\d{1,2})|Season[ ._-]?(\d{1,2}))(?:[ ._-]?(?:Complete|COMPLETE))?\b`)
-	reYear          = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
-	reResolution    = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p|4k|uhd)\b`)
-	reProper        = regexp.MustCompile(`(?i)\bPROPER\b`)
-	reRepack        = regexp.MustCompile(`(?i)\b(?:REPACK|RERIP)\b`)
-	reCodec         = regexp.MustCompile(`(?i)\b(x264|x265|h\.?264|h\.?265|HEVC|XviD|AV1)\b`)
-	reContainer     = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|m4v|ts|wmv)$`)
-	reGroupSuffix   = regexp.MustCompile(`-([A-Za-z0-9][A-Za-z0-9_]{1,24})$`)
-	reCleanJunk     = regexp.MustCompile(`[._]+`)
-	reMultiSpace    = regexp.MustCompile(`\s{2,}`)
+	// Anime absolute numbering: " - 15", " - 015v2", " - 15-16" after the
+	// title (only trusted when a [Group] prefix marked the release as anime).
+	reAbsolute    = regexp.MustCompile(`\s-\s(\d{1,4})(?:-(\d{1,4}))?(?:v\d)?\s*(?:\[|$|\()`)
+	reYear        = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
+	reResolution  = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p|4k|uhd)\b`)
+	reProper      = regexp.MustCompile(`(?i)\bPROPER\b`)
+	reRepack      = regexp.MustCompile(`(?i)\b(?:REPACK|RERIP)\b`)
+	reCodec       = regexp.MustCompile(`(?i)\b(x264|x265|h\.?264|h\.?265|HEVC|XviD|AV1)\b`)
+	reContainer   = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|m4v|ts|wmv)$`)
+	reGroupSuffix = regexp.MustCompile(`-([A-Za-z0-9][A-Za-z0-9_]{1,24})$`)
+	reCleanJunk   = regexp.MustCompile(`[._]+`)
+	reMultiSpace  = regexp.MustCompile(`\s{2,}`)
 )
 
 // sourcePatterns are matched in order; first hit wins. Book formats come
@@ -132,6 +138,22 @@ func Parse(release string) Parsed {
 			p.Episodes = expandRuns(append(p.Episodes, atoi(s[nxx[6]:nxx[7]])))
 		}
 	default:
+		// Anime absolute numbering ("[Group] Show - 15 [1080p]"): only when
+		// a bracket-group prefix marked this as an anime-style release.
+		if p.Group != "" {
+			if m := reAbsolute.FindStringSubmatchIndex(s); m != nil {
+				first := atoi(s[m[2]:m[3]])
+				// A 4-digit "episode" that looks like a year is a year.
+				if first < 1900 {
+					claim(m[0:2])
+					p.Absolute = []int{first}
+					if m[4] >= 0 {
+						p.Absolute = expandRuns([]int{first, atoi(s[m[4]:m[5]])})
+					}
+					break
+				}
+			}
+		}
 		// Season pack? Only meaningful with a real season marker.
 		if m := reSeasonOnly.FindStringSubmatchIndex(s); m != nil {
 			num := ""
@@ -208,7 +230,7 @@ func Parse(release string) Parsed {
 	// "Author - Title" or "Title by Author". Books have no season structure;
 	// anything the video patterns claimed above is noise.
 	if quality.IsBookFormat(p.Quality.Source) {
-		p.Season, p.Episodes, p.SeasonPack, p.Daily = -1, nil, false, ""
+		p.Season, p.Episodes, p.SeasonPack, p.Daily, p.Absolute = -1, nil, false, "", nil
 		p.Author, p.Title = splitBookTitle(p.Title)
 	}
 	return p

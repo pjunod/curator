@@ -7,6 +7,7 @@ import (
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/decision"
+	"github.com/monarr-media/monarr/internal/domain/format"
 	"github.com/monarr-media/monarr/internal/domain/matcher"
 	"github.com/monarr-media/monarr/internal/domain/parser"
 	"github.com/monarr-media/monarr/internal/domain/quality"
@@ -142,9 +143,20 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable, enab
 		return err
 	}
 
+	formats, _ := s.db.ListCustomFormats(ctx)
 	type scored struct {
-		r ports.Release
-		q quality.Quality
+		r     ports.Release
+		q     quality.Quality
+		score int
+	}
+	better := func(a, b *scored) bool { // is a strictly better than b
+		if quality.Rank(a.q) != quality.Rank(b.q) {
+			return quality.Rank(a.q) > quality.Rank(b.q)
+		}
+		if a.score != b.score {
+			return a.score > b.score
+		}
+		return a.r.Seeders > b.r.Seeders
 	}
 	var best *scored
 	for _, cfg := range enabled {
@@ -167,9 +179,9 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable, enab
 				if d := decision.Decide(p.Quality, w, profile); !d.Accepted {
 					continue
 				}
-				if best == nil || quality.Rank(p.Quality) > quality.Rank(best.q) ||
-					(quality.Rank(p.Quality) == quality.Rank(best.q) && r.Seeders > best.r.Seeders) {
-					best = &scored{r: r, q: p.Quality}
+				cand := &scored{r: r, q: p.Quality, score: format.Score(r.Title, formats)}
+				if best == nil || better(cand, best) {
+					best = cand
 				}
 			}
 		}

@@ -1,7 +1,7 @@
 [
  {"title":"","expect":{"title":""}},
  {"title":"...","expect":{"title":""}},
- {"title":"[SubsPlease] Anime Show - 05 (1080p)","expect":{"title":"Anime Show - 05","resolution":1080,"group":"SubsPlease"}},
+ {"title":"[SubsPlease] Anime Show - 05 (1080p)","expect":{"title":"Anime Show","resolution":1080,"group":"SubsPlease"}},
  {"title":"Show   Name    S01E01","expect":{"title":"Show Name","season":1,"episodes":[1]}},
  {"title":"Show.Name.S01E01.mkv","expect":{"title":"Show Name","season":1,"episodes":[1]}},
  {"title":"random text with no structure at all","expect":{"title":"random text with no structure at all"}},
