@@ -1,0 +1,77 @@
+name: Compat
+
+# The Sonarr/Radarr personality drift gate, as its own badge: the
+# fake-consumer conformance suite (Jellyseerr / Prowlarr / Bazarr request
+# flows) plus the contract-shape guards run hermetically, and the phase-4
+# e2e spec exercises both personalities against the real compiled binary.
+# Green badge = consumers can still talk to Monarr as if it were the real
+# apps. (The live-fire docker harness in test/conformance stays manual.)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    name: Fake-consumer flows + contract shapes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go test ./internal/compat (race, verbose)
+        run: go test -race -v -count=1 ./internal/compat/
+
+  e2e:
+    name: Personalities against the real binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            test/e2e/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary with embedded UI
+        run: make build
+
+      - name: Install Playwright
+        working-directory: test/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run compat e2e chain
+        working-directory: test/e2e
+        # phase4-compat reads library state the earlier specs build, so the
+        # minimal dependency chain runs: setup+add → grab/import → compat.
+        run: npx playwright test library.spec.ts phase2.spec.ts phase4-compat.spec.ts
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-playwright-report
+          path: test/e2e/playwright-report/
+          retention-days: 7

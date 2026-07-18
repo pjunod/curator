@@ -2,6 +2,7 @@
 
 [![Tests](https://github.com/monarr-media/monarr/actions/workflows/tests.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/tests.yml)
 [![Lint](https://github.com/monarr-media/monarr/actions/workflows/lint.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/lint.yml)
+[![Compat](https://github.com/monarr-media/monarr/actions/workflows/compat.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/compat.yml)
 [![Docker](https://github.com/monarr-media/monarr/actions/workflows/docker.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/docker.yml)
 [![codecov](https://codecov.io/gh/monarr-media/monarr/graph/badge.svg)](https://codecov.io/gh/monarr-media/monarr)
 
