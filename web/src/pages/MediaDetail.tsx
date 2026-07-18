@@ -15,6 +15,8 @@ import {
   posterUrl,
   RATING_SOURCE_LABELS,
   refreshLibraryItem,
+  setEpisodeMonitored,
+  setSeasonMonitored,
   updateLibraryItem,
 } from '../api'
 import type { MediaItemDetail } from '../api'
@@ -169,6 +171,25 @@ export function MediaDetailPage() {
       setAutoMsg('Metadata refreshed from the provider.')
     },
     onError: (e) => setAutoMsg(`✕ ${(e as Error).message}`),
+  })
+
+  // Granular monitoring: the API returns the updated item — write it
+  // straight into the cache so checkboxes feel instant.
+  const monitorSeason = useMutation({
+    mutationFn: (v: { season: number; monitored: boolean }) =>
+      setSeasonMonitored(Number(id), v.season, v.monitored),
+    onSuccess: (detail) => {
+      qc.setQueryData(['library-item', id], detail)
+      void qc.invalidateQueries({ queryKey: ['wanted'] })
+    },
+  })
+  const monitorEpisode = useMutation({
+    mutationFn: (v: { episodeId: number; monitored: boolean }) =>
+      setEpisodeMonitored(Number(id), v.episodeId, v.monitored),
+    onSuccess: (detail) => {
+      qc.setQueryData(['library-item', id], detail)
+      void qc.invalidateQueries({ queryKey: ['wanted'] })
+    },
   })
 
   if (item.isLoading) return <p className="muted">Loading…</p>
@@ -355,6 +376,18 @@ export function MediaDetailPage() {
             return (
               <details key={s.number} open={s.number === 1}>
                 <summary>
+                  <input
+                    type="checkbox"
+                    className="monitor-box"
+                    title={s.monitored ? 'Monitored — untick to stop wanting this season' : 'Unmonitored — tick to want this season'}
+                    aria-label={`Monitor season ${s.number}`}
+                    checked={s.monitored}
+                    disabled={monitorSeason.isPending}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) =>
+                      monitorSeason.mutate({ season: s.number, monitored: e.target.checked })
+                    }
+                  />{' '}
                   {s.number === 0 ? 'Specials' : `Season ${s.number}`}{' '}
                   <span className="muted">
                     {have}/{s.episodes.length} on disk{s.monitored ? '' : ' · unmonitored'}
@@ -372,6 +405,7 @@ export function MediaDetailPage() {
                 <table>
                   <thead>
                     <tr>
+                      <th></th>
                       <th>#</th>
                       <th>Title</th>
                       <th>Air date</th>
@@ -381,7 +415,20 @@ export function MediaDetailPage() {
                   </thead>
                   <tbody>
                     {s.episodes.map((e) => (
-                      <tr key={e.id}>
+                      <tr key={e.id} className={e.monitored ? '' : 'row-unmonitored'}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            className="monitor-box"
+                            title={e.monitored ? 'Monitored' : 'Unmonitored'}
+                            aria-label={`Monitor episode ${e.seasonNumber}x${e.episodeNumber}`}
+                            checked={e.monitored}
+                            disabled={monitorEpisode.isPending}
+                            onChange={(ev) =>
+                              monitorEpisode.mutate({ episodeId: e.id, monitored: ev.target.checked })
+                            }
+                          />
+                        </td>
                         <td className="mono">
                           {e.seasonNumber}x{String(e.episodeNumber).padStart(2, '0')}
                         </td>

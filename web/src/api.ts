@@ -560,6 +560,10 @@ export function composeHostPort(host: string, port: string): string {
 export const autoSearchItem = (id: number) => send('POST', `/library/${id}/autosearch`)
 export const refreshLibraryItem = (id: number) =>
   send<MediaItemDetail>('POST', `/library/${id}/refresh`)
+export const setSeasonMonitored = (id: number, season: number, monitored: boolean) =>
+  send<MediaItemDetail>('PATCH', `/library/${id}/seasons/${season}`, { monitored })
+export const setEpisodeMonitored = (id: number, episodeId: number, monitored: boolean) =>
+  send<MediaItemDetail>('PATCH', `/library/${id}/episodes/${episodeId}`, { monitored })
 export const updateLibraryItem = (id: number, req: UpdateMediaItemRequest) =>
   send<MediaItemDetail>('PATCH', `/library/${id}`, req)
 

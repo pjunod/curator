@@ -739,6 +739,58 @@ func (q *Queries) ListSeasons(ctx context.Context, mediaItemID int64) ([]Season,
 	return items, nil
 }
 
+const setEpisodeMonitored = `-- name: SetEpisodeMonitored :execrows
+UPDATE episodes SET monitored = ? WHERE id = ? AND media_item_id = ?
+`
+
+type SetEpisodeMonitoredParams struct {
+	Monitored   int64
+	ID          int64
+	MediaItemID int64
+}
+
+func (q *Queries) SetEpisodeMonitored(ctx context.Context, arg SetEpisodeMonitoredParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setEpisodeMonitored, arg.Monitored, arg.ID, arg.MediaItemID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setSeasonEpisodesMonitored = `-- name: SetSeasonEpisodesMonitored :exec
+UPDATE episodes SET monitored = ? WHERE media_item_id = ? AND season_number = ?
+`
+
+type SetSeasonEpisodesMonitoredParams struct {
+	Monitored    int64
+	MediaItemID  int64
+	SeasonNumber int64
+}
+
+// Season toggles cascade: an unmonitored season wants none of its episodes.
+func (q *Queries) SetSeasonEpisodesMonitored(ctx context.Context, arg SetSeasonEpisodesMonitoredParams) error {
+	_, err := q.db.ExecContext(ctx, setSeasonEpisodesMonitored, arg.Monitored, arg.MediaItemID, arg.SeasonNumber)
+	return err
+}
+
+const setSeasonMonitored = `-- name: SetSeasonMonitored :execrows
+UPDATE seasons SET monitored = ? WHERE media_item_id = ? AND number = ?
+`
+
+type SetSeasonMonitoredParams struct {
+	Monitored   int64
+	MediaItemID int64
+	Number      int64
+}
+
+func (q *Queries) SetSeasonMonitored(ctx context.Context, arg SetSeasonMonitoredParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSeasonMonitored, arg.Monitored, arg.MediaItemID, arg.Number)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const touchMediaItem = `-- name: TouchMediaItem :exec
 UPDATE media_items SET updated_at = ? WHERE id = ?
 `

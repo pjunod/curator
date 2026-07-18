@@ -293,6 +293,48 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 	return out, nil
 }
 
+// SetSeasonMonitored flips one season's monitored flag and cascades it to
+// the season's episodes (an unmonitored season wants none of them).
+// ErrNotFound when the item has no such season.
+func (d *DB) SetSeasonMonitored(ctx context.Context, itemID int64, season int, monitored bool) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+	n, err := q.SetSeasonMonitored(ctx, sqlitegen.SetSeasonMonitoredParams{
+		Monitored: boolInt(monitored), MediaItemID: itemID, Number: int64(season),
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	if err := q.SetSeasonEpisodesMonitored(ctx, sqlitegen.SetSeasonEpisodesMonitoredParams{
+		Monitored: boolInt(monitored), MediaItemID: itemID, SeasonNumber: int64(season),
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SetEpisodeMonitored flips one episode's monitored flag. ErrNotFound when
+// the episode doesn't exist or belongs to another item.
+func (d *DB) SetEpisodeMonitored(ctx context.Context, itemID, episodeID int64, monitored bool) error {
+	n, err := d.Write.SetEpisodeMonitored(ctx, sqlitegen.SetEpisodeMonitoredParams{
+		Monitored: boolInt(monitored), ID: episodeID, MediaItemID: itemID,
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // UpdateMediaItemPlacement stores a per-item edit: monitoring, quality
 // profile, root folder, and folder path. Disk is never touched.
 func (d *DB) UpdateMediaItemPlacement(ctx context.Context, m domain.MediaItem) error {

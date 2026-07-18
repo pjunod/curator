@@ -758,6 +758,66 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /library/{id}/seasons/{season}:
+    patch:
+      operationId: setSeasonMonitored
+      summary: Monitor or unmonitor one season (cascades to its episodes)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: season
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MonitorRequest" }
+      responses:
+        "200":
+          description: The updated item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaItemDetail" }
+        "404":
+          description: No such item or season.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /library/{id}/episodes/{episodeId}:
+    patch:
+      operationId: setEpisodeMonitored
+      summary: Monitor or unmonitor one episode
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: episodeId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MonitorRequest" }
+      responses:
+        "200":
+          description: The updated item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaItemDetail" }
+        "404":
+          description: No such item or episode.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/{id}/refresh:
     post:
       operationId: refreshLibraryItem
@@ -1370,6 +1430,13 @@ components:
           description: >
             Kick an automatic search for the item right after adding
             (Sonarr's "start search for missing" checkbox).
+
+    MonitorRequest:
+      type: object
+      required: [monitored]
+      properties:
+        monitored:
+          type: boolean
 
     UpdateMediaItemRequest:
       type: object

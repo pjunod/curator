@@ -307,13 +307,21 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	}
 	s.enrichRatings(ctx, &fresh)
 
-	// New seasons default to monitored only while the series itself is.
-	if !stored.Monitored {
-		for i := range fresh.Seasons {
-			fresh.Seasons[i].Monitored = false
-			for j := range fresh.Seasons[i].Episodes {
-				fresh.Seasons[i].Episodes[j].Monitored = false
-			}
+	// Season flags are the user's: known seasons keep their stored flag,
+	// and NEW episodes appearing in them inherit it (existing episodes keep
+	// their own flag via the upsert). Brand-new seasons follow the series.
+	storedSeason := map[int]bool{}
+	for _, s := range stored.Seasons {
+		storedSeason[s.Number] = s.Monitored
+	}
+	for i := range fresh.Seasons {
+		mon, known := storedSeason[fresh.Seasons[i].Number]
+		if !known {
+			mon = fresh.Seasons[i].Monitored && stored.Monitored
+		}
+		fresh.Seasons[i].Monitored = mon
+		for j := range fresh.Seasons[i].Episodes {
+			fresh.Seasons[i].Episodes[j].Monitored = mon
 		}
 	}
 
@@ -322,6 +330,25 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	}
 	s.log.Info("library: metadata refreshed", "kind", stored.Kind, "title", fresh.Title, "id", id)
 	return s.db.GetMediaItemFull(ctx, id)
+}
+
+// SetSeasonMonitored flips a season's monitored flag (cascading to its
+// episodes) and returns the refreshed item.
+func (s *Service) SetSeasonMonitored(ctx context.Context, itemID int64, season int, monitored bool) (domain.MediaItem, error) {
+	if err := s.db.SetSeasonMonitored(ctx, itemID, season, monitored); err != nil {
+		return domain.MediaItem{}, err
+	}
+	s.log.Info("library: season monitoring", "item", itemID, "season", season, "monitored", monitored)
+	return s.db.GetMediaItemFull(ctx, itemID)
+}
+
+// SetEpisodeMonitored flips one episode's monitored flag and returns the
+// refreshed item.
+func (s *Service) SetEpisodeMonitored(ctx context.Context, itemID, episodeID int64, monitored bool) (domain.MediaItem, error) {
+	if err := s.db.SetEpisodeMonitored(ctx, itemID, episodeID, monitored); err != nil {
+		return domain.MediaItem{}, err
+	}
+	return s.db.GetMediaItemFull(ctx, itemID)
 }
 
 // RefreshAll refreshes every library item (the metadata.refresh task).

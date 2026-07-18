@@ -260,6 +260,43 @@ func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id in
 	writeJSON(w, http.StatusOK, detailDTO(item))
 }
 
+// SetSeasonMonitored implements PATCH /library/{id}/seasons/{season}:
+// flip a season's monitored flag, cascading to its episodes.
+func (s *Server) SetSeasonMonitored(w http.ResponseWriter, r *http.Request, id int64, season int) {
+	var body apigen.SetSeasonMonitoredJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	item, err := s.deps.Library.SetSeasonMonitored(r.Context(), id, season, body.Monitored)
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	if s.deps.Acquisition != nil {
+		s.deps.Acquisition.InvalidateWanted()
+	}
+	writeJSON(w, http.StatusOK, detailDTO(item))
+}
+
+// SetEpisodeMonitored implements PATCH /library/{id}/episodes/{episodeId}.
+func (s *Server) SetEpisodeMonitored(w http.ResponseWriter, r *http.Request, id int64, episodeID int64) {
+	var body apigen.SetEpisodeMonitoredJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	item, err := s.deps.Library.SetEpisodeMonitored(r.Context(), id, episodeID, body.Monitored)
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	if s.deps.Acquisition != nil {
+		s.deps.Acquisition.InvalidateWanted()
+	}
+	writeJSON(w, http.StatusOK, detailDTO(item))
+}
+
 // RefreshLibraryItem implements POST /library/{id}/refresh: re-hydrate the
 // item's metadata from its provider and return the updated detail.
 func (s *Server) RefreshLibraryItem(w http.ResponseWriter, r *http.Request, id int64) {

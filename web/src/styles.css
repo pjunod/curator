@@ -1061,3 +1061,20 @@ a.pill-info:hover {
   font-size: 10px;
   letter-spacing: 0.05em;
 }
+
+/* ---- granular monitoring ---- */
+.monitor-box {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  vertical-align: -2px;
+  cursor: pointer;
+}
+
+.row-unmonitored td {
+  opacity: 0.55;
+}
+
+.row-unmonitored td:first-child {
+  opacity: 1; /* the checkbox stays crisp so it reads as actionable */
+}

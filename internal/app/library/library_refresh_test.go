@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/monarr-media/monarr/internal/domain"
@@ -185,4 +186,74 @@ func TestUpdateItemEditsPlacement(t *testing.T) {
 		t.Error("relative path should be rejected")
 	}
 	_ = db
+}
+
+func TestSeasonAndEpisodeMonitoring(t *testing.T) {
+	db, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	ctx := context.Background()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b := bus.New(nil)
+	t.Cleanup(b.Close)
+
+	prov := &mutableProvider{series: seriesV1()}
+	svc := New(db, prov, b, nil)
+	item, err := svc.Add(ctx, AddRequest{Kind: domain.KindSeries, TMDBID: 100, Monitored: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Unmonitor the season: cascades to every episode.
+	got, err := svc.SetSeasonMonitored(ctx, item.ID, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1 := got.Seasons[0]
+	if s1.Monitored || s1.Episodes[0].Monitored || s1.Episodes[1].Monitored {
+		t.Fatalf("cascade failed: %+v", s1)
+	}
+
+	// Re-monitor a single episode inside the unmonitored season.
+	got, err = svc.SetEpisodeMonitored(ctx, item.ID, s1.Episodes[0].ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1 = got.Seasons[0]
+	if !s1.Episodes[0].Monitored || s1.Episodes[1].Monitored || s1.Monitored {
+		t.Fatalf("episode flag = %+v", s1)
+	}
+
+	// A refresh that brings a NEW episode into the unmonitored season must
+	// deliver it unmonitored (season flags are the user's).
+	v2 := seriesV1()
+	v2.Seasons[0].Episodes = append(v2.Seasons[0].Episodes,
+		domain.Episode{SeasonNumber: 1, EpisodeNumber: 3, Title: "Three", AirDate: "2020-01-15", Monitored: true})
+	prov.series = v2
+	got, err = svc.RefreshItem(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1 = got.Seasons[0]
+	if len(s1.Episodes) != 3 {
+		t.Fatalf("episodes = %d", len(s1.Episodes))
+	}
+	if s1.Episodes[2].Monitored {
+		t.Error("new episode in an unmonitored season must arrive unmonitored")
+	}
+	if !s1.Episodes[0].Monitored {
+		t.Error("explicitly re-monitored episode must survive the refresh")
+	}
+
+	// Unknown season / foreign episode → not found.
+	if _, err := svc.SetSeasonMonitored(ctx, item.ID, 99, true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("season 99: %v", err)
+	}
+	if _, err := svc.SetEpisodeMonitored(ctx, item.ID, 999999, true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("bogus episode: %v", err)
+	}
 }

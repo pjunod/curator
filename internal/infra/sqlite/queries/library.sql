@@ -85,6 +85,16 @@ INSERT INTO seasons (media_item_id, number, monitored)
 VALUES (?, ?, ?)
 ON CONFLICT (media_item_id, number) DO NOTHING;
 
+-- name: SetSeasonMonitored :execrows
+UPDATE seasons SET monitored = ? WHERE media_item_id = ? AND number = ?;
+
+-- name: SetSeasonEpisodesMonitored :exec
+-- Season toggles cascade: an unmonitored season wants none of its episodes.
+UPDATE episodes SET monitored = ? WHERE media_item_id = ? AND season_number = ?;
+
+-- name: SetEpisodeMonitored :execrows
+UPDATE episodes SET monitored = ? WHERE id = ? AND media_item_id = ?;
+
 -- name: UpsertEpisodeMeta :exec
 -- Refresh path: provider metadata updates in place; the user's monitored
 -- flag survives, and rows are never deleted (files may point at them).

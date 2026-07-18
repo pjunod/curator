@@ -533,6 +533,11 @@ type MediaItemSummary struct {
 // MediaKind defines model for MediaKind.
 type MediaKind string
 
+// MonitorRequest defines model for MonitorRequest.
+type MonitorRequest struct {
+	Monitored bool `json:"monitored"`
+}
+
 // Notifier defines model for Notifier.
 type Notifier struct {
 	Enabled  *bool  `json:"enabled,omitempty"`
@@ -848,6 +853,12 @@ type BulkEditLibraryJSONRequestBody BulkEditLibraryJSONBody
 // UpdateLibraryItemJSONRequestBody defines body for UpdateLibraryItem for application/json ContentType.
 type UpdateLibraryItemJSONRequestBody = UpdateMediaItemRequest
 
+// SetEpisodeMonitoredJSONRequestBody defines body for SetEpisodeMonitored for application/json ContentType.
+type SetEpisodeMonitoredJSONRequestBody = MonitorRequest
+
+// SetSeasonMonitoredJSONRequestBody defines body for SetSeasonMonitored for application/json ContentType.
+type SetSeasonMonitoredJSONRequestBody = MonitorRequest
+
 // AddNotifierJSONRequestBody defines body for AddNotifier for application/json ContentType.
 type AddNotifierJSONRequestBody = NotifierInput
 
@@ -961,12 +972,18 @@ type ServerInterface interface {
 	// AutoSearchLibraryItem Search for everything this item wants and grab the best releases
 	// (POST /library/{id}/autosearch)
 	AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// SetEpisodeMonitored Monitor or unmonitor one episode
+	// (PATCH /library/{id}/episodes/{episodeId})
+	SetEpisodeMonitored(w http.ResponseWriter, r *http.Request, id int64, episodeId int64)
 	// RefreshLibraryItem Re-hydrate this item's metadata from its provider
 	// (POST /library/{id}/refresh)
 	RefreshLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
 	// SearchReleases Interactive search for a movie, episode, or season pack
 	// (GET /library/{id}/releases)
 	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
+	// SetSeasonMonitored Monitor or unmonitor one season (cascades to its episodes)
+	// (PATCH /library/{id}/seasons/{season})
+	SetSeasonMonitored(w http.ResponseWriter, r *http.Request, id int64, season int)
 	// SearchMetadata Search the metadata provider
 	// (GET /metadata/search)
 	SearchMetadata(w http.ResponseWriter, r *http.Request, params SearchMetadataParams)
@@ -1677,6 +1694,41 @@ func (siw *ServerInterfaceWrapper) AutoSearchLibraryItem(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// SetEpisodeMonitored operation middleware
+func (siw *ServerInterfaceWrapper) SetEpisodeMonitored(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "episodeId" -------------
+	var episodeId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "episodeId", r.PathValue("episodeId"), &episodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "episodeId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetEpisodeMonitored(w, r, id, episodeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RefreshLibraryItem operation middleware
 func (siw *ServerInterfaceWrapper) RefreshLibraryItem(w http.ResponseWriter, r *http.Request) {
 
@@ -1749,6 +1801,41 @@ func (siw *ServerInterfaceWrapper) SearchReleases(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SearchReleases(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetSeasonMonitored operation middleware
+func (siw *ServerInterfaceWrapper) SetSeasonMonitored(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "season" -------------
+	var season int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "season", r.PathValue("season"), &season, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "season", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetSeasonMonitored(w, r, id, season)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2265,6 +2352,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/importlists", wrapper.AddImportList)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/importlists/{id}", wrapper.DeleteImportList)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/autosearch", wrapper.AutoSearchLibraryItem)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/seasons/{season}", wrapper.SetSeasonMonitored)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/episodes/{episodeId}", wrapper.SetEpisodeMonitored)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/bulk", wrapper.BulkEditLibrary)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.Login)
