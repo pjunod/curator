@@ -6,8 +6,8 @@ import (
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/infra/bus"
-	"github.com/monarr-media/monarr/internal/ports"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
+	"github.com/monarr-media/monarr/internal/ports"
 )
 
 // mutableProvider serves whatever the test loads into it, so a second call

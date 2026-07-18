@@ -39,6 +39,10 @@ test-e2e: build
 
 lint:
 	go run $(GOLANGCI) run
+	@unformatted="$$(gofmt -l . | grep -v node_modules || true)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt needed on:"; echo "$$unformatted"; exit 1; \
+	fi
 
 hooks:
 	git config core.hooksPath .githooks
