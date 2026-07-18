@@ -25,6 +25,16 @@ ADRs in [docs/adr/](docs/adr/).
 
 ### Docker
 
+The repo ships a [`docker-compose.yml`](docker-compose.yml):
+
+```sh
+# optionally: echo -e "MONARR_DATA=/srv/monarr\nMONARR_POOL=/srv/pool" > .env
+docker compose up -d --build
+```
+
+Rebuild-and-swap after pulling changes is the same command. Plain
+`docker run` equivalent:
+
 ```sh
 docker build -t monarr .
 docker run -d --name monarr \

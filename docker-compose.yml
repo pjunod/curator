@@ -1,0 +1,59 @@
+# Monarr — compose deployment.
+#
+#   docker compose up -d --build      # build (or rebuild) and (re)start
+#
+# Paths below come from environment variables with local-dir fallbacks, so
+# either export them / put them in a .env file:
+#
+#   MONARR_DATA=/srv/monarr           # config: SQLite DB, backups (back this up)
+#   MONARR_POOL=/srv/pool             # media library + completed downloads
+#   PUID=1000                         # user/group that owns the pool
+#   PGID=1000
+#
+# …or just run as-is and get ./monarr-data and ./pool next to this file.
+#
+# THE ONE RULE (see README + docs/deployment.md): your download client must
+# see the pool at the SAME container path as Monarr — mount the same host
+# folder at /pool in both containers. That's also what makes imports
+# hardlink instead of copy. Keep /data off NFS/Gluster; the pool is fine
+# on shared storage.
+#
+# No healthcheck: the runtime image is distroless (no shell to probe with).
+# Poll http://<host>:7676/api/v1/health externally if you want one.
+
+services:
+  monarr:
+    build: .
+    image: monarr
+    container_name: monarr
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "7676:7676"
+    volumes:
+      - ${MONARR_DATA:-./monarr-data}:/data
+      - ${MONARR_POOL:-./pool}:/pool
+    restart: unless-stopped
+
+  # ---- optional: a download client on the same pool ----------------------
+  # Uncomment if you don't already run one. Point Monarr at
+  # http://qbittorrent:8080 (same compose network) and set its save path
+  # to /pool/downloads.
+  #
+  # qbittorrent:
+  #   image: lscr.io/linuxserver/qbittorrent:latest
+  #   container_name: qbittorrent
+  #   environment:
+  #     - PUID=${PUID:-1000}
+  #     - PGID=${PGID:-1000}
+  #     - WEBUI_PORT=8080
+  #   ports:
+  #     - "8080:8080"
+  #   volumes:
+  #     - ${QBIT_CONFIG:-./qbittorrent-config}:/config
+  #     - ${MONARR_POOL:-./pool}:/pool   # same pool, same path — required
+  #   restart: unless-stopped
+  #
+  # Already running NZBGet/qBittorrent elsewhere on the host or LAN? Skip
+  # this and add it in Monarr's Settings with its host+port — just make
+  # sure the paths it reports are reachable from Monarr's container (mount
+  # the same storage at the same path).
