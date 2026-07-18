@@ -19,3 +19,9 @@ coverage.out
 test/e2e/node_modules/
 test/e2e/test-results/
 test/e2e/playwright-report/
+
+# local compose data (deploy/docker-compose.yml fallbacks)
+deploy/monarr-data/
+deploy/pool/
+deploy/qbittorrent-config/
+deploy/.env

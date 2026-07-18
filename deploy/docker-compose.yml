@@ -23,7 +23,8 @@
 
 services:
   monarr:
-    build: .
+    build:
+      context: ..
     image: monarr
     container_name: monarr
     user: "${PUID:-1000}:${PGID:-1000}"

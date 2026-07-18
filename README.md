@@ -25,9 +25,10 @@ ADRs in [docs/adr/](docs/adr/).
 
 ### Docker
 
-The repo ships a [`docker-compose.yml`](docker-compose.yml):
+Deployment files live in [`deploy/`](deploy/):
 
 ```sh
+cd deploy
 # optionally: echo -e "MONARR_DATA=/srv/monarr\nMONARR_POOL=/srv/pool" > .env
 docker compose up -d --build
 ```
@@ -185,20 +186,50 @@ Phase 4.
 
 ## Repository layout
 
+The shape is hexagonal (blueprint §3) and the arrows are *enforced* — an
+architecture test (`internal/arch_test.go`) fails the build if a package
+imports against the grain:
+
 ```
-cmd/monarr/          wire everything, start HTTP + scheduler
-internal/domain/     PURE functional core (entities, parser, decision, naming — later phases)
-internal/ports/      driven-port interfaces (Indexer, DownloadClient, MetadataProvider, …)
-internal/adapters/   implementations of ports (torznab, qbittorrent, tmdb, … — later phases)
-internal/app/        application services (health today; library, acquisition, … later)
-internal/infra/      sqlite (sqlc + goose), event bus, scheduler, config, logging
-internal/api/        native /api/v1 (OpenAPI-first) + SSE + embedded UI serving
-internal/compat/     Sonarr/Radarr v3 personalities (Phase 4)
-web/                 React + TypeScript + Vite app, embedded via go:embed
-testdata/releases/   golden parser corpus (Phase 2)
-test/conformance/    docker-compose harness vs real Jellyseerr/Prowlarr/Bazarr (Phase 4)
-docs/                architecture blueprint + ADRs
+domain ← ports ← app ← { api, compat }        adapters → ports
+                  ↑                           infra    → domain
+            (infra wires under app)           cmd      → everything
 ```
+
+```
+cmd/monarr/           composition root: wiring, scheduler tasks, HTTP startup
+internal/
+  domain/             PURE core, stdlib-only — media model, Wantable
+    quality/            sources×resolutions + book formats, profiles, ranking
+    parser/             release-name parser (golden corpus + fuzz)
+    matcher/            release ↔ wantable matching (incl. books, anime absolute)
+    decision/           accept/reject/upgrade with machine-readable reasons
+    format/             custom-format regex scoring
+    naming/  filename/  on-disk name rendering · scan-side name reading
+  ports/              interfaces the core needs from the world (+ shared URL normalizer)
+  adapters/           one package per external service, ports implementations only:
+                        tmdb, openlibrary, torznab, qbittorrent, transmission,
+                        deluge, sabnzbd, nzbget, trakt, notify (webhook/discord/plex/jellyfin)
+  app/                use cases over domain+ports:
+                        library (add/scan/reconcile), acquisition (search/grab/
+                        queue/import + RSS/backlog/wanted), importlist, notify, health
+  infra/              technical substrate: sqlite (sqlc+goose), bus, scheduler,
+                        config, logging
+  api/                native /api/v1 (OpenAPI-first), SSE, auth, /metrics, SPA serving
+  compat/             Sonarr/Radarr v3 personalities (translation-only over app)
+web/                  React + TypeScript + Vite UI, embedded via go:embed
+deploy/               docker-compose + .env-driven paths
+test/e2e/             Playwright suite booting the real binary against fake services
+test/conformance/     docker-compose harness vs real Jellyseerr/Prowlarr/Bazarr
+testdata/releases/    golden parser corpus (shared spec, 70 cases)
+docs/                 architecture blueprint, ADRs, usage/settings/deployment guides
+.githooks/ .github/   versioned git hooks · CI (unit+lint+e2e+docker)
+STATUS.md             the per-item work ledger
+```
+
+Root files stay at the root because tooling demands it: `go.mod`
+(module root), `Dockerfile` (`docker build .`, CI, registries),
+`Makefile`, `sqlc.yaml`, `.golangci.yml` (tool discovery).
 
 Dependency arrows are enforced by `internal/arch_test.go`: domain imports nothing but stdlib,
 adapters import only ports+domain, compat never touches infra/adapters directly.
