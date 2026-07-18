@@ -189,9 +189,43 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}); err != nil {
 		return err
 	}
+	// Phase 3 automation: the RSS loop grabs wanted releases as they appear;
+	// backlog search actively hunts for what RSS already scrolled past.
+	if err := sched.Register(scheduler.Task{
+		Name:     "rss.sync",
+		Interval: 15 * time.Minute,
+		Fn:       acq.SyncRSS,
+	}); err != nil {
+		return err
+	}
+	if err := sched.Register(scheduler.Task{
+		Name:     "backlog.search",
+		Interval: 12 * time.Hour,
+		Fn:       acq.BacklogSearch,
+	}); err != nil {
+		return err
+	}
 	if err := sched.Start(ctx); err != nil {
 		return err
 	}
+
+	// Library changes invalidate the wanted index (imports do it in-service).
+	go func() {
+		added, cancelAdded := bus.Subscribe[library.MediaAdded](b, 16)
+		defer cancelAdded()
+		scans, cancelScans := bus.Subscribe[library.ScanCompleted](b, 16)
+		defer cancelScans()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-added:
+				acq.InvalidateWanted()
+			case <-scans:
+				acq.InvalidateWanted()
+			}
+		}
+	}()
 
 	// HTTP.
 	srv := api.New(api.Deps{

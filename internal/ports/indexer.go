@@ -33,8 +33,11 @@ type Release struct {
 	Protocol    string    `json:"protocol"`
 }
 
-// Indexer speaks Newznab/Torznab. RSS fetching lands in Phase 3.
+// Indexer speaks Newznab/Torznab.
 type Indexer interface {
 	Search(ctx context.Context, q domain.SearchQuery) ([]Release, error)
+	// FetchRSS returns the indexer's recent releases (empty-query search —
+	// the standard Torznab RSS mode), for the Phase 3 sync loop.
+	FetchRSS(ctx context.Context) ([]Release, error)
 	Test(ctx context.Context) error
 }

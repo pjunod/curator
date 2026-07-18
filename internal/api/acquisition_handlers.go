@@ -320,3 +320,46 @@ func (s *Server) RemoveQueueItem(w http.ResponseWriter, r *http.Request, id int6
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// ListWanted implements GET /wanted.
+func (s *Server) ListWanted(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.deps.Acquisition.WantedList(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := make([]apigen.WantedItem, 0, len(rows))
+	for _, ws := range rows {
+		out = append(out, apigen.WantedItem{
+			WantableId: ws.WantableID, MediaItemId: ws.MediaItemID,
+			Title: ws.Title, Detail: ws.Detail, Missing: ws.Missing, Current: ws.Current,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ListBlocklist implements GET /blocklist.
+func (s *Server) ListBlocklist(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.deps.Store.ListBlocklist(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := make([]apigen.BlocklistEntry, 0, len(rows))
+	for _, b := range rows {
+		out = append(out, apigen.BlocklistEntry{
+			Id: b.ID, MediaItemId: b.MediaItemID, ReleaseTitle: b.ReleaseTitle,
+			Indexer: b.Indexer, Reason: b.Reason, CreatedAt: b.CreatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// RemoveBlocklistEntry implements DELETE /blocklist/{id}.
+func (s *Server) RemoveBlocklistEntry(w http.ResponseWriter, r *http.Request, id int64) {
+	if err := s.deps.Store.DeleteBlocklist(r.Context(), id); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

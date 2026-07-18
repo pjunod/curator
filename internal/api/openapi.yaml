@@ -561,6 +561,46 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /wanted:
+    get:
+      operationId: listWanted
+      summary: Everything still wanted (missing or below cutoff)
+      responses:
+        "200":
+          description: Wanted items.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WantedItem"
+
+  /blocklist:
+    get:
+      operationId: listBlocklist
+      summary: Failed releases that will never be re-grabbed
+      responses:
+        "200":
+          description: Blocklist entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BlocklistEntry"
+
+  /blocklist/{id}:
+    delete:
+      operationId: removeBlocklistEntry
+      summary: Unblock a release
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Removed. }
+
   /events:
     get:
       operationId: streamEvents
@@ -1050,6 +1090,45 @@ components:
         indexer: { type: string }
         protocol: { type: string }
         size: { type: integer, format: int64 }
+
+    WantedItem:
+      type: object
+      required: [wantableId, mediaItemId, title, detail, missing, current]
+      properties:
+        wantableId:
+          type: string
+        mediaItemId:
+          type: integer
+          format: int64
+        title:
+          type: string
+        detail:
+          type: string
+        missing:
+          type: boolean
+          description: false = on disk but below the profile cutoff.
+        current:
+          type: string
+
+    BlocklistEntry:
+      type: object
+      required: [id, mediaItemId, releaseTitle, indexer, reason, createdAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        mediaItemId:
+          type: integer
+          format: int64
+        releaseTitle:
+          type: string
+        indexer:
+          type: string
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
 
     QueueItem:
       type: object

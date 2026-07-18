@@ -193,6 +193,9 @@ func (s *Server) DeleteLibraryItem(w http.ResponseWriter, r *http.Request, id in
 		s.libraryErr(w, err)
 		return
 	}
+	if s.deps.Acquisition != nil {
+		s.deps.Acquisition.InvalidateWanted()
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

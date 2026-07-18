@@ -144,6 +144,16 @@ type AddMediaRequest struct {
 	TmdbId *int64 `json:"tmdbId,omitempty"`
 }
 
+// BlocklistEntry defines model for BlocklistEntry.
+type BlocklistEntry struct {
+	CreatedAt    time.Time `json:"createdAt"`
+	Id           int64     `json:"id"`
+	Indexer      string    `json:"indexer"`
+	MediaItemId  int64     `json:"mediaItemId"`
+	Reason       string    `json:"reason"`
+	ReleaseTitle string    `json:"releaseTitle"`
+}
+
 // DownloadClientConfig defines model for DownloadClientConfig.
 type DownloadClientConfig struct {
 	Category *string                  `json:"category,omitempty"`
@@ -438,6 +448,18 @@ type UnmatchedDir struct {
 	RootFolderId int64  `json:"rootFolderId"`
 }
 
+// WantedItem defines model for WantedItem.
+type WantedItem struct {
+	Current     string `json:"current"`
+	Detail      string `json:"detail"`
+	MediaItemId int64  `json:"mediaItemId"`
+
+	// Missing false = on disk but below the profile cutoff.
+	Missing    bool   `json:"missing"`
+	Title      string `json:"title"`
+	WantableId string `json:"wantableId"`
+}
+
 // ListLibraryParams defines parameters for ListLibrary.
 type ListLibraryParams struct {
 	Kind *MediaKind `form:"kind,omitempty" json:"kind,omitempty"`
@@ -491,6 +513,12 @@ type UpdateSettingsJSONRequestBody = SettingsUpdate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListBlocklist Failed releases that will never be re-grabbed
+	// (GET /blocklist)
+	ListBlocklist(w http.ResponseWriter, r *http.Request)
+	// RemoveBlocklistEntry Unblock a release
+	// (DELETE /blocklist/{id})
+	RemoveBlocklistEntry(w http.ResponseWriter, r *http.Request, id int64)
 	// ListDownloadClients List download clients
 	// (GET /downloadclients)
 	ListDownloadClients(w http.ResponseWriter, r *http.Request)
@@ -581,6 +609,9 @@ type ServerInterface interface {
 	// RunTask Trigger an immediate run of a scheduled task
 	// (POST /system/tasks/{name}/run)
 	RunTask(w http.ResponseWriter, r *http.Request, name string)
+	// ListWanted Everything still wanted (missing or below cutoff)
+	// (GET /wanted)
+	ListWanted(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -591,6 +622,46 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListBlocklist operation middleware
+func (siw *ServerInterfaceWrapper) ListBlocklist(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBlocklist(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveBlocklistEntry operation middleware
+func (siw *ServerInterfaceWrapper) RemoveBlocklistEntry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveBlocklistEntry(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListDownloadClients operation middleware
 func (siw *ServerInterfaceWrapper) ListDownloadClients(w http.ResponseWriter, r *http.Request) {
@@ -1204,6 +1275,20 @@ func (siw *ServerInterfaceWrapper) RunTask(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// ListWanted operation middleware
+func (siw *ServerInterfaceWrapper) ListWanted(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWanted(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -1353,6 +1438,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/grab", wrapper.GrabRelease)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue", wrapper.ListQueue)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted", wrapper.ListWanted)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/blocklist", wrapper.ListBlocklist)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/blocklist/{id}", wrapper.RemoveBlocklistEntry)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/events", wrapper.StreamEvents)
 
 	return m

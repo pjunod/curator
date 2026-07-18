@@ -80,6 +80,9 @@ type Service struct {
 
 	// searchTimeout bounds each indexer call.
 	searchTimeout time.Duration
+
+	// wanted caches the missing/upgradable index (Phase 3).
+	wanted wantedIndex
 }
 
 // New returns a Service.
@@ -436,27 +439,82 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			case ports.StateQueued, ports.StateDownloading:
 				_ = s.db.UpdateDownloadState(ctx, dl.ID, "downloading", st.Progress, "")
 			case ports.StateFailed:
-				_ = s.db.UpdateDownloadState(ctx, dl.ID, "failed", st.Progress, st.Message)
-				_ = s.db.AddHistory(ctx, "failed", dl.MediaItemID, dl.ReleaseTitle,
-					map[string]any{"reason": st.Message})
-				s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: st.Message})
+				s.handleFailure(ctx, dl, st.Progress, st.Message)
 			case ports.StateCompleted:
 				if dl.State == "imported" {
 					continue
 				}
 				_ = s.db.UpdateDownloadState(ctx, dl.ID, "importing", 1, "")
 				if err := s.importDownload(ctx, dl, st.SavePath); err != nil {
-					_ = s.db.UpdateDownloadState(ctx, dl.ID, "failed", 1, err.Error())
-					_ = s.db.AddHistory(ctx, "failed", dl.MediaItemID, dl.ReleaseTitle,
-						map[string]any{"reason": err.Error()})
-					s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: err.Error()})
+					s.handleFailure(ctx, dl, 1, err.Error())
 				} else {
 					_ = s.db.UpdateDownloadState(ctx, dl.ID, "imported", 1, "")
+					s.InvalidateWanted()
 				}
 			}
 		}
 	}
 	return nil
+}
+
+// handleFailure marks a download failed, blocklists the release so it is
+// never re-grabbed, and immediately re-searches for the affected wantables
+// (blueprint §5.1 "failed-download handling").
+func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progress float64, reason string) {
+	_ = s.db.UpdateDownloadState(ctx, dl.ID, "failed", progress, reason)
+	_ = s.db.AddHistory(ctx, "failed", dl.MediaItemID, dl.ReleaseTitle,
+		map[string]any{"reason": reason})
+	if err := s.db.AddBlocklist(ctx, dl.MediaItemID, dl.ReleaseTitle, dl.Indexer, reason); err != nil {
+		s.log.Warn("blocklist: insert failed", "release", dl.ReleaseTitle, "err", err)
+	}
+	s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: reason})
+	s.log.Warn("download failed; blocklisted", "release", dl.ReleaseTitle, "reason", reason)
+
+	// Automatic re-search: try to replace the failed grab right away.
+	enabled, err := s.enabledIndexers(ctx)
+	if err != nil || len(enabled) == 0 {
+		return
+	}
+	for _, idStr := range dl.WantableIDs {
+		w, err := s.wantableFromID(ctx, idStr)
+		if err != nil {
+			continue
+		}
+		if err := s.searchAndGrabBest(ctx, w, enabled); err != nil {
+			s.log.Warn("re-search failed", "wantable", idStr, "err", err)
+		}
+	}
+}
+
+// wantableFromID reconstructs a wantable from its stable id string
+// ("movie:5", "episode:5:2:3", "season:5:2", "book:9").
+func (s *Service) wantableFromID(ctx context.Context, id string) (domain.Wantable, error) {
+	var kind string
+	var a, b, c int64
+	n, _ := fmt.Sscanf(id, "movie:%d", &a)
+	if n == 1 {
+		kind = "flat"
+	} else if n, _ = fmt.Sscanf(id, "book:%d", &a); n == 1 {
+		kind = "flat"
+	} else if n, _ = fmt.Sscanf(id, "episode:%d:%d:%d", &a, &b, &c); n == 3 {
+		kind = "episode"
+	} else if n, _ = fmt.Sscanf(id, "season:%d:%d", &a, &b); n == 2 {
+		kind = "season"
+	} else {
+		return nil, fmt.Errorf("unparseable wantable id %q", id)
+	}
+	item, err := s.db.GetMediaItemFull(ctx, a)
+	if err != nil {
+		return nil, err
+	}
+	switch kind {
+	case "episode":
+		return s.target(ctx, item, int(b), int(c))
+	case "season":
+		return s.target(ctx, item, int(b), 0)
+	default:
+		return s.target(ctx, item, 0, 0)
+	}
 }
 
 func matchStatus(dl sqlite.Download, statuses []ports.DownloadStatus) (ports.DownloadStatus, bool) {

@@ -22,6 +22,9 @@ type fakeIndexer struct{ releases []ports.Release }
 func (f fakeIndexer) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Release, error) {
 	return f.releases, nil
 }
+func (f fakeIndexer) FetchRSS(ctx context.Context) ([]ports.Release, error) {
+	return f.releases, nil
+}
 func (f fakeIndexer) Test(ctx context.Context) error { return nil }
 
 type fakeClient struct {

@@ -14,6 +14,15 @@ type AppMetum struct {
 	UpdatedAt int64
 }
 
+type Blocklist struct {
+	ID           int64
+	MediaItemID  int64
+	ReleaseTitle string
+	Indexer      string
+	Reason       string
+	CreatedAt    int64
+}
+
 type Download struct {
 	ID           int64
 	MediaItemID  int64
@@ -117,6 +126,18 @@ type MediaItem struct {
 	UpdatedAt        int64
 	QualityProfileID int64
 	Author           string
+}
+
+type Notifier struct {
+	ID       int64
+	Type     string
+	Name     string
+	Settings string
+	OnGrab   int64
+	OnImport int64
+	OnFailed int64
+	OnHealth int64
+	Enabled  int64
 }
 
 type QualityProfile struct {

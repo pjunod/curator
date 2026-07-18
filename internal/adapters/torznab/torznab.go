@@ -87,6 +87,12 @@ func (c *Client) call(ctx context.Context, params url.Values) ([]byte, error) {
 	return body, nil
 }
 
+// FetchRSS implements ports.Indexer: an empty-query t=search returns the
+// indexer's most recent releases (the standard Torznab RSS mode).
+func (c *Client) FetchRSS(ctx context.Context) ([]ports.Release, error) {
+	return c.Search(ctx, domain.SearchQuery{})
+}
+
 // Search implements ports.Indexer. TV queries use t=tvsearch with
 // season/ep parameters; everything else is a plain t=search. Book queries
 // (ADR 0006) pin the Newznab book categories — 7000s for ebooks plus 3030
