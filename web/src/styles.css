@@ -1,4 +1,9 @@
+/* Theme: dark is the default (systems without a light/dark preference get
+   dark); a system light preference switches the palette via the media
+   query below. color-scheme keeps native controls (inputs, selects,
+   scrollbars) in step. */
 :root {
+  color-scheme: dark;
   --bg: #0e1117;
   --bg-raised: #151a23;
   --bg-hover: #1a202c;
@@ -6,9 +11,29 @@
   --text: #e6e9ef;
   --text-muted: #9aa3b2;
   --accent: #8b7cf6;
+  --on-accent: #0e1117;
+  --accent-soft: rgba(139, 124, 246, 0.16);
   --ok: #3fb27f;
   --warning: #e5a53d;
   --error: #e05d5d;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f4f5f8;
+    --bg-raised: #ffffff;
+    --bg-hover: #e9ebf1;
+    --border: #d7dbe4;
+    --text: #1b212b;
+    --text-muted: #5b6472;
+    --accent: #6a58d8;
+    --on-accent: #ffffff;
+    --accent-soft: rgba(106, 88, 216, 0.14);
+    --ok: #1f8e5c;
+    --warning: #99660f;
+    --error: #c23b3b;
+  }
 }
 
 * {
@@ -353,7 +378,7 @@ button:disabled {
 .btn-accent {
   display: inline-block;
   background: var(--accent);
-  color: #0e1117;
+  color: var(--on-accent);
   font-weight: 650;
   border: none;
   padding: 6px 14px;
@@ -366,7 +391,7 @@ button:disabled {
 .btn-accent:hover {
   filter: brightness(1.1);
   text-decoration: none;
-  color: #0e1117;
+  color: var(--on-accent);
 }
 
 .btn-accent:disabled {
@@ -641,7 +666,7 @@ h3.muted {
 .progress-track {
   height: 6px;
   border-radius: 3px;
-  background: rgba(139, 124, 246, 0.16);
+  background: var(--accent-soft);
   overflow: hidden;
 }
 
