@@ -14,6 +14,7 @@ import { AddMediaPage } from './pages/AddMedia'
 import { MediaDetailPage } from './pages/MediaDetail'
 import { SettingsPage } from './pages/Settings'
 import { ActivityPage } from './pages/Activity'
+import { CalendarPage } from './pages/Calendar'
 import type { MediaKind } from './api'
 import { getHealth, getStatus } from './api'
 
@@ -31,6 +32,9 @@ function Layout() {
         <nav>
           <Link to="/" activeOptions={{ exact: true }} activeProps={{ className: 'active' }}>
             Library
+          </Link>
+          <Link to="/calendar" activeProps={{ className: 'active' }}>
+            Calendar
           </Link>
           <Link to="/activity" activeProps={{ className: 'active' }}>
             Activity
@@ -96,6 +100,12 @@ const addRoute = createRoute({
   }),
 })
 
+const calendarRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/calendar',
+  component: CalendarPage,
+})
+
 const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/activity',
@@ -119,6 +129,7 @@ const routeTree = rootRoute.addChildren([
   dashboardRoute,
   mediaDetailRoute,
   addRoute,
+  calendarRoute,
   activityRoute,
   systemRoute,
   settingsRoute,

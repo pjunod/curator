@@ -154,6 +154,18 @@ type BlocklistEntry struct {
 	ReleaseTitle string    `json:"releaseTitle"`
 }
 
+// CalendarEntry defines model for CalendarEntry.
+type CalendarEntry struct {
+	Date    string `json:"date"`
+	Detail  string `json:"detail"`
+	HasFile bool   `json:"hasFile"`
+
+	// Kind episode | movie | book
+	Kind        string `json:"kind"`
+	MediaItemId int64  `json:"mediaItemId"`
+	Title       string `json:"title"`
+}
+
 // DownloadClientConfig defines model for DownloadClientConfig.
 type DownloadClientConfig struct {
 	Category *string                  `json:"category,omitempty"`
@@ -460,6 +472,12 @@ type WantedItem struct {
 	WantableId string `json:"wantableId"`
 }
 
+// GetCalendarParams defines parameters for GetCalendar.
+type GetCalendarParams struct {
+	Start string `form:"start" json:"start"`
+	End   string `form:"end" json:"end"`
+}
+
 // ListLibraryParams defines parameters for ListLibrary.
 type ListLibraryParams struct {
 	Kind *MediaKind `form:"kind,omitempty" json:"kind,omitempty"`
@@ -519,6 +537,9 @@ type ServerInterface interface {
 	// RemoveBlocklistEntry Unblock a release
 	// (DELETE /blocklist/{id})
 	RemoveBlocklistEntry(w http.ResponseWriter, r *http.Request, id int64)
+	// GetCalendar Episodes airing and movies/books released in a date range
+	// (GET /calendar)
+	GetCalendar(w http.ResponseWriter, r *http.Request, params GetCalendarParams)
 	// ListDownloadClients List download clients
 	// (GET /downloadclients)
 	ListDownloadClients(w http.ResponseWriter, r *http.Request)
@@ -654,6 +675,52 @@ func (siw *ServerInterfaceWrapper) RemoveBlocklistEntry(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RemoveBlocklistEntry(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCalendar operation middleware
+func (siw *ServerInterfaceWrapper) GetCalendar(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCalendarParams
+
+	// ------------- Required query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCalendar(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1438,6 +1505,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/grab", wrapper.GrabRelease)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue", wrapper.ListQueue)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/calendar", wrapper.GetCalendar)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted", wrapper.ListWanted)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/blocklist", wrapper.ListBlocklist)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/blocklist/{id}", wrapper.RemoveBlocklistEntry)

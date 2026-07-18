@@ -159,6 +159,115 @@ func (q *Queries) ListBlocklist(ctx context.Context) ([]Blocklist, error) {
 	return items, nil
 }
 
+const listEpisodesAiring = `-- name: ListEpisodesAiring :many
+SELECT e.id, e.media_item_id, e.season_number, e.episode_number,
+       e.title AS episode_title, e.air_date, m.title AS series_title,
+       EXISTS(SELECT 1 FROM media_file_episodes mfe WHERE mfe.episode_id = e.id) AS has_file
+FROM episodes e JOIN media_items m ON m.id = e.media_item_id
+WHERE e.air_date >= ? AND e.air_date <= ?
+ORDER BY e.air_date, m.title, e.season_number, e.episode_number
+`
+
+type ListEpisodesAiringParams struct {
+	AirDate   string
+	AirDate_2 string
+}
+
+type ListEpisodesAiringRow struct {
+	ID            int64
+	MediaItemID   int64
+	SeasonNumber  int64
+	EpisodeNumber int64
+	EpisodeTitle  string
+	AirDate       string
+	SeriesTitle   string
+	HasFile       bool
+}
+
+func (q *Queries) ListEpisodesAiring(ctx context.Context, arg ListEpisodesAiringParams) ([]ListEpisodesAiringRow, error) {
+	rows, err := q.db.QueryContext(ctx, listEpisodesAiring, arg.AirDate, arg.AirDate_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListEpisodesAiringRow
+	for rows.Next() {
+		var i ListEpisodesAiringRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.SeasonNumber,
+			&i.EpisodeNumber,
+			&i.EpisodeTitle,
+			&i.AirDate,
+			&i.SeriesTitle,
+			&i.HasFile,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsReleasedBetween = `-- name: ListItemsReleasedBetween :many
+SELECT m.id, m.kind, m.title, m.author, m.release_date,
+       EXISTS(SELECT 1 FROM media_files f WHERE f.media_item_id = m.id) AS has_file
+FROM media_items m
+WHERE m.kind != 'series' AND m.release_date >= ? AND m.release_date <= ?
+ORDER BY m.release_date, m.title
+`
+
+type ListItemsReleasedBetweenParams struct {
+	ReleaseDate   string
+	ReleaseDate_2 string
+}
+
+type ListItemsReleasedBetweenRow struct {
+	ID          int64
+	Kind        string
+	Title       string
+	Author      string
+	ReleaseDate string
+	HasFile     bool
+}
+
+func (q *Queries) ListItemsReleasedBetween(ctx context.Context, arg ListItemsReleasedBetweenParams) ([]ListItemsReleasedBetweenRow, error) {
+	rows, err := q.db.QueryContext(ctx, listItemsReleasedBetween, arg.ReleaseDate, arg.ReleaseDate_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListItemsReleasedBetweenRow
+	for rows.Next() {
+		var i ListItemsReleasedBetweenRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Title,
+			&i.Author,
+			&i.ReleaseDate,
+			&i.HasFile,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNotifiers = `-- name: ListNotifiers :many
 SELECT id, type, name, settings, on_grab, on_import, on_failed, on_health, enabled FROM notifiers ORDER BY name
 `

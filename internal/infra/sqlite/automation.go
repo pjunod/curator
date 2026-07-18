@@ -3,6 +3,8 @@ package sqlite
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"time"
 
 	sqlitegen "github.com/monarr-media/monarr/internal/infra/sqlite/gen"
@@ -111,4 +113,62 @@ func (d *DB) GetNotifier(ctx context.Context, id int64) (ports.NotifierConfig, e
 // DeleteNotifier removes a notifier.
 func (d *DB) DeleteNotifier(ctx context.Context, id int64) error {
 	return d.Write.DeleteNotifier(ctx, id)
+}
+
+// ---- calendar (Phase 3) ----
+
+// CalendarEntry is one dated library event: an episode airing or a
+// movie/book release.
+type CalendarEntry struct {
+	Date        string `json:"date"` // ISO date
+	Kind        string `json:"kind"` // episode | movie | book
+	MediaItemID int64  `json:"mediaItemId"`
+	Title       string `json:"title"`
+	Detail      string `json:"detail"` // "S01E03 — Pilot", "by Author", ""
+	HasFile     bool   `json:"hasFile"`
+}
+
+// Calendar returns episodes airing and movies/books released in [start, end]
+// (ISO dates, inclusive), merged and date-ordered.
+func (d *DB) Calendar(ctx context.Context, start, end string) ([]CalendarEntry, error) {
+	eps, err := d.Read.ListEpisodesAiring(ctx, sqlitegen.ListEpisodesAiringParams{
+		AirDate: start, AirDate_2: end,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, err := d.Read.ListItemsReleasedBetween(ctx, sqlitegen.ListItemsReleasedBetweenParams{
+		ReleaseDate: start, ReleaseDate_2: end,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CalendarEntry, 0, len(eps)+len(items))
+	for _, e := range eps {
+		detail := fmt.Sprintf("S%02dE%02d", e.SeasonNumber, e.EpisodeNumber)
+		if e.EpisodeTitle != "" {
+			detail += " — " + e.EpisodeTitle
+		}
+		out = append(out, CalendarEntry{
+			Date: e.AirDate, Kind: "episode", MediaItemID: e.MediaItemID,
+			Title: e.SeriesTitle, Detail: detail, HasFile: e.HasFile,
+		})
+	}
+	for _, m := range items {
+		detail := ""
+		if m.Author != "" {
+			detail = "by " + m.Author
+		}
+		out = append(out, CalendarEntry{
+			Date: m.ReleaseDate, Kind: m.Kind, MediaItemID: m.ID,
+			Title: m.Title, Detail: detail, HasFile: m.HasFile,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Date != out[j].Date {
+			return out[i].Date < out[j].Date
+		}
+		return out[i].Title < out[j].Title
+	})
+	return out, nil
 }

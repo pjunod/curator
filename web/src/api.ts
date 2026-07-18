@@ -372,3 +372,38 @@ export function fmtInterval(seconds: number): string {
   }
   return `every ${seconds}s`
 }
+
+// ---- Phase 3: automation ----
+
+export interface CalendarEntry {
+  date: string
+  kind: string
+  mediaItemId: number
+  title: string
+  detail: string
+  hasFile: boolean
+}
+
+export interface WantedItem {
+  wantableId: string
+  mediaItemId: number
+  title: string
+  detail: string
+  missing: boolean
+  current: string
+}
+
+export interface BlocklistEntry {
+  id: number
+  mediaItemId: number
+  releaseTitle: string
+  indexer: string
+  reason: string
+  createdAt: string
+}
+
+export const getCalendar = (start: string, end: string) =>
+  get<CalendarEntry[]>(`/calendar?start=${start}&end=${end}`)
+export const getWanted = () => get<WantedItem[]>('/wanted')
+export const getBlocklist = () => get<BlocklistEntry[]>('/blocklist')
+export const removeBlocklistEntry = (id: number) => send('DELETE', `/blocklist/${id}`)

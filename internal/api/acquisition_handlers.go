@@ -363,3 +363,20 @@ func (s *Server) RemoveBlocklistEntry(w http.ResponseWriter, r *http.Request, id
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// GetCalendar implements GET /calendar.
+func (s *Server) GetCalendar(w http.ResponseWriter, r *http.Request, params apigen.GetCalendarParams) {
+	entries, err := s.deps.Store.Calendar(r.Context(), params.Start, params.End)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := make([]apigen.CalendarEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, apigen.CalendarEntry{
+			Date: e.Date, Kind: e.Kind, MediaItemId: e.MediaItemID,
+			Title: e.Title, Detail: e.Detail, HasFile: e.HasFile,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}

@@ -561,6 +561,29 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /calendar:
+    get:
+      operationId: getCalendar
+      summary: Episodes airing and movies/books released in a date range
+      parameters:
+        - name: start
+          in: query
+          required: true
+          schema: { type: string }
+        - name: end
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Calendar entries, date-ordered.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CalendarEntry"
+
   /wanted:
     get:
       operationId: listWanted
@@ -1090,6 +1113,25 @@ components:
         indexer: { type: string }
         protocol: { type: string }
         size: { type: integer, format: int64 }
+
+    CalendarEntry:
+      type: object
+      required: [date, kind, mediaItemId, title, detail, hasFile]
+      properties:
+        date:
+          type: string
+        kind:
+          type: string
+          description: episode | movie | book
+        mediaItemId:
+          type: integer
+          format: int64
+        title:
+          type: string
+        detail:
+          type: string
+        hasFile:
+          type: boolean
 
     WantedItem:
       type: object
