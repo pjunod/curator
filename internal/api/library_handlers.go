@@ -149,8 +149,20 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		if ids == nil {
 			ids = []int64{}
 		}
-		d.Files = append(d.Files, apigen.MediaFileInfo{
+		fi := apigen.MediaFileInfo{
 			Id: f.ID, Path: f.Path, Size: f.Size, EpisodeIds: ids,
+		}
+		if f.CopyID != 0 {
+			cid := f.CopyID
+			fi.CopyId = &cid
+		}
+		d.Files = append(d.Files, fi)
+	}
+	d.Copies = []apigen.MediaCopy{}
+	for _, c := range m.Copies {
+		d.Copies = append(d.Copies, apigen.MediaCopy{
+			Id: c.ID, Name: c.Name, QualityProfileId: c.QualityProfileID,
+			RootFolderId: c.RootFolderID, Path: c.Path, Monitored: c.Monitored,
 		})
 	}
 	return d
@@ -257,6 +269,74 @@ func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id in
 		return
 	}
 	// Monitoring and profile edits change what is wanted.
+	if s.deps.Acquisition != nil {
+		s.deps.Acquisition.InvalidateWanted()
+	}
+	writeJSON(w, http.StatusOK, detailDTO(item))
+}
+
+// AddMediaCopy implements POST /library/{id}/copies: an additional quality
+// target with its own profile and automation lifecycle.
+func (s *Server) AddMediaCopy(w http.ResponseWriter, r *http.Request, id int64) {
+	var body apigen.AddMediaCopyJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req := library.CopyRequest{QualityProfileID: body.QualityProfileId, Monitored: true}
+	if body.RootFolderId != nil {
+		req.RootFolderID = *body.RootFolderId
+	}
+	if body.Name != nil {
+		req.Name = *body.Name
+	}
+	if body.Monitored != nil {
+		req.Monitored = *body.Monitored
+	}
+	item, err := s.deps.Library.AddCopy(r.Context(), id, req)
+	if err != nil {
+		if errors.Is(err, library.ErrUnsupportedKind) ||
+			strings.Contains(err.Error(), "collide") ||
+			strings.Contains(err.Error(), "profile") ||
+			strings.Contains(err.Error(), "root folder") ||
+			strings.Contains(err.Error(), "already uses") {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.libraryErr(w, err)
+		return
+	}
+	if s.deps.Acquisition != nil {
+		s.deps.Acquisition.InvalidateWanted()
+	}
+	writeJSON(w, http.StatusOK, detailDTO(item))
+}
+
+// UpdateMediaCopy implements PATCH /library/{id}/copies/{copyId}.
+func (s *Server) UpdateMediaCopy(w http.ResponseWriter, r *http.Request, id, copyID int64) {
+	var body apigen.UpdateMediaCopyJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	item, err := s.deps.Library.UpdateCopy(r.Context(), id, copyID, body.Name, body.QualityProfileId, body.Monitored)
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	if s.deps.Acquisition != nil {
+		s.deps.Acquisition.InvalidateWanted()
+	}
+	writeJSON(w, http.StatusOK, detailDTO(item))
+}
+
+// DeleteMediaCopy implements DELETE /library/{id}/copies/{copyId}.
+func (s *Server) DeleteMediaCopy(w http.ResponseWriter, r *http.Request, id, copyID int64) {
+	item, err := s.deps.Library.DeleteCopy(r.Context(), id, copyID)
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
 	if s.deps.Acquisition != nil {
 		s.deps.Acquisition.InvalidateWanted()
 	}

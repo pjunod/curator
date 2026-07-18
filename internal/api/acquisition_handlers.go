@@ -399,6 +399,7 @@ func (s *Server) ListWanted(w http.ResponseWriter, r *http.Request) {
 		out = append(out, apigen.WantedItem{
 			WantableId: ws.WantableID, MediaItemId: ws.MediaItemID,
 			Title: ws.Title, Detail: ws.Detail, Missing: ws.Missing, Current: ws.Current,
+			Copy: ws.Copy,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

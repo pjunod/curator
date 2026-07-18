@@ -117,3 +117,49 @@ test('metadata refresh re-hydrates from the provider', async ({ request }) => {
   const tasks = await (await request.get('/api/v1/system/tasks')).json()
   expect(tasks.some((t: any) => t.name === 'metadata.refresh')).toBe(true)
 })
+
+test('quality copies: wanted independently, managed from the item page', async ({ page, request }) => {
+  const movies = await (await request.get('/api/v1/library?kind=movie')).json()
+  const movie = movies[0]
+
+  // Add an HD-1080p copy sharing the item folder.
+  let res = await request.post(`/api/v1/library/${movie.id}/copies`, {
+    data: { qualityProfileId: 2, name: 'second copy' },
+  })
+  expect(res.status()).toBe(200)
+  const detail = await res.json()
+  expect(detail.copies.length).toBe(1)
+  const copyId = detail.copies[0].id
+  expect(detail.copies[0].monitored).toBe(true)
+
+  // The copy is wanted under its own suffixed identity with its label,
+  // even though the primary is satisfied.
+  const wanted = await (await request.get('/api/v1/wanted')).json()
+  const entry = wanted.find((w: any) => w.wantableId === `movie:${movie.id}:c${copyId}`)
+  expect(entry).toBeTruthy()
+  expect(entry.copy).toBe('second copy')
+  expect(entry.missing).toBe(true)
+
+  // The item page lists it, and the Wanted page labels it.
+  await page.goto(`/library/${movie.id}`)
+  await expect(page.getByRole('heading', { name: 'Quality copies' })).toBeVisible()
+  await expect(page.getByText('second copy')).toBeVisible()
+  await page.goto('/wanted')
+  await expect(page.locator('.pill-info', { hasText: 'second copy' })).toBeVisible()
+
+  // Books have no copies.
+  const books = await (await request.get('/api/v1/library?kind=book')).json()
+  if (books.length > 0) {
+    const bad = await request.post(`/api/v1/library/${books[0].id}/copies`, {
+      data: { qualityProfileId: 2 },
+    })
+    expect(bad.status()).toBe(400)
+  }
+
+  // Remove it (files kept) so later specs see the original state.
+  res = await request.delete(`/api/v1/library/${movie.id}/copies/${copyId}`)
+  expect(res.status()).toBe(200)
+  expect((await res.json()).copies.length).toBe(0)
+  const drained = await (await request.get('/api/v1/wanted')).json()
+  expect(drained.find((w: any) => w.wantableId.endsWith(`:c${copyId}`))).toBeFalsy()
+})

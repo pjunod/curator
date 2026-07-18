@@ -758,6 +758,95 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /library/{id}/copies:
+    post:
+      operationId: addMediaCopy
+      summary: Add an additional quality copy (e.g. a 720p copy of a 4K item)
+      description: >
+        Each copy has its own quality profile and its own automation
+        lifecycle. rootFolderId picks a separate folder for the copy;
+        omit it (or 0) to keep the copy in the item's folder — filenames
+        carry the quality, so versions coexist. Movies and series only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MediaCopyInput" }
+      responses:
+        "200":
+          description: The updated item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaItemDetail" }
+        "400":
+          description: Invalid copy (bad profile, folder collision, book).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /library/{id}/copies/{copyId}:
+    patch:
+      operationId: updateMediaCopy
+      summary: Edit a copy's name, profile, or monitoring
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: copyId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MediaCopyUpdate" }
+      responses:
+        "200":
+          description: The updated item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaItemDetail" }
+        "404":
+          description: No such item or copy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: deleteMediaCopy
+      summary: Remove a copy (its files on disk are kept)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: copyId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The updated item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaItemDetail" }
+        "404":
+          description: No such item or copy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/{id}/seasons/{season}:
     patch:
       operationId: setSeasonMonitored
@@ -1298,6 +1387,10 @@ components:
         id:
           type: integer
           format: int64
+        copyId:
+          type: integer
+          format: int64
+          description: Which quality copy this file belongs to; 0/absent = primary.
         path:
           type: string
         size:
@@ -1329,6 +1422,7 @@ components:
         - ratings
         - monitored
         - qualityProfileId
+        - copies
         - path
         - rootFolderId
         - ended
@@ -1380,6 +1474,10 @@ components:
         qualityProfileId:
           type: integer
           format: int64
+        copies:
+          type: array
+          items: { $ref: "#/components/schemas/MediaCopy" }
+          description: Additional quality copies of this item.
         path:
           type: string
         rootFolderId:
@@ -1438,6 +1536,44 @@ components:
           description: >
             Kick an automatic search for the item right after adding
             (Sonarr's "start search for missing" checkbox).
+
+    MediaCopyInput:
+      type: object
+      required: [qualityProfileId]
+      properties:
+        qualityProfileId:
+          type: integer
+          format: int64
+        rootFolderId:
+          type: integer
+          format: int64
+          description: Separate folder for the copy; 0/absent = share the item's folder.
+        name:
+          type: string
+          description: Display label, e.g. "720p for dad".
+        monitored:
+          type: boolean
+          default: true
+
+    MediaCopyUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        qualityProfileId: { type: integer, format: int64 }
+        monitored: { type: boolean }
+
+    MediaCopy:
+      type: object
+      required: [id, name, qualityProfileId, rootFolderId, path, monitored]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        qualityProfileId: { type: integer, format: int64 }
+        rootFolderId: { type: integer, format: int64 }
+        path:
+          type: string
+          description: The copy's folder; "" = shares the item's folder.
+        monitored: { type: boolean }
 
     MonitorRequest:
       type: object
@@ -1784,7 +1920,7 @@ components:
 
     WantedItem:
       type: object
-      required: [wantableId, mediaItemId, title, detail, missing, current]
+      required: [wantableId, mediaItemId, title, detail, missing, current, copy]
       properties:
         wantableId:
           type: string
@@ -1800,6 +1936,9 @@ components:
           description: false = on disk but below the profile cutoff.
         current:
           type: string
+        copy:
+          type: string
+          description: Label of the quality copy this entry hunts for; "" = the primary.
 
     BlocklistEntry:
       type: object

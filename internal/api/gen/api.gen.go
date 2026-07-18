@@ -482,8 +482,41 @@ type IndexerInput struct {
 // IndexerInputProtocol defines model for IndexerInput.Protocol.
 type IndexerInputProtocol string
 
+// MediaCopy defines model for MediaCopy.
+type MediaCopy struct {
+	Id        int64  `json:"id"`
+	Monitored bool   `json:"monitored"`
+	Name      string `json:"name"`
+
+	// Path The copy's folder; "" = shares the item's folder.
+	Path             string `json:"path"`
+	QualityProfileId int64  `json:"qualityProfileId"`
+	RootFolderId     int64  `json:"rootFolderId"`
+}
+
+// MediaCopyInput defines model for MediaCopyInput.
+type MediaCopyInput struct {
+	Monitored *bool `json:"monitored,omitempty"`
+
+	// Name Display label, e.g. "720p for dad".
+	Name             *string `json:"name,omitempty"`
+	QualityProfileId int64   `json:"qualityProfileId"`
+
+	// RootFolderId Separate folder for the copy; 0/absent = share the item's folder.
+	RootFolderId *int64 `json:"rootFolderId,omitempty"`
+}
+
+// MediaCopyUpdate defines model for MediaCopyUpdate.
+type MediaCopyUpdate struct {
+	Monitored        *bool   `json:"monitored,omitempty"`
+	Name             *string `json:"name,omitempty"`
+	QualityProfileId *int64  `json:"qualityProfileId,omitempty"`
+}
+
 // MediaFileInfo defines model for MediaFileInfo.
 type MediaFileInfo struct {
+	// CopyId Which quality copy this file belongs to; 0/absent = primary.
+	CopyId     *int64  `json:"copyId,omitempty"`
 	EpisodeIds []int64 `json:"episodeIds"`
 	Id         int64   `json:"id"`
 	Path       string  `json:"path"`
@@ -495,8 +528,11 @@ type MediaItemDetail struct {
 	AddedAt time.Time `json:"addedAt"`
 
 	// Author Books only (ADR 0006); empty for movies/series.
-	Author           string          `json:"author"`
-	BackdropPath     string          `json:"backdropPath"`
+	Author       string `json:"author"`
+	BackdropPath string `json:"backdropPath"`
+
+	// Copies Additional quality copies of this item.
+	Copies           []MediaCopy     `json:"copies"`
 	Ended            bool            `json:"ended"`
 	Files            []MediaFileInfo `json:"files"`
 	Genres           []string        `json:"genres"`
@@ -791,6 +827,8 @@ type UpdateMediaItemRequest struct {
 
 // WantedItem defines model for WantedItem.
 type WantedItem struct {
+	// Copy Label of the quality copy this entry hunts for; "" = the primary.
+	Copy        string `json:"copy"`
 	Current     string `json:"current"`
 	Detail      string `json:"detail"`
 	MediaItemId int64  `json:"mediaItemId"`
@@ -879,6 +917,12 @@ type BulkEditLibraryJSONRequestBody BulkEditLibraryJSONBody
 
 // UpdateLibraryItemJSONRequestBody defines body for UpdateLibraryItem for application/json ContentType.
 type UpdateLibraryItemJSONRequestBody = UpdateMediaItemRequest
+
+// AddMediaCopyJSONRequestBody defines body for AddMediaCopy for application/json ContentType.
+type AddMediaCopyJSONRequestBody = MediaCopyInput
+
+// UpdateMediaCopyJSONRequestBody defines body for UpdateMediaCopy for application/json ContentType.
+type UpdateMediaCopyJSONRequestBody = MediaCopyUpdate
 
 // SetEpisodeMonitoredJSONRequestBody defines body for SetEpisodeMonitored for application/json ContentType.
 type SetEpisodeMonitoredJSONRequestBody = MonitorRequest
@@ -999,6 +1043,15 @@ type ServerInterface interface {
 	// AutoSearchLibraryItem Search for everything this item wants and grab the best releases
 	// (POST /library/{id}/autosearch)
 	AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// AddMediaCopy Add an additional quality copy (e.g. a 720p copy of a 4K item)
+	// (POST /library/{id}/copies)
+	AddMediaCopy(w http.ResponseWriter, r *http.Request, id int64)
+	// DeleteMediaCopy Remove a copy (its files on disk are kept)
+	// (DELETE /library/{id}/copies/{copyId})
+	DeleteMediaCopy(w http.ResponseWriter, r *http.Request, id int64, copyId int64)
+	// UpdateMediaCopy Edit a copy's name, profile, or monitoring
+	// (PATCH /library/{id}/copies/{copyId})
+	UpdateMediaCopy(w http.ResponseWriter, r *http.Request, id int64, copyId int64)
 	// SetEpisodeMonitored Monitor or unmonitor one episode
 	// (PATCH /library/{id}/episodes/{episodeId})
 	SetEpisodeMonitored(w http.ResponseWriter, r *http.Request, id int64, episodeId int64)
@@ -1721,6 +1774,102 @@ func (siw *ServerInterfaceWrapper) AutoSearchLibraryItem(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// AddMediaCopy operation middleware
+func (siw *ServerInterfaceWrapper) AddMediaCopy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddMediaCopy(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteMediaCopy operation middleware
+func (siw *ServerInterfaceWrapper) DeleteMediaCopy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "copyId" -------------
+	var copyId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "copyId", r.PathValue("copyId"), &copyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "copyId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteMediaCopy(w, r, id, copyId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateMediaCopy operation middleware
+func (siw *ServerInterfaceWrapper) UpdateMediaCopy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "copyId" -------------
+	var copyId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "copyId", r.PathValue("copyId"), &copyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "copyId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateMediaCopy(w, r, id, copyId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SetEpisodeMonitored operation middleware
 func (siw *ServerInterfaceWrapper) SetEpisodeMonitored(w http.ResponseWriter, r *http.Request) {
 
@@ -2379,6 +2528,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/importlists", wrapper.AddImportList)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/importlists/{id}", wrapper.DeleteImportList)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/autosearch", wrapper.AutoSearchLibraryItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/copies", wrapper.AddMediaCopy)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.DeleteMediaCopy)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.UpdateMediaCopy)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/seasons/{season}", wrapper.SetSeasonMonitored)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/episodes/{episodeId}", wrapper.SetEpisodeMonitored)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)

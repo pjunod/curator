@@ -3,9 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import {
   ACTIVE_DOWNLOAD_STATES,
+  addMediaCopy,
   autoSearchItem,
   completeness,
   deleteLibraryItem,
+  deleteMediaCopy,
   fmtBytes,
   fmtRatingValue,
   getLibraryItem,
@@ -18,9 +20,157 @@ import {
   setEpisodeMonitored,
   setSeasonMonitored,
   updateLibraryItem,
+  updateMediaCopy,
 } from '../api'
 import type { MediaItemDetail } from '../api'
 import { ReleaseSearch } from './ReleaseSearch'
+
+// CopiesPanel: additional quality targets — the same item kept at a second
+// quality, each copy with its own profile, location, and automation.
+function CopiesPanel(props: { item: MediaItemDetail }) {
+  const { item } = props
+  const qc = useQueryClient()
+  const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
+  const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
+
+  const [profileId, setProfileId] = useState<number | ''>('')
+  const [rootId, setRootId] = useState(0)
+  const [name, setName] = useState('')
+  const [msg, setMsg] = useState('')
+
+  const refreshCache = (detail: MediaItemDetail) => {
+    qc.setQueryData(['library-item', String(item.id)], detail)
+    void qc.invalidateQueries({ queryKey: ['wanted'] })
+  }
+  const add = useMutation({
+    mutationFn: () =>
+      addMediaCopy(item.id, {
+        qualityProfileId: Number(profileId),
+        rootFolderId: rootId || undefined,
+        name: name.trim() || undefined,
+      }),
+    onSuccess: (detail) => {
+      refreshCache(detail)
+      setProfileId('')
+      setName('')
+      setMsg('Copy added — the loops hunt it like any other wanted item.')
+    },
+    onError: (e) => setMsg(`✕ ${(e as Error).message}`),
+  })
+  const toggle = useMutation({
+    mutationFn: (v: { copyId: number; monitored: boolean }) =>
+      updateMediaCopy(item.id, v.copyId, { monitored: v.monitored }),
+    onSuccess: refreshCache,
+  })
+  const del = useMutation({
+    mutationFn: (copyId: number) => deleteMediaCopy(item.id, copyId),
+    onSuccess: (detail) => {
+      refreshCache(detail)
+      setMsg('Copy removed — its files on disk were kept.')
+    },
+  })
+
+  const profileName = (id: number) => profiles.data?.find((p) => p.id === id)?.name ?? `#${id}`
+  const copyFiles = (copyId: number) => item.files.filter((f) => (f.copyId ?? 0) === copyId).length
+
+  return (
+    <section className="panel" id="copies">
+      <h2>Quality copies</h2>
+      <p className="muted">
+        Keep this {item.kind} at more than one quality — e.g. the main copy at 4K plus a 720p
+        copy for someone else. Each copy has its own profile and is hunted, imported, and
+        upgraded independently. A copy either shares this folder (filenames carry the quality)
+        or lives in its own folder under a different root.
+      </p>
+
+      {item.copies.length > 0 && (
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Copy</th>
+              <th>Profile</th>
+              <th>Location</th>
+              <th>Files</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {item.copies.map((c) => (
+              <tr key={c.id} className={c.monitored ? '' : 'row-unmonitored'}>
+                <td>
+                  <input
+                    type="checkbox"
+                    className="monitor-box"
+                    aria-label={`Monitor copy ${c.name || c.id}`}
+                    checked={c.monitored}
+                    disabled={toggle.isPending}
+                    onChange={(e) => toggle.mutate({ copyId: c.id, monitored: e.target.checked })}
+                  />
+                </td>
+                <td>{c.name || <span className="muted">unnamed</span>}</td>
+                <td>{profileName(c.qualityProfileId)}</td>
+                <td>
+                  {c.path ? (
+                    <code className="path-chip">{c.path}</code>
+                  ) : (
+                    <span className="muted">same folder as the main copy</span>
+                  )}
+                </td>
+                <td className="muted">{copyFiles(c.id)}</td>
+                <td>
+                  <button onClick={() => del.mutate(c.id)} disabled={del.isPending}>
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <div className="form-row">
+        <select
+          aria-label="Copy quality profile"
+          value={profileId}
+          onChange={(e) => setProfileId(e.target.value ? Number(e.target.value) : '')}
+        >
+          <option value="">(profile…)</option>
+          {profiles.data?.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Copy location"
+          value={rootId}
+          onChange={(e) => setRootId(Number(e.target.value))}
+        >
+          <option value={0}>Same folder as the main copy</option>
+          {roots.data?.map((rf) => (
+            <option key={rf.id} value={rf.id}>
+              Own folder under {rf.path}
+            </option>
+          ))}
+        </select>
+        <input
+          placeholder="Name (optional, e.g. 720p for dad)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <button
+          className="btn-accent"
+          disabled={profileId === '' || add.isPending}
+          onClick={() => add.mutate()}
+        >
+          Add copy
+        </button>
+      </div>
+      {msg && <p className={msg.startsWith('✕') ? 'error-text' : 'ok-text'}>{msg}</p>}
+    </section>
+  )
+}
 
 // externalLinks builds the provider pages for an item — always new-tab.
 function externalLinks(m: MediaItemDetail): { label: string; href: string }[] {
@@ -359,6 +509,8 @@ export function MediaDetailPage() {
 
       {editing && <EditPanel item={m} onClose={() => setEditing(false)} />}
 
+      {m.kind !== 'book' && <CopiesPanel item={m} />}
+
       {searching && (
         <ReleaseSearch
           mediaItemId={m.id}
@@ -466,6 +618,7 @@ export function MediaDetailPage() {
                 <th>Path</th>
                 <th>Size</th>
                 <th>Episodes</th>
+                {m.copies.length > 0 && <th>Copy</th>}
               </tr>
             </thead>
             <tbody>
@@ -474,6 +627,13 @@ export function MediaDetailPage() {
                   <td className="mono">{f.path}</td>
                   <td className="muted">{fmtBytes(f.size)}</td>
                   <td className="muted">{f.episodeIds.length || '—'}</td>
+                  {m.copies.length > 0 && (
+                    <td className="muted">
+                      {f.copyId
+                        ? (m.copies.find((c) => c.id === f.copyId)?.name || `copy ${f.copyId}`)
+                        : 'main'}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

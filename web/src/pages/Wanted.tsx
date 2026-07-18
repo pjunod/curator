@@ -79,6 +79,11 @@ export function WantedPage() {
                       {w.title}
                     </Link>{' '}
                     <span className="muted">{w.detail}</span>
+                    {w.copy && (
+                      <span className="pill pill-info" title="This entry is for an additional quality copy">
+                        {w.copy}
+                      </span>
+                    )}
                   </td>
                   <td className="muted mono">{w.wantableId.split(':')[0]}</td>
                   <td>

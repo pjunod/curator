@@ -116,9 +116,26 @@ export interface SeasonInfo {
 
 export interface MediaFileInfo {
   id: number
+  copyId?: number // which quality copy owns this file; absent/0 = primary
   path: string
   size: number
   episodeIds: number[]
+}
+
+export interface MediaCopy {
+  id: number
+  name: string // '' = unnamed; show the profile instead
+  qualityProfileId: number
+  rootFolderId: number
+  path: string // '' = shares the item's folder
+  monitored: boolean
+}
+
+export interface MediaCopyInput {
+  qualityProfileId: number
+  rootFolderId?: number // 0/absent = share the item's folder
+  name?: string
+  monitored?: boolean
 }
 
 export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' | 'episodeFileCount' | 'fileCount'> {
@@ -134,6 +151,7 @@ export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' |
   ids: ExternalIds
   seasons: SeasonInfo[]
   files: MediaFileInfo[]
+  copies: MediaCopy[]
   addedAt: string
 }
 
@@ -454,6 +472,7 @@ export interface WantedItem {
   detail: string
   missing: boolean
   current: string
+  copy: string // media-copy label; '' = the primary
 }
 
 export interface BlocklistEntry {
@@ -561,6 +580,15 @@ export function composeHostPort(host: string, port: string): string {
 export const autoSearchItem = (id: number) => send('POST', `/library/${id}/autosearch`)
 export const refreshLibraryItem = (id: number) =>
   send<MediaItemDetail>('POST', `/library/${id}/refresh`)
+export const addMediaCopy = (id: number, req: MediaCopyInput) =>
+  send<MediaItemDetail>('POST', `/library/${id}/copies`, req)
+export const updateMediaCopy = (
+  id: number,
+  copyId: number,
+  req: { name?: string; qualityProfileId?: number; monitored?: boolean },
+) => send<MediaItemDetail>('PATCH', `/library/${id}/copies/${copyId}`, req)
+export const deleteMediaCopy = (id: number, copyId: number) =>
+  send<MediaItemDetail>('DELETE', `/library/${id}/copies/${copyId}`)
 export const setSeasonMonitored = (id: number, season: number, monitored: boolean) =>
   send<MediaItemDetail>('PATCH', `/library/${id}/seasons/${season}`, { monitored })
 export const setEpisodeMonitored = (id: number, episodeId: number, monitored: boolean) =>
