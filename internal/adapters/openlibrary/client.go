@@ -278,6 +278,9 @@ func (c *Client) GetBook(ctx context.Context, olid string) (domain.MediaItem, er
 		if ratings.Summary.Average != nil && ratings.Summary.Count > 0 {
 			item.Rating = *ratings.Summary.Average
 			item.RatingVotes = ratings.Summary.Count
+			item.Ratings = []domain.Rating{{
+				Source: "openlibrary", Value: item.Rating, Votes: item.RatingVotes, Scale: 5,
+			}}
 		}
 	}
 

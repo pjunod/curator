@@ -4,7 +4,8 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import type { MediaItemSummary, MediaKind } from '../api'
 import {
   ACTIVE_DOWNLOAD_STATES, bulkEditLibrary, completeness, fmtRating, getLibrary,
-  getProfiles, getQueue, getScanReport, getSettings, posterUrl, triggerScan,
+  getProfiles, getQueue, getScanReport, getSettings, posterUrl,
+  RATING_SOURCE_LABELS, triggerScan,
 } from '../api'
 
 // CardBadges: at-a-glance state on a poster — rating, in-flight downloads,
@@ -15,7 +16,13 @@ function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
   return (
     <>
       {m.ratingVotes > 0 && (
-        <span className="poster-chip chip-left" title={`${m.ratingVotes.toLocaleString()} votes`}>
+        <span
+          className="poster-chip chip-left"
+          title={`${
+            RATING_SOURCE_LABELS[m.ratings[0]?.source] ??
+            (m.kind === 'book' ? 'Open Library' : 'TMDB')
+          } · ${m.ratingVotes.toLocaleString()} votes`}
+        >
           ★ {fmtRating(m.kind, m.rating)}
         </span>
       )}

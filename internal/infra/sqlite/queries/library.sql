@@ -3,9 +3,9 @@ INSERT INTO media_items (
     kind, title, sort_title, year, author,
     tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin,
     overview, poster_path, backdrop_path, genres, status, release_date, runtime,
-    rating, rating_votes,
+    rating, rating_votes, ratings,
     monitored, quality_profile_id, root_folder_id, path, ended, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: UpdateMediaItemMetadata :exec
@@ -16,7 +16,7 @@ UPDATE media_items SET
     imdb_id = ?, tvdb_id = ?, isbn13 = ?, asin = ?,
     overview = ?, poster_path = ?, backdrop_path = ?, genres = ?,
     status = ?, release_date = ?, runtime = ?,
-    rating = ?, rating_votes = ?, ended = ?, updated_at = ?
+    rating = ?, rating_votes = ?, ratings = ?, ended = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: GetMediaItem :one

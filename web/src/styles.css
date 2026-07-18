@@ -1041,3 +1041,23 @@ a.pill-info:hover {
 .row-test {
   white-space: nowrap;
 }
+
+/* ---- labeled rating chips ---- */
+.rating-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.rating-source {
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}

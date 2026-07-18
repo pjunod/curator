@@ -111,6 +111,9 @@ func TestGetMovieMapsFields(t *testing.T) {
 	if m.Rating != 8.438 || m.RatingVotes != 26280 {
 		t.Errorf("rating = %v (%d votes)", m.Rating, m.RatingVotes)
 	}
+	if len(m.Ratings) != 1 || m.Ratings[0].Source != "tmdb" || m.Ratings[0].Scale != 10 {
+		t.Errorf("labeled ratings = %+v", m.Ratings)
+	}
 }
 
 func TestGetSeriesHydratesSeasons(t *testing.T) {

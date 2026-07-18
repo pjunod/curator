@@ -1118,11 +1118,27 @@ components:
       type: string
       enum: [movie, series, book]
 
+    Rating:
+      type: object
+      required: [source, value, scale]
+      properties:
+        source:
+          type: string
+          description: tmdb | openlibrary | imdb | rt | metacritic
+        value:
+          type: number
+          description: In the source's native scale.
+        votes:
+          type: integer
+        scale:
+          type: integer
+          description: 10, 5, or 100 — render 94/100 as "94%".
+
     MediaItemSummary:
       type: object
       required:
         [id, kind, title, year, author, posterPath, monitored, path,
-         rating, ratingVotes, episodeCount, episodeFileCount, fileCount]
+         rating, ratingVotes, ratings, episodeCount, episodeFileCount, fileCount]
       properties:
         id:
           type: integer
@@ -1148,6 +1164,10 @@ components:
         ratingVotes:
           type: integer
           description: 0 means no rating known.
+        ratings:
+          type: array
+          items: { $ref: "#/components/schemas/Rating" }
+          description: All known ratings, labeled by source.
         episodeCount:
           type: integer
           description: Monitored episodes aired to date (series; 0 otherwise).
@@ -1246,6 +1266,7 @@ components:
         - runtime
         - rating
         - ratingVotes
+        - ratings
         - monitored
         - qualityProfileId
         - path
@@ -1290,6 +1311,10 @@ components:
         ratingVotes:
           type: integer
           description: 0 means no rating known.
+        ratings:
+          type: array
+          items: { $ref: "#/components/schemas/Rating" }
+          description: All known ratings, labeled by source.
         monitored:
           type: boolean
         qualityProfileId:

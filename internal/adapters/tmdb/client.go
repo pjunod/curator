@@ -265,7 +265,16 @@ func (c *Client) GetMovie(ctx context.Context, tmdbID int64) (domain.MediaItem, 
 		Runtime:      resp.Runtime,
 		Rating:       resp.VoteAverage,
 		RatingVotes:  resp.VoteCount,
+		Ratings:      tmdbRatings(resp.VoteAverage, resp.VoteCount),
 	}, nil
+}
+
+// tmdbRatings renders the vote fields as a labeled rating entry.
+func tmdbRatings(avg float64, votes int) []domain.Rating {
+	if votes == 0 {
+		return nil
+	}
+	return []domain.Rating{{Source: "tmdb", Value: avg, Votes: votes, Scale: 10}}
 }
 
 // GetSeries implements ports.MetadataProvider: hydrates the series plus
@@ -296,6 +305,7 @@ func (c *Client) GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem,
 		Runtime:      runtime,
 		Rating:       resp.VoteAverage,
 		RatingVotes:  resp.VoteCount,
+		Ratings:      tmdbRatings(resp.VoteAverage, resp.VoteCount),
 		Ended:        strings.EqualFold(resp.Status, "Ended") || strings.EqualFold(resp.Status, "Canceled"),
 	}
 

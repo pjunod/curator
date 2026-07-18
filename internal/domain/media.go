@@ -50,6 +50,15 @@ type ExternalIDs struct {
 	ASIN   string
 }
 
+// Rating is one labeled community rating. Value is in the source's native
+// scale (Scale = 10, 5, or 100) so "94%" and "4.3/5" render honestly.
+type Rating struct {
+	Source string  `json:"source"` // tmdb | openlibrary | imdb | rt | metacritic
+	Value  float64 `json:"value"`
+	Votes  int     `json:"votes,omitempty"`
+	Scale  int     `json:"scale"`
+}
+
 // MediaItem is the aggregate root: one library entry (blueprint §4.2).
 type MediaItem struct {
 	ID        int64
@@ -70,6 +79,7 @@ type MediaItem struct {
 	Runtime      int    // minutes; per-episode average for series
 	Rating       float64
 	RatingVotes  int // 0 = no rating known; Rating is provider-scale (TMDB /10, Open Library /5)
+	Ratings      []Rating
 
 	Monitored        bool
 	QualityProfileID int64

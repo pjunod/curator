@@ -486,7 +486,10 @@ type MediaItemDetail struct {
 	Rating float32 `json:"rating"`
 
 	// RatingVotes 0 means no rating known.
-	RatingVotes  int          `json:"ratingVotes"`
+	RatingVotes int `json:"ratingVotes"`
+
+	// Ratings All known ratings, labeled by source.
+	Ratings      []Rating     `json:"ratings"`
 	ReleaseDate  string       `json:"releaseDate"`
 	RootFolderId int64        `json:"rootFolderId"`
 	Runtime      int          `json:"runtime"`
@@ -519,9 +522,12 @@ type MediaItemSummary struct {
 	Rating float32 `json:"rating"`
 
 	// RatingVotes 0 means no rating known.
-	RatingVotes int    `json:"ratingVotes"`
-	Title       string `json:"title"`
-	Year        int    `json:"year"`
+	RatingVotes int `json:"ratingVotes"`
+
+	// Ratings All known ratings, labeled by source.
+	Ratings []Rating `json:"ratings"`
+	Title   string   `json:"title"`
+	Year    int      `json:"year"`
 }
 
 // MediaKind defines model for MediaKind.
@@ -591,6 +597,19 @@ type QueueItem struct {
 	Quality     string    `json:"quality"`
 	State       string    `json:"state"`
 	Title       string    `json:"title"`
+}
+
+// Rating defines model for Rating.
+type Rating struct {
+	// Scale 10, 5, or 100 — render 94/100 as "94%".
+	Scale int `json:"scale"`
+
+	// Source tmdb | openlibrary | imdb | rt | metacritic
+	Source string `json:"source"`
+
+	// Value In the source's native scale.
+	Value float32 `json:"value"`
+	Votes *int    `json:"votes,omitempty"`
 }
 
 // Rejection defines model for Rejection.

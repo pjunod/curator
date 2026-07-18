@@ -37,6 +37,8 @@ func isConstraint(err error) bool {
 func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 	var genres []string
 	_ = json.Unmarshal([]byte(r.Genres), &genres)
+	var ratings []domain.Rating
+	_ = json.Unmarshal([]byte(r.Ratings), &ratings)
 	item := domain.MediaItem{
 		ID:        r.ID,
 		Kind:      domain.MediaKind(r.Kind),
@@ -57,6 +59,7 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		Runtime:          int(r.Runtime),
 		Rating:           r.Rating,
 		RatingVotes:      int(r.RatingVotes),
+		Ratings:          ratings,
 		Monitored:        r.Monitored != 0,
 		QualityProfileID: r.QualityProfileID,
 		Path:             r.Path,
@@ -75,6 +78,7 @@ func insertParams(m domain.MediaItem, now time.Time) sqlitegen.InsertMediaItemPa
 	if m.Genres == nil {
 		genres = []byte("[]")
 	}
+	ratings := marshalRatings(m.Ratings)
 	profileID := m.QualityProfileID
 	if profileID == 0 {
 		profileID = 1
@@ -101,6 +105,7 @@ func insertParams(m domain.MediaItem, now time.Time) sqlitegen.InsertMediaItemPa
 		Runtime:          int64(m.Runtime),
 		Rating:           m.Rating,
 		RatingVotes:      int64(m.RatingVotes),
+		Ratings:          ratings,
 		Monitored:        boolInt(m.Monitored),
 		Path:             m.Path,
 		Ended:            boolInt(m.Ended),
@@ -118,6 +123,14 @@ func boolInt(b bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+func marshalRatings(rs []domain.Rating) string {
+	if rs == nil {
+		return "[]"
+	}
+	b, _ := json.Marshal(rs)
+	return string(b)
 }
 
 // ---- media items ----
@@ -330,6 +343,7 @@ func (d *DB) UpdateMediaItemMetadata(ctx context.Context, id int64, m domain.Med
 		Runtime:      int64(m.Runtime),
 		Rating:       m.Rating,
 		RatingVotes:  int64(m.RatingVotes),
+		Ratings:      marshalRatings(m.Ratings),
 		Ended:        boolInt(m.Ended),
 		UpdatedAt:    time.Now().UnixMilli(),
 		ID:           id,

@@ -7,12 +7,13 @@ import {
   completeness,
   deleteLibraryItem,
   fmtBytes,
-  fmtRating,
+  fmtRatingValue,
   getLibraryItem,
   getProfiles,
   getQueue,
   getRootFolders,
   posterUrl,
+  RATING_SOURCE_LABELS,
   refreshLibraryItem,
   updateLibraryItem,
 } from '../api'
@@ -262,12 +263,24 @@ export function MediaDetailPage() {
               <span className="muted"> — quality target for grabs and upgrades</span>
             </div>
 
-            {m.ratingVotes > 0 && (
+            {(m.ratings.length > 0 || m.ratingVotes > 0) && (
               <>
-                <div className="fact-label">Rating</div>
-                <div>
-                  ★ {fmtRating(m.kind, m.rating)}{' '}
-                  <span className="muted">({m.ratingVotes.toLocaleString()} votes)</span>
+                <div className="fact-label">Ratings</div>
+                <div className="fact-pills">
+                  {(m.ratings.length > 0
+                    ? m.ratings
+                    : [{ source: m.kind === 'book' ? 'openlibrary' : 'tmdb', value: m.rating, votes: m.ratingVotes, scale: m.kind === 'book' ? 5 : 10 }]
+                  ).map((r) => (
+                    <span
+                      key={r.source}
+                      className="rating-chip"
+                      title={r.votes ? `${r.votes.toLocaleString()} votes` : undefined}
+                    >
+                      <span className="rating-source">{RATING_SOURCE_LABELS[r.source] ?? r.source}</span>{' '}
+                      ★ {fmtRatingValue(r)}
+                      {r.votes ? <span className="muted"> ({r.votes.toLocaleString()})</span> : null}
+                    </span>
+                  ))}
                 </div>
               </>
             )}

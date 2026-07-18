@@ -42,6 +42,19 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 
 // ---- DTO mapping ----
 
+func ratingsDTO(rs []domain.Rating) []apigen.Rating {
+	out := make([]apigen.Rating, 0, len(rs))
+	for _, r := range rs {
+		dto := apigen.Rating{Source: r.Source, Value: float32(r.Value), Scale: r.Scale}
+		if r.Votes > 0 {
+			v := r.Votes
+			dto.Votes = &v
+		}
+		out = append(out, dto)
+	}
+	return out
+}
+
 func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 	return apigen.MediaItemSummary{
 		Id:               m.ID,
@@ -54,6 +67,7 @@ func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 		Path:             m.Path,
 		Rating:           float32(m.Rating),
 		RatingVotes:      m.RatingVotes,
+		Ratings:          ratingsDTO(m.Ratings),
 		EpisodeCount:     m.EpisodeCount,
 		EpisodeFileCount: m.EpisodeFileCount,
 		FileCount:        m.FileCount,
@@ -82,6 +96,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		Runtime:          m.Runtime,
 		Rating:           float32(m.Rating),
 		RatingVotes:      m.RatingVotes,
+		Ratings:          ratingsDTO(m.Ratings),
 		Monitored:        m.Monitored,
 		QualityProfileId: m.QualityProfileID,
 		Path:             m.Path,

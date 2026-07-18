@@ -60,9 +60,33 @@ export interface MediaItemSummary {
   path: string
   rating: number // provider scale: TMDB /10, Open Library /5
   ratingVotes: number // 0 = no rating known
+  ratings: Rating[] // all known ratings, labeled by source
   episodeCount: number // monitored episodes aired to date (series)
   episodeFileCount: number // of those, how many have a file
   fileCount: number // files on disk (movies/books completeness)
+}
+
+export interface Rating {
+  source: string // tmdb | openlibrary | imdb | rt | metacritic
+  value: number // in the source's native scale
+  votes?: number
+  scale: number // 10, 5, or 100
+}
+
+export const RATING_SOURCE_LABELS: Record<string, string> = {
+  tmdb: 'TMDB',
+  openlibrary: 'Open Library',
+  imdb: 'IMDb',
+  rt: 'Rotten Tomatoes',
+  metacritic: 'Metacritic',
+}
+
+// fmtRatingValue renders a rating in its native scale: 94/100 → "94%",
+// 4.3/5 → "4.3/5", 8.4/10 → "8.4".
+export function fmtRatingValue(r: Rating): string {
+  if (r.scale === 100) return `${Math.round(r.value)}%`
+  if (r.scale === 5) return `${r.value.toFixed(1)}/5`
+  return r.value.toFixed(1)
 }
 
 export interface ExternalIds {

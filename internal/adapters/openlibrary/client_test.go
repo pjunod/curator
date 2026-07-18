@@ -99,6 +99,9 @@ func TestGetBook(t *testing.T) {
 	if item.Rating < 4.28 || item.Rating > 4.29 || item.RatingVotes != 206 {
 		t.Errorf("rating = %v (%d votes)", item.Rating, item.RatingVotes)
 	}
+	if len(item.Ratings) != 1 || item.Ratings[0].Source != "openlibrary" || item.Ratings[0].Scale != 5 {
+		t.Errorf("labeled ratings = %+v", item.Ratings)
+	}
 
 	// The "/works/" prefix form works too (search hands back bare ids, but
 	// callers may pass raw keys).

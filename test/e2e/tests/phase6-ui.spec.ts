@@ -46,8 +46,9 @@ test('detail page shows labeled facts: location chip, profile, rating, links', a
   await expect(page.locator('.path-chip')).toContainText('The Test Movie')
   await expect(page.getByText('Profile', { exact: true })).toBeVisible()
 
-  // Rating came from the provider at add time (fake TMDB: 7.6, 4321 votes).
-  await expect(page.getByText('★ 7.6')).toBeVisible()
+  // Rating came from the provider at add time (fake TMDB: 7.6, 4321 votes),
+  // labeled with its source.
+  await expect(page.locator('.rating-chip', { hasText: 'TMDB' })).toContainText('7.6')
 
   // External links open in a new tab.
   const imdb = page.getByRole('link', { name: /IMDb/ })
