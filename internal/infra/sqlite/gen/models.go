@@ -47,6 +47,7 @@ type Download struct {
 	Error        string
 	AddedAt      int64
 	UpdatedAt    int64
+	CopyID       sql.NullInt64
 }
 
 type DownloadClient struct {
@@ -105,6 +106,17 @@ type Indexer struct {
 	AddedAt    int64
 }
 
+type MediaCopy struct {
+	ID               int64
+	MediaItemID      int64
+	Name             string
+	QualityProfileID int64
+	RootFolderID     sql.NullInt64
+	Path             string
+	Monitored        int64
+	AddedAt          int64
+}
+
 type MediaFile struct {
 	ID          int64
 	MediaItemID sql.NullInt64
@@ -112,6 +124,7 @@ type MediaFile struct {
 	Size        int64
 	AddedAt     int64
 	Quality     string
+	CopyID      sql.NullInt64
 }
 
 type MediaFileEpisode struct {

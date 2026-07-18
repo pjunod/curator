@@ -27,7 +27,22 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	if err != nil {
 		return err
 	}
-	if item.Path == "" {
+
+	// The import scope: which copy this grab was for decides the profile,
+	// the destination folder, and which existing files count as "current".
+	scope := importScope{Dest: item.Path, ProfileID: item.QualityProfileID}
+	if dl.CopyID != 0 {
+		cp, err := s.db.GetMediaCopy(ctx, dl.MediaItemID, dl.CopyID)
+		if err != nil {
+			return fmt.Errorf("copy %d vanished: %w", dl.CopyID, err)
+		}
+		scope.CopyID = cp.ID
+		scope.ProfileID = cp.QualityProfileID
+		if cp.Path != "" {
+			scope.Dest = cp.Path
+		}
+	}
+	if scope.Dest == "" {
 		return fmt.Errorf("item has no library folder assigned")
 	}
 
@@ -43,11 +58,11 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		return fmt.Errorf("no media files in %s", savePath)
 	}
 
-	epQuals, err := s.episodeQualities(ctx, item)
+	epQuals, err := s.episodeQualities(ctx, item, scope.CopyID)
 	if err != nil {
 		return err
 	}
-	profile, err := s.db.GetProfile(ctx, item.QualityProfileID)
+	profile, err := s.db.GetProfile(ctx, scope.ProfileID)
 	if err != nil {
 		return err
 	}
@@ -70,11 +85,11 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		var wasUpgrade bool
 		switch item.Kind {
 		case domain.KindMovie:
-			wasUpgrade, err = s.importMovieFile(ctx, item, profile, src, q)
+			wasUpgrade, err = s.importMovieFile(ctx, item, scope, profile, src, q)
 		case domain.KindBook:
-			wasUpgrade, err = s.importBookFile(ctx, item, src, q)
+			wasUpgrade, err = s.importBookFile(ctx, item, scope, src, q)
 		default:
-			wasUpgrade, err = s.importEpisodeFile(ctx, item, profile, epQuals, src, p, q)
+			wasUpgrade, err = s.importEpisodeFile(ctx, item, scope, profile, epQuals, src, p, q)
 		}
 		if err != nil {
 			s.log.Warn("import: file skipped", "file", filepath.Base(src), "reason", err)
@@ -121,8 +136,16 @@ func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) 
 	return out, err
 }
 
-func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, profile quality.Profile, src string, q quality.Quality) (bool, error) {
-	current, have, err := s.db.BestQualityForItem(ctx, item.ID)
+// importScope pins an import to one copy of the item: its id (0 =
+// primary), its destination folder, and its quality profile.
+type importScope struct {
+	CopyID    int64
+	Dest      string
+	ProfileID int64
+}
+
+func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality) (bool, error) {
+	current, have, err := s.db.BestQualityForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return false, err
 	}
@@ -139,14 +162,14 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, pr
 		"Movie Title": item.Title, "Release Year": strconv.Itoa(item.Year),
 		"Quality Full": q.Display(),
 	})
-	dest := filepath.Join(item.Path, naming.SafeFileName(name)+filepath.Ext(src))
+	dest := filepath.Join(scope.Dest, naming.SafeFileName(name)+filepath.Ext(src))
 	if err := place(src, dest); err != nil {
 		return false, err
 	}
 	if upgrade {
-		s.removeExistingFiles(ctx, item, nil, dest)
+		s.removeExistingFiles(ctx, item, scope.CopyID, nil, dest)
 	}
-	fileID, err := s.db.UpsertFile(ctx, item.ID, dest, sizeOf(dest))
+	fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
 	if err != nil {
 		return false, err
 	}
@@ -156,8 +179,8 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, pr
 // importBookFile places one book file into <library>/<Author>/<Title>/ as
 // "Title - Author.ext" (Calibre-friendly, ADR 0006), with the same
 // upgrade-or-reject semantics as movies.
-func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, src string, q quality.Quality) (bool, error) {
-	current, have, err := s.db.BestQualityForItem(ctx, item.ID)
+func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, src string, q quality.Quality) (bool, error) {
+	current, have, err := s.db.BestQualityForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return false, err
 	}
@@ -169,22 +192,22 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, src
 		upgrade = true
 	}
 
-	dest := filepath.Join(item.Path,
+	dest := filepath.Join(scope.Dest,
 		naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
 	if err := place(src, dest); err != nil {
 		return false, err
 	}
 	if upgrade {
-		s.removeExistingFiles(ctx, item, nil, dest)
+		s.removeExistingFiles(ctx, item, scope.CopyID, nil, dest)
 	}
-	fileID, err := s.db.UpsertFile(ctx, item.ID, dest, sizeOf(dest))
+	fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
 	if err != nil {
 		return false, err
 	}
 	return upgrade, s.db.SetFileQuality(ctx, fileID, q)
 }
 
-func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, profile quality.Profile, epQuals map[int64]*quality.Quality, src string, p parser.Parsed, q quality.Quality) (bool, error) {
+func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epQuals map[int64]*quality.Quality, src string, p parser.Parsed, q quality.Quality) (bool, error) {
 	season, eps := p.Season, p.Episodes
 	if len(eps) == 0 {
 		if fx, ok := filename.Extract(filepath.Base(src)); ok {
@@ -244,16 +267,16 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		title = epTitles[0]
 	}
 	base := fmt.Sprintf("%s - %s - %s [%s]", item.Title, epToken, title, q.Display())
-	dest := filepath.Join(item.Path,
+	dest := filepath.Join(scope.Dest,
 		naming.Render(naming.SeasonFolderTemplate, map[string]string{"season": strconv.Itoa(season)}),
 		naming.SafeFileName(base)+filepath.Ext(src))
 	if err := place(src, dest); err != nil {
 		return false, err
 	}
 	if upgrade {
-		s.removeExistingFiles(ctx, item, epIDs, dest)
+		s.removeExistingFiles(ctx, item, scope.CopyID, epIDs, dest)
 	}
-	fileID, err := s.db.UpsertFile(ctx, item.ID, dest, sizeOf(dest))
+	fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
 	if err != nil {
 		return false, err
 	}
@@ -264,8 +287,10 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 }
 
 // removeExistingFiles deletes replaced files (rows + disk) for the target
-// scope: all item files for movies, or files linked to the given episodes.
-func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem, episodeIDs []int64, keep string) {
+// scope: all of ONE COPY's item files for movies, or that copy's files
+// linked to the given episodes. Other copies' files are never touched —
+// upgrading the 4K primary must not delete the 720p copy.
+func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem, copyID int64, episodeIDs []int64, keep string) {
 	files, err := s.db.ListFilesForItem(ctx, item.ID)
 	if err != nil {
 		return
@@ -275,7 +300,7 @@ func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem
 		covered[id] = true
 	}
 	for _, f := range files {
-		if f.Path == keep {
+		if f.Path == keep || f.CopyID != copyID {
 			continue
 		}
 		if episodeIDs != nil {

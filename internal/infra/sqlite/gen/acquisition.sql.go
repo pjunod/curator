@@ -38,7 +38,7 @@ func (q *Queries) DeleteIndexer(ctx context.Context, id int64) error {
 }
 
 const getDownload = `-- name: GetDownload :one
-SELECT id, media_item_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, added_at, updated_at FROM downloads WHERE id = ?
+SELECT id, media_item_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, added_at, updated_at, copy_id FROM downloads WHERE id = ?
 `
 
 func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
@@ -61,6 +61,7 @@ func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
 		&i.Error,
 		&i.AddedAt,
 		&i.UpdatedAt,
+		&i.CopyID,
 	)
 	return i, err
 }
@@ -125,13 +126,14 @@ func (q *Queries) GetProfile(ctx context.Context, id int64) (QualityProfile, err
 
 const insertDownload = `-- name: InsertDownload :one
 INSERT INTO downloads (
-    media_item_id, wantables, season, release_title, indexer, protocol,
+    media_item_id, copy_id, wantables, season, release_title, indexer, protocol,
     quality, size, client_id, handle, state, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
 `
 
 type InsertDownloadParams struct {
 	MediaItemID  int64
+	CopyID       sql.NullInt64
 	Wantables    string
 	Season       int64
 	ReleaseTitle string
@@ -149,6 +151,7 @@ type InsertDownloadParams struct {
 func (q *Queries) InsertDownload(ctx context.Context, arg InsertDownloadParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, insertDownload,
 		arg.MediaItemID,
+		arg.CopyID,
 		arg.Wantables,
 		arg.Season,
 		arg.ReleaseTitle,
@@ -256,7 +259,7 @@ func (q *Queries) InsertIndexer(ctx context.Context, arg InsertIndexerParams) (i
 }
 
 const listActiveDownloads = `-- name: ListActiveDownloads :many
-SELECT id, media_item_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, added_at, updated_at FROM downloads
+SELECT id, media_item_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, added_at, updated_at, copy_id FROM downloads
 WHERE state IN ('grabbed', 'downloading', 'completed', 'importing')
 ORDER BY added_at DESC
 `
@@ -287,6 +290,7 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 			&i.Error,
 			&i.AddedAt,
 			&i.UpdatedAt,
+			&i.CopyID,
 		); err != nil {
 			return nil, err
 		}
@@ -474,7 +478,7 @@ func (q *Queries) ListProfiles(ctx context.Context) ([]QualityProfile, error) {
 }
 
 const listRecentDownloads = `-- name: ListRecentDownloads :many
-SELECT id, media_item_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, added_at, updated_at FROM downloads ORDER BY added_at DESC LIMIT 100
+SELECT id, media_item_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, added_at, updated_at, copy_id FROM downloads ORDER BY added_at DESC LIMIT 100
 `
 
 func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
@@ -503,6 +507,7 @@ func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 			&i.Error,
 			&i.AddedAt,
 			&i.UpdatedAt,
+			&i.CopyID,
 		); err != nil {
 			return nil, err
 		}

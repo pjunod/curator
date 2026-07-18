@@ -233,7 +233,97 @@ func (d *DB) GetMediaItemFull(ctx context.Context, id int64) (domain.MediaItem, 
 		return domain.MediaItem{}, err
 	}
 	item.Files = files
+	copies, err := d.ListMediaCopies(ctx, id)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	item.Copies = copies
 	return item, nil
+}
+
+// ---- media copies (multi-quality targets) ----
+
+func copyFromRow(r sqlitegen.MediaCopy) domain.MediaCopy {
+	c := domain.MediaCopy{
+		ID: r.ID, MediaItemID: r.MediaItemID, Name: r.Name,
+		QualityProfileID: r.QualityProfileID, Path: r.Path,
+		Monitored: r.Monitored != 0, AddedAt: time.UnixMilli(r.AddedAt),
+	}
+	if r.RootFolderID.Valid {
+		c.RootFolderID = r.RootFolderID.Int64
+	}
+	return c
+}
+
+// AddMediaCopy stores an additional quality target for an item.
+func (d *DB) AddMediaCopy(ctx context.Context, c domain.MediaCopy) (int64, error) {
+	p := sqlitegen.InsertMediaCopyParams{
+		MediaItemID: c.MediaItemID, Name: c.Name,
+		QualityProfileID: c.QualityProfileID, Path: c.Path,
+		Monitored: boolInt(c.Monitored), AddedAt: time.Now().UnixMilli(),
+	}
+	if c.RootFolderID != 0 {
+		p.RootFolderID = sql.NullInt64{Int64: c.RootFolderID, Valid: true}
+	}
+	return d.Write.InsertMediaCopy(ctx, p)
+}
+
+// ListMediaCopies returns an item's copies.
+func (d *DB) ListMediaCopies(ctx context.Context, itemID int64) ([]domain.MediaCopy, error) {
+	rows, err := d.Read.ListMediaCopies(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.MediaCopy, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, copyFromRow(r))
+	}
+	return out, nil
+}
+
+// GetMediaCopy returns one copy of one item, or ErrNotFound.
+func (d *DB) GetMediaCopy(ctx context.Context, itemID, copyID int64) (domain.MediaCopy, error) {
+	r, err := d.Read.GetMediaCopy(ctx, sqlitegen.GetMediaCopyParams{ID: copyID, MediaItemID: itemID})
+	if err != nil {
+		return domain.MediaCopy{}, wrapNotFound(err)
+	}
+	return copyFromRow(r), nil
+}
+
+// UpdateMediaCopy stores name/profile/monitored edits for a copy.
+func (d *DB) UpdateMediaCopy(ctx context.Context, c domain.MediaCopy) error {
+	n, err := d.Write.UpdateMediaCopy(ctx, sqlitegen.UpdateMediaCopyParams{
+		Name: c.Name, QualityProfileID: c.QualityProfileID,
+		Monitored: boolInt(c.Monitored), ID: c.ID, MediaItemID: c.MediaItemID,
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteMediaCopy removes a copy and its file RECORDS; disk is untouched.
+func (d *DB) DeleteMediaCopy(ctx context.Context, itemID, copyID int64) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+	if err := q.DeleteMediaFilesForCopy(ctx, sql.NullInt64{Int64: copyID, Valid: true}); err != nil {
+		return err
+	}
+	n, err := q.DeleteMediaCopy(ctx, sqlitegen.DeleteMediaCopyParams{ID: copyID, MediaItemID: itemID})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
 }
 
 // GetMediaItemByKindTmdb returns the item id for (kind, tmdb) or ErrNotFound.
@@ -476,13 +566,18 @@ func (d *DB) DeleteRootFolder(ctx context.Context, id int64) error {
 
 // ---- files ----
 
-// UpsertFile records a file on disk. itemID 0 stores it as unmatched.
-func (d *DB) UpsertFile(ctx context.Context, itemID int64, path string, size int64) (int64, error) {
+// UpsertFile records a file on disk. itemID 0 stores it as unmatched;
+// copyID 0 attributes it to the primary. On path conflict the existing
+// row's copy attribution is preserved (rescans must not stomp imports).
+func (d *DB) UpsertFile(ctx context.Context, itemID, copyID int64, path string, size int64) (int64, error) {
 	p := sqlitegen.UpsertMediaFileParams{
 		Path: path, Size: size, AddedAt: time.Now().UnixMilli(),
 	}
 	if itemID != 0 {
 		p.MediaItemID = sql.NullInt64{Int64: itemID, Valid: true}
+	}
+	if copyID != 0 {
+		p.CopyID = sql.NullInt64{Int64: copyID, Valid: true}
 	}
 	return d.Write.UpsertMediaFile(ctx, p)
 }
@@ -531,6 +626,9 @@ func (d *DB) ListFilesForItem(ctx context.Context, itemID int64) ([]domain.Media
 		if r.MediaItemID.Valid {
 			f.MediaItemID = r.MediaItemID.Int64
 		}
+		if r.CopyID.Valid {
+			f.CopyID = r.CopyID.Int64
+		}
 		out = append(out, f)
 	}
 	return out, nil
@@ -547,6 +645,9 @@ func (d *DB) ListAllFiles(ctx context.Context) ([]domain.MediaFile, error) {
 		f := domain.MediaFile{ID: r.ID, Path: r.Path, Size: r.Size, AddedAt: time.UnixMilli(r.AddedAt)}
 		if r.MediaItemID.Valid {
 			f.MediaItemID = r.MediaItemID.Int64
+		}
+		if r.CopyID.Valid {
+			f.CopyID = r.CopyID.Int64
 		}
 		out = append(out, f)
 	}

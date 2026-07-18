@@ -19,12 +19,38 @@ func (q *Queries) ClearFileEpisodeLinks(ctx context.Context, mediaFileID int64) 
 	return err
 }
 
+const deleteMediaCopy = `-- name: DeleteMediaCopy :execrows
+DELETE FROM media_copies WHERE id = ? AND media_item_id = ?
+`
+
+type DeleteMediaCopyParams struct {
+	ID          int64
+	MediaItemID int64
+}
+
+func (q *Queries) DeleteMediaCopy(ctx context.Context, arg DeleteMediaCopyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteMediaCopy, arg.ID, arg.MediaItemID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteMediaFile = `-- name: DeleteMediaFile :exec
 DELETE FROM media_files WHERE id = ?
 `
 
 func (q *Queries) DeleteMediaFile(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteMediaFile, id)
+	return err
+}
+
+const deleteMediaFilesForCopy = `-- name: DeleteMediaFilesForCopy :exec
+DELETE FROM media_files WHERE copy_id = ?
+`
+
+func (q *Queries) DeleteMediaFilesForCopy(ctx context.Context, copyID sql.NullInt64) error {
+	_, err := q.db.ExecContext(ctx, deleteMediaFilesForCopy, copyID)
 	return err
 }
 
@@ -69,6 +95,31 @@ func (q *Queries) GetEpisodeByNumber(ctx context.Context, arg GetEpisodeByNumber
 		&i.Title,
 		&i.AirDate,
 		&i.Monitored,
+	)
+	return i, err
+}
+
+const getMediaCopy = `-- name: GetMediaCopy :one
+SELECT id, media_item_id, name, quality_profile_id, root_folder_id, path, monitored, added_at FROM media_copies WHERE id = ? AND media_item_id = ?
+`
+
+type GetMediaCopyParams struct {
+	ID          int64
+	MediaItemID int64
+}
+
+func (q *Queries) GetMediaCopy(ctx context.Context, arg GetMediaCopyParams) (MediaCopy, error) {
+	row := q.db.QueryRowContext(ctx, getMediaCopy, arg.ID, arg.MediaItemID)
+	var i MediaCopy
+	err := row.Scan(
+		&i.ID,
+		&i.MediaItemID,
+		&i.Name,
+		&i.QualityProfileID,
+		&i.RootFolderID,
+		&i.Path,
+		&i.Monitored,
+		&i.AddedAt,
 	)
 	return i, err
 }
@@ -250,6 +301,36 @@ func (q *Queries) InsertEpisode(ctx context.Context, arg InsertEpisodeParams) (i
 	return id, err
 }
 
+const insertMediaCopy = `-- name: InsertMediaCopy :one
+INSERT INTO media_copies (media_item_id, name, quality_profile_id, root_folder_id, path, monitored, added_at)
+VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
+`
+
+type InsertMediaCopyParams struct {
+	MediaItemID      int64
+	Name             string
+	QualityProfileID int64
+	RootFolderID     sql.NullInt64
+	Path             string
+	Monitored        int64
+	AddedAt          int64
+}
+
+func (q *Queries) InsertMediaCopy(ctx context.Context, arg InsertMediaCopyParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, insertMediaCopy,
+		arg.MediaItemID,
+		arg.Name,
+		arg.QualityProfileID,
+		arg.RootFolderID,
+		arg.Path,
+		arg.Monitored,
+		arg.AddedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertMediaItem = `-- name: InsertMediaItem :one
 INSERT INTO media_items (
     kind, title, sort_title, year, author,
@@ -379,8 +460,44 @@ func (q *Queries) LinkFileEpisode(ctx context.Context, arg LinkFileEpisodeParams
 	return err
 }
 
+const listAllMediaCopies = `-- name: ListAllMediaCopies :many
+SELECT id, media_item_id, name, quality_profile_id, root_folder_id, path, monitored, added_at FROM media_copies ORDER BY media_item_id, id
+`
+
+func (q *Queries) ListAllMediaCopies(ctx context.Context) ([]MediaCopy, error) {
+	rows, err := q.db.QueryContext(ctx, listAllMediaCopies)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaCopy
+	for rows.Next() {
+		var i MediaCopy
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.Name,
+			&i.QualityProfileID,
+			&i.RootFolderID,
+			&i.Path,
+			&i.Monitored,
+			&i.AddedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllMediaFiles = `-- name: ListAllMediaFiles :many
-SELECT id, media_item_id, path, size, added_at, quality FROM media_files ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id FROM media_files ORDER BY path
 `
 
 func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
@@ -399,6 +516,7 @@ func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
 			&i.Size,
 			&i.AddedAt,
 			&i.Quality,
+			&i.CopyID,
 		); err != nil {
 			return nil, err
 		}
@@ -480,8 +598,44 @@ func (q *Queries) ListFileEpisodeLinksForItem(ctx context.Context, mediaItemID s
 	return items, nil
 }
 
+const listMediaCopies = `-- name: ListMediaCopies :many
+SELECT id, media_item_id, name, quality_profile_id, root_folder_id, path, monitored, added_at FROM media_copies WHERE media_item_id = ? ORDER BY id
+`
+
+func (q *Queries) ListMediaCopies(ctx context.Context, mediaItemID int64) ([]MediaCopy, error) {
+	rows, err := q.db.QueryContext(ctx, listMediaCopies, mediaItemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaCopy
+	for rows.Next() {
+		var i MediaCopy
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.Name,
+			&i.QualityProfileID,
+			&i.RootFolderID,
+			&i.Path,
+			&i.Monitored,
+			&i.AddedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMediaFilesForItem = `-- name: ListMediaFilesForItem :many
-SELECT id, media_item_id, path, size, added_at, quality FROM media_files WHERE media_item_id = ? ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id FROM media_files WHERE media_item_id = ? ORDER BY path
 `
 
 func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.NullInt64) ([]MediaFile, error) {
@@ -500,6 +654,7 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.Nul
 			&i.Size,
 			&i.AddedAt,
 			&i.Quality,
+			&i.CopyID,
 		); err != nil {
 			return nil, err
 		}
@@ -805,6 +960,33 @@ func (q *Queries) TouchMediaItem(ctx context.Context, arg TouchMediaItemParams) 
 	return err
 }
 
+const updateMediaCopy = `-- name: UpdateMediaCopy :execrows
+UPDATE media_copies SET name = ?, quality_profile_id = ?, monitored = ?
+WHERE id = ? AND media_item_id = ?
+`
+
+type UpdateMediaCopyParams struct {
+	Name             string
+	QualityProfileID int64
+	Monitored        int64
+	ID               int64
+	MediaItemID      int64
+}
+
+func (q *Queries) UpdateMediaCopy(ctx context.Context, arg UpdateMediaCopyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateMediaCopy,
+		arg.Name,
+		arg.QualityProfileID,
+		arg.Monitored,
+		arg.ID,
+		arg.MediaItemID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateMediaItemMetadata = `-- name: UpdateMediaItemMetadata :exec
 UPDATE media_items SET
     title = ?, sort_title = ?, year = ?, author = ?,
@@ -935,8 +1117,8 @@ func (q *Queries) UpsertEpisodeMeta(ctx context.Context, arg UpsertEpisodeMetaPa
 }
 
 const upsertMediaFile = `-- name: UpsertMediaFile :one
-INSERT INTO media_files (media_item_id, path, size, added_at)
-VALUES (?, ?, ?, ?)
+INSERT INTO media_files (media_item_id, copy_id, path, size, added_at)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (path) DO UPDATE SET
     media_item_id = excluded.media_item_id,
     size          = excluded.size
@@ -945,14 +1127,18 @@ RETURNING id
 
 type UpsertMediaFileParams struct {
 	MediaItemID sql.NullInt64
+	CopyID      sql.NullInt64
 	Path        string
 	Size        int64
 	AddedAt     int64
 }
 
+// copy_id is NOT in the conflict update on purpose: a rescan of a shared
+// folder must never stomp the attribution an import recorded.
 func (q *Queries) UpsertMediaFile(ctx context.Context, arg UpsertMediaFileParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, upsertMediaFile,
 		arg.MediaItemID,
+		arg.CopyID,
 		arg.Path,
 		arg.Size,
 		arg.AddedAt,

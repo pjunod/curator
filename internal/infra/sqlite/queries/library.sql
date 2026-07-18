@@ -128,12 +128,37 @@ SELECT * FROM root_folders WHERE id = ?;
 DELETE FROM root_folders WHERE id = ?;
 
 -- name: UpsertMediaFile :one
-INSERT INTO media_files (media_item_id, path, size, added_at)
-VALUES (?, ?, ?, ?)
+-- copy_id is NOT in the conflict update on purpose: a rescan of a shared
+-- folder must never stomp the attribution an import recorded.
+INSERT INTO media_files (media_item_id, copy_id, path, size, added_at)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (path) DO UPDATE SET
     media_item_id = excluded.media_item_id,
     size          = excluded.size
 RETURNING id;
+
+-- name: InsertMediaCopy :one
+INSERT INTO media_copies (media_item_id, name, quality_profile_id, root_folder_id, path, monitored, added_at)
+VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id;
+
+-- name: ListMediaCopies :many
+SELECT * FROM media_copies WHERE media_item_id = ? ORDER BY id;
+
+-- name: ListAllMediaCopies :many
+SELECT * FROM media_copies ORDER BY media_item_id, id;
+
+-- name: GetMediaCopy :one
+SELECT * FROM media_copies WHERE id = ? AND media_item_id = ?;
+
+-- name: UpdateMediaCopy :execrows
+UPDATE media_copies SET name = ?, quality_profile_id = ?, monitored = ?
+WHERE id = ? AND media_item_id = ?;
+
+-- name: DeleteMediaCopy :execrows
+DELETE FROM media_copies WHERE id = ? AND media_item_id = ?;
+
+-- name: DeleteMediaFilesForCopy :exec
+DELETE FROM media_files WHERE copy_id = ?;
 
 -- name: ListMediaFilesForItem :many
 SELECT * FROM media_files WHERE media_item_id = ? ORDER BY path;

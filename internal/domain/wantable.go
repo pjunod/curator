@@ -9,6 +9,42 @@ import (
 // WantableID is a stable identity: "movie:42", "episode:42:2:5", "season:42:2".
 type WantableID string
 
+// copySuffix appends the copy discriminator to a wantable id: the primary
+// stays "movie:42", a copy's want is "movie:42:c3" — distinct identities
+// so in-flight suppression and grab bookkeeping never cross copies.
+func copySuffix(base string, copyID int64) string {
+	if copyID == 0 {
+		return base
+	}
+	return fmt.Sprintf("%s:c%d", base, copyID)
+}
+
+// WantableCopy reports which media copy a wantable hunts for (0 = primary).
+func WantableCopy(w Wantable) int64 {
+	switch t := w.(type) {
+	case MovieWantable:
+		return t.Copy
+	case EpisodeWantable:
+		return t.Copy
+	case SeasonWantable:
+		return t.Copy
+	}
+	return 0
+}
+
+// WantableCopyName is the copy's display label ("" for the primary).
+func WantableCopyName(w Wantable) string {
+	switch t := w.(type) {
+	case MovieWantable:
+		return t.CopyName
+	case EpisodeWantable:
+		return t.CopyName
+	case SeasonWantable:
+		return t.CopyName
+	}
+	return ""
+}
+
 // Wantable is "a thing the system wants on disk at a given quality" — the
 // contract the entire acquisition pipeline is built against (blueprint §4.1).
 type Wantable interface {
@@ -29,10 +65,16 @@ type MovieWantable struct {
 	Have    *quality.Quality
 	Title   string
 	Year    int
+	// Copy is the media copy this wantable hunts for (0 = the primary).
+	// Copies carry their own profile and their own on-disk file set.
+	Copy     int64
+	CopyName string
 }
 
 // ID implements Wantable.
-func (m MovieWantable) ID() WantableID { return WantableID(fmt.Sprintf("movie:%d", m.Item)) }
+func (m MovieWantable) ID() WantableID {
+	return WantableID(copySuffix(fmt.Sprintf("movie:%d", m.Item), m.Copy))
+}
 
 // MediaItemID implements Wantable.
 func (m MovieWantable) MediaItemID() int64 { return m.Item }
@@ -63,11 +105,13 @@ type EpisodeWantable struct {
 	Season    int
 	Episode   int
 	Absolute  int // anime absolute number; 0 = unknown
+	Copy      int64
+	CopyName  string
 }
 
 // ID implements Wantable.
 func (e EpisodeWantable) ID() WantableID {
-	return WantableID(fmt.Sprintf("episode:%d:%d:%d", e.Item, e.Season, e.Episode))
+	return WantableID(copySuffix(fmt.Sprintf("episode:%d:%d:%d", e.Item, e.Season, e.Episode), e.Copy))
 }
 
 // MediaItemID implements Wantable.
@@ -98,11 +142,13 @@ type SeasonWantable struct {
 	Year     int
 	Season   int
 	Episodes []EpisodeWantable // the episodes a pack would satisfy
+	Copy     int64
+	CopyName string
 }
 
 // ID implements Wantable.
 func (s SeasonWantable) ID() WantableID {
-	return WantableID(fmt.Sprintf("season:%d:%d", s.Item, s.Season))
+	return WantableID(copySuffix(fmt.Sprintf("season:%d:%d", s.Item, s.Season), s.Copy))
 }
 
 // MediaItemID implements Wantable.

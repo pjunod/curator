@@ -37,7 +37,8 @@ func (s *Service) enabledIndexers(ctx context.Context) ([]ports.IndexerConfig, e
 func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Release) error {
 	season, episode := wantableGrabTarget(w)
 	_, err := s.Grab(ctx, GrabRequest{
-		MediaItemID: w.MediaItemID(), Season: season, Episode: episode,
+		MediaItemID: w.MediaItemID(), CopyID: domain.WantableCopy(w),
+		Season: season, Episode: episode,
 		Title: r.Title, DownloadURL: r.DownloadURL, Indexer: r.Indexer,
 		Protocol: r.Protocol, Size: r.Size,
 	})
@@ -204,6 +205,7 @@ type WantedSummary struct {
 	Detail      string `json:"detail"`  // "S01E03", "by Author", "(2024)"
 	Missing     bool   `json:"missing"` // false = cutoff unmet (upgrade wanted)
 	Current     string `json:"current"` // current quality display, "" if missing
+	Copy        string `json:"copy"`    // media-copy label; "" = the primary
 }
 
 // WantedList renders the wanted index for the API, stably ordered.
@@ -216,6 +218,7 @@ func (s *Service) WantedList(ctx context.Context) ([]WantedSummary, error) {
 	for _, w := range wanted {
 		ws := WantedSummary{
 			WantableID: string(w.ID()), MediaItemID: w.MediaItemID(), Missing: true,
+			Copy: domain.WantableCopyName(w),
 		}
 		if q, ok := w.CurrentQuality(); ok {
 			ws.Missing, ws.Current = false, q.Display()
@@ -288,6 +291,28 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) error {
 				continue
 			}
 			targets = append(targets, w)
+		}
+	}
+	// Each monitored copy is its own automation target.
+	for i := range item.Copies {
+		cp := item.Copies[i]
+		if !cp.Monitored || item.Kind == domain.KindBook {
+			continue
+		}
+		switch item.Kind {
+		case domain.KindMovie:
+			if w, err := s.targetCopy(ctx, item, 0, 0, &cp); err == nil {
+				targets = append(targets, w)
+			}
+		case domain.KindSeries:
+			for _, season := range item.Seasons {
+				if season.Number == 0 || !season.Monitored || len(season.Episodes) == 0 {
+					continue
+				}
+				if w, err := s.targetCopy(ctx, item, season.Number, 0, &cp); err == nil {
+					targets = append(targets, w)
+				}
+			}
 		}
 	}
 

@@ -232,7 +232,7 @@ func TestImportUpgradeReplacesFile(t *testing.T) {
 	os.MkdirAll(oldDir, 0o755)
 	oldPath := filepath.Join(oldDir, "Test Show - S01E01 - Pilot [HDTV 720p].mkv")
 	os.WriteFile(oldPath, []byte("old"), 0o644)
-	fid, _ := db.UpsertFile(ctx, itemID, oldPath, 3)
+	fid, _ := db.UpsertFile(ctx, itemID, 0, oldPath, 3)
 	ep1, _ := db.GetEpisodeID(ctx, itemID, 1, 1)
 	db.ReplaceFileEpisodeLinks(ctx, fid, []int64{ep1})
 	db.SetFileQuality(ctx, fid, mustQ("hdtv-720"))

@@ -90,7 +90,8 @@ type MediaItem struct {
 	Ended   bool
 	Seasons []Season
 
-	Files []MediaFile
+	Files  []MediaFile
+	Copies []MediaCopy // additional quality targets (movies/series)
 
 	// Completeness, derived for list views (hydrated by ListMediaItems, zero
 	// elsewhere): monitored aired episodes vs those with files, and the raw
@@ -101,6 +102,22 @@ type MediaItem struct {
 
 	AddedAt   time.Time
 	UpdatedAt time.Time
+}
+
+// MediaCopy is an ADDITIONAL quality target for one item: the same
+// movie/series kept at a second (third, …) quality, each copy with its own
+// profile and its own automation lifecycle. Path "" means the copy shares
+// the item's folder (filenames carry [Quality], so versions coexist);
+// otherwise the copy lives in its own folder under its own root.
+type MediaCopy struct {
+	ID               int64
+	MediaItemID      int64
+	Name             string // display label, e.g. "720p for dad"; "" = profile name
+	QualityProfileID int64
+	RootFolderID     int64  // 0 = same folder as the item
+	Path             string // "" = item folder
+	Monitored        bool
+	AddedAt          time.Time
 }
 
 // Season groups episodes; season 0 is specials (unmonitored by default).
@@ -137,6 +154,7 @@ type RootFolder struct {
 type MediaFile struct {
 	ID          int64
 	MediaItemID int64
+	CopyID      int64 // 0 = the primary copy
 	Path        string
 	Size        int64
 	EpisodeIDs  []int64

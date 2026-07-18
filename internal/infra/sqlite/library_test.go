@@ -142,7 +142,7 @@ func TestFilesAndEpisodeLinks(t *testing.T) {
 	}
 	ep2, _ := db.GetEpisodeID(ctx, id, 1, 2)
 
-	fileID, err := db.UpsertFile(ctx, id, "/library/tv/Test Show/S01E01E02.mkv", 1234)
+	fileID, err := db.UpsertFile(ctx, id, 0, "/library/tv/Test Show/S01E01E02.mkv", 1234)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestFilesAndEpisodeLinks(t *testing.T) {
 	}
 
 	// Upsert same path re-links to a different (unmatched) owner.
-	orphanID, err := db.UpsertFile(ctx, 0, "/library/tv/Test Show/S01E01E02.mkv", 4321)
+	orphanID, err := db.UpsertFile(ctx, 0, 0, "/library/tv/Test Show/S01E01E02.mkv", 4321)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestListMediaItemStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileID, err := db.UpsertFile(ctx, seriesID, "/library/tv/Test Show/S01E01.mkv", 100)
+	fileID, err := db.UpsertFile(ctx, seriesID, 0, "/library/tv/Test Show/S01E01.mkv", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestListMediaItemStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.UpsertFile(ctx, movieID, "/library/movies/Have/have.mkv", 200); err != nil {
+	if _, err := db.UpsertFile(ctx, movieID, 0, "/library/movies/Have/have.mkv", 200); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.CreateMediaItem(ctx, domain.MediaItem{

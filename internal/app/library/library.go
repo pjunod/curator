@@ -356,6 +356,91 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	return s.db.GetMediaItemFull(ctx, id)
 }
 
+// CopyRequest describes a new additional quality target for an item.
+type CopyRequest struct {
+	QualityProfileID int64
+	RootFolderID     int64 // 0 = share the item's folder (filenames carry [Quality])
+	Name             string
+	Monitored        bool
+}
+
+// AddCopy registers an additional quality copy for a movie or series: its
+// own profile, and either its own folder under the chosen root or the
+// item's folder. The automation treats it as a first-class target.
+func (s *Service) AddCopy(ctx context.Context, itemID int64, req CopyRequest) (domain.MediaItem, error) {
+	item, err := s.db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	if item.Kind == domain.KindBook {
+		return domain.MediaItem{}, fmt.Errorf("%w: books have no quality copies", ErrUnsupportedKind)
+	}
+	if _, err := s.db.GetProfile(ctx, req.QualityProfileID); err != nil {
+		return domain.MediaItem{}, fmt.Errorf("quality profile: %w", err)
+	}
+	cp := domain.MediaCopy{
+		MediaItemID: itemID, Name: strings.TrimSpace(req.Name),
+		QualityProfileID: req.QualityProfileID, Monitored: req.Monitored,
+	}
+	if req.RootFolderID != 0 {
+		rf, err := s.db.GetRootFolder(ctx, req.RootFolderID)
+		if err != nil {
+			return domain.MediaItem{}, fmt.Errorf("root folder: %w", err)
+		}
+		cp.RootFolderID = rf.ID
+		cp.Path = filepath.Join(rf.Path, naming.FolderName(item.Title, item.Year))
+		if cp.Path == item.Path {
+			return domain.MediaItem{}, fmt.Errorf(
+				"copy folder would collide with the item's own folder — pick a different root, or omit the root to share the folder")
+		}
+		for _, other := range item.Copies {
+			if other.Path == cp.Path {
+				return domain.MediaItem{}, fmt.Errorf("another copy already uses %s", cp.Path)
+			}
+		}
+	}
+	id, err := s.db.AddMediaCopy(ctx, cp)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	s.log.Info("library: copy added", "item", item.Title, "copy", id,
+		"profile", req.QualityProfileID, "path", cp.Path)
+	return s.db.GetMediaItemFull(ctx, itemID)
+}
+
+// UpdateCopy edits a copy's name, profile, or monitoring.
+func (s *Service) UpdateCopy(ctx context.Context, itemID, copyID int64, name *string, profileID *int64, monitored *bool) (domain.MediaItem, error) {
+	cp, err := s.db.GetMediaCopy(ctx, itemID, copyID)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	if name != nil {
+		cp.Name = strings.TrimSpace(*name)
+	}
+	if profileID != nil && *profileID != 0 {
+		if _, err := s.db.GetProfile(ctx, *profileID); err != nil {
+			return domain.MediaItem{}, fmt.Errorf("quality profile: %w", err)
+		}
+		cp.QualityProfileID = *profileID
+	}
+	if monitored != nil {
+		cp.Monitored = *monitored
+	}
+	if err := s.db.UpdateMediaCopy(ctx, cp); err != nil {
+		return domain.MediaItem{}, err
+	}
+	return s.db.GetMediaItemFull(ctx, itemID)
+}
+
+// DeleteCopy removes a copy and its file records; disk is never touched.
+func (s *Service) DeleteCopy(ctx context.Context, itemID, copyID int64) (domain.MediaItem, error) {
+	if err := s.db.DeleteMediaCopy(ctx, itemID, copyID); err != nil {
+		return domain.MediaItem{}, err
+	}
+	s.log.Info("library: copy removed", "item", itemID, "copy", copyID)
+	return s.db.GetMediaItemFull(ctx, itemID)
+}
+
 // SetSeasonMonitored flips a season's monitored flag (cascading to its
 // episodes) and returns the refreshed item.
 func (s *Service) SetSeasonMonitored(ctx context.Context, itemID int64, season int, monitored bool) (domain.MediaItem, error) {

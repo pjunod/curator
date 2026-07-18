@@ -110,15 +110,15 @@ func TestFileQualityAndHistory(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	itemID, _ := db.CreateMediaItem(ctx, sampleSeries())
-	f1, _ := db.UpsertFile(ctx, itemID, "/x/a.mkv", 1)
-	f2, _ := db.UpsertFile(ctx, itemID, "/x/b.mkv", 1)
+	f1, _ := db.UpsertFile(ctx, itemID, 0, "/x/a.mkv", 1)
+	f2, _ := db.UpsertFile(ctx, itemID, 0, "/x/b.mkv", 1)
 
-	if _, ok, _ := db.BestQualityForItem(ctx, itemID); ok {
+	if _, ok, _ := db.BestQualityForItem(ctx, itemID, 0); ok {
 		t.Error("no qualities set yet")
 	}
 	db.SetFileQuality(ctx, f1, quality.Quality{Source: quality.SourceHDTV, Resolution: 720})
 	db.SetFileQuality(ctx, f2, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080})
-	best, ok, err := db.BestQualityForItem(ctx, itemID)
+	best, ok, err := db.BestQualityForItem(ctx, itemID, 0)
 	if err != nil || !ok || best.Resolution != 1080 {
 		t.Errorf("best = %+v ok=%v err=%v", best, ok, err)
 	}

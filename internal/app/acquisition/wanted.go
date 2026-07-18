@@ -82,7 +82,7 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 				out = append(out, w)
 			}
 		case domain.KindSeries:
-			epQuals, err := s.episodeQualities(ctx, item)
+			epQuals, err := s.episodeQualities(ctx, item, 0)
 			if err != nil {
 				continue
 			}
@@ -101,6 +101,63 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 							Season: e.SeasonNumber, Episode: e.EpisodeNumber,
 							Have: epQuals[e.ID], Absolute: e.AbsoluteNum,
 						})
+					}
+				}
+			}
+		}
+
+		// Additional copies: each monitored copy wants its own file set at
+		// its own profile — the 720p copy hunts even when the 4K is done.
+		for i := range item.Copies {
+			cp := item.Copies[i]
+			if !cp.Monitored || item.Kind == domain.KindBook {
+				continue
+			}
+			profile, err := s.db.GetProfile(ctx, cp.QualityProfileID)
+			if err != nil {
+				continue
+			}
+			copyWants := func(q *quality.Quality) bool {
+				if q == nil {
+					return true
+				}
+				return profile.UpgradesAllowed && !profile.MeetsCutoff(*q)
+			}
+			switch item.Kind {
+			case domain.KindMovie:
+				w, err := s.targetCopy(ctx, item, 0, 0, &cp)
+				if err != nil {
+					continue
+				}
+				var have *quality.Quality
+				if q, ok := w.CurrentQuality(); ok {
+					have = &q
+				}
+				if copyWants(have) {
+					out = append(out, w)
+				}
+			case domain.KindSeries:
+				epQuals, err := s.episodeQualities(ctx, item, cp.ID)
+				if err != nil {
+					continue
+				}
+				for _, season := range item.Seasons {
+					if !season.Monitored {
+						continue
+					}
+					for _, e := range season.Episodes {
+						if !e.Monitored || e.AirDate == "" {
+							continue
+						}
+						if copyWants(epQuals[e.ID]) {
+							out = append(out, domain.EpisodeWantable{
+								Item: item.ID, EpisodeID: e.ID, Profile: cp.QualityProfileID,
+								Mon: true, Title: item.Title, Year: item.Year,
+								Season: e.SeasonNumber, Episode: e.EpisodeNumber,
+								Have: epQuals[e.ID], Absolute: e.AbsoluteNum,
+								Copy: cp.ID, CopyName: copyLabel(cp),
+							})
+						}
 					}
 				}
 			}
@@ -129,8 +186,11 @@ func (s *Service) notInFlight(ctx context.Context, wanted []domain.Wantable) []d
 			continue
 		}
 		if ep, ok := w.(domain.EpisodeWantable); ok {
-			// season:<item>:<season> pack covers this episode.
+			// A season pack in flight FOR THE SAME COPY covers this episode.
 			packID := fmt.Sprintf("season:%d:%d", ep.Item, ep.Season)
+			if ep.Copy != 0 {
+				packID = fmt.Sprintf("%s:c%d", packID, ep.Copy)
+			}
 			if inFlight[packID] {
 				continue
 			}

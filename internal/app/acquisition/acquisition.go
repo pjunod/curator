@@ -102,8 +102,9 @@ func (s *Service) publish(e bus.Event) {
 
 // ---- wantable construction ----
 
-// episodeQualities maps episode id → best on-disk quality.
-func (s *Service) episodeQualities(ctx context.Context, item domain.MediaItem) (map[int64]*quality.Quality, error) {
+// episodeQualities maps episode id → best on-disk quality among ONE
+// copy's files (copyID 0 = primary). Copies never see each other's files.
+func (s *Service) episodeQualities(ctx context.Context, item domain.MediaItem, copyID int64) (map[int64]*quality.Quality, error) {
 	files, err := s.db.ListFilesForItem(ctx, item.ID)
 	if err != nil {
 		return nil, err
@@ -114,6 +115,9 @@ func (s *Service) episodeQualities(ctx context.Context, item domain.MediaItem) (
 	}
 	out := map[int64]*quality.Quality{}
 	for _, f := range files {
+		if f.CopyID != copyID {
+			continue
+		}
 		q, ok := qualities[f.ID]
 		if !ok {
 			continue
@@ -129,28 +133,45 @@ func (s *Service) episodeQualities(ctx context.Context, item domain.MediaItem) (
 }
 
 // Target resolves the wantable being searched/grabbed: movie, one episode,
-// or a season pack.
+// or a season pack — for the primary copy.
 func (s *Service) target(ctx context.Context, item domain.MediaItem, season, episode int) (domain.Wantable, error) {
+	return s.targetCopy(ctx, item, season, episode, nil)
+}
+
+// targetCopy is target for one specific media copy (nil = primary): the
+// copy's profile and the copy's own file set drive the decision.
+func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season, episode int, cp *domain.MediaCopy) (domain.Wantable, error) {
+	var copyID, profileID int64 = 0, item.QualityProfileID
+	copyName := ""
+	if cp != nil {
+		copyID, profileID = cp.ID, cp.QualityProfileID
+		copyName = copyLabel(*cp)
+	}
 	if item.Kind == domain.KindMovie || item.Kind == domain.KindBook {
 		var have *quality.Quality
-		if q, ok, err := s.db.BestQualityForItem(ctx, item.ID); err != nil {
+		if q, ok, err := s.db.BestQualityForItem(ctx, item.ID, copyID); err != nil {
 			return nil, err
 		} else if ok {
 			have = &q
 		}
 		if item.Kind == domain.KindBook {
 			return domain.BookWantable{
-				Item: item.ID, Profile: item.QualityProfileID, Mon: item.Monitored,
+				Item: item.ID, Profile: profileID, Mon: item.Monitored,
 				Title: item.Title, Author: item.Author, Year: item.Year, Have: have,
 			}, nil
 		}
+		mon := item.Monitored
+		if cp != nil {
+			mon = mon && cp.Monitored
+		}
 		return domain.MovieWantable{
-			Item: item.ID, Profile: item.QualityProfileID, Mon: item.Monitored,
+			Item: item.ID, Profile: profileID, Mon: mon,
 			Title: item.Title, Year: item.Year, Have: have,
+			Copy: copyID, CopyName: copyName,
 		}, nil
 	}
 
-	epQuals, err := s.episodeQualities(ctx, item)
+	epQuals, err := s.episodeQualities(ctx, item, copyID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,12 +184,13 @@ func (s *Service) target(ctx context.Context, item domain.MediaItem, season, epi
 	if seasonObj == nil {
 		return nil, fmt.Errorf("season %d: %w", season, ErrNotFound)
 	}
+	copyMon := cp == nil || cp.Monitored
 	mkEp := func(e domain.Episode) domain.EpisodeWantable {
 		return domain.EpisodeWantable{
-			Item: item.ID, EpisodeID: e.ID, Profile: item.QualityProfileID,
-			Mon: item.Monitored && e.Monitored, Title: item.Title, Year: item.Year,
+			Item: item.ID, EpisodeID: e.ID, Profile: profileID,
+			Mon: item.Monitored && e.Monitored && copyMon, Title: item.Title, Year: item.Year,
 			Season: e.SeasonNumber, Episode: e.EpisodeNumber, Have: epQuals[e.ID],
-			Absolute: e.AbsoluteNum,
+			Absolute: e.AbsoluteNum, Copy: copyID, CopyName: copyName,
 		}
 	}
 	if episode > 0 {
@@ -180,14 +202,22 @@ func (s *Service) target(ctx context.Context, item domain.MediaItem, season, epi
 		return nil, fmt.Errorf("episode %d: %w", episode, ErrNotFound)
 	}
 	pack := domain.SeasonWantable{
-		Item: item.ID, Profile: item.QualityProfileID,
-		Mon: item.Monitored && seasonObj.Monitored, Title: item.Title, Year: item.Year,
-		Season: season,
+		Item: item.ID, Profile: profileID,
+		Mon: item.Monitored && seasonObj.Monitored && copyMon, Title: item.Title, Year: item.Year,
+		Season: season, Copy: copyID, CopyName: copyName,
 	}
 	for _, e := range seasonObj.Episodes {
 		pack.Episodes = append(pack.Episodes, mkEp(e))
 	}
 	return pack, nil
+}
+
+// copyLabel is the copy's display name: explicit name, else "copy N".
+func copyLabel(c domain.MediaCopy) string {
+	if c.Name != "" {
+		return c.Name
+	}
+	return fmt.Sprintf("copy %d", c.ID)
 }
 
 // ---- interactive search ----
@@ -343,8 +373,9 @@ func age(d time.Duration) string {
 // GrabRequest is what the UI sends back from a chosen candidate.
 type GrabRequest struct {
 	MediaItemID int64
-	Season      int // -1 for movies
-	Episode     int // 0 = whole season / movie
+	CopyID      int64 // 0 = the primary copy
+	Season      int   // -1 for movies
+	Episode     int   // 0 = whole season / movie
 	Title       string
 	DownloadURL string
 	Indexer     string
@@ -387,20 +418,24 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	}
 
 	p := parser.Parse(req.Title)
-	var wants []string
+	var base string
 	switch {
 	case item.Kind == domain.KindMovie:
-		wants = []string{fmt.Sprintf("movie:%d", item.ID)}
+		base = fmt.Sprintf("movie:%d", item.ID)
 	case item.Kind == domain.KindBook:
-		wants = []string{fmt.Sprintf("book:%d", item.ID)}
+		base = fmt.Sprintf("book:%d", item.ID)
 	case req.Episode > 0:
-		wants = []string{fmt.Sprintf("episode:%d:%d:%d", item.ID, req.Season, req.Episode)}
+		base = fmt.Sprintf("episode:%d:%d:%d", item.ID, req.Season, req.Episode)
 	default:
-		wants = []string{fmt.Sprintf("season:%d:%d", item.ID, req.Season)}
+		base = fmt.Sprintf("season:%d:%d", item.ID, req.Season)
 	}
+	if req.CopyID != 0 {
+		base = fmt.Sprintf("%s:c%d", base, req.CopyID)
+	}
+	wants := []string{base}
 
 	id, err := s.db.InsertDownload(ctx, sqlite.Download{
-		MediaItemID: item.ID, WantableIDs: wants, Season: req.Season,
+		MediaItemID: item.ID, CopyID: req.CopyID, WantableIDs: wants, Season: req.Season,
 		ReleaseTitle: req.Title, Indexer: req.Indexer, Protocol: req.Protocol,
 		Quality: p.Quality, Size: req.Size, ClientID: cfg.ID,
 		Handle: string(handle), State: "grabbed",
@@ -501,6 +536,13 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 // wantableFromID reconstructs a wantable from its stable id string
 // ("movie:5", "episode:5:2:3", "season:5:2", "book:9").
 func (s *Service) wantableFromID(ctx context.Context, id string) (domain.Wantable, error) {
+	// A ":c<n>" suffix pins the wantable to a media copy.
+	var copyID int64
+	if i := strings.LastIndex(id, ":c"); i > 0 {
+		if n, _ := fmt.Sscanf(id[i:], ":c%d", &copyID); n == 1 {
+			id = id[:i]
+		}
+	}
 	var kind string
 	var a, b, c int64
 	n, _ := fmt.Sscanf(id, "movie:%d", &a)
@@ -519,13 +561,21 @@ func (s *Service) wantableFromID(ctx context.Context, id string) (domain.Wantabl
 	if err != nil {
 		return nil, err
 	}
+	var cp *domain.MediaCopy
+	if copyID != 0 {
+		mc, err := s.db.GetMediaCopy(ctx, a, copyID)
+		if err != nil {
+			return nil, err
+		}
+		cp = &mc
+	}
 	switch kind {
 	case "episode":
-		return s.target(ctx, item, int(b), int(c))
+		return s.targetCopy(ctx, item, int(b), int(c), cp)
 	case "season":
-		return s.target(ctx, item, int(b), 0)
+		return s.targetCopy(ctx, item, int(b), 0, cp)
 	default:
-		return s.target(ctx, item, 0, 0)
+		return s.targetCopy(ctx, item, 0, 0, cp)
 	}
 }
 

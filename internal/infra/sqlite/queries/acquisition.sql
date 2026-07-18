@@ -32,9 +32,9 @@ DELETE FROM download_clients WHERE id = ?;
 
 -- name: InsertDownload :one
 INSERT INTO downloads (
-    media_item_id, wantables, season, release_title, indexer, protocol,
+    media_item_id, copy_id, wantables, season, release_title, indexer, protocol,
     quality, size, client_id, handle, state, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
 
 -- name: ListActiveDownloads :many
 SELECT * FROM downloads

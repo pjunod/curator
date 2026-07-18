@@ -67,6 +67,16 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 	}
 	claimed := map[string]bool{}
 	for _, item := range items {
+		// Copies with their own folders are claimed and scanned too.
+		copies, err := s.db.ListMediaCopies(ctx, item.ID)
+		if err != nil {
+			return report, err
+		}
+		for _, cp := range copies {
+			if cp.Path != "" {
+				claimed[cp.Path] = true
+			}
+		}
 		if item.Path == "" {
 			continue
 		}
@@ -75,7 +85,7 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 			report.MissingPaths = append(report.MissingPaths, item.Path)
 			continue
 		}
-		linked, removed, err := s.scanItem(ctx, item)
+		linked, removed, err := s.scanItem(ctx, item, copies)
 		if err != nil {
 			s.log.Warn("scan: item failed", "title", item.Title, "err", err)
 			continue
@@ -130,28 +140,48 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 	return report, nil
 }
 
-// scanItem syncs one item's folder: every video file on disk gets a row
-// (episode-linked for series via the filename extractor), and rows whose
-// files vanished are pruned.
-func (s *Service) scanItem(ctx context.Context, item domain.MediaItem) (linked, removed int, err error) {
+// scanItem syncs one item's folders (the item's own plus each copy's own
+// folder): every video file on disk gets a row (episode-linked for series
+// via the filename extractor), and rows whose files vanished are pruned.
+// Files found in a copy's separate folder are attributed to that copy;
+// files in a shared folder keep whatever attribution their row already has
+// (the upsert never overwrites copy_id).
+func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []domain.MediaCopy) (linked, removed int, err error) {
 	isMedia := filename.IsVideo
 	if item.Kind == domain.KindBook {
 		isMedia = filename.IsBook
 	}
-	onDisk := map[string]int64{} // path -> size
-	walkErr := filepath.WalkDir(item.Path, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !isMedia(path) {
-			return err
-		}
-		info, ierr := d.Info()
-		if ierr != nil {
-			return nil // vanished mid-walk; skip
-		}
-		onDisk[path] = info.Size()
-		return nil
-	})
-	if walkErr != nil {
+	type foundFile struct {
+		size   int64
+		copyID int64
+	}
+	onDisk := map[string]foundFile{} // path -> size + copy attribution
+	walk := func(root string, copyID int64) error {
+		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !isMedia(path) {
+				return err
+			}
+			info, ierr := d.Info()
+			if ierr != nil {
+				return nil // vanished mid-walk; skip
+			}
+			onDisk[path] = foundFile{size: info.Size(), copyID: copyID}
+			return nil
+		})
+	}
+	if walkErr := walk(item.Path, 0); walkErr != nil {
 		return 0, 0, walkErr
+	}
+	for _, cp := range copies {
+		if cp.Path == "" || cp.Path == item.Path {
+			continue
+		}
+		if _, statErr := os.Stat(cp.Path); statErr != nil {
+			continue // copy folder not created yet — nothing to scan
+		}
+		if walkErr := walk(cp.Path, cp.ID); walkErr != nil {
+			return 0, 0, walkErr
+		}
 	}
 
 	existing, err := s.db.ListFilesForItem(ctx, item.ID)
@@ -163,8 +193,8 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem) (linked, 
 		existingByPath[f.Path] = f
 	}
 
-	for path, size := range onDisk {
-		fileID, err := s.db.UpsertFile(ctx, item.ID, path, size)
+	for path, ff := range onDisk {
+		fileID, err := s.db.UpsertFile(ctx, item.ID, ff.copyID, path, ff.size)
 		if err != nil {
 			return linked, removed, err
 		}

@@ -174,6 +174,7 @@ func (d *DB) DeleteDownloadClient(ctx context.Context, id int64) error {
 type Download struct {
 	ID           int64
 	MediaItemID  int64
+	CopyID       int64 // 0 = the primary copy
 	WantableIDs  []string
 	Season       int
 	ReleaseTitle string
@@ -193,13 +194,17 @@ type Download struct {
 func downloadFromRow(r sqlitegen.Download) Download {
 	var wants []string
 	_ = json.Unmarshal([]byte(r.Wantables), &wants)
-	return Download{
+	dl := Download{
 		ID: r.ID, MediaItemID: r.MediaItemID, WantableIDs: wants, Season: int(r.Season),
 		ReleaseTitle: r.ReleaseTitle, Indexer: r.Indexer, Protocol: r.Protocol,
 		Quality: quality.FromString(r.Quality), Size: r.Size, ClientID: r.ClientID,
 		Handle: r.Handle, State: r.State, Progress: r.Progress, Error: r.Error,
 		AddedAt: time.UnixMilli(r.AddedAt), UpdatedAt: time.UnixMilli(r.UpdatedAt),
 	}
+	if r.CopyID.Valid {
+		dl.CopyID = r.CopyID.Int64
+	}
+	return dl
 }
 
 // InsertDownload records a grab.
@@ -209,12 +214,16 @@ func (d *DB) InsertDownload(ctx context.Context, dl Download) (int64, error) {
 		wants = []byte("[]")
 	}
 	now := time.Now().UnixMilli()
-	return d.Write.InsertDownload(ctx, sqlitegen.InsertDownloadParams{
+	p := sqlitegen.InsertDownloadParams{
 		MediaItemID: dl.MediaItemID, Wantables: string(wants), Season: int64(dl.Season),
 		ReleaseTitle: dl.ReleaseTitle, Indexer: dl.Indexer, Protocol: dl.Protocol,
 		Quality: dl.Quality.String(), Size: dl.Size, ClientID: dl.ClientID,
 		Handle: dl.Handle, State: dl.State, AddedAt: now, UpdatedAt: now,
-	})
+	}
+	if dl.CopyID != 0 {
+		p.CopyID = sql.NullInt64{Int64: dl.CopyID, Valid: true}
+	}
+	return d.Write.InsertDownload(ctx, p)
 }
 
 // ListActiveDownloads returns rows still moving through the state machine.
@@ -272,21 +281,31 @@ func (d *DB) SetFileQuality(ctx context.Context, fileID int64, q quality.Quality
 	return d.Write.SetFileQuality(ctx, sqlitegen.SetFileQualityParams{Quality: q.String(), ID: fileID})
 }
 
-// BestQualityForItem returns the highest-ranked quality among an item's
-// files; ok=false when the item has no files with known quality.
-func (d *DB) BestQualityForItem(ctx context.Context, itemID int64) (quality.Quality, bool, error) {
-	rows, err := d.Read.ListFileQualitiesForItem(ctx, sql.NullInt64{Int64: itemID, Valid: true})
+// BestQualityForItem returns the highest-ranked quality among the files of
+// ONE copy of an item (copyID 0 = primary); ok=false when that copy has no
+// files with known quality. Copies never see each other's files — the 4K
+// primary must not convince the 720p copy it is satisfied, or vice versa.
+func (d *DB) BestQualityForItem(ctx context.Context, itemID, copyID int64) (quality.Quality, bool, error) {
+	files, err := d.ListFilesForItem(ctx, itemID)
+	if err != nil {
+		return quality.Quality{}, false, err
+	}
+	quals, err := d.FileQualities(ctx, itemID)
 	if err != nil {
 		return quality.Quality{}, false, err
 	}
 	var best *quality.Quality
-	for _, r := range rows {
-		if r.Quality == "" {
+	for _, f := range files {
+		if f.CopyID != copyID {
 			continue
 		}
-		q := quality.FromString(r.Quality)
+		q, ok := quals[f.ID]
+		if !ok {
+			continue
+		}
 		if best == nil || quality.Better(q, *best) {
-			best = &q
+			qq := q
+			best = &qq
 		}
 	}
 	if best == nil {
