@@ -1,0 +1,8 @@
+{
+  "title": "Project Hail Mary",
+  "description": {"type": "/type/text", "value": "A lone astronaut must save the earth from disaster."},
+  "covers": [12781196],
+  "subjects": ["Science fiction", "Space flight", "Extraterrestrial beings", "Survival", "Astronauts", "Fiction"],
+  "first_publish_date": "May 4, 2021",
+  "authors": [{"author": {"key": "/authors/OL7115219A"}, "type": {"key": "/type/author_role"}}]
+}

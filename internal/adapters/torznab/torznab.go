@@ -88,7 +88,9 @@ func (c *Client) call(ctx context.Context, params url.Values) ([]byte, error) {
 }
 
 // Search implements ports.Indexer. TV queries use t=tvsearch with
-// season/ep parameters; everything else is a plain t=search.
+// season/ep parameters; everything else is a plain t=search. Book queries
+// (ADR 0006) pin the Newznab book categories — 7000s for ebooks plus 3030
+// for audiobooks — unless the indexer config narrows them.
 func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Release, error) {
 	params := url.Values{}
 	if q.Season > 0 {
@@ -101,12 +103,16 @@ func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Rele
 		params.Set("t", "search")
 	}
 	params.Set("q", q.Q)
-	if len(c.cfg.Categories) > 0 {
-		cats := make([]string, len(c.cfg.Categories))
-		for i, cat := range c.cfg.Categories {
-			cats[i] = strconv.Itoa(cat)
+	cats := c.cfg.Categories
+	if len(cats) == 0 && q.Kind == domain.KindBook {
+		cats = []int{7000, 7020, 3030} // Books, Ebook, Audio/Audiobook
+	}
+	if len(cats) > 0 {
+		strs := make([]string, len(cats))
+		for i, cat := range cats {
+			strs[i] = strconv.Itoa(cat)
 		}
-		params.Set("cat", strings.Join(cats, ","))
+		params.Set("cat", strings.Join(strs, ","))
 	}
 
 	body, err := c.call(ctx, params)

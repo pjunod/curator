@@ -119,8 +119,9 @@ func TestAddSeriesCreatesTree(t *testing.T) {
 func TestSearchKindValidation(t *testing.T) {
 	svc, _, _ := newService(t)
 	ctx := context.Background()
-	if _, err := svc.Search(ctx, domain.KindBook, "dune"); !errors.Is(err, ErrUnsupportedKind) {
-		t.Errorf("book search err = %v (books are Phase 2.5)", err)
+	// Books are live (Phase 2.5) but need a provider wired.
+	if _, err := svc.Search(ctx, domain.KindBook, "dune"); !errors.Is(err, ports.ErrProviderNotConfigured) {
+		t.Errorf("book search without provider err = %v", err)
 	}
 	if _, err := svc.Search(ctx, "podcast", "x"); !errors.Is(err, ErrUnsupportedKind) {
 		t.Errorf("unknown kind err = %v", err)
@@ -232,5 +233,66 @@ func TestScanReconciles(t *testing.T) {
 	if err != nil || !ok || persisted.ScannedAt.IsZero() {
 		t.Errorf("persisted report = %+v ok=%v err=%v", persisted, ok, err)
 	}
+	_ = db
+}
+
+// fakeBooks implements ports.BookProvider with canned data.
+type fakeBooks struct{}
+
+func (fakeBooks) SearchBooks(ctx context.Context, q string) ([]ports.SearchResult, error) {
+	return []ports.SearchResult{{
+		Kind: domain.KindBook, OLID: "OL17091839W", Title: "Project Hail Mary",
+		Author: "Andy Weir", Year: 2021,
+	}}, nil
+}
+
+func (fakeBooks) GetBook(ctx context.Context, olid string) (domain.MediaItem, error) {
+	return domain.MediaItem{
+		Kind: domain.KindBook, Title: "Project Hail Mary", SortTitle: "project hail mary",
+		Author: "Andy Weir", Year: 2021,
+		IDs: domain.ExternalIDs{OLID: olid, ISBN13: "9780593135204"},
+	}, nil
+}
+
+func TestAddBook(t *testing.T) {
+	svc, db, _ := newService(t)
+	svc.WithBooks(fakeBooks{})
+	ctx := context.Background()
+
+	root := t.TempDir()
+	rf, err := svc.AddRootFolder(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.Search(ctx, domain.KindBook, "hail mary")
+	if err != nil || len(got) != 1 || got[0].Author != "Andy Weir" {
+		t.Fatalf("book search = %+v err %v", got, err)
+	}
+
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindBook, OLID: "OL17091839W", RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Author != "Andy Weir" || item.IDs.OLID != "OL17091839W" || item.IDs.ISBN13 == "" {
+		t.Errorf("book item = %+v", item)
+	}
+	// Calibre-friendly derived path + Ebook profile default.
+	want := filepath.Join(root, "Andy Weir", "Project Hail Mary")
+	if item.Path != want {
+		t.Errorf("path = %q, want %q", item.Path, want)
+	}
+	if item.QualityProfileID != 4 {
+		t.Errorf("profile = %d, want 4 (Ebook)", item.QualityProfileID)
+	}
+
+	// Same work twice → duplicate.
+	if _, err := svc.Add(ctx, AddRequest{Kind: domain.KindBook, OLID: "OL17091839W"}); !errors.Is(err, ErrAlreadyExists) {
+		t.Errorf("dup add err = %v", err)
+	}
+
+	// Explicit Audiobook profile is honored.
 	_ = db
 }

@@ -31,12 +31,16 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		return fmt.Errorf("item has no library folder assigned")
 	}
 
-	videos, err := collectVideos(savePath)
+	isMedia := filename.IsVideo
+	if item.Kind == domain.KindBook {
+		isMedia = filename.IsBook
+	}
+	videos, err := collectFiles(savePath, isMedia)
 	if err != nil {
 		return err
 	}
 	if len(videos) == 0 {
-		return fmt.Errorf("no video files in %s", savePath)
+		return fmt.Errorf("no media files in %s", savePath)
 	}
 
 	epQuals, err := s.episodeQualities(ctx, item)
@@ -52,16 +56,24 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	for _, src := range videos {
 		p := parser.Parse(filepath.Base(src))
 		q := p.Quality
-		if q.Source == quality.SourceUnknown && q.Resolution == 0 {
+		if item.Kind == domain.KindBook {
+			// The extension is the authority on a book file's format.
+			if ext := filename.BookQualitySource(src); ext != "" {
+				q = quality.Quality{Source: quality.Source(ext)}
+			}
+		} else if q.Source == quality.SourceUnknown && q.Resolution == 0 {
 			// Single files often carry the quality only on the release name.
 			q = dl.Quality
 		}
 
 		var err error
 		var wasUpgrade bool
-		if item.Kind == domain.KindMovie {
+		switch item.Kind {
+		case domain.KindMovie:
 			wasUpgrade, err = s.importMovieFile(ctx, item, profile, src, q)
-		} else {
+		case domain.KindBook:
+			wasUpgrade, err = s.importBookFile(ctx, item, src, q)
+		default:
 			wasUpgrade, err = s.importEpisodeFile(ctx, item, profile, epQuals, src, p, q)
 		}
 		if err != nil {
@@ -83,20 +95,20 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	return nil
 }
 
-func collectVideos(savePath string) ([]string, error) {
+func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) {
 	info, err := os.Stat(savePath)
 	if err != nil {
 		return nil, fmt.Errorf("payload missing: %w", err)
 	}
 	if !info.IsDir() {
-		if filename.IsVideo(savePath) {
+		if isMedia(savePath) {
 			return []string{savePath}, nil
 		}
 		return nil, nil
 	}
 	var out []string
 	err = filepath.WalkDir(savePath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !filename.IsVideo(path) {
+		if err != nil || d.IsDir() || !isMedia(path) {
 			return err
 		}
 		// Skip samples.
@@ -128,6 +140,37 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, pr
 		"Quality Full": q.Display(),
 	})
 	dest := filepath.Join(item.Path, naming.SafeFileName(name)+filepath.Ext(src))
+	if err := place(src, dest); err != nil {
+		return false, err
+	}
+	if upgrade {
+		s.removeExistingFiles(ctx, item, nil, dest)
+	}
+	fileID, err := s.db.UpsertFile(ctx, item.ID, dest, sizeOf(dest))
+	if err != nil {
+		return false, err
+	}
+	return upgrade, s.db.SetFileQuality(ctx, fileID, q)
+}
+
+// importBookFile places one book file into <library>/<Author>/<Title>/ as
+// "Title - Author.ext" (Calibre-friendly, ADR 0006), with the same
+// upgrade-or-reject semantics as movies.
+func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, src string, q quality.Quality) (bool, error) {
+	current, have, err := s.db.BestQualityForItem(ctx, item.ID)
+	if err != nil {
+		return false, err
+	}
+	upgrade := false
+	if have {
+		if !quality.Better(q, current) {
+			return false, fmt.Errorf("%s does not improve on %s", q.Display(), current.Display())
+		}
+		upgrade = true
+	}
+
+	dest := filepath.Join(item.Path,
+		naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
 	if err := place(src, dest); err != nil {
 		return false, err
 	}

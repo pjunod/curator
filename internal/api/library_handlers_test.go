@@ -177,9 +177,15 @@ func TestAddListGetDeleteFlow(t *testing.T) {
 
 func TestBadKindIs400(t *testing.T) {
 	h, _ := newLibraryServer(t, stubProvider{configured: true})
-	rr := do(t, h, "POST", "/api/v1/library", `{"kind":"book","tmdbId":1}`)
+	rr := do(t, h, "POST", "/api/v1/library", `{"kind":"music","tmdbId":1}`)
 	if rr.Code != http.StatusBadRequest {
-		t.Errorf("book add (Phase 2.5): %d", rr.Code)
+		t.Errorf("unknown kind: %d", rr.Code)
+	}
+	// Books are a real kind (Phase 2.5) — but with no book provider wired
+	// the add reports "provider not configured", not "bad request".
+	rr = do(t, h, "POST", "/api/v1/library", `{"kind":"book","olid":"OL1W"}`)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("book add without provider: %d", rr.Code)
 	}
 }
 

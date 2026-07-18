@@ -134,9 +134,13 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 // (episode-linked for series via the filename extractor), and rows whose
 // files vanished are pruned.
 func (s *Service) scanItem(ctx context.Context, item domain.MediaItem) (linked, removed int, err error) {
+	isMedia := filename.IsVideo
+	if item.Kind == domain.KindBook {
+		isMedia = filename.IsBook
+	}
 	onDisk := map[string]int64{} // path -> size
 	walkErr := filepath.WalkDir(item.Path, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !filename.IsVideo(path) {
+		if err != nil || d.IsDir() || !isMedia(path) {
 			return err
 		}
 		info, ierr := d.Info()
@@ -165,8 +169,11 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem) (linked, 
 			return linked, removed, err
 		}
 		// Record quality parsed from the file name so upgrade decisions
-		// work for adopted libraries too.
-		if q := parser.Parse(filepath.Base(path)).Quality; q.Resolution != 0 || q.Source != quality.SourceUnknown {
+		// work for adopted libraries too. Book files are graded by their
+		// extension — the format IS the quality (ADR 0006).
+		if src := filename.BookQualitySource(path); item.Kind == domain.KindBook && src != "" {
+			_ = s.db.SetFileQuality(ctx, fileID, quality.Quality{Source: quality.Source(src)})
+		} else if q := parser.Parse(filepath.Base(path)).Quality; q.Resolution != 0 || q.Source != quality.SourceUnknown {
 			_ = s.db.SetFileQuality(ctx, fileID, q)
 		}
 		if item.Kind == domain.KindSeries {

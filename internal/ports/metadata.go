@@ -16,10 +16,13 @@ import (
 // credentials are set (e.g. no TMDB API key in settings yet).
 var ErrProviderNotConfigured = errors.New("metadata provider not configured")
 
-// SearchResult is one candidate from a metadata search.
+// SearchResult is one candidate from a metadata search. TMDBID identifies
+// movies/series; OLID identifies books (ADR 0006).
 type SearchResult struct {
 	Kind       domain.MediaKind
 	TMDBID     int64
+	OLID       string
+	Author     string
 	Title      string
 	Year       int
 	Overview   string
@@ -39,4 +42,15 @@ type MetadataProvider interface {
 	SearchSeries(ctx context.Context, query string) ([]SearchResult, error)
 	GetMovie(ctx context.Context, tmdbID int64) (domain.MediaItem, error)
 	GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem, error)
+}
+
+// BookProvider hydrates book entries (ADR 0006) — a separate port because
+// book metadata comes from a different upstream (Open Library) with its own
+// identity scheme (work OLID), auth (none), and rate policy.
+//
+// GetBook returns a hydrated domain.MediaItem (Kind=book, Author set,
+// ISBN/OLID populated where known) with library-placement fields left zero.
+type BookProvider interface {
+	SearchBooks(ctx context.Context, query string) ([]SearchResult, error)
+	GetBook(ctx context.Context, olid string) (domain.MediaItem, error)
 }

@@ -127,17 +127,23 @@ func (s *Service) episodeQualities(ctx context.Context, item domain.MediaItem) (
 // Target resolves the wantable being searched/grabbed: movie, one episode,
 // or a season pack.
 func (s *Service) target(ctx context.Context, item domain.MediaItem, season, episode int) (domain.Wantable, error) {
-	if item.Kind == domain.KindMovie {
-		w := domain.MovieWantable{
-			Item: item.ID, Profile: item.QualityProfileID, Mon: item.Monitored,
-			Title: item.Title, Year: item.Year,
-		}
+	if item.Kind == domain.KindMovie || item.Kind == domain.KindBook {
+		var have *quality.Quality
 		if q, ok, err := s.db.BestQualityForItem(ctx, item.ID); err != nil {
 			return nil, err
 		} else if ok {
-			w.Have = &q
+			have = &q
 		}
-		return w, nil
+		if item.Kind == domain.KindBook {
+			return domain.BookWantable{
+				Item: item.ID, Profile: item.QualityProfileID, Mon: item.Monitored,
+				Title: item.Title, Author: item.Author, Year: item.Year, Have: have,
+			}, nil
+		}
+		return domain.MovieWantable{
+			Item: item.ID, Profile: item.QualityProfileID, Mon: item.Monitored,
+			Title: item.Title, Year: item.Year, Have: have,
+		}, nil
 	}
 
 	epQuals, err := s.episodeQualities(ctx, item)
@@ -299,6 +305,11 @@ func describeTarget(w domain.Wantable) string {
 		return fmt.Sprintf("%s S%02dE%02d", t.Title, t.Season, t.Episode)
 	case domain.SeasonWantable:
 		return fmt.Sprintf("%s season %d", t.Title, t.Season)
+	case domain.BookWantable:
+		if t.Author != "" {
+			return fmt.Sprintf("%s by %s", t.Title, t.Author)
+		}
+		return t.Title
 	}
 	return "target"
 }
@@ -367,6 +378,8 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	switch {
 	case item.Kind == domain.KindMovie:
 		wants = []string{fmt.Sprintf("movie:%d", item.ID)}
+	case item.Kind == domain.KindBook:
+		wants = []string{fmt.Sprintf("book:%d", item.ID)}
 	case req.Episode > 0:
 		wants = []string{fmt.Sprintf("episode:%d:%d:%d", item.ID, req.Season, req.Episode)}
 	default:

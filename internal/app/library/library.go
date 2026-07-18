@@ -14,6 +14,7 @@ import (
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/naming"
+	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
 	"github.com/monarr-media/monarr/internal/ports"
@@ -36,12 +37,13 @@ type MediaAdded struct {
 // EventType implements bus.Event.
 func (MediaAdded) EventType() string { return "media.added" }
 
-// Service wires storage, the metadata provider, and the bus.
+// Service wires storage, the metadata providers, and the bus.
 type Service struct {
-	db   *sqlite.DB
-	meta ports.MetadataProvider
-	bus  *bus.Bus
-	log  *slog.Logger
+	db    *sqlite.DB
+	meta  ports.MetadataProvider
+	books ports.BookProvider
+	bus   *bus.Bus
+	log   *slog.Logger
 }
 
 // New returns a Service. bus may be nil (tests).
@@ -50,6 +52,12 @@ func New(db *sqlite.DB, meta ports.MetadataProvider, b *bus.Bus, log *slog.Logge
 		log = slog.Default()
 	}
 	return &Service{db: db, meta: meta, bus: b, log: log}
+}
+
+// WithBooks attaches the book metadata provider (ADR 0006) and returns s.
+func (s *Service) WithBooks(books ports.BookProvider) *Service {
+	s.books = books
+	return s
 }
 
 func (s *Service) publish(e bus.Event) {
@@ -68,7 +76,10 @@ func (s *Service) Search(ctx context.Context, kind domain.MediaKind, query strin
 	case domain.KindSeries:
 		return s.meta.SearchSeries(ctx, query)
 	case domain.KindBook:
-		return nil, fmt.Errorf("%w: books arrive in Phase 2.5 (ADR 0006)", ErrUnsupportedKind)
+		if s.books == nil {
+			return nil, ports.ErrProviderNotConfigured
+		}
+		return s.books.SearchBooks(ctx, query)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnsupportedKind, kind)
 	}
@@ -77,46 +88,68 @@ func (s *Service) Search(ctx context.Context, kind domain.MediaKind, query strin
 // ---- add / browse ----
 
 // AddRequest is what the API sends to put something in the library.
+// TMDBID identifies movies/series; OLID identifies books (ADR 0006).
 type AddRequest struct {
-	Kind         domain.MediaKind
-	TMDBID       int64
-	RootFolderID int64 // optional; 0 = no folder assigned yet
-	Monitored    bool
+	Kind             domain.MediaKind
+	TMDBID           int64
+	OLID             string
+	RootFolderID     int64 // optional; 0 = no folder assigned yet
+	QualityProfileID int64 // optional; 0 = kind default (1, or Ebook for books)
+	Monitored        bool
 }
 
 // Add hydrates the item from the provider and stores it. The on-disk folder
-// is derived as <root>/<Title (Year)> when a root folder is given; nothing
-// is created on disk in Phase 1.
+// is derived as <root>/<Title (Year)> — or the Calibre-friendly
+// <root>/<Author>/<Title> for books — when a root folder is given; nothing
+// is created on disk until import.
 func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, error) {
-	if req.Kind != domain.KindMovie && req.Kind != domain.KindSeries {
-		return domain.MediaItem{}, fmt.Errorf("%w: %q", ErrUnsupportedKind, req.Kind)
-	}
-	if _, err := s.db.GetMediaItemByKindTmdb(ctx, req.Kind, req.TMDBID); err == nil {
-		return domain.MediaItem{}, ErrAlreadyExists
-	} else if !errors.Is(err, sqlite.ErrNotFound) {
-		return domain.MediaItem{}, err
-	}
-
 	var item domain.MediaItem
 	var err error
 	switch req.Kind {
-	case domain.KindMovie:
-		item, err = s.meta.GetMovie(ctx, req.TMDBID)
-	case domain.KindSeries:
-		item, err = s.meta.GetSeries(ctx, req.TMDBID)
+	case domain.KindMovie, domain.KindSeries:
+		if _, err := s.db.GetMediaItemByKindTmdb(ctx, req.Kind, req.TMDBID); err == nil {
+			return domain.MediaItem{}, ErrAlreadyExists
+		} else if !errors.Is(err, sqlite.ErrNotFound) {
+			return domain.MediaItem{}, err
+		}
+		if req.Kind == domain.KindMovie {
+			item, err = s.meta.GetMovie(ctx, req.TMDBID)
+		} else {
+			item, err = s.meta.GetSeries(ctx, req.TMDBID)
+		}
+	case domain.KindBook:
+		if s.books == nil {
+			return domain.MediaItem{}, ports.ErrProviderNotConfigured
+		}
+		if _, err := s.db.GetMediaItemByKindOlid(ctx, req.Kind, req.OLID); err == nil {
+			return domain.MediaItem{}, ErrAlreadyExists
+		} else if !errors.Is(err, sqlite.ErrNotFound) {
+			return domain.MediaItem{}, err
+		}
+		item, err = s.books.GetBook(ctx, req.OLID)
+	default:
+		return domain.MediaItem{}, fmt.Errorf("%w: %q", ErrUnsupportedKind, req.Kind)
 	}
 	if err != nil {
 		return domain.MediaItem{}, err
 	}
 
 	item.Monitored = req.Monitored
+	item.QualityProfileID = req.QualityProfileID
+	if item.QualityProfileID == 0 && item.Kind == domain.KindBook {
+		item.QualityProfileID = quality.EbookProfileID
+	}
 	if req.RootFolderID != 0 {
 		rf, err := s.db.GetRootFolder(ctx, req.RootFolderID)
 		if err != nil {
 			return domain.MediaItem{}, fmt.Errorf("root folder: %w", err)
 		}
 		item.RootFolderID = rf.ID
-		item.Path = filepath.Join(rf.Path, naming.FolderName(item.Title, item.Year))
+		if item.Kind == domain.KindBook {
+			item.Path = filepath.Join(rf.Path, naming.BookFolder(item.Author, item.Title))
+		} else {
+			item.Path = filepath.Join(rf.Path, naming.FolderName(item.Title, item.Year))
+		}
 	}
 
 	id, err := s.db.CreateMediaItem(ctx, item)

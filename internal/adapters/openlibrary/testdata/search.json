@@ -1,0 +1,20 @@
+{
+  "numFound": 2,
+  "docs": [
+    {
+      "key": "/works/OL17091839W",
+      "title": "Project Hail Mary",
+      "author_name": ["Andy Weir"],
+      "first_publish_year": 2021,
+      "cover_i": 12781196,
+      "isbn": ["9780593135204", "0593135202"]
+    },
+    {
+      "key": "/works/OL17332968W",
+      "title": "Artemis",
+      "author_name": ["Andy Weir"],
+      "first_publish_year": 2017,
+      "cover_i": 8358393
+    }
+  ]
+}
