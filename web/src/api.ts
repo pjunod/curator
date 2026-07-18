@@ -487,3 +487,23 @@ export const bulkEditLibrary = (req: {
 export const login = (username: string, password: string) =>
   send('POST', '/auth/login', { username, password })
 export const logout = () => send('POST', '/auth/logout')
+
+// composeHostPort joins a host (bare, or with scheme/path) with a port,
+// unless the host already carries one. The download-client form uses it to
+// offer a separate, default-prefilled port box.
+export function composeHostPort(host: string, port: string): string {
+  let h = host.trim()
+  const p = port.trim()
+  if (!h || !p) return h
+  let scheme = ''
+  const si = h.indexOf('://')
+  if (si >= 0) {
+    scheme = h.slice(0, si + 3)
+    h = h.slice(si + 3)
+  }
+  const slash = h.indexOf('/')
+  const hostPart = slash >= 0 ? h.slice(0, slash) : h
+  const rest = slash >= 0 ? h.slice(slash) : ''
+  if (hostPart.includes(':')) return scheme + h // port already present
+  return `${scheme}${hostPart}:${p}${rest}`
+}

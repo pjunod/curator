@@ -2,15 +2,16 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DownloadClientInput, IndexerInput } from '../api'
 
-// Default-port hints per client type, shown in the URL placeholder.
-const CLIENT_URL_HINTS: Record<DownloadClientInput['type'], string> = {
-  qbittorrent: 'http://192.168.1.10:8080',
-  transmission: 'http://192.168.1.10:9091',
-  deluge: 'http://192.168.1.10:8112',
-  sabnzbd: 'http://192.168.1.10:8080',
-  nzbget: 'http://192.168.1.10:6789',
+// Default ports per client type; prepopulates the port box.
+const CLIENT_DEFAULT_PORTS: Record<DownloadClientInput['type'], string> = {
+  qbittorrent: '8080',
+  transmission: '9091',
+  deluge: '8112',
+  sabnzbd: '8080',
+  nzbget: '6789',
 }
 import {
+  composeHostPort,
   addDownloadClient,
   addIndexer,
   deleteDownloadClient,
@@ -32,7 +33,9 @@ export function AcquisitionSettings() {
   const [cli, setCli] = useState<DownloadClientInput>({
     type: 'qbittorrent', name: '', url: '', username: '', password: '', category: 'monarr',
   })
+  const [cliPort, setCliPort] = useState(CLIENT_DEFAULT_PORTS.qbittorrent)
   const [cliMsg, setCliMsg] = useState('')
+  const cliPayload = (): DownloadClientInput => ({ ...cli, url: composeHostPort(cli.url, cliPort) })
 
   const testIdx = useMutation({
     mutationFn: () => testIndexer(idx),
@@ -54,14 +57,15 @@ export function AcquisitionSettings() {
   })
 
   const testCli = useMutation({
-    mutationFn: () => testDownloadClient(cli),
+    mutationFn: () => testDownloadClient(cliPayload()),
     onSuccess: () => setCliMsg('✓ client reachable'),
     onError: (e) => setCliMsg(`✕ ${(e as Error).message}`),
   })
   const saveCli = useMutation({
-    mutationFn: () => addDownloadClient({ ...cli, enabled: true }),
+    mutationFn: () => addDownloadClient({ ...cliPayload(), enabled: true }),
     onSuccess: () => {
       setCli({ type: cli.type, name: '', url: '', username: '', password: '', category: 'monarr' })
+      setCliPort(CLIENT_DEFAULT_PORTS[cli.type])
       setCliMsg('')
       void qc.invalidateQueries({ queryKey: ['downloadclients'] })
     },
@@ -144,7 +148,14 @@ export function AcquisitionSettings() {
           </tbody>
         </table>
         <div className="form-row">
-          <select value={cli.type} onChange={(e) => setCli({ ...cli, type: e.target.value as DownloadClientInput['type'] })}>
+          <select
+            value={cli.type}
+            onChange={(e) => {
+              const type = e.target.value as DownloadClientInput['type']
+              setCli({ ...cli, type })
+              setCliPort(CLIENT_DEFAULT_PORTS[type])
+            }}
+          >
             <option value="qbittorrent">qBittorrent</option>
             <option value="transmission">Transmission</option>
             <option value="deluge">Deluge</option>
@@ -153,9 +164,16 @@ export function AcquisitionSettings() {
           </select>
           <input placeholder="Name" value={cli.name} onChange={(e) => setCli({ ...cli, name: e.target.value })} />
           <input
-            placeholder={`URL (${CLIENT_URL_HINTS[cli.type]})`}
+            placeholder="Host (192.168.1.10)"
             value={cli.url}
             onChange={(e) => setCli({ ...cli, url: e.target.value })}
+          />
+          <input
+            placeholder="Port"
+            aria-label="Port"
+            style={{ width: 80 }}
+            value={cliPort}
+            onChange={(e) => setCliPort(e.target.value.replace(/[^0-9]/g, ''))}
           />
           {cli.type === 'sabnzbd' ? (
             <input type="password" placeholder="API key" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />

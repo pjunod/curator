@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addIndexer, fmtDuration, fmtInterval, fmtRelative, testIndexer } from './api'
+import { addIndexer, composeHostPort, fmtDuration, fmtInterval, fmtRelative, testIndexer } from './api'
 
 describe('fmtDuration', () => {
   it('formats seconds', () => {
@@ -95,5 +95,23 @@ describe('send tolerates empty success bodies', () => {
     } finally {
       globalThis.fetch = orig
     }
+  })
+})
+
+describe('composeHostPort', () => {
+  it('appends the port to a bare host', () => {
+    expect(composeHostPort('192.168.4.7', '6789')).toBe('192.168.4.7:6789')
+  })
+  it('respects an existing port', () => {
+    expect(composeHostPort('192.168.4.7:9999', '6789')).toBe('192.168.4.7:9999')
+    expect(composeHostPort('http://x.local:8080', '6789')).toBe('http://x.local:8080')
+  })
+  it('keeps schemes and paths intact', () => {
+    expect(composeHostPort('http://nzbget.local', '6789')).toBe('http://nzbget.local:6789')
+    expect(composeHostPort('https://box.example/sab', '8080')).toBe('https://box.example:8080/sab')
+  })
+  it('passes through when host or port is empty', () => {
+    expect(composeHostPort('', '6789')).toBe('')
+    expect(composeHostPort('192.168.4.7', '')).toBe('192.168.4.7')
   })
 })
