@@ -141,6 +141,15 @@ CI (`.github/workflows/ci.yml`) runs four parallel jobs on every push/PR: unit t
 output is up to date), golangci-lint, the Playwright E2E suite against the compiled binary,
 and a Docker image build. Least-privilege permissions, per-ref concurrency cancellation.
 
+## Documentation
+
+- **[Usage guide](docs/usage.md)** — first run, adding movies/series/books, adopting an
+  existing library, interactive search, automation, connecting Jellyseerr/Prowlarr/Bazarr.
+- **[Settings reference](docs/settings.md)** — every field in the Settings and System pages.
+- **[Deployment](docs/deployment.md)** — storage rules for the SQLite database (why the live
+  DB must not sit on NFS/Gluster), floating-node/HA patterns, backup/restore.
+- **[Architecture](docs/architecture.md)** and **[ADRs](docs/adr/)** — the design and why.
+
 ## Configuration
 
 Environment first, optional JSON file second (`MONARR_CONFIG=/path/to/config.json`),
