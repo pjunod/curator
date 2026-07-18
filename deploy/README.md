@@ -16,8 +16,9 @@ docker compose up -d --build
 ```
 
 Pulls update the examples, never your copies — diff against them after big
-updates. Without a `.env`, compose falls back to local dirs beside this
-file and user 1000:1000.
+updates. Built-in defaults: `/srv/monarr` (config), `/srv/pool` (media +
+downloads), user `1000:1000` — the `.env` only needs the values where your
+setup differs.
 
 Storage rules (what must not sit on NFS/Gluster, floating-node patterns):
 [docs/deployment.md](../docs/deployment.md). Mount rules and a worked

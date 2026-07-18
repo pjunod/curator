@@ -6,9 +6,10 @@
 # Your docker-compose.yml is gitignored — pulls update this example, never
 # your customized copy (diff against the example after big updates).
 #
-# Paths come from environment variables (cp .env.example .env and edit —
-# every variable is documented there), with local-dir fallbacks: run with
-# no .env at all and you get ./monarr-data and ./pool next to this file.
+# Defaults baked in: /srv/monarr (config) and /srv/pool (media +
+# downloads), running as 1000:1000. Override any of them by exporting the
+# variable or putting it in a .env file next to this one
+# (cp .env.example .env — every variable is documented there).
 #
 # THE ONE RULE (see README + docs/deployment.md): your download client must
 # see the pool at the SAME container path as Monarr — mount the same host
@@ -30,8 +31,8 @@ services:
     ports:
       - "7676:7676"
     volumes:
-      - ${MONARR_DATA:-./monarr-data}:/data
-      - ${MONARR_POOL:-./pool}:/pool
+      - ${MONARR_DATA:-/srv/monarr}:/data
+      - ${MONARR_POOL:-/srv/pool}:/pool
     restart: unless-stopped
 
   # ---- optional: a download client on the same pool ----------------------
@@ -49,8 +50,8 @@ services:
   #   ports:
   #     - "8080:8080"
   #   volumes:
-  #     - ${QBIT_CONFIG:-./qbittorrent-config}:/config
-  #     - ${MONARR_POOL:-./pool}:/pool   # same pool, same path — required
+  #     - ${QBIT_CONFIG:-/srv/qbittorrent}:/config
+  #     - ${MONARR_POOL:-/srv/pool}:/pool   # same pool, same path — required
   #   restart: unless-stopped
   #
   # Already running NZBGet/qBittorrent elsewhere on the host or LAN? Skip
