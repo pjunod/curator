@@ -1,5 +1,10 @@
 # Monarr
 
+[![Tests](https://github.com/monarr-media/monarr/actions/workflows/tests.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/tests.yml)
+[![Lint](https://github.com/monarr-media/monarr/actions/workflows/lint.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/lint.yml)
+[![Docker](https://github.com/monarr-media/monarr/actions/workflows/docker.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/docker.yml)
+[![codecov](https://codecov.io/gh/monarr-media/monarr/graph/badge.svg)](https://codecov.io/gh/monarr-media/monarr)
+
 **A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one
 acquisition pipeline — for TV, movies, and (Phase 2.5) books, filling the gap left by
 Readarr's retirement.

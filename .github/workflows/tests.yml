@@ -1,4 +1,4 @@
-name: CI
+name: Tests
 
 on:
   push:
@@ -9,11 +9,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test:
+  unit:
     name: Unit tests (Go + web)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -43,11 +43,6 @@ jobs:
           make gen
           git diff --exit-code -- internal/infra/sqlite/gen internal/api/gen
 
-      - name: gofmt
-        run: |
-          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '/gen/'))
-          if [ -n "$unformatted" ]; then echo "gofmt needed on:"; echo "$unformatted"; exit 1; fi
-
       - name: go vet
         run: go vet ./...
 
@@ -59,21 +54,15 @@ jobs:
           go tool cover -func=coverage.out | tail -1 >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Upload coverage to Codecov (no-op until the repo is linked)
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
+
       - name: go build
         run: make go-build
-
-  lint:
-    name: golangci-lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: golangci-lint (same pinned version as `make lint`)
-        run: make lint
 
   e2e:
     name: End-to-end (real binary + browser)
@@ -115,12 +104,3 @@ jobs:
           name: playwright-report
           path: test/e2e/playwright-report/
           retention-days: 7
-
-  docker:
-    name: Docker image builds
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - name: docker build
-        run: docker build -f deploy/Dockerfile -t monarr:ci .
