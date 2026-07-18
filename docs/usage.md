@@ -11,7 +11,8 @@ pulls never touch it):
 
 ```sh
 git clone https://github.com/monarr-media/monarr.git && cd monarr/deploy
-cp docker-compose.example.yml docker-compose.yml   # edit paths, or use .env
+cp docker-compose.example.yml docker-compose.yml   # yours to edit
+cp .env.example .env                               # optional: paths + user
 docker compose up -d --build
 ```
 

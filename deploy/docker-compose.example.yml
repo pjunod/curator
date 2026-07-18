@@ -6,15 +6,9 @@
 # Your docker-compose.yml is gitignored — pulls update this example, never
 # your customized copy (diff against the example after big updates).
 #
-# Paths below come from environment variables with local-dir fallbacks, so
-# either export them / put them in a .env file:
-#
-#   MONARR_DATA=/srv/monarr           # config: SQLite DB, backups (back this up)
-#   MONARR_POOL=/srv/pool             # media library + completed downloads
-#   PUID=1000                         # user/group that owns the pool
-#   PGID=1000
-#
-# …or just run as-is and get ./monarr-data and ./pool next to this file.
+# Paths come from environment variables (cp .env.example .env and edit —
+# every variable is documented there), with local-dir fallbacks: run with
+# no .env at all and you get ./monarr-data and ./pool next to this file.
 #
 # THE ONE RULE (see README + docs/deployment.md): your download client must
 # see the pool at the SAME container path as Monarr — mount the same host
