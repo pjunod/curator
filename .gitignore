@@ -30,3 +30,7 @@ deploy/monarr-data/
 deploy/pool/
 deploy/qbittorrent-config/
 deploy/.env
+
+# Playwright artifacts
+test/e2e/test-results/
+test-results/
