@@ -13,6 +13,7 @@ import {
   updateSettings,
 } from '../api'
 import { AcquisitionSettings } from './SettingsAcquisition'
+import { CustomFormatSettings, ImportListSettings, SecuritySettings } from './SettingsDepth'
 import { NotifierSettings } from './SettingsNotifiers'
 
 export function SettingsPage() {
@@ -141,7 +142,10 @@ export function SettingsPage() {
       </section>
 
       <AcquisitionSettings />
+      <CustomFormatSettings />
+      <ImportListSettings />
       <NotifierSettings />
+      <SecuritySettings />
 
       <section className="panel">
         <h2>Disk scan</h2>

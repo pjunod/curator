@@ -86,7 +86,12 @@ export function ReleaseSearch(props: {
                   ))}
                   {c.isUpgrade && <div className="ok-text">upgrade</div>}
                 </td>
-                <td className="muted">{c.quality}</td>
+                <td className="muted">
+                  {c.quality}
+                  {c.score !== 0 && (
+                    <div title={(c.formats ?? []).join(', ')}>score {c.score > 0 ? '+' : ''}{c.score}</div>
+                  )}
+                </td>
                 <td className="muted">{fmtBytes(c.size)}</td>
                 <td className="muted">{c.age || '—'}</td>
                 <td className="muted">{c.protocol === 'torrent' ? c.seeders : '—'}</td>

@@ -16,16 +16,25 @@ import (
 
 // Defines values for DownloadClientConfigType.
 const (
-	DownloadClientConfigTypeQbittorrent DownloadClientConfigType = "qbittorrent"
-	DownloadClientConfigTypeSabnzbd     DownloadClientConfigType = "sabnzbd"
+	DownloadClientConfigTypeDeluge       DownloadClientConfigType = "deluge"
+	DownloadClientConfigTypeNzbget       DownloadClientConfigType = "nzbget"
+	DownloadClientConfigTypeQbittorrent  DownloadClientConfigType = "qbittorrent"
+	DownloadClientConfigTypeSabnzbd      DownloadClientConfigType = "sabnzbd"
+	DownloadClientConfigTypeTransmission DownloadClientConfigType = "transmission"
 )
 
 // Valid indicates whether the value is a known member of the DownloadClientConfigType enum.
 func (e DownloadClientConfigType) Valid() bool {
 	switch e {
+	case DownloadClientConfigTypeDeluge:
+		return true
+	case DownloadClientConfigTypeNzbget:
+		return true
 	case DownloadClientConfigTypeQbittorrent:
 		return true
 	case DownloadClientConfigTypeSabnzbd:
+		return true
+	case DownloadClientConfigTypeTransmission:
 		return true
 	default:
 		return false
@@ -34,16 +43,25 @@ func (e DownloadClientConfigType) Valid() bool {
 
 // Defines values for DownloadClientInputType.
 const (
-	DownloadClientInputTypeQbittorrent DownloadClientInputType = "qbittorrent"
-	DownloadClientInputTypeSabnzbd     DownloadClientInputType = "sabnzbd"
+	DownloadClientInputTypeDeluge       DownloadClientInputType = "deluge"
+	DownloadClientInputTypeNzbget       DownloadClientInputType = "nzbget"
+	DownloadClientInputTypeQbittorrent  DownloadClientInputType = "qbittorrent"
+	DownloadClientInputTypeSabnzbd      DownloadClientInputType = "sabnzbd"
+	DownloadClientInputTypeTransmission DownloadClientInputType = "transmission"
 )
 
 // Valid indicates whether the value is a known member of the DownloadClientInputType enum.
 func (e DownloadClientInputType) Valid() bool {
 	switch e {
+	case DownloadClientInputTypeDeluge:
+		return true
+	case DownloadClientInputTypeNzbget:
+		return true
 	case DownloadClientInputTypeQbittorrent:
 		return true
 	case DownloadClientInputTypeSabnzbd:
+		return true
+	case DownloadClientInputTypeTransmission:
 		return true
 	default:
 		return false
@@ -65,6 +83,48 @@ func (e HealthStatus) Valid() bool {
 	case HealthStatusOk:
 		return true
 	case HealthStatusWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImportListType.
+const (
+	ImportListTypeTmdbPopular ImportListType = "tmdb-popular"
+	ImportListTypeTmdbTop     ImportListType = "tmdb-top"
+	ImportListTypeTraktList   ImportListType = "trakt-list"
+)
+
+// Valid indicates whether the value is a known member of the ImportListType enum.
+func (e ImportListType) Valid() bool {
+	switch e {
+	case ImportListTypeTmdbPopular:
+		return true
+	case ImportListTypeTmdbTop:
+		return true
+	case ImportListTypeTraktList:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImportListInputType.
+const (
+	ImportListInputTypeTmdbPopular ImportListInputType = "tmdb-popular"
+	ImportListInputTypeTmdbTop     ImportListInputType = "tmdb-top"
+	ImportListInputTypeTraktList   ImportListInputType = "trakt-list"
+)
+
+// Valid indicates whether the value is a known member of the ImportListInputType enum.
+func (e ImportListInputType) Valid() bool {
+	switch e {
+	case ImportListInputTypeTmdbPopular:
+		return true
+	case ImportListInputTypeTmdbTop:
+		return true
+	case ImportListInputTypeTraktList:
 		return true
 	default:
 		return false
@@ -221,6 +281,25 @@ type CalendarEntry struct {
 	Title       string `json:"title"`
 }
 
+// CustomFormat defines model for CustomFormat.
+type CustomFormat struct {
+	Id   int64  `json:"id"`
+	Name string `json:"name"`
+
+	// Pattern Case-insensitive RE2 matched against release titles.
+	Pattern string `json:"pattern"`
+	Score   *int   `json:"score,omitempty"`
+}
+
+// CustomFormatInput defines model for CustomFormatInput.
+type CustomFormatInput struct {
+	Name string `json:"name"`
+
+	// Pattern Case-insensitive RE2 matched against release titles.
+	Pattern string `json:"pattern"`
+	Score   *int   `json:"score,omitempty"`
+}
+
 // DownloadClientConfig defines model for DownloadClientConfig.
 type DownloadClientConfig struct {
 	Category *string                  `json:"category,omitempty"`
@@ -306,6 +385,39 @@ type HealthReport struct {
 
 // HealthStatus defines model for HealthStatus.
 type HealthStatus string
+
+// ImportList defines model for ImportList.
+type ImportList struct {
+	// Config trakt-list: {user, slug, clientId}.
+	Config           *map[string]string `json:"config,omitempty"`
+	Enabled          *bool              `json:"enabled,omitempty"`
+	Id               int64              `json:"id"`
+	Kind             *MediaKind         `json:"kind,omitempty"`
+	Monitored        *bool              `json:"monitored,omitempty"`
+	Name             string             `json:"name"`
+	QualityProfileId *int64             `json:"qualityProfileId,omitempty"`
+	RootFolderId     *int64             `json:"rootFolderId,omitempty"`
+	Type             ImportListType     `json:"type"`
+}
+
+// ImportListType defines model for ImportList.Type.
+type ImportListType string
+
+// ImportListInput defines model for ImportListInput.
+type ImportListInput struct {
+	// Config trakt-list: {user, slug, clientId}.
+	Config           *map[string]string  `json:"config,omitempty"`
+	Enabled          *bool               `json:"enabled,omitempty"`
+	Kind             *MediaKind          `json:"kind,omitempty"`
+	Monitored        *bool               `json:"monitored,omitempty"`
+	Name             string              `json:"name"`
+	QualityProfileId *int64              `json:"qualityProfileId,omitempty"`
+	RootFolderId     *int64              `json:"rootFolderId,omitempty"`
+	Type             ImportListInputType `json:"type"`
+}
+
+// ImportListInputType defines model for ImportListInput.Type.
+type ImportListInputType string
 
 // Indexer defines model for Indexer.
 type Indexer struct {
@@ -449,18 +561,24 @@ type Rejection struct {
 
 // ReleaseCandidate defines model for ReleaseCandidate.
 type ReleaseCandidate struct {
-	Accepted    bool        `json:"accepted"`
-	Age         string      `json:"age"`
-	DownloadUrl string      `json:"downloadUrl"`
-	Indexer     string      `json:"indexer"`
-	InfoUrl     *string     `json:"infoUrl,omitempty"`
-	IsUpgrade   bool        `json:"isUpgrade"`
-	Protocol    string      `json:"protocol"`
-	Quality     string      `json:"quality"`
-	Rejections  []Rejection `json:"rejections"`
-	Seeders     int         `json:"seeders"`
-	Size        int64       `json:"size"`
-	Title       string      `json:"title"`
+	Accepted    bool   `json:"accepted"`
+	Age         string `json:"age"`
+	DownloadUrl string `json:"downloadUrl"`
+
+	// Formats Names of matched custom formats.
+	Formats    *[]string   `json:"formats,omitempty"`
+	Indexer    string      `json:"indexer"`
+	InfoUrl    *string     `json:"infoUrl,omitempty"`
+	IsUpgrade  bool        `json:"isUpgrade"`
+	Protocol   string      `json:"protocol"`
+	Quality    string      `json:"quality"`
+	Rejections []Rejection `json:"rejections"`
+
+	// Score Custom-format score sum (Phase 5).
+	Score   int    `json:"score"`
+	Seeders int    `json:"seeders"`
+	Size    int64  `json:"size"`
+	Title   string `json:"title"`
 }
 
 // RootFolder defines model for RootFolder.
@@ -507,14 +625,23 @@ type SeasonInfo struct {
 // Settings defines model for Settings.
 type Settings struct {
 	// ApiKey Monarr's own API key — what consumers send as X-Api-Key to the /sonarr and /radarr personalities (and, once auth hardening is on, to /api/v1).
-	ApiKey               *string `json:"apiKey,omitempty"`
-	TmdbApiKeyConfigured bool    `json:"tmdbApiKeyConfigured"`
-	TmdbApiKeyHint       string  `json:"tmdbApiKeyHint"`
+	ApiKey *string `json:"apiKey,omitempty"`
+
+	// AuthRequired Whether /api/v1 requires authentication.
+	AuthRequired         *bool  `json:"authRequired,omitempty"`
+	TmdbApiKeyConfigured bool   `json:"tmdbApiKeyConfigured"`
+	TmdbApiKeyHint       string `json:"tmdbApiKeyHint"`
 }
 
 // SettingsUpdate defines model for SettingsUpdate.
 type SettingsUpdate struct {
-	TmdbApiKey *string `json:"tmdbApiKey,omitempty"`
+	// AuthPassword Stored salted-hashed; never returned.
+	AuthPassword *string `json:"authPassword,omitempty"`
+
+	// AuthRequired Require API key or session for /api/v1 (Phase 5).
+	AuthRequired *bool   `json:"authRequired,omitempty"`
+	AuthUsername *string `json:"authUsername,omitempty"`
+	TmdbApiKey   *string `json:"tmdbApiKey,omitempty"`
 }
 
 // SystemStatus defines model for SystemStatus.
@@ -564,6 +691,12 @@ type WantedItem struct {
 	WantableId string `json:"wantableId"`
 }
 
+// LoginJSONBody defines parameters for Login.
+type LoginJSONBody struct {
+	Password string `json:"password"`
+	Username string `json:"username"`
+}
+
 // GetCalendarParams defines parameters for GetCalendar.
 type GetCalendarParams struct {
 	Start string `form:"start" json:"start"`
@@ -573,6 +706,13 @@ type GetCalendarParams struct {
 // ListLibraryParams defines parameters for ListLibrary.
 type ListLibraryParams struct {
 	Kind *MediaKind `form:"kind,omitempty" json:"kind,omitempty"`
+}
+
+// BulkEditLibraryJSONBody defines parameters for BulkEditLibrary.
+type BulkEditLibraryJSONBody struct {
+	Ids              []int64 `json:"ids"`
+	Monitored        *bool   `json:"monitored,omitempty"`
+	QualityProfileId *int64  `json:"qualityProfileId,omitempty"`
 }
 
 // SearchReleasesParams defines parameters for SearchReleases.
@@ -597,6 +737,12 @@ type AddRootFolderJSONBody struct {
 	Path string `json:"path"`
 }
 
+// LoginJSONRequestBody defines body for Login for application/json ContentType.
+type LoginJSONRequestBody LoginJSONBody
+
+// AddCustomFormatJSONRequestBody defines body for AddCustomFormat for application/json ContentType.
+type AddCustomFormatJSONRequestBody = CustomFormatInput
+
 // AddDownloadClientJSONRequestBody defines body for AddDownloadClient for application/json ContentType.
 type AddDownloadClientJSONRequestBody = DownloadClientInput
 
@@ -606,6 +752,9 @@ type TestDownloadClientJSONRequestBody = DownloadClientInput
 // GrabReleaseJSONRequestBody defines body for GrabRelease for application/json ContentType.
 type GrabReleaseJSONRequestBody = GrabRequest
 
+// AddImportListJSONRequestBody defines body for AddImportList for application/json ContentType.
+type AddImportListJSONRequestBody = ImportListInput
+
 // AddIndexerJSONRequestBody defines body for AddIndexer for application/json ContentType.
 type AddIndexerJSONRequestBody = IndexerInput
 
@@ -614,6 +763,9 @@ type TestIndexerJSONRequestBody = IndexerInput
 
 // AddLibraryItemJSONRequestBody defines body for AddLibraryItem for application/json ContentType.
 type AddLibraryItemJSONRequestBody = AddMediaRequest
+
+// BulkEditLibraryJSONRequestBody defines body for BulkEditLibrary for application/json ContentType.
+type BulkEditLibraryJSONRequestBody BulkEditLibraryJSONBody
 
 // AddNotifierJSONRequestBody defines body for AddNotifier for application/json ContentType.
 type AddNotifierJSONRequestBody = NotifierInput
@@ -629,6 +781,12 @@ type UpdateSettingsJSONRequestBody = SettingsUpdate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Login Session login for the UI (when auth is enabled)
+	// (POST /auth/login)
+	Login(w http.ResponseWriter, r *http.Request)
+	// Logout Clear the session
+	// (POST /auth/logout)
+	Logout(w http.ResponseWriter, r *http.Request)
 	// ListBlocklist Failed releases that will never be re-grabbed
 	// (GET /blocklist)
 	ListBlocklist(w http.ResponseWriter, r *http.Request)
@@ -638,6 +796,15 @@ type ServerInterface interface {
 	// GetCalendar Episodes airing and movies/books released in a date range
 	// (GET /calendar)
 	GetCalendar(w http.ResponseWriter, r *http.Request, params GetCalendarParams)
+	// ListCustomFormats Custom-format scoring rules
+	// (GET /customformats)
+	ListCustomFormats(w http.ResponseWriter, r *http.Request)
+	// AddCustomFormat Add a scoring rule
+	// (POST /customformats)
+	AddCustomFormat(w http.ResponseWriter, r *http.Request)
+	// DeleteCustomFormat Remove a scoring rule
+	// (DELETE /customformats/{id})
+	DeleteCustomFormat(w http.ResponseWriter, r *http.Request, id int64)
 	// ListDownloadClients List download clients
 	// (GET /downloadclients)
 	ListDownloadClients(w http.ResponseWriter, r *http.Request)
@@ -659,6 +826,15 @@ type ServerInterface interface {
 	// GetHealth Run health checks and report results
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// ListImportLists Import list sources
+	// (GET /importlists)
+	ListImportLists(w http.ResponseWriter, r *http.Request)
+	// AddImportList Add an import list source
+	// (POST /importlists)
+	AddImportList(w http.ResponseWriter, r *http.Request)
+	// DeleteImportList Remove an import list source
+	// (DELETE /importlists/{id})
+	DeleteImportList(w http.ResponseWriter, r *http.Request, id int64)
 	// ListIndexers List indexers
 	// (GET /indexers)
 	ListIndexers(w http.ResponseWriter, r *http.Request)
@@ -677,6 +853,9 @@ type ServerInterface interface {
 	// AddLibraryItem Add a media item (hydrates metadata from the provider)
 	// (POST /library)
 	AddLibraryItem(w http.ResponseWriter, r *http.Request)
+	// BulkEditLibrary Apply monitoring/profile changes to many items at once
+	// (POST /library/bulk)
+	BulkEditLibrary(w http.ResponseWriter, r *http.Request)
 	// ScanLibrary Trigger a disk scan / reconcile
 	// (POST /library/scan)
 	ScanLibrary(w http.ResponseWriter, r *http.Request)
@@ -757,6 +936,34 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// Login operation middleware
+func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Login(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Logout operation middleware
+func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Logout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListBlocklist operation middleware
 func (siw *ServerInterfaceWrapper) ListBlocklist(w http.ResponseWriter, r *http.Request) {
 
@@ -834,6 +1041,60 @@ func (siw *ServerInterfaceWrapper) GetCalendar(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCalendar(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCustomFormats operation middleware
+func (siw *ServerInterfaceWrapper) ListCustomFormats(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCustomFormats(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddCustomFormat operation middleware
+func (siw *ServerInterfaceWrapper) AddCustomFormat(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddCustomFormat(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteCustomFormat operation middleware
+func (siw *ServerInterfaceWrapper) DeleteCustomFormat(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteCustomFormat(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -953,6 +1214,60 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// ListImportLists operation middleware
+func (siw *ServerInterfaceWrapper) ListImportLists(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListImportLists(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddImportList operation middleware
+func (siw *ServerInterfaceWrapper) AddImportList(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddImportList(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteImportList operation middleware
+func (siw *ServerInterfaceWrapper) DeleteImportList(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteImportList(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListIndexers operation middleware
 func (siw *ServerInterfaceWrapper) ListIndexers(w http.ResponseWriter, r *http.Request) {
 
@@ -1059,6 +1374,20 @@ func (siw *ServerInterfaceWrapper) AddLibraryItem(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AddLibraryItem(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BulkEditLibrary operation middleware
+func (siw *ServerInterfaceWrapper) BulkEditLibrary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BulkEditLibrary(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1700,6 +2029,15 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/grab", wrapper.GrabRelease)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue", wrapper.ListQueue)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/customformats", wrapper.ListCustomFormats)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/customformats", wrapper.AddCustomFormat)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/customformats/{id}", wrapper.DeleteCustomFormat)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/importlists", wrapper.ListImportLists)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/importlists", wrapper.AddImportList)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/importlists/{id}", wrapper.DeleteImportList)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/bulk", wrapper.BulkEditLibrary)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.Login)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/notifiers", wrapper.ListNotifiers)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers", wrapper.AddNotifier)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/test", wrapper.TestNotifier)

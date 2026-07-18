@@ -135,19 +135,24 @@ export function AcquisitionSettings() {
           </tbody>
         </table>
         <div className="form-row">
-          <select value={cli.type} onChange={(e) => setCli({ ...cli, type: e.target.value as 'qbittorrent' | 'sabnzbd' })}>
+          <select value={cli.type} onChange={(e) => setCli({ ...cli, type: e.target.value as DownloadClientInput['type'] })}>
             <option value="qbittorrent">qBittorrent</option>
+            <option value="transmission">Transmission</option>
+            <option value="deluge">Deluge</option>
             <option value="sabnzbd">SABnzbd</option>
+            <option value="nzbget">NZBGet</option>
           </select>
           <input placeholder="Name" value={cli.name} onChange={(e) => setCli({ ...cli, name: e.target.value })} />
           <input placeholder="URL (http://qbittorrent:8080)" value={cli.url} onChange={(e) => setCli({ ...cli, url: e.target.value })} />
-          {cli.type === 'qbittorrent' ? (
+          {cli.type === 'sabnzbd' ? (
+            <input type="password" placeholder="API key" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
+          ) : cli.type === 'deluge' ? (
+            <input type="password" placeholder="Web password" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
+          ) : (
             <>
               <input placeholder="Username" value={cli.username} onChange={(e) => setCli({ ...cli, username: e.target.value })} />
               <input type="password" placeholder="Password" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
             </>
-          ) : (
-            <input type="password" placeholder="API key" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
           )}
           <input placeholder="Category" value={cli.category} onChange={(e) => setCli({ ...cli, category: e.target.value })} style={{ minWidth: 110 }} />
           <button onClick={() => testCli.mutate()} disabled={testCli.isPending || !cli.url}>

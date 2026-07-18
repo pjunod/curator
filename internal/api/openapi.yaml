@@ -561,6 +561,161 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /customformats:
+    get:
+      operationId: listCustomFormats
+      summary: Custom-format scoring rules
+      responses:
+        "200":
+          description: Rules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CustomFormat"
+    post:
+      operationId: addCustomFormat
+      summary: Add a scoring rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomFormatInput"
+      responses:
+        "201":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomFormat"
+        "400":
+          description: Invalid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /customformats/{id}:
+    delete:
+      operationId: deleteCustomFormat
+      summary: Remove a scoring rule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Removed. }
+
+  /importlists:
+    get:
+      operationId: listImportLists
+      summary: Import list sources
+      responses:
+        "200":
+          description: Lists.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImportList"
+    post:
+      operationId: addImportList
+      summary: Add an import list source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportListInput"
+      responses:
+        "201":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportList"
+        "400":
+          description: Invalid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /importlists/{id}:
+    delete:
+      operationId: deleteImportList
+      summary: Remove an import list source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Removed. }
+
+  /library/bulk:
+    post:
+      operationId: bulkEditLibrary
+      summary: Apply monitoring/profile changes to many items at once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  items: { type: integer, format: int64 }
+                monitored:
+                  type: boolean
+                qualityProfileId:
+                  type: integer
+                  format: int64
+      responses:
+        "200":
+          description: Applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [updated]
+                properties:
+                  updated:
+                    type: integer
+
+  /auth/login:
+    post:
+      operationId: login
+      summary: Session login for the UI (when auth is enabled)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        "204": { description: Session cookie set. }
+        "401":
+          description: Bad credentials.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Clear the session
+      responses:
+        "204": { description: Session cleared. }
+
   /notifiers:
     get:
       operationId: listNotifiers
@@ -1146,7 +1301,7 @@ components:
       type: object
       required: [type, name, url]
       properties:
-        type: { type: string, enum: [qbittorrent, sabnzbd] }
+        type: { type: string, enum: [qbittorrent, sabnzbd, transmission, deluge, nzbget] }
         name: { type: string }
         url: { type: string }
         username: { type: string }
@@ -1171,7 +1326,7 @@ components:
 
     ReleaseCandidate:
       type: object
-      required: [title, downloadUrl, indexer, protocol, size, seeders, age, quality, accepted, isUpgrade, rejections]
+      required: [title, downloadUrl, indexer, protocol, size, seeders, age, quality, score, accepted, isUpgrade, rejections]
       properties:
         title: { type: string }
         downloadUrl: { type: string }
@@ -1182,6 +1337,13 @@ components:
         seeders: { type: integer }
         age: { type: string }
         quality: { type: string }
+        score:
+          type: integer
+          description: Custom-format score sum (Phase 5).
+        formats:
+          type: array
+          items: { type: string }
+          description: Names of matched custom formats.
         accepted: { type: boolean }
         isUpgrade: { type: boolean }
         rejections:
@@ -1200,6 +1362,53 @@ components:
         indexer: { type: string }
         protocol: { type: string }
         size: { type: integer, format: int64 }
+
+    CustomFormatInput:
+      type: object
+      required: [name, pattern]
+      properties:
+        name: { type: string }
+        pattern:
+          type: string
+          description: Case-insensitive RE2 matched against release titles.
+        score:
+          type: integer
+          default: 0
+
+    CustomFormat:
+      allOf:
+        - $ref: "#/components/schemas/CustomFormatInput"
+        - type: object
+          required: [id]
+          properties:
+            id: { type: integer, format: int64 }
+
+    ImportListInput:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string }
+        type:
+          type: string
+          enum: [tmdb-popular, tmdb-top, trakt-list]
+        config:
+          type: object
+          additionalProperties: { type: string }
+          description: "trakt-list: {user, slug, clientId}."
+        kind:
+          $ref: "#/components/schemas/MediaKind"
+        rootFolderId: { type: integer, format: int64 }
+        qualityProfileId: { type: integer, format: int64 }
+        monitored: { type: boolean, default: true }
+        enabled: { type: boolean, default: true }
+
+    ImportList:
+      allOf:
+        - $ref: "#/components/schemas/ImportListInput"
+        - type: object
+          required: [id]
+          properties:
+            id: { type: integer, format: int64 }
 
     NotifierInput:
       type: object
@@ -1340,9 +1549,20 @@ components:
             Monarr's own API key — what consumers send as X-Api-Key to the
             /sonarr and /radarr personalities (and, once auth hardening is
             on, to /api/v1).
+        authRequired:
+          type: boolean
+          description: Whether /api/v1 requires authentication.
 
     SettingsUpdate:
       type: object
       properties:
         tmdbApiKey:
           type: string
+        authRequired:
+          type: boolean
+          description: Require API key or session for /api/v1 (Phase 5).
+        authUsername:
+          type: string
+        authPassword:
+          type: string
+          description: Stored salted-hashed; never returned.

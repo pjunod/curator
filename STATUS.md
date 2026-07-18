@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-18 · Phases 0 through 4 complete (74/75, stretch importer deferred) · next: Phase 5 — Depth & parity (0/7)**
+> **Snapshot 2026-07-18 · ALL PHASES COMPLETE (81/82 — only the stretch *arr DB importer deferred) · next: launch logistics (Paul-side) + real-world validation**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -18,7 +18,7 @@
 | 2.5 — Books (ADR 0006) | **7/7 ✅** | grab an ebook and an audiobook, correctly named |
 | 3 — Automation | **9/9 ✅** | runs unattended for a month |
 | 4 — Ecosystem compat | **5/6 ✅** (stretch deferred) | Jellyseerr/Prowlarr/Bazarr work against the shim |
-| 5 — Depth & parity | **0/7 ⟵ next** | custom formats, client zoo, lists, anime |
+| 5 — Depth & parity | **7/7 ✅** | custom formats, client zoo, lists, anime |
 | Launch logistics | 2/6 | public repo, releases, name housekeeping |
 
 ## Phase 0 — Walking skeleton ✅ (shipped 2026-07-17)
@@ -117,15 +117,15 @@
 - [x] Conformance harness: `test/conformance/` docker-compose vs real Jellyseerr + Prowlarr + Bazarr, plus an in-process fake-consumer suite replaying their exact call flows (Jellyseerr add flows, Prowlarr indexer sync incl. idempotent re-sync + PUT/DELETE, Bazarr enumeration) that runs in CI
 - [ ] (stretch) one-shot *arr DB importer — deferred post-1.0; filesystem adoption (ADR 0005) is the supported migration path
 
-## Phase 5 — Depth & parity tail
+## Phase 5 — Depth & parity tail ✅ (shipped 2026-07-18)
 
-- [ ] Custom-format scoring engine
-- [ ] More download clients (Transmission, Deluge, NZBGet, …)
-- [ ] Import lists (Trakt/TMDB)
-- [ ] Anime absolute numbering (TVDB/AniDB mapping tables)
-- [ ] Auth hardening: API key + session login for UI
-- [ ] Mass editor + richer season views
-- [ ] Optional Prometheus `/metrics`
+- [x] Custom-format scoring engine: regex rules with scores summed per release; breaks ties in search ranking and automation best-pick; API/UI CRUD, invalid patterns rejected up front, scores shown in interactive search
+- [x] More download clients: **Transmission** (RPC + 409 session handshake), **Deluge** (web JSON-RPC), **NZBGet** (JSON-RPC append-by-URL, usenet routing) — contract-tested, in the client factory + settings UI
+- [x] Import lists: TMDB Popular/Top Rated + public Trakt lists (per-list client id); `importlists.sync` (12 h) adds missing entries with list policy, duplicate-safe; API/UI CRUD
+- [x] Anime absolute numbering: `[Group] Show - 15` parsing (v2/ranges), absolute matching on episodes, cumulative absolute numbers derived at TMDB hydration (AniDB/TVDB mapping tables remain the refinement path); corpus 70/70
+- [x] Auth hardening: API key everywhere (X-Api-Key / ?apikey=), opt-in `authRequired` gate on /api/v1 with salted-hash credentials + session login (UI login page); refuses to enable without credentials; key revealed in Settings → Security
+- [x] Mass editor: select-mode on the Library page → bulk monitor/unmonitor/profile via `POST /library/bulk`
+- [x] Optional Prometheus `/metrics` (`MONARR_METRICS=true`): build info, items by kind, active queue, wanted total, uptime — hand-rolled exposition, no new dependency
 
 ## Launch logistics
 
@@ -150,7 +150,16 @@
 ## Milestone commits
 
 ```
-16fea93..HEAD     Phase 2 (8 commits): parser+corpus+fuzz · wantables/matcher/
+70d3ba9..HEAD     Phase 5 (2 commits): custom formats · transmission/deluge/
+                  nzbget · import lists · anime absolute · auth + sessions ·
+                  mass editor · /metrics
+1b8671b           Phase 4: /sonarr + /radarr v3 personalities, X-Api-Key,
+                  conformance harness + fake-consumer suite
+3037805..21662ec  Phase 3 (3 commits): wanted index · rss/backlog loops ·
+                  blocklist + auto re-search · calendar · notifiers · backups
+b661b2e..bde394d  Phase 2.5 (3 commits): book domain · Open Library adapter ·
+                  books API/UI/e2e (ADR 0006)
+16fea93..6b35b62  Phase 2 (8 commits): parser+corpus+fuzz · wantables/matcher/
                   decision · schema · torznab/qbit/sab adapters · services ·
                   API · UI · full-loop e2e (movie + season pack)
 192ba45..743bb93  Phase 1 (6 commits): schema+storage · TMDB port/adapter ·

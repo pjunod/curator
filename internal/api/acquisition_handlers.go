@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
 	"github.com/monarr-media/monarr/internal/app/acquisition"
+	"github.com/monarr-media/monarr/internal/domain/format"
+	"github.com/monarr-media/monarr/internal/infra/sqlite"
 	"github.com/monarr-media/monarr/internal/ports"
 )
 
@@ -242,8 +245,12 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 			Title: c.Release.Title, DownloadUrl: c.Release.DownloadURL,
 			Indexer: c.Release.Indexer, Protocol: c.Release.Protocol,
 			Size: c.Release.Size, Seeders: c.Release.Seeders, Age: c.Age,
-			Quality: c.QualityStr, Accepted: c.Accepted, IsUpgrade: c.IsUpgrade,
+			Quality: c.QualityStr, Score: c.Score, Accepted: c.Accepted, IsUpgrade: c.IsUpgrade,
 			Rejections: []apigen.Rejection{},
+		}
+		if len(c.Formats) > 0 {
+			fs := c.Formats
+			rc.Formats = &fs
 		}
 		if c.Release.InfoURL != "" {
 			u := c.Release.InfoURL
@@ -502,4 +509,149 @@ func (s *Server) ListBackups(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// ---- custom formats + import lists + bulk edit (Phase 5) ----
+
+// ListCustomFormats implements GET /customformats.
+func (s *Server) ListCustomFormats(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.deps.Store.ListCustomFormats(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := make([]apigen.CustomFormat, 0, len(rows))
+	for _, f := range rows {
+		score := f.Score
+		out = append(out, apigen.CustomFormat{Id: f.ID, Name: f.Name, Pattern: f.Pattern, Score: &score})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// AddCustomFormat implements POST /customformats.
+func (s *Server) AddCustomFormat(w http.ResponseWriter, r *http.Request) {
+	var body apigen.AddCustomFormatJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" || body.Pattern == "" {
+		writeError(w, http.StatusBadRequest, "name and pattern are required")
+		return
+	}
+	if _, err := regexp.Compile("(?i)" + body.Pattern); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid pattern: "+err.Error())
+		return
+	}
+	f := format.CustomFormat{Name: body.Name, Pattern: body.Pattern}
+	if body.Score != nil {
+		f.Score = *body.Score
+	}
+	id, err := s.deps.Store.AddCustomFormat(r.Context(), f)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	f.ID = id
+	score := f.Score
+	writeJSON(w, http.StatusCreated, apigen.CustomFormat{Id: f.ID, Name: f.Name, Pattern: f.Pattern, Score: &score})
+}
+
+// DeleteCustomFormat implements DELETE /customformats/{id}.
+func (s *Server) DeleteCustomFormat(w http.ResponseWriter, r *http.Request, id int64) {
+	if err := s.deps.Store.DeleteCustomFormat(r.Context(), id); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListImportLists implements GET /importlists.
+func (s *Server) ListImportLists(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.deps.Store.ListImportLists(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := make([]apigen.ImportList, 0, len(rows))
+	for _, l := range rows {
+		out = append(out, importListDTO(l))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func importListDTO(l sqlite.ImportList) apigen.ImportList {
+	cfg := l.Config
+	if cfg == nil {
+		cfg = map[string]string{}
+	}
+	kind := apigen.MediaKind(l.Kind)
+	return apigen.ImportList{
+		Id: l.ID, Name: l.Name, Type: apigen.ImportListType(l.Type),
+		Config: &cfg, Kind: &kind,
+		RootFolderId: &l.RootFolderID, QualityProfileId: &l.QualityProfileID,
+		Monitored: &l.Monitored, Enabled: &l.Enabled,
+	}
+}
+
+// AddImportList implements POST /importlists.
+func (s *Server) AddImportList(w http.ResponseWriter, r *http.Request) {
+	var body apigen.AddImportListJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+		writeError(w, http.StatusBadRequest, "name and type are required")
+		return
+	}
+	l := sqlite.ImportList{
+		Name: body.Name, Type: string(body.Type), Kind: "movie",
+		QualityProfileID: 1, Monitored: true, Enabled: true,
+	}
+	if body.Config != nil {
+		l.Config = *body.Config
+	}
+	if body.Kind != nil {
+		l.Kind = string(*body.Kind)
+	}
+	if body.RootFolderId != nil {
+		l.RootFolderID = *body.RootFolderId
+	}
+	if body.QualityProfileId != nil {
+		l.QualityProfileID = *body.QualityProfileId
+	}
+	if body.Monitored != nil {
+		l.Monitored = *body.Monitored
+	}
+	if body.Enabled != nil {
+		l.Enabled = *body.Enabled
+	}
+	id, err := s.deps.Store.AddImportList(r.Context(), l)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	l.ID = id
+	writeJSON(w, http.StatusCreated, importListDTO(l))
+}
+
+// DeleteImportList implements DELETE /importlists/{id}.
+func (s *Server) DeleteImportList(w http.ResponseWriter, r *http.Request, id int64) {
+	if err := s.deps.Store.DeleteImportList(r.Context(), id); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// BulkEditLibrary implements POST /library/bulk (the mass editor).
+func (s *Server) BulkEditLibrary(w http.ResponseWriter, r *http.Request) {
+	var body apigen.BulkEditLibraryJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Ids) == 0 {
+		writeError(w, http.StatusBadRequest, "ids required")
+		return
+	}
+	updated := 0
+	for _, id := range body.Ids {
+		if err := s.deps.Store.BulkUpdateItem(r.Context(), id, body.Monitored, body.QualityProfileId); err == nil {
+			updated++
+		}
+	}
+	if s.deps.Acquisition != nil {
+		s.deps.Acquisition.InvalidateWanted()
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"updated": updated})
 }

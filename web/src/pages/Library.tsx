@@ -2,7 +2,10 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import type { MediaKind } from '../api'
-import { getLibrary, getScanReport, getSettings, posterUrl, triggerScan } from '../api'
+import {
+  bulkEditLibrary, getLibrary, getProfiles, getScanReport, getSettings,
+  posterUrl, triggerScan,
+} from '../api'
 
 const KIND_TABS: { label: string; kind?: MediaKind }[] = [
   { label: 'All' },
@@ -35,6 +38,27 @@ export function LibraryPage() {
     },
   })
 
+  // Mass editor (Phase 5): select items, apply monitoring/profile at once.
+  const [editing, setEditing] = useState(false)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [bulkProfile, setBulkProfile] = useState<number | ''>('')
+  const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles, enabled: editing })
+  const bulk = useMutation({
+    mutationFn: (patch: { monitored?: boolean; qualityProfileId?: number }) =>
+      bulkEditLibrary({ ids: [...selected], ...patch }),
+    onSuccess: () => {
+      setSelected(new Set())
+      setEditing(false)
+      void qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+  const toggle = (id: number) => {
+    const next = new Set(selected)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelected(next)
+  }
+
   const unmatched = report.data?.unmatchedDirs ?? []
 
   return (
@@ -58,11 +82,38 @@ export function LibraryPage() {
           <button onClick={() => scan.mutate()} disabled={scan.isPending}>
             Scan disk
           </button>
+          <button onClick={() => { setEditing(!editing); setSelected(new Set()) }}>
+            {editing ? 'Done' : 'Edit'}
+          </button>
           <Link to="/add" className="btn-accent">
             + Add media
           </Link>
         </div>
       </header>
+
+      {editing && (
+        <div className="banner">
+          <strong>{selected.size}</strong> selected ·{' '}
+          <button disabled={selected.size === 0 || bulk.isPending} onClick={() => bulk.mutate({ monitored: true })}>
+            Monitor
+          </button>{' '}
+          <button disabled={selected.size === 0 || bulk.isPending} onClick={() => bulk.mutate({ monitored: false })}>
+            Unmonitor
+          </button>{' '}
+          <select value={bulkProfile} onChange={(e) => setBulkProfile(e.target.value ? Number(e.target.value) : '')}>
+            <option value="">(profile…)</option>
+            {profiles.data?.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>{' '}
+          <button
+            disabled={selected.size === 0 || bulkProfile === '' || bulk.isPending}
+            onClick={() => bulk.mutate({ qualityProfileId: Number(bulkProfile) })}
+          >
+            Apply profile
+          </button>
+        </div>
+      )}
 
       {settings.data && !settings.data.tmdbApiKeyConfigured && (
         <div className="banner warning">
@@ -102,23 +153,49 @@ export function LibraryPage() {
       )}
 
       <div className="poster-grid">
-        {items.data?.map((m) => (
-          <Link key={m.id} to="/library/$id" params={{ id: String(m.id) }} className="poster-card">
-            {m.posterPath ? (
-              <img src={posterUrl(m.posterPath)} alt="" loading="lazy" />
-            ) : (
-              <div className="poster-fallback">{m.title.slice(0, 1)}</div>
-            )}
-            <div className="poster-meta">
-              <div className="poster-title" title={m.title}>
-                {m.title}
+        {items.data?.map((m) =>
+          editing ? (
+            <button
+              key={m.id}
+              className="poster-card"
+              style={{
+                textAlign: 'inherit', cursor: 'pointer',
+                outline: selected.has(m.id) ? '2px solid var(--accent, #7c5cff)' : 'none',
+              }}
+              aria-pressed={selected.has(m.id)}
+              onClick={() => toggle(m.id)}
+            >
+              {m.posterPath ? (
+                <img src={posterUrl(m.posterPath)} alt="" loading="lazy" />
+              ) : (
+                <div className="poster-fallback">{m.title.slice(0, 1)}</div>
+              )}
+              <div className="poster-meta">
+                <div className="poster-title" title={m.title}>
+                  {selected.has(m.id) ? '☑ ' : '☐ '}
+                  {m.title}
+                </div>
+                <div className="muted">{m.monitored ? 'monitored' : 'unmonitored'}</div>
               </div>
-              <div className="muted">
-                {m.kind === 'book' && m.author ? m.author : `${m.year || '—'} · ${m.kind}`}
+            </button>
+          ) : (
+            <Link key={m.id} to="/library/$id" params={{ id: String(m.id) }} className="poster-card">
+              {m.posterPath ? (
+                <img src={posterUrl(m.posterPath)} alt="" loading="lazy" />
+              ) : (
+                <div className="poster-fallback">{m.title.slice(0, 1)}</div>
+              )}
+              <div className="poster-meta">
+                <div className="poster-title" title={m.title}>
+                  {m.title}
+                </div>
+                <div className="muted">
+                  {m.kind === 'book' && m.author ? m.author : `${m.year || '—'} · ${m.kind}`}
+                </div>
               </div>
-            </div>
-          </Link>
-        ))}
+            </Link>
+          ),
+        )}
       </div>
     </>
   )

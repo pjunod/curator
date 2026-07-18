@@ -154,6 +154,8 @@ export interface ScanReport {
 export interface Settings {
   tmdbApiKeyConfigured: boolean
   tmdbApiKeyHint: string
+  apiKey?: string
+  authRequired?: boolean
 }
 
 async function parseError(res: Response, fallback: string): Promise<never> {
@@ -196,7 +198,12 @@ export const getRootFolders = () => get<RootFolder[]>('/rootfolders')
 export const addRootFolder = (path: string) => send<RootFolder>('POST', '/rootfolders', { path })
 export const deleteRootFolder = (id: number) => send('DELETE', `/rootfolders/${id}`)
 export const getSettings = () => get<Settings>('/settings')
-export const updateSettings = (patch: { tmdbApiKey?: string }) => send('PUT', '/settings', patch)
+export const updateSettings = (patch: {
+  tmdbApiKey?: string
+  authRequired?: boolean
+  authUsername?: string
+  authPassword?: string
+}) => send('PUT', '/settings', patch)
 export const triggerScan = () => send('POST', '/library/scan')
 export const getScanReport = async (): Promise<ScanReport | null> => {
   const res = await fetch('/api/v1/library/scan/report')
@@ -229,7 +236,7 @@ export interface Indexer extends IndexerInput {
 }
 
 export interface DownloadClientInput {
-  type: 'qbittorrent' | 'sabnzbd'
+  type: 'qbittorrent' | 'sabnzbd' | 'transmission' | 'deluge' | 'nzbget'
   name: string
   url: string
   username?: string
@@ -257,6 +264,8 @@ export interface ReleaseCandidate {
   seeders: number
   age: string
   quality: string
+  score: number
+  formats?: string[]
   accepted: boolean
   isUpgrade: boolean
   rejections: Rejection[]
@@ -436,3 +445,41 @@ export const addNotifier = (n: NotifierInput) => send<Notifier>('POST', '/notifi
 export const testNotifier = (n: NotifierInput) => send('POST', '/notifiers/test', n)
 export const deleteNotifier = (id: number) => send('DELETE', `/notifiers/${id}`)
 export const getBackups = () => get<BackupInfo[]>('/system/backups')
+
+// ---- Phase 5: depth ----
+
+export interface CustomFormat {
+  id: number
+  name: string
+  pattern: string
+  score?: number
+}
+
+export interface ImportList {
+  id: number
+  name: string
+  type: 'tmdb-popular' | 'tmdb-top' | 'trakt-list'
+  config?: Record<string, string>
+  kind?: MediaKind
+  rootFolderId?: number
+  qualityProfileId?: number
+  monitored?: boolean
+  enabled?: boolean
+}
+
+export const getCustomFormats = () => get<CustomFormat[]>('/customformats')
+export const addCustomFormat = (f: Omit<CustomFormat, 'id'>) =>
+  send<CustomFormat>('POST', '/customformats', f)
+export const deleteCustomFormat = (id: number) => send('DELETE', `/customformats/${id}`)
+export const getImportLists = () => get<ImportList[]>('/importlists')
+export const addImportList = (l: Omit<ImportList, 'id'>) =>
+  send<ImportList>('POST', '/importlists', l)
+export const deleteImportList = (id: number) => send('DELETE', `/importlists/${id}`)
+export const bulkEditLibrary = (req: {
+  ids: number[]
+  monitored?: boolean
+  qualityProfileId?: number
+}) => send<{ updated: number }>('POST', '/library/bulk', req)
+export const login = (username: string, password: string) =>
+  send('POST', '/auth/login', { username, password })
+export const logout = () => send('POST', '/auth/logout')

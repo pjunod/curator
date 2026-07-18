@@ -331,6 +331,8 @@ func (s *Server) GetSettings(w http.ResponseWriter, r *http.Request) {
 	if apiKey := s.readSetting(r.Context(), APIKeySetting); apiKey != "" {
 		out.ApiKey = &apiKey
 	}
+	authOn := s.authRequired(r.Context())
+	out.AuthRequired = &authOn
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -346,6 +348,10 @@ func (s *Server) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+	}
+	if err := s.applyAuthSettings(r.Context(), body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

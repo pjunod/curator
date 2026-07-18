@@ -88,7 +88,8 @@ func (s *Server) Handler() http.Handler {
 			writeError(w, http.StatusBadRequest, err.Error())
 		},
 	})
-	mux.Handle("/api/v1/", apiHandler)
+	mux.Handle("/api/v1/", s.authGuard(apiHandler))
+	mux.Handle("/metrics", s.metricsHandler())
 	if s.deps.CompatSonarr != nil {
 		mux.Handle("/sonarr/", http.StripPrefix("/sonarr", s.deps.CompatSonarr))
 	}

@@ -15,6 +15,7 @@ import { MediaDetailPage } from './pages/MediaDetail'
 import { SettingsPage } from './pages/Settings'
 import { ActivityPage } from './pages/Activity'
 import { CalendarPage } from './pages/Calendar'
+import { LoginPage } from './pages/Login'
 import type { MediaKind } from './api'
 import { getHealth, getStatus } from './api'
 
@@ -100,6 +101,12 @@ const addRoute = createRoute({
   }),
 })
 
+const loginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/login',
+  component: LoginPage,
+})
+
 const calendarRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/calendar',
@@ -129,6 +136,7 @@ const routeTree = rootRoute.addChildren([
   dashboardRoute,
   mediaDetailRoute,
   addRoute,
+  loginRoute,
   calendarRoute,
   activityRoute,
   systemRoute,
