@@ -25,6 +25,39 @@ func IsVideo(path string) bool {
 	return VideoExtensions[strings.ToLower(filepath.Ext(path))]
 }
 
+// BookExtensions are the file extensions treated as book media (ADR 0006):
+// ebooks plus audiobook containers.
+var BookExtensions = map[string]bool{
+	".epub": true, ".azw3": true, ".azw": true, ".mobi": true, ".pdf": true,
+	".m4b": true, ".mp3": true,
+}
+
+// IsBook reports whether path has a known book extension.
+func IsBook(path string) bool {
+	return BookExtensions[strings.ToLower(filepath.Ext(path))]
+}
+
+// BookQualitySource maps a book file extension to its quality-model source
+// name ("" when not a book extension). Lives here so the scanner and
+// importer grade book files identically.
+func BookQualitySource(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".epub":
+		return "epub"
+	case ".azw3", ".azw":
+		return "azw3"
+	case ".mobi":
+		return "mobi"
+	case ".pdf":
+		return "pdf"
+	case ".m4b":
+		return "m4b"
+	case ".mp3":
+		return "mp3"
+	}
+	return ""
+}
+
 // Episodes is the result of extraction: one season, one or more episodes.
 type Episodes struct {
 	Season   int

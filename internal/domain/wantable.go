@@ -134,11 +134,45 @@ func (s SeasonWantable) CurrentQuality() (quality.Quality, bool) {
 	return *worst, true
 }
 
+// BookWantable is one book (ADR 0006): like a movie, one item and one file,
+// but matched by author+title and graded on format instead of resolution.
+type BookWantable struct {
+	Item    int64
+	Profile int64
+	Mon     bool
+	Have    *quality.Quality
+	Title   string
+	Author  string
+	Year    int
+}
+
+// ID implements Wantable.
+func (b BookWantable) ID() WantableID { return WantableID(fmt.Sprintf("book:%d", b.Item)) }
+
+// MediaItemID implements Wantable.
+func (b BookWantable) MediaItemID() int64 { return b.Item }
+
+// ProfileID implements Wantable.
+func (b BookWantable) ProfileID() int64 { return b.Profile }
+
+// Monitored implements Wantable.
+func (b BookWantable) Monitored() bool { return b.Mon }
+
+// CurrentQuality implements Wantable.
+func (b BookWantable) CurrentQuality() (quality.Quality, bool) {
+	if b.Have == nil {
+		return quality.Quality{}, false
+	}
+	return *b.Have, true
+}
+
 // SearchQuery is what a planner emits for indexers (blueprint §4.1).
 type SearchQuery struct {
 	Q       string
 	Season  int // 0 = unset
 	Episode int // 0 = unset
+	// Kind steers indexer category selection (books → Torznab 7000s/3030).
+	Kind MediaKind
 }
 
 // PlanSearch builds the indexer queries for a wantable — one of exactly two
@@ -150,17 +184,26 @@ func PlanSearch(w Wantable) []SearchQuery {
 		if t.Year > 0 {
 			q = fmt.Sprintf("%s %d", t.Title, t.Year)
 		}
-		return []SearchQuery{{Q: q}}
+		return []SearchQuery{{Q: q, Kind: KindMovie}}
 	case EpisodeWantable:
 		return []SearchQuery{{
 			Q:      fmt.Sprintf("%s S%02dE%02d", t.Title, t.Season, t.Episode),
-			Season: t.Season, Episode: t.Episode,
+			Season: t.Season, Episode: t.Episode, Kind: KindSeries,
 		}}
 	case SeasonWantable:
 		return []SearchQuery{{
 			Q:      fmt.Sprintf("%s S%02d", t.Title, t.Season),
-			Season: t.Season,
+			Season: t.Season, Kind: KindSeries,
 		}}
+	case BookWantable:
+		if t.Author == "" {
+			return []SearchQuery{{Q: t.Title, Kind: KindBook}}
+		}
+		// Author+title is the discriminating query; title-only casts wider.
+		return []SearchQuery{
+			{Q: fmt.Sprintf("%s %s", t.Author, t.Title), Kind: KindBook},
+			{Q: t.Title, Kind: KindBook},
+		}
 	default:
 		return nil
 	}

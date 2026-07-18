@@ -1,10 +1,10 @@
 -- name: InsertMediaItem :one
 INSERT INTO media_items (
-    kind, title, sort_title, year,
+    kind, title, sort_title, year, author,
     tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin,
     overview, poster_path, backdrop_path, genres, status, release_date, runtime,
-    monitored, root_folder_id, path, ended, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    monitored, quality_profile_id, root_folder_id, path, ended, added_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: GetMediaItem :one
@@ -12,6 +12,9 @@ SELECT * FROM media_items WHERE id = ?;
 
 -- name: GetMediaItemByKindTmdb :one
 SELECT * FROM media_items WHERE kind = ? AND tmdb_id = ?;
+
+-- name: GetMediaItemByKindOlid :one
+SELECT * FROM media_items WHERE kind = ? AND olid = ?;
 
 -- name: ListMediaItems :many
 SELECT * FROM media_items ORDER BY sort_title, year;

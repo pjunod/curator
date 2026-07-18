@@ -43,6 +43,7 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		Title:     r.Title,
 		SortTitle: r.SortTitle,
 		Year:      int(r.Year),
+		Author:    r.Author,
 		IDs: domain.ExternalIDs{
 			TMDB: r.TmdbID, IMDB: r.ImdbID, TVDB: r.TvdbID,
 			ISBN13: r.Isbn13, OLID: r.Olid, ASIN: r.Asin,
@@ -72,29 +73,35 @@ func insertParams(m domain.MediaItem, now time.Time) sqlitegen.InsertMediaItemPa
 	if m.Genres == nil {
 		genres = []byte("[]")
 	}
+	profileID := m.QualityProfileID
+	if profileID == 0 {
+		profileID = 1
+	}
 	p := sqlitegen.InsertMediaItemParams{
-		Kind:         string(m.Kind),
-		Title:        m.Title,
-		SortTitle:    m.SortTitle,
-		Year:         int64(m.Year),
-		TmdbID:       m.IDs.TMDB,
-		ImdbID:       m.IDs.IMDB,
-		TvdbID:       m.IDs.TVDB,
-		Isbn13:       m.IDs.ISBN13,
-		Olid:         m.IDs.OLID,
-		Asin:         m.IDs.ASIN,
-		Overview:     m.Overview,
-		PosterPath:   m.PosterPath,
-		BackdropPath: m.BackdropPath,
-		Genres:       string(genres),
-		Status:       m.Status,
-		ReleaseDate:  m.ReleaseDate,
-		Runtime:      int64(m.Runtime),
-		Monitored:    boolInt(m.Monitored),
-		Path:         m.Path,
-		Ended:        boolInt(m.Ended),
-		AddedAt:      now.UnixMilli(),
-		UpdatedAt:    now.UnixMilli(),
+		Kind:             string(m.Kind),
+		Title:            m.Title,
+		SortTitle:        m.SortTitle,
+		Year:             int64(m.Year),
+		Author:           m.Author,
+		QualityProfileID: profileID,
+		TmdbID:           m.IDs.TMDB,
+		ImdbID:           m.IDs.IMDB,
+		TvdbID:           m.IDs.TVDB,
+		Isbn13:           m.IDs.ISBN13,
+		Olid:             m.IDs.OLID,
+		Asin:             m.IDs.ASIN,
+		Overview:         m.Overview,
+		PosterPath:       m.PosterPath,
+		BackdropPath:     m.BackdropPath,
+		Genres:           string(genres),
+		Status:           m.Status,
+		ReleaseDate:      m.ReleaseDate,
+		Runtime:          int64(m.Runtime),
+		Monitored:        boolInt(m.Monitored),
+		Path:             m.Path,
+		Ended:            boolInt(m.Ended),
+		AddedAt:          now.UnixMilli(),
+		UpdatedAt:        now.UnixMilli(),
 	}
 	if m.RootFolderID != 0 {
 		p.RootFolderID = sql.NullInt64{Int64: m.RootFolderID, Valid: true}
@@ -216,6 +223,17 @@ func (d *DB) GetMediaItemFull(ctx context.Context, id int64) (domain.MediaItem, 
 func (d *DB) GetMediaItemByKindTmdb(ctx context.Context, kind domain.MediaKind, tmdbID int64) (int64, error) {
 	row, err := d.Read.GetMediaItemByKindTmdb(ctx, sqlitegen.GetMediaItemByKindTmdbParams{
 		Kind: string(kind), TmdbID: tmdbID,
+	})
+	if err != nil {
+		return 0, wrapNotFound(err)
+	}
+	return row.ID, nil
+}
+
+// GetMediaItemByKindOlid returns the item id for (kind, olid) or ErrNotFound.
+func (d *DB) GetMediaItemByKindOlid(ctx context.Context, kind domain.MediaKind, olid string) (int64, error) {
+	row, err := d.Read.GetMediaItemByKindOlid(ctx, sqlitegen.GetMediaItemByKindOlidParams{
+		Kind: string(kind), Olid: olid,
 	})
 	if err != nil {
 		return 0, wrapNotFound(err)

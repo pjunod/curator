@@ -5,6 +5,7 @@ package naming
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -59,7 +60,31 @@ const (
 	EpisodeFileTemplate = "{Series Title} - S{season:00}E{episode:00} - {Episode Title} [{Quality Full}]"
 	// SeasonFolderTemplate → "Season 1"
 	SeasonFolderTemplate = "Season {season}"
+	// BookFileTemplate → "Project Hail Mary - Andy Weir" (Calibre-style)
+	BookFileTemplate = "{Book Title} - {Author Name}"
 )
+
+// BookFolder renders the Calibre-friendly library location for a book:
+// "Author Name/Book Title" (ADR 0006). Both segments are sanitized
+// independently; an unknown author lands under "Unknown Author".
+func BookFolder(author, title string) string {
+	a := FolderName(author, 0)
+	if author == "" {
+		a = "Unknown Author"
+	}
+	return a + string(os.PathSeparator) + FolderName(title, 0)
+}
+
+// BookFileName renders the default book file base name (no extension):
+// "Book Title - Author Name", degrading to the bare title with no author.
+func BookFileName(author, title string) string {
+	if author == "" {
+		return SafeFileName(title)
+	}
+	return SafeFileName(Render(BookFileTemplate, map[string]string{
+		"Book Title": title, "Author Name": author,
+	}))
+}
 
 // SafeFileName strips characters that break filesystems, preserving more
 // punctuation than FolderName (files keep brackets).

@@ -27,6 +27,7 @@ type corpusCase struct {
 		Proper     bool   `json:"proper"`
 		Repack     bool   `json:"repack"`
 		Group      string `json:"group"`
+		Author     string `json:"author"`
 	} `json:"expect"`
 }
 
@@ -84,6 +85,9 @@ func TestGoldenCorpus(t *testing.T) {
 			}
 			if got.Repack != exp.Repack {
 				errs = append(errs, fmt.Sprintf("repack %v != %v", got.Repack, exp.Repack))
+			}
+			if exp.Author != "" && got.Author != exp.Author {
+				errs = append(errs, fmt.Sprintf("author %q != %q", got.Author, exp.Author))
 			}
 			if exp.Group != "" && got.Group != exp.Group {
 				errs = append(errs, fmt.Sprintf("group %q != %q", got.Group, exp.Group))

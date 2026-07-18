@@ -74,7 +74,7 @@ func (q *Queries) GetEpisodeByNumber(ctx context.Context, arg GetEpisodeByNumber
 }
 
 const getMediaItem = `-- name: GetMediaItem :one
-SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id FROM media_items WHERE id = ?
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author FROM media_items WHERE id = ?
 `
 
 func (q *Queries) GetMediaItem(ctx context.Context, id int64) (MediaItem, error) {
@@ -106,12 +106,56 @@ func (q *Queries) GetMediaItem(ctx context.Context, id int64) (MediaItem, error)
 		&i.AddedAt,
 		&i.UpdatedAt,
 		&i.QualityProfileID,
+		&i.Author,
+	)
+	return i, err
+}
+
+const getMediaItemByKindOlid = `-- name: GetMediaItemByKindOlid :one
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author FROM media_items WHERE kind = ? AND olid = ?
+`
+
+type GetMediaItemByKindOlidParams struct {
+	Kind string
+	Olid string
+}
+
+func (q *Queries) GetMediaItemByKindOlid(ctx context.Context, arg GetMediaItemByKindOlidParams) (MediaItem, error) {
+	row := q.db.QueryRowContext(ctx, getMediaItemByKindOlid, arg.Kind, arg.Olid)
+	var i MediaItem
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Title,
+		&i.SortTitle,
+		&i.Year,
+		&i.TmdbID,
+		&i.ImdbID,
+		&i.TvdbID,
+		&i.Isbn13,
+		&i.Olid,
+		&i.Asin,
+		&i.Overview,
+		&i.PosterPath,
+		&i.BackdropPath,
+		&i.Genres,
+		&i.Status,
+		&i.ReleaseDate,
+		&i.Runtime,
+		&i.Monitored,
+		&i.RootFolderID,
+		&i.Path,
+		&i.Ended,
+		&i.AddedAt,
+		&i.UpdatedAt,
+		&i.QualityProfileID,
+		&i.Author,
 	)
 	return i, err
 }
 
 const getMediaItemByKindTmdb = `-- name: GetMediaItemByKindTmdb :one
-SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id FROM media_items WHERE kind = ? AND tmdb_id = ?
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author FROM media_items WHERE kind = ? AND tmdb_id = ?
 `
 
 type GetMediaItemByKindTmdbParams struct {
@@ -148,6 +192,7 @@ func (q *Queries) GetMediaItemByKindTmdb(ctx context.Context, arg GetMediaItemBy
 		&i.AddedAt,
 		&i.UpdatedAt,
 		&i.QualityProfileID,
+		&i.Author,
 	)
 	return i, err
 }
@@ -198,38 +243,40 @@ func (q *Queries) InsertEpisode(ctx context.Context, arg InsertEpisodeParams) (i
 
 const insertMediaItem = `-- name: InsertMediaItem :one
 INSERT INTO media_items (
-    kind, title, sort_title, year,
+    kind, title, sort_title, year, author,
     tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin,
     overview, poster_path, backdrop_path, genres, status, release_date, runtime,
-    monitored, root_folder_id, path, ended, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    monitored, quality_profile_id, root_folder_id, path, ended, added_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id
 `
 
 type InsertMediaItemParams struct {
-	Kind         string
-	Title        string
-	SortTitle    string
-	Year         int64
-	TmdbID       int64
-	ImdbID       string
-	TvdbID       int64
-	Isbn13       string
-	Olid         string
-	Asin         string
-	Overview     string
-	PosterPath   string
-	BackdropPath string
-	Genres       string
-	Status       string
-	ReleaseDate  string
-	Runtime      int64
-	Monitored    int64
-	RootFolderID sql.NullInt64
-	Path         string
-	Ended        int64
-	AddedAt      int64
-	UpdatedAt    int64
+	Kind             string
+	Title            string
+	SortTitle        string
+	Year             int64
+	Author           string
+	TmdbID           int64
+	ImdbID           string
+	TvdbID           int64
+	Isbn13           string
+	Olid             string
+	Asin             string
+	Overview         string
+	PosterPath       string
+	BackdropPath     string
+	Genres           string
+	Status           string
+	ReleaseDate      string
+	Runtime          int64
+	Monitored        int64
+	QualityProfileID int64
+	RootFolderID     sql.NullInt64
+	Path             string
+	Ended            int64
+	AddedAt          int64
+	UpdatedAt        int64
 }
 
 func (q *Queries) InsertMediaItem(ctx context.Context, arg InsertMediaItemParams) (int64, error) {
@@ -238,6 +285,7 @@ func (q *Queries) InsertMediaItem(ctx context.Context, arg InsertMediaItemParams
 		arg.Title,
 		arg.SortTitle,
 		arg.Year,
+		arg.Author,
 		arg.TmdbID,
 		arg.ImdbID,
 		arg.TvdbID,
@@ -252,6 +300,7 @@ func (q *Queries) InsertMediaItem(ctx context.Context, arg InsertMediaItemParams
 		arg.ReleaseDate,
 		arg.Runtime,
 		arg.Monitored,
+		arg.QualityProfileID,
 		arg.RootFolderID,
 		arg.Path,
 		arg.Ended,
@@ -450,7 +499,7 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.Nul
 }
 
 const listMediaItems = `-- name: ListMediaItems :many
-SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id FROM media_items ORDER BY sort_title, year
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author FROM media_items ORDER BY sort_title, year
 `
 
 func (q *Queries) ListMediaItems(ctx context.Context) ([]MediaItem, error) {
@@ -488,6 +537,7 @@ func (q *Queries) ListMediaItems(ctx context.Context) ([]MediaItem, error) {
 			&i.AddedAt,
 			&i.UpdatedAt,
 			&i.QualityProfileID,
+			&i.Author,
 		); err != nil {
 			return nil, err
 		}
@@ -503,7 +553,7 @@ func (q *Queries) ListMediaItems(ctx context.Context) ([]MediaItem, error) {
 }
 
 const listMediaItemsByKind = `-- name: ListMediaItemsByKind :many
-SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id FROM media_items WHERE kind = ? ORDER BY sort_title, year
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author FROM media_items WHERE kind = ? ORDER BY sort_title, year
 `
 
 func (q *Queries) ListMediaItemsByKind(ctx context.Context, kind string) ([]MediaItem, error) {
@@ -541,6 +591,7 @@ func (q *Queries) ListMediaItemsByKind(ctx context.Context, kind string) ([]Medi
 			&i.AddedAt,
 			&i.UpdatedAt,
 			&i.QualityProfileID,
+			&i.Author,
 		); err != nil {
 			return nil, err
 		}

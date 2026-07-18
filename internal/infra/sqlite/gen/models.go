@@ -116,6 +116,7 @@ type MediaItem struct {
 	AddedAt          int64
 	UpdatedAt        int64
 	QualityProfileID int64
+	Author           string
 }
 
 type QualityProfile struct {

@@ -162,3 +162,59 @@ func TestPlannerAndRenamer(t *testing.T) {
 		t.Errorf("empty-token render = %q", got)
 	}
 }
+
+func TestBookMatching(t *testing.T) {
+	book := domain.BookWantable{
+		Item: 9, Profile: 4, Mon: true,
+		Title: "Project Hail Mary", Author: "Andy Weir", Year: 2021,
+	}
+	cands := []domain.Wantable{book}
+
+	for _, release := range []string{
+		"Andy Weir - Project Hail Mary (2021) EPUB",      // author-first dash
+		"Project Hail Mary - Andy Weir 2021 EPUB",        // swapped dash order
+		"Project Hail Mary by Andy Weir [AZW3]",          // "by" form
+		"Andy Weir - Project Hail Mary (Unabridged) M4B", // audiobook noise
+	} {
+		if got := Match(parser.Parse(release), cands); len(got) != 1 {
+			t.Errorf("%q: matches = %d, want 1", release, len(got))
+		}
+	}
+
+	for _, release := range []string{
+		"Andy Weir - Artemis (2017) EPUB",          // wrong book, right author
+		"John Scalzi - Project Hail Mary EPUB",     // right title, wrong author
+		"Project.Hail.Mary.2024.1080p.WEB-DL.x264", // the MOVIE, not the book
+	} {
+		if got := Match(parser.Parse(release), cands); len(got) != 0 {
+			t.Errorf("%q: matched but should not", release)
+		}
+	}
+
+	// Title-only wantable (no author known) still matches on title.
+	loose := domain.BookWantable{Item: 10, Title: "Dune"}
+	if got := Match(parser.Parse("Frank Herbert - Dune M4B"), []domain.Wantable{loose}); len(got) != 1 {
+		t.Errorf("title-only book match failed")
+	}
+}
+
+func TestBookPlannerAndNaming(t *testing.T) {
+	book := domain.BookWantable{Item: 9, Title: "Project Hail Mary", Author: "Andy Weir"}
+	qs := domain.PlanSearch(book)
+	if len(qs) != 2 || qs[0].Q != "Andy Weir Project Hail Mary" || qs[0].Kind != domain.KindBook {
+		t.Errorf("book plan = %+v", qs)
+	}
+	if qs[1].Q != "Project Hail Mary" {
+		t.Errorf("book fallback query = %+v", qs[1])
+	}
+
+	if got := naming.BookFolder("Andy Weir", "Project Hail Mary"); got != "Andy Weir/Project Hail Mary" {
+		t.Errorf("BookFolder = %q", got)
+	}
+	if got := naming.BookFileName("Andy Weir", "Project Hail Mary"); got != "Project Hail Mary - Andy Weir" {
+		t.Errorf("BookFileName = %q", got)
+	}
+	if got := naming.BookFileName("", "Standalone"); got != "Standalone" {
+		t.Errorf("authorless BookFileName = %q", got)
+	}
+}

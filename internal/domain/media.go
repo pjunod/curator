@@ -57,6 +57,7 @@ type MediaItem struct {
 	Title     string
 	SortTitle string
 	Year      int
+	Author    string // books only (ADR 0006); "" for movies/series
 	IDs       ExternalIDs
 
 	// Metadata cache (hydrated from the provider).

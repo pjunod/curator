@@ -82,7 +82,48 @@ func Match(p parser.Parsed, candidates []domain.Wantable) []Result {
 			if p.SeasonPack && p.Season == t.Season && TitleMatches(p, t.Title, 0) {
 				out = append(out, Result{Wantable: w, FullSeason: true})
 			}
+		case domain.BookWantable:
+			if len(p.Episodes) == 0 && !p.SeasonPack && p.Daily == "" &&
+				bookMatches(p, t.Title, t.Author) {
+				out = append(out, Result{Wantable: w})
+			}
 		}
 	}
 	return out
+}
+
+// bookMatches pairs a parsed book release with a book wantable. Book naming
+// is looser than scene video naming, so matching is containment-based:
+// the book's title must appear in the parsed title (or, when the parser's
+// "Author - Title" order assumption was wrong, in the parsed author), and
+// every token of the book's author name must appear somewhere in the blob.
+// Years are ignored — editions republish freely.
+func bookMatches(p parser.Parsed, title, author string) bool {
+	nt := NormalizeTitle(title)
+	if nt == "" {
+		return false
+	}
+	pt, pa := NormalizeTitle(p.Title), NormalizeTitle(p.Author)
+	titleIn, swapped := containsPhrase(pt, nt), containsPhrase(pa, nt)
+	if !titleIn && !swapped {
+		return false
+	}
+	if author == "" {
+		return true
+	}
+	blob := pt + " " + pa
+	for _, tok := range strings.Fields(NormalizeTitle(author)) {
+		if !containsPhrase(blob, tok) {
+			return false
+		}
+	}
+	return true
+}
+
+// containsPhrase reports whether phrase appears in s on word boundaries.
+func containsPhrase(s, phrase string) bool {
+	if s == phrase {
+		return true
+	}
+	return strings.Contains(" "+s+" ", " "+phrase+" ")
 }

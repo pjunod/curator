@@ -22,11 +22,14 @@ type Parsed struct {
 	// Complete") — one download satisfying many episode wantables.
 	SeasonPack bool
 	Daily      string // "2024-01-15" for date-based releases
-	Quality    quality.Quality
-	Proper     bool
-	Repack     bool
-	Codec      string
-	Group      string
+	// Author is set for book-format releases (ADR 0006) when the name
+	// carries one ("Author - Title ... EPUB", "Title by Author ... M4B").
+	Author  string
+	Quality quality.Quality
+	Proper  bool
+	Repack  bool
+	Codec   string
+	Group   string
 }
 
 var (
@@ -47,11 +50,19 @@ var (
 	reMultiSpace    = regexp.MustCompile(`\s{2,}`)
 )
 
-// sourcePatterns are matched in order; first hit wins.
+// sourcePatterns are matched in order; first hit wins. Book formats come
+// first: their tokens are unambiguous, while a book release like
+// "Author - Title (Retail) EPUB" must not fall through to video sources.
 var sourcePatterns = []struct {
 	re  *regexp.Regexp
 	src quality.Source
 }{
+	{regexp.MustCompile(`(?i)\bEPUB\b`), quality.SourceEPUB},
+	{regexp.MustCompile(`(?i)\bAZW3?\b`), quality.SourceAZW3},
+	{regexp.MustCompile(`(?i)\bMOBI\b`), quality.SourceMOBI},
+	{regexp.MustCompile(`(?i)\bPDF\b`), quality.SourcePDF},
+	{regexp.MustCompile(`(?i)\bM4B\b`), quality.SourceM4B},
+	{regexp.MustCompile(`(?i)\bMP3\b`), quality.SourceMP3},
 	{regexp.MustCompile(`(?i)\bREMUX\b`), quality.SourceRemux},
 	{regexp.MustCompile(`(?i)\b(?:Blu[- .]?Ray|BDRip|BRRip|BD)\b`), quality.SourceBluray},
 	{regexp.MustCompile(`(?i)\bWEB[- .]?DL\b`), quality.SourceWEBDL},
@@ -192,7 +203,30 @@ func Parse(release string) Parsed {
 	}
 
 	p.Title = cleanTitle(s[:titleEnd])
+
+	// Book-format releases (ADR 0006): the blob usually carries an author —
+	// "Author - Title" or "Title by Author". Books have no season structure;
+	// anything the video patterns claimed above is noise.
+	if quality.IsBookFormat(p.Quality.Source) {
+		p.Season, p.Episodes, p.SeasonPack, p.Daily = -1, nil, false, ""
+		p.Author, p.Title = splitBookTitle(p.Title)
+	}
 	return p
+}
+
+// splitBookTitle separates author from title in a book release blob.
+// Dash order is assumed "Author - Title" (the dominant convention); the
+// matcher tolerates the swapped order.
+func splitBookTitle(blob string) (author, title string) {
+	blob = strings.ReplaceAll(blob, " – ", " - ") // en-dash variant
+	if idx := strings.Index(blob, " - "); idx > 0 {
+		return strings.TrimSpace(blob[:idx]), strings.TrimSpace(blob[idx+3:])
+	}
+	lower := strings.ToLower(blob)
+	if idx := strings.LastIndex(lower, " by "); idx > 0 {
+		return strings.TrimSpace(blob[idx+4:]), strings.TrimSpace(blob[:idx])
+	}
+	return "", blob
 }
 
 func cleanTitle(raw string) string {

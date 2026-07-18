@@ -11,6 +11,8 @@ import (
 )
 
 // Source is where the release came from, worst to best (roughly).
+// For books (ADR 0006) the "source" axis carries the file FORMAT instead —
+// same model, second vocabulary; Resolution stays 0 for all book formats.
 type Source string
 
 // Known sources.
@@ -24,7 +26,26 @@ const (
 	SourceWEBDL    Source = "webdl"
 	SourceBluray   Source = "bluray"
 	SourceRemux    Source = "remux"
+
+	// Book formats (Phase 2.5). Ebooks worst→best: PDF < MOBI < AZW3 < EPUB.
+	// Audiobooks: MP3 < M4B. The two families never compete in practice —
+	// profiles keep them apart — but ranks are total for determinism.
+	SourcePDF  Source = "pdf"
+	SourceMOBI Source = "mobi"
+	SourceAZW3 Source = "azw3"
+	SourceEPUB Source = "epub"
+	SourceMP3  Source = "mp3"
+	SourceM4B  Source = "m4b"
 )
+
+// IsBookFormat reports whether s is one of the book-format sources.
+func IsBookFormat(s Source) bool {
+	switch s {
+	case SourcePDF, SourceMOBI, SourceAZW3, SourceEPUB, SourceMP3, SourceM4B:
+		return true
+	}
+	return false
+}
 
 // Quality is a (source, resolution) pair. Resolution 0 = unknown/SD.
 type Quality struct {
@@ -43,6 +64,8 @@ func (q Quality) Display() string {
 		SourceUnknown: "Unknown", SourceCAM: "CAM", SourceTelesync: "Telesync",
 		SourceDVD: "DVD", SourceHDTV: "HDTV", SourceWEBRip: "WEBRip",
 		SourceWEBDL: "WEB-DL", SourceBluray: "Bluray", SourceRemux: "Remux",
+		SourcePDF: "PDF", SourceMOBI: "MOBI", SourceAZW3: "AZW3",
+		SourceEPUB: "EPUB", SourceMP3: "MP3", SourceM4B: "M4B",
 	}[q.Source]
 	if name == "" {
 		name = string(q.Source)
@@ -66,6 +89,10 @@ func FromString(s string) Quality {
 var sourceRank = map[Source]int{
 	SourceUnknown: 0, SourceCAM: 1, SourceTelesync: 2, SourceDVD: 3,
 	SourceHDTV: 4, SourceWEBRip: 5, SourceWEBDL: 6, SourceBluray: 7, SourceRemux: 8,
+	// Book formats rank at resolution 0; ordering within each family is what
+	// matters (profiles keep ebooks and audiobooks apart).
+	SourcePDF: 1, SourceMOBI: 2, SourceAZW3: 3, SourceEPUB: 4,
+	SourceMP3: 5, SourceM4B: 6,
 }
 
 var resolutionRank = map[int]int{0: 0, 480: 1, 720: 2, 1080: 3, 2160: 4}
@@ -122,9 +149,22 @@ func DefaultProfiles() []Profile {
 	uhd := []Quality{
 		{SourceWEBDL, 2160}, {SourceBluray, 2160}, {SourceRemux, 2160},
 	}
+	ebook := []Quality{
+		{SourcePDF, 0}, {SourceMOBI, 0}, {SourceAZW3, 0}, {SourceEPUB, 0},
+	}
+	audiobook := []Quality{{SourceMP3, 0}, {SourceM4B, 0}}
 	return []Profile{
 		{ID: 1, Name: "Any", Allowed: any, Cutoff: Quality{SourceWEBDL, 1080}, UpgradesAllowed: true},
 		{ID: 2, Name: "HD-1080p", Allowed: hd, Cutoff: Quality{SourceWEBDL, 1080}, UpgradesAllowed: true},
 		{ID: 3, Name: "Ultra-HD", Allowed: uhd, Cutoff: Quality{SourceWEBDL, 2160}, UpgradesAllowed: true},
+		{ID: 4, Name: "Ebook", Allowed: ebook, Cutoff: Quality{SourceEPUB, 0}, UpgradesAllowed: true},
+		{ID: 5, Name: "Audiobook", Allowed: audiobook, Cutoff: Quality{SourceM4B, 0}, UpgradesAllowed: true},
 	}
 }
+
+// EbookProfileID / AudiobookProfileID are the seeded book profile ids;
+// library.Add defaults book items to the ebook profile.
+const (
+	EbookProfileID     int64 = 4
+	AudiobookProfileID int64 = 5
+)

@@ -12,7 +12,7 @@ func TestSeededProfiles(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	profiles, err := db.ListProfiles(ctx)
-	if err != nil || len(profiles) != 3 {
+	if err != nil || len(profiles) != 5 {
 		t.Fatalf("profiles = %d, err %v", len(profiles), err)
 	}
 	hd, err := db.GetProfile(ctx, 2)
@@ -21,6 +21,13 @@ func TestSeededProfiles(t *testing.T) {
 	}
 	if hd.Cutoff != (quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}) {
 		t.Errorf("cutoff = %+v", hd.Cutoff)
+	}
+	ebook, err := db.GetProfile(ctx, quality.EbookProfileID)
+	if err != nil || ebook.Name != "Ebook" || len(ebook.Allowed) != 4 {
+		t.Fatalf("ebook profile = %+v err %v", ebook, err)
+	}
+	if ebook.Cutoff != (quality.Quality{Source: quality.SourceEPUB}) {
+		t.Errorf("ebook cutoff = %+v", ebook.Cutoff)
 	}
 }
 

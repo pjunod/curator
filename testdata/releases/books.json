@@ -1,0 +1,50 @@
+[
+  {
+    "title": "Andy Weir - Project Hail Mary (2021) EPUB",
+    "expect": { "title": "Project Hail Mary", "author": "Andy Weir", "year": 2021, "source": "epub" }
+  },
+  {
+    "title": "Andy.Weir.-.Project.Hail.Mary.2021.Retail.EPUB",
+    "expect": { "title": "Project Hail Mary", "author": "Andy Weir", "year": 2021, "source": "epub" }
+  },
+  {
+    "title": "Project Hail Mary by Andy Weir (2021) [AZW3]",
+    "expect": { "title": "Project Hail Mary", "author": "Andy Weir", "year": 2021, "source": "azw3" }
+  },
+  {
+    "title": "Brandon Sanderson - The Way of Kings MOBI",
+    "expect": { "title": "The Way of Kings", "author": "Brandon Sanderson", "source": "mobi" }
+  },
+  {
+    "title": "J.K. Rowling - Harry Potter and the Sorcerers Stone MP3 64kbps",
+    "expect": { "title": "Harry Potter and the Sorcerers Stone", "author": "J K Rowling", "source": "mp3" }
+  },
+  {
+    "title": "Frank Herbert - Dune M4B",
+    "expect": { "title": "Dune", "author": "Frank Herbert", "source": "m4b" }
+  },
+  {
+    "title": "Frank Herbert - Dune (Unabridged) M4B",
+    "expect": { "title": "Dune Unabridged", "author": "Frank Herbert", "source": "m4b" }
+  },
+  {
+    "title": "Andy Weir – Artemis EPUB",
+    "expect": { "title": "Artemis", "author": "Andy Weir", "source": "epub" }
+  },
+  {
+    "title": "Some Author - Cooking Companion 2020 PDF",
+    "expect": { "title": "Cooking Companion", "author": "Some Author", "year": 2020, "source": "pdf" }
+  },
+  {
+    "title": "Becky Chambers - A Psalm for the Wild-Built 2021 EPUB",
+    "expect": { "title": "A Psalm for the Wild-Built", "author": "Becky Chambers", "year": 2021, "source": "epub" }
+  },
+  {
+    "title": "The Martian by Andy Weir Unabridged MP3",
+    "expect": { "title": "The Martian", "author": "Andy Weir Unabridged", "source": "mp3" }
+  },
+  {
+    "title": "Terry Pratchett - Guards Guards Discworld 8 EPUB",
+    "expect": { "title": "Guards Guards Discworld 8", "author": "Terry Pratchett", "source": "epub" }
+  }
+]
