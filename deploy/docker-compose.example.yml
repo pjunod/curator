@@ -3,6 +3,12 @@
 #   cp docker-compose.example.yml docker-compose.yml   # once; yours to edit
 #   docker compose up -d --build                       # build/rebuild + (re)start
 #
+# ⚠ Your copy must STAY IN deploy/ — the build context (..) resolves
+# relative to this file's location, so a copy at the repo root fails with
+# "lstat …/deploy: no such file or directory". Running from elsewhere is
+# fine, just point at the file:
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
 # Your docker-compose.yml is gitignored — pulls update this example, never
 # your customized copy (diff against the example after big updates).
 #
