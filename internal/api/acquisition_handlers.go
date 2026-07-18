@@ -54,7 +54,7 @@ func (s *Server) ListProfiles(w http.ResponseWriter, r *http.Request) {
 
 func indexerInputToConfig(in apigen.IndexerInput) ports.IndexerConfig {
 	cfg := ports.IndexerConfig{
-		Name: in.Name, URL: in.Url, Protocol: string(in.Protocol), Enabled: true,
+		Name: in.Name, URL: ports.NormalizeURL(in.Url), Protocol: string(in.Protocol), Enabled: true,
 	}
 	if in.ApiKey != nil {
 		cfg.APIKey = *in.ApiKey
@@ -139,7 +139,7 @@ func (s *Server) DeleteIndexer(w http.ResponseWriter, r *http.Request, id int64)
 
 func clientInputToConfig(in apigen.DownloadClientInput) ports.ClientConfig {
 	cfg := ports.ClientConfig{
-		Type: string(in.Type), Name: in.Name, URL: in.Url,
+		Type: string(in.Type), Name: in.Name, URL: ports.NormalizeURL(in.Url),
 		Category: "monarr", Enabled: true,
 	}
 	if in.Username != nil {

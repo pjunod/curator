@@ -24,15 +24,16 @@ var httpClient = &http.Client{Timeout: 15 * time.Second}
 // notifier whose calls fail loudly (config rot should be visible, not
 // silent).
 func New(cfg ports.NotifierConfig) ports.Notifier {
+	u := ports.NormalizeURL(cfg.Settings["url"])
 	switch cfg.Type {
 	case "webhook":
-		return &Webhook{URL: cfg.Settings["url"]}
+		return &Webhook{URL: u}
 	case "discord":
-		return &Discord{URL: cfg.Settings["url"]}
+		return &Discord{URL: u}
 	case "plex":
-		return &Plex{URL: cfg.Settings["url"], Token: cfg.Settings["token"]}
+		return &Plex{URL: u, Token: cfg.Settings["token"]}
 	case "jellyfin":
-		return &Jellyfin{URL: cfg.Settings["url"], APIKey: cfg.Settings["apiKey"]}
+		return &Jellyfin{URL: u, APIKey: cfg.Settings["apiKey"]}
 	}
 	return errNotifier{cfg.Type}
 }

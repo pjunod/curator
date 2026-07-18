@@ -26,6 +26,7 @@ var _ ports.DownloadClient = (*Client)(nil)
 
 // New returns a Client.
 func New(cfg ports.ClientConfig) *Client {
+	cfg.URL = ports.NormalizeURL(cfg.URL)
 	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
 }
 

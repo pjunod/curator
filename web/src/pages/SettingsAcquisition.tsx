@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DownloadClientInput, IndexerInput } from '../api'
+
+// Default-port hints per client type, shown in the URL placeholder.
+const CLIENT_URL_HINTS: Record<DownloadClientInput['type'], string> = {
+  qbittorrent: 'http://192.168.1.10:8080',
+  transmission: 'http://192.168.1.10:9091',
+  deluge: 'http://192.168.1.10:8112',
+  sabnzbd: 'http://192.168.1.10:8080',
+  nzbget: 'http://192.168.1.10:6789',
+}
 import {
   addDownloadClient,
   addIndexer,
@@ -143,7 +152,11 @@ export function AcquisitionSettings() {
             <option value="nzbget">NZBGet</option>
           </select>
           <input placeholder="Name" value={cli.name} onChange={(e) => setCli({ ...cli, name: e.target.value })} />
-          <input placeholder="URL (http://qbittorrent:8080)" value={cli.url} onChange={(e) => setCli({ ...cli, url: e.target.value })} />
+          <input
+            placeholder={`URL (${CLIENT_URL_HINTS[cli.type]})`}
+            value={cli.url}
+            onChange={(e) => setCli({ ...cli, url: e.target.value })}
+          />
           {cli.type === 'sabnzbd' ? (
             <input type="password" placeholder="API key" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
           ) : cli.type === 'deluge' ? (

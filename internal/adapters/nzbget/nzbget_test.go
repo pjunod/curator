@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/monarr-media/monarr/internal/ports"
@@ -65,5 +66,20 @@ func TestAppendAndStatuses(t *testing.T) {
 	bad := New(ports.ClientConfig{URL: srv.URL, Username: "nzb", Password: "wrong"})
 	if err := bad.Test(context.Background()); err == nil {
 		t.Error("bad auth should fail")
+	}
+}
+
+func TestBareHostURLNormalized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"result":"21.1"}`))
+	}))
+	defer srv.Close()
+
+	// A user pasting "192.168.4.7:6789" instead of "http://…" must not get
+	// `unsupported protocol scheme ""`.
+	bare := strings.TrimPrefix(srv.URL, "http://")
+	c := New(ports.ClientConfig{URL: bare})
+	if err := c.Test(context.Background()); err != nil {
+		t.Fatalf("bare host: %v", err)
 	}
 }

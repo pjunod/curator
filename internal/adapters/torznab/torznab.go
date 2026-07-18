@@ -28,6 +28,7 @@ var _ ports.Indexer = (*Client)(nil)
 
 // New returns a Client for the given config.
 func New(cfg ports.IndexerConfig) *Client {
+	cfg.URL = ports.NormalizeURL(cfg.URL)
 	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
 }
 
