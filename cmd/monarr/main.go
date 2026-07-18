@@ -5,7 +5,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -27,6 +29,7 @@ import (
 	"github.com/monarr-media/monarr/internal/app/health"
 	"github.com/monarr-media/monarr/internal/app/library"
 	appnotify "github.com/monarr-media/monarr/internal/app/notify"
+	"github.com/monarr-media/monarr/internal/compat"
 	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/config"
 	"github.com/monarr-media/monarr/internal/infra/logging"
@@ -123,6 +126,37 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	notifierFactory := func(cfg ports.NotifierConfig) ports.Notifier { return notify.New(cfg) }
 	dispatcher := appnotify.New(db, b, log, notifierFactory)
 	go dispatcher.Run(ctx)
+
+	// API key (Phase 4 compat auth; Phase 5 hardens the native API with it).
+	apiKey, err := db.GetMeta(ctx, api.APIKeySetting)
+	if errors.Is(err, sql.ErrNoRows) || apiKey == "" {
+		buf := make([]byte, 16)
+		if _, err := rand.Read(buf); err != nil {
+			return fmt.Errorf("generating api key: %w", err)
+		}
+		apiKey = hex.EncodeToString(buf)
+		if err := db.SetMeta(ctx, api.APIKeySetting, apiKey); err != nil {
+			return fmt.Errorf("storing api key: %w", err)
+		}
+		log.Info("generated API key (Settings shows it; consumers use X-Api-Key)")
+	} else if err != nil {
+		return err
+	}
+	keyFn := func(ctx context.Context) string {
+		v, err := db.GetMeta(ctx, api.APIKeySetting)
+		if err != nil {
+			return ""
+		}
+		return v
+	}
+
+	// Compat personalities (ADR 0003): Sonarr/Radarr v3 translation surfaces.
+	compatDeps := compat.Deps{
+		Log: log, Library: lib, Store: db, APIKey: keyFn,
+		ResolveTVDB: meta.FindSeriesByTVDB,
+	}
+	sonarrShim := compat.NewSonarr(compatDeps)
+	radarrShim := compat.NewRadarr(compatDeps)
 
 	// Health checks.
 	reg := health.NewRegistry(b)
@@ -260,6 +294,8 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		IndexerFactory:  indexerFactory,
 		ClientFactory:   clientFactory,
 		NotifierFactory: notifierFactory,
+		CompatSonarr:    sonarrShim.Handler(),
+		CompatRadarr:    radarrShim.Handler(),
 		Settings:        db,
 		Version:         version,
 		Commit:          commit,

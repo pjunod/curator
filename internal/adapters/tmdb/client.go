@@ -315,6 +315,27 @@ func (c *Client) GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem,
 	return item, nil
 }
 
+// FindSeriesByTVDB resolves a TVDB id to a fully hydrated series via
+// TMDB's /find endpoint — the Sonarr compat personality needs this because
+// Sonarr consumers (Jellyseerr) identify series by TVDB id (blueprint §6).
+// Not part of ports.MetadataProvider: it is a TMDB-specific capability,
+// injected explicitly where needed.
+func (c *Client) FindSeriesByTVDB(ctx context.Context, tvdbID int64) (domain.MediaItem, error) {
+	var resp struct {
+		TVResults []struct {
+			ID int64 `json:"id"`
+		} `json:"tv_results"`
+	}
+	path := fmt.Sprintf("/find/%d", tvdbID)
+	if err := c.get(ctx, path, url.Values{"external_source": {"tvdb_id"}}, &resp); err != nil {
+		return domain.MediaItem{}, err
+	}
+	if len(resp.TVResults) == 0 {
+		return domain.MediaItem{}, fmt.Errorf("tmdb: no series for tvdb id %d", tvdbID)
+	}
+	return c.GetSeries(ctx, resp.TVResults[0].ID)
+}
+
 func genreNames(gs []genre) []string {
 	out := make([]string, 0, len(gs))
 	for _, g := range gs {

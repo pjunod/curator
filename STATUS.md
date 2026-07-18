@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-18 · Phases 0 through 3 complete (69/69) · next: Phase 4 — Ecosystem compat (0/6)**
+> **Snapshot 2026-07-18 · Phases 0 through 4 complete (74/75, stretch importer deferred) · next: Phase 5 — Depth & parity (0/7)**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -17,8 +17,8 @@
 | 2 — Acquisition core | **16/16 ✅** | search → grab → import → correctly named file (movie + season pack) |
 | 2.5 — Books (ADR 0006) | **7/7 ✅** | grab an ebook and an audiobook, correctly named |
 | 3 — Automation | **9/9 ✅** | runs unattended for a month |
-| 4 — Ecosystem compat | **0/6 ⟵ next** | Jellyseerr/Prowlarr/Bazarr work against the shim |
-| 5 — Depth & parity | 0/7 | custom formats, client zoo, lists, anime |
+| 4 — Ecosystem compat | **5/6 ✅** (stretch deferred) | Jellyseerr/Prowlarr/Bazarr work against the shim |
+| 5 — Depth & parity | **0/7 ⟵ next** | custom formats, client zoo, lists, anime |
 | Launch logistics | 2/6 | public repo, releases, name housekeeping |
 
 ## Phase 0 — Walking skeleton ✅ (shipped 2026-07-17)
@@ -108,14 +108,14 @@
 - [x] Plex/Jellyfin library-refresh notifiers (poked on imports only, never chatter)
 - [x] Scheduled SQLite online backups: daily `VACUUM INTO`, last 7 kept, listed on the System page — e2e proves the whole circle: delete file → rescan → wanted → RSS re-grab → re-import → webhook notified
 
-## Phase 4 — Ecosystem compat
+## Phase 4 — Ecosystem compat ✅ (shipped 2026-07-18; stretch importer deferred)
 
-- [ ] `/sonarr/api/v3` personality (scoped to what Jellyseerr/Prowlarr/Bazarr call — §6)
-- [ ] `/radarr/api/v3` personality
-- [ ] X-Api-Key auth, case-insensitive routes, plausible upstream version strings
-- [ ] Unknown-v3-request logging to guide shim expansion
-- [ ] Conformance harness: docker-compose vs real Jellyseerr + Prowlarr + Bazarr
-- [ ] (stretch) one-shot *arr DB importer
+- [x] `/sonarr/api/v3` personality: status/health/profiles/languageprofile/tag/rootfolder/queue/history/command + series list/get/add (tvdbId resolved via TMDB /find), series/lookup (`tvdb:` + text), episode + episodefile for Bazarr
+- [x] `/radarr/api/v3` personality: movie list/get/add (tmdbId native), movie/lookup, moviefile; books never leak through either personality
+- [x] X-Api-Key auth (header or ?apikey=; key auto-generated, shown in Settings), case-insensitive routes, plausible version strings (Sonarr 4.0.10 / Radarr 5.14.0)
+- [x] Unknown-v3-request logging (counter + warn line naming the path) to guide shim expansion
+- [x] Conformance harness: `test/conformance/` docker-compose vs real Jellyseerr + Prowlarr + Bazarr, plus an in-process fake-consumer suite replaying their exact call flows (Jellyseerr add flows, Prowlarr indexer sync incl. idempotent re-sync + PUT/DELETE, Bazarr enumeration) that runs in CI
+- [ ] (stretch) one-shot *arr DB importer — deferred post-1.0; filesystem adoption (ADR 0005) is the supported migration path
 
 ## Phase 5 — Depth & parity tail
 

@@ -1,0 +1,49 @@
+# Conformance harness (blueprint §6): run the REAL ecosystem apps against
+# Monarr's /sonarr and /radarr personalities.
+#
+#   docker compose up -d
+#   # then, in each UI:
+#   #  Jellyseerr  http://localhost:5055  → add "Sonarr" http://monarr:7676/sonarr  (API key below)
+#   #                                     → add "Radarr" http://monarr:7676/radarr
+#   #  Prowlarr    http://localhost:9696  → Settings→Apps → add Sonarr/Radarr with the same URLs
+#   #  Bazarr      http://localhost:6767  → Settings→Sonarr/Radarr with the same URLs
+#
+# Monarr's API key: open http://localhost:7676 → Settings (or:
+#   docker compose exec monarr wget -qO- localhost:7676/api/v1/settings)
+#
+# The fake-consumer test suite in internal/compat/compat_test.go replays the
+# same request flows in-process; this compose file is the live-fire version.
+services:
+  monarr:
+    build: ../..
+    ports: ["7676:7676"]
+    volumes:
+      - monarr-data:/data
+      - media:/media
+
+  jellyseerr:
+    image: fallenbagel/jellyseerr:latest
+    environment: [LOG_LEVEL=debug, TZ=UTC]
+    ports: ["5055:5055"]
+    volumes: [jellyseerr-config:/app/config]
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    environment: [PUID=1000, PGID=1000, TZ=UTC]
+    ports: ["9696:9696"]
+    volumes: [prowlarr-config:/config]
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    environment: [PUID=1000, PGID=1000, TZ=UTC]
+    ports: ["6767:6767"]
+    volumes:
+      - bazarr-config:/config
+      - media:/media
+
+volumes:
+  monarr-data:
+  jellyseerr-config:
+  prowlarr-config:
+  bazarr-config:
+  media:

@@ -506,8 +506,10 @@ type SeasonInfo struct {
 
 // Settings defines model for Settings.
 type Settings struct {
-	TmdbApiKeyConfigured bool   `json:"tmdbApiKeyConfigured"`
-	TmdbApiKeyHint       string `json:"tmdbApiKeyHint"`
+	// ApiKey Monarr's own API key — what consumers send as X-Api-Key to the /sonarr and /radarr personalities (and, once auth hardening is on, to /api/v1).
+	ApiKey               *string `json:"apiKey,omitempty"`
+	TmdbApiKeyConfigured bool    `json:"tmdbApiKeyConfigured"`
+	TmdbApiKeyHint       string  `json:"tmdbApiKeyHint"`
 }
 
 // SettingsUpdate defines model for SettingsUpdate.

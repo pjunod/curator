@@ -16,6 +16,11 @@ import (
 // TMDBKeySetting is the app_meta key holding the metadata provider key.
 const TMDBKeySetting = "tmdb_api_key"
 
+// APIKeySetting is the app_meta key holding Monarr's own API key —
+// required by the compat personalities (X-Api-Key) and, from Phase 5,
+// the native API.
+const APIKeySetting = "api_key"
+
 // libraryErr maps service errors to HTTP responses.
 func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 	switch {
@@ -319,10 +324,14 @@ func (s *Server) GetSettings(w http.ResponseWriter, r *http.Request) {
 	} else if n > 0 {
 		hint = strings.Repeat("•", n)
 	}
-	writeJSON(w, http.StatusOK, apigen.Settings{
+	out := apigen.Settings{
 		TmdbApiKeyConfigured: key != "",
 		TmdbApiKeyHint:       hint,
-	})
+	}
+	if apiKey := s.readSetting(r.Context(), APIKeySetting); apiKey != "" {
+		out.ApiKey = &apiKey
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // UpdateSettings implements PUT /settings.

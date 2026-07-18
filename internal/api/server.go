@@ -51,10 +51,14 @@ type Deps struct {
 	ClientFactory   acquisition.ClientFactory
 	NotifierFactory func(ports.NotifierConfig) ports.Notifier
 	Settings        SettingsStore
-	Version         string
-	Commit          string
-	DataDir         string
-	StartedAt       time.Time
+	// Compat personalities (ADR 0003), mounted at /sonarr and /radarr.
+	// Built in cmd/monarr from internal/compat; nil disables them.
+	CompatSonarr http.Handler
+	CompatRadarr http.Handler
+	Version      string
+	Commit       string
+	DataDir      string
+	StartedAt    time.Time
 }
 
 // Server implements apigen.ServerInterface.
@@ -85,6 +89,12 @@ func (s *Server) Handler() http.Handler {
 		},
 	})
 	mux.Handle("/api/v1/", apiHandler)
+	if s.deps.CompatSonarr != nil {
+		mux.Handle("/sonarr/", http.StripPrefix("/sonarr", s.deps.CompatSonarr))
+	}
+	if s.deps.CompatRadarr != nil {
+		mux.Handle("/radarr/", http.StripPrefix("/radarr", s.deps.CompatRadarr))
+	}
 	mux.Handle("/", s.spaHandler())
 	return s.recoverer(s.requestLogger(mux))
 }

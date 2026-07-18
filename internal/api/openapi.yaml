@@ -1334,6 +1334,12 @@ components:
           type: boolean
         tmdbApiKeyHint:
           type: string
+        apiKey:
+          type: string
+          description: >
+            Monarr's own API key — what consumers send as X-Api-Key to the
+            /sonarr and /radarr personalities (and, once auth hardening is
+            on, to /api/v1).
 
     SettingsUpdate:
       type: object
