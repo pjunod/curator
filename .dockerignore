@@ -1,4 +1,5 @@
-.git
+# .git stays IN the context so the build can self-version (git describe);
+# it costs a little context size and buys accurate version strings.
 .github
 bin
 data
