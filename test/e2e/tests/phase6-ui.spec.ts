@@ -118,36 +118,46 @@ test('metadata refresh re-hydrates from the provider', async ({ request }) => {
   expect(tasks.some((t: any) => t.name === 'metadata.refresh')).toBe(true)
 })
 
-test('library All view groups by kind with sort and filter controls', async ({ page }) => {
+test('library All view groups by kind, each section with its own controls', async ({ page }) => {
   await page.goto('/')
 
-  // Grouped sections, fixed order — no interleaving.
+  // Grouped sections, fixed order — no interleaving — each with a toolbar.
   const heads = page.locator('.lib-section-head')
   await expect(heads).toHaveCount(3)
   await expect(heads.nth(0)).toContainText('Movies')
   await expect(heads.nth(1)).toContainText('Series')
   await expect(heads.nth(2)).toContainText('Books')
+  await expect(page.locator('.section-toolbar')).toHaveCount(3)
 
-  // Text filter narrows to the matching section only.
-  await page.getByRole('searchbox', { name: 'Filter library by title' }).fill('test movie')
-  await expect(page.locator('.lib-section-head')).toHaveCount(1)
-  await expect(page.locator('.lib-section-head').first()).toContainText('Movies')
-  await page.getByRole('searchbox', { name: 'Filter library by title' }).fill('')
+  // The Movies text filter touches ONLY the Movies section.
+  await page.getByRole('searchbox', { name: 'Filter Movies by title' }).fill('zzz-no-match')
+  await expect(page.getByText('Nothing in Movies matches the current filter.')).toBeVisible()
+  await expect(heads.nth(1)).toContainText('Series') // untouched
+  await expect(page.locator('.poster-card').first()).toBeVisible() // series/book cards remain
+  await page.getByRole('searchbox', { name: 'Filter Movies by title' }).fill('')
 
-  // Completeness filter: everything in the suite is on disk by now, so
-  // "Missing" empties the grid and says so.
-  await page.getByRole('combobox', { name: 'Filter' }).selectOption('missing')
-  await expect(page.getByText('Nothing matches the current filter.')).toBeVisible()
-  await page.getByRole('combobox', { name: 'Filter' }).selectOption('all')
+  // The Series state filter is independent too: everything is on disk, so
+  // "Missing" empties Series while Movies keeps its card.
+  await page.getByRole('combobox', { name: 'Show Series' }).selectOption('missing')
+  await expect(page.getByText('Nothing in Series matches the current filter.')).toBeVisible()
+  await expect(page.getByText('Nothing in Movies matches')).not.toBeVisible()
+  await page.getByRole('combobox', { name: 'Show Series' }).selectOption('all')
 
-  // Sort control flips direction.
-  await page.getByRole('combobox', { name: 'Sort' }).selectOption('year')
-  await expect(page.getByRole('button', { name: 'Toggle sort direction' })).toBeVisible()
-  await page.getByRole('combobox', { name: 'Sort' }).selectOption('title')
+  // Books get an Author sort option; Movies must not.
+  await expect(
+    page.getByRole('combobox', { name: 'Sort Books' }).locator('option[value="author"]'),
+  ).toHaveCount(1)
+  await expect(
+    page.getByRole('combobox', { name: 'Sort Movies' }).locator('option[value="author"]'),
+  ).toHaveCount(0)
+  await page.getByRole('combobox', { name: 'Sort Movies' }).selectOption('year')
+  await expect(page.getByRole('button', { name: 'Toggle Movies sort direction' })).toBeVisible()
+  await page.getByRole('combobox', { name: 'Sort Movies' }).selectOption('title')
 
-  // Kind tabs stay flat (no section heads).
+  // A flat kind tab reuses that kind's toolbar (no section heads).
   await page.getByRole('tab', { name: 'Movies' }).click()
   await expect(page.locator('.lib-section-head')).toHaveCount(0)
+  await expect(page.getByRole('combobox', { name: 'Show Movies' })).toBeVisible()
   await expect(page.locator('.poster-card').first()).toBeVisible()
   await page.getByRole('tab', { name: 'All' }).click()
 })

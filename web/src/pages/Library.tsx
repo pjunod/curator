@@ -59,11 +59,13 @@ const KIND_SECTIONS: { kind: MediaKind; label: string }[] = [
   { kind: 'book', label: 'Books' },
 ]
 
-type SortKey = 'title' | 'year' | 'added' | 'rating'
+type SortKey = 'title' | 'author' | 'year' | 'added' | 'rating'
 type FilterKey = 'all' | 'monitored' | 'unmonitored' | 'missing' | 'incomplete' | 'complete'
 
-const SORTS: { key: SortKey; label: string }[] = [
+// Per-kind sort menus: books sort by author too, nobody else needs it.
+const SORTS: { key: SortKey; label: string; kinds?: MediaKind[] }[] = [
   { key: 'title', label: 'Title' },
+  { key: 'author', label: 'Author', kinds: ['book'] },
   { key: 'year', label: 'Year' },
   { key: 'added', label: 'Recently added' },
   { key: 'rating', label: 'Rating' },
@@ -105,28 +107,125 @@ function compare(a: MediaItemSummary, b: MediaItemSummary, key: SortKey): number
       return a.addedAt.localeCompare(b.addedAt)
     case 'rating':
       return a.rating - b.rating
+    case 'author':
+      return (a.author || a.title).localeCompare(b.author || b.title, undefined, { sensitivity: 'base' })
     default:
       return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })
   }
 }
 
-// Sort/filter choices persist per browser, like the theme.
-function savedPref<T extends string>(key: string, valid: readonly T[], fallback: T): T {
-  try {
-    const v = localStorage.getItem(key)
-    if (v && (valid as readonly string[]).includes(v)) return v as T
-  } catch {
-    /* private mode */
-  }
-  return fallback
+// Each kind carries its OWN controls — the Movies section sorts by year
+// while Books sort by author. The same settings drive that kind's flat
+// tab, and everything but the text filter persists per browser.
+interface SectionState {
+  q: string
+  filter: FilterKey
+  sortKey: SortKey
+  sortDir: 'asc' | 'desc'
 }
 
-function savePref(key: string, value: string) {
+function loadSection(kind: MediaKind): SectionState {
+  const state: SectionState = { q: '', filter: 'all', sortKey: 'title', sortDir: 'asc' }
   try {
-    localStorage.setItem(key, value)
+    const raw = localStorage.getItem(`monarr-lib-${kind}`)
+    if (raw) {
+      const saved = JSON.parse(raw) as Partial<SectionState>
+      if (FILTERS.some((f) => f.key === saved.filter)) state.filter = saved.filter as FilterKey
+      if (SORTS.some((s) => s.key === saved.sortKey)) state.sortKey = saved.sortKey as SortKey
+      if (saved.sortDir === 'asc' || saved.sortDir === 'desc') state.sortDir = saved.sortDir
+    }
+  } catch {
+    /* private mode / bad JSON — defaults win */
+  }
+  return state
+}
+
+function persistSection(kind: MediaKind, s: SectionState) {
+  try {
+    localStorage.setItem(
+      `monarr-lib-${kind}`,
+      JSON.stringify({ filter: s.filter, sortKey: s.sortKey, sortDir: s.sortDir }),
+    )
   } catch {
     /* private mode */
   }
+}
+
+function applySection(items: MediaItemSummary[], s: SectionState): MediaItemSummary[] {
+  const needle = s.q.trim().toLowerCase()
+  return items
+    .filter((m) => matchesFilter(m, s.filter))
+    .filter(
+      (m) =>
+        !needle ||
+        m.title.toLowerCase().includes(needle) ||
+        (m.author && m.author.toLowerCase().includes(needle)),
+    )
+    .sort((a, b) => (s.sortDir === 'asc' ? 1 : -1) * compare(a, b, s.sortKey))
+}
+
+// SectionToolbar: the compact filter/sort strip one kind owns.
+function SectionToolbar(props: {
+  kind: MediaKind
+  label: string
+  state: SectionState
+  onChange: (patch: Partial<SectionState>) => void
+  shown: number
+  total: number
+}) {
+  const { label, state, onChange } = props
+  const filtered = state.filter !== 'all' || state.q.trim() !== ''
+  return (
+    <div className="section-toolbar">
+      <input
+        type="search"
+        placeholder="Filter…"
+        aria-label={`Filter ${label} by title`}
+        value={state.q}
+        onChange={(e) => onChange({ q: e.target.value })}
+      />
+      <select
+        aria-label={`Show ${label}`}
+        title="Filter by state"
+        value={state.filter}
+        onChange={(e) => onChange({ filter: e.target.value as FilterKey })}
+      >
+        {FILTERS.map((f) => (
+          <option key={f.key} value={f.key}>
+            {f.label}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label={`Sort ${label}`}
+        title="Sort"
+        value={state.sortKey}
+        onChange={(e) => {
+          const key = e.target.value as SortKey
+          // A fresh sort key gets its natural direction once.
+          onChange({ sortKey: key, sortDir: key === 'added' || key === 'rating' ? 'desc' : 'asc' })
+        }}
+      >
+        {SORTS.filter((s) => !s.kinds || s.kinds.includes(props.kind)).map((s) => (
+          <option key={s.key} value={s.key}>
+            {s.label}
+          </option>
+        ))}
+      </select>
+      <button
+        aria-label={`Toggle ${label} sort direction`}
+        title={state.sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+        onClick={() => onChange({ sortDir: state.sortDir === 'asc' ? 'desc' : 'asc' })}
+      >
+        {state.sortDir === 'asc' ? '↑' : '↓'}
+      </button>
+      {filtered && (
+        <span className="muted">
+          {props.shown}/{props.total}
+        </span>
+      )}
+    </div>
+  )
 }
 
 export function LibraryPage() {
@@ -182,25 +281,19 @@ export function LibraryPage() {
 
   const unmatched = report.data?.unmatchedDirs ?? []
 
-  // Sort / filter toolbar state, remembered per browser.
-  const [sortKey, setSortKey] = useState<SortKey>(() =>
-    savedPref('monarr-lib-sort', ['title', 'year', 'added', 'rating'] as const, 'title'))
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() =>
-    savedPref('monarr-lib-dir', ['asc', 'desc'] as const, 'asc'))
-  const [filter, setFilter] = useState<FilterKey>(() =>
-    savedPref('monarr-lib-filter', ['all', 'monitored', 'unmonitored', 'missing', 'incomplete', 'complete'] as const, 'all'))
-  const [q, setQ] = useState('')
-
-  const needle = q.trim().toLowerCase()
-  const visible = (items.data ?? [])
-    .filter((m) => matchesFilter(m, filter))
-    .filter(
-      (m) =>
-        !needle ||
-        m.title.toLowerCase().includes(needle) ||
-        (m.author && m.author.toLowerCase().includes(needle)),
-    )
-    .sort((a, b) => (sortDir === 'asc' ? 1 : -1) * compare(a, b, sortKey))
+  // Every kind owns its controls; the flat tabs reuse the same state.
+  const [controls, setControls] = useState<Record<MediaKind, SectionState>>(() => ({
+    movie: loadSection('movie'),
+    series: loadSection('series'),
+    book: loadSection('book'),
+  }))
+  const updateSection = (k: MediaKind, patch: Partial<SectionState>) => {
+    setControls((prev) => {
+      const next = { ...prev, [k]: { ...prev[k], ...patch } }
+      persistSection(k, next[k])
+      return next
+    })
+  }
 
   const renderCard = (m: MediaItemSummary) =>
     editing ? (
@@ -339,93 +432,63 @@ export function LibraryPage() {
         </div>
       )}
 
-      {(items.data?.length ?? 0) > 0 && (
-        <div className="lib-toolbar">
-          <input
-            type="search"
-            placeholder="Filter by title or author…"
-            aria-label="Filter library by title"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-          <label className="inline">
-            Show:{' '}
-            <select
-              aria-label="Filter"
-              value={filter}
-              onChange={(e) => {
-                setFilter(e.target.value as FilterKey)
-                savePref('monarr-lib-filter', e.target.value)
-              }}
-            >
-              {FILTERS.map((f) => (
-                <option key={f.key} value={f.key}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="inline">
-            Sort:{' '}
-            <select
-              aria-label="Sort"
-              value={sortKey}
-              onChange={(e) => {
-                const key = e.target.value as SortKey
-                setSortKey(key)
-                savePref('monarr-lib-sort', key)
-                // New sort key gets its natural direction once.
-                const dir = key === 'added' || key === 'rating' ? 'desc' : 'asc'
-                setSortDir(dir)
-                savePref('monarr-lib-dir', dir)
-              }}
-            >
-              {SORTS.map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
-            aria-label="Toggle sort direction"
-            onClick={() => {
-              const dir = sortDir === 'asc' ? 'desc' : 'asc'
-              setSortDir(dir)
-              savePref('monarr-lib-dir', dir)
-            }}
-          >
-            {sortDir === 'asc' ? '↑' : '↓'}
-          </button>
-          {(filter !== 'all' || needle) && (
-            <span className="muted">
-              {visible.length} of {items.data!.length} shown
-            </span>
-          )}
-        </div>
-      )}
-
       {kind === undefined ? (
-        // The All view: everything, grouped by kind — never interleaved.
+        // The All view: everything, grouped by kind — never interleaved —
+        // and every section runs its OWN filter/sort strip.
         KIND_SECTIONS.map((section) => {
-          const group = visible.filter((m) => m.kind === section.kind)
-          if (group.length === 0) return null
+          const all = (items.data ?? []).filter((m) => m.kind === section.kind)
+          if (all.length === 0) return null
+          const group = applySection(all, controls[section.kind])
           return (
             <section key={section.kind} className="lib-section">
-              <h2 className="lib-section-head">
-                {section.label} <span className="muted">({group.length})</span>
-              </h2>
-              <div className="poster-grid">{group.map(renderCard)}</div>
+              <div className="lib-section-bar">
+                <h2 className="lib-section-head">
+                  {section.label} <span className="muted">({all.length})</span>
+                </h2>
+                <SectionToolbar
+                  kind={section.kind}
+                  label={section.label}
+                  state={controls[section.kind]}
+                  onChange={(patch) => updateSection(section.kind, patch)}
+                  shown={group.length}
+                  total={all.length}
+                />
+              </div>
+              {group.length > 0 ? (
+                <div className="poster-grid">{group.map(renderCard)}</div>
+              ) : (
+                <p className="muted">Nothing in {section.label} matches the current filter.</p>
+              )}
             </section>
           )
         })
       ) : (
-        <div className="poster-grid">{visible.map(renderCard)}</div>
-      )}
-
-      {(items.data?.length ?? 0) > 0 && visible.length === 0 && (
-        <p className="muted">Nothing matches the current filter.</p>
+        // A flat kind tab: the same section state, one grid.
+        (() => {
+          const section = KIND_SECTIONS.find((s) => s.kind === kind)!
+          const all = items.data ?? []
+          const group = applySection(all, controls[kind])
+          return (
+            <>
+              {all.length > 0 && (
+                <div className="lib-section-bar">
+                  <SectionToolbar
+                    kind={kind}
+                    label={section.label}
+                    state={controls[kind]}
+                    onChange={(patch) => updateSection(kind, patch)}
+                    shown={group.length}
+                    total={all.length}
+                  />
+                </div>
+              )}
+              <div className="poster-grid">{group.map(renderCard)}</div>
+              {all.length > 0 && group.length === 0 && (
+                <p className="muted">Nothing in {section.label} matches the current filter.</p>
+              )}
+            </>
+          )
+        })()
       )}
     </>
   )
