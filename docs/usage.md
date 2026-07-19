@@ -68,6 +68,20 @@ right after adding, Sonarr-style). Hit **Add**.
 Nothing touches the disk at add time — the item's folder is created on
 first import.
 
+## On your phone (install as an app)
+
+The UI is a PWA: open `http://<host>:7676` on your phone and install it —
+**iOS Safari**: Share → *Add to Home Screen*; **Android Chrome**: menu →
+*Add to Home screen* (or the install prompt). It launches full-screen
+with its own icon, and below tablet width the whole app switches to a
+phone layout: bottom tabs for Library / Wanted / Calendar / Activity,
+with a **More** sheet holding Dashboard, System, Settings, Add, the
+global search, and the theme picker. The calendar becomes an agenda,
+wide tables scroll sideways, posters run three across. Posters are
+cached for snappy loads; live data always comes from the server, so
+offline you get the shell and an error rather than stale numbers. New
+Monarr builds update the installed app on the next launch.
+
 ## The library page
 
 The **All** tab shows everything, grouped into Movies / Series / Books
