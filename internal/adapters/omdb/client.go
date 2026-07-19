@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -56,7 +57,7 @@ func New(baseURL string, keyFn KeyFunc) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		keyFn:   keyFn,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		http:    httpx.NewClient(15 * time.Second),
 		// The free tier is 1000/day; 1 req/s keeps bursts civil.
 		limiter: rate.NewLimiter(rate.Limit(1), 3),
 		cache:   map[string]cacheEntry{},

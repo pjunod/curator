@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	"github.com/monarr-media/monarr/internal/ports"
 )
 
@@ -32,7 +33,7 @@ var _ ports.DownloadClient = (*Client)(nil)
 func New(cfg ports.ClientConfig) *Client {
 	cfg.URL = ports.NormalizeURL(cfg.URL)
 	jar, _ := cookiejar.New(nil)
-	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second, Jar: jar}}
+	return &Client{cfg: cfg, http: httpx.NewClientJar(30*time.Second, jar)}
 }
 
 func (c *Client) base() string { return strings.TrimRight(c.cfg.URL, "/") }

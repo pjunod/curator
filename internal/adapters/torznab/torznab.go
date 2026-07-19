@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -29,7 +30,7 @@ var _ ports.Indexer = (*Client)(nil)
 // New returns a Client for the given config.
 func New(cfg ports.IndexerConfig) *Client {
 	cfg.URL = ports.NormalizeURL(cfg.URL)
-	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
+	return &Client{cfg: cfg, http: httpx.NewClient(30 * time.Second)}
 }
 
 // rss is the subset of the feed we consume.

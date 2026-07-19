@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -55,7 +56,7 @@ func New(baseURL string, keyFn KeyFunc) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		keyFn:   keyFn,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		http:    httpx.NewClient(15 * time.Second),
 		// TMDB tolerates ~50 req/s; stay well under it.
 		limiter: rate.NewLimiter(rate.Limit(10), 10),
 		cache:   map[string]cacheEntry{},

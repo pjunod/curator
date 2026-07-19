@@ -15,10 +15,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	"github.com/monarr-media/monarr/internal/ports"
 )
 
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+var httpClient = httpx.NewClient(15 * time.Second)
 
 // New returns the Notifier for a stored config. Unknown types return a
 // notifier whose calls fail loudly (config rot should be visible, not

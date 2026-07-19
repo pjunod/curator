@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -33,7 +34,7 @@ func New(baseURL, clientID string) *Client {
 	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"), clientID: clientID,
-		http: &http.Client{Timeout: 15 * time.Second},
+		http: httpx.NewClient(15 * time.Second),
 	}
 }
 

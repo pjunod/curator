@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -53,7 +54,7 @@ func New(baseURL string) *Client {
 	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
-		http:    &http.Client{Timeout: 15 * time.Second},
+		http:    httpx.NewClient(15 * time.Second),
 		// Open Library asks for courteous use; a few req/s is plenty.
 		limiter: rate.NewLimiter(rate.Limit(3), 3),
 		cache:   map[string]cacheEntry{},

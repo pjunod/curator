@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	"github.com/monarr-media/monarr/internal/ports"
 )
 
@@ -27,7 +28,7 @@ type Client struct {
 // New returns a Client.
 func New(cfg ports.ClientConfig) *Client {
 	cfg.URL = ports.NormalizeURL(cfg.URL)
-	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
+	return &Client{cfg: cfg, http: httpx.NewClient(30 * time.Second)}
 }
 
 type rpcResponse struct {
