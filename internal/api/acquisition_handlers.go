@@ -161,6 +161,9 @@ func clientInputToConfig(in apigen.DownloadClientInput) ports.ClientConfig {
 	if in.Enabled != nil {
 		cfg.Enabled = *in.Enabled
 	}
+	if in.ManualApproval != nil {
+		cfg.ManualApproval = *in.ManualApproval
+	}
 	if in.PathMappings != nil {
 		for _, m := range *in.PathMappings {
 			// Blank halves are form noise, not a mapping.
@@ -176,7 +179,7 @@ func clientInputToConfig(in apigen.DownloadClientInput) ports.ClientConfig {
 }
 
 func clientDTO(c ports.ClientConfig) apigen.DownloadClientConfig {
-	user, cat, enabled := c.Username, c.Category, c.Enabled
+	user, cat, enabled, manual := c.Username, c.Category, c.Enabled, c.ManualApproval
 	masked := ""
 	if c.Password != "" {
 		masked = "••••"
@@ -184,6 +187,7 @@ func clientDTO(c ports.ClientConfig) apigen.DownloadClientConfig {
 	out := apigen.DownloadClientConfig{
 		Id: c.ID, Type: apigen.DownloadClientConfigType(c.Type), Name: c.Name, Url: c.URL,
 		Username: &user, Password: &masked, Category: &cat, Enabled: &enabled,
+		ManualApproval: &manual,
 	}
 	if len(c.PathMappings) > 0 {
 		maps := make([]apigen.PathMapping, 0, len(c.PathMappings))
@@ -271,6 +275,36 @@ func (s *Server) TestDownloadClientById(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// UpdateDownloadClient implements PUT /downloadclients/{id}. The stored
+// password is preserved when the form sends the masked placeholder (or
+// nothing), so an edit never blanks credentials the UI can't see.
+func (s *Server) UpdateDownloadClient(w http.ResponseWriter, r *http.Request, id int64) {
+	var in apigen.DownloadClientInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Name == "" || in.Url == "" {
+		writeError(w, http.StatusBadRequest, "type, name, and url are required")
+		return
+	}
+	if !in.Type.Valid() {
+		writeError(w, http.StatusBadRequest, "unknown download client type "+string(in.Type))
+		return
+	}
+	existing, err := s.deps.Store.GetDownloadClient(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	cfg := clientInputToConfig(in)
+	cfg.ID = id
+	if cfg.Password == "" || cfg.Password == "••••" {
+		cfg.Password = existing.Password
+	}
+	if err := s.deps.Store.UpdateDownloadClient(r.Context(), cfg); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, clientDTO(cfg))
 }
 
 // DeleteDownloadClient implements DELETE /downloadclients/{id}.
@@ -363,14 +397,29 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]apigen.QueueItem, 0, len(rows))
 	for _, d := range rows {
+		copyID, clientID := d.CopyID, d.ClientID
+		save, imp := d.SavePath, d.ImportPath
 		item := apigen.QueueItem{
-			Id: d.ID, MediaItemId: d.MediaItemID, Title: d.ReleaseTitle,
-			State: d.State, Progress: float32(d.Progress), Protocol: d.Protocol,
-			Quality: d.Quality.Display(), AddedAt: d.AddedAt,
+			Id: d.ID, MediaItemId: d.MediaItemID, CopyId: &copyID, ClientId: &clientID,
+			Title: d.ReleaseTitle, State: d.State, Progress: float32(d.Progress),
+			Protocol: d.Protocol, Quality: d.Quality.Display(),
+			SavePath: &save, ImportPath: &imp, AddedAt: d.AddedAt,
 		}
 		if d.Error != "" {
 			e := d.Error
 			item.Error = &e
+		}
+		if len(d.Handoff) > 0 {
+			steps := make([]apigen.HandoffEntry, 0, len(d.Handoff))
+			for _, h := range d.Handoff {
+				he := apigen.HandoffEntry{Step: h.Step, At: h.At}
+				if h.Detail != "" {
+					detail := h.Detail
+					he.Detail = &detail
+				}
+				steps = append(steps, he)
+			}
+			item.Handoff = &steps
 		}
 		out = append(out, item)
 	}
@@ -385,6 +434,76 @@ func (s *Server) RemoveQueueItem(w http.ResponseWriter, r *http.Request, id int6
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ImportQueueItem implements POST /queue/{id}/import: approve a held
+// download or retry a failed import. An import error is a 400 with the
+// reason — the row stays retryable — while a missing row is a 404.
+func (s *Server) ImportQueueItem(w http.ResponseWriter, r *http.Request, id int64) {
+	err := s.deps.Acquisition.ImportNow(r.Context(), id)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, acquisition.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+	default:
+		writeError(w, http.StatusBadRequest, err.Error())
+	}
+}
+
+// BlocklistQueueItem implements POST /queue/{id}/blocklist: declare the
+// release bad, blocklist it, and search a replacement.
+func (s *Server) BlocklistQueueItem(w http.ResponseWriter, r *http.Request, id int64) {
+	if err := s.deps.Acquisition.BlocklistReplace(r.Context(), id); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ScanImportPath implements GET /import/scan: list the media files Monarr
+// can see under a path (the manual-import preview).
+func (s *Server) ScanImportPath(w http.ResponseWriter, r *http.Request, params apigen.ScanImportPathParams) {
+	files, err := s.deps.Acquisition.ScanImportPath(r.Context(), params.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	out := make([]apigen.ScannedFile, 0, len(files))
+	for _, f := range files {
+		eps := f.Episodes
+		if eps == nil {
+			eps = []int{}
+		}
+		out = append(out, apigen.ScannedFile{
+			Path: f.Path, Name: f.Name, Size: f.Size, Kind: f.Kind,
+			Quality: f.Quality, Season: f.Season, Episodes: eps,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ManualImport implements POST /import/manual: import files from a path into
+// a chosen item/copy.
+func (s *Server) ManualImport(w http.ResponseWriter, r *http.Request) {
+	var in apigen.ManualImportRequest
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Path == "" || in.MediaItemId == 0 {
+		writeError(w, http.StatusBadRequest, "path and mediaItemId are required")
+		return
+	}
+	req := acquisition.ManualImportRequest{Path: in.Path, MediaItemID: in.MediaItemId}
+	if in.CopyId != nil {
+		req.CopyID = *in.CopyId
+	}
+	if in.DownloadId != nil {
+		req.DownloadID = *in.DownloadId
+	}
+	files, err := s.deps.Acquisition.ManualImport(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"files": files})
 }
 
 // ListWanted implements GET /wanted.

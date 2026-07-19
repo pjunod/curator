@@ -335,8 +335,11 @@ type DownloadClientConfig struct {
 	Category *string `json:"category,omitempty"`
 	Enabled  *bool   `json:"enabled,omitempty"`
 	Id       int64   `json:"id"`
-	Name     string  `json:"name"`
-	Password *string `json:"password,omitempty"`
+
+	// ManualApproval Hold a completed download at 'awaiting_import' until you approve it, instead of importing automatically.
+	ManualApproval *bool   `json:"manualApproval,omitempty"`
+	Name           string  `json:"name"`
+	Password       *string `json:"password,omitempty"`
 
 	// PathMappings Remote path mappings: when the client runs on another host or container, rewrite the completed-download path it reports into the path Monarr sees the same files at.
 	PathMappings *[]PathMapping           `json:"pathMappings,omitempty"`
@@ -352,8 +355,11 @@ type DownloadClientConfigType string
 type DownloadClientInput struct {
 	Category *string `json:"category,omitempty"`
 	Enabled  *bool   `json:"enabled,omitempty"`
-	Name     string  `json:"name"`
-	Password *string `json:"password,omitempty"`
+
+	// ManualApproval Hold a completed download at 'awaiting_import' until you approve it, instead of importing automatically.
+	ManualApproval *bool   `json:"manualApproval,omitempty"`
+	Name           string  `json:"name"`
+	Password       *string `json:"password,omitempty"`
 
 	// PathMappings Remote path mappings: when the client runs on another host or container, rewrite the completed-download path it reports into the path Monarr sees the same files at.
 	PathMappings *[]PathMapping          `json:"pathMappings,omitempty"`
@@ -403,6 +409,16 @@ type GrabRequest struct {
 	Season      *int    `json:"season,omitempty"`
 	Size        *int64  `json:"size,omitempty"`
 	Title       string  `json:"title"`
+}
+
+// HandoffEntry defines model for HandoffEntry.
+type HandoffEntry struct {
+	// At Unix milliseconds.
+	At     int64   `json:"at"`
+	Detail *string `json:"detail,omitempty"`
+
+	// Step grabbed | downloading | downloaded | awaiting_import | importing | imported | failed.
+	Step string `json:"step"`
 }
 
 // HealthCheck defines model for HealthCheck.
@@ -481,6 +497,17 @@ type IndexerInput struct {
 
 // IndexerInputProtocol defines model for IndexerInput.Protocol.
 type IndexerInputProtocol string
+
+// ManualImportRequest defines model for ManualImportRequest.
+type ManualImportRequest struct {
+	// CopyId Target copy; 0 = the primary copy.
+	CopyId *int64 `json:"copyId,omitempty"`
+
+	// DownloadId Tie the import to a stuck queue row so it's marked imported (or failed) by this attempt. 0 = a standalone import.
+	DownloadId  *int64 `json:"downloadId,omitempty"`
+	MediaItemId int64  `json:"mediaItemId"`
+	Path        string `json:"path"`
+}
 
 // MediaCopy defines model for MediaCopy.
 type MediaCopy struct {
@@ -659,15 +686,30 @@ type QualityProfile struct {
 
 // QueueItem defines model for QueueItem.
 type QueueItem struct {
-	AddedAt     time.Time `json:"addedAt"`
-	Error       *string   `json:"error,omitempty"`
-	Id          int64     `json:"id"`
-	MediaItemId int64     `json:"mediaItemId"`
-	Progress    float32   `json:"progress"`
-	Protocol    string    `json:"protocol"`
-	Quality     string    `json:"quality"`
-	State       string    `json:"state"`
-	Title       string    `json:"title"`
+	AddedAt  time.Time `json:"addedAt"`
+	ClientId *int64    `json:"clientId,omitempty"`
+
+	// CopyId The media copy this grab targets; 0 = the primary copy.
+	CopyId *int64  `json:"copyId,omitempty"`
+	Error  *string `json:"error,omitempty"`
+
+	// Handoff The download → import handoff, step by step.
+	Handoff *[]HandoffEntry `json:"handoff,omitempty"`
+	Id      int64           `json:"id"`
+
+	// ImportPath Where Monarr looked for the files after remote path mapping.
+	ImportPath  *string `json:"importPath,omitempty"`
+	MediaItemId int64   `json:"mediaItemId"`
+	Progress    float32 `json:"progress"`
+	Protocol    string  `json:"protocol"`
+	Quality     string  `json:"quality"`
+
+	// SavePath The completed-download path the client reported.
+	SavePath *string `json:"savePath,omitempty"`
+
+	// State grabbed | downloading | downloaded | awaiting_import | importing | imported | failed.
+	State string `json:"state"`
+	Title string `json:"title"`
 }
 
 // Rating defines model for Rating.
@@ -728,6 +770,21 @@ type ScanReport struct {
 	RootsScanned  int            `json:"rootsScanned"`
 	ScannedAt     time.Time      `json:"scannedAt"`
 	UnmatchedDirs []UnmatchedDir `json:"unmatchedDirs"`
+}
+
+// ScannedFile defines model for ScannedFile.
+type ScannedFile struct {
+	Episodes []int `json:"episodes"`
+
+	// Kind video | book
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Quality string `json:"quality"`
+
+	// Season -1 when not a series file
+	Season int   `json:"season"`
+	Size   int64 `json:"size"`
 }
 
 // SearchResult defines model for SearchResult.
@@ -854,6 +911,11 @@ type GetCalendarParams struct {
 	End   string `form:"end" json:"end"`
 }
 
+// ScanImportPathParams defines parameters for ScanImportPath.
+type ScanImportPathParams struct {
+	Path string `form:"path" json:"path"`
+}
+
 // ListLibraryParams defines parameters for ListLibrary.
 type ListLibraryParams struct {
 	Kind *MediaKind `form:"kind,omitempty" json:"kind,omitempty"`
@@ -900,8 +962,14 @@ type AddDownloadClientJSONRequestBody = DownloadClientInput
 // TestDownloadClientJSONRequestBody defines body for TestDownloadClient for application/json ContentType.
 type TestDownloadClientJSONRequestBody = DownloadClientInput
 
+// UpdateDownloadClientJSONRequestBody defines body for UpdateDownloadClient for application/json ContentType.
+type UpdateDownloadClientJSONRequestBody = DownloadClientInput
+
 // GrabReleaseJSONRequestBody defines body for GrabRelease for application/json ContentType.
 type GrabReleaseJSONRequestBody = GrabRequest
+
+// ManualImportJSONRequestBody defines body for ManualImport for application/json ContentType.
+type ManualImportJSONRequestBody = ManualImportRequest
 
 // AddImportListJSONRequestBody defines body for AddImportList for application/json ContentType.
 type AddImportListJSONRequestBody = ImportListInput
@@ -983,6 +1051,9 @@ type ServerInterface interface {
 	// DeleteDownloadClient Remove a download client
 	// (DELETE /downloadclients/{id})
 	DeleteDownloadClient(w http.ResponseWriter, r *http.Request, id int64)
+	// UpdateDownloadClient Update a download client (e.g. toggle manual approval)
+	// (PUT /downloadclients/{id})
+	UpdateDownloadClient(w http.ResponseWriter, r *http.Request, id int64)
 	// TestDownloadClientById Test a saved download client with its stored credentials
 	// (POST /downloadclients/{id}/test)
 	TestDownloadClientById(w http.ResponseWriter, r *http.Request, id int64)
@@ -995,6 +1066,12 @@ type ServerInterface interface {
 	// GetHealth Run health checks and report results
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// ManualImport Import files from a path into a chosen item/copy
+	// (POST /import/manual)
+	ManualImport(w http.ResponseWriter, r *http.Request)
+	// ScanImportPath List the media files Monarr can see under a path
+	// (GET /import/scan)
+	ScanImportPath(w http.ResponseWriter, r *http.Request, params ScanImportPathParams)
 	// ListImportLists Import list sources
 	// (GET /importlists)
 	ListImportLists(w http.ResponseWriter, r *http.Request)
@@ -1091,6 +1168,12 @@ type ServerInterface interface {
 	// RemoveQueueItem Remove a queue row (optionally from the client too)
 	// (DELETE /queue/{id})
 	RemoveQueueItem(w http.ResponseWriter, r *http.Request, id int64, params RemoveQueueItemParams)
+	// BlocklistQueueItem Declare the release bad — blocklist it and search a replacement
+	// (POST /queue/{id}/blocklist)
+	BlocklistQueueItem(w http.ResponseWriter, r *http.Request, id int64)
+	// ImportQueueItem Import a download now — approve a held one, or retry a failed one
+	// (POST /queue/{id}/import)
+	ImportQueueItem(w http.ResponseWriter, r *http.Request, id int64)
 	// ListRootFolders List library root folders
 	// (GET /rootfolders)
 	ListRootFolders(w http.ResponseWriter, r *http.Request)
@@ -1368,6 +1451,32 @@ func (siw *ServerInterfaceWrapper) DeleteDownloadClient(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateDownloadClient operation middleware
+func (siw *ServerInterfaceWrapper) UpdateDownloadClient(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateDownloadClient(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // TestDownloadClientById operation middleware
 func (siw *ServerInterfaceWrapper) TestDownloadClientById(w http.ResponseWriter, r *http.Request) {
 
@@ -1427,6 +1536,53 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ManualImport operation middleware
+func (siw *ServerInterfaceWrapper) ManualImport(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ManualImport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ScanImportPath operation middleware
+func (siw *ServerInterfaceWrapper) ScanImportPath(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ScanImportPathParams
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ScanImportPath(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2208,6 +2364,58 @@ func (siw *ServerInterfaceWrapper) RemoveQueueItem(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// BlocklistQueueItem operation middleware
+func (siw *ServerInterfaceWrapper) BlocklistQueueItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BlocklistQueueItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportQueueItem operation middleware
+func (siw *ServerInterfaceWrapper) ImportQueueItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportQueueItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRootFolders operation middleware
 func (siw *ServerInterfaceWrapper) ListRootFolders(w http.ResponseWriter, r *http.Request) {
 
@@ -2519,11 +2727,16 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloadclients", wrapper.AddDownloadClient)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloadclients/test", wrapper.TestDownloadClient)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloadclients/{id}", wrapper.DeleteDownloadClient)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/downloadclients/{id}", wrapper.UpdateDownloadClient)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloadclients/{id}/test", wrapper.TestDownloadClientById)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/releases", wrapper.SearchReleases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/grab", wrapper.GrabRelease)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue", wrapper.ListQueue)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/blocklist", wrapper.BlocklistQueueItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/scan", wrapper.ScanImportPath)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/manual", wrapper.ManualImport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/customformats", wrapper.ListCustomFormats)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/customformats", wrapper.AddCustomFormat)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/customformats/{id}", wrapper.DeleteCustomFormat)

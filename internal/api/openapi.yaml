@@ -513,6 +513,36 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   /downloadclients/{id}:
+    put:
+      operationId: updateDownloadClient
+      summary: Update a download client (e.g. toggle manual approval)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadClientInput"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DownloadClientConfig" }
+        "400":
+          description: Invalid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No such client.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       operationId: deleteDownloadClient
       summary: Remove a download client
@@ -640,6 +670,93 @@ paths:
         "204": { description: Removed. }
         "404":
           description: Unknown row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /queue/{id}/import:
+    post:
+      operationId: importQueueItem
+      summary: Import a download now — approve a held one, or retry a failed one
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Imported. }
+        "400":
+          description: Import failed (reason in the body); the row stays retryable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /queue/{id}/blocklist:
+    post:
+      operationId: blocklistQueueItem
+      summary: Declare the release bad — blocklist it and search a replacement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Blocklisted; a replacement search was kicked off. }
+        "404":
+          description: Unknown row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /import/scan:
+    get:
+      operationId: scanImportPath
+      summary: List the media files Monarr can see under a path
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Files found (empty array means nothing importable there).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ScannedFile" }
+        "400":
+          description: Path not accessible.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /import/manual:
+    post:
+      operationId: manualImport
+      summary: Import files from a path into a chosen item/copy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ManualImportRequest" }
+      responses:
+        "200":
+          description: Imported; returns how many files landed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [files]
+                properties:
+                  files: { type: integer }
+        "400":
+          description: Import failed.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1742,6 +1859,12 @@ components:
         password: { type: string }
         category: { type: string, default: monarr }
         enabled: { type: boolean, default: true }
+        manualApproval:
+          type: boolean
+          default: false
+          description: >
+            Hold a completed download at 'awaiting_import' until you approve
+            it, instead of importing automatically.
         pathMappings:
           type: array
           items: { $ref: "#/components/schemas/PathMapping" }
@@ -1803,6 +1926,37 @@ components:
         indexer: { type: string }
         protocol: { type: string }
         size: { type: integer, format: int64 }
+
+    ScannedFile:
+      type: object
+      required: [path, name, size, kind, quality, season, episodes]
+      properties:
+        path: { type: string }
+        name: { type: string }
+        size: { type: integer, format: int64 }
+        kind: { type: string, description: "video | book" }
+        quality: { type: string }
+        season: { type: integer, description: "-1 when not a series file" }
+        episodes:
+          type: array
+          items: { type: integer }
+
+    ManualImportRequest:
+      type: object
+      required: [path, mediaItemId]
+      properties:
+        path: { type: string }
+        mediaItemId: { type: integer, format: int64 }
+        copyId:
+          type: integer
+          format: int64
+          description: Target copy; 0 = the primary copy.
+        downloadId:
+          type: integer
+          format: int64
+          description: >
+            Tie the import to a stuck queue row so it's marked imported (or
+            failed) by this attempt. 0 = a standalone import.
 
     CustomFormatInput:
       type: object
@@ -1971,13 +2125,44 @@ components:
       properties:
         id: { type: integer, format: int64 }
         mediaItemId: { type: integer, format: int64 }
+        copyId:
+          type: integer
+          format: int64
+          description: The media copy this grab targets; 0 = the primary copy.
         title: { type: string }
-        state: { type: string }
+        state:
+          type: string
+          description: >
+            grabbed | downloading | downloaded | awaiting_import | importing
+            | imported | failed.
         progress: { type: number }
         protocol: { type: string }
         quality: { type: string }
+        clientId: { type: integer, format: int64 }
         error: { type: string }
+        savePath:
+          type: string
+          description: The completed-download path the client reported.
+        importPath:
+          type: string
+          description: Where Monarr looked for the files after remote path mapping.
+        handoff:
+          type: array
+          description: The download → import handoff, step by step.
+          items: { $ref: "#/components/schemas/HandoffEntry" }
         addedAt: { type: string, format: date-time }
+
+    HandoffEntry:
+      type: object
+      required: [step, at]
+      properties:
+        step:
+          type: string
+          description: >
+            grabbed | downloading | downloaded | awaiting_import | importing
+            | imported | failed.
+        at: { type: integer, format: int64, description: Unix milliseconds. }
+        detail: { type: string }
 
     Settings:
       type: object
