@@ -71,11 +71,13 @@ first import.
 ## The library page
 
 The **All** tab shows everything, grouped into Movies / Series / Books
-sections (never interleaved); the kind tabs show flat grids. The toolbar
-filters by title/author text and by state — monitored, unmonitored,
-missing, incomplete, complete — and sorts by title, year, recently
-added, or rating (with an ascending/descending toggle). Sort and filter
-choices are remembered per browser. Every card carries the rating star,
+sections (never interleaved); the kind tabs show flat grids. **Each
+section carries its own controls** in its header bar: a title/author
+text filter, a state filter (monitored, unmonitored, missing,
+incomplete, complete), and a sort (title, year, recently added, rating —
+books also sort by author) with an ascending/descending toggle. The same
+per-kind settings drive that kind's flat tab, and everything but the
+text filter is remembered per browser. Every card carries the rating star,
 the color-coded completeness pill, and a ↓ badge while something is
 downloading for it.
 
