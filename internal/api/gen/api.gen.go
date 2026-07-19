@@ -564,6 +564,9 @@ type MediaItemDetail struct {
 
 // MediaItemSummary defines model for MediaItemSummary.
 type MediaItemSummary struct {
+	// AddedAt When the item was added — drives the "recently added" sort.
+	AddedAt time.Time `json:"addedAt"`
+
 	// Author Books only (ADR 0006); empty for movies/series.
 	Author string `json:"author"`
 

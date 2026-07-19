@@ -52,6 +52,83 @@ const KIND_TABS: { label: string; kind?: MediaKind }[] = [
   { label: 'Books', kind: 'book' },
 ]
 
+// The All view groups by kind in this order — never interleaved.
+const KIND_SECTIONS: { kind: MediaKind; label: string }[] = [
+  { kind: 'movie', label: 'Movies' },
+  { kind: 'series', label: 'Series' },
+  { kind: 'book', label: 'Books' },
+]
+
+type SortKey = 'title' | 'year' | 'added' | 'rating'
+type FilterKey = 'all' | 'monitored' | 'unmonitored' | 'missing' | 'incomplete' | 'complete'
+
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: 'title', label: 'Title' },
+  { key: 'year', label: 'Year' },
+  { key: 'added', label: 'Recently added' },
+  { key: 'rating', label: 'Rating' },
+]
+
+const FILTERS: { key: FilterKey; label: string }[] = [
+  { key: 'all', label: 'Everything' },
+  { key: 'monitored', label: 'Monitored' },
+  { key: 'unmonitored', label: 'Unmonitored' },
+  { key: 'missing', label: 'Missing (nothing on disk)' },
+  { key: 'incomplete', label: 'Incomplete' },
+  { key: 'complete', label: 'Complete' },
+]
+
+// matchesFilter applies the completeness/monitoring filter to one item.
+function matchesFilter(m: MediaItemSummary, f: FilterKey): boolean {
+  const comp = completeness(m.kind, m.episodeFileCount, m.episodeCount, m.fileCount)
+  switch (f) {
+    case 'monitored':
+      return m.monitored
+    case 'unmonitored':
+      return !m.monitored
+    case 'missing':
+      return comp.have === 0 && comp.total > 0
+    case 'incomplete':
+      return comp.total > 0 && comp.have < comp.total
+    case 'complete':
+      return comp.total > 0 && comp.have >= comp.total
+    default:
+      return true
+  }
+}
+
+function compare(a: MediaItemSummary, b: MediaItemSummary, key: SortKey): number {
+  switch (key) {
+    case 'year':
+      return a.year - b.year
+    case 'added':
+      return a.addedAt.localeCompare(b.addedAt)
+    case 'rating':
+      return a.rating - b.rating
+    default:
+      return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })
+  }
+}
+
+// Sort/filter choices persist per browser, like the theme.
+function savedPref<T extends string>(key: string, valid: readonly T[], fallback: T): T {
+  try {
+    const v = localStorage.getItem(key)
+    if (v && (valid as readonly string[]).includes(v)) return v as T
+  } catch {
+    /* private mode */
+  }
+  return fallback
+}
+
+function savePref(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* private mode */
+  }
+}
+
 export function LibraryPage() {
   const [kind, setKind] = useState<MediaKind | undefined>(undefined)
   const navigate = useNavigate()
@@ -104,6 +181,72 @@ export function LibraryPage() {
   }
 
   const unmatched = report.data?.unmatchedDirs ?? []
+
+  // Sort / filter toolbar state, remembered per browser.
+  const [sortKey, setSortKey] = useState<SortKey>(() =>
+    savedPref('monarr-lib-sort', ['title', 'year', 'added', 'rating'] as const, 'title'))
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() =>
+    savedPref('monarr-lib-dir', ['asc', 'desc'] as const, 'asc'))
+  const [filter, setFilter] = useState<FilterKey>(() =>
+    savedPref('monarr-lib-filter', ['all', 'monitored', 'unmonitored', 'missing', 'incomplete', 'complete'] as const, 'all'))
+  const [q, setQ] = useState('')
+
+  const needle = q.trim().toLowerCase()
+  const visible = (items.data ?? [])
+    .filter((m) => matchesFilter(m, filter))
+    .filter(
+      (m) =>
+        !needle ||
+        m.title.toLowerCase().includes(needle) ||
+        (m.author && m.author.toLowerCase().includes(needle)),
+    )
+    .sort((a, b) => (sortDir === 'asc' ? 1 : -1) * compare(a, b, sortKey))
+
+  const renderCard = (m: MediaItemSummary) =>
+    editing ? (
+      <button
+        key={m.id}
+        className="poster-card"
+        style={{
+          textAlign: 'inherit', cursor: 'pointer',
+          outline: selected.has(m.id) ? '2px solid var(--accent, #7c5cff)' : 'none',
+        }}
+        aria-pressed={selected.has(m.id)}
+        onClick={() => toggle(m.id)}
+      >
+        {m.posterPath ? (
+          <img src={posterUrl(m.posterPath)} alt="" loading="lazy" />
+        ) : (
+          <div className="poster-fallback">{m.title.slice(0, 1)}</div>
+        )}
+        <div className="poster-meta">
+          <div className="poster-title" title={m.title}>
+            {selected.has(m.id) ? '☑ ' : '☐ '}
+            {m.title}
+          </div>
+          <div className="muted">{m.monitored ? 'monitored' : 'unmonitored'}</div>
+        </div>
+      </button>
+    ) : (
+      <Link key={m.id} to="/library/$id" params={{ id: String(m.id) }} className="poster-card">
+        {m.posterPath ? (
+          <img src={posterUrl(m.posterPath)} alt="" loading="lazy" />
+        ) : (
+          <div className="poster-fallback">{m.title.slice(0, 1)}</div>
+        )}
+        <div className="poster-meta">
+          <div className="poster-title" title={m.title}>
+            {m.title}
+          </div>
+          <div className="muted poster-sub">
+            <span>
+              {m.kind === 'book' && m.author ? m.author : `${m.year || '—'} · ${m.kind}`}
+            </span>
+            <CardBadges m={m} downloading={downloading.has(m.id)} />
+          </div>
+        </div>
+      </Link>
+    )
 
   return (
     <>
@@ -196,54 +339,94 @@ export function LibraryPage() {
         </div>
       )}
 
-      <div className="poster-grid">
-        {items.data?.map((m) =>
-          editing ? (
-            <button
-              key={m.id}
-              className="poster-card"
-              style={{
-                textAlign: 'inherit', cursor: 'pointer',
-                outline: selected.has(m.id) ? '2px solid var(--accent, #7c5cff)' : 'none',
+      {(items.data?.length ?? 0) > 0 && (
+        <div className="lib-toolbar">
+          <input
+            type="search"
+            placeholder="Filter by title or author…"
+            aria-label="Filter library by title"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <label className="inline">
+            Show:{' '}
+            <select
+              aria-label="Filter"
+              value={filter}
+              onChange={(e) => {
+                setFilter(e.target.value as FilterKey)
+                savePref('monarr-lib-filter', e.target.value)
               }}
-              aria-pressed={selected.has(m.id)}
-              onClick={() => toggle(m.id)}
             >
-              {m.posterPath ? (
-                <img src={posterUrl(m.posterPath)} alt="" loading="lazy" />
-              ) : (
-                <div className="poster-fallback">{m.title.slice(0, 1)}</div>
-              )}
-              <div className="poster-meta">
-                <div className="poster-title" title={m.title}>
-                  {selected.has(m.id) ? '☑ ' : '☐ '}
-                  {m.title}
-                </div>
-                <div className="muted">{m.monitored ? 'monitored' : 'unmonitored'}</div>
-              </div>
-            </button>
-          ) : (
-            <Link key={m.id} to="/library/$id" params={{ id: String(m.id) }} className="poster-card">
-              {m.posterPath ? (
-                <img src={posterUrl(m.posterPath)} alt="" loading="lazy" />
-              ) : (
-                <div className="poster-fallback">{m.title.slice(0, 1)}</div>
-              )}
-              <div className="poster-meta">
-                <div className="poster-title" title={m.title}>
-                  {m.title}
-                </div>
-                <div className="muted poster-sub">
-                  <span>
-                    {m.kind === 'book' && m.author ? m.author : `${m.year || '—'} · ${m.kind}`}
-                  </span>
-                  <CardBadges m={m} downloading={downloading.has(m.id)} />
-                </div>
-              </div>
-            </Link>
-          ),
-        )}
-      </div>
+              {FILTERS.map((f) => (
+                <option key={f.key} value={f.key}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="inline">
+            Sort:{' '}
+            <select
+              aria-label="Sort"
+              value={sortKey}
+              onChange={(e) => {
+                const key = e.target.value as SortKey
+                setSortKey(key)
+                savePref('monarr-lib-sort', key)
+                // New sort key gets its natural direction once.
+                const dir = key === 'added' || key === 'rating' ? 'desc' : 'asc'
+                setSortDir(dir)
+                savePref('monarr-lib-dir', dir)
+              }}
+            >
+              {SORTS.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+            aria-label="Toggle sort direction"
+            onClick={() => {
+              const dir = sortDir === 'asc' ? 'desc' : 'asc'
+              setSortDir(dir)
+              savePref('monarr-lib-dir', dir)
+            }}
+          >
+            {sortDir === 'asc' ? '↑' : '↓'}
+          </button>
+          {(filter !== 'all' || needle) && (
+            <span className="muted">
+              {visible.length} of {items.data!.length} shown
+            </span>
+          )}
+        </div>
+      )}
+
+      {kind === undefined ? (
+        // The All view: everything, grouped by kind — never interleaved.
+        KIND_SECTIONS.map((section) => {
+          const group = visible.filter((m) => m.kind === section.kind)
+          if (group.length === 0) return null
+          return (
+            <section key={section.kind} className="lib-section">
+              <h2 className="lib-section-head">
+                {section.label} <span className="muted">({group.length})</span>
+              </h2>
+              <div className="poster-grid">{group.map(renderCard)}</div>
+            </section>
+          )
+        })
+      ) : (
+        <div className="poster-grid">{visible.map(renderCard)}</div>
+      )}
+
+      {(items.data?.length ?? 0) > 0 && visible.length === 0 && (
+        <p className="muted">Nothing matches the current filter.</p>
+      )}
     </>
   )
 }

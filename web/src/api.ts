@@ -64,6 +64,7 @@ export interface MediaItemSummary {
   episodeCount: number // monitored episodes aired to date (series)
   episodeFileCount: number // of those, how many have a file
   fileCount: number // files on disk (movies/books completeness)
+  addedAt: string // ISO timestamp — drives the "recently added" sort
 }
 
 export interface Rating {

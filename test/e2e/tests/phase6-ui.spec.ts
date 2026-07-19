@@ -118,6 +118,40 @@ test('metadata refresh re-hydrates from the provider', async ({ request }) => {
   expect(tasks.some((t: any) => t.name === 'metadata.refresh')).toBe(true)
 })
 
+test('library All view groups by kind with sort and filter controls', async ({ page }) => {
+  await page.goto('/')
+
+  // Grouped sections, fixed order — no interleaving.
+  const heads = page.locator('.lib-section-head')
+  await expect(heads).toHaveCount(3)
+  await expect(heads.nth(0)).toContainText('Movies')
+  await expect(heads.nth(1)).toContainText('Series')
+  await expect(heads.nth(2)).toContainText('Books')
+
+  // Text filter narrows to the matching section only.
+  await page.getByRole('searchbox', { name: 'Filter library by title' }).fill('test movie')
+  await expect(page.locator('.lib-section-head')).toHaveCount(1)
+  await expect(page.locator('.lib-section-head').first()).toContainText('Movies')
+  await page.getByRole('searchbox', { name: 'Filter library by title' }).fill('')
+
+  // Completeness filter: everything in the suite is on disk by now, so
+  // "Missing" empties the grid and says so.
+  await page.getByRole('combobox', { name: 'Filter' }).selectOption('missing')
+  await expect(page.getByText('Nothing matches the current filter.')).toBeVisible()
+  await page.getByRole('combobox', { name: 'Filter' }).selectOption('all')
+
+  // Sort control flips direction.
+  await page.getByRole('combobox', { name: 'Sort' }).selectOption('year')
+  await expect(page.getByRole('button', { name: 'Toggle sort direction' })).toBeVisible()
+  await page.getByRole('combobox', { name: 'Sort' }).selectOption('title')
+
+  // Kind tabs stay flat (no section heads).
+  await page.getByRole('tab', { name: 'Movies' }).click()
+  await expect(page.locator('.lib-section-head')).toHaveCount(0)
+  await expect(page.locator('.poster-card').first()).toBeVisible()
+  await page.getByRole('tab', { name: 'All' }).click()
+})
+
 test('quality copies: wanted independently, managed from the item page', async ({ page, request }) => {
   const movies = await (await request.get('/api/v1/library?kind=movie')).json()
   const movie = movies[0]

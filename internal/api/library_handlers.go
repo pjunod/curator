@@ -75,6 +75,7 @@ func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 		EpisodeCount:     m.EpisodeCount,
 		EpisodeFileCount: m.EpisodeFileCount,
 		FileCount:        m.FileCount,
+		AddedAt:          m.AddedAt,
 	}
 }
 
