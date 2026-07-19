@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { DownloadClientInput, IndexerInput } from '../api'
+import type { DownloadClientConfig, DownloadClientInput, IndexerInput } from '../api'
 
 // Default ports per client type; prepopulates the port box.
 const CLIENT_DEFAULT_PORTS: Record<DownloadClientInput['type'], string> = {
@@ -22,6 +22,7 @@ import {
   testDownloadClientById,
   testIndexer,
   testIndexerById,
+  updateDownloadClient,
 } from '../api'
 
 // RowTest is the per-row Test button for saved indexers/clients: runs the
@@ -118,6 +119,18 @@ export function AcquisitionSettings() {
     mutationFn: deleteDownloadClient,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['downloadclients'] }),
   })
+  // Toggle manual-approval on a saved client. The masked password round-trips
+  // and is preserved server-side, so this never blanks credentials.
+  const toggleApproval = useMutation({
+    mutationFn: (c: DownloadClientConfig) =>
+      updateDownloadClient(c.id, {
+        type: c.type, name: c.name, url: c.url,
+        username: c.username, password: c.password,
+        category: c.category, enabled: c.enabled,
+        manualApproval: !c.manualApproval, pathMappings: c.pathMappings,
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['downloadclients'] }),
+  })
 
   return (
     <>
@@ -194,6 +207,20 @@ export function AcquisitionSettings() {
                     : ''}
                 </td>
                 <td>
+                  <label
+                    className="approval-toggle"
+                    title="Hold this client's completed downloads for manual approval before import"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!c.manualApproval}
+                      onChange={() => toggleApproval.mutate(c)}
+                      disabled={toggleApproval.isPending}
+                    />{' '}
+                    Approve imports
+                  </label>
+                </td>
+                <td>
                   <RowTest run={() => testDownloadClientById(c.id)} />
                 </td>
                 <td>
@@ -264,6 +291,14 @@ export function AcquisitionSettings() {
             onChange={(e) => setMapLocal(e.target.value)}
             style={{ minWidth: 260 }}
           />
+          <label className="approval-toggle" title="Hold completed downloads for manual approval before import">
+            <input
+              type="checkbox"
+              checked={!!cli.manualApproval}
+              onChange={(e) => setCli({ ...cli, manualApproval: e.target.checked })}
+            />{' '}
+            Require approval
+          </label>
           <button onClick={() => testCli.mutate()} disabled={testCli.isPending || !cli.url}>
             Test
           </button>

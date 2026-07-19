@@ -313,6 +313,7 @@ export interface DownloadClientInput {
   password?: string
   category?: string
   enabled?: boolean
+  manualApproval?: boolean
   pathMappings?: PathMapping[]
 }
 
@@ -353,16 +354,44 @@ export interface GrabRequest {
   size?: number
 }
 
+export interface HandoffEntry {
+  step: string
+  at: number // unix millis
+  detail?: string
+}
+
 export interface QueueItem {
   id: number
   mediaItemId: number
+  copyId?: number
+  clientId?: number
   title: string
   state: string
   progress: number
   protocol: string
   quality: string
   error?: string
+  savePath?: string
+  importPath?: string
+  handoff?: HandoffEntry[]
   addedAt: string
+}
+
+export interface ScannedFile {
+  path: string
+  name: string
+  size: number
+  kind: string // 'video' | 'book'
+  quality: string
+  season: number // -1 when not a series file
+  episodes: number[]
+}
+
+export interface ManualImportRequest {
+  path: string
+  mediaItemId: number
+  copyId?: number
+  downloadId?: number
 }
 
 export const getProfiles = () => get<QualityProfile[]>('/profiles')
@@ -375,6 +404,8 @@ export const deleteIndexer = (id: number) => send('DELETE', `/indexers/${id}`)
 export const getDownloadClients = () => get<DownloadClientConfig[]>('/downloadclients')
 export const addDownloadClient = (c: DownloadClientInput) =>
   send<DownloadClientConfig>('POST', '/downloadclients', c)
+export const updateDownloadClient = (id: number, c: DownloadClientInput) =>
+  send<DownloadClientConfig>('PUT', `/downloadclients/${id}`, c)
 export const testDownloadClient = (c: DownloadClientInput) => send('POST', '/downloadclients/test', c)
 export const deleteDownloadClient = (id: number) => send('DELETE', `/downloadclients/${id}`)
 export const searchReleases = (itemId: number, season?: number, episode?: number) => {
@@ -388,6 +419,12 @@ export const grabRelease = (req: GrabRequest) => send<{ id: number }>('POST', '/
 export const getQueue = () => get<QueueItem[]>('/queue')
 export const removeQueueItem = (id: number, fromClient: boolean) =>
   send('DELETE', `/queue/${id}?fromClient=${fromClient}`)
+export const importQueueItem = (id: number) => send('POST', `/queue/${id}/import`)
+export const blocklistQueueItem = (id: number) => send('POST', `/queue/${id}/blocklist`)
+export const scanImportPath = (path: string) =>
+  get<ScannedFile[]>(`/import/scan?path=${encodeURIComponent(path)}`)
+export const manualImport = (req: ManualImportRequest) =>
+  send<{ files: number }>('POST', '/import/manual', req)
 
 export function posterUrl(path: string, size: 'w185' | 'w342' | 'w500' = 'w342'): string {
   if (!path) return ''
@@ -598,7 +635,13 @@ export const updateLibraryItem = (id: number, req: UpdateMediaItemRequest) =>
   send<MediaItemDetail>('PATCH', `/library/${id}`, req)
 
 // States that mean a download for the item is in flight right now.
-export const ACTIVE_DOWNLOAD_STATES = ['grabbed', 'downloading', 'importing']
+export const ACTIVE_DOWNLOAD_STATES = [
+  'grabbed',
+  'downloading',
+  'downloaded',
+  'awaiting_import',
+  'importing',
+]
 
 // fmtRating renders a provider-scale rating for display: TMDB rates /10,
 // Open Library rates books /5.

@@ -1373,3 +1373,119 @@ a.pill-info:hover {
   gap: 8px;
   padding: 8px 6px;
 }
+
+/* ---- activity: handoff trace, row actions, manual import ---- */
+.row-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+.row-toggle:hover {
+  color: var(--text);
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.handoff-row > td {
+  background: var(--bg-hover);
+  border-top: none;
+}
+
+.handoff {
+  padding: 6px 2px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.handoff-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.handoff-trace {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.handoff-step {
+  display: grid;
+  grid-template-columns: 14px 76px 1fr;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  position: relative;
+}
+
+/* Timeline connector between dots. */
+.handoff-step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 12px;
+  bottom: -8px;
+  width: 1px;
+  background: var(--border);
+}
+
+.handoff-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  align-self: center;
+  z-index: 1;
+}
+.handoff-step[data-step='imported'] .handoff-dot {
+  background: var(--ok);
+}
+.handoff-step[data-step='failed'] .handoff-dot {
+  background: var(--error);
+}
+.handoff-step[data-step='awaiting_import'] .handoff-dot {
+  background: var(--warning);
+}
+
+.handoff-when {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.handoff-what {
+  color: var(--text);
+  word-break: break-word;
+}
+
+.manual-import h2 {
+  margin-top: 0;
+}
+.manual-import .form-row {
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.scan-result {
+  margin: 10px 0;
+}
+
+.approval-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
