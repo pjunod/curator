@@ -17,9 +17,11 @@ COPY --from=web /src/web/dist ./web/dist
 # explicit --build-arg VERSION=… still wins, e.g. for tagged release
 # builds. A clone that lacks the release tags falls back to the VERSION
 # file, so the UI shows "0.3.0+g<hash>", never a raw commit hash.
+# --no-dirty: .dockerignore prunes tracked files from the context, which
+# would stamp every image build "-dirty"; image builds describe HEAD.
 ARG VERSION=""
 RUN apk add --no-cache git
-RUN V="${VERSION:-$(sh scripts/version.sh)}" && \
+RUN V="${VERSION:-$(sh scripts/version.sh --no-dirty)}" && \
     V="${V#v}" && \
     C="$(git rev-parse --short HEAD 2>/dev/null || echo none)" && \
     CGO_ENABLED=0 go build -trimpath \

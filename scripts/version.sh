@@ -6,10 +6,17 @@
 #   tagless clone  → VERSION file + commit: "0.3.0+gabc1234"
 #   no git at all  → VERSION file: "0.3.0+unknown"
 #
+# --no-dirty drops the worktree-state suffix. The Docker build passes it:
+# .dockerignore prunes tracked files (docs, tests, *.md, .github) from the
+# build context, so inside the build EVERY checkout looks dirty — image
+# builds describe HEAD instead.
+#
 # The leading v is stripped; the UI prepends its own. The VERSION file is
 # the release base and is bumped together with every release tag.
 cd "$(dirname "$0")/.." || exit 1
-D="$(git describe --tags --always --dirty 2>/dev/null || true)"
+DIRTY="--dirty"
+[ "${1:-}" = "--no-dirty" ] && DIRTY=""
+D="$(git describe --tags --always $DIRTY 2>/dev/null || true)"
 B="$(cat VERSION 2>/dev/null || echo 0.0.0)"
 case "$D" in
   v*) printf '%s\n' "${D#v}" ;;
