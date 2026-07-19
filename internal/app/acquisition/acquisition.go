@@ -443,6 +443,9 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	// Open the handoff trace so every step from here is laid out.
+	dl := sqlite.Download{ID: id, MediaItemID: item.ID, ReleaseTitle: req.Title, State: "grabbed"}
+	s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, "sent to "+clientLabel(*cfg))
 	_ = s.db.AddHistory(ctx, "grabbed", item.ID, req.Title,
 		map[string]any{"indexer": req.Indexer, "protocol": req.Protocol})
 	s.publish(ReleaseGrabbed{MediaItemID: item.ID, Title: req.Title,
@@ -482,22 +485,25 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			}
 			switch st.State {
 			case ports.StateQueued, ports.StateDownloading:
-				_ = s.db.UpdateDownloadState(ctx, dl.ID, "downloading", st.Progress, "")
+				if dl.State == "grabbed" {
+					// First sighting in the client queue — log the step.
+					s.advance(ctx, &dl, "downloading", st.Progress, "", stepDownloading,
+						"download client is fetching the release")
+				} else {
+					_ = s.db.UpdateDownloadState(ctx, dl.ID, "downloading", st.Progress, "")
+				}
 			case ports.StateFailed:
+				if dl.State == "imported" {
+					continue
+				}
+				// A client-reported failure is a bad release: blocklist it
+				// and search a replacement.
 				s.handleFailure(ctx, dl, st.Progress, st.Message)
 			case ports.StateCompleted:
 				if dl.State == "imported" {
 					continue
 				}
-				_ = s.db.UpdateDownloadState(ctx, dl.ID, "importing", 1, "")
-				// The client reports its own path; remote path mappings
-				// translate it to where Monarr sees the same files.
-				if err := s.importDownload(ctx, dl, ports.MapRemotePath(cfg.PathMappings, st.SavePath)); err != nil {
-					s.handleFailure(ctx, dl, 1, err.Error())
-				} else {
-					_ = s.db.UpdateDownloadState(ctx, dl.ID, "imported", 1, "")
-					s.InvalidateWanted()
-				}
+				s.onDownloaded(ctx, dl, cfg, st)
 			}
 		}
 	}
@@ -508,7 +514,7 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 // never re-grabbed, and immediately re-searches for the affected wantables
 // (blueprint §5.1 "failed-download handling").
 func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progress float64, reason string) {
-	_ = s.db.UpdateDownloadState(ctx, dl.ID, "failed", progress, reason)
+	s.advance(ctx, &dl, "failed", progress, reason, stepFailed, "download failed: "+reason)
 	_ = s.db.AddHistory(ctx, "failed", dl.MediaItemID, dl.ReleaseTitle,
 		map[string]any{"reason": reason})
 	if err := s.db.AddBlocklist(ctx, dl.MediaItemID, dl.ReleaseTitle, dl.Indexer, reason); err != nil {

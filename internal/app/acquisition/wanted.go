@@ -169,7 +169,9 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 // notInFlight filters out wantables that already have an active download —
 // including episodes covered by an in-flight season pack.
 func (s *Service) notInFlight(ctx context.Context, wanted []domain.Wantable) []domain.Wantable {
-	active, err := s.db.ListActiveDownloads(ctx)
+	// In-flight includes rows stalled at a failed import: the user resolves
+	// those by hand (retry / manual import), so don't grab a duplicate.
+	active, err := s.db.ListInFlightDownloads(ctx)
 	if err != nil {
 		return wanted
 	}

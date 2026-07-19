@@ -22,10 +22,10 @@ import (
 // video file, map it to wantables, apply per-file upgrade decisions,
 // hardlink-or-copy into the Renamer layout, link MediaFile rows, and clean
 // up replaced files (blueprint §5.1 grab → import).
-func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePath string) error {
+func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePath string) (int, bool, error) {
 	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
 	if err != nil {
-		return err
+		return 0, false, err
 	}
 
 	// The import scope: which copy this grab was for decides the profile,
@@ -34,7 +34,7 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	if dl.CopyID != 0 {
 		cp, err := s.db.GetMediaCopy(ctx, dl.MediaItemID, dl.CopyID)
 		if err != nil {
-			return fmt.Errorf("copy %d vanished: %w", dl.CopyID, err)
+			return 0, false, fmt.Errorf("copy %d vanished: %w", dl.CopyID, err)
 		}
 		scope.CopyID = cp.ID
 		scope.ProfileID = cp.QualityProfileID
@@ -43,7 +43,7 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		}
 	}
 	if scope.Dest == "" {
-		return fmt.Errorf("item has no library folder assigned")
+		return 0, false, fmt.Errorf("item has no library folder assigned")
 	}
 
 	isMedia := filename.IsVideo
@@ -52,19 +52,19 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	}
 	videos, err := collectFiles(savePath, isMedia)
 	if err != nil {
-		return err
+		return 0, false, err
 	}
 	if len(videos) == 0 {
-		return fmt.Errorf("no media files in %s", savePath)
+		return 0, false, fmt.Errorf("no media files in %s", savePath)
 	}
 
 	epQuals, err := s.episodeQualities(ctx, item, scope.CopyID)
 	if err != nil {
-		return err
+		return 0, false, err
 	}
 	profile, err := s.db.GetProfile(ctx, scope.ProfileID)
 	if err != nil {
-		return err
+		return 0, false, err
 	}
 
 	imported, upgraded := 0, false
@@ -99,7 +99,7 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		upgraded = upgraded || wasUpgrade
 	}
 	if imported == 0 {
-		return fmt.Errorf("no files imported from %s", savePath)
+		return 0, false, fmt.Errorf("no files imported from %s", savePath)
 	}
 
 	_ = s.db.AddHistory(ctx, "imported", item.ID, dl.ReleaseTitle,
@@ -107,7 +107,7 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	s.publish(ImportCompleted{MediaItemID: item.ID, Release: dl.ReleaseTitle,
 		Files: imported, Upgrade: upgraded})
 	s.log.Info("imported", "item", item.Title, "files", imported)
-	return nil
+	return imported, upgraded, nil
 }
 
 func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) {
