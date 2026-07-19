@@ -58,7 +58,15 @@ itself doesn't require it.
 `Category` (default `monarr`) tags/labels downloads where the client
 supports it. Grabs route by protocol: a torrent release goes to the first
 enabled torrent client, usenet to the first enabled usenet client. The
-queue is polled every 30 s; completed items import automatically.
+queue is polled every 30 s; completed items import automatically unless the
+client requires approval (below).
+
+**Approve imports** (per client, default off) holds every completed
+download at *awaiting approval* instead of importing it — nothing touches
+the library until you press **Import now** on the Activity page. Turn it on
+with the checkbox on the client's row (or when adding it) for a client
+whose completed files you want to eyeball first. The toggle round-trips
+without re-entering the password.
 
 ### Completed downloads: where files land, and how Monarr finds them
 
@@ -81,8 +89,27 @@ That reported path must be **openable by Monarr as-is**:
   container at `/pool/downloads/...` → map `/data/completed` →
   `/pool/downloads`.
 
-A failed import with `payload missing` means the reported path wasn't
-visible — fix the mount or add a mapping.
+### When an import can't proceed
+
+A completed download that Monarr can't place is **not** silently dropped or
+blocklisted — the release downloaded fine, so the problem is local and
+fixable. The queue row goes to **failed** with the exact reason, and
+expanding it on the Activity page shows the whole handoff: the path the
+client reported, the path Monarr looked in after any mapping, and where it
+stopped. Common cases:
+
+- `payload missing` — the reported path isn't visible to Monarr. Fix the
+  mount or add a remote path mapping (above), then press **Retry**.
+- `no media files in …` — the path is visible but holds nothing importable
+  (wrong folder, or an archive Monarr doesn't unpack). Point a **Manual
+  import** at the right folder.
+
+Every failed row offers **Retry** (re-run the import once the underlying
+problem is fixed, using the same path), **Manual import** (browse to the
+real files and pick the target title/copy yourself), **Blocklist** (declare
+the release bad — blocklists it and searches a replacement), and **Remove**.
+Nothing is auto-blocklisted on an import failure, so a config problem never
+churns through replacements behind your back.
 
 ## Quality profiles
 

@@ -214,7 +214,8 @@ drops its records only; files on disk stay.
   task). Imported files are renamed to the library layout —
   `Movie (Year) [Quality].ext`, `Show - S01E02 - Title [Quality].ext`,
   `Author/Title/Title - Author.ext` — using hardlinks when the download and
-  library share a filesystem.
+  library share a filesystem. **Expand any row** (the ▸) to see the
+  handoff, below.
 - **Calendar** is a month grid: episode air dates and movie/book release
   dates land on their days, filled when the file is on disk, outlined when
   it isn't. Page with ← / Today / →.
@@ -222,6 +223,39 @@ drops its records only; files on disk stay.
   shows when the RSS and backlog loops last ran / run next, and offers
   **Search all now** plus a per-item **Search** button that grabs the best
   accepted release for just that entry.
+
+## The handoff: download to library
+
+The stretch between "the download client finished" and "the files are in
+the library" is a black box in most tools — when something doesn't show up,
+you can't tell why. Monarr lays it out. Expand a row on the **Activity**
+page (the ▸) to see the handoff step by step, each with a timestamp:
+**grabbed** → **downloading** → **downloaded** → **importing** →
+**imported**. Alongside the trace it shows the two paths that matter: what
+the download client *reported*, and where Monarr *looked* after any remote
+path mapping. When an import stops, the trace ends at **failed** with the
+exact reason — no guessing.
+
+Every row carries the controls for its state:
+
+- **Import now** — on a download **awaiting approval** (from a client set to
+  require approval), imports it right now.
+- **Retry** — on a **failed** row, re-runs the import using the same path,
+  for after you've fixed a mount or added a path mapping.
+- **Manual import** — browse Monarr to the real files (a folder or a single
+  file), preview what it found, pick the target title and copy, and import.
+  Use it when automation couldn't resolve the payload, or to pull in files
+  you placed by hand. It's also on the top of the Activity page for imports
+  not tied to any download.
+- **Blocklist** — declare the release bad: blocklist it so it's never
+  grabbed again and search for a replacement. This is the *only* way a
+  handoff gets blocklisted — an import failure never does it on its own, so
+  a mount problem never churns silently through replacements.
+- **Remove** — drop the row (leaves the client and any files alone).
+
+**Require approval per client** (Settings → Download clients) flips a
+client from hands-free to hold-for-approval: its completed downloads park at
+*awaiting approval* until you press **Import now**. Off by default.
 
 ## Finding things fast
 
