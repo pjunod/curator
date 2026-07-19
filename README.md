@@ -233,12 +233,15 @@ test/e2e/             Playwright suite booting the real binary against fake serv
 test/conformance/     docker-compose harness vs real Jellyseerr/Prowlarr/Bazarr
 testdata/releases/    golden parser corpus (shared spec, 70 cases)
 docs/                 architecture blueprint, ADRs, usage/settings/deployment guides
+scripts/              version derivation, shared by the Makefile and Docker build
 .githooks/ .github/   versioned git hooks · CI (unit+lint+e2e+docker)
 STATUS.md             the per-item work ledger
 ```
 
 Root files stay at the root because tooling discovers them there:
-`go.mod` (module root), `Makefile`, `sqlc.yaml`, `.golangci.yml`, and
+`go.mod` (module root), `Makefile`, `VERSION` (release base version — the
+build's fallback when a clone lacks the release tags; bumped with every
+tag), `sqlc.yaml`, `.golangci.yml`, and
 `.dockerignore` (read at the build *context* root — the Dockerfile itself
 lives in deploy/ and builds with the repo as context).
 

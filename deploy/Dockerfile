@@ -13,11 +13,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist ./web/dist
-# Self-version from git (the context includes .git); an explicit
-# --build-arg VERSION=… still wins, e.g. for tagged release builds.
+# Self-version via scripts/version.sh (the context includes .git); an
+# explicit --build-arg VERSION=… still wins, e.g. for tagged release
+# builds. A clone that lacks the release tags falls back to the VERSION
+# file, so the UI shows "0.3.0+g<hash>", never a raw commit hash.
 ARG VERSION=""
 RUN apk add --no-cache git
-RUN V="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}" && \
+RUN V="${VERSION:-$(sh scripts/version.sh)}" && \
     V="${V#v}" && \
     C="$(git rev-parse --short HEAD 2>/dev/null || echo none)" && \
     CGO_ENABLED=0 go build -trimpath \
