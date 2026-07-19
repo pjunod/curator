@@ -43,6 +43,9 @@ type ClientConfig struct {
 	Category     string
 	Enabled      bool
 	PathMappings []PathMapping
+	// ManualApproval holds a completed download at 'awaiting_import' until
+	// the user approves it, instead of importing automatically.
+	ManualApproval bool
 }
 
 // Handle identifies an item inside a download client (torrent hash, nzo id).

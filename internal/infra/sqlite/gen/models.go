@@ -33,6 +33,7 @@ type CustomFormat struct {
 type Download struct {
 	ID           int64
 	MediaItemID  int64
+	CopyID       sql.NullInt64
 	Wantables    string
 	Season       int64
 	ReleaseTitle string
@@ -45,22 +46,25 @@ type Download struct {
 	State        string
 	Progress     float64
 	Error        string
+	SavePath     string
+	ImportPath   string
+	HandoffLog   string
 	AddedAt      int64
 	UpdatedAt    int64
-	CopyID       sql.NullInt64
 }
 
 type DownloadClient struct {
-	ID           int64
-	Type         string
-	Name         string
-	Url          string
-	Username     string
-	Password     string
-	Category     string
-	Enabled      int64
-	AddedAt      int64
-	PathMappings string
+	ID             int64
+	Type           string
+	Name           string
+	Url            string
+	Username       string
+	Password       string
+	Category       string
+	Enabled        int64
+	AddedAt        int64
+	PathMappings   string
+	ManualApproval int64
 }
 
 type Episode struct {

@@ -166,7 +166,7 @@ func TestSchemaEnumsMatchCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert grabbed: %v", err)
 	}
-	for _, state := range []string{"downloading", "completed", "importing", "imported", "failed"} {
+	for _, state := range []string{"downloading", "downloaded", "awaiting_import", "importing", "imported", "failed"} {
 		if err := db.UpdateDownloadState(ctx, dlID, state, 1, ""); err != nil {
 			t.Errorf("state %q rejected: %v", state, err)
 		}

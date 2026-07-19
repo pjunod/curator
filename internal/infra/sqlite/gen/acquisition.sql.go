@@ -38,7 +38,7 @@ func (q *Queries) DeleteIndexer(ctx context.Context, id int64) error {
 }
 
 const getDownload = `-- name: GetDownload :one
-SELECT id, media_item_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, added_at, updated_at, copy_id FROM downloads WHERE id = ?
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at FROM downloads WHERE id = ?
 `
 
 func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
@@ -47,6 +47,7 @@ func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.MediaItemID,
+		&i.CopyID,
 		&i.Wantables,
 		&i.Season,
 		&i.ReleaseTitle,
@@ -59,15 +60,17 @@ func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
 		&i.State,
 		&i.Progress,
 		&i.Error,
+		&i.SavePath,
+		&i.ImportPath,
+		&i.HandoffLog,
 		&i.AddedAt,
 		&i.UpdatedAt,
-		&i.CopyID,
 	)
 	return i, err
 }
 
 const getDownloadClient = `-- name: GetDownloadClient :one
-SELECT id, type, name, url, username, password, category, enabled, added_at, path_mappings FROM download_clients WHERE id = ?
+SELECT id, type, name, url, username, password, category, enabled, added_at, path_mappings, manual_approval FROM download_clients WHERE id = ?
 `
 
 func (q *Queries) GetDownloadClient(ctx context.Context, id int64) (DownloadClient, error) {
@@ -84,6 +87,7 @@ func (q *Queries) GetDownloadClient(ctx context.Context, id int64) (DownloadClie
 		&i.Enabled,
 		&i.AddedAt,
 		&i.PathMappings,
+		&i.ManualApproval,
 	)
 	return i, err
 }
@@ -171,20 +175,21 @@ func (q *Queries) InsertDownload(ctx context.Context, arg InsertDownloadParams) 
 }
 
 const insertDownloadClient = `-- name: InsertDownloadClient :one
-INSERT INTO download_clients (type, name, url, username, password, category, enabled, path_mappings, added_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+INSERT INTO download_clients (type, name, url, username, password, category, enabled, path_mappings, manual_approval, added_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
 `
 
 type InsertDownloadClientParams struct {
-	Type         string
-	Name         string
-	Url          string
-	Username     string
-	Password     string
-	Category     string
-	Enabled      int64
-	PathMappings string
-	AddedAt      int64
+	Type           string
+	Name           string
+	Url            string
+	Username       string
+	Password       string
+	Category       string
+	Enabled        int64
+	PathMappings   string
+	ManualApproval int64
+	AddedAt        int64
 }
 
 func (q *Queries) InsertDownloadClient(ctx context.Context, arg InsertDownloadClientParams) (int64, error) {
@@ -197,6 +202,7 @@ func (q *Queries) InsertDownloadClient(ctx context.Context, arg InsertDownloadCl
 		arg.Category,
 		arg.Enabled,
 		arg.PathMappings,
+		arg.ManualApproval,
 		arg.AddedAt,
 	)
 	var id int64
@@ -259,8 +265,8 @@ func (q *Queries) InsertIndexer(ctx context.Context, arg InsertIndexerParams) (i
 }
 
 const listActiveDownloads = `-- name: ListActiveDownloads :many
-SELECT id, media_item_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, added_at, updated_at, copy_id FROM downloads
-WHERE state IN ('grabbed', 'downloading', 'completed', 'importing')
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at FROM downloads
+WHERE state IN ('grabbed', 'downloading', 'downloaded', 'awaiting_import', 'importing')
 ORDER BY added_at DESC
 `
 
@@ -276,6 +282,7 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.MediaItemID,
+			&i.CopyID,
 			&i.Wantables,
 			&i.Season,
 			&i.ReleaseTitle,
@@ -288,9 +295,11 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 			&i.State,
 			&i.Progress,
 			&i.Error,
+			&i.SavePath,
+			&i.ImportPath,
+			&i.HandoffLog,
 			&i.AddedAt,
 			&i.UpdatedAt,
-			&i.CopyID,
 		); err != nil {
 			return nil, err
 		}
@@ -306,7 +315,7 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 }
 
 const listDownloadClients = `-- name: ListDownloadClients :many
-SELECT id, type, name, url, username, password, category, enabled, added_at, path_mappings FROM download_clients ORDER BY name
+SELECT id, type, name, url, username, password, category, enabled, added_at, path_mappings, manual_approval FROM download_clients ORDER BY name
 `
 
 func (q *Queries) ListDownloadClients(ctx context.Context) ([]DownloadClient, error) {
@@ -329,6 +338,7 @@ func (q *Queries) ListDownloadClients(ctx context.Context) ([]DownloadClient, er
 			&i.Enabled,
 			&i.AddedAt,
 			&i.PathMappings,
+			&i.ManualApproval,
 		); err != nil {
 			return nil, err
 		}
@@ -395,6 +405,54 @@ func (q *Queries) ListHistory(ctx context.Context) ([]HistoryEvent, error) {
 			&i.MediaItemID,
 			&i.ReleaseTitle,
 			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInFlightDownloads = `-- name: ListInFlightDownloads :many
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at FROM downloads WHERE state != 'imported' ORDER BY added_at DESC
+`
+
+func (q *Queries) ListInFlightDownloads(ctx context.Context) ([]Download, error) {
+	rows, err := q.db.QueryContext(ctx, listInFlightDownloads)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Download
+	for rows.Next() {
+		var i Download
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.CopyID,
+			&i.Wantables,
+			&i.Season,
+			&i.ReleaseTitle,
+			&i.Indexer,
+			&i.Protocol,
+			&i.Quality,
+			&i.Size,
+			&i.ClientID,
+			&i.Handle,
+			&i.State,
+			&i.Progress,
+			&i.Error,
+			&i.SavePath,
+			&i.ImportPath,
+			&i.HandoffLog,
+			&i.AddedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -478,7 +536,7 @@ func (q *Queries) ListProfiles(ctx context.Context) ([]QualityProfile, error) {
 }
 
 const listRecentDownloads = `-- name: ListRecentDownloads :many
-SELECT id, media_item_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, added_at, updated_at, copy_id FROM downloads ORDER BY added_at DESC LIMIT 100
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at FROM downloads ORDER BY added_at DESC LIMIT 100
 `
 
 func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
@@ -493,6 +551,7 @@ func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.MediaItemID,
+			&i.CopyID,
 			&i.Wantables,
 			&i.Season,
 			&i.ReleaseTitle,
@@ -505,9 +564,11 @@ func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 			&i.State,
 			&i.Progress,
 			&i.Error,
+			&i.SavePath,
+			&i.ImportPath,
+			&i.HandoffLog,
 			&i.AddedAt,
 			&i.UpdatedAt,
-			&i.CopyID,
 		); err != nil {
 			return nil, err
 		}
@@ -533,6 +594,74 @@ type SetFileQualityParams struct {
 
 func (q *Queries) SetFileQuality(ctx context.Context, arg SetFileQualityParams) error {
 	_, err := q.db.ExecContext(ctx, setFileQuality, arg.Quality, arg.ID)
+	return err
+}
+
+const updateDownloadClient = `-- name: UpdateDownloadClient :exec
+UPDATE download_clients
+SET type = ?, name = ?, url = ?, username = ?, password = ?, category = ?,
+    enabled = ?, path_mappings = ?, manual_approval = ?
+WHERE id = ?
+`
+
+type UpdateDownloadClientParams struct {
+	Type           string
+	Name           string
+	Url            string
+	Username       string
+	Password       string
+	Category       string
+	Enabled        int64
+	PathMappings   string
+	ManualApproval int64
+	ID             int64
+}
+
+func (q *Queries) UpdateDownloadClient(ctx context.Context, arg UpdateDownloadClientParams) error {
+	_, err := q.db.ExecContext(ctx, updateDownloadClient,
+		arg.Type,
+		arg.Name,
+		arg.Url,
+		arg.Username,
+		arg.Password,
+		arg.Category,
+		arg.Enabled,
+		arg.PathMappings,
+		arg.ManualApproval,
+		arg.ID,
+	)
+	return err
+}
+
+const updateDownloadHandoff = `-- name: UpdateDownloadHandoff :exec
+UPDATE downloads
+SET state = ?, progress = ?, error = ?, save_path = ?, import_path = ?,
+    handoff_log = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateDownloadHandoffParams struct {
+	State      string
+	Progress   float64
+	Error      string
+	SavePath   string
+	ImportPath string
+	HandoffLog string
+	UpdatedAt  int64
+	ID         int64
+}
+
+func (q *Queries) UpdateDownloadHandoff(ctx context.Context, arg UpdateDownloadHandoffParams) error {
+	_, err := q.db.ExecContext(ctx, updateDownloadHandoff,
+		arg.State,
+		arg.Progress,
+		arg.Error,
+		arg.SavePath,
+		arg.ImportPath,
+		arg.HandoffLog,
+		arg.UpdatedAt,
+		arg.ID,
+	)
 	return err
 }
 

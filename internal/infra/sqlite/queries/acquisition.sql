@@ -18,14 +18,20 @@ SELECT * FROM indexers WHERE id = ?;
 DELETE FROM indexers WHERE id = ?;
 
 -- name: InsertDownloadClient :one
-INSERT INTO download_clients (type, name, url, username, password, category, enabled, path_mappings, added_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
+INSERT INTO download_clients (type, name, url, username, password, category, enabled, path_mappings, manual_approval, added_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
 
 -- name: ListDownloadClients :many
 SELECT * FROM download_clients ORDER BY name;
 
 -- name: GetDownloadClient :one
 SELECT * FROM download_clients WHERE id = ?;
+
+-- name: UpdateDownloadClient :exec
+UPDATE download_clients
+SET type = ?, name = ?, url = ?, username = ?, password = ?, category = ?,
+    enabled = ?, path_mappings = ?, manual_approval = ?
+WHERE id = ?;
 
 -- name: DeleteDownloadClient :exec
 DELETE FROM download_clients WHERE id = ?;
@@ -38,8 +44,11 @@ INSERT INTO downloads (
 
 -- name: ListActiveDownloads :many
 SELECT * FROM downloads
-WHERE state IN ('grabbed', 'downloading', 'completed', 'importing')
+WHERE state IN ('grabbed', 'downloading', 'downloaded', 'awaiting_import', 'importing')
 ORDER BY added_at DESC;
+
+-- name: ListInFlightDownloads :many
+SELECT * FROM downloads WHERE state != 'imported' ORDER BY added_at DESC;
 
 -- name: ListRecentDownloads :many
 SELECT * FROM downloads ORDER BY added_at DESC LIMIT 100;
@@ -49,6 +58,12 @@ SELECT * FROM downloads WHERE id = ?;
 
 -- name: UpdateDownloadState :exec
 UPDATE downloads SET state = ?, progress = ?, error = ?, updated_at = ?
+WHERE id = ?;
+
+-- name: UpdateDownloadHandoff :exec
+UPDATE downloads
+SET state = ?, progress = ?, error = ?, save_path = ?, import_path = ?,
+    handoff_log = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: DeleteDownload :exec

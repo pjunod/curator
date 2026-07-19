@@ -123,7 +123,7 @@ func clientFromRow(r sqlitegen.DownloadClient) ports.ClientConfig {
 	return ports.ClientConfig{
 		ID: r.ID, Type: r.Type, Name: r.Name, URL: r.Url,
 		Username: r.Username, Password: r.Password, Category: r.Category, Enabled: r.Enabled != 0,
-		PathMappings: maps,
+		PathMappings: maps, ManualApproval: r.ManualApproval != 0,
 	}
 }
 
@@ -136,8 +136,26 @@ func (d *DB) AddDownloadClient(ctx context.Context, c ports.ClientConfig) (int64
 	return d.Write.InsertDownloadClient(ctx, sqlitegen.InsertDownloadClientParams{
 		Type: c.Type, Name: c.Name, Url: c.URL, Username: c.Username,
 		Password: c.Password, Category: c.Category, Enabled: boolInt(c.Enabled),
-		PathMappings: string(maps),
-		AddedAt:      time.Now().UnixMilli(),
+		PathMappings:   string(maps),
+		ManualApproval: boolInt(c.ManualApproval),
+		AddedAt:        time.Now().UnixMilli(),
+	})
+}
+
+// UpdateDownloadClient overwrites a stored client (all fields but id and
+// added_at). The handler preserves the password when the form sends the
+// masked placeholder, so an edit never blanks stored credentials.
+func (d *DB) UpdateDownloadClient(ctx context.Context, c ports.ClientConfig) error {
+	maps, _ := json.Marshal(c.PathMappings)
+	if c.PathMappings == nil {
+		maps = []byte("[]")
+	}
+	return d.Write.UpdateDownloadClient(ctx, sqlitegen.UpdateDownloadClientParams{
+		Type: c.Type, Name: c.Name, Url: c.URL, Username: c.Username,
+		Password: c.Password, Category: c.Category, Enabled: boolInt(c.Enabled),
+		PathMappings:   string(maps),
+		ManualApproval: boolInt(c.ManualApproval),
+		ID:             c.ID,
 	})
 }
 
@@ -170,6 +188,16 @@ func (d *DB) DeleteDownloadClient(ctx context.Context, id int64) error {
 
 // ---- downloads (queue) ----
 
+// HandoffEntry is one step in a download's handoff trace: which step, when
+// (unix millis), and a human-readable detail. The slice is persisted as the
+// handoff_log JSON column so the whole download → import handoff is laid out
+// and inspectable rather than a black box.
+type HandoffEntry struct {
+	Step   string `json:"step"`
+	At     int64  `json:"at"`
+	Detail string `json:"detail,omitempty"`
+}
+
 // Download is a queue row (persisted Download state machine, blueprint §4.2).
 type Download struct {
 	ID           int64
@@ -187,6 +215,9 @@ type Download struct {
 	State        string
 	Progress     float64
 	Error        string
+	SavePath     string // what the download client reported
+	ImportPath   string // where Monarr looks after remote path mapping
+	Handoff      []HandoffEntry
 	AddedAt      time.Time
 	UpdatedAt    time.Time
 }
@@ -194,11 +225,14 @@ type Download struct {
 func downloadFromRow(r sqlitegen.Download) Download {
 	var wants []string
 	_ = json.Unmarshal([]byte(r.Wantables), &wants)
+	var handoff []HandoffEntry
+	_ = json.Unmarshal([]byte(r.HandoffLog), &handoff)
 	dl := Download{
 		ID: r.ID, MediaItemID: r.MediaItemID, WantableIDs: wants, Season: int(r.Season),
 		ReleaseTitle: r.ReleaseTitle, Indexer: r.Indexer, Protocol: r.Protocol,
 		Quality: quality.FromString(r.Quality), Size: r.Size, ClientID: r.ClientID,
 		Handle: r.Handle, State: r.State, Progress: r.Progress, Error: r.Error,
+		SavePath: r.SavePath, ImportPath: r.ImportPath, Handoff: handoff,
 		AddedAt: time.UnixMilli(r.AddedAt), UpdatedAt: time.UnixMilli(r.UpdatedAt),
 	}
 	if r.CopyID.Valid {
@@ -239,6 +273,21 @@ func (d *DB) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 	return out, nil
 }
 
+// ListInFlightDownloads returns every row that has not finished importing —
+// used to suppress re-searching a wantable that already has a download in
+// progress or stalled at a failed import.
+func (d *DB) ListInFlightDownloads(ctx context.Context) ([]Download, error) {
+	rows, err := d.Read.ListInFlightDownloads(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Download, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, downloadFromRow(r))
+	}
+	return out, nil
+}
+
 // ListRecentDownloads returns the last 100 rows, any state.
 func (d *DB) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 	rows, err := d.Read.ListRecentDownloads(ctx)
@@ -257,6 +306,21 @@ func (d *DB) UpdateDownloadState(ctx context.Context, id int64, state string, pr
 	return d.Write.UpdateDownloadState(ctx, sqlitegen.UpdateDownloadStateParams{
 		State: state, Progress: progress, Error: errMsg,
 		UpdatedAt: time.Now().UnixMilli(), ID: id,
+	})
+}
+
+// UpdateDownloadHandoff persists a stage transition together with the
+// reported/mapped paths and the full step log. Callers mutate the Download
+// in memory (append a HandoffEntry, set State/paths) and pass it here.
+func (d *DB) UpdateDownloadHandoff(ctx context.Context, dl Download) error {
+	log, _ := json.Marshal(dl.Handoff)
+	if dl.Handoff == nil {
+		log = []byte("[]")
+	}
+	return d.Write.UpdateDownloadHandoff(ctx, sqlitegen.UpdateDownloadHandoffParams{
+		State: dl.State, Progress: dl.Progress, Error: dl.Error,
+		SavePath: dl.SavePath, ImportPath: dl.ImportPath,
+		HandoffLog: string(log), UpdatedAt: time.Now().UnixMilli(), ID: dl.ID,
 	})
 }
 
