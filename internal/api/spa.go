@@ -3,11 +3,18 @@ package api
 import (
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"strings"
 
 	"github.com/monarr-media/monarr/web"
 )
+
+func init() {
+	// The PWA manifest must not fall back to text/plain — browsers want
+	// the manifest type before they offer "install".
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 // fallbackHTML is served when the binary was built without the web UI
 // (e.g. `go build` without `make web`). The binary must still run.
