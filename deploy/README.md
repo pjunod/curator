@@ -7,6 +7,7 @@ Docker packaging lives here; the build context is the repo root.
 | `Dockerfile` | multi-stage build (web UI → Go binary → distroless runtime); build with `docker build -f deploy/Dockerfile -t monarr .` from the repo root |
 | `docker-compose.example.yml` | tracked compose template — **copy, don't edit** |
 | `.env.example` | tracked env template documenting every variable |
+| `k8s/` | Kubernetes manifests for the floating single-instance pattern (replicated-block and Litestream variants) |
 
 ```sh
 cd deploy

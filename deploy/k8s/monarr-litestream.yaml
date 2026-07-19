@@ -1,0 +1,142 @@
+# Monarr on Kubernetes — the Litestream variant: NO local-disk dependency
+# for the database at all.
+#
+# How it works: the SQLite file lives on plain node-local storage (fast,
+# boring), and Litestream continuously replicates every WAL segment to
+# S3-compatible object storage (minio, garage, B2, real S3). When the pod
+# reschedules onto another node, an init container RESTORES the DB from
+# the replica before Monarr starts. The node that died took nothing with
+# it: the durable copy is in object storage, not on any node's disk.
+#
+# Trade-offs vs the replicated-block variant (monarr.yaml):
+#   + no Longhorn/Ceph requirement — any cluster with an S3 endpoint works
+#   + off-cluster disaster copy for free
+#   - failover loses the last unreplicated instants (sub-second sync
+#     interval by default; for Monarr that's at most "re-grab one release")
+#
+# Edit the Secret + ConfigMap endpoints, then: kubectl apply -f monarr-litestream.yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: monarr-litestream-s3
+type: Opaque
+stringData:
+  LITESTREAM_ACCESS_KEY_ID: "CHANGE-ME"
+  LITESTREAM_SECRET_ACCESS_KEY: "CHANGE-ME"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monarr-litestream
+data:
+  litestream.yml: |
+    dbs:
+      - path: /data/monarr.db
+        replicas:
+          - type: s3
+            endpoint: http://minio.storage.svc:9000   # your S3 endpoint
+            bucket: monarr
+            path: db
+            force-path-style: true                    # minio/garage need this
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monarr
+  labels:
+    app: monarr
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: monarr
+  template:
+    metadata:
+      labels:
+        app: monarr
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        # Restore the DB from object storage when this node has no copy.
+        # -if-replica-exists makes first-ever boot a clean no-op.
+        - name: restore
+          image: litestream/litestream:0.3
+          args:
+            - restore
+            - -if-db-not-exists
+            - -if-replica-exists
+            - -config
+            - /etc/litestream.yml
+            - /data/monarr.db
+          envFrom:
+            - secretRef: { name: monarr-litestream-s3 }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: litestream-config, mountPath: /etc/litestream.yml, subPath: litestream.yml }
+      containers:
+        - name: monarr
+          image: your-registry/monarr:0.2.0
+          ports:
+            - name: http
+              containerPort: 7676
+          env:
+            - name: MONARR_DATA_DIR
+              value: /data
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: pool, mountPath: /pool }
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+        # The replication sidecar: ships every WAL segment as it lands.
+        - name: litestream
+          image: litestream/litestream:0.3
+          args: [replicate, -config, /etc/litestream.yml]
+          envFrom:
+            - secretRef: { name: monarr-litestream-s3 }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: litestream-config, mountPath: /etc/litestream.yml, subPath: litestream.yml }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        # Node-local scratch is the point: fast SQLite, durable copy in S3.
+        # emptyDir means a reschedule ALWAYS restores from the replica;
+        # swap for a local-path PVC if you want restarts on the same node
+        # to skip the restore.
+        - name: data
+          emptyDir: {}
+        - name: litestream-config
+          configMap:
+            name: monarr-litestream
+        - name: pool
+          nfs:                        # shared FS is fine for media — pick
+            server: 192.168.4.5       # your mount, same as monarr.yaml
+            path: /srv/pool
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monarr
+spec:
+  selector:
+    app: monarr
+  ports:
+    - name: http
+      port: 7676
+      targetPort: http

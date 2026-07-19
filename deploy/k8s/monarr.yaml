@@ -1,0 +1,112 @@
+# Monarr on Kubernetes — the floating-single-instance pattern.
+#
+# The availability model (docs/deployment.md): Monarr is strictly ONE
+# replica (the automation loops assume a single writer — two replicas
+# would double-grab and race imports; upstream Sonarr/Radarr are the
+# same). HA comes from letting that one instance FLOAT: the pod dies or
+# its node does, kube reschedules it, the replicated block volume
+# reattaches, and the app is back in well under a minute with no data
+# loss.
+#
+# Storage rules, non-negotiable:
+#   /data (SQLite, WAL)  -> replicated BLOCK storage: Longhorn, Ceph RBD,
+#                           DRBD. NEVER NFS or GlusterFS — shared-file
+#                           locking corrupts WAL databases.
+#   /pool (media + completed downloads) -> shared filesystem is FINE
+#                           (NFS/Gluster/CephFS); every node may mount it.
+#
+# Apply: kubectl apply -f monarr.yaml   (edit storageClassName + the pool
+# volume first). Prefer local disk + Litestream instead of replicated
+# block? See monarr-litestream.yaml.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: monarr-data
+spec:
+  accessModes: [ReadWriteOnce]        # block semantics: one node at a time
+  storageClassName: longhorn          # or ceph-rbd / your replicated class
+  resources:
+    requests:
+      storage: 5Gi                    # DB + backups; tiny
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monarr
+  labels:
+    app: monarr
+spec:
+  replicas: 1                         # exactly one — see header
+  strategy:
+    type: Recreate                    # never RollingUpdate: old pod must
+                                      # release the DB volume before the
+                                      # new one starts
+  selector:
+    matchLabels:
+      app: monarr
+  template:
+    metadata:
+      labels:
+        app: monarr
+    spec:
+      securityContext:
+        runAsUser: 1000               # match your pool's ownership (PUID)
+        runAsGroup: 1000
+        fsGroup: 1000                 # makes the data volume writable
+      containers:
+        - name: monarr
+          # Build from the repo: docker build -f deploy/Dockerfile -t <reg>/monarr:0.2.0 .
+          image: your-registry/monarr:0.2.0
+          ports:
+            - name: http
+              containerPort: 7676
+          env:
+            - name: MONARR_DATA_DIR
+              value: /data
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: pool
+              mountPath: /pool
+          # The SPA shell serves unauthenticated — a cheap, honest probe.
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: monarr-data
+        # The media pool: shared filesystem is fine here. Pick ONE:
+        - name: pool
+          nfs:                        # e.g. the NAS export every node mounts
+            server: 192.168.4.5
+            path: /srv/pool
+        # - name: pool
+        #   persistentVolumeClaim:
+        #     claimName: pool          # RWX claim (CephFS, NFS provisioner, …)
+        # - name: pool
+        #   hostPath:                  # only if every node bind-mounts the
+        #     path: /srv/pool          # same Gluster/NFS mount at this path
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monarr
+spec:
+  selector:
+    app: monarr
+  ports:
+    - name: http
+      port: 7676
+      targetPort: http
+# Expose via your ingress of choice; the UI, /api/v1, and the /sonarr +
+# /radarr compat personalities all hang off this one port.

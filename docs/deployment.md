@@ -36,6 +36,10 @@ sequential files, no locking subtleties. Split your storage classes:
 
 ## Patterns for a floating `/data`, best first
 
+> Worked Kubernetes manifests for patterns 1 and 2 live in
+> [`deploy/k8s/`](../deploy/k8s/) — edit the storage class / S3 endpoint
+> and apply.
+
 ### 1. Replicated block storage (recommended on a cluster)
 
 Give `/data` a **block** volume that follows the container — the
