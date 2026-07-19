@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { defineConfig } from '@playwright/test'
+import { defineConfig, devices } from '@playwright/test'
 
 // End-to-end tests boot the REAL compiled binary (./bin/monarr, built by
 // `make build` so the web UI is embedded) against a throwaway data dir plus
@@ -35,6 +35,25 @@ export default defineConfig({
       ? { executablePath: process.env.PW_CHROMIUM_PATH }
       : {},
   },
+  projects: [
+    // The main suite runs desktop-sized; the phone shell has its own spec
+    // at an iPhone viewport, run AFTER (it reads state the suite builds).
+    { name: 'desktop', testIgnore: /mobile\.spec\.ts/ },
+    {
+      name: 'mobile',
+      testMatch: /mobile\.spec\.ts/,
+      dependencies: ['desktop'],
+      use: {
+        ...devices['iPhone 13'],
+        // Keep the preinstalled chromium; the device preset only sets
+        // viewport/UA/touch.
+        browserName: 'chromium',
+        launchOptions: process.env.PW_CHROMIUM_PATH
+          ? { executablePath: process.env.PW_CHROMIUM_PATH }
+          : {},
+      },
+    },
+  ],
   webServer: [
     {
       command: `node ${join(import.meta.dirname, 'fake-tmdb.mjs')}`,

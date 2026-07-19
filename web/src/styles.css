@@ -1334,7 +1334,8 @@ a.pill-info:hover {
   }
 
   .section-toolbar input[type='search'] {
-    flex: 1;
+    /* Full first line — squeezed between two selects it collapses. */
+    flex: 1 1 100%;
     width: auto;
   }
 }
