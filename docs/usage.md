@@ -68,6 +68,17 @@ right after adding, Sonarr-style). Hit **Add**.
 Nothing touches the disk at add time — the item's folder is created on
 first import.
 
+## The library page
+
+The **All** tab shows everything, grouped into Movies / Series / Books
+sections (never interleaved); the kind tabs show flat grids. The toolbar
+filters by title/author text and by state — monitored, unmonitored,
+missing, incomplete, complete — and sorts by title, year, recently
+added, or rating (with an ascending/descending toggle). Sort and filter
+choices are remembered per browser. Every card carries the rating star,
+the color-coded completeness pill, and a ↓ badge while something is
+downloading for it.
+
 ## Adopting an existing library
 
 Monarr expects humans to touch the filesystem. Point a root folder at your
