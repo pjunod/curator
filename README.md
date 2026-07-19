@@ -241,7 +241,7 @@ STATUS.md             the per-item work ledger
 Root files stay at the root because tooling discovers them there:
 `go.mod` (module root), `Makefile`, `VERSION` (release base version — the
 build's fallback when a clone lacks the release tags; bumped with every
-tag), `sqlc.yaml`, `.golangci.yml`, and
+tag), `.golangci.yml`, and
 `.dockerignore` (read at the build *context* root — the Dockerfile itself
 lives in deploy/ and builds with the repo as context).
 
