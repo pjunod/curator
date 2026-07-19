@@ -6,9 +6,11 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  useRouterState,
 } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { GlobalSearch } from './globalsearch'
+import { useIsMobile } from './useIsMobile'
 import { Dashboard } from './pages/Dashboard'
 import { SystemPage } from './pages/System'
 import { LibraryPage } from './pages/Library'
@@ -65,10 +67,96 @@ function ThemePicker() {
   )
 }
 
+// MobileShell: the phone chrome — top bar, bottom tab bar, and a More
+// sheet holding everything the desktop sidebar carries.
+function MobileShell(props: { overall: string; version: string; children: React.ReactNode }) {
+  const [sheet, setSheet] = useState(false)
+  // Any navigation closes the sheet.
+  const path = useRouterState({ select: (s) => s.location.pathname })
+  const [lastPath, setLastPath] = useState(path)
+  if (path !== lastPath) {
+    setLastPath(path)
+    if (sheet) setSheet(false)
+  }
+
+  const tab = (to: string, label: string, exact = false) => (
+    <Link
+      to={to}
+      activeOptions={{ exact }}
+      activeProps={{ className: 'active' }}
+      className="mobile-tab"
+    >
+      {label}
+    </Link>
+  )
+
+  return (
+    <div className="app-mobile">
+      <header className="mobile-top">
+        <div className="wordmark">
+          mon<span>arr</span>
+        </div>
+      </header>
+      <main className="content mobile-content">{props.children}</main>
+
+      <nav className="mobile-tabs" aria-label="Primary">
+        {tab('/', 'Library', true)}
+        {tab('/wanted', 'Wanted')}
+        {tab('/calendar', 'Calendar')}
+        {tab('/activity', 'Activity')}
+        <button
+          className={`mobile-tab${sheet ? ' active' : ''}`}
+          aria-label="More"
+          aria-expanded={sheet}
+          onClick={() => setSheet(!sheet)}
+        >
+          More
+          {props.overall !== 'ok' && <span className={`dot dot-${props.overall}`} aria-label={props.overall} />}
+        </button>
+      </nav>
+
+      {sheet && (
+        <>
+          <div className="sheet-backdrop" onClick={() => setSheet(false)} />
+          <div className="more-sheet" role="dialog" aria-label="More">
+            <GlobalSearch />
+            <nav className="sheet-nav">
+              <Link to="/dashboard" activeProps={{ className: 'active' }}>
+                Dashboard
+              </Link>
+              <Link to="/system" activeProps={{ className: 'active' }}>
+                System
+                {props.overall !== 'ok' && <span className={`dot dot-${props.overall}`} aria-label={props.overall} />}
+              </Link>
+              <Link to="/settings" activeProps={{ className: 'active' }}>
+                Settings
+              </Link>
+              <Link to="/add" activeProps={{ className: 'active' }}>
+                + Add media
+              </Link>
+            </nav>
+            <ThemePicker />
+            <div className="muted sheet-foot">v{props.version} · movies · series · books</div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function Layout() {
   const status = useQuery({ queryKey: ['status'], queryFn: getStatus, refetchInterval: 30_000 })
   const health = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
   const overall = health.data?.overall ?? 'ok'
+  const isMobile = useIsMobile()
+
+  if (isMobile) {
+    return (
+      <MobileShell overall={overall} version={status.data?.version ?? '…'}>
+        <Outlet />
+      </MobileShell>
+    )
+  }
 
   return (
     <div className="app">

@@ -1130,3 +1130,245 @@ a.pill-info:hover {
 .section-toolbar button {
   padding: 3px 9px;
 }
+
+/* ============================================================
+   Mobile (< 768px) — the phone shell and page adaptations.
+   Breakpoint mirrors MOBILE_QUERY in useIsMobile.ts.
+   ============================================================ */
+
+/* ---- phone shell: top bar, bottom tabs, More sheet ---- */
+.app-mobile {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.mobile-top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.mobile-content {
+  flex: 1;
+  padding: 16px 14px calc(76px + env(safe-area-inset-bottom));
+  max-width: none;
+}
+
+.mobile-tabs {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.mobile-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: none;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.mobile-tab.active {
+  color: var(--accent);
+}
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.more-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.more-sheet .global-search {
+  margin: 0;
+  padding: 0;
+}
+
+.more-sheet .search-results {
+  left: 0;
+  right: 0;
+  max-height: 40dvh;
+}
+
+.sheet-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sheet-nav a {
+  color: var(--text);
+  text-decoration: none;
+  padding: 12px 10px;
+  border-radius: 10px;
+  font-size: 15px;
+}
+
+.sheet-nav a:active,
+.sheet-nav a.active {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.sheet-foot {
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ---- page adaptations ---- */
+@media (max-width: 767px) {
+  /* The desktop 240px input floor overflows phones. */
+  input[type='search'],
+  input[type='text'],
+  input[type='password'],
+  select {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Finger-sized controls. */
+  button {
+    min-height: 40px;
+  }
+
+  .theme-picker button,
+  .mobile-tab {
+    min-height: 0;
+  }
+
+  .page-head {
+    flex-wrap: wrap;
+  }
+
+  .head-actions {
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  /* Wide tables scroll sideways instead of crushing their columns. */
+  .panel {
+    overflow-x: auto;
+  }
+
+  .panel table {
+    min-width: 560px;
+  }
+
+  /* Posters: three across on a phone. */
+  .poster-grid {
+    grid-template-columns: repeat(auto-fill, minmax(105px, 1fr));
+    gap: 10px;
+  }
+
+  .poster-sub .pill {
+    display: none; /* completeness pill needs room the card doesn't have */
+  }
+
+  .cards {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+
+  /* Item page stacks. */
+  .detail-head {
+    flex-direction: column;
+  }
+
+  .detail-poster {
+    width: 130px;
+  }
+
+  .fact-grid {
+    grid-template-columns: 1fr;
+    gap: 2px 0;
+  }
+
+  .fact-grid .fact-label {
+    margin-top: 8px;
+  }
+
+  /* Library section bars: controls drop under the heading, full width. */
+  .lib-section-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-toolbar {
+    width: 100%;
+  }
+
+  .section-toolbar input[type='search'] {
+    flex: 1;
+    width: auto;
+  }
+}
+
+/* ---- mobile calendar agenda ---- */
+.cal-agenda {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cal-agenda .cal-day {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--bg-raised);
+}
+
+.cal-agenda .cal-day.cal-today {
+  border-color: var(--accent);
+}
+
+.cal-day-head {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.cal-agenda .cal-entry {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 6px;
+}
