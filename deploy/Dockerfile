@@ -25,7 +25,7 @@ RUN V="${VERSION:-$(sh scripts/version.sh --no-dirty)}" && \
     V="${V#v}" && \
     C="$(git rev-parse --short HEAD 2>/dev/null || echo none)" && \
     CGO_ENABLED=0 go build -trimpath \
-    -ldflags "-s -w -X main.version=$V -X main.commit=$C" \
+    -ldflags "-s -w -X github.com/monarr-media/monarr/internal/buildinfo.Version=$V -X github.com/monarr-media/monarr/internal/buildinfo.Commit=$C" \
     -o /monarr ./cmd/monarr
 
 # ---- runtime ----

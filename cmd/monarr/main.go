@@ -35,6 +35,7 @@ import (
 	"github.com/monarr-media/monarr/internal/app/importlist"
 	"github.com/monarr-media/monarr/internal/app/library"
 	appnotify "github.com/monarr-media/monarr/internal/app/notify"
+	"github.com/monarr-media/monarr/internal/buildinfo"
 	"github.com/monarr-media/monarr/internal/compat"
 	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/config"
@@ -42,12 +43,6 @@ import (
 	"github.com/monarr-media/monarr/internal/infra/scheduler"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
 	"github.com/monarr-media/monarr/internal/ports"
-)
-
-// Injected via -ldflags at build time (see Makefile / Dockerfile).
-var (
-	version = "dev"
-	commit  = "none"
 )
 
 func main() {
@@ -71,7 +66,7 @@ func main() {
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	startedAt := time.Now()
 	log.Info("monarr starting",
-		"version", version, "commit", commit,
+		"version", buildinfo.Version, "commit", buildinfo.Commit,
 		"addr", cfg.Addr(), "dataDir", cfg.DataDir, "uiEmbedded", api.UIBuilt())
 
 	// Storage.
@@ -349,8 +344,8 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		CompatSonarr:    sonarrShim.Handler(),
 		CompatRadarr:    radarrShim.Handler(),
 		Settings:        db,
-		Version:         version,
-		Commit:          commit,
+		Version:         buildinfo.Version,
+		Commit:          buildinfo.Commit,
 		DataDir:         cfg.DataDir,
 		StartedAt:       startedAt,
 	})
