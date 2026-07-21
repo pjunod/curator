@@ -13,15 +13,12 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist ./web/dist
-# Self-version via scripts/version.sh (the context includes .git); an
-# explicit --build-arg VERSION=… still wins, e.g. for tagged release
-# builds. A clone that lacks the release tags falls back to the VERSION
-# file, so the UI shows "0.3.0+g<hash>", never a raw commit hash.
-# --no-dirty: .dockerignore prunes tracked files from the context, which
-# would stamp every image build "-dirty"; image builds describe HEAD.
+# The version is the VERSION file (scripts/version.sh); an explicit
+# --build-arg VERSION=… still wins. The commit is captured separately from
+# git HEAD (the context includes .git) and shown on the Dashboard.
 ARG VERSION=""
 RUN apk add --no-cache git
-RUN V="${VERSION:-$(sh scripts/version.sh --no-dirty)}" && \
+RUN V="${VERSION:-$(sh scripts/version.sh)}" && \
     V="${V#v}" && \
     C="$(git rev-parse --short HEAD 2>/dev/null || echo none)" && \
     CGO_ENABLED=0 go build -trimpath \

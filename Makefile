@@ -1,10 +1,9 @@
 # Monarr — build orchestration.
 # `make build` produces ./bin/monarr with the web UI embedded.
 
-# Tag releases as vX.Y.Z. Derivation lives in scripts/version.sh (shared
-# with the Docker build): git describe when the release tags are present,
-# else the VERSION file — bumped with every tag — as "0.3.0+g<hash>". A
-# tagless clone never shows a raw commit hash as its version.
+# The version is the VERSION file, verbatim (scripts/version.sh, shared with
+# the Docker build) — no git describe, no commit suffix, no dependency on
+# tags. Bump VERSION to cut a release. The commit is stamped separately.
 VERSION ?= $(shell sh scripts/version.sh)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 LDFLAGS := -s -w -X github.com/monarr-media/monarr/internal/buildinfo.Version=$(VERSION) -X github.com/monarr-media/monarr/internal/buildinfo.Commit=$(COMMIT)
