@@ -1,7 +1,9 @@
-# ADR 0008 — Multi-host execution: a leased job queue, Postgres for clustered mode, and playback left to the media server
+# ADR 0008 — Multi-host execution: a leased job queue, mount-aware routing, and Postgres for clustered mode
 
-- **Status:** Proposed — the scope question below is answered, but the recommendation to integrate rather than build playback needs Paul's agreement
-- **Date:** 2026-07-24
+- **Status:** Proposed — scope is settled; the open decision is the staging
+  in "Staging" below (queue first, or the role-flag stopgap first)
+- **Date:** 2026-07-24 (scope corrected same day — see "What the cluster is
+  actually for")
 - **Relates to:** ADR [0004](0004-sqlite-only.md) (SQLite only), ADR
   [0007](0007-remote-database-postgres.md) (Postgres deferred). This is the
   trigger 0007 named, firing.
@@ -10,14 +12,15 @@
 
 The requirement, stated plainly: several Monarr instances of the same
 version, sharing one state source while keeping their own local config,
-**across hosts — a cluster, k8s or otherwise**. Each instance plays media
-for one or more clients. Work should be farmed out to whichever hosts are
-idle or less busy: generic jobs like scanning folders and fetching artwork,
-and heavier ones like a remux or transcode on behalf of a host that is busy
-serving a client.
+**across hosts — a cluster, k8s or otherwise**. Work should be farmed out to
+whichever hosts are idle or less busy: par repairs, unpacking, renames,
+folder scans, artwork.
 
-Multi-host is therefore the target. It is still worth separating the two
-blockers, because they have different costs and only one of them is urgent:
+**Monarr does not play media and does not transcode.** Neither is in scope
+here, and this ADR should not be cited as though it covered them.
+
+Multi-host is the target. It is still worth separating the two blockers,
+because they have different costs and only one of them is urgent:
 
 - **Multi-instance on one host needs no new database.** SQLite's WAL mode
   coordinates several *processes* on one kernel correctly — that is ordinary
@@ -60,40 +63,76 @@ is topology-dependent:
   events — stale on every node but the one that changed something.
 - **Sessions.** In memory, so a user is logged in to one node only.
 
-## The scope question, answered — and what it costs
+## What the cluster is actually for — and how much of it is Monarr's today
 
-Asked directly, the answer was: "each instance will be able to play media
-for one or more clients," and work should be "farmed out to other idle or
-less busy hosts," including "splitting up a remux or transcode job for one
-of the hosts in the cluster that is serving a client."
+The named workloads are par repairs, unpacking, renames, folder scans, and
+artwork. Before designing for them, it is worth checking which of them
+Monarr actually performs, because the answer changes what the queue is
+farming:
 
-That is three distinct products, and they should be priced separately
-because only one of them is Monarr:
+| Work | Whose job today | Heavy? |
+|---|---|---|
+| Par repair | SABnzbd/NZBGet, before Monarr sees the payload | CPU-heavy |
+| Unpacking | SABnzbd/NZBGet, likewise | Disk-heavy |
+| Import + rename | **Monarr** — `internal/app/acquisition/import.go` | Usually instant; sometimes multi-GB |
+| Library scan | **Monarr** — `internal/app/library/scan.go` | Disk-heavy on large trees |
+| Artwork fetch | **Monarr** | Network-bound, embarrassingly parallel |
 
-- **A media server.** Playback for clients: streaming endpoints, client
-  capability negotiation, direct-play vs. transcode decisions, seeking,
-  subtitle burn-in, session tracking. Monarr has none of this and it is not
-  adjacent to anything Monarr has. Jellyfin and Plex are this product.
-- **A distributed transcode farm.** A pool of worker nodes pulling
-  encode/remux work over a shared library. **This already exists as Tdarr**,
-  which is worth naming because it is precisely the described architecture,
-  and because the interesting question becomes build-vs-integrate rather
-  than how-to-build.
-- **A media manager.** Acquire, organize, rename, reconcile. This is Monarr,
-  and it is finished.
+**Par repair and unpacking are not Monarr's work today, and there is no code
+for either.** `internal/adapters/sabnzbd` submits and polls; the download
+client repairs and extracts, and Monarr picks up the completed directory.
+Farming those two across a Monarr cluster therefore means one of two things,
+and they should not be conflated:
 
-**The recommendation is to build the third and integrate the other two.**
-Monarr gains a job queue that can farm work across hosts — which is real,
-useful, and in its lane — and that queue can drive remux and pre-transcode
-whose output lands in the pool. Playback stays with the software that
-already does playback. A Monarr that grows a streaming stack is a
-multi-month project whose end state is a worse Jellyfin, and the manager is
-the part nobody else is currently rewriting.
+- **Monarr takes them over** — a par2 and archive stage of its own, running
+  before import. That is net-new work that duplicates a responsibility the
+  download client already owns, and it is only worth it if the goal is to
+  drop the download client's post-processing entirely.
+- **They stay where they are** — and the cluster's benefit for them is
+  indirect at best. SABnzbd is its own single process on its own host; a
+  Monarr cluster does not parallelise it.
 
-The rest of this ADR designs the queue and the farming, which are needed
-under either answer. **Segmented transcode is sketched but not committed**
-(see "Splitting a transcode" below) — it is the piece with the worst
-effort-to-payoff ratio, and the piece Tdarr already ships.
+This is not an objection to the ADR. It is a scoping correction: of the five
+named workloads, **three are Monarr's and two are the download client's**.
+The queue below is designed for the three, and it is the prerequisite for
+the other two if they are ever brought in-house — but nothing here makes
+par repair faster by itself, and no plan should assume otherwise.
+
+The three that *are* Monarr's are genuinely worth farming. Scans walk entire
+roots (`filepath.WalkDir`), artwork is hundreds of independent HTTP fetches,
+and imports are occasionally very large — see the next section, which is the
+one real constraint on placement.
+
+### Shared storage is the precondition, and hardlinks are the trap
+
+All three farmable workloads are filesystem work. Whether a second node can
+do them at all depends on what that node has mounted — and one case degrades
+silently rather than failing.
+
+`place` in [`import.go`](../../internal/app/acquisition/import.go) hardlinks
+`src` to `dest` and **falls back to a full `io.Copy` when the link fails**,
+which is what happens across filesystems. That fallback is correct and
+should stay. But it means an import farmed to a node where the download
+directory and the library are not the *same* filesystem turns an instant
+hardlink into a multi-gigabyte copy — no error, no warning, just a job that
+takes a thousand times longer and burns network for the privilege.
+
+So placement is not free, and the self-balancing property described in §2a
+has one exception worth stating loudly:
+
+```
+ node has BOTH download dir and library on one filesystem? ─ yes ─▶ hardlink, instant
+        │ no
+ node has both mounted at all? ───────────────────────────── yes ─▶ COPY: slow, correct
+        │ no
+        ▼
+   cannot import — must not be routed here
+```
+
+**Route imports by mount, not by idleness.** A node's mount set is a
+routing input, and the busiest node with the right filesystem beats an idle
+node without it every time. Scans and artwork have no such trap: scans need
+the library readable, artwork needs only network.
 
 ## Decision
 
@@ -139,15 +178,25 @@ The scheduler keeps its job: it stops *running* periodic work and starts
   this buys: singleton *jobs* without a singleton *node*. No leader
   election, no primary, no failover story to operate — any node may run it,
   exactly one does.
-- **`required_capability`** — set to `vaapi`, `nvenc`, or similar. Only
-  nodes advertising it can claim the row. This is how a transcode reaches a
-  host that can actually do it.
-- **`affinity_node`** — pins work to one node, for files only it can see or
-  clients only it serves.
+- **`required_capability`** — a tag a node advertises, matched against the
+  job's requirement. **For this workload the tags are mounts and
+  toolchains, not hardware:** `mount:media-nas`, `mount:downloads`,
+  `linked:downloads+media` for the hardlink case above, `tool:par2` if
+  repair ever moves in-house. Any node carrying the tag may claim the row.
+- **`affinity_node`** — pins work to exactly one node, for files only it can
+  see. The degenerate case of a capability tag, kept separate because
+  "this one host" is common enough to deserve a column rather than a
+  synthesised per-node tag.
 
 Everything else — artwork fetches, per-item metadata refresh — is left
 unrouted and drains across all nodes in parallel, which is the one place
-clustering actually buys throughput.
+clustering plainly buys throughput.
+
+Capability routing is doing less work here than it would in a cluster with
+heterogeneous hardware; with no transcodes, its whole job is expressing
+which node can see which files. That is still enough to need it, but it
+argues for keeping the tag vocabulary small and mount-shaped rather than
+building a general capability system.
 
 ### 2a. "Farm work to idle hosts" needs no dispatcher
 
@@ -157,11 +206,15 @@ when it has capacity, so a busy node simply claims less and an idle node
 claims more. Load balances itself, with no scheduler deciding placement and
 nothing to get wrong when a node is slow rather than dead.
 
-This is a genuine argument for the queue over any push-based or
-role-based design, and it is why `nodes.load` should exist only for the UI
-and for sizing decisions — never as an input to placement. The moment
-placement consults load, the self-balancing property is replaced by a
-heuristic that has to be tuned.
+This is a genuine argument for the queue over any push-based or role-based
+design, and it is why `nodes.load` should exist only for the UI and for
+sizing decisions — never as an input to placement. The moment placement
+consults load, the self-balancing property is replaced by a heuristic that
+has to be tuned.
+
+The exception is the mount trap above: capability tags constrain *which*
+nodes may claim a job, and within that set idleness decides. Constrain by
+correctness, balance by pull — never the reverse.
 
 ### 3. Postgres for clustered mode, SQLite for everyone else
 
@@ -176,32 +229,6 @@ definition run by someone who can operate a database. The cost is the
 dual-dialect tax ADR 0007 priced: every store query and migration written
 and tested against both engines, permanently. That is the real price of this
 ADR, and it is paid in every future change, not once.
-
-### 3a. Splitting a transcode — sketched, not committed
-
-Segmented encoding is the one requirement the queue does not answer by
-itself. The shape is: split at keyframe boundaries, encode segments as
-independent jobs, concatenate. The queue handles the fan-out; the hard parts
-are elsewhere and are worth stating before anyone estimates this as "a job
-kind":
-
-- Segments must be cut on keyframes, or the concatenation stutters. That
-  means a probe pass, and it means variable segment lengths.
-- Rate control does not survive segmentation. Per-segment CRF drifts in
-  quality across boundaries; matching a target bitrate requires a
-  two-pass or a shared statistics file that segments cannot share.
-- Audio, subtitles, and chapters are not segmented and must be passed
-  through and remuxed at the end.
-- Every node needs the same encoder build. Different ffmpeg or driver
-  versions across nodes produce segments that differ subtly, and the seams
-  show.
-- The payoff is bounded: it only helps for one large file at a time. With a
-  queue of many files, encoding whole files on separate nodes is simpler,
-  faster in aggregate, and has none of the above problems.
-
-**Recommendation: whole-file jobs first**, routed by capability. Revisit
-segmentation only if single-file latency is measurably the problem, which
-for a library-wide re-encode it is not.
 
 ### 4. The supporting pieces
 
@@ -222,7 +249,9 @@ Per-node config already works: config is ops-layer only (bind, port, data
 dir, logging), while indexers, clients, and profiles live in the DB and are
 therefore shared by construction. Resist expressing node differences as
 divergent config — they belong in node capabilities, or the cluster becomes
-N snowflakes.
+N snowflakes. Mounts are the exception that proves it: they differ per node
+by nature, which is exactly why they are advertised as capabilities rather
+than configured as behaviour.
 
 ## Consequences
 
@@ -239,11 +268,16 @@ N snowflakes.
   failures, and backpressure are all things the timer scheduler cannot do.
   This matters, because it means step 1 is not speculative work done for a
   cluster that may never arrive.
-- Transcode and remux remain net-new work. The queue is their prerequisite,
-  not a substitute for them — an encoder port, ffmpeg adapter, profiles,
-  and progress reporting are their own project.
-- Playback stays out of scope. If that is ever revisited, this ADR does not
-  cover it and should not be cited as though it did.
+- Import gains a placement failure mode it does not have today — a job
+  routed to a node without the right mounts either cannot run or copies
+  gigabytes instead of linking. Capability tags exist to prevent this, and
+  an import that falls back to copy should log loudly enough to be
+  diagnosable, which today it does not.
+- Par repair and unpacking are **not** made faster by this ADR. If moving
+  them in-house is the actual goal, that is a separate decision with its own
+  record; this one only ensures there would be somewhere to run them.
+- Playback and transcoding stay out of scope entirely. Nothing here is
+  designed for them.
 
 ## Staging, so this can stop at any point and still be worth it
 
@@ -255,43 +289,46 @@ N snowflakes.
    a single instance.
 2. **Postgres behind the store interface.** Per ADR 0007's scope sketch.
    Mechanical, but this is where the permanent dual-dialect tax starts.
-3. **Multi-host.** Node registry, heartbeats, capability routing,
+3. **Multi-host.** Node registry, heartbeats, mount-tag routing,
    `LISTEN`/`NOTIFY` bus, shared sessions, migration locking.
-4. **Whole-file remux/transcode as the first capability-routed job kind** —
-   not segmented (see 3a).
+4. **Parallel scan and artwork as the first genuinely farmed job kinds**,
+   then imports once mount tags are trustworthy — imports last, because
+   they are the ones that degrade silently when routed wrong.
 
 Steps 1 and 2 are independently useful and independently revertible. Step 3
 is the point of no return for the single-instance assumption, and should not
-start until 1 and 2 are proven. Playback is not in this list, and should not
-be added to it — see the scope question above.
+start until 1 and 2 are proven.
 
 ## Alternatives considered
 
 - **Designate one writer, replicas read-only.** A role flag disabling the
   scheduler and acquisition on replicas: roughly a day's work against
   several for the queue, and it preserves ADR 0004 outright. It genuinely
-  solves "N instances serving the UI and API on one host," and if that is
-  all that is ever wanted, it is the right answer and this ADR is
-  over-engineering.
+  solves "N instances serving the UI and API on one host."
 
-  Rejected as the *plan* for two reasons. It cannot route work by
-  capability, so it can never run a transcode on the node with the GPU —
-  the specific thing asked for. And it is thrown away rather than built on
+  Rejected as the *plan* because it farms nothing — all work stays on the
+  writer, which is the opposite of the stated requirement. It also cannot
+  express which node can see which files, so it cannot place an import
+  correctly even by accident. And it is thrown away rather than built on
   when hosts multiply, whereas step 1 of the queue is the same code the
   cluster later runs. It remains a reasonable stopgap if instances are
   needed before the queue lands; it is not a foundation.
+
+  Worth being honest that this option is more competitive than it was when
+  this ADR assumed GPU transcodes: without heterogeneous hardware, "one
+  writer, N read-only UI replicas" covers more of the ground than it used
+  to. What it does not cover is farming, and farming is the requirement.
 - **Leader election over the existing scheduler.** Solves double-grabbing
-  without a queue, but yields one busy node and N idle ones, and still
-  cannot route work by capability. Strictly worse than the queue for the
-  same operational cost.
+  without a queue, but yields one busy node and N idle ones — again, no
+  farming. Strictly worse than the queue for the same operational cost.
 - **rqlite / LiteFS.** Already rejected in ADR 0007; nothing here changes
   that, and neither offers `SKIP LOCKED`.
 - **Redis or NATS for the queue.** A better queue, and a second stateful
   dependency to operate for a homelab. Postgres is already the multi-host
   answer; one new dependency is enough.
-- **Do nothing.** Worth stating, because it is not obviously wrong. Monarr
-  does not need N instances to serve N clients — the software that streams
-  media does that, and one Monarr can feed it. If the motivation is
-  throughput, the honest measurement is that Monarr is idle almost all the
-  time. The case for this ADR rests on capability routing and on the queue's
-  own merits (retries, visibility), not on load.
+- **Do nothing.** Worth stating, because it is not obviously wrong. If the
+  motivation is throughput, the honest measurement is that Monarr is idle
+  almost all the time — scans and artwork are bursty, not sustained, and a
+  single instance absorbs them on any reasonable hardware. The case for this
+  ADR rests on the queue's own merits (retries, visibility, backpressure)
+  and on correct placement, not on load.
