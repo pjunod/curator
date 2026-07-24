@@ -30,6 +30,9 @@ var (
 	// declared to hold a different kind (ADR 0009). A mixed root never
 	// produces this.
 	ErrRootKindMismatch = errors.New("root folder holds a different media kind")
+	// ErrNestedRoot is returned when a root would contain, or sit inside,
+	// one that is already registered (ADR 0009 §3).
+	ErrNestedRoot = errors.New("root folders may not nest")
 )
 
 // MediaAdded is published on the bus after a successful add.
@@ -541,11 +544,54 @@ func (s *Service) AddRootFolder(ctx context.Context, path string, kind domain.Ro
 	if !info.IsDir() {
 		return domain.RootFolder{}, fmt.Errorf("root folder is not a directory")
 	}
-	rf, err := s.db.AddRootFolder(ctx, filepath.Clean(path), kind)
+	clean := filepath.Clean(path)
+	if err := s.checkNotNested(ctx, clean); err != nil {
+		return domain.RootFolder{}, err
+	}
+	rf, err := s.db.AddRootFolder(ctx, clean, kind)
 	if errors.Is(err, sqlite.ErrDuplicate) {
 		return domain.RootFolder{}, fmt.Errorf("root folder already registered")
 	}
 	return rf, err
+}
+
+// checkNotNested rejects a root that contains, or is contained by, one that
+// is already registered (ADR 0009 §3). Nested roots offer every folder under
+// the overlap twice, and registering a base like /media when the libraries
+// are /media/Movies and /media/TV is the specific mistake that makes a scan
+// look like it is trawling the whole tree. The error names the conflict,
+// because that message is where the model gets learned.
+func (s *Service) checkNotNested(ctx context.Context, path string) error {
+	existing, err := s.db.ListRootFolders(ctx)
+	if err != nil {
+		return err
+	}
+	for _, rf := range existing {
+		switch {
+		case isSubPath(rf.Path, path):
+			return fmt.Errorf(
+				"%w: %s is inside the registered root %s", ErrNestedRoot, path, rf.Path)
+		case isSubPath(path, rf.Path):
+			return fmt.Errorf(
+				"%w: %s contains the registered root %s — register the media folders under it instead",
+				ErrNestedRoot, path, rf.Path)
+		}
+	}
+	return nil
+}
+
+// isSubPath reports whether child is strictly beneath parent. Both are
+// expected to be cleaned absolute paths. Comparison is component-wise via
+// the separator suffix, so /media/tv2 is not treated as being inside
+// /media/tv.
+func isSubPath(parent, child string) bool {
+	if parent == child {
+		return false
+	}
+	if !strings.HasSuffix(parent, string(filepath.Separator)) {
+		parent += string(filepath.Separator)
+	}
+	return strings.HasPrefix(child, parent)
 }
 
 // SetRootFolderKind retypes an existing root. Items already in it keep their
