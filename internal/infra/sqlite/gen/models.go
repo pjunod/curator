@@ -116,6 +116,26 @@ type Indexer struct {
 	AddedAt    int64
 }
 
+type Job struct {
+	ID                 int64
+	Kind               string
+	Payload            string
+	State              string
+	Priority           int64
+	RunAfter           int64
+	Attempts           int64
+	MaxAttempts        int64
+	LastError          string
+	DedupeKey          sql.NullString
+	RequiredCapability sql.NullString
+	AffinityNode       sql.NullString
+	LeaseOwner         string
+	LeaseExpiresAt     int64
+	CreatedAt          int64
+	UpdatedAt          int64
+	FinishedAt         int64
+}
+
 type MediaCopy struct {
 	ID               int64
 	MediaItemID      int64

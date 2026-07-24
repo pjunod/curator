@@ -38,6 +38,7 @@ import (
 	"github.com/monarr-media/monarr/internal/compat"
 	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/config"
+	"github.com/monarr-media/monarr/internal/infra/jobs"
 	"github.com/monarr-media/monarr/internal/infra/logging"
 	"github.com/monarr-media/monarr/internal/infra/scheduler"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
@@ -249,8 +250,10 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Name:     api.ScanTaskName,
 		Interval: 12 * time.Hour,
 		Fn: func(ctx context.Context) error {
-			_, err := lib.Scan(ctx)
-			return err
+			// The scheduler stops running periodic work and starts
+			// enqueuing it (ADR 0008 §1). The dedupe key means a slow
+			// scan never stacks up behind itself.
+			return lib.EnqueueScan(ctx)
 		},
 	}); err != nil {
 		return err
@@ -314,6 +317,17 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err := sched.Start(ctx); err != nil {
 		return err
 	}
+
+	// Job queue (ADR 0008 step 1). Started after the scheduler so periodic
+	// work can enqueue jobs, and worth running on a single instance for the
+	// retries and failure visibility the timer scheduler cannot give.
+	queue := jobs.New(db, b, log, jobs.Options{})
+	if err := library.RegisterJobHandlers(lib, queue.Register); err != nil {
+		return err
+	}
+	lib.WithQueue(queue)
+	queue.Start(ctx)
+	defer queue.Wait()
 
 	// Library changes invalidate the wanted index (imports do it in-service).
 	go func() {

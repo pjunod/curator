@@ -53,6 +53,9 @@ type Service struct {
 	ratings ports.RatingsProvider // optional (OMDb): RT/IMDb/Metacritic
 	bus     *bus.Bus
 	log     *slog.Logger
+	// queue is optional: without it, work that would be enqueued runs
+	// inline, so the queue stays an addition rather than a dependency.
+	queue JobEnqueuer
 }
 
 // New returns a Service. bus may be nil (tests).
