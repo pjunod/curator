@@ -7,10 +7,13 @@ import {
   deleteRootFolder,
   fmtBytes,
   fmtRelative,
+  getIgnoredDirs,
   getRootFolders,
   getScanReport,
   getSettings,
+  ignoreDir,
   triggerScan,
+  unignoreDir,
   updateRootFolderKind,
   updateSettings,
 } from '../api'
@@ -23,11 +26,13 @@ export function SettingsPage() {
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
   const report = useQuery({ queryKey: ['scan-report'], queryFn: getScanReport })
+  const ignored = useQuery({ queryKey: ['ignored-dirs'], queryFn: getIgnoredDirs })
 
   const [key, setKey] = useState('')
   const [omdbKey, setOmdbKey] = useState('')
   const [newRoot, setNewRoot] = useState('')
   const [newRootKind, setNewRootKind] = useState<RootKind>('movie')
+  const [skipPatterns, setSkipPatterns] = useState<string | null>(null)
 
   const saveKey = useMutation({
     mutationFn: () => updateSettings({ tmdbApiKey: key }),
@@ -58,6 +63,21 @@ export function SettingsPage() {
   const delRoot = useMutation({
     mutationFn: deleteRootFolder,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
+  })
+  const dismiss = useMutation({
+    mutationFn: (path: string) => ignoreDir(path),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['scan-report'] })
+      void qc.invalidateQueries({ queryKey: ['ignored-dirs'] })
+    },
+  })
+  const restore = useMutation({
+    mutationFn: (path: string) => unignoreDir(path),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ignored-dirs'] }),
+  })
+  const saveSkips = useMutation({
+    mutationFn: () => updateSettings({ scanSkipPatterns: skipPatterns ?? '' }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['settings'] }),
   })
   const scan = useMutation({
     mutationFn: triggerScan,
@@ -252,12 +272,28 @@ export function SettingsPage() {
                     <Link to="/add" search={{ q: d.name, kind: 'book' }}>
                       book
                     </Link>
+                    {' · '}
+                    <button
+                      className="link-btn"
+                      title="Never offer this folder again"
+                      disabled={dismiss.isPending}
+                      onClick={() => dismiss.mutate(d.path)}
+                    >
+                      not media
+                    </button>
                   </span>
                 </li>
               ))}
             </ul>
           </>
         )}
+        {report.data && (report.data.skippedDirs || report.data.ignoredDirs) ? (
+          <p className="muted">
+            Not offered: {report.data.skippedDirs ?? 0} skipped by pattern ·{' '}
+            {report.data.ignoredDirs ?? 0} dismissed. Counted rather than listed, so an
+            exclusion is never silent.
+          </p>
+        ) : null}
         {report.data && report.data.missingPaths.length > 0 && (
           <>
             <h3 className="muted">Items whose folder is missing on disk</h3>
@@ -270,6 +306,52 @@ export function SettingsPage() {
             </ul>
           </>
         )}
+
+        {ignored.data && ignored.data.length > 0 && (
+          <details>
+            <summary className="muted">Dismissed folders ({ignored.data.length})</summary>
+            <ul className="unmatched-list">
+              {ignored.data.map((ip) => (
+                <li key={ip.path}>
+                  <span className="mono">{ip.path}</span>
+                  <span className="match-as">
+                    <button
+                      className="link-btn"
+                      disabled={restore.isPending}
+                      onClick={() => restore.mutate(ip.path)}
+                    >
+                      offer it again
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+
+        <h3 style={{ marginTop: 18 }}>Skip patterns</h3>
+        <p className="muted">
+          Folder names never offered as candidates, one per line. Dot-directories and the usual
+          NAS clutter (@eaDir, #recycle, lost+found, extras, samples) are built in — these are
+          on top of those. Glob syntax works: <span className="mono">_incoming</span>,{' '}
+          <span className="mono">*.tmp</span>.
+        </p>
+        <textarea
+          rows={4}
+          className="mono"
+          placeholder={'_incoming\n*.partial'}
+          value={skipPatterns ?? settings.data?.scanSkipPatterns ?? ''}
+          onChange={(e) => setSkipPatterns(e.target.value)}
+        />
+        <div className="form-row">
+          <button
+            disabled={skipPatterns === null || saveSkips.isPending}
+            onClick={() => saveSkips.mutate()}
+          >
+            Save skip patterns
+          </button>
+          {saveSkips.isSuccess && <span className="ok-text">Saved — applies on the next scan.</span>}
+        </div>
       </section>
 
       <AcquisitionSettings />

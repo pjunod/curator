@@ -87,6 +87,12 @@ type HistoryEvent struct {
 	Data         string
 }
 
+type IgnoredPath struct {
+	Path      string
+	Reason    string
+	IgnoredAt int64
+}
+
 type ImportList struct {
 	ID               int64
 	Name             string

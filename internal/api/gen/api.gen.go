@@ -462,6 +462,13 @@ type HealthReport struct {
 // HealthStatus defines model for HealthStatus.
 type HealthStatus string
 
+// IgnoredPath defines model for IgnoredPath.
+type IgnoredPath struct {
+	IgnoredAt time.Time `json:"ignoredAt"`
+	Path      string    `json:"path"`
+	Reason    string    `json:"reason"`
+}
+
 // ImportList defines model for ImportList.
 type ImportList struct {
 	// Config trakt-list: {user, slug, clientId}.
@@ -793,12 +800,18 @@ type RootKind string
 
 // ScanReport defines model for ScanReport.
 type ScanReport struct {
-	FilesLinked   int            `json:"filesLinked"`
-	FilesRemoved  int            `json:"filesRemoved"`
-	ItemsScanned  int            `json:"itemsScanned"`
-	MissingPaths  []string       `json:"missingPaths"`
-	RootsScanned  int            `json:"rootsScanned"`
-	ScannedAt     time.Time      `json:"scannedAt"`
+	FilesLinked  int `json:"filesLinked"`
+	FilesRemoved int `json:"filesRemoved"`
+
+	// IgnoredDirs Directories the user has dismissed (counted, not listed).
+	IgnoredDirs  *int      `json:"ignoredDirs,omitempty"`
+	ItemsScanned int       `json:"itemsScanned"`
+	MissingPaths []string  `json:"missingPaths"`
+	RootsScanned int       `json:"rootsScanned"`
+	ScannedAt    time.Time `json:"scannedAt"`
+
+	// SkippedDirs Directories excluded by a skip pattern (counted, not listed).
+	SkippedDirs   *int           `json:"skippedDirs,omitempty"`
 	UnmatchedDirs []UnmatchedDir `json:"unmatchedDirs"`
 }
 
@@ -850,6 +863,9 @@ type Settings struct {
 	// OmdbApiKeyConfigured OMDb key present — enables Rotten Tomatoes / IMDb / Metacritic ratings.
 	OmdbApiKeyConfigured *bool   `json:"omdbApiKeyConfigured,omitempty"`
 	OmdbApiKeyHint       *string `json:"omdbApiKeyHint,omitempty"`
+
+	// ScanSkipPatterns User skip patterns, one per line, applied on top of the built-in defaults during the root-folder sweep. Blank lines and # comments are ignored.
+	ScanSkipPatterns     *string `json:"scanSkipPatterns,omitempty"`
 	TmdbApiKeyConfigured bool    `json:"tmdbApiKeyConfigured"`
 	TmdbApiKeyHint       string  `json:"tmdbApiKeyHint"`
 }
@@ -865,7 +881,10 @@ type SettingsUpdate struct {
 
 	// OmdbApiKey Optional — adds Rotten Tomatoes / IMDb / Metacritic ratings. "" clears it.
 	OmdbApiKey *string `json:"omdbApiKey,omitempty"`
-	TmdbApiKey *string `json:"tmdbApiKey,omitempty"`
+
+	// ScanSkipPatterns Directory-name patterns to never offer as adoption candidates, one per line.
+	ScanSkipPatterns *string `json:"scanSkipPatterns,omitempty"`
+	TmdbApiKey       *string `json:"tmdbApiKey,omitempty"`
 }
 
 // SystemStatus defines model for SystemStatus.
@@ -958,6 +977,17 @@ type BulkEditLibraryJSONBody struct {
 	QualityProfileId *int64  `json:"qualityProfileId,omitempty"`
 }
 
+// UnignoreDirParams defines parameters for UnignoreDir.
+type UnignoreDirParams struct {
+	Path string `form:"path" json:"path"`
+}
+
+// IgnoreDirJSONBody defines parameters for IgnoreDir.
+type IgnoreDirJSONBody struct {
+	Path   string  `json:"path"`
+	Reason *string `json:"reason,omitempty"`
+}
+
 // SearchReleasesParams defines parameters for SearchReleases.
 type SearchReleasesParams struct {
 	Season  *int `form:"season,omitempty" json:"season,omitempty"`
@@ -1023,6 +1053,9 @@ type AddLibraryItemJSONRequestBody = AddMediaRequest
 
 // BulkEditLibraryJSONRequestBody defines body for BulkEditLibrary for application/json ContentType.
 type BulkEditLibraryJSONRequestBody BulkEditLibraryJSONBody
+
+// IgnoreDirJSONRequestBody defines body for IgnoreDir for application/json ContentType.
+type IgnoreDirJSONRequestBody IgnoreDirJSONBody
 
 // UpdateLibraryItemJSONRequestBody defines body for UpdateLibraryItem for application/json ContentType.
 type UpdateLibraryItemJSONRequestBody = UpdateMediaItemRequest
@@ -1149,6 +1182,15 @@ type ServerInterface interface {
 	// ScanLibrary Trigger a disk scan / reconcile
 	// (POST /library/scan)
 	ScanLibrary(w http.ResponseWriter, r *http.Request)
+	// UnignoreDir Undo a dismissal
+	// (DELETE /library/scan/ignored)
+	UnignoreDir(w http.ResponseWriter, r *http.Request, params UnignoreDirParams)
+	// ListIgnoredDirs Directories dismissed as not-media
+	// (GET /library/scan/ignored)
+	ListIgnoredDirs(w http.ResponseWriter, r *http.Request)
+	// IgnoreDir Dismiss an adoption candidate for good
+	// (POST /library/scan/ignored)
+	IgnoreDir(w http.ResponseWriter, r *http.Request)
 	// GetScanReport Result of the most recent scan
 	// (GET /library/scan/report)
 	GetScanReport(w http.ResponseWriter, r *http.Request)
@@ -1850,6 +1892,67 @@ func (siw *ServerInterfaceWrapper) ScanLibrary(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ScanLibrary(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnignoreDir operation middleware
+func (siw *ServerInterfaceWrapper) UnignoreDir(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UnignoreDirParams
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnignoreDir(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListIgnoredDirs operation middleware
+func (siw *ServerInterfaceWrapper) ListIgnoredDirs(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListIgnoredDirs(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// IgnoreDir operation middleware
+func (siw *ServerInterfaceWrapper) IgnoreDir(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.IgnoreDir(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2781,6 +2884,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}", wrapper.UpdateLibraryItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan", wrapper.ScanLibrary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/report", wrapper.GetScanReport)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/scan/ignored", wrapper.UnignoreDir)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/ignored", wrapper.ListIgnoredDirs)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan/ignored", wrapper.IgnoreDir)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/search", wrapper.SearchMetadata)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders", wrapper.ListRootFolders)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rootfolders", wrapper.AddRootFolder)

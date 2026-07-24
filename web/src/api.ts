@@ -197,6 +197,12 @@ export interface RootFolder {
   accessible: boolean
 }
 
+export interface IgnoredPath {
+  path: string
+  reason: string
+  ignoredAt: string
+}
+
 export interface UnmatchedDir {
   rootFolderId: number
   path: string
@@ -209,6 +215,8 @@ export interface ScanReport {
   itemsScanned: number
   filesLinked: number
   filesRemoved: number
+  skippedDirs?: number
+  ignoredDirs?: number
   unmatchedDirs: UnmatchedDir[]
   missingPaths: string[]
 }
@@ -220,6 +228,7 @@ export interface Settings {
   omdbApiKeyHint?: string
   apiKey?: string
   authRequired?: boolean
+  scanSkipPatterns?: string
 }
 
 async function parseError(res: Response, fallback: string): Promise<never> {
@@ -268,6 +277,11 @@ export const addRootFolder = (path: string, kind: RootKind) =>
 export const updateRootFolderKind = (id: number, kind: RootKind) =>
   send<RootFolder>('PATCH', `/rootfolders/${id}`, { kind })
 export const deleteRootFolder = (id: number) => send('DELETE', `/rootfolders/${id}`)
+export const getIgnoredDirs = () => get<IgnoredPath[]>('/library/scan/ignored')
+export const ignoreDir = (path: string, reason = '') =>
+  send('POST', '/library/scan/ignored', { path, reason })
+export const unignoreDir = (path: string) =>
+  send('DELETE', `/library/scan/ignored?path=${encodeURIComponent(path)}`)
 export const getSettings = () => get<Settings>('/settings')
 export const updateSettings = (patch: {
   tmdbApiKey?: string
@@ -275,6 +289,7 @@ export const updateSettings = (patch: {
   authRequired?: boolean
   authUsername?: string
   authPassword?: string
+  scanSkipPatterns?: string
 }) => send('PUT', '/settings', patch)
 export const triggerScan = () => send('POST', '/library/scan')
 export const getScanReport = async (): Promise<ScanReport | null> => {

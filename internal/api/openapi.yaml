@@ -231,6 +231,56 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /library/scan/ignored:
+    get:
+      operationId: listIgnoredDirs
+      summary: Directories dismissed as not-media
+      responses:
+        "200":
+          description: Every dismissal, so it can be undone.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IgnoredPath"
+    post:
+      operationId: ignoreDir
+      summary: Dismiss an adoption candidate for good
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        "204":
+          description: Dismissed; scans stop offering it.
+        "400":
+          description: Path invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: unignoreDir
+      summary: Undo a dismissal
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Restored; the next scan offers it again.
+
   /metadata/search:
     get:
       operationId: searchMetadata
@@ -1846,6 +1896,12 @@ components:
           type: integer
         filesRemoved:
           type: integer
+        skippedDirs:
+          type: integer
+          description: Directories excluded by a skip pattern (counted, not listed).
+        ignoredDirs:
+          type: integer
+          description: Directories the user has dismissed (counted, not listed).
         unmatchedDirs:
           type: array
           items:
@@ -1854,6 +1910,18 @@ components:
           type: array
           items:
             type: string
+
+    IgnoredPath:
+      type: object
+      required: [path, reason, ignoredAt]
+      properties:
+        path:
+          type: string
+        reason:
+          type: string
+        ignoredAt:
+          type: string
+          format: date-time
 
     QualityProfile:
       type: object
@@ -2237,6 +2305,12 @@ components:
         authRequired:
           type: boolean
           description: Whether /api/v1 requires authentication.
+        scanSkipPatterns:
+          type: string
+          description: >
+            User skip patterns, one per line, applied on top of the built-in
+            defaults during the root-folder sweep. Blank lines and # comments
+            are ignored.
 
     SettingsUpdate:
       type: object
@@ -2246,6 +2320,9 @@ components:
         omdbApiKey:
           type: string
           description: Optional — adds Rotten Tomatoes / IMDb / Metacritic ratings. "" clears it.
+        scanSkipPatterns:
+          type: string
+          description: Directory-name patterns to never offer as adoption candidates, one per line.
         authRequired:
           type: boolean
           description: Require API key or session for /api/v1 (Phase 5).

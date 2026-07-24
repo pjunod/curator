@@ -19,6 +19,15 @@ func (q *Queries) ClearFileEpisodeLinks(ctx context.Context, mediaFileID int64) 
 	return err
 }
 
+const deleteIgnoredPath = `-- name: DeleteIgnoredPath :exec
+DELETE FROM ignored_paths WHERE path = ?
+`
+
+func (q *Queries) DeleteIgnoredPath(ctx context.Context, path string) error {
+	_, err := q.db.ExecContext(ctx, deleteIgnoredPath, path)
+	return err
+}
+
 const deleteMediaCopy = `-- name: DeleteMediaCopy :execrows
 DELETE FROM media_copies WHERE id = ? AND media_item_id = ?
 `
@@ -306,6 +315,22 @@ func (q *Queries) InsertEpisode(ctx context.Context, arg InsertEpisodeParams) (i
 	return id, err
 }
 
+const insertIgnoredPath = `-- name: InsertIgnoredPath :exec
+INSERT INTO ignored_paths (path, reason, ignored_at) VALUES (?, ?, ?)
+ON CONFLICT (path) DO UPDATE SET reason = excluded.reason
+`
+
+type InsertIgnoredPathParams struct {
+	Path      string
+	Reason    string
+	IgnoredAt int64
+}
+
+func (q *Queries) InsertIgnoredPath(ctx context.Context, arg InsertIgnoredPathParams) error {
+	_, err := q.db.ExecContext(ctx, insertIgnoredPath, arg.Path, arg.Reason, arg.IgnoredAt)
+	return err
+}
+
 const insertMediaCopy = `-- name: InsertMediaCopy :one
 INSERT INTO media_copies (media_item_id, name, quality_profile_id, root_folder_id, path, monitored, added_at)
 VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
@@ -591,6 +616,33 @@ func (q *Queries) ListFileEpisodeLinksForItem(ctx context.Context, mediaItemID s
 	for rows.Next() {
 		var i MediaFileEpisode
 		if err := rows.Scan(&i.MediaFileID, &i.EpisodeID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIgnoredPaths = `-- name: ListIgnoredPaths :many
+SELECT path, reason, ignored_at FROM ignored_paths ORDER BY path
+`
+
+func (q *Queries) ListIgnoredPaths(ctx context.Context) ([]IgnoredPath, error) {
+	rows, err := q.db.QueryContext(ctx, listIgnoredPaths)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []IgnoredPath
+	for rows.Next() {
+		var i IgnoredPath
+		if err := rows.Scan(&i.Path, &i.Reason, &i.IgnoredAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -39,11 +40,17 @@ type UnmatchedDir struct {
 
 // Report is the persisted result of the last reconcile.
 type Report struct {
-	ScannedAt     time.Time      `json:"scannedAt"`
-	RootsScanned  int            `json:"rootsScanned"`
-	ItemsScanned  int            `json:"itemsScanned"`
-	FilesLinked   int            `json:"filesLinked"`
-	FilesRemoved  int            `json:"filesRemoved"`
+	ScannedAt    time.Time `json:"scannedAt"`
+	RootsScanned int       `json:"rootsScanned"`
+	ItemsScanned int       `json:"itemsScanned"`
+	FilesLinked  int       `json:"filesLinked"`
+	FilesRemoved int       `json:"filesRemoved"`
+	// SkippedDirs and IgnoredDirs are counted rather than listed, so the
+	// user can see the sweep excluded something without the excluded
+	// things becoming a second list to read. Silent truncation reads as
+	// "there was nothing there".
+	SkippedDirs   int            `json:"skippedDirs"`
+	IgnoredDirs   int            `json:"ignoredDirs"`
 	UnmatchedDirs []UnmatchedDir `json:"unmatchedDirs"`
 	MissingPaths  []string       `json:"missingPaths"`
 }
@@ -99,6 +106,19 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 	if err != nil {
 		return report, err
 	}
+	// Two exclusion mechanisms, and they answer different questions
+	// (ADR 0009 §4): patterns say "never look at things shaped like this",
+	// dismissals say "I looked, it is not media, stop asking".
+	skip := s.loadSkipMatcher(ctx)
+	ignored := map[string]bool{}
+	if rows, err := s.db.ListIgnoredPaths(ctx); err == nil {
+		for _, ip := range rows {
+			ignored[ip.Path] = true
+		}
+	} else {
+		s.log.Warn("scan: could not read ignored paths", "err", err)
+	}
+
 	for _, root := range roots {
 		entries, err := os.ReadDir(root.Path)
 		if err != nil {
@@ -110,7 +130,15 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 			if !e.IsDir() {
 				continue
 			}
+			if skip.skip(e.Name()) {
+				report.SkippedDirs++
+				continue
+			}
 			full := filepath.Join(root.Path, e.Name())
+			if ignored[full] {
+				report.IgnoredDirs++
+				continue
+			}
 			if !claimed[full] {
 				report.UnmatchedDirs = append(report.UnmatchedDirs, UnmatchedDir{
 					RootFolderID: root.ID, Path: full, Name: e.Name(),
@@ -254,4 +282,51 @@ func (s *Service) LastScanReport(ctx context.Context) (Report, bool, error) {
 		return Report{}, false, err
 	}
 	return r, true, nil
+}
+
+// IgnoreDir dismisses an adoption candidate for good. Dismissals are keyed
+// by exact path and survive rescans — without that, every non-media folder
+// under a root is re-offered forever (ADR 0009 §4).
+//
+// The dismissal is also removed from the persisted report immediately, so
+// the list the user is looking at reflects the click without waiting for
+// the next scan.
+func (s *Service) IgnoreDir(ctx context.Context, path, reason string) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("ignored path must be absolute")
+	}
+	clean := filepath.Clean(path)
+	if err := s.db.IgnorePath(ctx, clean, reason); err != nil {
+		return err
+	}
+	report, ok, err := s.LastScanReport(ctx)
+	if err != nil || !ok {
+		return nil //nolint:nilerr // the dismissal itself succeeded
+	}
+	kept := report.UnmatchedDirs[:0]
+	for _, d := range report.UnmatchedDirs {
+		if d.Path == clean {
+			report.IgnoredDirs++
+			continue
+		}
+		kept = append(kept, d)
+	}
+	report.UnmatchedDirs = kept
+	if raw, err := json.Marshal(report); err == nil {
+		if err := s.db.SetMeta(ctx, scanReportKey, string(raw)); err != nil {
+			s.log.Warn("scan: could not persist report after dismissal", "err", err)
+		}
+	}
+	return nil
+}
+
+// ListIgnoredDirs returns every dismissal, so the UI can show and undo them.
+// A dismissal nobody can find again is a trap rather than a feature.
+func (s *Service) ListIgnoredDirs(ctx context.Context) ([]domain.IgnoredPath, error) {
+	return s.db.ListIgnoredPaths(ctx)
+}
+
+// UnignoreDir undoes a dismissal. The path reappears on the next scan.
+func (s *Service) UnignoreDir(ctx context.Context, path string) error {
+	return s.db.UnignorePath(ctx, filepath.Clean(path))
 }

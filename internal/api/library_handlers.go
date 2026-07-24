@@ -567,6 +567,9 @@ func (s *Server) GetSettings(w http.ResponseWriter, r *http.Request) {
 	omdbConfigured, omdbHint := omdbKey != "", keyHint(omdbKey)
 	out.OmdbApiKeyConfigured = &omdbConfigured
 	out.OmdbApiKeyHint = &omdbHint
+	if patterns := s.readSetting(r.Context(), library.SkipPatternsSetting); patterns != "" {
+		out.ScanSkipPatterns = &patterns
+	}
 	if apiKey := s.readSetting(r.Context(), APIKeySetting); apiKey != "" {
 		out.ApiKey = &apiKey
 	}
@@ -594,6 +597,12 @@ func (s *Server) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.ScanSkipPatterns != nil {
+		if err := s.deps.Settings.SetMeta(r.Context(), library.SkipPatternsSetting, *body.ScanSkipPatterns); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if err := s.applyAuthSettings(r.Context(), body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -610,4 +619,49 @@ func (s *Server) readSetting(ctx context.Context, key string) string {
 		return ""
 	}
 	return v
+}
+
+// ---- adoption dismissals (ADR 0009 §4) ----
+
+// ListIgnoredDirs implements GET /library/scan/ignored.
+func (s *Server) ListIgnoredDirs(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.deps.Library.ListIgnoredDirs(r.Context())
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	out := make([]apigen.IgnoredPath, 0, len(rows))
+	for _, ip := range rows {
+		out = append(out, apigen.IgnoredPath{
+			Path: ip.Path, Reason: ip.Reason, IgnoredAt: ip.IgnoredAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// IgnoreDir implements POST /library/scan/ignored.
+func (s *Server) IgnoreDir(w http.ResponseWriter, r *http.Request) {
+	var body apigen.IgnoreDirJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	reason := ""
+	if body.Reason != nil {
+		reason = *body.Reason
+	}
+	if err := s.deps.Library.IgnoreDir(r.Context(), body.Path, reason); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// UnignoreDir implements DELETE /library/scan/ignored?path=...
+func (s *Server) UnignoreDir(w http.ResponseWriter, r *http.Request, params apigen.UnignoreDirParams) {
+	if err := s.deps.Library.UnignoreDir(r.Context(), params.Path); err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

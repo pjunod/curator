@@ -185,6 +185,14 @@ type RootFolder struct {
 	AddedAt time.Time
 }
 
+// IgnoredPath is a directory the user dismissed as not-media. Without this
+// record a scan re-offers every non-media folder forever (ADR 0009 §4).
+type IgnoredPath struct {
+	Path      string
+	Reason    string
+	IgnoredAt time.Time
+}
+
 // MediaFile is a file on disk belonging to the library. For series it links
 // to 1..n episodes (multi-episode files are real — ADR 0002); for movies it
 // links to the item alone. MediaItemID 0 means the file is unmatched.

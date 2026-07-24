@@ -575,6 +575,36 @@ func (d *DB) GetRootFolder(ctx context.Context, id int64) (domain.RootFolder, er
 	}, nil
 }
 
+// ---- ignored paths ----
+
+// IgnorePath records that a directory is not media, so scans stop offering
+// it (ADR 0009 §4). Idempotent: re-ignoring updates the reason.
+func (d *DB) IgnorePath(ctx context.Context, path, reason string) error {
+	return d.Write.InsertIgnoredPath(ctx, sqlitegen.InsertIgnoredPathParams{
+		Path: path, Reason: reason, IgnoredAt: time.Now().UnixMilli(),
+	})
+}
+
+// ListIgnoredPaths returns every dismissed path, oldest key order.
+func (d *DB) ListIgnoredPaths(ctx context.Context) ([]domain.IgnoredPath, error) {
+	rows, err := d.Read.ListIgnoredPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.IgnoredPath, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.IgnoredPath{
+			Path: r.Path, Reason: r.Reason, IgnoredAt: time.UnixMilli(r.IgnoredAt),
+		})
+	}
+	return out, nil
+}
+
+// UnignorePath undoes a dismissal, so the path is offered again.
+func (d *DB) UnignorePath(ctx context.Context, path string) error {
+	return d.Write.DeleteIgnoredPath(ctx, path)
+}
+
 // DeleteRootFolder removes a root folder registration (never touches disk).
 func (d *DB) DeleteRootFolder(ctx context.Context, id int64) error {
 	return d.Write.DeleteRootFolder(ctx, id)

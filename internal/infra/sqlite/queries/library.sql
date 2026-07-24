@@ -185,3 +185,13 @@ SELECT mfe.media_file_id, mfe.episode_id
 FROM media_file_episodes mfe
 JOIN media_files mf ON mf.id = mfe.media_file_id
 WHERE mf.media_item_id = ?;
+
+-- name: InsertIgnoredPath :exec
+INSERT INTO ignored_paths (path, reason, ignored_at) VALUES (?, ?, ?)
+ON CONFLICT (path) DO UPDATE SET reason = excluded.reason;
+
+-- name: ListIgnoredPaths :many
+SELECT * FROM ignored_paths ORDER BY path;
+
+-- name: DeleteIgnoredPath :exec
+DELETE FROM ignored_paths WHERE path = ?;
