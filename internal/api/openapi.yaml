@@ -231,6 +231,42 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /library/adopt:
+    post:
+      operationId: runAdoption
+      summary: Match the unmatched folders the last scan found
+      description: >
+        Parses each candidate folder name, searches the provider for the
+        root's kind, and adopts the ones that clear the per-kind bar. The
+        first pass over a new root proposes without writing; once the root is
+        confirmed, later passes apply automatically (ADR 0010).
+      responses:
+        "200":
+          description: What was adopted and what needs review.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdoptResult"
+
+  /library/adopt/confirm:
+    post:
+      operationId: confirmRootAdopted
+      summary: Mark a root as reviewed, so later scans adopt into it directly
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rootFolderId]
+              properties:
+                rootFolderId:
+                  type: integer
+                  format: int64
+      responses:
+        "204":
+          description: Confirmed.
+
   /library/scan/ignored:
     get:
       operationId: listIgnoredDirs
@@ -1969,6 +2005,74 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DirEntry"
+
+    AdoptionCandidate:
+      type: object
+      required: [kind, tmdbId, title, year]
+      properties:
+        kind:
+          $ref: "#/components/schemas/MediaKind"
+        tmdbId:
+          type: integer
+          format: int64
+        olid:
+          type: string
+        author:
+          type: string
+        title:
+          type: string
+        year:
+          type: integer
+        overview:
+          type: string
+        posterPath:
+          type: string
+
+    Proposal:
+      type: object
+      required: [rootFolderId, path, name, parsedTitle, parsedYear, confidence, candidates]
+      properties:
+        rootFolderId:
+          type: integer
+          format: int64
+        path:
+          type: string
+        name:
+          type: string
+        parsedTitle:
+          type: string
+        parsedYear:
+          type: integer
+        kind:
+          $ref: "#/components/schemas/MediaKind"
+        confidence:
+          type: string
+          enum: [exact, ambiguous, none]
+          description: >
+            exact clears the per-kind bar and may be adopted without asking;
+            anything else goes to review. There is deliberately no
+            "probably".
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdoptionCandidate"
+
+    AdoptResult:
+      type: object
+      required: [adopted, review, failures]
+      properties:
+        adopted:
+          type: array
+          items:
+            $ref: "#/components/schemas/Proposal"
+        review:
+          type: array
+          items:
+            $ref: "#/components/schemas/Proposal"
+        failures:
+          type: array
+          items:
+            type: string
 
     IgnoredPath:
       type: object

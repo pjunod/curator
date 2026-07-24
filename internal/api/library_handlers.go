@@ -690,3 +690,73 @@ func (s *Server) BrowseFilesystem(w http.ResponseWriter, r *http.Request, params
 		Path: res.Path, Parent: res.Parent, Dirs: dirs,
 	})
 }
+
+// ---- adoption (ADR 0010) ----
+
+func proposalDTO(p library.Proposal) apigen.Proposal {
+	out := apigen.Proposal{
+		RootFolderId: p.RootFolderID,
+		Path:         p.Path,
+		Name:         p.Name,
+		ParsedTitle:  p.ParsedTitle,
+		ParsedYear:   p.ParsedYear,
+		Confidence:   apigen.ProposalConfidence(p.Confidence),
+		Candidates:   make([]apigen.AdoptionCandidate, 0, len(p.Candidates)),
+	}
+	if p.Kind != "" {
+		k := apigen.MediaKind(p.Kind)
+		out.Kind = &k
+	}
+	for _, c := range p.Candidates {
+		cand := apigen.AdoptionCandidate{
+			Kind: apigen.MediaKind(c.Kind), TmdbId: c.TMDBID,
+			Title: c.Title, Year: c.Year,
+		}
+		cand.Overview = optStr(c.Overview)
+		cand.PosterPath = optStr(c.PosterPath)
+		cand.Olid = optStr(c.OLID)
+		cand.Author = optStr(c.Author)
+		out.Candidates = append(out.Candidates, cand)
+	}
+	return out
+}
+
+func proposalsDTO(ps []library.Proposal) []apigen.Proposal {
+	out := make([]apigen.Proposal, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, proposalDTO(p))
+	}
+	return out
+}
+
+// RunAdoption implements POST /library/adopt.
+func (s *Server) RunAdoption(w http.ResponseWriter, r *http.Request) {
+	res, err := s.deps.Library.RunAdoption(r.Context())
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	failures := res.Failures
+	if failures == nil {
+		failures = []string{}
+	}
+	writeJSON(w, http.StatusOK, apigen.AdoptResult{
+		Adopted:  proposalsDTO(res.Adopted),
+		Review:   proposalsDTO(res.Review),
+		Failures: failures,
+	})
+}
+
+// ConfirmRootAdopted implements POST /library/adopt/confirm.
+func (s *Server) ConfirmRootAdopted(w http.ResponseWriter, r *http.Request) {
+	var body apigen.ConfirmRootAdoptedJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := s.deps.Library.ConfirmRootAdopted(r.Context(), body.RootFolderId); err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

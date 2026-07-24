@@ -15,6 +15,15 @@ const (
 	// JobScan is a full library reconcile. Deduped, so a slow scan never
 	// stacks up behind itself and two instances never scan concurrently.
 	JobScan = "library.scan"
+	// JobAdopt proposes matches for the unmatched folders the last scan
+	// found, and applies the ones that clear the bar (ADR 0010 §4).
+	//
+	// This is queued rather than done inside the scan request because 600
+	// directories is 600 provider searches: that exceeds any sane HTTP
+	// timeout, hits provider rate limits, and a failure halfway through
+	// leaves nothing. It is also the concrete workload that makes the
+	// queue worth having on a single instance.
+	JobAdopt = "library.adopt"
 )
 
 // JobEnqueuer is the slice of the queue this service needs. Narrow on
@@ -30,8 +39,14 @@ type JobEnqueuer interface {
 func RegisterJobHandlers[H ~func(ctx context.Context, j domain.Job) error](
 	s *Service, register func(kind string, h H) error,
 ) error {
-	return register(JobScan, H(func(ctx context.Context, _ domain.Job) error {
+	if err := register(JobScan, H(func(ctx context.Context, _ domain.Job) error {
 		_, err := s.Scan(ctx)
+		return err
+	})); err != nil {
+		return err
+	}
+	return register(JobAdopt, H(func(ctx context.Context, _ domain.Job) error {
+		_, err := s.RunAdoption(ctx)
 		return err
 	}))
 }
@@ -64,6 +79,25 @@ func (s *Service) EnqueueScan(ctx context.Context) error {
 	}
 	if !queued {
 		s.log.Info("scan: already queued, request coalesced")
+	}
+	return nil
+}
+
+// EnqueueAdoption asks for the matching pass over the last scan's unmatched
+// folders. Same coalescing as the scan, for the same reason.
+func (s *Service) EnqueueAdoption(ctx context.Context) error {
+	if s.queue == nil {
+		_, err := s.RunAdoption(ctx)
+		return err
+	}
+	queued, err := s.queue.EnqueueUnique(ctx, domain.Job{
+		Kind: JobAdopt, DedupeKey: JobAdopt, Priority: 60,
+	})
+	if err != nil {
+		return fmt.Errorf("enqueue adoption: %w", err)
+	}
+	if !queued {
+		s.log.Info("adopt: already queued, request coalesced")
 	}
 	return nil
 }

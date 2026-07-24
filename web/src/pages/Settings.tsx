@@ -11,7 +11,9 @@ import {
   getRootFolders,
   getScanReport,
   getSettings,
+  confirmRootAdopted,
   ignoreDir,
+  runAdoption,
   triggerScan,
   unignoreDir,
   updateRootFolderKind,
@@ -34,6 +36,7 @@ export function SettingsPage() {
   const [newRoot, setNewRoot] = useState('')
   const [newRootKind, setNewRootKind] = useState<RootKind>('movie')
   const [skipPatterns, setSkipPatterns] = useState<string | null>(null)
+  const [adoptSummary, setAdoptSummary] = useState<string | null>(null)
 
   const saveKey = useMutation({
     mutationFn: () => updateSettings({ tmdbApiKey: key }),
@@ -79,6 +82,21 @@ export function SettingsPage() {
   const saveSkips = useMutation({
     mutationFn: () => updateSettings({ scanSkipPatterns: skipPatterns ?? '' }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
+  const adopt = useMutation({
+    mutationFn: runAdoption,
+    onSuccess: (res) => {
+      setAdoptSummary(
+        `${res.adopted.length} adopted · ${res.review.length} need review` +
+          (res.failures.length ? ` · ${res.failures.length} failed` : ''),
+      )
+      void qc.invalidateQueries({ queryKey: ['scan-report'] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+  const confirmRoot = useMutation({
+    mutationFn: confirmRootAdopted,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
   })
   const scan = useMutation({
     mutationFn: triggerScan,
@@ -239,6 +257,9 @@ export function SettingsPage() {
           <button onClick={() => scan.mutate()} disabled={scan.isPending}>
             Scan now
           </button>
+          <button onClick={() => adopt.mutate()} disabled={adopt.isPending}>
+            {adopt.isPending ? 'Matching…' : 'Match unmatched folders'}
+          </button>
           {report.data && (
             <span className="muted">
               Last scan {fmtRelative(report.data.scannedAt)} · {report.data.itemsScanned} items ·{' '}
@@ -282,6 +303,30 @@ export function SettingsPage() {
               ))}
             </ul>
           </>
+        )}
+        {adoptSummary && <p className="ok-text">{adoptSummary}</p>}
+        {adopt.isError && (
+          <div className="banner warning">{String((adopt.error as Error).message)}</div>
+        )}
+        {roots.data && roots.data.some((rf) => rf.kind !== 'mixed') && (
+          <p className="muted">
+            The first match over a new root only proposes — nothing is written until you confirm
+            it, because a wrong match among hundreds is hard to spot and expensive to unpick.
+            Confirm a root to let later scans adopt into it directly:{' '}
+            {roots.data
+              .filter((rf) => rf.kind !== 'mixed')
+              .map((rf) => (
+                <button
+                  key={rf.id}
+                  className="link-btn"
+                  style={{ marginRight: 8 }}
+                  disabled={confirmRoot.isPending}
+                  onClick={() => confirmRoot.mutate(rf.id)}
+                >
+                  {rf.path}
+                </button>
+              ))}
+          </p>
         )}
         {report.data && (report.data.skippedDirs || report.data.ignoredDirs) ? (
           <p className="muted">

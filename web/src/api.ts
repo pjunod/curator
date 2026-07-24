@@ -209,6 +209,34 @@ export interface BrowseResult {
   dirs: DirEntry[]
 }
 
+export interface AdoptionCandidate {
+  kind: MediaKind
+  tmdbId: number
+  olid?: string
+  author?: string
+  title: string
+  year: number
+  overview?: string
+  posterPath?: string
+}
+
+export interface Proposal {
+  rootFolderId: number
+  path: string
+  name: string
+  parsedTitle: string
+  parsedYear: number
+  kind?: MediaKind
+  confidence: 'exact' | 'ambiguous' | 'none'
+  candidates: AdoptionCandidate[]
+}
+
+export interface AdoptResult {
+  adopted: Proposal[]
+  review: Proposal[]
+  failures: string[]
+}
+
 export interface IgnoredPath {
   path: string
   reason: string
@@ -291,6 +319,9 @@ export const updateRootFolderKind = (id: number, kind: RootKind) =>
 export const deleteRootFolder = (id: number) => send('DELETE', `/rootfolders/${id}`)
 export const browseFilesystem = (path: string) =>
   get<BrowseResult>(`/filesystem?path=${encodeURIComponent(path)}`)
+export const runAdoption = () => send<AdoptResult>('POST', '/library/adopt')
+export const confirmRootAdopted = (rootFolderId: number) =>
+  send('POST', '/library/adopt/confirm', { rootFolderId })
 export const getIgnoredDirs = () => get<IgnoredPath[]>('/library/scan/ignored')
 export const ignoreDir = (path: string, reason = '') =>
   send('POST', '/library/scan/ignored', { path, reason })

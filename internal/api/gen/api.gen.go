@@ -16,19 +16,19 @@ import (
 
 // Defines values for AddMediaRequestMonitor.
 const (
-	All    AddMediaRequestMonitor = "all"
-	Latest AddMediaRequestMonitor = "latest"
-	None   AddMediaRequestMonitor = "none"
+	AddMediaRequestMonitorAll    AddMediaRequestMonitor = "all"
+	AddMediaRequestMonitorLatest AddMediaRequestMonitor = "latest"
+	AddMediaRequestMonitorNone   AddMediaRequestMonitor = "none"
 )
 
 // Valid indicates whether the value is a known member of the AddMediaRequestMonitor enum.
 func (e AddMediaRequestMonitor) Valid() bool {
 	switch e {
-	case All:
+	case AddMediaRequestMonitorAll:
 		return true
-	case Latest:
+	case AddMediaRequestMonitorLatest:
 		return true
-	case None:
+	case AddMediaRequestMonitorNone:
 		return true
 	default:
 		return false
@@ -257,6 +257,27 @@ func (e NotifierInputType) Valid() bool {
 	}
 }
 
+// Defines values for ProposalConfidence.
+const (
+	ProposalConfidenceAmbiguous ProposalConfidence = "ambiguous"
+	ProposalConfidenceExact     ProposalConfidence = "exact"
+	ProposalConfidenceNone      ProposalConfidence = "none"
+)
+
+// Valid indicates whether the value is a known member of the ProposalConfidence enum.
+func (e ProposalConfidence) Valid() bool {
+	switch e {
+	case ProposalConfidenceAmbiguous:
+		return true
+	case ProposalConfidenceExact:
+		return true
+	case ProposalConfidenceNone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RootKind.
 const (
 	RootKindBook   RootKind = "book"
@@ -305,6 +326,25 @@ type AddMediaRequest struct {
 
 // AddMediaRequestMonitor Series only — which seasons start monitored: every season, only the latest, or none (add a 20-season show and hunt just the newest). Specials always start unmonitored.
 type AddMediaRequestMonitor string
+
+// AdoptResult defines model for AdoptResult.
+type AdoptResult struct {
+	Adopted  []Proposal `json:"adopted"`
+	Failures []string   `json:"failures"`
+	Review   []Proposal `json:"review"`
+}
+
+// AdoptionCandidate defines model for AdoptionCandidate.
+type AdoptionCandidate struct {
+	Author     *string   `json:"author,omitempty"`
+	Kind       MediaKind `json:"kind"`
+	Olid       *string   `json:"olid,omitempty"`
+	Overview   *string   `json:"overview,omitempty"`
+	PosterPath *string   `json:"posterPath,omitempty"`
+	Title      string    `json:"title"`
+	TmdbId     int64     `json:"tmdbId"`
+	Year       int       `json:"year"`
+}
 
 // BackupInfo defines model for BackupInfo.
 type BackupInfo struct {
@@ -724,6 +764,23 @@ type PathMapping struct {
 	Remote string `json:"remote"`
 }
 
+// Proposal defines model for Proposal.
+type Proposal struct {
+	Candidates []AdoptionCandidate `json:"candidates"`
+
+	// Confidence exact clears the per-kind bar and may be adopted without asking; anything else goes to review. There is deliberately no "probably".
+	Confidence   ProposalConfidence `json:"confidence"`
+	Kind         *MediaKind         `json:"kind,omitempty"`
+	Name         string             `json:"name"`
+	ParsedTitle  string             `json:"parsedTitle"`
+	ParsedYear   int                `json:"parsedYear"`
+	Path         string             `json:"path"`
+	RootFolderId int64              `json:"rootFolderId"`
+}
+
+// ProposalConfidence exact clears the per-kind bar and may be adopted without asking; anything else goes to review. There is deliberately no "probably".
+type ProposalConfidence string
+
 // QualityProfile defines model for QualityProfile.
 type QualityProfile struct {
 	Cutoff          string   `json:"cutoff"`
@@ -994,6 +1051,11 @@ type ListLibraryParams struct {
 	Kind *MediaKind `form:"kind,omitempty" json:"kind,omitempty"`
 }
 
+// ConfirmRootAdoptedJSONBody defines parameters for ConfirmRootAdopted.
+type ConfirmRootAdoptedJSONBody struct {
+	RootFolderId int64 `json:"rootFolderId"`
+}
+
 // BulkEditLibraryJSONBody defines parameters for BulkEditLibrary.
 type BulkEditLibraryJSONBody struct {
 	Ids              []int64 `json:"ids"`
@@ -1074,6 +1136,9 @@ type TestIndexerJSONRequestBody = IndexerInput
 
 // AddLibraryItemJSONRequestBody defines body for AddLibraryItem for application/json ContentType.
 type AddLibraryItemJSONRequestBody = AddMediaRequest
+
+// ConfirmRootAdoptedJSONRequestBody defines body for ConfirmRootAdopted for application/json ContentType.
+type ConfirmRootAdoptedJSONRequestBody ConfirmRootAdoptedJSONBody
 
 // BulkEditLibraryJSONRequestBody defines body for BulkEditLibrary for application/json ContentType.
 type BulkEditLibraryJSONRequestBody BulkEditLibraryJSONBody
@@ -1203,6 +1268,12 @@ type ServerInterface interface {
 	// AddLibraryItem Add a media item (hydrates metadata from the provider)
 	// (POST /library)
 	AddLibraryItem(w http.ResponseWriter, r *http.Request)
+	// RunAdoption Match the unmatched folders the last scan found
+	// (POST /library/adopt)
+	RunAdoption(w http.ResponseWriter, r *http.Request)
+	// ConfirmRootAdopted Mark a root as reviewed, so later scans adopt into it directly
+	// (POST /library/adopt/confirm)
+	ConfirmRootAdopted(w http.ResponseWriter, r *http.Request)
 	// BulkEditLibrary Apply monitoring/profile changes to many items at once
 	// (POST /library/bulk)
 	BulkEditLibrary(w http.ResponseWriter, r *http.Request)
@@ -1924,6 +1995,34 @@ func (siw *ServerInterfaceWrapper) AddLibraryItem(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AddLibraryItem(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunAdoption operation middleware
+func (siw *ServerInterfaceWrapper) RunAdoption(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunAdoption(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmRootAdopted operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmRootAdopted(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmRootAdopted(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2944,6 +3043,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}", wrapper.UpdateLibraryItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan", wrapper.ScanLibrary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/report", wrapper.GetScanReport)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt", wrapper.RunAdoption)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt/confirm", wrapper.ConfirmRootAdopted)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/scan/ignored", wrapper.UnignoreDir)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/ignored", wrapper.ListIgnoredDirs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan/ignored", wrapper.IgnoreDir)
