@@ -1,6 +1,6 @@
 # ADR 0010 — Scan proposes matches; adoption is bulk work, not a to-do list
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented
 - **Date:** 2026-07-24
 - **Relates to:** ADR [0005](0005-filesystem-adoption.md) (adoption is *the*
   migration path — this is the part of it that was never built), ADR

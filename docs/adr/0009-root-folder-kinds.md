@@ -1,6 +1,6 @@
 # ADR 0009 — Root folders carry a media kind; base directories are a picker, not an entity
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented (migrations 0014 and 0015)
 - **Date:** 2026-07-24
 - **Relates to:** ADR [0002](0002-single-media-table.md) (one table, `kind`
   discriminates), ADR [0003](0003-compat-personalities.md) (Sonarr/Radarr
@@ -211,7 +211,9 @@ to the root's scoping. Splitting them means changing a root, scrolling past
 five unrelated panels, scanning, and scrolling back to read the result.
 
 **This is done** — merged into one "Library folders" panel, ordered roots →
-scan → results, since it needed nothing from the rest of the ADR.
+scan → results, since it needed nothing from the rest of the ADR. The panel
+now also carries each root's kind, the skip-pattern editor, the dismissed
+list, and the adoption controls, which is the same loop drawn above.
 
 Merging also exposed a bug worth recording, because it is this ADR's thesis
 in one line of JSX: every unmatched folder's `Match…` link hardcoded

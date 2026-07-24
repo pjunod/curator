@@ -1,7 +1,7 @@
 # ADR 0008 — Multi-host execution: a leased job queue, mount-aware routing, and Postgres for clustered mode
 
-- **Status:** Proposed — scope is settled; the open decision is the staging
-  in "Staging" below (queue first, or the role-flag stopgap first)
+- **Status:** Accepted — step 1 (the leased job queue) is implemented and
+  in use; steps 2–4 (Postgres, multi-host, farmed job kinds) remain
 - **Date:** 2026-07-24 (scope corrected same day — see "What the cluster is
   actually for")
 - **Relates to:** ADR [0004](0004-sqlite-only.md) (SQLite only), ADR
