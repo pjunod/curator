@@ -201,6 +201,20 @@ func (p *Personality) languageProfiles(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// kind is the media kind this personality speaks for. Sonarr is series and
+// Radarr is movies — the discriminator the *arrs got for free by being
+// separate applications, and which Monarr has to state (ADR 0009).
+func (p *Personality) kind() domain.MediaKind {
+	if p.app == "Sonarr" {
+		return domain.KindSeries
+	}
+	return domain.KindMovie
+}
+
+// rootFolders lists only roots this personality can legitimately write to:
+// its own kind, plus mixed roots, which restrict nothing. Before ADR 0009
+// every root was offered to both personalities, so a Radarr client was shown
+// the TV root as a valid movie destination.
 func (p *Personality) rootFolders(w http.ResponseWriter, r *http.Request) {
 	roots, err := p.deps.Library.ListRootFolders(r.Context())
 	if err != nil {
@@ -209,6 +223,9 @@ func (p *Personality) rootFolders(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(roots))
 	for _, rf := range roots {
+		if !rf.Kind.Accepts(p.kind()) {
+			continue
+		}
 		out = append(out, map[string]any{
 			"id": rf.ID, "path": rf.Path, "accessible": rf.Accessible,
 			"freeSpace": rf.FreeBytes, "unmappedFolders": []any{},

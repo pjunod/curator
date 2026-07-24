@@ -120,10 +120,15 @@ func (p *Personality) addMovie(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "tmdbId required"})
 		return
 	}
+	rootID, err := p.rootIDByPath(r, body.RootFolderPath)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, []map[string]string{{"errorMessage": err.Error()}})
+		return
+	}
 	req := library.AddRequest{
 		Kind: domain.KindMovie, TMDBID: body.TMDBID,
 		QualityProfileID: body.QualityProfileID, Monitored: body.Monitored,
-		RootFolderID: p.rootIDByPath(r, body.RootFolderPath),
+		RootFolderID: rootID,
 	}
 	item, err := p.deps.Library.Add(r.Context(), req)
 	if err != nil {

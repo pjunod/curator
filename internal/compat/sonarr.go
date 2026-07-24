@@ -2,6 +2,8 @@ package compat
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -158,10 +160,15 @@ func (p *Personality) addSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rootID, err := p.rootIDByPath(r, body.RootFolderPath)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, []map[string]string{{"errorMessage": err.Error()}})
+		return
+	}
 	req := library.AddRequest{
 		Kind: domain.KindSeries, TMDBID: resolved.IDs.TMDB,
 		QualityProfileID: body.QualityProfileID, Monitored: body.Monitored,
-		RootFolderID: p.rootIDByPath(r, body.RootFolderPath),
+		RootFolderID: rootID,
 	}
 	item, err := p.deps.Library.Add(r.Context(), req)
 	if err != nil {
@@ -176,21 +183,38 @@ func (p *Personality) addSeries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, p.seriesDTO(item, roots))
 }
 
-func (p *Personality) rootIDByPath(r *http.Request, path string) int64 {
+// errRootKindMismatch is returned when a client posts a rootFolderPath whose
+// root holds a different kind. Filtering the list is the affordance; refusing
+// the write is the guarantee — a client that remembered an old path, or was
+// configured before ADR 0009 existed, would otherwise still file a movie
+// under the series tree with no error at any layer.
+var errRootKindMismatch = errors.New("root folder holds a different media kind")
+
+// rootIDByPath resolves a client-supplied rootFolderPath. An unknown path
+// still resolves to 0 (no root assigned), which is the pre-existing
+// behaviour; a path belonging to a root of the wrong kind is an error rather
+// than a quiet zero, because silently dropping the destination is how media
+// ends up somewhere nobody chose.
+func (p *Personality) rootIDByPath(r *http.Request, path string) (int64, error) {
 	if path == "" {
-		return 0
+		return 0, nil
 	}
 	roots, err := p.deps.Library.ListRootFolders(r.Context())
 	if err != nil {
-		return 0
+		return 0, nil //nolint:nilerr // unreadable roots are not the client's fault
 	}
 	clean := strings.TrimRight(path, "/")
 	for _, rf := range roots {
-		if strings.TrimRight(rf.Path, "/") == clean {
-			return rf.ID
+		if strings.TrimRight(rf.Path, "/") != clean {
+			continue
 		}
+		if !rf.Kind.Accepts(p.kind()) {
+			return 0, fmt.Errorf("%w: %s holds %s, not %s",
+				errRootKindMismatch, rf.Path, rf.Kind, p.kind())
+		}
+		return rf.ID, nil
 	}
-	return 0
+	return 0, nil
 }
 
 // listEpisodes serves ?seriesId= for Bazarr and Jellyseerr season views.
