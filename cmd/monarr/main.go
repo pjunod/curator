@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -59,6 +58,13 @@ func main() {
 
 	if err := run(ctx, cfg, log); err != nil {
 		log.Error("monarr exited with error", "err", err)
+		// A misconfigured data dir is an operator problem with a one-line
+		// fix, and the fix is multi-line prose that slog would escape into
+		// unreadable \n literals. Repeat it plainly on stderr.
+		var dde *sqlite.DataDirError
+		if errors.As(err, &dde) {
+			fmt.Fprintf(os.Stderr, "\n%v\n\n", dde)
+		}
 		os.Exit(1)
 	}
 }
@@ -194,12 +200,11 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		return health.OK()
 	})
 	reg.Register("data-directory", func(ctx context.Context) health.Result {
-		probe := filepath.Join(cfg.DataDir, ".monarr-write-probe")
-		if err := os.WriteFile(probe, []byte("ok"), 0o644); err != nil {
-			return health.Errorf("data dir not writable: %v", err)
-		}
-		if err := os.Remove(probe); err != nil {
-			return health.Warn("could not remove write probe: %v", err)
+		// The same probe Open ran at startup, so a mount that goes
+		// read-only or gets re-chowned underneath us is reported with the
+		// same ownership detail and the same one-line fix.
+		if err := sqlite.CheckDataDir(cfg.DataDir); err != nil {
+			return health.Errorf("%v", err)
 		}
 		return health.OK()
 	})

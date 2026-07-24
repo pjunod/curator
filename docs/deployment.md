@@ -12,6 +12,32 @@ follows:
 2. **The live database must sit on storage with local-disk semantics.**
    Which is the actual question here.
 
+## Before anything else: who owns `/data`
+
+The most common first-run failure has nothing to do with storage class. A
+bind mount whose host directory does not exist is created by the Docker
+daemon as `root:root`. The container runs as `${PUID}:${PGID}`, cannot
+create `monarr.db` inside a root-owned directory, and Monarr exits before it
+ever serves a request. Compose gives you no way to declare a bind mount's
+ownership, so the host has to be correct first:
+
+```sh
+cd deploy && ./bootstrap.sh   # every path in your .env, owned by PUID:PGID
+```
+
+The same rule applies to any path you add later — a second root folder, a
+pool on another disk. Create it owned by the runtime user, or Monarr and its
+download client will both fail on it in ways that look like bugs.
+
+If you hit it anyway the startup error names the directory, its owner, the
+process's uid/gid, and the exact `install -d` to run. On Kubernetes prefer
+`securityContext.fsGroup`, which makes the kubelet fix volume ownership for
+you. A *named* Docker volume is also safe: on first use Docker seeds an
+empty named volume from the image's `/data`, ownership included, and the
+image ships that directory owned by `1000:1000`. Only bind mounts need the
+host-side step, because a bind mount always takes the host directory's
+ownership and no image can change that.
+
 ## Why the DB can't live on NFS — or Gluster
 
 SQLite's WAL mode coordinates through a memory-mapped `-shm` file and

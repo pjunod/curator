@@ -1,7 +1,13 @@
 # Monarr — compose deployment TEMPLATE.
 #
 #   cp docker-compose.example.yml docker-compose.yml   # once; yours to edit
+#   ./bootstrap.sh                                     # host dirs, right owner
 #   docker compose up -d --build                       # build/rebuild + (re)start
+#
+# ⚠ Run bootstrap.sh before the first `up`. Compose cannot declare a bind
+# mount's ownership: if the host directory doesn't exist, Docker creates it
+# as root, and Monarr — running as ${PUID}:${PGID} — then can't create its
+# database and won't start. See deploy/README.md.
 #
 # ⚠ Your copy must STAY IN deploy/ — the build context (..) resolves
 # relative to this file's location, so a copy at the repo root fails with

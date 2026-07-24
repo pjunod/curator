@@ -11,7 +11,6 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -37,11 +36,16 @@ type DB struct {
 	Path  string
 }
 
-// Open creates the data dir if needed, opens the database with WAL mode and
-// sane pragmas, and verifies connectivity. Call Migrate before first use.
+// Open creates the data dir, proves it is writable, then opens the database
+// with WAL mode and sane pragmas and verifies connectivity. Call Migrate
+// before first use.
+//
+// The writability check runs first on purpose: a root-owned bind mount
+// otherwise fails several layers down as an opaque driver error that says
+// nothing about ownership (see CheckDataDir).
 func Open(dataDir string) (*DB, error) {
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		return nil, fmt.Errorf("sqlite: creating data dir: %w", err)
+	if err := CheckDataDir(dataDir); err != nil {
+		return nil, err
 	}
 	path := filepath.Join(dataDir, FileName)
 	dsn := "file:" + path +

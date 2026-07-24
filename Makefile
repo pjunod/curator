@@ -13,7 +13,7 @@ SQLC         := github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 OAPI_CODEGEN := github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 GOLANGCI     := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
-.PHONY: all build go-build web test test-web test-e2e lint vet fmt gen gen-sqlc gen-api tidy clean dev-api dev-web docker hooks
+.PHONY: all build go-build web test test-web test-e2e lint vet fmt gen gen-sqlc gen-api tidy clean dev-api dev-web docker bootstrap hooks
 
 all: build
 
@@ -75,6 +75,11 @@ dev-web:
 
 docker:
 	docker build -t monarr:dev .
+
+# Create the host directories a compose deployment bind-mounts, owned by
+# PUID:PGID, before the first `up`. Reads deploy/.env if present.
+bootstrap:
+	deploy/bootstrap.sh
 
 clean:
 	rm -rf bin web/dist/assets web/dist/index.html

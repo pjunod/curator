@@ -24,13 +24,25 @@ RUN V="${VERSION:-$(sh scripts/version.sh)}" && \
     CGO_ENABLED=0 go build -trimpath \
     -ldflags "-s -w -X github.com/monarr-media/monarr/internal/buildinfo.Version=$V -X github.com/monarr-media/monarr/internal/buildinfo.Commit=$C" \
     -o /monarr ./cmd/monarr
+# A /data skeleton owned by the default runtime user. Docker seeds a fresh
+# NAMED volume from the image's directory — contents and ownership — so this
+# is what makes `docker run` and named-volume compose work with no host-side
+# setup at all. It does NOT help bind mounts: a bind mount always takes the
+# host directory's ownership, and if that directory is missing the daemon
+# creates it as root. Nothing in an image can fix that; deploy/bootstrap.sh
+# is the answer there.
+RUN mkdir -p /data-skel/backups && chown -R 1000:1000 /data-skel
 
 # ---- runtime ----
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /monarr /monarr
+COPY --from=build --chown=1000:1000 /data-skel /data
 ENV MONARR_DATA_DIR=/data \
     MONARR_PORT=7676 \
     MONARR_LOG_FORMAT=json
 VOLUME /data
 EXPOSE 7676
+# Never root by default. Compose overrides this with ${PUID}:${PGID}; if you
+# do override it, the host directory must be owned by that same uid/gid.
+USER 1000:1000
 ENTRYPOINT ["/monarr"]
