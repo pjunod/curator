@@ -197,6 +197,18 @@ export interface RootFolder {
   accessible: boolean
 }
 
+export interface DirEntry {
+  name: string
+  path: string
+  registered: boolean
+}
+
+export interface BrowseResult {
+  path: string
+  parent: string
+  dirs: DirEntry[]
+}
+
 export interface IgnoredPath {
   path: string
   reason: string
@@ -277,6 +289,8 @@ export const addRootFolder = (path: string, kind: RootKind) =>
 export const updateRootFolderKind = (id: number, kind: RootKind) =>
   send<RootFolder>('PATCH', `/rootfolders/${id}`, { kind })
 export const deleteRootFolder = (id: number) => send('DELETE', `/rootfolders/${id}`)
+export const browseFilesystem = (path: string) =>
+  get<BrowseResult>(`/filesystem?path=${encodeURIComponent(path)}`)
 export const getIgnoredDirs = () => get<IgnoredPath[]>('/library/scan/ignored')
 export const ignoreDir = (path: string, reason = '') =>
   send('POST', '/library/scan/ignored', { path, reason })

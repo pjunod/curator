@@ -281,6 +281,39 @@ paths:
         "204":
           description: Restored; the next scan offers it again.
 
+  /filesystem:
+    get:
+      operationId: browseFilesystem
+      summary: List child directories of a path (root-folder picker and typeahead)
+      description: >
+        Directories only, one level, no recursion. Missing and unreadable
+        paths return the same error on purpose — distinguishing them is what
+        makes an enumeration primitive useful to someone probing the host.
+        Requires authentication like every other settings route.
+      parameters:
+        - name: path
+          in: query
+          required: false
+          description: >
+            Absolute path to list. A trailing separator lists the directory;
+            a partial final component filters that directory's children by
+            prefix, which is what drives typeahead. Defaults to "/".
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The directory's child directories.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowseResult"
+        "400":
+          description: Path not absolute, or not readable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /metadata/search:
     get:
       operationId: searchMetadata
@@ -1910,6 +1943,32 @@ components:
           type: array
           items:
             type: string
+
+    DirEntry:
+      type: object
+      required: [name, path, registered]
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        registered:
+          type: boolean
+          description: Already a registered root folder.
+
+    BrowseResult:
+      type: object
+      required: [path, parent, dirs]
+      properties:
+        path:
+          type: string
+        parent:
+          type: string
+          description: Empty at the filesystem root.
+        dirs:
+          type: array
+          items:
+            $ref: "#/components/schemas/DirEntry"
 
     IgnoredPath:
       type: object

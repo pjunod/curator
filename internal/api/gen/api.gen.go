@@ -323,6 +323,15 @@ type BlocklistEntry struct {
 	ReleaseTitle string    `json:"releaseTitle"`
 }
 
+// BrowseResult defines model for BrowseResult.
+type BrowseResult struct {
+	Dirs []DirEntry `json:"dirs"`
+
+	// Parent Empty at the filesystem root.
+	Parent string `json:"parent"`
+	Path   string `json:"path"`
+}
+
 // CalendarEntry defines model for CalendarEntry.
 type CalendarEntry struct {
 	Date    string `json:"date"`
@@ -352,6 +361,15 @@ type CustomFormatInput struct {
 	// Pattern Case-insensitive RE2 matched against release titles.
 	Pattern string `json:"pattern"`
 	Score   *int   `json:"score,omitempty"`
+}
+
+// DirEntry defines model for DirEntry.
+type DirEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+
+	// Registered Already a registered root folder.
+	Registered bool `json:"registered"`
 }
 
 // DownloadClientConfig defines model for DownloadClientConfig.
@@ -960,6 +978,12 @@ type GetCalendarParams struct {
 	End   string `form:"end" json:"end"`
 }
 
+// BrowseFilesystemParams defines parameters for BrowseFilesystem.
+type BrowseFilesystemParams struct {
+	// Path Absolute path to list. A trailing separator lists the directory; a partial final component filters that directory's children by prefix, which is what drives typeahead. Defaults to "/".
+	Path *string `form:"path,omitempty" json:"path,omitempty"`
+}
+
 // ScanImportPathParams defines parameters for ScanImportPath.
 type ScanImportPathParams struct {
 	Path string `form:"path" json:"path"`
@@ -1134,6 +1158,9 @@ type ServerInterface interface {
 	// StreamEvents Server-sent events
 	// (GET /events)
 	StreamEvents(w http.ResponseWriter, r *http.Request)
+	// BrowseFilesystem List child directories of a path (root-folder picker and typeahead)
+	// (GET /filesystem)
+	BrowseFilesystem(w http.ResponseWriter, r *http.Request, params BrowseFilesystemParams)
 	// GrabRelease Send a release to a download client
 	// (POST /grab)
 	GrabRelease(w http.ResponseWriter, r *http.Request)
@@ -1594,6 +1621,39 @@ func (siw *ServerInterfaceWrapper) StreamEvents(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.StreamEvents(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BrowseFilesystem operation middleware
+func (siw *ServerInterfaceWrapper) BrowseFilesystem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params BrowseFilesystemParams
+
+	// ------------- Optional query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BrowseFilesystem(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2887,6 +2947,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/scan/ignored", wrapper.UnignoreDir)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/ignored", wrapper.ListIgnoredDirs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan/ignored", wrapper.IgnoreDir)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/filesystem", wrapper.BrowseFilesystem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/search", wrapper.SearchMetadata)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders", wrapper.ListRootFolders)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rootfolders", wrapper.AddRootFolder)

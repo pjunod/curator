@@ -665,3 +665,28 @@ func (s *Server) UnignoreDir(w http.ResponseWriter, r *http.Request, params apig
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// BrowseFilesystem implements GET /filesystem (ADR 0009 §2a).
+//
+// This is a directory-enumeration primitive, so it lives behind the same
+// authentication as every other settings route and returns directories
+// only — never file contents, never sizes, and never a distinction between
+// "missing" and "forbidden".
+func (s *Server) BrowseFilesystem(w http.ResponseWriter, r *http.Request, params apigen.BrowseFilesystemParams) {
+	path := ""
+	if params.Path != nil {
+		path = *params.Path
+	}
+	res, err := s.deps.Library.Suggest(r.Context(), path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	dirs := make([]apigen.DirEntry, 0, len(res.Dirs))
+	for _, d := range res.Dirs {
+		dirs = append(dirs, apigen.DirEntry{Name: d.Name, Path: d.Path, Registered: d.Registered})
+	}
+	writeJSON(w, http.StatusOK, apigen.BrowseResult{
+		Path: res.Path, Parent: res.Parent, Dirs: dirs,
+	})
+}

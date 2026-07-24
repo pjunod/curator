@@ -20,6 +20,7 @@ import {
 import { AcquisitionSettings } from './SettingsAcquisition'
 import { CustomFormatSettings, ImportListSettings, SecuritySettings } from './SettingsDepth'
 import { NotifierSettings } from './SettingsNotifiers'
+import { PathInput } from '../PathInput'
 
 export function SettingsPage() {
   const qc = useQueryClient()
@@ -216,12 +217,7 @@ export function SettingsPage() {
           <div className="banner warning">{String((retypeRoot.error as Error).message)}</div>
         )}
         <div className="form-row">
-          <input
-            type="text"
-            placeholder="/absolute/path/to/media"
-            value={newRoot}
-            onChange={(e) => setNewRoot(e.target.value)}
-          />
+          <PathInput value={newRoot} onChange={setNewRoot} />
           <select value={newRootKind} onChange={(e) => setNewRootKind(e.target.value as RootKind)}>
             <option value="movie">Movies</option>
             <option value="series">TV series</option>

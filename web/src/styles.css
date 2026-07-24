@@ -1515,3 +1515,53 @@ a.pill-info:hover {
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+/* ---- path typeahead (ADR 0009 §2a) ---- */
+.path-input {
+  position: relative;
+  flex: 1;
+  min-width: 220px;
+}
+
+.path-input input {
+  width: 100%;
+}
+
+.path-suggestions {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.path-suggestions li button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.path-suggestions li button:hover {
+  background: var(--accent-soft);
+}
+
+.path-suggestions li button.taken {
+  opacity: 0.55;
+  cursor: default;
+}
