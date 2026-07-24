@@ -68,7 +68,7 @@ func TestAddMovieWithRootFolder(t *testing.T) {
 	defer cancel()
 
 	rootDir := t.TempDir()
-	rf, err := svc.AddRootFolder(ctx, rootDir)
+	rf, err := svc.AddRootFolder(ctx, rootDir, domain.KindMixed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,15 +135,15 @@ func TestSearchKindValidation(t *testing.T) {
 func TestAddRootFolderValidation(t *testing.T) {
 	svc, _, _ := newService(t)
 	ctx := context.Background()
-	if _, err := svc.AddRootFolder(ctx, "relative/path"); err == nil {
+	if _, err := svc.AddRootFolder(ctx, "relative/path", domain.KindMixed); err == nil {
 		t.Error("relative path should be rejected")
 	}
-	if _, err := svc.AddRootFolder(ctx, "/definitely/not/a/real/dir-xyz"); err == nil {
+	if _, err := svc.AddRootFolder(ctx, "/definitely/not/a/real/dir-xyz", domain.KindMixed); err == nil {
 		t.Error("missing dir should be rejected")
 	}
 	f := filepath.Join(t.TempDir(), "afile")
 	os.WriteFile(f, []byte("x"), 0o644)
-	if _, err := svc.AddRootFolder(ctx, f); err == nil {
+	if _, err := svc.AddRootFolder(ctx, f, domain.KindMixed); err == nil {
 		t.Error("plain file should be rejected")
 	}
 }
@@ -155,7 +155,7 @@ func TestScanReconciles(t *testing.T) {
 	defer cancel()
 
 	root := t.TempDir()
-	rf, _ := svc.AddRootFolder(ctx, root)
+	rf, _ := svc.AddRootFolder(ctx, root, domain.KindMixed)
 
 	// The series folder matches the naming template "Test Show (2020)".
 	item, err := svc.Add(ctx, AddRequest{Kind: domain.KindSeries, TMDBID: 100, RootFolderID: rf.ID, Monitored: true})
@@ -260,7 +260,7 @@ func TestAddBook(t *testing.T) {
 	ctx := context.Background()
 
 	root := t.TempDir()
-	rf, err := svc.AddRootFolder(ctx, root)
+	rf, err := svc.AddRootFolder(ctx, root, domain.KindMixed)
 	if err != nil {
 		t.Fatal(err)
 	}

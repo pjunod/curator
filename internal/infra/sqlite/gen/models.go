@@ -191,6 +191,7 @@ type RootFolder struct {
 	ID      int64
 	Path    string
 	AddedAt int64
+	Kind    string
 }
 
 type ScheduledTask struct {

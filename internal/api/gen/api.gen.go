@@ -190,19 +190,19 @@ func (e IndexerInputProtocol) Valid() bool {
 
 // Defines values for MediaKind.
 const (
-	Book   MediaKind = "book"
-	Movie  MediaKind = "movie"
-	Series MediaKind = "series"
+	MediaKindBook   MediaKind = "book"
+	MediaKindMovie  MediaKind = "movie"
+	MediaKindSeries MediaKind = "series"
 )
 
 // Valid indicates whether the value is a known member of the MediaKind enum.
 func (e MediaKind) Valid() bool {
 	switch e {
-	case Book:
+	case MediaKindBook:
 		return true
-	case Movie:
+	case MediaKindMovie:
 		return true
-	case Series:
+	case MediaKindSeries:
 		return true
 	default:
 		return false
@@ -251,6 +251,30 @@ func (e NotifierInputType) Valid() bool {
 	case NotifierInputTypePlex:
 		return true
 	case NotifierInputTypeWebhook:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RootKind.
+const (
+	RootKindBook   RootKind = "book"
+	RootKindMixed  RootKind = "mixed"
+	RootKindMovie  RootKind = "movie"
+	RootKindSeries RootKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the RootKind enum.
+func (e RootKind) Valid() bool {
+	switch e {
+	case RootKindBook:
+		return true
+	case RootKindMixed:
+		return true
+	case RootKindMovie:
+		return true
+	case RootKindSeries:
 		return true
 	default:
 		return false
@@ -755,11 +779,17 @@ type ReleaseCandidate struct {
 
 // RootFolder defines model for RootFolder.
 type RootFolder struct {
-	Accessible bool   `json:"accessible"`
-	FreeBytes  int64  `json:"freeBytes"`
-	Id         int64  `json:"id"`
-	Path       string `json:"path"`
+	Accessible bool  `json:"accessible"`
+	FreeBytes  int64 `json:"freeBytes"`
+	Id         int64 `json:"id"`
+
+	// Kind What a root folder holds (ADR 0009). "mixed" means the kind is not known, so adoption asks instead of assuming — the behaviour every root had before kinds existed.
+	Kind RootKind `json:"kind"`
+	Path string   `json:"path"`
 }
+
+// RootKind What a root folder holds (ADR 0009). "mixed" means the kind is not known, so adoption asks instead of assuming — the behaviour every root had before kinds existed.
+type RootKind string
 
 // ScanReport defines model for ScanReport.
 type ScanReport struct {
@@ -947,7 +977,15 @@ type RemoveQueueItemParams struct {
 
 // AddRootFolderJSONBody defines parameters for AddRootFolder.
 type AddRootFolderJSONBody struct {
-	Path string `json:"path"`
+	// Kind What a root folder holds (ADR 0009). "mixed" means the kind is not known, so adoption asks instead of assuming — the behaviour every root had before kinds existed.
+	Kind *RootKind `json:"kind,omitempty"`
+	Path string    `json:"path"`
+}
+
+// UpdateRootFolderJSONBody defines parameters for UpdateRootFolder.
+type UpdateRootFolderJSONBody struct {
+	// Kind What a root folder holds (ADR 0009). "mixed" means the kind is not known, so adoption asks instead of assuming — the behaviour every root had before kinds existed.
+	Kind RootKind `json:"kind"`
 }
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
@@ -1009,6 +1047,9 @@ type TestNotifierJSONRequestBody = NotifierInput
 
 // AddRootFolderJSONRequestBody defines body for AddRootFolder for application/json ContentType.
 type AddRootFolderJSONRequestBody AddRootFolderJSONBody
+
+// UpdateRootFolderJSONRequestBody defines body for UpdateRootFolder for application/json ContentType.
+type UpdateRootFolderJSONRequestBody UpdateRootFolderJSONBody
 
 // UpdateSettingsJSONRequestBody defines body for UpdateSettings for application/json ContentType.
 type UpdateSettingsJSONRequestBody = SettingsUpdate
@@ -1183,6 +1224,9 @@ type ServerInterface interface {
 	// DeleteRootFolder Remove a root folder registration (disk untouched)
 	// (DELETE /rootfolders/{id})
 	DeleteRootFolder(w http.ResponseWriter, r *http.Request, id int64)
+	// UpdateRootFolder Retype a root folder (items already in it are untouched)
+	// (PATCH /rootfolders/{id})
+	UpdateRootFolder(w http.ResponseWriter, r *http.Request, id int64)
 	// GetSettings Read settings (secrets masked)
 	// (GET /settings)
 	GetSettings(w http.ResponseWriter, r *http.Request)
@@ -2470,6 +2514,32 @@ func (siw *ServerInterfaceWrapper) DeleteRootFolder(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateRootFolder operation middleware
+func (siw *ServerInterfaceWrapper) UpdateRootFolder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateRootFolder(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSettings operation middleware
 func (siw *ServerInterfaceWrapper) GetSettings(w http.ResponseWriter, r *http.Request) {
 
@@ -2715,6 +2785,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders", wrapper.ListRootFolders)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rootfolders", wrapper.AddRootFolder)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/rootfolders/{id}", wrapper.DeleteRootFolder)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/rootfolders/{id}", wrapper.UpdateRootFolder)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/settings", wrapper.GetSettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/settings", wrapper.UpdateSettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/profiles", wrapper.ListProfiles)

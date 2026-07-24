@@ -294,6 +294,8 @@ paths:
               properties:
                 path:
                   type: string
+                kind:
+                  $ref: "#/components/schemas/RootKind"
       responses:
         "201":
           description: Registered.
@@ -309,6 +311,45 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   /rootfolders/{id}:
+    patch:
+      operationId: updateRootFolder
+      summary: Retype a root folder (items already in it are untouched)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind:
+                  $ref: "#/components/schemas/RootKind"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RootFolder"
+        "400":
+          description: Unknown kind.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such root folder.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
       operationId: deleteRootFolder
       summary: Remove a root folder registration (disk untouched)
@@ -1746,15 +1787,25 @@ components:
         inLibrary:
           type: boolean
 
+    RootKind:
+      type: string
+      description: >
+        What a root folder holds (ADR 0009). "mixed" means the kind is not
+        known, so adoption asks instead of assuming — the behaviour every
+        root had before kinds existed.
+      enum: [movie, series, book, mixed]
+
     RootFolder:
       type: object
-      required: [id, path, freeBytes, accessible]
+      required: [id, path, kind, freeBytes, accessible]
       properties:
         id:
           type: integer
           format: int64
         path:
           type: string
+        kind:
+          $ref: "#/components/schemas/RootKind"
         freeBytes:
           type: integer
           format: int64

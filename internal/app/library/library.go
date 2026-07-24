@@ -26,6 +26,10 @@ var (
 	ErrAlreadyExists   = errors.New("item already in library")
 	ErrUnsupportedKind = errors.New("kind not supported yet")
 	ErrNotFound        = sqlite.ErrNotFound
+	// ErrRootKindMismatch is returned when an item is placed in a root
+	// declared to hold a different kind (ADR 0009). A mixed root never
+	// produces this.
+	ErrRootKindMismatch = errors.New("root folder holds a different media kind")
 )
 
 // MediaAdded is published on the bus after a successful add.
@@ -201,6 +205,10 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 		rf, err := s.db.GetRootFolder(ctx, req.RootFolderID)
 		if err != nil {
 			return domain.MediaItem{}, fmt.Errorf("root folder: %w", err)
+		}
+		if !rf.Kind.Accepts(item.Kind) {
+			return domain.MediaItem{}, fmt.Errorf(
+				"%w: root folder %s holds %s", ErrRootKindMismatch, rf.Path, rf.Kind)
 		}
 		item.RootFolderID = rf.ID
 		if item.Kind == domain.KindBook {
@@ -514,8 +522,15 @@ type RootFolderInfo struct {
 	Accessible bool
 }
 
-// AddRootFolder validates and registers a library root.
-func (s *Service) AddRootFolder(ctx context.Context, path string) (domain.RootFolder, error) {
+// AddRootFolder validates and registers a library root. An empty kind means
+// mixed, which is how every root behaved before ADR 0009.
+func (s *Service) AddRootFolder(ctx context.Context, path string, kind domain.RootKind) (domain.RootFolder, error) {
+	if kind == "" {
+		kind = domain.KindMixed
+	}
+	if !domain.ValidRootKind(kind) {
+		return domain.RootFolder{}, fmt.Errorf("unknown root folder kind %q", kind)
+	}
 	if !filepath.IsAbs(path) {
 		return domain.RootFolder{}, fmt.Errorf("root folder path must be absolute")
 	}
@@ -526,11 +541,26 @@ func (s *Service) AddRootFolder(ctx context.Context, path string) (domain.RootFo
 	if !info.IsDir() {
 		return domain.RootFolder{}, fmt.Errorf("root folder is not a directory")
 	}
-	rf, err := s.db.AddRootFolder(ctx, filepath.Clean(path))
+	rf, err := s.db.AddRootFolder(ctx, filepath.Clean(path), kind)
 	if errors.Is(err, sqlite.ErrDuplicate) {
 		return domain.RootFolder{}, fmt.Errorf("root folder already registered")
 	}
 	return rf, err
+}
+
+// SetRootFolderKind retypes an existing root. Items already in it keep their
+// own kinds — this only changes how future adoption and placement route.
+func (s *Service) SetRootFolderKind(ctx context.Context, id int64, kind domain.RootKind) (domain.RootFolder, error) {
+	if !domain.ValidRootKind(kind) {
+		return domain.RootFolder{}, fmt.Errorf("unknown root folder kind %q", kind)
+	}
+	if _, err := s.db.GetRootFolder(ctx, id); err != nil {
+		return domain.RootFolder{}, err
+	}
+	if err := s.db.SetRootFolderKind(ctx, id, kind); err != nil {
+		return domain.RootFolder{}, err
+	}
+	return s.db.GetRootFolder(ctx, id)
 }
 
 // ListRootFolders returns roots with free-space and accessibility info.

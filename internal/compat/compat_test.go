@@ -83,7 +83,7 @@ func newEnv(t *testing.T) *env {
 	lib := library.New(db, fakeProvider{}, b, nil)
 
 	rootPath := t.TempDir()
-	if _, err := lib.AddRootFolder(ctx, rootPath); err != nil {
+	if _, err := lib.AddRootFolder(ctx, rootPath, domain.KindMixed); err != nil {
 		t.Fatal(err)
 	}
 

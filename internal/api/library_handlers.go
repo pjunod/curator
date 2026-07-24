@@ -33,6 +33,8 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, library.ErrUnsupportedKind):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, library.ErrRootKindMismatch):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ports.ErrProviderNotConfigured):
 		writeError(w, http.StatusServiceUnavailable,
 			"TMDB API key not configured — set it under Settings")
@@ -485,7 +487,8 @@ func (s *Server) ListRootFolders(w http.ResponseWriter, r *http.Request) {
 	out := make([]apigen.RootFolder, 0, len(roots))
 	for _, rf := range roots {
 		out = append(out, apigen.RootFolder{
-			Id: rf.ID, Path: rf.Path, FreeBytes: rf.FreeBytes, Accessible: rf.Accessible,
+			Id: rf.ID, Path: rf.Path, Kind: apigen.RootKind(rf.Kind),
+			FreeBytes: rf.FreeBytes, Accessible: rf.Accessible,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -498,13 +501,38 @@ func (s *Server) AddRootFolder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	rf, err := s.deps.Library.AddRootFolder(r.Context(), body.Path)
+	var kind domain.RootKind
+	if body.Kind != nil {
+		kind = domain.RootKind(*body.Kind)
+	}
+	rf, err := s.deps.Library.AddRootFolder(r.Context(), body.Path, kind)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, apigen.RootFolder{
-		Id: rf.ID, Path: rf.Path, FreeBytes: 0, Accessible: true,
+		Id: rf.ID, Path: rf.Path, Kind: apigen.RootKind(rf.Kind),
+		FreeBytes: 0, Accessible: true,
+	})
+}
+
+// UpdateRootFolder implements PATCH /rootfolders/{id}: retyping a root.
+// Items already in the root keep their own kinds; this only routes what
+// happens next (ADR 0009 §1).
+func (s *Server) UpdateRootFolder(w http.ResponseWriter, r *http.Request, id int64) {
+	var body apigen.UpdateRootFolderJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	rf, err := s.deps.Library.SetRootFolderKind(r.Context(), id, domain.RootKind(body.Kind))
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, apigen.RootFolder{
+		Id: rf.ID, Path: rf.Path, Kind: apigen.RootKind(rf.Kind),
+		FreeBytes: 0, Accessible: true,
 	})
 }
 

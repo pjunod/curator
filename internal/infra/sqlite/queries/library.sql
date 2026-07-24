@@ -116,7 +116,10 @@ SELECT * FROM episodes
 WHERE media_item_id = ? AND season_number = ? AND episode_number = ?;
 
 -- name: InsertRootFolder :one
-INSERT INTO root_folders (path, added_at) VALUES (?, ?) RETURNING id;
+INSERT INTO root_folders (path, kind, added_at) VALUES (?, ?, ?) RETURNING id;
+
+-- name: UpdateRootFolderKind :exec
+UPDATE root_folders SET kind = ? WHERE id = ?;
 
 -- name: ListRootFolders :many
 SELECT * FROM root_folders ORDER BY path;

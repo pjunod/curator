@@ -186,9 +186,13 @@ export interface AddMediaRequest {
   searchNow?: boolean
 }
 
+/** What a root folder holds. 'mixed' means "ask" — ADR 0009. */
+export type RootKind = MediaKind | 'mixed'
+
 export interface RootFolder {
   id: number
   path: string
+  kind: RootKind
   freeBytes: number
   accessible: boolean
 }
@@ -259,7 +263,10 @@ export const deleteLibraryItem = (id: number) => send('DELETE', `/library/${id}`
 export const searchMetadata = (kind: MediaKind, query: string) =>
   get<SearchResult[]>(`/metadata/search?kind=${kind}&query=${encodeURIComponent(query)}`)
 export const getRootFolders = () => get<RootFolder[]>('/rootfolders')
-export const addRootFolder = (path: string) => send<RootFolder>('POST', '/rootfolders', { path })
+export const addRootFolder = (path: string, kind: RootKind) =>
+  send<RootFolder>('POST', '/rootfolders', { path, kind })
+export const updateRootFolderKind = (id: number, kind: RootKind) =>
+  send<RootFolder>('PATCH', `/rootfolders/${id}`, { kind })
 export const deleteRootFolder = (id: number) => send('DELETE', `/rootfolders/${id}`)
 export const getSettings = () => get<Settings>('/settings')
 export const updateSettings = (patch: {

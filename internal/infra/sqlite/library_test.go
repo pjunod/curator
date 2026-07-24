@@ -112,11 +112,11 @@ func TestRootFolders(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	rf, err := db.AddRootFolder(ctx, "/library/tv")
+	rf, err := db.AddRootFolder(ctx, "/library/tv", domain.KindMixed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.AddRootFolder(ctx, "/library/tv"); !errors.Is(err, ErrDuplicate) {
+	if _, err := db.AddRootFolder(ctx, "/library/tv", domain.KindMixed); !errors.Is(err, ErrDuplicate) {
 		t.Errorf("duplicate path err = %v, want ErrDuplicate", err)
 	}
 	list, _ := db.ListRootFolders(ctx)

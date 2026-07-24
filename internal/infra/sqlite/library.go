@@ -524,9 +524,12 @@ func (d *DB) GetEpisodeID(ctx context.Context, itemID int64, season, episode int
 // ---- root folders ----
 
 // AddRootFolder registers a library root; ErrDuplicate if the path exists.
-func (d *DB) AddRootFolder(ctx context.Context, path string) (domain.RootFolder, error) {
+func (d *DB) AddRootFolder(ctx context.Context, path string, kind domain.RootKind) (domain.RootFolder, error) {
+	if kind == "" {
+		kind = domain.KindMixed
+	}
 	id, err := d.Write.InsertRootFolder(ctx, sqlitegen.InsertRootFolderParams{
-		Path: path, AddedAt: time.Now().UnixMilli(),
+		Path: path, Kind: string(kind), AddedAt: time.Now().UnixMilli(),
 	})
 	if err != nil {
 		if isConstraint(err) {
@@ -534,7 +537,16 @@ func (d *DB) AddRootFolder(ctx context.Context, path string) (domain.RootFolder,
 		}
 		return domain.RootFolder{}, err
 	}
-	return domain.RootFolder{ID: id, Path: path, AddedAt: time.Now()}, nil
+	return domain.RootFolder{ID: id, Path: path, Kind: kind, AddedAt: time.Now()}, nil
+}
+
+// SetRootFolderKind changes what a root is declared to hold. Retyping never
+// touches the items already in it: an item's own kind is authoritative
+// (ADR 0002), and the root's kind only routes future decisions.
+func (d *DB) SetRootFolderKind(ctx context.Context, id int64, kind domain.RootKind) error {
+	return d.Write.UpdateRootFolderKind(ctx, sqlitegen.UpdateRootFolderKindParams{
+		Kind: string(kind), ID: id,
+	})
 }
 
 // ListRootFolders returns all library roots.
@@ -545,7 +557,9 @@ func (d *DB) ListRootFolders(ctx context.Context) ([]domain.RootFolder, error) {
 	}
 	out := make([]domain.RootFolder, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, domain.RootFolder{ID: r.ID, Path: r.Path, AddedAt: time.UnixMilli(r.AddedAt)})
+		out = append(out, domain.RootFolder{
+			ID: r.ID, Path: r.Path, Kind: domain.RootKind(r.Kind), AddedAt: time.UnixMilli(r.AddedAt),
+		})
 	}
 	return out, nil
 }
@@ -556,7 +570,9 @@ func (d *DB) GetRootFolder(ctx context.Context, id int64) (domain.RootFolder, er
 	if err != nil {
 		return domain.RootFolder{}, wrapNotFound(err)
 	}
-	return domain.RootFolder{ID: r.ID, Path: r.Path, AddedAt: time.UnixMilli(r.AddedAt)}, nil
+	return domain.RootFolder{
+		ID: r.ID, Path: r.Path, Kind: domain.RootKind(r.Kind), AddedAt: time.UnixMilli(r.AddedAt),
+	}, nil
 }
 
 // DeleteRootFolder removes a root folder registration (never touches disk).

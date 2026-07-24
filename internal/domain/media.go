@@ -140,11 +140,48 @@ type Episode struct {
 	HasFile       bool
 }
 
-// RootFolder is a library root on disk (one shared system for every kind —
-// ADR 0002).
+// RootKind is what a root folder holds. It is MediaKind plus KindMixed,
+// which is a property of folders and never of items — hence a distinct type
+// rather than a fourth MediaKind (ADR 0009).
+type RootKind string
+
+// KindMixed means "this folder holds more than one kind, so ask". It is the
+// value every pre-ADR-0009 root migrates to, and it is defined to behave
+// exactly as roots behaved before kinds existed.
+const KindMixed RootKind = "mixed"
+
+// RootKindOf lifts a MediaKind into a RootKind.
+func RootKindOf(k MediaKind) RootKind { return RootKind(k) }
+
+// ValidRootKind reports whether k is one of the three media kinds or mixed.
+func ValidRootKind(k RootKind) bool {
+	return k == KindMixed || ValidKind(MediaKind(k))
+}
+
+// Media returns the media kind a root is restricted to, and false when the
+// root is mixed and therefore restricts nothing.
+func (k RootKind) Media() (MediaKind, bool) {
+	if k == KindMixed || !ValidRootKind(k) {
+		return "", false
+	}
+	return MediaKind(k), true
+}
+
+// Accepts reports whether an item of kind m may live in a root of kind k.
+// A mixed root accepts everything; a typed root accepts only its own kind.
+func (k RootKind) Accepts(m MediaKind) bool {
+	want, restricted := k.Media()
+	return !restricted || want == m
+}
+
+// RootFolder is a library root on disk. One shared system serves every kind
+// (ADR 0002); Kind records which kind this particular root holds so that
+// adoption, the Add flow, and the compat personalities can route correctly
+// (ADR 0009).
 type RootFolder struct {
 	ID      int64
 	Path    string
+	Kind    RootKind
 	AddedAt time.Time
 }
 

@@ -140,11 +140,11 @@ func TestUpdateItemEditsPlacement(t *testing.T) {
 	ctx := context.Background()
 
 	rootA, rootB := t.TempDir(), t.TempDir()
-	rfA, err := svc.AddRootFolder(ctx, rootA)
+	rfA, err := svc.AddRootFolder(ctx, rootA, domain.KindMixed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rfB, err := svc.AddRootFolder(ctx, rootB)
+	rfB, err := svc.AddRootFolder(ctx, rootB, domain.KindMixed)
 	if err != nil {
 		t.Fatal(err)
 	}

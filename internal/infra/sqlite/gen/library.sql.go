@@ -258,13 +258,18 @@ func (q *Queries) GetMediaItemByKindTmdb(ctx context.Context, arg GetMediaItemBy
 }
 
 const getRootFolder = `-- name: GetRootFolder :one
-SELECT id, path, added_at FROM root_folders WHERE id = ?
+SELECT id, path, added_at, kind FROM root_folders WHERE id = ?
 `
 
 func (q *Queries) GetRootFolder(ctx context.Context, id int64) (RootFolder, error) {
 	row := q.db.QueryRowContext(ctx, getRootFolder, id)
 	var i RootFolder
-	err := row.Scan(&i.ID, &i.Path, &i.AddedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Path,
+		&i.AddedAt,
+		&i.Kind,
+	)
 	return i, err
 }
 
@@ -410,16 +415,17 @@ func (q *Queries) InsertMediaItem(ctx context.Context, arg InsertMediaItemParams
 }
 
 const insertRootFolder = `-- name: InsertRootFolder :one
-INSERT INTO root_folders (path, added_at) VALUES (?, ?) RETURNING id
+INSERT INTO root_folders (path, kind, added_at) VALUES (?, ?, ?) RETURNING id
 `
 
 type InsertRootFolderParams struct {
 	Path    string
+	Kind    string
 	AddedAt int64
 }
 
 func (q *Queries) InsertRootFolder(ctx context.Context, arg InsertRootFolderParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, insertRootFolder, arg.Path, arg.AddedAt)
+	row := q.db.QueryRowContext(ctx, insertRootFolder, arg.Path, arg.Kind, arg.AddedAt)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
@@ -836,7 +842,7 @@ func (q *Queries) ListMediaItemsByKind(ctx context.Context, kind string) ([]Medi
 }
 
 const listRootFolders = `-- name: ListRootFolders :many
-SELECT id, path, added_at FROM root_folders ORDER BY path
+SELECT id, path, added_at, kind FROM root_folders ORDER BY path
 `
 
 func (q *Queries) ListRootFolders(ctx context.Context) ([]RootFolder, error) {
@@ -848,7 +854,12 @@ func (q *Queries) ListRootFolders(ctx context.Context) ([]RootFolder, error) {
 	var items []RootFolder
 	for rows.Next() {
 		var i RootFolder
-		if err := rows.Scan(&i.ID, &i.Path, &i.AddedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Path,
+			&i.AddedAt,
+			&i.Kind,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1077,6 +1088,20 @@ func (q *Queries) UpdateMediaItemPlacement(ctx context.Context, arg UpdateMediaI
 		arg.UpdatedAt,
 		arg.ID,
 	)
+	return err
+}
+
+const updateRootFolderKind = `-- name: UpdateRootFolderKind :exec
+UPDATE root_folders SET kind = ? WHERE id = ?
+`
+
+type UpdateRootFolderKindParams struct {
+	Kind string
+	ID   int64
+}
+
+func (q *Queries) UpdateRootFolderKind(ctx context.Context, arg UpdateRootFolderKindParams) error {
+	_, err := q.db.ExecContext(ctx, updateRootFolderKind, arg.Kind, arg.ID)
 	return err
 }
 

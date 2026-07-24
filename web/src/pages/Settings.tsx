@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
+import type { RootKind } from '../api'
 import {
   addRootFolder,
   deleteRootFolder,
@@ -10,6 +11,7 @@ import {
   getScanReport,
   getSettings,
   triggerScan,
+  updateRootFolderKind,
   updateSettings,
 } from '../api'
 import { AcquisitionSettings } from './SettingsAcquisition'
@@ -25,6 +27,7 @@ export function SettingsPage() {
   const [key, setKey] = useState('')
   const [omdbKey, setOmdbKey] = useState('')
   const [newRoot, setNewRoot] = useState('')
+  const [newRootKind, setNewRootKind] = useState<RootKind>('movie')
 
   const saveKey = useMutation({
     mutationFn: () => updateSettings({ tmdbApiKey: key }),
@@ -42,11 +45,15 @@ export function SettingsPage() {
     },
   })
   const addRoot = useMutation({
-    mutationFn: () => addRootFolder(newRoot),
+    mutationFn: () => addRootFolder(newRoot, newRootKind),
     onSuccess: () => {
       setNewRoot('')
       void qc.invalidateQueries({ queryKey: ['rootfolders'] })
     },
+  })
+  const retypeRoot = useMutation({
+    mutationFn: ({ id, kind }: { id: number; kind: RootKind }) => updateRootFolderKind(id, kind),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
   })
   const delRoot = useMutation({
     mutationFn: deleteRootFolder,
@@ -133,6 +140,7 @@ export function SettingsPage() {
           <thead>
             <tr>
               <th>Path</th>
+              <th>Holds</th>
               <th>Free</th>
               <th>Status</th>
               <th></th>
@@ -142,6 +150,20 @@ export function SettingsPage() {
             {roots.data?.map((rf) => (
               <tr key={rf.id}>
                 <td className="mono">{rf.path}</td>
+                <td>
+                  <select
+                    value={rf.kind}
+                    disabled={retypeRoot.isPending}
+                    onChange={(e) =>
+                      retypeRoot.mutate({ id: rf.id, kind: e.target.value as RootKind })
+                    }
+                  >
+                    <option value="movie">Movies</option>
+                    <option value="series">TV series</option>
+                    <option value="book">Books</option>
+                    <option value="mixed">Mixed — ask</option>
+                  </select>
+                </td>
                 <td className="muted">{fmtBytes(rf.freeBytes)}</td>
                 <td>
                   {rf.accessible ? (
@@ -157,13 +179,22 @@ export function SettingsPage() {
             ))}
             {roots.data?.length === 0 && (
               <tr>
-                <td colSpan={4} className="muted">
+                <td colSpan={5} className="muted">
                   No root folders yet — add the folder where your media lives.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        {roots.data?.some((rf) => rf.kind === 'mixed') && (
+          <p className="muted">
+            A folder set to <em>Mixed</em> has to ask what every unmatched folder is. Setting it
+            to a single kind is what lets a scan match on its own.
+          </p>
+        )}
+        {retypeRoot.isError && (
+          <div className="banner warning">{String((retypeRoot.error as Error).message)}</div>
+        )}
         <div className="form-row">
           <input
             type="text"
@@ -171,6 +202,12 @@ export function SettingsPage() {
             value={newRoot}
             onChange={(e) => setNewRoot(e.target.value)}
           />
+          <select value={newRootKind} onChange={(e) => setNewRootKind(e.target.value as RootKind)}>
+            <option value="movie">Movies</option>
+            <option value="series">TV series</option>
+            <option value="book">Books</option>
+            <option value="mixed">Mixed — ask</option>
+          </select>
           <button
             className="btn-accent"
             disabled={newRoot.trim() === '' || addRoot.isPending}
