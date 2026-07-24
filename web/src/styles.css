@@ -456,6 +456,15 @@ button:disabled {
   padding: 4px 0;
 }
 
+/* Until root folders carry a kind (ADR 0009), a candidate's kind is unknown
+   here, so all three are offered rather than one being guessed. */
+.match-as {
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* ---- poster grid ---- */
 .poster-grid {
   display: grid;

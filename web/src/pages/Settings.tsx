@@ -122,8 +122,13 @@ export function SettingsPage() {
         {saveOmdbKey.isError && <div className="banner warning">{String((saveOmdbKey.error as Error).message)}</div>}
       </section>
 
-      <section className="panel" id="rootfolders">
-        <h2>Root folders</h2>
+      <section className="panel" id="library-folders">
+        <h2>Library folders</h2>
+        <p className="muted">
+          Root folders are the only places Monarr looks. A scan reconciles what is on disk
+          against the library, and anything it finds that no item claims is listed below as a
+          candidate to match.
+        </p>
         <table>
           <thead>
             <tr>
@@ -175,16 +180,8 @@ export function SettingsPage() {
           </button>
         </div>
         {addRoot.isError && <div className="banner warning">{String((addRoot.error as Error).message)}</div>}
-      </section>
 
-      <AcquisitionSettings />
-      <CustomFormatSettings />
-      <ImportListSettings />
-      <NotifierSettings />
-      <SecuritySettings />
-
-      <section className="panel" id="scan">
-        <h2>Disk scan</h2>
+        <h3 style={{ marginTop: 18 }}>Disk scan</h3>
         <div className="form-row">
           <button onClick={() => scan.mutate()} disabled={scan.isPending}>
             Scan now
@@ -205,9 +202,20 @@ export function SettingsPage() {
               {report.data.unmatchedDirs.map((d) => (
                 <li key={d.path}>
                   <span className="mono">{d.path}</span>
-                  <Link to="/add" search={{ q: d.name, kind: 'series' }}>
-                    Match…
-                  </Link>
+                  <span className="match-as">
+                    Match as{' '}
+                    <Link to="/add" search={{ q: d.name, kind: 'movie' }}>
+                      movie
+                    </Link>{' '}
+                    ·{' '}
+                    <Link to="/add" search={{ q: d.name, kind: 'series' }}>
+                      series
+                    </Link>{' '}
+                    ·{' '}
+                    <Link to="/add" search={{ q: d.name, kind: 'book' }}>
+                      book
+                    </Link>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -226,6 +234,12 @@ export function SettingsPage() {
           </>
         )}
       </section>
+
+      <AcquisitionSettings />
+      <CustomFormatSettings />
+      <ImportListSettings />
+      <NotifierSettings />
+      <SecuritySettings />
     </>
   )
 }

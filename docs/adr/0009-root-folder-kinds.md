@@ -108,8 +108,39 @@ Monarr offers it. That requires remembering the base, and is a
 It is deliberately not built now, because the browse flow delivers the
 stated requirement and the watching behavior has not been asked for.
 
-The browse endpoint is new work: a directory lister scoped to safe roots,
-which the Add-root screen drives. It does not exist today.
+### 2a. One filesystem endpoint, serving both the picker and path typeahead
+
+Today the Add-root control is a bare text input that wants an absolute path
+typed from memory ([Settings.tsx](../../web/src/pages/Settings.tsx)), and
+`AddRootFolder` can only reject what it is given after the fact. Both the
+base-picker above and **typeahead while typing a path** are the same
+missing capability: the server can see the filesystem and the browser
+cannot.
+
+`GET /api/v1/filesystem?path=/media` returning immediate child directories
+answers both. Typing `/me` lists `/media`; typing `/media/` lists `Movies`,
+`TV`, `Books`; ticking two of them registers two typed roots. The picker is
+the same endpoint with checkboxes instead of a dropdown, which is the
+argument for building the endpoint rather than either UI first.
+
+Deliberate constraints, because this is a directory lister exposed over
+HTTP:
+
+- **Authenticated like every other settings route.** It is a filesystem
+  enumeration primitive; an unauthenticated one is a disclosure bug.
+- **Directories only, never file contents, never sizes.** The caller is
+  choosing a folder, and anything more is surface for no benefit.
+- **No symlink traversal out of the parent**, and errors report "not
+  readable" without distinguishing missing from forbidden — that
+  distinction is exactly what makes an enumeration primitive useful to
+  someone probing.
+- **No recursion, ever.** One level per request, driven by the user's
+  keystrokes, which also keeps it fast on network mounts where a recursive
+  walk would hang the UI.
+
+Sonarr and Radarr ship `/api/v3/filesystem` with this shape, so the
+personalities in ADR 0003 gain an obvious implementation for free — but the
+native endpoint is the one being specified, and compat is a follow-on.
 
 ### 3. Nested roots are rejected at registration
 
@@ -159,11 +190,46 @@ This is kept honest by the existing contract tests in
 [`internal/compat`](../../internal/compat), which should gain a case
 asserting that a Sonarr-personality add against a `movie` root fails.
 
+### 6. Root folders and disk scan are one settings surface, not two
+
+They were separate panels with five unrelated sections between them —
+metadata, then Root folders, then acquisition, custom formats, import
+lists, notifiers, security, and *then* Disk scan. That split is wrong
+because the three things are one loop:
+
+```
+ root folders ──▶ what the scan is allowed to look at
+       ▲                        │
+       │                        ▼
+ exclusions ◀── unmatched folders the scan surfaced
+```
+
+Configuration, execution, and result belong on one screen, and the ADR's
+new pieces land in exactly that loop: a root's kind (§1) decides what a
+candidate is matched against, and dismissing a candidate (§4) writes back
+to the root's scoping. Splitting them means changing a root, scrolling past
+five unrelated panels, scanning, and scrolling back to read the result.
+
+**This is done** — merged into one "Library folders" panel, ordered roots →
+scan → results, since it needed nothing from the rest of the ADR.
+
+Merging also exposed a bug worth recording, because it is this ADR's thesis
+in one line of JSX: every unmatched folder's `Match…` link hardcoded
+`kind: 'series'`, so an unmatched *movie* folder opened the Add page
+pre-filtered to TV. The UI needed a kind, had nowhere to get one, and a
+constant was substituted. It now offers movie · series · book explicitly
+rather than guessing, and that collapses back to a single correct link once
+roots carry kinds.
+
 ## Consequences
 
-- One migration (`0014`), one new column, one new table, and one new browse
-  endpoint. No change to `media_items`, and no change to how any existing
-  item is stored.
+- One migration (`0014`), one new column, one new table, and one new
+  filesystem endpoint. No change to `media_items`, and no change to how any
+  existing item is stored.
+- Monarr gains an authenticated directory-enumeration endpoint it did not
+  have. That is a real increase in what a compromised session can learn
+  about the host, accepted because typing absolute paths blind is the
+  status quo it replaces, and constrained per §2a.
 - Upgrades are behaviour-neutral by construction: everything backfills to
   `mixed` or to its inferred kind, and `mixed` is defined as today's
   behaviour. Nobody's library re-scans differently the morning after.
