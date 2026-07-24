@@ -420,7 +420,7 @@ func (s *Server) ScanLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetScanReport implements GET /library/scan/report.
-func (s *Server) GetScanReport(w http.ResponseWriter, r *http.Request) {
+func (s *Server) GetScanReport(w http.ResponseWriter, r *http.Request, params apigen.GetScanReportParams) {
 	report, ok, err := s.deps.Library.LastScanReport(r.Context())
 	if err != nil {
 		s.libraryErr(w, err)
@@ -430,8 +430,50 @@ func (s *Server) GetScanReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no scan has run yet")
 		return
 	}
+	// A library with several hundred unmatched folders should not ship the
+	// whole list every time the settings page loads. The count is what that
+	// page needs; the list itself is paginated at /library/review.
+	limit := 25
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	report.UnmatchedTotal = len(report.UnmatchedDirs)
+	if len(report.UnmatchedDirs) > limit {
+		report.UnmatchedDirs = report.UnmatchedDirs[:limit]
+	}
 	// The service report is already JSON-shaped per the spec.
 	writeJSON(w, http.StatusOK, report)
+}
+
+// GetReviewQueue implements GET /library/review.
+func (s *Server) GetReviewQueue(w http.ResponseWriter, r *http.Request, params apigen.GetReviewQueueParams) {
+	q := ""
+	if params.Q != nil {
+		q = *params.Q
+	}
+	limit, offset := 0, 0
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	if params.Offset != nil {
+		offset = *params.Offset
+	}
+	page := s.deps.Library.ReviewQueue(r.Context(), q, limit, offset)
+	writeJSON(w, http.StatusOK, apigen.ReviewPage{
+		Items:  proposalsDTO(page.Items),
+		Total:  page.Total,
+		Offset: page.Offset,
+		Limit:  page.Limit,
+		Counts: apigen.ReviewCounts{
+			Total: page.Counts.Total, Ambiguous: page.Counts.Ambiguous, None: page.Counts.None,
+		},
+	})
 }
 
 // SearchMetadata implements GET /metadata/search.
@@ -486,9 +528,11 @@ func (s *Server) ListRootFolders(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]apigen.RootFolder, 0, len(roots))
 	for _, rf := range roots {
+		auto := rf.AutoAdopt
 		out = append(out, apigen.RootFolder{
 			Id: rf.ID, Path: rf.Path, Kind: apigen.RootKind(rf.Kind),
 			FreeBytes: rf.FreeBytes, Accessible: rf.Accessible,
+			AutoAdopt: &auto,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -754,7 +798,11 @@ func (s *Server) ConfirmRootAdopted(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if err := s.deps.Library.ConfirmRootAdopted(r.Context(), body.RootFolderId); err != nil {
+	on := true
+	if body.AutoAdopt != nil {
+		on = *body.AutoAdopt
+	}
+	if err := s.deps.Library.SetRootAutoAdopt(r.Context(), body.RootFolderId, on); err != nil {
 		s.libraryErr(w, err)
 		return
 	}

@@ -193,6 +193,8 @@ export interface RootFolder {
   id: number
   path: string
   kind: RootKind
+  /** Adoption applies matches here without asking. Off until confirmed. */
+  autoAdopt?: boolean
   freeBytes: number
   accessible: boolean
 }
@@ -231,6 +233,20 @@ export interface Proposal {
   candidates: AdoptionCandidate[]
 }
 
+export interface ReviewCounts {
+  total: number
+  ambiguous: number
+  none: number
+}
+
+export interface ReviewPage {
+  items: Proposal[]
+  total: number
+  offset: number
+  limit: number
+  counts: ReviewCounts
+}
+
 export interface AdoptResult {
   adopted: Proposal[]
   review: Proposal[]
@@ -257,6 +273,8 @@ export interface ScanReport {
   filesRemoved: number
   skippedDirs?: number
   ignoredDirs?: number
+  /** True count; unmatchedDirs may be a capped prefix of it. */
+  unmatchedTotal?: number
   unmatchedDirs: UnmatchedDir[]
   missingPaths: string[]
 }
@@ -320,8 +338,12 @@ export const deleteRootFolder = (id: number) => send('DELETE', `/rootfolders/${i
 export const browseFilesystem = (path: string) =>
   get<BrowseResult>(`/filesystem?path=${encodeURIComponent(path)}`)
 export const runAdoption = () => send<AdoptResult>('POST', '/library/adopt')
-export const confirmRootAdopted = (rootFolderId: number) =>
-  send('POST', '/library/adopt/confirm', { rootFolderId })
+export const setRootAutoAdopt = (rootFolderId: number, autoAdopt: boolean) =>
+  send('POST', '/library/adopt/confirm', { rootFolderId, autoAdopt })
+export const getReviewQueue = (q: string, limit: number, offset: number) =>
+  get<ReviewPage>(
+    `/library/review?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`,
+  )
 export const getIgnoredDirs = () => get<IgnoredPath[]>('/library/scan/ignored')
 export const ignoreDir = (path: string, reason = '') =>
   send('POST', '/library/scan/ignored', { path, reason })

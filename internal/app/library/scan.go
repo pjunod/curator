@@ -49,10 +49,13 @@ type Report struct {
 	// user can see the sweep excluded something without the excluded
 	// things becoming a second list to read. Silent truncation reads as
 	// "there was nothing there".
-	SkippedDirs   int            `json:"skippedDirs"`
-	IgnoredDirs   int            `json:"ignoredDirs"`
-	UnmatchedDirs []UnmatchedDir `json:"unmatchedDirs"`
-	MissingPaths  []string       `json:"missingPaths"`
+	SkippedDirs int `json:"skippedDirs"`
+	IgnoredDirs int `json:"ignoredDirs"`
+	// UnmatchedTotal is the true count; UnmatchedDirs may be a capped
+	// prefix of it when the API is asked for a page rather than the lot.
+	UnmatchedTotal int            `json:"unmatchedTotal"`
+	UnmatchedDirs  []UnmatchedDir `json:"unmatchedDirs"`
+	MissingPaths   []string       `json:"missingPaths"`
 }
 
 // Scan reconciles the library against disk: walks every item's folder,

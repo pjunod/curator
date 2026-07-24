@@ -526,6 +526,9 @@ type RootFolderInfo struct {
 	domain.RootFolder
 	FreeBytes  int64
 	Accessible bool
+	// AutoAdopt reports whether adoption applies matches into this root
+	// without asking first (ADR 0010 §5).
+	AutoAdopt bool
 }
 
 // AddRootFolder validates and registers a library root. An empty kind means
@@ -618,9 +621,10 @@ func (s *Service) ListRootFolders(ctx context.Context) ([]RootFolderInfo, error)
 	if err != nil {
 		return nil, err
 	}
+	auto := s.AutoAdoptRoots(ctx)
 	out := make([]RootFolderInfo, 0, len(roots))
 	for _, rf := range roots {
-		info := RootFolderInfo{RootFolder: rf}
+		info := RootFolderInfo{RootFolder: rf, AutoAdopt: auto[rf.ID]}
 		if st, err := os.Stat(rf.Path); err == nil && st.IsDir() {
 			info.Accessible = true
 			info.FreeBytes = freeBytes(rf.Path)

@@ -859,11 +859,32 @@ type ReleaseCandidate struct {
 	Title   string `json:"title"`
 }
 
+// ReviewCounts defines model for ReviewCounts.
+type ReviewCounts struct {
+	Ambiguous int `json:"ambiguous"`
+	None      int `json:"none"`
+	Total     int `json:"total"`
+}
+
+// ReviewPage defines model for ReviewPage.
+type ReviewPage struct {
+	Counts ReviewCounts `json:"counts"`
+	Items  []Proposal   `json:"items"`
+	Limit  int          `json:"limit"`
+	Offset int          `json:"offset"`
+
+	// Total Entries matching the filter.
+	Total int `json:"total"`
+}
+
 // RootFolder defines model for RootFolder.
 type RootFolder struct {
-	Accessible bool  `json:"accessible"`
-	FreeBytes  int64 `json:"freeBytes"`
-	Id         int64 `json:"id"`
+	Accessible bool `json:"accessible"`
+
+	// AutoAdopt Adoption applies matches into this root without asking. Off until the first pass has been reviewed and confirmed.
+	AutoAdopt *bool `json:"autoAdopt,omitempty"`
+	FreeBytes int64 `json:"freeBytes"`
+	Id        int64 `json:"id"`
 
 	// Kind What a root folder holds (ADR 0009). "mixed" means the kind is not known, so adoption asks instead of assuming — the behaviour every root had before kinds existed.
 	Kind RootKind `json:"kind"`
@@ -888,6 +909,9 @@ type ScanReport struct {
 	// SkippedDirs Directories excluded by a skip pattern (counted, not listed).
 	SkippedDirs   *int           `json:"skippedDirs,omitempty"`
 	UnmatchedDirs []UnmatchedDir `json:"unmatchedDirs"`
+
+	// UnmatchedTotal True number of unmatched folders. unmatchedDirs may be a capped prefix of these; the full list is at /library/review.
+	UnmatchedTotal *int `json:"unmatchedTotal,omitempty"`
 }
 
 // ScannedFile defines model for ScannedFile.
@@ -1053,6 +1077,8 @@ type ListLibraryParams struct {
 
 // ConfirmRootAdoptedJSONBody defines parameters for ConfirmRootAdopted.
 type ConfirmRootAdoptedJSONBody struct {
+	// AutoAdopt Defaults to true.
+	AutoAdopt    *bool `json:"autoAdopt,omitempty"`
 	RootFolderId int64 `json:"rootFolderId"`
 }
 
@@ -1061,6 +1087,14 @@ type BulkEditLibraryJSONBody struct {
 	Ids              []int64 `json:"ids"`
 	Monitored        *bool   `json:"monitored,omitempty"`
 	QualityProfileId *int64  `json:"qualityProfileId,omitempty"`
+}
+
+// GetReviewQueueParams defines parameters for GetReviewQueue.
+type GetReviewQueueParams struct {
+	// Q Free-text filter over the folder name and parsed title.
+	Q      *string `form:"q,omitempty" json:"q,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int    `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
 // UnignoreDirParams defines parameters for UnignoreDir.
@@ -1072,6 +1106,12 @@ type UnignoreDirParams struct {
 type IgnoreDirJSONBody struct {
 	Path   string  `json:"path"`
 	Reason *string `json:"reason,omitempty"`
+}
+
+// GetScanReportParams defines parameters for GetScanReport.
+type GetScanReportParams struct {
+	// Limit Cap on embedded unmatchedDirs (default 25, max 200, 0 for none).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // SearchReleasesParams defines parameters for SearchReleases.
@@ -1271,12 +1311,15 @@ type ServerInterface interface {
 	// RunAdoption Match the unmatched folders the last scan found
 	// (POST /library/adopt)
 	RunAdoption(w http.ResponseWriter, r *http.Request)
-	// ConfirmRootAdopted Mark a root as reviewed, so later scans adopt into it directly
+	// ConfirmRootAdopted Turn automatic adoption on or off for a root
 	// (POST /library/adopt/confirm)
 	ConfirmRootAdopted(w http.ResponseWriter, r *http.Request)
 	// BulkEditLibrary Apply monitoring/profile changes to many items at once
 	// (POST /library/bulk)
 	BulkEditLibrary(w http.ResponseWriter, r *http.Request)
+	// GetReviewQueue One page of the adoption review queue
+	// (GET /library/review)
+	GetReviewQueue(w http.ResponseWriter, r *http.Request, params GetReviewQueueParams)
 	// ScanLibrary Trigger a disk scan / reconcile
 	// (POST /library/scan)
 	ScanLibrary(w http.ResponseWriter, r *http.Request)
@@ -1291,7 +1334,7 @@ type ServerInterface interface {
 	IgnoreDir(w http.ResponseWriter, r *http.Request)
 	// GetScanReport Result of the most recent scan
 	// (GET /library/scan/report)
-	GetScanReport(w http.ResponseWriter, r *http.Request)
+	GetScanReport(w http.ResponseWriter, r *http.Request, params GetScanReportParams)
 	// DeleteLibraryItem Remove an item from the library (files on disk are untouched)
 	// (DELETE /library/{id})
 	DeleteLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
@@ -2046,6 +2089,65 @@ func (siw *ServerInterfaceWrapper) BulkEditLibrary(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetReviewQueue operation middleware
+func (siw *ServerInterfaceWrapper) GetReviewQueue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetReviewQueueParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetReviewQueue(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ScanLibrary operation middleware
 func (siw *ServerInterfaceWrapper) ScanLibrary(w http.ResponseWriter, r *http.Request) {
 
@@ -2124,8 +2226,27 @@ func (siw *ServerInterfaceWrapper) IgnoreDir(w http.ResponseWriter, r *http.Requ
 // GetScanReport operation middleware
 func (siw *ServerInterfaceWrapper) GetScanReport(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetScanReportParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetScanReport(w, r)
+		siw.Handler.GetScanReport(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3043,6 +3164,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}", wrapper.UpdateLibraryItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan", wrapper.ScanLibrary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/report", wrapper.GetScanReport)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/review", wrapper.GetReviewQueue)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt", wrapper.RunAdoption)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt/confirm", wrapper.ConfirmRootAdopted)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/scan/ignored", wrapper.UnignoreDir)

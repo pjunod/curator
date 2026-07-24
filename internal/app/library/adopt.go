@@ -316,6 +316,9 @@ func (s *Service) RunAdoption(ctx context.Context) (AdoptResult, error) {
 	res.Review = append(res.Review, preview.Review...)
 	res.Failures = append(res.Failures, preview.Failures...)
 
+	// Persist what needs a human so the review list survives a reload.
+	s.saveReviewQueue(ctx, res.Review)
+
 	if len(firstRoots) > 0 {
 		s.log.Info("adopt: first pass over new roots proposed for review",
 			"roots", len(firstRoots), "proposals", len(first))
@@ -328,13 +331,32 @@ func (s *Service) RunAdoption(ctx context.Context) (AdoptResult, error) {
 // ConfirmRootAdopted marks a root as reviewed, so subsequent scans adopt
 // into it without asking.
 func (s *Service) ConfirmRootAdopted(ctx context.Context, rootID int64) error {
+	return s.SetRootAutoAdopt(ctx, rootID, true)
+}
+
+// SetRootAutoAdopt turns automatic adoption on or off for one root.
+//
+// Reversible on purpose: confirming a root is a trust decision, and a
+// setting you can only ever switch on is one users are right to hesitate
+// over. Turning it back off returns that root to propose-only.
+func (s *Service) SetRootAutoAdopt(ctx context.Context, rootID int64, on bool) error {
 	seen := s.adoptedRoots(ctx)
-	seen[rootID] = true
+	if on {
+		seen[rootID] = true
+	} else {
+		delete(seen, rootID)
+	}
 	ids := make([]string, 0, len(seen))
 	for id := range seen {
 		ids = append(ids, fmt.Sprint(id))
 	}
 	return s.db.SetMeta(ctx, adoptionStateKey, strings.Join(ids, ","))
+}
+
+// AutoAdoptRoots reports which roots adopt without asking, so the UI can
+// show the state rather than describing it in prose nobody can act on.
+func (s *Service) AutoAdoptRoots(ctx context.Context) map[int64]bool {
+	return s.adoptedRoots(ctx)
 }
 
 func (s *Service) adoptedRoots(ctx context.Context) map[int64]bool {

@@ -217,6 +217,18 @@ paths:
     get:
       operationId: getScanReport
       summary: Result of the most recent scan
+      description: >
+        unmatchedDirs is capped so a library of several hundred unmatched
+        folders does not arrive whenever the settings page loads; the full
+        list is paginated at /library/review. unmatchedTotal is always the
+        true count.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Cap on embedded unmatchedDirs (default 25, max 200, 0 for none).
+          schema:
+            type: integer
       responses:
         "200":
           description: The last scan report.
@@ -230,6 +242,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /library/review:
+    get:
+      operationId: getReviewQueue
+      summary: One page of the adoption review queue
+      description: >
+        The folders adoption could not resolve on its own, paginated and
+        filterable. Falls back to the last scan's unmatched folders when no
+        adoption run has happened yet, so a fresh scan never looks empty.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Free-text filter over the folder name and parsed title.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: One page, plus totals for the whole queue.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewPage"
 
   /library/adopt:
     post:
@@ -251,7 +296,11 @@ paths:
   /library/adopt/confirm:
     post:
       operationId: confirmRootAdopted
-      summary: Mark a root as reviewed, so later scans adopt into it directly
+      summary: Turn automatic adoption on or off for a root
+      description: >
+        Reversible on purpose. Confirming a root is a trust decision, and a
+        switch that only goes one way is one users are right to hesitate
+        over.
       requestBody:
         required: true
         content:
@@ -263,6 +312,9 @@ paths:
                 rootFolderId:
                   type: integer
                   format: int64
+                autoAdopt:
+                  type: boolean
+                  description: Defaults to true.
       responses:
         "204":
           description: Confirmed.
@@ -1925,6 +1977,11 @@ components:
           type: string
         kind:
           $ref: "#/components/schemas/RootKind"
+        autoAdopt:
+          type: boolean
+          description: >
+            Adoption applies matches into this root without asking. Off
+            until the first pass has been reviewed and confirmed.
         freeBytes:
           type: integer
           format: int64
@@ -1971,6 +2028,11 @@ components:
         ignoredDirs:
           type: integer
           description: Directories the user has dismissed (counted, not listed).
+        unmatchedTotal:
+          type: integer
+          description: >
+            True number of unmatched folders. unmatchedDirs may be a capped
+            prefix of these; the full list is at /library/review.
         unmatchedDirs:
           type: array
           items:
@@ -2056,6 +2118,35 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AdoptionCandidate"
+
+    ReviewCounts:
+      type: object
+      required: [total, ambiguous, none]
+      properties:
+        total:
+          type: integer
+        ambiguous:
+          type: integer
+        none:
+          type: integer
+
+    ReviewPage:
+      type: object
+      required: [items, total, offset, limit, counts]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Proposal"
+        total:
+          type: integer
+          description: Entries matching the filter.
+        offset:
+          type: integer
+        limit:
+          type: integer
+        counts:
+          $ref: "#/components/schemas/ReviewCounts"
 
     AdoptResult:
       type: object

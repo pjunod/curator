@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
 import type { RootKind } from '../api'
 import {
   addRootFolder,
@@ -11,9 +10,8 @@ import {
   getRootFolders,
   getScanReport,
   getSettings,
-  confirmRootAdopted,
-  ignoreDir,
   runAdoption,
+  setRootAutoAdopt,
   triggerScan,
   unignoreDir,
   updateRootFolderKind,
@@ -23,6 +21,7 @@ import { AcquisitionSettings } from './SettingsAcquisition'
 import { CustomFormatSettings, ImportListSettings, SecuritySettings } from './SettingsDepth'
 import { NotifierSettings } from './SettingsNotifiers'
 import { PathInput } from '../PathInput'
+import { ReviewWindow } from '../ReviewWindow'
 
 export function SettingsPage() {
   const qc = useQueryClient()
@@ -37,6 +36,7 @@ export function SettingsPage() {
   const [newRootKind, setNewRootKind] = useState<RootKind>('movie')
   const [skipPatterns, setSkipPatterns] = useState<string | null>(null)
   const [adoptSummary, setAdoptSummary] = useState<string | null>(null)
+  const [reviewOpen, setReviewOpen] = useState(false)
 
   const saveKey = useMutation({
     mutationFn: () => updateSettings({ tmdbApiKey: key }),
@@ -68,13 +68,6 @@ export function SettingsPage() {
     mutationFn: deleteRootFolder,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
   })
-  const dismiss = useMutation({
-    mutationFn: (path: string) => ignoreDir(path),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['scan-report'] })
-      void qc.invalidateQueries({ queryKey: ['ignored-dirs'] })
-    },
-  })
   const restore = useMutation({
     mutationFn: (path: string) => unignoreDir(path),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['ignored-dirs'] }),
@@ -94,8 +87,8 @@ export function SettingsPage() {
       void qc.invalidateQueries({ queryKey: ['library'] })
     },
   })
-  const confirmRoot = useMutation({
-    mutationFn: confirmRootAdopted,
+  const autoAdopt = useMutation({
+    mutationFn: ({ id, on }: { id: number; on: boolean }) => setRootAutoAdopt(id, on),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
   })
   const scan = useMutation({
@@ -180,6 +173,7 @@ export function SettingsPage() {
             <tr>
               <th>Path</th>
               <th>Holds</th>
+              <th>Adoption</th>
               <th>Free</th>
               <th>Status</th>
               <th></th>
@@ -203,6 +197,33 @@ export function SettingsPage() {
                     <option value="mixed">Mixed — ask</option>
                   </select>
                 </td>
+                <td>
+                  {rf.kind === 'mixed' ? (
+                    <span className="muted" title="A mixed root always asks — set a kind first">
+                      always asks
+                    </span>
+                  ) : rf.autoAdopt ? (
+                    <>
+                      <span className="pill pill-ok">auto</span>{' '}
+                      <button
+                        className="link-btn"
+                        disabled={autoAdopt.isPending}
+                        title="Go back to proposing matches for review"
+                        onClick={() => autoAdopt.mutate({ id: rf.id, on: false })}
+                      >
+                        undo
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      disabled={autoAdopt.isPending}
+                      title="Let later scans adopt confident matches into this root without asking"
+                      onClick={() => autoAdopt.mutate({ id: rf.id, on: true })}
+                    >
+                      Confirm
+                    </button>
+                  )}
+                </td>
                 <td className="muted">{fmtBytes(rf.freeBytes)}</td>
                 <td>
                   {rf.accessible ? (
@@ -218,7 +239,7 @@ export function SettingsPage() {
             ))}
             {roots.data?.length === 0 && (
               <tr>
-                <td colSpan={5} className="muted">
+                <td colSpan={6} className="muted">
                   No root folders yet — add the folder where your media lives.
                 </td>
               </tr>
@@ -260,6 +281,10 @@ export function SettingsPage() {
           <button onClick={() => adopt.mutate()} disabled={adopt.isPending}>
             {adopt.isPending ? 'Matching…' : 'Match unmatched folders'}
           </button>
+          {adoptSummary && <span className="ok-text">{adoptSummary}</span>}
+          {adopt.isError && (
+            <span className="error-text">{String((adopt.error as Error).message)}</span>
+          )}
           {report.data && (
             <span className="muted">
               Last scan {fmtRelative(report.data.scannedAt)} · {report.data.itemsScanned} items ·{' '}
@@ -269,64 +294,16 @@ export function SettingsPage() {
           {report.data === null && <span className="muted">No scan has run yet.</span>}
         </div>
 
-        {report.data && report.data.unmatchedDirs.length > 0 && (
-          <>
-            <h3 className="muted">Unmatched folders</h3>
-            <ul className="unmatched-list">
-              {report.data.unmatchedDirs.map((d) => (
-                <li key={d.path}>
-                  <span className="mono">{d.path}</span>
-                  <span className="match-as">
-                    Match as{' '}
-                    <Link to="/add" search={{ q: d.name, kind: 'movie' }}>
-                      movie
-                    </Link>{' '}
-                    ·{' '}
-                    <Link to="/add" search={{ q: d.name, kind: 'series' }}>
-                      series
-                    </Link>{' '}
-                    ·{' '}
-                    <Link to="/add" search={{ q: d.name, kind: 'book' }}>
-                      book
-                    </Link>
-                    {' · '}
-                    <button
-                      className="link-btn"
-                      title="Never offer this folder again"
-                      disabled={dismiss.isPending}
-                      onClick={() => dismiss.mutate(d.path)}
-                    >
-                      not media
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {adoptSummary && <p className="ok-text">{adoptSummary}</p>}
-        {adopt.isError && (
-          <div className="banner warning">{String((adopt.error as Error).message)}</div>
-        )}
-        {roots.data && roots.data.some((rf) => rf.kind !== 'mixed') && (
-          <p className="muted">
-            The first match over a new root only proposes — nothing is written until you confirm
-            it, because a wrong match among hundreds is hard to spot and expensive to unpick.
-            Confirm a root to let later scans adopt into it directly:{' '}
-            {roots.data
-              .filter((rf) => rf.kind !== 'mixed')
-              .map((rf) => (
-                <button
-                  key={rf.id}
-                  className="link-btn"
-                  style={{ marginRight: 8 }}
-                  disabled={confirmRoot.isPending}
-                  onClick={() => confirmRoot.mutate(rf.id)}
-                >
-                  {rf.path}
-                </button>
-              ))}
-          </p>
+        {report.data && (report.data.unmatchedTotal ?? report.data.unmatchedDirs.length) > 0 && (
+          <div className="form-row">
+            <button className="btn-accent" onClick={() => setReviewOpen(true)}>
+              Review {report.data.unmatchedTotal ?? report.data.unmatchedDirs.length} folders…
+            </button>
+            <span className="muted">
+              Opens in a window with pages, so a folder of several hundred movies does not turn
+              this page into a mile of rows.
+            </span>
+          </div>
         )}
         {report.data && (report.data.skippedDirs || report.data.ignoredDirs) ? (
           <p className="muted">
@@ -336,23 +313,30 @@ export function SettingsPage() {
           </p>
         ) : null}
         {report.data && report.data.missingPaths.length > 0 && (
-          <>
-            <h3 className="muted">Items whose folder is missing on disk</h3>
+          <details>
+            <summary className="muted">
+              Items whose folder is missing on disk ({report.data.missingPaths.length})
+            </summary>
             <ul className="unmatched-list">
-              {report.data.missingPaths.map((p) => (
+              {report.data.missingPaths.slice(0, 100).map((p) => (
                 <li key={p}>
                   <span className="mono">{p}</span>
                 </li>
               ))}
             </ul>
-          </>
+            {report.data.missingPaths.length > 100 && (
+              <p className="muted">
+                Showing the first 100 of {report.data.missingPaths.length}.
+              </p>
+            )}
+          </details>
         )}
 
         {ignored.data && ignored.data.length > 0 && (
           <details>
             <summary className="muted">Dismissed folders ({ignored.data.length})</summary>
             <ul className="unmatched-list">
-              {ignored.data.map((ip) => (
+              {ignored.data.slice(0, 100).map((ip) => (
                 <li key={ip.path}>
                   <span className="mono">{ip.path}</span>
                   <span className="match-as">
@@ -400,6 +384,8 @@ export function SettingsPage() {
       <ImportListSettings />
       <NotifierSettings />
       <SecuritySettings />
+
+      {reviewOpen && <ReviewWindow onClose={() => setReviewOpen(false)} />}
     </>
   )
 }
