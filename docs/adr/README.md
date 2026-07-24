@@ -14,5 +14,6 @@ accepted; a change of course gets a new ADR that supersedes the old one.
 | [0007](0007-remote-database-postgres.md) | Remote database (Postgres): evaluated for cluster HA, deferred with triggers | Deferred |
 | [0008](0008-distributed-execution.md) | Multi-host execution: leased job queue, mount-aware routing, Postgres for clustered mode | Proposed |
 | [0009](0009-root-folder-kinds.md) | Root folders carry a media kind; base directories are a picker, not an entity | Proposed |
+| [0010](0010-scan-adopts.md) | Scan proposes matches; adoption is bulk work, not a to-do list | Proposed |
 
 Context for all of these lives in [../architecture.md](../architecture.md).
