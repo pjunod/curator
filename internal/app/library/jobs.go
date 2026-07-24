@@ -40,8 +40,7 @@ func RegisterJobHandlers[H ~func(ctx context.Context, j domain.Job) error](
 	s *Service, register func(kind string, h H) error,
 ) error {
 	if err := register(JobScan, H(func(ctx context.Context, _ domain.Job) error {
-		_, err := s.Scan(ctx)
-		return err
+		return s.ScanThenAdopt(ctx)
 	})); err != nil {
 		return err
 	}
@@ -49,6 +48,25 @@ func RegisterJobHandlers[H ~func(ctx context.Context, j domain.Job) error](
 		_, err := s.RunAdoption(ctx)
 		return err
 	}))
+}
+
+// ScanThenAdopt reconciles the library and then queues the matching pass.
+//
+// A named method rather than a closure inside RegisterJobHandlers because
+// the chain is behaviour worth testing directly: an earlier version of this
+// lived inline, was lost in an unrelated edit, and nothing noticed because
+// no test asserted that a scan leads to a match. A scan that leaves a list
+// of names is the thing ADR 0010 exists to fix, so the link between the two
+// is a promise, not an implementation detail.
+//
+// Adoption is enqueued rather than inlined so its provider work retries and
+// reports on its own terms — the scan should not be marked failed because
+// TMDB rate-limited the matching.
+func (s *Service) ScanThenAdopt(ctx context.Context) error {
+	if _, err := s.Scan(ctx); err != nil {
+		return err
+	}
+	return s.EnqueueAdoption(ctx)
 }
 
 // WithQueue gives the service a queue to enqueue onto. Optional: without

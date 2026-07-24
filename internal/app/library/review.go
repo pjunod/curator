@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/parser"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -30,11 +31,17 @@ type ReviewPage struct {
 	Counts ReviewCounts `json:"counts"`
 }
 
-// ReviewCounts summarises the queue by confidence.
+// ReviewCounts summarises the queue by confidence and by kind, so tab
+// labels can carry their own totals without a request per tab.
 type ReviewCounts struct {
 	Total     int `json:"total"`
 	Ambiguous int `json:"ambiguous"`
 	None      int `json:"none"`
+	Movie     int `json:"movie"`
+	Series    int `json:"series"`
+	Book      int `json:"book"`
+	// Unknown counts entries from mixed roots, where no kind was resolved.
+	Unknown int `json:"unknown"`
 }
 
 // defaultReviewLimit is one screenful. Deliberately modest: the point of
@@ -100,14 +107,21 @@ func (s *Service) loadReviewQueue(ctx context.Context) []Proposal {
 }
 
 // ReviewQueue returns one page of the adoption review queue, optionally
-// filtered by a free-text query over the folder name and parsed title.
+// filtered by media kind and by a free-text query over the folder name and
+// parsed title.
+//
+// A limit of 0 means "all", which is the escape hatch for anyone who would
+// rather scroll or use the browser's own find. It is honoured rather than
+// clamped, because refusing it would just push people to click Next forty
+// times.
 //
 // Dismissed paths are filtered out on read rather than rewritten into the
 // stored queue: a dismissal is one small write, and rewriting a
 // six-hundred-entry blob on every click is the kind of thing that is fine
 // until it is not.
-func (s *Service) ReviewQueue(ctx context.Context, q string, limit, offset int) ReviewPage {
-	if limit <= 0 {
+func (s *Service) ReviewQueue(ctx context.Context, kind domain.MediaKind, q string, limit, offset int) ReviewPage {
+	all := limit == 0
+	if limit < 0 {
 		limit = defaultReviewLimit
 	}
 	if limit > maxReviewLimit {
@@ -117,7 +131,7 @@ func (s *Service) ReviewQueue(ctx context.Context, q string, limit, offset int) 
 		offset = 0
 	}
 
-	all := s.loadReviewQueue(ctx)
+	queue := s.loadReviewQueue(ctx)
 
 	ignored := map[string]bool{}
 	if rows, err := s.db.ListIgnoredPaths(ctx); err == nil {
@@ -128,11 +142,13 @@ func (s *Service) ReviewQueue(ctx context.Context, q string, limit, offset int) 
 
 	page := ReviewPage{Items: []Proposal{}, Limit: limit, Offset: offset}
 	needle := strings.ToLower(strings.TrimSpace(q))
-	matched := make([]Proposal, 0, len(all))
-	for _, p := range all {
+	matched := make([]Proposal, 0, len(queue))
+	for _, p := range queue {
 		if ignored[p.Path] {
 			continue
 		}
+		// Counts are over the whole queue, before kind and text filters, so
+		// the tab labels stay still while the user narrows the list.
 		page.Counts.Total++
 		switch p.Confidence {
 		case ConfidenceAmbiguous:
@@ -140,9 +156,22 @@ func (s *Service) ReviewQueue(ctx context.Context, q string, limit, offset int) 
 		case ConfidenceNone:
 			page.Counts.None++
 		case ConfidenceExact:
-			// An exact proposal sitting in the review queue means it is
-			// waiting on a first-pass confirmation, which is a state the
-			// counts do not need to distinguish.
+			// An exact proposal in the review queue is waiting on a
+			// first-pass confirmation — not a state the counts split out.
+		}
+		switch p.Kind {
+		case domain.KindMovie:
+			page.Counts.Movie++
+		case domain.KindSeries:
+			page.Counts.Series++
+		case domain.KindBook:
+			page.Counts.Book++
+		default:
+			page.Counts.Unknown++ // mixed root: kind never resolved
+		}
+
+		if kind != "" && p.Kind != kind {
+			continue
 		}
 		if needle != "" &&
 			!strings.Contains(strings.ToLower(p.Name), needle) &&
@@ -153,6 +182,11 @@ func (s *Service) ReviewQueue(ctx context.Context, q string, limit, offset int) 
 	}
 
 	page.Total = len(matched)
+	if all {
+		page.Items = matched
+		page.Limit = 0
+		return page
+	}
 	if offset >= len(matched) {
 		return page
 	}

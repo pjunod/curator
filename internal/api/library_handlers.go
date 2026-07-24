@@ -457,14 +457,20 @@ func (s *Server) GetReviewQueue(w http.ResponseWriter, r *http.Request, params a
 	if params.Q != nil {
 		q = *params.Q
 	}
-	limit, offset := 0, 0
+	// -1 rather than 0 for "unspecified": 0 is a meaningful value here
+	// (it means "all"), so it cannot double as the absent marker.
+	limit, offset := -1, 0
 	if params.Limit != nil {
 		limit = *params.Limit
 	}
 	if params.Offset != nil {
 		offset = *params.Offset
 	}
-	page := s.deps.Library.ReviewQueue(r.Context(), q, limit, offset)
+	kind := domain.MediaKind("")
+	if params.Kind != nil {
+		kind = domain.MediaKind(*params.Kind)
+	}
+	page := s.deps.Library.ReviewQueue(r.Context(), kind, q, limit, offset)
 	writeJSON(w, http.StatusOK, apigen.ReviewPage{
 		Items:  proposalsDTO(page.Items),
 		Total:  page.Total,
@@ -472,6 +478,8 @@ func (s *Server) GetReviewQueue(w http.ResponseWriter, r *http.Request, params a
 		Limit:  page.Limit,
 		Counts: apigen.ReviewCounts{
 			Total: page.Counts.Total, Ambiguous: page.Counts.Ambiguous, None: page.Counts.None,
+			Movie: page.Counts.Movie, Series: page.Counts.Series,
+			Book: page.Counts.Book, Unknown: page.Counts.Unknown,
 		},
 	})
 }

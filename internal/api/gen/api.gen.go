@@ -862,8 +862,14 @@ type ReleaseCandidate struct {
 // ReviewCounts defines model for ReviewCounts.
 type ReviewCounts struct {
 	Ambiguous int `json:"ambiguous"`
+	Book      int `json:"book"`
+	Movie     int `json:"movie"`
 	None      int `json:"none"`
+	Series    int `json:"series"`
 	Total     int `json:"total"`
+
+	// Unknown Entries from mixed roots, where no kind was resolved.
+	Unknown int `json:"unknown"`
 }
 
 // ReviewPage defines model for ReviewPage.
@@ -1091,10 +1097,15 @@ type BulkEditLibraryJSONBody struct {
 
 // GetReviewQueueParams defines parameters for GetReviewQueue.
 type GetReviewQueueParams struct {
+	// Kind Restrict to one media kind. Omit for every kind, including the mixed-root entries whose kind was never resolved.
+	Kind *MediaKind `form:"kind,omitempty" json:"kind,omitempty"`
+
 	// Q Free-text filter over the folder name and parsed title.
-	Q      *string `form:"q,omitempty" json:"q,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *int    `form:"offset,omitempty" json:"offset,omitempty"`
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
+
+	// Limit 0 means all — honoured, not clamped.
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
 // UnignoreDirParams defines parameters for UnignoreDir.
@@ -2097,6 +2108,19 @@ func (siw *ServerInterfaceWrapper) GetReviewQueue(w http.ResponseWriter, r *http
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetReviewQueueParams
+
+	// ------------- Optional query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
 
 	// ------------- Optional query parameter "q" -------------
 

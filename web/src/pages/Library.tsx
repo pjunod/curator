@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import type { MediaItemSummary, MediaKind } from '../api'
@@ -7,6 +7,7 @@ import {
   getProfiles, getQueue, getScanReport, getSettings, posterUrl,
   RATING_SOURCE_LABELS, triggerScan,
 } from '../api'
+import { PAGE_SIZES, Pager, PageSizePicker, sliceForPage } from '../Pager'
 
 // CardBadges: at-a-glance state on a poster — rating, in-flight downloads,
 // and the green/yellow/red completeness pill.
@@ -48,14 +49,14 @@ function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
 const KIND_TABS: { label: string; kind?: MediaKind }[] = [
   { label: 'All' },
   { label: 'Movies', kind: 'movie' },
-  { label: 'Series', kind: 'series' },
+  { label: 'TV', kind: 'series' },
   { label: 'Books', kind: 'book' },
 ]
 
 // The All view groups by kind in this order — never interleaved.
 const KIND_SECTIONS: { kind: MediaKind; label: string }[] = [
   { kind: 'movie', label: 'Movies' },
-  { kind: 'series', label: 'Series' },
+  { kind: 'series', label: 'TV' },
   { kind: 'book', label: 'Books' },
 ]
 
@@ -122,10 +123,19 @@ interface SectionState {
   filter: FilterKey
   sortKey: SortKey
   sortDir: 'asc' | 'desc'
+  /** Rows per page; 0 means All. Persisted — a preference about how much
+   *  you want on screen should not reset every visit. */
+  pageSize: number
 }
 
 function loadSection(kind: MediaKind): SectionState {
-  const state: SectionState = { q: '', filter: 'all', sortKey: 'title', sortDir: 'asc' }
+  const state: SectionState = {
+    q: '',
+    filter: 'all',
+    sortKey: 'title',
+    sortDir: 'asc',
+    pageSize: 100,
+  }
   try {
     const raw = localStorage.getItem(`monarr-lib-${kind}`)
     if (raw) {
@@ -133,6 +143,11 @@ function loadSection(kind: MediaKind): SectionState {
       if (FILTERS.some((f) => f.key === saved.filter)) state.filter = saved.filter as FilterKey
       if (SORTS.some((s) => s.key === saved.sortKey)) state.sortKey = saved.sortKey as SortKey
       if (saved.sortDir === 'asc' || saved.sortDir === 'desc') state.sortDir = saved.sortDir
+      // Only honour a size we actually offer, so a hand-edited or stale
+      // value cannot leave someone stuck on a page size the UI cannot show.
+      if (PAGE_SIZES.includes(saved.pageSize as (typeof PAGE_SIZES)[number])) {
+        state.pageSize = saved.pageSize as number
+      }
     }
   } catch {
     /* private mode / bad JSON — defaults win */
@@ -144,7 +159,12 @@ function persistSection(kind: MediaKind, s: SectionState) {
   try {
     localStorage.setItem(
       `monarr-lib-${kind}`,
-      JSON.stringify({ filter: s.filter, sortKey: s.sortKey, sortDir: s.sortDir }),
+      JSON.stringify({
+        filter: s.filter,
+        sortKey: s.sortKey,
+        sortDir: s.sortDir,
+        pageSize: s.pageSize,
+      }),
     )
   } catch {
     /* private mode */
@@ -224,18 +244,35 @@ function SectionToolbar(props: {
           {props.shown}/{props.total}
         </span>
       )}
+      <PageSizePicker
+        size={state.pageSize}
+        onChange={(n) => onChange({ pageSize: n })}
+        label="Show"
+      />
     </div>
   )
 }
 
 export function LibraryPage() {
   const [kind, setKind] = useState<MediaKind | undefined>(undefined)
+  // Page number per kind. Not persisted: coming back to the library on
+  // page 9 of a list that has since changed is disorienting, and the
+  // page-size preference is the part worth remembering.
+  const [pages, setPages] = useState<Record<MediaKind, number>>({
+    movie: 0,
+    series: 0,
+    book: 0,
+  })
   const navigate = useNavigate()
   const qc = useQueryClient()
 
   const items = useQuery({
-    queryKey: ['library', kind ?? 'all'],
-    queryFn: () => getLibrary(kind),
+    // Always fetch the whole library and split it per tab in the browser.
+    // A few hundred summaries is a small payload, tab switching stops
+    // hitting the network, and — the actual reason — every tab can show its
+    // own count even while another tab is on screen.
+    queryKey: ['library', 'all'],
+    queryFn: () => getLibrary(),
     refetchInterval: 30_000,
   })
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
@@ -246,6 +283,15 @@ export function LibraryPage() {
       .filter((q) => ACTIVE_DOWNLOAD_STATES.includes(q.state))
       .map((q) => q.mediaItemId),
   )
+
+  // Per-tab counts, so a tab that looks empty is empty rather than
+  // ambiguous — "Books 0" answers the question "is this broken?".
+  const kindCounts = useMemo(() => {
+    if (!items.data) return undefined
+    const counts = { movie: 0, series: 0, book: 0, total: items.data.length }
+    for (const m of items.data) counts[m.kind]++
+    return counts
+  }, [items.data])
 
   const scan = useMutation({
     mutationFn: triggerScan,
@@ -293,6 +339,10 @@ export function LibraryPage() {
       persistSection(k, next[k])
       return next
     })
+    // Any change to what the list contains or how it is ordered invalidates
+    // the page number: page 7 of the old ordering is not page 7 of the new
+    // one, and a stale page can leave the grid looking empty.
+    setPages((prev) => ({ ...prev, [k]: 0 }))
   }
 
   const renderCard = (m: MediaItemSummary) =>
@@ -355,6 +405,11 @@ export function LibraryPage() {
               onClick={() => setKind(t.kind)}
             >
               {t.label}
+              {kindCounts && (
+                <span className="tab-count">
+                  {t.kind ? kindCounts[t.kind] : kindCounts.total}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -439,6 +494,9 @@ export function LibraryPage() {
           const all = (items.data ?? []).filter((m) => m.kind === section.kind)
           if (all.length === 0) return null
           const group = applySection(all, controls[section.kind])
+          const size = controls[section.kind].pageSize
+          const page = pages[section.kind]
+          const visible = sliceForPage(group, page, size)
           return (
             <section key={section.kind} className="lib-section">
               <div className="lib-section-bar">
@@ -454,10 +512,20 @@ export function LibraryPage() {
                   total={all.length}
                 />
               </div>
-              {group.length > 0 ? (
-                <div className="poster-grid">{group.map(renderCard)}</div>
+              {visible.length > 0 ? (
+                <div className="poster-grid">{visible.map(renderCard)}</div>
               ) : (
                 <p className="muted">Nothing in {section.label} matches the current filter.</p>
+              )}
+              {group.length > 0 && (
+                <div className="lib-pager-bar">
+                  <Pager
+                    page={page}
+                    size={size}
+                    total={group.length}
+                    onPage={(n) => setPages((prev) => ({ ...prev, [section.kind]: n }))}
+                  />
+                </div>
               )}
             </section>
           )
@@ -466,8 +534,11 @@ export function LibraryPage() {
         // A flat kind tab: the same section state, one grid.
         (() => {
           const section = KIND_SECTIONS.find((s) => s.kind === kind)!
-          const all = items.data ?? []
+          const all = (items.data ?? []).filter((m) => m.kind === kind)
           const group = applySection(all, controls[kind])
+          const size = controls[kind].pageSize
+          const page = pages[kind]
+          const visible = sliceForPage(group, page, size)
           return (
             <>
               {all.length > 0 && (
@@ -482,9 +553,19 @@ export function LibraryPage() {
                   />
                 </div>
               )}
-              <div className="poster-grid">{group.map(renderCard)}</div>
+              <div className="poster-grid">{visible.map(renderCard)}</div>
               {all.length > 0 && group.length === 0 && (
                 <p className="muted">Nothing in {section.label} matches the current filter.</p>
+              )}
+              {group.length > 0 && (
+                <div className="lib-pager-bar">
+                  <Pager
+                    page={page}
+                    size={size}
+                    total={group.length}
+                    onPage={(n) => setPages((prev) => ({ ...prev, [kind]: n }))}
+                  />
+                </div>
               )}
             </>
           )

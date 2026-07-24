@@ -252,6 +252,14 @@ paths:
         filterable. Falls back to the last scan's unmatched folders when no
         adoption run has happened yet, so a fresh scan never looks empty.
       parameters:
+        - name: kind
+          in: query
+          required: false
+          description: >
+            Restrict to one media kind. Omit for every kind, including the
+            mixed-root entries whose kind was never resolved.
+          schema:
+            $ref: "#/components/schemas/MediaKind"
         - name: q
           in: query
           required: false
@@ -261,6 +269,7 @@ paths:
         - name: limit
           in: query
           required: false
+          description: 0 means all — honoured, not clamped.
           schema:
             type: integer
         - name: offset
@@ -2121,7 +2130,7 @@ components:
 
     ReviewCounts:
       type: object
-      required: [total, ambiguous, none]
+      required: [total, ambiguous, none, movie, series, book, unknown]
       properties:
         total:
           type: integer
@@ -2129,6 +2138,15 @@ components:
           type: integer
         none:
           type: integer
+        movie:
+          type: integer
+        series:
+          type: integer
+        book:
+          type: integer
+        unknown:
+          type: integer
+          description: Entries from mixed roots, where no kind was resolved.
 
     ReviewPage:
       type: object

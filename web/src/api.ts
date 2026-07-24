@@ -237,6 +237,11 @@ export interface ReviewCounts {
   total: number
   ambiguous: number
   none: number
+  movie: number
+  series: number
+  book: number
+  /** Entries from mixed roots, where no kind was resolved. */
+  unknown: number
 }
 
 export interface ReviewPage {
@@ -340,9 +345,15 @@ export const browseFilesystem = (path: string) =>
 export const runAdoption = () => send<AdoptResult>('POST', '/library/adopt')
 export const setRootAutoAdopt = (rootFolderId: number, autoAdopt: boolean) =>
   send('POST', '/library/adopt/confirm', { rootFolderId, autoAdopt })
-export const getReviewQueue = (q: string, limit: number, offset: number) =>
+export const getReviewQueue = (
+  kind: MediaKind | undefined,
+  q: string,
+  limit: number,
+  offset: number,
+) =>
   get<ReviewPage>(
-    `/library/review?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`,
+    `/library/review?${kind ? `kind=${kind}&` : ''}q=${encodeURIComponent(q)}` +
+      `&limit=${limit}&offset=${offset}`,
   )
 export const getIgnoredDirs = () => get<IgnoredPath[]>('/library/scan/ignored')
 export const ignoreDir = (path: string, reason = '') =>

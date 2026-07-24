@@ -1,10 +1,24 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import type { Proposal } from './api'
+import type { MediaKind, Proposal, ReviewCounts } from './api'
 import { getReviewQueue, ignoreDir } from './api'
+import { clampPage, Pager, PageSizePicker } from './Pager'
 
-const PAGE_SIZE = 25
+// Kind tabs, matching the library's vocabulary so the same content is called
+// the same thing in both places.
+const KIND_TABS: { label: string; kind?: MediaKind }[] = [
+  { label: 'All' },
+  { label: 'Movies', kind: 'movie' },
+  { label: 'TV', kind: 'series' },
+  { label: 'Books', kind: 'book' },
+]
+
+function tabCount(counts: ReviewCounts | undefined, kind?: MediaKind): number | undefined {
+  if (!counts) return undefined
+  if (!kind) return counts.total
+  return kind === 'movie' ? counts.movie : kind === 'series' ? counts.series : counts.book
+}
 
 /**
  * The adoption review queue, in a window with pages.
@@ -17,6 +31,8 @@ const PAGE_SIZE = 25
 export function ReviewWindow({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
   const [page, setPage] = useState(0)
+  const [size, setSize] = useState(25)
+  const [kind, setKind] = useState<MediaKind | undefined>(undefined)
   const [query, setQuery] = useState('')
   const [debounced, setDebounced] = useState('')
 
@@ -38,8 +54,8 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
   }, [onClose])
 
   const review = useQuery({
-    queryKey: ['review', debounced, page],
-    queryFn: () => getReviewQueue(debounced, PAGE_SIZE, page * PAGE_SIZE),
+    queryKey: ['review', kind ?? 'all', debounced, size, page],
+    queryFn: () => getReviewQueue(kind, debounced, size, page * size),
   })
 
   const dismiss = useMutation({
@@ -52,7 +68,6 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
   })
 
   const total = review.data?.total ?? 0
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const counts = review.data?.counts
 
   return (
@@ -71,6 +86,26 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
           </button>
         </header>
 
+        <div className="tabs" role="tablist">
+          {KIND_TABS.map((t) => (
+            <button
+              key={t.label}
+              role="tab"
+              aria-selected={kind === t.kind}
+              className={kind === t.kind ? 'tab active' : 'tab'}
+              onClick={() => {
+                setKind(t.kind)
+                setPage(0) // a different tab is a different list
+              }}
+            >
+              {t.label}
+              {tabCount(counts, t.kind) !== undefined && (
+                <span className="tab-count">{tabCount(counts, t.kind)}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
         <div className="form-row">
           <input
             type="search"
@@ -80,9 +115,11 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
           />
           {counts && (
             <span className="muted">
-              {counts.total} total · {counts.ambiguous} ambiguous · {counts.none} no match
+              {counts.ambiguous} ambiguous · {counts.none} no match
+              {counts.unknown > 0 && ` · ${counts.unknown} from mixed roots`}
             </span>
           )}
+          <PageSizePicker size={size} onChange={(n) => { setSize(n); setPage(0) }} />
         </div>
 
         <div className="modal-body">
@@ -103,28 +140,12 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
         </div>
 
         <footer className="modal-foot">
-          <span className="muted">
-            {total === 0
-              ? 'No entries'
-              : `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, total)} of ${total}`}
-          </span>
-          <div className="pager">
-            <button disabled={page === 0} onClick={() => setPage(0)}>
-              « First
-            </button>
-            <button disabled={page === 0} onClick={() => setPage((n) => n - 1)}>
-              ‹ Prev
-            </button>
-            <span className="muted">
-              Page {page + 1} of {pages}
-            </span>
-            <button disabled={page + 1 >= pages} onClick={() => setPage((n) => n + 1)}>
-              Next ›
-            </button>
-            <button disabled={page + 1 >= pages} onClick={() => setPage(pages - 1)}>
-              Last »
-            </button>
-          </div>
+          <Pager
+            page={page}
+            size={size}
+            total={total}
+            onPage={(n) => setPage(clampPage(n, total, size))}
+          />
         </footer>
       </div>
     </div>
