@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-18 · ALL PHASES COMPLETE (81/82 — only the stretch *arr DB importer deferred) · next: launch logistics (Paul-side) + real-world validation**
+> **Snapshot 2026-07-25 · ALL PHASES COMPLETE (81/82 — only the stretch *arr DB importer deferred) · v0.4.0 in real-world deployment · next: Phase 6 quality truth (ADR 0013/0014 — plan ready at [docs/plan-quality-truth.md](docs/plan-quality-truth.md)) + launch logistics**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -19,6 +19,7 @@
 | 3 — Automation | **9/9 ✅** | runs unattended for a month |
 | 4 — Ecosystem compat | **5/6 ✅** (stretch deferred) | Jellyseerr/Prowlarr/Bazarr work against the shim |
 | 5 — Depth & parity | **7/7 ✅** | custom formats, client zoo, lists, anime |
+| 6 — Quality truth (ADR 0013/0014) | 0/9 | on-disk quality measured; target profiles; churn regression pinned |
 | Launch logistics | 2/6 | public repo, releases, name housekeeping |
 
 ## Phase 0 — Walking skeleton ✅ (shipped 2026-07-17)
@@ -127,6 +128,24 @@
 - [x] Mass editor: select-mode on the Library page → bulk monitor/unmonitor/profile via `POST /library/bulk`
 - [x] Optional Prometheus `/metrics` (`MONARR_METRICS=true`): build info, items by kind, active queue, wanted total, uptime — hand-rolled exposition, no new dependency
 
+## Phase 6 — Quality truth (ADR 0013 + 0014 — planned 2026-07-25)
+
+Plan: [docs/plan-quality-truth.md](docs/plan-quality-truth.md). Fixes the
+adopted-file blind spot (unknown on-disk quality is hunted as *missing* →
+duplicate grabs) and replaces the allowed-list+cutoff profile model with
+target-based profiles ("Any — upgrades until WEB-DL 1080p, then stops" was
+the symptom).
+
+- [ ] `domain/mediainfo` native prober: MKV (EBML) + MP4 header walkers — resolution, codec, bit depth, HDR/DV, audio, duration/bitrate; fixture corpus + fuzz; no runtime deps (plan §4, M1)
+- [ ] Migration 0018: `media_files` media_info + provenance/confidence/probed_at; `DiskStateForItem` replaces ambiguous `BestQualityForItem` (plan §5/§7, M2)
+- [ ] Probe wiring: `library.probe` jobs from scan (deduped per file), inline probe on import; backfill = first post-upgrade scan (plan §6.1–6.2, M2)
+- [ ] Source inference + filename cross-check: measured resolution absolute; source inferred with confidence; tokens demoted to hints; provenance recorded (plan §4.3, M3)
+- [ ] Target-based `Profile` (floor/target/upgrades) + migration 0019 in-place seed rewrite, ids stable; "Any" retired → "1080p" (ADR 0014 §4, M4)
+- [ ] Decision engine + wanted index on the `Met/Acceptable/Upgrade` predicates — unknown ≠ missing; `TestUnknownQualityOnDiskIsNotHunted` pins the churn fix (M4)
+- [ ] Profile CRUD API + editor UI; QualityFacts measured pill + provenance badges; Files table quality columns (plan §6.3, M5)
+- [ ] Compat `/qualityprofile` synthesized from targets — fake-consumer suite green untouched (plan §6.4, M5)
+- [ ] Post-import verification: `quality_mismatch` history event (log-only); docs updated (usage/settings/architecture); ADRs 0013/0014 → Accepted (M6)
+
 ## Launch logistics
 
 - [x] `monarr-media` GitHub org (free) + private repo + initial push
@@ -146,6 +165,14 @@
 | [0004](docs/adr/0004-sqlite-only.md) | SQLite only (modernc, WAL, single writer); no Postgres |
 | [0005](docs/adr/0005-filesystem-adoption.md) | Migration by filesystem adoption; *arr DB import is a stretch item |
 | [0006](docs/adr/0006-books-third-media-kind.md) | Books as a third kind — ebooks + audiobooks, Phase 2.5 |
+| [0007](docs/adr/0007-remote-database-postgres.md) | Postgres for cluster HA evaluated, deferred with revisit triggers — superseded by 0008 |
+| [0008](docs/adr/0008-distributed-execution.md) | Multi-host execution: leased job queue first (on SQLite), Postgres for clustered mode, mount-aware routing |
+| [0009](docs/adr/0009-root-folder-kinds.md) | Root folders carry a media kind; mixed roots always ask |
+| [0010](docs/adr/0010-scan-adopts.md) | Scan proposes matches; adoption is bulk work with a confidence bar, not a to-do list |
+| [0011](docs/adr/0011-series-metadata-provider.md) | Series metadata is a chain: TheTVDB when keyed, TVmaze free, TMDB always |
+| [0012](docs/adr/0012-manual-entries.md) | Manual entries: a library record no provider backs, episodes read off the disk |
+| [0013](docs/adr/0013-measured-quality.md) | **Proposed:** on-disk quality is measured (native probe); filename demoted to hint; unknown ≠ missing; don't churn |
+| [0014](docs/adr/0014-target-profiles.md) | **Proposed:** a profile is a floor + target + upgrades switch; grabs capped at target resolution; "Any" retired |
 
 ## Milestone commits
 

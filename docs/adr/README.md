@@ -17,5 +17,7 @@ accepted; a change of course gets a new ADR that supersedes the old one.
 | [0010](0010-scan-adopts.md) | Scan proposes matches; adoption is bulk work, not a to-do list | Accepted |
 | [0011](0011-series-metadata-provider.md) | Series metadata is a chain: TheTVDB when keyed, TVmaze free, TMDB always | Accepted |
 | [0012](0012-manual-entries.md) | Manual entries: a library record no provider backs, episodes read off the disk | Accepted |
+| [0013](0013-measured-quality.md) | On-disk quality is measured (native probe), not inferred from names | Proposed |
+| [0014](0014-target-profiles.md) | A quality profile is a target, not a list with a cutoff | Proposed |
 
 Context for all of these lives in [../architecture.md](../architecture.md).
