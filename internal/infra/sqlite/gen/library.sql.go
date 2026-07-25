@@ -812,7 +812,13 @@ SELECT
     -- copy must not make the main copy look unfinished.
     -- COALESCE because group_concat over no rows is NULL, and an item with
     -- no files is the common case on a fresh library.
-    (SELECT COALESCE(group_concat(f2.quality), '') FROM media_files f2
+    -- Each entry is quality~provenance~confidence: they travel together
+    -- because the weakest file's PROVENANCE is what decides whether the
+    -- target counts as met (ADR 0013 don't-churn), and two separate
+    -- group_concats would have no guaranteed row order to align them by.
+    (SELECT COALESCE(group_concat(
+              f2.quality || '~' || f2.quality_provenance || '~' || f2.quality_confidence
+            ), '') FROM media_files f2
       WHERE f2.media_item_id = m.id AND f2.quality != ''
         -- The primary copy stores copy_id NULL, not 0; "= 0" matches nothing
         -- and every item reports no quality at all.

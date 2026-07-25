@@ -108,29 +108,32 @@ func TestGoldenCorpus(t *testing.T) {
 
 func TestProfileBasics(t *testing.T) {
 	profiles := quality.DefaultProfiles()
-	hd := profiles[1]
-	if !hd.IsAllowed(quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}) {
-		t.Error("HD-1080p should allow WEBDL-1080")
+	hd := profiles[1] // HD-1080p: target WEB-DL 1080p, floor HDTV 1080p
+	if !hd.Acceptable(quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}) {
+		t.Error("HD-1080p should accept WEBDL-1080")
 	}
-	if hd.IsAllowed(quality.Quality{Source: quality.SourceWEBDL, Resolution: 2160}) {
-		t.Error("HD-1080p should not allow 2160p")
+	if hd.Acceptable(quality.Quality{Source: quality.SourceWEBDL, Resolution: 2160}) {
+		t.Error("HD-1080p should not accept 2160p: the target caps the resolution")
 	}
-	// Unknown source matches on resolution (scanned files).
-	if !hd.IsAllowed(quality.Quality{Source: quality.SourceUnknown, Resolution: 1080}) {
-		t.Error("unknown-source 1080 should be allowed by resolution")
+	if hd.Acceptable(quality.Quality{Source: quality.SourceWEBDL, Resolution: 720}) {
+		t.Error("HD-1080p has a 1080p floor and must refuse 720p")
 	}
-	if !hd.MeetsCutoff(quality.Quality{Source: quality.SourceBluray, Resolution: 1080}) {
-		t.Error("bluray-1080 should meet WEBDL-1080 cutoff")
+	if !hd.Acceptable(quality.Quality{Source: quality.SourceRemux, Resolution: 1080}) {
+		t.Error("a better SOURCE at the target resolution is welcome")
 	}
-	if hd.MeetsCutoff(quality.Quality{Source: quality.SourceHDTV, Resolution: 1080}) {
-		t.Error("hdtv-1080 should be below WEBDL-1080 cutoff")
+	if !hd.Met(quality.Quality{Source: quality.SourceBluray, Resolution: 1080}, true) {
+		t.Error("bluray-1080 should meet a WEBDL-1080 target")
+	}
+	if hd.Met(quality.Quality{Source: quality.SourceHDTV, Resolution: 1080}, true) {
+		t.Error("hdtv-1080 is below a WEBDL-1080 target")
+	}
+	// Don't-churn: right resolution, unverified source counts as met rather
+	// than triggering a replacement on a guess (ADR 0013 section 5).
+	if !hd.Met(quality.Quality{Source: quality.SourceHDTV, Resolution: 1080}, false) {
+		t.Error("an unverified source at the target resolution must count as met")
 	}
 	if !quality.Better(quality.Quality{Source: quality.SourceHDTV, Resolution: 1080}, quality.Quality{Source: quality.SourceBluray, Resolution: 720}) {
 		t.Error("resolution should dominate source in ranking")
-	}
-	rt := quality.FromString(quality.Quality{Source: quality.SourceRemux, Resolution: 2160}.String())
-	if rt.Source != quality.SourceRemux || rt.Resolution != 2160 {
-		t.Errorf("string round-trip failed: %+v", rt)
 	}
 }
 

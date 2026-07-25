@@ -42,8 +42,8 @@ func (s *Service) Wanted(ctx context.Context) ([]domain.Wantable, error) {
 }
 
 // buildWanted walks the library and collects monitored wantables that are
-// missing or upgradable. Series contribute per-episode wantables (season
-// packs are a search strategy, not a wanted unit).
+// missing or upgradable. Series contribute per-episode wantables (season packs
+// are a search strategy, not a wanted unit).
 func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 	summaries, err := s.db.ListMediaItems(ctx, "")
 	if err != nil {
@@ -62,48 +62,21 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 		if err != nil {
 			continue
 		}
-		wants := func(q *quality.Quality) bool {
-			if q == nil {
-				return true // missing
-			}
-			return profile.UpgradesAllowed && !profile.MeetsCutoff(*q)
-		}
 		switch item.Kind {
 		case domain.KindMovie, domain.KindBook:
 			w, err := s.target(ctx, item, 0, 0)
 			if err != nil {
 				continue
 			}
-			var have *quality.Quality
-			if q, ok := w.CurrentQuality(); ok {
-				have = &q
-			}
-			if wants(have) {
+			if wants(profile, w) {
 				out = append(out, w)
 			}
 		case domain.KindSeries:
-			epQuals, err := s.episodeQualities(ctx, item, 0)
+			epStates, err := s.episodeStates(ctx, item, 0)
 			if err != nil {
 				continue
 			}
-			for _, season := range item.Seasons {
-				if !season.Monitored {
-					continue
-				}
-				for _, e := range season.Episodes {
-					if !e.Monitored || e.AirDate == "" {
-						continue
-					}
-					if wants(epQuals[e.ID]) {
-						out = append(out, domain.EpisodeWantable{
-							Item: item.ID, EpisodeID: e.ID, Profile: item.QualityProfileID,
-							Mon: true, Title: item.Title, Year: item.Year,
-							Season: e.SeasonNumber, Episode: e.EpisodeNumber,
-							Have: epQuals[e.ID], Absolute: e.AbsoluteNum,
-						})
-					}
-				}
-			}
+			out = append(out, s.wantedEpisodes(item, profile, epStates, nil)...)
 		}
 
 		// Additional copies: each monitored copy wants its own file set at
@@ -113,15 +86,9 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 			if !cp.Monitored || item.Kind == domain.KindBook {
 				continue
 			}
-			profile, err := s.db.GetProfile(ctx, cp.QualityProfileID)
+			copyProfile, err := s.db.GetProfile(ctx, cp.QualityProfileID)
 			if err != nil {
 				continue
-			}
-			copyWants := func(q *quality.Quality) bool {
-				if q == nil {
-					return true
-				}
-				return profile.UpgradesAllowed && !profile.MeetsCutoff(*q)
 			}
 			switch item.Kind {
 			case domain.KindMovie:
@@ -129,41 +96,75 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 				if err != nil {
 					continue
 				}
-				var have *quality.Quality
-				if q, ok := w.CurrentQuality(); ok {
-					have = &q
-				}
-				if copyWants(have) {
+				if wants(copyProfile, w) {
 					out = append(out, w)
 				}
 			case domain.KindSeries:
-				epQuals, err := s.episodeQualities(ctx, item, cp.ID)
+				epStates, err := s.episodeStates(ctx, item, cp.ID)
 				if err != nil {
 					continue
 				}
-				for _, season := range item.Seasons {
-					if !season.Monitored {
-						continue
-					}
-					for _, e := range season.Episodes {
-						if !e.Monitored || e.AirDate == "" {
-							continue
-						}
-						if copyWants(epQuals[e.ID]) {
-							out = append(out, domain.EpisodeWantable{
-								Item: item.ID, EpisodeID: e.ID, Profile: cp.QualityProfileID,
-								Mon: true, Title: item.Title, Year: item.Year,
-								Season: e.SeasonNumber, Episode: e.EpisodeNumber,
-								Have: epQuals[e.ID], Absolute: e.AbsoluteNum,
-								Copy: cp.ID, CopyName: copyLabel(cp),
-							})
-						}
-					}
-				}
+				out = append(out, s.wantedEpisodes(item, copyProfile, epStates, &cp)...)
 			}
 		}
 	}
 	return out, nil
+}
+
+// wants is THE line this whole phase exists to change (ADR 0013 §5).
+//
+// Three states, three answers:
+//
+//   - Nothing on disk: wanted. This is what "missing" means, and it still
+//     hunts exactly as before.
+//   - Files on disk whose quality could not be determined: NOT wanted. The
+//     files are right there. Hunting a replacement for something we simply
+//     failed to measure is how a 17 GB library file got a duplicate grabbed
+//     on top of it and the original left behind with no story.
+//   - Files with a known quality: wanted only while upgrades are on and the
+//     profile's target is not met — where "met" carries the don't-churn rule,
+//     so an unverified SOURCE at the target resolution counts as done.
+func wants(profile quality.Profile, w domain.Wantable) bool {
+	current, known := w.CurrentQuality()
+	if !known {
+		return !w.OnDisk()
+	}
+	return profile.UpgradesAllowed && !profile.Met(current, w.SourceVerified())
+}
+
+// wantedEpisodes builds the episode wantables for one copy of a series (cp nil
+// = the primary).
+func (s *Service) wantedEpisodes(item domain.MediaItem, profile quality.Profile,
+	states map[int64]episodeState, cp *domain.MediaCopy) []domain.Wantable {
+	profileID := item.QualityProfileID
+	var copyID int64
+	copyName := ""
+	if cp != nil {
+		profileID, copyID, copyName = cp.QualityProfileID, cp.ID, copyLabel(*cp)
+	}
+	var out []domain.Wantable
+	for _, season := range item.Seasons {
+		if !season.Monitored {
+			continue
+		}
+		for _, e := range season.Episodes {
+			if !e.Monitored || e.AirDate == "" {
+				continue
+			}
+			st := states[e.ID]
+			ep := domain.EpisodeWantable{
+				Item: item.ID, EpisodeID: e.ID, Profile: profileID,
+				Mon: true, Title: item.Title, Year: item.Year,
+				Season: e.SeasonNumber, Episode: e.EpisodeNumber,
+				Have: st.Have, Files: st.HasFile, Verified: st.Verified,
+				Absolute: e.AbsoluteNum, Copy: copyID, CopyName: copyName,
+			}
+			if wants(profile, ep) {
+				out = append(out, ep)
+			}
+		}
+	}
+	return out
 }
 
 // notInFlight filters out wantables that already have an active download —

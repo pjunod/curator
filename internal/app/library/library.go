@@ -703,7 +703,7 @@ func (s *Service) gradeUpgrades(ctx context.Context, items []domain.MediaItem) {
 		if !ok {
 			continue
 		}
-		items[i].QualityTarget = p.Cutoff
+		items[i].QualityTarget = p.Target
 		items[i].Upgrade = upgradeState(items[i], p)
 	}
 }
@@ -723,7 +723,7 @@ func upgradeState(m domain.MediaItem, p quality.Profile) domain.UpgradeState {
 		return domain.UpgradeUnknown
 	}
 	switch {
-	case p.MeetsCutoff(m.Quality):
+	case p.Met(m.Quality, m.QualityVerified):
 		return domain.UpgradeMet
 	case p.UpgradesAllowed:
 		return domain.UpgradeSeeking
@@ -759,25 +759,29 @@ func (s *Service) Get(ctx context.Context, id int64) (domain.MediaItem, error) {
 // Best-effort, like gradeUpgrades: a provider of none of this is an
 // ungraded item, never a failed request.
 func (s *Service) gradeOne(ctx context.Context, item *domain.MediaItem) {
-	quals, err := s.db.FileQualities(ctx, item.ID)
+	records, err := s.db.FileQualityRecords(ctx, item.ID)
 	if err != nil {
 		s.log.Debug("library: file qualities unreadable", "item", item.ID, "err", err)
 	}
+	byID := make(map[int64]sqlite.FileQuality, len(records))
+	for _, r := range records {
+		byID[r.FileID] = r
+	}
 	var worst quality.Quality
-	var have bool
+	var verified, have bool
 	for _, f := range item.Files {
 		if f.CopyID != 0 {
 			continue // a deliberate 720p second copy is not the main copy's problem
 		}
-		q, ok := quals[f.ID]
-		if !ok {
+		rec, ok := byID[f.ID]
+		if !ok || !rec.Known {
 			continue
 		}
-		if !have || quality.Rank(q) < quality.Rank(worst) {
-			worst, have = q, true
+		if !have || quality.Rank(rec.Quality) < quality.Rank(worst) {
+			worst, verified, have = rec.Quality, rec.SourceVerified(), true
 		}
 	}
-	item.Quality = worst
+	item.Quality, item.QualityVerified = worst, verified
 
 	// The list view counts monitored aired episodes; here the loaded
 	// episodes answer the same question directly.
@@ -796,7 +800,7 @@ func (s *Service) gradeOne(ctx context.Context, item *domain.MediaItem) {
 	if err != nil {
 		return
 	}
-	item.QualityTarget = p.Cutoff
+	item.QualityTarget = p.Target
 	item.Upgrade = upgradeState(*item, p)
 }
 

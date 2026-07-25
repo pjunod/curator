@@ -16,19 +16,44 @@ func TestSeededProfiles(t *testing.T) {
 	if err != nil || len(profiles) != 5 {
 		t.Fatalf("profiles = %d, err %v", len(profiles), err)
 	}
+	// Migration 0019 rewrote the seeds in place. Ids are stable because
+	// media_items and media_copies reference them; only the shape and two of
+	// the names changed (ADR 0014 section 4).
 	hd, err := db.GetProfile(ctx, 2)
-	if err != nil || hd.Name != "HD-1080p" || len(hd.Allowed) != 5 {
+	if err != nil || hd.Name != "HD-1080p" {
 		t.Fatalf("hd profile = %+v err %v", hd, err)
 	}
-	if hd.Cutoff != (quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}) {
-		t.Errorf("cutoff = %+v", hd.Cutoff)
+	if hd.Target != (quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}) {
+		t.Errorf("target = %+v", hd.Target)
 	}
+	if hd.Floor == nil || *hd.Floor != (quality.Quality{Source: quality.SourceHDTV, Resolution: 1080}) {
+		t.Errorf("floor = %+v, want hdtv-1080 (never accept below 1080p)", hd.Floor)
+	}
+
+	// "Any" is retired. What it actually did -- stop at WEB-DL 1080p -- is
+	// what the profile now says it does, under a name that says it.
+	def, err := db.GetProfile(ctx, 1)
+	if err != nil || def.Name != "1080p" {
+		t.Fatalf("default profile = %+v err %v", def, err)
+	}
+	if def.Floor != nil {
+		t.Errorf("the default profile should have no floor, got %+v", def.Floor)
+	}
+	if def.Acceptable(quality.Quality{Source: quality.SourceRemux, Resolution: 2160}) {
+		t.Error("the 1080p profile must not accept a 2160p remux -- that is the whole fix")
+	}
+
+	uhd, err := db.GetProfile(ctx, 3)
+	if err != nil || uhd.Name != "4K" {
+		t.Fatalf("uhd profile = %+v err %v", uhd, err)
+	}
+
 	ebook, err := db.GetProfile(ctx, quality.EbookProfileID)
-	if err != nil || ebook.Name != "Ebook" || len(ebook.Allowed) != 4 {
+	if err != nil || ebook.Name != "Ebook" {
 		t.Fatalf("ebook profile = %+v err %v", ebook, err)
 	}
-	if ebook.Cutoff != (quality.Quality{Source: quality.SourceEPUB}) {
-		t.Errorf("ebook cutoff = %+v", ebook.Cutoff)
+	if ebook.Target != (quality.Quality{Source: quality.SourceEPUB}) {
+		t.Errorf("ebook target = %+v", ebook.Target)
 	}
 }
 

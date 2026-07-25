@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/quality"
 	sqlitegen "github.com/monarr-media/monarr/internal/infra/sqlite/gen"
 )
@@ -398,7 +399,7 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 			item.EpisodeCount = int(s.AiredEpisodes)
 			item.EpisodeFileCount = int(s.HaveEpisodes)
 			item.FileCount = int(s.Files)
-			item.Quality = weakestQuality(textOf(s.Qualities))
+			item.Quality, item.QualityVerified = weakestRecorded(textOf(s.Qualities))
 		}
 		out = append(out, item)
 	}
@@ -420,27 +421,36 @@ func textOf(v any) string {
 	}
 }
 
-// weakestQuality picks the lowest-ranked quality from the comma-joined list
-// the stats query returns.
+// weakestRecorded picks the lowest-ranked quality from the joined list the
+// stats query returns, and reports whether THAT file's source is verified.
 //
 // The weakest, not the best: it is the one that decides whether the item is
 // still being hunted. A series with nine 1080p episodes and one 720p has not
-// finished at 1080p, and a grid that says otherwise is the reason someone
-// has to open every item to find out.
-func weakestQuality(joined string) quality.Quality {
+// finished at 1080p, and a grid that says otherwise is the reason someone has
+// to open every item to find out.
+//
+// Each entry is "quality~provenance~confidence". Older rows written before
+// ADR 0013 carry no provenance and read as unverified, which is the safe
+// direction: unverified only ever makes monarr stop hunting, never start.
+func weakestRecorded(joined string) (quality.Quality, bool) {
 	var worst quality.Quality
-	var have bool
+	var verified, have bool
 	for _, raw := range strings.Split(joined, ",") {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
 		}
-		q := quality.FromString(raw)
+		parts := strings.Split(raw, "~")
+		q := quality.FromString(parts[0])
+		v := false
+		if len(parts) >= 3 {
+			v = mediainfo.Provenance(parts[1]).Verified(mediainfo.Confidence(parts[2]))
+		}
 		if !have || quality.Rank(q) < quality.Rank(worst) {
-			worst, have = q, true
+			worst, verified, have = q, v, true
 		}
 	}
-	return worst
+	return worst, verified
 }
 
 // SetSeasonMonitored flips one season's monitored flag and cascades it to

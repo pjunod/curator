@@ -87,10 +87,10 @@ func TestEpisodeAndSeasonPackMatching(t *testing.T) {
 }
 
 func TestDecisionEngine(t *testing.T) {
-	profile := quality.DefaultProfiles()[1] // HD-1080p, cutoff WEBDL-1080
+	profile := quality.DefaultProfiles()[1] // HD-1080p: target WEBDL-1080, floor HDTV-1080
 	missing := domain.MovieWantable{Item: 1, Title: "M", Mon: true}
-	haveHDTV := domain.MovieWantable{Item: 1, Title: "M", Mon: true, Have: q(quality.SourceHDTV, 1080)}
-	haveCutoff := domain.MovieWantable{Item: 1, Title: "M", Mon: true, Have: q(quality.SourceBluray, 1080)}
+	haveHDTV := domain.MovieWantable{Item: 1, Title: "M", Mon: true, Have: q(quality.SourceHDTV, 1080), Verified: true}
+	haveTarget := domain.MovieWantable{Item: 1, Title: "M", Mon: true, Have: q(quality.SourceBluray, 1080), Verified: true}
 	unmon := domain.MovieWantable{Item: 1, Title: "M", Mon: false}
 
 	web1080 := quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}
@@ -99,14 +99,34 @@ func TestDecisionEngine(t *testing.T) {
 	if d := decision.Decide(web1080, missing, profile); !d.Accepted || d.IsUpgrade {
 		t.Errorf("missing + allowed = accept: %+v", d)
 	}
-	if d := decision.Decide(uhd, missing, profile); d.Accepted || d.Rejections[0].Code != decision.CodeQualityNotAllow {
-		t.Errorf("2160 on HD profile = quality_not_allowed: %+v", d)
+	if d := decision.Decide(uhd, missing, profile); d.Accepted || d.Rejections[0].Code != decision.CodeAboveTarget {
+		t.Errorf("2160 on a 1080p target = above_target: %+v", d)
+	}
+	sd := quality.Quality{Source: quality.SourceWEBDL, Resolution: 480}
+	if d := decision.Decide(sd, missing, profile); d.Accepted || d.Rejections[0].Code != decision.CodeBelowFloor {
+		t.Errorf("480p under a 1080p floor = below_floor: %+v", d)
 	}
 	if d := decision.Decide(web1080, haveHDTV, profile); !d.Accepted || !d.IsUpgrade {
 		t.Errorf("webdl over hdtv = upgrade: %+v", d)
 	}
-	if d := decision.Decide(web1080, haveCutoff, profile); d.Accepted || d.Rejections[0].Code != decision.CodeAtCutoff {
-		t.Errorf("already at cutoff: %+v", d)
+	if d := decision.Decide(web1080, haveTarget, profile); d.Accepted || d.Rejections[0].Code != decision.CodeTargetMet {
+		t.Errorf("target already met: %+v", d)
+	}
+	// The ADR 0013 state: files on disk, quality unmeasurable. Not missing,
+	// and automation must not replace what it could not read.
+	unverifiable := domain.MovieWantable{Item: 1, Title: "M", Mon: true, Files: true}
+	if d := decision.Decide(web1080, unverifiable, profile); d.Accepted ||
+		d.Rejections[0].Code != decision.CodeUnverified {
+		t.Errorf("on-disk-but-unmeasured must not be treated as missing: %+v", d)
+	}
+	// Don't-churn: right resolution, source only guessed, so it counts as met
+	// rather than as an upgrade opportunity.
+	unverifiedSource := domain.MovieWantable{
+		Item: 1, Title: "M", Mon: true, Have: q(quality.SourceHDTV, 1080), Files: true,
+	}
+	if d := decision.Decide(web1080, unverifiedSource, profile); d.Accepted ||
+		d.Rejections[0].Code != decision.CodeTargetMet {
+		t.Errorf("unverified source at target resolution must read as met: %+v", d)
 	}
 	hdtv := quality.Quality{Source: quality.SourceHDTV, Resolution: 1080}
 	if d := decision.Decide(hdtv, haveHDTV, profile); d.Accepted || d.Rejections[0].Code != decision.CodeNotAnUpgrade {

@@ -13,15 +13,22 @@ import (
 
 // ---- profiles ----
 
+// profileDef is the stored shape of a profile (ADR 0014 §1), migrated in place
+// by 0019. Only this shape is read: goose is up-only, so there is no version of
+// the database that still holds the old allowed+cutoff form, and carrying a
+// dual-format reader for a state that cannot exist is how dead code survives.
 type profileDef struct {
-	Allowed []struct {
-		Source     string `json:"source"`
-		Resolution int    `json:"resolution"`
-	} `json:"allowed"`
-	Cutoff struct {
-		Source     string `json:"source"`
-		Resolution int    `json:"resolution"`
-	} `json:"cutoff"`
+	Target qualityDef  `json:"target"`
+	Floor  *qualityDef `json:"floor"`
+}
+
+type qualityDef struct {
+	Source     string `json:"source"`
+	Resolution int    `json:"resolution"`
+}
+
+func (q qualityDef) quality() quality.Quality {
+	return quality.Quality{Source: quality.Source(q.Source), Resolution: q.Resolution}
 }
 
 func profileFromRow(r sqlitegen.QualityProfile) (quality.Profile, error) {
@@ -31,10 +38,11 @@ func profileFromRow(r sqlitegen.QualityProfile) (quality.Profile, error) {
 	}
 	p := quality.Profile{
 		ID: r.ID, Name: r.Name, UpgradesAllowed: r.UpgradesAllowed != 0,
-		Cutoff: quality.Quality{Source: quality.Source(def.Cutoff.Source), Resolution: def.Cutoff.Resolution},
+		Target: def.Target.quality(),
 	}
-	for _, a := range def.Allowed {
-		p.Allowed = append(p.Allowed, quality.Quality{Source: quality.Source(a.Source), Resolution: a.Resolution})
+	if def.Floor != nil {
+		f := def.Floor.quality()
+		p.Floor = &f
 	}
 	return p, nil
 }

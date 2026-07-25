@@ -59,7 +59,7 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		return 0, false, fmt.Errorf("no media files in %s", savePath)
 	}
 
-	epQuals, err := s.episodeQualities(ctx, item, scope.CopyID)
+	epStates, err := s.episodeStates(ctx, item, scope.CopyID)
 	if err != nil {
 		return 0, false, err
 	}
@@ -88,9 +88,9 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		case domain.KindMovie:
 			wasUpgrade, err = s.importMovieFile(ctx, item, scope, profile, src, q, dl.ReleaseTitle)
 		case domain.KindBook:
-			wasUpgrade, err = s.importBookFile(ctx, item, scope, src, q)
+			wasUpgrade, err = s.importBookFile(ctx, item, scope, profile, src, q)
 		default:
-			wasUpgrade, err = s.importEpisodeFile(ctx, item, scope, profile, epQuals, src, p, q, dl.ReleaseTitle)
+			wasUpgrade, err = s.importEpisodeFile(ctx, item, scope, profile, epStates, src, p, q, dl.ReleaseTitle)
 		}
 		if err != nil {
 			s.log.Warn("import: file skipped", "file", filepath.Base(src), "reason", err)
@@ -152,8 +152,9 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	}
 	upgrade := false
 	if state.Best != nil {
-		if !quality.Better(q, *state.Best) {
-			return false, fmt.Errorf("%s does not improve on %s", q.Display(), state.Best.Display())
+		if !profile.Upgrade(q, *state.Best, state.SourceVerified) {
+			return false, fmt.Errorf("%s does not improve on %s under profile %q",
+				q.Display(), state.Best.Display(), profile.Name)
 		}
 		upgrade = true
 	}
@@ -182,15 +183,16 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 // importBookFile places one book file into <library>/<Author>/<Title>/ as
 // "Title - Author.ext" (Calibre-friendly, ADR 0006), with the same
 // upgrade-or-reject semantics as movies.
-func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, src string, q quality.Quality) (bool, error) {
+func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality) (bool, error) {
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return false, err
 	}
 	upgrade := false
 	if state.Best != nil {
-		if !quality.Better(q, *state.Best) {
-			return false, fmt.Errorf("%s does not improve on %s", q.Display(), state.Best.Display())
+		if !profile.Upgrade(q, *state.Best, state.SourceVerified) {
+			return false, fmt.Errorf("%s does not improve on %s under profile %q",
+				q.Display(), state.Best.Display(), profile.Name)
 		}
 		upgrade = true
 	}
@@ -213,7 +215,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 		mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
 }
 
-func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epQuals map[int64]*quality.Quality, src string, p parser.Parsed, q quality.Quality, releaseTitle string) (bool, error) {
+func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, releaseTitle string) (bool, error) {
 	season, eps := p.Season, p.Episodes
 	if len(eps) == 0 {
 		if fx, ok := filename.Extract(filepath.Base(src)); ok {
@@ -229,6 +231,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	var epIDs []int64
 	var epTitles []string
 	var worst *quality.Quality
+	worstVerified := true
 	missing := false
 	for _, epNum := range eps {
 		epID, err := s.db.GetEpisodeID(ctx, item.ID, season, epNum)
@@ -246,10 +249,15 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 				}
 			}
 		}
-		if cur := epQuals[epID]; cur == nil {
+		st := epStates[epID]
+		if st.Have == nil {
+			// Nothing known here. If a file exists it is unverified rather
+			// than missing, and either way this import is not an upgrade
+			// over something we cannot compare against.
 			missing = true
-		} else if worst == nil || quality.Better(*worst, *cur) {
-			worst = cur
+		} else if worst == nil || quality.Better(*worst, *st.Have) {
+			worst = st.Have
+			worstVerified = st.Verified
 		}
 	}
 	if len(epIDs) == 0 {
@@ -257,12 +265,12 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	}
 	upgrade := false
 	if !missing && worst != nil {
-		if !quality.Better(q, *worst) {
-			return false, fmt.Errorf("%s does not improve on %s", q.Display(), worst.Display())
+		if !profile.Upgrade(q, *worst, worstVerified) {
+			return false, fmt.Errorf("%s does not improve on %s under profile %q",
+				q.Display(), worst.Display(), profile.Name)
 		}
 		upgrade = true
 	}
-	_ = profile
 
 	epToken := fmt.Sprintf("S%02dE%02d", season, eps[0])
 	if len(eps) > 1 {

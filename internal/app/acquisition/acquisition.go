@@ -102,31 +102,50 @@ func (s *Service) publish(e bus.Event) {
 
 // ---- wantable construction ----
 
-// episodeQualities maps episode id → best on-disk quality among ONE
-// copy's files (copyID 0 = primary). Copies never see each other's files.
-func (s *Service) episodeQualities(ctx context.Context, item domain.MediaItem, copyID int64) (map[int64]*quality.Quality, error) {
+// episodeState is what ONE copy has on disk for one episode: whether a file is
+// there at all, the best KNOWN quality among the files covering it, and whether
+// that quality's source is trustworthy.
+//
+// The three are separate on purpose. "No file" and "a file whose quality we
+// could not determine" used to be the same nil, and every decision path read
+// it as the first — which is how a 17 GB file on disk got hunted as missing
+// (ADR 0013).
+type episodeState struct {
+	HasFile  bool
+	Have     *quality.Quality
+	Verified bool
+}
+
+// episodeStates maps episode id → what one copy has for it (copyID 0 =
+// primary). Copies never see each other's files.
+func (s *Service) episodeStates(ctx context.Context, item domain.MediaItem, copyID int64) (map[int64]episodeState, error) {
 	files, err := s.db.ListFilesForItem(ctx, item.ID)
 	if err != nil {
 		return nil, err
 	}
-	qualities, err := s.db.FileQualities(ctx, item.ID)
+	records, err := s.db.FileQualityRecords(ctx, item.ID)
 	if err != nil {
 		return nil, err
 	}
-	out := map[int64]*quality.Quality{}
+	byID := make(map[int64]sqlite.FileQuality, len(records))
+	for _, r := range records {
+		byID[r.FileID] = r
+	}
+	out := map[int64]episodeState{}
 	for _, f := range files {
 		if f.CopyID != copyID {
 			continue
 		}
-		q, ok := qualities[f.ID]
-		if !ok {
-			continue
-		}
+		rec := byID[f.ID]
 		for _, epID := range f.EpisodeIDs {
-			if cur := out[epID]; cur == nil || quality.Better(q, *cur) {
-				qq := q
-				out[epID] = &qq
+			st := out[epID]
+			st.HasFile = true
+			if rec.Known && (st.Have == nil || quality.Better(rec.Quality, *st.Have)) {
+				q := rec.Quality
+				st.Have = &q
+				st.Verified = rec.SourceVerified()
 			}
+			out[epID] = st
 		}
 	}
 	return out, nil
@@ -171,7 +190,7 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 		}, nil
 	}
 
-	epQuals, err := s.episodeQualities(ctx, item, copyID)
+	epStates, err := s.episodeStates(ctx, item, copyID)
 	if err != nil {
 		return nil, err
 	}
@@ -186,10 +205,12 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 	}
 	copyMon := cp == nil || cp.Monitored
 	mkEp := func(e domain.Episode) domain.EpisodeWantable {
+		st := epStates[e.ID]
 		return domain.EpisodeWantable{
 			Item: item.ID, EpisodeID: e.ID, Profile: profileID,
 			Mon: item.Monitored && e.Monitored && copyMon, Title: item.Title, Year: item.Year,
-			Season: e.SeasonNumber, Episode: e.EpisodeNumber, Have: epQuals[e.ID],
+			Season: e.SeasonNumber, Episode: e.EpisodeNumber,
+			Have: st.Have, Files: st.HasFile, Verified: st.Verified,
 			Absolute: e.AbsoluteNum, Copy: copyID, CopyName: copyName,
 		}
 	}

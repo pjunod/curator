@@ -105,12 +105,13 @@ func TestTheWeakestFileDecidesTheState(t *testing.T) {
 // promise something that will never happen.
 func TestUpgradesOffReadsAsCappedRatherThanSeeking(t *testing.T) {
 	p := quality.Profile{
-		ID: 99, Cutoff: quality.Quality{Source: quality.SourceWEBDL, Resolution: 2160},
+		ID: 99, Target: quality.Quality{Source: quality.SourceWEBDL, Resolution: 2160},
 		UpgradesAllowed: false,
 	}
 	m := domain.MediaItem{
 		Kind: domain.KindMovie, FileCount: 1,
-		Quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		Quality:         quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		QualityVerified: true,
 	}
 	if got := upgradeState(m, p); got != domain.UpgradeCapped {
 		t.Errorf("want capped, got %q", got)
@@ -127,7 +128,7 @@ func TestUpgradesOffReadsAsCappedRatherThanSeeking(t *testing.T) {
 // an adopted file whose name carries no quality tag ("A Good Day to Die
 // Hard.mkv") has nothing recorded, which is not the same as not existing.
 func TestAFileWithNoRecordedQualityIsNotMissing(t *testing.T) {
-	p := quality.Profile{ID: 1, Cutoff: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}}
+	p := quality.Profile{ID: 1, Target: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}}
 	m := domain.MediaItem{Kind: domain.KindMovie, FileCount: 1} // quality zero
 	if got := upgradeState(m, p); got != domain.UpgradeUnknown {
 		t.Errorf("want unknown rather than missing, got %q", got)
@@ -142,7 +143,7 @@ func TestAFileWithNoRecordedQualityIsNotMissing(t *testing.T) {
 // Series count episodes with files, not raw file rows — the same split the
 // completeness pill uses, so the two cannot disagree.
 func TestSeriesEmptinessIsMeasuredInEpisodes(t *testing.T) {
-	p := quality.Profile{ID: 1, Cutoff: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}}
+	p := quality.Profile{ID: 1, Target: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}}
 	m := domain.MediaItem{
 		Kind: domain.KindSeries, FileCount: 3, EpisodeFileCount: 0,
 		Quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},

@@ -180,16 +180,27 @@ func (p *Personality) qualityProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(profiles))
 	for _, pr := range profiles {
-		items := make([]map[string]any, 0, len(pr.Allowed))
-		for i, q := range pr.Allowed {
+		// Monarr profiles are targets now (ADR 0014); *arr consumers expect an
+		// allowed list plus a cutoff and have no concept of one. Synthesizing
+		// the list from the target -- via the same Acceptable predicate the
+		// decision engine uses -- keeps the translation honest: the shim
+		// cannot describe a profile that does not behave as described.
+		// Ids and names pass through untouched (ADR 0003: translation only).
+		allowed := pr.AllowedUnder()
+		items := make([]map[string]any, 0, len(allowed))
+		cutoff := 1
+		for i, q := range allowed {
 			items = append(items, map[string]any{
 				"quality": map[string]any{"id": i + 1, "name": q.Display()},
 				"allowed": true,
 			})
+			if q == pr.Target {
+				cutoff = i + 1
+			}
 		}
 		out = append(out, map[string]any{
 			"id": pr.ID, "name": pr.Name, "upgradeAllowed": pr.UpgradesAllowed,
-			"cutoff": 1, "items": items,
+			"cutoff": cutoff, "items": items,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

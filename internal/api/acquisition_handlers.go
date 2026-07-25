@@ -43,10 +43,10 @@ func (s *Server) ListProfiles(w http.ResponseWriter, r *http.Request) {
 	out := make([]apigen.QualityProfile, 0, len(profiles))
 	for _, p := range profiles {
 		qp := apigen.QualityProfile{
-			Id: p.ID, Name: p.Name, Cutoff: p.Cutoff.Display(),
+			Id: p.ID, Name: p.Name, Cutoff: p.Target.Display(),
 			UpgradesAllowed: p.UpgradesAllowed, Qualities: []string{},
 		}
-		for _, q := range p.Allowed {
+		for _, q := range p.AllowedUnder() {
 			qp.Qualities = append(qp.Qualities, q.Display())
 		}
 		out = append(out, qp)

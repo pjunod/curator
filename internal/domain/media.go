@@ -142,8 +142,14 @@ type MediaItem struct {
 	// quality was never recorded).
 	Quality quality.Quality
 	Upgrade UpgradeState
-	// QualityTarget is the profile's cutoff — the "good enough" point that
-	// Quality is being compared against.
+	// QualityVerified reports whether the SOURCE of Quality is trustworthy —
+	// measured at high confidence, or claimed by a name nothing contradicts.
+	// When it is false and the resolution already matches the target, monarr
+	// counts the target as met rather than replacing a file on a guess
+	// (ADR 0013 §5, the don't-churn rule).
+	QualityVerified bool
+	// QualityTarget is the profile's target — the point at which hunting
+	// stops (ADR 0014).
 	QualityTarget quality.Quality
 
 	AddedAt   time.Time
