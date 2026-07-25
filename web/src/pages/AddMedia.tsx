@@ -31,11 +31,27 @@ export function AddMediaPage() {
   const [monitor, setMonitor] = useState<'all' | 'latest' | 'none'>('all')
   const [searchNow, setSearchNow] = useState(true)
 
+  // Root folders declare which kind they hold (ADR 0009), so only some of
+  // them can take what is being added. Offering the rest turns a settled
+  // question into a rejected POST: the add fails with "root folder holds a
+  // different media kind" *after* the user picked from a list that put the
+  // wrong root in front of them, preselected.
+  const eligibleRoots = (roots.data ?? []).filter((rf) => rf.kind === 'mixed' || rf.kind === kind)
+  const eligibleIds = eligibleRoots.map((rf) => rf.id).join(',')
+
   useEffect(() => {
-    if (rootId === undefined && roots.data && roots.data.length > 0) {
-      setRootId(roots.data[0].id)
+    if (eligibleRoots.length === 0) {
+      setRootId(undefined)
+      return
     }
-  }, [roots.data, rootId])
+    // Re-pick on a kind change as well: yesterday's movie root is not a valid
+    // choice on the Series tab, and a stale selection is invisible until the
+    // add is refused.
+    if (rootId === undefined || !eligibleRoots.some((rf) => rf.id === rootId)) {
+      setRootId(eligibleRoots[0].id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eligibleIds, rootId])
 
   const results = useQuery({
     queryKey: ['metadata-search', kind, debouncedQuery],
@@ -102,13 +118,20 @@ export function AddMediaPage() {
             onChange={(e) => setRootId(e.target.value ? Number(e.target.value) : undefined)}
           >
             <option value="">(none)</option>
-            {roots.data?.map((rf) => (
+            {eligibleRoots.map((rf) => (
               <option key={rf.id} value={rf.id}>
                 {rf.path}
+                {rf.kind === 'mixed' ? ' (mixed)' : ''}
               </option>
             ))}
           </select>
         </label>
+        {roots.data && roots.data.length > 0 && eligibleRoots.length === 0 && (
+          <span className="muted">
+            no root folder holds {kind === 'series' ? 'TV' : kind === 'book' ? 'books' : 'movies'} —
+            add one in Settings, or the item lands with no folder
+          </span>
+        )}
         <label className="inline">
           Profile{' '}
           <select

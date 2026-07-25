@@ -16,6 +16,12 @@ test('configure TMDB key and a root folder via the settings UI', async ({ page }
   await expect(page.getByText('Saved.')).toBeVisible()
 
   await page.getByPlaceholder('/absolute/path/to/media').fill(mediaRoot)
+  // One directory holds a movie, a series and a book across this suite, which
+  // is what a mixed root is for (ADR 0009). The picker defaults to Movies, and
+  // leaving it there made every later series and book add fail with "root
+  // folder holds a different media kind" — a correct refusal against a root
+  // that had never been asked what it holds.
+  await page.getByLabel('What the new root folder holds').selectOption('mixed')
   await page.getByRole('button', { name: 'Add root folder' }).click()
   await expect(page.getByRole('cell', { name: mediaRoot })).toBeVisible()
   await expect(page.locator('.pill-ok', { hasText: 'ok' })).toBeVisible()
@@ -57,7 +63,8 @@ test('library grid lists both items and filters by kind', async ({ page }) => {
   await expect(page.locator('.poster-card')).toHaveCount(1)
   await expect(page.getByText('The Test Movie')).toBeVisible()
 
-  await page.getByRole('tab', { name: 'Series' }).click()
+  // The library calls series "TV", the same word the review window uses.
+  await page.getByRole('tab', { name: 'TV' }).click()
   await expect(page.getByText('The Test Show')).toBeVisible()
 })
 

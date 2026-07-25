@@ -125,23 +125,23 @@ test('library All view groups by kind, each section with its own controls', asyn
   const heads = page.locator('.lib-section-head')
   await expect(heads).toHaveCount(3)
   await expect(heads.nth(0)).toContainText('Movies')
-  await expect(heads.nth(1)).toContainText('Series')
+  await expect(heads.nth(1)).toContainText('TV')
   await expect(heads.nth(2)).toContainText('Books')
   await expect(page.locator('.section-toolbar')).toHaveCount(3)
 
   // The Movies text filter touches ONLY the Movies section.
   await page.getByRole('searchbox', { name: 'Filter Movies by title' }).fill('zzz-no-match')
   await expect(page.getByText('Nothing in Movies matches the current filter.')).toBeVisible()
-  await expect(heads.nth(1)).toContainText('Series') // untouched
+  await expect(heads.nth(1)).toContainText('TV') // untouched
   await expect(page.locator('.poster-card').first()).toBeVisible() // series/book cards remain
   await page.getByRole('searchbox', { name: 'Filter Movies by title' }).fill('')
 
-  // The Series state filter is independent too: everything is on disk, so
-  // "Missing" empties Series while Movies keeps its card.
-  await page.getByRole('combobox', { name: 'Show Series' }).selectOption('missing')
-  await expect(page.getByText('Nothing in Series matches the current filter.')).toBeVisible()
+  // The TV state filter is independent too: everything is on disk, so
+  // "Missing" empties TV while Movies keeps its card.
+  await page.getByRole('combobox', { name: 'Show TV' }).selectOption('missing')
+  await expect(page.getByText('Nothing in TV matches the current filter.')).toBeVisible()
   await expect(page.getByText('Nothing in Movies matches')).not.toBeVisible()
-  await page.getByRole('combobox', { name: 'Show Series' }).selectOption('all')
+  await page.getByRole('combobox', { name: 'Show TV' }).selectOption('all')
 
   // Books get an Author sort option; Movies must not.
   await expect(
