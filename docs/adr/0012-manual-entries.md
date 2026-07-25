@@ -1,6 +1,6 @@
 # ADR 0012 — Manual entries: a library record no provider backs, with episodes read off the disk
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-25
 - **Relates to:** ADR [0011](0011-series-metadata-provider.md) (the provider
   chain, which shrinks this problem without closing it), ADR
