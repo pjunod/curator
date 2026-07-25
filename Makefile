@@ -13,7 +13,7 @@ SQLC         := github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 OAPI_CODEGEN := github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 GOLANGCI     := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
-.PHONY: all build go-build web test test-web test-e2e lint vet fmt gen gen-sqlc gen-api tidy clean dev-api dev-web docker bootstrap hooks
+.PHONY: all build go-build web test test-web test-e2e coverage coverage-html lint vet fmt gen gen-sqlc gen-api tidy clean dev-api dev-web docker bootstrap hooks
 
 all: build
 
@@ -37,6 +37,21 @@ test-web: web/node_modules
 
 test-e2e: build
 	cd test/e2e && npm ci && npm test
+
+# Coverage is measured and rendered here rather than uploaded to a service.
+# -coverpkg=./... is the load-bearing flag: without it a package is in the
+# profile only if it owns a _test.go file, which measures where the tests live
+# rather than what they cover. scripts/coverage-badge.sh then drops generated
+# code and writes the badge — both rules live in that script so this target, CI
+# and the README badge cannot report three different numbers.
+coverage:
+	go test -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+	@printf 'coverage: %s%% (badge: coverage.svg)\n' "$$(sh scripts/coverage-badge.sh coverage.out coverage.svg)"
+
+# The line-by-line view, for finding what to test next.
+coverage-html: coverage
+	go tool cover -html=coverage.out -o coverage.html
+	@echo 'open coverage.html'
 
 lint:
 	go run $(GOLANGCI) run

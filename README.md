@@ -4,7 +4,7 @@
 [![Lint](https://github.com/monarr-media/monarr/actions/workflows/lint.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/lint.yml)
 [![Compat](https://github.com/monarr-media/monarr/actions/workflows/compat.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/compat.yml)
 [![Docker](https://github.com/monarr-media/monarr/actions/workflows/docker.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/docker.yml)
-[![codecov](https://codecov.io/gh/monarr-media/monarr/graph/badge.svg)](https://codecov.io/gh/monarr-media/monarr)
+[![Coverage](https://raw.githubusercontent.com/monarr-media/monarr/badges/coverage.svg)](https://github.com/monarr-media/monarr/actions/workflows/tests.yml)
 
 **A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one
 acquisition pipeline — for TV, movies, and (Phase 2.5) books, filling the gap left by
@@ -148,6 +148,8 @@ The suite is a pyramid; every layer runs in CI and the fast layers run in git ho
 make test           # Go unit tests, incl. the architecture-rules test (internal/arch_test.go)
 make test-web       # web unit tests (vitest)
 make lint           # golangci-lint (pinned version, same as CI)
+make coverage       # Go coverage: prints the percentage, writes coverage.svg
+make coverage-html  # the same run, as a browsable line-by-line report
 make test-e2e       # end-to-end: builds the real binary with embedded UI, boots it
                     # against a throwaway data dir, drives it with Playwright
                     # (first run: npx playwright install chromium in test/e2e)
@@ -157,10 +159,32 @@ Git hooks (installed by `make hooks`, versioned in `.githooks/`): **pre-commit**
 `go vet` on staged Go files and typechecks staged web sources; **pre-push** runs the full Go
 and web unit suites. E2E stays in CI to keep pushes fast.
 
-CI (`.github/workflows/ci.yml`) runs four parallel jobs on every push/PR: unit tests
-(Go with `-race` and a coverage summary, web with vitest, plus a check that sqlc/oapi-codegen
-output is up to date), golangci-lint, the Playwright E2E suite against the compiled binary,
-and a Docker image build. Least-privilege permissions, per-ref concurrency cancellation.
+CI runs four workflows on every push/PR — `tests.yml` (Go unit tests with `-race` and
+coverage, web vitest, a check that sqlc/oapi-codegen output is current, and the Playwright
+E2E suite against the compiled binary), `lint.yml`, `compat.yml` (Sonarr/Radarr conformance),
+and `docker.yml`. Least-privilege permissions, per-ref concurrency cancellation.
+
+### Coverage
+
+The number and the badge are produced by this repository, not by a coverage service.
+`make coverage` writes `coverage.svg`; CI does the same on every push to `main` and publishes
+the file to the orphan `badges` branch, which is what the README badge points at. Two rules,
+both in [`scripts/coverage-badge.sh`](scripts/coverage-badge.sh) so nothing can report a
+different figure:
+
+- **`-coverpkg=./...`.** Without it a package appears in the profile only if it owns a
+  `_test.go` file, so what gets measured depends on where the tests happen to live rather
+  than on what they exercise. Ten of forty packages were invisible: `cmd/monarr` and
+  `internal/infra/logging` at 0%, but also `internal/domain/decision` at 94% and
+  `internal/domain/quality` at 93%, both covered thoroughly through their callers. The
+  subset can flatter or understate; the point is that it is arbitrary.
+- **Generated code excluded.** sqlc and oapi-codegen contribute tens of thousands of
+  statements that no one will write a test for; counting them measures how much machine
+  output the repo holds, which is not a fact about the tests. It is the difference between
+  60.7% and 65.3%, and only the second number moves when someone writes a test.
+
+The CI step summary lists every package least-covered first, which is where the number
+becomes useful — right now that reads `internal/api` at 30% and three packages at zero.
 
 ## Documentation
 

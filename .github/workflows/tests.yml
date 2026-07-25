@@ -17,6 +17,10 @@ jobs:
     name: Unit tests (Go + web)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Write access is for one thing: pushing the coverage badge to the orphan
+    # `badges` branch on main. Pull requests never reach that step.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -48,18 +52,68 @@ jobs:
 
       - name: go test (race, coverage; includes architecture rules)
         run: |
-          go test -race -coverprofile=coverage.out -covermode=atomic ./...
-          echo '### Go coverage' >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          go tool cover -func=coverage.out | tail -1 >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+          pct="$(sh scripts/coverage-badge.sh coverage.out coverage.svg coverage-hand.out)"
+          echo "COVERAGE_PCT=$pct" >> "$GITHUB_ENV"
+          {
+            echo "### Go coverage: ${pct}%"
+            echo
+            echo 'Hand-written packages; generated code excluded (scripts/coverage-badge.sh).'
+            echo
+            echo '<details><summary>By package, least covered first</summary>'
+            echo
+            echo '```'
+            # -coverpkg emits every block once per test binary that linked the
+            # package, so the blocks must be merged before anything is summed —
+            # counting them raw divides by the number of test binaries and
+            # reports single digits for well-tested packages.
+            awk 'NR > 1 { n[$1] = $2; if ($3 > 0) hit[$1] = 1 }
+                 END {
+                   for (b in n) {
+                     split(b, f, ":"); pkg = f[1]; sub(/\/[^/]*$/, "", pkg);
+                     stmt[pkg] += n[b]; if (b in hit) cov[pkg] += n[b]
+                   }
+                   for (p in stmt) printf "%5.1f%%  %s\n", 100 * cov[p] / stmt[p], p
+                 }' coverage-hand.out | sort -n
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload coverage to Codecov (no-op until the repo is linked)
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
-        with:
-          files: coverage.out
-          token: ${{ secrets.CODECOV_TOKEN }}
+      # The badge lives on an orphan `badges` branch rather than in main's
+      # history: the README needs one stable URL, and a bot commit per push is
+      # not worth putting in the log of the actual work. Nothing external is in
+      # the loop — the number is measured by the step above, the SVG is
+      # rendered by a script in this repo, and the push uses the token GitHub
+      # already gives the job.
+      - name: Publish the coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GIT_AUTHOR_NAME: monarr-ci
+          GIT_AUTHOR_EMAIL: ci@monarr.invalid
+          GIT_COMMITTER_NAME: monarr-ci
+          GIT_COMMITTER_EMAIL: ci@monarr.invalid
+        run: |
+          # Fetch into an explicit ref rather than reading FETCH_HEAD, which
+          # actions/checkout has already written and which would otherwise make
+          # main's tip the badge branch's parent.
+          ref=refs/remotes/origin/badges
+          git fetch --depth=1 origin "+refs/heads/badges:$ref" 2>/dev/null || true
+          blob="$(git hash-object -w coverage.svg)"
+          # Nothing to record when the number has not moved.
+          if [ "$(git rev-parse --verify -q "$ref:coverage.svg" || true)" = "$blob" ]; then
+            echo "badge unchanged at ${COVERAGE_PCT}%"
+            exit 0
+          fi
+          # Plumbing rather than a checkout: building the commit by hand keeps
+          # the working tree (and the rest of this job) untouched.
+          tree="$(printf '100644 blob %s\tcoverage.svg\n' "$blob" | git mktree)"
+          parent="$(git rev-parse --verify -q "$ref" || true)"
+          if [ -n "$parent" ]; then
+            commit="$(git commit-tree "$tree" -p "$parent" -m "coverage: ${COVERAGE_PCT}% (${GITHUB_SHA})")"
+          else
+            commit="$(git commit-tree "$tree" -m "coverage: ${COVERAGE_PCT}% (${GITHUB_SHA})")"
+          fi
+          git push origin "$commit:refs/heads/badges"
 
       - name: go build
         run: make go-build
