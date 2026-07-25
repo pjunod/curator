@@ -12,6 +12,7 @@ import (
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/filename"
+	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/naming"
 	"github.com/monarr-media/monarr/internal/domain/parser"
 	"github.com/monarr-media/monarr/internal/domain/quality"
@@ -85,11 +86,11 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		var wasUpgrade bool
 		switch item.Kind {
 		case domain.KindMovie:
-			wasUpgrade, err = s.importMovieFile(ctx, item, scope, profile, src, q)
+			wasUpgrade, err = s.importMovieFile(ctx, item, scope, profile, src, q, dl.ReleaseTitle)
 		case domain.KindBook:
 			wasUpgrade, err = s.importBookFile(ctx, item, scope, src, q)
 		default:
-			wasUpgrade, err = s.importEpisodeFile(ctx, item, scope, profile, epQuals, src, p, q)
+			wasUpgrade, err = s.importEpisodeFile(ctx, item, scope, profile, epQuals, src, p, q, dl.ReleaseTitle)
 		}
 		if err != nil {
 			s.log.Warn("import: file skipped", "file", filepath.Base(src), "reason", err)
@@ -144,7 +145,7 @@ type importScope struct {
 	ProfileID int64
 }
 
-func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality) (bool, error) {
+func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string) (bool, error) {
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return false, err
@@ -173,7 +174,9 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	if err != nil {
 		return false, err
 	}
-	return upgrade, s.db.SetFileQuality(ctx, fileID, q)
+	// The file exists now, so stop taking the release name's word for it.
+	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle)
+	return upgrade, nil
 }
 
 // importBookFile places one book file into <library>/<Author>/<Title>/ as
@@ -204,10 +207,13 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 	if err != nil {
 		return false, err
 	}
-	return upgrade, s.db.SetFileQuality(ctx, fileID, q)
+	// Books are not probed: the extension IS the format (ADR 0006), so the
+	// provenance is the filename and there is nothing to measure.
+	return upgrade, s.db.SetFileQualityFrom(ctx, fileID, q,
+		mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
 }
 
-func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epQuals map[int64]*quality.Quality, src string, p parser.Parsed, q quality.Quality) (bool, error) {
+func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epQuals map[int64]*quality.Quality, src string, p parser.Parsed, q quality.Quality, releaseTitle string) (bool, error) {
 	season, eps := p.Season, p.Episodes
 	if len(eps) == 0 {
 		if fx, ok := filename.Extract(filepath.Base(src)); ok {
@@ -280,9 +286,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	if err != nil {
 		return false, err
 	}
-	if err := s.db.SetFileQuality(ctx, fileID, q); err != nil {
-		return false, err
-	}
+	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle)
 	return upgrade, s.db.ReplaceFileEpisodeLinks(ctx, fileID, epIDs)
 }
 

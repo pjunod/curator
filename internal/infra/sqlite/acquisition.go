@@ -361,6 +361,34 @@ func (d *DB) FileQualities(ctx context.Context, itemID int64) (map[int64]quality
 	return out, nil
 }
 
+// HistoryEvent is one recorded thing that happened to an item: grabbed,
+// imported, failed, or a quality claim that did not survive contact with the
+// bytes (ADR 0013). Data is the event's own JSON payload, shape by type.
+type HistoryEvent struct {
+	ID           int64
+	At           time.Time
+	Type         string
+	MediaItemID  int64
+	ReleaseTitle string
+	Data         string
+}
+
+// ListHistory returns the most recent events, newest first.
+func (d *DB) ListHistory(ctx context.Context) ([]HistoryEvent, error) {
+	rows, err := d.Read.ListHistory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]HistoryEvent, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, HistoryEvent{
+			ID: r.ID, At: time.UnixMilli(r.Ts), Type: r.Type,
+			MediaItemID: r.MediaItemID, ReleaseTitle: r.ReleaseTitle, Data: r.Data,
+		})
+	}
+	return out, nil
+}
+
 // AddHistory appends an event (grabbed | imported | failed).
 func (d *DB) AddHistory(ctx context.Context, eventType string, mediaItemID int64, releaseTitle string, data any) error {
 	raw, _ := json.Marshal(data)
