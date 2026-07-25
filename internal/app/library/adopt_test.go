@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/monarr-media/monarr/internal/domain"
@@ -270,5 +271,209 @@ func TestRunAdoptionFirstPassProposesThenAdopts(t *testing.T) {
 	items, _ := svc.List(ctx, domain.KindMovie)
 	if len(items) != 2 {
 		t.Fatalf("library should hold 2 adopted items, got %d", len(items))
+	}
+}
+
+// Accepting a match must happen in place: no trip to the Add page, no
+// re-search, no losing your position in the queue.
+func TestAdoptOneAcceptsAChosenCandidate(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{
+		movie(1, "Nosferatu", 2024), movie(2, "Nosferatu", 1922),
+	}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	folder := filepath.Join(root, "Nosferatu (2024)")
+	if err := os.Mkdir(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunAdoption(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The 1922 version, deliberately not the one adoption would have picked:
+	// the user's choice has to win over the proposal's ranking.
+	if err := svc.AdoptOne(ctx, folder, movie(2, "Nosferatu", 1922)); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := svc.List(ctx, domain.KindMovie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("want 1 adopted item, got %d", len(items))
+	}
+	if items[0].Path != folder {
+		t.Errorf("item path = %q, want the existing folder %q", items[0].Path, folder)
+	}
+	// And it leaves the queue immediately, without waiting for a rescan.
+	if got := svc.ReviewQueue(ctx, "", "", 25, 0).Total; got != 0 {
+		t.Errorf("review queue still holds %d entries after adopting", got)
+	}
+}
+
+// The path has to be one the queue is offering: this endpoint writes a
+// library item pointed at a directory, so an arbitrary path would let a
+// session aim the library anywhere on the host.
+func TestAdoptOneRefusesUnofferedPaths(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(1, "Anything", 2020)}}
+	err := svc.AdoptOne(context.Background(), "/etc", movie(1, "Anything", 2020))
+	if err == nil {
+		t.Fatal("want a refusal for a path that is not awaiting review")
+	}
+}
+
+// The first-pass guard has to be releasable from the screen where reviewing
+// happens, or it is a dead end rather than a safety rail.
+func TestAdoptExactAppliesConfidentMatchesInUnconfirmedRoots(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{
+		movie(550, "Fight Club", 1999),
+		movie(1, "Arrival", 2016),
+		movie(2, "Ambiguous", 2020),
+		movie(3, "Ambiguous", 2020),
+	}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	for _, n := range []string{"Fight Club (1999)", "Arrival (2016)", "Ambiguous (2020)"} {
+		if err := os.Mkdir(filepath.Join(root, n), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// First pass over an unconfirmed root: everything is held for review.
+	first, err := svc.RunAdoption(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Adopted) != 0 {
+		t.Fatalf("first pass should write nothing, adopted %d", len(first.Adopted))
+	}
+
+	res, err := svc.AdoptExact(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Adopted) != 2 {
+		t.Fatalf("adopted %d, want the 2 confident ones: %+v", len(res.Adopted), res.Failures)
+	}
+	// The genuinely ambiguous one stays put.
+	page := svc.ReviewQueue(ctx, "", "", 25, 0)
+	if page.Total != 1 || page.Items[0].Name != "Ambiguous (2020)" {
+		t.Fatalf("queue should hold only the ambiguous folder, got %+v", page.Items)
+	}
+}
+
+// A folder whose match is already in the library is the interesting case,
+// not an error: it usually means an item added by hand has never been
+// pointed at the files it describes. This was a dead end — "item already in
+// library", with no way to ever accept the folder.
+func TestAdoptOneRelinksAnItemThatHasNoFolder(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(550, "Fight Club", 1999)}}
+	ctx := context.Background()
+
+	// Added by hand, with no root folder: exactly what a pre-adoption
+	// library looks like.
+	added, err := svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 550, Monitored: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added.Path != "" {
+		t.Fatalf("precondition: expected no path, got %q", added.Path)
+	}
+
+	root := t.TempDir()
+	folder := filepath.Join(root, "Fight Club (1999)")
+	if err := os.Mkdir(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunAdoption(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.AdoptOne(ctx, folder, movie(550, "Fight Club", 1999)); err != nil {
+		t.Fatalf("adopting a folder for an item that has no folder should relink it: %v", err)
+	}
+
+	got, err := svc.Get(ctx, added.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Path != folder {
+		t.Fatalf("item path = %q, want it pointed at %q", got.Path, folder)
+	}
+	// And exactly one item — relinking must not create a duplicate.
+	items, _ := svc.List(ctx, domain.KindMovie)
+	if len(items) != 1 {
+		t.Fatalf("want 1 item after relink, got %d", len(items))
+	}
+}
+
+// But a genuine conflict — two folders claiming one title, both on disk —
+// must not silently move the pointer and detach the other folder's files.
+func TestAdoptOneRefusesToStealAFolderThatExists(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(550, "Fight Club", 1999)}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	first := filepath.Join(root, "Fight Club (1999)")
+	second := filepath.Join(root, "Fight Club (1999) [remux]")
+	for _, d := range []string{first, second} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The item already lives in the first folder, which exists.
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunAdoption(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	err = svc.AdoptOne(ctx, second, movie(550, "Fight Club", 1999))
+	if err == nil {
+		t.Fatal("want a refusal: the title already has a folder that exists")
+	}
+	if !strings.Contains(err.Error(), first) {
+		t.Errorf("the error should name the conflicting folder %q, got %v", first, err)
+	}
+	// The original placement is untouched.
+	got, _ := svc.Get(ctx, item.ID)
+	if got.Path != first {
+		t.Errorf("item path moved to %q; it should still be %q", got.Path, first)
 	}
 }

@@ -1088,6 +1088,16 @@ type ConfirmRootAdoptedJSONBody struct {
 	RootFolderId int64 `json:"rootFolderId"`
 }
 
+// AdoptOneJSONBody defines parameters for AdoptOne.
+type AdoptOneJSONBody struct {
+	Kind   *MediaKind `json:"kind,omitempty"`
+	Olid   *string    `json:"olid,omitempty"`
+	Path   string     `json:"path"`
+	Title  *string    `json:"title,omitempty"`
+	TmdbId *int64     `json:"tmdbId,omitempty"`
+	Year   *int       `json:"year,omitempty"`
+}
+
 // BulkEditLibraryJSONBody defines parameters for BulkEditLibrary.
 type BulkEditLibraryJSONBody struct {
 	Ids              []int64 `json:"ids"`
@@ -1190,6 +1200,9 @@ type AddLibraryItemJSONRequestBody = AddMediaRequest
 
 // ConfirmRootAdoptedJSONRequestBody defines body for ConfirmRootAdopted for application/json ContentType.
 type ConfirmRootAdoptedJSONRequestBody ConfirmRootAdoptedJSONBody
+
+// AdoptOneJSONRequestBody defines body for AdoptOne for application/json ContentType.
+type AdoptOneJSONRequestBody AdoptOneJSONBody
 
 // BulkEditLibraryJSONRequestBody defines body for BulkEditLibrary for application/json ContentType.
 type BulkEditLibraryJSONRequestBody BulkEditLibraryJSONBody
@@ -1325,6 +1338,12 @@ type ServerInterface interface {
 	// ConfirmRootAdopted Turn automatic adoption on or off for a root
 	// (POST /library/adopt/confirm)
 	ConfirmRootAdopted(w http.ResponseWriter, r *http.Request)
+	// AdoptExact Apply every confident match in the review queue
+	// (POST /library/adopt/exact)
+	AdoptExact(w http.ResponseWriter, r *http.Request)
+	// AdoptOne Adopt one reviewed folder to a chosen match
+	// (POST /library/adopt/one)
+	AdoptOne(w http.ResponseWriter, r *http.Request)
 	// BulkEditLibrary Apply monitoring/profile changes to many items at once
 	// (POST /library/bulk)
 	BulkEditLibrary(w http.ResponseWriter, r *http.Request)
@@ -2077,6 +2096,34 @@ func (siw *ServerInterfaceWrapper) ConfirmRootAdopted(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ConfirmRootAdopted(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AdoptExact operation middleware
+func (siw *ServerInterfaceWrapper) AdoptExact(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AdoptExact(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AdoptOne operation middleware
+func (siw *ServerInterfaceWrapper) AdoptOne(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AdoptOne(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3190,6 +3237,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/report", wrapper.GetScanReport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/review", wrapper.GetReviewQueue)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt", wrapper.RunAdoption)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt/one", wrapper.AdoptOne)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt/exact", wrapper.AdoptExact)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt/confirm", wrapper.ConfirmRootAdopted)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/scan/ignored", wrapper.UnignoreDir)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/ignored", wrapper.ListIgnoredDirs)

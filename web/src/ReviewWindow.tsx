@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import type { MediaKind, Proposal, ReviewCounts } from './api'
-import { getReviewQueue, ignoreDir } from './api'
+import type { AdoptionCandidate, MediaKind, Proposal, ReviewCounts } from './api'
+import { adoptExact, adoptOne, getReviewQueue, ignoreDir } from './api'
 import { clampPage, Pager, PageSizePicker } from './Pager'
 
 // Kind tabs, matching the library's vocabulary so the same content is called
@@ -58,13 +58,28 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
     queryFn: () => getReviewQueue(kind, debounced, size, page * size),
   })
 
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['review'] })
+    void qc.invalidateQueries({ queryKey: ['scan-report'] })
+    void qc.invalidateQueries({ queryKey: ['ignored-dirs'] })
+    void qc.invalidateQueries({ queryKey: ['library'] })
+  }
+
   const dismiss = useMutation({
     mutationFn: (path: string) => ignoreDir(path),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['review'] })
-      void qc.invalidateQueries({ queryKey: ['scan-report'] })
-      void qc.invalidateQueries({ queryKey: ['ignored-dirs'] })
-    },
+    onSuccess: refresh,
+  })
+  // Accepting a match happens here, in place. It used to be a link to the
+  // Add page, which meant searching again, clicking Add beside the title you
+  // had already picked, and being dropped on the item's page — having lost
+  // your place in the queue.
+  const accept = useMutation({
+    mutationFn: ({ path, pick }: { path: string; pick: AdoptionCandidate }) => adoptOne(path, pick),
+    onSuccess: refresh,
+  })
+  const acceptAll = useMutation({
+    mutationFn: adoptExact,
+    onSuccess: refresh,
   })
 
   const total = review.data?.total ?? 0
@@ -107,6 +122,28 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="form-row">
+          <button
+            className="btn-accent"
+            disabled={acceptAll.isPending}
+            title="Adopt every folder whose match is unambiguous"
+            onClick={() => acceptAll.mutate()}
+          >
+            {acceptAll.isPending ? 'Adopting…' : 'Accept all confident matches'}
+          </button>
+          {acceptAll.data && (
+            <span className="ok-text">
+              {acceptAll.data.adopted.length} adopted · {acceptAll.data.review.length} still need a
+              look
+            </span>
+          )}
+          {(accept.isError || acceptAll.isError) && (
+            <span className="error-text">
+              {String(((accept.error ?? acceptAll.error) as Error).message)}
+            </span>
+          )}
+        </div>
+
+        <div className="form-row">
           <input
             type="search"
             placeholder="Filter by folder or title…"
@@ -135,7 +172,13 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
             </p>
           )}
           {review.data?.items.map((p) => (
-            <ReviewRow key={p.path} p={p} onDismiss={() => dismiss.mutate(p.path)} />
+            <ReviewRow
+              key={p.path}
+              p={p}
+              busy={accept.isPending || acceptAll.isPending}
+              onAccept={(pick) => accept.mutate({ path: p.path, pick })}
+              onDismiss={() => dismiss.mutate(p.path)}
+            />
           ))}
         </div>
 
@@ -153,7 +196,17 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
 }
 
 /** One candidate folder, with whatever adoption managed to work out. */
-function ReviewRow({ p, onDismiss }: { p: Proposal; onDismiss: () => void }) {
+function ReviewRow({
+  p,
+  onAccept,
+  onDismiss,
+  busy,
+}: {
+  p: Proposal
+  onAccept: (pick: AdoptionCandidate) => void
+  onDismiss: () => void
+  busy: boolean
+}) {
   return (
     <div className="review-row">
       <div className="review-main">
@@ -162,39 +215,45 @@ function ReviewRow({ p, onDismiss }: { p: Proposal; onDismiss: () => void }) {
           read as <strong>{p.parsedTitle}</strong>
           {p.parsedYear ? ` (${p.parsedYear})` : ''}
           {p.kind ? ` · ${p.kind}` : ' · kind unknown (mixed root)'}
+          {p.confidence === 'exact' && ' · confident'}
         </span>
       </div>
 
       {p.candidates.length > 0 ? (
         <div className="review-candidates">
-          {p.candidates.map((c) => (
-            <Link
+          {p.candidates.map((c, i) => (
+            <button
               key={`${c.kind}-${c.tmdbId}-${c.olid ?? ''}`}
-              to="/add"
-              search={{ q: c.title, kind: c.kind }}
-              className="candidate"
-              title={c.overview}
+              className={i === 0 && p.confidence === 'exact' ? 'candidate best' : 'candidate'}
+              disabled={busy}
+              title={`Adopt this folder as ${c.title}${c.year ? ` (${c.year})` : ''}`}
+              onClick={() => onAccept(c)}
             >
               {c.title}
               {c.year ? ` (${c.year})` : ''}
-            </Link>
+            </button>
           ))}
         </div>
       ) : (
-        // No proposal to confirm, so fall back to the manual route rather
-        // than leaving the row with nothing actionable on it.
+        // Nothing to accept, so the only honest option is a manual search.
         <div className="review-candidates">
           <span className="muted">no match —</span>
-          <Link to="/add" search={{ q: p.parsedTitle, kind: 'movie' }} className="candidate">
-            search movies
-          </Link>
-          <Link to="/add" search={{ q: p.parsedTitle, kind: 'series' }} className="candidate">
-            search series
+          <Link
+            to="/add"
+            search={{ q: p.parsedTitle, kind: p.kind ?? 'movie' }}
+            className="candidate"
+          >
+            search by hand
           </Link>
         </div>
       )}
 
-      <button className="link-btn" title="Never offer this folder again" onClick={onDismiss}>
+      <button
+        className="link-btn"
+        title="Never offer this folder again"
+        disabled={busy}
+        onClick={onDismiss}
+      >
         not media
       </button>
     </div>

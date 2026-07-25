@@ -816,3 +816,52 @@ func (s *Server) ConfirmRootAdopted(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// AdoptOne implements POST /library/adopt/one: accept one proposed match
+// without leaving the review window.
+func (s *Server) AdoptOne(w http.ResponseWriter, r *http.Request) {
+	var body apigen.AdoptOneJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	pick := ports.SearchResult{}
+	if body.Kind != nil {
+		pick.Kind = domain.MediaKind(*body.Kind)
+	}
+	if body.TmdbId != nil {
+		pick.TMDBID = *body.TmdbId
+	}
+	if body.Olid != nil {
+		pick.OLID = *body.Olid
+	}
+	if body.Title != nil {
+		pick.Title = *body.Title
+	}
+	if body.Year != nil {
+		pick.Year = *body.Year
+	}
+	if err := s.deps.Library.AdoptOne(r.Context(), body.Path, pick); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdoptExact implements POST /library/adopt/exact.
+func (s *Server) AdoptExact(w http.ResponseWriter, r *http.Request) {
+	res, err := s.deps.Library.AdoptExact(r.Context())
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	failures := res.Failures
+	if failures == nil {
+		failures = []string{}
+	}
+	writeJSON(w, http.StatusOK, apigen.AdoptResult{
+		Adopted:  proposalsDTO(res.Adopted),
+		Review:   proposalsDTO(res.Review),
+		Failures: failures,
+	})
+}

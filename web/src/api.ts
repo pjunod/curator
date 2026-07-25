@@ -343,6 +343,16 @@ export const deleteRootFolder = (id: number) => send('DELETE', `/rootfolders/${i
 export const browseFilesystem = (path: string) =>
   get<BrowseResult>(`/filesystem?path=${encodeURIComponent(path)}`)
 export const runAdoption = () => send<AdoptResult>('POST', '/library/adopt')
+export const adoptOne = (path: string, pick: AdoptionCandidate) =>
+  send('POST', '/library/adopt/one', {
+    path,
+    kind: pick.kind,
+    tmdbId: pick.tmdbId || undefined,
+    olid: pick.olid || undefined,
+    title: pick.title,
+    year: pick.year,
+  })
+export const adoptExact = () => send<AdoptResult>('POST', '/library/adopt/exact')
 export const setRootAutoAdopt = (rootFolderId: number, autoAdopt: boolean) =>
   send('POST', '/library/adopt/confirm', { rootFolderId, autoAdopt })
 export const getReviewQueue = (

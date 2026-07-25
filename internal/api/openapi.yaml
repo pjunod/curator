@@ -302,6 +302,61 @@ paths:
               schema:
                 $ref: "#/components/schemas/AdoptResult"
 
+  /library/adopt/one:
+    post:
+      operationId: adoptOne
+      summary: Adopt one reviewed folder to a chosen match
+      description: >
+        Applies a specific candidate to a specific folder, in place. The path
+        must be one the review queue is currently offering — the endpoint
+        writes a library item pointed at a directory, so arbitrary paths are
+        refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                kind:
+                  $ref: "#/components/schemas/MediaKind"
+                tmdbId:
+                  type: integer
+                  format: int64
+                olid:
+                  type: string
+                title:
+                  type: string
+                year:
+                  type: integer
+      responses:
+        "204":
+          description: Adopted; the folder leaves the review queue.
+        "400":
+          description: Not a folder awaiting review, or the match was rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /library/adopt/exact:
+    post:
+      operationId: adoptExact
+      summary: Apply every confident match in the review queue
+      description: >
+        Adopts the proposals that clear the per-kind bar, including in roots
+        whose first pass has not been confirmed — pressing this is the review.
+      responses:
+        "200":
+          description: What was adopted and what still needs a human.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdoptResult"
+
   /library/adopt/confirm:
     post:
       operationId: confirmRootAdopted

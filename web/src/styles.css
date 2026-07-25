@@ -1683,6 +1683,20 @@ a.pill-info:hover {
   color: var(--accent);
 }
 
+/* A candidate the user can accept with one click. The "best" variant marks
+   the match adoption would have chosen on its own, so the confident answer
+   is visually first as well as positionally first. */
+.candidate.best {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.candidate:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ---- pagination controls (shared: library grid + review window) ---- */
 .page-size {
   display: inline-flex;

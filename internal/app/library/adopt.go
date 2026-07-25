@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/monarr-media/monarr/internal/domain"
@@ -96,10 +98,11 @@ func (s *Service) propose(ctx context.Context, d UnmatchedDir, rootKind domain.R
 	kind, typed := rootKind.Media()
 	if !typed {
 		// Mixed root: offer across kinds and always ask.
+		var mixed []ports.SearchResult
 		for _, k := range []domain.MediaKind{domain.KindMovie, domain.KindSeries} {
-			p.Candidates = append(p.Candidates, s.searchTop(ctx, k, p.ParsedTitle)...)
+			mixed = append(mixed, s.searchTop(ctx, k, p.ParsedTitle)...)
 		}
-		p.Candidates = trim(p.Candidates, maxProposalCandidates)
+		p.Candidates = trim(dedupeResults(mixed), maxProposalCandidates)
 		if len(p.Candidates) > 0 {
 			p.Confidence = ConfidenceAmbiguous
 		}
@@ -107,19 +110,27 @@ func (s *Service) propose(ctx context.Context, d UnmatchedDir, rootKind domain.R
 	}
 
 	p.Kind = kind
-	results := s.searchTop(ctx, kind, p.ParsedTitle)
-	p.Candidates = trim(results, maxProposalCandidates)
+	results := dedupeResults(s.searchTop(ctx, kind, p.ParsedTitle))
 	p.Confidence = grade(kind, parsed, results)
-	if p.Confidence == ConfidenceExact {
-		// Put the winner first so the caller never has to re-derive it.
-		for i, r := range p.Candidates {
-			if clears(kind, parsed, r) {
-				p.Candidates[0], p.Candidates[i] = p.Candidates[i], p.Candidates[0]
-				break
-			}
-		}
+	if won := clearing(kind, parsed, results); len(won) == 1 {
+		// Put the winner first so the caller never has to re-derive it, and
+		// so the UI's first chip is the one adoption would have picked.
+		results = append(won, filterOut(results, won[0])...)
 	}
+	p.Candidates = trim(results, maxProposalCandidates)
 	return p
+}
+
+// filterOut returns everything except one specific result.
+func filterOut(in []ports.SearchResult, drop ports.SearchResult) []ports.SearchResult {
+	out := make([]ports.SearchResult, 0, len(in))
+	for _, r := range in {
+		if r.Kind == drop.Kind && r.TMDBID == drop.TMDBID && r.OLID == drop.OLID {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 func (s *Service) searchTop(ctx context.Context, kind domain.MediaKind, query string) []ports.SearchResult {
@@ -134,6 +145,34 @@ func (s *Service) searchTop(ctx context.Context, kind domain.MediaKind, query st
 	return res
 }
 
+// dedupeResults removes candidates that are the same title twice.
+//
+// Providers really do return duplicates — a TMDB search for "Daniel Sloss
+// Can't" comes back with the same film twice — and because the bar is
+// "exactly one result clears", a duplicate turns a perfect match into an
+// ambiguous one. That failure is invisible from the outside: the user sees
+// two identical chips and no explanation for why nothing was adopted.
+//
+// Identity is the provider id where there is one, and normalized title plus
+// year otherwise, so two rows for the same film collapse even when their ids
+// differ.
+func dedupeResults(in []ports.SearchResult) []ports.SearchResult {
+	seen := map[string]bool{}
+	out := make([]ports.SearchResult, 0, len(in))
+	for _, r := range in {
+		key := fmt.Sprintf("%s|%d|%s", r.Kind, r.TMDBID, r.OLID)
+		if r.TMDBID == 0 && r.OLID == "" {
+			key = fmt.Sprintf("%s|%s|%d", r.Kind, matcher.NormalizeTitle(r.Title), r.Year)
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, r)
+	}
+	return out
+}
+
 // grade applies the per-kind bar. The asymmetry is the point: a wrong
 // auto-match writes a path assignment and metadata that look right until
 // someone notices the poster, while an unmatched folder is merely visible
@@ -143,16 +182,38 @@ func grade(kind domain.MediaKind, parsed parser.Parsed, results []ports.SearchRe
 	if len(results) == 0 {
 		return ConfidenceNone
 	}
-	clear := 0
-	for _, r := range results {
-		if clears(kind, parsed, r) {
-			clear++
-		}
-	}
-	if clear == 1 {
+	if len(clearing(kind, parsed, results)) == 1 {
 		return ConfidenceExact
 	}
 	return ConfidenceAmbiguous
+}
+
+// clearing returns every candidate that meets the bar, with one refinement
+// that matters a great deal in practice: **an exact year beats a tolerated
+// one.**
+//
+// The ±1 tolerance exists for release-date drift, where a folder says 2024
+// and the provider says 2025 for the same film. But applied blindly it makes
+// Nosferatu (2024) ambiguous against Nosferatu (2025) — two different films,
+// one of which matches the folder exactly. So when any candidate agrees on
+// the year outright, only those candidates are eligible; the tolerance is a
+// fallback for when nothing matches exactly, not a widening of the target.
+func clearing(kind domain.MediaKind, parsed parser.Parsed, results []ports.SearchResult) []ports.SearchResult {
+	var exactYear, tolerated []ports.SearchResult
+	for _, r := range results {
+		if !clears(kind, parsed, r) {
+			continue
+		}
+		if parsed.Year != 0 && r.Year == parsed.Year {
+			exactYear = append(exactYear, r)
+			continue
+		}
+		tolerated = append(tolerated, r)
+	}
+	if len(exactYear) > 0 {
+		return exactYear
+	}
+	return tolerated
 }
 
 // clears reports whether one result meets the bar for its kind.
@@ -257,6 +318,14 @@ func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 		Monitor:      "none", // adopting is not a request to go download things
 	}
 	item, err := s.Add(ctx, req)
+	if errors.Is(err, ErrAlreadyExists) {
+		// The title is already in the library. That is not a dead end — it
+		// is usually the *interesting* case: an item added by hand, or by an
+		// earlier import, that has never been pointed at the files it
+		// describes. Adopting the folder is exactly how you say "this
+		// folder is that item".
+		return s.relinkExisting(ctx, p, win)
+	}
 	if err != nil {
 		return err
 	}
@@ -372,4 +441,147 @@ func (s *Service) adoptedRoots(ctx context.Context) map[int64]bool {
 		}
 	}
 	return out
+}
+
+// AdoptOne adopts a single folder to a caller-chosen candidate.
+//
+// This is what a click on a proposed match should do. It used to be a link
+// into the Add page, which meant re-running the search, clicking Add next to
+// the title you had already chosen, and landing on the item's page — three
+// steps and a lost place in the queue, to accept an answer the queue had
+// already worked out.
+//
+// The path must be one the review queue is actually offering. That is not
+// ceremony: the endpoint writes a library item pointed at a directory, and
+// accepting an arbitrary caller-supplied path would let anyone with a session
+// aim the library anywhere on the host.
+func (s *Service) AdoptOne(ctx context.Context, path string, pick ports.SearchResult) error {
+	clean := filepath.Clean(path)
+	queue := s.loadReviewQueue(ctx)
+	var found *Proposal
+	for i := range queue {
+		if queue[i].Path == clean {
+			found = &queue[i]
+			break
+		}
+	}
+	if found == nil {
+		return fmt.Errorf("%w: %s is not a folder awaiting review", ErrNotFound, clean)
+	}
+	if pick.Kind == "" {
+		pick.Kind = found.Kind
+	}
+	if pick.Kind == "" {
+		return fmt.Errorf("a media kind is required to adopt %s", clean)
+	}
+
+	p := *found
+	p.Candidates = []ports.SearchResult{pick}
+	if err := s.adoptOne(ctx, p); err != nil {
+		return err
+	}
+	s.dropFromReviewQueue(ctx, clean)
+	s.log.Info("adopt: folder adopted by hand",
+		"path", clean, "kind", pick.Kind, "title", pick.Title, "year", pick.Year)
+	return nil
+}
+
+// AdoptExact applies every proposal in the queue that clears the bar,
+// regardless of whether its root has been confirmed.
+//
+// ADR 0010 §5 holds the first pass over a new root for review, which is
+// right: hundreds of unseen matches at once is where trust gets lost. But
+// the user pressing this button *is* the review — so the guard has to be
+// releasable from the screen where the reviewing happens, or it stops being
+// a safety rail and becomes a dead end.
+func (s *Service) AdoptExact(ctx context.Context) (AdoptResult, error) {
+	queue := s.loadReviewQueue(ctx)
+	if len(queue) == 0 {
+		return AdoptResult{Adopted: []Proposal{}, Review: []Proposal{}, Failures: []string{}}, nil
+	}
+	var exact []Proposal
+	for _, p := range queue {
+		if p.Confidence == ConfidenceExact && len(p.Candidates) > 0 {
+			exact = append(exact, p)
+		}
+	}
+	res := s.Adopt(ctx, exact, false)
+
+	adopted := map[string]bool{}
+	for _, p := range res.Adopted {
+		adopted[p.Path] = true
+	}
+	kept := make([]Proposal, 0, len(queue))
+	for _, p := range queue {
+		if !adopted[p.Path] {
+			kept = append(kept, p)
+		}
+	}
+	s.saveReviewQueue(ctx, kept)
+	s.log.Info("adopt: confident matches applied on request",
+		"adopted", len(res.Adopted), "remaining", len(kept))
+	return res, nil
+}
+
+// dropFromReviewQueue removes one entry, so an adopted folder stops being
+// offered without waiting for the next scan.
+func (s *Service) dropFromReviewQueue(ctx context.Context, path string) {
+	queue := s.loadReviewQueue(ctx)
+	kept := make([]Proposal, 0, len(queue))
+	for _, p := range queue {
+		if p.Path != path {
+			kept = append(kept, p)
+		}
+	}
+	s.saveReviewQueue(ctx, kept)
+}
+
+// relinkExisting points an item that is already in the library at the folder
+// being adopted.
+//
+// It refuses when the existing item already points at a real directory that
+// is not this one, because that is a genuine conflict — two folders claiming
+// one title — and silently moving the pointer would detach whatever files the
+// other folder holds. The error names the other path, so the choice is
+// informed rather than a mystery.
+func (s *Service) relinkExisting(ctx context.Context, p Proposal, win ports.SearchResult) error {
+	var id int64
+	var err error
+	switch {
+	case win.OLID != "":
+		id, err = s.db.GetMediaItemByKindOlid(ctx, win.Kind, win.OLID)
+	default:
+		id, err = s.db.GetMediaItemByKindTmdb(ctx, win.Kind, win.TMDBID)
+	}
+	if err != nil {
+		// Already-exists was reported but the row cannot be found: report the
+		// original condition rather than inventing a new one.
+		return ErrAlreadyExists
+	}
+	existing, err := s.Get(ctx, id)
+	if err != nil {
+		return ErrAlreadyExists
+	}
+
+	if existing.Path == p.Path {
+		// Already pointed here. Nothing to do, and not an error — this is
+		// what a re-run looks like.
+		return nil
+	}
+	if existing.Path != "" {
+		if _, statErr := os.Stat(existing.Path); statErr == nil {
+			return fmt.Errorf(
+				"%w: %s is already in the library at %s — dismiss this folder, or remove the other entry first",
+				ErrAlreadyExists, existing.Title, existing.Path)
+		}
+	}
+
+	path := p.Path
+	root := p.RootFolderID
+	if _, err := s.UpdateItem(ctx, existing.ID, UpdateRequest{Path: &path, RootFolderID: &root}); err != nil {
+		return fmt.Errorf("point %q at %s: %w", existing.Title, p.Path, err)
+	}
+	s.log.Info("adopt: existing library item pointed at its folder",
+		"title", existing.Title, "path", p.Path, "was", existing.Path)
+	return nil
 }
