@@ -52,9 +52,19 @@ type Wantable interface {
 	MediaItemID() int64
 	ProfileID() int64
 	Monitored() bool
-	// CurrentQuality is the best quality already on disk; ok=false when
-	// nothing is on disk (a missing wantable).
+	// CurrentQuality is the best KNOWN quality already on disk; ok=false
+	// when nothing is on disk OR when what is there could not be measured.
+	// Use OnDisk to tell those two apart — they are different states and
+	// treating them alike is what made monarr hunt files it already had.
 	CurrentQuality() (quality.Quality, bool)
+	// OnDisk reports whether files exist for this wantable at all,
+	// regardless of whether their quality could be determined (ADR 0013 §5:
+	// "a file whose quality could not be determined still exists").
+	OnDisk() bool
+	// SourceVerified reports whether the SOURCE axis of CurrentQuality is
+	// trustworthy enough to justify replacing the file. False for a
+	// medium/low-confidence inference — the don't-churn rule.
+	SourceVerified() bool
 }
 
 // MovieWantable is the degenerate case: one item, one file.
@@ -63,8 +73,12 @@ type MovieWantable struct {
 	Profile int64
 	Mon     bool
 	Have    *quality.Quality
-	Title   string
-	Year    int
+	// Files reports whether this copy has any file on disk, even one whose
+	// quality is unknown. Have==nil && Files==true is "on disk, unverified".
+	Files    bool
+	Verified bool
+	Title    string
+	Year     int
 	// Copy is the media copy this wantable hunts for (0 = the primary).
 	// Copies carry their own profile and their own on-disk file set.
 	Copy     int64
@@ -93,6 +107,12 @@ func (m MovieWantable) CurrentQuality() (quality.Quality, bool) {
 	return *m.Have, true
 }
 
+// OnDisk implements Wantable.
+func (m MovieWantable) OnDisk() bool { return m.Files || m.Have != nil }
+
+// SourceVerified implements Wantable.
+func (m MovieWantable) SourceVerified() bool { return m.Verified }
+
 // EpisodeWantable is one episode of a series.
 type EpisodeWantable struct {
 	Item      int64
@@ -100,6 +120,8 @@ type EpisodeWantable struct {
 	Profile   int64
 	Mon       bool
 	Have      *quality.Quality
+	Files     bool
+	Verified  bool
 	Title     string // series title
 	Year      int
 	Season    int
@@ -130,6 +152,12 @@ func (e EpisodeWantable) CurrentQuality() (quality.Quality, bool) {
 	}
 	return *e.Have, true
 }
+
+// OnDisk implements Wantable.
+func (e EpisodeWantable) OnDisk() bool { return e.Files || e.Have != nil }
+
+// SourceVerified implements Wantable.
+func (e EpisodeWantable) SourceVerified() bool { return e.Verified }
 
 // SeasonWantable is the season-pack search target: one download that
 // satisfies many episode wantables at import time — Sonarr's hardest
@@ -181,16 +209,47 @@ func (s SeasonWantable) CurrentQuality() (quality.Quality, bool) {
 	return *worst, true
 }
 
+// OnDisk implements Wantable: a season is on disk only when every one of its
+// episodes is. One missing episode makes the season an incomplete thing to
+// hunt, whatever the others are.
+func (s SeasonWantable) OnDisk() bool {
+	if len(s.Episodes) == 0 {
+		return false
+	}
+	for _, e := range s.Episodes {
+		if !e.OnDisk() {
+			return false
+		}
+	}
+	return true
+}
+
+// SourceVerified implements Wantable: same weakest-link rule CurrentQuality
+// uses. A season is only as verified as its least-verified episode.
+func (s SeasonWantable) SourceVerified() bool {
+	if len(s.Episodes) == 0 {
+		return false
+	}
+	for _, e := range s.Episodes {
+		if !e.SourceVerified() {
+			return false
+		}
+	}
+	return true
+}
+
 // BookWantable is one book (ADR 0006): like a movie, one item and one file,
 // but matched by author+title and graded on format instead of resolution.
 type BookWantable struct {
-	Item    int64
-	Profile int64
-	Mon     bool
-	Have    *quality.Quality
-	Title   string
-	Author  string
-	Year    int
+	Item     int64
+	Profile  int64
+	Mon      bool
+	Have     *quality.Quality
+	Files    bool
+	Verified bool
+	Title    string
+	Author   string
+	Year     int
 }
 
 // ID implements Wantable.
@@ -212,6 +271,12 @@ func (b BookWantable) CurrentQuality() (quality.Quality, bool) {
 	}
 	return *b.Have, true
 }
+
+// OnDisk implements Wantable.
+func (b BookWantable) OnDisk() bool { return b.Files || b.Have != nil }
+
+// SourceVerified implements Wantable.
+func (b BookWantable) SourceVerified() bool { return b.Verified }
 
 // SearchQuery is what a planner emits for indexers (blueprint §4.1).
 type SearchQuery struct {

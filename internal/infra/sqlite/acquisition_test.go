@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -113,14 +114,40 @@ func TestFileQualityAndHistory(t *testing.T) {
 	f1, _ := db.UpsertFile(ctx, itemID, 0, "/x/a.mkv", 1)
 	f2, _ := db.UpsertFile(ctx, itemID, 0, "/x/b.mkv", 1)
 
-	if _, ok, _ := db.BestQualityForItem(ctx, itemID, 0); ok {
-		t.Error("no qualities set yet")
+	// Files exist but nothing is known about them: HasFiles yes, Best nil.
+	// That distinction is the whole of ADR 0013 -- "on disk, unverified" is
+	// not "missing", and the old single ok flag could not say so.
+	state, err := db.DiskStateForItem(ctx, itemID, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if !state.HasFiles {
+		t.Error("two files were just upserted; HasFiles should be true")
+	}
+	if state.Best != nil {
+		t.Errorf("no qualities set yet, but Best = %v", state.Best)
+	}
+
 	db.SetFileQuality(ctx, f1, quality.Quality{Source: quality.SourceHDTV, Resolution: 720})
 	db.SetFileQuality(ctx, f2, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080})
-	best, ok, err := db.BestQualityForItem(ctx, itemID, 0)
-	if err != nil || !ok || best.Resolution != 1080 {
-		t.Errorf("best = %+v ok=%v err=%v", best, ok, err)
+	state, err = db.DiskStateForItem(ctx, itemID, 0)
+	if err != nil || state.Best == nil || state.Best.Resolution != 1080 {
+		t.Errorf("best = %+v err=%v", state.Best, err)
+	}
+	if state.SourceVerified {
+		t.Error("quality written with no provenance should not count as verified")
+	}
+
+	// The same quality with a provenance a human or a name supplied IS
+	// verified, which is what stops the don't-churn rule from firing.
+	if err := db.SetFileQualityFrom(ctx, f2,
+		quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone); err != nil {
+		t.Fatal(err)
+	}
+	state, err = db.DiskStateForItem(ctx, itemID, 0)
+	if err != nil || !state.SourceVerified {
+		t.Errorf("filename provenance should be verified: %+v err=%v", state, err)
 	}
 
 	if err := db.AddHistory(ctx, "grabbed", itemID, "Some.Release", map[string]any{"indexer": "x"}); err != nil {

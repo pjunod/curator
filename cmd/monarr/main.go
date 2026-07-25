@@ -371,6 +371,12 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		defer cancelAdded()
 		scans, cancelScans := bus.Subscribe[library.ScanCompleted](b, 16)
 		defer cancelScans()
+		// A probe can flip an item from "missing" to "already have it"
+		// (ADR 0013), so a measurement landing invalidates the index just as
+		// a scan does. The buffer is larger because the post-upgrade backfill
+		// publishes one of these per file in the library.
+		probed, cancelProbed := bus.Subscribe[library.FileProbed](b, 256)
+		defer cancelProbed()
 		for {
 			select {
 			case <-ctx.Done():
@@ -378,6 +384,8 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 			case <-added:
 				acq.InvalidateWanted()
 			case <-scans:
+				acq.InvalidateWanted()
+			case <-probed:
 				acq.InvalidateWanted()
 			}
 		}

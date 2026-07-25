@@ -112,6 +112,45 @@ func (q *Queries) GetIndexer(ctx context.Context, id int64) (Indexer, error) {
 	return i, err
 }
 
+const getMediaFile = `-- name: GetMediaFile :one
+SELECT id, media_item_id, copy_id, path, size, added_at, quality,
+       media_info, quality_provenance, quality_confidence, probed_at
+FROM media_files WHERE id = ?
+`
+
+type GetMediaFileRow struct {
+	ID                int64
+	MediaItemID       sql.NullInt64
+	CopyID            sql.NullInt64
+	Path              string
+	Size              int64
+	AddedAt           int64
+	Quality           string
+	MediaInfo         string
+	QualityProvenance string
+	QualityConfidence string
+	ProbedAt          int64
+}
+
+func (q *Queries) GetMediaFile(ctx context.Context, id int64) (GetMediaFileRow, error) {
+	row := q.db.QueryRowContext(ctx, getMediaFile, id)
+	var i GetMediaFileRow
+	err := row.Scan(
+		&i.ID,
+		&i.MediaItemID,
+		&i.CopyID,
+		&i.Path,
+		&i.Size,
+		&i.AddedAt,
+		&i.Quality,
+		&i.MediaInfo,
+		&i.QualityProvenance,
+		&i.QualityConfidence,
+		&i.ProbedAt,
+	)
+	return i, err
+}
+
 const getProfile = `-- name: GetProfile :one
 SELECT id, name, definition, upgrades_allowed FROM quality_profiles WHERE id = ?
 `
@@ -385,6 +424,57 @@ func (q *Queries) ListFileQualitiesForItem(ctx context.Context, mediaItemID sql.
 	return items, nil
 }
 
+const listFileQualityRecordsForItem = `-- name: ListFileQualityRecordsForItem :many
+SELECT id, copy_id, path, size, quality, media_info, quality_provenance,
+       quality_confidence, probed_at
+FROM media_files WHERE media_item_id = ?
+`
+
+type ListFileQualityRecordsForItemRow struct {
+	ID                int64
+	CopyID            sql.NullInt64
+	Path              string
+	Size              int64
+	Quality           string
+	MediaInfo         string
+	QualityProvenance string
+	QualityConfidence string
+	ProbedAt          int64
+}
+
+func (q *Queries) ListFileQualityRecordsForItem(ctx context.Context, mediaItemID sql.NullInt64) ([]ListFileQualityRecordsForItemRow, error) {
+	rows, err := q.db.QueryContext(ctx, listFileQualityRecordsForItem, mediaItemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFileQualityRecordsForItemRow
+	for rows.Next() {
+		var i ListFileQualityRecordsForItemRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CopyID,
+			&i.Path,
+			&i.Size,
+			&i.Quality,
+			&i.MediaInfo,
+			&i.QualityProvenance,
+			&i.QualityConfidence,
+			&i.ProbedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHistory = `-- name: ListHistory :many
 SELECT id, ts, type, media_item_id, release_title, data FROM history_events ORDER BY ts DESC LIMIT 200
 `
@@ -583,6 +673,34 @@ func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 	return items, nil
 }
 
+const setFileMediaInfo = `-- name: SetFileMediaInfo :exec
+UPDATE media_files
+SET media_info = ?, quality_provenance = ?, quality_confidence = ?, probed_at = ?
+WHERE id = ?
+`
+
+type SetFileMediaInfoParams struct {
+	MediaInfo         string
+	QualityProvenance string
+	QualityConfidence string
+	ProbedAt          int64
+	ID                int64
+}
+
+// The measured record and where the recorded quality came from (ADR 0013 section 3).
+// Written by the probe path only; `quality` is set separately so a probe that
+// learns nothing new about quality still records that it ran.
+func (q *Queries) SetFileMediaInfo(ctx context.Context, arg SetFileMediaInfoParams) error {
+	_, err := q.db.ExecContext(ctx, setFileMediaInfo,
+		arg.MediaInfo,
+		arg.QualityProvenance,
+		arg.QualityConfidence,
+		arg.ProbedAt,
+		arg.ID,
+	)
+	return err
+}
+
 const setFileQuality = `-- name: SetFileQuality :exec
 UPDATE media_files SET quality = ? WHERE id = ?
 `
@@ -594,6 +712,29 @@ type SetFileQualityParams struct {
 
 func (q *Queries) SetFileQuality(ctx context.Context, arg SetFileQualityParams) error {
 	_, err := q.db.ExecContext(ctx, setFileQuality, arg.Quality, arg.ID)
+	return err
+}
+
+const setFileQualityWithProvenance = `-- name: SetFileQualityWithProvenance :exec
+UPDATE media_files
+SET quality = ?, quality_provenance = ?, quality_confidence = ?
+WHERE id = ?
+`
+
+type SetFileQualityWithProvenanceParams struct {
+	Quality           string
+	QualityProvenance string
+	QualityConfidence string
+	ID                int64
+}
+
+func (q *Queries) SetFileQualityWithProvenance(ctx context.Context, arg SetFileQualityWithProvenanceParams) error {
+	_, err := q.db.ExecContext(ctx, setFileQualityWithProvenance,
+		arg.Quality,
+		arg.QualityProvenance,
+		arg.QualityConfidence,
+		arg.ID,
+	)
 	return err
 }
 

@@ -145,14 +145,14 @@ type importScope struct {
 }
 
 func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality) (bool, error) {
-	current, have, err := s.db.BestQualityForItem(ctx, item.ID, scope.CopyID)
+	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return false, err
 	}
 	upgrade := false
-	if have {
-		if !quality.Better(q, current) {
-			return false, fmt.Errorf("%s does not improve on %s", q.Display(), current.Display())
+	if state.Best != nil {
+		if !quality.Better(q, *state.Best) {
+			return false, fmt.Errorf("%s does not improve on %s", q.Display(), state.Best.Display())
 		}
 		upgrade = true
 	}
@@ -180,14 +180,14 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 // "Title - Author.ext" (Calibre-friendly, ADR 0006), with the same
 // upgrade-or-reject semantics as movies.
 func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, src string, q quality.Quality) (bool, error) {
-	current, have, err := s.db.BestQualityForItem(ctx, item.ID, scope.CopyID)
+	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return false, err
 	}
 	upgrade := false
-	if have {
-		if !quality.Better(q, current) {
-			return false, fmt.Errorf("%s does not improve on %s", q.Display(), current.Display())
+	if state.Best != nil {
+		if !quality.Better(q, *state.Best) {
+			return false, fmt.Errorf("%s does not improve on %s", q.Display(), state.Best.Display())
 		}
 		upgrade = true
 	}

@@ -12,8 +12,10 @@ import (
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/filename"
+	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/parser"
 	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/monarr-media/monarr/internal/infra/sqlite"
 )
 
 const scanReportKey = "last_scan_report"
@@ -248,19 +250,43 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 	for _, f := range existing {
 		existingByPath[f.Path] = f
 	}
+	// One query for the whole item, so deciding what to re-probe costs
+	// nothing per file. Missing entries simply mean "never probed".
+	probeState := map[string]sqlite.FileQuality{}
+	if records, qErr := s.db.FileQualityRecords(ctx, item.ID); qErr == nil {
+		for _, r := range records {
+			probeState[r.Path] = r
+		}
+	} else {
+		s.log.Warn("scan: could not read file quality records", "item", item.Title, "err", qErr)
+	}
 
 	for path, ff := range onDisk {
 		fileID, err := s.db.UpsertFile(ctx, item.ID, ff.copyID, path, ff.size)
 		if err != nil {
 			return linked, removed, err
 		}
-		// Record quality parsed from the file name so upgrade decisions
-		// work for adopted libraries too. Book files are graded by their
-		// extension — the format IS the quality (ADR 0006).
+		// The filename is a hint now, not the authority (ADR 0013 §3): it
+		// seeds a quality so an unprobed library still has something to show,
+		// and the probe overwrites it with measurement. Book files are the
+		// exception — the extension IS the format, and there is no container
+		// to walk (ADR 0006).
 		if src := filename.BookQualitySource(path); item.Kind == domain.KindBook && src != "" {
-			_ = s.db.SetFileQuality(ctx, fileID, quality.Quality{Source: quality.Source(src)})
+			_ = s.db.SetFileQualityFrom(ctx, fileID, quality.Quality{Source: quality.Source(src)},
+				mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
 		} else if q := parser.Parse(filepath.Base(path)).Quality; q.Resolution != 0 || q.Source != quality.SourceUnknown {
-			_ = s.db.SetFileQuality(ctx, fileID, q)
+			_ = s.db.SetFileQualityFrom(ctx, fileID, q,
+				mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+		}
+		// Measure anything we have not measured at this size. This IS the
+		// backfill: no separate migration pass, no "run this once" button —
+		// the first scan after upgrade walks the library and queues the work.
+		if item.Kind != domain.KindBook {
+			if rec, ok := probeState[path]; !ok || rec.NeedsProbe(ff.size) {
+				if pErr := s.EnqueueProbe(ctx, fileID); pErr != nil {
+					s.log.Warn("scan: could not queue probe", "path", path, "err", pErr)
+				}
+			}
 		}
 		if item.Kind == domain.KindSeries {
 			if eps, ok := filename.Extract(path); ok {

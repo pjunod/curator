@@ -345,39 +345,6 @@ func (d *DB) SetFileQuality(ctx context.Context, fileID int64, q quality.Quality
 	return d.Write.SetFileQuality(ctx, sqlitegen.SetFileQualityParams{Quality: q.String(), ID: fileID})
 }
 
-// BestQualityForItem returns the highest-ranked quality among the files of
-// ONE copy of an item (copyID 0 = primary); ok=false when that copy has no
-// files with known quality. Copies never see each other's files — the 4K
-// primary must not convince the 720p copy it is satisfied, or vice versa.
-func (d *DB) BestQualityForItem(ctx context.Context, itemID, copyID int64) (quality.Quality, bool, error) {
-	files, err := d.ListFilesForItem(ctx, itemID)
-	if err != nil {
-		return quality.Quality{}, false, err
-	}
-	quals, err := d.FileQualities(ctx, itemID)
-	if err != nil {
-		return quality.Quality{}, false, err
-	}
-	var best *quality.Quality
-	for _, f := range files {
-		if f.CopyID != copyID {
-			continue
-		}
-		q, ok := quals[f.ID]
-		if !ok {
-			continue
-		}
-		if best == nil || quality.Better(q, *best) {
-			qq := q
-			best = &qq
-		}
-	}
-	if best == nil {
-		return quality.Quality{}, false, nil
-	}
-	return *best, true, nil
-}
-
 // FileQualities maps file id → parsed quality for an item's files (files
 // with unknown quality are omitted).
 func (d *DB) FileQualities(ctx context.Context, itemID int64) (map[int64]quality.Quality, error) {

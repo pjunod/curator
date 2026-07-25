@@ -148,16 +148,15 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 		copyName = copyLabel(*cp)
 	}
 	if item.Kind == domain.KindMovie || item.Kind == domain.KindBook {
-		var have *quality.Quality
-		if q, ok, err := s.db.BestQualityForItem(ctx, item.ID, copyID); err != nil {
+		state, err := s.db.DiskStateForItem(ctx, item.ID, copyID)
+		if err != nil {
 			return nil, err
-		} else if ok {
-			have = &q
 		}
 		if item.Kind == domain.KindBook {
 			return domain.BookWantable{
 				Item: item.ID, Profile: profileID, Mon: item.Monitored,
-				Title: item.Title, Author: item.Author, Year: item.Year, Have: have,
+				Title: item.Title, Author: item.Author, Year: item.Year,
+				Have: state.Best, Files: state.HasFiles, Verified: state.SourceVerified,
 			}, nil
 		}
 		mon := item.Monitored
@@ -166,7 +165,8 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 		}
 		return domain.MovieWantable{
 			Item: item.ID, Profile: profileID, Mon: mon,
-			Title: item.Title, Year: item.Year, Have: have,
+			Title: item.Title, Year: item.Year,
+			Have: state.Best, Files: state.HasFiles, Verified: state.SourceVerified,
 			Copy: copyID, CopyName: copyName,
 		}, nil
 	}

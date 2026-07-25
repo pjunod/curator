@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/monarr-media/monarr/internal/domain"
@@ -44,9 +45,21 @@ func RegisterJobHandlers[H ~func(ctx context.Context, j domain.Job) error](
 	})); err != nil {
 		return err
 	}
-	return register(JobAdopt, H(func(ctx context.Context, _ domain.Job) error {
+	if err := register(JobAdopt, H(func(ctx context.Context, _ domain.Job) error {
 		_, err := s.RunAdoption(ctx)
 		return err
+	})); err != nil {
+		return err
+	}
+	return register(JobProbe, H(func(ctx context.Context, j domain.Job) error {
+		var p probePayload
+		if err := json.Unmarshal([]byte(j.Payload), &p); err != nil {
+			return fmt.Errorf("probe job payload: %w", err)
+		}
+		if p.FileID == 0 {
+			return fmt.Errorf("probe job: no file id")
+		}
+		return s.ProbeFile(ctx, p.FileID)
 	}))
 }
 

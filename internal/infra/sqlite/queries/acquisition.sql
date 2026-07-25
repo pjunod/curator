@@ -81,3 +81,26 @@ VALUES (?, ?, ?, ?, ?);
 
 -- name: ListHistory :many
 SELECT * FROM history_events ORDER BY ts DESC LIMIT 200;
+
+-- name: SetFileMediaInfo :exec
+-- The measured record and where the recorded quality came from (ADR 0013 section 3).
+-- Written by the probe path only; `quality` is set separately so a probe that
+-- learns nothing new about quality still records that it ran.
+UPDATE media_files
+SET media_info = ?, quality_provenance = ?, quality_confidence = ?, probed_at = ?
+WHERE id = ?;
+
+-- name: SetFileQualityWithProvenance :exec
+UPDATE media_files
+SET quality = ?, quality_provenance = ?, quality_confidence = ?
+WHERE id = ?;
+
+-- name: ListFileQualityRecordsForItem :many
+SELECT id, copy_id, path, size, quality, media_info, quality_provenance,
+       quality_confidence, probed_at
+FROM media_files WHERE media_item_id = ?;
+
+-- name: GetMediaFile :one
+SELECT id, media_item_id, copy_id, path, size, added_at, quality,
+       media_info, quality_provenance, quality_confidence, probed_at
+FROM media_files WHERE id = ?;

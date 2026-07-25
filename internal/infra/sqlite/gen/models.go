@@ -148,13 +148,17 @@ type MediaCopy struct {
 }
 
 type MediaFile struct {
-	ID          int64
-	MediaItemID sql.NullInt64
-	Path        string
-	Size        int64
-	AddedAt     int64
-	Quality     string
-	CopyID      sql.NullInt64
+	ID                int64
+	MediaItemID       sql.NullInt64
+	Path              string
+	Size              int64
+	AddedAt           int64
+	Quality           string
+	CopyID            sql.NullInt64
+	MediaInfo         string
+	QualityProvenance string
+	QualityConfidence string
+	ProbedAt          int64
 }
 
 type MediaFileEpisode struct {

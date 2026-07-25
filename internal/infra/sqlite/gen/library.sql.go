@@ -586,7 +586,7 @@ func (q *Queries) ListAllMediaCopies(ctx context.Context) ([]MediaCopy, error) {
 }
 
 const listAllMediaFiles = `-- name: ListAllMediaFiles :many
-SELECT id, media_item_id, path, size, added_at, quality, copy_id FROM media_files ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at FROM media_files ORDER BY path
 `
 
 func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
@@ -606,6 +606,10 @@ func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
 			&i.AddedAt,
 			&i.Quality,
 			&i.CopyID,
+			&i.MediaInfo,
+			&i.QualityProvenance,
+			&i.QualityConfidence,
+			&i.ProbedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -751,7 +755,7 @@ func (q *Queries) ListMediaCopies(ctx context.Context, mediaItemID int64) ([]Med
 }
 
 const listMediaFilesForItem = `-- name: ListMediaFilesForItem :many
-SELECT id, media_item_id, path, size, added_at, quality, copy_id FROM media_files WHERE media_item_id = ? ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at FROM media_files WHERE media_item_id = ? ORDER BY path
 `
 
 func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.NullInt64) ([]MediaFile, error) {
@@ -771,6 +775,10 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.Nul
 			&i.AddedAt,
 			&i.Quality,
 			&i.CopyID,
+			&i.MediaInfo,
+			&i.QualityProvenance,
+			&i.QualityConfidence,
+			&i.ProbedAt,
 		); err != nil {
 			return nil, err
 		}
