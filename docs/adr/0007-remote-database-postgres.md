@@ -1,6 +1,11 @@
 # ADR 0007 — Remote database (Postgres) support: evaluated, deferred
 
-- **Status:** Deferred (revisit criteria below)
+- **Status:** Superseded by [ADR 0008](0008-distributed-execution.md) — was
+  "Deferred (revisit criteria below)". The revisit happened: 0008 takes the
+  clustering question further and settles the Postgres part of it. The
+  analysis below is unedited and still worth reading for *why* it was
+  deferred; only this line changed, on 2026-07-25, because the index has said
+  superseded since 0008 landed and this file still said deferred.
 - **Date:** 2026-07-19
 - **Relates to:** ADR 0004 (SQLite only), which stands
 

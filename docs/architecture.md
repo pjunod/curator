@@ -341,7 +341,7 @@ monarr/
 ├── web/                          # React+TS+Vite app → dist embedded via go:embed
 ├── testdata/releases/            # golden parser corpus (ported from upstream, GPL)
 ├── test/conformance/             # docker-compose: monarr + jellyseerr + prowlarr + bazarr
-├── docs/adr/                     # 0001-go, 0002-single-media-table, 0003-compat-personalities, …
+├── docs/adr/                     # numbered decision records + README.md index
 └── .github/workflows/            # build, test, corpus-conformance, goreleaser
 ```
 
@@ -352,11 +352,11 @@ Domain must not import app/infra/adapters; adapters import ports+domain only; co
 1. **Name: Monarr.** Committed. A web/GitHub sweep found no collisions (runners-up Singularr and Omniarr were also clean) — register the GitHub org, Docker Hub namespace, and a domain before the repo goes public. *(v0.3 note: the bare `monarr` GitHub handle is a dormant 2011 user account, so the org and module path are `monarr-media` / `github.com/monarr-media/monarr`; container images publish to `ghcr.io/monarr-media/monarr` rather than Docker Hub, whose orgs require a paid plan — see ADR 0001 amendment.)*
 2. **License: GPL-3.0**, matching upstream — the golden parser corpus port (§8) is unlocked.
 3. **Migration: filesystem adoption** is the committed path (§9); the *arr DB importer drops to a Phase 4 stretch item.
-4. **Anime: minimal.** TMDB-only metadata holds long-term; absolute numbering and AniDB/TVDB mapping stay parked in Phase 5.
+4. **Anime: minimal.** TMDB-only metadata holds long-term; absolute numbering and AniDB/TVDB mapping stay parked in Phase 5. *(v0.4 note: "TMDB-only holds long-term" is the part now in question, and not only for anime — [ADR 0011](adr/0011-series-metadata-provider.md) records a series TMDB files as a season of an umbrella entry while TheTVDB, Plex and the folder on disk call it a show, plus the larger issue that scene release names carry TVDB episode numbering. Proposed, not decided.)*
 5. **Database: SQLite only.** No dual-dialect tax; Postgres reconsidered only on demonstrated need.
 6. **Books: in (v0.3).** A third `kind` (reserved in the Phase 1 schema from the first migration), standalone-Wantable shape, ebooks + audiobooks together via the quality ladder, metadata provider bake-off behind the port, landing as Phase 2.5. Prompted by Readarr's retirement leaving the niche unserved.
 
-Each of these is an ADR (`docs/adr/0001-name-and-license.md`, `0002-single-media-table.md`, `0003-compat-personalities.md`, `0004-sqlite-only.md`, `0005-filesystem-adoption.md`, `0006-books-third-media-kind.md`).
+Each of these is an ADR, and so is every decision taken since. The current list — with statuses, and which records supersede which — is [docs/adr/README.md](adr/README.md); this section is not kept in step with it, because an enumeration copied into a second file is an enumeration that goes stale (this one had, at 0006, while records ran to 0011).
 
 ## 14. References
 
