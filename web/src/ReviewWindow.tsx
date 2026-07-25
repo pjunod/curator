@@ -311,27 +311,48 @@ function ReviewRow({
 
       <div className="review-candidates">
         {p.candidates.length === 0 && <span className="muted">no match —</span>}
-        {p.candidates.map((c, i) => (
-          <button
-            key={`${c.kind}-${c.tmdbId}-${c.olid ?? ''}`}
-            className={i === 0 && p.confidence === 'exact' ? 'candidate best' : 'candidate'}
-            disabled={busy}
-            title={
-              c.altTitles?.length
-                ? `${c.title}${c.year ? ` (${c.year})` : ''} is also released as ${c.altTitles.join(', ')}`
-                : `Adopt this folder as ${c.title}${c.year ? ` (${c.year})` : ''}`
-            }
-            onClick={() => onAccept(c)}
-          >
-            {c.title}
-            {c.year ? ` (${c.year})` : ''}
-            {/* A chip that names a different film than the folder does looks
-                like a bad suggestion until it says why it is here. */}
-            {c.altTitles?.length ? (
-              <span className="candidate-aka"> aka {c.altTitles[0]}</span>
-            ) : null}
-          </button>
-        ))}
+        {p.candidates.map((c, i) => {
+          const label = (
+            <>
+              {c.title}
+              {c.year ? ` (${c.year})` : ''}
+              {/* A chip that names a different title than the folder does
+                  looks like a bad suggestion until it says why it is here. */}
+              {c.altTitles?.length ? (
+                <span className="candidate-aka"> aka {c.altTitles[0]}</span>
+              ) : null}
+            </>
+          )
+          const key = `${c.kind}-${c.tmdbId}-${c.olid ?? ''}`
+
+          // heldBy is set only for a leading candidate another folder already
+          // holds, and adopting it cannot succeed — the server refuses, and
+          // rightly. So this is not a button. A chip that looks clickable,
+          // takes a click and answers with a conflict error is a worse way of
+          // saying the same thing the note above already says.
+          if (i === 0 && p.heldBy) {
+            return (
+              <span key={key} className="candidate taken" title={`Already at ${p.heldBy}`}>
+                {label}
+              </span>
+            )
+          }
+          return (
+            <button
+              key={key}
+              className={i === 0 && p.confidence === 'exact' ? 'candidate best' : 'candidate'}
+              disabled={busy}
+              title={
+                c.altTitles?.length
+                  ? `${c.title}${c.year ? ` (${c.year})` : ''} is also released as ${c.altTitles.join(', ')}`
+                  : `Adopt this folder as ${c.title}${c.year ? ` (${c.year})` : ''}`
+              }
+              onClick={() => onAccept(c)}
+            >
+              {label}
+            </button>
+          )
+        })}
         {/* Searching happens here rather than on the Add page. Sending the
             user there created a library item at the naming-rule path and left
             this folder unmatched — a phantom entry pointing at a directory
@@ -346,13 +367,17 @@ function ReviewRow({
         </button>
       </div>
 
+      {/* The action is "never offer this folder again", and "not media" is a
+          good name for it right up until the folder plainly *is* media and
+          simply has no separate entry to match. Then the honest label is what
+          the button does. */}
       <button
         className="link-btn"
         title="Never offer this folder again"
         disabled={busy}
         onClick={onDismiss}
       >
-        not media
+        {p.heldBy ? 'stop offering' : 'not media'}
       </button>
 
       {searching && (

@@ -46,6 +46,33 @@ const tv700season1 = {
   ],
 }
 
+// An umbrella entry: one series whose alternative titles name several
+// programmes, which is how TMDB files the Cunk shows. A folder per programme
+// therefore points every review row at this one id — the case adoption has to
+// describe rather than let the user click into a conflict.
+const tv900 = {
+  id: 900,
+  name: 'Panel Show on...',
+  overview: 'One series the provider files several programmes under.',
+  first_air_date: '2018-04-03',
+  status: 'Ended',
+  poster_path: '',
+  backdrop_path: '',
+  genres: [{ id: 35, name: 'Comedy' }],
+  episode_run_time: [30],
+  vote_average: 7.1,
+  vote_count: 120,
+  seasons: [{ season_number: 1, episode_count: 1, name: 'Season 1' }],
+  external_ids: { imdb_id: 'tt9000001', tvdb_id: 900900 },
+}
+
+const tv900alts = {
+  results: [
+    { iso_3166_1: 'GB', title: 'Panel Show on Britain' },
+    { iso_3166_1: 'GB', title: 'Panel Show on Earth' },
+  ],
+}
+
 // ---- Open Library (books, ADR 0006) — same fake server, distinct paths ----
 
 const routes = {
@@ -54,6 +81,12 @@ const routes = {
   '/movie/601': movie601,
   '/tv/700': tv700,
   '/tv/700/season/1': tv700season1,
+  '/tv/900': tv900,
+  '/tv/900/alternative_titles': tv900alts,
+  '/tv/900/season/1': {
+    season_number: 1,
+    episodes: [{ season_number: 1, episode_number: 1, name: 'Only', air_date: '2018-04-03' }],
+  },
   '/search.json': {
     numFound: 1,
     docs: [{
@@ -76,7 +109,20 @@ const routes = {
 }
 
 createServer((req, res) => {
-  const { pathname } = new URL(req.url, 'http://x')
+  const { pathname, searchParams } = new URL(req.url, 'http://x')
+  // /search/tv is the one route that has to read the query: the umbrella
+  // series must be findable without turning up beside The Test Show in the
+  // add-media flow, where a second result would make "Add" ambiguous.
+  if (pathname === '/search/tv' && /panel show/i.test(searchParams.get('query') ?? '')) {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({
+      results: [{
+        id: 900, name: tv900.name, first_air_date: tv900.first_air_date,
+        overview: tv900.overview, poster_path: '',
+      }],
+    }))
+    return
+  }
   const body = routes[pathname]
   if (!body) {
     res.writeHead(404, { 'content-type': 'application/json' })

@@ -1720,6 +1720,16 @@ a.pill-info:hover {
   cursor: default;
 }
 
+/* A candidate that cannot be adopted because another folder already holds it.
+   Still shown — the note above names it — but plainly not a control: no
+   pointer, no hover, and the border dropped so it does not read as a chip
+   waiting to be pressed. */
+.candidate.taken {
+  cursor: default;
+  border-style: dashed;
+  opacity: 0.55;
+}
+
 /* The alternate name a folder was actually named after. Quieter than the
    title, because it answers "why is this chip here" rather than "what is
    this" — but on the chip, because that is where the question gets asked. */
