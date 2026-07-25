@@ -3,30 +3,61 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import type { MediaItemSummary, MediaKind } from '../api'
 import {
-  ACTIVE_DOWNLOAD_STATES, bulkEditLibrary, completeness, fmtRating, getLibrary,
+  ACTIVE_DOWNLOAD_STATES, bulkEditLibrary, completeness, getLibrary,
   getProfiles, getQueue, getReviewQueue, getScanReport, getSettings, posterUrl,
-  RATING_SOURCE_LABELS, triggerScan,
+  triggerScan,
 } from '../api'
 import { PAGE_SIZES, Pager, PageSizePicker, sliceForPage } from '../Pager'
 
-// CardBadges: at-a-glance state on a poster — rating, in-flight downloads,
-// and the green/yellow/red completeness pill.
+// QualityBadge: what is on disk, what it is aiming at, and whether monarr
+// is still hunting — the three questions a poster grid otherwise answers
+// with "open the item and see".
+//
+// Rendered as "1080p → 2160p" while seeking and "2160p" once the cutoff is
+// met, so the arrow itself carries the status. The rating used to live in
+// this corner; it moved to the item page, where someone who wants a rating
+// is already looking.
+// The chip has a poster's width to work with, and the question it answers is
+// about resolution: "1080p → 2160p", not "WEB-DL 1080p → Bluray 2160p",
+// which wraps onto two lines and off the card. Quality.Display() is ours and
+// always ends in the resolution (or is a bare format for books), so the last
+// token is the compact form. The source stays in the tooltip.
+function shortQuality(q: string): string {
+  const parts = q.trim().split(/\s+/)
+  return parts[parts.length - 1] || q
+}
+
+function QualityBadge({ m }: { m: MediaItemSummary }) {
+  if (m.upgrade === 'missing' || !m.quality) return null
+
+  const seeking = m.upgrade === 'seeking'
+  const target = m.qualityTarget ?? ''
+  const cls =
+    m.upgrade === 'met' ? 'quality-met' : seeking ? 'quality-seeking' : 'quality-capped'
+  const title =
+    m.upgrade === 'met'
+      ? `${m.quality} on disk — at the profile's target${target ? ` (${target})` : ''}`
+      : seeking
+        ? `${m.quality} on disk — still looking for ${target || 'better'}`
+        : `${m.quality} on disk — below ${target || 'the target'}, and staying there ` +
+          `because this profile has upgrades switched off`
+
+  return (
+    <span className={`poster-chip chip-left ${cls}`} title={title}>
+      {shortQuality(m.quality)}
+      {seeking && target ? ` → ${shortQuality(target)}` : ''}
+    </span>
+  )
+}
+
+// CardBadges: at-a-glance state on a poster — quality and where it is
+// headed, in-flight downloads, and the green/yellow/red completeness pill.
 function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
   const { m } = props
   const comp = completeness(m.kind, m.episodeFileCount, m.episodeCount, m.fileCount)
   return (
     <>
-      {m.ratingVotes > 0 && (
-        <span
-          className="poster-chip chip-left"
-          title={`${
-            RATING_SOURCE_LABELS[m.ratings[0]?.source] ??
-            (m.kind === 'book' ? 'Open Library' : 'TMDB')
-          } · ${m.ratingVotes.toLocaleString()} votes`}
-        >
-          ★ {fmtRating(m.kind, m.rating)}
-        </span>
-      )}
+      <QualityBadge m={m} />
       {props.downloading && (
         <span className="poster-chip chip-right" title="Download in flight">
           ↓

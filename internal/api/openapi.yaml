@@ -1719,6 +1719,23 @@ components:
           type: boolean
         path:
           type: string
+        quality:
+          type: string
+          description: >
+            The WEAKEST quality among the item's files, rendered for display
+            ("1080p WEB-DL"); empty when nothing is on disk or no file's
+            quality was recorded. Weakest rather than best because that is
+            what decides whether the item is still being hunted.
+        qualityTarget:
+          type: string
+          description: The profile's cutoff — the "good enough" point.
+        upgrade:
+          type: string
+          enum: ["", missing, seeking, met, capped]
+          description: >
+            missing = nothing on disk · seeking = below the cutoff and being
+            hunted · met = cutoff reached · capped = below the cutoff with
+            upgrades switched off. Empty when it could not be determined.
         rating:
           type: number
           description: Provider-scale community rating (TMDB /10, Open Library /5).

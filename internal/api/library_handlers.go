@@ -11,6 +11,7 @@ import (
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
 	"github.com/monarr-media/monarr/internal/app/library"
 	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/ports"
 )
 
@@ -62,7 +63,7 @@ func ratingsDTO(rs []domain.Rating) []apigen.Rating {
 }
 
 func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
-	return apigen.MediaItemSummary{
+	out := apigen.MediaItemSummary{
 		Id:               m.ID,
 		Kind:             apigen.MediaKind(m.Kind),
 		Title:            m.Title,
@@ -79,6 +80,17 @@ func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 		FileCount:        m.FileCount,
 		AddedAt:          m.AddedAt,
 	}
+	if quality.Rank(m.Quality) > 0 {
+		out.Quality = optStr(m.Quality.Display())
+	}
+	if quality.Rank(m.QualityTarget) > 0 {
+		out.QualityTarget = optStr(m.QualityTarget.Display())
+	}
+	if m.Upgrade != domain.UpgradeUnknown {
+		u := apigen.MediaItemSummaryUpgrade(m.Upgrade)
+		out.Upgrade = &u
+	}
+	return out
 }
 
 func optStr(s string) *string {

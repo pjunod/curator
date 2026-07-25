@@ -3,6 +3,28 @@ package domain
 import (
 	"strings"
 	"time"
+
+	"github.com/monarr-media/monarr/internal/domain/quality"
+)
+
+// UpgradeState answers, for a list view, "is this done or is it still being
+// hunted" — the question a poster grid otherwise leaves to guesswork.
+type UpgradeState string
+
+// The four states an item can be in against its quality profile.
+const (
+	// UpgradeUnknown is the zero value: not computed for this view.
+	UpgradeUnknown UpgradeState = ""
+	// UpgradeMissing means nothing is on disk yet.
+	UpgradeMissing UpgradeState = "missing"
+	// UpgradeSeeking means what is on disk is below the profile's cutoff and
+	// the profile allows upgrades, so monarr is still looking for better.
+	UpgradeSeeking UpgradeState = "seeking"
+	// UpgradeMet means the cutoff is reached: nothing further is wanted.
+	UpgradeMet UpgradeState = "met"
+	// UpgradeCapped means it is below the cutoff and staying there, because
+	// the profile has upgrades switched off.
+	UpgradeCapped UpgradeState = "capped"
 )
 
 // SortTitle normalizes a title for ordering: lowercase, trimmed, leading
@@ -99,6 +121,17 @@ type MediaItem struct {
 	EpisodeCount     int
 	EpisodeFileCount int
 	FileCount        int
+	// Quality is the WEAKEST quality among the primary copy's files, and
+	// Upgrade is what the item's profile makes of it. The weakest rather
+	// than the best because that is the one deciding whether the item is
+	// still being hunted: a series with nine 1080p episodes and one 720p is
+	// not finished at 1080p. Zero value = nothing on disk (or files whose
+	// quality was never recorded).
+	Quality quality.Quality
+	Upgrade UpgradeState
+	// QualityTarget is the profile's cutoff — the "good enough" point that
+	// Quality is being compared against.
+	QualityTarget quality.Quality
 
 	AddedAt   time.Time
 	UpdatedAt time.Time

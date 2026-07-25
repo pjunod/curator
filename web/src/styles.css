@@ -913,6 +913,26 @@ a.pill-info:hover {
   left: 8px;
 }
 
+/* Quality state on the poster. The colours carry the same meaning as the
+   completeness pill below them — green is done, amber is in progress —
+   so one glance across a grid reads consistently. Deliberately quiet:
+   these sit over artwork and must not fight it. */
+.quality-met {
+  color: #b7f7d8;
+  box-shadow: inset 0 0 0 1px rgba(63, 178, 127, 0.55);
+}
+
+.quality-seeking {
+  color: #ffe3ad;
+  box-shadow: inset 0 0 0 1px rgba(229, 165, 61, 0.6);
+}
+
+/* Below target and staying there — no arrow, no promise of improvement. */
+.quality-capped {
+  color: #d8dbe3;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
 .chip-right {
   right: 8px;
   color: var(--accent);

@@ -188,6 +188,33 @@ func (e IndexerInputProtocol) Valid() bool {
 	}
 }
 
+// Defines values for MediaItemSummaryUpgrade.
+const (
+	Capped  MediaItemSummaryUpgrade = "capped"
+	Empty   MediaItemSummaryUpgrade = ""
+	Met     MediaItemSummaryUpgrade = "met"
+	Missing MediaItemSummaryUpgrade = "missing"
+	Seeking MediaItemSummaryUpgrade = "seeking"
+)
+
+// Valid indicates whether the value is a known member of the MediaItemSummaryUpgrade enum.
+func (e MediaItemSummaryUpgrade) Valid() bool {
+	switch e {
+	case Capped:
+		return true
+	case Empty:
+		return true
+	case Met:
+		return true
+	case Missing:
+		return true
+	case Seeking:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MediaKind.
 const (
 	MediaKindBook   MediaKind = "book"
@@ -711,6 +738,12 @@ type MediaItemSummary struct {
 	Path       string    `json:"path"`
 	PosterPath string    `json:"posterPath"`
 
+	// Quality The WEAKEST quality among the item's files, rendered for display ("1080p WEB-DL"); empty when nothing is on disk or no file's quality was recorded. Weakest rather than best because that is what decides whether the item is still being hunted.
+	Quality *string `json:"quality,omitempty"`
+
+	// QualityTarget The profile's cutoff — the "good enough" point.
+	QualityTarget *string `json:"qualityTarget,omitempty"`
+
 	// Rating Provider-scale community rating (TMDB /10, Open Library /5).
 	Rating float32 `json:"rating"`
 
@@ -720,8 +753,14 @@ type MediaItemSummary struct {
 	// Ratings All known ratings, labeled by source.
 	Ratings []Rating `json:"ratings"`
 	Title   string   `json:"title"`
-	Year    int      `json:"year"`
+
+	// Upgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off. Empty when it could not be determined.
+	Upgrade *MediaItemSummaryUpgrade `json:"upgrade,omitempty"`
+	Year    int                      `json:"year"`
 }
+
+// MediaItemSummaryUpgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off. Empty when it could not be determined.
+type MediaItemSummaryUpgrade string
 
 // MediaKind defines model for MediaKind.
 type MediaKind string

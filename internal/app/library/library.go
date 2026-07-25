@@ -647,7 +647,76 @@ func (s *Service) RefreshAll(ctx context.Context) error {
 
 // List returns item summaries, optionally filtered by kind ("" = all).
 func (s *Service) List(ctx context.Context, kind domain.MediaKind) ([]domain.MediaItem, error) {
-	return s.db.ListMediaItems(ctx, kind)
+	items, err := s.db.ListMediaItems(ctx, kind)
+	if err != nil {
+		return nil, err
+	}
+	s.gradeUpgrades(ctx, items)
+	return items, nil
+}
+
+// gradeUpgrades fills in each item's quality target and upgrade state.
+//
+// The storage layer knows what is on disk; only here is the profile known,
+// and the profile is what turns "1080p" into "1080p, and still looking" or
+// "1080p, done". A list view that shows the first without the second makes
+// the reader open every item to find out which — which is the state the
+// poster grid was in.
+//
+// Best-effort: profiles unreadable means the items come back ungraded
+// (UpgradeUnknown) rather than the list failing.
+func (s *Service) gradeUpgrades(ctx context.Context, items []domain.MediaItem) {
+	profiles, err := s.db.ListProfiles(ctx)
+	if err != nil {
+		s.log.Debug("library: profiles unreadable, list is ungraded", "err", err)
+		return
+	}
+	byID := make(map[int64]quality.Profile, len(profiles))
+	for _, p := range profiles {
+		byID[p.ID] = p
+	}
+	for i := range items {
+		p, ok := byID[items[i].QualityProfileID]
+		if !ok {
+			continue
+		}
+		items[i].QualityTarget = p.Cutoff
+		items[i].Upgrade = upgradeState(items[i], p)
+	}
+}
+
+// upgradeState answers the three questions a card should not need a click
+// for: is anything here, is it good enough, and is monarr still looking.
+func upgradeState(m domain.MediaItem, p quality.Profile) domain.UpgradeState {
+	// "Nothing on disk" is a fact about files, not about quality: a file
+	// whose quality was never recorded still counts as present, and calling
+	// that missing would have the grid contradict the completeness pill
+	// beside it.
+	if !hasFiles(m) {
+		return domain.UpgradeMissing
+	}
+	if quality.Rank(m.Quality) == 0 {
+		// Present but unrecognised — say nothing rather than guess.
+		return domain.UpgradeUnknown
+	}
+	switch {
+	case p.MeetsCutoff(m.Quality):
+		return domain.UpgradeMet
+	case p.UpgradesAllowed:
+		return domain.UpgradeSeeking
+	default:
+		return domain.UpgradeCapped
+	}
+}
+
+// hasFiles reports whether anything is on disk, counting episodes for series
+// and raw files for everything else — the same split the completeness pill
+// uses, so the two never disagree.
+func hasFiles(m domain.MediaItem) bool {
+	if m.Kind == domain.KindSeries {
+		return m.EpisodeFileCount > 0
+	}
+	return m.FileCount > 0
 }
 
 // Get returns one fully hydrated item.

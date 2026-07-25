@@ -789,7 +789,19 @@ SELECT
        JOIN episodes e2 ON e2.id = mfe.episode_id
       WHERE e2.media_item_id = m.id AND e2.monitored = 1
         AND e2.air_date != '' AND e2.air_date <= ?1) AS have_episodes,
-    (SELECT COUNT(*) FROM media_files f WHERE f.media_item_id = m.id) AS files
+    (SELECT COUNT(*) FROM media_files f WHERE f.media_item_id = m.id) AS files,
+    -- Every file's recorded quality, comma-joined. Ranking happens in Go
+    -- (quality.Rank), which SQLite cannot do, and the list view needs the
+    -- weakest one: that is what decides whether an item is still being
+    -- upgraded. Only the primary copy counts -- a deliberate 720p second
+    -- copy must not make the main copy look unfinished.
+    -- COALESCE because group_concat over no rows is NULL, and an item with
+    -- no files is the common case on a fresh library.
+    (SELECT COALESCE(group_concat(f2.quality), '') FROM media_files f2
+      WHERE f2.media_item_id = m.id AND f2.quality != ''
+        -- The primary copy stores copy_id NULL, not 0; "= 0" matches nothing
+        -- and every item reports no quality at all.
+        AND (f2.copy_id IS NULL OR f2.copy_id = 0)) AS qualities
 FROM media_items m
 `
 
@@ -798,6 +810,7 @@ type ListMediaItemStatsRow struct {
 	AiredEpisodes int64
 	HaveEpisodes  int64
 	Files         int64
+	Qualities     interface{}
 }
 
 // Completeness per item for list views: monitored aired episodes vs the
@@ -816,6 +829,7 @@ func (q *Queries) ListMediaItemStats(ctx context.Context, today string) ([]ListM
 			&i.AiredEpisodes,
 			&i.HaveEpisodes,
 			&i.Files,
+			&i.Qualities,
 		); err != nil {
 			return nil, err
 		}

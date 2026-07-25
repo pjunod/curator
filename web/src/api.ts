@@ -61,6 +61,12 @@ export interface MediaItemSummary {
   rating: number // provider scale: TMDB /10, Open Library /5
   ratingVotes: number // 0 = no rating known
   ratings: Rating[] // all known ratings, labeled by source
+  /** Weakest quality among the item's files, for display; '' if none. */
+  quality?: string
+  /** The profile's cutoff — the "good enough" point. */
+  qualityTarget?: string
+  /** missing · seeking · met · capped; '' when undetermined. */
+  upgrade?: '' | 'missing' | 'seeking' | 'met' | 'capped'
   episodeCount: number // monitored episodes aired to date (series)
   episodeFileCount: number // of those, how many have a file
   fileCount: number // files on disk (movies/books completeness)

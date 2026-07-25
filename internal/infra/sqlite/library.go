@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/monarr-media/monarr/internal/domain/quality"
 	sqlitegen "github.com/monarr-media/monarr/internal/infra/sqlite/gen"
 )
 
@@ -395,10 +396,49 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 			item.EpisodeCount = int(s.AiredEpisodes)
 			item.EpisodeFileCount = int(s.HaveEpisodes)
 			item.FileCount = int(s.Files)
+			item.Quality = weakestQuality(textOf(s.Qualities))
 		}
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// textOf reads a column sqlc typed as interface{} (which COALESCE makes it
+// do). The driver hands TEXT back as []byte here, not string — asserting
+// only for string compiles, runs, and silently reports every item as having
+// no quality at all.
+func textOf(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case []byte:
+		return string(t)
+	default:
+		return ""
+	}
+}
+
+// weakestQuality picks the lowest-ranked quality from the comma-joined list
+// the stats query returns.
+//
+// The weakest, not the best: it is the one that decides whether the item is
+// still being hunted. A series with nine 1080p episodes and one 720p has not
+// finished at 1080p, and a grid that says otherwise is the reason someone
+// has to open every item to find out.
+func weakestQuality(joined string) quality.Quality {
+	var worst quality.Quality
+	var have bool
+	for _, raw := range strings.Split(joined, ",") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		q := quality.FromString(raw)
+		if !have || quality.Rank(q) < quality.Rank(worst) {
+			worst, have = q, true
+		}
+	}
+	return worst
 }
 
 // SetSeasonMonitored flips one season's monitored flag and cascades it to
