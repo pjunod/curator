@@ -7,6 +7,15 @@ import (
 	"github.com/monarr-media/monarr/internal/domain/quality"
 )
 
+// SourceManual marks a library record no provider backs: its metadata was
+// typed by the user and its episodes were read off the disk (ADR 0012).
+const SourceManual = "manual"
+
+// IsManual reports whether this record has no provider behind it. The
+// paths that must know are the ones that would otherwise go looking for a
+// provider: metadata refresh, and anything reporting an external id.
+func (m MediaItem) IsManual() bool { return m.Source == SourceManual }
+
 // UpgradeState answers, for a list view, "is this done or is it still being
 // hunted" — the question a poster grid otherwise leaves to guesswork.
 type UpgradeState string
@@ -102,6 +111,10 @@ type MediaItem struct {
 	Rating       float64
 	RatingVotes  int // 0 = no rating known; Rating is provider-scale (TMDB /10, Open Library /5)
 	Ratings      []Rating
+
+	// Source names the provider this record came from ("tmdb", "tvmaze",
+	// "openlibrary") or SourceManual when none did (ADR 0012).
+	Source string
 
 	Monitored        bool
 	QualityProfileID int64

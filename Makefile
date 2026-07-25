@@ -13,7 +13,7 @@ SQLC         := github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 OAPI_CODEGEN := github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 GOLANGCI     := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
-.PHONY: all build go-build web test test-web test-e2e coverage coverage-html lint vet fmt gen gen-sqlc gen-api tidy clean dev-api dev-web docker bootstrap hooks
+.PHONY: all build go-build web test test-web test-e2e coverage coverage-html lint vet fmt gen gen-sqlc gen-api release release-check tidy clean dev-api dev-web docker bootstrap hooks
 
 all: build
 
@@ -78,6 +78,26 @@ gen-sqlc:
 
 gen-api:
 	go run $(OAPI_CODEGEN) -config internal/api/oapi-codegen.yaml internal/api/openapi.yaml
+
+# Cut a version. VERSION is the single source of truth (scripts/version.sh),
+# and it sat at 0.4.0 across 39 commits because nothing ever asked for a bump.
+#   make release BUMP=minor
+release:
+	@sh scripts/release.sh $(or $(BUMP),patch)
+
+# What is unreleased. Run it before deciding the bump — the answer is usually
+# "more than you thought".
+release-check:
+	@tag="$$(git describe --tags --abbrev=0 2>/dev/null || echo '')"; \
+	base="$$tag"; \
+	if [ -z "$$base" ]; then base="$$(git log -1 --format=%H -- VERSION)"; fi; \
+	if [ -z "$$base" ]; then base="$$(git rev-list --max-parents=0 HEAD)"; fi; \
+	printf 'VERSION %s · last tag %s · counting from %s\n' \
+	  "$$(cat VERSION)" "$${tag:-none}" "$$(git log -1 --format=%h $$base)"; \
+	printf 'unreleased: %s commits, %s of them feat/fix\n' \
+	  "$$(git rev-list --count $$base..HEAD)" \
+	  "$$(git log --format=%s $$base..HEAD | grep -cE '^(feat|fix)' || true)"; \
+	git log --format='  %h %s' $$base..HEAD | head -20
 
 tidy:
 	go mod tidy

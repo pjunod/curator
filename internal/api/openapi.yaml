@@ -302,6 +302,95 @@ paths:
               schema:
                 $ref: "#/components/schemas/AdoptResult"
 
+  /library/manual:
+    post:
+      operationId: addManualEntry
+      summary: Create a library record no provider backs (ADR 0012)
+      description: >
+        For media no metadata provider has right: programmes no database
+        carries, home video, anything a user wants filed their own way. The
+        folder must be a direct child of a registered root folder and must
+        exist. For a series the episode list is read off the disk — the files
+        are the truth for a record with no provider behind it — and files
+        carrying no episode number are skipped rather than guessed at. The
+        entry is created unmonitored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, title, path]
+              properties:
+                kind:
+                  $ref: "#/components/schemas/MediaKind"
+                title:
+                  type: string
+                year:
+                  type: integer
+                author:
+                  type: string
+                  description: Books only.
+                overview:
+                  type: string
+                path:
+                  type: string
+                  description: Absolute folder, a direct child of a root folder.
+      responses:
+        "201":
+          description: The new entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaItemDetail"
+        "400":
+          description: Missing title, unsupported kind, or a folder outside a root.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Another item already points at that folder.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /library/{id}/rescan:
+    post:
+      operationId: rescanManualEntry
+      summary: Re-read a manual series' folder for episodes that have appeared
+      description: >
+        Adds episodes for new files and never removes any: a missing file is
+        the normal state of a monitored episode. Only valid for manual
+        entries — provider-backed items use metadata refresh.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: The entry, with any new episodes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaItemDetail"
+        "400":
+          description: Not a manual entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /library/adopt/one:
     post:
       operationId: adoptOne
@@ -1719,6 +1808,11 @@ components:
           type: boolean
         path:
           type: string
+        source:
+          type: string
+          description: >
+            Which provider this record came from ("tmdb", "tvmaze",
+            "openlibrary"), or "manual" when none did (ADR 0012).
         quality:
           type: string
           description: >
@@ -1880,6 +1974,11 @@ components:
           type: string
         backdropPath:
           type: string
+        source:
+          type: string
+          description: >
+            Which provider this record came from, or "manual" when none did
+            (ADR 0012). A manual entry has no metadata to refresh against.
         quality:
           type: string
           description: >

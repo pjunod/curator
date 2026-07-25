@@ -322,3 +322,58 @@ func TestChainBeatsAnAlternateTitleOnTheUmbrellaEntry(t *testing.T) {
 		t.Errorf("the alternate-title lookup should not be reached, got %d", looks)
 	}
 }
+
+// One folder, one item.
+//
+// Two providers describing the same show with no id in common have nothing
+// to collide on: a TMDB record with no tvdb_id and a TVmaze record keyed on
+// TVDB both pass the per-id-space duplicate check (ADR 0011 §4). What lands
+// is two cards for one show, of which at most one can hold the folder — the
+// other keeps the invented naming-rule path and is linked to nothing, which
+// is exactly what a real library showed.
+func TestAFolderIsNeverAdoptedTwice(t *testing.T) {
+	svc, _, _ := newService(t)
+	// Same show, two providers, no id in common: TMDB with no tvdb id, and
+	// the chain keyed on tvdb.
+	svc.meta = adoptProvider{series: []ports.SearchResult{series(555, "Cunk on Britain", 2018)}}
+	svc.series = []ports.SeriesProvider{chainProvider{
+		name:    "tvmaze",
+		results: []ports.SearchResult{chained(339732, "Cunk on Britain", 2016)},
+	}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "Cunk on Britain")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindSeries))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Adopt it as the TMDB record, then again as the chain record — the two
+	// share no id, so nothing but the folder can stop the second one.
+	if err := svc.AdoptOne(ctx, dir, series(555, "Cunk on Britain", 2018), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AdoptOne(ctx, dir, chained(339732, "Cunk on Britain", 2016), false); err != nil {
+		t.Fatalf("the second adoption should be a quiet no-op, got %v", err)
+	}
+
+	items, err := svc.List(ctx, domain.KindSeries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		var got []string
+		for _, m := range items {
+			got = append(got, m.Title+" @ "+m.Path)
+		}
+		t.Fatalf("one folder must produce one item, got %d: %v", len(items), got)
+	}
+	if items[0].Path != dir {
+		t.Errorf("the surviving item must hold the folder, got %q", items[0].Path)
+	}
+	_ = rf
+}

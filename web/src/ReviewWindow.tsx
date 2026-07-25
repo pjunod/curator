@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { AdoptionCandidate, MediaKind, Proposal, ReviewCounts } from './api'
 import {
+  addManualEntry,
   adoptExact,
   adoptOne,
   ApiError,
@@ -112,6 +113,32 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
   const acceptAll = useMutation({
     mutationFn: adoptExact,
     onSuccess: refresh,
+  })
+  // The third option (ADR 0012). Before this the only exit from a row nothing
+  // could match was dismissal, which leaves a folder on disk unmanaged: no
+  // monitoring, no episode tracking, absent from the library. That is fine
+  // for a folder that is not media and wrong for one that is.
+  const manual = useMutation({
+    mutationFn: (p: Proposal) =>
+      addManualEntry({
+        kind: p.kind ?? 'movie',
+        title: p.parsedTitle,
+        year: p.parsedYear || undefined,
+        path: p.path,
+      }),
+    onSuccess: (_data, p) => {
+      clearRowError(p.path)
+      refresh()
+    },
+    onError: (err, p) => {
+      setRowErrors((prev) => ({
+        ...prev,
+        [p.path]: {
+          message: (err as Error).message,
+          conflict: err instanceof ApiError && err.status === 409,
+        },
+      }))
+    },
   })
 
   const total = review.data?.total ?? 0
@@ -225,6 +252,7 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
               error={rowErrors[p.path]}
               onAccept={(pick, force) => accept.mutate({ path: p.path, pick, force })}
               onDismiss={() => dismiss.mutate(p.path)}
+              onManual={p.kind ? () => manual.mutate(p) : undefined}
             />
           ))}
         </div>
@@ -247,12 +275,15 @@ function ReviewRow({
   p,
   onAccept,
   onDismiss,
+  onManual,
   busy,
   error,
 }: {
   p: Proposal
   onAccept: (pick: AdoptionCandidate, force?: boolean) => void
   onDismiss: () => void
+  /** Undefined for a mixed root, where the kind is not resolved. */
+  onManual?: () => void
   busy: boolean
   error?: { message: string; conflict: boolean }
 }) {
@@ -367,10 +398,19 @@ function ReviewRow({
         </button>
       </div>
 
-      {/* The action is "never offer this folder again", and "not media" is a
-          good name for it right up until the folder plainly *is* media and
-          simply has no separate entry to match. Then the honest label is what
-          the button does. */}
+      {/* Three exits, not two: match it, file it as its own record, or stop
+          being asked. The middle one is what ADR 0012 added — dismissal was
+          being used for folders that plainly are media. */}
+      {onManual && (
+        <button
+          className="link-btn"
+          title={`Create a library entry from this folder as "${p.parsedTitle}" — no provider, episodes read off the disk`}
+          disabled={busy}
+          onClick={onManual}
+        >
+          add manually
+        </button>
+      )}
       <button
         className="link-btn"
         title="Never offer this folder again"

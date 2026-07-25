@@ -61,6 +61,7 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		Rating:           r.Rating,
 		RatingVotes:      int(r.RatingVotes),
 		Ratings:          ratings,
+		Source:           r.Source,
 		Monitored:        r.Monitored != 0,
 		QualityProfileID: r.QualityProfileID,
 		Path:             r.Path,
@@ -85,6 +86,7 @@ func insertParams(m domain.MediaItem, now time.Time) sqlitegen.InsertMediaItemPa
 		profileID = 1
 	}
 	p := sqlitegen.InsertMediaItemParams{
+		Source:           m.Source,
 		Kind:             string(m.Kind),
 		Title:            m.Title,
 		SortTitle:        m.SortTitle,

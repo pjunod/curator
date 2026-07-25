@@ -192,6 +192,7 @@ type MediaItem struct {
 	Rating           float64
 	RatingVotes      int64
 	Ratings          string
+	Source           string
 }
 
 type Notifier struct {

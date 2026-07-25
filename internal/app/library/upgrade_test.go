@@ -123,7 +123,9 @@ func TestUpgradesOffReadsAsCappedRatherThanSeeking(t *testing.T) {
 }
 
 // A file whose quality was never recorded is still a file. Reporting it as
-// missing would have the badge contradict the completeness pill beside it.
+// missing had the Quality row contradict the Files table two panels down:
+// an adopted file whose name carries no quality tag ("A Good Day to Die
+// Hard.mkv") has nothing recorded, which is not the same as not existing.
 func TestAFileWithNoRecordedQualityIsNotMissing(t *testing.T) {
 	p := quality.Profile{ID: 1, Cutoff: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}}
 	m := domain.MediaItem{Kind: domain.KindMovie, FileCount: 1} // quality zero
@@ -151,5 +153,48 @@ func TestSeriesEmptinessIsMeasuredInEpisodes(t *testing.T) {
 	m.EpisodeFileCount = 1
 	if got := upgradeState(m, p); got != domain.UpgradeMet {
 		t.Errorf("want met once an episode has a file, got %q", got)
+	}
+}
+
+// The state monarr is in for most adopted libraries: files present, names
+// carrying no quality tag. It must read as "not recorded", never as "no
+// files" — the Files table is right there.
+func TestAdoptedFileWithNoQualityTagInItsNameIsOnDiskButUnknown(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(1, "Die Hard", 2013)}}
+	ctx := context.Background()
+
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindMovie, TMDBID: 1, Monitored: true, Monitor: "none",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exactly the shape of a real adopted file: no resolution, no source.
+	if _, err := svc.db.UpsertFile(ctx, item.ID, 0, "/m/A Good Day to Die Hard.mkv", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.Get(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Upgrade == domain.UpgradeMissing {
+		t.Error("a file with no recorded quality is still a file")
+	}
+	if got.Upgrade != domain.UpgradeUnknown {
+		t.Errorf("want unknown, got %q", got.Upgrade)
+	}
+	if got.FileCount != 1 {
+		t.Errorf("the file must still be counted, got %d", got.FileCount)
+	}
+
+	// And in the list view, which computes the same thing a different way.
+	items, err := svc.List(ctx, domain.KindMovie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items[0].Upgrade == domain.UpgradeMissing {
+		t.Errorf("list view disagrees with the item page: %q", items[0].Upgrade)
 	}
 }

@@ -34,6 +34,8 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, library.ErrUnsupportedKind):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, library.ErrManualEntry):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, library.ErrRootKindMismatch):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ports.ErrProviderNotConfigured):
@@ -80,6 +82,7 @@ func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 		FileCount:        m.FileCount,
 		AddedAt:          m.AddedAt,
 	}
+	out.Source = optStr(m.Source)
 	if quality.Rank(m.Quality) > 0 {
 		out.Quality = optStr(m.Quality.Display())
 	}
@@ -173,6 +176,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		}
 		d.Files = append(d.Files, fi)
 	}
+	d.Source = optStr(m.Source)
 	if quality.Rank(m.Quality) > 0 {
 		d.Quality = optStr(m.Quality.Display())
 	}
@@ -785,6 +789,49 @@ func (s *Server) BrowseFilesystem(w http.ResponseWriter, r *http.Request, params
 	writeJSON(w, http.StatusOK, apigen.BrowseResult{
 		Path: res.Path, Parent: res.Parent, Dirs: dirs,
 	})
+}
+
+// AddManualEntry implements POST /library/manual (ADR 0012).
+func (s *Server) AddManualEntry(w http.ResponseWriter, r *http.Request) {
+	var body apigen.AddManualEntryJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req := library.ManualRequest{
+		Kind:  domain.MediaKind(body.Kind),
+		Title: body.Title,
+		Path:  body.Path,
+	}
+	if body.Year != nil {
+		req.Year = *body.Year
+	}
+	if body.Author != nil {
+		req.Author = *body.Author
+	}
+	if body.Overview != nil {
+		req.Overview = *body.Overview
+	}
+	item, err := s.deps.Library.AddManual(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, library.ErrFolderConflict) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		s.libraryErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, detailDTO(item))
+}
+
+// RescanManualEntry implements POST /library/{id}/rescan (ADR 0012).
+func (s *Server) RescanManualEntry(w http.ResponseWriter, r *http.Request, id int64) {
+	item, err := s.deps.Library.RescanManual(r.Context(), id)
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detailDTO(item))
 }
 
 // ---- adoption (ADR 0010) ----

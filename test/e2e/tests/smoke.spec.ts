@@ -27,7 +27,13 @@ test.describe('API', () => {
     const body = await res.json()
     expect(body.overall).toBe('ok')
     const names = body.checks.map((c: { name: string }) => c.name).sort()
-    expect(names).toEqual(['data-directory', 'database', 'metadata-provider', 'web-ui'])
+    expect(names).toEqual([
+      'data-directory',
+      'database',
+      'library-folders',
+      'metadata-provider',
+      'web-ui',
+    ])
   })
 
   test('unknown task returns 404 with an error body', async ({ request }) => {
@@ -54,10 +60,16 @@ test.describe('UI', () => {
     await page.goto('/system')
     await expect(page.getByRole('heading', { name: 'System' })).toBeVisible()
 
-    for (const check of ['database', 'data-directory', 'web-ui', 'metadata-provider']) {
+    for (const check of [
+      'database',
+      'data-directory',
+      'web-ui',
+      'metadata-provider',
+      'library-folders',
+    ]) {
       await expect(page.getByRole('cell', { name: check, exact: true })).toBeVisible()
     }
-    await expect(page.locator('.pill-ok')).toHaveCount(4)
+    await expect(page.locator('.pill-ok')).toHaveCount(5)
 
     await expect(page.getByRole('cell', { name: 'health.check' })).toBeVisible()
     await expect(page.getByRole('cell', { name: 'db.wal-checkpoint' })).toBeVisible()

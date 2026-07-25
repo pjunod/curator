@@ -17,6 +17,7 @@ import {
   posterUrl,
   RATING_SOURCE_LABELS,
   refreshLibraryItem,
+  rescanManualEntry,
   setEpisodeMonitored,
   setSeasonMonitored,
   updateLibraryItem,
@@ -287,8 +288,13 @@ function EditPanel(props: { item: MediaItemDetail; onClose: () => void }) {
   )
 }
 
-// QualityFacts: what is on disk, what the profile is aiming at, and whether
-// anything more is being sought — one line, each number labelled.
+// QualityFacts: what is on disk and whether anything more is being sought.
+//
+// The cutoff deliberately is NOT here. Shown on this row it was an orphan
+// number — "TARGET 1080p" next to a profile named "Any" reads as arriving
+// from nowhere, and the honest question it prompts is "where did that come
+// from?". It now sits on the Profile row, beside the thing it belongs to,
+// so the number appears exactly once and next to its source.
 //
 // Labelling is the whole design. The first version read
 // "Remux 2160p / at the target (WEB-DL 1080p)", which puts two resolutions
@@ -302,49 +308,55 @@ function QualityFacts({ m }: { m: MediaItemDetail }) {
   const target = m.qualityTarget
   const state: Record<string, { word: string; cls: string; why: string }> = {
     met: {
-      word: 'target met',
+      word: `at or above ${target || 'the cutoff'}`,
       cls: 'qf-met',
-      // "met" covers at-or-above: a 2160p Remux against a 1080p cutoff is
-      // finished, and saying "at the target" about it was the confusing part.
-      why: `What is on disk is at or above ${target || 'the target'}, so nothing better will be sought.`,
+      why: `What is on disk is at or above ${target || 'the cutoff'}, so nothing better will be sought.`,
     },
     seeking: {
-      word: 'upgrading',
+      word: `upgrading to ${target || 'better'}`,
       cls: 'qf-seeking',
-      why: `Below ${target || 'the target'}, and the profile allows upgrades — monarr is still looking for better.`,
+      why: `Below ${target || 'the cutoff'}, and the profile allows upgrades — monarr is still looking for better.`,
     },
     capped: {
-      word: 'upgrades off',
+      word: `below ${target || 'the cutoff'} · upgrades off`,
       cls: 'qf-capped',
-      why: `Below ${target || 'the target'} and staying there: this profile has upgrades switched off.`,
+      why: `Below ${target || 'the cutoff'} and staying there: this profile has upgrades switched off.`,
     },
   }
   const s = m.upgrade ? state[m.upgrade] : undefined
 
+  // "Nothing on disk" is a fact about FILES. Reading it off an empty quality
+  // string made this row contradict the Files table two panels down: an
+  // adopted file whose name carries no quality tag has nothing recorded, and
+  // that is not the same as not existing.
+  if (m.upgrade === 'missing') {
+    return (
+      <div className="quality-facts">
+        <span className="muted">nothing on disk yet</span>
+      </div>
+    )
+  }
+
   return (
     <div className="quality-facts">
-      {m.upgrade === 'missing' || !m.quality ? (
-        <span className="muted">nothing on disk yet</span>
-      ) : (
-        <span className="qf-pair">
-          <span className="qf-label">on disk</span>
+      <span className="qf-pair">
+        <span className="qf-label">on disk</span>
+        {m.quality ? (
           <span
             className="pill pill-neutral"
             title="The weakest quality among this item's files — the one that decides whether it is still being hunted"
           >
             {m.quality}
           </span>
-        </span>
-      )}
-
-      {target && (
-        <span className="qf-pair">
-          <span className="qf-label">target</span>
-          <span className="pill pill-outline" title="The profile's cutoff: the point at which monarr stops looking for better">
-            {target}
+        ) : (
+          <span
+            className="muted"
+            title="Quality is read from the filename. Files monarr imported carry it; a file adopted under its original name often does not, and nothing here guesses."
+          >
+            quality not recorded — the filename does not say
           </span>
-        </span>
-      )}
+        )}
+      </span>
 
       {s && (
         <span className={`qf-state ${s.cls}`} title={s.why}>
@@ -380,6 +392,15 @@ export function MediaDetailPage() {
     mutationFn: () => autoSearchItem(Number(id)),
     onSuccess: () => setAutoMsg('Searching in the background — grabs appear under Activity.'),
     onError: (e) => setAutoMsg(`✕ ${(e as Error).message}`),
+  })
+  const rescan = useMutation({
+    mutationFn: () => rescanManualEntry(Number(id)),
+    onSuccess: (item) => {
+      void qc.invalidateQueries({ queryKey: ['library-item', id] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+      const eps = item.seasons.reduce((n, s) => n + s.episodes.length, 0)
+      setAutoMsg(`Folder re-read — ${eps} episode${eps === 1 ? '' : 's'} known.`)
+    },
   })
   const refresh = useMutation({
     mutationFn: () => refreshLibraryItem(Number(id)),
@@ -502,10 +523,18 @@ export function MediaDetailPage() {
             <div className="fact-label">Profile</div>
             <div>
               {profileName ?? `#${m.qualityProfileId}`}
-              {/* The cutoff is on the Quality row above as a concrete number,
-                  so this no longer needs to explain what a target is — what
-                  is left is the part the pill cannot show. */}
-              <span className="muted"> — which qualities are allowed, and whether upgrades run</span>
+              {/* The cutoff lives here, attached to the profile that sets it.
+                  A profile called "Any" that stops upgrading at 1080p is
+                  surprising, and the surprise is worth spending a clause on:
+                  "Any" names the qualities it will accept, not the point it
+                  stops hunting past. */}
+              {m.qualityTarget ? (
+                <span className="muted">
+                  {' '}— upgrades until <strong>{m.qualityTarget}</strong>, then stops
+                </span>
+              ) : (
+                <span className="muted"> — which qualities are allowed, and whether upgrades run</span>
+              )}
             </div>
 
             {(m.ratings.length > 0 || m.ratingVotes > 0) && (
@@ -558,13 +587,29 @@ export function MediaDetailPage() {
               <button onClick={() => setSearching({})}>Interactive search</button>
             )}
             <button onClick={() => setEditing(true)}>Edit</button>
-            <button
-              title="Re-fetch metadata from the provider (new episodes, poster, rating, …)"
-              disabled={refresh.isPending}
-              onClick={() => refresh.mutate()}
-            >
-              {refresh.isPending ? 'Refreshing…' : 'Refresh metadata'}
-            </button>
+            {/* A manual entry has no provider to refresh against (ADR 0012
+                §3), so the button is absent rather than present-and-failing.
+                What replaces it for a series is a folder rescan: for a record
+                with no metadata, the files are the metadata. */}
+            {m.source === 'manual' ? (
+              m.kind === 'series' && (
+                <button
+                  title="Re-read this folder for episodes that have appeared. Never removes any — a missing file is the normal state of a monitored episode."
+                  disabled={rescan.isPending}
+                  onClick={() => rescan.mutate()}
+                >
+                  {rescan.isPending ? 'Rescanning…' : 'Rescan folder'}
+                </button>
+              )
+            ) : (
+              <button
+                title="Re-fetch metadata from the provider (new episodes, poster, rating, …)"
+                disabled={refresh.isPending}
+                onClick={() => refresh.mutate()}
+              >
+                {refresh.isPending ? 'Refreshing…' : 'Refresh metadata'}
+              </button>
+            )}
             {!confirming ? (
               <button onClick={() => setConfirming(true)}>Remove from library</button>
             ) : (

@@ -39,6 +39,10 @@ var (
 	// resolvable by the user rather than simply wrong: they know which
 	// folder holds the files.
 	ErrFolderConflict = errors.New("another folder already holds this title")
+	// ErrManualEntry is returned by provider-backed operations asked to act
+	// on a record no provider backs (ADR 0012). Not a failure: the caller
+	// skips rather than reports.
+	ErrManualEntry = errors.New("manual entry has no metadata provider")
 )
 
 // MediaAdded is published on the bus after a successful add.
@@ -229,6 +233,9 @@ func (s *Service) seriesByTVDB(ctx context.Context, tvdbID int64) (domain.MediaI
 	for _, p := range s.series {
 		item, err := p.GetSeriesByTVDB(ctx, tvdbID)
 		if err == nil {
+			// Which link answered is a fact worth keeping: it is what tells
+			// refresh where to go back to, and the UI where this came from.
+			item.Source = p.Name()
 			return item, nil
 		}
 		s.log.Debug("library: series provider could not hydrate",
@@ -337,6 +344,7 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 			return domain.MediaItem{}, err
 		}
 		item, err = s.books.GetBook(ctx, req.OLID)
+		item.Source = "openlibrary"
 	default:
 		return domain.MediaItem{}, fmt.Errorf("%w: %q", ErrUnsupportedKind, req.Kind)
 	}
@@ -447,13 +455,24 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 		return domain.MediaItem{}, err
 	}
 
+	// A manual entry has nothing to refresh against (ADR 0012 §3). Treating
+	// "no provider id" as "go look it up" would either error every cycle or
+	// overwrite what the user typed with whatever id zero returns.
+	if stored.IsManual() {
+		return domain.MediaItem{}, fmt.Errorf("%w: %q", ErrManualEntry, stored.Title)
+	}
+
 	var fresh domain.MediaItem
-	switch stored.Kind {
-	case domain.KindMovie:
+	switch {
+	case stored.Kind == domain.KindMovie:
 		fresh, err = s.meta.GetMovie(ctx, stored.IDs.TMDB)
-	case domain.KindSeries:
+	case stored.Kind == domain.KindSeries && stored.IDs.TMDB != 0:
 		fresh, err = s.meta.GetSeries(ctx, stored.IDs.TMDB)
-	case domain.KindBook:
+	case stored.Kind == domain.KindSeries:
+		// Reached through the chain (ADR 0011), so it has a TVDB id and no
+		// TMDB one — asking TMDB for series zero is not a refresh.
+		fresh, err = s.seriesByTVDB(ctx, stored.IDs.TVDB)
+	case stored.Kind == domain.KindBook:
 		if s.books == nil {
 			return domain.MediaItem{}, ports.ErrProviderNotConfigured
 		}
@@ -631,6 +650,10 @@ func (s *Service) RefreshAll(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// Nothing to refresh it against, and asking is what would clobber it.
+		if item.IsManual() {
+			continue
+		}
 		if _, err := s.RefreshItem(ctx, item.ID); err != nil {
 			// No provider key yet is a setup state, not a task failure.
 			if errors.Is(err, ports.ErrProviderNotConfigured) {
@@ -775,6 +798,34 @@ func (s *Service) gradeOne(ctx context.Context, item *domain.MediaItem) {
 	}
 	item.QualityTarget = p.Cutoff
 	item.Upgrade = upgradeState(*item, p)
+}
+
+// SharedFolders returns folders more than one library item points at,
+// with the titles sharing each one.
+//
+// Two items on one folder is always wrong and never self-corrects: whichever
+// scan runs last decides which of them the files link to, and the other is a
+// card that looks real and holds nothing. Adoption refuses to create the
+// second one now (see adoptOne), but libraries built before that guard still
+// carry the damage, and damage nobody can see does not get repaired.
+func (s *Service) SharedFolders(ctx context.Context) (map[string][]string, error) {
+	items, err := s.db.ListMediaItems(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	byPath := map[string][]string{}
+	for _, it := range items {
+		if it.Path == "" {
+			continue
+		}
+		byPath[it.Path] = append(byPath[it.Path], it.Title)
+	}
+	for path, titles := range byPath {
+		if len(titles) < 2 {
+			delete(byPath, path)
+		}
+	}
+	return byPath, nil
 }
 
 // Delete removes an item from the library. Files on disk are never touched.

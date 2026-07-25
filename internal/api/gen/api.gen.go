@@ -744,8 +744,11 @@ type MediaItemDetail struct {
 	RootFolderId int64        `json:"rootFolderId"`
 	Runtime      int          `json:"runtime"`
 	Seasons      []SeasonInfo `json:"seasons"`
-	Status       string       `json:"status"`
-	Title        string       `json:"title"`
+
+	// Source Which provider this record came from, or "manual" when none did (ADR 0012). A manual entry has no metadata to refresh against.
+	Source *string `json:"source,omitempty"`
+	Status string  `json:"status"`
+	Title  string  `json:"title"`
 
 	// Upgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off.
 	Upgrade *MediaItemDetailUpgrade `json:"upgrade,omitempty"`
@@ -791,7 +794,10 @@ type MediaItemSummary struct {
 
 	// Ratings All known ratings, labeled by source.
 	Ratings []Rating `json:"ratings"`
-	Title   string   `json:"title"`
+
+	// Source Which provider this record came from ("tmdb", "tvmaze", "openlibrary"), or "manual" when none did (ADR 0012).
+	Source *string `json:"source,omitempty"`
+	Title  string  `json:"title"`
 
 	// Upgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off. Empty when it could not be determined.
 	Upgrade *MediaItemSummaryUpgrade `json:"upgrade,omitempty"`
@@ -1220,6 +1226,19 @@ type BulkEditLibraryJSONBody struct {
 	QualityProfileId *int64  `json:"qualityProfileId,omitempty"`
 }
 
+// AddManualEntryJSONBody defines parameters for AddManualEntry.
+type AddManualEntryJSONBody struct {
+	// Author Books only.
+	Author   *string   `json:"author,omitempty"`
+	Kind     MediaKind `json:"kind"`
+	Overview *string   `json:"overview,omitempty"`
+
+	// Path Absolute folder, a direct child of a root folder.
+	Path  string `json:"path"`
+	Title string `json:"title"`
+	Year  *int   `json:"year,omitempty"`
+}
+
 // GetReviewQueueParams defines parameters for GetReviewQueue.
 type GetReviewQueueParams struct {
 	// Kind Restrict to one media kind. Omit for every kind, including the mixed-root entries whose kind was never resolved.
@@ -1321,6 +1340,9 @@ type AdoptOneJSONRequestBody AdoptOneJSONBody
 
 // BulkEditLibraryJSONRequestBody defines body for BulkEditLibrary for application/json ContentType.
 type BulkEditLibraryJSONRequestBody BulkEditLibraryJSONBody
+
+// AddManualEntryJSONRequestBody defines body for AddManualEntry for application/json ContentType.
+type AddManualEntryJSONRequestBody AddManualEntryJSONBody
 
 // IgnoreDirJSONRequestBody defines body for IgnoreDir for application/json ContentType.
 type IgnoreDirJSONRequestBody IgnoreDirJSONBody
@@ -1462,6 +1484,9 @@ type ServerInterface interface {
 	// BulkEditLibrary Apply monitoring/profile changes to many items at once
 	// (POST /library/bulk)
 	BulkEditLibrary(w http.ResponseWriter, r *http.Request)
+	// AddManualEntry Create a library record no provider backs (ADR 0012)
+	// (POST /library/manual)
+	AddManualEntry(w http.ResponseWriter, r *http.Request)
 	// GetReviewQueue One page of the adoption review queue
 	// (GET /library/review)
 	GetReviewQueue(w http.ResponseWriter, r *http.Request, params GetReviewQueueParams)
@@ -1510,6 +1535,9 @@ type ServerInterface interface {
 	// SearchReleases Interactive search for a movie, episode, or season pack
 	// (GET /library/{id}/releases)
 	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
+	// RescanManualEntry Re-read a manual series' folder for episodes that have appeared
+	// (POST /library/{id}/rescan)
+	RescanManualEntry(w http.ResponseWriter, r *http.Request, id int64)
 	// SetSeasonMonitored Monitor or unmonitor one season (cascades to its episodes)
 	// (PATCH /library/{id}/seasons/{season})
 	SetSeasonMonitored(w http.ResponseWriter, r *http.Request, id int64, season int)
@@ -2262,6 +2290,20 @@ func (siw *ServerInterfaceWrapper) BulkEditLibrary(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// AddManualEntry operation middleware
+func (siw *ServerInterfaceWrapper) AddManualEntry(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddManualEntry(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReviewQueue operation middleware
 func (siw *ServerInterfaceWrapper) GetReviewQueue(w http.ResponseWriter, r *http.Request) {
 
@@ -2749,6 +2791,32 @@ func (siw *ServerInterfaceWrapper) SearchReleases(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SearchReleases(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RescanManualEntry operation middleware
+func (siw *ServerInterfaceWrapper) RescanManualEntry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RescanManualEntry(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3352,6 +3420,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/report", wrapper.GetScanReport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/review", wrapper.GetReviewQueue)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt", wrapper.RunAdoption)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/manual", wrapper.AddManualEntry)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/rescan", wrapper.RescanManualEntry)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt/one", wrapper.AdoptOne)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt/exact", wrapper.AdoptExact)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/adopt/confirm", wrapper.ConfirmRootAdopted)

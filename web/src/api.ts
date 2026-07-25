@@ -61,6 +61,8 @@ export interface MediaItemSummary {
   rating: number // provider scale: TMDB /10, Open Library /5
   ratingVotes: number // 0 = no rating known
   ratings: Rating[] // all known ratings, labeled by source
+  /** Which provider this came from, or 'manual' when none did (ADR 0012). */
+  source?: string
   /** Weakest quality among the item's files, for display; '' if none. */
   quality?: string
   /** The profile's cutoff — the "good enough" point. */
@@ -406,6 +408,20 @@ export const adoptOne = (path: string, pick: AdoptionCandidate, force = false) =
     force: force || undefined,
   })
 export const adoptExact = () => send<AdoptResult>('POST', '/library/adopt/exact')
+
+/** ADR 0012: a record no provider backs, for media none of them has right. */
+export interface ManualEntryRequest {
+  kind: MediaKind
+  title: string
+  year?: number
+  author?: string
+  overview?: string
+  path: string
+}
+export const addManualEntry = (req: ManualEntryRequest) =>
+  send<MediaItemDetail>('POST', '/library/manual', req)
+export const rescanManualEntry = (id: number) =>
+  send<MediaItemDetail>('POST', `/library/${id}/rescan`)
 export const setRootAutoAdopt = (rootFolderId: number, autoAdopt: boolean) =>
   send('POST', '/library/adopt/confirm', { rootFolderId, autoAdopt })
 export const getReviewQueue = (

@@ -592,6 +592,22 @@ func (s *Service) Adopt(ctx context.Context, proposals []Proposal, dryRun bool) 
 // made about adopting existing layouts.
 func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 	win := p.Candidates[0]
+
+	// One folder, one item. Without this, a folder can be adopted twice under
+	// two identities that share no id — a TMDB record with no tvdb_id and a
+	// TVmaze record keyed on TVDB have nothing to collide on, so the
+	// per-id-space duplicate check (ADR 0011 §4) passes both. What lands is
+	// two cards for one show, of which at most one can hold the folder; the
+	// other keeps the invented naming-rule path and is linked to nothing.
+	//
+	// The folder is the thing that cannot be shared, so it is the thing to
+	// check. Whoever holds it already IS the answer for this folder.
+	if holder, ok := s.itemHolding(ctx, p.Path); ok {
+		s.log.Info("adopt: folder already held, not adding a second entry",
+			"path", p.Path, "held by", holder.Title, "id", holder.ID)
+		return nil
+	}
+
 	req := AddRequest{
 		Kind:         win.Kind,
 		TMDBID:       win.TMDBID,
@@ -621,6 +637,24 @@ func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 		return fmt.Errorf("point %d at %s: %w", item.ID, p.Path, err)
 	}
 	return nil
+}
+
+// itemHolding returns the library item already pointed at path, if any.
+func (s *Service) itemHolding(ctx context.Context, path string) (domain.MediaItem, bool) {
+	if path == "" {
+		return domain.MediaItem{}, false
+	}
+	items, err := s.db.ListMediaItems(ctx, "")
+	if err != nil {
+		s.log.Warn("adopt: could not check whether the folder is held", "err", err)
+		return domain.MediaItem{}, false
+	}
+	for _, it := range items {
+		if it.Path == path {
+			return it, true
+		}
+	}
+	return domain.MediaItem{}, false
 }
 
 // adoptionStateKey records which roots have been adopted at least once.
