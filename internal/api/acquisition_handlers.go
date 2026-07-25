@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
 	"github.com/monarr-media/monarr/internal/app/acquisition"
 	"github.com/monarr-media/monarr/internal/domain/format"
+	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -33,6 +35,69 @@ func (s *Server) acqErr(w http.ResponseWriter, err error) {
 
 // ---- profiles ----
 
+// profileDTO renders a profile for monarr's own clients: the target model
+// itself, plus the one server-rendered sentence that describes it.
+//
+// The sentence is here rather than in each client on purpose. The old model
+// needed a paragraph of UI comment to explain why a profile called "Any"
+// stopped at WEB-DL 1080p; a model that has to be explained differently by
+// every surface is a model nobody agrees about.
+func profileDTO(p quality.Profile, inUse int64) apigen.QualityProfile {
+	qp := apigen.QualityProfile{
+		Id: p.ID, Name: p.Name, Target: qualityDTO(p.Target),
+		UpgradesAllowed: p.UpgradesAllowed, Sentence: p.Sentence(),
+	}
+	if p.Floor != nil {
+		f := qualityDTO(*p.Floor)
+		qp.Floor = &f
+	}
+	if inUse >= 0 {
+		n := int(inUse)
+		qp.InUse = &n
+	}
+	return qp
+}
+
+func qualityDTO(q quality.Quality) apigen.Quality {
+	return apigen.Quality{
+		Source: string(q.Source), Resolution: q.Resolution, Display: q.Display(),
+	}
+}
+
+func profileFromInput(in apigen.ProfileInput) (quality.Profile, error) {
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		return quality.Profile{}, fmt.Errorf("a profile needs a name")
+	}
+	target := quality.Quality{Source: quality.Source(strings.TrimSpace(in.Target.Source))}
+	if in.Target.Resolution != nil {
+		target.Resolution = *in.Target.Resolution
+	}
+	if target.Source == "" || target.Source == quality.SourceUnknown {
+		return quality.Profile{}, fmt.Errorf("a profile needs a target to hunt toward")
+	}
+	p := quality.Profile{Name: name, Target: target, UpgradesAllowed: true}
+	if in.UpgradesAllowed != nil {
+		p.UpgradesAllowed = *in.UpgradesAllowed
+	}
+	if in.Floor != nil {
+		floor := quality.Quality{Source: quality.Source(strings.TrimSpace(in.Floor.Source))}
+		if in.Floor.Resolution != nil {
+			floor.Resolution = *in.Floor.Resolution
+		}
+		if floor.Source == "" || floor.Source == quality.SourceUnknown {
+			return quality.Profile{}, fmt.Errorf("a floor needs a quality; leave it out for no floor")
+		}
+		if quality.Rank(floor) > quality.Rank(target) {
+			return quality.Profile{}, fmt.Errorf(
+				"the floor (%s) is above the target (%s), so nothing would ever be grabbed",
+				floor.Display(), target.Display())
+		}
+		p.Floor = &floor
+	}
+	return p, nil
+}
+
 // ListProfiles implements GET /profiles.
 func (s *Server) ListProfiles(w http.ResponseWriter, r *http.Request) {
 	profiles, err := s.deps.Store.ListProfiles(r.Context())
@@ -42,16 +107,75 @@ func (s *Server) ListProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]apigen.QualityProfile, 0, len(profiles))
 	for _, p := range profiles {
-		qp := apigen.QualityProfile{
-			Id: p.ID, Name: p.Name, Cutoff: p.Target.Display(),
-			UpgradesAllowed: p.UpgradesAllowed, Qualities: []string{},
+		refs, err := s.deps.Store.ProfileReferences(r.Context(), p.ID)
+		if err != nil {
+			refs = -1 // unknown rather than a failed list
 		}
-		for _, q := range p.AllowedUnder() {
-			qp.Qualities = append(qp.Qualities, q.Display())
-		}
-		out = append(out, qp)
+		out = append(out, profileDTO(p, refs))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// CreateProfile implements POST /profiles.
+func (s *Server) CreateProfile(w http.ResponseWriter, r *http.Request) {
+	var in apigen.ProfileInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	p, err := profileFromInput(in)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, err := s.deps.Store.AddProfile(r.Context(), p)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	p.ID = id
+	writeJSON(w, http.StatusCreated, profileDTO(p, 0))
+}
+
+// UpdateProfile implements PUT /profiles/{id}.
+func (s *Server) UpdateProfile(w http.ResponseWriter, r *http.Request, id int64) {
+	var in apigen.ProfileInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	p, err := profileFromInput(in)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	p.ID = id
+	if err := s.deps.Store.UpdateProfile(r.Context(), p); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	refs, err := s.deps.Store.ProfileReferences(r.Context(), id)
+	if err != nil {
+		refs = -1
+	}
+	writeJSON(w, http.StatusOK, profileDTO(p, refs))
+}
+
+// DeleteProfile implements DELETE /profiles/{id}.
+//
+// Refused while anything still points at the profile. Silently orphaning a
+// library item onto a profile id that no longer exists is the kind of damage
+// nobody sees until an upgrade decision goes strange months later.
+func (s *Server) DeleteProfile(w http.ResponseWriter, r *http.Request, id int64) {
+	err := s.deps.Store.DeleteProfile(r.Context(), id)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, sqlite.ErrProfileInUse):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		s.acqErr(w, err)
+	}
 }
 
 // ---- indexers ----

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/quality"
 )
 
@@ -256,4 +257,18 @@ type MediaFile struct {
 	Size        int64
 	EpisodeIDs  []int64
 	AddedAt     time.Time
+
+	// What this file actually is, and how we know (ADR 0013). Quality is the
+	// canonical (source, resolution) pair; QualityKnown separates "we looked
+	// and could not tell" from "we never looked". Info carries the measured
+	// facts the UI renders as a pill and is the zero value when unprobed.
+	Quality      quality.Quality
+	QualityKnown bool
+	Provenance   mediainfo.Provenance
+	Confidence   mediainfo.Confidence
+	Info         mediainfo.Info
 }
+
+// SourceVerified reports whether this file's recorded SOURCE is trustworthy
+// enough to justify replacing it (the don't-churn rule, ADR 0013 §5).
+func (f MediaFile) SourceVerified() bool { return f.Provenance.Verified(f.Confidence) }

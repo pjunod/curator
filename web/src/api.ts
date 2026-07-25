@@ -65,8 +65,10 @@ export interface MediaItemSummary {
   source?: string
   /** Weakest quality among the item's files, for display; '' if none. */
   quality?: string
-  /** The profile's cutoff — the "good enough" point. */
+  /** The profile's target — the point at which hunting stops (ADR 0014). */
   qualityTarget?: string
+  /** Whether the SOURCE half of `quality` is measured or claimed, not guessed. */
+  qualityVerified?: boolean
   /** missing · seeking · met · capped; '' when undetermined. */
   upgrade?: '' | 'missing' | 'seeking' | 'met' | 'capped'
   episodeCount: number // monitored episodes aired to date (series)
@@ -130,6 +132,16 @@ export interface MediaFileInfo {
   path: string
   size: number
   episodeIds: number[]
+  /** Recorded quality, e.g. "WEB-DL 1080p"; '' when nothing could be determined. */
+  quality?: string
+  /** Where `quality` came from (ADR 0013). */
+  provenance?: '' | 'probe' | 'filename' | 'release' | 'manual' | 'failed'
+  /** Badge text for `provenance`, rendered server-side. */
+  provenanceLabel?: string
+  /** Whether the SOURCE half of `quality` is trustworthy enough to replace on. */
+  verified?: boolean
+  /** Measured facts as one line: "1080p · HEVC · HDR10 · TrueHD · 23 Mbps". */
+  facts?: string
 }
 
 export interface MediaCopy {
@@ -458,12 +470,34 @@ export const getScanReport = async (): Promise<ScanReport | null> => {
 
 // ---- Phase 2: acquisition ----
 
+export interface Quality {
+  source: string
+  resolution: number
+  display: string
+}
+
+/**
+ * A profile is a target, an optional floor, and an upgrades switch (ADR 0014).
+ * `sentence` is rendered by the server so every surface describes a profile
+ * with exactly the same words — the old model needed each client to explain
+ * why "Any" stopped at 1080p, and no two of them explained it the same way.
+ */
 export interface QualityProfile {
   id: number
   name: string
-  cutoff: string
+  target: Quality
+  floor?: Quality
   upgradesAllowed: boolean
-  qualities: string[]
+  sentence: string
+  /** How many items/copies/lists use it; non-zero means delete is refused. */
+  inUse?: number
+}
+
+export interface ProfileInput {
+  name: string
+  target: { source: string; resolution?: number }
+  floor?: { source: string; resolution?: number }
+  upgradesAllowed?: boolean
 }
 
 export interface IndexerInput {
@@ -574,6 +608,11 @@ export interface ManualImportRequest {
 }
 
 export const getProfiles = () => get<QualityProfile[]>('/profiles')
+export const createProfile = (body: ProfileInput) =>
+  send<QualityProfile>('POST', '/profiles', body)
+export const updateProfile = (id: number, body: ProfileInput) =>
+  send<QualityProfile>('PUT', `/profiles/${id}`, body)
+export const deleteProfile = (id: number) => send('DELETE', `/profiles/${id}`)
 export const getIndexers = () => get<Indexer[]>('/indexers')
 export const addIndexer = (i: IndexerInput) => send<Indexer>('POST', '/indexers', i)
 export const testIndexer = (i: IndexerInput) => send('POST', '/indexers/test', i)

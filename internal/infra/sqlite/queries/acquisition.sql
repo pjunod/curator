@@ -104,3 +104,22 @@ FROM media_files WHERE media_item_id = ?;
 SELECT id, media_item_id, copy_id, path, size, added_at, quality,
        media_info, quality_provenance, quality_confidence, probed_at
 FROM media_files WHERE id = ?;
+
+-- name: InsertProfile :one
+INSERT INTO quality_profiles (name, definition, upgrades_allowed)
+VALUES (?, ?, ?) RETURNING id;
+
+-- name: UpdateProfile :execrows
+UPDATE quality_profiles SET name = ?, definition = ?, upgrades_allowed = ?
+WHERE id = ?;
+
+-- name: DeleteProfile :execrows
+DELETE FROM quality_profiles WHERE id = ?;
+
+-- name: CountProfileReferences :one
+-- A profile in use cannot be deleted: items, copies and import lists all
+-- reference it by id, and SQLite would happily leave them pointing at nothing.
+SELECT
+  (SELECT COUNT(*) FROM media_items  mi WHERE mi.quality_profile_id = ?1) +
+  (SELECT COUNT(*) FROM media_copies mc WHERE mc.quality_profile_id = ?1) +
+  (SELECT COUNT(*) FROM import_lists il WHERE il.quality_profile_id = ?1) AS refs;

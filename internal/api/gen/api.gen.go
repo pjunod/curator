@@ -188,6 +188,36 @@ func (e IndexerInputProtocol) Valid() bool {
 	}
 }
 
+// Defines values for MediaFileInfoProvenance.
+const (
+	MediaFileInfoProvenanceEmpty    MediaFileInfoProvenance = ""
+	MediaFileInfoProvenanceFailed   MediaFileInfoProvenance = "failed"
+	MediaFileInfoProvenanceFilename MediaFileInfoProvenance = "filename"
+	MediaFileInfoProvenanceManual   MediaFileInfoProvenance = "manual"
+	MediaFileInfoProvenanceProbe    MediaFileInfoProvenance = "probe"
+	MediaFileInfoProvenanceRelease  MediaFileInfoProvenance = "release"
+)
+
+// Valid indicates whether the value is a known member of the MediaFileInfoProvenance enum.
+func (e MediaFileInfoProvenance) Valid() bool {
+	switch e {
+	case MediaFileInfoProvenanceEmpty:
+		return true
+	case MediaFileInfoProvenanceFailed:
+		return true
+	case MediaFileInfoProvenanceFilename:
+		return true
+	case MediaFileInfoProvenanceManual:
+		return true
+	case MediaFileInfoProvenanceProbe:
+		return true
+	case MediaFileInfoProvenanceRelease:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MediaItemDetailUpgrade.
 const (
 	MediaItemDetailUpgradeCapped  MediaItemDetailUpgrade = "capped"
@@ -699,10 +729,28 @@ type MediaFileInfo struct {
 	// CopyId Which quality copy this file belongs to; 0/absent = primary.
 	CopyId     *int64  `json:"copyId,omitempty"`
 	EpisodeIds []int64 `json:"episodeIds"`
-	Id         int64   `json:"id"`
-	Path       string  `json:"path"`
-	Size       int64   `json:"size"`
+
+	// Facts The measured facts as one line, e.g. "1080p · HEVC · HDR10 · TrueHD · 23 Mbps". Empty when the file was never probed.
+	Facts *string `json:"facts,omitempty"`
+	Id    int64   `json:"id"`
+	Path  string  `json:"path"`
+
+	// Provenance Where `quality` came from.
+	Provenance *MediaFileInfoProvenance `json:"provenance,omitempty"`
+
+	// ProvenanceLabel The badge text for `provenance` ("measured", "from filename", ...).
+	ProvenanceLabel *string `json:"provenanceLabel,omitempty"`
+
+	// Quality The file's recorded quality, e.g. "WEB-DL 1080p". Empty when the file exists but nothing could be determined about it -- which is not the same as the file being absent (ADR 0013).
+	Quality *string `json:"quality,omitempty"`
+	Size    int64   `json:"size"`
+
+	// Verified Whether the SOURCE half of `quality` is trustworthy enough to justify replacing this file (the don't-churn rule, ADR 0013).
+	Verified *bool `json:"verified,omitempty"`
 }
+
+// MediaFileInfoProvenance Where `quality` came from.
+type MediaFileInfoProvenance string
 
 // MediaItemDetail defines model for MediaItemDetail.
 type MediaItemDetail struct {
@@ -867,6 +915,14 @@ type PathMapping struct {
 	Remote string `json:"remote"`
 }
 
+// ProfileInput defines model for ProfileInput.
+type ProfileInput struct {
+	Floor           *QualityInput `json:"floor,omitempty"`
+	Name            string        `json:"name"`
+	Target          QualityInput  `json:"target"`
+	UpgradesAllowed *bool         `json:"upgradesAllowed,omitempty"`
+}
+
 // Proposal defines model for Proposal.
 type Proposal struct {
 	Candidates []AdoptionCandidate `json:"candidates"`
@@ -890,13 +946,37 @@ type Proposal struct {
 // ProposalConfidence exact clears the per-kind bar and may be adopted without asking; anything else goes to review. There is deliberately no "probably".
 type ProposalConfidence string
 
+// Quality defines model for Quality.
+type Quality struct {
+	// Display Human rendering, e.g. "WEB-DL 1080p".
+	Display string `json:"display"`
+
+	// Resolution 480 | 720 | 1080 | 2160; 0 for books and unknown.
+	Resolution int `json:"resolution"`
+
+	// Source webdl | bluray | remux | hdtv | ... or a book format (epub, m4b, ...).
+	Source string `json:"source"`
+}
+
+// QualityInput defines model for QualityInput.
+type QualityInput struct {
+	Resolution *int   `json:"resolution,omitempty"`
+	Source     string `json:"source"`
+}
+
 // QualityProfile defines model for QualityProfile.
 type QualityProfile struct {
-	Cutoff          string   `json:"cutoff"`
-	Id              int64    `json:"id"`
-	Name            string   `json:"name"`
-	Qualities       []string `json:"qualities"`
-	UpgradesAllowed bool     `json:"upgradesAllowed"`
+	Floor *Quality `json:"floor,omitempty"`
+	Id    int64    `json:"id"`
+
+	// InUse How many items, copies and import lists reference this profile. Non-zero means DELETE will be refused with 409.
+	InUse *int   `json:"inUse,omitempty"`
+	Name  string `json:"name"`
+
+	// Sentence The profile rendered as the one true sentence it now is -- "hunts the best release up to WEB-DL 1080p, then stops". Server-rendered so every client says exactly the same thing about a profile.
+	Sentence        string  `json:"sentence"`
+	Target          Quality `json:"target"`
+	UpgradesAllowed bool    `json:"upgradesAllowed"`
 }
 
 // QueueItem defines model for QueueItem.
@@ -1368,6 +1448,12 @@ type AddNotifierJSONRequestBody = NotifierInput
 // TestNotifierJSONRequestBody defines body for TestNotifier for application/json ContentType.
 type TestNotifierJSONRequestBody = NotifierInput
 
+// CreateProfileJSONRequestBody defines body for CreateProfile for application/json ContentType.
+type CreateProfileJSONRequestBody = ProfileInput
+
+// UpdateProfileJSONRequestBody defines body for UpdateProfile for application/json ContentType.
+type UpdateProfileJSONRequestBody = ProfileInput
+
 // AddRootFolderJSONRequestBody defines body for AddRootFolder for application/json ContentType.
 type AddRootFolderJSONRequestBody AddRootFolderJSONBody
 
@@ -1559,6 +1645,15 @@ type ServerInterface interface {
 	// ListProfiles List quality profiles
 	// (GET /profiles)
 	ListProfiles(w http.ResponseWriter, r *http.Request)
+	// CreateProfile Create a quality profile
+	// (POST /profiles)
+	CreateProfile(w http.ResponseWriter, r *http.Request)
+	// DeleteProfile Delete a quality profile
+	// (DELETE /profiles/{id})
+	DeleteProfile(w http.ResponseWriter, r *http.Request, id int64)
+	// UpdateProfile Replace a quality profile
+	// (PUT /profiles/{id})
+	UpdateProfile(w http.ResponseWriter, r *http.Request, id int64)
 	// ListQueue Recent downloads (all states)
 	// (GET /queue)
 	ListQueue(w http.ResponseWriter, r *http.Request)
@@ -2989,6 +3084,72 @@ func (siw *ServerInterfaceWrapper) ListProfiles(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// CreateProfile operation middleware
+func (siw *ServerInterfaceWrapper) CreateProfile(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateProfile(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteProfile operation middleware
+func (siw *ServerInterfaceWrapper) DeleteProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateProfile operation middleware
+func (siw *ServerInterfaceWrapper) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListQueue operation middleware
 func (siw *ServerInterfaceWrapper) ListQueue(w http.ResponseWriter, r *http.Request) {
 
@@ -3437,6 +3598,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/settings", wrapper.GetSettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/settings", wrapper.UpdateSettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/profiles", wrapper.ListProfiles)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/profiles", wrapper.CreateProfile)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/profiles/{id}", wrapper.DeleteProfile)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/profiles/{id}", wrapper.UpdateProfile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/indexers", wrapper.ListIndexers)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/indexers", wrapper.AddIndexer)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/indexers/test", wrapper.TestIndexer)

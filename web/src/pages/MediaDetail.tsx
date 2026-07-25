@@ -23,7 +23,7 @@ import {
   updateLibraryItem,
   updateMediaCopy,
 } from '../api'
-import type { MediaItemDetail } from '../api'
+import type { MediaFileInfo, MediaItemDetail } from '../api'
 import { ReleaseSearch } from './ReleaseSearch'
 
 // CopiesPanel: additional quality targets — the same item kept at a second
@@ -288,13 +288,14 @@ function EditPanel(props: { item: MediaItemDetail; onClose: () => void }) {
   )
 }
 
-// QualityFacts: what is on disk and whether anything more is being sought.
+// QualityFacts: what is on disk, how we know, and whether anything more is
+// being sought.
 //
-// The cutoff deliberately is NOT here. Shown on this row it was an orphan
+// The target deliberately is NOT here. Shown on this row it was an orphan
 // number — "TARGET 1080p" next to a profile named "Any" reads as arriving
 // from nowhere, and the honest question it prompts is "where did that come
-// from?". It now sits on the Profile row, beside the thing it belongs to,
-// so the number appears exactly once and next to its source.
+// from?". It sits on the Profile row, beside the thing that sets it, so the
+// number appears exactly once and next to its source.
 //
 // Labelling is the whole design. The first version read
 // "Remux 2160p / at the target (WEB-DL 1080p)", which puts two resolutions
@@ -306,21 +307,28 @@ function EditPanel(props: { item: MediaItemDetail; onClose: () => void }) {
 // The state word never restates a number, for the same reason.
 function QualityFacts({ m }: { m: MediaItemDetail }) {
   const target = m.qualityTarget
+  // Whether the SOURCE half of what is on disk was measured or merely guessed
+  // changes what "met" means, so it changes what this row says (ADR 0013).
+  const unverified = m.quality ? m.qualityVerified === false : false
   const state: Record<string, { word: string; cls: string; why: string }> = {
     met: {
-      word: `at or above ${target || 'the cutoff'}`,
+      word: unverified
+        ? `at target (source unverified)`
+        : `at or above ${target || 'the target'}`,
       cls: 'qf-met',
-      why: `What is on disk is at or above ${target || 'the cutoff'}, so nothing better will be sought.`,
+      why: unverified
+        ? `The resolution on disk matches ${target || 'the target'}, but monarr could only guess at the source. Rather than replace a file that may already be perfect on a guess, it stops here. Interactive search still lets you grab anything you like.`
+        : `What is on disk is at or above ${target || 'the target'}, so nothing better will be sought.`,
     },
     seeking: {
       word: `upgrading to ${target || 'better'}`,
       cls: 'qf-seeking',
-      why: `Below ${target || 'the cutoff'}, and the profile allows upgrades — monarr is still looking for better.`,
+      why: `Below ${target || 'the target'}, and the profile allows upgrades — monarr is still looking for better.`,
     },
     capped: {
-      word: `below ${target || 'the cutoff'} · upgrades off`,
+      word: `below ${target || 'the target'} · upgrades off`,
       cls: 'qf-capped',
-      why: `Below ${target || 'the cutoff'} and staying there: this profile has upgrades switched off.`,
+      why: `Below ${target || 'the target'} and staying there: this profile has upgrades switched off.`,
     },
   }
   const s = m.upgrade ? state[m.upgrade] : undefined
@@ -337,6 +345,12 @@ function QualityFacts({ m }: { m: MediaItemDetail }) {
     )
   }
 
+  // The measured facts for the primary copy's files, deduped: this is what
+  // replaced "quality not recorded — the filename does not say".
+  const facts = Array.from(
+    new Set(m.files.filter((f) => !f.copyId && f.facts).map((f) => f.facts as string)),
+  )
+
   return (
     <div className="quality-facts">
       <span className="qf-pair">
@@ -351,12 +365,18 @@ function QualityFacts({ m }: { m: MediaItemDetail }) {
         ) : (
           <span
             className="muted"
-            title="Quality is read from the filename. Files monarr imported carry it; a file adopted under its original name often does not, and nothing here guesses."
+            title="The file is on disk; monarr could not read it. That is not the same as the file being missing, and nothing here guesses."
           >
-            quality not recorded — the filename does not say
+            on disk — monarr could not read this file
           </span>
         )}
       </span>
+
+      {facts.length > 0 && (
+        <span className="qf-facts" title="Measured from the file itself, not from its name">
+          {facts.join('  ·  ')}
+        </span>
+      )}
 
       {s && (
         <span className={`qf-state ${s.cls}`} title={s.why}>
@@ -364,6 +384,26 @@ function QualityFacts({ m }: { m: MediaItemDetail }) {
         </span>
       )}
     </div>
+  )
+}
+
+// ProvenanceBadge says where a file's recorded quality came from. A quality
+// with no provenance is exactly the ambiguity ADR 0013 set out to remove, so
+// every file row carries one.
+function ProvenanceBadge({ f }: { f: MediaFileInfo }) {
+  if (!f.provenanceLabel) return <span className="muted">—</span>
+  const titles: Record<string, string> = {
+    probe: 'Measured from the file itself.',
+    filename: "Taken from the file's name, which nothing measured contradicted.",
+    release: "Taken from the grabbed release's name, which nothing measured contradicted.",
+    manual: 'Set by hand.',
+    failed: 'monarr could not read this file. It is on disk; its quality is unknown.',
+  }
+  const cls = f.provenance === 'probe' ? 'prov-measured' : f.provenance === 'failed' ? 'prov-failed' : 'prov-claimed'
+  return (
+    <span className={`prov-badge ${cls}`} title={titles[f.provenance ?? ''] ?? ''}>
+      {f.provenanceLabel}
+    </span>
   )
 }
 
@@ -436,7 +476,9 @@ export function MediaDetailPage() {
 
   const m = item.data
   const fileCount = m.files.length
-  const profileName = profiles.data?.find((p) => p.id === m.qualityProfileId)?.name
+  const profile = profiles.data?.find((p) => p.id === m.qualityProfileId)
+  const profileName = profile?.name
+  const profileSentence = profile?.sentence
   const inFlight =
     queue.data?.filter(
       (q) => q.mediaItemId === m.id && ACTIVE_DOWNLOAD_STATES.includes(q.state),
@@ -523,18 +565,12 @@ export function MediaDetailPage() {
             <div className="fact-label">Profile</div>
             <div>
               {profileName ?? `#${m.qualityProfileId}`}
-              {/* The cutoff lives here, attached to the profile that sets it.
-                  A profile called "Any" that stops upgrading at 1080p is
-                  surprising, and the surprise is worth spending a clause on:
-                  "Any" names the qualities it will accept, not the point it
-                  stops hunting past. */}
-              {m.qualityTarget ? (
-                <span className="muted">
-                  {' '}— upgrades until <strong>{m.qualityTarget}</strong>, then stops
-                </span>
-              ) : (
-                <span className="muted"> — which qualities are allowed, and whether upgrades run</span>
-              )}
+              {/* The sentence comes from the server, rendered from the profile
+                  itself (ADR 0014). The old model needed an apology here —
+                  a profile called "Any" that stopped upgrading at 1080p had to
+                  be explained — and a model the UI has to apologise for is the
+                  wrong model. Deleting the apology was part of the fix. */}
+              {profileSentence ? <span className="muted"> — {profileSentence}</span> : null}
             </div>
 
             {(m.ratings.length > 0 || m.ratingVotes > 0) && (
@@ -735,6 +771,8 @@ export function MediaDetailPage() {
             <thead>
               <tr>
                 <th>Path</th>
+                <th>Quality</th>
+                <th>How we know</th>
                 <th>Size</th>
                 <th>Episodes</th>
                 {m.copies.length > 0 && <th>Copy</th>}
@@ -743,7 +781,20 @@ export function MediaDetailPage() {
             <tbody>
               {m.files.map((f) => (
                 <tr key={f.id}>
-                  <td className="mono">{f.path}</td>
+                  <td className="mono">
+                    {f.path}
+                    {f.facts ? <div className="file-facts">{f.facts}</div> : null}
+                  </td>
+                  <td>
+                    {f.quality ? (
+                      <span className="pill pill-neutral">{f.quality}</span>
+                    ) : (
+                      <span className="muted">unknown</span>
+                    )}
+                  </td>
+                  <td>
+                    <ProvenanceBadge f={f} />
+                  </td>
                   <td className="muted">{fmtBytes(f.size)}</td>
                   <td className="muted">{f.episodeIds.length || '—'}</td>
                   {m.copies.length > 0 && (

@@ -10,6 +10,22 @@ import (
 	"database/sql"
 )
 
+const countProfileReferences = `-- name: CountProfileReferences :one
+SELECT
+  (SELECT COUNT(*) FROM media_items  mi WHERE mi.quality_profile_id = ?1) +
+  (SELECT COUNT(*) FROM media_copies mc WHERE mc.quality_profile_id = ?1) +
+  (SELECT COUNT(*) FROM import_lists il WHERE il.quality_profile_id = ?1) AS refs
+`
+
+// A profile in use cannot be deleted: items, copies and import lists all
+// reference it by id, and SQLite would happily leave them pointing at nothing.
+func (q *Queries) CountProfileReferences(ctx context.Context, qualityProfileID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countProfileReferences, qualityProfileID)
+	var refs int64
+	err := row.Scan(&refs)
+	return refs, err
+}
+
 const deleteDownload = `-- name: DeleteDownload :exec
 DELETE FROM downloads WHERE id = ?
 `
@@ -35,6 +51,18 @@ DELETE FROM indexers WHERE id = ?
 func (q *Queries) DeleteIndexer(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteIndexer, id)
 	return err
+}
+
+const deleteProfile = `-- name: DeleteProfile :execrows
+DELETE FROM quality_profiles WHERE id = ?
+`
+
+func (q *Queries) DeleteProfile(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteProfile, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getDownload = `-- name: GetDownload :one
@@ -298,6 +326,24 @@ func (q *Queries) InsertIndexer(ctx context.Context, arg InsertIndexerParams) (i
 		arg.Enabled,
 		arg.AddedAt,
 	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertProfile = `-- name: InsertProfile :one
+INSERT INTO quality_profiles (name, definition, upgrades_allowed)
+VALUES (?, ?, ?) RETURNING id
+`
+
+type InsertProfileParams struct {
+	Name            string
+	Definition      string
+	UpgradesAllowed int64
+}
+
+func (q *Queries) InsertProfile(ctx context.Context, arg InsertProfileParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, insertProfile, arg.Name, arg.Definition, arg.UpgradesAllowed)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
@@ -828,4 +874,29 @@ func (q *Queries) UpdateDownloadState(ctx context.Context, arg UpdateDownloadSta
 		arg.ID,
 	)
 	return err
+}
+
+const updateProfile = `-- name: UpdateProfile :execrows
+UPDATE quality_profiles SET name = ?, definition = ?, upgrades_allowed = ?
+WHERE id = ?
+`
+
+type UpdateProfileParams struct {
+	Name            string
+	Definition      string
+	UpgradesAllowed int64
+	ID              int64
+}
+
+func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateProfile,
+		arg.Name,
+		arg.Definition,
+		arg.UpgradesAllowed,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

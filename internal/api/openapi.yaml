@@ -749,6 +749,84 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/QualityProfile"
+    post:
+      operationId: createProfile
+      summary: Create a quality profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileInput"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityProfile"
+        "400":
+          description: Invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /profiles/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    put:
+      operationId: updateProfile
+      summary: Replace a quality profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileInput"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityProfile"
+        "400":
+          description: Invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteProfile
+      summary: Delete a quality profile
+      description: >
+        Refused with 409 while any library item, copy, or import list still
+        references the profile -- those rows would be left pointing at nothing.
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          description: No such profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Still in use.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /indexers:
     get:
@@ -1928,6 +2006,29 @@ components:
           items:
             type: integer
             format: int64
+        quality:
+          type: string
+          description: >
+            The file's recorded quality, e.g. "WEB-DL 1080p". Empty when the
+            file exists but nothing could be determined about it -- which is
+            not the same as the file being absent (ADR 0013).
+        provenance:
+          type: string
+          enum: ["", probe, filename, release, manual, failed]
+          description: Where `quality` came from.
+        provenanceLabel:
+          type: string
+          description: The badge text for `provenance` ("measured", "from filename", ...).
+        verified:
+          type: boolean
+          description: >
+            Whether the SOURCE half of `quality` is trustworthy enough to
+            justify replacing this file (the don't-churn rule, ADR 0013).
+        facts:
+          type: string
+          description: >
+            The measured facts as one line, e.g. "1080p · HEVC · HDR10 ·
+            TrueHD · 23 Mbps". Empty when the file was never probed.
 
     MediaItemDetail:
       type: object
@@ -2477,17 +2578,60 @@ components:
           type: string
           format: date-time
 
+    Quality:
+      type: object
+      required: [source, resolution, display]
+      properties:
+        source:
+          type: string
+          description: webdl | bluray | remux | hdtv | ... or a book format (epub, m4b, ...).
+        resolution:
+          type: integer
+          description: 480 | 720 | 1080 | 2160; 0 for books and unknown.
+        display:
+          type: string
+          description: Human rendering, e.g. "WEB-DL 1080p".
+
     QualityProfile:
       type: object
-      required: [id, name, cutoff, upgradesAllowed, qualities]
+      required: [id, name, target, upgradesAllowed, sentence]
       properties:
         id: { type: integer, format: int64 }
         name: { type: string }
-        cutoff: { type: string }
+        target:
+          $ref: "#/components/schemas/Quality"
+        floor:
+          $ref: "#/components/schemas/Quality"
         upgradesAllowed: { type: boolean }
-        qualities:
-          type: array
-          items: { type: string }
+        sentence:
+          type: string
+          description: >
+            The profile rendered as the one true sentence it now is -- "hunts
+            the best release up to WEB-DL 1080p, then stops". Server-rendered
+            so every client says exactly the same thing about a profile.
+        inUse:
+          type: integer
+          description: >
+            How many items, copies and import lists reference this profile.
+            Non-zero means DELETE will be refused with 409.
+
+    QualityInput:
+      type: object
+      required: [source]
+      properties:
+        source: { type: string }
+        resolution: { type: integer, default: 0 }
+
+    ProfileInput:
+      type: object
+      required: [name, target]
+      properties:
+        name: { type: string }
+        target:
+          $ref: "#/components/schemas/QualityInput"
+        floor:
+          $ref: "#/components/schemas/QualityInput"
+        upgradesAllowed: { type: boolean, default: true }
 
     IndexerInput:
       type: object

@@ -20,6 +20,7 @@ import {
   updateSettings,
 } from '../api'
 import { AcquisitionSettings } from './SettingsAcquisition'
+import { QualityProfileSettings } from './SettingsProfiles'
 import { CustomFormatSettings, ImportListSettings, SecuritySettings } from './SettingsDepth'
 import { NotifierSettings } from './SettingsNotifiers'
 import { PathInput } from '../PathInput'
@@ -437,6 +438,8 @@ export function SettingsPage() {
           {saveSkips.isSuccess && <span className="ok-text">Saved — applies on the next scan.</span>}
         </div>
       </section>
+
+      <QualityProfileSettings />
 
       <AcquisitionSettings />
       <CustomFormatSettings />

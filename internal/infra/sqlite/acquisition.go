@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/monarr-media/monarr/internal/domain/quality"
@@ -71,6 +73,74 @@ func (d *DB) GetProfile(ctx context.Context, id int64) (quality.Profile, error) 
 		return quality.Profile{}, wrapNotFound(err)
 	}
 	return profileFromRow(r)
+}
+
+// ErrProfileInUse is returned when a profile cannot be deleted because library
+// items, copies, or import lists still point at it. SQLite would happily let
+// the delete through and leave them referencing nothing.
+var ErrProfileInUse = errors.New("quality profile is still in use")
+
+// profileDefinition renders a profile into the stored JSON.
+func profileDefinition(p quality.Profile) (string, error) {
+	def := profileDef{Target: qualityDef{Source: string(p.Target.Source), Resolution: p.Target.Resolution}}
+	if p.Floor != nil {
+		def.Floor = &qualityDef{Source: string(p.Floor.Source), Resolution: p.Floor.Resolution}
+	}
+	raw, err := json.Marshal(def)
+	return string(raw), err
+}
+
+// AddProfile stores a new quality profile and returns its id.
+func (d *DB) AddProfile(ctx context.Context, p quality.Profile) (int64, error) {
+	def, err := profileDefinition(p)
+	if err != nil {
+		return 0, err
+	}
+	return d.Write.InsertProfile(ctx, sqlitegen.InsertProfileParams{
+		Name: p.Name, Definition: def, UpgradesAllowed: boolInt(p.UpgradesAllowed),
+	})
+}
+
+// UpdateProfile overwrites a stored profile. ErrNotFound when the id is gone.
+func (d *DB) UpdateProfile(ctx context.Context, p quality.Profile) error {
+	def, err := profileDefinition(p)
+	if err != nil {
+		return err
+	}
+	n, err := d.Write.UpdateProfile(ctx, sqlitegen.UpdateProfileParams{
+		Name: p.Name, Definition: def, UpgradesAllowed: boolInt(p.UpgradesAllowed), ID: p.ID,
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteProfile removes a profile, refusing while anything references it.
+func (d *DB) DeleteProfile(ctx context.Context, id int64) error {
+	refs, err := d.Read.CountProfileReferences(ctx, id)
+	if err != nil {
+		return err
+	}
+	if refs > 0 {
+		return fmt.Errorf("%w: %d item(s), cop(ies) or import list(s) use it", ErrProfileInUse, refs)
+	}
+	n, err := d.Write.DeleteProfile(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ProfileReferences counts what would break if a profile were deleted.
+func (d *DB) ProfileReferences(ctx context.Context, id int64) (int64, error) {
+	return d.Read.CountProfileReferences(ctx, id)
 }
 
 // ---- indexers ----

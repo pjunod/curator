@@ -1,0 +1,421 @@
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { ProfileInput, QualityProfile } from '../api'
+import { createProfile, deleteProfile, getProfiles, updateProfile } from '../api'
+
+// The quality vocabulary, worst to best on each axis. Kept here rather than
+// fetched because it is a property of the model, not of the deployment — and
+// a picker that cannot render until a request lands is a picker that flickers.
+const VIDEO_SOURCES = [
+  { value: 'hdtv', label: 'HDTV' },
+  { value: 'webrip', label: 'WEBRip' },
+  { value: 'webdl', label: 'WEB-DL' },
+  { value: 'bluray', label: 'Bluray' },
+  { value: 'remux', label: 'Remux' },
+]
+const RESOLUTIONS = [
+  { value: 480, label: '480p' },
+  { value: 720, label: '720p' },
+  { value: 1080, label: '1080p' },
+  { value: 2160, label: '2160p (4K)' },
+]
+const EBOOK_FORMATS = [
+  { value: 'pdf', label: 'PDF' },
+  { value: 'mobi', label: 'MOBI' },
+  { value: 'azw3', label: 'AZW3' },
+  { value: 'epub', label: 'EPUB' },
+]
+const AUDIOBOOK_FORMATS = [
+  { value: 'mp3', label: 'MP3' },
+  { value: 'm4b', label: 'M4B' },
+]
+
+type Axis = 'video' | 'ebook' | 'audiobook'
+
+function axisOf(source: string): Axis {
+  if (EBOOK_FORMATS.some((f) => f.value === source)) return 'ebook'
+  if (AUDIOBOOK_FORMATS.some((f) => f.value === source)) return 'audiobook'
+  return 'video'
+}
+
+function sourcesFor(axis: Axis) {
+  if (axis === 'ebook') return EBOOK_FORMATS
+  if (axis === 'audiobook') return AUDIOBOOK_FORMATS
+  return VIDEO_SOURCES
+}
+
+// blankDraft is a new profile before anyone has typed: a 1080p target, which
+// is what most people want and what the seeded default already says.
+const blankDraft = (): Draft => ({
+  name: '',
+  axis: 'video',
+  targetSource: 'webdl',
+  targetResolution: 1080,
+  hasFloor: false,
+  floorSource: 'hdtv',
+  floorResolution: 1080,
+  upgradesAllowed: true,
+})
+
+interface Draft {
+  name: string
+  axis: Axis
+  targetSource: string
+  targetResolution: number
+  hasFloor: boolean
+  floorSource: string
+  floorResolution: number
+  upgradesAllowed: boolean
+}
+
+function draftOf(p: QualityProfile): Draft {
+  const axis = axisOf(p.target.source)
+  return {
+    name: p.name,
+    axis,
+    targetSource: p.target.source,
+    targetResolution: p.target.resolution,
+    hasFloor: !!p.floor,
+    floorSource: p.floor?.source ?? p.target.source,
+    floorResolution: p.floor?.resolution ?? p.target.resolution,
+    upgradesAllowed: p.upgradesAllowed,
+  }
+}
+
+function toInput(d: Draft): ProfileInput {
+  const res = d.axis === 'video' ? d.targetResolution : 0
+  const body: ProfileInput = {
+    name: d.name.trim(),
+    target: { source: d.targetSource, resolution: res },
+    upgradesAllowed: d.upgradesAllowed,
+  }
+  if (d.hasFloor) {
+    body.floor = {
+      source: d.floorSource,
+      resolution: d.axis === 'video' ? d.floorResolution : 0,
+    }
+  }
+  return body
+}
+
+// previewSentence mirrors the server's Profile.Sentence so the editor can show
+// what a profile will say about itself BEFORE it is saved. The server remains
+// the authority — every saved profile renders the sentence the server sent —
+// but a picker whose consequence you only learn after saving is a guessing
+// game, and guessing games are how "Any" happened.
+function previewSentence(d: Draft): string {
+  const label = (source: string, resolution: number) => {
+    const name = sourcesFor(d.axis).find((s) => s.value === source)?.label ?? source
+    return resolution > 0 ? `${name} ${resolution}p` : name
+  }
+  const res = d.axis === 'video' ? d.targetResolution : 0
+  let s = `hunts the best release up to ${label(d.targetSource, res)}, then stops`
+  if (d.hasFloor) {
+    s += `; never below ${label(d.floorSource, d.axis === 'video' ? d.floorResolution : 0)}`
+  }
+  if (!d.upgradesAllowed) s += '; no upgrades once a file is present'
+  return s
+}
+
+function ProfileForm(props: {
+  draft: Draft
+  onChange: (d: Draft) => void
+  onSubmit: () => void
+  onCancel?: () => void
+  busy: boolean
+  submitLabel: string
+  error?: string
+}) {
+  const { draft: d, onChange } = props
+  const set = (patch: Partial<Draft>) => onChange({ ...d, ...patch })
+  const sources = sourcesFor(d.axis)
+
+  return (
+    <div className="profile-form">
+      <div className="form-row">
+        <label>
+          Name
+          <input
+            aria-label="Profile name"
+            value={d.name}
+            placeholder="1080p"
+            onChange={(e) => set({ name: e.target.value })}
+          />
+        </label>
+        <label>
+          Kind
+          <select
+            value={d.axis}
+            onChange={(e) => {
+              const axis = e.target.value as Axis
+              const first = sourcesFor(axis)
+              set({
+                axis,
+                targetSource: axis === 'video' ? 'webdl' : first[first.length - 1].value,
+                floorSource: first[0].value,
+              })
+            }}
+          >
+            <option value="video">Film &amp; TV</option>
+            <option value="ebook">Ebook</option>
+            <option value="audiobook">Audiobook</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="form-row">
+        <label>
+          Target
+          <select
+            aria-label="Target source"
+            value={d.targetSource}
+            onChange={(e) => set({ targetSource: e.target.value })}
+          >
+            {sources.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {d.axis === 'video' && (
+          <label>
+            Resolution
+            <select
+              aria-label="Target resolution"
+              value={d.targetResolution}
+              onChange={(e) => set({ targetResolution: Number(e.target.value) })}
+            >
+              {RESOLUTIONS.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
+
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={d.hasFloor}
+          onChange={(e) => set({ hasFloor: e.target.checked })}
+        />
+        Set a floor — below this, do not grab at all
+      </label>
+      {d.hasFloor && (
+        <div className="form-row">
+          <label>
+            Floor
+            <select
+              aria-label="Floor source"
+              value={d.floorSource}
+              onChange={(e) => set({ floorSource: e.target.value })}
+            >
+              {sources.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {d.axis === 'video' && (
+            <label>
+              Floor resolution
+              <select
+                aria-label="Floor resolution"
+                value={d.floorResolution}
+                onChange={(e) => set({ floorResolution: Number(e.target.value) })}
+              >
+                {RESOLUTIONS.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
+
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={d.upgradesAllowed}
+          onChange={(e) => set({ upgradesAllowed: e.target.checked })}
+        />
+        Keep looking for better until the target is met
+      </label>
+
+      <p className="profile-sentence" data-testid="profile-preview">
+        <strong>{d.name.trim() || 'This profile'}</strong> — {previewSentence(d)}
+      </p>
+
+      <div className="form-actions">
+        <button onClick={props.onSubmit} disabled={props.busy || !d.name.trim()}>
+          {props.submitLabel}
+        </button>
+        {props.onCancel && <button onClick={props.onCancel}>Cancel</button>}
+        {props.error && <span className="error-text"> ✕ {props.error}</span>}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * QualityProfileSettings: the editor that should have existed from the start.
+ *
+ * A model users cannot see or change is how "Any" happened — five seeded rows
+ * were the only profiles that had ever existed, so nobody ever had to make the
+ * old allowed-list-plus-cutoff shape express an intent, and nobody noticed it
+ * could not (ADR 0014 §5).
+ */
+export function QualityProfileSettings() {
+  const qc = useQueryClient()
+  const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
+  const [creating, setCreating] = useState(false)
+  const [draft, setDraft] = useState<Draft>(blankDraft())
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editDraft, setEditDraft] = useState<Draft>(blankDraft())
+  const [error, setError] = useState('')
+
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['profiles'] })
+    void qc.invalidateQueries({ queryKey: ['library'] })
+  }
+
+  const create = useMutation({
+    mutationFn: () => createProfile(toInput(draft)),
+    onSuccess: () => {
+      setCreating(false)
+      setDraft(blankDraft())
+      setError('')
+      refresh()
+    },
+    onError: (e) => setError((e as Error).message),
+  })
+  const save = useMutation({
+    mutationFn: () => updateProfile(editingId as number, toInput(editDraft)),
+    onSuccess: () => {
+      setEditingId(null)
+      setError('')
+      refresh()
+    },
+    onError: (e) => setError((e as Error).message),
+  })
+  const remove = useMutation({
+    mutationFn: deleteProfile,
+    onSuccess: () => {
+      setError('')
+      refresh()
+    },
+    onError: (e) => setError((e as Error).message),
+  })
+
+  return (
+    <section className="panel" id="profiles">
+      <h2>Quality profiles</h2>
+      <p className="muted">
+        A profile is a target: hunt the best release at or below the target&apos;s resolution,
+        keep looking while what&apos;s on disk is below it, and stop once it&apos;s met. An
+        optional floor says what&apos;s not worth grabbing at all.
+      </p>
+
+      {profiles.data && profiles.data.length > 0 && (
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>What it does</th>
+              <th>In use</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {profiles.data.map((p) => (
+              <tr key={p.id}>
+                <td>
+                  <strong>{p.name}</strong>
+                </td>
+                <td className="muted">{p.sentence}</td>
+                <td className="muted">{p.inUse ? `${p.inUse}` : '—'}</td>
+                <td>
+                  <button
+                    onClick={() => {
+                      setEditingId(p.id)
+                      setEditDraft(draftOf(p))
+                      setError('')
+                    }}
+                  >
+                    Edit
+                  </button>{' '}
+                  <button
+                    onClick={() => remove.mutate(p.id)}
+                    disabled={remove.isPending || !!p.inUse}
+                    title={
+                      p.inUse
+                        ? `${p.inUse} item(s), cop(ies) or import list(s) still use this profile`
+                        : undefined
+                    }
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {editingId !== null && (
+        <>
+          <h3>Edit profile</h3>
+          <ProfileForm
+            draft={editDraft}
+            onChange={setEditDraft}
+            onSubmit={() => save.mutate()}
+            onCancel={() => {
+              setEditingId(null)
+              setError('')
+            }}
+            busy={save.isPending}
+            submitLabel="Save"
+            error={error}
+          />
+        </>
+      )}
+
+      {creating ? (
+        <>
+          <h3>New profile</h3>
+          <ProfileForm
+            draft={draft}
+            onChange={setDraft}
+            onSubmit={() => create.mutate()}
+            onCancel={() => {
+              setCreating(false)
+              setError('')
+            }}
+            busy={create.isPending}
+            submitLabel="Create"
+            error={error}
+          />
+        </>
+      ) : (
+        <p>
+          <button
+            onClick={() => {
+              setCreating(true)
+              setEditingId(null)
+              setError('')
+            }}
+          >
+            New profile
+          </button>
+          {error && !editingId && <span className="error-text"> ✕ {error}</span>}
+        </p>
+      )}
+    </section>
+  )
+}

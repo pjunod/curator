@@ -170,6 +170,18 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		fi := apigen.MediaFileInfo{
 			Id: f.ID, Path: f.Path, Size: f.Size, EpisodeIds: ids,
 		}
+		// What this file is, and how we know (ADR 0013). The label and the
+		// facts line are rendered here rather than in the client so the API,
+		// the UI, and anything else reading this all say the same thing.
+		fi.Quality = optStr(qualityText(f))
+		if f.Provenance != "" {
+			prov := apigen.MediaFileInfoProvenance(f.Provenance)
+			fi.Provenance = &prov
+		}
+		fi.ProvenanceLabel = optStr(f.Provenance.Label())
+		verified := f.SourceVerified()
+		fi.Verified = &verified
+		fi.Facts = optStr(f.Info.Summary())
 		if f.CopyID != 0 {
 			cid := f.CopyID
 			fi.CopyId = &cid
@@ -980,4 +992,14 @@ func (s *Server) AdoptExact(w http.ResponseWriter, r *http.Request) {
 		Review:   proposalsDTO(res.Review),
 		Failures: failures,
 	})
+}
+
+// qualityText renders a file's recorded quality, or "" when the file exists
+// and nothing could be determined about it. The empty string is meaningful:
+// it is the "on disk, unverified" state, not an absent file.
+func qualityText(f domain.MediaFile) string {
+	if !f.QualityKnown {
+		return ""
+	}
+	return f.Quality.Display()
 }
