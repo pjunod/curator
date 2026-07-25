@@ -881,6 +881,60 @@ a.pill-info:hover {
   align-items: center;
 }
 
+/* ---- quality facts (item page) ----
+   One line: what is on disk, what the profile wants, and the state. Each
+   value carries a small label because two resolutions side by side with
+   nothing distinguishing them is how "Remux 2160p — at the target (WEB-DL
+   1080p)" came to read as a contradiction. */
+.quality-facts {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.qf-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.qf-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+/* The target is a goal, not a possession — outlined rather than filled, so
+   the eye reads the solid pill as the thing you actually have. */
+.pill-outline {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-muted);
+}
+
+.qf-state {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding-left: 2px;
+  cursor: help;
+}
+
+.qf-met {
+  color: var(--ok);
+}
+
+.qf-seeking {
+  color: var(--warning);
+}
+
+.qf-capped {
+  color: var(--text-muted);
+}
+
 .path-chip {
   display: inline-block;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

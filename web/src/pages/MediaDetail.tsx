@@ -287,6 +287,74 @@ function EditPanel(props: { item: MediaItemDetail; onClose: () => void }) {
   )
 }
 
+// QualityFacts: what is on disk, what the profile is aiming at, and whether
+// anything more is being sought — one line, each number labelled.
+//
+// Labelling is the whole design. The first version read
+// "Remux 2160p / at the target (WEB-DL 1080p)", which puts two resolutions
+// next to each other with nothing saying which is which, and the parenthetical
+// reads as a correction: it looked like a 2160p file being described as 1080p.
+// "on disk" and "target" in front of each pill costs two words and removes the
+// ambiguity entirely.
+//
+// The state word never restates a number, for the same reason.
+function QualityFacts({ m }: { m: MediaItemDetail }) {
+  const target = m.qualityTarget
+  const state: Record<string, { word: string; cls: string; why: string }> = {
+    met: {
+      word: 'target met',
+      cls: 'qf-met',
+      // "met" covers at-or-above: a 2160p Remux against a 1080p cutoff is
+      // finished, and saying "at the target" about it was the confusing part.
+      why: `What is on disk is at or above ${target || 'the target'}, so nothing better will be sought.`,
+    },
+    seeking: {
+      word: 'upgrading',
+      cls: 'qf-seeking',
+      why: `Below ${target || 'the target'}, and the profile allows upgrades — monarr is still looking for better.`,
+    },
+    capped: {
+      word: 'upgrades off',
+      cls: 'qf-capped',
+      why: `Below ${target || 'the target'} and staying there: this profile has upgrades switched off.`,
+    },
+  }
+  const s = m.upgrade ? state[m.upgrade] : undefined
+
+  return (
+    <div className="quality-facts">
+      {m.upgrade === 'missing' || !m.quality ? (
+        <span className="muted">nothing on disk yet</span>
+      ) : (
+        <span className="qf-pair">
+          <span className="qf-label">on disk</span>
+          <span
+            className="pill pill-neutral"
+            title="The weakest quality among this item's files — the one that decides whether it is still being hunted"
+          >
+            {m.quality}
+          </span>
+        </span>
+      )}
+
+      {target && (
+        <span className="qf-pair">
+          <span className="qf-label">target</span>
+          <span className="pill pill-outline" title="The profile's cutoff: the point at which monarr stops looking for better">
+            {target}
+          </span>
+        </span>
+      )}
+
+      {s && (
+        <span className={`qf-state ${s.cls}`} title={s.why}>
+          {s.word}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function MediaDetailPage() {
   const { id } = useParams({ from: '/library/$id' })
   const navigate = useNavigate()
@@ -429,39 +497,15 @@ export function MediaDetailPage() {
             </div>
 
             <div className="fact-label">Quality</div>
-            <div className="fact-pills">
-              {m.upgrade === 'missing' || !m.quality ? (
-                <span className="muted">nothing on disk yet</span>
-              ) : (
-                <>
-                  <span className="pill pill-neutral" title="The weakest quality among this item's files — the one that decides whether it is still being hunted">
-                    {m.quality}
-                  </span>
-                  {m.upgrade === 'met' && (
-                    <span className="muted">
-                      at the target{m.qualityTarget ? ` (${m.qualityTarget})` : ''} — nothing better
-                      is being sought
-                    </span>
-                  )}
-                  {m.upgrade === 'seeking' && (
-                    <span className="muted">
-                      still looking for {m.qualityTarget || 'better'}
-                    </span>
-                  )}
-                  {m.upgrade === 'capped' && (
-                    <span className="muted">
-                      below {m.qualityTarget || 'the target'}, and staying there — this profile has
-                      upgrades switched off
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
+            <QualityFacts m={m} />
 
             <div className="fact-label">Profile</div>
             <div>
               {profileName ?? `#${m.qualityProfileId}`}
-              <span className="muted"> — quality target for grabs and upgrades</span>
+              {/* The cutoff is on the Quality row above as a concrete number,
+                  so this no longer needs to explain what a target is — what
+                  is left is the part the pill cannot show. */}
+              <span className="muted"> — which qualities are allowed, and whether upgrades run</span>
             </div>
 
             {(m.ratings.length > 0 || m.ratingVotes > 0) && (
