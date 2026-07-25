@@ -101,8 +101,13 @@ Monarr expects humans to touch the filesystem. Point a root folder at your
 existing collection and run **Scan disk** (Library page):
 
 - Files inside known item folders are linked (episodes matched by
-  `S01E02`-style names, quality read from the file name; book formats read
-  from the extension).
+  `S01E02`-style names; book formats read from the extension).
+- Every video file is **measured**: monarr reads the container headers and
+  records resolution, codec, bit depth, HDR format, audio tracks and
+  bitrate. A file called `A Good Day to Die Hard.mkv` gets a real quality,
+  because the bytes were always there to answer the question (ADR 0013).
+  Measuring is queued per file, so a large library fills in over the
+  minutes after the scan rather than blocking it.
 - Folders nobody claims are listed as **unmatched**, each with a
   **Match…** button that pre-fills the add search.
 - Items whose folders vanished are reported; their file records are pruned
@@ -115,9 +120,9 @@ Scans also run on a 12-hour schedule.
 Automatic is the default posture — the interactive search is the override
 for when you want to pick a specific release yourself.
 
-**Automatic** — three entry points, all using the decision engine (profile
-allowed-set, cutoff, upgrade rules, custom-format scores) to pick the best
-accepted release with no list to review:
+**Automatic** — three entry points, all using the decision engine (the
+profile's target and floor, upgrade rules, custom-format scores) to pick
+the best accepted release with no list to review:
 
 - **Search on add** (checkbox on the add form, on by default) fires the
   moment an item is added.
@@ -129,11 +134,13 @@ accepted release with no list to review:
 **Interactive search** — **Interactive search** on movie/book detail pages;
 on a series, each season has **Search pack** and each episode a **Search**
 button. Every release the indexers returned is shown — including rejected
-ones, with the reason attached (`quality not allowed`, `not an upgrade`,
-`does not match …`). **Grab** sends your pick to the right client.
+ones, with the reason attached (`above target`, `below floor`,
+`not an upgrade`, `target met`, `does not match …`). **Grab** sends your
+pick to the right client, with no decision gate — interactive search is
+the override, and it always wins.
 
 **The loops** — anything monitored and missing (or below its profile
-cutoff) stays on the wanted list, and two loops work it unattended:
+target) stays on the wanted list, and two loops work it unattended:
 
 - **RSS sync** (every ~15 min): pulls each indexer's newest releases and
   grabs whatever matches a wanted item and passes the decision engine.
@@ -193,6 +200,42 @@ the finale). Unmonitored rows dim. At add time, the Series tab offers
 "latest only" and untick or tick the rest afterwards. Metadata refresh
 respects all of it: a newly announced episode in an unmonitored season
 arrives unmonitored.
+
+## Reading the quality row
+
+The item page's **Quality** row says three things: what is on disk, the
+facts monarr measured, and whether it is still hunting.
+
+| What you see | What it means |
+|---|---|
+| `on disk  WEB-DL 1080p` | The weakest quality among this item's files — the one that decides whether it is still being hunted. |
+| `1080p · HEVC · HDR10 · TrueHD · 23 Mbps` | Measured from the file itself, not from its name. |
+| `upgrading to WEB-DL 1080p` | Below the profile's target, upgrades on, still looking. |
+| `at or above WEB-DL 1080p` | Target met. Nothing better will be sought. |
+| `at target (source unverified)` | The resolution matches the target but monarr could only *guess* at the source. It stops rather than replace a possibly-perfect file on a guess. Interactive search still grabs whatever you pick. |
+| `below … · upgrades off` | Below target and staying there: this profile has upgrades switched off. |
+| `on disk — monarr could not read this file` | The file exists and could not be parsed. Unknown is **not** missing: monarr will not hunt a replacement for a file it simply failed to read. |
+
+The **Files** table names the same thing per file, with a **How we know**
+badge:
+
+- **measured** — read out of the file's own headers. Resolution measured
+  this way is fact; nothing overrides it.
+- **from filename** / **from release** — the name claimed it and nothing
+  measured contradicted the claim. Names are hints now, not authority.
+- **set by hand** — a human said so.
+- **unreadable** — on disk, quality unknown.
+
+Resolution is always measured when a probe succeeded. The **source**
+(WEB-DL vs Bluray vs remux) is inferred from the measurements — lossless
+audio, bitrate bands, interlacing, muxer signature — and cross-checked
+against the name. A low-confidence inference is shown but never triggers
+a replacement, because being wrong about a source should cost an odd badge
+and never somebody's 17 GB file.
+
+When a grabbed release turns out not to be what it claimed, the import
+still proceeds — the file is what it is — and a `quality_mismatch` event
+is recorded against the release with the measured truth beside the claim.
 
 ## Quality copies (the same thing at two qualities)
 

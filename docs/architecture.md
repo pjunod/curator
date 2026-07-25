@@ -110,11 +110,20 @@ MediaItem (aggregate root — one library entry)
    └─ Season (number, monitored)
       └─ Episode (seasonNum, epNum, absoluteNum?, airDateUTC, title, monitored)
 
-MediaFile: path, size, quality, mediaInfo, releaseGroup, dateAdded
+MediaFile: path, size, quality, mediaInfo, provenance, confidence, probedAt
   · movie file  → links to 1 movie
   · episode file → links to 1..n episodes   (multi-episode files are real; n:m link table)
+  · mediaInfo is MEASURED (ADR 0013): container/codec/dimensions/bit depth/
+    HDR/interlacing/audio/duration, read from the file's own headers by
+    domain/mediainfo — no ffprobe, no image change. provenance says where
+    `quality` came from (probe · filename · release · manual · failed) and
+    confidence qualifies an inferred source. Resolution is measured fact;
+    source is inference, and a low-confidence inference never evicts a file.
 
-QualityProfile: ordered quality groups, cutoff, upgradesAllowed
+QualityProfile: target, floor?, upgradesAllowed  (ADR 0014)
+  · target caps grabs by resolution and defines "done"; floor says what is
+    not worth grabbing at all. The compat shim synthesizes the Radarr-shaped
+    allowed-list + cutoff from the target, so *arr consumers see no change.
   (custom-format scoring slots in here later as an additive score, exactly like upstream)
 
 Release (transient, never persisted except in history):

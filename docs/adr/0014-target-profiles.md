@@ -1,6 +1,6 @@
 # ADR 0014 — A quality profile is a target, not a list with a cutoff
 
-- **Status:** Proposed
+- **Status:** Accepted — built 2026-07-25 (v0.6.0)
 - **Date:** 2026-07-25
 - **Relates to:** ADR [0013](0013-measured-quality.md) (measured on-disk
   quality, which these rules consume), ADR
@@ -126,6 +126,22 @@ phase, API and UI, with the profile row rendered as the sentence it now is:
 allowed-items + cutoff view generated from the target — same wire shape the
 fake-consumer suite already asserts, same ids and names. Translation-only,
 per ADR 0003; the target model is not exposed through the shim.
+
+### 7. Two exclusions the allowed-lists gave for free
+
+Discovered while building this, and stated here because a target model
+does not imply them:
+
+- **Format families never compete.** Ebook, audiobook, and film/TV are
+  three vocabularies sharing one `Source` field. Without an explicit rule
+  an M4B is "better than" an EPUB by rank and satisfies an Ebook profile.
+  A release is only acceptable if its family matches the target's.
+- **A screen capture is never a stand-in.** CAM and telesync are not
+  lower-quality copies of the film, they are a recording of a screening,
+  and no profile wants one while waiting for the real thing. A floor
+  cannot express this: `Rank` is resolution-dominant, so a 1080p CAM
+  outranks a 480p Bluray. It is a rule, not a threshold — a release whose
+  source is a screen capture is rejected unless the profile targets one.
 
 ## Consequences
 

@@ -1,6 +1,7 @@
 # Quality truth — implementation plan
 
-**Status:** ready to build · **Executes:** ADR
+**Status:** BUILT 2026-07-25 (v0.6.0) — kept as the record of how, and of
+the two rules §9 did not anticipate (ADR 0014 §7) · **Executes:** ADR
 [0013](adr/0013-measured-quality.md) + ADR [0014](adr/0014-target-profiles.md)
 · **Written:** 2026-07-25 · **Ledger:** STATUS.md "Phase 6 — Quality truth"
 

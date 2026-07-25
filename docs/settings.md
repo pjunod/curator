@@ -113,19 +113,74 @@ churns through replacements behind your back.
 
 ## Quality profiles
 
-Five seeded profiles (editing arrives with a later UI pass):
+A profile is a **target**, an optional **floor**, and an **upgrades**
+switch (ADR 0014). Three sentences are the whole model, and they are the
+sentence the UI prints on every profile:
 
-| ID | Name | Allowed (worst → best) | Cutoff |
+> Hunt the best release at or below the target's resolution. While what's
+> on disk is below the target and upgrades are on, keep looking; once the
+> target is met, stop. Never grab below the floor.
+
+Five seeded profiles, editable under **Settings → Quality profiles**:
+
+| ID | Name | Target | Floor |
 |---|---|---|---|
-| 1 | Any | 480p SD → 2160p Remux | WEB-DL 1080p |
-| 2 | HD-1080p | 1080p HDTV → 1080p Remux | WEB-DL 1080p |
-| 3 | Ultra-HD | 2160p WEB-DL → 2160p Remux | WEB-DL 2160p |
-| 4 | Ebook | PDF → MOBI → AZW3 → EPUB | EPUB |
-| 5 | Audiobook | MP3 → M4B | M4B |
+| 1 | 1080p | WEB-DL 1080p | — |
+| 2 | HD-1080p | WEB-DL 1080p | HDTV 1080p |
+| 3 | 4K | WEB-DL 2160p | WEB-DL 2160p |
+| 4 | Ebook | EPUB | — |
+| 5 | Audiobook | M4B | — |
 
-Files at/above the cutoff stop being wanted; below it they're upgrade
-candidates. Profiles are picked per item (movies/series default to Any,
-books to Ebook) and changeable in bulk via the mass editor.
+Ids are stable — items, copies and import lists reference profiles by id —
+so an upgrade from 0.5.x rewrites these rows in place rather than
+recreating them. Two names changed: **Any → 1080p** and **Ultra-HD → 4K**.
+"Any" is retired because it never meant "anything": it stopped upgrading
+at WEB-DL 1080p while still being willing to *grab* a 2160p remux for a
+missing item. The 1080p profile now caps grabs at its target resolution
+too, which is the behaviour its cutoff always claimed.
+
+**What the target does:** it caps grabs by RESOLUTION and defines "done".
+A better SOURCE at the target resolution is welcome — a 1080p remux
+satisfies (and may be grabbed under) a WEB-DL 1080p target, because
+refusing a better file at the resolution you asked for helps nobody. The
+thing people actually fear is a surprise 4K download, and that is a
+resolution problem.
+
+**What the floor does:** it says what is not worth having at all. With no
+floor, something beats nothing — a 480p copy of a missing film is
+acceptable until something better turns up. With a floor, monarr waits.
+
+Two exclusions apply regardless of target and floor, because they are not
+questions of rank: a **screen capture** (CAM, telesync) is never grabbed
+unless a profile explicitly targets one, and the three format families
+(film/TV · ebook · audiobook) never satisfy each other — an M4B is not a
+better EPUB, it answers a different question.
+
+**Deleting a profile** is refused while any item, copy, or import list
+references it; the row shows the count and the button is disabled.
+
+## Media probing (`MONARR_FFPROBE`)
+
+Monarr reads resolution, codec, bit depth, HDR format, interlacing, audio
+tracks and duration out of MKV and MP4 files itself, with no external
+dependency — the stock image is distroless and has nothing on PATH
+(ADR 0013). There is nothing to configure for the formats that matter.
+
+For the long tail it does not deep-parse (AVI, TS, WMV), set
+`MONARR_FFPROBE` to the absolute path of an `ffprobe` binary and monarr
+will use it opportunistically. An `ffprobe` on `PATH` is picked up without
+configuration. Absent both, those files keep the quality their filename
+claims — exactly as every file did before 0.6.0 — and their provenance
+says so.
+
+```bash
+# Only useful if you actually have these containers AND a custom image.
+MONARR_FFPROBE=/usr/bin/ffprobe
+```
+
+Probing never reads a whole file: MKV is capped at 8 MiB of header reads
+and MP4 at 32 MiB, once per file, re-run only when the file's size
+changes. A sweep over a multi-TB NFS library is cheap by construction.
 
 ## Custom formats
 

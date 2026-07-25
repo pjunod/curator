@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-25 · ALL PHASES COMPLETE (81/82 — only the stretch *arr DB importer deferred) · v0.4.0 in real-world deployment · next: Phase 6 quality truth (ADR 0013/0014 — plan ready at [docs/plan-quality-truth.md](docs/plan-quality-truth.md)) + launch logistics**
+> **Snapshot 2026-07-25 · ALL PHASES COMPLETE (90/91 — only the stretch *arr DB importer deferred) · v0.6.0 · Phase 6 "quality truth" built: on-disk quality is measured (ADR 0013), a profile is a target (ADR 0014), and the duplicate-grab chain is dead · next: launch logistics + real-world validation of the inference bands**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -19,7 +19,7 @@
 | 3 — Automation | **9/9 ✅** | runs unattended for a month |
 | 4 — Ecosystem compat | **5/6 ✅** (stretch deferred) | Jellyseerr/Prowlarr/Bazarr work against the shim |
 | 5 — Depth & parity | **7/7 ✅** | custom formats, client zoo, lists, anime |
-| 6 — Quality truth (ADR 0013/0014) | 0/9 | on-disk quality measured; target profiles; churn regression pinned |
+| 6 — Quality truth (ADR 0013/0014) | **9/9 ✅** | on-disk quality measured; target profiles; churn regression pinned |
 | Launch logistics | 2/6 | public repo, releases, name housekeeping |
 
 ## Phase 0 — Walking skeleton ✅ (shipped 2026-07-17)
@@ -128,7 +128,7 @@
 - [x] Mass editor: select-mode on the Library page → bulk monitor/unmonitor/profile via `POST /library/bulk`
 - [x] Optional Prometheus `/metrics` (`MONARR_METRICS=true`): build info, items by kind, active queue, wanted total, uptime — hand-rolled exposition, no new dependency
 
-## Phase 6 — Quality truth (ADR 0013 + 0014 — planned 2026-07-25)
+## Phase 6 — Quality truth (ADR 0013 + 0014 — built 2026-07-25, v0.6.0)
 
 Plan: [docs/plan-quality-truth.md](docs/plan-quality-truth.md). Fixes the
 adopted-file blind spot (unknown on-disk quality is hunted as *missing* →
@@ -144,7 +144,7 @@ the symptom).
 - [x] Decision engine + wanted index on the `Met/Acceptable/Upgrade` predicates — unknown ≠ missing; `TestUnknownQualityOnDiskIsNotHunted` pins the churn fix (M4)
 - [x] Profile CRUD API + editor UI; QualityFacts measured pill + provenance badges; Files table quality columns (plan §6.3, M5)
 - [x] Compat `/qualityprofile` synthesized from targets — fake-consumer suite green untouched (plan §6.4, M5)
-- [ ] Post-import verification: `quality_mismatch` history event (log-only); docs updated (usage/settings/architecture); ADRs 0013/0014 → Accepted (M6)
+- [x] Post-import verification: `quality_mismatch` history event (log-only); docs updated (usage/settings/architecture); ADRs 0013/0014 → Accepted (M6)
 
 ## Launch logistics
 
@@ -177,7 +177,11 @@ the symptom).
 ## Milestone commits
 
 ```
-70d3ba9..HEAD     Phase 5 (2 commits): custom formats · transmission/deluge/
+84e29a7..HEAD     Phase 6 (5 commits): native mediainfo prober + corpus/fuzz ·
+                  migration 0018 + probe jobs · import measures what it
+                  placed · target profiles + migration 0019 + churn fix ·
+                  profile CRUD/editor + provenance UI
+70d3ba9..84e29a7  Phase 5 (2 commits): custom formats · transmission/deluge/
                   nzbget · import lists · anime absolute · auth + sessions ·
                   mass editor · /metrics
 1b8671b           Phase 4: /sonarr + /radarr v3 personalities, X-Api-Key,

@@ -1,6 +1,6 @@
 # ADR 0013 — On-disk quality is measured, not inferred from names
 
-- **Status:** Proposed
+- **Status:** Accepted — built 2026-07-25 (v0.6.0)
 - **Date:** 2026-07-25
 - **Relates to:** ADR [0005](0005-filesystem-adoption.md) (adoption, which is
   where nameless files enter the library), ADR
