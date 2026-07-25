@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import type { MediaItemSummary, MediaKind } from '../api'
 import {
   ACTIVE_DOWNLOAD_STATES, bulkEditLibrary, completeness, fmtRating, getLibrary,
@@ -263,7 +263,6 @@ export function LibraryPage() {
     series: 0,
     book: 0,
   })
-  const navigate = useNavigate()
   const qc = useQueryClient()
 
   const items = useQuery({
@@ -325,7 +324,11 @@ export function LibraryPage() {
     setSelected(next)
   }
 
+  // unmatchedDirs is a capped prefix, so the count has to come from
+  // unmatchedTotal. Reading length here reported "25 unmatched folders" for
+  // a library with 150 of them.
   const unmatched = report.data?.unmatchedDirs ?? []
+  const unmatchedTotal = report.data?.unmatchedTotal ?? unmatched.length
 
   // Every kind owns its controls; the flat tabs reuse the same state.
   const [controls, setControls] = useState<Record<MediaKind, SectionState>>(() => ({
@@ -457,23 +460,24 @@ export function LibraryPage() {
         </div>
       )}
 
-      {unmatched.length > 0 && (
+      {unmatchedTotal > 0 && (
         <div className="banner">
-          <strong>{unmatched.length}</strong> unmatched folder{unmatched.length > 1 ? 's' : ''} found
-          on disk:
+          <strong>{unmatchedTotal}</strong> unmatched folder{unmatchedTotal > 1 ? 's' : ''} found on
+          disk:
           <ul className="unmatched-list">
             {unmatched.slice(0, 5).map((d) => (
               <li key={d.path}>
                 <span className="mono">{d.name}</span>
-                <button
-                  onClick={() => navigate({ to: '/add', search: { q: d.name, kind: 'series' } })}
-                >
-                  Match…
-                </button>
               </li>
             ))}
-            {unmatched.length > 5 && <li className="muted">…and {unmatched.length - 5} more</li>}
           </ul>
+          {/* One route into the paged review window rather than five
+              hardcoded-kind buttons: the window knows each folder's kind and
+              carries adoption's proposals, which a Match… button here never
+              could. */}
+          <Link to="/settings" hash="library-folders">
+            Review all {unmatchedTotal} in Settings →
+          </Link>
         </div>
       )}
 
