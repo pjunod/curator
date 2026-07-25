@@ -142,3 +142,66 @@ func TestDedupeFreesCandidateSlots(t *testing.T) {
 		t.Fatalf("dedupe left %d, want 2: %+v", len(out), out)
 	}
 }
+
+// Libraries named the way Plex, Emby and Kodi name them — article inverted
+// after a comma — used to match nothing at all. This is the whole reason
+// "Fall, The (2006)" sat in a review queue next to a perfectly good
+// "The Fall (2006)" candidate.
+func TestSortNamedFoldersMatch(t *testing.T) {
+	mv := func(id int64, title string, year int) ports.SearchResult {
+		return ports.SearchResult{Kind: domain.KindMovie, TMDBID: id, Title: title, Year: year}
+	}
+	for _, tc := range []struct {
+		folder  string
+		results []ports.SearchResult
+		want    Confidence
+		winner  string
+	}{
+		{
+			folder:  "Fall, The (2006)",
+			results: []ports.SearchResult{mv(1, "The Fall Guy", 2024), mv(2, "The Fall", 2006), mv(3, "Legends of the Fall", 1994)},
+			want:    ConfidenceExact,
+			winner:  "The Fall",
+		},
+		{
+			folder:  "Matrix, The (1999)",
+			results: []ports.SearchResult{mv(10, "The Matrix", 1999), mv(11, "The Matrix Reloaded", 2003)},
+			want:    ConfidenceExact,
+			winner:  "The Matrix",
+		},
+		{
+			folder:  "American Tail, An (1986)",
+			results: []ports.SearchResult{mv(20, "An American Tail", 1986)},
+			want:    ConfidenceExact,
+			winner:  "An American Tail",
+		},
+	} {
+		t.Run(tc.folder, func(t *testing.T) {
+			svc, _, _ := newService(t)
+			svc.meta = adoptProvider{movies: tc.results}
+			ctx := context.Background()
+
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, tc.folder), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie))
+			if err != nil {
+				t.Fatal(err)
+			}
+			props, err := svc.ProposeAdoptions(ctx, []UnmatchedDir{
+				{RootFolderID: rf.ID, Path: filepath.Join(root, tc.folder), Name: tc.folder},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := props[0]
+			if got.Confidence != tc.want {
+				t.Fatalf("confidence = %s, want %s (candidates %+v)", got.Confidence, tc.want, got.Candidates)
+			}
+			if got.Candidates[0].Title != tc.winner {
+				t.Errorf("winner = %q, want %q", got.Candidates[0].Title, tc.winner)
+			}
+		})
+	}
+}

@@ -262,34 +262,32 @@ function ReviewRow({
         </span>
       </div>
 
-      {p.candidates.length > 0 ? (
-        <div className="review-candidates">
-          {p.candidates.map((c, i) => (
-            <button
-              key={`${c.kind}-${c.tmdbId}-${c.olid ?? ''}`}
-              className={i === 0 && p.confidence === 'exact' ? 'candidate best' : 'candidate'}
-              disabled={busy}
-              title={`Adopt this folder as ${c.title}${c.year ? ` (${c.year})` : ''}`}
-              onClick={() => onAccept(c)}
-            >
-              {c.title}
-              {c.year ? ` (${c.year})` : ''}
-            </button>
-          ))}
-        </div>
-      ) : (
-        // Nothing to accept, so the only honest option is a manual search.
-        <div className="review-candidates">
-          <span className="muted">no match —</span>
-          <Link
-            to="/add"
-            search={{ q: p.parsedTitle, kind: p.kind ?? 'movie' }}
-            className="candidate"
+      <div className="review-candidates">
+        {p.candidates.length === 0 && <span className="muted">no match —</span>}
+        {p.candidates.map((c, i) => (
+          <button
+            key={`${c.kind}-${c.tmdbId}-${c.olid ?? ''}`}
+            className={i === 0 && p.confidence === 'exact' ? 'candidate best' : 'candidate'}
+            disabled={busy}
+            title={`Adopt this folder as ${c.title}${c.year ? ` (${c.year})` : ''}`}
+            onClick={() => onAccept(c)}
           >
-            search by hand
-          </Link>
-        </div>
-      )}
+            {c.title}
+            {c.year ? ` (${c.year})` : ''}
+          </button>
+        ))}
+        {/* Always offered, not only when there are no candidates: when every
+            chip on offer is wrong, dismissing the folder was the only thing
+            left, and dismissing is not the same as "I will find it myself". */}
+        <Link
+          to="/add"
+          search={{ q: p.parsedTitle, kind: p.kind ?? 'movie' }}
+          className="candidate search-link"
+          title={`Search ${p.kind === 'series' ? 'TV' : p.kind === 'book' ? 'books' : 'movies'} for "${p.parsedTitle}"`}
+        >
+          search…
+        </Link>
+      </div>
 
       <button
         className="link-btn"

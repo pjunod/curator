@@ -1754,3 +1754,11 @@ a.pill-info:hover {
 .review-error .error-text {
   overflow-wrap: anywhere;
 }
+
+/* The manual-search escape hatch, kept visually quieter than a real
+   candidate so it does not compete with the matches on offer. */
+.candidate.search-link {
+  border-style: dashed;
+  color: var(--text-muted);
+  background: none;
+}

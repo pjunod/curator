@@ -13,10 +13,24 @@ import (
 
 var reNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
 
+// reSortName matches the inverted-article convention that media libraries
+// have used forever: "Fall, The", "Lord of the Rings, The", "Thing, A".
+// Plex, Emby, Kodi and countless rename scripts all produce it, so a library
+// full of it would otherwise match nothing.
+//
+// Deliberately requires the comma. Dropping any trailing "the" would also
+// rewrite titles that legitimately end in the word, and the comma is the
+// thing that actually signals an inversion.
+var reSortName = regexp.MustCompile(`,\s*(the|a|an)\s*$`)
+
 // NormalizeTitle lowers, strips punctuation/articles, and collapses spacing
-// so "The Office (US)" matches "the.office.us".
+// so "The Office (US)" matches "the.office.us" — and so "Fall, The" matches
+// "The Fall", which is the same title written the way a library sorts it.
 func NormalizeTitle(t string) string {
 	t = strings.ToLower(t)
+	// Un-invert before punctuation goes, because the comma is the signal and
+	// stripping punctuation destroys it.
+	t = reSortName.ReplaceAllString(t, "")
 	t = reNonAlnum.ReplaceAllString(t, " ")
 	fields := strings.Fields(t)
 	if len(fields) > 1 {
