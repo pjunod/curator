@@ -15,5 +15,6 @@ accepted; a change of course gets a new ADR that supersedes the old one.
 | [0008](0008-distributed-execution.md) | Multi-host execution: leased job queue, mount-aware routing, Postgres for clustered mode | Accepted (step 1 built) |
 | [0009](0009-root-folder-kinds.md) | Root folders carry a media kind; base directories are a picker, not an entity | Accepted |
 | [0010](0010-scan-adopts.md) | Scan proposes matches; adoption is bulk work, not a to-do list | Accepted |
+| [0011](0011-series-metadata-provider.md) | Series identity from TheTVDB when keyed; TMDB alone cannot describe a Sonarr-shaped library | Proposed |
 
 Context for all of these lives in [../architecture.md](../architecture.md).
