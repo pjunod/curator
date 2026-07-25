@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -390,8 +391,16 @@ func (s *Service) RunAdoption(ctx context.Context) (AdoptResult, error) {
 	res.Review = append(res.Review, preview.Review...)
 	res.Failures = append(res.Failures, preview.Failures...)
 
-	// Persist what needs a human so the review list survives a reload.
+	// Persist what needs a human so the review list survives a reload...
 	s.saveReviewQueue(ctx, res.Review)
+	// ...and take what was adopted out of the scan report, so the panel stops
+	// counting work that is done. The automatic path is the common one, and
+	// it was leaving the report untouched.
+	adoptedPaths := make([]string, 0, len(res.Adopted))
+	for _, p := range res.Adopted {
+		adoptedPaths = append(adoptedPaths, p.Path)
+	}
+	s.dropFromOutstanding(ctx, adoptedPaths...)
 
 	if len(firstRoots) > 0 {
 		s.log.Info("adopt: first pass over new roots proposed for review",
@@ -456,40 +465,87 @@ func (s *Service) adoptedRoots(ctx context.Context) map[int64]bool {
 // steps and a lost place in the queue, to accept an answer the queue had
 // already worked out.
 //
-// The path must be one the review queue is actually offering. That is not
-// ceremony: the endpoint writes a library item pointed at a directory, and
-// accepting an arbitrary caller-supplied path would let anyone with a session
-// aim the library anywhere on the host.
+// The path is validated against the root folders and the disk, NOT against
+// the review queue. The security property wanted here is "this is a folder
+// inside a library root", and that is a fact about the filesystem. The queue
+// is a snapshot that a rescan or a previous adoption rewrites underneath an
+// open window, so checking membership in it rejected clicks on rows the user
+// could plainly see — reported as "not a folder awaiting review", which is
+// both wrong and impossible to act on. The queue is still consulted for the
+// parse it already did; it is just no longer the gatekeeper.
 func (s *Service) AdoptOne(ctx context.Context, path string, pick ports.SearchResult, force bool) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("adoption path must be absolute")
+	}
 	clean := filepath.Clean(path)
-	queue := s.loadReviewQueue(ctx)
-	var found *Proposal
-	for i := range queue {
-		if queue[i].Path == clean {
-			found = &queue[i]
+
+	root, err := s.rootFolderFor(ctx, clean)
+	if err != nil {
+		return err
+	}
+	info, statErr := os.Stat(clean)
+	if statErr != nil || !info.IsDir() {
+		return fmt.Errorf("%w: %s is not a directory on disk", ErrNotFound, clean)
+	}
+
+	// Use the queue entry when there is one — it carries the parsed title —
+	// and otherwise synthesise from the folder name.
+	p := Proposal{RootFolderID: root.ID, Path: clean, Name: filepath.Base(clean)}
+	for _, q := range s.loadReviewQueue(ctx) {
+		if q.Path == clean {
+			p = q
 			break
 		}
 	}
-	if found == nil {
-		return fmt.Errorf("%w: %s is not a folder awaiting review", ErrNotFound, clean)
+	p.RootFolderID = root.ID
+
+	if pick.Kind == "" {
+		pick.Kind = p.Kind
 	}
 	if pick.Kind == "" {
-		pick.Kind = found.Kind
+		// A mixed root resolves nothing, so the caller has to say which kind
+		// the chosen candidate is.
+		if k, typed := root.Kind.Media(); typed {
+			pick.Kind = k
+		}
 	}
 	if pick.Kind == "" {
 		return fmt.Errorf("a media kind is required to adopt %s", clean)
 	}
+	if !root.Kind.Accepts(pick.Kind) {
+		return fmt.Errorf("%w: %s holds %s", ErrRootKindMismatch, root.Path, root.Kind)
+	}
 
-	p := *found
 	p.Candidates = []ports.SearchResult{pick}
 	p.Force = force
 	if err := s.adoptOne(ctx, p); err != nil {
 		return err
 	}
-	s.dropFromReviewQueue(ctx, clean)
+	s.dropFromOutstanding(ctx, clean)
 	s.log.Info("adopt: folder adopted by hand",
 		"path", clean, "kind", pick.Kind, "title", pick.Title, "year", pick.Year)
 	return nil
+}
+
+// rootFolderFor returns the registered root that directly contains path.
+//
+// Requiring a *direct* child is deliberate and is the whole security check:
+// scan only ever offers depth-1 children of a root, so anything else is
+// either a mistake or someone probing. The library must not be aimable at
+// arbitrary places on the host by a caller who can post JSON.
+func (s *Service) rootFolderFor(ctx context.Context, path string) (domain.RootFolder, error) {
+	roots, err := s.db.ListRootFolders(ctx)
+	if err != nil {
+		return domain.RootFolder{}, err
+	}
+	parent := filepath.Dir(path)
+	for _, rf := range roots {
+		if filepath.Clean(rf.Path) == parent {
+			return rf, nil
+		}
+	}
+	return domain.RootFolder{}, fmt.Errorf(
+		"%w: %s is not inside a registered root folder", ErrNotFound, path)
 }
 
 // AdoptExact applies every proposal in the queue that clears the bar,
@@ -513,33 +569,65 @@ func (s *Service) AdoptExact(ctx context.Context) (AdoptResult, error) {
 	}
 	res := s.Adopt(ctx, exact, false)
 
-	adopted := map[string]bool{}
+	paths := make([]string, 0, len(res.Adopted))
 	for _, p := range res.Adopted {
-		adopted[p.Path] = true
+		paths = append(paths, p.Path)
 	}
-	kept := make([]Proposal, 0, len(queue))
-	for _, p := range queue {
-		if !adopted[p.Path] {
-			kept = append(kept, p)
-		}
-	}
-	s.saveReviewQueue(ctx, kept)
+	s.dropFromOutstanding(ctx, paths...)
 	s.log.Info("adopt: confident matches applied on request",
-		"adopted", len(res.Adopted), "remaining", len(kept))
+		"adopted", len(res.Adopted), "remaining", len(queue)-len(res.Adopted))
 	return res, nil
 }
 
-// dropFromReviewQueue removes one entry, so an adopted folder stops being
-// offered without waiting for the next scan.
-func (s *Service) dropFromReviewQueue(ctx context.Context, path string) {
+// dropFromOutstanding removes adopted folders from BOTH the review queue and
+// the last scan report's unmatched list.
+//
+// Pruning only the queue left the two disagreeing: the report still counted
+// the folder as unmatched, so the settings panel kept advertising work that
+// was done, and the queue's fallback — which derives from that report — could
+// resurrect an already-adopted folder. Two stores of the same fact have to be
+// updated together or one of them is a lie.
+func (s *Service) dropFromOutstanding(ctx context.Context, paths ...string) {
+	if len(paths) == 0 {
+		return
+	}
+	gone := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		gone[p] = true
+	}
+
 	queue := s.loadReviewQueue(ctx)
 	kept := make([]Proposal, 0, len(queue))
 	for _, p := range queue {
-		if p.Path != path {
+		if !gone[p.Path] {
 			kept = append(kept, p)
 		}
 	}
 	s.saveReviewQueue(ctx, kept)
+
+	report, ok, err := s.LastScanReport(ctx)
+	if err != nil || !ok {
+		return
+	}
+	keptDirs := make([]UnmatchedDir, 0, len(report.UnmatchedDirs))
+	for _, d := range report.UnmatchedDirs {
+		if !gone[d.Path] {
+			keptDirs = append(keptDirs, d)
+		}
+	}
+	if len(keptDirs) == len(report.UnmatchedDirs) {
+		return // nothing to rewrite
+	}
+	report.UnmatchedDirs = keptDirs
+	// Recompute rather than decrement: the report's list is the population
+	// this count describes, and arithmetic against a possibly-stale total is
+	// how counts drift out of step with the thing they count.
+	report.UnmatchedTotal = len(keptDirs)
+	if raw, err := json.Marshal(report); err == nil {
+		if err := s.db.SetMeta(ctx, scanReportKey, string(raw)); err != nil {
+			s.log.Warn("adopt: could not prune the scan report", "err", err)
+		}
+	}
 }
 
 // relinkExisting points an item that is already in the library at the folder

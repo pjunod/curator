@@ -150,6 +150,10 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 		}
 	}
 
+	// Set the true count at the source. It used to be filled in by the API
+	// handler when serving, which left the *stored* report saying zero — and
+	// anything that later adjusted the count had nothing to adjust.
+	report.UnmatchedTotal = len(report.UnmatchedDirs)
 	if raw, err := json.Marshal(report); err == nil {
 		if err := s.db.SetMeta(ctx, scanReportKey, string(raw)); err != nil {
 			s.log.Warn("scan: could not persist report", "err", err)

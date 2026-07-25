@@ -443,7 +443,11 @@ func (s *Server) GetScanReport(w http.ResponseWriter, r *http.Request, params ap
 	if limit > 200 {
 		limit = 200
 	}
-	report.UnmatchedTotal = len(report.UnmatchedDirs)
+	// The stored report already carries the true count; only fall back to
+	// the list length for reports written before it was persisted.
+	if report.UnmatchedTotal == 0 {
+		report.UnmatchedTotal = len(report.UnmatchedDirs)
+	}
 	if len(report.UnmatchedDirs) > limit {
 		report.UnmatchedDirs = report.UnmatchedDirs[:limit]
 	}

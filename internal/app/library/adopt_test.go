@@ -321,15 +321,15 @@ func TestAdoptOneAcceptsAChosenCandidate(t *testing.T) {
 	}
 }
 
-// The path has to be one the queue is offering: this endpoint writes a
+// A path outside every registered root is refused: this endpoint writes a
 // library item pointed at a directory, so an arbitrary path would let a
 // session aim the library anywhere on the host.
-func TestAdoptOneRefusesUnofferedPaths(t *testing.T) {
+func TestAdoptOneRefusesArbitrarySystemPaths(t *testing.T) {
 	svc, _, _ := newService(t)
 	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(1, "Anything", 2020)}}
 	err := svc.AdoptOne(context.Background(), "/etc", movie(1, "Anything", 2020), false)
 	if err == nil {
-		t.Fatal("want a refusal for a path that is not awaiting review")
+		t.Fatal("want a refusal for a path outside every root folder")
 	}
 }
 
@@ -495,5 +495,181 @@ func TestAdoptOneRefusesToStealAFolderThatExists(t *testing.T) {
 	// Still one item — forcing must not duplicate.
 	if items, _ := svc.List(ctx, domain.KindMovie); len(items) != 1 {
 		t.Errorf("want 1 item after a forced move, got %d", len(items))
+	}
+}
+
+// The reported failure: a click on a row the user can plainly see, rejected
+// as "not a folder awaiting review". The queue is a snapshot that a rescan or
+// an earlier adoption rewrites underneath an open window, so membership in it
+// was never the right gate.
+func TestAdoptOneWorksWhenTheQueueSnapshotIsStale(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{series: []ports.SearchResult{
+		series(10, "The Rehearsal", 2022), series(11, "The Rehearsal", 2020),
+	}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	folder := filepath.Join(root, "The Rehearsal")
+	if err := os.Mkdir(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindSeries)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunAdoption(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the window going stale: the persisted queue is emptied while
+	// the browser still shows the row.
+	svc.saveReviewQueue(ctx, nil)
+
+	if err := svc.AdoptOne(ctx, folder, series(10, "The Rehearsal", 2022), false); err != nil {
+		t.Fatalf("a stale window must not block a legitimate click: %v", err)
+	}
+	items, _ := svc.List(ctx, domain.KindSeries)
+	if len(items) != 1 || items[0].Path != folder {
+		t.Fatalf("want the folder adopted, got %+v", items)
+	}
+}
+
+// The security property has to survive that relaxation: only a direct child
+// of a registered root is adoptable, because that is all a scan ever offers.
+func TestAdoptOneRefusesPathsOutsideRoots(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(1, "Anything", 2020)}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	if _, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie)); err != nil {
+		t.Fatal(err)
+	}
+	// A real directory, outside every root.
+	outside := t.TempDir()
+	if err := svc.AdoptOne(ctx, outside, movie(1, "Anything", 2020), false); err == nil {
+		t.Error("a directory outside every root must be refused")
+	}
+	// Nested deeper than a scan would ever offer.
+	deep := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AdoptOne(ctx, deep, movie(1, "Anything", 2020), false); err == nil {
+		t.Error("a grandchild of a root must be refused — scan only offers direct children")
+	}
+	// A path that does not exist at all.
+	if err := svc.AdoptOne(ctx, filepath.Join(root, "ghost"), movie(1, "Anything", 2020), false); err == nil {
+		t.Error("a path that is not on disk must be refused")
+	}
+}
+
+// A typed root still refuses the wrong kind, even by hand.
+func TestAdoptOneRefusesWrongKindForTheRoot(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(1, "Thing", 2020)}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	folder := filepath.Join(root, "Thing (2020)")
+	if err := os.Mkdir(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindSeries)); err != nil {
+		t.Fatal(err)
+	}
+	err := svc.AdoptOne(ctx, folder, movie(1, "Thing", 2020), false)
+	if !errors.Is(err, ErrRootKindMismatch) {
+		t.Fatalf("want ErrRootKindMismatch putting a movie in a series root, got %v", err)
+	}
+}
+
+// Adopting must update both stores of "what is outstanding". Pruning only
+// the review queue left the scan report still advertising the folder, so the
+// settings panel counted work that was done — and the queue's fallback, which
+// derives from that report, could resurrect an adopted folder.
+func TestAdoptingPrunesBothTheQueueAndTheReport(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{
+		movie(550, "Fight Club", 1999), movie(1, "Arrival", 2016),
+	}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	for _, n := range []string{"Fight Club (1999)", "Arrival (2016)"} {
+		if err := os.Mkdir(filepath.Join(root, n), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunAdoption(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	before, _, _ := svc.LastScanReport(ctx)
+	if len(before.UnmatchedDirs) != 2 {
+		t.Fatalf("precondition: report should list 2 unmatched, got %d", len(before.UnmatchedDirs))
+	}
+
+	folder := filepath.Join(root, "Fight Club (1999)")
+	if err := svc.AdoptOne(ctx, folder, movie(550, "Fight Club", 1999), false); err != nil {
+		t.Fatal(err)
+	}
+
+	after, ok, err := svc.LastScanReport(ctx)
+	if err != nil || !ok {
+		t.Fatalf("report: ok=%v err=%v", ok, err)
+	}
+	for _, d := range after.UnmatchedDirs {
+		if d.Path == folder {
+			t.Error("an adopted folder must not still be listed as unmatched")
+		}
+	}
+	if after.UnmatchedTotal != 1 {
+		t.Errorf("unmatchedTotal = %d, want 1 — the panel's count comes from this", after.UnmatchedTotal)
+	}
+	if got := svc.ReviewQueue(ctx, "", "", 25, 0).Total; got != 1 {
+		t.Errorf("review queue total = %d, want 1", got)
+	}
+}
+
+// Accept-all prunes both stores for everything it took.
+func TestAcceptAllPrunesTheReport(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(550, "Fight Club", 1999)}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "Fight Club (1999)"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ConfirmRootAdopted(ctx, rf.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunAdoption(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AdoptExact(ctx); err != nil {
+		t.Fatal(err)
+	}
+	report, ok, _ := svc.LastScanReport(ctx)
+	if ok && len(report.UnmatchedDirs) != 0 {
+		t.Errorf("report still lists %d unmatched after accept-all: %+v",
+			len(report.UnmatchedDirs), report.UnmatchedDirs)
 	}
 }
