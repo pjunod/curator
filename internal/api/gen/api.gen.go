@@ -336,6 +336,8 @@ type AdoptResult struct {
 
 // AdoptionCandidate defines model for AdoptionCandidate.
 type AdoptionCandidate struct {
+	// AltTitles Other names this work is released under that the folder's name actually matches — usually absent. Present so a row can say why "Cunk on Life" is offered for a folder called "Cunk's Quest for Meaning": they are the same film.
+	AltTitles  *[]string `json:"altTitles,omitempty"`
 	Author     *string   `json:"author,omitempty"`
 	Kind       MediaKind `json:"kind"`
 	Olid       *string   `json:"olid,omitempty"`

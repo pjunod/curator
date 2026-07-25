@@ -118,25 +118,109 @@ func (s *Service) propose(ctx context.Context, d UnmatchedDir, rootKind domain.R
 	p.Kind = kind
 	results := dedupeResults(s.searchTop(ctx, kind, p.ParsedTitle))
 	p.Confidence = grade(kind, parsed, results)
-	if won := clearing(kind, parsed, results); len(won) == 1 {
+
+	switch won := clearing(kind, parsed, results); {
+	case len(won) == 1:
 		// Put the winner first so the caller never has to re-derive it, and
 		// so the UI's first chip is the one adoption would have picked.
 		results = append(won, filterOut(results, won[0])...)
+	case len(won) == 0:
+		// Nothing matched on its primary title. Ask the provider what else
+		// these titles are called and rank any that answer to the folder's
+		// name — a work released under two names is ordinary, and the
+		// candidate the user wants is often sitting at position nine of a
+		// list that gets trimmed to three.
+		results = s.withAltTitles(ctx, kind, results)
+		if alt := clearingAlt(kind, parsed, results); len(alt) > 0 {
+			results = append(alt, filterOutAll(results, alt)...)
+		}
 	}
+
 	p.Candidates = trim(results, maxProposalCandidates)
+	// Keep only the alternate names that are why a candidate is here, so a
+	// row can say *why* "Cunk on Life" is offered for a folder called
+	// something else, without shipping TMDB's forty regional retitles.
+	for i := range p.Candidates {
+		p.Candidates[i].AltTitles = matchingAlts(parsed, p.Candidates[i])
+	}
 	return p
+}
+
+// maxAltTitleLookups bounds the second pass. Adoption runs over hundreds of
+// folders and this costs one request per candidate, so it buys back the top
+// few results — where a retitled work realistically lands — and no more.
+const maxAltTitleLookups = 5
+
+// withAltTitles fills in AltTitles for the leading candidates.
+//
+// The provider capability is optional (ports.AltTitleProvider): without it,
+// or when a lookup fails, the candidates come back exactly as they went in
+// and the folder lands in review. That is the pre-existing behaviour, which
+// is the right thing for an enrichment step to degrade to.
+func (s *Service) withAltTitles(ctx context.Context, kind domain.MediaKind, in []ports.SearchResult) []ports.SearchResult {
+	prov, ok := s.meta.(ports.AltTitleProvider)
+	if !ok || len(in) == 0 {
+		return in
+	}
+	out := make([]ports.SearchResult, len(in))
+	copy(out, in)
+	for i := range out {
+		if i >= maxAltTitleLookups || ctx.Err() != nil {
+			break
+		}
+		if out[i].TMDBID == 0 {
+			continue
+		}
+		alts, err := prov.AlternativeTitles(ctx, kind, out[i].TMDBID)
+		if err != nil {
+			s.log.Debug("adopt: alternative titles unavailable",
+				"kind", kind, "tmdb", out[i].TMDBID, "err", err)
+			continue
+		}
+		out[i].AltTitles = append(append([]string{}, out[i].AltTitles...), alts...)
+	}
+	return out
+}
+
+// matchingAlts returns the alternate names of r that the folder was actually
+// named after.
+func matchingAlts(parsed parser.Parsed, r ports.SearchResult) []string {
+	want := matcher.NormalizeTitle(parsed.Title)
+	if want == "" {
+		return nil
+	}
+	var out []string
+	for _, alt := range r.AltTitles {
+		if matcher.NormalizeTitle(alt) == want {
+			out = append(out, alt)
+		}
+	}
+	return out
 }
 
 // filterOut returns everything except one specific result.
 func filterOut(in []ports.SearchResult, drop ports.SearchResult) []ports.SearchResult {
+	return filterOutAll(in, []ports.SearchResult{drop})
+}
+
+// filterOutAll returns everything not in drop.
+func filterOutAll(in, drop []ports.SearchResult) []ports.SearchResult {
+	gone := make(map[string]bool, len(drop))
+	for _, d := range drop {
+		gone[identity(d)] = true
+	}
 	out := make([]ports.SearchResult, 0, len(in))
 	for _, r := range in {
-		if r.Kind == drop.Kind && r.TMDBID == drop.TMDBID && r.OLID == drop.OLID {
+		if gone[identity(r)] {
 			continue
 		}
 		out = append(out, r)
 	}
 	return out
+}
+
+func identity(r ports.SearchResult) string {
+	return fmt.Sprintf("%s|%d|%s", r.Kind, r.TMDBID, r.OLID)
 }
 
 func (s *Service) searchTop(ctx context.Context, kind domain.MediaKind, query string) []ports.SearchResult {
@@ -205,9 +289,39 @@ func grade(kind domain.MediaKind, parsed parser.Parsed, results []ports.SearchRe
 // the year outright, only those candidates are eligible; the tolerance is a
 // fallback for when nothing matches exactly, not a widening of the target.
 func clearing(kind domain.MediaKind, parsed parser.Parsed, results []ports.SearchResult) []ports.SearchResult {
+	return clearingWith(kind, parsed, results, primaryTitle)
+}
+
+// clearingAlt returns candidates that clear every other part of the bar but
+// answer to the folder's name only through an *alternate* title.
+//
+// Deliberately not fed into grade: an alternate-title match is good enough to
+// offer as the first chip and not good enough to write without asking. TMDB's
+// alternate titles are crowd-maintained and include working titles, dubbed
+// retitles and outright noise, so a yearless series folder could clear on a
+// coincidence. Ranking it first turns a "no match —" row into one click; the
+// click is the part that stays (ADR 0010 §2).
+func clearingAlt(kind domain.MediaKind, parsed parser.Parsed, results []ports.SearchResult) []ports.SearchResult {
+	return clearingWith(kind, parsed, results, alternateTitle)
+}
+
+// titleRule says which of a candidate's names may answer to the folder.
+type titleRule func(parser.Parsed, ports.SearchResult) bool
+
+func primaryTitle(parsed parser.Parsed, r ports.SearchResult) bool {
+	return matcher.NormalizeTitle(parsed.Title) == matcher.NormalizeTitle(r.Title)
+}
+
+func alternateTitle(parsed parser.Parsed, r ports.SearchResult) bool {
+	return !primaryTitle(parsed, r) && len(matchingAlts(parsed, r)) > 0
+}
+
+func clearingWith(
+	kind domain.MediaKind, parsed parser.Parsed, results []ports.SearchResult, titleOK titleRule,
+) []ports.SearchResult {
 	var exactYear, tolerated []ports.SearchResult
 	for _, r := range results {
-		if !clears(kind, parsed, r) {
+		if !titleOK(parsed, r) || !clearsRest(kind, parsed, r) {
 			continue
 		}
 		if parsed.Year != 0 && r.Year == parsed.Year {
@@ -222,11 +336,9 @@ func clearing(kind domain.MediaKind, parsed parser.Parsed, results []ports.Searc
 	return tolerated
 }
 
-// clears reports whether one result meets the bar for its kind.
-func clears(kind domain.MediaKind, parsed parser.Parsed, r ports.SearchResult) bool {
-	if matcher.NormalizeTitle(parsed.Title) != matcher.NormalizeTitle(r.Title) {
-		return false
-	}
+// clearsRest reports whether one result meets everything the bar asks for
+// besides the title, which its caller has already decided.
+func clearsRest(kind domain.MediaKind, parsed parser.Parsed, r ports.SearchResult) bool {
 	switch kind {
 	case domain.KindMovie:
 		// Movies need a year on both sides. Movie folders almost always

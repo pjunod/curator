@@ -772,6 +772,10 @@ func proposalDTO(p library.Proposal) apigen.Proposal {
 		cand.PosterPath = optStr(c.PosterPath)
 		cand.Olid = optStr(c.OLID)
 		cand.Author = optStr(c.Author)
+		if len(c.AltTitles) > 0 {
+			alts := c.AltTitles
+			cand.AltTitles = &alts
+		}
 		out.Candidates = append(out.Candidates, cand)
 	}
 	return out

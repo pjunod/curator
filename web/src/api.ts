@@ -217,6 +217,12 @@ export interface AdoptionCandidate {
   olid?: string
   author?: string
   title: string
+  /**
+   * Other names this work is released under that the folder's name actually
+   * matches — usually absent. It is why "Cunk on Life" can be the answer for
+   * a folder called "Cunk's Quest for Meaning".
+   */
+  altTitles?: string[]
   year: number
   overview?: string
   posterPath?: string

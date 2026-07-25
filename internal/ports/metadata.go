@@ -19,14 +19,35 @@ var ErrProviderNotConfigured = errors.New("metadata provider not configured")
 // SearchResult is one candidate from a metadata search. TMDBID identifies
 // movies/series; OLID identifies books (ADR 0006).
 type SearchResult struct {
-	Kind       domain.MediaKind
-	TMDBID     int64
-	OLID       string
-	Author     string
-	Title      string
+	Kind   domain.MediaKind
+	TMDBID int64
+	OLID   string
+	Author string
+	Title  string
+	// AltTitles are other names the same work is released under: the
+	// original-language title, a regional retitle, a festival title. One
+	// work having several names is ordinary — "Cunk on Life" is released as
+	// "Cunk's Quest for Meaning" — and a library folder may well be named
+	// after any of them, so matching that compares only Title fails on
+	// perfectly correct data.
+	//
+	// Providers fill this in as far as it is free; AltTitleProvider fetches
+	// the rest on demand.
+	AltTitles  []string
 	Year       int
 	Overview   string
 	PosterPath string
+}
+
+// AltTitleProvider is an optional capability of a MetadataProvider: the
+// alternate names one work is released under, fetched for a single title.
+//
+// Separate from SearchResult because it costs a request per candidate.
+// Callers should ask only when a cheap match has already failed — the point
+// of the interface being optional is that adoption works without it, just
+// with a folder or two more in review.
+type AltTitleProvider interface {
+	AlternativeTitles(ctx context.Context, kind domain.MediaKind, tmdbID int64) ([]string, error)
 }
 
 // MetadataProvider hydrates library entries from an external source. The

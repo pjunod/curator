@@ -46,7 +46,10 @@ type cacheEntry struct {
 	expires time.Time
 }
 
-var _ ports.MetadataProvider = (*Client)(nil)
+var (
+	_ ports.MetadataProvider = (*Client)(nil)
+	_ ports.AltTitleProvider = (*Client)(nil)
+)
 
 // New returns a Client. baseURL "" means DefaultBaseURL.
 func New(baseURL string, keyFn KeyFunc) *Client {
@@ -136,11 +139,12 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 
 type searchMovieResp struct {
 	Results []struct {
-		ID          int64  `json:"id"`
-		Title       string `json:"title"`
-		ReleaseDate string `json:"release_date"`
-		Overview    string `json:"overview"`
-		PosterPath  string `json:"poster_path"`
+		ID            int64  `json:"id"`
+		Title         string `json:"title"`
+		OriginalTitle string `json:"original_title"`
+		ReleaseDate   string `json:"release_date"`
+		Overview      string `json:"overview"`
+		PosterPath    string `json:"poster_path"`
 	} `json:"results"`
 }
 
@@ -148,9 +152,21 @@ type searchTVResp struct {
 	Results []struct {
 		ID           int64  `json:"id"`
 		Name         string `json:"name"`
+		OriginalName string `json:"original_name"`
 		FirstAirDate string `json:"first_air_date"`
 		Overview     string `json:"overview"`
 		PosterPath   string `json:"poster_path"`
+	} `json:"results"`
+}
+
+// altTitlesResp covers both alternative-titles endpoints: movies return the
+// list under "titles", TV under "results", and nothing else differs.
+type altTitlesResp struct {
+	Titles []struct {
+		Title string `json:"title"`
+	} `json:"titles"`
+	Results []struct {
+		Title string `json:"title"`
 	} `json:"results"`
 }
 
@@ -223,10 +239,21 @@ func (c *Client) SearchMovies(ctx context.Context, query string) ([]ports.Search
 	for _, r := range resp.Results {
 		out = append(out, ports.SearchResult{
 			Kind: domain.KindMovie, TMDBID: r.ID, Title: r.Title,
-			Year: yearOf(r.ReleaseDate), Overview: r.Overview, PosterPath: r.PosterPath,
+			AltTitles: otherThan(r.Title, r.OriginalTitle),
+			Year:      yearOf(r.ReleaseDate), Overview: r.Overview, PosterPath: r.PosterPath,
 		})
 	}
 	return out, nil
+}
+
+// otherThan returns alt as a one-element slice when it says something the
+// primary title does not. The original-language title rides along in every
+// search response, so it is the one alternate name that costs nothing.
+func otherThan(primary, alt string) []string {
+	if alt == "" || alt == primary {
+		return nil
+	}
+	return []string{alt}
 }
 
 // SearchSeries implements ports.MetadataProvider.
@@ -239,8 +266,41 @@ func (c *Client) SearchSeries(ctx context.Context, query string) ([]ports.Search
 	for _, r := range resp.Results {
 		out = append(out, ports.SearchResult{
 			Kind: domain.KindSeries, TMDBID: r.ID, Title: r.Name,
-			Year: yearOf(r.FirstAirDate), Overview: r.Overview, PosterPath: r.PosterPath,
+			AltTitles: otherThan(r.Name, r.OriginalName),
+			Year:      yearOf(r.FirstAirDate), Overview: r.Overview, PosterPath: r.PosterPath,
 		})
+	}
+	return out, nil
+}
+
+// AlternativeTitles implements ports.AltTitleProvider.
+//
+// TMDB keeps these on a separate endpoint, one request per title, which is
+// why adoption asks for them only after a plain title comparison has already
+// failed.
+func (c *Client) AlternativeTitles(ctx context.Context, kind domain.MediaKind, tmdbID int64) ([]string, error) {
+	var path string
+	switch kind {
+	case domain.KindMovie:
+		path = fmt.Sprintf("/movie/%d/alternative_titles", tmdbID)
+	case domain.KindSeries:
+		path = fmt.Sprintf("/tv/%d/alternative_titles", tmdbID)
+	default:
+		return nil, fmt.Errorf("tmdb: no alternative titles for kind %q", kind)
+	}
+	var resp altTitlesResp
+	if err := c.get(ctx, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	rows := resp.Titles
+	if len(rows) == 0 {
+		rows = resp.Results
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.Title != "" {
+			out = append(out, r.Title)
+		}
 	}
 	return out, nil
 }

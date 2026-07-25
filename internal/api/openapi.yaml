@@ -2169,6 +2169,15 @@ components:
           type: string
         title:
           type: string
+        altTitles:
+          type: array
+          description: >
+            Other names this work is released under that the folder's name
+            actually matches — usually absent. Present so a row can say why
+            "Cunk on Life" is offered for a folder called "Cunk's Quest for
+            Meaning": they are the same film.
+          items:
+            type: string
         year:
           type: integer
         overview:

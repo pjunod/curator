@@ -293,11 +293,20 @@ function ReviewRow({
             key={`${c.kind}-${c.tmdbId}-${c.olid ?? ''}`}
             className={i === 0 && p.confidence === 'exact' ? 'candidate best' : 'candidate'}
             disabled={busy}
-            title={`Adopt this folder as ${c.title}${c.year ? ` (${c.year})` : ''}`}
+            title={
+              c.altTitles?.length
+                ? `${c.title}${c.year ? ` (${c.year})` : ''} is also released as ${c.altTitles.join(', ')}`
+                : `Adopt this folder as ${c.title}${c.year ? ` (${c.year})` : ''}`
+            }
             onClick={() => onAccept(c)}
           >
             {c.title}
             {c.year ? ` (${c.year})` : ''}
+            {/* A chip that names a different film than the folder does looks
+                like a bad suggestion until it says why it is here. */}
+            {c.altTitles?.length ? (
+              <span className="candidate-aka"> aka {c.altTitles[0]}</span>
+            ) : null}
           </button>
         ))}
         {/* Searching happens here rather than on the Add page. Sending the

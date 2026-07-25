@@ -1709,6 +1709,15 @@ a.pill-info:hover {
   cursor: default;
 }
 
+/* The alternate name a folder was actually named after. Quieter than the
+   title, because it answers "why is this chip here" rather than "what is
+   this" — but on the chip, because that is where the question gets asked. */
+.candidate-aka {
+  opacity: 0.7;
+  font-style: italic;
+  font-weight: 400;
+}
+
 /* ---- pagination controls (shared: library grid + review window) ---- */
 .page-size {
   display: inline-flex;
