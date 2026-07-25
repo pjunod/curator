@@ -176,7 +176,6 @@ func (s *Service) propose(ctx context.Context, d UnmatchedDir, rootKind domain.R
 
 	p.Kind = kind
 	results := dedupeResults(s.searchTop(ctx, kind, p.ParsedTitle))
-	p.Confidence = grade(kind, parsed, results)
 
 	switch won := clearing(kind, parsed, results); {
 	case len(won) == 1:
@@ -184,16 +183,44 @@ func (s *Service) propose(ctx context.Context, d UnmatchedDir, rootKind domain.R
 		// so the UI's first chip is the one adoption would have picked.
 		results = append(won, filterOut(results, won[0])...)
 	case len(won) == 0:
-		// Nothing matched on its primary title. Ask the provider what else
-		// these titles are called and rank any that answer to the folder's
-		// name — a work released under two names is ordinary, and the
-		// candidate the user wants is often sitting at position nine of a
-		// list that gets trimmed to three.
+		// Nothing matched on its primary title, so there are two fallbacks
+		// and the order between them is the whole point.
+		//
+		// The chain goes first (ADR 0011 §1). A standalone record from
+		// another provider beats an alternate name on the first provider's
+		// umbrella entry, and the umbrella case produces both: TMDB lists
+		// "Cunk on Earth" among the alternate titles of "Cunk on…", so
+		// trying alternates first settles for the entry that *cannot hold
+		// the folder* — and settles confidently enough to stop looking.
+		// It is also the cheaper probe: one search against one provider,
+		// versus one request per candidate for alternate titles.
+		//
+		// The trigger is "nothing clears", not "no results". TMDB answers
+		// these folders with something; a chain keyed on emptiness would
+		// never engage.
+		if kind == domain.KindSeries {
+			if chained := s.chainProposals(ctx, parsed, results); len(chained) > 0 {
+				results = chained
+				break
+			}
+		}
+		// No other provider has it either. Ask what else the first
+		// provider's candidates are called and rank any that answer to the
+		// folder's name — a work released under two names is ordinary, and
+		// the one the user wants is often at position nine of a list that
+		// gets trimmed to three.
 		results = s.withAltTitles(ctx, kind, results)
 		if alt := clearingAlt(kind, parsed, results); len(alt) > 0 {
 			results = append(alt, filterOutAll(results, alt)...)
 		}
 	}
+
+	// Graded on the final set, not the first one: a match found through the
+	// chain clears the same bar any other match does, and grading before the
+	// chain ran would file it as ambiguous for no reason. Alternate-title
+	// matches are unaffected — clearing() compares primary titles, so they
+	// stay ambiguous by construction (ADR 0010 §2).
+	p.Confidence = grade(kind, parsed, results)
 
 	p.Candidates = trim(results, maxProposalCandidates)
 	// Keep only the alternate names that are why a candidate is here, so a
@@ -224,6 +251,8 @@ func (s *Service) folderHolding(ctx context.Context, c ports.SearchResult, self 
 		id, err = s.db.GetMediaItemByKindOlid(ctx, c.Kind, c.OLID)
 	case c.TMDBID != 0:
 		id, err = s.db.GetMediaItemByKindTmdb(ctx, c.Kind, c.TMDBID)
+	case c.TVDBID != 0:
+		id, err = s.db.GetMediaItemByKindTvdb(ctx, c.Kind, c.TVDBID)
 	default:
 		return ""
 	}
@@ -238,6 +267,43 @@ func (s *Service) folderHolding(ctx context.Context, c ports.SearchResult, self 
 		return ""
 	}
 	return item.Path
+}
+
+// chainProposals asks the rest of the series chain about a folder the first
+// link could not place, and returns a result set with anything that clears
+// the bar ranked first.
+//
+// Returns nil when no link produces a clearing match, so the caller keeps
+// the original candidates: a provider that merely has *different* wrong
+// answers should not displace the ones already on screen.
+func (s *Service) chainProposals(
+	ctx context.Context, parsed parser.Parsed, existing []ports.SearchResult,
+) []ports.SearchResult {
+	for _, p := range s.series {
+		if ctx.Err() != nil {
+			return nil
+		}
+		res, err := p.SearchSeries(ctx, parsed.Title)
+		if err != nil {
+			s.log.Debug("adopt: series provider search failed",
+				"provider", p.Name(), "query", parsed.Title, "err", err)
+			continue
+		}
+		res = dedupeResults(res)
+		won := clearing(domain.KindSeries, parsed, res)
+		if len(won) == 0 {
+			continue
+		}
+		s.log.Info("adopt: matched through the series chain",
+			"provider", p.Name(), "folder", parsed.Title,
+			"title", won[0].Title, "tvdb", won[0].TVDBID)
+		// Winner first, then this provider's runners-up, then whatever the
+		// earlier link offered — which is still worth showing, because the
+		// user may know better than either.
+		rest := filterOutAll(res, won)
+		return append(append(won, rest...), existing...)
+	}
+	return nil
 }
 
 // maxAltTitleLookups bounds the second pass. Adoption runs over hundreds of
@@ -314,14 +380,19 @@ func filterOutAll(in, drop []ports.SearchResult) []ports.SearchResult {
 }
 
 func identity(r ports.SearchResult) string {
-	return fmt.Sprintf("%s|%d|%s", r.Kind, r.TMDBID, r.OLID)
+	// Every id space, not just TMDB's: a chain result carries a TVDB id and
+	// zeros elsewhere, so a key without it collapses every one of them onto
+	// each other (which reads as "the provider returned one result").
+	return fmt.Sprintf("%s|%d|%d|%s", r.Kind, r.TMDBID, r.TVDBID, r.OLID)
 }
 
 func (s *Service) searchTop(ctx context.Context, kind domain.MediaKind, query string) []ports.SearchResult {
 	if strings.TrimSpace(query) == "" {
 		return nil
 	}
-	res, err := s.Search(ctx, kind, query)
+	// The first link only. The rest of the chain is reached from propose,
+	// and only for a folder nothing here could place — see chainProposals.
+	res, err := s.searchPrimary(ctx, kind, query)
 	if err != nil {
 		s.log.Debug("adopt: provider search failed", "kind", kind, "query", query, "err", err)
 		return nil
@@ -344,8 +415,8 @@ func dedupeResults(in []ports.SearchResult) []ports.SearchResult {
 	seen := map[string]bool{}
 	out := make([]ports.SearchResult, 0, len(in))
 	for _, r := range in {
-		key := fmt.Sprintf("%s|%d|%s", r.Kind, r.TMDBID, r.OLID)
-		if r.TMDBID == 0 && r.OLID == "" {
+		key := identity(r)
+		if r.TMDBID == 0 && r.TVDBID == 0 && r.OLID == "" {
 			key = fmt.Sprintf("%s|%s|%d", r.Kind, matcher.NormalizeTitle(r.Title), r.Year)
 		}
 		if seen[key] {
@@ -524,6 +595,7 @@ func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 	req := AddRequest{
 		Kind:         win.Kind,
 		TMDBID:       win.TMDBID,
+		TVDBID:       win.TVDBID,
 		OLID:         win.OLID,
 		RootFolderID: p.RootFolderID,
 		Monitored:    true,
@@ -850,8 +922,10 @@ func (s *Service) relinkExisting(ctx context.Context, p Proposal, win ports.Sear
 	switch {
 	case win.OLID != "":
 		id, err = s.db.GetMediaItemByKindOlid(ctx, win.Kind, win.OLID)
-	default:
+	case win.TMDBID != 0:
 		id, err = s.db.GetMediaItemByKindTmdb(ctx, win.Kind, win.TMDBID)
+	default:
+		id, err = s.db.GetMediaItemByKindTvdb(ctx, win.Kind, win.TVDBID)
 	}
 	if err != nil {
 		// Already-exists was reported but the row cannot be found: report the

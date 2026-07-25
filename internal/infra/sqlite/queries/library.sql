@@ -25,6 +25,14 @@ SELECT * FROM media_items WHERE id = ?;
 -- name: GetMediaItemByKindTmdb :one
 SELECT * FROM media_items WHERE kind = ? AND tmdb_id = ?;
 
+-- name: GetMediaItemByKindTvdb :one
+-- Series reached through the provider chain (ADR 0011) are keyed on their
+-- TheTVDB id, whichever provider supplied it: TVmaze publishes the same ids
+-- TheTVDB does, so a library built without a TVDB key is still keyed for one.
+-- (Keep these comments ASCII. sqlc edits queries by byte offset, so one
+-- multi-byte character here corrupts every query after it in the file.)
+SELECT * FROM media_items WHERE kind = ? AND tvdb_id = ? AND tvdb_id != 0;
+
 -- name: GetMediaItemByKindOlid :one
 SELECT * FROM media_items WHERE kind = ? AND olid = ?;
 

@@ -76,6 +76,7 @@ export interface Rating {
 
 export const RATING_SOURCE_LABELS: Record<string, string> = {
   tmdb: 'TMDB',
+  tvmaze: 'TVmaze',
   openlibrary: 'Open Library',
   imdb: 'IMDb',
   rt: 'Rotten Tomatoes',
@@ -166,6 +167,9 @@ export interface UpdateMediaItemRequest {
 export interface SearchResult {
   kind: MediaKind
   tmdbId: number
+  /** Set when the series came from the provider chain rather than TMDB. */
+  tvdbId?: number
+  source?: string
   olid?: string
   author?: string
   title: string
@@ -178,6 +182,7 @@ export interface SearchResult {
 export interface AddMediaRequest {
   kind: MediaKind
   tmdbId?: number
+  tvdbId?: number
   olid?: string
   rootFolderId?: number
   qualityProfileId?: number
@@ -214,6 +219,10 @@ export interface BrowseResult {
 export interface AdoptionCandidate {
   kind: MediaKind
   tmdbId: number
+  /** Set when the series came from the provider chain rather than TMDB (ADR 0011). */
+  tvdbId?: number
+  /** Which provider produced it ("tmdb", "tvmaze") — display only. */
+  source?: string
   olid?: string
   author?: string
   title: string
@@ -382,6 +391,7 @@ export const adoptOne = (path: string, pick: AdoptionCandidate, force = false) =
     path,
     kind: pick.kind,
     tmdbId: pick.tmdbId || undefined,
+    tvdbId: pick.tvdbId || undefined,
     olid: pick.olid || undefined,
     title: pick.title,
     year: pick.year,

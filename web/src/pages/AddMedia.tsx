@@ -72,7 +72,10 @@ export function AddMediaPage() {
       return addLibraryItem(
         r.kind === 'book'
           ? { kind: r.kind, olid: r.olid, ...common }
-          : { kind: r.kind, tmdbId: r.tmdbId, ...common },
+          // A series from the provider chain is identified by its TVDB id and
+          // has no TMDB one (ADR 0011); sending tmdbId: 0 would ask TMDB for
+          // series zero.
+          : { kind: r.kind, tmdbId: r.tmdbId || undefined, tvdbId: r.tvdbId, ...common },
       )
     },
     onSuccess: (item) => navigate({ to: '/library/$id', params: { id: String(item.id) } }),
@@ -179,7 +182,7 @@ export function AddMediaPage() {
 
       <ul className="result-list">
         {results.data?.map((r) => (
-          <li key={`${r.kind}-${r.olid ?? r.tmdbId}`} className="result">
+          <li key={`${r.kind}-${r.olid ?? ''}-${r.tmdbId}-${r.tvdbId ?? 0}`} className="result">
             {r.posterPath ? (
               <img src={posterUrl(r.posterPath, 'w185')} alt="" loading="lazy" />
             ) : (

@@ -108,8 +108,71 @@ const routes = {
   },
 }
 
+// ---- TVmaze (the series chain, ADR 0011) — same fake, distinct paths ----
+//
+// The chain is only consulted for a folder the first provider could not
+// place, so for most of this suite the right answer is "nothing here". One
+// show exists, to prove a chain match reaches the library.
+const tvmazeShows = [
+  {
+    id: 5100,
+    name: 'The Chain Only Show',
+    premiered: '2021-06-01',
+    status: 'Ended',
+    genres: ['Drama'],
+    averageRuntime: 42,
+    summary: '<p>A series only the second link of the chain knows about.</p>',
+    image: { medium: '', original: '' },
+    rating: { average: 8.1 },
+    externals: { tvrage: null, thetvdb: 510000, imdb: 'tt5100001' },
+  },
+]
+
+const tvmazeEpisodes = {
+  5100: [
+    { name: 'Link One', season: 1, number: 1, type: 'regular', airdate: '2021-06-01' },
+    { name: 'Link Two', season: 1, number: 2, type: 'regular', airdate: '2021-06-08' },
+  ],
+}
+
 createServer((req, res) => {
   const { pathname, searchParams } = new URL(req.url, 'http://x')
+
+  // TVmaze: /search/shows, /lookup/shows?thetvdb= (301), /shows/{id}/episodes
+  if (pathname === '/search/shows') {
+    const q = (searchParams.get('q') ?? '').toLowerCase()
+    const hits = tvmazeShows
+      .filter((s) => s.name.toLowerCase().includes(q) && q.length > 2)
+      .map((show) => ({ score: 1, show }))
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(hits))
+    return
+  }
+  if (pathname === '/lookup/shows') {
+    const show = tvmazeShows.find((s) => String(s.externals.thetvdb) === searchParams.get('thetvdb'))
+    if (!show) {
+      res.writeHead(404, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ status: 404 }))
+      return
+    }
+    // The real API answers 301 here rather than returning the show inline.
+    res.writeHead(301, { location: `/shows/${show.id}` })
+    res.end()
+    return
+  }
+  const tvmazeShow = /^\/shows\/(\d+)$/.exec(pathname)
+  if (tvmazeShow) {
+    const show = tvmazeShows.find((s) => String(s.id) === tvmazeShow[1])
+    res.writeHead(show ? 200 : 404, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(show ?? { status: 404 }))
+    return
+  }
+  const tvmazeEps = /^\/shows\/(\d+)\/episodes$/.exec(pathname)
+  if (tvmazeEps) {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(tvmazeEpisodes[tvmazeEps[1]] ?? []))
+    return
+  }
   // /search/tv is the one route that has to read the query: the umbrella
   // series must be findable without turning up beside The Test Show in the
   // add-media flow, where a second result would make "Add" ambiguous.

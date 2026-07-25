@@ -323,7 +323,7 @@ function ReviewRow({
               ) : null}
             </>
           )
-          const key = `${c.kind}-${c.tmdbId}-${c.olid ?? ''}`
+          const key = `${c.kind}-${c.tmdbId}-${c.tvdbId ?? 0}-${c.olid ?? ''}`
 
           // heldBy is set only for a leading candidate another folder already
           // holds, and adopting it cannot succeed — the server refuses, and
@@ -405,7 +405,7 @@ function ReviewRow({
           {results.data?.length === 0 && <span className="muted">nothing found</span>}
           {results.data?.slice(0, 8).map((r) => (
             <button
-              key={`${r.kind}-${r.tmdbId}-${r.olid ?? ''}`}
+              key={`${r.kind}-${r.tmdbId}-${r.tvdbId ?? 0}-${r.olid ?? ''}`}
               className="candidate"
               disabled={busy}
               title={`Adopt this folder as ${r.title}${r.year ? ` (${r.year})` : ''}`}
@@ -413,6 +413,7 @@ function ReviewRow({
                 onAccept({
                   kind: r.kind,
                   tmdbId: r.tmdbId,
+                  tvdbId: r.tvdbId,
                   olid: r.olid,
                   author: r.author,
                   title: r.title,

@@ -337,6 +337,24 @@ func (d *DB) GetMediaItemByKindTmdb(ctx context.Context, kind domain.MediaKind, 
 	return row.ID, nil
 }
 
+// GetMediaItemByKindTvdb returns the item id for (kind, tvdb) or ErrNotFound.
+//
+// A zero tvdb_id means "not known", not a real id, so it never matches —
+// without that guard every series TMDB has no TVDB id for would collapse
+// onto whichever one was added first (ADR 0011 §4).
+func (d *DB) GetMediaItemByKindTvdb(ctx context.Context, kind domain.MediaKind, tvdbID int64) (int64, error) {
+	if tvdbID == 0 {
+		return 0, ErrNotFound
+	}
+	row, err := d.Read.GetMediaItemByKindTvdb(ctx, sqlitegen.GetMediaItemByKindTvdbParams{
+		Kind: string(kind), TvdbID: tvdbID,
+	})
+	if err != nil {
+		return 0, wrapNotFound(err)
+	}
+	return row.ID, nil
+}
+
 // GetMediaItemByKindOlid returns the item id for (kind, olid) or ErrNotFound.
 func (d *DB) GetMediaItemByKindOlid(ctx context.Context, kind domain.MediaKind, olid string) (int64, error) {
 	row, err := d.Read.GetMediaItemByKindOlid(ctx, sqlitegen.GetMediaItemByKindOlidParams{

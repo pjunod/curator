@@ -322,6 +322,9 @@ type AddMediaRequest struct {
 
 	// TmdbId Identifies movies/series.
 	TmdbId *int64 `json:"tmdbId,omitempty"`
+
+	// TvdbId Identifies a series that came from the provider chain rather than TMDB (ADR 0011). Exactly one of tmdbId / tvdbId / olid identifies the item.
+	TvdbId *int64 `json:"tvdbId,omitempty"`
 }
 
 // AddMediaRequestMonitor Series only — which seasons start monitored: every season, only the latest, or none (add a 20-season show and hunt just the newest). Specials always start unmonitored.
@@ -343,9 +346,15 @@ type AdoptionCandidate struct {
 	Olid       *string   `json:"olid,omitempty"`
 	Overview   *string   `json:"overview,omitempty"`
 	PosterPath *string   `json:"posterPath,omitempty"`
-	Title      string    `json:"title"`
-	TmdbId     int64     `json:"tmdbId"`
-	Year       int       `json:"year"`
+
+	// Source Which provider produced this candidate ("tmdb", "tvmaze"). For display only — identity is the ids.
+	Source *string `json:"source,omitempty"`
+	Title  string  `json:"title"`
+	TmdbId int64   `json:"tmdbId"`
+
+	// TvdbId Set for a series identified through the provider chain (ADR 0011) rather than by TMDB. Exactly one of tmdbId / tvdbId / olid identifies a candidate.
+	TvdbId *int64 `json:"tvdbId,omitempty"`
+	Year   int    `json:"year"`
 }
 
 // BackupInfo defines model for BackupInfo.
@@ -964,9 +973,15 @@ type SearchResult struct {
 	Olid       *string `json:"olid,omitempty"`
 	Overview   string  `json:"overview"`
 	PosterPath string  `json:"posterPath"`
-	Title      string  `json:"title"`
-	TmdbId     int64   `json:"tmdbId"`
-	Year       int     `json:"year"`
+
+	// Source Which provider produced it ("tmdb", "tvmaze").
+	Source *string `json:"source,omitempty"`
+	Title  string  `json:"title"`
+	TmdbId int64   `json:"tmdbId"`
+
+	// TvdbId Set for a series the provider chain supplied (ADR 0011); such a result has no tmdbId.
+	TvdbId *int64 `json:"tvdbId,omitempty"`
+	Year   int    `json:"year"`
 }
 
 // SeasonInfo defines model for SeasonInfo.
@@ -1116,6 +1131,7 @@ type AdoptOneJSONBody struct {
 	Path   string     `json:"path"`
 	Title  *string    `json:"title,omitempty"`
 	TmdbId *int64     `json:"tmdbId,omitempty"`
+	TvdbId *int64     `json:"tvdbId,omitempty"`
 	Year   *int       `json:"year,omitempty"`
 }
 

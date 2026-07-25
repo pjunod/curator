@@ -28,6 +28,7 @@ import (
 	"github.com/monarr-media/monarr/internal/adapters/torznab"
 	"github.com/monarr-media/monarr/internal/adapters/trakt"
 	"github.com/monarr-media/monarr/internal/adapters/transmission"
+	"github.com/monarr-media/monarr/internal/adapters/tvmaze"
 	"github.com/monarr-media/monarr/internal/api"
 	"github.com/monarr-media/monarr/internal/app/acquisition"
 	"github.com/monarr-media/monarr/internal/app/health"
@@ -126,9 +127,17 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		return v, err
 	}
 	extraRatings := omdb.New(os.Getenv("MONARR_OMDB_BASE_URL"), omdbKey)
+	// The series chain (ADR 0011). TVmaze needs no key and no account, so it
+	// is always on; it is consulted only for series TMDB cannot place, and
+	// it supplies TheTVDB ids, which is what keys them for a TVDB adapter
+	// later.
+	seriesChain := tvmaze.New(os.Getenv("MONARR_TVMAZE_BASE_URL"))
 
 	// Library service.
-	lib := library.New(db, meta, b, log).WithBooks(books).WithRatings(extraRatings)
+	lib := library.New(db, meta, b, log).
+		WithBooks(books).
+		WithRatings(extraRatings).
+		WithSeriesProviders(seriesChain)
 
 	// Acquisition: real adapters injected as factories.
 	indexerFactory := func(cfg ports.IndexerConfig) ports.Indexer { return torznab.New(cfg) }

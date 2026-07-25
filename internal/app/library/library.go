@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/monarr-media/monarr/internal/domain/matcher"
 	"github.com/monarr-media/monarr/internal/domain/naming"
 	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/infra/bus"
@@ -52,8 +53,12 @@ func (MediaAdded) EventType() string { return "media.added" }
 
 // Service wires storage, the metadata providers, and the bus.
 type Service struct {
-	db      *sqlite.DB
-	meta    ports.MetadataProvider
+	db   *sqlite.DB
+	meta ports.MetadataProvider
+	// series is the rest of the chain from ADR 0011, in order, consulted
+	// only when the link before it has nothing usable. TMDB (meta) is the
+	// always-present last link and is not in here.
+	series  []ports.SeriesProvider
 	books   ports.BookProvider
 	ratings ports.RatingsProvider // optional (OMDb): RT/IMDb/Metacritic
 	bus     *bus.Bus
@@ -74,6 +79,14 @@ func New(db *sqlite.DB, meta ports.MetadataProvider, b *bus.Bus, log *slog.Logge
 // WithBooks attaches the book metadata provider (ADR 0006) and returns s.
 func (s *Service) WithBooks(books ports.BookProvider) *Service {
 	s.books = books
+	return s
+}
+
+// WithSeriesProviders attaches the extra links of the series chain in
+// priority order (ADR 0011) and returns s. Omitting them leaves behaviour
+// exactly as it was: TMDB alone.
+func (s *Service) WithSeriesProviders(p ...ports.SeriesProvider) *Service {
+	s.series = append(s.series, p...)
 	return s
 }
 
@@ -116,8 +129,36 @@ func (s *Service) publish(e bus.Event) {
 
 // ---- metadata search ----
 
-// Search proxies the metadata provider for the given kind.
+// Search is the interactive lookup behind the Add page and the review row's
+// search box. For series it returns the union of the chain (ADR 0011),
+// nearest link first.
+//
+// Adoption does NOT come through here — it uses searchPrimary and reaches
+// the rest of the chain only when nothing clears the bar. The difference is
+// deliberate: a person typing a query wants everything anyone has, while a
+// scan over six hundred folders should not spend a request per folder on
+// providers the first one already answered for.
 func (s *Service) Search(ctx context.Context, kind domain.MediaKind, query string) ([]ports.SearchResult, error) {
+	if kind != domain.KindSeries {
+		return s.searchPrimary(ctx, kind, query)
+	}
+	res, err := s.searchPrimary(ctx, kind, query)
+	if err != nil {
+		// TMDB being unreachable or unconfigured is not a reason to withhold
+		// results a keyless provider can still supply.
+		s.log.Debug("library: primary series search failed, trying the chain", "err", err)
+		res = nil
+	}
+	merged := s.appendSeriesChain(ctx, query, res)
+	if len(merged) == 0 && err != nil {
+		return nil, err
+	}
+	return merged, nil
+}
+
+// searchPrimary asks only the first link: TMDB for video, Open Library for
+// books.
+func (s *Service) searchPrimary(ctx context.Context, kind domain.MediaKind, query string) ([]ports.SearchResult, error) {
 	switch kind {
 	case domain.KindMovie:
 		return s.meta.SearchMovies(ctx, query)
@@ -133,13 +174,79 @@ func (s *Service) Search(ctx context.Context, kind domain.MediaKind, query strin
 	}
 }
 
+// appendSeriesChain adds results from the later links that the earlier ones
+// did not already produce.
+//
+// Interactive search merges rather than falling back, because the user is
+// looking for something and a provider that has it should not be silent
+// merely because an earlier one returned *a* result. (Adoption uses a
+// stricter rule — see propose: there, "usable" means "clears the bar", so
+// the chain engages exactly where matching fails.)
+//
+// Duplicates are collapsed on normalized title plus year, since a TMDB
+// search result carries no TVDB id to compare against. Two records that
+// agree on both are the same show often enough, and the cost of being wrong
+// is one missing row in a list the user is reading anyway.
+func (s *Service) appendSeriesChain(
+	ctx context.Context, query string, have []ports.SearchResult,
+) []ports.SearchResult {
+	if len(s.series) == 0 {
+		return have
+	}
+	seen := make(map[string]bool, len(have))
+	for _, r := range have {
+		seen[titleYearKey(r)] = true
+	}
+	out := have
+	for _, p := range s.series {
+		if ctx.Err() != nil {
+			return out
+		}
+		res, err := p.SearchSeries(ctx, query)
+		if err != nil {
+			s.log.Debug("library: series provider search failed",
+				"provider", p.Name(), "query", query, "err", err)
+			continue
+		}
+		for _, r := range res {
+			if seen[titleYearKey(r)] {
+				continue
+			}
+			seen[titleYearKey(r)] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func titleYearKey(r ports.SearchResult) string {
+	return fmt.Sprintf("%s|%d", matcher.NormalizeTitle(r.Title), r.Year)
+}
+
+// seriesByTVDB hydrates a series from whichever link of the chain knows the
+// id. Used by Add for anything the chain — rather than TMDB — identified.
+func (s *Service) seriesByTVDB(ctx context.Context, tvdbID int64) (domain.MediaItem, error) {
+	for _, p := range s.series {
+		item, err := p.GetSeriesByTVDB(ctx, tvdbID)
+		if err == nil {
+			return item, nil
+		}
+		s.log.Debug("library: series provider could not hydrate",
+			"provider", p.Name(), "tvdb", tvdbID, "err", err)
+	}
+	return domain.MediaItem{}, fmt.Errorf("%w: no provider has tvdb series %d", ErrNotFound, tvdbID)
+}
+
 // ---- add / browse ----
 
 // AddRequest is what the API sends to put something in the library.
 // TMDBID identifies movies/series; OLID identifies books (ADR 0006).
 type AddRequest struct {
-	Kind             domain.MediaKind
-	TMDBID           int64
+	Kind   domain.MediaKind
+	TMDBID int64
+	// TVDBID identifies a series that came from the chain rather than from
+	// TMDB (ADR 0011). Exactly one of TMDBID/TVDBID/OLID identifies the item.
+	TVDBID           int64
 	OLID             string
 	RootFolderID     int64 // optional; 0 = no folder assigned yet
 	QualityProfileID int64 // optional; 0 = kind default (1, or Ebook for books)
@@ -147,6 +254,34 @@ type AddRequest struct {
 	// Monitor picks which seasons start monitored (series only):
 	// "all" (default), "latest" (newest season only), or "none".
 	Monitor string
+}
+
+// existingByAnyID returns ErrAlreadyExists when the library already holds
+// this title under any id the request carries.
+func (s *Service) existingByAnyID(ctx context.Context, req AddRequest) error {
+	lookups := []func() (int64, error){}
+	if req.TMDBID != 0 {
+		lookups = append(lookups, func() (int64, error) {
+			return s.db.GetMediaItemByKindTmdb(ctx, req.Kind, req.TMDBID)
+		})
+	}
+	if req.TVDBID != 0 {
+		lookups = append(lookups, func() (int64, error) {
+			return s.db.GetMediaItemByKindTvdb(ctx, req.Kind, req.TVDBID)
+		})
+	}
+	if len(lookups) == 0 {
+		return fmt.Errorf("%w: an id is required to add a %s", ErrNotFound, req.Kind)
+	}
+	for _, look := range lookups {
+		switch _, err := look(); {
+		case err == nil:
+			return ErrAlreadyExists
+		case !errors.Is(err, sqlite.ErrNotFound):
+			return err
+		}
+	}
+	return nil
 }
 
 // applyMonitorPreset flips season/episode flags per the add-time choice.
@@ -178,15 +313,19 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	var err error
 	switch req.Kind {
 	case domain.KindMovie, domain.KindSeries:
-		if _, err := s.db.GetMediaItemByKindTmdb(ctx, req.Kind, req.TMDBID); err == nil {
-			return domain.MediaItem{}, ErrAlreadyExists
-		} else if !errors.Is(err, sqlite.ErrNotFound) {
+		// Look for an existing row under *every* id the request carries, not
+		// just TMDB's: a series added through the chain is keyed on TVDB, and
+		// checking one id space would add it a second time (ADR 0011 §4).
+		if err := s.existingByAnyID(ctx, req); err != nil {
 			return domain.MediaItem{}, err
 		}
-		if req.Kind == domain.KindMovie {
+		switch {
+		case req.Kind == domain.KindMovie:
 			item, err = s.meta.GetMovie(ctx, req.TMDBID)
-		} else {
+		case req.TMDBID != 0:
 			item, err = s.meta.GetSeries(ctx, req.TMDBID)
+		default:
+			item, err = s.seriesByTVDB(ctx, req.TVDBID)
 		}
 	case domain.KindBook:
 		if s.books == nil {

@@ -21,6 +21,14 @@ var ErrProviderNotConfigured = errors.New("metadata provider not configured")
 type SearchResult struct {
 	Kind   domain.MediaKind
 	TMDBID int64
+	// TVDBID identifies a series reached through the provider chain (ADR
+	// 0011). It is the key for anything TMDB did not supply, because it is
+	// the one id every series source agrees on — TVmaze publishes TheTVDB's
+	// ids, so a library built with no TVDB key is still keyed for one.
+	TVDBID int64
+	// Source names the provider that produced this result ("tmdb", "tvmaze",
+	// …), for display and for logs. Identity is the ids, never this.
+	Source string
 	OLID   string
 	Author string
 	Title  string
@@ -37,6 +45,27 @@ type SearchResult struct {
 	Year       int
 	Overview   string
 	PosterPath string
+}
+
+// SeriesProvider is an additional source of series identity and episodes,
+// consulted when the one before it in the chain has nothing usable (ADR
+// 0011). TMDB is not one of these — it is the always-present last link,
+// reached through MetadataProvider.
+//
+// Everything here is keyed on TheTVDB's series id rather than the provider's
+// own. That is the point of the interface: release names carry TVDB episode
+// numbering, monarr's schema already has a tvdb_id column, and a provider
+// that cannot say which TVDB series it is describing cannot be checked
+// against another one. A provider with no TVDB id for a show returns nothing
+// for it and the chain moves on.
+type SeriesProvider interface {
+	// Name identifies the provider in logs and in the UI ("tvmaze").
+	Name() string
+	// SearchSeries returns candidates, each carrying a non-zero TVDBID.
+	SearchSeries(ctx context.Context, query string) ([]SearchResult, error)
+	// GetSeriesByTVDB hydrates one series — seasons and episodes populated,
+	// library-placement fields left zero, exactly as MetadataProvider does.
+	GetSeriesByTVDB(ctx context.Context, tvdbID int64) (domain.MediaItem, error)
 }
 
 // AltTitleProvider is an optional capability of a MetadataProvider: the

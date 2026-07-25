@@ -113,3 +113,50 @@ test('once one holds the title the other stops offering it as a match', async ({
   await expect(row.getByRole('button', { name: 'search…' })).toBeVisible()
   await expect(row.getByRole('button', { name: 'stop offering' })).toBeVisible()
 })
+
+// The series chain (ADR 0011). The fake provider holds one show the fake
+// TMDB has never heard of, so a folder named after it can only be placed by
+// the second link — and the item that lands must be keyed on its TVDB id,
+// which is what lets a TheTVDB adapter take over later without re-matching.
+test('a folder only the chain can place is adopted and keyed on its TVDB id', async ({
+  request,
+}) => {
+  const dir = join(umbrellaRoot, 'The Chain Only Show')
+  mkdirSync(dir, { recursive: true })
+
+  expect((await request.post('/api/v1/library/scan')).status()).toBe(202)
+  await expect
+    .poll(
+      async () => {
+        const res = await request.get('/api/v1/library/scan/report?limit=200')
+        if (!res.ok()) return -1
+        const report = await res.json()
+        return (report?.unmatchedDirs ?? []).filter((d: { name: string }) =>
+          d.name.startsWith('The Chain Only'),
+        ).length
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(1)
+  expect((await request.post('/api/v1/library/adopt')).status()).toBe(200)
+
+  // Proposed as a confident match, carrying the chain's id and its name.
+  const page = await (await request.get('/api/v1/library/review?limit=200')).json()
+  const row = page.items.find((p: { name: string }) => p.name === 'The Chain Only Show')
+  expect(row.confidence).toBe('exact')
+  expect(row.candidates[0].tvdbId).toBe(510000)
+  expect(row.candidates[0].source).toBe('tvmaze')
+  expect(row.candidates[0].tmdbId).toBe(0)
+
+  expect((await request.post('/api/v1/library/adopt/exact')).status()).toBe(200)
+
+  const list = await (await request.get('/api/v1/library?kind=series')).json()
+  const added = list.find((m: { title: string }) => m.title === 'The Chain Only Show')
+  expect(added).toBeTruthy()
+  expect(added.path).toBe(dir)
+
+  const detail = await (await request.get(`/api/v1/library/${added.id}`)).json()
+  expect(detail.ids.tvdb).toBe(510000)
+  expect(detail.ids.tmdb).toBe(0) // nothing invented a TMDB id for it
+  expect(detail.seasons[0].episodes).toHaveLength(2)
+})

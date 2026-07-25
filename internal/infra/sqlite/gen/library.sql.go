@@ -266,6 +266,57 @@ func (q *Queries) GetMediaItemByKindTmdb(ctx context.Context, arg GetMediaItemBy
 	return i, err
 }
 
+const getMediaItemByKindTvdb = `-- name: GetMediaItemByKindTvdb :one
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes, ratings FROM media_items WHERE kind = ? AND tvdb_id = ? AND tvdb_id != 0
+`
+
+type GetMediaItemByKindTvdbParams struct {
+	Kind   string
+	TvdbID int64
+}
+
+// Series reached through the provider chain (ADR 0011) are keyed on their
+// TheTVDB id, whichever provider supplied it: TVmaze publishes the same ids
+// TheTVDB does, so a library built without a TVDB key is still keyed for one.
+// (Keep these comments ASCII. sqlc edits queries by byte offset, so one
+// multi-byte character here corrupts every query after it in the file.)
+func (q *Queries) GetMediaItemByKindTvdb(ctx context.Context, arg GetMediaItemByKindTvdbParams) (MediaItem, error) {
+	row := q.db.QueryRowContext(ctx, getMediaItemByKindTvdb, arg.Kind, arg.TvdbID)
+	var i MediaItem
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Title,
+		&i.SortTitle,
+		&i.Year,
+		&i.TmdbID,
+		&i.ImdbID,
+		&i.TvdbID,
+		&i.Isbn13,
+		&i.Olid,
+		&i.Asin,
+		&i.Overview,
+		&i.PosterPath,
+		&i.BackdropPath,
+		&i.Genres,
+		&i.Status,
+		&i.ReleaseDate,
+		&i.Runtime,
+		&i.Monitored,
+		&i.RootFolderID,
+		&i.Path,
+		&i.Ended,
+		&i.AddedAt,
+		&i.UpdatedAt,
+		&i.QualityProfileID,
+		&i.Author,
+		&i.Rating,
+		&i.RatingVotes,
+		&i.Ratings,
+	)
+	return i, err
+}
+
 const getRootFolder = `-- name: GetRootFolder :one
 SELECT id, path, added_at, kind FROM root_folders WHERE id = ?
 `

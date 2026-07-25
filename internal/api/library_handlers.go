@@ -205,6 +205,9 @@ func (s *Server) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
 	if body.TmdbId != nil {
 		req.TMDBID = *body.TmdbId
 	}
+	if body.TvdbId != nil {
+		req.TVDBID = *body.TvdbId
+	}
 	if body.Olid != nil {
 		req.OLID = *body.Olid
 	}
@@ -498,10 +501,14 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 	// Mark results already in the library (movies/series by TMDB id,
 	// books by Open Library work id).
 	inLib := map[int64]bool{}
+	inLibTvdb := map[int64]bool{}
 	inLibOlid := map[string]bool{}
 	if items, err := s.deps.Library.List(r.Context(), domain.MediaKind(params.Kind)); err == nil {
 		for _, it := range items {
 			inLib[it.IDs.TMDB] = true
+			if it.IDs.TVDB != 0 {
+				inLibTvdb[it.IDs.TVDB] = true
+			}
 			if it.IDs.OLID != "" {
 				inLibOlid[it.IDs.OLID] = true
 			}
@@ -519,10 +526,21 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 			Overview:   res.Overview,
 			PosterPath: res.PosterPath,
 		}
-		if res.OLID != "" {
+		sr.Source = optStr(res.Source)
+		if res.TVDBID != 0 {
+			id := res.TVDBID
+			sr.TvdbId = &id
+		}
+		// "Already in the library" has to be answered against whichever id
+		// this result carries, or a chain result always reads as new and the
+		// Add button offers a duplicate.
+		switch {
+		case res.OLID != "":
 			sr.InLibrary = inLibOlid[res.OLID]
-		} else {
+		case res.TMDBID != 0:
 			sr.InLibrary = inLib[res.TMDBID]
+		default:
+			sr.InLibrary = inLibTvdb[res.TVDBID]
 		}
 		out = append(out, sr)
 	}
@@ -773,6 +791,11 @@ func proposalDTO(p library.Proposal) apigen.Proposal {
 			Kind: apigen.MediaKind(c.Kind), TmdbId: c.TMDBID,
 			Title: c.Title, Year: c.Year,
 		}
+		if c.TVDBID != 0 {
+			id := c.TVDBID
+			cand.TvdbId = &id
+		}
+		cand.Source = optStr(c.Source)
 		cand.Overview = optStr(c.Overview)
 		cand.PosterPath = optStr(c.PosterPath)
 		cand.Olid = optStr(c.OLID)
@@ -844,6 +867,9 @@ func (s *Server) AdoptOne(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.TmdbId != nil {
 		pick.TMDBID = *body.TmdbId
+	}
+	if body.TvdbId != nil {
+		pick.TVDBID = *body.TvdbId
 	}
 	if body.Olid != nil {
 		pick.OLID = *body.Olid

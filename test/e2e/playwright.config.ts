@@ -82,6 +82,11 @@ export default defineConfig({
         MONARR_TMDB_BASE_URL: `http://127.0.0.1:${TMDB_PORT}`,
         // Open Library paths don't collide with TMDB's; one fake serves both.
         MONARR_OPENLIBRARY_BASE_URL: `http://127.0.0.1:${TMDB_PORT}`,
+        // ...and neither do TVmaze's. Pointing the series chain (ADR 0011) at
+        // the fake keeps the suite hermetic: left at its default it queries
+        // the real api.tvmaze.com, and a search for "test" then returns eight
+        // real shows beside the fixture's one.
+        MONARR_TVMAZE_BASE_URL: `http://127.0.0.1:${TMDB_PORT}`,
       },
     },
   ],
