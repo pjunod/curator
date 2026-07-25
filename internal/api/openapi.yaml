@@ -2185,6 +2185,10 @@ components:
         posterPath:
           type: string
 
+    # heldBy / sharedWith describe the umbrella case: a provider that files a
+    # whole franchise under one title lists every part of it among that title's
+    # alternate names, so several folders answer to one entry and only the first
+    # can have it.
     Proposal:
       type: object
       required: [rootFolderId, path, name, parsedTitle, parsedYear, confidence, candidates]
@@ -2213,6 +2217,20 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AdoptionCandidate"
+        heldBy:
+          type: string
+          description: >
+            The folder that already holds the leading candidate, when that
+            candidate answers to this folder only through an alternate title.
+            Present so the row can say so before the user clicks a chip that
+            looks right and reads a conflict error afterwards.
+        sharedWith:
+          type: array
+          description: >
+            Other folders in this review batch whose leading candidate is the
+            same entry by the same alternate-title route.
+          items:
+            type: string
 
     ReviewCounts:
       type: object

@@ -286,6 +286,29 @@ function ReviewRow({
         </span>
       </div>
 
+      {/* Said before the click, not after it. A chip reading "Cunk on… aka
+          Cunk on Earth" looks like the answer; the fact that another folder
+          already holds that entry is the part that changes what to do. */}
+      {(p.heldBy || (p.sharedWith?.length ?? 0) > 0) && (
+        <p className="review-note muted">
+          {p.heldBy ? (
+            <>
+              <strong>{p.candidates[0]?.title}</strong> is already this library&rsquo;s{' '}
+              <span className="mono">{p.heldBy}</span>. The provider lists both names under one
+              title, so it cannot also be this folder — search for a separate entry, or dismiss
+              this folder.
+            </>
+          ) : (
+            <>
+              {p.sharedWith!.length + 1} folders answer to{' '}
+              <strong>{p.candidates[0]?.title}</strong> through its other names, so that title
+              covers all of them rather than being any one&rsquo;s match. Adopting one leaves the
+              rest to search or dismiss.
+            </>
+          )}
+        </p>
+      )}
+
       <div className="review-candidates">
         {p.candidates.length === 0 && <span className="muted">no match —</span>}
         {p.candidates.map((c, i) => (
@@ -382,7 +405,10 @@ function ReviewRow({
       {error && (
         <div className="review-error">
           <span className="error-text">{error.message}</span>
-          {error.conflict && p.candidates.length > 0 && (
+          {/* Not offered for the umbrella case: the other folder is a real
+              folder with a real claim, and moving the entry to this one only
+              relocates the problem. heldBy already said as much above. */}
+          {error.conflict && p.candidates.length > 0 && !p.heldBy && (
             <button
               disabled={busy}
               title="Move the existing library entry to this folder"

@@ -45,6 +45,20 @@ type Proposal struct {
 	Kind         domain.MediaKind     `json:"kind,omitempty"` // "" in a mixed root
 	Confidence   Confidence           `json:"confidence"`
 	Candidates   []ports.SearchResult `json:"candidates"`
+	// HeldBy is the folder that already holds the leading candidate, set only
+	// when that candidate answers to this folder through an alternate title.
+	//
+	// It is the umbrella case: a provider that files a whole franchise under
+	// one title lists every entry in it as an alternate name, so several
+	// folders match one entry and only the first can have it. Saying so on the
+	// row is the whole point — the alternative is the user clicking a chip
+	// that looks correct and reading a conflict error afterwards.
+	HeldBy string `json:"heldBy,omitempty"`
+	// SharedWith names the other folders in this review batch whose leading
+	// candidate is the same entry, by the same alternate-title route. Two
+	// folders answering to one title is the signal that the title covers both
+	// rather than being either one's answer.
+	SharedWith []string `json:"sharedWith,omitempty"`
 	// Force re-points an existing library entry at this folder even when it
 	// already points at a directory that exists. Only ever set by an
 	// explicit single-folder request — bulk adoption must never take a
@@ -82,7 +96,52 @@ func (s *Service) ProposeAdoptions(ctx context.Context, dirs []UnmatchedDir) ([]
 		}
 		out = append(out, s.propose(ctx, d, kindOf[d.RootFolderID]))
 	}
+	markAltCollisions(out)
 	return out, nil
+}
+
+// markAltCollisions records, on each proposal, the other folders in this batch
+// that lead with the same alternate-title match.
+//
+// One entry answering to several folders is how a provider says "these are all
+// one title" — TMDB files the Cunk programmes under a single series and lists
+// every one of them among its alternate names, so a folder per programme
+// produces a batch where three rows all point at one entry. Adopting the first
+// is fine; the rest then collide with it, and without this the collision is
+// only discoverable by clicking and reading the error.
+func markAltCollisions(props []Proposal) {
+	byEntry := map[string][]int{}
+	for i, p := range props {
+		if key, ok := altLead(p); ok {
+			byEntry[key] = append(byEntry[key], i)
+		}
+	}
+	for _, idx := range byEntry {
+		if len(idx) < 2 {
+			continue
+		}
+		for _, i := range idx {
+			for _, j := range idx {
+				if i != j {
+					props[i].SharedWith = append(props[i].SharedWith, props[j].Path)
+				}
+			}
+		}
+	}
+}
+
+// altLead reports the identity of the leading candidate when the folder answers
+// to it only through an alternate title.
+func altLead(p Proposal) (string, bool) {
+	if len(p.Candidates) == 0 {
+		return "", false
+	}
+	lead := p.Candidates[0]
+	if len(lead.AltTitles) == 0 ||
+		matcher.NormalizeTitle(lead.Title) == matcher.NormalizeTitle(p.ParsedTitle) {
+		return "", false
+	}
+	return identity(lead), true
 }
 
 // propose builds one proposal.
@@ -143,7 +202,42 @@ func (s *Service) propose(ctx context.Context, d UnmatchedDir, rootKind domain.R
 	for i := range p.Candidates {
 		p.Candidates[i].AltTitles = matchingAlts(parsed, p.Candidates[i])
 	}
+	if _, isAlt := altLead(p); isAlt {
+		p.HeldBy = s.folderHolding(ctx, p.Candidates[0], p.Path)
+	}
 	return p
+}
+
+// folderHolding returns the existing folder of a library item matching this
+// candidate, when there is one, it is not `self`, and it exists on disk.
+//
+// Only the last condition makes this worth checking: an item pointed at a
+// directory that is not there is the ordinary adoptable case (added by hand,
+// never attached to files), and relinking it is exactly right. An item pointed
+// at a folder that *does* exist is a different situation, and one the user
+// should hear about before clicking rather than after.
+func (s *Service) folderHolding(ctx context.Context, c ports.SearchResult, self string) string {
+	var id int64
+	var err error
+	switch {
+	case c.OLID != "":
+		id, err = s.db.GetMediaItemByKindOlid(ctx, c.Kind, c.OLID)
+	case c.TMDBID != 0:
+		id, err = s.db.GetMediaItemByKindTmdb(ctx, c.Kind, c.TMDBID)
+	default:
+		return ""
+	}
+	if err != nil {
+		return ""
+	}
+	item, err := s.Get(ctx, id)
+	if err != nil || item.Path == "" || item.Path == self {
+		return ""
+	}
+	if _, statErr := os.Stat(item.Path); statErr != nil {
+		return ""
+	}
+	return item.Path
 }
 
 // maxAltTitleLookups bounds the second pass. Adoption runs over hundreds of

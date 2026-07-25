@@ -213,3 +213,136 @@ func TestSearchSuppliedAlternateTitleIsHonoured(t *testing.T) {
 		t.Error("still an alternate-title match, so still one click")
 	}
 }
+
+// The umbrella case, which the first version of alternate-title matching made
+// worse rather than better: TMDB files the Cunk programmes under one series
+// and lists every one of them among that series' alternate names, so a folder
+// per programme produces a batch where every row leads with the same entry.
+func TestUmbrellaTitleIsFlaggedAcrossTheBatch(t *testing.T) {
+	looks := 0
+	prov := altProvider{
+		adoptProvider: adoptProvider{series: []ports.SearchResult{series(82712, "Cunk on...", 2018)}},
+		alts: map[int64][]string{82712: {
+			"Cunk on Britain", "Cunk on Earth", "Cunk on Christmas",
+		}},
+		nLooks: &looks,
+	}
+
+	svc, _, _ := newService(t)
+	svc.meta = prov
+	ctx := context.Background()
+	root := t.TempDir()
+	for _, name := range []string{"Cunk on Britain", "Cunk on Earth"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindSeries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	props, err := svc.ProposeAdoptions(ctx, []UnmatchedDir{
+		{RootFolderID: rf.ID, Path: filepath.Join(root, "Cunk on Britain"), Name: "Cunk on Britain"},
+		{RootFolderID: rf.ID, Path: filepath.Join(root, "Cunk on Earth"), Name: "Cunk on Earth"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range props {
+		if len(p.SharedWith) != 1 {
+			t.Errorf("%s should name the other folder it collides with, got %v", p.Name, p.SharedWith)
+			continue
+		}
+		if p.SharedWith[0] == p.Path {
+			t.Errorf("%s should not list itself", p.Name)
+		}
+		// Still offered — the provider's answer is information — but never
+		// applied on its own.
+		if p.Confidence == ConfidenceExact {
+			t.Errorf("%s must not auto-adopt into a shared title", p.Name)
+		}
+	}
+}
+
+// Once one of them is adopted, the rest have to say who holds it. Without
+// this the row shows a chip that looks correct and the conflict is only
+// discoverable by clicking it.
+func TestAnAlreadyHeldAlternateTitleNamesTheFolderThatHasIt(t *testing.T) {
+	looks := 0
+	prov := altProvider{
+		adoptProvider: adoptProvider{series: []ports.SearchResult{series(82712, "Cunk on...", 2018)}},
+		alts:          map[int64][]string{82712: {"Cunk on Britain", "Cunk on Earth"}},
+		nLooks:        &looks,
+	}
+
+	svc, _, _ := newService(t)
+	svc.meta = prov
+	ctx := context.Background()
+	root := t.TempDir()
+	britain := filepath.Join(root, "Cunk on Britain")
+	earth := filepath.Join(root, "Cunk on Earth")
+	for _, d := range []string{britain, earth} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindSeries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AdoptOne(ctx, britain, series(82712, "Cunk on...", 2018), false); err != nil {
+		t.Fatal(err)
+	}
+
+	props, err := svc.ProposeAdoptions(ctx, []UnmatchedDir{
+		{RootFolderID: rf.ID, Path: earth, Name: "Cunk on Earth"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if props[0].HeldBy != britain {
+		t.Errorf("want the row to name %q as the holder, got %q", britain, props[0].HeldBy)
+	}
+}
+
+// A primary-title match whose item points at a folder that is *not* there is
+// the ordinary adoptable case — an item added by hand and never attached to
+// files — and must not be flagged, or relinking becomes unreachable.
+func TestAnItemWithNoRealFolderIsNotReportedAsHolding(t *testing.T) {
+	looks := 0
+	prov := altProvider{
+		adoptProvider: adoptProvider{series: []ports.SearchResult{series(7, "Cunk on...", 2018)}},
+		alts:          map[int64][]string{7: {"Cunk on Earth"}},
+		nLooks:        &looks,
+	}
+
+	svc, _, _ := newService(t)
+	svc.meta = prov
+	ctx := context.Background()
+	root := t.TempDir()
+	earth := filepath.Join(root, "Cunk on Earth")
+	if err := os.Mkdir(earth, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindSeries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Added by title, pointed at a folder the naming rules invented.
+	if _, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindSeries, TMDBID: 7, RootFolderID: rf.ID, Monitored: true, Monitor: "none",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	props, err := svc.ProposeAdoptions(ctx, []UnmatchedDir{
+		{RootFolderID: rf.ID, Path: earth, Name: "Cunk on Earth"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if props[0].HeldBy != "" {
+		t.Errorf("an entry with no folder on disk is adoptable, not a conflict; got %q", props[0].HeldBy)
+	}
+}

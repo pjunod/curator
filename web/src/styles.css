@@ -1678,6 +1678,17 @@ a.pill-info:hover {
   max-width: 45%;
 }
 
+/* Why the obvious-looking chip is not the answer. Full width and above the
+   chips, because it has to be read before one of them is clicked — not a
+   warning (nothing is wrong yet) and not a tooltip (it changes what to do). */
+.review-note {
+  flex-basis: 100%;
+  order: 1;
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .candidate {
   display: inline-block;
   padding: 3px 10px;
@@ -1765,6 +1776,7 @@ a.pill-info:hover {
 
 .review-error {
   flex-basis: 100%;
+  order: 3; /* last on the row: the note, then the search, then the failure */
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1789,6 +1801,7 @@ a.pill-info:hover {
    unmatched — a phantom entry plus the original problem. */
 .review-search {
   flex-basis: 100%;
+  order: 2;
   display: flex;
   align-items: center;
   gap: 8px;

@@ -237,6 +237,15 @@ export interface Proposal {
   kind?: MediaKind
   confidence: 'exact' | 'ambiguous' | 'none'
   candidates: AdoptionCandidate[]
+  /**
+   * The folder that already holds the leading candidate, when that candidate
+   * only answers to this folder through an alternate title. The umbrella case:
+   * a provider filing a franchise under one title lists every part of it among
+   * that title's alternate names, so several folders match one entry.
+   */
+  heldBy?: string
+  /** Other folders in this batch leading with the same entry, same route. */
+  sharedWith?: string[]
 }
 
 export interface ReviewCounts {

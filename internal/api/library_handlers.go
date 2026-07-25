@@ -763,6 +763,11 @@ func proposalDTO(p library.Proposal) apigen.Proposal {
 		k := apigen.MediaKind(p.Kind)
 		out.Kind = &k
 	}
+	out.HeldBy = optStr(p.HeldBy)
+	if len(p.SharedWith) > 0 {
+		shared := p.SharedWith
+		out.SharedWith = &shared
+	}
 	for _, c := range p.Candidates {
 		cand := apigen.AdoptionCandidate{
 			Kind: apigen.MediaKind(c.Kind), TmdbId: c.TMDBID,

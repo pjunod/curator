@@ -779,13 +779,19 @@ type Proposal struct {
 	Candidates []AdoptionCandidate `json:"candidates"`
 
 	// Confidence exact clears the per-kind bar and may be adopted without asking; anything else goes to review. There is deliberately no "probably".
-	Confidence   ProposalConfidence `json:"confidence"`
-	Kind         *MediaKind         `json:"kind,omitempty"`
-	Name         string             `json:"name"`
-	ParsedTitle  string             `json:"parsedTitle"`
-	ParsedYear   int                `json:"parsedYear"`
-	Path         string             `json:"path"`
-	RootFolderId int64              `json:"rootFolderId"`
+	Confidence ProposalConfidence `json:"confidence"`
+
+	// HeldBy The folder that already holds the leading candidate, when that candidate answers to this folder only through an alternate title. Present so the row can say so before the user clicks a chip that looks right and reads a conflict error afterwards.
+	HeldBy       *string    `json:"heldBy,omitempty"`
+	Kind         *MediaKind `json:"kind,omitempty"`
+	Name         string     `json:"name"`
+	ParsedTitle  string     `json:"parsedTitle"`
+	ParsedYear   int        `json:"parsedYear"`
+	Path         string     `json:"path"`
+	RootFolderId int64      `json:"rootFolderId"`
+
+	// SharedWith Other folders in this review batch whose leading candidate is the same entry by the same alternate-title route.
+	SharedWith *[]string `json:"sharedWith,omitempty"`
 }
 
 // ProposalConfidence exact clears the per-kind bar and may be adopted without asking; anything else goes to review. There is deliberately no "probably".
