@@ -9,6 +9,7 @@ import {
   fmtRelative,
   getIgnoredDirs,
   getRootFolders,
+  getReviewQueue,
   getScanReport,
   getSettings,
   runAdoption,
@@ -29,6 +30,16 @@ export function SettingsPage() {
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
   const report = useQuery({ queryKey: ['scan-report'], queryFn: getScanReport })
+  // The button's number comes from the queue the window will actually show,
+  // not from the scan report. They are different facts with different update
+  // triggers, and a button reading one to describe the other said "Review 4
+  // folders…" over a window listing one. Asking for a single row is enough:
+  // the counts are computed over the whole queue.
+  const reviewCount = useQuery({
+    queryKey: ['review', 'count'],
+    queryFn: () => getReviewQueue(undefined, '', 1, 0),
+    select: (page) => page.counts.total,
+  })
   const ignored = useQuery({ queryKey: ['ignored-dirs'], queryFn: getIgnoredDirs })
 
   const [key, setKey] = useState('')
@@ -71,7 +82,10 @@ export function SettingsPage() {
   })
   const restore = useMutation({
     mutationFn: (path: string) => unignoreDir(path),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ignored-dirs'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['ignored-dirs'] })
+      void qc.invalidateQueries({ queryKey: ['review'] })
+    },
   })
   const saveSkips = useMutation({
     mutationFn: () => updateSettings({ scanSkipPatterns: skipPatterns ?? '' }),
@@ -85,6 +99,7 @@ export function SettingsPage() {
           (res.failures.length ? ` · ${res.failures.length} failed` : ''),
       )
       void qc.invalidateQueries({ queryKey: ['scan-report'] })
+      void qc.invalidateQueries({ queryKey: ['review'] })
       void qc.invalidateQueries({ queryKey: ['library'] })
     },
   })
@@ -92,6 +107,7 @@ export function SettingsPage() {
     mutationFn: deleteLibraryItem,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['scan-report'] })
+      void qc.invalidateQueries({ queryKey: ['review'] })
       void qc.invalidateQueries({ queryKey: ['library'] })
     },
   })
@@ -102,7 +118,10 @@ export function SettingsPage() {
   const scan = useMutation({
     mutationFn: triggerScan,
     onSuccess: () => {
-      setTimeout(() => void qc.invalidateQueries({ queryKey: ['scan-report'] }), 1500)
+      setTimeout(() => {
+        void qc.invalidateQueries({ queryKey: ['scan-report'] })
+        void qc.invalidateQueries({ queryKey: ['review'] })
+      }, 1500)
     },
   })
 
@@ -265,7 +284,11 @@ export function SettingsPage() {
         )}
         <div className="form-row">
           <PathInput value={newRoot} onChange={setNewRoot} />
-          <select value={newRootKind} onChange={(e) => setNewRootKind(e.target.value as RootKind)}>
+          <select
+            aria-label="What the new root folder holds"
+            value={newRootKind}
+            onChange={(e) => setNewRootKind(e.target.value as RootKind)}
+          >
             <option value="movie">Movies</option>
             <option value="series">TV series</option>
             <option value="book">Books</option>
@@ -302,10 +325,10 @@ export function SettingsPage() {
           {report.data === null && <span className="muted">No scan has run yet.</span>}
         </div>
 
-        {report.data && (report.data.unmatchedTotal ?? report.data.unmatchedDirs.length) > 0 && (
+        {(reviewCount.data ?? 0) > 0 && (
           <div className="form-row">
             <button className="btn-accent" onClick={() => setReviewOpen(true)}>
-              Review {report.data.unmatchedTotal ?? report.data.unmatchedDirs.length} folders…
+              Review {reviewCount.data} folders…
             </button>
             <span className="muted">
               Opens in a window with pages, so a folder of several hundred movies does not turn

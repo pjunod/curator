@@ -376,6 +376,11 @@ func (s *Service) IgnoreDir(ctx context.Context, path, reason string) error {
 		kept = append(kept, d)
 	}
 	report.UnmatchedDirs = kept
+	// Recompute rather than leave alone: UnmatchedTotal is what the UI counts
+	// ("Review 4 folders…"), and dropping an entry from the list without
+	// touching the total is how a dismissed folder stayed in the count while
+	// being absent from the window it claimed to describe.
+	report.UnmatchedTotal = len(kept)
 	if raw, err := json.Marshal(report); err == nil {
 		if err := s.db.SetMeta(ctx, scanReportKey, string(raw)); err != nil {
 			s.log.Warn("scan: could not persist report after dismissal", "err", err)

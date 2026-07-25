@@ -65,45 +65,78 @@ func (s *Service) saveReviewQueue(ctx context.Context, proposals []Proposal) {
 	}
 }
 
-// loadReviewQueue returns the persisted proposals, falling back to the raw
-// unmatched directories from the last scan when adoption has not run yet.
-// The fallback matters: without it, a user who scans but has not pressed
-// match sees an empty review list and concludes the scan found nothing.
+// loadReviewQueue returns every folder still awaiting a decision: the
+// persisted proposals, plus a bare entry for anything the last scan found
+// that they do not cover.
+//
+// The union is the point. These are two stores of one fact with different
+// update triggers — a scan rewrites the unmatched list, an adoption run
+// rewrites the queue — so treating the queue as authoritative whenever it
+// exists hid every folder found by a scan since the last adoption run. The
+// settings button counted the scan (four folders) and opened a window that
+// listed the queue (one), with nothing on screen to explain the difference
+// and no way to reach the other three but a button whose label said
+// "Match unmatched folders" and gave no hint it was load-bearing.
 func (s *Service) loadReviewQueue(ctx context.Context) []Proposal {
-	if raw, err := s.db.GetMeta(ctx, reviewQueueKey); err == nil && raw != "" {
-		var out []Proposal
-		if err := json.Unmarshal([]byte(raw), &out); err == nil {
-			return out
-		}
-		s.log.Warn("adopt: review queue unreadable, falling back to the scan report")
-	}
+	stored := s.storedReviewQueue(ctx)
 
 	report, ok, err := s.LastScanReport(ctx)
 	if err != nil || !ok {
-		return nil
+		return stored
 	}
-	out := make([]Proposal, 0, len(report.UnmatchedDirs))
+
+	seen := make(map[string]bool, len(stored))
+	for _, p := range stored {
+		seen[p.Path] = true
+	}
+	out := make([]Proposal, 0, len(stored)+len(report.UnmatchedDirs))
+	out = append(out, stored...)
 	for _, d := range report.UnmatchedDirs {
-		// Parse even in the fallback. It costs nothing (no provider call)
-		// and it is the difference between the row saying
-		// "read as Arrival (2016)" and repeating the raw folder name back
-		// at the user, which tells them nothing they cannot already see.
-		parsed := parser.Parse(d.Name)
-		title := parsed.Title
-		if title == "" {
-			title = d.Name
+		if seen[d.Path] {
+			// The stored proposal wins: it carries the parse and whatever
+			// candidates a provider search already found.
+			continue
 		}
-		out = append(out, Proposal{
-			RootFolderID: d.RootFolderID,
-			Path:         d.Path,
-			Name:         d.Name,
-			ParsedTitle:  title,
-			ParsedYear:   parsed.Year,
-			Confidence:   ConfidenceNone,
-			Candidates:   []ports.SearchResult{},
-		})
+		out = append(out, bareProposal(d))
 	}
 	return out
+}
+
+// storedReviewQueue reads the persisted proposals, or nothing when adoption
+// has not run yet or the blob is unreadable.
+func (s *Service) storedReviewQueue(ctx context.Context) []Proposal {
+	raw, err := s.db.GetMeta(ctx, reviewQueueKey)
+	if err != nil || raw == "" {
+		return nil
+	}
+	var out []Proposal
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		s.log.Warn("adopt: review queue unreadable, falling back to the scan report")
+		return nil
+	}
+	return out
+}
+
+// bareProposal describes a folder nothing has searched for yet.
+func bareProposal(d UnmatchedDir) Proposal {
+	// Parse even here. It costs nothing (no provider call) and it is the
+	// difference between the row saying "read as Arrival (2016)" and
+	// repeating the raw folder name back at the user, which tells them
+	// nothing they cannot already see.
+	parsed := parser.Parse(d.Name)
+	title := parsed.Title
+	if title == "" {
+		title = d.Name
+	}
+	return Proposal{
+		RootFolderID: d.RootFolderID,
+		Path:         d.Path,
+		Name:         d.Name,
+		ParsedTitle:  title,
+		ParsedYear:   parsed.Year,
+		Confidence:   ConfidenceNone,
+		Candidates:   []ports.SearchResult{},
+	}
 }
 
 // ReviewQueue returns one page of the adoption review queue, optionally

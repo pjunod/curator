@@ -4,7 +4,7 @@ import { Link } from '@tanstack/react-router'
 import type { MediaItemSummary, MediaKind } from '../api'
 import {
   ACTIVE_DOWNLOAD_STATES, bulkEditLibrary, completeness, fmtRating, getLibrary,
-  getProfiles, getQueue, getScanReport, getSettings, posterUrl,
+  getProfiles, getQueue, getReviewQueue, getScanReport, getSettings, posterUrl,
   RATING_SOURCE_LABELS, triggerScan,
 } from '../api'
 import { PAGE_SIZES, Pager, PageSizePicker, sliceForPage } from '../Pager'
@@ -298,6 +298,7 @@ export function LibraryPage() {
       // The scan runs async; refresh the report and library shortly after.
       setTimeout(() => {
         void qc.invalidateQueries({ queryKey: ['scan-report'] })
+        void qc.invalidateQueries({ queryKey: ['review'] })
         void qc.invalidateQueries({ queryKey: ['library'] })
       }, 1500)
     },
@@ -324,11 +325,17 @@ export function LibraryPage() {
     setSelected(next)
   }
 
-  // unmatchedDirs is a capped prefix, so the count has to come from
-  // unmatchedTotal. Reading length here reported "25 unmatched folders" for
-  // a library with 150 of them.
+  // unmatchedDirs is a capped prefix, so it is only ever a sample of names.
+  // The count comes from the review queue — the same source the review window
+  // pages through — because a number here that disagrees with the window it
+  // sends people to is worse than no number at all.
   const unmatched = report.data?.unmatchedDirs ?? []
-  const unmatchedTotal = report.data?.unmatchedTotal ?? unmatched.length
+  const reviewCount = useQuery({
+    queryKey: ['review', 'count'],
+    queryFn: () => getReviewQueue(undefined, '', 1, 0),
+    select: (page) => page.counts.total,
+  })
+  const unmatchedTotal = reviewCount.data ?? 0
 
   // Every kind owns its controls; the flat tabs reuse the same state.
   const [controls, setControls] = useState<Record<MediaKind, SectionState>>(() => ({
