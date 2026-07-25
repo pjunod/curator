@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -223,6 +225,31 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 			return health.Warn("binary built without web UI (run `make build`); serving fallback page")
 		}
 		return health.OK()
+	})
+	reg.Register("library-folders", func(ctx context.Context) health.Result {
+		// Two items pointing at one folder: whichever scan runs last decides
+		// which of them the files attach to, and the other is a card that
+		// looks real and holds nothing. Adoption cannot create this any more;
+		// this reports the libraries that already have it.
+		shared, err := lib.SharedFolders(ctx)
+		if err != nil {
+			return health.Errorf("cannot read the library: %v", err)
+		}
+		if len(shared) == 0 {
+			return health.OK()
+		}
+		// Named example, chosen in sorted order so the same library reports
+		// the same folder every time rather than a different one per poll.
+		paths := make([]string, 0, len(shared))
+		for path := range shared {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		first := paths[0]
+		return health.Warn(
+			"%d folder(s) are claimed by more than one item — e.g. %s is held by %s. "+
+				"Remove the duplicate from the library (files on disk are untouched)",
+			len(shared), first, strings.Join(shared[first], " and "))
 	})
 	reg.Register("metadata-provider", func(ctx context.Context) health.Result {
 		key, err := tmdbKey(ctx)
