@@ -147,6 +147,8 @@ export interface MediaCopyInput {
 }
 
 export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' | 'episodeFileCount' | 'fileCount'> {
+  // quality / qualityTarget / upgrade are inherited from MediaItemSummary —
+  // the detail response carries the same three fields.
   backdropPath: string
   overview: string
   genres: string[]

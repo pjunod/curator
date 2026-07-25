@@ -1880,6 +1880,23 @@ components:
           type: string
         backdropPath:
           type: string
+        quality:
+          type: string
+          description: >
+            The weakest quality among the primary copy's files ("1080p
+            WEB-DL"); empty when nothing is on disk or no quality was
+            recorded. Weakest because that is what decides whether the item
+            is still being hunted.
+        qualityTarget:
+          type: string
+          description: The profile's cutoff — the "good enough" point.
+        upgrade:
+          type: string
+          enum: ["", missing, seeking, met, capped]
+          description: >
+            missing = nothing on disk · seeking = below the cutoff and being
+            hunted · met = cutoff reached · capped = below the cutoff with
+            upgrades switched off.
         overview:
           type: string
         genres:

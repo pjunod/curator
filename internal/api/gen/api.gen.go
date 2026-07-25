@@ -188,27 +188,54 @@ func (e IndexerInputProtocol) Valid() bool {
 	}
 }
 
+// Defines values for MediaItemDetailUpgrade.
+const (
+	MediaItemDetailUpgradeCapped  MediaItemDetailUpgrade = "capped"
+	MediaItemDetailUpgradeEmpty   MediaItemDetailUpgrade = ""
+	MediaItemDetailUpgradeMet     MediaItemDetailUpgrade = "met"
+	MediaItemDetailUpgradeMissing MediaItemDetailUpgrade = "missing"
+	MediaItemDetailUpgradeSeeking MediaItemDetailUpgrade = "seeking"
+)
+
+// Valid indicates whether the value is a known member of the MediaItemDetailUpgrade enum.
+func (e MediaItemDetailUpgrade) Valid() bool {
+	switch e {
+	case MediaItemDetailUpgradeCapped:
+		return true
+	case MediaItemDetailUpgradeEmpty:
+		return true
+	case MediaItemDetailUpgradeMet:
+		return true
+	case MediaItemDetailUpgradeMissing:
+		return true
+	case MediaItemDetailUpgradeSeeking:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MediaItemSummaryUpgrade.
 const (
-	Capped  MediaItemSummaryUpgrade = "capped"
-	Empty   MediaItemSummaryUpgrade = ""
-	Met     MediaItemSummaryUpgrade = "met"
-	Missing MediaItemSummaryUpgrade = "missing"
-	Seeking MediaItemSummaryUpgrade = "seeking"
+	MediaItemSummaryUpgradeCapped  MediaItemSummaryUpgrade = "capped"
+	MediaItemSummaryUpgradeEmpty   MediaItemSummaryUpgrade = ""
+	MediaItemSummaryUpgradeMet     MediaItemSummaryUpgrade = "met"
+	MediaItemSummaryUpgradeMissing MediaItemSummaryUpgrade = "missing"
+	MediaItemSummaryUpgradeSeeking MediaItemSummaryUpgrade = "seeking"
 )
 
 // Valid indicates whether the value is a known member of the MediaItemSummaryUpgrade enum.
 func (e MediaItemSummaryUpgrade) Valid() bool {
 	switch e {
-	case Capped:
+	case MediaItemSummaryUpgradeCapped:
 		return true
-	case Empty:
+	case MediaItemSummaryUpgradeEmpty:
 		return true
-	case Met:
+	case MediaItemSummaryUpgradeMet:
 		return true
-	case Missing:
+	case MediaItemSummaryUpgradeMissing:
 		return true
-	case Seeking:
+	case MediaItemSummaryUpgradeSeeking:
 		return true
 	default:
 		return false
@@ -686,18 +713,24 @@ type MediaItemDetail struct {
 	BackdropPath string `json:"backdropPath"`
 
 	// Copies Additional quality copies of this item.
-	Copies           []MediaCopy     `json:"copies"`
-	Ended            bool            `json:"ended"`
-	Files            []MediaFileInfo `json:"files"`
-	Genres           []string        `json:"genres"`
-	Id               int64           `json:"id"`
-	Ids              ExternalIds     `json:"ids"`
-	Kind             MediaKind       `json:"kind"`
-	Monitored        bool            `json:"monitored"`
-	Overview         string          `json:"overview"`
-	Path             string          `json:"path"`
-	PosterPath       string          `json:"posterPath"`
-	QualityProfileId int64           `json:"qualityProfileId"`
+	Copies     []MediaCopy     `json:"copies"`
+	Ended      bool            `json:"ended"`
+	Files      []MediaFileInfo `json:"files"`
+	Genres     []string        `json:"genres"`
+	Id         int64           `json:"id"`
+	Ids        ExternalIds     `json:"ids"`
+	Kind       MediaKind       `json:"kind"`
+	Monitored  bool            `json:"monitored"`
+	Overview   string          `json:"overview"`
+	Path       string          `json:"path"`
+	PosterPath string          `json:"posterPath"`
+
+	// Quality The weakest quality among the primary copy's files ("1080p WEB-DL"); empty when nothing is on disk or no quality was recorded. Weakest because that is what decides whether the item is still being hunted.
+	Quality          *string `json:"quality,omitempty"`
+	QualityProfileId int64   `json:"qualityProfileId"`
+
+	// QualityTarget The profile's cutoff — the "good enough" point.
+	QualityTarget *string `json:"qualityTarget,omitempty"`
 
 	// Rating Provider-scale community rating (TMDB /10, Open Library /5).
 	Rating float32 `json:"rating"`
@@ -713,8 +746,14 @@ type MediaItemDetail struct {
 	Seasons      []SeasonInfo `json:"seasons"`
 	Status       string       `json:"status"`
 	Title        string       `json:"title"`
-	Year         int          `json:"year"`
+
+	// Upgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off.
+	Upgrade *MediaItemDetailUpgrade `json:"upgrade,omitempty"`
+	Year    int                     `json:"year"`
 }
+
+// MediaItemDetailUpgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off.
+type MediaItemDetailUpgrade string
 
 // MediaItemSummary defines model for MediaItemSummary.
 type MediaItemSummary struct {

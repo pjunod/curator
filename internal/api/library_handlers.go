@@ -173,6 +173,16 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		}
 		d.Files = append(d.Files, fi)
 	}
+	if quality.Rank(m.Quality) > 0 {
+		d.Quality = optStr(m.Quality.Display())
+	}
+	if quality.Rank(m.QualityTarget) > 0 {
+		d.QualityTarget = optStr(m.QualityTarget.Display())
+	}
+	if m.Upgrade != domain.UpgradeUnknown {
+		u := apigen.MediaItemDetailUpgrade(m.Upgrade)
+		d.Upgrade = &u
+	}
 	d.Copies = []apigen.MediaCopy{}
 	for _, c := range m.Copies {
 		d.Copies = append(d.Copies, apigen.MediaCopy{

@@ -719,9 +719,62 @@ func hasFiles(m domain.MediaItem) bool {
 	return m.FileCount > 0
 }
 
-// Get returns one fully hydrated item.
+// Get returns one fully hydrated item, graded against its quality profile.
 func (s *Service) Get(ctx context.Context, id int64) (domain.MediaItem, error) {
-	return s.db.GetMediaItemFull(ctx, id)
+	item, err := s.db.GetMediaItemFull(ctx, id)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	s.gradeOne(ctx, &item)
+	return item, nil
+}
+
+// gradeOne fills in quality, target and upgrade state for a single hydrated
+// item — the same three facts the list computes in bulk, derived here from
+// the files and episodes already loaded.
+//
+// Best-effort, like gradeUpgrades: a provider of none of this is an
+// ungraded item, never a failed request.
+func (s *Service) gradeOne(ctx context.Context, item *domain.MediaItem) {
+	quals, err := s.db.FileQualities(ctx, item.ID)
+	if err != nil {
+		s.log.Debug("library: file qualities unreadable", "item", item.ID, "err", err)
+	}
+	var worst quality.Quality
+	var have bool
+	for _, f := range item.Files {
+		if f.CopyID != 0 {
+			continue // a deliberate 720p second copy is not the main copy's problem
+		}
+		q, ok := quals[f.ID]
+		if !ok {
+			continue
+		}
+		if !have || quality.Rank(q) < quality.Rank(worst) {
+			worst, have = q, true
+		}
+	}
+	item.Quality = worst
+
+	// The list view counts monitored aired episodes; here the loaded
+	// episodes answer the same question directly.
+	if item.Kind == domain.KindSeries {
+		for _, season := range item.Seasons {
+			for _, e := range season.Episodes {
+				if e.HasFile {
+					item.EpisodeFileCount++
+				}
+			}
+		}
+	}
+	item.FileCount = len(item.Files)
+
+	p, err := s.db.GetProfile(ctx, item.QualityProfileID)
+	if err != nil {
+		return
+	}
+	item.QualityTarget = p.Cutoff
+	item.Upgrade = upgradeState(*item, p)
 }
 
 // Delete removes an item from the library. Files on disk are never touched.

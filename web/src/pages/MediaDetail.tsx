@@ -428,6 +428,36 @@ export function MediaDetailPage() {
               )}
             </div>
 
+            <div className="fact-label">Quality</div>
+            <div className="fact-pills">
+              {m.upgrade === 'missing' || !m.quality ? (
+                <span className="muted">nothing on disk yet</span>
+              ) : (
+                <>
+                  <span className="pill pill-neutral" title="The weakest quality among this item's files — the one that decides whether it is still being hunted">
+                    {m.quality}
+                  </span>
+                  {m.upgrade === 'met' && (
+                    <span className="muted">
+                      at the target{m.qualityTarget ? ` (${m.qualityTarget})` : ''} — nothing better
+                      is being sought
+                    </span>
+                  )}
+                  {m.upgrade === 'seeking' && (
+                    <span className="muted">
+                      still looking for {m.qualityTarget || 'better'}
+                    </span>
+                  )}
+                  {m.upgrade === 'capped' && (
+                    <span className="muted">
+                      below {m.qualityTarget || 'the target'}, and staying there — this profile has
+                      upgrades switched off
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+
             <div className="fact-label">Profile</div>
             <div>
               {profileName ?? `#${m.qualityProfileId}`}
