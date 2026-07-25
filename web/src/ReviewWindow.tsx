@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
 import type { AdoptionCandidate, MediaKind, Proposal, ReviewCounts } from './api'
-import { adoptExact, adoptOne, ApiError, getReviewQueue, ignoreDir } from './api'
+import {
+  adoptExact,
+  adoptOne,
+  ApiError,
+  getReviewQueue,
+  ignoreDir,
+  searchMetadata,
+} from './api'
 import { clampPage, Pager, PageSizePicker } from './Pager'
 
 // Kind tabs, matching the library's vocabulary so the same content is called
@@ -250,6 +256,24 @@ function ReviewRow({
   busy: boolean
   error?: { message: string; conflict: boolean }
 }) {
+  const [searching, setSearching] = useState(false)
+  const [term, setTerm] = useState(p.parsedTitle)
+  const [debounced, setDebounced] = useState(p.parsedTitle)
+  // A mixed root resolves no kind, so the user picks which provider to ask.
+  const [searchKind, setSearchKind] = useState<MediaKind>(p.kind ?? 'movie')
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(term), 300)
+    return () => clearTimeout(t)
+  }, [term])
+
+  const results = useQuery({
+    queryKey: ['metadata-search', searchKind, debounced],
+    queryFn: () => searchMetadata(searchKind, debounced),
+    enabled: searching && debounced.trim().length > 1,
+    retry: false,
+  })
+
   return (
     <div className={error ? 'review-row has-error' : 'review-row'}>
       <div className="review-main">
@@ -276,17 +300,18 @@ function ReviewRow({
             {c.year ? ` (${c.year})` : ''}
           </button>
         ))}
-        {/* Always offered, not only when there are no candidates: when every
-            chip on offer is wrong, dismissing the folder was the only thing
-            left, and dismissing is not the same as "I will find it myself". */}
-        <Link
-          to="/add"
-          search={{ q: p.parsedTitle, kind: p.kind ?? 'movie' }}
+        {/* Searching happens here rather than on the Add page. Sending the
+            user there created a library item at the naming-rule path and left
+            this folder unmatched — a phantom entry pointing at a directory
+            that does not exist, and the folder still in the queue. */}
+        <button
           className="candidate search-link"
-          title={`Search ${p.kind === 'series' ? 'TV' : p.kind === 'book' ? 'books' : 'movies'} for "${p.parsedTitle}"`}
+          disabled={busy}
+          title={`Search ${p.kind === 'series' ? 'TV' : p.kind === 'book' ? 'books' : 'movies'} for another title`}
+          onClick={() => setSearching((v) => !v)}
         >
-          search…
-        </Link>
+          {searching ? 'cancel search' : 'search…'}
+        </button>
       </div>
 
       <button
@@ -297,6 +322,53 @@ function ReviewRow({
       >
         not media
       </button>
+
+      {searching && (
+        <div className="review-search">
+          <input
+            type="search"
+            autoFocus
+            value={term}
+            placeholder="Search for a title…"
+            onChange={(e) => setTerm(e.target.value)}
+          />
+          {!p.kind && (
+            <select value={searchKind} onChange={(e) => setSearchKind(e.target.value as MediaKind)}>
+              <option value="movie">Movies</option>
+              <option value="series">TV</option>
+              <option value="book">Books</option>
+            </select>
+          )}
+          {results.isPending && debounced.trim().length > 1 && (
+            <span className="muted">searching…</span>
+          )}
+          {results.isError && (
+            <span className="error-text">{String((results.error as Error).message)}</span>
+          )}
+          {results.data?.length === 0 && <span className="muted">nothing found</span>}
+          {results.data?.slice(0, 8).map((r) => (
+            <button
+              key={`${r.kind}-${r.tmdbId}-${r.olid ?? ''}`}
+              className="candidate"
+              disabled={busy}
+              title={`Adopt this folder as ${r.title}${r.year ? ` (${r.year})` : ''}`}
+              onClick={() =>
+                onAccept({
+                  kind: r.kind,
+                  tmdbId: r.tmdbId,
+                  olid: r.olid,
+                  author: r.author,
+                  title: r.title,
+                  year: r.year,
+                })
+              }
+            >
+              {r.title}
+              {r.year ? ` (${r.year})` : ''}
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div className="review-error">

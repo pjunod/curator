@@ -1762,3 +1762,19 @@ a.pill-info:hover {
   color: var(--text-muted);
   background: none;
 }
+
+/* Inline provider search, inside the row. Replaces a link to the Add page,
+   which created an item at the naming-rule path and left the folder
+   unmatched — a phantom entry plus the original problem. */
+.review-search {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 4px 8px;
+}
+
+.review-search input[type='search'] {
+  min-width: 240px;
+}

@@ -38,6 +38,20 @@ type UnmatchedDir struct {
 	Name         string `json:"name"`
 }
 
+// MissingItem is a library item whose folder is not on disk.
+//
+// Carries the id, not just the path, because a list of paths is only ever
+// something to read. With the id the UI can offer the two things a user
+// actually wants — drop the entry, or point it somewhere real — and the most
+// common cause of these is an item added by title that was never attached to
+// any folder at all.
+type MissingItem struct {
+	ID    int64            `json:"id"`
+	Kind  domain.MediaKind `json:"kind"`
+	Title string           `json:"title"`
+	Path  string           `json:"path"`
+}
+
 // Report is the persisted result of the last reconcile.
 type Report struct {
 	ScannedAt    time.Time `json:"scannedAt"`
@@ -55,7 +69,10 @@ type Report struct {
 	// prefix of it when the API is asked for a page rather than the lot.
 	UnmatchedTotal int            `json:"unmatchedTotal"`
 	UnmatchedDirs  []UnmatchedDir `json:"unmatchedDirs"`
-	MissingPaths   []string       `json:"missingPaths"`
+	// MissingPaths is kept for readers that only want the paths;
+	// MissingItems is the same set with the identity needed to act on it.
+	MissingPaths []string      `json:"missingPaths"`
+	MissingItems []MissingItem `json:"missingItems"`
 }
 
 // Scan reconciles the library against disk: walks every item's folder,
@@ -69,6 +86,7 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 		ScannedAt:     start,
 		UnmatchedDirs: []UnmatchedDir{},
 		MissingPaths:  []string{},
+		MissingItems:  []MissingItem{},
 	}
 
 	items, err := s.db.ListMediaItems(ctx, "")
@@ -93,6 +111,9 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 		claimed[item.Path] = true
 		if _, err := os.Stat(item.Path); err != nil {
 			report.MissingPaths = append(report.MissingPaths, item.Path)
+			report.MissingItems = append(report.MissingItems, MissingItem{
+				ID: item.ID, Kind: item.Kind, Title: item.Title, Path: item.Path,
+			})
 			continue
 		}
 		linked, removed, err := s.scanItem(ctx, item, copies)
@@ -279,6 +300,13 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 
 // LastScanReport returns the persisted report from the most recent Scan.
 // ok is false when no scan has run yet.
+//
+// The missing-folder list is re-verified on read. It is a claim about the
+// filesystem that goes stale the moment the user acts on it — removing the
+// entry, or adopting a folder for it — and a list that keeps naming items you
+// have already dealt with is worse than no list. Re-checking is affordable
+// here precisely because this list is small: it costs one stat per *missing*
+// item, not per library item.
 func (s *Service) LastScanReport(ctx context.Context) (Report, bool, error) {
 	raw, err := s.db.GetMeta(ctx, scanReportKey)
 	if err != nil {
@@ -288,7 +316,36 @@ func (s *Service) LastScanReport(ctx context.Context) (Report, bool, error) {
 	if err := json.Unmarshal([]byte(raw), &r); err != nil {
 		return Report{}, false, err
 	}
+	r.pruneResolvedMissing(ctx, s)
 	return r, true, nil
+}
+
+// pruneResolvedMissing drops missing-folder entries that no longer apply:
+// the item was removed, or it now points at a folder that exists.
+func (r *Report) pruneResolvedMissing(ctx context.Context, s *Service) {
+	if len(r.MissingItems) == 0 {
+		return
+	}
+	keptItems := make([]MissingItem, 0, len(r.MissingItems))
+	keptPaths := make([]string, 0, len(r.MissingItems))
+	for _, m := range r.MissingItems {
+		item, err := s.db.GetMediaItemFull(ctx, m.ID)
+		if err != nil {
+			continue // entry removed — nothing missing any more
+		}
+		if item.Path == "" {
+			continue // no folder claimed, so none can be missing
+		}
+		if _, statErr := os.Stat(item.Path); statErr == nil {
+			continue // it was pointed at something real
+		}
+		m.Path = item.Path // report where it points now, not where it did
+		m.Title = item.Title
+		keptItems = append(keptItems, m)
+		keptPaths = append(keptPaths, item.Path)
+	}
+	r.MissingItems = keptItems
+	r.MissingPaths = keptPaths
 }
 
 // IgnoreDir dismisses an adoption candidate for good. Dismissals are keyed

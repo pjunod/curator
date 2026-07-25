@@ -270,6 +270,13 @@ export interface UnmatchedDir {
   name: string
 }
 
+export interface MissingItem {
+  id: number
+  kind: MediaKind
+  title: string
+  path: string
+}
+
 export interface ScanReport {
   scannedAt: string
   rootsScanned: number
@@ -282,6 +289,7 @@ export interface ScanReport {
   unmatchedTotal?: number
   unmatchedDirs: UnmatchedDir[]
   missingPaths: string[]
+  missingItems?: MissingItem[]
 }
 
 export interface Settings {

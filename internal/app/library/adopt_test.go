@@ -673,3 +673,103 @@ func TestAcceptAllPrunesTheReport(t *testing.T) {
 			len(report.UnmatchedDirs), report.UnmatchedDirs)
 	}
 }
+
+// The missing-folder list is a claim about the filesystem, and it goes stale
+// the moment the user acts on it. A list that keeps naming items you have
+// already dealt with is worse than no list.
+func TestMissingListSelfHeals(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{
+		movie(550, "Fight Club", 1999), movie(1, "Arrival", 2016),
+	}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two items added by title with a root: their folders are derived from
+	// the naming rules and do not exist. This is what the Add page produces,
+	// and it is where the reported phantoms came from.
+	gone, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixable, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindMovie, TMDBID: 1, RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := svc.Scan(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.MissingItems) != 2 {
+		t.Fatalf("precondition: want 2 missing, got %d", len(report.MissingItems))
+	}
+
+	// Resolve one by removing the entry, the other by pointing it somewhere
+	// real — the two things a user can actually do.
+	if err := svc.Delete(ctx, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(root, "Arrival (2016)")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateItem(ctx, fixable.ID, UpdateRequest{Path: &real}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without a rescan, the report must already agree.
+	after, ok, err := svc.LastScanReport(ctx)
+	if err != nil || !ok {
+		t.Fatalf("report: ok=%v err=%v", ok, err)
+	}
+	if len(after.MissingItems) != 0 {
+		t.Fatalf("missing list should be empty, still holds %+v", after.MissingItems)
+	}
+	if len(after.MissingPaths) != 0 {
+		t.Errorf("missingPaths should agree with missingItems, got %+v", after.MissingPaths)
+	}
+}
+
+// A moved item is reported at its current path, not the one recorded when the
+// scan ran.
+func TestMissingListReportsTheCurrentPath(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(550, "Fight Club", 1999)}}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point it at a different folder that also does not exist.
+	moved := filepath.Join(root, "somewhere else")
+	if _, err := svc.UpdateItem(ctx, item.ID, UpdateRequest{Path: &moved}); err != nil {
+		t.Fatal(err)
+	}
+	after, _, err := svc.LastScanReport(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.MissingItems) != 1 || after.MissingItems[0].Path != moved {
+		t.Fatalf("want the current path %q reported, got %+v", moved, after.MissingItems)
+	}
+}

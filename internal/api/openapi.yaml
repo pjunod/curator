@@ -2120,6 +2120,13 @@ components:
           type: array
           items:
             type: string
+        missingItems:
+          type: array
+          description: >
+            The same set as missingPaths, with the identity needed to act on
+            them — a list of paths is only ever something to read.
+          items:
+            $ref: "#/components/schemas/MissingItem"
 
     DirEntry:
       type: object
@@ -2252,6 +2259,20 @@ components:
           type: array
           items:
             type: string
+
+    MissingItem:
+      type: object
+      required: [id, kind, title, path]
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          $ref: "#/components/schemas/MediaKind"
+        title:
+          type: string
+        path:
+          type: string
 
     IgnoredPath:
       type: object

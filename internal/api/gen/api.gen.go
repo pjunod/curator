@@ -715,6 +715,14 @@ type MediaItemSummary struct {
 // MediaKind defines model for MediaKind.
 type MediaKind string
 
+// MissingItem defines model for MissingItem.
+type MissingItem struct {
+	Id    int64     `json:"id"`
+	Kind  MediaKind `json:"kind"`
+	Path  string    `json:"path"`
+	Title string    `json:"title"`
+}
+
 // MonitorRequest defines model for MonitorRequest.
 type MonitorRequest struct {
 	Monitored bool `json:"monitored"`
@@ -906,11 +914,14 @@ type ScanReport struct {
 	FilesRemoved int `json:"filesRemoved"`
 
 	// IgnoredDirs Directories the user has dismissed (counted, not listed).
-	IgnoredDirs  *int      `json:"ignoredDirs,omitempty"`
-	ItemsScanned int       `json:"itemsScanned"`
-	MissingPaths []string  `json:"missingPaths"`
-	RootsScanned int       `json:"rootsScanned"`
-	ScannedAt    time.Time `json:"scannedAt"`
+	IgnoredDirs  *int `json:"ignoredDirs,omitempty"`
+	ItemsScanned int  `json:"itemsScanned"`
+
+	// MissingItems The same set as missingPaths, with the identity needed to act on them — a list of paths is only ever something to read.
+	MissingItems *[]MissingItem `json:"missingItems,omitempty"`
+	MissingPaths []string       `json:"missingPaths"`
+	RootsScanned int            `json:"rootsScanned"`
+	ScannedAt    time.Time      `json:"scannedAt"`
 
 	// SkippedDirs Directories excluded by a skip pattern (counted, not listed).
 	SkippedDirs   *int           `json:"skippedDirs,omitempty"`

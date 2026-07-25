@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { RootKind } from '../api'
 import {
   addRootFolder,
+  deleteLibraryItem,
   deleteRootFolder,
   fmtBytes,
   fmtRelative,
@@ -83,6 +84,13 @@ export function SettingsPage() {
         `${res.adopted.length} adopted · ${res.review.length} need review` +
           (res.failures.length ? ` · ${res.failures.length} failed` : ''),
       )
+      void qc.invalidateQueries({ queryKey: ['scan-report'] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+  const forgetItem = useMutation({
+    mutationFn: deleteLibraryItem,
+    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['scan-report'] })
       void qc.invalidateQueries({ queryKey: ['library'] })
     },
@@ -317,17 +325,45 @@ export function SettingsPage() {
             <summary className="muted">
               Items whose folder is missing on disk ({report.data.missingPaths.length})
             </summary>
+            <p className="muted">
+              Usually an item added by title that was never attached to a folder — the path
+              below is the one the naming rules would have used, not a folder that exists.
+              Removing the entry leaves any files alone.
+            </p>
             <ul className="unmatched-list">
-              {report.data.missingPaths.slice(0, 100).map((p) => (
-                <li key={p}>
-                  <span className="mono">{p}</span>
+              {(report.data.missingItems ?? []).slice(0, 100).map((m) => (
+                <li key={m.id}>
+                  <span className="mono">{m.path}</span>
+                  <span className="match-as">
+                    <strong>{m.title}</strong>{' · '}
+                    <button
+                      className="link-btn"
+                      disabled={forgetItem.isPending}
+                      title="Remove this library entry (files on disk are untouched)"
+                      onClick={() => forgetItem.mutate(m.id)}
+                    >
+                      remove entry
+                    </button>
+                  </span>
                 </li>
               ))}
+              {/* Reports written before missingItems existed only carry paths. */}
+              {(report.data.missingItems ?? []).length === 0 &&
+                report.data.missingPaths.slice(0, 100).map((p) => (
+                  <li key={p}>
+                    <span className="mono">{p}</span>
+                  </li>
+                ))}
             </ul>
             {report.data.missingPaths.length > 100 && (
               <p className="muted">
                 Showing the first 100 of {report.data.missingPaths.length}.
               </p>
+            )}
+            {forgetItem.isError && (
+              <div className="banner warning">
+                {String((forgetItem.error as Error).message)}
+              </div>
             )}
           </details>
         )}
