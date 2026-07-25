@@ -26,16 +26,25 @@ import {
 } from '../api'
 
 // RowTest is the per-row Test button for saved indexers/clients: runs the
-// reachability test against the STORED credentials and shows ✓/✕ inline.
+// reachability test against the STORED credentials and reports the result.
+//
+// The failure message is rendered, not tucked into a title attribute. It used
+// to be a hover tooltip on a single ✕ glyph, which meant the one piece of
+// information the button exists to produce — *why* it failed — was invisible
+// unless you knew to hover a 9-pixel target, and unreachable entirely on a
+// touch screen.
 function RowTest(props: { run: () => Promise<unknown> }) {
-  const [state, setState] = useState<'idle' | 'busy' | 'ok' | string>('idle')
+  const [state, setState] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle')
+  const [message, setMessage] = useState('')
   const test = async () => {
     setState('busy')
+    setMessage('')
     try {
       await props.run()
       setState('ok')
     } catch (e) {
-      setState((e as Error).message || 'failed')
+      setState('error')
+      setMessage((e as Error).message || 'failed')
     }
   }
   return (
@@ -43,12 +52,8 @@ function RowTest(props: { run: () => Promise<unknown> }) {
       <button onClick={() => void test()} disabled={state === 'busy'}>
         {state === 'busy' ? 'Testing…' : 'Test'}
       </button>{' '}
-      {state === 'ok' && <span className="ok-text">✓</span>}
-      {state !== 'idle' && state !== 'busy' && state !== 'ok' && (
-        <span className="error-text" title={state}>
-          ✕
-        </span>
-      )}
+      {state === 'ok' && <span className="ok-text">✓ reachable</span>}
+      {state === 'error' && <span className="error-text test-error">✕ {message}</span>}
     </span>
   )
 }

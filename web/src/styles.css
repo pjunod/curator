@@ -1065,7 +1065,19 @@ a.pill-info:hover {
 }
 
 .row-test {
-  white-space: nowrap;
+  /* Was nowrap, which is fine for "Test ✕" and wrong for a sentence
+     explaining what to change. */
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* A diagnosis is a sentence, so give it room to be one. */
+.test-error {
+  max-width: 46ch;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* ---- labeled rating chips ---- */

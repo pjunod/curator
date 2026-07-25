@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
 	"github.com/monarr-media/monarr/internal/app/acquisition"
 	"github.com/monarr-media/monarr/internal/domain/format"
@@ -127,7 +128,7 @@ func (s *Server) TestIndexer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.deps.IndexerFactory(indexerInputToConfig(in)).Test(r.Context()); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, httpx.Diagnose(err, in.Url).Error())
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -242,7 +243,7 @@ func (s *Server) TestDownloadClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.deps.ClientFactory(clientInputToConfig(in)).Test(r.Context()); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, httpx.Diagnose(err, in.Url).Error())
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -257,7 +258,7 @@ func (s *Server) TestIndexerById(w http.ResponseWriter, r *http.Request, id int6
 		return
 	}
 	if err := s.deps.IndexerFactory(cfg).Test(r.Context()); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, httpx.Diagnose(err, cfg.URL).Error())
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -271,7 +272,9 @@ func (s *Server) TestDownloadClientById(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if err := s.deps.ClientFactory(cfg).Test(r.Context()); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		// A Test button exists to say what to change, not merely that
+		// something is wrong.
+		writeError(w, http.StatusBadRequest, httpx.Diagnose(err, cfg.URL).Error())
 		return
 	}
 	w.WriteHeader(http.StatusOK)
