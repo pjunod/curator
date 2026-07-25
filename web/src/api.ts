@@ -294,6 +294,17 @@ export interface Settings {
   scanSkipPatterns?: string
 }
 
+/** An API failure that still carries its HTTP status, so callers can tell a
+ *  resolvable conflict (409) from a flat rejection (400). */
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 async function parseError(res: Response, fallback: string): Promise<never> {
   let msg = fallback
   try {
@@ -302,7 +313,7 @@ async function parseError(res: Response, fallback: string): Promise<never> {
   } catch {
     /* keep fallback */
   }
-  throw new Error(msg)
+  throw new ApiError(msg, res.status)
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -343,7 +354,7 @@ export const deleteRootFolder = (id: number) => send('DELETE', `/rootfolders/${i
 export const browseFilesystem = (path: string) =>
   get<BrowseResult>(`/filesystem?path=${encodeURIComponent(path)}`)
 export const runAdoption = () => send<AdoptResult>('POST', '/library/adopt')
-export const adoptOne = (path: string, pick: AdoptionCandidate) =>
+export const adoptOne = (path: string, pick: AdoptionCandidate, force = false) =>
   send('POST', '/library/adopt/one', {
     path,
     kind: pick.kind,
@@ -351,6 +362,7 @@ export const adoptOne = (path: string, pick: AdoptionCandidate) =>
     olid: pick.olid || undefined,
     title: pick.title,
     year: pick.year,
+    force: force || undefined,
   })
 export const adoptExact = () => send<AdoptResult>('POST', '/library/adopt/exact')
 export const setRootAutoAdopt = (rootFolderId: number, autoAdopt: boolean) =>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import type { AdoptionCandidate, MediaKind, Proposal, ReviewCounts } from './api'
-import { adoptExact, adoptOne, getReviewQueue, ignoreDir } from './api'
+import { adoptExact, adoptOne, ApiError, getReviewQueue, ignoreDir } from './api'
 import { clampPage, Pager, PageSizePicker } from './Pager'
 
 // Kind tabs, matching the library's vocabulary so the same content is called
@@ -73,9 +73,35 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
   // Add page, which meant searching again, clicking Add beside the title you
   // had already picked, and being dropped on the item's page — having lost
   // your place in the queue.
+  // Failures are held per folder. A single shared error banner put the
+  // message at the top of the window, detached from the row that caused it —
+  // so a click on row seven reported itself above row one.
+  const [rowErrors, setRowErrors] = useState<Record<string, { message: string; conflict: boolean }>>(
+    {},
+  )
+  const clearRowError = (path: string) =>
+    setRowErrors((prev) => {
+      const { [path]: _drop, ...rest } = prev
+      return rest
+    })
+
   const accept = useMutation({
-    mutationFn: ({ path, pick }: { path: string; pick: AdoptionCandidate }) => adoptOne(path, pick),
-    onSuccess: refresh,
+    mutationFn: ({ path, pick, force }: { path: string; pick: AdoptionCandidate; force?: boolean }) =>
+      adoptOne(path, pick, force),
+    onSuccess: (_data, vars) => {
+      clearRowError(vars.path)
+      refresh()
+    },
+    onError: (err, vars) => {
+      setRowErrors((prev) => ({
+        ...prev,
+        [vars.path]: {
+          message: (err as Error).message,
+          // 409 means the user can resolve it by moving the entry here.
+          conflict: err instanceof ApiError && err.status === 409,
+        },
+      }))
+    },
   })
   const acceptAll = useMutation({
     mutationFn: adoptExact,
@@ -136,12 +162,26 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
               look
             </span>
           )}
-          {(accept.isError || acceptAll.isError) && (
-            <span className="error-text">
-              {String(((accept.error ?? acceptAll.error) as Error).message)}
-            </span>
+          {acceptAll.isError && (
+            <span className="error-text">{String((acceptAll.error as Error).message)}</span>
           )}
         </div>
+
+        {acceptAll.data && acceptAll.data.failures.length > 0 && (
+          <details className="banner warning">
+            <summary>
+              {acceptAll.data.failures.length} folder
+              {acceptAll.data.failures.length > 1 ? 's' : ''} could not be adopted
+            </summary>
+            <ul className="unmatched-list">
+              {acceptAll.data.failures.map((f) => (
+                <li key={f}>
+                  <span className="mono">{f}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
 
         <div className="form-row">
           <input
@@ -176,7 +216,8 @@ export function ReviewWindow({ onClose }: { onClose: () => void }) {
               key={p.path}
               p={p}
               busy={accept.isPending || acceptAll.isPending}
-              onAccept={(pick) => accept.mutate({ path: p.path, pick })}
+              error={rowErrors[p.path]}
+              onAccept={(pick, force) => accept.mutate({ path: p.path, pick, force })}
               onDismiss={() => dismiss.mutate(p.path)}
             />
           ))}
@@ -201,14 +242,16 @@ function ReviewRow({
   onAccept,
   onDismiss,
   busy,
+  error,
 }: {
   p: Proposal
-  onAccept: (pick: AdoptionCandidate) => void
+  onAccept: (pick: AdoptionCandidate, force?: boolean) => void
   onDismiss: () => void
   busy: boolean
+  error?: { message: string; conflict: boolean }
 }) {
   return (
-    <div className="review-row">
+    <div className={error ? 'review-row has-error' : 'review-row'}>
       <div className="review-main">
         <span className="mono">{p.name}</span>
         <span className="muted review-parsed">
@@ -256,6 +299,21 @@ function ReviewRow({
       >
         not media
       </button>
+
+      {error && (
+        <div className="review-error">
+          <span className="error-text">{error.message}</span>
+          {error.conflict && p.candidates.length > 0 && (
+            <button
+              disabled={busy}
+              title="Move the existing library entry to this folder"
+              onClick={() => onAccept(p.candidates[0], true)}
+            >
+              Point the entry at this folder
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

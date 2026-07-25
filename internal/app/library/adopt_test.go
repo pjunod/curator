@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -300,7 +301,7 @@ func TestAdoptOneAcceptsAChosenCandidate(t *testing.T) {
 
 	// The 1922 version, deliberately not the one adoption would have picked:
 	// the user's choice has to win over the proposal's ranking.
-	if err := svc.AdoptOne(ctx, folder, movie(2, "Nosferatu", 1922)); err != nil {
+	if err := svc.AdoptOne(ctx, folder, movie(2, "Nosferatu", 1922), false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -326,7 +327,7 @@ func TestAdoptOneAcceptsAChosenCandidate(t *testing.T) {
 func TestAdoptOneRefusesUnofferedPaths(t *testing.T) {
 	svc, _, _ := newService(t)
 	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(1, "Anything", 2020)}}
-	err := svc.AdoptOne(context.Background(), "/etc", movie(1, "Anything", 2020))
+	err := svc.AdoptOne(context.Background(), "/etc", movie(1, "Anything", 2020), false)
 	if err == nil {
 		t.Fatal("want a refusal for a path that is not awaiting review")
 	}
@@ -413,7 +414,7 @@ func TestAdoptOneRelinksAnItemThatHasNoFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := svc.AdoptOne(ctx, folder, movie(550, "Fight Club", 1999)); err != nil {
+	if err := svc.AdoptOne(ctx, folder, movie(550, "Fight Club", 1999), false); err != nil {
 		t.Fatalf("adopting a folder for an item that has no folder should relink it: %v", err)
 	}
 
@@ -464,16 +465,35 @@ func TestAdoptOneRefusesToStealAFolderThatExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = svc.AdoptOne(ctx, second, movie(550, "Fight Club", 1999))
+	err = svc.AdoptOne(ctx, second, movie(550, "Fight Club", 1999), false)
 	if err == nil {
 		t.Fatal("want a refusal: the title already has a folder that exists")
 	}
-	if !strings.Contains(err.Error(), first) {
-		t.Errorf("the error should name the conflicting folder %q, got %v", first, err)
+	if !errors.Is(err, ErrFolderConflict) {
+		t.Errorf("want ErrFolderConflict so the UI can offer a resolution, got %v", err)
+	}
+	// Both paths must appear: the difference is often one character (a
+	// hyphen against an en dash) and prose cannot show that.
+	if !strings.Contains(err.Error(), first) || !strings.Contains(err.Error(), second) {
+		t.Errorf("the error must name both folders (%q and %q), got %v", first, second, err)
 	}
 	// The original placement is untouched.
 	got, _ := svc.Get(ctx, item.ID)
 	if got.Path != first {
 		t.Errorf("item path moved to %q; it should still be %q", got.Path, first)
+	}
+
+	// ...until the user says so explicitly, which is the resolution the UI
+	// offers on that error.
+	if err := svc.AdoptOne(ctx, second, movie(550, "Fight Club", 1999), true); err != nil {
+		t.Fatalf("an explicit force should move the entry: %v", err)
+	}
+	moved, _ := svc.Get(ctx, item.ID)
+	if moved.Path != second {
+		t.Errorf("after force the item should sit at %q, got %q", second, moved.Path)
+	}
+	// Still one item — forcing must not duplicate.
+	if items, _ := svc.List(ctx, domain.KindMovie); len(items) != 1 {
+		t.Errorf("want 1 item after a forced move, got %d", len(items))
 	}
 }

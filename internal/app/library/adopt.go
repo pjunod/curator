@@ -44,6 +44,11 @@ type Proposal struct {
 	Kind         domain.MediaKind     `json:"kind,omitempty"` // "" in a mixed root
 	Confidence   Confidence           `json:"confidence"`
 	Candidates   []ports.SearchResult `json:"candidates"`
+	// Force re-points an existing library entry at this folder even when it
+	// already points at a directory that exists. Only ever set by an
+	// explicit single-folder request — bulk adoption must never take a
+	// folder away from another entry on its own initiative.
+	Force bool `json:"-"`
 }
 
 // maxProposalCandidates is how many options a review row carries. Three is
@@ -324,7 +329,7 @@ func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 		// earlier import, that has never been pointed at the files it
 		// describes. Adopting the folder is exactly how you say "this
 		// folder is that item".
-		return s.relinkExisting(ctx, p, win)
+		return s.relinkExisting(ctx, p, win, p.Force)
 	}
 	if err != nil {
 		return err
@@ -455,7 +460,7 @@ func (s *Service) adoptedRoots(ctx context.Context) map[int64]bool {
 // ceremony: the endpoint writes a library item pointed at a directory, and
 // accepting an arbitrary caller-supplied path would let anyone with a session
 // aim the library anywhere on the host.
-func (s *Service) AdoptOne(ctx context.Context, path string, pick ports.SearchResult) error {
+func (s *Service) AdoptOne(ctx context.Context, path string, pick ports.SearchResult, force bool) error {
 	clean := filepath.Clean(path)
 	queue := s.loadReviewQueue(ctx)
 	var found *Proposal
@@ -477,6 +482,7 @@ func (s *Service) AdoptOne(ctx context.Context, path string, pick ports.SearchRe
 
 	p := *found
 	p.Candidates = []ports.SearchResult{pick}
+	p.Force = force
 	if err := s.adoptOne(ctx, p); err != nil {
 		return err
 	}
@@ -544,7 +550,7 @@ func (s *Service) dropFromReviewQueue(ctx context.Context, path string) {
 // one title — and silently moving the pointer would detach whatever files the
 // other folder holds. The error names the other path, so the choice is
 // informed rather than a mystery.
-func (s *Service) relinkExisting(ctx context.Context, p Proposal, win ports.SearchResult) error {
+func (s *Service) relinkExisting(ctx context.Context, p Proposal, win ports.SearchResult, force bool) error {
 	var id int64
 	var err error
 	switch {
@@ -568,11 +574,16 @@ func (s *Service) relinkExisting(ctx context.Context, p Proposal, win ports.Sear
 		// what a re-run looks like.
 		return nil
 	}
-	if existing.Path != "" {
+	if existing.Path != "" && !force {
 		if _, statErr := os.Stat(existing.Path); statErr == nil {
+			// Two folders claiming one title. Which one is right is a
+			// question only the user can answer, so name both paths
+			// verbatim — the difference is often a single character
+			// (a hyphen against an en dash) that prose cannot show.
 			return fmt.Errorf(
-				"%w: %s is already in the library at %s — dismiss this folder, or remove the other entry first",
-				ErrAlreadyExists, existing.Title, existing.Path)
+				"%w: %q is already in the library at %q, and this is %q. "+
+					"Point the entry at this folder, or dismiss it",
+				ErrFolderConflict, existing.Title, existing.Path, p.Path)
 		}
 	}
 

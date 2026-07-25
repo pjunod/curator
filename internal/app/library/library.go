@@ -33,6 +33,11 @@ var (
 	// ErrNestedRoot is returned when a root would contain, or sit inside,
 	// one that is already registered (ADR 0009 §3).
 	ErrNestedRoot = errors.New("root folders may not nest")
+	// ErrFolderConflict is returned when two folders claim one title and
+	// both exist on disk. Distinct from ErrAlreadyExists because it is
+	// resolvable by the user rather than simply wrong: they know which
+	// folder holds the files.
+	ErrFolderConflict = errors.New("another folder already holds this title")
 )
 
 // MediaAdded is published on the bus after a successful add.

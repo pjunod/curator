@@ -1090,6 +1090,8 @@ type ConfirmRootAdoptedJSONBody struct {
 
 // AdoptOneJSONBody defines parameters for AdoptOne.
 type AdoptOneJSONBody struct {
+	// Force Re-point an existing library entry at this folder even when it already points at a directory that exists. The caller must have been told which other folder it is.
+	Force  *bool      `json:"force,omitempty"`
 	Kind   *MediaKind `json:"kind,omitempty"`
 	Olid   *string    `json:"olid,omitempty"`
 	Path   string     `json:"path"`

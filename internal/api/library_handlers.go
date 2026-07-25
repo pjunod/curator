@@ -841,7 +841,15 @@ func (s *Server) AdoptOne(w http.ResponseWriter, r *http.Request) {
 	if body.Year != nil {
 		pick.Year = *body.Year
 	}
-	if err := s.deps.Library.AdoptOne(r.Context(), body.Path, pick); err != nil {
+	force := body.Force != nil && *body.Force
+	if err := s.deps.Library.AdoptOne(r.Context(), body.Path, pick, force); err != nil {
+		// A folder conflict is resolvable by the user, so it gets its own
+		// status: the UI offers "move it here" rather than treating this as
+		// a flat rejection.
+		if errors.Is(err, library.ErrFolderConflict) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

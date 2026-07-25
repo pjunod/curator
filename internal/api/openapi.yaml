@@ -332,11 +332,26 @@ paths:
                   type: string
                 year:
                   type: integer
+                force:
+                  type: boolean
+                  description: >
+                    Re-point an existing library entry at this folder even
+                    when it already points at a directory that exists. The
+                    caller must have been told which other folder it is.
       responses:
         "204":
           description: Adopted; the folder leaves the review queue.
         "400":
           description: Not a folder awaiting review, or the match was rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Another folder already holds this title and also exists on disk.
+            Resolvable: retry with force to move the entry here, or dismiss
+            this folder.
           content:
             application/json:
               schema:

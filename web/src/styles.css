@@ -1730,3 +1730,27 @@ a.pill-info:hover {
   background: var(--accent-soft);
   color: var(--accent);
 }
+
+/* A row carries its own failure, underneath itself. A shared banner at the
+   top of the window reported row seven's error above row one. */
+.review-row {
+  flex-wrap: wrap;
+}
+
+.review-row.has-error {
+  background: color-mix(in srgb, var(--error) 7%, transparent);
+  border-radius: 8px;
+}
+
+.review-error {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 2px 4px 6px;
+}
+
+.review-error .error-text {
+  overflow-wrap: anywhere;
+}
