@@ -148,3 +148,45 @@ func TestBrowseResolvesSymlinks(t *testing.T) {
 		t.Fatalf("listing through a symlink should show the target's dirs, got %+v", res.Dirs)
 	}
 }
+
+// THE BUG THIS GUARDS: Browse enumerates the symlink-resolved tree, but roots
+// are stored as the path the user typed. Comparing the two directly meant a
+// root reached through a symlink never matched, so the picker offered a folder
+// that was already registered and the add then failed as a duplicate.
+//
+// This reproduced on every macOS machine and on no Linux one, because /var is
+// a symlink to /private/var there and t.TempDir() lives under it. The symlink
+// here is explicit so the platform stops being the variable.
+func TestBrowseFlagsARootReachedThroughASymlink(t *testing.T) {
+	base, svc := browseFixture(t)
+	ctx := context.Background()
+
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(base, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	// Registered under the LINK path, browsed through it as well: the resolved
+	// entries underneath will carry the real path either way.
+	if _, err := svc.AddRootFolder(ctx, filepath.Join(link, "Movies"),
+		domain.RootKindOf(domain.KindMovie)); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.Browse(ctx, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen bool
+	for _, d := range res.Dirs {
+		if d.Name != "Movies" {
+			continue
+		}
+		seen = true
+		if !d.Registered {
+			t.Error("a root registered through a symlink is not flagged, so the picker offers it as free")
+		}
+	}
+	if !seen {
+		t.Fatal("Movies missing from the listing")
+	}
+}

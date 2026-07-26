@@ -71,10 +71,25 @@ func (s *Service) Browse(ctx context.Context, path string) (BrowseResult, error)
 		return BrowseResult{}, errNotReadable(clean)
 	}
 
+	// Roots are stored as the path the user typed; this listing enumerates the
+	// symlink-RESOLVED tree. Comparing the two directly means a root reached
+	// through a symlink never matches, and the picker offers a folder that is
+	// already taken — the add then fails as a duplicate, which is precisely
+	// what this flag exists to prevent.
+	//
+	// Not a corner case: /var is a symlink to /private/var on macOS, /mnt/media
+	// is routinely a link to somewhere else, and container bind mounts and NAS
+	// volume paths are links more often than not.
+	//
+	// Both forms go in the set. A root whose disk is currently unplugged will
+	// not resolve, and it must still read as registered.
 	registered := map[string]bool{}
 	if roots, err := s.db.ListRootFolders(ctx); err == nil {
 		for _, rf := range roots {
 			registered[rf.Path] = true
+			if r, err := filepath.EvalSymlinks(rf.Path); err == nil {
+				registered[r] = true
+			}
 		}
 	}
 
