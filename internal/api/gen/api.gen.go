@@ -655,6 +655,33 @@ type ImportListInput struct {
 // ImportListInputType defines model for ImportListInput.Type.
 type ImportListInputType string
 
+// ImportOutcome defines model for ImportOutcome.
+type ImportOutcome struct {
+	// Files Every file considered, in payload order.
+	Files []ImportedFile `json:"files"`
+
+	// Imported How many files landed in the library.
+	Imported int `json:"imported"`
+
+	// Upgrade Whether any of them replaced something already there.
+	Upgrade bool `json:"upgrade"`
+}
+
+// ImportedFile defines model for ImportedFile.
+type ImportedFile struct {
+	Imported bool   `json:"imported"`
+	Name     string `json:"name"`
+
+	// Quality The quality monarr judged the file by, e.g. "WEB-DL 1080p".
+	Quality *string `json:"quality,omitempty"`
+
+	// Reason Why it was not imported. Empty when it was.
+	Reason *string `json:"reason,omitempty"`
+
+	// Upgrade This file replaced one already in the library.
+	Upgrade *bool `json:"upgrade,omitempty"`
+}
+
 // Indexer defines model for Indexer.
 type Indexer struct {
 	ApiKey     *string         `json:"apiKey,omitempty"`

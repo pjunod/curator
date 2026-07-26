@@ -978,6 +978,59 @@ a.pill-info:hover {
   box-shadow: inset 0 0 0 1px var(--warning);
 }
 
+/* ---- seasons ---- */
+/* A disclosure we own rather than <details>/<summary>: the row carries two
+   real controls, and interactive content inside a <summary> is invalid HTML
+   that WebKit refuses to activate. See the comment in MediaDetail.tsx. */
+.season {
+  border-top: 1px solid var(--border);
+  padding: 6px 0;
+}
+
+.season:first-of-type {
+  border-top: none;
+}
+
+.season-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.season-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.season-toggle:hover {
+  color: var(--accent);
+}
+
+.season-caret {
+  display: inline-block;
+  width: 1em;
+  color: var(--text-muted);
+}
+
+/* ---- manual import outcomes ---- */
+.import-outcome {
+  margin-top: 10px;
+}
+
+.import-outcome td {
+  vertical-align: top;
+}
+
 /* ---- quality profile editor ---- */
 .profile-form {
   display: flex;

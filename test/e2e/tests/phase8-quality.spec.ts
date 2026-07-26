@@ -109,3 +109,70 @@ test('a measured file reports its facts, not an apology', async ({ request }) =>
   }
   expect(seen).toBeGreaterThan(0)
 })
+
+// The season monitor toggle must be a real, clickable control.
+//
+// It used to live inside a <summary>, which is invalid HTML — a <summary> is
+// exposed as a button and you cannot nest a checkbox in a button. Chromium
+// tolerated it; WebKit does not, so on Safari there was simply no way to
+// monitor or unmonitor a season. On top of that the checkbox was controlled by
+// server state with no optimistic update and no error handler, so it did not
+// move until a round-trip landed and said nothing at all when one failed.
+//
+// The test sets its own starting state rather than assuming one: earlier specs
+// share this library.
+test('a season can be monitored and unmonitored from the item page', async ({ page, request }) => {
+  const series = await (await request.get('/api/v1/library?kind=series')).json()
+  const seriesId = series[0].id
+  const seasonMonitored = async () => {
+    const item = await (await request.get(`/api/v1/library/${seriesId}`)).json()
+    return item.seasons.find((s: { number: number }) => s.number === 1)?.monitored
+  }
+  await request.patch(`/api/v1/library/${seriesId}/seasons/1`, { data: { monitored: true } })
+
+  await page.goto(`/library/${seriesId}`)
+  const box = page.getByLabel('Monitor Season 1')
+  await expect(box).toBeVisible()
+  await expect(box).toBeChecked()
+
+  // Off. The box moves immediately (optimistic) and the server agrees after.
+  await box.click()
+  await expect(box).not.toBeChecked()
+  await expect.poll(seasonMonitored).toBe(false)
+
+  // Unmonitoring cascades to the season's episodes, and the UI shows that
+  // without waiting for a refetch.
+  await expect(page.getByLabel('Monitor episode 1x1')).not.toBeChecked()
+
+  // And back on.
+  await box.click()
+  await expect(box).toBeChecked()
+  await expect.poll(seasonMonitored).toBe(true)
+})
+
+// The season header is a disclosure AND carries two controls; clicking the
+// checkbox must not collapse the episode table, and vice versa.
+test('the season disclosure and its controls do not fight each other', async ({
+  page,
+  request,
+}) => {
+  const series = await (await request.get('/api/v1/library?kind=series')).json()
+  await page.goto(`/library/${series[0].id}`)
+
+  const toggle = page.getByRole('button', { name: /Season 1/ })
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+  // Toggling monitoring leaves the episode table open.
+  const box = page.getByLabel('Monitor Season 1')
+  const before = await box.isChecked()
+  await box.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await box.click()
+  await expect(box).toBeChecked({ checked: before })
+
+  // And the disclosure still works on its own.
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+})

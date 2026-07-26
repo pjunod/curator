@@ -641,8 +641,24 @@ export const importQueueItem = (id: number) => send('POST', `/queue/${id}/import
 export const blocklistQueueItem = (id: number) => send('POST', `/queue/${id}/blocklist`)
 export const scanImportPath = (path: string) =>
   get<ScannedFile[]>(`/import/scan?path=${encodeURIComponent(path)}`)
+/** What happened to one file in an import — including why it did not land. */
+export interface ImportedFile {
+  name: string
+  imported: boolean
+  upgrade?: boolean
+  quality?: string
+  /** Why it was declined. Empty when it was imported. */
+  reason?: string
+}
+
+export interface ImportOutcome {
+  imported: number
+  upgrade: boolean
+  files: ImportedFile[]
+}
+
 export const manualImport = (req: ManualImportRequest) =>
-  send<{ files: number }>('POST', '/import/manual', req)
+  send<ImportOutcome>('POST', '/import/manual', req)
 
 export function posterUrl(path: string, size: 'w185' | 'w342' | 'w500' = 'w342'): string {
   if (!path) return ''

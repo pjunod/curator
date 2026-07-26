@@ -1208,16 +1208,17 @@ paths:
             schema: { $ref: "#/components/schemas/ManualImportRequest" }
       responses:
         "200":
-          description: Imported; returns how many files landed.
+          description: >
+            Imported. Reports what happened to EVERY file, including the ones
+            that did not land and why — a refusal without a reason is
+            indistinguishable from a bug.
           content:
             application/json:
-              schema:
-                type: object
-                required: [files]
-                properties:
-                  files: { type: integer }
+              schema: { $ref: "#/components/schemas/ImportOutcome" }
         "400":
-          description: Import failed.
+          description: >
+            Nothing imported. The message names each file and the reason it
+            was declined.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2757,6 +2758,38 @@ components:
         episodes:
           type: array
           items: { type: integer }
+
+    ImportOutcome:
+      type: object
+      required: [files, imported, upgrade]
+      properties:
+        imported:
+          type: integer
+          description: How many files landed in the library.
+        upgrade:
+          type: boolean
+          description: Whether any of them replaced something already there.
+        files:
+          type: array
+          description: Every file considered, in payload order.
+          items:
+            $ref: "#/components/schemas/ImportedFile"
+
+    ImportedFile:
+      type: object
+      required: [name, imported]
+      properties:
+        name: { type: string }
+        imported: { type: boolean }
+        upgrade:
+          type: boolean
+          description: This file replaced one already in the library.
+        quality:
+          type: string
+          description: The quality monarr judged the file by, e.g. "WEB-DL 1080p".
+        reason:
+          type: string
+          description: Why it was not imported. Empty when it was.
 
     ManualImportRequest:
       type: object

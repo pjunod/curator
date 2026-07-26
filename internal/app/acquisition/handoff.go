@@ -88,14 +88,21 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	}
 	s.advance(ctx, &dl, "importing", 1, "", stepImporting,
 		"looking for media files in "+orNone(imp))
-	files, upgraded, err := s.importDownload(ctx, dl, imp)
+	// Automatic import: gated by the profile, because that is what a profile
+	// is for. A manual import is the override and passes manual=true.
+	result, err := s.importDownload(ctx, dl, imp, false)
 	if err != nil {
 		s.failImport(ctx, &dl, err.Error())
 		return err
 	}
-	detail := fmt.Sprintf("imported %d file(s) into the library", files)
-	if upgraded {
+	detail := fmt.Sprintf("imported %d file(s) into the library", result.Imported)
+	if result.Upgraded {
 		detail += " (upgrade)"
+	}
+	// A partial import is not a failure, but it is a thing the user needs to
+	// be able to see afterwards without reading the server log.
+	if skipped := result.Skipped(); len(skipped) > 0 {
+		detail += fmt.Sprintf("; %d skipped — %s", len(skipped), result.reasons(3))
 	}
 	s.advance(ctx, &dl, "imported", 1, "", stepImported, detail)
 	s.InvalidateWanted()

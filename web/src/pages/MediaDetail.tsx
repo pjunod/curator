@@ -415,6 +415,9 @@ export function MediaDetailPage() {
   const [editing, setEditing] = useState(false)
   // Interactive search target: null = closed; {season?, episode?} = open.
   const [searching, setSearching] = useState<{ season?: number; episode?: number } | null>(null)
+  // Season disclosure state. Season 1 opens by default; anything the user
+  // toggles is remembered for the life of the page.
+  const [openSeasons, setOpenSeasons] = useState<Record<number, boolean>>({})
 
   const item = useQuery({
     queryKey: ['library-item', id],
@@ -452,22 +455,81 @@ export function MediaDetailPage() {
     onError: (e) => setAutoMsg(`✕ ${(e as Error).message}`),
   })
 
-  // Granular monitoring: the API returns the updated item — write it
-  // straight into the cache so checkboxes feel instant.
+  // Granular monitoring. These checkboxes are OPTIMISTIC on purpose: they are
+  // controlled by server state, so without this the box does not move until a
+  // round-trip completes, and a control that does not respond to a click reads
+  // as a control that does not work. The old version also swallowed errors
+  // entirely — a failed request left the box exactly where it started with no
+  // message, which is indistinguishable from "this feature is missing".
   const monitorSeason = useMutation({
     mutationFn: (v: { season: number; monitored: boolean }) =>
       setSeasonMonitored(Number(id), v.season, v.monitored),
+    onMutate: async (v) => {
+      const key = ['library-item', id]
+      // Cancel in-flight refetches first: one landing after this write would
+      // overwrite the optimistic value with the state we are changing away
+      // from, and the box would visibly snap back.
+      await qc.cancelQueries({ queryKey: key })
+      const previous = qc.getQueryData<MediaItemDetail>(key)
+      if (previous) {
+        qc.setQueryData<MediaItemDetail>(key, {
+          ...previous,
+          seasons: previous.seasons.map((s) =>
+            s.number === v.season
+              ? {
+                  ...s,
+                  monitored: v.monitored,
+                  // Unmonitoring a season cascades to its episodes server-side;
+                  // show that immediately rather than half a state.
+                  episodes: s.episodes.map((e) => ({ ...e, monitored: v.monitored })),
+                }
+              : s,
+          ),
+        })
+      }
+      return { previous }
+    },
     onSuccess: (detail) => {
       qc.setQueryData(['library-item', id], detail)
       void qc.invalidateQueries({ queryKey: ['wanted'] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+    },
+    onError: (e, _v, ctx) => {
+      if (ctx?.previous) qc.setQueryData(['library-item', id], ctx.previous)
+      setAutoMsg(`✕ could not change season monitoring: ${(e as Error).message}`)
     },
   })
   const monitorEpisode = useMutation({
     mutationFn: (v: { episodeId: number; monitored: boolean }) =>
       setEpisodeMonitored(Number(id), v.episodeId, v.monitored),
+    onMutate: async (v) => {
+      const key = ['library-item', id]
+      // Cancel in-flight refetches first: one landing after this write would
+      // overwrite the optimistic value with the state we are changing away
+      // from, and the box would visibly snap back.
+      await qc.cancelQueries({ queryKey: key })
+      const previous = qc.getQueryData<MediaItemDetail>(key)
+      if (previous) {
+        qc.setQueryData<MediaItemDetail>(key, {
+          ...previous,
+          seasons: previous.seasons.map((s) => ({
+            ...s,
+            episodes: s.episodes.map((e) =>
+              e.id === v.episodeId ? { ...e, monitored: v.monitored } : e,
+            ),
+          })),
+        })
+      }
+      return { previous }
+    },
     onSuccess: (detail) => {
       qc.setQueryData(['library-item', id], detail)
       void qc.invalidateQueries({ queryKey: ['wanted'] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+    },
+    onError: (e, _v, ctx) => {
+      if (ctx?.previous) qc.setQueryData(['library-item', id], ctx.previous)
+      setAutoMsg(`✕ could not change episode monitoring: ${(e as Error).message}`)
     },
   })
 
@@ -678,82 +740,107 @@ export function MediaDetailPage() {
       {m.kind === 'series' && (
         <section className="panel">
           <h2>Seasons</h2>
+          {/* Deliberately NOT <details>/<summary>. The season row carries two
+              controls — the monitor checkbox and Search pack — and interactive
+              content inside a <summary> is invalid HTML (a <summary> is
+              exposed as a button, and you cannot nest a checkbox in a button).
+              Chromium tolerated it; WebKit does not, so on Safari the season
+              monitor toggle simply could not be clicked. A disclosure we own
+              behaves the same everywhere. */}
           {m.seasons.map((s) => {
             const have = s.episodes.filter((e) => e.hasFile).length
+            const open = openSeasons[s.number] ?? s.number === 1
+            const label = s.number === 0 ? 'Specials' : `Season ${s.number}`
             return (
-              <details key={s.number} open={s.number === 1}>
-                <summary>
+              <div key={s.number} className="season">
+                <div className="season-head">
                   <input
                     type="checkbox"
                     className="monitor-box"
-                    title={s.monitored ? 'Monitored — untick to stop wanting this season' : 'Unmonitored — tick to want this season'}
-                    aria-label={`Monitor season ${s.number}`}
+                    title={
+                      s.monitored
+                        ? 'Monitored — untick to stop wanting this season'
+                        : 'Unmonitored — tick to want this season'
+                    }
+                    aria-label={`Monitor ${label}`}
                     checked={s.monitored}
-                    disabled={monitorSeason.isPending}
-                    onClick={(e) => e.stopPropagation()}
                     onChange={(e) =>
                       monitorSeason.mutate({ season: s.number, monitored: e.target.checked })
                     }
-                  />{' '}
-                  {s.number === 0 ? 'Specials' : `Season ${s.number}`}{' '}
-                  <span className="muted">
-                    {have}/{s.episodes.length} on disk{s.monitored ? '' : ' · unmonitored'}
-                  </span>
+                  />
                   <button
-                    className="summary-action"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      setSearching({ season: s.number })
-                    }}
+                    type="button"
+                    className="season-toggle"
+                    aria-expanded={open}
+                    onClick={() => setOpenSeasons((prev) => ({ ...prev, [s.number]: !open }))}
                   >
-                    Search pack
+                    <span className="season-caret" aria-hidden="true">
+                      {open ? '▾' : '▸'}
+                    </span>{' '}
+                    {label}{' '}
+                    <span className="muted">
+                      {have}/{s.episodes.length} on disk{s.monitored ? '' : ' · unmonitored'}
+                    </span>
                   </button>
-                </summary>
-                <table>
-                  <thead>
-                    <tr>
-                      <th></th>
-                      <th>#</th>
-                      <th>Title</th>
-                      <th>Air date</th>
-                      <th>File</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {s.episodes.map((e) => (
-                      <tr key={e.id} className={e.monitored ? '' : 'row-unmonitored'}>
-                        <td>
-                          <input
-                            type="checkbox"
-                            className="monitor-box"
-                            title={e.monitored ? 'Monitored' : 'Unmonitored'}
-                            aria-label={`Monitor episode ${e.seasonNumber}x${e.episodeNumber}`}
-                            checked={e.monitored}
-                            disabled={monitorEpisode.isPending}
-                            onChange={(ev) =>
-                              monitorEpisode.mutate({ episodeId: e.id, monitored: ev.target.checked })
-                            }
-                          />
-                        </td>
-                        <td className="mono">
-                          {e.seasonNumber}x{String(e.episodeNumber).padStart(2, '0')}
-                        </td>
-                        <td>{e.title || <span className="muted">TBA</span>}</td>
-                        <td className="muted">{e.airDate || '—'}</td>
-                        <td>{e.hasFile ? <span className="pill pill-ok">✓</span> : <span className="muted">—</span>}</td>
-                        <td>
-                          <button
-                            onClick={() => setSearching({ season: e.seasonNumber, episode: e.episodeNumber })}
-                          >
-                            Search
-                          </button>
-                        </td>
+                  <button onClick={() => setSearching({ season: s.number })}>Search pack</button>
+                </div>
+                {open && (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th></th>
+                        <th>#</th>
+                        <th>Title</th>
+                        <th>Air date</th>
+                        <th>File</th>
+                        <th></th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </details>
+                    </thead>
+                    <tbody>
+                      {s.episodes.map((e) => (
+                        <tr key={e.id} className={e.monitored ? '' : 'row-unmonitored'}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              className="monitor-box"
+                              title={e.monitored ? 'Monitored' : 'Unmonitored'}
+                              aria-label={`Monitor episode ${e.seasonNumber}x${e.episodeNumber}`}
+                              checked={e.monitored}
+                              onChange={(ev) =>
+                                monitorEpisode.mutate({
+                                  episodeId: e.id,
+                                  monitored: ev.target.checked,
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="mono">
+                            {e.seasonNumber}x{String(e.episodeNumber).padStart(2, '0')}
+                          </td>
+                          <td>{e.title || <span className="muted">TBA</span>}</td>
+                          <td className="muted">{e.airDate || '—'}</td>
+                          <td>
+                            {e.hasFile ? (
+                              <span className="pill pill-ok">✓</span>
+                            ) : (
+                              <span className="muted">—</span>
+                            )}
+                          </td>
+                          <td>
+                            <button
+                              onClick={() =>
+                                setSearching({ season: e.seasonNumber, episode: e.episodeNumber })
+                              }
+                            >
+                              Search
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             )
           })}
         </section>

@@ -257,12 +257,12 @@ func TestManualImportLooseFiles(t *testing.T) {
 		t.Errorf("scan parse wrong: %+v", scanned[0])
 	}
 
-	n, err := svc.ManualImport(ctx, ManualImportRequest{Path: dir, MediaItemID: itemID})
+	result, err := svc.ManualImport(ctx, ManualImportRequest{Path: dir, MediaItemID: itemID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Errorf("imported %d files, want 1", n)
+	if result.Imported != 1 {
+		t.Errorf("imported %d files, want 1: %+v", result.Imported, result.Files)
 	}
 	if item, _ := db.GetMediaItemFull(ctx, itemID); len(item.Files) != 1 {
 		t.Errorf("expected 1 imported file: %+v", item.Files)

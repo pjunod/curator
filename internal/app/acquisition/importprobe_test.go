@@ -4,9 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/monarr-media/monarr/internal/domain/mediainfo"
+	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/monarr-media/monarr/internal/infra/sqlite"
 	"github.com/monarr-media/monarr/internal/ports"
 )
 
@@ -177,5 +180,115 @@ func TestImportOfAnUnmeasurableFileKeepsTheClaim(t *testing.T) {
 	if rec.Quality.Resolution != 1080 || rec.Provenance != mediainfo.ProvenanceRelease {
 		t.Errorf("record = %+v, want the release's own claim at provenance %q",
 			rec, mediainfo.ProvenanceRelease)
+	}
+}
+
+// TestImportSaysWhyItSkippedEveryFile is the regression for the message a user
+// actually got when an import declined everything: "no files imported from
+// /working/monarr/completed/…" and nothing else. The reasons were computed and
+// even logged, then dropped before reaching the person who needed them — and a
+// refusal without a reason is indistinguishable from a bug.
+func TestImportSaysWhyItSkippedEveryFile(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setup(t, nil, client)
+	ctx := context.Background()
+	item, _ := db.GetMediaItemFull(ctx, itemID)
+
+	// S01E01 already on disk at exactly the profile's target.
+	seasonDir := filepath.Join(item.Path, "Season 1")
+	if err := os.MkdirAll(seasonDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(seasonDir, "Test Show - S01E01 - Pilot [WEB-DL 1080p].mkv")
+	if err := os.WriteFile(existing, []byte("already here"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fid, err := db.UpsertFile(ctx, itemID, 0, existing, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep1, err := db.GetEpisodeID(ctx, itemID, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReplaceFileEpisodeLinks(ctx, fid, []int64{ep1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFileQualityFrom(ctx, fid,
+		quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone); err != nil {
+		t.Fatal(err)
+	}
+
+	// A payload offering the same episode at the same quality: legitimately
+	// nothing to do, automatically.
+	payload := t.TempDir()
+	name := "Test.Show.S01E01.1080p.WEB-DL.x264-SAME.mkv"
+	if err := os.WriteFile(filepath.Join(payload, name), []byte("same again"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := sqlite.Download{MediaItemID: itemID, ReleaseTitle: "Test.Show.S01E01.1080p.WEB-DL.x264-SAME"}
+	result, err := svc.importDownload(ctx, dl, payload, false)
+	if err == nil {
+		t.Fatal("expected the automatic import to decline")
+	}
+	if !strings.Contains(err.Error(), name) {
+		t.Errorf("error does not name the file: %v", err)
+	}
+	if !strings.Contains(err.Error(), "does not improve on") {
+		t.Errorf("error does not say why: %v", err)
+	}
+	skipped := result.Skipped()
+	if len(skipped) != 1 || skipped[0].Name != name || skipped[0].Reason == "" {
+		t.Fatalf("per-file outcomes = %+v", result.Files)
+	}
+	if skipped[0].Quality != "WEB-DL 1080p" {
+		t.Errorf("outcome should say what it judged the file to be, got %q", skipped[0].Quality)
+	}
+}
+
+// TestManualImportIsNotGatedByTheProfile: the profile gates AUTOMATION. A
+// person who pointed at a folder and pressed Import has already decided, and
+// telling them "does not improve on" is the same mistake as gating a manual
+// grab — which monarr has never done.
+func TestManualImportIsNotGatedByTheProfile(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setup(t, nil, client)
+	ctx := context.Background()
+	item, _ := db.GetMediaItemFull(ctx, itemID)
+
+	seasonDir := filepath.Join(item.Path, "Season 1")
+	_ = os.MkdirAll(seasonDir, 0o755)
+	existing := filepath.Join(seasonDir, "Test Show - S01E01 - Pilot [WEB-DL 1080p].mkv")
+	_ = os.WriteFile(existing, []byte("already here"), 0o644)
+	fid, _ := db.UpsertFile(ctx, itemID, 0, existing, 12)
+	ep1, _ := db.GetEpisodeID(ctx, itemID, 1, 1)
+	_ = db.ReplaceFileEpisodeLinks(ctx, fid, []int64{ep1})
+	_ = db.SetFileQualityFrom(ctx, fid,
+		quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+
+	payload := t.TempDir()
+	name := "Test.Show.S01E01.1080p.WEB-DL.x264-SAME.mkv"
+	_ = os.WriteFile(filepath.Join(payload, name), []byte("same again"), 0o644)
+
+	result, err := svc.ManualImport(ctx, ManualImportRequest{
+		Path: payload, MediaItemID: itemID,
+	})
+	if err != nil {
+		t.Fatalf("manual import refused what the user explicitly asked for: %v", err)
+	}
+	if result.Imported != 1 {
+		t.Errorf("imported = %d, want 1: %+v", result.Imported, result.Files)
+	}
+	// Same quality, so it is not an upgrade and must NOT have deleted the
+	// file that was already there — a manual import replaces only when the
+	// new file actually outranks the old one.
+	if result.Upgraded {
+		t.Error("a same-quality manual import reported itself as an upgrade")
+	}
+	if _, statErr := os.Stat(existing); statErr != nil {
+		t.Error("the existing file was deleted by a manual import that did not outrank it")
 	}
 }

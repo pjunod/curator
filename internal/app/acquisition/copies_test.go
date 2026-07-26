@@ -137,7 +137,7 @@ func TestCopiesWantGrabImportIndependently(t *testing.T) {
 		[]byte("seven-twenty"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := svc.importDownload(ctx, dl, payload); err != nil {
+	if _, err := svc.importDownload(ctx, dl, payload, false); err != nil {
 		t.Fatal(err)
 	}
 	files, err := db.ListFilesForItem(ctx, itemID)
@@ -191,7 +191,7 @@ func TestCopiesWantGrabImportIndependently(t *testing.T) {
 			dl2 = d
 		}
 	}
-	if _, _, err := svc.importDownload(ctx, dl2, payload2); err != nil {
+	if _, err := svc.importDownload(ctx, dl2, payload2, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(copyFile); !os.IsNotExist(err) {

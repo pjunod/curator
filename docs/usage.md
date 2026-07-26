@@ -115,6 +115,13 @@ existing collection and run **Scan disk** (Library page):
 
 Scans also run on a 12-hour schedule.
 
+## Monitoring seasons and episodes
+
+On a series page, each season row carries a checkbox. Unticking it stops
+monarr wanting that season and cascades to every episode in it; each episode
+has its own checkbox for finer control. The season name toggles the episode
+table open and closed, and neither control interferes with the other.
+
 ## Getting releases
 
 Automatic is the default posture — the interactive search is the override
@@ -200,6 +207,26 @@ the finale). Unmonitored rows dim. At add time, the Series tab offers
 "latest only" and untick or tick the rest afterwards. Metadata refresh
 respects all of it: a newly announced episode in an unmonitored season
 arrives unmonitored.
+
+## When an import doesn't import
+
+The manual import panel (Activity → Manual import) now reports what happened
+to **every** file, including the ones it declined and why — "no files
+imported from `<path>`" on its own is true and useless.
+
+Common reasons, and what they mean:
+
+| Reason | What to do |
+|---|---|
+| `… does not improve on the … already here (profile "X")` | Only automation is gated by the profile. A manual import is the override and goes ahead anyway. |
+| `no known episodes for S20 [18 19 20]` | monarr has no episode records for those numbers — refresh the series metadata first. |
+| `cannot determine episodes from "<name>"` | The filename carries no `S00E00` pattern monarr recognises. |
+| `item has no library folder assigned` | Set a root folder / path on the item. |
+
+A **manual** import is never blocked by the quality profile: you pointed at
+the folder and pressed Import, and that is the decision. It still only
+*replaces* an existing file when the new one actually outranks it — otherwise
+both stay and you choose.
 
 ## Reading the quality row
 

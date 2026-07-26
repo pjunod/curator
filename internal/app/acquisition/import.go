@@ -19,14 +19,73 @@ import (
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
 )
 
+// FileOutcome is what happened to one file in an import, including — above
+// all — why it did not land.
+//
+// This exists because "no files imported from <path>" was the entire story a
+// user got when an import declined every file. The reasons were computed, they
+// were even logged, and then they were dropped on the floor before reaching the
+// one person who needed them. A refusal without a reason is indistinguishable
+// from a bug.
+type FileOutcome struct {
+	Name     string `json:"name"`
+	Imported bool   `json:"imported"`
+	Upgrade  bool   `json:"upgrade,omitempty"`
+	Quality  string `json:"quality,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// ImportResult is the outcome of one payload.
+type ImportResult struct {
+	Imported int
+	Upgraded bool
+	Files    []FileOutcome
+}
+
+// Skipped returns the files that did not land, in payload order.
+func (r ImportResult) Skipped() []FileOutcome {
+	var out []FileOutcome
+	for _, f := range r.Files {
+		if !f.Imported {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// reasons renders the per-file refusals as one line, capped so a 24-file
+// season pack does not produce a wall of text. Silent truncation reads as
+// "that was all of them", so the remainder is counted out loud.
+func (r ImportResult) reasons(limit int) string {
+	skipped := r.Skipped()
+	if len(skipped) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, limit+1)
+	for i, f := range skipped {
+		if i == limit {
+			parts = append(parts, fmt.Sprintf("and %d more", len(skipped)-limit))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s: %s", f.Name, f.Reason))
+	}
+	return strings.Join(parts, "; ")
+}
+
 // importDownload moves a completed payload into the library: parse each
 // video file, map it to wantables, apply per-file upgrade decisions,
 // hardlink-or-copy into the Renamer layout, link MediaFile rows, and clean
 // up replaced files (blueprint §5.1 grab → import).
-func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePath string) (int, bool, error) {
+//
+// manual marks an import the user asked for by hand. Automation is gated by
+// the profile — that is the whole point of a profile — but a person who
+// pointed at a folder and pressed Import has already made the decision, and
+// second-guessing them with "does not improve on" is the same mistake as
+// gating a manual grab (which monarr has never done).
+func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePath string, manual bool) (ImportResult, error) {
 	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
 	if err != nil {
-		return 0, false, err
+		return ImportResult{}, err
 	}
 
 	// The import scope: which copy this grab was for decides the profile,
@@ -35,7 +94,7 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	if dl.CopyID != 0 {
 		cp, err := s.db.GetMediaCopy(ctx, dl.MediaItemID, dl.CopyID)
 		if err != nil {
-			return 0, false, fmt.Errorf("copy %d vanished: %w", dl.CopyID, err)
+			return ImportResult{}, fmt.Errorf("copy %d vanished: %w", dl.CopyID, err)
 		}
 		scope.CopyID = cp.ID
 		scope.ProfileID = cp.QualityProfileID
@@ -44,7 +103,7 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		}
 	}
 	if scope.Dest == "" {
-		return 0, false, fmt.Errorf("item has no library folder assigned")
+		return ImportResult{}, fmt.Errorf("item has no library folder assigned")
 	}
 
 	isMedia := filename.IsVideo
@@ -53,22 +112,22 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	}
 	videos, err := collectFiles(savePath, isMedia)
 	if err != nil {
-		return 0, false, err
+		return ImportResult{}, err
 	}
 	if len(videos) == 0 {
-		return 0, false, fmt.Errorf("no media files in %s", savePath)
+		return ImportResult{}, fmt.Errorf("no media files in %s", savePath)
 	}
 
 	epStates, err := s.episodeStates(ctx, item, scope.CopyID)
 	if err != nil {
-		return 0, false, err
+		return ImportResult{}, err
 	}
 	profile, err := s.db.GetProfile(ctx, scope.ProfileID)
 	if err != nil {
-		return 0, false, err
+		return ImportResult{}, err
 	}
 
-	imported, upgraded := 0, false
+	result := ImportResult{Files: make([]FileOutcome, 0, len(videos))}
 	for _, src := range videos {
 		p := parser.Parse(filepath.Base(src))
 		q := p.Quality
@@ -82,33 +141,41 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 			q = dl.Quality
 		}
 
+		outcome := FileOutcome{Name: filepath.Base(src), Quality: q.Display()}
 		var err error
 		var wasUpgrade bool
 		switch item.Kind {
 		case domain.KindMovie:
-			wasUpgrade, err = s.importMovieFile(ctx, item, scope, profile, src, q, dl.ReleaseTitle)
+			wasUpgrade, err = s.importMovieFile(ctx, item, scope, profile, src, q, dl.ReleaseTitle, manual)
 		case domain.KindBook:
-			wasUpgrade, err = s.importBookFile(ctx, item, scope, profile, src, q)
+			wasUpgrade, err = s.importBookFile(ctx, item, scope, profile, src, q, manual)
 		default:
-			wasUpgrade, err = s.importEpisodeFile(ctx, item, scope, profile, epStates, src, p, q, dl.ReleaseTitle)
+			wasUpgrade, err = s.importEpisodeFile(ctx, item, scope, profile, epStates, src, p, q, dl.ReleaseTitle, manual)
 		}
 		if err != nil {
-			s.log.Warn("import: file skipped", "file", filepath.Base(src), "reason", err)
-			continue
+			outcome.Reason = err.Error()
+			s.log.Warn("import: file skipped", "file", outcome.Name, "reason", err)
+		} else {
+			outcome.Imported, outcome.Upgrade = true, wasUpgrade
+			result.Imported++
+			result.Upgraded = result.Upgraded || wasUpgrade
 		}
-		imported++
-		upgraded = upgraded || wasUpgrade
+		result.Files = append(result.Files, outcome)
 	}
-	if imported == 0 {
-		return 0, false, fmt.Errorf("no files imported from %s", savePath)
+	if result.Imported == 0 {
+		// Say WHY, per file. This is the message a user actually reads when
+		// an import does nothing, and "no files imported" alone told them
+		// only that something went wrong somewhere.
+		return result, fmt.Errorf("no files imported from %s — %s", savePath, result.reasons(5))
 	}
 
 	_ = s.db.AddHistory(ctx, "imported", item.ID, dl.ReleaseTitle,
-		map[string]any{"files": imported, "upgrade": upgraded})
+		map[string]any{"files": result.Imported, "upgrade": result.Upgraded})
 	s.publish(ImportCompleted{MediaItemID: item.ID, Release: dl.ReleaseTitle,
-		Files: imported, Upgrade: upgraded})
-	s.log.Info("imported", "item", item.Title, "files", imported)
-	return imported, upgraded, nil
+		Files: result.Imported, Upgrade: result.Upgraded})
+	s.log.Info("imported", "item", item.Title, "files", result.Imported,
+		"skipped", len(result.Skipped()))
+	return result, nil
 }
 
 func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) {
@@ -145,18 +212,22 @@ type importScope struct {
 	ProfileID int64
 }
 
-func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string) (bool, error) {
+func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string, manual bool) (bool, error) {
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return false, err
 	}
 	upgrade := false
 	if state.Best != nil {
-		if !profile.Upgrade(q, *state.Best, state.SourceVerified) {
-			return false, fmt.Errorf("%s does not improve on %s under profile %q",
+		upgrade = profile.Upgrade(q, *state.Best, state.SourceVerified)
+		if !upgrade && !manual {
+			return false, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), state.Best.Display(), profile.Name)
 		}
-		upgrade = true
+		// A manual import proceeds either way, but only REPLACES when the new
+		// file actually outranks what is there. Deleting a better file because
+		// somebody imported a worse one is not a thing to do silently.
+		upgrade = upgrade || quality.Better(q, *state.Best)
 	}
 	_ = profile
 
@@ -183,18 +254,22 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 // importBookFile places one book file into <library>/<Author>/<Title>/ as
 // "Title - Author.ext" (Calibre-friendly, ADR 0006), with the same
 // upgrade-or-reject semantics as movies.
-func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality) (bool, error) {
+func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, manual bool) (bool, error) {
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return false, err
 	}
 	upgrade := false
 	if state.Best != nil {
-		if !profile.Upgrade(q, *state.Best, state.SourceVerified) {
-			return false, fmt.Errorf("%s does not improve on %s under profile %q",
+		upgrade = profile.Upgrade(q, *state.Best, state.SourceVerified)
+		if !upgrade && !manual {
+			return false, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), state.Best.Display(), profile.Name)
 		}
-		upgrade = true
+		// A manual import proceeds either way, but only REPLACES when the new
+		// file actually outranks what is there. Deleting a better file because
+		// somebody imported a worse one is not a thing to do silently.
+		upgrade = upgrade || quality.Better(q, *state.Best)
 	}
 
 	dest := filepath.Join(scope.Dest,
@@ -215,7 +290,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 		mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
 }
 
-func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, releaseTitle string) (bool, error) {
+func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, releaseTitle string, manual bool) (bool, error) {
 	season, eps := p.Season, p.Episodes
 	if len(eps) == 0 {
 		if fx, ok := filename.Extract(filepath.Base(src)); ok {
@@ -265,11 +340,12 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	}
 	upgrade := false
 	if !missing && worst != nil {
-		if !profile.Upgrade(q, *worst, worstVerified) {
-			return false, fmt.Errorf("%s does not improve on %s under profile %q",
+		upgrade = profile.Upgrade(q, *worst, worstVerified)
+		if !upgrade && !manual {
+			return false, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), worst.Display(), profile.Name)
 		}
-		upgrade = true
+		upgrade = upgrade || quality.Better(q, *worst)
 	}
 
 	epToken := fmt.Sprintf("S%02dE%02d", season, eps[0])

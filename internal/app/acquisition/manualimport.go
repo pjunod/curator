@@ -94,7 +94,7 @@ type ManualImportRequest struct {
 // ManualImport imports the media at a path into a chosen item/copy — the
 // escape hatch when automation can't resolve the payload. When tied to a
 // download row it records the outcome on that row's handoff trace.
-func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (int, error) {
+func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (ImportResult, error) {
 	dl := sqlite.Download{
 		MediaItemID: req.MediaItemID, CopyID: req.CopyID,
 		ReleaseTitle: filepath.Base(req.Path), ImportPath: req.Path,
@@ -102,7 +102,7 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (in
 	if req.DownloadID != 0 {
 		existing, err := s.db.GetDownload(ctx, req.DownloadID)
 		if err != nil {
-			return 0, err
+			return ImportResult{}, err
 		}
 		dl = existing
 		if req.MediaItemID != 0 {
@@ -112,11 +112,14 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (in
 		dl.ImportPath = req.Path
 	}
 	if dl.MediaItemID == 0 {
-		return 0, fmt.Errorf("no target item chosen")
+		return ImportResult{}, fmt.Errorf("no target item chosen")
 	}
 
-	files, upgraded, err := s.importDownload(ctx, dl, req.Path)
-	_ = upgraded
+	// manual=true: the user pointed at this folder and pressed Import. The
+	// profile gates AUTOMATION; telling a person "does not improve on" after
+	// they explicitly asked is the same mistake as gating a manual grab.
+	result, err := s.importDownload(ctx, dl, req.Path, true)
+	files := result.Imported
 	if req.DownloadID != 0 {
 		row, gerr := s.db.GetDownload(ctx, req.DownloadID)
 		if gerr == nil {
@@ -131,8 +134,8 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (in
 		}
 	}
 	if err != nil {
-		return 0, err
+		return result, err
 	}
 	s.InvalidateWanted()
-	return files, nil
+	return result, nil
 }

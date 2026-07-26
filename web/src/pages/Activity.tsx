@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  type ImportOutcome,
   type ManualImportRequest,
   type QueueItem,
   type ScannedFile,
@@ -277,6 +278,7 @@ function ManualImportPanel({
   const [scanErr, setScanErr] = useState<string>('')
   const [importErr, setImportErr] = useState<string>('')
   const [done, setDone] = useState<string>('')
+  const [outcome, setOutcome] = useState<ImportOutcome | null>(null)
 
   const library = useQuery({ queryKey: ['library'], queryFn: () => getLibrary() })
   const itemDetail = useQuery({
@@ -307,10 +309,21 @@ function ManualImportPanel({
       }),
     onSuccess: (res) => {
       setImportErr('')
-      setDone(`Imported ${res.files} file(s).`)
-      setTimeout(onDone, 1200)
+      setOutcome(res)
+      const skipped = res.files.filter((f) => !f.imported)
+      setDone(
+        skipped.length
+          ? `Imported ${res.imported} file(s); ${skipped.length} skipped.`
+          : `Imported ${res.imported} file(s).`,
+      )
+      // A clean import can close itself. One that skipped something must not:
+      // the reasons are the reason the panel is still open.
+      if (!skipped.length) setTimeout(onDone, 1200)
     },
-    onError: (e: Error) => setImportErr(e.message),
+    onError: (e: Error) => {
+      setOutcome(null)
+      setImportErr(e.message)
+    },
   })
 
   const copies = itemDetail.data?.copies ?? []
@@ -412,6 +425,36 @@ function ManualImportPanel({
       </div>
       {importErr && <p className="error-text">{importErr}</p>}
       {done && <p className="ok-text">{done}</p>}
+      {/* Per-file outcomes. An import that declines everything used to say
+          only "no files imported from <path>", which is true and useless —
+          the reasons existed, they just never reached the person who needed
+          them. */}
+      {outcome && outcome.files.some((f) => !f.imported) && (
+        <table className="import-outcome">
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Result</th>
+              <th>Why</th>
+            </tr>
+          </thead>
+          <tbody>
+            {outcome.files.map((f) => (
+              <tr key={f.name}>
+                <td className="mono">{f.name}</td>
+                <td>
+                  {f.imported ? (
+                    <span className="pill pill-ok">imported{f.upgrade ? ' · upgrade' : ''}</span>
+                  ) : (
+                    <span className="pill pill-neutral">skipped</span>
+                  )}
+                </td>
+                <td className="muted">{f.reason || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   )
 }

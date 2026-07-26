@@ -625,12 +625,12 @@ func (s *Server) ManualImport(w http.ResponseWriter, r *http.Request) {
 	if in.DownloadId != nil {
 		req.DownloadID = *in.DownloadId
 	}
-	files, err := s.deps.Acquisition.ManualImport(r.Context(), req)
+	result, err := s.deps.Acquisition.ManualImport(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"files": files})
+	writeJSON(w, http.StatusOK, importOutcomeDTO(result))
 }
 
 // ListWanted implements GET /wanted.
@@ -977,4 +977,25 @@ func (s *Server) AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, i
 		}
 	}(id)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// importOutcomeDTO reports what happened to every file, not just a count.
+// The per-file reason is the whole point: "no files imported from <path>" is
+// a true sentence that helps nobody.
+func importOutcomeDTO(r acquisition.ImportResult) apigen.ImportOutcome {
+	out := apigen.ImportOutcome{
+		Imported: r.Imported, Upgrade: r.Upgraded,
+		Files: make([]apigen.ImportedFile, 0, len(r.Files)),
+	}
+	for _, f := range r.Files {
+		fi := apigen.ImportedFile{Name: f.Name, Imported: f.Imported}
+		fi.Quality = optStr(f.Quality)
+		fi.Reason = optStr(f.Reason)
+		if f.Upgrade {
+			up := true
+			fi.Upgrade = &up
+		}
+		out.Files = append(out.Files, fi)
+	}
+	return out
 }
