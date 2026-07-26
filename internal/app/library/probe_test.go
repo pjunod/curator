@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/mediainfo"
@@ -103,12 +104,17 @@ func TestScanProbesAdoptedFileWithNoTokens(t *testing.T) {
 		t.Errorf("disk state = %+v", state)
 	}
 
+	// Wait rather than poll once. bus.Subscribe forwards through a goroutine,
+	// so Publish returning does not mean the typed channel has the event yet —
+	// a non-blocking receive here raced the scheduler and failed roughly one
+	// run in fifteen. Every other event assertion in this package already uses
+	// this timeout; this one was the odd man out.
 	select {
 	case ev := <-probed:
 		if ev.MediaItemID != item.ID || ev.Provenance != string(mediainfo.ProvenanceProbe) {
 			t.Errorf("FileProbed = %+v", ev)
 		}
-	default:
+	case <-time.After(2 * time.Second):
 		t.Error("no FileProbed event published; the wanted index would never learn")
 	}
 }
