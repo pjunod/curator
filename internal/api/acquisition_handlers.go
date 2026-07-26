@@ -13,6 +13,7 @@ import (
 	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
 	"github.com/monarr-media/monarr/internal/app/acquisition"
+	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/format"
 	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
@@ -905,7 +906,7 @@ func (s *Server) AddImportList(w http.ResponseWriter, r *http.Request) {
 	}
 	l := sqlite.ImportList{
 		Name: body.Name, Type: string(body.Type), Kind: "movie",
-		QualityProfileID: 1, Monitored: true, Enabled: true,
+		Monitored: true, Enabled: true,
 	}
 	if body.Config != nil {
 		l.Config = *body.Config
@@ -913,6 +914,9 @@ func (s *Server) AddImportList(w http.ResponseWriter, r *http.Request) {
 	if body.Kind != nil {
 		l.Kind = string(*body.Kind)
 	}
+	// Everything a list adds behaves like a manual add of that kind, so an
+	// unspecified profile means what it means there: the kind's default.
+	l.QualityProfileID = s.deps.Store.DefaultProfileID(r.Context(), domain.MediaKind(l.Kind))
 	if body.RootFolderId != nil {
 		l.RootFolderID = *body.RootFolderId
 	}

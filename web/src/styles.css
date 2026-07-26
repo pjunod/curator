@@ -1089,6 +1089,78 @@ a.pill-info:hover {
   font-size: 13px;
 }
 
+/* Which profile new items start on. Sits under the table because the table's
+   "Default for" column raises the question and this answers it in place. */
+.profile-defaults {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  max-width: 620px;
+}
+
+.profile-defaults h3 {
+  margin: 0 0 4px;
+}
+
+.profile-defaults .form-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.profile-defaults label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.default-badge {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  font-size: 11px;
+}
+
+/* Adding is a repeated action, so the page stays put and keeps a receipt of
+   what has gone in. The alternative — navigating to each new item — charged a
+   round trip per title for a detail page nobody asked to open. */
+.added-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  font-size: 13px;
+}
+
+.added-strip ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.result-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
 .path-chip {
   display: inline-block;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

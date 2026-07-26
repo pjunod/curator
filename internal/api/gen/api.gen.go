@@ -498,6 +498,21 @@ type CustomFormatInput struct {
 	Score   *int   `json:"score,omitempty"`
 }
 
+// DefaultProfiles The quality profile a newly added item gets when the add form does not name one, per media kind. Always fully populated on read: an unset or dangling setting resolves to the built-in, so this is the effective answer rather than only what has been saved.
+type DefaultProfiles struct {
+	// Book Must target a book format. Format families never compete (ADR 0014 §7), so a video profile here would leave every book wanted forever with nothing able to satisfy it.
+	Book   int64 `json:"book"`
+	Movie  int64 `json:"movie"`
+	Series int64 `json:"series"`
+}
+
+// DefaultProfilesUpdate Partial: only the kinds present are changed. A profile that does not exist, or that lives on the wrong format axis for the kind, is refused with 400 rather than saved and discovered later.
+type DefaultProfilesUpdate struct {
+	Book   *int64 `json:"book,omitempty"`
+	Movie  *int64 `json:"movie,omitempty"`
+	Series *int64 `json:"series,omitempty"`
+}
+
 // DirEntry defines model for DirEntry.
 type DirEntry struct {
 	Name string `json:"name"`
@@ -1190,6 +1205,9 @@ type Settings struct {
 	// AuthRequired Whether /api/v1 requires authentication.
 	AuthRequired *bool `json:"authRequired,omitempty"`
 
+	// DefaultProfiles The quality profile a newly added item gets when the add form does not name one, per media kind. Always fully populated on read: an unset or dangling setting resolves to the built-in, so this is the effective answer rather than only what has been saved.
+	DefaultProfiles *DefaultProfiles `json:"defaultProfiles,omitempty"`
+
 	// OmdbApiKeyConfigured OMDb key present — enables Rotten Tomatoes / IMDb / Metacritic ratings.
 	OmdbApiKeyConfigured *bool   `json:"omdbApiKeyConfigured,omitempty"`
 	OmdbApiKeyHint       *string `json:"omdbApiKeyHint,omitempty"`
@@ -1208,6 +1226,9 @@ type SettingsUpdate struct {
 	// AuthRequired Require API key or session for /api/v1 (Phase 5).
 	AuthRequired *bool   `json:"authRequired,omitempty"`
 	AuthUsername *string `json:"authUsername,omitempty"`
+
+	// DefaultProfiles Partial: only the kinds present are changed. A profile that does not exist, or that lives on the wrong format axis for the kind, is refused with 400 rather than saved and discovered later.
+	DefaultProfiles *DefaultProfilesUpdate `json:"defaultProfiles,omitempty"`
 
 	// OmdbApiKey Optional — adds Rotten Tomatoes / IMDb / Metacritic ratings. "" clears it.
 	OmdbApiKey *string `json:"omdbApiKey,omitempty"`

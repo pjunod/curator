@@ -54,16 +54,24 @@ above appears there as a warning.
 **+ Add media** (Library page) → pick the Movie / Series / Book tab →
 type a title. Movies and series search TMDB; books search Open Library and
 show the author next to each result. Pick a root folder, a quality profile
-(or leave the kind default), monitoring state, and whether to **Search on
-add** (on by default: the best accepted release is grabbed automatically
-right after adding, Sonarr-style). Hit **Add**.
+(or leave the default — the picker names it, e.g. "Default — 1080p", and
+you set it under Settings → Quality profiles), monitoring state, and
+whether to **Search on add** (on by default: the best accepted release is
+grabbed automatically right after adding, Sonarr-style). Hit **Add**.
+
+**Adding several things is one screen.** Adding does not navigate away:
+the row turns into *added* with an **Open** link, a strip at the top keeps
+a running list of everything added this visit, and your search text, tab,
+root folder and profile all stay put. The next title is one click, and
+**Go to library** takes you out when you're done.
 
 - *Movies* arrive hydrated with year, overview, poster, runtime.
 - *Series* arrive with every season and episode; specials (season 0) start
   unmonitored, like upstream.
 - *Books* arrive with author, first-publish year, and ISBN, and default to
-  the **Ebook** quality profile (switch an item to **Audiobook** via the
-  mass editor if you want M4B/MP3 instead).
+  the **Ebook** quality profile (change the Books default under Settings →
+  Quality profiles, or switch an item to **Audiobook** via the mass editor
+  if you want M4B/MP3 instead).
 
 Nothing touches the disk at add time — the item's folder is created on
 first import.

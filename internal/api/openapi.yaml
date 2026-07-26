@@ -3074,6 +3074,27 @@ components:
             User skip patterns, one per line, applied on top of the built-in
             defaults during the root-folder sweep. Blank lines and # comments
             are ignored.
+        defaultProfiles:
+          $ref: '#/components/schemas/DefaultProfiles'
+
+    DefaultProfiles:
+      type: object
+      description: >
+        The quality profile a newly added item gets when the add form does not
+        name one, per media kind. Always fully populated on read: an unset or
+        dangling setting resolves to the built-in, so this is the effective
+        answer rather than only what has been saved.
+      required: [movie, series, book]
+      properties:
+        movie:  { type: integer, format: int64 }
+        series: { type: integer, format: int64 }
+        book:
+          type: integer
+          format: int64
+          description: >
+            Must target a book format. Format families never compete
+            (ADR 0014 §7), so a video profile here would leave every book
+            wanted forever with nothing able to satisfy it.
 
     SettingsUpdate:
       type: object
@@ -3094,3 +3115,16 @@ components:
         authPassword:
           type: string
           description: Stored salted-hashed; never returned.
+        defaultProfiles:
+          $ref: '#/components/schemas/DefaultProfilesUpdate'
+
+    DefaultProfilesUpdate:
+      type: object
+      description: >
+        Partial: only the kinds present are changed. A profile that does not
+        exist, or that lives on the wrong format axis for the kind, is refused
+        with 400 rather than saved and discovered later.
+      properties:
+        movie:  { type: integer, format: int64 }
+        series: { type: integer, format: int64 }
+        book:   { type: integer, format: int64 }

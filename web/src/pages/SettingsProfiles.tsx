@@ -1,7 +1,14 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { ProfileInput, QualityProfile } from '../api'
-import { createProfile, deleteProfile, getProfiles, updateProfile } from '../api'
+import type { DefaultProfiles, ProfileInput, QualityProfile } from '../api'
+import {
+  createProfile,
+  deleteProfile,
+  getProfiles,
+  getSettings,
+  updateProfile,
+  updateSettings,
+} from '../api'
 
 // The quality vocabulary, worst to best on each axis. Kept here rather than
 // fetched because it is a property of the model, not of the deployment — and
@@ -115,6 +122,80 @@ function previewSentence(d: Draft): string {
   }
   if (!d.upgradesAllowed) s += '; no upgrades once a file is present'
   return s
+}
+
+// The three kinds a default can be set for, in the order the library lists
+// them. Books share one setting: a book item is one kind, and whether it wants
+// EPUB or M4B is exactly what choosing a profile decides.
+const DEFAULT_KINDS: { key: keyof DefaultProfiles; label: string; book: boolean }[] = [
+  { key: 'movie', label: 'Movies', book: false },
+  { key: 'series', label: 'Series', book: false },
+  { key: 'book', label: 'Books', book: true },
+]
+
+/**
+ * DefaultProfileSettings: what a newly added item gets when the add form does
+ * not name one.
+ *
+ * This was a constant in the server — profile 1, or Ebook for books — with no
+ * UI anywhere. Anyone who wanted 4K films had to open every title they added
+ * and change it by hand, and nothing on screen ever said what was about to
+ * happen. One default per kind rather than one global one, because a book
+ * cannot use a video profile at all and wanting 4K films beside 1080p
+ * television is the ordinary case.
+ */
+function DefaultProfileSettings(props: { profiles: QualityProfile[] }) {
+  const qc = useQueryClient()
+  const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+  const [error, setError] = useState('')
+
+  const save = useMutation({
+    mutationFn: (patch: Partial<DefaultProfiles>) => updateSettings({ defaultProfiles: patch }),
+    onSuccess: () => {
+      setError('')
+      void qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+    onError: (e) => setError((e as Error).message),
+  })
+
+  const defaults = settings.data?.defaultProfiles
+  if (!defaults) return null
+
+  return (
+    <div className="profile-defaults" data-testid="profile-defaults">
+      <h3>Defaults for new items</h3>
+      <p className="muted">
+        What an item gets when you add it without picking a profile. Changing this does not
+        touch anything already in the library.
+      </p>
+      <div className="form-row">
+        {DEFAULT_KINDS.map(({ key, label, book }) => {
+          // Only same-axis profiles are offered: format families never
+          // compete, so a book on a video profile would sit wanted forever
+          // with nothing able to satisfy it.
+          const eligible = props.profiles.filter((p) => (axisOf(p.target.source) !== 'video') === book)
+          return (
+            <label key={key}>
+              {label}
+              <select
+                aria-label={`Default profile for ${label}`}
+                value={defaults[key]}
+                disabled={save.isPending || eligible.length === 0}
+                onChange={(e) => save.mutate({ [key]: Number(e.target.value) })}
+              >
+                {eligible.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )
+        })}
+      </div>
+      {error && <p className="error-text">✕ {error}</p>}
+    </div>
+  )
 }
 
 function ProfileForm(props: {
@@ -274,6 +355,7 @@ function ProfileForm(props: {
 export function QualityProfileSettings() {
   const qc = useQueryClient()
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
+  const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState<Draft>(blankDraft())
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -283,6 +365,16 @@ export function QualityProfileSettings() {
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['profiles'] })
     void qc.invalidateQueries({ queryKey: ['library'] })
+    void qc.invalidateQueries({ queryKey: ['settings'] })
+  }
+
+  // Which kinds start on this profile. Shown in the table because "which one
+  // is the default" is the question the settings screen exists to answer, and
+  // a picker further down the page answers it only if you scroll to it.
+  const defaultFor = (id: number) => {
+    const d = settings.data?.defaultProfiles
+    if (!d) return []
+    return DEFAULT_KINDS.filter((k) => d[k.key] === id).map((k) => k.label)
   }
 
   const create = useMutation({
@@ -328,44 +420,65 @@ export function QualityProfileSettings() {
             <tr>
               <th>Name</th>
               <th>What it does</th>
+              <th>Default for</th>
               <th>In use</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {profiles.data.map((p) => (
-              <tr key={p.id}>
-                <td>
-                  <strong>{p.name}</strong>
-                </td>
-                <td className="muted">{p.sentence}</td>
-                <td className="muted">{p.inUse ? `${p.inUse}` : '—'}</td>
-                <td>
-                  <button
-                    onClick={() => {
-                      setEditingId(p.id)
-                      setEditDraft(draftOf(p))
-                      setError('')
-                    }}
-                  >
-                    Edit
-                  </button>{' '}
-                  <button
-                    onClick={() => remove.mutate(p.id)}
-                    disabled={remove.isPending || !!p.inUse}
-                    title={
-                      p.inUse
-                        ? `${p.inUse} item(s), cop(ies) or import list(s) still use this profile`
-                        : undefined
-                    }
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {profiles.data.map((p) => {
+              const isDefaultFor = defaultFor(p.id)
+              return (
+                <tr key={p.id}>
+                  <td>
+                    <strong>{p.name}</strong>
+                  </td>
+                  <td className="muted">{p.sentence}</td>
+                  <td>
+                    {isDefaultFor.length === 0 ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      isDefaultFor.map((label) => (
+                        <span key={label} className="default-badge">
+                          {label}
+                        </span>
+                      ))
+                    )}
+                  </td>
+                  <td className="muted">{p.inUse ? `${p.inUse}` : '—'}</td>
+                  <td>
+                    <button
+                      onClick={() => {
+                        setEditingId(p.id)
+                        setEditDraft(draftOf(p))
+                        setError('')
+                      }}
+                    >
+                      Edit
+                    </button>{' '}
+                    <button
+                      onClick={() => remove.mutate(p.id)}
+                      disabled={remove.isPending || !!p.inUse || isDefaultFor.length > 0}
+                      title={
+                        isDefaultFor.length > 0
+                          ? `New ${isDefaultFor.join(' and ')} use this profile — pick a different default first`
+                          : p.inUse
+                            ? `${p.inUse} item(s), cop(ies) or import list(s) still use this profile`
+                            : undefined
+                      }
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
+      )}
+
+      {profiles.data && profiles.data.length > 0 && (
+        <DefaultProfileSettings profiles={profiles.data} />
       )}
 
       {editingId !== null && (

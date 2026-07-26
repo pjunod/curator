@@ -34,7 +34,12 @@ test('search TMDB and add a movie', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Add', exact: true }).click()
 
-  // Lands on the detail page, fully hydrated.
+  // Adding keeps you on the add screen so the next one is a single click; the
+  // item page is one link away for when you actually want it.
+  await expect(page.getByTestId('added-strip')).toContainText('Added 1 item')
+  await page.getByRole('link', { name: 'Open' }).first().click()
+
+  // The detail page, fully hydrated.
   await expect(page.getByRole('heading', { name: /The Test Movie/ })).toBeVisible()
   await expect(page.getByText('101 min')).toBeVisible()
   await expect(page.getByText('No files on disk yet', { exact: false })).toBeVisible()
@@ -47,6 +52,7 @@ test('add a series with hydrated seasons and episodes', async ({ page }) => {
   await expect(page.getByText('The Test Show')).toBeVisible()
 
   await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await page.getByRole('link', { name: 'Open' }).first().click()
 
   await expect(page.getByRole('heading', { name: /The Test Show/ })).toBeVisible()
   // Appears twice now: the season summary and the Status completeness pill.

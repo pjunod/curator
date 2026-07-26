@@ -338,6 +338,15 @@ export interface ScanReport {
   missingItems?: MissingItem[]
 }
 
+/** The profile a newly added item gets when the add form does not name one.
+ *  Always fully populated on read — the server resolves built-in fallbacks, so
+ *  the settings screen can never show a blank where a default is in force. */
+export interface DefaultProfiles {
+  movie: number
+  series: number
+  book: number
+}
+
 export interface Settings {
   tmdbApiKeyConfigured: boolean
   tmdbApiKeyHint: string
@@ -346,6 +355,7 @@ export interface Settings {
   apiKey?: string
   authRequired?: boolean
   scanSkipPatterns?: string
+  defaultProfiles?: DefaultProfiles
 }
 
 /** An API failure that still carries its HTTP status, so callers can tell a
@@ -462,6 +472,7 @@ export const updateSettings = (patch: {
   authUsername?: string
   authPassword?: string
   scanSkipPatterns?: string
+  defaultProfiles?: Partial<DefaultProfiles>
 }) => send('PUT', '/settings', patch)
 export const triggerScan = () => send('POST', '/library/scan')
 export const getScanReport = async (): Promise<ScanReport | null> => {

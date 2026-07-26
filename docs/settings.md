@@ -156,8 +156,35 @@ unless a profile explicitly targets one, and the three format families
 (film/TV · ebook · audiobook) never satisfy each other — an M4B is not a
 better EPUB, it answers a different question.
 
+### Defaults for new items
+
+Under the profile table, one default per media kind — **Movies**,
+**Series**, **Books** — is what an item gets when you add it without
+picking a profile. The table's **Default for** column shows the same
+answer from the other direction, so you can see at a glance which profile
+new titles land on.
+
+Per kind rather than one global default, for two reasons: a book cannot
+use a video profile at all (the format families never satisfy each other,
+above), and wanting 4K films alongside 1080p television is the ordinary
+case rather than an exotic one. The Books picker offers only ebook and
+audiobook profiles; the film and TV pickers offer only video ones.
+
+Unset, the defaults are the values that used to be hardcoded — **1080p**
+for films and television, **Ebook** for books — so upgrading changes
+nothing until you choose. Changing a default affects only what you add
+afterwards; nothing already in the library moves. If the profile a default
+points at is somehow gone, adds fall back to the built-in rather than
+failing: a preference is never allowed to be the reason an add breaks.
+
+The add screen names the default it is about to use ("Default — 1080p")
+rather than saying only "(default)".
+
 **Deleting a profile** is refused while any item, copy, or import list
-references it; the row shows the count and the button is disabled.
+references it; the row shows the count and the button is disabled. It is
+refused for the same reason while any kind defaults to it — that
+reference is real even though no row holds it — with the tooltip naming
+the kinds. Point them elsewhere first.
 
 ## File permissions (`MONARR_FILE_MODE`, `MONARR_DIR_MODE`)
 

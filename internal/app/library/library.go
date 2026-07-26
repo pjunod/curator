@@ -253,10 +253,13 @@ type AddRequest struct {
 	TMDBID int64
 	// TVDBID identifies a series that came from the chain rather than from
 	// TMDB (ADR 0011). Exactly one of TMDBID/TVDBID/OLID identifies the item.
-	TVDBID           int64
-	OLID             string
-	RootFolderID     int64 // optional; 0 = no folder assigned yet
-	QualityProfileID int64 // optional; 0 = kind default (1, or Ebook for books)
+	TVDBID       int64
+	OLID         string
+	RootFolderID int64 // optional; 0 = no folder assigned yet
+	// QualityProfileID is optional; 0 means "use the configured default for
+	// this kind" (Settings → Profiles), which falls back to the built-in when
+	// nothing has been chosen.
+	QualityProfileID int64
 	Monitored        bool
 	// Monitor picks which seasons start monitored (series only):
 	// "all" (default), "latest" (newest season only), or "none".
@@ -356,8 +359,11 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	applyMonitorPreset(&item, req.Monitor)
 	item.Monitored = req.Monitored
 	item.QualityProfileID = req.QualityProfileID
-	if item.QualityProfileID == 0 && item.Kind == domain.KindBook {
-		item.QualityProfileID = quality.EbookProfileID
+	if item.QualityProfileID == 0 {
+		// Nothing was chosen, so the kind's configured default applies. It
+		// resolves to the built-in when unset or dangling, which is what the
+		// hardcoded constant here used to do unconditionally.
+		item.QualityProfileID = s.db.DefaultProfileID(ctx, item.Kind)
 	}
 	if req.RootFolderID != 0 {
 		rf, err := s.db.GetRootFolder(ctx, req.RootFolderID)

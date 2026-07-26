@@ -692,6 +692,17 @@ func (s *Server) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	authOn := s.authRequired(r.Context())
 	out.AuthRequired = &authOn
+	// Always the resolved answer, including built-in fallbacks — a settings
+	// screen showing nothing for "default profile" is how you end up believing
+	// there isn't one.
+	if s.deps.Store != nil {
+		d := s.deps.Store.DefaultProfiles(r.Context())
+		out.DefaultProfiles = &apigen.DefaultProfiles{
+			Movie:  d[domain.KindMovie],
+			Series: d[domain.KindSeries],
+			Book:   d[domain.KindBook],
+		}
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -720,11 +731,39 @@ func (s *Server) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.DefaultProfiles != nil {
+		if err := s.applyDefaultProfiles(r.Context(), *body.DefaultProfiles); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if err := s.applyAuthSettings(r.Context(), body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// applyDefaultProfiles saves the per-kind defaults, refusing a profile that
+// does not exist or is on the wrong format axis. Partial by design: sending
+// only {"movie": 3} leaves series and books alone.
+func (s *Server) applyDefaultProfiles(ctx context.Context, in apigen.DefaultProfilesUpdate) error {
+	if s.deps.Store == nil {
+		return errors.New("profile storage unavailable")
+	}
+	for kind, id := range map[domain.MediaKind]*int64{
+		domain.KindMovie:  in.Movie,
+		domain.KindSeries: in.Series,
+		domain.KindBook:   in.Book,
+	} {
+		if id == nil {
+			continue
+		}
+		if err := s.deps.Store.SetDefaultProfile(ctx, kind, *id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) readSetting(ctx context.Context, key string) string {
