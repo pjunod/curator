@@ -1642,6 +1642,9 @@ type ServerInterface interface {
 	// SetEpisodeMonitored Monitor or unmonitor one episode
 	// (PATCH /library/{id}/episodes/{episodeId})
 	SetEpisodeMonitored(w http.ResponseWriter, r *http.Request, id int64, episodeId int64)
+	// ReprobeLibraryItem Re-measure this item's files
+	// (POST /library/{id}/probe)
+	ReprobeLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
 	// RefreshLibraryItem Re-hydrate this item's metadata from its provider
 	// (POST /library/{id}/refresh)
 	RefreshLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
@@ -2841,6 +2844,32 @@ func (siw *ServerInterfaceWrapper) SetEpisodeMonitored(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// ReprobeLibraryItem operation middleware
+func (siw *ServerInterfaceWrapper) ReprobeLibraryItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReprobeLibraryItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RefreshLibraryItem operation middleware
 func (siw *ServerInterfaceWrapper) RefreshLibraryItem(w http.ResponseWriter, r *http.Request) {
 
@@ -3657,6 +3686,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/copies", wrapper.AddMediaCopy)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.DeleteMediaCopy)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.UpdateMediaCopy)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/probe", wrapper.ReprobeLibraryItem)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/seasons/{season}", wrapper.SetSeasonMonitored)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/episodes/{episodeId}", wrapper.SetEpisodeMonitored)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/mediainfo"
+	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/infra/bus"
 )
 
@@ -254,5 +255,138 @@ func TestProbeVanishedFileIsNotAnError(t *testing.T) {
 	svc, _, _ := newService(t)
 	if err := svc.ProbeFile(context.Background(), 99999); err != nil {
 		t.Errorf("ProbeFile on a missing row = %v, want nil", err)
+	}
+}
+
+// TestFailedProbeIsRetried: a probe that could not READ the file must try
+// again on the next scan. A failure is usually about something outside the
+// file — a permission monarr did not have, a mount that was not up — and those
+// get fixed. Caching "we tried once" strands the file in "unreadable" forever
+// with no way back short of touching it on disk.
+func TestFailedProbeIsRetried(t *testing.T) {
+	svc, db, _ := newService(t)
+	ctx := context.Background()
+
+	root := t.TempDir()
+	rf, _ := svc.AddRootFolder(ctx, root, domain.KindMixed)
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.MkdirAll(item.Path, 0o755)
+	movie := filepath.Join(item.Path, "Fight Club.mkv")
+	// Unreadable to the prober: recognisably not a container.
+	if err := os.WriteFile(movie, []byte("nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := db.FileQualityRecords(ctx, item.ID)
+	if len(first) != 1 || first[0].Provenance != mediainfo.ProvenanceFailed {
+		t.Fatalf("expected a failed probe, got %+v", first)
+	}
+	if !first[0].NeedsProbe(first[0].Size) {
+		t.Error("a failed probe is cached forever; there would be no way back")
+	}
+
+	// Whatever was wrong is fixed — here, by the file becoming readable at the
+	// same size it already had, so nothing but the retry rule can save it.
+	real := fixtureBytes(t, "mkv-1080p-h264-ac3.mkv")
+	if err := os.WriteFile(movie, real, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := db.FileQualityRecords(ctx, item.ID)
+	if second[0].Provenance != mediainfo.ProvenanceProbe {
+		t.Errorf("provenance = %q, want the retry to have succeeded", second[0].Provenance)
+	}
+	if second[0].Quality.Resolution != 1080 {
+		t.Errorf("resolution = %d, want 1080", second[0].Quality.Resolution)
+	}
+}
+
+// TestUnsupportedContainerIsNotRetriedForever is the other half of the rule:
+// nothing about the next scan makes an AVI parseable, so re-reading one every
+// sweep burns I/O to learn the same thing.
+func TestUnsupportedContainerIsNotRetriedForever(t *testing.T) {
+	svc, db, _ := newService(t)
+	ctx := context.Background()
+
+	root := t.TempDir()
+	rf, _ := svc.AddRootFolder(ctx, root, domain.KindMixed)
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.MkdirAll(item.Path, 0o755)
+	avi := filepath.Join(item.Path, "Fight Club.avi")
+	if err := os.WriteFile(avi, fixtureBytes(t, "avi-720p-mpeg4-ac3.avi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	records, _ := db.FileQualityRecords(ctx, item.ID)
+	if len(records) != 1 {
+		t.Fatalf("records = %+v", records)
+	}
+	if records[0].NeedsProbe(records[0].Size) {
+		t.Error("an unsupported container wants re-probing on every scan")
+	}
+}
+
+// TestReprobeItemForcesAMeasurement: the cache is right for a routine sweep,
+// but "try again" has to be something a person can ask for.
+func TestReprobeItemForcesAMeasurement(t *testing.T) {
+	svc, db, _ := newService(t)
+	ctx := context.Background()
+
+	root := t.TempDir()
+	rf, _ := svc.AddRootFolder(ctx, root, domain.KindMixed)
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.MkdirAll(item.Path, 0o755)
+	movie := filepath.Join(item.Path, "Fight Club.mkv")
+	if err := os.WriteFile(movie, fixtureBytes(t, "mkv-720p-h264-aac.mkv"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wipe what we learned, exactly as a bad first probe would have left it,
+	// then ask for a re-measure. A scan would decline: same path, same size.
+	records, _ := db.FileQualityRecords(ctx, item.ID)
+	fileID := records[0].FileID
+	if err := db.SetFileMediaInfo(ctx, fileID, mediainfo.Info{},
+		mediainfo.ProvenanceManual, mediainfo.ConfidenceNone, records[0].ProbedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFileQualityFrom(ctx, fileID, quality.Quality{Source: quality.SourceUnknown},
+		mediainfo.ProvenanceManual, mediainfo.ConfidenceNone); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := svc.ReprobeItem(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("queued %d files, want 1", n)
+	}
+	after, _ := db.FileQualityRecords(ctx, item.ID)
+	if after[0].Quality.Resolution != 720 || after[0].Provenance != mediainfo.ProvenanceProbe {
+		t.Errorf("re-measure did not take: %+v", after[0])
 	}
 }

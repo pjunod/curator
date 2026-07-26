@@ -176,3 +176,62 @@ test('the season disclosure and its controls do not fight each other', async ({
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-expanded', 'true')
 })
+
+// Changing a quality profile is a request, not a note.
+//
+// Before this, the edit invalidated the wanted index and then nothing visible
+// happened: the item joined the wanted list and waited for the backlog loop —
+// up to twelve hours of silence after asking for a different target.
+test('changing an item profile starts a search and says so', async ({ page, request }) => {
+  const movies = await (await request.get('/api/v1/library?kind=movie')).json()
+  const movieId = movies[0].id
+  await page.goto(`/library/${movieId}`)
+
+  const openEditor = async () => {
+    await page.getByRole('button', { name: 'Edit' }).first().click()
+    return page
+      .locator('section.panel')
+      .filter({ has: page.getByRole('heading', { name: 'Edit' }) })
+      .first()
+  }
+  const editor = await openEditor()
+  // Any profile other than the current one; the seeded set always has 4K.
+  await editor.getByLabel('Quality profile').selectOption({ label: '4K' })
+  await editor.getByRole('button', { name: 'Save' }).click()
+
+  await expect(page.getByText(/searching for the new target/i)).toBeVisible()
+
+  // Put it back.
+  const again = await openEditor()
+  await again.getByLabel('Quality profile').selectOption({ label: '1080p' })
+  await again.getByRole('button', { name: 'Save' }).click()
+})
+
+// A probe that failed has to have a way back. The scan cache is right for a
+// routine sweep and wrong as the only path.
+test('files can be re-measured on demand', async ({ page, request }) => {
+  const movies = await (await request.get('/api/v1/library?kind=movie')).json()
+  await page.goto(`/library/${movies[0].id}`)
+
+  const button = page.getByRole('button', { name: 'Re-measure files' })
+  await expect(button).toBeVisible()
+  await button.click()
+  await expect(page.getByText(/Measuring \d+ file|No files to measure/)).toBeVisible()
+})
+
+// A library section that is hiding items must say so, with a way out. The
+// filter persists across visits, so one set weeks ago silently hides a title
+// added today — which is exactly "I added it and cannot find it".
+test('a filtered library section says how much it is hiding', async ({ page }) => {
+  // The library lives at the root; the All view groups by kind.
+  await page.goto('/')
+  const movies = page.locator('.lib-section').filter({ hasText: 'Movies' }).first()
+  await expect(movies).toBeVisible()
+
+  // Filter to something the seeded movie is not, so the section hides it.
+  await movies.getByLabel('Show Movies').selectOption('unmonitored')
+  await expect(movies.locator('.hidden-notice')).toContainText('hidden by the current filter')
+
+  await movies.getByRole('button', { name: 'Show all' }).first().click()
+  await expect(movies.locator('.hidden-notice')).toHaveCount(0)
+})

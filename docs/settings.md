@@ -159,6 +159,33 @@ better EPUB, it answers a different question.
 **Deleting a profile** is refused while any item, copy, or import list
 references it; the row shows the count and the button is disabled.
 
+## File permissions (`MONARR_FILE_MODE`, `MONARR_DIR_MODE`)
+
+Monarr sets the mode on every file and folder it places, rather than
+inheriting whatever the download client or the temp file left behind.
+
+| Variable | Default | What it governs |
+|---|---|---|
+| `MONARR_FILE_MODE` | `0644` | Imported media files |
+| `MONARR_DIR_MODE` | `0755` | Library folders monarr creates |
+
+Both take an octal string; anything unparseable falls back to the default,
+because a typo must never produce a file nobody can read.
+
+**Why this is explicit rather than inherited:** the cross-filesystem copy path
+creates its temp file mode `0600` — owner only. Before 0.6.2 every copied
+import therefore landed as a file no media server could open and monarr's own
+prober could not re-read, while reporting complete success. Hard-linked
+imports had the same hazard from the other side: the file kept whatever mode
+the download client's umask produced.
+
+A hard link shares one inode with the source, so setting the mode is visible
+to the seeding copy too. That is the intended trade: a seeding file that is
+readable is strictly better than a library file that is not.
+
+Monarr only ever chmods folders it *creates* — never one that already
+existed, and never upward toward the root folder.
+
 ## Media probing (`MONARR_FFPROBE`)
 
 Monarr reads resolution, codec, bit depth, HDR format, interlacing, audio
@@ -179,8 +206,15 @@ MONARR_FFPROBE=/usr/bin/ffprobe
 ```
 
 Probing never reads a whole file: MKV is capped at 8 MiB of header reads
-and MP4 at 32 MiB, once per file, re-run only when the file's size
-changes. A sweep over a multi-TB NFS library is cheap by construction.
+and MP4 at 32 MiB, once per file, re-run only when the file's size changes.
+A sweep over a multi-TB NFS library is cheap by construction.
+
+**Re-measuring.** A probe that *failed to read* a file retries on the next
+scan — a failure is usually about something outside the file (a permission,
+a mount that was not up) and those get fixed. A container monarr deliberately
+does not parse (AVI, TS, WMV) is cached and not retried, because nothing about
+the next scan makes it parseable. To force the issue, **Re-measure files** on
+any item page ignores the cache entirely.
 
 ## Custom formats
 

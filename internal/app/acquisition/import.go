@@ -410,23 +410,48 @@ func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem
 	}
 }
 
-// place hardlinks src to dest, falling back to copy across filesystems.
+// place hardlinks src to dest, falling back to copy across filesystems, and
+// sets the result's permissions explicitly.
+//
+// The explicit chmod is not decoration. The copy path uses os.CreateTemp,
+// which creates files mode 0600 — so every cross-filesystem import produced a
+// file that no media server could open and no other user could even probe,
+// while reporting complete success. The hardlink path is the same hazard
+// wearing different clothes: the file keeps whatever mode the download client
+// gave it. Neither is a mode monarr chose, so monarr now chooses.
+//
+// A hardlink shares one inode with the source, so the chmod is visible to the
+// download client's copy too. That is the intended trade and the same one
+// upstream makes: a seeding file that is readable is strictly better than a
+// library file that is not.
 func place(src, dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+	dir := filepath.Dir(dest)
+	// Record which folders do not exist yet, so the chmod below touches only
+	// the ones monarr is about to create. Walking up and fixing whatever it
+	// finds would eventually chmod the root folder — or the filesystem root —
+	// which is not monarr's to change.
+	created := missingDirs(dir)
+	if err := os.MkdirAll(dir, dirMode()); err != nil {
 		return err
 	}
+	// MkdirAll is subject to the process umask; chmod is not. Under umask 077
+	// the folder would be 0700 and the file inside unreachable however
+	// correct its own mode.
+	for _, d := range created {
+		_ = applyMode(d, dirMode())
+	}
 	if _, err := os.Stat(dest); err == nil {
-		return nil // already imported (idempotent re-poll)
+		return applyMode(dest, fileMode()) // already imported; still fix the mode
 	}
 	if err := os.Link(src, dest); err == nil {
-		return nil
+		return applyMode(dest, fileMode())
 	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.CreateTemp(filepath.Dir(dest), ".monarr-import-*")
+	out, err := os.CreateTemp(dir, ".monarr-import-*")
 	if err != nil {
 		return err
 	}
@@ -440,7 +465,36 @@ func place(src, dest string) error {
 		_ = os.Remove(tmp)
 		return err
 	}
+	// Chmod the temp file BEFORE the rename, so the file is never visible at
+	// its final path with the wrong mode.
+	if err := applyMode(tmp, fileMode()); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
 	return os.Rename(tmp, dest)
+}
+
+// missingDirs returns the folders between dir and its nearest existing
+// ancestor, outermost first — exactly the set MkdirAll is about to create,
+// and therefore exactly the set monarr may set permissions on.
+func missingDirs(dir string) []string {
+	var missing []string
+	for i := 0; i < 16; i++ {
+		if _, err := os.Stat(dir); err == nil {
+			break
+		}
+		missing = append(missing, dir)
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	// Reverse: create-order, so a parent is chmodded before its child.
+	for i, j := 0, len(missing)-1; i < j; i, j = i+1, j-1 {
+		missing[i], missing[j] = missing[j], missing[i]
+	}
+	return missing
 }
 
 func sizeOf(path string) int64 {

@@ -40,14 +40,28 @@ func (f FileQuality) SourceVerified() bool {
 	return f.Provenance.Verified(f.Confidence)
 }
 
-// NeedsProbe reports whether this file should be (re)measured: never probed, or
-// probed at a different size. Size is the cheap cache key — a file whose bytes
-// changed is a different file wearing the same path.
+// NeedsProbe reports whether this file should be (re)measured.
+//
+// Never probed, or probed at a different size — size is the cheap cache key,
+// since a file whose bytes changed is a different file wearing the same path.
+//
+// Plus one case that is easy to get wrong: a probe that FAILED to read the
+// file retries. A failure usually means something outside the file — a
+// permission monarr did not have, a mount that was not up — and those get
+// fixed. Recording "we tried once" and never trying again strands the file in
+// "unreadable" forever, with no way back short of touching it on disk.
+//
+// A container monarr deliberately does not deep-parse (AVI, TS, WMV) is NOT a
+// failure of that kind: nothing about the next scan will make it parseable, so
+// it stays cached and does not burn a read on every sweep.
 func (f FileQuality) NeedsProbe(sizeOnDisk int64) bool {
 	if !f.Probed {
 		return true
 	}
-	return f.Size != sizeOnDisk
+	if f.Size != sizeOnDisk {
+		return true
+	}
+	return f.Provenance == mediainfo.ProvenanceFailed && !mediainfo.IsUnsupported(f.Info.Container)
 }
 
 // CopyDiskState is what one copy of an item actually has on disk.

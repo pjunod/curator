@@ -1426,6 +1426,38 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /library/{id}/probe:
+    post:
+      operationId: reprobeLibraryItem
+      summary: Re-measure this item's files
+      description: >
+        Re-reads every video file of the item, ignoring the already-probed
+        cache. The cache is right for a routine scan, but it leaves no way back
+        for a file whose probe failed for a reason outside the file — a
+        permission that has since been fixed, a mount that was not up.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "202":
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [files]
+                properties:
+                  files:
+                    type: integer
+                    description: How many files were queued for measurement.
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/{id}/seasons/{season}:
     patch:
       operationId: setSeasonMonitored

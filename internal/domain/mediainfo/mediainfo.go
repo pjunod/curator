@@ -44,6 +44,26 @@ func Unsupported(ext string) string {
 // IsUnsupported reports whether c is an Unsupported marker.
 func IsUnsupported(c string) bool { return strings.HasPrefix(c, "unsupported:") }
 
+// nativeExtensions are the containers the walkers in this package deep-parse.
+var nativeExtensions = map[string]bool{
+	".mkv": true, ".mka": true, ".mks": true, ".webm": true,
+	".mp4": true, ".m4v": true, ".mov": true,
+}
+
+// IsNativeContainer reports whether an extension is one monarr parses itself.
+//
+// This is deliberately keyed on the EXTENSION rather than on whether a probe
+// succeeded, because the two answer different questions. An .avi will never
+// parse here and re-reading it every scan buys nothing. An .mkv that fails to
+// parse is a different animal entirely — truncated, corrupt, still
+// downloading, or sitting behind a permission monarr did not have — and every
+// one of those is a condition that gets fixed, so it is worth trying again.
+//
+// Conflating them is how "the probe failed once" became permanent.
+func IsNativeContainer(ext string) bool {
+	return nativeExtensions[strings.ToLower(ext)]
+}
+
 // Errors returned by Probe. All of them come back alongside a partially
 // populated Info — callers record what was learned and note the rest as
 // unmeasured rather than throwing the whole record away.

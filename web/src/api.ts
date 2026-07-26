@@ -397,6 +397,9 @@ export const getLibraryItem = (id: number) => get<MediaItemDetail>(`/library/${i
 export const addLibraryItem = (req: AddMediaRequest) =>
   send<MediaItemDetail>('POST', '/library', req)
 export const deleteLibraryItem = (id: number) => send('DELETE', `/library/${id}`)
+/** Re-measure an item's files, ignoring the already-probed cache. */
+export const reprobeLibraryItem = (id: number) =>
+  send<{ files: number }>('POST', `/library/${id}/probe`)
 export const searchMetadata = (kind: MediaKind, query: string) =>
   get<SearchResult[]>(`/metadata/search?kind=${kind}&query=${encodeURIComponent(query)}`)
 export const getRootFolders = () => get<RootFolder[]>('/rootfolders')

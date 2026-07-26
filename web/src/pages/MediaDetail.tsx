@@ -17,6 +17,7 @@ import {
   posterUrl,
   RATING_SOURCE_LABELS,
   refreshLibraryItem,
+  reprobeLibraryItem,
   rescanManualEntry,
   setEpisodeMonitored,
   setSeasonMonitored,
@@ -190,7 +191,11 @@ function externalLinks(m: MediaItemDetail): { label: string; href: string }[] {
 }
 
 // EditPanel: per-item edits — monitoring, quality profile, and location.
-function EditPanel(props: { item: MediaItemDetail; onClose: () => void }) {
+function EditPanel(props: {
+  item: MediaItemDetail
+  onClose: () => void
+  onSaved?: (message: string) => void
+}) {
   const { item } = props
   const qc = useQueryClient()
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
@@ -201,6 +206,7 @@ function EditPanel(props: { item: MediaItemDetail; onClose: () => void }) {
   const [rootId, setRootId] = useState<number>(item.rootFolderId)
   const [path, setPath] = useState(item.path)
 
+  const profileChanged = profileId !== item.qualityProfileId
   const save = useMutation({
     mutationFn: () => {
       const req: Parameters<typeof updateLibraryItem>[1] = {
@@ -215,6 +221,12 @@ function EditPanel(props: { item: MediaItemDetail; onClose: () => void }) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
       void qc.invalidateQueries({ queryKey: ['library'] })
+      void qc.invalidateQueries({ queryKey: ['wanted'] })
+      // A profile change starts a search server-side. Saying so is the whole
+      // difference between "monarr is working on it" and "nothing happened".
+      if (profileChanged && monitored) {
+        props.onSaved?.('Profile changed — searching for the new target in the background.')
+      }
       props.onClose()
     },
   })
@@ -239,7 +251,11 @@ function EditPanel(props: { item: MediaItemDetail; onClose: () => void }) {
         </label>
         <label>
           Quality profile
-          <select value={profileId} onChange={(e) => setProfileId(Number(e.target.value))}>
+          <select
+            aria-label="Quality profile"
+            value={profileId}
+            onChange={(e) => setProfileId(Number(e.target.value))}
+          >
             {profiles.data?.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -434,6 +450,22 @@ export function MediaDetailPage() {
   const auto = useMutation({
     mutationFn: () => autoSearchItem(Number(id)),
     onSuccess: () => setAutoMsg('Searching in the background — grabs appear under Activity.'),
+    onError: (e) => setAutoMsg(`✕ ${(e as Error).message}`),
+  })
+  // Re-measure the files. The scan's already-probed cache is right for a
+  // routine sweep, but it leaves no way back for a file whose probe failed
+  // for a reason outside the file — a permission since fixed, a mount that
+  // was not up. "Try again" has to be something a person can ask for.
+  const reprobe = useMutation({
+    mutationFn: () => reprobeLibraryItem(Number(id)),
+    onSuccess: (res) => {
+      setAutoMsg(
+        res.files === 0
+          ? 'No files to measure yet — run a disk scan first.'
+          : `Measuring ${res.files} file(s) in the background; the Files table updates as they land.`,
+      )
+      void qc.invalidateQueries({ queryKey: ['library-item', id] })
+    },
     onError: (e) => setAutoMsg(`✕ ${(e as Error).message}`),
   })
   const rescan = useMutation({
@@ -685,6 +717,15 @@ export function MediaDetailPage() {
               <button onClick={() => setSearching({})}>Interactive search</button>
             )}
             <button onClick={() => setEditing(true)}>Edit</button>
+            {m.kind !== 'book' && (
+              <button
+                title="Read the files again and record what is actually in them — resolution, codec, HDR, audio. Use this after fixing a permission or a mount that made a probe fail."
+                disabled={reprobe.isPending}
+                onClick={() => reprobe.mutate()}
+              >
+                {reprobe.isPending ? 'Measuring…' : 'Re-measure files'}
+              </button>
+            )}
             {/* A manual entry has no provider to refresh against (ADR 0012
                 §3), so the button is absent rather than present-and-failing.
                 What replaces it for a series is a folder rescan: for a record
@@ -724,7 +765,9 @@ export function MediaDetailPage() {
 
       {autoMsg && <div className="banner">{autoMsg}</div>}
 
-      {editing && <EditPanel item={m} onClose={() => setEditing(false)} />}
+      {editing && (
+        <EditPanel item={m} onClose={() => setEditing(false)} onSaved={setAutoMsg} />
+      )}
 
       {m.kind !== 'book' && <CopiesPanel item={m} />}
 

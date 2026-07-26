@@ -60,12 +60,21 @@ func File(path string) (mediainfo.Info, error) {
 		return info, err
 	}
 
-	// Neither MKV nor MP4. Say which container it was, then see whether this
-	// deployment happens to have an ffprobe to lend us.
-	info.Container = mediainfo.Unsupported(filepath.Ext(path))
-	if ext, ffErr := ffprobe(path, st.Size()); ffErr == nil {
-		ext.Container = info.Container
-		return ext, nil
+	// The magic bytes matched neither EBML nor an ISO base-media brand. That
+	// is two very different situations and they must not be recorded alike:
+	//
+	//   - An .avi/.ts/.wmv was never going to parse here. Mark the container
+	//     so the UI can say why, and so scans stop re-reading it forever.
+	//   - An .mkv that will not sniff is TRUNCATED, corrupt, still
+	//     downloading, or behind a permission we did not have. Leave the
+	//     container blank: it is a failure, and failures are worth retrying
+	//     once whatever was wrong is fixed.
+	if !mediainfo.IsNativeContainer(filepath.Ext(path)) {
+		info.Container = mediainfo.Unsupported(filepath.Ext(path))
+		if ext, ffErr := ffprobe(path, st.Size()); ffErr == nil {
+			ext.Container = info.Container
+			return ext, nil
+		}
 	}
 	return info, err
 }

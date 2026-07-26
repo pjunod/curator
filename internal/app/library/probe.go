@@ -127,3 +127,33 @@ func (s *Service) publishProbed(fileID, itemID int64, path string, prov mediainf
 		Provenance: string(prov), Quality: q,
 	})
 }
+
+// ReprobeItem re-measures every video file of an item, ignoring the
+// already-probed cache.
+//
+// The scan's cache is right for the sweep — re-reading 40 TB nightly to learn
+// nothing would be its own outage — but it leaves no way back for a file whose
+// probe went wrong for a reason outside the file: a permission monarr did not
+// have when it looked, a mount that was not up, or a bug in a walker that has
+// since been fixed. "Try again" has to be something a person can ask for.
+//
+// Returns how many files were queued (or probed inline, without a queue).
+func (s *Service) ReprobeItem(ctx context.Context, itemID int64) (int, error) {
+	records, err := s.db.FileQualityRecords(ctx, itemID)
+	if err != nil {
+		return 0, err
+	}
+	queued := 0
+	for _, rec := range records {
+		if !filename.IsVideo(rec.Path) {
+			continue // a book's format is its extension; nothing to measure
+		}
+		if err := s.EnqueueProbe(ctx, rec.FileID); err != nil {
+			s.log.Warn("reprobe: could not queue", "path", rec.Path, "err", err)
+			continue
+		}
+		queued++
+	}
+	s.log.Info("reprobe: requested", "item", itemID, "files", queued)
+	return queued, nil
+}

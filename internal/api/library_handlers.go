@@ -269,13 +269,7 @@ func (s *Server) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
 	// Search on add (Sonarr semantics): fire-and-forget; failures land in
 	// the log and the item stays wanted for the RSS/backlog loops.
 	if body.SearchNow != nil && *body.SearchNow && item.Monitored && s.deps.Acquisition != nil {
-		go func(itemID int64) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-			if err := s.deps.Acquisition.AutoSearchItem(ctx, itemID); err != nil {
-				s.deps.Log.Warn("search on add failed", "item", itemID, "err", err)
-			}
-		}(item.ID)
+		s.searchInBackground(item.ID, "add")
 	}
 	writeJSON(w, http.StatusCreated, detailDTO(item))
 }
@@ -298,6 +292,7 @@ func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id in
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	before, beforeErr := s.deps.Library.Get(r.Context(), id)
 	item, err := s.deps.Library.UpdateItem(r.Context(), id, library.UpdateRequest{
 		Monitored:        body.Monitored,
 		QualityProfileID: body.QualityProfileId,
@@ -315,6 +310,16 @@ func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id in
 	// Monitoring and profile edits change what is wanted.
 	if s.deps.Acquisition != nil {
 		s.deps.Acquisition.InvalidateWanted()
+	}
+	// Changing the profile is a request, not a note. Before this, the item
+	// joined the wanted list and then sat there until the backlog loop came
+	// round — up to twelve hours of "nothing seems to happen" after asking
+	// for 4K. Search on add already treats an intentional act as a reason to
+	// go looking; a profile change is the same kind of act.
+	profileChanged := beforeErr == nil && body.QualityProfileId != nil &&
+		*body.QualityProfileId != before.QualityProfileID
+	if profileChanged && item.Monitored && s.deps.Acquisition != nil {
+		s.searchInBackground(item.ID, "profile change")
 	}
 	writeJSON(w, http.StatusOK, detailDTO(item))
 }
@@ -1002,4 +1007,33 @@ func qualityText(f domain.MediaFile) string {
 		return ""
 	}
 	return f.Quality.Display()
+}
+
+// searchInBackground fires an auto-search without blocking the request that
+// asked for it. Fire-and-forget on purpose: a search fans out to every
+// indexer, which is far longer than any sane HTTP timeout, and a failure is
+// not a reason to fail the edit — the item stays wanted and the RSS/backlog
+// loops pick it up regardless.
+func (s *Server) searchInBackground(itemID int64, why string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := s.deps.Acquisition.AutoSearchItem(ctx, itemID); err != nil {
+			s.deps.Log.Warn("background search failed", "item", itemID, "trigger", why, "err", err)
+		}
+	}()
+}
+
+// ReprobeLibraryItem implements POST /library/{id}/probe.
+func (s *Server) ReprobeLibraryItem(w http.ResponseWriter, r *http.Request, id int64) {
+	if _, err := s.deps.Library.Get(r.Context(), id); err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	n, err := s.deps.Library.ReprobeItem(r.Context(), id)
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]int{"files": n})
 }

@@ -133,6 +133,9 @@ the best accepted release with no list to review:
 
 - **Search on add** (checkbox on the add form, on by default) fires the
   moment an item is added.
+- **Changing an item's quality profile** fires one too. Asking for a
+  different target is a request, not a note — without this the item joined
+  the wanted list and waited up to twelve hours for the backlog loop.
 - **Auto search** (button on every detail page) does the same on demand —
   for series it searches per-season packs.
 - The **Wanted** page lists everything still missing or below cutoff, shows
@@ -184,6 +187,9 @@ Actions up top:
 - **Interactive search** (movies/books; per-episode and per-season on
   series) — the full candidate list with scores and rejection reasons.
   Release titles link to the release's page on the indexer (new tab).
+- **Re-measure files** — read the files again and record what is actually in
+  them. Use it after fixing a permission or a mount that made a probe fail;
+  a routine scan skips files it has already measured at the same size.
 - **Edit** — change monitoring, quality profile, root folder, or the
   folder path itself. Changing the root recomputes the folder from the
   naming rules; **files on disk are never moved** by an edit.

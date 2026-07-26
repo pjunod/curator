@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import type { MediaKind, SearchResult } from '../api'
 import { addLibraryItem, getProfiles, getRootFolders, posterUrl, searchMetadata } from '../api'
@@ -16,6 +16,7 @@ function useDebounced<T>(value: T, ms: number): T {
 export function AddMediaPage() {
   const search = useSearch({ from: '/add' })
   const navigate = useNavigate()
+  const qc = useQueryClient()
 
   const [kind, setKind] = useState<MediaKind>(
     search.kind === 'series' || search.kind === 'book' ? search.kind : 'movie',
@@ -78,7 +79,16 @@ export function AddMediaPage() {
           : { kind: r.kind, tmdbId: r.tmdbId || undefined, tvdbId: r.tvdbId, ...common },
       )
     },
-    onSuccess: (item) => navigate({ to: '/library/$id', params: { id: String(item.id) } }),
+    onSuccess: (item) => {
+      // Without this the Library page keeps serving its cached list and the
+      // new item is simply absent from its section — while the dashboard's
+      // "recently added" and global search, which are different queries, both
+      // show it. That combination reads as "the item was added somewhere I
+      // cannot find".
+      void qc.invalidateQueries({ queryKey: ['library'] })
+      void qc.invalidateQueries({ queryKey: ['wanted'] })
+      navigate({ to: '/library/$id', params: { id: String(item.id) } })
+    },
   })
 
   return (

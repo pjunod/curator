@@ -245,6 +245,32 @@ function SectionToolbar(props: {
   )
 }
 
+// HiddenNotice says out loud when a section is not showing everything it has,
+// and offers the one click that fixes it.
+//
+// The filter and page size PERSIST across visits, so a filter set weeks ago
+// silently hides a title added today — and the only clue was a small "12/300"
+// with no explanation. "I added it, I can search for it, and it is not in the
+// Movies section" is what that looks like from the outside.
+function HiddenNotice(props: {
+  label: string
+  shown: number
+  total: number
+  filterActive: boolean
+  onClear: () => void
+}) {
+  const hidden = props.total - props.shown
+  if (hidden <= 0 || !props.filterActive) return null
+  return (
+    <p className="hidden-notice">
+      {hidden} of {props.total} {props.label.toLowerCase()} hidden by the current filter.{' '}
+      <button className="link-button" onClick={props.onClear}>
+        Show all
+      </button>
+    </p>
+  )
+}
+
 export function LibraryPage() {
   const [kind, setKind] = useState<MediaKind | undefined>(undefined)
   // Page number per kind. Not persisted: coming back to the library on
@@ -515,10 +541,27 @@ export function LibraryPage() {
                   total={all.length}
                 />
               </div>
+              <HiddenNotice
+                label={section.label}
+                shown={group.length}
+                total={all.length}
+                filterActive={
+                  controls[section.kind].filter !== 'all' || controls[section.kind].q.trim() !== ''
+                }
+                onClear={() => updateSection(section.kind, { filter: 'all', q: '' })}
+              />
               {visible.length > 0 ? (
                 <div className="poster-grid">{visible.map(renderCard)}</div>
               ) : (
-                <p className="muted">Nothing in {section.label} matches the current filter.</p>
+                <p className="muted">
+                  Nothing in {section.label} matches the current filter.{' '}
+                  <button
+                    className="link-button"
+                    onClick={() => updateSection(section.kind, { filter: 'all', q: '' })}
+                  >
+                    Show all {all.length}
+                  </button>
+                </p>
               )}
               {group.length > 0 && (
                 <div className="lib-pager-bar">
@@ -556,9 +599,24 @@ export function LibraryPage() {
                   />
                 </div>
               )}
+              <HiddenNotice
+                label={section.label}
+                shown={group.length}
+                total={all.length}
+                filterActive={controls[kind].filter !== 'all' || controls[kind].q.trim() !== ''}
+                onClear={() => updateSection(kind, { filter: 'all', q: '' })}
+              />
               <div className="poster-grid">{visible.map(renderCard)}</div>
               {all.length > 0 && group.length === 0 && (
-                <p className="muted">Nothing in {section.label} matches the current filter.</p>
+                <p className="muted">
+                  Nothing in {section.label} matches the current filter.{' '}
+                  <button
+                    className="link-button"
+                    onClick={() => updateSection(kind, { filter: 'all', q: '' })}
+                  >
+                    Show all {all.length}
+                  </button>
+                </p>
               )}
               {group.length > 0 && (
                 <div className="lib-pager-bar">
