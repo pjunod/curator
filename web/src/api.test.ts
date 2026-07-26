@@ -29,7 +29,17 @@ describe('fmtRelative', () => {
   })
   it('formats past timestamps as ago', () => {
     expect(fmtRelative('2026-07-17T11:59:18Z', now)).toBe('42s ago')
-    expect(fmtRelative('2026-07-17T10:59:00Z', now)).toBe('1h 1m 0s ago')
+    expect(fmtRelative('2026-07-17T10:59:00Z', now)).toBe('1h 1m ago')
+  })
+  // At most two units, and the smaller one disappears once it stops
+  // mattering: "1h 30m 28s ago" wrapped onto four lines in a table column and
+  // set the height of every row beside it.
+  it('never spends more than two units', () => {
+    expect(fmtRelative('2026-07-17T10:29:32Z', now)).toBe('1h 30m ago')
+    expect(fmtRelative('2026-07-17T11:00:00Z', now)).toBe('1h ago')
+    expect(fmtRelative('2026-07-17T11:58:00Z', now)).toBe('2m ago')
+    expect(fmtRelative('2026-07-15T10:00:00Z', now)).toBe('2d 2h ago')
+    expect(fmtRelative('2026-07-15T12:00:00Z', now)).toBe('2d ago')
   })
   it('formats future timestamps as in', () => {
     expect(fmtRelative('2026-07-17T12:00:22Z', now)).toBe('in 22s')

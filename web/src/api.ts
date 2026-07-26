@@ -707,14 +707,40 @@ export function fmtDuration(totalSeconds: number): string {
   return `${sec}s`
 }
 
+/**
+ * fmtRelative renders "how long ago" in at most TWO units, dropping the
+ * smaller one entirely once it stops mattering.
+ *
+ * It used to hand fmtDuration's full breakdown straight through, which
+ * produced "1h 30m 28s ago" — three units, sixteen characters, in a table
+ * column narrow enough that it wrapped onto four lines and set the height of
+ * every row beside it. The seconds in "an hour and a half ago" are not
+ * information anybody wanted; they were just the format not knowing when to
+ * stop.
+ */
 export function fmtRelative(iso: string | undefined, now: Date = new Date()): string {
   if (!iso) return '—'
   const t = new Date(iso).getTime()
   const diff = (t - now.getTime()) / 1000
   const abs = Math.abs(diff)
-  const fmt = fmtDuration(abs)
   if (abs < 1) return 'now'
+  const fmt = fmtRelativeDuration(abs)
   return diff < 0 ? `${fmt} ago` : `in ${fmt}`
+}
+
+/** fmtRelativeDuration is fmtDuration with the tail lopped off: precision
+ *  shrinks as the magnitude grows, because that is how people read elapsed
+ *  time. Exported for the tests that pin the boundaries. */
+export function fmtRelativeDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds))
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  if (m > 0) return `${m}m`
+  return `${sec}s`
 }
 
 export function fmtInterval(seconds: number): string {

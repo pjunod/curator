@@ -1660,6 +1660,101 @@ a.pill-info:hover {
   gap: 6px;
 }
 
+/* Buttons never break mid-label. "Manual import" wrapping to two lines is how
+   a four-button row became a four-ROW column. */
+.row-actions button {
+  white-space: nowrap;
+}
+
+/* ---- the queue table ---- */
+/* Fixed layout plus a colgroup, so the release title cannot starve every
+   other column. Without it the title expanded to fit the longest scene name
+   in the list and the actions wrapped one button per line. */
+.queue-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.queue-table .col-toggle {
+  width: 28px;
+}
+
+/* auto: the release title gets whatever is left, and only it wraps. */
+.queue-table .col-release {
+  width: auto;
+}
+
+/* Wide enough for "WEB-DL 1080p" without clipping. table-layout: fixed does
+   not grow a column to fit, so a too-narrow one OVERFLOWS into its neighbour
+   rather than wrapping — which had the quality sitting on top of the state
+   pill. */
+.queue-table .col-quality {
+  width: 124px;
+}
+
+.queue-table .col-state {
+  width: 120px;
+}
+
+.queue-table .col-progress {
+  width: 120px;
+}
+
+/* Wide enough for the longest two-unit relative time ("1h 30m ago") plus
+   cell padding. Too narrow and the nowrap overflows into the actions. */
+.queue-table .col-added {
+  width: 108px;
+}
+
+.queue-table .col-actions {
+  width: 300px;
+}
+
+.queue-table td {
+  vertical-align: top;
+}
+
+.queue-table .col-release,
+.queue-table td.mono {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+/* ---- long output ---- */
+/* Anything that can grow without bound — a per-file import report, a folder
+   preview, a scan log — goes in one of these rather than pushing the rest of
+   the page off the screen. The header stays put so you can still read the
+   columns twenty rows down. */
+.log-scroll {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.log-scroll table {
+  margin: 0;
+}
+
+.log-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-raised);
+}
+
+@media (max-width: 900px) {
+  /* Narrow screens cannot honour the fixed layout; let the table scroll
+     sideways instead of crushing every column. */
+  .queue-table {
+    table-layout: auto;
+  }
+}
+
 .handoff-row > td {
   background: var(--bg-hover);
   border-top: none;

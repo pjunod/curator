@@ -92,10 +92,23 @@ export function ActivityPage() {
           <p className="muted">Nothing in the queue. Grab something from a title's search.</p>
         )}
         {rows.length > 0 && (
-          <table>
+          <table className="queue-table">
+            {/* An explicit column layout. Without one the release title takes
+                whatever width it likes and squeezes the actions column until
+                every button wraps onto its own line — which is what made these
+                rows six lines tall. */}
+            <colgroup>
+              <col className="col-toggle" />
+              <col className="col-release" />
+              <col className="col-quality" />
+              <col className="col-state" />
+              <col className="col-progress" />
+              <col className="col-added" />
+              <col className="col-actions" />
+            </colgroup>
             <thead>
               <tr>
-                <th style={{ width: 24 }}></th>
+                <th></th>
                 <th>Release</th>
                 <th>Quality</th>
                 <th>State</th>
@@ -178,12 +191,14 @@ function RowGroup(props: {
             {label(STATE_LABEL, d.state)}
           </span>
         </td>
-        <td style={{ minWidth: 120 }}>
+        <td>
           <div className="progress-track">
             <i style={{ width: `${Math.round(d.progress * 100)}%` }} />
           </div>
         </td>
-        <td className="muted">{fmtRelative(d.addedAt)}</td>
+        <td className="muted nowrap" title={d.addedAt}>
+          {fmtRelative(d.addedAt)}
+        </td>
         <td>
           <div className="row-actions">
             {canImport && (
@@ -357,6 +372,7 @@ function ManualImportPanel({
           {scanned.length === 0 ? (
             <p className="error-text">No media files found there. Check the path is reachable from Monarr's container.</p>
           ) : (
+            <div className="log-scroll">
             <table>
               <thead>
                 <tr>
@@ -385,6 +401,7 @@ function ManualImportPanel({
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}
@@ -430,7 +447,8 @@ function ManualImportPanel({
           the reasons existed, they just never reached the person who needed
           them. */}
       {outcome && outcome.files.some((f) => !f.imported) && (
-        <table className="import-outcome">
+        <div className="log-scroll">
+          <table className="import-outcome">
           <thead>
             <tr>
               <th>File</th>
@@ -452,8 +470,9 @@ function ManualImportPanel({
                 <td className="muted">{f.reason || '—'}</td>
               </tr>
             ))}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   )
