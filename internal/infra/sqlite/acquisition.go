@@ -307,9 +307,14 @@ type Download struct {
 	Error        string
 	SavePath     string // what the download client reported
 	ImportPath   string // where Monarr looks after remote path mapping
-	Handoff      []HandoffEntry
-	AddedAt      time.Time
-	UpdatedAt    time.Time
+	// Transfer names this one transfer end to end (nzbd contract §3.1:
+	// t-<id>-<6 hex>). It goes onto the download in the client and will
+	// travel on to the media server, so grepping any app's log for it
+	// reconstructs the whole story. Empty when the client cannot carry it.
+	Transfer  string
+	Handoff   []HandoffEntry
+	AddedAt   time.Time
+	UpdatedAt time.Time
 }
 
 func downloadFromRow(r sqlitegen.Download) Download {
@@ -322,7 +327,8 @@ func downloadFromRow(r sqlitegen.Download) Download {
 		ReleaseTitle: r.ReleaseTitle, Indexer: r.Indexer, Protocol: r.Protocol,
 		Quality: quality.FromString(r.Quality), Size: r.Size, ClientID: r.ClientID,
 		Handle: r.Handle, State: r.State, Progress: r.Progress, Error: r.Error,
-		SavePath: r.SavePath, ImportPath: r.ImportPath, Handoff: handoff,
+		SavePath: r.SavePath, ImportPath: r.ImportPath, Transfer: r.Transfer,
+		Handoff: handoff,
 		AddedAt: time.UnixMilli(r.AddedAt), UpdatedAt: time.UnixMilli(r.UpdatedAt),
 	}
 	if r.CopyID.Valid {
@@ -348,6 +354,14 @@ func (d *DB) InsertDownload(ctx context.Context, dl Download) (int64, error) {
 		p.CopyID = sql.NullInt64{Int64: dl.CopyID, Valid: true}
 	}
 	return d.Write.InsertDownload(ctx, p)
+}
+
+// SetDownloadHandle records the client-side id and the transfer id, both
+// of which are only known after the client has accepted the download.
+func (d *DB) SetDownloadHandle(ctx context.Context, id int64, handle, transfer string) error {
+	return d.Write.SetDownloadHandle(ctx, sqlitegen.SetDownloadHandleParams{
+		Handle: handle, Transfer: transfer, UpdatedAt: time.Now().UnixMilli(), ID: id,
+	})
 }
 
 // ListActiveDownloads returns rows still moving through the state machine.

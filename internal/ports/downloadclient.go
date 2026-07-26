@@ -79,3 +79,18 @@ type DownloadClient interface {
 	Remove(ctx context.Context, h Handle, deleteData bool) error
 	Test(ctx context.Context) error
 }
+
+// TaggedAdder is an OPTIONAL capability: a client that can carry Monarr's
+// transfer id onto the download itself, so the same id is visible in the
+// client's UI, in whatever it reports back, and in Monarr's handoff trace.
+// Grepping one id across both applications is the point.
+//
+// Optional rather than part of DownloadClient because most clients have
+// nowhere to put it — qBittorrent tags and SABnzbd's nzo metadata are not
+// the same thing and pretending otherwise would make every adapter lie
+// about a capability only one of them has. Callers type-assert; a client
+// that does not implement this gets a plain Add and Monarr keeps the id
+// on its own row.
+type TaggedAdder interface {
+	AddTagged(ctx context.Context, downloadURL, category, transfer string) (Handle, error)
+}

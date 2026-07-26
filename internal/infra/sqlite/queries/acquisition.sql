@@ -66,6 +66,9 @@ SET state = ?, progress = ?, error = ?, save_path = ?, import_path = ?,
     handoff_log = ?, updated_at = ?
 WHERE id = ?;
 
+-- name: SetDownloadHandle :exec
+UPDATE downloads SET handle = ?, transfer = ?, updated_at = ? WHERE id = ?;
+
 -- name: DeleteDownload :exec
 DELETE FROM downloads WHERE id = ?;
 

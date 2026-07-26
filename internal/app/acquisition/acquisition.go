@@ -5,6 +5,7 @@ package acquisition
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -405,10 +406,40 @@ type GrabRequest struct {
 }
 
 func protocolOfClient(clientType string) string {
-	if clientType == "sabnzbd" || clientType == "nzbget" {
+	if clientType == "sabnzbd" || clientType == "nzbget" || clientType == "nzbd" {
 		return "usenet"
 	}
 	return "torrent"
+}
+
+// newTransferID mints the id that names one transfer end to end
+// (nzbd/docs/INTEGRATION_PLAN.md §3.1): `t-<downloads.id>-<6 lowercase
+// hex>`.
+//
+// The row id alone would be enough to be unique here, but not to be
+// unambiguous THERE: ids restart when a database is rebuilt from a backup,
+// and a stale "t-42" in a media server's log would then point at a
+// different download entirely. The random half makes a collision across
+// rebuilds something you would have to be unlucky twice to see.
+func newTransferID(downloadID int64) string {
+	var b [3]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// A transfer id that is merely unique-per-database is worth far
+		// more than no id at all: without one the trace has no thread.
+		return fmt.Sprintf("t-%d-%06x", downloadID, downloadID&0xffffff)
+	}
+	return fmt.Sprintf("t-%d-%x", downloadID, b)
+}
+
+// addToClient sends the release, carrying the transfer id when the client
+// can hold one. The type assertion is the whole mechanism: clients that
+// cannot tag a download are added exactly as before, and Monarr keeps the
+// id on its own row so its trace is still threaded.
+func addToClient(ctx context.Context, c ports.DownloadClient, downloadURL, category, transfer string) (ports.Handle, error) {
+	if tagger, ok := c.(ports.TaggedAdder); ok && transfer != "" {
+		return tagger.AddTagged(ctx, downloadURL, category, transfer)
+	}
+	return c.Add(ctx, downloadURL, category)
 }
 
 // Grab sends the release to the right client by protocol and records the
@@ -433,11 +464,6 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		return 0, fmt.Errorf("%w: %s", ErrNoClient, req.Protocol)
 	}
 
-	handle, err := s.newClient(*cfg).Add(ctx, req.DownloadURL, cfg.Category)
-	if err != nil {
-		return 0, err
-	}
-
 	p := parser.Parse(req.Title)
 	var base string
 	switch {
@@ -455,18 +481,51 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	}
 	wants := []string{base}
 
+	// The row goes in BEFORE the client is asked to take the download,
+	// because the transfer id is built from the row id and has to be on
+	// the request that creates the download — a client cannot be told
+	// afterwards what to have called it. A client that then refuses the
+	// add leaves a row that describes a download nobody has, so it is
+	// removed again below; the alternative (add first, insert second) is
+	// a download running in a client that Monarr has no record of, which
+	// is the worse of the two failures by a distance.
 	id, err := s.db.InsertDownload(ctx, sqlite.Download{
 		MediaItemID: item.ID, CopyID: req.CopyID, WantableIDs: wants, Season: req.Season,
 		ReleaseTitle: req.Title, Indexer: req.Indexer, Protocol: req.Protocol,
 		Quality: p.Quality, Size: req.Size, ClientID: cfg.ID,
-		Handle: string(handle), State: "grabbed",
+		State: "grabbed",
 	})
 	if err != nil {
 		return 0, err
 	}
+	transfer := newTransferID(id)
+	handle, err := addToClient(ctx, s.newClient(*cfg), req.DownloadURL, cfg.Category, transfer)
+	if err != nil {
+		// Nothing downstream ever saw this row: no event, no trace entry,
+		// no history. Dropping it is the honest undo.
+		if delErr := s.db.DeleteDownload(ctx, id); delErr != nil {
+			s.log.Warn("grab: could not remove the row for a rejected add",
+				"download", id, "err", delErr)
+		}
+		return 0, err
+	}
+	if err := s.db.SetDownloadHandle(ctx, id, string(handle), transfer); err != nil {
+		// The download IS running; losing the handle would orphan it, so
+		// this is loud rather than fatal — the title-match fallback in
+		// matchStatus still reconciles it.
+		s.log.Error("grab: download accepted but its handle could not be stored",
+			"download", id, "handle", handle, "err", err)
+	}
 	// Open the handoff trace so every step from here is laid out.
-	dl := sqlite.Download{ID: id, MediaItemID: item.ID, ReleaseTitle: req.Title, State: "grabbed"}
-	s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, "sent to "+clientLabel(*cfg))
+	dl := sqlite.Download{ID: id, MediaItemID: item.ID, ReleaseTitle: req.Title,
+		State: "grabbed", Transfer: transfer}
+	detail := "sent to " + clientLabel(*cfg)
+	if transfer != "" {
+		// The id is in the trace's first line because that is where
+		// someone starts reading when a transfer goes wrong.
+		detail += " as " + transfer
+	}
+	s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, detail)
 	_ = s.db.AddHistory(ctx, "grabbed", item.ID, req.Title,
 		map[string]any{"indexer": req.Indexer, "protocol": req.Protocol})
 	s.publish(ReleaseGrabbed{MediaItemID: item.ID, Title: req.Title,

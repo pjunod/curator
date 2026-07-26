@@ -38,6 +38,7 @@ func (e AddMediaRequestMonitor) Valid() bool {
 // Defines values for DownloadClientConfigType.
 const (
 	DownloadClientConfigTypeDeluge       DownloadClientConfigType = "deluge"
+	DownloadClientConfigTypeNzbd         DownloadClientConfigType = "nzbd"
 	DownloadClientConfigTypeNzbget       DownloadClientConfigType = "nzbget"
 	DownloadClientConfigTypeQbittorrent  DownloadClientConfigType = "qbittorrent"
 	DownloadClientConfigTypeSabnzbd      DownloadClientConfigType = "sabnzbd"
@@ -48,6 +49,8 @@ const (
 func (e DownloadClientConfigType) Valid() bool {
 	switch e {
 	case DownloadClientConfigTypeDeluge:
+		return true
+	case DownloadClientConfigTypeNzbd:
 		return true
 	case DownloadClientConfigTypeNzbget:
 		return true
@@ -65,6 +68,7 @@ func (e DownloadClientConfigType) Valid() bool {
 // Defines values for DownloadClientInputType.
 const (
 	DownloadClientInputTypeDeluge       DownloadClientInputType = "deluge"
+	DownloadClientInputTypeNzbd         DownloadClientInputType = "nzbd"
 	DownloadClientInputTypeNzbget       DownloadClientInputType = "nzbget"
 	DownloadClientInputTypeQbittorrent  DownloadClientInputType = "qbittorrent"
 	DownloadClientInputTypeSabnzbd      DownloadClientInputType = "sabnzbd"
@@ -75,6 +79,8 @@ const (
 func (e DownloadClientInputType) Valid() bool {
 	switch e {
 	case DownloadClientInputTypeDeluge:
+		return true
+	case DownloadClientInputTypeNzbd:
 		return true
 	case DownloadClientInputTypeNzbget:
 		return true

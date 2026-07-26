@@ -9,6 +9,7 @@ const CLIENT_DEFAULT_PORTS: Record<DownloadClientInput['type'], string> = {
   deluge: '8112',
   sabnzbd: '8080',
   nzbget: '6789',
+  nzbd: '6789',
 }
 import {
   composeHostPort,
@@ -254,6 +255,7 @@ export function AcquisitionSettings() {
             <option value="deluge">Deluge</option>
             <option value="sabnzbd">SABnzbd</option>
             <option value="nzbget">NZBGet</option>
+            <option value="nzbd">nzbd (native)</option>
           </select>
           <input placeholder="Name" value={cli.name} onChange={(e) => setCli({ ...cli, name: e.target.value })} />
           <input
@@ -270,6 +272,14 @@ export function AcquisitionSettings() {
           />
           {cli.type === 'sabnzbd' ? (
             <input type="password" placeholder="API key" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
+          ) : cli.type === 'nzbd' ? (
+            // nzbd takes either a token or a username/password on the same
+            // header. Leave the username blank and the password field is
+            // read as a token, which is the credential its docs hand out.
+            <>
+              <input placeholder="Username (blank if using a token)" value={cli.username} onChange={(e) => setCli({ ...cli, username: e.target.value })} />
+              <input type="password" placeholder="Token, or password" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
+            </>
           ) : cli.type === 'deluge' ? (
             <input type="password" placeholder="Web password" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
           ) : (

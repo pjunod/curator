@@ -2702,7 +2702,7 @@ components:
       type: object
       required: [type, name, url]
       properties:
-        type: { type: string, enum: [qbittorrent, sabnzbd, transmission, deluge, nzbget] }
+        type: { type: string, enum: [qbittorrent, sabnzbd, transmission, deluge, nzbget, nzbd] }
         name: { type: string }
         url: { type: string }
         username: { type: string }

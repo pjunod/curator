@@ -51,6 +51,7 @@ type Download struct {
 	HandoffLog   string
 	AddedAt      int64
 	UpdatedAt    int64
+	Transfer     string
 }
 
 type DownloadClient struct {
@@ -62,9 +63,9 @@ type DownloadClient struct {
 	Password       string
 	Category       string
 	Enabled        int64
-	AddedAt        int64
 	PathMappings   string
 	ManualApproval int64
+	AddedAt        int64
 }
 
 type Episode struct {

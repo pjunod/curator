@@ -533,7 +533,7 @@ export interface PathMapping {
 }
 
 export interface DownloadClientInput {
-  type: 'qbittorrent' | 'sabnzbd' | 'transmission' | 'deluge' | 'nzbget'
+  type: 'qbittorrent' | 'sabnzbd' | 'transmission' | 'deluge' | 'nzbget' | 'nzbd'
   name: string
   url: string
   username?: string

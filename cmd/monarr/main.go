@@ -21,6 +21,7 @@ import (
 
 	"github.com/monarr-media/monarr/internal/adapters/deluge"
 	"github.com/monarr-media/monarr/internal/adapters/notify"
+	"github.com/monarr-media/monarr/internal/adapters/nzbd"
 	"github.com/monarr-media/monarr/internal/adapters/nzbget"
 	"github.com/monarr-media/monarr/internal/adapters/omdb"
 	"github.com/monarr-media/monarr/internal/adapters/openlibrary"
@@ -149,6 +150,8 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 			return sabnzbd.New(cfg)
 		case "nzbget":
 			return nzbget.New(cfg)
+		case "nzbd":
+			return nzbd.New(cfg)
 		case "transmission":
 			return transmission.New(cfg)
 		case "deluge":
