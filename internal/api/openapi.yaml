@@ -2715,6 +2715,17 @@ components:
           description: >
             Hold a completed download at 'awaiting_import' until you approve
             it, instead of importing automatically.
+        mode:
+          type: string
+          enum: [poll, push]
+          default: poll
+          description: >
+            How Monarr learns this client's state. 'poll' asks every 30
+            seconds. 'push' additionally holds the client's event stream
+            open, so a finished download is acted on when it finishes
+            rather than up to a poll interval later — currently only the
+            native nzbd client can stream. Push never replaces the poll,
+            so a stream that dies quietly costs latency, not correctness.
         pathMappings:
           type: array
           items: { $ref: "#/components/schemas/PathMapping" }

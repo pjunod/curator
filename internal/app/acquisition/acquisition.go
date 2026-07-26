@@ -85,6 +85,17 @@ type Service struct {
 
 	// wanted caches the missing/upgradable index (Phase 3).
 	wanted wantedIndex
+
+	// One mutex per download id, so the 30 s poll and an event arriving
+	// for the same download cannot both decide to import it. The map only
+	// ever grows by the number of downloads seen in this process, which
+	// is bounded by the queue, so it is not swept.
+	reconcileMu sync.Mutex
+	reconciling map[int64]*sync.Mutex
+
+	// Live state of each push subscription, for the UI.
+	linksMu sync.Mutex
+	links   map[int64]*linkState
 }
 
 // New returns a Service.
@@ -563,31 +574,91 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			if !ok {
 				continue // not visible yet (magnet resolving, etc.)
 			}
-			switch st.State {
-			case ports.StateQueued, ports.StateDownloading:
-				if dl.State == "grabbed" {
-					// First sighting in the client queue — log the step.
-					s.advance(ctx, &dl, "downloading", st.Progress, "", stepDownloading,
-						"download client is fetching the release")
-				} else {
-					_ = s.db.UpdateDownloadState(ctx, dl.ID, "downloading", st.Progress, "")
-				}
-			case ports.StateFailed:
-				if dl.State == "imported" {
-					continue
-				}
-				// A client-reported failure is a bad release: blocklist it
-				// and search a replacement.
-				s.handleFailure(ctx, dl, st.Progress, st.Message)
-			case ports.StateCompleted:
-				if dl.State == "imported" {
-					continue
-				}
-				s.onDownloaded(ctx, dl, cfg, st)
-			}
+			s.reconcileDownload(ctx, dl, cfg, st, "poll")
 		}
 	}
 	return nil
+}
+
+// reconcileDownload advances ONE download from ONE observation of it.
+//
+// Poll and push both land here, deliberately: the 30 s sweep and the event
+// stream are two ways of learning the same fact, and the moment they have
+// separate state machines they will disagree about what a download is
+// doing. `source` only colors the trace — the decisions are identical.
+//
+// Serialized per download id, because the two channels genuinely race: an
+// event can arrive in the same instant a poll tick reads the same client.
+// Without the lock both would see state 'downloaded' and both would run
+// the import, which places the files twice and writes two 'imported'
+// entries into a trace whose whole job is to be readable.
+func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus, source string) {
+	unlock := s.lockDownload(dl.ID)
+	defer unlock()
+
+	// Re-read under the lock: whoever held it before us may have moved
+	// this row on, and acting on the copy we were handed would undo them.
+	if fresh, err := s.db.GetDownload(ctx, dl.ID); err == nil {
+		dl = fresh
+	}
+
+	switch st.State {
+	case ports.StateQueued, ports.StateDownloading:
+		if dl.State == "grabbed" {
+			// First sighting in the client queue — log the step.
+			detail := "download client is fetching the release"
+			if st.Message != "" {
+				detail = st.Message
+			}
+			s.advance(ctx, &dl, "downloading", st.Progress, "", stepDownloading,
+				traced(detail, source))
+		} else {
+			_ = s.db.UpdateDownloadState(ctx, dl.ID, "downloading", st.Progress, "")
+		}
+	case ports.StateFailed:
+		if dl.State == "imported" || dl.State == "failed" {
+			return
+		}
+		// A client-reported failure is a bad release: blocklist it
+		// and search a replacement.
+		s.handleFailure(ctx, dl, st.Progress, st.Message)
+	case ports.StateCompleted:
+		// 'downloaded' and 'importing' are NOT terminal, but they mean
+		// someone is already on it; only 'grabbed'/'downloading' should
+		// start an import from here.
+		switch dl.State {
+		case "imported", "awaiting_import", "importing", "downloaded", "failed":
+			return
+		}
+		s.onDownloaded(ctx, dl, cfg, st, source)
+	}
+}
+
+// traced names the channel that delivered an observation. "completed
+// (event 12)" versus "completed (poll)" is the difference between knowing
+// push is working and assuming it is.
+func traced(detail, source string) string {
+	if source == "" {
+		return detail
+	}
+	return detail + " (" + source + ")"
+}
+
+// lockDownload serializes work on one download id across the poller and
+// the event subscribers, returning the unlock.
+func (s *Service) lockDownload(id int64) func() {
+	s.reconcileMu.Lock()
+	if s.reconciling == nil {
+		s.reconciling = map[int64]*sync.Mutex{}
+	}
+	m, ok := s.reconciling[id]
+	if !ok {
+		m = &sync.Mutex{}
+		s.reconciling[id] = m
+	}
+	s.reconcileMu.Unlock()
+	m.Lock()
+	return m.Unlock
 }
 
 // handleFailure marks a download failed, blocklists the release so it is

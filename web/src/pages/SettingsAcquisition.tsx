@@ -213,6 +213,18 @@ export function AcquisitionSettings() {
                     : ''}
                 </td>
                 <td>
+                  <span
+                    className={c.mode === 'push' ? 'pill pill-ok' : 'pill pill-neutral'}
+                    title={
+                      c.mode === 'push'
+                        ? 'Live: subscribed to this client\u2019s event stream (the 30s poll still runs underneath)'
+                        : 'Polled every 30 seconds'
+                    }
+                  >
+                    {c.mode === 'push' ? 'live' : 'poll'}
+                  </span>
+                </td>
+                <td>
                   <label
                     className="approval-toggle"
                     title="Hold this client's completed downloads for manual approval before import"
@@ -314,6 +326,19 @@ export function AcquisitionSettings() {
             />{' '}
             Require approval
           </label>
+          {cli.type === 'nzbd' && (
+            <label
+              className="approval-toggle"
+              title="Live: hold nzbd's event stream open so a finished download is imported the moment it finishes, instead of up to 30s later. The 30s poll keeps running either way — this only removes the wait."
+            >
+              <input
+                type="checkbox"
+                checked={cli.mode === 'push'}
+                onChange={(e) => setCli({ ...cli, mode: e.target.checked ? 'push' : 'poll' })}
+              />{' '}
+              Live updates
+            </label>
+          )}
           <button onClick={() => testCli.mutate()} disabled={testCli.isPending || !cli.url}>
             Test
           </button>

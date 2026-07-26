@@ -541,6 +541,8 @@ export interface DownloadClientInput {
   category?: string
   enabled?: boolean
   manualApproval?: boolean
+  /** How Monarr learns this client's state: poll every 30s, or hold its event stream open. */
+  mode?: 'poll' | 'push'
   pathMappings?: PathMapping[]
 }
 

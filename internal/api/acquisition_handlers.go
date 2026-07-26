@@ -290,6 +290,9 @@ func clientInputToConfig(in apigen.DownloadClientInput) ports.ClientConfig {
 	if in.ManualApproval != nil {
 		cfg.ManualApproval = *in.ManualApproval
 	}
+	if in.Mode != nil {
+		cfg.Mode = string(*in.Mode)
+	}
 	if in.PathMappings != nil {
 		for _, m := range *in.PathMappings {
 			// Blank halves are form noise, not a mapping.
@@ -306,6 +309,10 @@ func clientInputToConfig(in apigen.DownloadClientInput) ports.ClientConfig {
 
 func clientDTO(c ports.ClientConfig) apigen.DownloadClientConfig {
 	user, cat, enabled, manual := c.Username, c.Category, c.Enabled, c.ManualApproval
+	mode := apigen.DownloadClientConfigMode(c.Mode)
+	if c.Mode == "" {
+		mode = "poll"
+	}
 	masked := ""
 	if c.Password != "" {
 		masked = "••••"
@@ -313,7 +320,7 @@ func clientDTO(c ports.ClientConfig) apigen.DownloadClientConfig {
 	out := apigen.DownloadClientConfig{
 		Id: c.ID, Type: apigen.DownloadClientConfigType(c.Type), Name: c.Name, Url: c.URL,
 		Username: &user, Password: &masked, Category: &cat, Enabled: &enabled,
-		ManualApproval: &manual,
+		ManualApproval: &manual, Mode: &mode,
 	}
 	if len(c.PathMappings) > 0 {
 		maps := make([]apigen.PathMapping, 0, len(c.PathMappings))

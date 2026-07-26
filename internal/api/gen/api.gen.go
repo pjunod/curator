@@ -35,6 +35,24 @@ func (e AddMediaRequestMonitor) Valid() bool {
 	}
 }
 
+// Defines values for DownloadClientConfigMode.
+const (
+	DownloadClientConfigModePoll DownloadClientConfigMode = "poll"
+	DownloadClientConfigModePush DownloadClientConfigMode = "push"
+)
+
+// Valid indicates whether the value is a known member of the DownloadClientConfigMode enum.
+func (e DownloadClientConfigMode) Valid() bool {
+	switch e {
+	case DownloadClientConfigModePoll:
+		return true
+	case DownloadClientConfigModePush:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DownloadClientConfigType.
 const (
 	DownloadClientConfigTypeDeluge       DownloadClientConfigType = "deluge"
@@ -59,6 +77,24 @@ func (e DownloadClientConfigType) Valid() bool {
 	case DownloadClientConfigTypeSabnzbd:
 		return true
 	case DownloadClientConfigTypeTransmission:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DownloadClientInputMode.
+const (
+	DownloadClientInputModePoll DownloadClientInputMode = "poll"
+	DownloadClientInputModePush DownloadClientInputMode = "push"
+)
+
+// Valid indicates whether the value is a known member of the DownloadClientInputMode enum.
+func (e DownloadClientInputMode) Valid() bool {
+	switch e {
+	case DownloadClientInputModePoll:
+		return true
+	case DownloadClientInputModePush:
 		return true
 	default:
 		return false
@@ -535,9 +571,12 @@ type DownloadClientConfig struct {
 	Id       int64   `json:"id"`
 
 	// ManualApproval Hold a completed download at 'awaiting_import' until you approve it, instead of importing automatically.
-	ManualApproval *bool   `json:"manualApproval,omitempty"`
-	Name           string  `json:"name"`
-	Password       *string `json:"password,omitempty"`
+	ManualApproval *bool `json:"manualApproval,omitempty"`
+
+	// Mode How Monarr learns this client's state. 'poll' asks every 30 seconds. 'push' additionally holds the client's event stream open, so a finished download is acted on when it finishes rather than up to a poll interval later — currently only the native nzbd client can stream. Push never replaces the poll, so a stream that dies quietly costs latency, not correctness.
+	Mode     *DownloadClientConfigMode `json:"mode,omitempty"`
+	Name     string                    `json:"name"`
+	Password *string                   `json:"password,omitempty"`
 
 	// PathMappings Remote path mappings: when the client runs on another host or container, rewrite the completed-download path it reports into the path Monarr sees the same files at.
 	PathMappings *[]PathMapping           `json:"pathMappings,omitempty"`
@@ -545,6 +584,9 @@ type DownloadClientConfig struct {
 	Url          string                   `json:"url"`
 	Username     *string                  `json:"username,omitempty"`
 }
+
+// DownloadClientConfigMode How Monarr learns this client's state. 'poll' asks every 30 seconds. 'push' additionally holds the client's event stream open, so a finished download is acted on when it finishes rather than up to a poll interval later — currently only the native nzbd client can stream. Push never replaces the poll, so a stream that dies quietly costs latency, not correctness.
+type DownloadClientConfigMode string
 
 // DownloadClientConfigType defines model for DownloadClientConfig.Type.
 type DownloadClientConfigType string
@@ -555,9 +597,12 @@ type DownloadClientInput struct {
 	Enabled  *bool   `json:"enabled,omitempty"`
 
 	// ManualApproval Hold a completed download at 'awaiting_import' until you approve it, instead of importing automatically.
-	ManualApproval *bool   `json:"manualApproval,omitempty"`
-	Name           string  `json:"name"`
-	Password       *string `json:"password,omitempty"`
+	ManualApproval *bool `json:"manualApproval,omitempty"`
+
+	// Mode How Monarr learns this client's state. 'poll' asks every 30 seconds. 'push' additionally holds the client's event stream open, so a finished download is acted on when it finishes rather than up to a poll interval later — currently only the native nzbd client can stream. Push never replaces the poll, so a stream that dies quietly costs latency, not correctness.
+	Mode     *DownloadClientInputMode `json:"mode,omitempty"`
+	Name     string                   `json:"name"`
+	Password *string                  `json:"password,omitempty"`
 
 	// PathMappings Remote path mappings: when the client runs on another host or container, rewrite the completed-download path it reports into the path Monarr sees the same files at.
 	PathMappings *[]PathMapping          `json:"pathMappings,omitempty"`
@@ -565,6 +610,9 @@ type DownloadClientInput struct {
 	Url          string                  `json:"url"`
 	Username     *string                 `json:"username,omitempty"`
 }
+
+// DownloadClientInputMode How Monarr learns this client's state. 'poll' asks every 30 seconds. 'push' additionally holds the client's event stream open, so a finished download is acted on when it finishes rather than up to a poll interval later — currently only the native nzbd client can stream. Push never replaces the poll, so a stream that dies quietly costs latency, not correctness.
+type DownloadClientInputMode string
 
 // DownloadClientInputType defines model for DownloadClientInput.Type.
 type DownloadClientInputType string

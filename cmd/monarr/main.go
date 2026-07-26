@@ -304,6 +304,12 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}); err != nil {
 		return err
 	}
+	// Push subscriptions run beside the poll, never instead of it: a
+	// client in push mode is still swept every 30 s above, which is what
+	// notices a stream that died quietly. The supervisor re-reads the
+	// client list itself, so switching a client to push in the settings
+	// UI takes effect without a restart.
+	go acq.RunSubscribers(ctx)
 	// Phase 3 automation: the RSS loop grabs wanted releases as they appear;
 	// backlog search actively hunts for what RSS already scrolled past.
 	if err := sched.Register(scheduler.Task{

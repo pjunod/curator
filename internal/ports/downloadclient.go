@@ -46,6 +46,12 @@ type ClientConfig struct {
 	// ManualApproval holds a completed download at 'awaiting_import' until
 	// the user approves it, instead of importing automatically.
 	ManualApproval bool
+	// Mode is how Monarr learns this client's state: "poll" (ask every
+	// 30 s) or "push" (hold the client's event stream open). Push still
+	// polls underneath — it is an optimization, never a dependency — so
+	// the worst case for a client wrongly set to push is the behavior it
+	// had before. Empty means poll.
+	Mode string
 }
 
 // Handle identifies an item inside a download client (torrent hash, nzo id).
@@ -93,4 +99,59 @@ type DownloadClient interface {
 // on its own row.
 type TaggedAdder interface {
 	AddTagged(ctx context.Context, downloadURL, category, transfer string) (Handle, error)
+}
+
+// ClientEventKind is what a pushed event says happened.
+type ClientEventKind string
+
+// Event kinds. Progress is advisory; the other three are decisions.
+const (
+	// EventProgress is a rate/percentage update. High frequency, no
+	// decision attached — consumers throttle it.
+	EventProgress ClientEventKind = "progress"
+	// EventStage is post-processing moving between stages (verify,
+	// repair, unpack). This is what turns "stuck" into "repairing, since
+	// four minutes ago".
+	EventStage ClientEventKind = "stage"
+	// EventCompleted means the payload is finished AND ready to import —
+	// past post-processing, with a path attached.
+	EventCompleted ClientEventKind = "completed"
+	// EventFailed means the client gave up on this download.
+	EventFailed ClientEventKind = "failed"
+	// EventReset means the stream could not be resumed and anything may
+	// have been missed. The consumer must reconcile by polling before it
+	// trusts the stream again. It is the difference between a consumer
+	// that knows it is behind and one that silently is.
+	EventReset ClientEventKind = "reset"
+)
+
+// ClientEvent is one pushed observation about one download.
+type ClientEvent struct {
+	Handle Handle
+	Kind   ClientEventKind
+	// Stage is the post-processing stage name when Kind is EventStage.
+	Stage string
+	// Status is populated for progress/completed/failed, in exactly the
+	// shape the poller produces — so both channels feed one reconciler
+	// rather than two that can disagree.
+	Status DownloadStatus
+	// Seq is the client's own event cursor, for logs and for saying which
+	// channel delivered a step. Zero when the client does not number.
+	Seq uint64
+}
+
+// Subscriber is an OPTIONAL capability: a client that can push state
+// changes instead of waiting to be asked.
+//
+// Optional because most download clients have no such stream, and a port
+// every adapter must implement by returning "unsupported" is a port that
+// tells you nothing. Push is also never load-bearing — the poll keeps
+// running underneath — so a client that cannot stream loses latency and
+// nothing else.
+//
+// The returned channel is closed when ctx is cancelled or the stream ends
+// unrecoverably. Implementations reconnect internally and report a gap
+// they could not bridge as an EventReset rather than by closing.
+type Subscriber interface {
+	Subscribe(ctx context.Context) (<-chan ClientEvent, error)
 }

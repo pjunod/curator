@@ -18,8 +18,8 @@ SELECT * FROM indexers WHERE id = ?;
 DELETE FROM indexers WHERE id = ?;
 
 -- name: InsertDownloadClient :one
-INSERT INTO download_clients (type, name, url, username, password, category, enabled, path_mappings, manual_approval, added_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
+INSERT INTO download_clients (type, name, url, username, password, category, enabled, path_mappings, manual_approval, mode, added_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
 
 -- name: ListDownloadClients :many
 SELECT * FROM download_clients ORDER BY name;
@@ -30,7 +30,7 @@ SELECT * FROM download_clients WHERE id = ?;
 -- name: UpdateDownloadClient :exec
 UPDATE download_clients
 SET type = ?, name = ?, url = ?, username = ?, password = ?, category = ?,
-    enabled = ?, path_mappings = ?, manual_approval = ?
+    enabled = ?, path_mappings = ?, manual_approval = ?, mode = ?
 WHERE id = ?;
 
 -- name: DeleteDownloadClient :exec

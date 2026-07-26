@@ -66,6 +66,7 @@ type DownloadClient struct {
 	PathMappings   string
 	ManualApproval int64
 	AddedAt        int64
+	Mode           string
 }
 
 type Episode struct {

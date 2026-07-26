@@ -51,6 +51,7 @@ sync pushes them in.
 | Deluge | torrent | web password only |
 | SABnzbd | usenet | API key (in the password field) |
 | NZBGet | usenet | username + password (defaults `nzbget`/`tegbzn6789`); **leave both blank if you've disabled auth** (empty `ControlPassword`) |
+| nzbd (native) | usenet | a token in the password field with the username blank, or username + password |
 
 Blank credentials mean "send no auth at all" — valid whenever the client
 itself doesn't require it.
@@ -60,6 +61,45 @@ supports it. Grabs route by protocol: a torrent release goes to the first
 enabled torrent client, usenet to the first enabled usenet client. The
 queue is polled every 30 s; completed items import automatically unless the
 client requires approval (below).
+
+### nzbd, natively (`nzbd` vs `NZBGet`)
+
+[nzbd](https://github.com/pjunod/nzbd) speaks NZBGet's API, so it works as
+an `NZBGet` client and always has. The `nzbd (native)` type talks to its
+own `/api/v1` instead, which buys three things the compat API cannot
+express:
+
+- **A transfer id on every download.** Monarr tags each grab `t-<id>-<hex>`
+  and nzbd carries it on the job, into its history, and onto its completion
+  event. Grep that one string in either application's log and the whole
+  story comes back.
+- **Post-processing detail.** The Activity trace says *"post-processing:
+  par verify"* rather than sitting on "downloading" for the ten minutes a
+  repair takes.
+- **Live updates** (below), which need an event stream compat does not have.
+
+Everything else behaves identically, and switching an existing client's
+type is safe: in-flight downloads reconcile by handle either way.
+
+### Live updates (per client, default off)
+
+**Live updates** holds the client's event stream open, so a finished
+download is imported the moment post-processing ends instead of up to 30
+seconds later. Only the native `nzbd` type can stream today; the checkbox
+only appears for it.
+
+**Push never replaces the poll.** The 30 s sweep keeps running underneath,
+and it is what notices a stream that died quietly. So the worst case for a
+client set to Live is exactly the behavior it had before — latency, never
+correctness. If the stream drops, Monarr reconnects with backoff and
+resumes from where it left off; if the gap is too big to replay (nzbd
+restarted, or Monarr was away longer than nzbd's buffer), it reconciles by
+polling before trusting the stream again.
+
+The client list shows `live` or `poll` per client, and the Activity trace
+names the channel that delivered each step — *"…finished; payload at /x
+(event 913)"* versus *"(poll)"*. That is the difference between knowing
+push works and assuming it does.
 
 **Approve imports** (per client, default off) holds every completed
 download at *awaiting approval* instead of importing it — nothing touches

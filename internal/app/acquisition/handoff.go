@@ -46,22 +46,26 @@ func (s *Service) advance(ctx context.Context, dl *sqlite.Download, state string
 // recordDownloaded captures the client-reported path and its remote-path
 // mapping, then marks the download 'downloaded'. Called once, when a grab
 // first shows up complete.
-func (s *Service) recordDownloaded(ctx context.Context, dl *sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus) {
+func (s *Service) recordDownloaded(ctx context.Context, dl *sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus, source string) {
 	dl.SavePath = st.SavePath
 	dl.ImportPath = ports.MapRemotePath(cfg.PathMappings, st.SavePath)
 	detail := fmt.Sprintf("%s finished; payload at %s", clientLabel(cfg), orNone(st.SavePath))
 	if dl.ImportPath != st.SavePath {
 		detail += fmt.Sprintf(" (mapped to %s)", dl.ImportPath)
 	}
-	s.advance(ctx, dl, "downloaded", 1, "", stepDownloaded, detail)
+	// Which channel delivered the completion. "(event 913)" versus
+	// "(poll)" is how an operator sees that push is actually working —
+	// otherwise a dead subscription and a healthy one produce identical
+	// traces, just 30 seconds apart, and nobody notices for weeks.
+	s.advance(ctx, dl, "downloaded", 1, "", stepDownloaded, traced(detail, source))
 }
 
 // onDownloaded is the completed-download branch of the poller. It records
 // the download, then imports it (auto). The manual-approval gate is layered
 // in on top of this.
-func (s *Service) onDownloaded(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus) {
+func (s *Service) onDownloaded(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus, source string) {
 	if dl.State == "grabbed" || dl.State == "downloading" {
-		s.recordDownloaded(ctx, &dl, cfg, st)
+		s.recordDownloaded(ctx, &dl, cfg, st, source)
 	}
 	if cfg.ManualApproval {
 		if dl.State != "awaiting_import" {

@@ -146,6 +146,44 @@ the symptom).
 - [x] Compat `/qualityprofile` synthesized from targets — fake-consumer suite green untouched (plan §6.4, M5)
 - [x] Post-import verification: `quality_mismatch` history event (log-only); docs updated (usage/settings/architecture); ADRs 0013/0014 → Accepted (M6)
 
+## Phase 7 — The nzbd integration (plan: `docs/plan-integration.md`, untracked)
+
+Making the three apps behave like one pipeline: events instead of timers at
+every seam, and one id that names a transfer from grab to playable. nzbd's
+side (N1–N7) is built; this is Monarr's.
+
+- [x] **§5.1 native `nzbd` client** — `internal/adapters/nzbd`, a separate
+      type from `nzbget` because it is a different API with different
+      capabilities. Add / Statuses / Remove / Test against `/api/v1`, with
+      post-processing reported as a named stage rather than a stall, and a
+      job deleted by hand in nzbd reported as removed rather than as a bad
+      release (which would blocklist it). Migration 0020 widens the type
+      CHECK; UI, openapi and the web client types follow
+- [x] **The transfer id** — `t-<downloads.id>-<6 hex>` on `downloads`,
+      sent to nzbd as an add-time job param via the optional
+      `ports.TaggedAdder` capability, and opening the handoff trace. The
+      row is now inserted before the client add, because the id is built
+      from the row id; a refused add cleans up its own row
+- [x] **§5.2 push subscription** — `ports.Subscriber` + the nzbd SSE
+      consumer (opaque `Last-Event-ID` resume, backoff reconnect, `reset`/
+      `lagged` → reconcile by poll), a supervisor goroutine per push-mode
+      client, `download_clients.mode` (`poll`|`push`, default poll), and a
+      **Live updates** toggle that only appears for a client that can
+      stream. Push runs beside the poll, never instead of it
+- [x] **§5.3 one reconciler** — `reconcileDownload` extracted so poll and
+      push share one brain, serialized per download id so the two channels
+      cannot both import. The trace names the channel that delivered each
+      step (`(event 913)` vs `(poll)`) — the difference between knowing
+      push works and assuming it does
+- [x] Verified against a **real nzbd**: a real download driven end to end
+      while subscribed, receiving the actual `par_rename → rar_rename →
+      post_unpack_rename` stages and a completion carrying the real final
+      directory. The httptest fixtures are payloads captured from that run
+- [ ] §5.4–5.5 import paths on `ImportCompleted` + the plurx notifier
+- [ ] §5.6 health checks (client reachability, nzbd capacity warnings)
+- [ ] §5.7 Connections panel — one screen that answers "are the three apps
+      actually talking right now"
+
 ## Launch logistics
 
 - [x] `monarr-media` GitHub org (free) + private repo + initial push

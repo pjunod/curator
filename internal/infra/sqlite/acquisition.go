@@ -214,7 +214,19 @@ func clientFromRow(r sqlitegen.DownloadClient) ports.ClientConfig {
 		ID: r.ID, Type: r.Type, Name: r.Name, URL: r.Url,
 		Username: r.Username, Password: r.Password, Category: r.Category, Enabled: r.Enabled != 0,
 		PathMappings: maps, ManualApproval: r.ManualApproval != 0,
+		Mode: r.Mode,
 	}
+}
+
+// clientMode normalizes the update channel. Anything unrecognized —
+// including the empty string from an older API client — is 'poll', which
+// is the behavior every client has always had. A CHECK constraint would
+// otherwise turn a blank field in an old integration into a failed save.
+func clientMode(m string) string {
+	if m == "push" {
+		return "push"
+	}
+	return "poll"
 }
 
 // AddDownloadClient stores a client config.
@@ -228,6 +240,7 @@ func (d *DB) AddDownloadClient(ctx context.Context, c ports.ClientConfig) (int64
 		Password: c.Password, Category: c.Category, Enabled: boolInt(c.Enabled),
 		PathMappings:   string(maps),
 		ManualApproval: boolInt(c.ManualApproval),
+		Mode:           clientMode(c.Mode),
 		AddedAt:        time.Now().UnixMilli(),
 	})
 }
@@ -245,6 +258,7 @@ func (d *DB) UpdateDownloadClient(ctx context.Context, c ports.ClientConfig) err
 		Password: c.Password, Category: c.Category, Enabled: boolInt(c.Enabled),
 		PathMappings:   string(maps),
 		ManualApproval: boolInt(c.ManualApproval),
+		Mode:           clientMode(c.Mode),
 		ID:             c.ID,
 	})
 }

@@ -42,3 +42,13 @@ FROM download_clients;
 
 DROP TABLE download_clients;
 ALTER TABLE download_clients_new RENAME TO download_clients;
+
+-- How Monarr learns a client's state. 'poll' asks every 30 s (what every
+-- client has always done); 'push' additionally holds the client's event
+-- stream open so a finished download is acted on when it finishes rather
+-- than up to a poll interval later. Push never replaces the poll — it is
+-- an optimization, so a stream that dies quietly costs latency and not
+-- correctness, and a client wrongly set to push behaves exactly as it did
+-- before. Defaulting to 'poll' means this migration changes no behavior.
+ALTER TABLE download_clients ADD COLUMN mode TEXT NOT NULL DEFAULT 'poll'
+    CHECK (mode IN ('poll', 'push'));
