@@ -25,7 +25,9 @@ var httpClient = httpx.NewClient(15 * time.Second)
 // notifier whose calls fail loudly (config rot should be visible, not
 // silent).
 func New(cfg ports.NotifierConfig) ports.Notifier {
-	u := ports.NormalizeURL(cfg.Settings["url"])
+	// Defensive: rows saved before URL completion existed still carry a bare
+	// host, and a stored config is read far more often than it is written.
+	u := ports.NormalizeServiceURL(cfg.Settings["url"], ports.DefaultPortFor(cfg.Type))
 	switch cfg.Type {
 	case "webhook":
 		return &Webhook{URL: u}

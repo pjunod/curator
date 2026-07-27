@@ -30,7 +30,7 @@ type Client struct {
 
 // New returns a Client.
 func New(cfg ports.ClientConfig) *Client {
-	cfg.URL = ports.NormalizeURL(cfg.URL)
+	cfg.URL = ports.NormalizeServiceURL(cfg.URL, ports.DefaultPortFor(cfg.Type))
 	return &Client{cfg: cfg, http: httpx.NewClient(30 * time.Second)}
 }
 

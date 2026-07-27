@@ -273,7 +273,8 @@ func (s *Server) DeleteIndexer(w http.ResponseWriter, r *http.Request, id int64)
 
 func clientInputToConfig(in apigen.DownloadClientInput) ports.ClientConfig {
 	cfg := ports.ClientConfig{
-		Type: string(in.Type), Name: in.Name, URL: ports.NormalizeURL(in.Url),
+		Type: string(in.Type), Name: in.Name,
+		URL:      ports.NormalizeServiceURL(in.Url, ports.DefaultPortFor(string(in.Type))),
 		Category: "monarr", Enabled: true,
 	}
 	if in.Username != nil {
@@ -723,6 +724,13 @@ func notifierFromInput(in apigen.NotifierInput) ports.NotifierConfig {
 	if in.Settings != nil {
 		cfg.Settings = *in.Settings
 	}
+	// Complete the URL on the way in, so the settings row shows back exactly
+	// what Monarr will dial. What a person types is a host — `plurxd`,
+	// `192.168.1.10` — because that is the part they had to look up; the
+	// scheme and the port are constants the software already knows.
+	if u, ok := cfg.Settings["url"]; ok && u != "" {
+		cfg.Settings["url"] = ports.NormalizeServiceURL(u, ports.DefaultPortFor(cfg.Type))
+	}
 	if in.OnGrab != nil {
 		cfg.OnGrab = *in.OnGrab
 	}
@@ -801,6 +809,26 @@ func (s *Server) TestNotifier(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.deps.NotifierFactory(notifierFromInput(body)).Test(r.Context()); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// TestNotifierByID implements POST /notifiers/{id}/test — the same probe,
+// against the SAVED config rather than whatever is typed into the add form.
+//
+// Download clients and indexers have had this since the beginning; notifiers
+// did not, so the only way to check a saved one was to retype its settings
+// into the add form and trust you retyped them identically. That tests the
+// typing. This tests the notifier that actually runs after an import.
+func (s *Server) TestNotifierByID(w http.ResponseWriter, r *http.Request, id int64) {
+	cfg, err := s.deps.Store.GetNotifier(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	if err := s.deps.NotifierFactory(cfg).Test(r.Context()); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

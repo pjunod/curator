@@ -42,6 +42,27 @@ const STATE_TITLE: Record<Connection['state'], string> = {
   quiet: 'It has called since Monarr started, but not lately',
 }
 
+// Direction stated, not inferred.
+//
+// One application legitimately appears twice — plurx is both something Monarr
+// pushes to and something that calls Monarr — and when both rows carry the
+// same name, one green and one amber, the second reads as a stale duplicate of
+// the first. It is not: they are two settings that fail independently, and
+// conflating them sends you to fix the half that already works. So the Kind
+// cell leads with the direction instead of leaving it to be deduced from
+// "media server" versus "calls Monarr".
+const KIND_LABEL: Record<Connection['kind'], string> = {
+  downloadclient: '→ download client',
+  mediaserver: '→ media server',
+  inbound: '← calls Monarr',
+}
+
+const KIND_TITLE: Record<Connection['kind'], string> = {
+  downloadclient: 'Outbound: Monarr polls this client for queue and history',
+  mediaserver: 'Outbound: Monarr tells this server when an import finishes',
+  inbound: 'Inbound: this application calls Monarr. Configured on its side, not here',
+}
+
 function ConnectionsCard() {
   const q = useQuery({
     queryKey: ['connections'],
@@ -54,7 +75,9 @@ function ConnectionsCard() {
     <section className="panel">
       <h2>Connections</h2>
       <p className="muted">
-        The other applications Monarr talks to — and the ones that talk to it.{' '}
+        The other applications Monarr talks to (→) — and the ones that talk to it
+        (←). One application can appear as both; the two directions are separate
+        settings and fail separately.{' '}
         {q.data?.checkedAt
           ? `Last probed ${fmtRelative(new Date(q.data.checkedAt).toISOString())}.`
           : 'Not probed yet — the health check runs every minute.'}
@@ -85,12 +108,8 @@ function ConnectionsCard() {
                     {c.url ? ` · ${c.url}` : ''}
                   </div>
                 </td>
-                <td className="muted">
-                  {c.kind === 'downloadclient'
-                    ? 'download client'
-                    : c.kind === 'inbound'
-                      ? 'calls Monarr'
-                      : 'media server'}
+                <td className="muted nowrap" title={KIND_TITLE[c.kind] ?? ''}>
+                  {KIND_LABEL[c.kind] ?? c.kind}
                 </td>
                 <td>
                   <span className={`pill ${STATE_PILL[c.state]}`} title={STATE_TITLE[c.state]}>

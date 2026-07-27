@@ -1985,6 +1985,9 @@ type ServerInterface interface {
 	// ListDeliveries This notifier's recent deliveries, newest first
 	// (GET /notifiers/{id}/deliveries)
 	ListDeliveries(w http.ResponseWriter, r *http.Request, id int64)
+	// TestNotifierByID Send a test notification using the SAVED config
+	// (POST /notifiers/{id}/test)
+	TestNotifierByID(w http.ResponseWriter, r *http.Request, id int64)
 	// ListProfiles List quality profiles
 	// (GET /profiles)
 	ListProfiles(w http.ResponseWriter, r *http.Request)
@@ -3574,6 +3577,32 @@ func (siw *ServerInterfaceWrapper) ListDeliveries(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// TestNotifierByID operation middleware
+func (siw *ServerInterfaceWrapper) TestNotifierByID(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestNotifierByID(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProfiles operation middleware
 func (siw *ServerInterfaceWrapper) ListProfiles(w http.ResponseWriter, r *http.Request) {
 
@@ -4175,6 +4204,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/test", wrapper.TestNotifier)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/notifiers/{id}", wrapper.DeleteNotifier)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/notifiers/{id}", wrapper.UpdateNotifier)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/{id}/test", wrapper.TestNotifierByID)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/notifiers/{id}/deliveries", wrapper.ListDeliveries)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/webhooks/plurx", wrapper.PlurxWebhook)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/connections", wrapper.GetConnections)

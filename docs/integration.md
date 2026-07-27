@@ -33,7 +33,7 @@ is the only vantage point that sees both directions.
    └───────────────┘
 ```
 
-Default ports: nzbd 6789 · **Monarr 7676** · plurx 32600.
+Default ports: nzbd 6789 · **Monarr 7676** · plurx 32400.
 
 ## Wiring the three together in Docker
 
@@ -63,19 +63,46 @@ networks:
     external: true                   # created above; compose must not own it
 ```
 
-`docker compose up -d` in each directory. After that:
+`docker compose up -d` in each directory.
+
+**Get the names from Docker, not from memory.** One command answers both "what
+do I put in the URL" and "are they actually on the same network":
+
+```bash
+docker ps --format '{{.Names}}\t{{.Networks}}'
+```
+
+```
+plurxd	media
+nzbd	media
+monarr	media
+```
+
+Column 1 is the hostname. Column 2 must contain the shared network for every
+container that has to reach another — anything showing `bridge` or `host`
+cannot be resolved by name from the others.
+
+Read column 1 literally. A container called `plurxd` is **not** reachable as
+`plurx`, and the failure does not read like a typo. Monarr reports
+`cannot reach plurx: Post "http://plurx:32400/api/v1/scan": dial tcp: lookup
+plurx on 127.0.0.11:53: server misbehaving` — that is Docker's embedded
+resolver at `127.0.0.11` saying the name does not exist on this network.
+Nothing was ever dialled, and the port in that message is irrelevant. Fix the
+name before touching anything else.
+
+So, for the containers above:
 
 | Setting | Value |
 |---|---|
 | Monarr → nzbd download client | host `nzbd`, port `6789` |
-| Monarr → plurx notifier URL | `http://plurx:32600` |
+| Monarr → plurx notifier URL | `http://plurxd:32400` |
 | plurx → monarr URL | `http://monarr:7676` |
 
-Three things that trip people up, each with its reason:
+Three more things that trip people up, each with its reason:
 
 **The hostname is the `container_name`, or the service key if you did not set
-one.** Not the image, and not the directory. If plurx's container is called
-`plurx-server`, that is what goes in monarr's notifier URL.
+one.** Not the image, not the directory, and not the product's name — `plurxd`
+is a real example of all three being different.
 
 **Published ports are irrelevant on this path.** `ports: - "7676:7676"` maps
 host→container; container→container traffic goes straight to the *internal*
@@ -469,7 +496,7 @@ spends an afternoon looking for a metric that does not exist.
 ```bash
 NZBD=http://127.0.0.1:6789;  TOK=<nzbd api.token>
 MONARR=http://127.0.0.1:7676; KEY=<Settings → Security → Reveal>
-PLURX=http://127.0.0.1:32600
+PLURX=http://127.0.0.1:32400
 ```
 
 1. **nzbd is up and honest** — `curl -sS "$NZBD/healthz"` → `ok`, then

@@ -1,7 +1,14 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Notifier, NotifierInput, NotifierType } from '../api'
-import { addNotifier, deleteNotifier, getNotifiers, testNotifier, updateNotifier } from '../api'
+import {
+  addNotifier,
+  deleteNotifier,
+  getNotifiers,
+  testNotifier,
+  testNotifierByID,
+  updateNotifier,
+} from '../api'
 import { NotifierDeliveries } from './NotifierDeliveries'
 
 const TYPE_FIELDS: Record<NotifierType, { key: string; label: string }[]> = {
@@ -24,6 +31,38 @@ const TYPE_FIELDS: Record<NotifierType, { key: string; label: string }[]> = {
 // The types that act on a media server rather than talk to a person. They
 // fire on imports only, so the per-event checkboxes do not apply to them.
 const MEDIA_SERVER: NotifierType[] = ['plex', 'jellyfin', 'plurx']
+
+// RowTest probes a SAVED notifier, which is a different question from the one
+// the add form's Test answers.
+//
+// The add form tests what is typed into its boxes. What runs after an import
+// is what is stored, and the two are identical only until somebody edits one
+// of them. Without this, checking a saved notifier meant retyping its settings
+// into the add form and trusting you retyped them identically — which tests
+// your typing. Download clients and indexers have had a per-row test since the
+// beginning; this closes the gap.
+function RowTest({ id }: { id: number }) {
+  const [msg, setMsg] = useState('')
+  const run = useMutation({
+    mutationFn: () => testNotifierByID(id),
+    onSuccess: () => setMsg('✓ delivered'),
+    onError: (e: Error) => setMsg(`✗ ${e.message}`),
+  })
+  return (
+    <>
+      <button
+        onClick={() => {
+          setMsg('')
+          run.mutate()
+        }}
+        disabled={run.isPending}
+      >
+        {run.isPending ? 'Testing…' : 'Test'}
+      </button>
+      {msg && <div className={msg.startsWith('✓') ? 'ok-text' : 'error-text'}>{msg}</div>}
+    </>
+  )
+}
 
 // NotifierSettings manages notification targets (Phase 3): webhooks,
 // Discord, the Plex/Jellyfin library-refresh pokes, and plurx — which is
@@ -144,6 +183,7 @@ export function NotifierSettings() {
                     </>
                   ) : (
                     <>
+                      <RowTest id={n.id} />
                       <button onClick={() => startEdit(n)}>Edit</button>
                       {MEDIA_SERVER.includes(n.type) && (
                         <button onClick={() => setShowLog(showLog === n.id ? null : n.id)}>

@@ -31,7 +31,7 @@ var _ ports.DownloadClient = (*Client)(nil)
 
 // New returns a Client; login happens lazily on first use.
 func New(cfg ports.ClientConfig) *Client {
-	cfg.URL = ports.NormalizeURL(cfg.URL)
+	cfg.URL = ports.NormalizeServiceURL(cfg.URL, ports.DefaultPortFor(cfg.Type))
 	jar, _ := cookiejar.New(nil)
 	return &Client{cfg: cfg, http: httpx.NewClientJar(30*time.Second, jar)}
 }

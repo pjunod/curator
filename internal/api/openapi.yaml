@@ -1759,6 +1759,37 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /notifiers/{id}/test:
+    post:
+      operationId: testNotifierByID
+      summary: Send a test notification using the SAVED config
+      description: >
+        The add form's test probes what is typed into its boxes. This probes
+        what is stored, which is what actually runs after an import — and the
+        two are only the same until somebody edits one of them. Download
+        clients and indexers have had a per-row test since the beginning;
+        without this, checking a saved notifier meant retyping its settings
+        into the add form and trusting you retyped them identically, which
+        tests the typing rather than the notifier.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Delivered.
+        "400":
+          description: Failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown notifier.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /notifiers/{id}/deliveries:
     get:
       operationId: listDeliveries

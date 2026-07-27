@@ -876,6 +876,8 @@ export interface BackupInfo {
 export const getNotifiers = () => get<Notifier[]>('/notifiers')
 export const addNotifier = (n: NotifierInput) => send<Notifier>('POST', '/notifiers', n)
 export const testNotifier = (n: NotifierInput) => send('POST', '/notifiers/test', n)
+// The SAVED config, not the typed one — those diverge the moment anyone edits.
+export const testNotifierByID = (id: number) => send('POST', `/notifiers/${id}/test`)
 export const deleteNotifier = (id: number) => send('DELETE', `/notifiers/${id}`)
 export const updateNotifier = (id: number, n: NotifierInput) =>
   send<Notifier>('PUT', `/notifiers/${id}`, n)
