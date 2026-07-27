@@ -706,10 +706,22 @@ func (s *Server) GetCalendar(w http.ResponseWriter, r *http.Request, params apig
 	}
 	out := make([]apigen.CalendarEntry, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, apigen.CalendarEntry{
+		entry := apigen.CalendarEntry{
 			Date: e.Date, Kind: e.Kind, MediaItemId: e.MediaItemID,
 			Title: e.Title, Detail: e.Detail, HasFile: e.HasFile,
-		})
+		}
+		// Ids only when we have them: an absent field says "unknown", where a
+		// zero would say "TMDB id 0" and match whatever the consumer stores
+		// for its own unknowns.
+		if e.TmdbID != 0 {
+			id := e.TmdbID
+			entry.TmdbId = &id
+		}
+		if e.ImdbID != "" {
+			imdb := e.ImdbID
+			entry.ImdbId = &imdb
+		}
+		out = append(out, entry)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

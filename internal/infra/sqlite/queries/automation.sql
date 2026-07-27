@@ -30,13 +30,14 @@ DELETE FROM notifiers WHERE id = ?;
 -- name: ListEpisodesAiring :many
 SELECT e.id, e.media_item_id, e.season_number, e.episode_number,
        e.title AS episode_title, e.air_date, m.title AS series_title,
+       m.tmdb_id, m.imdb_id,
        EXISTS(SELECT 1 FROM media_file_episodes mfe WHERE mfe.episode_id = e.id) AS has_file
 FROM episodes e JOIN media_items m ON m.id = e.media_item_id
 WHERE e.air_date >= ? AND e.air_date <= ?
 ORDER BY e.air_date, m.title, e.season_number, e.episode_number;
 
 -- name: ListItemsReleasedBetween :many
-SELECT m.id, m.kind, m.title, m.author, m.release_date,
+SELECT m.id, m.kind, m.title, m.author, m.release_date, m.tmdb_id, m.imdb_id,
        EXISTS(SELECT 1 FROM media_files f WHERE f.media_item_id = m.id) AS has_file
 FROM media_items m
 WHERE m.kind != 'series' AND m.release_date >= ? AND m.release_date <= ?

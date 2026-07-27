@@ -428,6 +428,14 @@ is missing its TMDB/IMDb id, not the webhook is broken.
 for its home-screen **Coming soon** rail, and `GET /api/v1/system/status` as
 the target of its **Test connection** button. Both use `X-Api-Key`.
 
+Calendar entries carry `tmdbId` and `imdbId` — the SHOW's, for an episode —
+so plurx can resolve each one against its own library by id and put its own
+poster on the card. Ids rather than titles, for the same reason as everywhere
+else: an application guessing which item you meant is the failure this
+integration exists to remove. Monarr sends no artwork and plurx fetches none;
+a series whose next episode is airing is already in plurx's library, and its
+poster is already cached there.
+
 **Where you see it.** System → **Connections**, kind `calls Monarr`. The same
 `plurx` row as §6 — the registry is per-caller, not per-endpoint, and `Detail`
 names the last path so you can tell which half is active.

@@ -3304,6 +3304,17 @@ components:
           type: string
         hasFile:
           type: boolean
+        tmdbId:
+          type: integer
+          format: int64
+          description: >
+            The item's TMDB id, so a consumer can resolve this entry against
+            its own library by id rather than by title. For an episode this is
+            the SHOW's id — an episode's own identity does not name the series
+            it belongs to. Absent when unknown.
+        imdbId:
+          type: string
+          description: The item's IMDb id (the show's, for an episode).
 
     WantedItem:
       type: object

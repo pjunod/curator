@@ -232,6 +232,12 @@ type CalendarEntry struct {
 	Title       string `json:"title"`
 	Detail      string `json:"detail"` // "S01E03 — Pilot", "by Author", ""
 	HasFile     bool   `json:"hasFile"`
+	// External ids, so a consumer can resolve this entry against its OWN
+	// library instead of matching on the title. For an episode these are the
+	// SHOW's ids — an episode's own identity is not what names the series it
+	// belongs to, and the thing a reader wants beside "S04E02" is the show.
+	TmdbID int64  `json:"tmdbId,omitempty"`
+	ImdbID string `json:"imdbId,omitempty"`
 }
 
 // Calendar returns episodes airing and movies/books released in [start, end]
@@ -258,6 +264,7 @@ func (d *DB) Calendar(ctx context.Context, start, end string) ([]CalendarEntry, 
 		out = append(out, CalendarEntry{
 			Date: e.AirDate, Kind: "episode", MediaItemID: e.MediaItemID,
 			Title: e.SeriesTitle, Detail: detail, HasFile: e.HasFile,
+			TmdbID: e.TmdbID, ImdbID: e.ImdbID,
 		})
 	}
 	for _, m := range items {
@@ -268,6 +275,7 @@ func (d *DB) Calendar(ctx context.Context, start, end string) ([]CalendarEntry, 
 		out = append(out, CalendarEntry{
 			Date: m.ReleaseDate, Kind: m.Kind, MediaItemID: m.ID,
 			Title: m.Title, Detail: detail, HasFile: m.HasFile,
+			TmdbID: m.TmdbID, ImdbID: m.ImdbID,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

@@ -617,10 +617,16 @@ type CalendarEntry struct {
 	Detail  string `json:"detail"`
 	HasFile bool   `json:"hasFile"`
 
+	// ImdbId The item's IMDb id (the show's, for an episode).
+	ImdbId *string `json:"imdbId,omitempty"`
+
 	// Kind episode | movie | book
 	Kind        string `json:"kind"`
 	MediaItemId int64  `json:"mediaItemId"`
 	Title       string `json:"title"`
+
+	// TmdbId The item's TMDB id, so a consumer can resolve this entry against its own library by id rather than by title. For an episode this is the SHOW's id — an episode's own identity does not name the series it belongs to. Absent when unknown.
+	TmdbId *int64 `json:"tmdbId,omitempty"`
 }
 
 // Connection defines model for Connection.
