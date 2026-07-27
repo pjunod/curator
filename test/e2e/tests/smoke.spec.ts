@@ -26,15 +26,29 @@ test.describe('API', () => {
     expect(res.ok()).toBeTruthy()
     const body = await res.json()
     expect(body.overall).toBe('ok')
-    const names = body.checks.map((c: { name: string }) => c.name).sort()
-    expect(names).toEqual([
-      'connections',
+    // The static checks are a fixed set; download clients each register their
+    // own `client:<name>` on top, so the list grows with the configuration.
+    // Asserting an exact array here made this test fail every time somebody
+    // added a check OR added a client, which is the wrong thing to be
+    // sensitive to. Pin the ones that must always exist, and require that
+    // anything extra is a client check rather than a surprise.
+    const names: string[] = body.checks.map((c: { name: string }) => c.name)
+    for (const required of [
       'data-directory',
       'database',
       'library-folders',
       'metadata-provider',
       'web-ui',
-    ])
+    ]) {
+      expect(names).toContain(required)
+    }
+    const extra = names.filter(
+      (n) =>
+        !['data-directory', 'database', 'library-folders', 'metadata-provider', 'web-ui'].includes(n),
+    )
+    for (const n of extra) {
+      expect(n).toMatch(/^client:/)
+    }
   })
 
   test('unknown task returns 404 with an error body', async ({ request }) => {
@@ -67,11 +81,15 @@ test.describe('UI', () => {
       'web-ui',
       'metadata-provider',
       'library-folders',
-      'connections',
     ]) {
       await expect(page.getByRole('cell', { name: check, exact: true })).toBeVisible()
     }
-    await expect(page.locator('.pill-ok')).toHaveCount(6)
+    // Every check is green. A count would have to be revised each time a
+    // check or a download client is added; "nothing is unhealthy" is the
+    // thing actually being asserted and does not go stale.
+    await expect(page.locator('.pill-warning')).toHaveCount(0)
+    await expect(page.locator('.pill-error')).toHaveCount(0)
+    expect(await page.locator('.pill-ok').count()).toBeGreaterThanOrEqual(5)
 
     await expect(page.getByRole('cell', { name: 'health.check' })).toBeVisible()
     await expect(page.getByRole('cell', { name: 'db.wal-checkpoint' })).toBeVisible()

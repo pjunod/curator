@@ -17,7 +17,6 @@ type fakeClient struct {
 	probes   *int32
 	capacity ports.Capacity
 	capErr   error
-	reports  bool
 }
 
 func (f *fakeClient) Add(context.Context, string, string) (ports.Handle, error) {
