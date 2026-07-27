@@ -369,6 +369,15 @@ plus an observation log, and both are records of what actually happened rather
 than a synthetic check you have to remember to run. The per-row **Test**
 buttons live on the Settings pages, next to the config they exercise.
 
+**`degraded` on age alone.** A client that answers its test but has not
+produced anything for five minutes degrades with the detail *"answering, but
+nothing has come through it for Nm"*. Monarr polls every enabled client every
+30 seconds whether or not it has anything in flight, precisely so that this
+clock means what it says — before 2026-07 the poll skipped idle clients, and
+the result was a permanent ERROR on any instance that had simply finished
+everything. If you are on an older build, read a stale-contact WARNING/ERROR
+as "Monarr has nothing downloading", not as a fault.
+
 System → **Health** carries the same information as named checks —
 `client:<name>`, `client:<name>:capacity`, `mediaserver:<name>` — with `ok` /
 `warning` / `error` and a message. A connection answering but delivering

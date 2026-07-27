@@ -34,6 +34,10 @@ type fakeClient struct {
 	// assert monarr asked the client to throw the payload away — and, just as
 	// importantly, that it did not.
 	removed []removeCall
+	// polls counts Statuses calls, so a test can assert Monarr talked to the
+	// client at all — which is what the Connections panel and the contact
+	// clock actually report on.
+	polls int
 }
 
 type removeCall struct {
@@ -46,6 +50,7 @@ func (f *fakeClient) Add(ctx context.Context, url, cat string) (ports.Handle, er
 	return "h1", nil
 }
 func (f *fakeClient) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
+	f.polls++
 	return f.statuses, nil
 }
 func (f *fakeClient) Remove(ctx context.Context, h ports.Handle, del bool) error {

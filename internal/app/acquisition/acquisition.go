@@ -637,28 +637,51 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 
 // RefreshQueue polls clients and reconciles queue rows through the state
 // machine; completed downloads are imported (blueprint §5.1).
+//
+// Every enabled client is polled on every tick, including when Monarr has
+// nothing in flight with it. That is deliberate, and it was not always so:
+// the poll used to start from the active-downloads list and return early when
+// it was empty, which meant an idle Monarr never spoke to its client at all.
+// Three things broke as a result, and all three looked like the client's
+// fault rather than ours:
+//
+//   - the contact clock froze, so `client:<name>` went WARNING at five
+//     minutes and ERROR at thirty on any instance that simply had nothing
+//     downloading. A check that cannot be green while you are idle is not a
+//     health check, it is a clock.
+//   - the Connections panel degraded off the same frozen clock, with no
+//     detail to explain it.
+//   - the client never saw a history read, so a downloader that records who
+//     collected a finished job — nzbd does — reported every completed
+//     download as never picked up.
+//
+// Polling an idle client costs two small GETs every 30 s. Being wrong about
+// whether the pipeline is alive costs considerably more.
 func (s *Service) RefreshQueue(ctx context.Context) error {
 	active, err := s.db.ListActiveDownloads(ctx)
-	if err != nil || len(active) == 0 {
+	if err != nil {
 		return err
 	}
-
 	byClient := map[int64][]sqlite.Download{}
 	for _, dl := range active {
 		byClient[dl.ClientID] = append(byClient[dl.ClientID], dl)
 	}
-	for clientID, dls := range byClient {
-		cfg, err := s.db.GetDownloadClient(ctx, clientID)
-		if err != nil {
+
+	clients, err := s.db.ListDownloadClients(ctx)
+	if err != nil {
+		return err
+	}
+	for _, cfg := range clients {
+		if !cfg.Enabled {
 			continue
 		}
 		statuses, err := s.newClient(cfg).Statuses(ctx)
-		s.noteContact(clientID, err)
+		s.noteContact(cfg.ID, err)
 		if err != nil {
 			s.log.Warn("queue: client poll failed", "client", cfg.Name, "err", err)
 			continue
 		}
-		for _, dl := range dls {
+		for _, dl := range byClient[cfg.ID] {
 			st, ok := matchStatus(dl, statuses)
 			if !ok {
 				continue // not visible yet (magnet resolving, etc.)

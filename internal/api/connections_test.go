@@ -99,6 +99,43 @@ func TestConnectionStateSaysWhichKindOfWorkingItIs(t *testing.T) {
 	}
 }
 
+// No amber badge with a blank cell beside it.
+//
+// A client that answers its test but has not been heard from in a while
+// degrades on age alone. That branch used to print the last error verbatim —
+// and there is no last error, because "stale" means Monarr stopped asking,
+// not that asking failed. The panel showed DEGRADED with an empty Detail
+// column and no way to find out why. A state the page cannot explain is
+// worse than no state at all.
+func TestADegradedConnectionAlwaysSaysWhy(t *testing.T) {
+	mon := monitorFor(
+		[]ports.ClientConfig{{ID: 1, Name: "nzbd_live", Type: "nzbd", Enabled: true}},
+		func(ports.ClientConfig) ports.DownloadClient { return probeClient{} },
+		// Answering fine; last successful contact 48 minutes ago and no
+		// error recorded — exactly the shape that produced a blank.
+		map[int64]health.Contact{1: {At: time.Now().Add(-48 * time.Minute)}},
+	)
+	mon.Check(context.Background())
+
+	for _, c := range connections(t, mon).Connections {
+		if c.Name != "nzbd_live" {
+			continue
+		}
+		if string(c.State) != "degraded" {
+			t.Fatalf("state = %q, want degraded", c.State)
+		}
+		if c.Detail == nil || *c.Detail == "" {
+			t.Fatal("a degraded row with no detail is unreadable: the user " +
+				"sees an amber badge beside an empty cell")
+		}
+		if !strings.Contains(*c.Detail, "48m") {
+			t.Errorf("detail = %q, want it to name how long it has been quiet", *c.Detail)
+		}
+		return
+	}
+	t.Fatal("the client was not listed")
+}
+
 // A status page is made to be screenshotted and pasted into an issue.
 // Credentials in a client URL ride along unnoticed (§10.10).
 func TestConnectionURLsNeverCarryAPassword(t *testing.T) {

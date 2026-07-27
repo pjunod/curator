@@ -994,7 +994,14 @@ func connectionState(st health.ConnectionState, link acquisition.ClientLink) (st
 		}
 	}
 	if st.StaleFor > 5*time.Minute {
-		return "degraded", st.LastError
+		// Never a degraded row with an empty Detail column. This branch used
+		// to return st.LastError verbatim, and LastError is empty whenever
+		// the last exchange did not fail — which is exactly the case here,
+		// because "stale" means Monarr stopped asking, not that asking
+		// failed. The result was an amber badge with nothing beside it and
+		// no way to find out why. A state the panel cannot explain is worse
+		// than no state at all.
+		return "degraded", st.StaleMessage()
 	}
 	// A push client that is answering but whose stream is down is not
 	// "live" — it is running on the poll, which is the fallback working as

@@ -141,10 +141,10 @@ func (st ConnectionState) results() []CheckResult {
 	// would call that healthy forever.
 	case st.StaleFor > contactErrorAfter:
 		out = append(out, CheckResult{Name: name, Status: StatusError,
-			Message: st.staleMessage()})
+			Message: st.StaleMessage()})
 	case st.StaleFor > contactWarnAfter:
 		out = append(out, CheckResult{Name: name, Status: StatusWarning,
-			Message: st.staleMessage()})
+			Message: st.StaleMessage()})
 	default:
 		out = append(out, CheckResult{Name: name, Status: StatusOK})
 	}
@@ -163,7 +163,14 @@ func (st ConnectionState) results() []CheckResult {
 	return out
 }
 
-func (st ConnectionState) staleMessage() string {
+// StaleMessage explains a client that answers its test while Monarr has not
+// managed to fetch anything from it.
+//
+// Exported because the Connections panel says the same thing, and this type
+// exists precisely so the two surfaces cannot drift. The panel used to print
+// LastError here instead, which is empty whenever nothing actually failed —
+// an amber badge with a blank cell beside it.
+func (st ConnectionState) StaleMessage() string {
 	msg := fmt.Sprintf("answering, but nothing has come through it for %s", roughly(st.StaleFor))
 	if st.LastError != "" {
 		msg += " (last error: " + oneLine(st.LastError) + ")"
