@@ -508,3 +508,64 @@ func TestMoviePayloadPrefersTheLargestFile(t *testing.T) {
 		t.Errorf("imported %d bytes; the decoy won over the feature", files[0].Size)
 	}
 }
+
+// TestTruncatedPayloadIsRefused is the 500 MiB case, at the moment it lands.
+//
+// Two different films arrived at 499.70 MiB — 61 seconds of a 96-minute
+// feature, at a bitrate that proves the content was genuine and the transfer
+// stopped. The old behaviour placed that stump in the library, where the
+// plausibility rules correctly refused to count it, which put the item back to
+// wanted, which had the next backlog pass grab again and land another one.
+//
+// Refusing at import breaks that loop and puts the failure somewhere a person
+// will see it. The release is NOT blocklisted: it was never the problem.
+func TestTruncatedPayloadIsRefused(t *testing.T) {
+	svc, db, _ := setup(t, nil, nil)
+	ctx := context.Background()
+	itemID, err := db.CreateMediaItem(ctx, domain.MediaItem{
+		Kind: domain.KindMovie, Title: "Test Movie", SortTitle: "test movie",
+		Year: 2024, IDs: domain.ExternalIDs{TMDB: 601}, Monitored: true,
+		Path: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A real MKV cut to a header window — the corpus is built this way, so
+	// these bytes are a genuine truncated file rather than a mock of one.
+	payload := t.TempDir()
+	stump := filepath.Join(payload, "The.Test.Movie.2024.2160p.BluRay.REMUX.mkv")
+	if err := os.WriteFile(stump, corpusFile(t, "mkv-2160p-hevc-hdr10-truehd.mkv"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := sqlite.Download{
+		MediaItemID: itemID, ReleaseTitle: "The.Test.Movie.2024.2160p.BluRay.REMUX-GRP",
+		Quality:  quality.Quality{Source: quality.SourceRemux, Resolution: 2160},
+		SavePath: payload,
+	}
+	_, err = svc.importDownload(ctx, dl, payload, false)
+	if err == nil {
+		t.Fatal("a cut-short payload imported; it must fail the import instead")
+	}
+	if !strings.Contains(err.Error(), "cut short") {
+		t.Errorf("the failure must say what happened, got: %v", err)
+	}
+
+	files, err := db.ListFilesForItem(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Errorf("%d file(s) landed in the library; a stump must not be placed", len(files))
+	}
+
+	// And the release keeps its good name.
+	blocked, err := db.IsBlocklisted(ctx, dl.ReleaseTitle, dl.Indexer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked {
+		t.Error("the release was blocklisted; a stopped transfer is not a bad release")
+	}
+}

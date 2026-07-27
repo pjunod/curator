@@ -229,6 +229,15 @@ declared 60 GB. That is not a bad release, it is a transfer that stopped, and
 blocklisting it would punish a release that was fine. Check the download
 client, the disk, and any size caps.
 
+A cut-short file caught at import is **refused** rather than placed — the one
+refusal in the import path, because it is the one case that is proof rather
+than judgement. The download is surfaced as failed with the numbers on it and
+can be retried once the underlying problem is fixed; the release is not
+blocklisted. Placing the stump instead would put the item straight back to
+wanted, so the next search would grab, land another stump, and go round again.
+You will still see this badge on files that landed before the check existed —
+"Re-measure files" re-grades them.
+
 Every other reason means the opposite: the file is complete and is simply not
 what it claims. Those are worth blocklisting. The distinction matters because
 from every other angle the two are identical — a fake is usually built from a

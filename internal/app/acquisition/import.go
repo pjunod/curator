@@ -17,6 +17,7 @@ import (
 	"github.com/monarr-media/monarr/internal/domain/naming"
 	"github.com/monarr-media/monarr/internal/domain/parser"
 	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/monarr-media/monarr/internal/infra/probe"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
 )
 
@@ -231,6 +232,34 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		}
 
 		outcome := FileOutcome{Name: filepath.Base(src), Quality: q.Display()}
+		// Refuse a file that is provably incomplete, before it is placed.
+		//
+		// This is the one refusal in the import path that is not a judgement
+		// call. Everywhere else monarr imports and lets the library sort it
+		// out, because a file that is worse than promised is still a file. A
+		// cut-short file is not: the container states its own finished length
+		// and the bytes are not there, so what would land is a stump.
+		//
+		// Placing it anyway is worse than doing nothing. The item goes back to
+		// wanted (the plausibility rules see to that), the next backlog pass
+		// grabs again, gets another stump, replaces the first, and monarr
+		// spends the night rediscovering the same broken transfer. Failing the
+		// import stops that: the download is surfaced as failed, with the
+		// numbers, and it is retryable the moment the underlying problem is
+		// fixed.
+		//
+		// Deliberately NOT a blocklist. The release is fine — 500 MB of a
+		// 60 GB remux is a transfer that stopped, and punishing the release
+		// for it would burn a good one and send monarr after a worse copy.
+		if why, cut := truncatedPayload(src); cut {
+			outcome.Reason = why
+			s.log.Warn("import: refusing a file that is cut short",
+				"release", dl.ReleaseTitle, "file", outcome.Name, "why", why)
+			_ = s.db.AddHistory(ctx, HistoryShortDelivery, item.ID, dl.ReleaseTitle,
+				map[string]any{"file": outcome.Name, "reason": why})
+			result.Files = append(result.Files, outcome)
+			continue
+		}
 		var err error
 		var put placement
 		switch item.Kind {
@@ -265,6 +294,28 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	s.log.Info("imported", "item", item.Title, "files", result.Imported,
 		"skipped", len(result.Skipped()))
 	return result, nil
+}
+
+// truncatedPayload reports whether a file declares more bytes than it has, and
+// says so in the user's terms.
+//
+// Reads the header only (the prober never reads a whole file), so this costs
+// one bounded read per imported file — paid once at import, against the cost
+// of a stump in the library and a search loop that never settles.
+//
+// Anything it cannot judge passes. A container monarr does not deep-parse, a
+// muxer that declared no length, an unreadable file: none of those are proof
+// of anything, and this refusal is only for the case that is.
+func truncatedPayload(src string) (string, bool) {
+	if !filename.IsVideo(src) {
+		return "", false // a book's bytes are its own business
+	}
+	info, _ := probe.File(src)
+	if !info.Truncated() {
+		return "", false
+	}
+	why, _ := mediainfo.Implausible(info)
+	return why.Reason, true
 }
 
 // HistoryShortDelivery records a payload that arrived materially smaller than

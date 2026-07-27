@@ -287,6 +287,20 @@ The damage was never the badge. It was that a fake file **retired the want**.
       tracks, chapters and stated runtime. Validated against the fixture
       corpus, every file of which is a truncated real file by construction
       (`SIZES.txt` records each original), plus two new whole controls
+- [x] A provably cut-short payload is REFUSED at import rather than placed.
+      The one refusal in the import path, because it is the one case that is
+      proof and not judgement — and because placing it loops: the item returns
+      to wanted, the next pass grabs, lands another stump, repeat. Not
+      blocklisted; the release was never the problem
+
+**Field diagnosis, 2026-07-27 — the exactly-500 MiB movies are TRUNCATED, not
+fake.** `ffprobe` on HIM (2025): "File ended prematurely", last video packet at
+61.6 s of a 96-minute feature. 500 MiB over 61.6 s is ~68 Mbps, which is
+exactly a 2160p DV remux — the content is genuine and the transfer stopped.
+Two files measured: 523,975,057 and 523,967,206 bytes, both 499.70 MiB, 7.8 KB
+apart. Just under a round 500 MiB with a few KB of per-release variance is a
+500 MiB cap on the DOWNLOADED data, the extracted MKV coming out under it by
+rar/par overhead. Upstream of monarr — nzbd or the provider — and still open
 
 ## Launch logistics
 
