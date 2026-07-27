@@ -275,8 +275,8 @@ sweep. One POST **per directory** — not per file, because a season pack that
 lands 10 episodes in one folder is one thing that changed, and ten scans of
 the same folder is nine wasted scans.
 
-**Wire.** `POST {plurx}/api/v1/scan` with header
-`X-Api-Key: <plx_… scoped key>` and body:
+**Wire.** `POST {plurx}/api/v1/scan` with the scoped key as
+`Authorization: Bearer plx_…` (plurx accepts `X-Api-Key` too), and body:
 
 ```json
 // an episode: the SHOW's id, under `series`
@@ -301,10 +301,25 @@ also hands over every secret in plurx's settings. A key carries a scope list
 and cannot widen itself. Mint one on the plurx side:
 
 ```bash
+# There is no cookie to copy out of a browser: log in for an admin token.
+TOKEN=$(curl -sS -X POST "$PLURX/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"<admin>","password":"<password>"}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+
 curl -sS -X POST "$PLURX/api/v1/keys" \
-     -H "Content-Type: application/json" -b <admin session> \
-     -d '{"name":"monarr","scopes":["scan:trigger"]}'
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"monarr","scopes":["scan:trigger"]}'
 # the secret is in the response ONCE — plx_… — and is never retrievable again
+```
+
+If the notifier reports `plurx rejected the key (401)`, list the keys and look
+at `last_used_at`: an empty list means plurx's database was reset (its data dir
+is not on a persistent volume), and a key present but never used means the
+secret Monarr holds is not that key.
+
+```bash
+curl -sS -H "Authorization: Bearer $TOKEN" "$PLURX/api/v1/keys"
 ```
 
 **Where you configure it.** Settings → **Notifications** → add a notifier of
