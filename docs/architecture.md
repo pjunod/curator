@@ -237,7 +237,23 @@ flowchart LR
 
 **Infrastructure choices** inside the monolith:
 
-- **Event bus**: in-process, typed pub/sub (small hand-rolled fan-out over channels). Events: `MediaAdded`, `ReleaseGrabbed`, `DownloadCompleted`, `FileImported`, `UpgradeCompleted`, `HealthChanged`… The bus feeds notifiers, the SSE stream to the UI, and the history writer. No external broker — an event bus is a pattern, not a deployment.
+- **Event bus**: in-process, typed pub/sub (small hand-rolled fan-out over channels). The bus feeds notifiers, the SSE stream to the UI, and the history writer. No external broker — an event bus is a pattern, not a deployment.
+
+  The events that exist, with the wire names the SSE stream and the notifiers key off. This list is exhaustive on purpose: it previously named `DownloadCompleted`, `FileImported` and `UpgradeCompleted`, none of which were ever built, and a doc that describes events you could subscribe to but cannot is worse than one that says nothing.
+
+  | Event | Wire name | Published when |
+  |---|---|---|
+  | `MediaAdded` | `media.added` | An item is added to the library |
+  | `ReleaseGrabbed` | `release.grabbed` | A grab is accepted by a download client |
+  | `ImportCompleted` | `import.completed` | Files have landed in the library. Carries the paths, the unique parent dirs, the item's TMDB/IMDb ids, its kind, and the transfer id — everything a media server needs to index exactly what appeared (plan §5.4) |
+  | `ImportFailed` | `import.failed` | A completed download could not be imported |
+  | `FileProbed` | `library.file.probed` | ffprobe has measured a file |
+  | `ScanCompleted` | `library.scan.completed` | A library scan finished |
+  | `health.Changed` | `health.changed` | The overall health status transitioned |
+  | `JobFinished` | `job.finished` | A background job finished |
+  | `TaskCompleted` | `task.completed` | A scheduled task finished |
+
+  There is deliberately **no** `DownloadCompleted`. "The client finished downloading" and "the files are in the library" are different moments with different consequences, and only the second is worth acting on: reacting to the first tells a media server to index a folder that is still being unpacked (nzbd plan §N1 is the same distinction on the other side of the wire).
 - **Scheduler**: in-process cron-style ticker driving named tasks (RSS sync every N min, queue refresh, library refresh, backup) with per-task state (last run, next run, lock) persisted so the UI can show and trigger them — upstream's "Tasks" page is good UX worth keeping. Backoff and jitter built in.
 - **Single-writer discipline for SQLite**: all writes flow through one connection (goroutine-owned), readers use a read pool with WAL mode. This sidesteps SQLite's write-lock contention entirely at homelab scale (a few writes/sec at peak).
 
