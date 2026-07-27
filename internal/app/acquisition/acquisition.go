@@ -49,11 +49,35 @@ type (
 		Protocol    string `json:"protocol"`
 	}
 	// ImportCompleted is published after files land in the library.
+	//
+	// It carries the paths and the ids because of who reads it. A
+	// notification only needs a sentence; a media server needs to know
+	// exactly which file appeared and what it is. Telling plurx "something
+	// changed, go and look" costs a full library sweep and can still match
+	// the wrong film from a filename — telling it "this path is tmdb 949"
+	// costs one folder and cannot be mismatched. Everything needed for that
+	// has to leave the importer, because nothing downstream can reconstruct
+	// it.
 	ImportCompleted struct {
 		MediaItemID int64  `json:"mediaItemId"`
 		Release     string `json:"release"`
 		Files       int    `json:"files"`
 		Upgrade     bool   `json:"upgrade"`
+		// Paths are the files that landed, absolute, as Monarr sees them.
+		// A consumer on another host may need a path mapping — the same
+		// caveat the download clients already carry.
+		Paths []string `json:"paths,omitempty"`
+		// Episode is true when these paths are episodes rather than a
+		// movie or a book. It decides what TMDBID means to a consumer.
+		Episode bool `json:"episode,omitempty"`
+		// TMDBID and IMDBID identify the ITEM — for a series that is the
+		// show, never the episode: an episode's own id is not what
+		// identifies the series it belongs to.
+		TMDBID int64  `json:"tmdbId,omitempty"`
+		IMDBID string `json:"imdbId,omitempty"`
+		// Transfer is the id that names this transfer end to end
+		// (contract §3.1), so one grep spans every application it crossed.
+		Transfer string `json:"transfer,omitempty"`
 	}
 	// ImportFailed is published when a completed download cannot import.
 	ImportFailed struct {

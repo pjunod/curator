@@ -340,6 +340,7 @@ const (
 	NotifierTypeDiscord  NotifierType = "discord"
 	NotifierTypeJellyfin NotifierType = "jellyfin"
 	NotifierTypePlex     NotifierType = "plex"
+	NotifierTypePlurx    NotifierType = "plurx"
 	NotifierTypeWebhook  NotifierType = "webhook"
 )
 
@@ -351,6 +352,8 @@ func (e NotifierType) Valid() bool {
 	case NotifierTypeJellyfin:
 		return true
 	case NotifierTypePlex:
+		return true
+	case NotifierTypePlurx:
 		return true
 	case NotifierTypeWebhook:
 		return true
@@ -364,6 +367,7 @@ const (
 	NotifierInputTypeDiscord  NotifierInputType = "discord"
 	NotifierInputTypeJellyfin NotifierInputType = "jellyfin"
 	NotifierInputTypePlex     NotifierInputType = "plex"
+	NotifierInputTypePlurx    NotifierInputType = "plurx"
 	NotifierInputTypeWebhook  NotifierInputType = "webhook"
 )
 
@@ -375,6 +379,8 @@ func (e NotifierInputType) Valid() bool {
 	case NotifierInputTypeJellyfin:
 		return true
 	case NotifierInputTypePlex:
+		return true
+	case NotifierInputTypePlurx:
 		return true
 	case NotifierInputTypeWebhook:
 		return true
@@ -977,7 +983,7 @@ type Notifier struct {
 	OnHealth *bool  `json:"onHealth,omitempty"`
 	OnImport *bool  `json:"onImport,omitempty"`
 
-	// Settings Type-specific: webhook/discord {url}; plex {url, token}; jellyfin {url, apiKey}.
+	// Settings Type-specific: webhook/discord {url}; plex {url, token}; jellyfin and plurx {url, apiKey} — for plurx a scoped plx_ key with scan:trigger, never an admin token.
 	Settings *map[string]string `json:"settings,omitempty"`
 	Type     NotifierType       `json:"type"`
 }
@@ -994,7 +1000,7 @@ type NotifierInput struct {
 	OnHealth *bool  `json:"onHealth,omitempty"`
 	OnImport *bool  `json:"onImport,omitempty"`
 
-	// Settings Type-specific: webhook/discord {url}; plex {url, token}; jellyfin {url, apiKey}.
+	// Settings Type-specific: webhook/discord {url}; plex {url, token}; jellyfin and plurx {url, apiKey} — for plurx a scoped plx_ key with scan:trigger, never an admin token.
 	Settings *map[string]string `json:"settings,omitempty"`
 	Type     NotifierInputType  `json:"type"`
 }

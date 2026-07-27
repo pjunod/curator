@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -290,5 +292,142 @@ func TestManualImportIsNotGatedByTheProfile(t *testing.T) {
 	}
 	if _, statErr := os.Stat(existing); statErr != nil {
 		t.Error("the existing file was deleted by a manual import that did not outrank it")
+	}
+}
+
+// What an import announces decides what a media server can do with it.
+//
+// "Something was imported" makes plurx (or Plex, or Jellyfin) sweep an
+// entire library to find one file, and then identify it by searching for its
+// filename — the step that puts the wrong film's poster on a remake. The
+// paths and the ids have to leave the importer, because nothing downstream
+// can work them out afterwards.
+func TestImportAnnouncesTheExactPathsAndIDs(t *testing.T) {
+	client := &fakeClient{}
+	svc, _, itemID := setup(t, nil, client)
+	ctx := context.Background()
+
+	events, cancel := bus.Subscribe[ImportCompleted](svc.bus, 4)
+	defer cancel()
+
+	payload := t.TempDir()
+	for _, name := range []string{
+		"Test.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv",
+		"Test.Show.S01E02.1080p.WEB-DL.x264-GRP.mkv",
+	} {
+		if err := os.WriteFile(filepath.Join(payload, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dl := sqlite.Download{
+		MediaItemID:  itemID,
+		ReleaseTitle: "Test.Show.S01.1080p.WEB-DL.x264-GRP",
+		Transfer:     "t-42-a3f9c1",
+	}
+	result, err := svc.importDownload(ctx, dl, payload, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ev ImportCompleted
+	select {
+	case ev = <-events:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no ImportCompleted published")
+	}
+
+	if len(ev.Paths) != result.Imported {
+		t.Fatalf("announced %d paths for %d imported files: %v", len(ev.Paths), result.Imported, ev.Paths)
+	}
+	for _, p := range ev.Paths {
+		if !filepath.IsAbs(p) {
+			t.Errorf("%q is not absolute — a consumer cannot resolve it", p)
+		}
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("announced a path that is not there: %v", err)
+		}
+	}
+	if !ev.Episode {
+		t.Error("a series import must say so — it decides whose id TMDBID is")
+	}
+	if ev.TMDBID != 100 {
+		t.Errorf("TMDBID = %d, want the SHOW's id", ev.TMDBID)
+	}
+	if ev.Transfer != "t-42-a3f9c1" {
+		t.Errorf("transfer = %q — without it the trail stops at Monarr", ev.Transfer)
+	}
+}
+
+// A file that was rejected has no path. Announcing one would send a media
+// server after a file that is not in the library — or, if the rejected copy
+// is still sitting in the download folder, after that one.
+func TestImportAnnouncesOnlyTheFilesThatLanded(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setup(t, nil, client)
+	ctx := context.Background()
+	item, _ := db.GetMediaItemFull(ctx, itemID)
+
+	// S01E01 already here at the profile's target, so a second copy of it
+	// will be declined while S01E02 lands.
+	seasonDir := filepath.Join(item.Path, "Season 1")
+	if err := os.MkdirAll(seasonDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(seasonDir, "Test Show - S01E01 - Pilot [WEB-DL 1080p].mkv")
+	if err := os.WriteFile(existing, []byte("already here"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fid, err := db.UpsertFile(ctx, itemID, 0, existing, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep1, err := db.GetEpisodeID(ctx, itemID, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReplaceFileEpisodeLinks(ctx, fid, []int64{ep1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFileQualityFrom(ctx, fid,
+		quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone); err != nil {
+		t.Fatal(err)
+	}
+
+	events, cancel := bus.Subscribe[ImportCompleted](svc.bus, 4)
+	defer cancel()
+
+	payload := t.TempDir()
+	for _, name := range []string{
+		"Test.Show.S01E01.1080p.WEB-DL.x264-SAME.mkv",
+		"Test.Show.S01E02.1080p.WEB-DL.x264-GRP.mkv",
+	} {
+		if err := os.WriteFile(filepath.Join(payload, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dl := sqlite.Download{MediaItemID: itemID, ReleaseTitle: "Test.Show.S01.1080p"}
+	if _, err := svc.importDownload(ctx, dl, payload, false); err != nil {
+		t.Fatal(err)
+	}
+
+	var ev ImportCompleted
+	select {
+	case ev = <-events:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no ImportCompleted published")
+	}
+	if len(ev.Paths) != 1 {
+		t.Fatalf("announced %d paths; only S01E02 landed: %v", len(ev.Paths), ev.Paths)
+	}
+	if strings.Contains(ev.Paths[0], "S01E01") {
+		t.Errorf("announced the file that was declined: %q", ev.Paths[0])
+	}
+	for _, p := range ev.Paths {
+		if strings.HasPrefix(p, payload) {
+			t.Errorf("announced a path still in the download folder: %q", p)
+		}
 	}
 }

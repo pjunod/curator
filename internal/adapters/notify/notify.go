@@ -35,6 +35,8 @@ func New(cfg ports.NotifierConfig) ports.Notifier {
 		return &Plex{URL: u, Token: cfg.Settings["token"]}
 	case "jellyfin":
 		return &Jellyfin{URL: u, APIKey: cfg.Settings["apiKey"]}
+	case "plurx":
+		return &Plurx{URL: u, APIKey: cfg.Settings["apiKey"]}
 	}
 	return errNotifier{cfg.Type}
 }

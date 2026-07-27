@@ -63,6 +63,17 @@ func (d *Dispatcher) Run(ctx context.Context) {
 					"files":   fmt.Sprintf("%d", e.Files),
 					"upgrade": fmt.Sprintf("%v", e.Upgrade),
 				},
+				// The same event twice, in two registers: a sentence for the
+				// notifiers that render text, and the facts for the ones
+				// that act on it.
+				Import: &ports.ImportInfo{
+					MediaItemID: e.MediaItemID,
+					Paths:       e.Paths,
+					Episode:     e.Episode,
+					TMDBID:      e.TMDBID,
+					IMDBID:      e.IMDBID,
+					Transfer:    e.Transfer,
+				},
 			})
 		case e := <-fails:
 			d.dispatch(ctx, "failed", ports.Notification{
@@ -93,10 +104,11 @@ func wants(cfg ports.NotifierConfig, event string) bool {
 	return false
 }
 
-// refreshOnly reports whether this notifier type is a media-server poke —
-// those fire on imports regardless of payload, never on chatter.
+// refreshOnly reports whether this notifier type acts on a media server
+// rather than talking to a person. Those fire on imports and nothing else:
+// a grab or a health flap gives them nothing to index.
 func refreshOnly(cfg ports.NotifierConfig) bool {
-	return cfg.Type == "plex" || cfg.Type == "jellyfin"
+	return cfg.Type == "plex" || cfg.Type == "jellyfin" || cfg.Type == "plurx"
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context, event string, n ports.Notification) {
@@ -116,9 +128,50 @@ func (d *Dispatcher) dispatch(ctx context.Context, event string, n ports.Notific
 		err := d.new(cfg).Send(cctx, n)
 		cancel()
 		if err != nil {
-			d.log.Warn("notify: send failed", "notifier", cfg.Name, "type", cfg.Type, "err", err)
+			d.log.Warn("notify: send failed", "notifier", cfg.Name, "type", cfg.Type,
+				"transfer", transferOf(n), "err", err)
+			d.record(ctx, cfg, n, err)
 			continue
 		}
-		d.log.Debug("notify: sent", "notifier", cfg.Name, "event", event)
+		d.log.Debug("notify: sent", "notifier", cfg.Name, "event", event,
+			"transfer", transferOf(n))
+		d.record(ctx, cfg, n, nil)
 	}
+}
+
+// record writes an import delivery into the item's history.
+//
+// A notification that failed is otherwise visible only in the server log,
+// which is the one place nobody looks until they already suspect something.
+// On the item's own history it sits beside the import it belongs to, which
+// is where somebody asking "why hasn't this shown up in plurx" is looking
+// anyway. Only import deliveries are recorded: history is per media item,
+// and a health notification has no item to belong to.
+func (d *Dispatcher) record(ctx context.Context, cfg ports.NotifierConfig, n ports.Notification, sendErr error) {
+	if n.Import == nil || n.Import.MediaItemID == 0 || !refreshOnly(cfg) {
+		return
+	}
+	detail := map[string]any{
+		"notifier": cfg.Name,
+		"type":     cfg.Type,
+		"paths":    len(n.Import.Paths),
+	}
+	if n.Import.Transfer != "" {
+		detail["transfer"] = n.Import.Transfer
+	}
+	kind := "notified"
+	if sendErr != nil {
+		kind = "notify_failed"
+		detail["error"] = sendErr.Error()
+	}
+	if err := d.db.AddHistory(ctx, kind, n.Import.MediaItemID, n.Body, detail); err != nil {
+		d.log.Debug("notify: could not record delivery", "err", err)
+	}
+}
+
+func transferOf(n ports.Notification) string {
+	if n.Import == nil {
+		return ""
+	}
+	return n.Import.Transfer
 }

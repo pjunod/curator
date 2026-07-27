@@ -33,6 +33,9 @@ type FileOutcome struct {
 	Upgrade  bool   `json:"upgrade,omitempty"`
 	Quality  string `json:"quality,omitempty"`
 	Reason   string `json:"reason,omitempty"`
+	// Path is where the file landed — absolute, as Monarr sees it. Empty
+	// when the file was skipped.
+	Path string `json:"path,omitempty"`
 }
 
 // ImportResult is the outcome of one payload.
@@ -40,6 +43,42 @@ type ImportResult struct {
 	Imported int
 	Upgraded bool
 	Files    []FileOutcome
+}
+
+// importedEvent assembles the ImportCompleted for one finished payload.
+//
+// Only the files that actually landed are listed. A skipped file has no
+// path, and a consumer told to index one would either 404 or — worse, if the
+// rejected file is still sitting in the download folder — index a copy of it
+// from outside the library.
+func importedEvent(item domain.MediaItem, dl sqlite.Download, r ImportResult) ImportCompleted {
+	paths := make([]string, 0, r.Imported)
+	for _, f := range r.Files {
+		if f.Imported && f.Path != "" {
+			paths = append(paths, f.Path)
+		}
+	}
+	return ImportCompleted{
+		MediaItemID: item.ID,
+		Release:     dl.ReleaseTitle,
+		Files:       r.Imported,
+		Upgrade:     r.Upgraded,
+		Paths:       paths,
+		Episode:     item.Kind == domain.KindSeries,
+		TMDBID:      item.IDs.TMDB,
+		IMDBID:      item.IDs.IMDB,
+		Transfer:    dl.Transfer,
+	}
+}
+
+// placement is what importing one file produced: where it landed, and
+// whether it replaced something. The path matters beyond bookkeeping — it is
+// what a media server is told to index, and "the folder the item lives in"
+// is not a good enough answer when a season pack drops six files into a
+// library that is otherwise unchanged.
+type placement struct {
+	Path    string
+	Upgrade bool
 }
 
 // Skipped returns the files that did not land, in payload order.
@@ -143,22 +182,23 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 
 		outcome := FileOutcome{Name: filepath.Base(src), Quality: q.Display()}
 		var err error
-		var wasUpgrade bool
+		var put placement
 		switch item.Kind {
 		case domain.KindMovie:
-			wasUpgrade, err = s.importMovieFile(ctx, item, scope, profile, src, q, dl.ReleaseTitle, manual)
+			put, err = s.importMovieFile(ctx, item, scope, profile, src, q, dl.ReleaseTitle, manual)
 		case domain.KindBook:
-			wasUpgrade, err = s.importBookFile(ctx, item, scope, profile, src, q, manual)
+			put, err = s.importBookFile(ctx, item, scope, profile, src, q, manual)
 		default:
-			wasUpgrade, err = s.importEpisodeFile(ctx, item, scope, profile, epStates, src, p, q, dl.ReleaseTitle, manual)
+			put, err = s.importEpisodeFile(ctx, item, scope, profile, epStates, src, p, q, dl.ReleaseTitle, manual)
 		}
 		if err != nil {
 			outcome.Reason = err.Error()
 			s.log.Warn("import: file skipped", "file", outcome.Name, "reason", err)
 		} else {
-			outcome.Imported, outcome.Upgrade = true, wasUpgrade
+			outcome.Imported, outcome.Upgrade = true, put.Upgrade
+			outcome.Path = put.Path
 			result.Imported++
-			result.Upgraded = result.Upgraded || wasUpgrade
+			result.Upgraded = result.Upgraded || put.Upgrade
 		}
 		result.Files = append(result.Files, outcome)
 	}
@@ -171,8 +211,7 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 
 	_ = s.db.AddHistory(ctx, "imported", item.ID, dl.ReleaseTitle,
 		map[string]any{"files": result.Imported, "upgrade": result.Upgraded})
-	s.publish(ImportCompleted{MediaItemID: item.ID, Release: dl.ReleaseTitle,
-		Files: result.Imported, Upgrade: result.Upgraded})
+	s.publish(importedEvent(item, dl, result))
 	s.log.Info("imported", "item", item.Title, "files", result.Imported,
 		"skipped", len(result.Skipped()))
 	return result, nil
@@ -212,16 +251,16 @@ type importScope struct {
 	ProfileID int64
 }
 
-func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string, manual bool) (bool, error) {
+func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
-		return false, err
+		return placement{}, err
 	}
 	upgrade := false
 	if state.Best != nil {
 		upgrade = profile.Upgrade(q, *state.Best, state.SourceVerified)
 		if !upgrade && !manual {
-			return false, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
+			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), state.Best.Display(), profile.Name)
 		}
 		// A manual import proceeds either way, but only REPLACES when the new
@@ -237,33 +276,33 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	})
 	dest := filepath.Join(scope.Dest, naming.SafeFileName(name)+filepath.Ext(src))
 	if err := place(src, dest); err != nil {
-		return false, err
+		return placement{}, err
 	}
 	if upgrade {
 		s.removeExistingFiles(ctx, item, scope.CopyID, nil, dest)
 	}
 	fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
 	if err != nil {
-		return false, err
+		return placement{}, err
 	}
 	// The file exists now, so stop taking the release name's word for it.
 	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle)
-	return upgrade, nil
+	return placement{Path: dest, Upgrade: upgrade}, nil
 }
 
 // importBookFile places one book file into <library>/<Author>/<Title>/ as
 // "Title - Author.ext" (Calibre-friendly, ADR 0006), with the same
 // upgrade-or-reject semantics as movies.
-func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, manual bool) (bool, error) {
+func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, manual bool) (placement, error) {
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
-		return false, err
+		return placement{}, err
 	}
 	upgrade := false
 	if state.Best != nil {
 		upgrade = profile.Upgrade(q, *state.Best, state.SourceVerified)
 		if !upgrade && !manual {
-			return false, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
+			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), state.Best.Display(), profile.Name)
 		}
 		// A manual import proceeds either way, but only REPLACES when the new
@@ -275,22 +314,23 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 	dest := filepath.Join(scope.Dest,
 		naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
 	if err := place(src, dest); err != nil {
-		return false, err
+		return placement{}, err
 	}
 	if upgrade {
 		s.removeExistingFiles(ctx, item, scope.CopyID, nil, dest)
 	}
 	fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
 	if err != nil {
-		return false, err
+		return placement{}, err
 	}
 	// Books are not probed: the extension IS the format (ADR 0006), so the
 	// provenance is the filename and there is nothing to measure.
-	return upgrade, s.db.SetFileQualityFrom(ctx, fileID, q,
-		mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+	return placement{Path: dest, Upgrade: upgrade},
+		s.db.SetFileQualityFrom(ctx, fileID, q,
+			mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
 }
 
-func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, releaseTitle string, manual bool) (bool, error) {
+func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
 	season, eps := p.Season, p.Episodes
 	if len(eps) == 0 {
 		if fx, ok := filename.Extract(filepath.Base(src)); ok {
@@ -298,7 +338,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		}
 	}
 	if len(eps) == 0 || season < 0 {
-		return false, fmt.Errorf("cannot determine episodes from %q", filepath.Base(src))
+		return placement{}, fmt.Errorf("cannot determine episodes from %q", filepath.Base(src))
 	}
 
 	// Resolve episode ids + titles; per-file upgrade check against the
@@ -336,13 +376,13 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		}
 	}
 	if len(epIDs) == 0 {
-		return false, fmt.Errorf("no known episodes for S%02d %v", season, eps)
+		return placement{}, fmt.Errorf("no known episodes for S%02d %v", season, eps)
 	}
 	upgrade := false
 	if !missing && worst != nil {
 		upgrade = profile.Upgrade(q, *worst, worstVerified)
 		if !upgrade && !manual {
-			return false, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
+			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), worst.Display(), profile.Name)
 		}
 		upgrade = upgrade || quality.Better(q, *worst)
@@ -361,17 +401,18 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		naming.Render(naming.SeasonFolderTemplate, map[string]string{"season": strconv.Itoa(season)}),
 		naming.SafeFileName(base)+filepath.Ext(src))
 	if err := place(src, dest); err != nil {
-		return false, err
+		return placement{}, err
 	}
 	if upgrade {
 		s.removeExistingFiles(ctx, item, scope.CopyID, epIDs, dest)
 	}
 	fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
 	if err != nil {
-		return false, err
+		return placement{}, err
 	}
 	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle)
-	return upgrade, s.db.ReplaceFileEpisodeLinks(ctx, fileID, epIDs)
+	return placement{Path: dest, Upgrade: upgrade},
+		s.db.ReplaceFileEpisodeLinks(ctx, fileID, epIDs)
 }
 
 // removeExistingFiles deletes replaced files (rows + disk) for the target

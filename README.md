@@ -243,7 +243,7 @@ internal/
   ports/              interfaces the core needs from the world (+ shared URL normalizer)
   adapters/           one package per external service, ports implementations only:
                         tmdb, openlibrary, torznab, qbittorrent, transmission,
-                        deluge, sabnzbd, nzbget, trakt, notify (webhook/discord/plex/jellyfin)
+                        deluge, sabnzbd, nzbget, trakt, notify (webhook/discord/plex/jellyfin/plurx)
   app/                use cases over domain+ports:
                         library (add/scan/reconcile), acquisition (search/grab/
                         queue/import + RSS/backlog/wanted), importlist, notify, health

@@ -30,7 +30,7 @@ const PAGES: Destination[] = [
   { label: 'Download clients', sub: 'setting', to: '/settings', hash: 'downloadclients', keywords: 'download clients nzbget sabnzbd qbittorrent transmission deluge path mapping' },
   { label: 'Custom formats', sub: 'setting', to: '/settings', hash: 'customformats', keywords: 'custom formats scoring preferred words' },
   { label: 'Import lists', sub: 'setting', to: '/settings', hash: 'importlists', keywords: 'import lists trakt tmdb popular discover' },
-  { label: 'Notifications', sub: 'setting', to: '/settings', hash: 'notifications', keywords: 'notifications webhook discord plex jellyfin' },
+  { label: 'Notifications', sub: 'setting', to: '/settings', hash: 'notifications', keywords: 'notifications webhook discord plex jellyfin plurx' },
   { label: 'Security', sub: 'setting', to: '/settings', hash: 'security', keywords: 'security authentication login password api key' },
 ]
 

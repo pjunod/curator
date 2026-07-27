@@ -310,6 +310,38 @@ Already-in-library entries are skipped, never duplicated.
 | Discord | `url` (channel webhook) | same, as an embed |
 | Plex | `url`, `token` (X-Plex-Token) | imports only — triggers a library rescan |
 | Jellyfin | `url`, `apiKey` | imports only — `Library/Refresh` |
+| plurx | `url`, `apiKey` (a scoped `plx_` key) | imports only — a **targeted scan**, not a refresh |
+
+**plurx is different from the other two.** Plex and Jellyfin get a poke —
+"something changed, sweep your library" — and then identify the new file by
+searching for its filename, which is the step that puts the 2015 remake's
+poster on the 1995 film. plurx is told the exact paths that landed and the
+TMDB/IMDb ids Monarr already holds, so it indexes one folder and matches by
+id. Nothing is left to guess at.
+
+Its key is a **scoped** plurx key (`plx_…`, scope `scan:trigger`), never a
+plurx admin token. That distinction is the reason scoped keys exist: a plurx
+user token *is* that user, so an admin token stored here would also hand over
+every secret in plurx's own settings — to Monarr, and to anything that can
+read Monarr's database. Mint one in plurx (Settings, or the two curl lines in
+plurx's `docs/CHEATSHEET.md`) and paste it here.
+
+**Test** asks plurx to scan a path that cannot be under any library root and
+counts the rejection as a pass: it proves the URL, the key and the scope
+without starting a scan of anything real.
+
+What the failures mean:
+
+| Message | Cause |
+|---|---|
+| `does not have this path under any library root` (with plurx's roots listed) | The two containers disagree about mounts — Monarr says `/data/media/…`, plurx has `/media/…`. Fix the mapping on Monarr's side. |
+| `rejected the key (401)` | Unknown, revoked, or a plurx *user* token — that route does not accept those. |
+| `lacks the scan:trigger scope (403)` | Real key, wrong scopes. Mint a new one; scopes are fixed at creation. |
+| `N of M paths not indexed` | Partial: some files of a season pack landed and some did not. The per-path reasons follow. |
+
+Deliveries — successes and failures both — are recorded on the media item's
+own history, next to the import they belong to, so "why hasn't this shown up
+in plurx" is answerable without reading the server log.
 
 ## Security
 

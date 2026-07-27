@@ -2904,14 +2904,14 @@ components:
       properties:
         type:
           type: string
-          enum: [webhook, discord, plex, jellyfin]
+          enum: [webhook, discord, plex, jellyfin, plurx]
         name:
           type: string
         settings:
           type: object
           additionalProperties:
             type: string
-          description: "Type-specific: webhook/discord {url}; plex {url, token}; jellyfin {url, apiKey}."
+          description: "Type-specific: webhook/discord {url}; plex {url, token}; jellyfin and plurx {url, apiKey} — for plurx a scoped plx_ key with scan:trigger, never an admin token."
         onGrab:
           type: boolean
           default: true

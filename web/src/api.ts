@@ -804,7 +804,7 @@ export const getWanted = () => get<WantedItem[]>('/wanted')
 export const getBlocklist = () => get<BlocklistEntry[]>('/blocklist')
 export const removeBlocklistEntry = (id: number) => send('DELETE', `/blocklist/${id}`)
 
-export type NotifierType = 'webhook' | 'discord' | 'plex' | 'jellyfin'
+export type NotifierType = 'webhook' | 'discord' | 'plex' | 'jellyfin' | 'plurx'
 
 export interface NotifierInput {
   type: NotifierType
