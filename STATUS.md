@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-25 · ALL PHASES COMPLETE (90/91 — only the stretch *arr DB importer deferred) · v0.6.0 · Phase 6 "quality truth" built: on-disk quality is measured (ADR 0013), a profile is a target (ADR 0014), and the duplicate-grab chain is dead · next: launch logistics + real-world validation of the inference bands**
+> **Snapshot 2026-07-27 · v0.7.0 · Phase 8 "plausibility" built: monarr now refuses to believe a file whose own measurements cannot be true, and a fake copy no longer retires a want (the HIM case). Files can be deleted and their releases condemned; the search window pages · next: launch logistics + §5.4–5.7 of the nzbd integration**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -183,6 +183,49 @@ side (N1–N7) is built; this is Monarr's.
 - [ ] §5.6 health checks (client reachability, nzbd capacity warnings)
 - [ ] §5.7 Connections panel — one screen that answers "are the three apps
       actually talking right now"
+
+## Phase 8 — Plausibility (built 2026-07-27)
+
+Real-world validation of the Phase 6 inference bands, which is exactly what
+this section was waiting for — and the first thing it turned up was a hole.
+
+A 500 MB file named `HIM (2025) [Remux 2160p].mkv` — a 96-minute feature —
+imported, graded **REMUX 2160P**, and marked the movie satisfied. 500 MB over
+96 minutes is 725 kbps: one sixtieth of a real 2160p remux, and less than the
+TrueHD track it declares would need on its own.
+
+The hole was specific. `Contradicts()` could only reject a remux claim when the
+file had NO lossless audio, so declaring a TrueHD track made the claim
+unfalsifiable — and a declared track is not a delivered one. Under that, every
+band in `inference.go` is a lower-bound ladder bottoming out at
+`SourceUnknown`, and `Resolve` accepts any filename token the measurements do
+not actively contradict. "Inconclusive" and "obviously fabricated" reached the
+same place: the name won.
+
+The damage was never the badge. It was that a fake file **retired the want**.
+
+- [x] `domain/mediainfo/plausible.go`: absolute bitrate floors per resolution
+      tier (~3× below the lowest real encode), declared-audio-vs-total-bitrate
+      contradiction, and measured-duration-vs-metadata-runtime. Skipped under
+      60 s, where overall bitrate describes the container rather than the
+      content — and a file that short is caught by the runtime rule anyway
+- [x] `Contradicts()`: a remux claim below the bottom of the **encode** band is
+      refused whatever the audio headers say
+- [x] `ProvenanceImplausible`, distinct from `Failed`. Failed means we do not
+      know, which is a reason to leave a file alone; this means we do know, and
+      what we know is that it is not what it claims — a reason to keep hunting
+- [x] `DiskStateForItem` + `episodeStates` skip implausible files, so the item
+      goes back to wanted instead of sitting green over 500 MB. The row stays
+      visible and stops voting
+- [x] `SizeImplausible()` gates RSS and backlog before the grab; interactive
+      search only warns. Gate the robot, never the person
+- [x] Migration 0022: `media_files.source_release`/`source_indexer`, recorded at
+      import — the link a blocklist needs, which used to live only in the
+      queue row and only until it moved on
+- [x] `DELETE /library/{id}/files/{fileId}` (`fromDisk`/`blocklist`/`search`) +
+      Files-table row actions; the interactive search window pages, filters and
+      collapses its rejections
+- [x] `phase9b-plausibility.spec.ts` — 6 e2e covering the whole chain; 80/80 green
 
 ## Launch logistics
 

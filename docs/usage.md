@@ -210,6 +210,56 @@ The same completeness pill, rating, and ↓ badge appear on every library
 card, so the grid shows at a glance what's complete, what's partial, and
 what's moving right now.
 
+## The Files table, and getting rid of a bad file
+
+Every file lists what it measures as and **how we know** — measured from the
+bytes, taken from the filename, taken from the release name, set by hand, or
+unreadable.
+
+There is one more badge, and it is the only one that changes what monarr does:
+**does not add up**. It means the file was read and what it says about itself
+cannot be true — a 2160p file at 725 kbps, a declared TrueHD track the whole
+file has no room for, or a 90-second "movie". The reason prints next to the
+path, with the arithmetic. A file in this state stays exactly where it is and
+stops counting toward the item being complete, so monarr keeps looking for a
+real copy instead of sitting satisfied on a fake one.
+
+This is deliberately different from **unreadable**, which means monarr could
+not parse the file at all. Not knowing is a reason to leave a file alone —
+replacing something you cannot read means possibly deleting something perfect.
+Knowing it is wrong is the opposite.
+
+Two buttons on each row:
+
+- **Delete** — removes the file from disk and from the library. Use it for a
+  duplicate, or a copy you simply do not want.
+- **Delete & blocklist** — removes the file, tells automation never to grab
+  that release again, and starts searching for a replacement. Use it when a
+  release turned out to be a fake, a mislabel, or the wrong cut.
+
+The two are separate because they are separate statements: a file deleted to
+free space should not poison a release that was fine. **Delete & blocklist**
+is disabled for a file monarr did not grab — an adopted file has no source
+release, so there is nothing to blocklist, and the button says so rather than
+half-working.
+
+## Interactive search
+
+Every candidate is listed, including the ones monarr would decline, each with
+its reasons — "found nothing" and "found two hundred and disliked all of them"
+are different problems. A rejected release can still be grabbed by hand;
+manual grabs are never gated.
+
+Because a busy indexer returns hundreds of rows, the list pages (50 at a time
+by default), filters by name, and offers a **Would be grabbed** view. Each
+row's rejections collapse to the first reason with the rest one click away.
+
+A release can also carry an amber **⚠ warning**: the profile would take it,
+but its advertised size cannot hold what its name claims — a "2160p Remux"
+listed at 500 MB. That is a caution for you, not a refusal. Unattended
+searches (RSS and backlog) do decline these outright, because nobody is there
+to weigh it and the cost of guessing wrong is a fake file that ends the hunt.
+
 ## Monitoring: series, seasons, episodes
 
 Monitoring decides what the automation hunts, at three levels that all

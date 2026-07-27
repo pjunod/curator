@@ -110,15 +110,28 @@ MediaItem (aggregate root — one library entry)
    └─ Season (number, monitored)
       └─ Episode (seasonNum, epNum, absoluteNum?, airDateUTC, title, monitored)
 
-MediaFile: path, size, quality, mediaInfo, provenance, confidence, probedAt
+MediaFile: path, size, quality, mediaInfo, provenance, confidence, probedAt,
+           sourceRelease, sourceIndexer
   · movie file  → links to 1 movie
   · episode file → links to 1..n episodes   (multi-episode files are real; n:m link table)
   · mediaInfo is MEASURED (ADR 0013): container/codec/dimensions/bit depth/
     HDR/interlacing/audio/duration, read from the file's own headers by
     domain/mediainfo — no ffprobe, no image change. provenance says where
-    `quality` came from (probe · filename · release · manual · failed) and
-    confidence qualifies an inferred source. Resolution is measured fact;
-    source is inference, and a low-confidence inference never evicts a file.
+    `quality` came from (probe · filename · release · manual · failed ·
+    implausible) and confidence qualifies an inferred source. Resolution is
+    measured fact; source is inference, and a low-confidence inference never
+    evicts a file.
+  · `implausible` is the one provenance that changes what monarr DOES. The
+    others range over how much we know; this one says the measurement refutes
+    itself — a 2160p file at 725 kbps, or a declared TrueHD track the whole
+    file has no room for (domain/mediainfo/plausible.go). Such a file stays on
+    disk and stays visible, and stops counting toward the item being
+    satisfied, so the search for a real copy continues. `failed` means we do
+    not know, which is a reason to LEAVE A FILE ALONE; `implausible` means we
+    do know, which is the opposite.
+  · sourceRelease/sourceIndexer name what monarr grabbed to produce the file,
+    empty for an adopted one. They exist so "this file is bad, never take that
+    release again" has something to point at after the download row is gone.
 
 QualityProfile: target, floor?, upgradesAllowed  (ADR 0014)
   · target caps grabs by resolution and defines "done"; floor says what is
