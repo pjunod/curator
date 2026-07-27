@@ -152,7 +152,9 @@ func (s *Service) BlocklistReplace(ctx context.Context, id int64) error {
 			_ = s.newClient(cfg).Remove(ctx, ports.Handle(dl.Handle), true)
 		}
 	}
-	s.handleFailure(ctx, dl, dl.Progress, "blocklisted by user")
+	// Never blameless: the user pressed Blocklist, and a blocklist that does
+	// not blocklist is the one outcome this button must not have.
+	s.handleFailure(ctx, dl, dl.Progress, "blocklisted by user", false)
 	return nil
 }
 

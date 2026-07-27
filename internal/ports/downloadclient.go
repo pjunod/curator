@@ -103,6 +103,17 @@ type DownloadStatus struct {
 	Progress float64 // 0..1
 	SavePath string  // where the payload lands when completed
 	Message  string
+	// Blameless marks a StateFailed the RELEASE is not responsible for, so
+	// it must not be blocklisted.
+	//
+	// The distinction is not academic. A failed download normally means a bad
+	// release, and blocklisting it is how Monarr avoids spending the night
+	// re-grabbing the same broken copy. But "someone clicked delete in the
+	// download client" arrives on exactly the same channel, and treating that
+	// as the release's fault burns a good one and sends Monarr after a worse
+	// copy — a punishment for an operator action, applied silently and
+	// permanently.
+	Blameless bool
 }
 
 // DownloadClient adds and tracks downloads (blueprint §5 ports).

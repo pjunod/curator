@@ -35,6 +35,69 @@ is the only vantage point that sees both directions.
 
 Default ports: nzbd 6789 · **Monarr 7676** · plurx 32600.
 
+## Wiring the three together in Docker
+
+Do this first. Every "cannot reach" in the rest of this document is more often
+a container that cannot resolve a name than a wrong key or a wrong port.
+
+**One shared user-defined network, and address everything by container name.**
+That is the recommended setup, not merely one that works.
+
+```bash
+docker network create media          # once, on the host
+```
+
+Then in **each** compose file — monarr's, plurx's, nzbd's — attach the service
+and declare the network as external:
+
+```yaml
+services:
+  monarr:
+    container_name: monarr           # this name IS the hostname
+    # ...the rest of your service...
+    networks:
+      - media
+
+networks:
+  media:
+    external: true                   # created above; compose must not own it
+```
+
+`docker compose up -d` in each directory. After that:
+
+| Setting | Value |
+|---|---|
+| Monarr → nzbd download client | host `nzbd`, port `6789` |
+| Monarr → plurx notifier URL | `http://plurx:32600` |
+| plurx → monarr URL | `http://monarr:7676` |
+
+Three things that trip people up, each with its reason:
+
+**The hostname is the `container_name`, or the service key if you did not set
+one.** Not the image, and not the directory. If plurx's container is called
+`plurx-server`, that is what goes in monarr's notifier URL.
+
+**Published ports are irrelevant on this path.** `ports: - "7676:7676"` maps
+host→container; container→container traffic goes straight to the *internal*
+port and works even with no published port at all. Keep the published ones for
+your own browser, and stop reasoning about them when debugging a seam.
+
+**`host.docker.internal` is a per-container setting, and it is the wrong tool
+here.** It only exists in a container whose compose declares
+`extra_hosts: ["host.docker.internal:host-gateway"]`, so putting that line on
+*Monarr's* service does nothing for plurx — plurx is the process making the
+plurx→Monarr call, and plurx's container is the one that has to resolve the
+name. It also routes container→host→container for traffic that never needed to
+leave the bridge. It is a valid fallback when you cannot change all three
+compose files; it is not the good answer.
+
+**How to tell which one you are hitting.** plurx now reports the root cause
+rather than the wrapper: `dns error: failed to lookup address information`
+means the name is not resolvable from that container — wrong network, or a
+missing `extra_hosts`. `Connection refused` means the name resolved and nothing
+was listening on that port — the application is down, or you have the internal
+and published ports mixed up.
+
 ## The seams Monarr has
 
 | # | Seam | Direction | Transport | Who starts it |

@@ -262,11 +262,14 @@ func statusOfHistory(h historyEntry) ports.DownloadStatus {
 	case strings.HasPrefix(h.Status, "SUCCESS"):
 		st.State = ports.StateCompleted
 	case h.Status == "DELETED" || strings.HasPrefix(h.Status, "DELETED"):
-		// Someone removed the job in nzbd. Not a release failure — saying
-		// "failed" here would blocklist a perfectly good release because
-		// an operator clicked delete.
+		// Someone removed the job in nzbd. The download did stop, so it is a
+		// failure — but not the release's, and Blameless is what keeps the
+		// blocklist off it. This comment used to claim the mapping avoided a
+		// blocklist while the code blocklisted anyway, so clicking delete in
+		// nzbd's UI permanently banned a perfectly good release.
 		st.State = ports.StateFailed
 		st.Message = "removed in nzbd"
+		st.Blameless = true
 	default:
 		st.State = ports.StateFailed
 		st.Message = h.Status

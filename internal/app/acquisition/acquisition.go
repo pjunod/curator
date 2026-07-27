@@ -731,9 +731,11 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		if dl.State == "imported" || dl.State == "failed" {
 			return
 		}
-		// A client-reported failure is a bad release: blocklist it
-		// and search a replacement.
-		s.handleFailure(ctx, dl, st.Progress, st.Message)
+		// A client-reported failure is normally a bad release: blocklist it
+		// and search a replacement. Unless the client says the release is
+		// not to blame — an operator deleting the job is not a reason to
+		// ban the release forever.
+		s.handleFailure(ctx, dl, st.Progress, st.Message, st.Blameless)
 	case ports.StateCompleted:
 		// 'downloaded' and 'importing' are NOT terminal, but they mean
 		// someone is already on it; only 'grabbed'/'downloading' should
@@ -776,15 +778,21 @@ func (s *Service) lockDownload(id int64) func() {
 // handleFailure marks a download failed, blocklists the release so it is
 // never re-grabbed, and immediately re-searches for the affected wantables
 // (blueprint §5.1 "failed-download handling").
-func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progress float64, reason string) {
+func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progress float64, reason string, blameless bool) {
 	s.advance(ctx, &dl, "failed", progress, reason, stepFailed, "download failed: "+reason)
 	_ = s.db.AddHistory(ctx, "failed", dl.MediaItemID, dl.ReleaseTitle,
 		map[string]any{"reason": reason})
-	if err := s.db.AddBlocklist(ctx, dl.MediaItemID, dl.ReleaseTitle, dl.Indexer, reason); err != nil {
+	if blameless {
+		// The download stopped, but not because the release is bad. Banning
+		// it would burn a good copy and send the re-search after a worse one.
+		s.log.Warn("download failed; NOT blocklisted (the release is not at fault)",
+			"release", dl.ReleaseTitle, "reason", reason)
+	} else if err := s.db.AddBlocklist(ctx, dl.MediaItemID, dl.ReleaseTitle, dl.Indexer, reason); err != nil {
 		s.log.Warn("blocklist: insert failed", "release", dl.ReleaseTitle, "err", err)
+	} else {
+		s.log.Warn("download failed; blocklisted", "release", dl.ReleaseTitle, "reason", reason)
 	}
 	s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: reason})
-	s.log.Warn("download failed; blocklisted", "release", dl.ReleaseTitle, "reason", reason)
 
 	// Automatic re-search: try to replace the failed grab right away.
 	enabled, err := s.enabledIndexers(ctx)
