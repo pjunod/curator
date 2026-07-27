@@ -17,6 +17,12 @@
 > Anything below that conflicts with those two loses: they were written
 > against the source and have been built from. This file is now tracked, so
 > it cannot go missing again.
+>
+> **§5's structure did survive**, in `STATUS.md` under *Phase 7*: the
+> §5.1–§5.7 checklist, with a paragraph of scope on each milestone as it was
+> completed. That is where to look for what monarr's own half of the plan
+> said. What is gone is the master's per-milestone acceptance criteria and
+> the monarr-side guardrails — the two per-repo plans still carry theirs.
 
 ## The shape of it
 

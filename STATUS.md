@@ -146,7 +146,7 @@ the symptom).
 - [x] Compat `/qualityprofile` synthesized from targets — fake-consumer suite green untouched (plan §6.4, M5)
 - [x] Post-import verification: `quality_mismatch` history event (log-only); docs updated (usage/settings/architecture); ADRs 0013/0014 → Accepted (M6)
 
-## Phase 7 — The nzbd integration (plan: `docs/plan-integration.md`, untracked)
+## Phase 7 — The nzbd integration (plan: `docs/plan-integration.md`)
 
 Making the three apps behave like one pipeline: events instead of timers at
 every seam, and one id that names a transfer from grab to playable. nzbd's
@@ -179,8 +179,23 @@ side (N1–N7) is built; this is Monarr's.
       while subscribed, receiving the actual `par_rename → rar_rename →
       post_unpack_rename` stages and a completion carrying the real final
       directory. The httptest fixtures are payloads captured from that run
-- [ ] §5.4–5.5 import paths on `ImportCompleted` + the plurx notifier
-- [ ] §5.6 health checks (client reachability, nzbd capacity warnings)
+- [x] **§5.4–5.5 import paths + the plurx notifier** — `ImportCompleted`
+      carries the absolute paths that landed, the item's TMDB/IMDb ids,
+      whether they are episodes, and the transfer id; the three per-file
+      importers return where each file went. The `plurx` notifier sits with
+      Plex and Jellyfin in the import-only group but is not a refresh poke:
+      it says "index this path, it is tmdb 949". Scoped `plx_` key, never an
+      admin token. Retry covers the connection and 5xx and stops dead on
+      401/403/422, and plurx's 422 — the path-mapping one everybody hits —
+      is carried through verbatim with the roots it listed. Deliveries land
+      on the item's history, carrying plurx's own answer
+      (`scanned → plurx item 1201`) via the optional `ports.DeliveryReporter`
+- [x] **§5.6 health checks** — a `connections` check probing enabled
+      download clients and plurx notifiers through the real adapters, in
+      parallel, reported as a warning because Monarr queues and catches up.
+      Chat notifiers and Plex/Jellyfin are deliberately never probed: their
+      only "test" is the action itself, and neither belongs on a one-minute
+      timer. **nzbd capacity warnings are still to do**
 - [ ] §5.7 Connections panel — one screen that answers "are the three apps
       actually talking right now"
 
