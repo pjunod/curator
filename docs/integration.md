@@ -137,6 +137,7 @@ and published ports mixed up.
 | 6 | plurx watch webhook | **inbound** | `POST /api/v1/webhooks/plurx` | plurx |
 | 7 | Calendar + status reads | **inbound** | `GET /api/v1/calendar`, `/system/status` | plurx |
 | 8 | Connections panel | observation | `GET /api/v1/system/connections` | you |
+| 9 | In-flight transfers | observation | `GET /api/v1/system/transfers` | you |
 
 Sections 1–5 are things Monarr does. Sections 6–7 are things done to it — and
 they are the half that used to be invisible, which is why §8 exists.
@@ -491,6 +492,55 @@ the result was a permanent ERROR on any instance that had simply finished
 everything. If you are on an older build, read a stale-contact WARNING/ERROR
 as "Monarr has nothing downloading", not as a fault.
 
+## 9. In flight — the data plane, reported separately
+
+**Where.** **System → In flight**, under Connections. Refreshes every 2
+seconds, because it is the panel that moves.
+
+**What it does.** Answers one question the rest of this document does not:
+*is anything actually moving right now*. Columns: title and transfer id,
+stage, progress with bytes and rate, elapsed, detail.
+
+| Stage | Means |
+|---|---|
+| `downloading · nzbd` | nzbd is fetching it. Monarr is watching, not working |
+| `importing` | Monarr is moving bytes into the library itself |
+| `notifying · plurx` | telling plurx what landed, including waits between retries |
+
+`importing` has no peer, because Monarr is moving its own files and naming one
+would invent a seam that does not exist.
+
+**Why it is not part of Connections.** Those are two different questions and
+conflating them produced a specific, memorable failure. A 20 GB import ran
+*inside* the queue poll, held it open for seventeen minutes, and every
+control-plane signal that reads that loop — the contact clock, the task
+duration, the next-run time — reported a file copy instead of a connection.
+The panel degraded the download client Monarr was importing **from**, while
+the Test button beside it passed, because the probe is a separate call. And
+the import itself was visible nowhere: the only evidence in the whole process
+was the duration column of an unrelated scheduled task.
+
+So since 2026-07: imports run on their own bounded worker pool, the poll
+returns in milliseconds whatever the library is doing, and the data plane
+reports itself here. Control-plane checks (`client:<name>`) only ever mean
+"can Monarr reach this"; data-plane trouble has its own check (`imports`),
+which warns when an import has been running long enough to be stuck rather
+than merely slow.
+
+**How to verify.**
+
+```bash
+curl -sS -H "X-Api-Key: $KEY" "$MONARR/api/v1/system/transfers" | python3 -m json.tool
+```
+
+**How to read it.** `not measurable` in the progress column is deliberate and
+is not 0% — a notify has no byte count, and an empty progress bar would claim
+nothing had happened. `bytesPerSecond` is averaged over the life of the
+transfer rather than instantaneous: an instantaneous rate on a network mount
+is mostly noise, and the question being asked is "will this finish tonight".
+
+---
+
 System → **Health** carries the same information as named checks —
 `client:<name>`, `client:<name>:capacity`, `mediaserver:<name>` — with `ok` /
 `warning` / `error` and a message. A connection answering but delivering
@@ -504,13 +554,23 @@ nothing goes `warning` after 5 minutes and `error` after 30.
 `monarr_build_info{version,commit}` · `monarr_media_items{kind}` ·
 `monarr_queue_active` · `monarr_wanted_total` · `monarr_uptime_seconds`.
 
-**Monarr exposes no integration counters.** The pipeline cannot be joined in
-Prometheus from Monarr's end — inbound caller counts live only in the
-`/api/v1/system/connections` JSON, and delivery outcomes only in the delivery
-log. nzbd has `nzbd_events_emitted_total{event}` / `nzbd_sse_clients` and
-plurx has `plurx_scan_total{trigger}` / `plurx_notify_received_total` /
-`plurx_watched_outbox{status}`; Monarr is the gap. Recorded here so nobody
-spends an afternoon looking for a metric that does not exist.
+Per-seam, added 2026-07 with the in-flight view:
+
+| Metric | Reads |
+|---|---|
+| `monarr_transfers_in_flight{stage="downloading\|importing\|notifying"}` | work in flight at each seam |
+| `monarr_transfer_bytes_moved` | bytes those transfers have moved so far |
+| `monarr_transfer_bytes_total` | bytes they are expected to move |
+
+Before these, Monarr — the application in the *middle* of the pipeline —
+exposed no integration counters at all, so the pipeline could not be joined in
+Prometheus from the one vantage point that sees both seams. nzbd has
+`nzbd_events_emitted_total{event}` / `nzbd_sse_clients`; plurx has
+`plurx_scan_total{trigger}` / `plurx_notify_received_total` /
+`plurx_watched_outbox{status}`.
+
+Still only in JSON: inbound caller counts (`/system/connections`) and
+per-delivery outcomes (the delivery log).
 
 ---
 

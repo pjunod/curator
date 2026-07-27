@@ -74,9 +74,14 @@ func (s *Service) onDownloaded(ctx context.Context, dl sqlite.Download, cfg port
 		}
 		return
 	}
-	// Fire-and-forget from the poller: runImport records the outcome (state
-	// + trace) itself; the error only matters to a user-initiated import.
-	_ = s.runImport(ctx, dl)
+	// Handed to the import workers, not run here. This is the control/data
+	// split: deciding is cheap and belongs on the caller's goroutine, moving
+	// bytes is not and does not — a 20 GB import used to hold the queue poll
+	// open for seventeen minutes, and every control-plane signal that reads
+	// that loop reported a file copy instead of a connection. runImport
+	// records its own outcome; the error only ever mattered to a
+	// user-initiated import.
+	s.enqueueImport(ctx, dl, cfg)
 }
 
 // runImport performs the actual import and records its steps. It reuses the

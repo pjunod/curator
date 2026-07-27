@@ -25,7 +25,7 @@ func TestPlaceMakesFilesReadable(t *testing.T) {
 		// Force the copy path by making the link fail: a directory cannot be
 		// hard-linked to, and os.Link across these temp dirs may still succeed,
 		// so assert on the final mode either way.
-		if err := place(src, dest); err != nil {
+		if err := place(src, dest, nil); err != nil {
 			t.Fatal(err)
 		}
 		assertMode(t, dest, 0o644)
@@ -36,7 +36,7 @@ func TestPlaceMakesFilesReadable(t *testing.T) {
 		_ = os.WriteFile(src, []byte("payload"), 0o600)
 		root := t.TempDir()
 		dest := filepath.Join(root, "Show (2020)", "Season 1", "out.mkv")
-		if err := place(src, dest); err != nil {
+		if err := place(src, dest, nil); err != nil {
 			t.Fatal(err)
 		}
 		assertMode(t, filepath.Join(root, "Show (2020)"), 0o755)
@@ -50,7 +50,7 @@ func TestPlaceMakesFilesReadable(t *testing.T) {
 		if err := os.WriteFile(dest, []byte("already here"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := place(src, dest); err != nil {
+		if err := place(src, dest, nil); err != nil {
 			t.Fatal(err)
 		}
 		assertMode(t, dest, 0o644)
@@ -61,7 +61,7 @@ func TestPlaceMakesFilesReadable(t *testing.T) {
 		src := filepath.Join(t.TempDir(), "source.mkv")
 		_ = os.WriteFile(src, []byte("payload"), 0o600)
 		dest := filepath.Join(t.TempDir(), "out.mkv")
-		if err := place(src, dest); err != nil {
+		if err := place(src, dest, nil); err != nil {
 			t.Fatal(err)
 		}
 		assertMode(t, dest, 0o640)
@@ -138,7 +138,7 @@ func TestPlaceReplacesAStrangerAtTheDestination(t *testing.T) {
 	if err := os.WriteFile(runt, bytes.Repeat([]byte{0xAA}, 512), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := place(runt, dest); err != nil {
+	if err := place(runt, dest, nil); err != nil {
 		t.Fatalf("first place: %v", err)
 	}
 
@@ -147,7 +147,7 @@ func TestPlaceReplacesAStrangerAtTheDestination(t *testing.T) {
 	if err := os.WriteFile(real, want, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := place(real, dest); err != nil {
+	if err := place(real, dest, nil); err != nil {
 		t.Fatalf("second place: %v", err)
 	}
 
@@ -181,14 +181,14 @@ func TestPlaceIsIdempotentForTheSameFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(dir, "lib", "Movie (2025) [Bluray 2160p].mkv")
-	if err := place(src, dest); err != nil {
+	if err := place(src, dest, nil); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.Stat(dest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := place(src, dest); err != nil {
+	if err := place(src, dest, nil); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.Stat(dest)

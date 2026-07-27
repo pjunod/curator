@@ -11,6 +11,7 @@ import (
 
 	"github.com/monarr-media/monarr/internal/app/acquisition"
 	"github.com/monarr-media/monarr/internal/app/health"
+	"github.com/monarr-media/monarr/internal/app/transfers"
 	"github.com/monarr-media/monarr/internal/infra/bus"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
 	"github.com/monarr-media/monarr/internal/ports"
@@ -26,6 +27,18 @@ type Dispatcher struct {
 	bus *bus.Bus
 	log *slog.Logger
 	new Factory
+	// The in-flight view, shared with acquisition. Optional: without one
+	// every report is a no-op. A notify is a seam like any other and belongs
+	// on the same surface as the import that triggered it — "the file landed
+	// but plurx has not been told yet" is a state a person should be able to
+	// SEE, not deduce from a delivery log they had to know to open.
+	inflight *transfers.Registry
+}
+
+// WithRegistry reports deliveries on the in-flight data-plane view.
+func (d *Dispatcher) WithRegistry(r *transfers.Registry) *Dispatcher {
+	d.inflight = r
+	return d
 }
 
 // New returns a Dispatcher.

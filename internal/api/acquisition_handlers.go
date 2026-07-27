@@ -1033,12 +1033,6 @@ func connectionState(st health.ConnectionState, link acquisition.ClientLink) (st
 			return "degraded", strings.Join(problems, "; ")
 		}
 	}
-	if st.Busy {
-		// Mid-sweep. The import runs inside the poll, so a large one holds it
-		// open for minutes — during which the client is not quiet, it is the
-		// reason we are busy.
-		return "polling", "importing — the current sweep is still running"
-	}
 	if st.StaleFor > 5*time.Minute {
 		// Never a degraded row with an empty Detail column. This branch used
 		// to return st.LastError verbatim, and LastError is empty whenever
@@ -1268,4 +1262,55 @@ func importOutcomeDTO(r acquisition.ImportResult) apigen.ImportOutcome {
 		out.Files = append(out.Files, fi)
 	}
 	return out
+}
+
+// ListTransfers implements GET /system/transfers — the data plane.
+//
+// Separate from /system/connections on purpose. That endpoint answers "can
+// Monarr still talk to these applications"; this one answers "is anything
+// actually moving". They were the same question once, and the result was a
+// 20 GB import reported as a degraded download client while being visible
+// nowhere else at all.
+func (s *Server) ListTransfers(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Acquisition == nil {
+		writeJSON(w, http.StatusOK, []apigen.Transfer{})
+		return
+	}
+	live := s.deps.Acquisition.Transfers()
+	out := make([]apigen.Transfer, 0, len(live))
+	for _, t := range live {
+		item := apigen.Transfer{
+			DownloadId: t.DownloadID,
+			Title:      t.Title,
+			Stage:      apigen.TransferStage(t.Stage),
+			StartedAt:  t.StartedAt,
+			Outbound:   t.Outbound,
+		}
+		if t.Transfer != "" {
+			v := t.Transfer
+			item.Transfer = &v
+		}
+		if t.Peer != "" {
+			v := t.Peer
+			item.Peer = &v
+		}
+		if t.Detail != "" {
+			v := t.Detail
+			item.Detail = &v
+		}
+		// Absent, not zero: "we cannot measure this stage" and "nothing has
+		// moved yet" look identical as a 0 and mean opposite things.
+		if t.Total > 0 {
+			total := t.Total
+			item.Total = &total
+			b := t.Bytes
+			item.Bytes = &b
+		}
+		if t.BytesPerSecond > 0 {
+			rate := t.BytesPerSecond
+			item.BytesPerSecond = &rate
+		}
+		out = append(out, item)
+	}
+	writeJSON(w, http.StatusOK, out)
 }

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/monarr-media/monarr/internal/app/transfers"
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/filename"
 	"github.com/monarr-media/monarr/internal/domain/mediainfo"
@@ -426,7 +427,7 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 		"Quality Full": q.Display(),
 	})
 	dest := filepath.Join(scope.Dest, naming.SafeFileName(name)+filepath.Ext(src))
-	if err := place(src, dest); err != nil {
+	if err := place(src, dest, transfers.Progress(ctx)); err != nil {
 		return placement{}, err
 	}
 	if upgrade {
@@ -465,7 +466,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 
 	dest := filepath.Join(scope.Dest,
 		naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
-	if err := place(src, dest); err != nil {
+	if err := place(src, dest, transfers.Progress(ctx)); err != nil {
 		return placement{}, err
 	}
 	if upgrade {
@@ -553,7 +554,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	dest := filepath.Join(scope.Dest,
 		naming.Render(naming.SeasonFolderTemplate, map[string]string{"season": strconv.Itoa(season)}),
 		naming.SafeFileName(base)+filepath.Ext(src))
-	if err := place(src, dest); err != nil {
+	if err := place(src, dest, transfers.Progress(ctx)); err != nil {
 		return placement{}, err
 	}
 	if upgrade {
@@ -637,7 +638,7 @@ func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem
 // download client's copy too. That is the intended trade and the same one
 // upstream makes: a seeding file that is readable is strictly better than a
 // library file that is not.
-func place(src, dest string) error {
+func place(src, dest string, onBytes func(done, total int64)) error {
 	dir := filepath.Dir(dest)
 	// Record which folders do not exist yet, so the chmod below touches only
 	// the ones monarr is about to create. Walking up and fixing whatever it
@@ -677,7 +678,7 @@ func place(src, dest string) error {
 	// Both paths land the file at a temp name first and rename over the
 	// destination. Rename is atomic and, unlike Link, does not refuse when
 	// something is already there — which is what makes replacement safe.
-	tmp, err := placeTemp(dir, src)
+	tmp, err := placeTemp(dir, src, onBytes)
 	if err != nil {
 		return err
 	}
@@ -697,7 +698,7 @@ func place(src, dest string) error {
 // placeTemp materialises src next to dest under a temporary name, hardlinking
 // when the filesystem allows it and copying when it does not, and returns that
 // name. The caller renames it into place.
-func placeTemp(dir, src string) (string, error) {
+func placeTemp(dir, src string, onBytes func(done, total int64)) (string, error) {
 	// A hardlink is free and is what makes seeding-while-imported possible;
 	// it only works within one filesystem, so a failure here is expected
 	// rather than exceptional and falls through to the copy.
@@ -726,7 +727,16 @@ func placeTemp(dir, src string) (string, error) {
 		return "", err
 	}
 	tmp := out.Name()
-	if _, err := io.Copy(out, in); err != nil {
+	// The copy reports itself. This is the only place in Monarr where it
+	// moves a large amount of data, and until it was instrumented a 20 GB
+	// cross-filesystem copy was invisible: no bytes, no rate, no started-at,
+	// nothing on any page. The one observable symptom was an unrelated
+	// scheduled task showing a seventeen-minute duration.
+	total := int64(0)
+	if fi, serr := in.Stat(); serr == nil {
+		total = fi.Size()
+	}
+	if _, err := io.Copy(out, &countingReader{r: in, total: total, on: onBytes}); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return "", err
@@ -766,4 +776,29 @@ func sizeOf(path string) int64 {
 		return info.Size()
 	}
 	return 0
+}
+
+// countingReader reports how far a copy has got, without changing what it
+// copies. Wrapping the READER rather than the writer means the count is bytes
+// genuinely read from the source, so a short write shows as a stall rather
+// than as a copy that raced ahead of itself.
+type countingReader struct {
+	r     io.Reader
+	done  int64
+	total int64
+	on    func(done, total int64)
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if n > 0 {
+		c.done += int64(n)
+		if c.on != nil {
+			// The callback throttles itself (transfers.Handle.Bytes); this
+			// loop runs tens of thousands of times for a large file and must
+			// not decide anything about how often anyone wants to hear.
+			c.on(c.done, c.total)
+		}
+	}
+	return n, err
 }

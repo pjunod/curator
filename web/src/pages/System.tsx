@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BusEvent } from '../api'
 import type { Connection } from '../api'
+import type { Transfer } from '../api'
 import {
   fmtBytes,
+  getTransfers,
   fmtInterval,
   fmtRelative,
   getBackups,
@@ -61,6 +63,104 @@ const KIND_TITLE: Record<Connection['kind'], string> = {
   downloadclient: 'Outbound: Monarr polls this client for queue and history',
   mediaserver: 'Outbound: Monarr tells this server when an import finishes',
   inbound: 'Inbound: this application calls Monarr. Configured on its side, not here',
+}
+
+// The data plane, on its own card.
+//
+// Deliberately not merged into Connections. That panel answers "can Monarr
+// still talk to these applications"; this answers "is anything actually
+// moving". They were the same question once, and the result was a 20 GB
+// import reported as a degraded download client while being visible nowhere
+// else at all — the only evidence anywhere was the duration column of an
+// unrelated scheduled task.
+const STAGE_LABEL: Record<Transfer['stage'], string> = {
+  downloading: 'downloading',
+  importing: 'importing',
+  notifying: 'notifying',
+}
+
+const STAGE_TITLE: Record<Transfer['stage'], string> = {
+  downloading: 'nzbd is fetching it — Monarr is watching, not working',
+  importing: 'Monarr is moving bytes into the library right now',
+  notifying: 'telling plurx what landed, including the waits between retries',
+}
+
+function rate(bps?: number): string {
+  if (!bps || bps <= 0) return ''
+  return `${fmtBytes(bps)}/s`
+}
+
+function TransfersCard() {
+  const q = useQuery({
+    queryKey: ['transfers'],
+    queryFn: getTransfers,
+    // Faster than the other panels on purpose: this is the one that moves.
+    refetchInterval: 2_000,
+  })
+  const rows = q.data ?? []
+
+  return (
+    <section className="panel">
+      <h2>In flight</h2>
+      <p className="muted">
+        What is moving right now, and which seam it is at. Separate from
+        Connections above: that one says whether Monarr can still talk to the
+        other applications, this one says whether anything is actually moving.
+      </p>
+      {rows.length === 0 ? (
+        <p className="muted">Nothing in flight.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Stage</th>
+              <th>Progress</th>
+              <th>Elapsed</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((t) => {
+              // Absent totals are not 0% — a stage that cannot measure itself
+              // must not draw an empty bar suggesting nothing has happened.
+              const known = !!t.total && t.total > 0
+              const pct = known ? Math.min(100, Math.round((100 * (t.bytes ?? 0)) / t.total!)) : 0
+              return (
+                <tr key={`${t.downloadId}:${t.stage}`}>
+                  <td>
+                    {t.title}
+                    {t.transfer && <div className="muted mono">{t.transfer}</div>}
+                  </td>
+                  <td className="muted nowrap" title={STAGE_TITLE[t.stage]}>
+                    {STAGE_LABEL[t.stage] ?? t.stage}
+                    {t.peer ? ` · ${t.peer}` : ''}
+                  </td>
+                  <td>
+                    {known ? (
+                      <>
+                        <div className="progress-track">
+                          <i style={{ width: `${pct}%` }} />
+                        </div>
+                        <div className="muted nowrap">
+                          {fmtBytes(t.bytes ?? 0)} / {fmtBytes(t.total!)}
+                          {rate(t.bytesPerSecond) ? ` · ${rate(t.bytesPerSecond)}` : ''}
+                        </div>
+                      </>
+                    ) : (
+                      <span className="muted">not measurable</span>
+                    )}
+                  </td>
+                  <td className="muted nowrap">{fmtRelative(t.startedAt)}</td>
+                  <td className="muted">{t.detail ?? ''}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
 }
 
 function ConnectionsCard() {
@@ -179,6 +279,8 @@ export function SystemPage() {
       </header>
 
       <ConnectionsCard />
+
+      <TransfersCard />
 
       <section className="panel">
         <h2>Health</h2>

@@ -38,6 +38,7 @@ import (
 	"github.com/monarr-media/monarr/internal/app/importlist"
 	"github.com/monarr-media/monarr/internal/app/library"
 	appnotify "github.com/monarr-media/monarr/internal/app/notify"
+	"github.com/monarr-media/monarr/internal/app/transfers"
 	"github.com/monarr-media/monarr/internal/buildinfo"
 	"github.com/monarr-media/monarr/internal/compat"
 	"github.com/monarr-media/monarr/internal/infra/bus"
@@ -161,10 +162,16 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		}
 	}
 	acq := acquisition.New(db, b, log, indexerFactory, clientFactory)
+	// The data plane gets its own registry and its own workers. Cancel ctx to
+	// stop them; WaitImporters drains, in the same shape the jobs queue uses.
+	inflight := transfers.New()
+	acq.SetRegistry(inflight)
+	acq.StartImporters(ctx)
+	defer acq.WaitImporters()
 
 	// Notifications (Phase 3): bus events fan out to configured targets.
 	notifierFactory := func(cfg ports.NotifierConfig) ports.Notifier { return notify.New(cfg) }
-	dispatcher := appnotify.New(db, b, log, notifierFactory)
+	dispatcher := appnotify.New(db, b, log, notifierFactory).WithRegistry(inflight)
 	go dispatcher.Run(ctx)
 	// The delivery worker runs beside it: a retry scheduled two minutes out
 	// has no bus event to wake it, and a dead server must not stall the
@@ -269,6 +276,26 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Contacts:    acq.Contacts,
 	})
 	reg.RegisterGroup(connections.Check)
+	// The data plane, checked separately from the control plane. This asks
+	// "is work moving", never "can we reach anyone" — the two used to be the
+	// same question, and a 20 GB import answered it as a degraded download
+	// client. An import that has been running for hours is a real problem
+	// and a different one from a client that stopped answering; each now has
+	// its own line, and neither can mask the other.
+	reg.Register("imports", func(ctx context.Context) health.Result {
+		age, running := acq.StalledImports()
+		switch {
+		case !running:
+			return health.Result{Status: health.StatusOK}
+		case age > 6*time.Hour:
+			return health.Result{Status: health.StatusWarning, Message: fmt.Sprintf(
+				"an import has been running for %s — that is long enough to be stuck rather than slow",
+				age.Truncate(time.Minute))}
+		default:
+			return health.Result{Status: health.StatusOK, Message: fmt.Sprintf(
+				"importing for %s", age.Truncate(time.Second))}
+		}
+	})
 	reg.Register("metadata-provider", func(ctx context.Context) health.Result {
 		key, err := tmdbKey(ctx)
 		if err != nil {

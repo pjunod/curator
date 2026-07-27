@@ -139,6 +139,10 @@ type Service struct {
 	// and reachability alone would call it healthy forever.
 	contactMu sync.Mutex
 	contacts  map[int64]health.Contact
+
+	// The data plane: import workers and the in-flight registry. See
+	// importers.go for why they are not on the poll goroutine.
+	importerFields
 }
 
 // New returns a Service.
@@ -147,26 +151,6 @@ func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, ni IndexerFactory, nc Clie
 		log = slog.Default()
 	}
 	return &Service{db: db, bus: b, log: log, newIndexer: ni, newClient: nc, searchTimeout: 30 * time.Second}
-}
-
-// noteBusy marks a client as being swept right now, so the staleness check
-// cannot read "we are mid-import" as "we have heard nothing".
-//
-// The poll and the import share a goroutine: the sweep calls the client,
-// records the contact, then imports whatever finished. A 20 GB import across
-// a network mount holds that open for minutes, during which the contact clock
-// ages and the panel degrades a client that is not merely fine but actively
-// feeding us. Meanwhile the per-row Test passes, because the probe is a
-// separate call — a panel disagreeing with the button beside it.
-func (s *Service) noteBusy(clientID int64, busy bool) {
-	s.contactMu.Lock()
-	defer s.contactMu.Unlock()
-	if s.contacts == nil {
-		s.contacts = map[int64]health.Contact{}
-	}
-	c := s.contacts[clientID]
-	c.Busy = busy
-	s.contacts[clientID] = c
 }
 
 // noteContact records the outcome of one exchange with a client.
@@ -695,11 +679,9 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 		if !cfg.Enabled {
 			continue
 		}
-		s.noteBusy(cfg.ID, true)
 		statuses, err := s.newClient(cfg).Statuses(ctx)
 		s.noteContact(cfg.ID, err)
 		if err != nil {
-			s.noteBusy(cfg.ID, false)
 			s.log.Warn("queue: client poll failed", "client", cfg.Name, "err", err)
 			continue
 		}
@@ -708,9 +690,9 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			if !ok {
 				continue // not visible yet (magnet resolving, etc.)
 			}
+			s.watchDownloading(dl, st)
 			s.reconcileDownload(ctx, dl, cfg, st, "poll")
 		}
-		s.noteBusy(cfg.ID, false)
 	}
 	return nil
 }

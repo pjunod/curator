@@ -17,18 +17,6 @@ import (
 type Contact struct {
 	At    time.Time
 	Error string
-	// Busy means a sweep of this client is running right now.
-	//
-	// The poll and the import share one goroutine: the sweep calls the
-	// client, records the contact, and then imports whatever finished — so a
-	// 20 GB import across a network mount holds the sweep open for minutes,
-	// and the contact clock ages for the whole of it. Reading that as "we
-	// have not heard from this client" is exactly backwards: we are busy
-	// *because* of what it gave us, and the per-row Test passes at the same
-	// moment because the probe is a separate call that never touches the
-	// busy loop. A panel that contradicts the button next to it is worse
-	// than one that says nothing.
-	Busy bool
 }
 
 // ConnectionDeps are the pieces the connections group needs: what is
@@ -254,13 +242,11 @@ func (m *ConnectionMonitor) probe(ctx context.Context) ([]ConnectionState, error
 			st := ConnectionState{
 				ID: cfg.ID, Name: cfg.Name, Kind: "downloadclient", Type: cfg.Type,
 				URL: ports.RedactURL(cfg.URL), Probed: true, LastSeen: seen.At,
-				LastError: seen.Error, Busy: seen.Busy,
+				LastError: seen.Error,
 			}
 			client := deps.NewClient(cfg)
 			st.Reach = client.Test(ctx)
-			// A sweep in flight IS contact. Ageing the clock through a long
-			// import reports the busiest client as the quietest one.
-			if st.Reach == nil && !seen.At.IsZero() && !seen.Busy {
+			if st.Reach == nil && !seen.At.IsZero() {
 				st.StaleFor = time.Since(seen.At)
 			}
 			if st.Reach == nil {

@@ -80,7 +80,7 @@ func isURLScheme(s string) bool {
 		return false
 	}
 	for _, c := range s {
-		if !isAlpha(c) && !(c >= '0' && c <= '9') && c != '+' && c != '-' && c != '.' {
+		if !isAlpha(c) && !isDigit(c) && c != '+' && c != '-' && c != '.' {
 			return false
 		}
 	}
@@ -89,6 +89,10 @@ func isURLScheme(s string) bool {
 
 func isAlpha(c rune) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func isDigit(c rune) bool {
+	return c >= '0' && c <= '9'
 }
 
 // DefaultPortFor is the port a service listens on when nobody says otherwise,

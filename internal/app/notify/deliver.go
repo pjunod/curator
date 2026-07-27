@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/app/transfers"
 	"github.com/monarr-media/monarr/internal/infra/sqlite"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -100,6 +101,17 @@ func (d *Dispatcher) deliverDue(ctx context.Context) {
 
 // attempt makes one delivery attempt and records what happened to it.
 func (d *Dispatcher) attempt(ctx context.Context, del sqlite.Delivery) {
+	// In flight for the duration of the attempt, including a retry that is
+	// still waiting: "imported, but plurx does not know yet" is exactly the
+	// handoff state that used to be invisible.
+	h := d.inflight.Begin(transfers.Transfer{
+		DownloadID: del.DownloadID,
+		Stage:      transfers.StageNotifying,
+		Peer:       "plurx",
+		Outbound:   true,
+		Detail:     deliveryDetail(del),
+	})
+	defer h.End()
 	cfg, err := d.db.GetNotifier(ctx, del.NotifierID)
 	if err != nil {
 		// The notifier was deleted while this sat in the queue. Nothing to
@@ -182,3 +194,11 @@ func (d *Dispatcher) trace(ctx context.Context, del sqlite.Delivery, sendErr err
 // stepNotifyPlurx names the trace step. New, so it extends the handoff
 // vocabulary rather than renaming any of it (guardrail §10.9).
 const stepNotifyPlurx = "notify_plurx"
+
+// deliveryDetail says what this attempt is, in the words a person would use.
+func deliveryDetail(del sqlite.Delivery) string {
+	if del.Attempts == 0 {
+		return "telling plurx what landed"
+	}
+	return fmt.Sprintf("retry %d — %s", del.Attempts+1, del.LastError)
+}

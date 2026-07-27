@@ -530,6 +530,27 @@ func (e RootKind) Valid() bool {
 	}
 }
 
+// Defines values for TransferStage.
+const (
+	Downloading TransferStage = "downloading"
+	Importing   TransferStage = "importing"
+	Notifying   TransferStage = "notifying"
+)
+
+// Valid indicates whether the value is a known member of the TransferStage enum.
+func (e TransferStage) Valid() bool {
+	switch e {
+	case Downloading:
+		return true
+	case Importing:
+		return true
+	case Notifying:
+		return true
+	default:
+		return false
+	}
+}
+
 // AddMediaRequest defines model for AddMediaRequest.
 type AddMediaRequest struct {
 	Kind MediaKind `json:"kind"`
@@ -1537,6 +1558,35 @@ type TaskState struct {
 	Running         bool       `json:"running"`
 }
 
+// Transfer defines model for Transfer.
+type Transfer struct {
+	// Bytes Bytes moved. Absent when the stage cannot measure itself — which a UI must render differently from 0%, hence the omission rather than a zero.
+	Bytes *int64 `json:"bytes,omitempty"`
+
+	// BytesPerSecond Averaged over the life of the transfer, not instantaneous: an instantaneous rate on a network mount is mostly noise, and the question being asked is "will this finish tonight".
+	BytesPerSecond *float64 `json:"bytesPerSecond,omitempty"`
+	Detail         *string  `json:"detail,omitempty"`
+
+	// DownloadId Monarr's download row, so a reader can reach the handoff trace.
+	DownloadId int64 `json:"downloadId"`
+	Outbound   bool  `json:"outbound"`
+
+	// Peer The application on the other side. Absent for `importing` — Monarr is moving its own files, and naming a peer would invent a seam that does not exist.
+	Peer *string `json:"peer,omitempty"`
+
+	// Stage Which seam this is at. `downloading` is nzbd's work that Monarr is watching; `importing` is Monarr moving bytes itself; `notifying` is telling plurx, including the waits between retries.
+	Stage     TransferStage `json:"stage"`
+	StartedAt time.Time     `json:"startedAt"`
+	Title     string        `json:"title"`
+	Total     *int64        `json:"total,omitempty"`
+
+	// Transfer The id that spans all three applications (contract §3.1) — the one to grep with.
+	Transfer *string `json:"transfer,omitempty"`
+}
+
+// TransferStage Which seam this is at. `downloading` is nzbd's work that Monarr is watching; `importing` is Monarr moving bytes itself; `notifying` is telling plurx, including the waits between retries.
+type TransferStage string
+
 // UnmatchedDir defines model for UnmatchedDir.
 type UnmatchedDir struct {
 	Name         string `json:"name"`
@@ -2051,6 +2101,9 @@ type ServerInterface interface {
 	// RunTask Trigger an immediate run of a scheduled task
 	// (POST /system/tasks/{name}/run)
 	RunTask(w http.ResponseWriter, r *http.Request, name string)
+	// ListTransfers What is moving right now, and between which applications
+	// (GET /system/transfers)
+	ListTransfers(w http.ResponseWriter, r *http.Request)
 	// ListWanted Everything still wanted (missing or below cutoff)
 	// (GET /wanted)
 	ListWanted(w http.ResponseWriter, r *http.Request)
@@ -3987,6 +4040,20 @@ func (siw *ServerInterfaceWrapper) RunTask(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// ListTransfers operation middleware
+func (siw *ServerInterfaceWrapper) ListTransfers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListTransfers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListWanted operation middleware
 func (siw *ServerInterfaceWrapper) ListWanted(w http.ResponseWriter, r *http.Request) {
 
@@ -4213,6 +4280,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/{id}/test", wrapper.TestNotifierByID)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/notifiers/{id}/deliveries", wrapper.ListDeliveries)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/webhooks/plurx", wrapper.PlurxWebhook)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/transfers", wrapper.ListTransfers)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/connections", wrapper.GetConnections)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/backups", wrapper.ListBackups)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/calendar", wrapper.GetCalendar)

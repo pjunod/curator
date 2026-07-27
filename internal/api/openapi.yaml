@@ -1847,6 +1847,26 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /system/transfers:
+    get:
+      operationId: listTransfers
+      summary: What is moving right now, and between which applications
+      description: >
+        The data plane, reported separately from the control plane on
+        purpose. /system/connections answers "can Monarr still talk to these
+        applications"; this answers "is anything actually moving". Conflating
+        them is how a 20 GB import — which held the queue poll open for
+        seventeen minutes — got reported as a degraded download client, while
+        being visible nowhere else at all.
+      responses:
+        "200":
+          description: Everything in flight, longest-running first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Transfer" }
+
   /system/connections:
     get:
       operationId: getConnections
@@ -3213,6 +3233,53 @@ components:
             The plurx username. Per the §11.1 decision the signal is per-user;
             this is plurx's user, not a Monarr account, and Monarr does not
             create one.
+
+    Transfer:
+      type: object
+      required: [downloadId, title, stage, startedAt, outbound]
+      properties:
+        downloadId:
+          type: integer
+          format: int64
+          description: Monarr's download row, so a reader can reach the handoff trace.
+        transfer:
+          type: string
+          description: >
+            The id that spans all three applications (contract §3.1) — the one
+            to grep with.
+        title: { type: string }
+        stage:
+          type: string
+          enum: [downloading, importing, notifying]
+          description: >
+            Which seam this is at. `downloading` is nzbd's work that Monarr is
+            watching; `importing` is Monarr moving bytes itself; `notifying`
+            is telling plurx, including the waits between retries.
+        peer:
+          type: string
+          description: >
+            The application on the other side. Absent for `importing` —
+            Monarr is moving its own files, and naming a peer would invent a
+            seam that does not exist.
+        outbound:
+          type: boolean
+        startedAt: { type: string, format: date-time }
+        bytes:
+          type: integer
+          format: int64
+          description: >
+            Bytes moved. Absent when the stage cannot measure itself — which a
+            UI must render differently from 0%, hence the omission rather than
+            a zero.
+        total: { type: integer, format: int64 }
+        bytesPerSecond:
+          type: number
+          format: double
+          description: >
+            Averaged over the life of the transfer, not instantaneous: an
+            instantaneous rate on a network mount is mostly noise, and the
+            question being asked is "will this finish tonight".
+        detail: { type: string }
 
     Connection:
       type: object

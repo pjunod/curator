@@ -922,6 +922,24 @@ export interface Connections {
   connections: Connection[]
 }
 
+export interface Transfer {
+  downloadId: number
+  transfer?: string
+  title: string
+  /** Which seam: nzbd is fetching it, Monarr is moving it, plurx is being told. */
+  stage: 'downloading' | 'importing' | 'notifying'
+  peer?: string
+  outbound: boolean
+  startedAt: string
+  /** Absent when the stage cannot measure itself — which is not the same as 0%. */
+  bytes?: number
+  total?: number
+  bytesPerSecond?: number
+  detail?: string
+}
+
+export const getTransfers = () => get<Transfer[]>('/system/transfers')
+
 export const getConnections = () => get<Connections>('/system/connections')
 export const getBackups = () => get<BackupInfo[]>('/system/backups')
 
