@@ -170,13 +170,25 @@ type Capacity struct {
 	DiskLow        bool
 	QuotaReached   bool
 	BlockedServers int
-	HealthAbort    bool
 	Paused         bool
+	// HealthAbort is a POLICY, not a problem: nzbd sets it whenever
+	// `[post] health_action` is park or delete, which is a deliberate and
+	// sensible operator choice — it stops wasting bandwidth on a download
+	// that cannot be repaired. It is reported as context, never as a
+	// fault. See Problems().
+	HealthAbort bool
 }
 
 // Problems renders the capacity as plain sentences, or nothing when there
 // is nothing wrong. Plain words on purpose: a health page that says
 // "quota_reached: true" has made the reader translate.
+//
+// HealthAbort is deliberately absent. Plan §5.6 maps it to an error, but
+// the field does not mean what that reading assumed: nzbd derives it from
+// `[post] health_action`, so it is true on any server configured to park or
+// delete unrepairable downloads — a default-good setting, on permanently.
+// Reporting it as an error produced a red badge that could never clear,
+// which is the exact failure this file is careful about everywhere else.
 func (c Capacity) Problems() []string {
 	var out []string
 	if c.DiskLow {

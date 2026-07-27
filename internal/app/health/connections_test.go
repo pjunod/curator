@@ -127,9 +127,13 @@ func TestCapacityNamesTheReasonNothingIsDownloading(t *testing.T) {
 		{"quota", ports.Capacity{QuotaReached: true}, StatusWarning, "quota is used up"},
 		{"blocked servers", ports.Capacity{BlockedServers: 2}, StatusWarning, "2 news server(s) are blocked"},
 		{"paused", ports.Capacity{Paused: true}, StatusWarning, "queue is paused"},
-		// Armed destruction outranks a warning: nzbd is set to park or
-		// delete on critical health.
-		{"health abort", ports.Capacity{HealthAbort: true}, StatusError, "parked or deleted"},
+		// NOT a problem. nzbd sets health_abort from `[post] health_action`,
+		// so it is true on any server configured to park or delete
+		// unrepairable downloads — a good default, on permanently. Plan
+		// §5.6 maps it to an error; that reading produced a red badge that
+		// could never clear, which is the failure this file is careful
+		// about everywhere else.
+		{"health abort is policy, not a fault", ports.Capacity{HealthAbort: true}, StatusOK, ""},
 		{"nothing wrong", ports.Capacity{}, StatusOK, ""},
 	}
 	for _, tc := range cases {

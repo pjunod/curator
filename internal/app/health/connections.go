@@ -41,6 +41,136 @@ const (
 	contactErrorAfter = 30 * time.Minute
 )
 
+// ConnectionState is what one probe learned about one remote application,
+// before it is rendered as anything.
+//
+// It exists because two surfaces need the same facts and must not disagree:
+// the health checks (§5.6) and the Connections panel (§5.7). Deriving the
+// panel by parsing the health check's English would put a screen one reworded
+// sentence away from lying.
+type ConnectionState struct {
+	ID       int64
+	Name     string
+	Kind     string // downloadclient | mediaserver
+	Type     string
+	URL      string
+	Probed   bool
+	Reach    error
+	StaleFor time.Duration
+	LastSeen time.Time
+	// LastError is what the last failed exchange said, even when the client
+	// answers its test now. "Answering, but the stream ended an hour ago"
+	// is a different problem from "answering, but quiet", and only this
+	// tells them apart.
+	LastError string
+	Capacity  *ports.Capacity
+	Version   string
+}
+
+// ConnectionMonitor probes the remote applications once and serves both
+// consumers from that one pass — the health registry on its timer, and the
+// panel from whatever the last pass found.
+type ConnectionMonitor struct {
+	deps ConnectionDeps
+	mu   sync.Mutex
+	last []ConnectionState
+	at   time.Time
+}
+
+// NewConnectionMonitor returns a monitor over these dependencies.
+func NewConnectionMonitor(deps ConnectionDeps) *ConnectionMonitor {
+	return &ConnectionMonitor{deps: deps}
+}
+
+// Snapshot returns the last probe's findings and when it ran. A zero time
+// means nothing has been probed yet, which a caller should say rather than
+// render as an all-clear.
+func (m *ConnectionMonitor) Snapshot() ([]ConnectionState, time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ConnectionState, len(m.last))
+	copy(out, m.last)
+	return out, m.at
+}
+
+// Check implements GroupFunc: probe, remember, and render as health results.
+func (m *ConnectionMonitor) Check(ctx context.Context) []CheckResult {
+	states, err := m.probe(ctx)
+	if err != nil {
+		return []CheckResult{{
+			Name: "connections", Status: StatusError, Message: oneLine(err.Error()),
+		}}
+	}
+	m.mu.Lock()
+	m.last, m.at = states, time.Now()
+	m.mu.Unlock()
+
+	var out []CheckResult
+	for _, st := range states {
+		out = append(out, st.results()...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// results renders one connection as its health lines.
+func (st ConnectionState) results() []CheckResult {
+	if st.Kind == "mediaserver" {
+		name := "mediaserver:" + st.Name
+		if !st.Probed {
+			return []CheckResult{{Name: name, Status: StatusOK,
+				Message: fmt.Sprintf("%s is configured; not probed, because its only "+
+					"test is a full library rescan", st.Type)}}
+		}
+		if st.Reach != nil {
+			return []CheckResult{{Name: name, Status: StatusWarning,
+				Message: fmt.Sprintf("%s: %s", st.Type, oneLine(st.Reach.Error()))}}
+		}
+		return []CheckResult{{Name: name, Status: StatusOK}}
+	}
+
+	name := "client:" + st.Name
+	var out []CheckResult
+	switch {
+	case st.Reach != nil:
+		out = append(out, CheckResult{Name: name, Status: StatusWarning,
+			Message: fmt.Sprintf("%s is not answering: %s", st.Type, oneLine(st.Reach.Error()))})
+	// Answering is not the same as working. A client that passes its test
+	// while nothing has actually been fetched from it for half an hour is
+	// the shape of a subscription that died quietly, and the test alone
+	// would call that healthy forever.
+	case st.StaleFor > contactErrorAfter:
+		out = append(out, CheckResult{Name: name, Status: StatusError,
+			Message: st.staleMessage()})
+	case st.StaleFor > contactWarnAfter:
+		out = append(out, CheckResult{Name: name, Status: StatusWarning,
+			Message: st.staleMessage()})
+	default:
+		out = append(out, CheckResult{Name: name, Status: StatusOK})
+	}
+
+	if st.Capacity != nil {
+		capName := name + ":capacity"
+		switch {
+		case len(st.Capacity.Problems()) > 0:
+			out = append(out, CheckResult{Name: capName, Status: StatusWarning,
+				Message: fmt.Sprintf("%s is up but not downloading: %s",
+					st.Type, strings.Join(st.Capacity.Problems(), "; "))})
+		default:
+			out = append(out, CheckResult{Name: capName, Status: StatusOK})
+		}
+	}
+	return out
+}
+
+func (st ConnectionState) staleMessage() string {
+	msg := fmt.Sprintf("answering, but nothing has come through it for %s", roughly(st.StaleFor))
+	if st.LastError != "" {
+		msg += " (last error: " + oneLine(st.LastError) + ")"
+	}
+	return msg
+}
+
 // Connections reports on every other application Monarr depends on, one
 // line each (plan §5.6).
 //
@@ -59,155 +189,110 @@ const (
 // offers no such endpoint it is listed as unprobed rather than quietly
 // omitted, so an absence is never mistaken for an all-clear.
 func Connections(deps ConnectionDeps) GroupFunc {
-	return func(ctx context.Context) []CheckResult {
-		var contacts map[int64]Contact
-		if deps.Contacts != nil {
-			contacts = deps.Contacts()
-		}
+	return NewConnectionMonitor(deps).Check
+}
 
-		clients, err := deps.Clients(ctx)
-		if err != nil {
-			return []CheckResult{{
-				Name: "connections", Status: StatusError,
-				Message: fmt.Sprintf("cannot read download clients: %v", err),
-			}}
-		}
-		notifiers, err := deps.Notifiers(ctx)
-		if err != nil {
-			return []CheckResult{{
-				Name: "connections", Status: StatusError,
-				Message: fmt.Sprintf("cannot read notifiers: %v", err),
-			}}
-		}
-
-		var mu sync.Mutex
-		var out []CheckResult
-		add := func(r CheckResult) {
-			mu.Lock()
-			out = append(out, r)
-			mu.Unlock()
-		}
-
-		// In parallel: the check's own timeout should bound the slowest
-		// connection, not the sum. One unplugged server must not make every
-		// other line report "timed out".
-		var wg sync.WaitGroup
-		for _, c := range clients {
-			if !c.Enabled || deps.NewClient == nil {
-				continue
-			}
-			cfg := c
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				client := deps.NewClient(cfg)
-				add(clientResult(ctx, cfg, client, contacts[cfg.ID]))
-				if cap, ok := client.(ports.CapacityReporter); ok {
-					if r, reported := capacityResult(ctx, cfg, cap); reported {
-						add(r)
-					}
-				}
-			}()
-		}
-		for _, n := range notifiers {
-			if !n.Enabled || !mediaServer(n.Type) || deps.NewNotifier == nil {
-				continue
-			}
-			cfg := n
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				add(mediaServerResult(ctx, cfg, deps.NewNotifier))
-			}()
-		}
-		wg.Wait()
-
-		// Stable order: a health page whose rows shuffle between polls is
-		// unreadable, and these were produced by racing goroutines.
-		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-		return out
+// probe asks every enabled connection how it is, concurrently.
+func (m *ConnectionMonitor) probe(ctx context.Context) ([]ConnectionState, error) {
+	deps := m.deps
+	var contacts map[int64]Contact
+	if deps.Contacts != nil {
+		contacts = deps.Contacts()
 	}
+	clients, err := deps.Clients(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read download clients: %w", err)
+	}
+	notifiers, err := deps.Notifiers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read notifiers: %w", err)
+	}
+
+	var mu sync.Mutex
+	var out []ConnectionState
+	add := func(st ConnectionState) {
+		mu.Lock()
+		out = append(out, st)
+		mu.Unlock()
+	}
+
+	// In parallel: the probe's own timeout should bound the slowest
+	// connection, not the sum. One unplugged server must not make every
+	// other line report "timed out".
+	var wg sync.WaitGroup
+	for _, c := range clients {
+		if !c.Enabled || deps.NewClient == nil {
+			continue
+		}
+		cfg := c
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			seen := contacts[cfg.ID]
+			st := ConnectionState{
+				ID: cfg.ID, Name: cfg.Name, Kind: "downloadclient", Type: cfg.Type,
+				URL: ports.RedactURL(cfg.URL), Probed: true, LastSeen: seen.At,
+				LastError: seen.Error,
+			}
+			client := deps.NewClient(cfg)
+			st.Reach = client.Test(ctx)
+			if st.Reach == nil && !seen.At.IsZero() {
+				st.StaleFor = time.Since(seen.At)
+			}
+			if st.Reach == nil {
+				if cap, ok := client.(ports.CapacityReporter); ok {
+					if c, err := cap.Capacity(ctx); err == nil {
+						st.Capacity, st.Version = &c, c.Version
+					}
+					// A failed capacity call adds nothing: the
+					// reachability result above already reported that
+					// outage, and repeating it would double-count one.
+				}
+			}
+			add(st)
+		}()
+	}
+	for _, n := range notifiers {
+		if !n.Enabled || !mediaServer(n.Type) || deps.NewNotifier == nil {
+			continue
+		}
+		cfg := n
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			st := ConnectionState{
+				ID: cfg.ID, Name: cfg.Name, Kind: "mediaserver", Type: cfg.Type,
+				URL: ports.RedactURL(cfg.Settings["url"]),
+			}
+			// Only plurx is probed: it has a public, side-effect-free
+			// GET /api/v1/server. Plex and Jellyfin have no inert test —
+			// their only one IS a full library rescan — so they are listed
+			// as unprobed rather than omitted, because an absence reads as
+			// an all-clear.
+			if cfg.Type == "plurx" {
+				st.Probed = true
+				st.Reach = deps.NewNotifier(cfg).Test(ctx)
+			}
+			add(st)
+		}()
+	}
+	wg.Wait()
+
+	// Stable order: a page whose rows shuffle between polls is unreadable,
+	// and these were produced by racing goroutines.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
 }
 
 func mediaServer(kind string) bool {
 	return kind == "plex" || kind == "jellyfin" || kind == "plurx"
 }
 
-// clientResult probes one download client and folds in how long it has been
-// since anything actually worked.
-func clientResult(ctx context.Context, cfg ports.ClientConfig, client ports.DownloadClient, seen Contact) CheckResult {
-	name := fmt.Sprintf("client:%s", cfg.Name)
-	if err := client.Test(ctx); err != nil {
-		return CheckResult{Name: name, Status: StatusWarning,
-			Message: fmt.Sprintf("%s is not answering: %s", cfg.Type, oneLine(err.Error()))}
-	}
-	// Answering is not the same as working. A client that passes its test
-	// while nothing has actually been fetched from it for half an hour is
-	// the shape of a subscription that died quietly, and the test alone
-	// would call that healthy forever.
-	if !seen.At.IsZero() {
-		if age := time.Since(seen.At); age > contactErrorAfter {
-			return CheckResult{Name: name, Status: StatusError,
-				Message: fmt.Sprintf("answering, but nothing has come through it for %s%s",
-					roughly(age), because(seen.Error))}
-		} else if age > contactWarnAfter {
-			return CheckResult{Name: name, Status: StatusWarning,
-				Message: fmt.Sprintf("answering, but nothing has come through it for %s%s",
-					roughly(age), because(seen.Error))}
-		}
-	}
-	return CheckResult{Name: name, Status: StatusOK}
-}
-
-// capacityResult reports a client that is up, answering, and unable to
-// download — the state that looks exactly like "idle" from outside.
-func capacityResult(ctx context.Context, cfg ports.ClientConfig, cap ports.CapacityReporter) (CheckResult, bool) {
-	name := fmt.Sprintf("client:%s:capacity", cfg.Name)
-	c, err := cap.Capacity(ctx)
-	if err != nil {
-		// The reachability line above already says the client is unwell.
-		// Repeating it here would double-count one outage.
-		return CheckResult{}, false
-	}
-	// A health abort is armed destruction: nzbd is set to park or delete on
-	// critical health, so this one outranks a warning.
-	if c.HealthAbort {
-		return CheckResult{Name: name, Status: StatusError,
-			Message: fmt.Sprintf("%s reports its critical-health abort is armed — "+
-				"failing downloads will be parked or deleted", cfg.Type)}, true
-	}
-	problems := c.Problems()
-	if len(problems) == 0 {
-		return CheckResult{Name: name, Status: StatusOK}, true
-	}
-	return CheckResult{Name: name, Status: StatusWarning,
-		Message: fmt.Sprintf("%s is up but not downloading: %s",
-			cfg.Type, strings.Join(problems, "; "))}, true
-}
-
-// mediaServerResult probes a media server, where probing it is safe.
-func mediaServerResult(ctx context.Context, cfg ports.NotifierConfig, factory func(ports.NotifierConfig) ports.Notifier) CheckResult {
-	name := fmt.Sprintf("mediaserver:%s", cfg.Name)
-	if cfg.Type != "plurx" {
-		return CheckResult{Name: name, Status: StatusOK,
-			Message: fmt.Sprintf("%s is configured; not probed, because its only "+
-				"test is a full library rescan", cfg.Type)}
-	}
-	if err := factory(cfg).Test(ctx); err != nil {
-		return CheckResult{Name: name, Status: StatusWarning,
-			Message: fmt.Sprintf("plurx: %s", oneLine(err.Error()))}
-	}
-	return CheckResult{Name: name, Status: StatusOK}
-}
-
-func because(msg string) string {
-	if msg == "" {
-		return ""
-	}
-	return " (last error: " + oneLine(msg) + ")"
-}
-
-// roughly renders a duration the way somebody reads it off a status page.
 func roughly(d time.Duration) string {
 	switch {
 	case d < time.Minute:

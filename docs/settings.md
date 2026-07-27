@@ -380,9 +380,12 @@ healthy forever.
 
 For nzbd, `client:<name>:capacity` names the reason it is up and downloading
 nothing — low disk, quota used up, blocked news servers, a paused queue — in
-plain words. An armed critical-health abort is reported as an **error**
-rather than a warning, since it means failing downloads are about to be
-parked or deleted.
+plain words.
+
+*Not* reported: nzbd's `health_abort`. It reads like an incident and is not
+one — nzbd sets it from `[post] health_action`, so it is true on any server
+configured to park or delete unrepairable downloads, which is a good default
+and permanently on. Reporting it produced a red badge that could never clear.
 
 Chat notifiers and Plex/Jellyfin are deliberately never probed: testing a
 Discord webhook posts a message, and the only "test" a Plex notifier has is a

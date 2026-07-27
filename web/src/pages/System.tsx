@@ -1,9 +1,107 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BusEvent } from '../api'
-import { fmtBytes, fmtInterval, fmtRelative, getBackups, getHealth, getTasks, runTask } from '../api'
+import type { Connection } from '../api'
+import {
+  fmtBytes,
+  fmtInterval,
+  fmtRelative,
+  getBackups,
+  getConnections,
+  getHealth,
+  getTasks,
+  runTask,
+} from '../api'
 
 const MAX_EVENTS = 50
+
+// The Connections card (plan §5.7): one row per remote application, and the
+// single screen that answers "are the three apps actually talking right
+// now". Everything here comes from the last health probe plus the push
+// supervisor's live state — opening four connections every few seconds to
+// render a status page would make the page part of the problem.
+const STATE_PILL: Record<Connection['state'], string> = {
+  live: 'pill-ok',
+  polling: 'pill-ok',
+  degraded: 'pill-warning',
+  unreachable: 'pill-warning',
+  unprobed: 'pill-neutral',
+}
+
+// What the word means, for anyone who has not read the plan. `polling` is
+// not a lesser `live`: it is the fallback working exactly as designed.
+const STATE_TITLE: Record<Connection['state'], string> = {
+  live: 'A push stream is open — completions arrive the moment they happen',
+  polling: 'Answering, on the 30-second poll',
+  degraded: 'Answering, but not working properly',
+  unreachable: 'Not answering',
+  unprobed: 'Configured, but never probed — its only test is the action itself',
+}
+
+function ConnectionsCard() {
+  const q = useQuery({
+    queryKey: ['connections'],
+    queryFn: getConnections,
+    refetchInterval: 10_000,
+  })
+  const rows = q.data?.connections ?? []
+
+  return (
+    <section className="panel">
+      <h2>Connections</h2>
+      <p className="muted">
+        The other applications Monarr talks to.{' '}
+        {q.data?.checkedAt
+          ? `Last probed ${fmtRelative(new Date(q.data.checkedAt).toISOString())}.`
+          : 'Not probed yet — the health check runs every minute.'}
+      </p>
+      {rows.length === 0 ? (
+        <p className="muted">
+          No download clients or media servers configured yet (Settings).
+        </p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Kind</th>
+              <th>State</th>
+              <th>Last contact</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={`${c.kind}:${c.name}`}>
+                <td>
+                  {c.name}
+                  <div className="muted">
+                    {c.type}
+                    {c.version ? ` ${c.version}` : ''}
+                    {c.url ? ` · ${c.url}` : ''}
+                  </div>
+                </td>
+                <td className="muted">
+                  {c.kind === 'downloadclient' ? 'download client' : 'media server'}
+                </td>
+                <td>
+                  <span className={`pill ${STATE_PILL[c.state]}`} title={STATE_TITLE[c.state]}>
+                    {c.state}
+                  </span>
+                </td>
+                <td className="muted">
+                  {c.lastContact ? fmtRelative(new Date(c.lastContact).toISOString()) : '—'}
+                  {c.lastEventSeq ? ` · event #${c.lastEventSeq}` : ''}
+                </td>
+                <td className="muted">{c.detail ?? ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
+}
 
 function useEventStream(): { events: BusEvent[]; connected: boolean } {
   const [events, setEvents] = useState<BusEvent[]>([])
@@ -52,6 +150,8 @@ export function SystemPage() {
       <header className="page-head">
         <h1>System</h1>
       </header>
+
+      <ConnectionsCard />
 
       <section className="panel">
         <h2>Health</h2>

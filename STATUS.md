@@ -205,11 +205,18 @@ side (N1–N7) is built; this is Monarr's.
       a client that answers while nothing comes through it is reported at
       5 min / 30 min. nzbd capacity — low disk, quota, blocked servers,
       paused queue — via the optional `ports.CapacityReporter`, with an
-      armed critical-health abort as an error rather than a warning. Chat
+      paused queue — via the optional `ports.CapacityReporter`. Chat
       notifiers and Plex/Jellyfin are listed but never probed: their only
       test is the action itself
-- [ ] §5.7 Connections panel — one screen that answers "are the three apps
-      actually talking right now"
+- [x] **§5.7 Connections panel** — `GET /api/v1/system/connections` and a
+      card on System: one row per remote app, `live | polling | degraded |
+      unreachable | unprobed`, last-contact age and `event #913` for push
+      clients, URLs redacted. Assembled from the last health probe plus the
+      supervisor's live state rather than probing on demand, so the page
+      does not become load on the servers it reports about. `polling` is
+      styled as healthy, not as a lesser `live`: it is the fallback working
+      as designed, and colouring it as a fault trains people to ignore the
+      one that is
 
 ## Phase 8 — Plausibility (built 2026-07-27)
 

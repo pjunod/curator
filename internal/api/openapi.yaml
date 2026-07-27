@@ -1782,6 +1782,32 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Delivery" }
 
+  /system/connections:
+    get:
+      operationId: getConnections
+      summary: The other applications Monarr talks to, and whether they are talking back
+      description: >
+        One row per remote application, assembled from the last health probe,
+        the push supervisor's live state, and the queue poll's contact clock.
+        This is the screen that answers "are the three apps actually talking
+        right now". URLs are redacted.
+      responses:
+        "200":
+          description: Connections.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [connections]
+                properties:
+                  checkedAt:
+                    type: integer
+                    format: int64
+                    description: When the last probe ran (epoch ms); absent if none has.
+                  connections:
+                    type: array
+                    items: { $ref: "#/components/schemas/Connection" }
+
   /system/backups:
     get:
       operationId: listBackups
@@ -3076,6 +3102,36 @@ components:
             id:
               type: integer
               format: int64
+
+    Connection:
+      type: object
+      required: [name, kind, type, state]
+      properties:
+        name: { type: string }
+        kind:
+          type: string
+          enum: [downloadclient, mediaserver]
+        type: { type: string }
+        url:
+          type: string
+          description: Redacted — any password is replaced before it leaves the server.
+        state:
+          type: string
+          enum: [live, polling, degraded, unreachable, unprobed]
+          description: >
+            live = a push stream is open; polling = answering, on the 30s poll;
+            degraded = answering but not working properly; unreachable = not
+            answering; unprobed = configured, but has no side-effect-free test.
+        version: { type: string }
+        lastContact:
+          type: integer
+          format: int64
+          description: Last time something actually came through it (epoch ms).
+        lastEventSeq:
+          type: integer
+          format: int64
+          description: The last event id seen on a push stream.
+        detail: { type: string }
 
     Delivery:
       type: object

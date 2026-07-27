@@ -893,6 +893,29 @@ export interface Delivery {
 }
 
 export const getDeliveries = (id: number) => get<Delivery[]>(`/notifiers/${id}/deliveries`)
+
+// One remote application and whether it is talking back.
+export interface Connection {
+  name: string
+  kind: 'downloadclient' | 'mediaserver'
+  type: string
+  url?: string
+  /** live = a push stream is open · polling = answering, on the 30s poll ·
+   *  degraded = answering but not working · unreachable = not answering ·
+   *  unprobed = configured, but has no side-effect-free test. */
+  state: 'live' | 'polling' | 'degraded' | 'unreachable' | 'unprobed'
+  version?: string
+  lastContact?: number
+  lastEventSeq?: number
+  detail?: string
+}
+
+export interface Connections {
+  checkedAt?: number
+  connections: Connection[]
+}
+
+export const getConnections = () => get<Connections>('/system/connections')
 export const getBackups = () => get<BackupInfo[]>('/system/backups')
 
 // ---- Phase 5: depth ----

@@ -37,9 +37,12 @@ const ScanTaskName = "library.reconcile"
 
 // Deps is everything the server needs, wired in cmd/monarr.
 type Deps struct {
-	Log         *slog.Logger
-	Bus         *bus.Bus
-	Health      *health.Registry
+	Log    *slog.Logger
+	Bus    *bus.Bus
+	Health *health.Registry
+	// Connections is the monitor behind the Connections panel; nil renders
+	// the panel empty rather than failing.
+	Connections *health.ConnectionMonitor
 	Scheduler   *scheduler.Scheduler
 	DB          SchemaVersioner
 	Library     *library.Service

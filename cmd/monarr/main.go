@@ -261,13 +261,14 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// The seams: the other applications in the pipeline, probed through the
 	// same adapters that do the real work — so a check passing means the
 	// thing that matters would work, not merely that a URL resolves.
-	reg.RegisterGroup(health.Connections(health.ConnectionDeps{
+	connections := health.NewConnectionMonitor(health.ConnectionDeps{
 		Clients:     db.ListDownloadClients,
 		Notifiers:   db.ListNotifiers,
 		NewClient:   clientFactory,
 		NewNotifier: notifierFactory,
 		Contacts:    acq.Contacts,
-	}))
+	})
+	reg.RegisterGroup(connections.Check)
 	reg.Register("metadata-provider", func(ctx context.Context) health.Result {
 		key, err := tmdbKey(ctx)
 		if err != nil {
@@ -419,6 +420,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Log:             log,
 		Bus:             b,
 		Health:          reg,
+		Connections:     connections,
 		Scheduler:       sched,
 		DB:              db,
 		Library:         lib,

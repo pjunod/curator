@@ -35,6 +35,51 @@ func (e AddMediaRequestMonitor) Valid() bool {
 	}
 }
 
+// Defines values for ConnectionKind.
+const (
+	Downloadclient ConnectionKind = "downloadclient"
+	Mediaserver    ConnectionKind = "mediaserver"
+)
+
+// Valid indicates whether the value is a known member of the ConnectionKind enum.
+func (e ConnectionKind) Valid() bool {
+	switch e {
+	case Downloadclient:
+		return true
+	case Mediaserver:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConnectionState.
+const (
+	Degraded    ConnectionState = "degraded"
+	Live        ConnectionState = "live"
+	Polling     ConnectionState = "polling"
+	Unprobed    ConnectionState = "unprobed"
+	Unreachable ConnectionState = "unreachable"
+)
+
+// Valid indicates whether the value is a known member of the ConnectionState enum.
+func (e ConnectionState) Valid() bool {
+	switch e {
+	case Degraded:
+		return true
+	case Live:
+		return true
+	case Polling:
+		return true
+	case Unprobed:
+		return true
+	case Unreachable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeliveryStatus.
 const (
 	DeliveryStatusFailed  DeliveryStatus = "failed"
@@ -550,6 +595,33 @@ type CalendarEntry struct {
 	MediaItemId int64  `json:"mediaItemId"`
 	Title       string `json:"title"`
 }
+
+// Connection defines model for Connection.
+type Connection struct {
+	Detail *string        `json:"detail,omitempty"`
+	Kind   ConnectionKind `json:"kind"`
+
+	// LastContact Last time something actually came through it (epoch ms).
+	LastContact *int64 `json:"lastContact,omitempty"`
+
+	// LastEventSeq The last event id seen on a push stream.
+	LastEventSeq *int64 `json:"lastEventSeq,omitempty"`
+	Name         string `json:"name"`
+
+	// State live = a push stream is open; polling = answering, on the 30s poll; degraded = answering but not working properly; unreachable = not answering; unprobed = configured, but has no side-effect-free test.
+	State ConnectionState `json:"state"`
+	Type  string          `json:"type"`
+
+	// Url Redacted — any password is replaced before it leaves the server.
+	Url     *string `json:"url,omitempty"`
+	Version *string `json:"version,omitempty"`
+}
+
+// ConnectionKind defines model for Connection.Kind.
+type ConnectionKind string
+
+// ConnectionState live = a push stream is open; polling = answering, on the 30s poll; degraded = answering but not working properly; unreachable = not answering; unprobed = configured, but has no side-effect-free test.
+type ConnectionState string
 
 // CustomFormat defines model for CustomFormat.
 type CustomFormat struct {
@@ -1889,6 +1961,9 @@ type ServerInterface interface {
 	// ListBackups On-disk database backups (newest first)
 	// (GET /system/backups)
 	ListBackups(w http.ResponseWriter, r *http.Request)
+	// GetConnections The other applications Monarr talks to, and whether they are talking back
+	// (GET /system/connections)
+	GetConnections(w http.ResponseWriter, r *http.Request)
 	// GetSystemStatus System status
 	// (GET /system/status)
 	GetSystemStatus(w http.ResponseWriter, r *http.Request)
@@ -3737,6 +3812,20 @@ func (siw *ServerInterfaceWrapper) ListBackups(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// GetConnections operation middleware
+func (siw *ServerInterfaceWrapper) GetConnections(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetConnections(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSystemStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
 
@@ -4001,6 +4090,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/notifiers/{id}", wrapper.DeleteNotifier)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/notifiers/{id}", wrapper.UpdateNotifier)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/notifiers/{id}/deliveries", wrapper.ListDeliveries)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/connections", wrapper.GetConnections)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/backups", wrapper.ListBackups)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/calendar", wrapper.GetCalendar)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted", wrapper.ListWanted)

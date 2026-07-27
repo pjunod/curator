@@ -13,6 +13,7 @@ import (
 	"github.com/monarr-media/monarr/internal/adapters/httpx"
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
 	"github.com/monarr-media/monarr/internal/app/acquisition"
+	"github.com/monarr-media/monarr/internal/app/health"
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/format"
 	"github.com/monarr-media/monarr/internal/domain/quality"
@@ -874,6 +875,101 @@ func (s *Server) DeleteNotifier(w http.ResponseWriter, r *http.Request, id int64
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// connectionsResponse is the body of GET /system/connections.
+type connectionsResponse struct {
+	CheckedAt   *int64              `json:"checkedAt,omitempty"`
+	Connections []apigen.Connection `json:"connections"`
+}
+
+// GetConnections implements GET /system/connections.
+//
+// The single screen that answers "are the three apps actually talking right
+// now" (plan §5.7). It reports the LAST probe rather than probing on demand:
+// a page that opened four connections every few seconds would itself become
+// load on the servers it is reporting about, and `checkedAt` says how fresh
+// the answer is so nobody has to guess.
+func (s *Server) GetConnections(w http.ResponseWriter, r *http.Request) {
+	out := connectionsResponse{Connections: []apigen.Connection{}}
+	if s.deps.Connections == nil {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	states, at := s.deps.Connections.Snapshot()
+	if !at.IsZero() {
+		ms := at.UnixMilli()
+		out.CheckedAt = &ms
+	}
+	links := map[int64]acquisition.ClientLink{}
+	if s.deps.Acquisition != nil {
+		for _, l := range s.deps.Acquisition.Subscriptions() {
+			links[l.ClientID] = l
+		}
+	}
+	for _, st := range states {
+		out.Connections = append(out.Connections, connectionDTO(st, links[st.ID]))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// connectionDTO folds the probe's findings and the live push state into the
+// one word somebody actually reads off the page.
+func connectionDTO(st health.ConnectionState, link acquisition.ClientLink) apigen.Connection {
+	c := apigen.Connection{
+		Name: st.Name, Kind: apigen.ConnectionKind(st.Kind), Type: st.Type,
+		Url: ptrIfText(st.URL), Version: ptrIfText(st.Version),
+	}
+	if !st.LastSeen.IsZero() {
+		ms := st.LastSeen.UnixMilli()
+		c.LastContact = &ms
+	}
+	if link.LastSeq > 0 {
+		seq := int64(link.LastSeq)
+		c.LastEventSeq = &seq
+	}
+
+	state, detail := connectionState(st, link)
+	c.State = apigen.ConnectionState(state)
+	c.Detail = ptrIfText(detail)
+	return c
+}
+
+func connectionState(st health.ConnectionState, link acquisition.ClientLink) (string, string) {
+	switch {
+	case !st.Probed:
+		// Configured, and deliberately never probed — its only test is the
+		// action itself. Said out loud, because a blank row reads as fine.
+		return "unprobed", "not probed: its only test is a full library rescan"
+	case st.Reach != nil:
+		return "unreachable", st.Reach.Error()
+	}
+	// Answering. Now: is it actually working?
+	if st.Capacity != nil {
+		if problems := st.Capacity.Problems(); len(problems) > 0 {
+			return "degraded", strings.Join(problems, "; ")
+		}
+	}
+	if st.StaleFor > 5*time.Minute {
+		return "degraded", st.LastError
+	}
+	// A push client that is answering but whose stream is down is not
+	// "live" — it is running on the poll, which is the fallback working as
+	// designed rather than a failure.
+	if link.ClientID != 0 && link.Mode == "push" {
+		if link.Connected {
+			return "live", ""
+		}
+		return "polling", "push is configured but the stream is not connected" + suffix(link.LastError)
+	}
+	return "polling", ""
+}
+
+func suffix(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	return ": " + msg
 }
 
 // ListBackups implements GET /system/backups.
