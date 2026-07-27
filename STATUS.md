@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-27 · v0.7.0 · Phase 8 "plausibility" built: monarr now refuses to believe a file whose own measurements cannot be true, and a fake copy no longer retires a want (the HIM case). Files can be deleted and their releases condemned; the search window pages · next: launch logistics + §5.4–5.7 of the nzbd integration**
+> **Snapshot 2026-07-27 · v0.8.0 · Phase 8 "plausibility" built: monarr now refuses to believe a file whose own measurements cannot be true, and a fake copy no longer retires a want (the HIM case). Files can be deleted and their releases condemned; the search window pages. Landed on top of the plurx notifier + seam health checks · next: launch logistics + the rest of the nzbd integration**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -219,7 +219,7 @@ The damage was never the badge. It was that a fake file **retired the want**.
       visible and stops voting
 - [x] `SizeImplausible()` gates RSS and backlog before the grab; interactive
       search only warns. Gate the robot, never the person
-- [x] Migration 0022: `media_files.source_release`/`source_indexer`, recorded at
+- [x] Migration 0023: `media_files.source_release`/`source_indexer`, recorded at
       import — the link a blocklist needs, which used to live only in the
       queue row and only until it moved on
 - [x] `DELETE /library/{id}/files/{fileId}` (`fromDisk`/`blocklist`/`search`) +

@@ -28,6 +28,7 @@ test.describe('API', () => {
     expect(body.overall).toBe('ok')
     const names = body.checks.map((c: { name: string }) => c.name).sort()
     expect(names).toEqual([
+      'connections',
       'data-directory',
       'database',
       'library-folders',
@@ -66,10 +67,11 @@ test.describe('UI', () => {
       'web-ui',
       'metadata-provider',
       'library-folders',
+      'connections',
     ]) {
       await expect(page.getByRole('cell', { name: check, exact: true })).toBeVisible()
     }
-    await expect(page.locator('.pill-ok')).toHaveCount(5)
+    await expect(page.locator('.pill-ok')).toHaveCount(6)
 
     await expect(page.getByRole('cell', { name: 'health.check' })).toBeVisible()
     await expect(page.getByRole('cell', { name: 'db.wal-checkpoint' })).toBeVisible()
