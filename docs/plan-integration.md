@@ -721,6 +721,48 @@ who), retried like §5.5. Monarr records it on the media item and exposes
 this phase starts:** per-profile policy shape, multi-user semantics,
 whether "watched" should ever gate deletion automatically.
 
+#### Settled 2026-07-27 (Paul)
+
+The three open questions above, answered. Two of these change the sketch;
+where they do, **these answers win over the sketch** — they were made with
+the code in front of us and the sketch was not.
+
+1. **What monarr does with it: record and display, plus prefer upgrades for
+   what is being watched.** Watched state lands on the media item and is
+   visible; a show someone is actively watching gets priority in backlog
+   search and upgrade decisions. Explicitly **not** in scope: unmonitoring
+   fully-watched items, and cleanup policies.
+
+2. **Per-user, with usernames** — *not* the sketch's aggregate any-user
+   signal. This is the one that changes the design, and it has a cost worth
+   naming: viewing history is personal, and this copies it into a second
+   application that has no other reason to hold it. So it is gated: the
+   whole feature is off by default (`monarr.watched_sync`), turning it on is
+   a deliberate admin act, and the setting must say plainly what it sends.
+   The reason for the answer is that per-user is the only shape that can
+   later support "everyone who could has watched it", which is the meaning
+   any cleanup policy would need — and an aggregate signal cannot be
+   refined into a per-user one after the fact.
+
+3. **Deletion: only behind an explicit opt-in, and not now.** No automatic
+   deletion is built in this phase, because (1) did not ask for cleanup.
+   When it is built: off by default, per-profile, and turned on
+   deliberately. Nothing may ever delete a file as a side effect of somebody
+   finishing an episode.
+
+**Scope, therefore:**
+
+- plurx: `monarr.watched_sync` (default off), reusing the `monarr.url` /
+  `monarr.api_key` pair the coming-soon rail already added. On scrobble or
+  the 95% auto-watch crossing, queue
+  `POST {monarr}/api/v1/webhooks/plurx`
+  `{event:"watched", kind, tmdb, imdb, season, episode, watched_at, user}`,
+  retried like §5.5 and visible on `plurxd::integrate`. This is plurx's
+  first outbound push, so it needs a small delivery queue of its own.
+- monarr: receive it, record watched-by-user on the media item, show it, and
+  let the decision engine prefer upgrades for actively-watched series.
+- Neither side gains a delete path.
+
 ### 11.2 Coming-soon rail in plurx
 
 Purpose: see what's on the way without leaving the player. Sketch:
