@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/monarr-media/monarr/internal/app/health"
+	"github.com/monarr-media/monarr/internal/app/transfers"
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/decision"
 	"github.com/monarr-media/monarr/internal/domain/format"
@@ -685,14 +686,31 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			s.log.Warn("queue: client poll failed", "client", cfg.Name, "err", err)
 			continue
 		}
+		seen := make(map[int64]bool, len(byClient[cfg.ID]))
 		for _, dl := range byClient[cfg.ID] {
 			st, ok := matchStatus(dl, statuses)
 			if !ok {
 				continue // not visible yet (magnet resolving, etc.)
 			}
-			s.watchDownloading(dl, st)
+			seen[dl.ID] = true
 			s.reconcileDownload(ctx, dl, cfg, st, "poll")
 		}
+		// Anything this client no longer mentions is not moving, whatever the
+		// in-flight view still believes.
+		//
+		// The view is fed by observations, and an observation that never
+		// arrives cannot end anything. Deleting a job in nzbd is exactly that
+		// shape: the job stops being reported, so the last thing Monarr ever
+		// heard about it was "downloading", and it sat on the panel forever
+		// claiming to be in progress. A live view that can only ever be added
+		// to is a leak with a progress bar.
+		//
+		// So the sweep reconciles rather than reacts. It is the safety net,
+		// not the mechanism — the event stream ends these within a second
+		// (see EventRemoved); this catches whatever the stream missed, and
+		// covers clients that cannot push at all. Only runs when the client
+		// actually answered, so an outage never mass-clears the panel.
+		s.endUnseenTransfers(byClient[cfg.ID], seen)
 	}
 	return nil
 }
@@ -719,6 +737,16 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		dl = fresh
 	}
 
+	// The in-flight view is maintained here, not at the call sites.
+	//
+	// It used to be updated only from the poll, so a download that changed
+	// state via the event stream — the fast path, the one that exists to make
+	// this immediate — never had its downloading row retired. Deleting a job
+	// in nzbd left it on the panel indefinitely. Every observation of a
+	// download reaches this function from both channels, so this is the only
+	// place that cannot be forgotten by one of them.
+	s.watchDownloading(dl, st)
+
 	switch st.State {
 	case ports.StateQueued, ports.StateDownloading:
 		if dl.State == "grabbed" {
@@ -741,6 +769,11 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		// not to blame — an operator deleting the job is not a reason to
 		// ban the release forever.
 		s.handleFailure(ctx, dl, st.Progress, st.Message, st.Blameless)
+	case ports.StateRemoved:
+		if dl.State == "imported" || dl.State == "failed" {
+			return
+		}
+		s.handleRemoved(ctx, dl, st.Progress, st.Message, source)
 	case ports.StateCompleted:
 		// 'downloaded' and 'importing' are NOT terminal, but they mean
 		// someone is already on it; only 'grabbed'/'downloading' should
@@ -765,6 +798,52 @@ func traced(detail, source string) string {
 
 // lockDownload serializes work on one download id across the poller and
 // the event subscribers, returning the unlock.
+// handleRemoved retires a download somebody deleted in the client.
+//
+// A deletion is an instruction, and this is the whole difference between it
+// and a failure: no blocklist, and no automatic re-search. handleFailure runs
+// one, which is correct when a release breaks and actively hostile when the
+// operator has just said they do not want this one — delete a job in nzbd,
+// and seconds later Monarr has grabbed another copy of the same film. Doing
+// that once is confusing; doing it three times, which is what the re-search
+// loop produces if you keep deleting, looks like the applications are
+// fighting each other. They were.
+//
+// The want stays wanted. Nothing here touches monitoring, so the next
+// deliberate search still finds it — the difference is that the search is
+// yours to start.
+func (s *Service) handleRemoved(ctx context.Context, dl sqlite.Download, progress float64, reason, source string) {
+	if reason == "" {
+		reason = "removed in the download client"
+	}
+	s.advance(ctx, &dl, "failed", progress, reason, stepFailed, traced(reason, source))
+	_ = s.db.AddHistory(ctx, "failed", dl.MediaItemID, dl.ReleaseTitle,
+		map[string]any{"reason": reason, "removed": true})
+	s.log.Info("download removed in the client; not blocklisted and not replaced",
+		"release", dl.ReleaseTitle, "reason", reason, "source", source)
+	s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: reason})
+}
+
+// endUnseenTransfers retires in-flight rows for downloads the client did not
+// mention in the sweep it just answered.
+//
+// `seen` holds the ids matched to a status this pass; anything active but
+// absent is no longer moving, so its downloading row goes. Ending a stage
+// that was never begun is a no-op, so this needs no membership check.
+func (s *Service) endUnseenTransfers(active []sqlite.Download, seen map[int64]bool) {
+	if s.registry == nil {
+		return
+	}
+	for _, dl := range active {
+		if seen[dl.ID] {
+			continue
+		}
+		s.registry.Begin(transfers.Transfer{
+			DownloadID: dl.ID, Stage: transfers.StageDownloading,
+		}).End()
+	}
+}
+
 func (s *Service) lockDownload(id int64) func() {
 	s.reconcileMu.Lock()
 	if s.reconciling == nil {

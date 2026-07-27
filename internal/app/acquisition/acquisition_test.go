@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,7 +28,20 @@ func (f fakeIndexer) FetchRSS(ctx context.Context) ([]ports.Release, error) {
 }
 func (f fakeIndexer) Test(ctx context.Context) error { return nil }
 
+// fakeClient stands in for a download client.
+//
+// Its recording fields are guarded because the real thing is called from
+// several goroutines at once and this double must not be the reason a test
+// passes. Two sweeps overlapping on one client is not a contrived scenario —
+// it is what the poll and the event stream do to each other by design, and
+// TestPollAndEventCannotBothImport provokes it deliberately. An unguarded
+// counter here reports a race in the fake and hides whatever the test was
+// actually asking about.
+//
+// Fields are still read directly after a wg.Wait() or in single-goroutine
+// tests, which is safe: the join is the happens-before edge.
 type fakeClient struct {
+	mu       sync.Mutex
 	added    []string
 	statuses []ports.DownloadStatus
 	// removed records (handle, deleteData) for every Remove, so a test can
@@ -46,14 +60,20 @@ type removeCall struct {
 }
 
 func (f *fakeClient) Add(ctx context.Context, url, cat string) (ports.Handle, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.added = append(f.added, url)
 	return "h1", nil
 }
 func (f *fakeClient) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.polls++
 	return f.statuses, nil
 }
 func (f *fakeClient) Remove(ctx context.Context, h ports.Handle, del bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.removed = append(f.removed, removeCall{Handle: h, DeleteData: del})
 	return nil
 }

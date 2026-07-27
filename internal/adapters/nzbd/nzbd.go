@@ -262,12 +262,14 @@ func statusOfHistory(h historyEntry) ports.DownloadStatus {
 	case strings.HasPrefix(h.Status, "SUCCESS"):
 		st.State = ports.StateCompleted
 	case h.Status == "DELETED" || strings.HasPrefix(h.Status, "DELETED"):
-		// Someone removed the job in nzbd. The download did stop, so it is a
-		// failure — but not the release's, and Blameless is what keeps the
-		// blocklist off it. This comment used to claim the mapping avoided a
-		// blocklist while the code blocklisted anyway, so clicking delete in
-		// nzbd's UI permanently banned a perfectly good release.
-		st.State = ports.StateFailed
+		// Someone removed the job in nzbd.
+		//
+		// This was StateFailed+Blameless, which fixed the blocklist and left
+		// the louder half in place: the failure path also runs an automatic
+		// re-search, so deleting a job in nzbd made Monarr grab another copy
+		// of the same film within seconds. Blameless was never going to stop
+		// that — it only ever guarded the blocklist.
+		st.State = ports.StateRemoved
 		st.Message = "removed in nzbd"
 		st.Blameless = true
 	default:

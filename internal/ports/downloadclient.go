@@ -93,6 +93,20 @@ const (
 	StateDownloading DownloadState = "downloading"
 	StateCompleted   DownloadState = "completed"
 	StateFailed      DownloadState = "failed"
+	// StateRemoved is an operator deleting the job in the download client.
+	//
+	// It is deliberately not StateFailed+Blameless, which is what it used to
+	// be. Blameless stops the blocklist, and stopping the blocklist is only
+	// half of what a deletion means: the failure path then ran its automatic
+	// re-search and grabbed a replacement within seconds. Deleting a job in
+	// nzbd and watching Monarr immediately fetch another copy of the same
+	// film is not a bug in the re-search — the re-search is right about
+	// failures. It is a bug in calling this a failure.
+	//
+	// A deletion is an instruction. Monarr stops, records why, and does not
+	// go looking for another copy of something you just said you did not
+	// want. Wanting it again is what the Search button is for.
+	StateRemoved DownloadState = "removed"
 )
 
 // DownloadStatus is one item's live state in a client.
@@ -156,6 +170,14 @@ const (
 	EventCompleted ClientEventKind = "completed"
 	// EventFailed means the client gave up on this download.
 	EventFailed ClientEventKind = "failed"
+	// EventRemoved means somebody deleted the job in the download client.
+	//
+	// Distinct from EventFailed so the stream describes itself honestly: a
+	// consumer reading its own event log should be able to tell an operator
+	// action from a broken release without inspecting a boolean three fields
+	// away. Carries StateRemoved in Status, so poll and push reach the same
+	// branch of the reconciler.
+	EventRemoved ClientEventKind = "removed"
 	// EventReset means the stream could not be resumed and anything may
 	// have been missed. The consumer must reconcile by polling before it
 	// trusts the stream again. It is the difference between a consumer

@@ -214,11 +214,19 @@ func TestStatusesMapsQueueAndHistory(t *testing.T) {
 	if s := by["12"]; s.State != ports.StateFailed || s.Message != "UNPACK_FAILURE" {
 		t.Errorf("job 12 = %+v, want failed carrying nzbd's own reason", s)
 	}
-	// Deleted-by-hand is not a bad release. Reporting it as a plain
-	// failure would blocklist a good release because someone clicked
-	// delete in nzbd, and then re-search would avoid it forever.
-	if s := by["13"]; s.State != ports.StateFailed || !strings.Contains(s.Message, "removed in nzbd") {
-		t.Errorf("job 13 = %+v, want a failure that says a human removed it", s)
+	// Deleted-by-hand is not a failure at all.
+	//
+	// It was reported as one (blameless, so at least not blocklisted) until
+	// the blameless flag turned out to guard only half the consequence: the
+	// failure path also re-searches, so deleting a job in nzbd made Monarr
+	// grab another copy of the same release seconds later. StateRemoved is
+	// the state that carries the operator's actual meaning — stop, and do
+	// not go and find me another one.
+	if s := by["13"]; s.State != ports.StateRemoved || !strings.Contains(s.Message, "removed in nzbd") {
+		t.Errorf("job 13 = %+v, want removed, saying a human removed it", s)
+	}
+	if s := by["13"]; s.State == ports.StateFailed {
+		t.Error("a deletion reported as a failure will be re-searched and replaced")
 	}
 }
 

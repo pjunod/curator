@@ -227,11 +227,16 @@ func translate(name, data, id string) []ports.ClientEvent {
 		if json.Unmarshal([]byte(data), &f) != nil {
 			return nil
 		}
+		// The same mapping the history path uses, on purpose. This branch
+		// used to produce a plain StateFailed with no Blameless, so which of
+		// the two channels delivered a deletion decided whether the release
+		// got blocklisted — push banned it, poll did not. Two channels for
+		// one fact must not disagree about what the fact means.
 		return []ports.ClientEvent{{
-			Handle: handleOf(f.Job), Kind: ports.EventFailed, Seq: seq,
+			Handle: handleOf(f.Job), Kind: ports.EventRemoved, Seq: seq,
 			Status: ports.DownloadStatus{
-				Handle: handleOf(f.Job), State: ports.StateFailed,
-				Message: "removed in nzbd",
+				Handle: handleOf(f.Job), State: ports.StateRemoved,
+				Message: "removed in nzbd", Blameless: true,
 			},
 		}}
 
