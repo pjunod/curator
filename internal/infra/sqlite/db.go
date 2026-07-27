@@ -12,6 +12,7 @@ import (
 	"embed"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pressly/goose/v3"
@@ -91,7 +92,64 @@ func (d *DB) Migrate(ctx context.Context) error {
 	if err := goose.UpContext(ctx, d.W, "migrations"); err != nil {
 		return fmt.Errorf("sqlite: migrating: %w", err)
 	}
-	return nil
+	return d.verifySchema(ctx)
+}
+
+// Columns the query layer depends on and that a migration is supposed to
+// have added. Deliberately not the whole schema — this is a tripwire for one
+// specific failure, not a substitute for the migrations.
+var requiredColumns = []struct{ table, column string }{
+	{"downloads", "transfer"},
+	{"download_clients", "mode"},
+}
+
+// verifySchema refuses to start on a database that goose considers migrated
+// but isn't.
+//
+// goose identifies a migration solely by the number in its filename, so two
+// branches that both add an `0020_*.sql` collide: the first to run records
+// version 20 and the second is skipped permanently, without an error. The
+// symptom surfaces much later and somewhere else — a "SQL logic error: table
+// download_clients has no column named mode" in the settings UI, from a
+// binary whose code is entirely correct. That is a miserable thing to debug
+// from the far end.
+//
+// So the check happens here, where the cause is still visible, and it is
+// fatal: a database missing a column the query layer writes to is not a
+// degraded server, it is one that will fail at some unpredictable later
+// moment. Migration 21 repairs the known instance of this; this exists to
+// name the next one out loud.
+func (d *DB) verifySchema(ctx context.Context) error {
+	var missing []string
+	for _, want := range requiredColumns {
+		ok, err := columnExists(ctx, d.R, want.table, want.column)
+		if err != nil {
+			return fmt.Errorf("sqlite: verifying schema: %w", err)
+		}
+		if !ok {
+			missing = append(missing, want.table+"."+want.column)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	version, err := goose.GetDBVersionContext(ctx, d.R)
+	if err != nil {
+		version = -1
+	}
+	return fmt.Errorf(
+		"sqlite: the database reports schema version %d, but %s %s missing — a "+
+			"migration was recorded as applied without running, which happens when two "+
+			"branches add migrations with the same number. Check goose_db_version against "+
+			"the files in internal/infra/sqlite/migrations",
+		version, strings.Join(missing, ", "), plural(len(missing), "is", "are"))
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // SchemaVersion reports the current goose migration version.
