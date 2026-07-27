@@ -19,17 +19,20 @@ func plurxNotifier(url string) ports.Notifier {
 	}})
 }
 
-func movieImport(paths ...string) ports.Notification {
+// movieImport builds an import notification for the given DIRECTORIES —
+// what plurx is actually asked to index.
+func movieImport(dirs ...string) ports.Notification {
 	return ports.Notification{
 		Event: "import", Title: "Import completed", Body: "Heat.1995.1080p",
 		Import: &ports.ImportInfo{
-			MediaItemID: 7, Paths: paths, TMDBID: 949, IMDBID: "tt0113277",
+			MediaItemID: 7, DownloadID: 42, Kind: "movie", Title: "Heat",
+			Dirs: dirs, TmdbID: 949, ImdbID: "tt0113277",
 			Transfer: "t-42-a3f9c1",
 		},
 	}
 }
 
-func TestPlurxSendsOneScanPerImportedPath(t *testing.T) {
+func TestPlurxSendsOneScanPerImportedDirectory(t *testing.T) {
 	var got []map[string]any
 	var auth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +49,7 @@ func TestPlurxSendsOneScanPerImportedPath(t *testing.T) {
 	defer srv.Close()
 
 	err := plurxNotifier(srv.URL).Send(context.Background(),
-		movieImport("/media/movies/Heat (1995)/Heat (1995) [Bluray-1080p].mkv"))
+		movieImport("/media/movies/Heat (1995)"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +60,7 @@ func TestPlurxSendsOneScanPerImportedPath(t *testing.T) {
 		t.Errorf("Authorization = %q", auth)
 	}
 	req := got[0]
-	if req["path"] != "/media/movies/Heat (1995)/Heat (1995) [Bluray-1080p].mkv" {
+	if req["path"] != "/media/movies/Heat (1995)" {
 		t.Errorf("path = %v", req["path"])
 	}
 	// The ids are the entire point: without them plurx falls back to
@@ -90,9 +93,9 @@ func TestPlurxPutsASeriesIDWhereASeriesIDGoes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := movieImport("/media/tv/Severance/Season 01/S01E01.mkv")
-	n.Import.Episode = true
-	n.Import.TMDBID = 95396
+	n := movieImport("/media/tv/Severance/Season 01")
+	n.Import.Kind = "series"
+	n.Import.TmdbID = 95396
 	if err := plurxNotifier(srv.URL).Send(context.Background(), n); err != nil {
 		t.Fatal(err)
 	}
@@ -108,9 +111,10 @@ func TestPlurxPutsASeriesIDWhereASeriesIDGoes(t *testing.T) {
 	}
 }
 
-// A season pack is one event and several files. Every one of them has to be
-// announced, or the season is half-indexed and nothing says so.
-func TestPlurxAnnouncesEveryFileOfASeasonPack(t *testing.T) {
+// A season pack is one event, one folder, and several files. plurx indexes
+// folders, so a dozen requests naming the same folder would be a dozen
+// chances for one to fail and eleven scans of work already done.
+func TestPlurxAnnouncesASeasonPackAsOneDirectory(t *testing.T) {
 	var count int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&count, 1)
@@ -119,12 +123,13 @@ func TestPlurxAnnouncesEveryFileOfASeasonPack(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	paths := []string{"/tv/S01E01.mkv", "/tv/S01E02.mkv", "/tv/S01E03.mkv"}
-	if err := plurxNotifier(srv.URL).Send(context.Background(), movieImport(paths...)); err != nil {
+	// Three files, ONE directory: exactly one request.
+	if err := plurxNotifier(srv.URL).Send(context.Background(),
+		movieImport("/tv/Severance/Season 01")); err != nil {
 		t.Fatalf("202 must count as delivered — plurx queued it: %v", err)
 	}
-	if int(count) != len(paths) {
-		t.Errorf("sent %d requests for %d files", count, len(paths))
+	if count != 1 {
+		t.Errorf("sent %d requests for one directory — a season pack is one folder", count)
 	}
 }
 
@@ -139,7 +144,7 @@ func TestPlurxRetriesWhatRetryingCanFixAndNotWhatItCannot(t *testing.T) {
 			_, _ = w.Write([]byte(`{"status":"scanned"}`))
 		}))
 		defer srv.Close()
-		if err := plurxNotifier(srv.URL).Send(context.Background(), movieImport("/m/a.mkv")); err != nil {
+		if err := plurxNotifier(srv.URL).Send(context.Background(), movieImport("/m")); err != nil {
 			t.Fatalf("a transient 502 should have been ridden out: %v", err)
 		}
 		if attempts != 3 {
@@ -154,7 +159,7 @@ func TestPlurxRetriesWhatRetryingCanFixAndNotWhatItCannot(t *testing.T) {
 			w.WriteHeader(http.StatusForbidden)
 		}))
 		defer srv.Close()
-		err := plurxNotifier(srv.URL).Send(context.Background(), movieImport("/m/a.mkv"))
+		err := plurxNotifier(srv.URL).Send(context.Background(), movieImport("/m"))
 		if err == nil {
 			t.Fatal("a 403 must be reported, not swallowed")
 		}
@@ -177,14 +182,14 @@ func TestPlurxCarriesThePathMappingErrorThrough(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := plurxNotifier(srv.URL).Send(context.Background(), movieImport("/data/media/movies/Heat.mkv"))
+	err := plurxNotifier(srv.URL).Send(context.Background(), movieImport("/data/media/movies/Heat (1995)"))
 	if err == nil {
 		t.Fatal("expected an error")
 	}
 	if !strings.Contains(err.Error(), "/media/movies") {
 		t.Errorf("plurx's roots must reach the log, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "/data/media/movies/Heat.mkv") {
+	if !strings.Contains(err.Error(), "/data/media/movies/Heat (1995)") {
 		t.Errorf("the rejected path must be named too, got: %v", err)
 	}
 }
@@ -194,7 +199,7 @@ func TestPlurxCarriesThePathMappingErrorThrough(t *testing.T) {
 func TestPlurxSaysHowMuchOfAnImportLanded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(raw), "bad.mkv") {
+		if strings.Contains(string(raw), "/m/bad") {
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, _ = w.Write([]byte(`{"error":"path is not under any library root","roots":[]}`))
 			return
@@ -204,7 +209,7 @@ func TestPlurxSaysHowMuchOfAnImportLanded(t *testing.T) {
 	defer srv.Close()
 
 	err := plurxNotifier(srv.URL).Send(context.Background(),
-		movieImport("/m/ok1.mkv", "/m/bad.mkv", "/m/ok2.mkv"))
+		movieImport("/m/ok1", "/m/bad", "/m/ok2"))
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -263,7 +268,7 @@ func TestPlurxTestPassesOnThePathRejectionAndFailsOnBadCredentials(t *testing.T)
 
 func TestPlurxWithoutConfigurationFailsLoudly(t *testing.T) {
 	n := New(ports.NotifierConfig{Type: "plurx", Settings: map[string]string{"url": "http://x"}})
-	if err := n.Send(context.Background(), movieImport("/m/a.mkv")); err == nil {
+	if err := n.Send(context.Background(), movieImport("/m")); err == nil {
 		t.Error("a plurx notifier with no key must not silently do nothing")
 	}
 }
@@ -285,7 +290,7 @@ func TestPlurxReportsWhatPlurxMadeOfTheFiles(t *testing.T) {
 	defer srv.Close()
 
 	target := plurxNotifier(srv.URL)
-	if err := target.Send(context.Background(), movieImport("/m/a.mkv", "/m/b.mkv")); err != nil {
+	if err := target.Send(context.Background(), movieImport("/m/a", "/m/b")); err != nil {
 		t.Fatal(err)
 	}
 	r, ok := target.(ports.DeliveryReporter)
@@ -306,7 +311,7 @@ func TestPlurxReportsWhatPlurxMadeOfTheFiles(t *testing.T) {
 func TestPlurxKeepsTheResultOfThePartThatWorked(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(raw), "bad.mkv") {
+		if strings.Contains(string(raw), "/m/bad") {
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, _ = w.Write([]byte(`{"error":"path is not under any library root","roots":[]}`))
 			return
@@ -316,11 +321,33 @@ func TestPlurxKeepsTheResultOfThePartThatWorked(t *testing.T) {
 	defer srv.Close()
 
 	target := plurxNotifier(srv.URL)
-	if err := target.Send(context.Background(), movieImport("/m/ok.mkv", "/m/bad.mkv")); err == nil {
+	if err := target.Send(context.Background(), movieImport("/m/ok", "/m/bad")); err == nil {
 		t.Fatal("expected the partial failure to be reported")
 	}
 	got := target.(ports.DeliveryReporter).Delivery()
 	if !strings.Contains(got, "77") {
 		t.Errorf("the successful half was thrown away: %q", got)
+	}
+}
+
+// plurx has no book library kind (plan §10.7), so a book import must be
+// declined rather than sent — and the decline has to be visible, because
+// silence looks exactly like a bug to someone whose audiobook never showed
+// up.
+func TestPlurxDeclinesBooksOutLoud(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("plurx was told about a book — it has no library kind for one")
+	}))
+	defer srv.Close()
+
+	n := movieImport("/media/books/Some Author/Some Title")
+	n.Import.Kind = "book"
+	target := plurxNotifier(srv.URL)
+	if err := target.Send(context.Background(), n); err != nil {
+		t.Fatalf("declining a book is not a delivery failure: %v", err)
+	}
+	got := target.(ports.DeliveryReporter).Delivery()
+	if !strings.Contains(got, "book") {
+		t.Errorf("the trace must explain the absence, got %q", got)
 	}
 }

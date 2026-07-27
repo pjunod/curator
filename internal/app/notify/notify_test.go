@@ -131,9 +131,13 @@ func TestDispatcherCarriesImportDetailAndRecordsTheDelivery(t *testing.T) {
 
 	b.Publish(acquisition.ImportCompleted{
 		MediaItemID: item, Release: "Heat.1995.1080p", Files: 1,
-		Paths:    []string{"/media/movies/Heat (1995)/Heat (1995).mkv"},
-		TMDBID:   949,
-		Transfer: "t-42-a3f9c1",
+		Paths:         []string{"/media/movies/Heat (1995)/Heat (1995).mkv"},
+		Dirs:          []string{"/media/movies/Heat (1995)"},
+		MediaItemKind: "movie",
+		Title:         "Heat",
+		TmdbID:        949,
+		DownloadID:    42,
+		Transfer:      "t-42-a3f9c1",
 	})
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -147,8 +151,11 @@ func TestDispatcherCarriesImportDetailAndRecordsTheDelivery(t *testing.T) {
 	if got.Import == nil {
 		t.Fatal("the import detail did not reach the notifier — it would have nothing to index")
 	}
-	if len(got.Import.Paths) != 1 || got.Import.TMDBID != 949 {
+	if len(got.Import.Dirs) != 1 || got.Import.TmdbID != 949 {
 		t.Errorf("import detail = %+v", got.Import)
+	}
+	if got.Import.Kind != "movie" {
+		t.Errorf("kind = %q — a plurx notifier needs it to know whether to send at all", got.Import.Kind)
 	}
 	if got.Import.Transfer != "t-42-a3f9c1" {
 		t.Errorf("transfer = %q", got.Import.Transfer)

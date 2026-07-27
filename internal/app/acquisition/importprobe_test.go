@@ -350,11 +350,24 @@ func TestImportAnnouncesTheExactPathsAndIDs(t *testing.T) {
 			t.Errorf("announced a path that is not there: %v", err)
 		}
 	}
-	if !ev.Episode {
-		t.Error("a series import must say so — it decides whose id TMDBID is")
+	if ev.MediaItemKind != "series" {
+		t.Errorf("kind = %q — it decides whose id TmdbID is, and whether plurx is told at all", ev.MediaItemKind)
 	}
-	if ev.TMDBID != 100 {
-		t.Errorf("TMDBID = %d, want the SHOW's id", ev.TMDBID)
+	if ev.TmdbID != 100 {
+		t.Errorf("TmdbID = %d, want the SHOW's id", ev.TmdbID)
+	}
+	// One directory for a season pack: that is what plurx is asked to index.
+	if len(ev.Dirs) != 1 {
+		t.Errorf("dirs = %v, want the one season folder both files landed in", ev.Dirs)
+	}
+	if ev.Dirs[0] != filepath.Dir(ev.Paths[0]) {
+		t.Errorf("dirs[0] = %q is not the parent of paths[0] = %q", ev.Dirs[0], ev.Paths[0])
+	}
+	if ev.DownloadID != dl.ID {
+		t.Errorf("downloadId = %d, want %d — a consumer writes back onto that trace", ev.DownloadID, dl.ID)
+	}
+	if ev.Title != "Test Show" {
+		t.Errorf("title = %q", ev.Title)
 	}
 	if ev.Transfer != "t-42-a3f9c1" {
 		t.Errorf("transfer = %q — without it the trail stops at Monarr", ev.Transfer)
@@ -423,6 +436,9 @@ func TestImportAnnouncesOnlyTheFilesThatLanded(t *testing.T) {
 	}
 	if len(ev.Paths) != 1 {
 		t.Fatalf("announced %d paths; only S01E02 landed: %v", len(ev.Paths), ev.Paths)
+	}
+	if len(ev.Dirs) != 1 {
+		t.Errorf("dirs = %v, want one", ev.Dirs)
 	}
 	if strings.Contains(ev.Paths[0], "S01E01") {
 		t.Errorf("announced the file that was declined: %q", ev.Paths[0])

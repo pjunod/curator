@@ -58,14 +58,26 @@ func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 	// event arriving at a notifier that only speaks about files. Saying
 	// nothing is the correct response; reporting an error would light up
 	// the health page for a grab notification.
-	if n.Import == nil || len(n.Import.Paths) == 0 {
+	if n.Import == nil || len(n.Import.Dirs) == 0 {
+		return nil
+	}
+	p.delivery = nil
+
+	// plurx has no book library kind (plan §10.7). Telling it about one
+	// would mean inventing a kind on its behalf, and the alternative —
+	// staying silent — leaves somebody wondering why their audiobook never
+	// appeared. So: decline, out loud, and let the trace carry the reason.
+	if n.Import.Kind == "book" {
+		p.delivery = []string{"skipped (book — plurx has no book library kind)"}
 		return nil
 	}
 
-	p.delivery = nil
+	// One request per DIRECTORY, not per file. A season pack is one folder
+	// and a dozen files; a dozen requests naming the same folder is a dozen
+	// chances for one to fail and eleven scans of work already done.
 	var failures []string
-	for _, path := range n.Import.Paths {
-		if err := p.scan(ctx, path, n.Import); err != nil {
+	for _, dir := range n.Import.Dirs {
+		if err := p.scan(ctx, dir, n.Import); err != nil {
 			failures = append(failures, err.Error())
 		}
 	}
@@ -73,10 +85,10 @@ func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 		return nil
 	}
 	// Partial delivery is worth naming as such: the difference between "one
-	// file of a season pack was rejected" and "plurx is down" is the first
-	// thing anyone reading this wants to know.
-	return fmt.Errorf("plurx: %d of %d paths not indexed: %s",
-		len(failures), len(n.Import.Paths), strings.Join(failures, "; "))
+	// folder of a multi-season import was rejected" and "plurx is down" is
+	// the first thing anyone reading this wants to know.
+	return fmt.Errorf("plurx: %d of %d directories not indexed: %s",
+		len(failures), len(n.Import.Dirs), strings.Join(failures, "; "))
 }
 
 type plurxScanRequest struct {
@@ -101,22 +113,20 @@ type plurxIDs struct {
 // would stamp it on the episode row.
 func scanBody(path string, info *ports.ImportInfo) plurxScanRequest {
 	req := plurxScanRequest{Path: path, CorrelationID: info.Transfer, Source: "monarr"}
-	ids := &plurxIDs{TMDB: info.TMDBID, IMDB: info.IMDBID}
-	if ids.TMDB == 0 && ids.IMDB == "" {
-		ids = nil
-	}
-	if info.Episode {
+	if info.Kind == "series" {
 		req.Hint = "episode"
-		// Only the TMDB id belongs to the show; an IMDb id on a series row
-		// is the series', but plurx keys episodes off the series TMDB id
-		// alone, so sending more would be inventing precision.
-		if info.TMDBID != 0 {
-			req.Series = &plurxIDs{TMDB: info.TMDBID}
+		// Only the TMDB id belongs to the show; plurx keys episodes off the
+		// series TMDB id alone, so sending an IMDb id here would be
+		// inventing precision it does not use.
+		if info.TmdbID != 0 {
+			req.Series = &plurxIDs{TMDB: info.TmdbID}
 		}
 		return req
 	}
 	req.Hint = "movie"
-	req.IDs = ids
+	if info.TmdbID != 0 || info.ImdbID != "" {
+		req.IDs = &plurxIDs{TMDB: info.TmdbID, IMDB: info.ImdbID}
+	}
 	return req
 }
 

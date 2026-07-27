@@ -312,6 +312,12 @@ Already-in-library entries are skipped, never duplicated.
 | Jellyfin | `url`, `apiKey` | imports only — `Library/Refresh` |
 | plurx | `url`, `apiKey` (a scoped `plx_` key) | imports only — a **targeted scan**, not a refresh |
 
+One request per imported **directory**, not per file: a season pack is one
+folder and a dozen files, and a dozen requests naming the same folder would
+be a dozen chances for one to fail. Book imports are skipped entirely — plurx
+has no book library kind — and the skip is recorded, because silence looks
+identical to a bug when your audiobook never appears.
+
 **plurx is different from the other two.** Plex and Jellyfin get a poke —
 "something changed, sweep your library" — and then identify the new file by
 searching for its filename, which is the step that puts the 2015 remake's

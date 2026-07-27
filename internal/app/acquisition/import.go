@@ -48,27 +48,41 @@ type ImportResult struct {
 
 // importedEvent assembles the ImportCompleted for one finished payload.
 //
-// Only the files that actually landed are listed. A skipped file has no
-// path, and a consumer told to index one would either 404 or — worse, if the
+// Only files that actually landed are listed. A skipped file has no path,
+// and a consumer told to index one would either 404 or — worse, if the
 // rejected file is still sitting in the download folder — index a copy of it
 // from outside the library.
 func importedEvent(item domain.MediaItem, dl sqlite.Download, r ImportResult) ImportCompleted {
 	paths := make([]string, 0, r.Imported)
+	var dirs []string
+	seen := map[string]bool{}
 	for _, f := range r.Files {
-		if f.Imported && f.Path != "" {
-			paths = append(paths, f.Path)
+		if !f.Imported || f.Path == "" {
+			continue
+		}
+		paths = append(paths, f.Path)
+		// Unique, in first-seen order. A season pack is one directory and a
+		// dozen files: one request that names the directory beats a dozen
+		// that name the same directory twelve times over, and stable order
+		// keeps the trace readable across runs.
+		if dir := filepath.Dir(f.Path); !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
 		}
 	}
 	return ImportCompleted{
-		MediaItemID: item.ID,
-		Release:     dl.ReleaseTitle,
-		Files:       r.Imported,
-		Upgrade:     r.Upgraded,
-		Paths:       paths,
-		Episode:     item.Kind == domain.KindSeries,
-		TMDBID:      item.IDs.TMDB,
-		IMDBID:      item.IDs.IMDB,
-		Transfer:    dl.Transfer,
+		MediaItemID:   item.ID,
+		Release:       dl.ReleaseTitle,
+		Files:         r.Imported,
+		Upgrade:       r.Upgraded,
+		Paths:         paths,
+		Dirs:          dirs,
+		MediaItemKind: string(item.Kind),
+		Title:         item.Title,
+		TmdbID:        item.IDs.TMDB,
+		ImdbID:        item.IDs.IMDB,
+		DownloadID:    dl.ID,
+		Transfer:      dl.Transfer,
 	}
 }
 

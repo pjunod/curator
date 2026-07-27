@@ -53,29 +53,39 @@ type (
 	//
 	// It carries the paths and the ids because of who reads it. A
 	// notification only needs a sentence; a media server needs to know
-	// exactly which file appeared and what it is. Telling plurx "something
+	// exactly what appeared and what it is. Telling plurx "something
 	// changed, go and look" costs a full library sweep and can still match
-	// the wrong film from a filename — telling it "this path is tmdb 949"
-	// costs one folder and cannot be mismatched. Everything needed for that
-	// has to leave the importer, because nothing downstream can reconstruct
-	// it.
+	// the wrong film from a folder name — telling it "this directory is
+	// tmdb 949" costs one folder and cannot be mismatched. None of it can
+	// be reconstructed downstream: the bus event is the only source the
+	// notifier gets, so what is not on here cannot be sent (plan §5.4).
 	ImportCompleted struct {
 		MediaItemID int64  `json:"mediaItemId"`
 		Release     string `json:"release"`
 		Files       int    `json:"files"`
 		Upgrade     bool   `json:"upgrade"`
-		// Paths are the files that landed, absolute, as Monarr sees them.
-		// A consumer on another host may need a path mapping — the same
+		// Paths are every placed file, absolute, as MONARR sees them. A
+		// consumer on another host may need a path mapping — the same
 		// caveat the download clients already carry.
 		Paths []string `json:"paths,omitempty"`
-		// Episode is true when these paths are episodes rather than a
-		// movie or a book. It decides what TMDBID means to a consumer.
-		Episode bool `json:"episode,omitempty"`
-		// TMDBID and IMDBID identify the ITEM — for a series that is the
+		// Dirs are the unique parent directories of Paths, in first-seen
+		// order: what a media server is actually asked to index. A season
+		// pack is one directory and a dozen files, and a dozen requests
+		// saying the same thing is a dozen chances for one to fail.
+		Dirs []string `json:"dirs,omitempty"`
+		// MediaItemKind is movie | series | book. Not a bool: "not a movie"
+		// is three different things downstream, and books have no plurx
+		// library kind at all (plan §10.7).
+		MediaItemKind string `json:"mediaItemKind,omitempty"`
+		Title         string `json:"title,omitempty"`
+		// TmdbID and ImdbID identify the ITEM — for a series that is the
 		// show, never the episode: an episode's own id is not what
-		// identifies the series it belongs to.
-		TMDBID int64  `json:"tmdbId,omitempty"`
-		IMDBID string `json:"imdbId,omitempty"`
+		// identifies the series it belongs to. 0 / "" when unknown.
+		TmdbID int64  `json:"tmdbId,omitempty"`
+		ImdbID string `json:"imdbId,omitempty"`
+		// DownloadID is the row this import came from, so a consumer can
+		// write back onto its handoff trace.
+		DownloadID int64 `json:"downloadId,omitempty"`
 		// Transfer is the id that names this transfer end to end
 		// (contract §3.1), so one grep spans every application it crossed.
 		Transfer string `json:"transfer,omitempty"`

@@ -39,15 +39,20 @@ type Notification struct {
 // ImportInfo is the structured detail behind an import notification.
 type ImportInfo struct {
 	MediaItemID int64 `json:"mediaItemId,omitempty"`
-	// Paths are absolute as MONARR sees them. A consumer on another host
-	// may need a path mapping — the same caveat download clients carry.
+	DownloadID  int64 `json:"downloadId,omitempty"`
+	// Paths are every placed file; Dirs are their unique parent
+	// directories — what a media server is actually asked to index. Both
+	// are absolute as MONARR sees them: a consumer on another host may
+	// need a path mapping, the same caveat download clients carry.
 	Paths []string `json:"paths,omitempty"`
-	// Episode distinguishes "these are episodes of a series" from a movie
-	// or a book, which decides what TMDBID identifies.
-	Episode bool `json:"episode,omitempty"`
-	// TMDBID and IMDBID identify the item: for a series, the SHOW.
-	TMDBID int64  `json:"tmdbId,omitempty"`
-	IMDBID string `json:"imdbId,omitempty"`
+	Dirs  []string `json:"dirs,omitempty"`
+	// Kind is movie | series | book. Books have no plurx library kind, so
+	// this is what lets a notifier decline rather than invent one.
+	Kind  string `json:"kind,omitempty"`
+	Title string `json:"title,omitempty"`
+	// TmdbID and ImdbID identify the item: for a series, the SHOW.
+	TmdbID int64  `json:"tmdbId,omitempty"`
+	ImdbID string `json:"imdbId,omitempty"`
 	// Transfer names this transfer end to end, across applications.
 	Transfer string `json:"transfer,omitempty"`
 }

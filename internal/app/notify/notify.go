@@ -68,10 +68,13 @@ func (d *Dispatcher) Run(ctx context.Context) {
 				// that act on it.
 				Import: &ports.ImportInfo{
 					MediaItemID: e.MediaItemID,
+					DownloadID:  e.DownloadID,
 					Paths:       e.Paths,
-					Episode:     e.Episode,
-					TMDBID:      e.TMDBID,
-					IMDBID:      e.IMDBID,
+					Dirs:        e.Dirs,
+					Kind:        e.MediaItemKind,
+					Title:       e.Title,
+					TmdbID:      e.TmdbID,
+					ImdbID:      e.ImdbID,
 					Transfer:    e.Transfer,
 				},
 			})
@@ -164,6 +167,7 @@ func (d *Dispatcher) record(ctx context.Context, cfg ports.NotifierConfig, n por
 		"notifier": cfg.Name,
 		"type":     cfg.Type,
 		"paths":    len(n.Import.Paths),
+		"dirs":     len(n.Import.Dirs),
 	}
 	if n.Import.Transfer != "" {
 		detail["transfer"] = n.Import.Transfer
