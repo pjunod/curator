@@ -1033,6 +1033,12 @@ func connectionState(st health.ConnectionState, link acquisition.ClientLink) (st
 			return "degraded", strings.Join(problems, "; ")
 		}
 	}
+	if st.Busy {
+		// Mid-sweep. The import runs inside the poll, so a large one holds it
+		// open for minutes — during which the client is not quiet, it is the
+		// reason we are busy.
+		return "polling", "importing — the current sweep is still running"
+	}
 	if st.StaleFor > 5*time.Minute {
 		// Never a degraded row with an empty Detail column. This branch used
 		// to return st.LastError verbatim, and LastError is empty whenever
