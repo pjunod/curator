@@ -311,6 +311,25 @@ apart. Just under a round 500 MiB with a few KB of per-release variance is a
 500 MiB cap on the DOWNLOADED data, the extracted MKV coming out under it by
 rar/par overhead. Upstream of monarr — nzbd or the provider — and still open
 
+### Phase 8 — watched → monarr (master plan §11.1)
+
+- [x] **`POST /api/v1/webhooks/plurx`** — matched by external id only, never
+      by title; an unknown item is 200 `matched:false`, not a 404, because
+      plurx retries failures and there is nothing to retry about a film
+      Monarr never managed. Migration 26 records it per plurx user, thin by
+      design (who, what, when), replacing on rewatch so the table is bounded
+      by library size rather than by television
+- [x] **Backlog prioritization** — anything watched in the last 30 days is
+      searched first. The per-run cap makes that decisive rather than
+      cosmetic: on a large backlog the order decides what gets searched at
+      all. A stable partition, not a score — the signal is "somebody watched
+      this", and a numeric intensity would be precision nobody could check
+- [x] Decisions recorded in `docs/plan-integration.md` §11.1: per-user with
+      usernames (overriding the sketch's aggregate), and **no deletion path
+      on either side**
+- [ ] Show it on the item page — the data is stored and read, but not yet
+      rendered anywhere
+
 ## Launch logistics
 
 - [x] `monarr-media` GitHub org (free) + private repo + initial push

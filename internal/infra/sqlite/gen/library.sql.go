@@ -81,6 +81,100 @@ func (q *Queries) DeleteRootFolder(ctx context.Context, id int64) error {
 	return err
 }
 
+const findItemByImdb = `-- name: FindItemByImdb :one
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes, ratings, source FROM media_items WHERE kind = ? AND imdb_id = ? LIMIT 1
+`
+
+type FindItemByImdbParams struct {
+	Kind   string
+	ImdbID string
+}
+
+func (q *Queries) FindItemByImdb(ctx context.Context, arg FindItemByImdbParams) (MediaItem, error) {
+	row := q.db.QueryRowContext(ctx, findItemByImdb, arg.Kind, arg.ImdbID)
+	var i MediaItem
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Title,
+		&i.SortTitle,
+		&i.Year,
+		&i.TmdbID,
+		&i.ImdbID,
+		&i.TvdbID,
+		&i.Isbn13,
+		&i.Olid,
+		&i.Asin,
+		&i.Overview,
+		&i.PosterPath,
+		&i.BackdropPath,
+		&i.Genres,
+		&i.Status,
+		&i.ReleaseDate,
+		&i.Runtime,
+		&i.Monitored,
+		&i.RootFolderID,
+		&i.Path,
+		&i.Ended,
+		&i.AddedAt,
+		&i.UpdatedAt,
+		&i.QualityProfileID,
+		&i.Author,
+		&i.Rating,
+		&i.RatingVotes,
+		&i.Ratings,
+		&i.Source,
+	)
+	return i, err
+}
+
+const findItemByTmdb = `-- name: FindItemByTmdb :one
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes, ratings, source FROM media_items WHERE kind = ? AND tmdb_id = ? LIMIT 1
+`
+
+type FindItemByTmdbParams struct {
+	Kind   string
+	TmdbID int64
+}
+
+func (q *Queries) FindItemByTmdb(ctx context.Context, arg FindItemByTmdbParams) (MediaItem, error) {
+	row := q.db.QueryRowContext(ctx, findItemByTmdb, arg.Kind, arg.TmdbID)
+	var i MediaItem
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Title,
+		&i.SortTitle,
+		&i.Year,
+		&i.TmdbID,
+		&i.ImdbID,
+		&i.TvdbID,
+		&i.Isbn13,
+		&i.Olid,
+		&i.Asin,
+		&i.Overview,
+		&i.PosterPath,
+		&i.BackdropPath,
+		&i.Genres,
+		&i.Status,
+		&i.ReleaseDate,
+		&i.Runtime,
+		&i.Monitored,
+		&i.RootFolderID,
+		&i.Path,
+		&i.Ended,
+		&i.AddedAt,
+		&i.UpdatedAt,
+		&i.QualityProfileID,
+		&i.Author,
+		&i.Rating,
+		&i.RatingVotes,
+		&i.Ratings,
+		&i.Source,
+	)
+	return i, err
+}
+
 const getEpisodeByNumber = `-- name: GetEpisodeByNumber :one
 SELECT id, media_item_id, season_number, episode_number, absolute_num, title, air_date, monitored FROM episodes
 WHERE media_item_id = ? AND season_number = ? AND episode_number = ?
@@ -985,6 +1079,49 @@ func (q *Queries) ListMediaItemsByKind(ctx context.Context, kind string) ([]Medi
 	return items, nil
 }
 
+const listPlurxWatched = `-- name: ListPlurxWatched :many
+SELECT id, media_item_id, username, season, episode, watched_at, created_at FROM plurx_watched
+ WHERE media_item_id = ?
+ ORDER BY watched_at DESC
+ LIMIT ?
+`
+
+type ListPlurxWatchedParams struct {
+	MediaItemID int64
+	Limit       int64
+}
+
+func (q *Queries) ListPlurxWatched(ctx context.Context, arg ListPlurxWatchedParams) ([]PlurxWatched, error) {
+	rows, err := q.db.QueryContext(ctx, listPlurxWatched, arg.MediaItemID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PlurxWatched
+	for rows.Next() {
+		var i PlurxWatched
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.Username,
+			&i.Season,
+			&i.Episode,
+			&i.WatchedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRootFolders = `-- name: ListRootFolders :many
 SELECT id, path, added_at, kind FROM root_folders ORDER BY path
 `
@@ -1047,6 +1184,67 @@ func (q *Queries) ListSeasons(ctx context.Context, mediaItemID int64) ([]Season,
 		return nil, err
 	}
 	return items, nil
+}
+
+const recentlyWatchedItems = `-- name: RecentlyWatchedItems :many
+SELECT media_item_id, MAX(watched_at) AS last_watched
+  FROM plurx_watched
+ WHERE watched_at >= ?
+ GROUP BY media_item_id
+`
+
+type RecentlyWatchedItemsRow struct {
+	MediaItemID int64
+	LastWatched interface{}
+}
+
+func (q *Queries) RecentlyWatchedItems(ctx context.Context, watchedAt int64) ([]RecentlyWatchedItemsRow, error) {
+	rows, err := q.db.QueryContext(ctx, recentlyWatchedItems, watchedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecentlyWatchedItemsRow
+	for rows.Next() {
+		var i RecentlyWatchedItemsRow
+		if err := rows.Scan(&i.MediaItemID, &i.LastWatched); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recordPlurxWatched = `-- name: RecordPlurxWatched :exec
+INSERT INTO plurx_watched (media_item_id, username, season, episode, watched_at, created_at)
+VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type RecordPlurxWatchedParams struct {
+	MediaItemID int64
+	Username    string
+	Season      int64
+	Episode     int64
+	WatchedAt   int64
+	CreatedAt   int64
+}
+
+func (q *Queries) RecordPlurxWatched(ctx context.Context, arg RecordPlurxWatchedParams) error {
+	_, err := q.db.ExecContext(ctx, recordPlurxWatched,
+		arg.MediaItemID,
+		arg.Username,
+		arg.Season,
+		arg.Episode,
+		arg.WatchedAt,
+		arg.CreatedAt,
+	)
+	return err
 }
 
 const setEpisodeMonitored = `-- name: SetEpisodeMonitored :execrows

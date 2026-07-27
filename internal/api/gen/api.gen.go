@@ -458,6 +458,24 @@ func (e NotifierInputType) Valid() bool {
 	}
 }
 
+// Defines values for PlurxWatchedEventKind.
+const (
+	PlurxWatchedEventKindEpisode PlurxWatchedEventKind = "episode"
+	PlurxWatchedEventKindMovie   PlurxWatchedEventKind = "movie"
+)
+
+// Valid indicates whether the value is a known member of the PlurxWatchedEventKind enum.
+func (e PlurxWatchedEventKind) Valid() bool {
+	switch e {
+	case PlurxWatchedEventKindEpisode:
+		return true
+	case PlurxWatchedEventKindMovie:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProposalConfidence.
 const (
 	ProposalConfidenceAmbiguous ProposalConfidence = "ambiguous"
@@ -1155,6 +1173,29 @@ type PathMapping struct {
 	Remote string `json:"remote"`
 }
 
+// PlurxWatchedEvent defines model for PlurxWatchedEvent.
+type PlurxWatchedEvent struct {
+	Episode *int `json:"episode,omitempty"`
+
+	// Event "watched" today; the field exists so the route can grow others.
+	Event  string                `json:"event"`
+	Imdb   *string               `json:"imdb,omitempty"`
+	Kind   PlurxWatchedEventKind `json:"kind"`
+	Season *int                  `json:"season,omitempty"`
+
+	// Tmdb For an episode this is the SHOW's id, not the episode's.
+	Tmdb *int64 `json:"tmdb,omitempty"`
+
+	// User The plurx username. Per the §11.1 decision the signal is per-user; this is plurx's user, not a Monarr account, and Monarr does not create one.
+	User *string `json:"user,omitempty"`
+
+	// WatchedAt Unix seconds.
+	WatchedAt int64 `json:"watched_at"`
+}
+
+// PlurxWatchedEventKind defines model for PlurxWatchedEvent.Kind.
+type PlurxWatchedEventKind string
+
 // ProfileInput defines model for ProfileInput.
 type ProfileInput struct {
 	Floor           *QualityInput `json:"floor,omitempty"`
@@ -1739,6 +1780,9 @@ type UpdateRootFolderJSONRequestBody UpdateRootFolderJSONBody
 // UpdateSettingsJSONRequestBody defines body for UpdateSettings for application/json ContentType.
 type UpdateSettingsJSONRequestBody = SettingsUpdate
 
+// PlurxWebhookJSONRequestBody defines body for PlurxWebhook for application/json ContentType.
+type PlurxWebhookJSONRequestBody = PlurxWatchedEvent
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Login Session login for the UI (when auth is enabled)
@@ -1990,6 +2034,9 @@ type ServerInterface interface {
 	// ListWanted Everything still wanted (missing or below cutoff)
 	// (GET /wanted)
 	ListWanted(w http.ResponseWriter, r *http.Request)
+	// PlurxWebhook Receive a watch-state notification from plurx
+	// (POST /webhooks/plurx)
+	PlurxWebhook(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -3908,6 +3955,20 @@ func (siw *ServerInterfaceWrapper) ListWanted(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// PlurxWebhook operation middleware
+func (siw *ServerInterfaceWrapper) PlurxWebhook(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlurxWebhook(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -4104,6 +4165,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/notifiers/{id}", wrapper.DeleteNotifier)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/notifiers/{id}", wrapper.UpdateNotifier)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/notifiers/{id}/deliveries", wrapper.ListDeliveries)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/webhooks/plurx", wrapper.PlurxWebhook)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/connections", wrapper.GetConnections)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/backups", wrapper.ListBackups)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/calendar", wrapper.GetCalendar)

@@ -225,3 +225,25 @@ SELECT * FROM ignored_paths ORDER BY path;
 
 -- name: DeleteIgnoredPath :exec
 DELETE FROM ignored_paths WHERE path = ?;
+
+-- name: RecordPlurxWatched :exec
+INSERT INTO plurx_watched (media_item_id, username, season, episode, watched_at, created_at)
+VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: ListPlurxWatched :many
+SELECT * FROM plurx_watched
+ WHERE media_item_id = ?
+ ORDER BY watched_at DESC
+ LIMIT ?;
+
+-- name: RecentlyWatchedItems :many
+SELECT media_item_id, MAX(watched_at) AS last_watched
+  FROM plurx_watched
+ WHERE watched_at >= ?
+ GROUP BY media_item_id;
+
+-- name: FindItemByTmdb :one
+SELECT * FROM media_items WHERE kind = ? AND tmdb_id = ? LIMIT 1;
+
+-- name: FindItemByImdb :one
+SELECT * FROM media_items WHERE kind = ? AND imdb_id = ? LIMIT 1;

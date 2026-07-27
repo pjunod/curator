@@ -1782,6 +1782,40 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Delivery" }
 
+  /webhooks/plurx:
+    post:
+      operationId: plurxWebhook
+      summary: Receive a watch-state notification from plurx
+      description: >
+        The one thing another application tells Monarr to record (master plan
+        §11.1). Matched by external id only — never by title — so a
+        notification for something Monarr does not have is accepted and
+        ignored rather than guessed at. Nothing here can cause a deletion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlurxWatchedEvent" }
+      responses:
+        "200":
+          description: >
+            Accepted. `matched` is false when Monarr does not have the item —
+            not an error, and deliberately not a 404: the sender should not
+            retry something that will never match.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [matched]
+                properties:
+                  matched: { type: boolean }
+                  mediaItemId: { type: integer, format: int64 }
+        "400":
+          description: Unusable payload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /system/connections:
     get:
       operationId: getConnections
@@ -3120,6 +3154,34 @@ components:
             id:
               type: integer
               format: int64
+
+    PlurxWatchedEvent:
+      type: object
+      required: [event, kind, watched_at]
+      properties:
+        event:
+          type: string
+          description: "\"watched\" today; the field exists so the route can grow others."
+        kind:
+          type: string
+          enum: [movie, episode]
+        tmdb:
+          type: integer
+          format: int64
+          description: For an episode this is the SHOW's id, not the episode's.
+        imdb: { type: string }
+        season: { type: integer }
+        episode: { type: integer }
+        watched_at:
+          type: integer
+          format: int64
+          description: Unix seconds.
+        user:
+          type: string
+          description: >
+            The plurx username. Per the §11.1 decision the signal is per-user;
+            this is plurx's user, not a Monarr account, and Monarr does not
+            create one.
 
     Connection:
       type: object

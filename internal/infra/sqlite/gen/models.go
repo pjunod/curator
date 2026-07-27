@@ -232,6 +232,16 @@ type NotifierDelivery struct {
 	UpdatedAt  int64
 }
 
+type PlurxWatched struct {
+	ID          int64
+	MediaItemID int64
+	Username    string
+	Season      int64
+	Episode     int64
+	WatchedAt   int64
+	CreatedAt   int64
+}
+
 type QualityProfile struct {
 	ID              int64
 	Name            string

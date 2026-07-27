@@ -394,6 +394,30 @@ listed, saying they were not probed, so an absence is never mistaken for an
 all-clear. plurx is probed because it has a public, side-effect-free
 `GET /api/v1/server`.
 
+## Watch state from plurx
+
+`POST /api/v1/webhooks/plurx` receives "somebody finished this" from a paired
+plurx (master plan §11.1). Nothing to configure on Monarr's side beyond the
+API key plurx already needs — the switch is in **plurx's** settings, off by
+default, because it is plurx's users' viewing history that travels.
+
+What Monarr does with it:
+
+- **Records it**, per plurx user, per episode. Deliberately thin: who, what,
+  when. No position, no device, no rewatch history.
+- **Searches what you are watching first.** The backlog search has a per-run
+  cap, so on a large backlog the order decides what gets searched at all.
+  Anything watched in the last 30 days goes to the front. Being three
+  episodes into a series and waiting a week for an upgrade — while a film
+  nobody has opened in two years is retried nightly — is the case this fixes.
+- **Nothing else.** No unmonitoring, no cleanup, and no deletion path exists
+  on either side.
+
+Matching is by TMDB or IMDb id and never by title; a payload with no ids is
+refused. A notification for something Monarr does not manage returns 200 with
+`matched: false` rather than a 404 — plurx retries failures, and there is
+nothing to retry about a film Monarr was never asked to look after.
+
 ## Security
 
 - **API key** — generated on first start, shown here (**Reveal**). This is

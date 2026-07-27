@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/infra/bus"
@@ -171,5 +172,56 @@ func TestAutoSearchItemGrabsBest(t *testing.T) {
 	}
 	if len(client.added) != 1 {
 		t.Errorf("second auto search grabbed again: %v", client.added)
+	}
+}
+
+// The backlog has a per-run cap, so ordering is not cosmetic: what is
+// searched first is, on a large backlog, what is searched at all. Being three
+// episodes into a series and waiting a week for the upgrade — while a film
+// nobody has opened in two years is retried nightly — is the case this fixes.
+func TestTheBacklogSearchesWhatSomebodyIsWatchingFirst(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, _ := autoSetup(t, nil, client)
+	ctx := context.Background()
+
+	cold, err := db.CreateMediaItem(ctx, domain.MediaItem{
+		Kind: domain.KindMovie, Title: "Alien", Year: 1979, Monitored: true,
+		IDs: domain.ExternalIDs{TMDB: 348},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hot, err := db.CreateMediaItem(ctx, domain.MediaItem{
+		Kind: domain.KindMovie, Title: "Heat", Year: 1995, Monitored: true,
+		IDs: domain.ExternalIDs{TMDB: 949},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing watched: the order is whatever it was.
+	before := svc.watchedFirst(ctx, []domain.Wantable{
+		domain.MovieWantable{Item: cold},
+		domain.MovieWantable{Item: hot},
+	})
+	if before[0].MediaItemID() != cold {
+		t.Errorf("with no signal the order must not change, got %d first", before[0].MediaItemID())
+	}
+
+	// Somebody watched Heat this morning.
+	if err := db.RecordPlurxWatched(ctx, sqlite.PlurxWatch{
+		MediaItemID: hot, Username: "paul", WatchedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after := svc.watchedFirst(ctx, []domain.Wantable{
+		domain.MovieWantable{Item: cold},
+		domain.MovieWantable{Item: hot},
+	})
+	if after[0].MediaItemID() != hot {
+		t.Errorf("the watched item was not searched first: %d", after[0].MediaItemID())
+	}
+	if len(after) != 2 || after[1].MediaItemID() != cold {
+		t.Errorf("reordering dropped or duplicated something: %v", after)
 	}
 }

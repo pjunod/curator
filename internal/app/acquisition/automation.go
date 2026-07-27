@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/decision"
@@ -91,6 +92,7 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 	if len(wanted) == 0 {
 		return nil
 	}
+	wanted = s.watchedFirst(ctx, wanted)
 	enabled, err := s.enabledIndexers(ctx)
 	if err != nil || len(enabled) == 0 {
 		return err
@@ -153,6 +155,7 @@ func (s *Service) BacklogSearch(ctx context.Context) error {
 	if len(wanted) == 0 {
 		return nil
 	}
+	wanted = s.watchedFirst(ctx, wanted)
 	enabled, err := s.enabledIndexers(ctx)
 	if err != nil || len(enabled) == 0 {
 		return err
@@ -173,6 +176,51 @@ func (s *Service) BacklogSearch(ctx context.Context) error {
 		s.InvalidateWanted()
 	}
 	return nil
+}
+
+// activeWindow is how recently something must have been watched to count as
+// "being watched". A month covers the gap between seasons of a show somebody
+// is following without letting a series they finished last spring outrank
+// one they started on Tuesday.
+const activeWindow = 30 * 24 * time.Hour
+
+// watchedFirst reorders the backlog so things somebody is actually watching
+// are searched first (master plan §11.1).
+//
+// This matters because of the per-run cap: what gets searched first is, on a
+// large backlog, what gets searched at all this run. Being three episodes
+// into a series and waiting a week for the upgrade — while a film nobody has
+// opened in two years is retried nightly — is the case this exists for.
+//
+// A stable partition rather than a score. The signal is "somebody watched
+// this recently", and turning a handful of timestamps into a numeric
+// intensity would be precision nobody asked for and nobody could check.
+// Without plurx paired the map is empty and the order is exactly what it was.
+func (s *Service) watchedFirst(ctx context.Context, wanted []domain.Wantable) []domain.Wantable {
+	active, err := s.db.ActivelyWatched(ctx, time.Now().Add(-activeWindow))
+	if err != nil {
+		// Ordering is an optimization; failing to read it must not stop the
+		// backlog from running at all.
+		s.log.Debug("backlog: cannot read watch signals", "err", err)
+		return wanted
+	}
+	if len(active) == 0 {
+		return wanted
+	}
+	out := make([]domain.Wantable, 0, len(wanted))
+	var rest []domain.Wantable
+	for _, w := range wanted {
+		if _, ok := active[w.MediaItemID()]; ok {
+			out = append(out, w)
+		} else {
+			rest = append(rest, w)
+		}
+	}
+	if len(out) > 0 {
+		s.log.Info("backlog: prioritizing what is being watched",
+			"active", len(out), "total", len(wanted))
+	}
+	return append(out, rest...)
 }
 
 // searchAndGrabBest runs the wantable's planned queries against the given
