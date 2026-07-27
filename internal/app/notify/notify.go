@@ -127,63 +127,23 @@ func (d *Dispatcher) dispatch(ctx context.Context, event string, n ports.Notific
 		if refreshOnly(cfg) && event != "import" {
 			continue // media-server pokes only make sense after imports
 		}
+		// A media server's notification is the work itself, not an
+		// announcement of it, so it goes through the durable queue
+		// (§5.5) instead of being attempted once and forgotten.
+		if queued(cfg) {
+			d.enqueue(ctx, cfg, n)
+			continue
+		}
 		target := d.new(cfg)
 		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		err := target.Send(cctx, n)
 		cancel()
-		// What the far side said, when it said anything worth keeping.
-		// Asked for after Send either way: a partial delivery has both a
-		// failure and a result, and dropping the result would lose the half
-		// that worked.
-		result := ""
-		if r, ok := target.(ports.DeliveryReporter); ok {
-			result = r.Delivery()
-		}
 		if err != nil {
 			d.log.Warn("notify: send failed", "notifier", cfg.Name, "type", cfg.Type,
 				"transfer", transferOf(n), "err", err)
-			d.record(ctx, cfg, n, result, err)
 			continue
 		}
-		d.log.Info("notify: sent", "notifier", cfg.Name, "event", event,
-			"transfer", transferOf(n), "result", result)
-		d.record(ctx, cfg, n, result, nil)
-	}
-}
-
-// record writes an import delivery into the item's history.
-//
-// A notification that failed is otherwise visible only in the server log,
-// which is the one place nobody looks until they already suspect something.
-// On the item's own history it sits beside the import it belongs to, which
-// is where somebody asking "why hasn't this shown up in plurx" is looking
-// anyway. Only import deliveries are recorded: history is per media item,
-// and a health notification has no item to belong to.
-func (d *Dispatcher) record(ctx context.Context, cfg ports.NotifierConfig, n ports.Notification, result string, sendErr error) {
-	if n.Import == nil || n.Import.MediaItemID == 0 || !refreshOnly(cfg) {
-		return
-	}
-	detail := map[string]any{
-		"notifier": cfg.Name,
-		"type":     cfg.Type,
-		"paths":    len(n.Import.Paths),
-		"dirs":     len(n.Import.Dirs),
-	}
-	if n.Import.Transfer != "" {
-		detail["transfer"] = n.Import.Transfer
-	}
-	if result != "" {
-		// The far end's own words. This is where "imported" stops being the
-		// end of the story and becomes "…and plurx made item 1201 of it".
-		detail["result"] = result
-	}
-	kind := "notified"
-	if sendErr != nil {
-		kind = "notify_failed"
-		detail["error"] = sendErr.Error()
-	}
-	if err := d.db.AddHistory(ctx, kind, n.Import.MediaItemID, n.Body, detail); err != nil {
-		d.log.Debug("notify: could not record delivery", "err", err)
+		d.log.Debug("notify: sent", "notifier", cfg.Name, "event", event)
 	}
 }
 

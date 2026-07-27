@@ -35,6 +35,27 @@ func (e AddMediaRequestMonitor) Valid() bool {
 	}
 }
 
+// Defines values for DeliveryStatus.
+const (
+	DeliveryStatusFailed  DeliveryStatus = "failed"
+	DeliveryStatusOk      DeliveryStatus = "ok"
+	DeliveryStatusPending DeliveryStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the DeliveryStatus enum.
+func (e DeliveryStatus) Valid() bool {
+	switch e {
+	case DeliveryStatusFailed:
+		return true
+	case DeliveryStatusOk:
+		return true
+	case DeliveryStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DownloadClientConfigMode.
 const (
 	DownloadClientConfigModePoll DownloadClientConfigMode = "poll"
@@ -563,6 +584,28 @@ type DefaultProfilesUpdate struct {
 	Movie  *int64 `json:"movie,omitempty"`
 	Series *int64 `json:"series,omitempty"`
 }
+
+// Delivery defines model for Delivery.
+type Delivery struct {
+	Attempts   int64   `json:"attempts"`
+	CreatedAt  int64   `json:"createdAt"`
+	DownloadId *int64  `json:"downloadId,omitempty"`
+	Event      string  `json:"event"`
+	Id         int64   `json:"id"`
+	LastError  *string `json:"lastError,omitempty"`
+
+	// NextAt When a pending retry becomes due (epoch ms).
+	NextAt     *int64 `json:"nextAt,omitempty"`
+	NotifierId int64  `json:"notifierId"`
+
+	// Result What the far side answered on success, e.g. "scanned → plurx item 1201".
+	Result    *string        `json:"result,omitempty"`
+	Status    DeliveryStatus `json:"status"`
+	UpdatedAt int64          `json:"updatedAt"`
+}
+
+// DeliveryStatus defines model for Delivery.Status.
+type DeliveryStatus string
 
 // DirEntry defines model for DirEntry.
 type DirEntry struct {
@@ -1592,6 +1635,9 @@ type AddNotifierJSONRequestBody = NotifierInput
 // TestNotifierJSONRequestBody defines body for TestNotifier for application/json ContentType.
 type TestNotifierJSONRequestBody = NotifierInput
 
+// UpdateNotifierJSONRequestBody defines body for UpdateNotifier for application/json ContentType.
+type UpdateNotifierJSONRequestBody = NotifierInput
+
 // CreateProfileJSONRequestBody defines body for CreateProfile for application/json ContentType.
 type CreateProfileJSONRequestBody = ProfileInput
 
@@ -1792,6 +1838,12 @@ type ServerInterface interface {
 	// DeleteNotifier Remove a notification target
 	// (DELETE /notifiers/{id})
 	DeleteNotifier(w http.ResponseWriter, r *http.Request, id int64)
+	// UpdateNotifier Replace a notification target in place
+	// (PUT /notifiers/{id})
+	UpdateNotifier(w http.ResponseWriter, r *http.Request, id int64)
+	// ListDeliveries This notifier's recent deliveries, newest first
+	// (GET /notifiers/{id}/deliveries)
+	ListDeliveries(w http.ResponseWriter, r *http.Request, id int64)
 	// ListProfiles List quality profiles
 	// (GET /profiles)
 	ListProfiles(w http.ResponseWriter, r *http.Request)
@@ -3323,6 +3375,58 @@ func (siw *ServerInterfaceWrapper) DeleteNotifier(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateNotifier operation middleware
+func (siw *ServerInterfaceWrapper) UpdateNotifier(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateNotifier(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListDeliveries operation middleware
+func (siw *ServerInterfaceWrapper) ListDeliveries(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDeliveries(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProfiles operation middleware
 func (siw *ServerInterfaceWrapper) ListProfiles(w http.ResponseWriter, r *http.Request) {
 
@@ -3895,6 +3999,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers", wrapper.AddNotifier)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/test", wrapper.TestNotifier)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/notifiers/{id}", wrapper.DeleteNotifier)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/notifiers/{id}", wrapper.UpdateNotifier)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/notifiers/{id}/deliveries", wrapper.ListDeliveries)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/backups", wrapper.ListBackups)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/calendar", wrapper.GetCalendar)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted", wrapper.ListWanted)

@@ -112,9 +112,113 @@ func (d *DB) GetNotifier(ctx context.Context, id int64) (ports.NotifierConfig, e
 	return notifierToPort(r), nil
 }
 
-// DeleteNotifier removes a notifier.
+// UpdateNotifier replaces a notifier in place.
+//
+// Editing used to mean delete-and-recreate, which changed the id — and the
+// id is what the delivery log hangs off. Changing a URL should not throw
+// away the record of every delivery that came before it.
+func (d *DB) UpdateNotifier(ctx context.Context, n ports.NotifierConfig) error {
+	settings, _ := json.Marshal(n.Settings)
+	if n.Settings == nil {
+		settings = []byte("{}")
+	}
+	return d.Write.UpdateNotifier(ctx, sqlitegen.UpdateNotifierParams{
+		Type: n.Type, Name: n.Name, Settings: string(settings),
+		OnGrab: boolInt(n.OnGrab), OnImport: boolInt(n.OnImport),
+		OnFailed: boolInt(n.OnFailed), OnHealth: boolInt(n.OnHealth),
+		Enabled: boolInt(n.Enabled), ID: n.ID,
+	})
+}
+
+// DeleteNotifier removes a notifier and the deliveries that belonged to it.
 func (d *DB) DeleteNotifier(ctx context.Context, id int64) error {
+	// No foreign key on notifier_deliveries — deliveries outlive nothing,
+	// but they must not outlive their notifier and become rows nobody can
+	// name. Cleared first so a failure leaves orphans rather than a
+	// notifier that cannot be removed.
+	if err := d.Write.DeleteDeliveriesForNotifier(ctx, id); err != nil {
+		return err
+	}
 	return d.Write.DeleteNotifier(ctx, id)
+}
+
+// ---- notification deliveries (plan §5.5) ----
+
+// Delivery is one attempt-tracked notification.
+type Delivery struct {
+	ID         int64  `json:"id"`
+	NotifierID int64  `json:"notifierId"`
+	DownloadID int64  `json:"downloadId,omitempty"`
+	Event      string `json:"event"`
+	Payload    string `json:"-"`
+	Attempts   int64  `json:"attempts"`
+	LastError  string `json:"lastError,omitempty"`
+	Result     string `json:"result,omitempty"`
+	Status     string `json:"status"` // pending | ok | failed
+	NextAt     int64  `json:"nextAt,omitempty"`
+	CreatedAt  int64  `json:"createdAt"`
+	UpdatedAt  int64  `json:"updatedAt"`
+}
+
+func deliveryFrom(r sqlitegen.NotifierDelivery) Delivery {
+	return Delivery{
+		ID: r.ID, NotifierID: r.NotifierID, DownloadID: r.DownloadID,
+		Event: r.Event, Payload: r.Payload, Attempts: r.Attempts,
+		LastError: r.LastError, Result: r.Result, Status: r.Status,
+		NextAt: r.NextAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}
+}
+
+// EnqueueDelivery records a notification to deliver, due now.
+func (d *DB) EnqueueDelivery(ctx context.Context, notifierID, downloadID int64, event, payload string) (Delivery, error) {
+	now := time.Now().UnixMilli()
+	r, err := d.Write.EnqueueDelivery(ctx, sqlitegen.EnqueueDeliveryParams{
+		NotifierID: notifierID, DownloadID: downloadID, Event: event,
+		Payload: payload, NextAt: now, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		return Delivery{}, err
+	}
+	return deliveryFrom(r), nil
+}
+
+// DueDeliveries returns pending deliveries whose time has come.
+func (d *DB) DueDeliveries(ctx context.Context, limit int64) ([]Delivery, error) {
+	rows, err := d.Read.DueDeliveries(ctx, sqlitegen.DueDeliveriesParams{
+		NextAt: time.Now().UnixMilli(), Limit: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Delivery, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, deliveryFrom(r))
+	}
+	return out, nil
+}
+
+// SettleDelivery writes the outcome of one attempt.
+func (d *DB) SettleDelivery(ctx context.Context, del Delivery) error {
+	return d.Write.SettleDelivery(ctx, sqlitegen.SettleDeliveryParams{
+		Attempts: del.Attempts, LastError: del.LastError, Result: del.Result,
+		Status: del.Status, NextAt: del.NextAt,
+		UpdatedAt: time.Now().UnixMilli(), ID: del.ID,
+	})
+}
+
+// ListDeliveries returns a notifier's most recent deliveries, newest first.
+func (d *DB) ListDeliveries(ctx context.Context, notifierID, limit int64) ([]Delivery, error) {
+	rows, err := d.Read.ListDeliveries(ctx, sqlitegen.ListDeliveriesParams{
+		NotifierID: notifierID, Limit: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Delivery, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, deliveryFrom(r))
+	}
+	return out, nil
 }
 
 // ---- calendar (Phase 3) ----

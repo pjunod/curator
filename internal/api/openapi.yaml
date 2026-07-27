@@ -1715,6 +1715,34 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   /notifiers/{id}:
+    put:
+      operationId: updateNotifier
+      summary: Replace a notification target in place
+      description: >
+        Editing used to mean delete-and-recreate, which changed the id — and
+        the id is what the delivery log hangs off. Changing a URL should not
+        throw away the record of every delivery before it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotifierInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Notifier" }
+        "404":
+          description: Unknown notifier.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       operationId: deleteNotifier
       summary: Remove a notification target
@@ -1730,6 +1758,29 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /notifiers/{id}/deliveries:
+    get:
+      operationId: listDeliveries
+      summary: This notifier's recent deliveries, newest first
+      description: >
+        Media-server notifications are queued and retried, so "did it
+        arrive?" has an answer that outlives the log buffer. Successes carry
+        what the far side said; failures carry why, and how many attempts it
+        took to give up.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Deliveries (last 100).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Delivery" }
 
   /system/backups:
     get:
@@ -3025,6 +3076,29 @@ components:
             id:
               type: integer
               format: int64
+
+    Delivery:
+      type: object
+      required: [id, notifierId, event, attempts, status, createdAt, updatedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        notifierId: { type: integer, format: int64 }
+        downloadId: { type: integer, format: int64 }
+        event: { type: string }
+        attempts: { type: integer, format: int64 }
+        lastError: { type: string }
+        result:
+          type: string
+          description: What the far side answered on success, e.g. "scanned → plurx item 1201".
+        status:
+          type: string
+          enum: [pending, ok, failed]
+        nextAt:
+          type: integer
+          format: int64
+          description: When a pending retry becomes due (epoch ms).
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
 
     BackupInfo:
       type: object

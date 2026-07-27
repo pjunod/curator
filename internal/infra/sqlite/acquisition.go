@@ -442,6 +442,36 @@ func (d *DB) UpdateDownloadHandoff(ctx context.Context, dl Download) error {
 	})
 }
 
+// AppendHandoffStep adds one entry to a download's trace without touching
+// its state.
+//
+// The trace's other writer is the acquisition service, which owns the state
+// machine and moves it forward. This one is for steps that happen AFTER the
+// download is finished with — telling plurx, above all. Those must be able
+// to write "here is what happened next" onto the same trace without being
+// able to move the download backwards, or a slow notification could
+// resurrect an import that already completed.
+//
+// A download that has since been removed is not an error: the notification
+// outliving its queue row is ordinary, and failing here would turn a
+// tidy-up into a delivery failure.
+func (d *DB) AppendHandoffStep(ctx context.Context, downloadID int64, step, detail string) error {
+	if downloadID == 0 {
+		return nil
+	}
+	dl, err := d.GetDownload(ctx, downloadID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	dl.Handoff = append(dl.Handoff, HandoffEntry{
+		Step: step, At: time.Now().UnixMilli(), Detail: detail,
+	})
+	return d.UpdateDownloadHandoff(ctx, dl)
+}
+
 // DeleteDownload removes a queue row.
 func (d *DB) DeleteDownload(ctx context.Context, id int64) error {
 	return d.Write.DeleteDownload(ctx, id)

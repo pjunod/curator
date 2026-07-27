@@ -44,6 +44,15 @@ func (q *Queries) DeleteCustomFormat(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteDeliveriesForNotifier = `-- name: DeleteDeliveriesForNotifier :exec
+DELETE FROM notifier_deliveries WHERE notifier_id = ?
+`
+
+func (q *Queries) DeleteDeliveriesForNotifier(ctx context.Context, notifierID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteDeliveriesForNotifier, notifierID)
+	return err
+}
+
 const deleteImportList = `-- name: DeleteImportList :exec
 DELETE FROM import_lists WHERE id = ?
 `
@@ -60,6 +69,99 @@ DELETE FROM notifiers WHERE id = ?
 func (q *Queries) DeleteNotifier(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteNotifier, id)
 	return err
+}
+
+const dueDeliveries = `-- name: DueDeliveries :many
+SELECT id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at FROM notifier_deliveries
+ WHERE status = 'pending' AND next_at <= ?
+ ORDER BY next_at, id
+ LIMIT ?
+`
+
+type DueDeliveriesParams struct {
+	NextAt int64
+	Limit  int64
+}
+
+func (q *Queries) DueDeliveries(ctx context.Context, arg DueDeliveriesParams) ([]NotifierDelivery, error) {
+	rows, err := q.db.QueryContext(ctx, dueDeliveries, arg.NextAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NotifierDelivery
+	for rows.Next() {
+		var i NotifierDelivery
+		if err := rows.Scan(
+			&i.ID,
+			&i.NotifierID,
+			&i.DownloadID,
+			&i.Event,
+			&i.Payload,
+			&i.Attempts,
+			&i.LastError,
+			&i.Result,
+			&i.Status,
+			&i.NextAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const enqueueDelivery = `-- name: EnqueueDelivery :one
+INSERT INTO notifier_deliveries
+    (notifier_id, download_id, event, payload, next_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+RETURNING id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at
+`
+
+type EnqueueDeliveryParams struct {
+	NotifierID int64
+	DownloadID int64
+	Event      string
+	Payload    string
+	NextAt     int64
+	CreatedAt  int64
+	UpdatedAt  int64
+}
+
+func (q *Queries) EnqueueDelivery(ctx context.Context, arg EnqueueDeliveryParams) (NotifierDelivery, error) {
+	row := q.db.QueryRowContext(ctx, enqueueDelivery,
+		arg.NotifierID,
+		arg.DownloadID,
+		arg.Event,
+		arg.Payload,
+		arg.NextAt,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	var i NotifierDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.NotifierID,
+		&i.DownloadID,
+		&i.Event,
+		&i.Payload,
+		&i.Attempts,
+		&i.LastError,
+		&i.Result,
+		&i.Status,
+		&i.NextAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getNotifier = `-- name: GetNotifier :one
@@ -260,6 +362,54 @@ func (q *Queries) ListCustomFormats(ctx context.Context) ([]CustomFormat, error)
 	return items, nil
 }
 
+const listDeliveries = `-- name: ListDeliveries :many
+SELECT id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at FROM notifier_deliveries
+ WHERE notifier_id = ?
+ ORDER BY id DESC
+ LIMIT ?
+`
+
+type ListDeliveriesParams struct {
+	NotifierID int64
+	Limit      int64
+}
+
+func (q *Queries) ListDeliveries(ctx context.Context, arg ListDeliveriesParams) ([]NotifierDelivery, error) {
+	rows, err := q.db.QueryContext(ctx, listDeliveries, arg.NotifierID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NotifierDelivery
+	for rows.Next() {
+		var i NotifierDelivery
+		if err := rows.Scan(
+			&i.ID,
+			&i.NotifierID,
+			&i.DownloadID,
+			&i.Event,
+			&i.Payload,
+			&i.Attempts,
+			&i.LastError,
+			&i.Result,
+			&i.Status,
+			&i.NextAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEpisodesAiring = `-- name: ListEpisodesAiring :many
 SELECT e.id, e.media_item_id, e.season_number, e.episode_number,
        e.title AS episode_title, e.air_date, m.title AS series_title,
@@ -443,6 +593,36 @@ func (q *Queries) ListNotifiers(ctx context.Context) ([]Notifier, error) {
 	return items, nil
 }
 
+const settleDelivery = `-- name: SettleDelivery :exec
+UPDATE notifier_deliveries
+   SET attempts = ?, last_error = ?, result = ?, status = ?, next_at = ?,
+       updated_at = ?
+ WHERE id = ?
+`
+
+type SettleDeliveryParams struct {
+	Attempts  int64
+	LastError string
+	Result    string
+	Status    string
+	NextAt    int64
+	UpdatedAt int64
+	ID        int64
+}
+
+func (q *Queries) SettleDelivery(ctx context.Context, arg SettleDeliveryParams) error {
+	_, err := q.db.ExecContext(ctx, settleDelivery,
+		arg.Attempts,
+		arg.LastError,
+		arg.Result,
+		arg.Status,
+		arg.NextAt,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
 const updateMediaItemBulk = `-- name: UpdateMediaItemBulk :exec
 UPDATE media_items SET
     monitored          = COALESCE(?1, monitored),
@@ -463,6 +643,40 @@ func (q *Queries) UpdateMediaItemBulk(ctx context.Context, arg UpdateMediaItemBu
 		arg.Monitored,
 		arg.QualityProfileID,
 		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const updateNotifier = `-- name: UpdateNotifier :exec
+UPDATE notifiers
+   SET type = ?, name = ?, settings = ?, on_grab = ?, on_import = ?,
+       on_failed = ?, on_health = ?, enabled = ?
+ WHERE id = ?
+`
+
+type UpdateNotifierParams struct {
+	Type     string
+	Name     string
+	Settings string
+	OnGrab   int64
+	OnImport int64
+	OnFailed int64
+	OnHealth int64
+	Enabled  int64
+	ID       int64
+}
+
+func (q *Queries) UpdateNotifier(ctx context.Context, arg UpdateNotifierParams) error {
+	_, err := q.db.ExecContext(ctx, updateNotifier,
+		arg.Type,
+		arg.Name,
+		arg.Settings,
+		arg.OnGrab,
+		arg.OnImport,
+		arg.OnFailed,
+		arg.OnHealth,
+		arg.Enabled,
 		arg.ID,
 	)
 	return err

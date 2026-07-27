@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -43,12 +42,6 @@ type Plurx struct {
 // in one line, for the transfer's trace.
 func (p *Plurx) Delivery() string { return strings.Join(p.delivery, "; ") }
 
-// plurxAttempts bounds the retry. The dispatcher gives each notifier 20
-// seconds for the whole event, and a season pack is a dozen paths, so this
-// buys through a restart or a blocked moment without ever being the thing
-// that makes an import hang.
-const plurxAttempts = 3
-
 // Send implements ports.Notifier.
 func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 	if p.URL == "" || p.APIKey == "" {
@@ -76,9 +69,11 @@ func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 	// and a dozen files; a dozen requests naming the same folder is a dozen
 	// chances for one to fail and eleven scans of work already done.
 	var failures []string
+	permanent := true
 	for _, dir := range n.Import.Dirs {
 		if err := p.scan(ctx, dir, n.Import); err != nil {
 			failures = append(failures, err.Error())
+			permanent = permanent && errors.Is(err, ports.ErrNotifyPermanent)
 		}
 	}
 	if len(failures) == 0 {
@@ -87,8 +82,16 @@ func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 	// Partial delivery is worth naming as such: the difference between "one
 	// folder of a multi-season import was rejected" and "plurx is down" is
 	// the first thing anyone reading this wants to know.
-	return fmt.Errorf("plurx: %d of %d directories not indexed: %s",
+	err := fmt.Errorf("plurx: %d of %d directories not indexed: %s",
 		len(failures), len(n.Import.Dirs), strings.Join(failures, "; "))
+	if permanent {
+		// Every failure was one retrying cannot fix, so the whole delivery
+		// is. A mixed batch stays retryable: the transient half deserves
+		// another go, and plurx's targeted scan is idempotent, so redoing
+		// the settled half costs a no-op scan and nothing else.
+		return fmt.Errorf("%w: %s", ports.ErrNotifyPermanent, err)
+	}
+	return err
 }
 
 type plurxScanRequest struct {
@@ -130,46 +133,26 @@ func scanBody(path string, info *ports.ImportInfo) plurxScanRequest {
 	return req
 }
 
-// scan posts one path, retrying only what retrying can fix.
+// scan posts one directory.
+//
+// No retry loop here: retrying is the delivery queue's job (plan §5.5), and
+// it does it durably across restarts, which a loop inside one Send cannot.
+// What this owns is the CLASSIFICATION — whether trying again could
+// possibly help — because that knowledge lives with the status codes.
 func (p *Plurx) scan(ctx context.Context, path string, info *ports.ImportInfo) error {
 	body, err := json.Marshal(scanBody(path, info))
 	if err != nil {
 		return err
 	}
-	target := strings.TrimRight(p.URL, "/") + "/api/v1/scan"
-
-	var last error
-	for attempt := 1; attempt <= plurxAttempts; attempt++ {
-		if attempt > 1 {
-			// Short and fixed rather than exponential: the budget for the
-			// whole event is 20 s and this is one path of possibly many.
-			select {
-			case <-ctx.Done():
-				return fmt.Errorf("%s: %w", path, ctx.Err())
-			case <-time.After(time.Duration(attempt-1) * 400 * time.Millisecond):
-			}
-		}
-		outcome, err := p.post(ctx, target, body)
-		if err == nil {
-			if outcome != "" {
-				p.delivery = append(p.delivery, outcome)
-			}
-			return nil
-		}
-		last = fmt.Errorf("%s: %w", path, err)
-		// A rejected request is rejected however many times it is sent. A
-		// bad path, a key without the scope, a revoked key — retrying those
-		// only delays the moment somebody reads the message.
-		if !errors.Is(err, errPlurxRetryable) {
-			return last
-		}
+	outcome, err := p.post(ctx, strings.TrimRight(p.URL, "/")+"/api/v1/scan", body)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
 	}
-	return last
+	if outcome != "" {
+		p.delivery = append(p.delivery, outcome)
+	}
+	return nil
 }
-
-// errPlurxRetryable marks the failures where trying again is the right move:
-// the connection, and the server saying it is having a moment.
-var errPlurxRetryable = errors.New("retryable")
 
 // post sends one request. On success it returns a one-line summary of what
 // plurx answered, for the trace.
@@ -182,7 +165,7 @@ func (p *Plurx) post(ctx context.Context, target string, body []byte) (string, e
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s", errPlurxRetryable, err)
+		return "", fmt.Errorf("cannot reach plurx: %s", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
@@ -198,18 +181,21 @@ func (p *Plurx) post(ctx context.Context, target string, body []byte) (string, e
 		// through verbatim is the difference between "422" and being able
 		// to see, in Monarr's own log, that plurx has /media mounted where
 		// Monarr has /data/media.
-		return "", fmt.Errorf("plurx does not have this path under any library root — %s",
-			summarize(raw))
+		return "", fmt.Errorf("%w: plurx does not have this path under any library root — %s",
+			ports.ErrNotifyPermanent, summarize(raw))
 	case resp.StatusCode == http.StatusUnauthorized:
-		return "", fmt.Errorf("plurx rejected the key (401) — it is unknown, revoked, "+
-			"or a plurx USER token, which this route does not accept: %s", summarize(raw))
+		return "", fmt.Errorf("%w: plurx rejected the key (401) — it is unknown, revoked, "+
+			"or a plurx USER token, which this route does not accept: %s",
+			ports.ErrNotifyPermanent, summarize(raw))
 	case resp.StatusCode == http.StatusForbidden:
-		return "", fmt.Errorf("the key is valid but lacks the scan:trigger scope (403): %s",
-			summarize(raw))
+		return "", fmt.Errorf("%w: the key is valid but lacks the scan:trigger scope (403): %s",
+			ports.ErrNotifyPermanent, summarize(raw))
 	case resp.StatusCode >= 500:
-		return "", fmt.Errorf("%w: plurx returned %d: %s", errPlurxRetryable, resp.StatusCode, summarize(raw))
-	default:
+		// A 5xx is the server having a moment. Left retryable.
 		return "", fmt.Errorf("plurx returned %d: %s", resp.StatusCode, summarize(raw))
+	default:
+		return "", fmt.Errorf("%w: plurx returned %d: %s",
+			ports.ErrNotifyPermanent, resp.StatusCode, summarize(raw))
 	}
 }
 

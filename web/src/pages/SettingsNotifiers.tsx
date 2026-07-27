@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { NotifierInput, NotifierType } from '../api'
-import { addNotifier, deleteNotifier, getNotifiers, testNotifier } from '../api'
+import type { Notifier, NotifierInput, NotifierType } from '../api'
+import { addNotifier, deleteNotifier, getNotifiers, testNotifier, updateNotifier } from '../api'
+import { NotifierDeliveries } from './NotifierDeliveries'
 
 const TYPE_FIELDS: Record<NotifierType, { key: string; label: string }[]> = {
   webhook: [{ key: 'url', label: 'Webhook URL' }],
@@ -35,8 +36,37 @@ export function NotifierSettings() {
   const [name, setName] = useState('')
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [testResult, setTestResult] = useState('')
+  // Which row is being edited, and which has its delivery log open. Editing
+  // in place rather than delete-and-recreate: the id is what the delivery
+  // log hangs off, and changing a URL should not throw the history away.
+  const [editing, setEditing] = useState<number | null>(null)
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [showLog, setShowLog] = useState<number | null>(null)
 
   const input = (): NotifierInput => ({ type, name, settings })
+
+  const startEdit = (n: Notifier) => {
+    setEditing(n.id)
+    setDraft({ ...(n.settings ?? {}) })
+  }
+
+  const save = useMutation({
+    mutationFn: ({ n }: { n: Notifier }) =>
+      updateNotifier(n.id, {
+        type: n.type,
+        name: n.name,
+        settings: draft,
+        onGrab: n.onGrab,
+        onImport: n.onImport,
+        onFailed: n.onFailed,
+        onHealth: n.onHealth,
+        enabled: n.enabled,
+      }),
+    onSuccess: () => {
+      setEditing(null)
+      void qc.invalidateQueries({ queryKey: ['notifiers'] })
+    },
+  })
 
   const add = useMutation({
     mutationFn: () => addNotifier(input()),
@@ -62,9 +92,12 @@ export function NotifierSettings() {
       <h2>Notifications</h2>
       <p className="muted">
         Webhook and Discord targets get grab/import/failure events. Plex and Jellyfin are
-        poked to rescan their libraries after every import. plurx is told the exact paths
+        poked to rescan their libraries after every import. plurx is told the exact folders
         that landed and the TMDB/IMDb ids Monarr already knows, so it indexes one folder
         instead of sweeping the library — and never has to guess the title from a filename.
+        Media-server deliveries are queued and retried, so a plurx that was restarting when
+        an import finished still gets told; <strong>Delivery log</strong> shows what happened
+        to each one.
       </p>
 
       {(notifiers.data?.length ?? 0) > 0 && (
@@ -78,7 +111,7 @@ export function NotifierSettings() {
             </tr>
           </thead>
           <tbody>
-            {notifiers.data!.map((n) => (
+            {notifiers.data!.flatMap((n) => [
               <tr key={n.id}>
                 <td>{n.name}</td>
                 <td>
@@ -94,10 +127,42 @@ export function NotifierSettings() {
                         .join(', ')}
                 </td>
                 <td>
-                  <button onClick={() => del.mutate(n.id)}>Remove</button>
+                  {editing === n.id ? (
+                    <>
+                      {TYPE_FIELDS[n.type].map((f) => (
+                        <input
+                          key={f.key}
+                          placeholder={f.label}
+                          value={draft[f.key] ?? ''}
+                          onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+                        />
+                      ))}
+                      <button className="btn-accent" onClick={() => save.mutate({ n })}>
+                        Save
+                      </button>
+                      <button onClick={() => setEditing(null)}>Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => startEdit(n)}>Edit</button>
+                      {MEDIA_SERVER.includes(n.type) && (
+                        <button onClick={() => setShowLog(showLog === n.id ? null : n.id)}>
+                          {showLog === n.id ? 'Hide log' : 'Delivery log'}
+                        </button>
+                      )}
+                      <button onClick={() => del.mutate(n.id)}>Remove</button>
+                    </>
+                  )}
                 </td>
-              </tr>
-            ))}
+              </tr>,
+              showLog === n.id && (
+                <tr key={`${n.id}-log`}>
+                  <td colSpan={4}>
+                    <NotifierDeliveries id={n.id} />
+                  </td>
+                </tr>
+              ),
+            ])}
           </tbody>
         </table>
       )}

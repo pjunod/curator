@@ -872,6 +872,27 @@ export const getNotifiers = () => get<Notifier[]>('/notifiers')
 export const addNotifier = (n: NotifierInput) => send<Notifier>('POST', '/notifiers', n)
 export const testNotifier = (n: NotifierInput) => send('POST', '/notifiers/test', n)
 export const deleteNotifier = (id: number) => send('DELETE', `/notifiers/${id}`)
+export const updateNotifier = (id: number, n: NotifierInput) =>
+  send<Notifier>('PUT', `/notifiers/${id}`, n)
+
+// One queued notification attempt. Media-server notifications are retried,
+// so "did it arrive?" has an answer that outlives the log buffer.
+export interface Delivery {
+  id: number
+  notifierId: number
+  downloadId?: number
+  event: string
+  attempts: number
+  lastError?: string
+  /** What the far side answered, e.g. "scanned → plurx item 1201". */
+  result?: string
+  status: 'pending' | 'ok' | 'failed'
+  nextAt?: number
+  createdAt: number
+  updatedAt: number
+}
+
+export const getDeliveries = (id: number) => get<Delivery[]>(`/notifiers/${id}/deliveries`)
 export const getBackups = () => get<BackupInfo[]>('/system/backups')
 
 // ---- Phase 5: depth ----

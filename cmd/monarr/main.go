@@ -166,6 +166,10 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	notifierFactory := func(cfg ports.NotifierConfig) ports.Notifier { return notify.New(cfg) }
 	dispatcher := appnotify.New(db, b, log, notifierFactory)
 	go dispatcher.Run(ctx)
+	// The delivery worker runs beside it: a retry scheduled two minutes out
+	// has no bus event to wake it, and a dead server must not stall the
+	// event loop while it times out.
+	go dispatcher.RunDeliveries(ctx)
 
 	// API key (Phase 4 compat auth; Phase 5 hardens the native API with it).
 	apiKey, err := db.GetMeta(ctx, api.APIKeySetting)

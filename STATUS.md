@@ -188,8 +188,16 @@ side (N1–N7) is built; this is Monarr's.
       admin token. Retry covers the connection and 5xx and stops dead on
       401/403/422, and plurx's 422 — the path-mapping one everybody hits —
       is carried through verbatim with the roots it listed. Deliveries land
-      on the item's history, carrying plurx's own answer
-      (`scanned → plurx item 1201`) via the optional `ports.DeliveryReporter`
+      recorded on a **persistent delivery queue** (`notifier_deliveries`,
+      migration 24): first attempt immediately, retries at 5 s / 30 s / 2 m,
+      terminal failures (401/403/422/404) not retried at all. The row is the
+      point — the common miss is a host reboot where an in-memory retry dies
+      with the process that owns it. The outcome lands on the download's
+      handoff trace as a `notify_plurx` step, carrying plurx's own answer
+      (`scanned → plurx item 1201`) via the optional
+      `ports.DeliveryReporter`. `PUT /api/v1/notifiers/{id}` (edit in place —
+      the log hangs off the id) and `GET .../deliveries` + a **Delivery log**
+      on the notifier row
 - [x] **§5.6 health checks** — a `connections` check probing enabled
       download clients and plurx notifiers through the real adapters, in
       parallel, reported as a warning because Monarr queues and catches up.

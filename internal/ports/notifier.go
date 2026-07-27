@@ -1,6 +1,16 @@
 package ports
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrNotifyPermanent marks a delivery failure that retrying cannot fix: a
+// path outside every library root, a key without the scope, a revoked
+// credential. Wrap it and the delivery queue stops immediately instead of
+// spending its whole backoff schedule postponing the moment somebody reads
+// the reason.
+var ErrNotifyPermanent = errors.New("permanent delivery failure")
 
 // NotifierConfig is a stored notification target (Phase 3). Settings is
 // type-specific: webhook/discord need {"url"}, plex needs {"url","token"},

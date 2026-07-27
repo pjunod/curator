@@ -68,3 +68,36 @@ UPDATE media_items SET
     quality_profile_id = COALESCE(sqlc.narg('quality_profile_id'), quality_profile_id),
     updated_at         = sqlc.arg('updated_at')
 WHERE id = sqlc.arg('id');
+
+-- name: UpdateNotifier :exec
+UPDATE notifiers
+   SET type = ?, name = ?, settings = ?, on_grab = ?, on_import = ?,
+       on_failed = ?, on_health = ?, enabled = ?
+ WHERE id = ?;
+
+-- name: EnqueueDelivery :one
+INSERT INTO notifier_deliveries
+    (notifier_id, download_id, event, payload, next_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+RETURNING *;
+
+-- name: DueDeliveries :many
+SELECT * FROM notifier_deliveries
+ WHERE status = 'pending' AND next_at <= ?
+ ORDER BY next_at, id
+ LIMIT ?;
+
+-- name: SettleDelivery :exec
+UPDATE notifier_deliveries
+   SET attempts = ?, last_error = ?, result = ?, status = ?, next_at = ?,
+       updated_at = ?
+ WHERE id = ?;
+
+-- name: ListDeliveries :many
+SELECT * FROM notifier_deliveries
+ WHERE notifier_id = ?
+ ORDER BY id DESC
+ LIMIT ?;
+
+-- name: DeleteDeliveriesForNotifier :exec
+DELETE FROM notifier_deliveries WHERE notifier_id = ?;

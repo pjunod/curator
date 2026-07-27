@@ -215,6 +215,21 @@ type Notifier struct {
 	Enabled  int64
 }
 
+type NotifierDelivery struct {
+	ID         int64
+	NotifierID int64
+	DownloadID int64
+	Event      string
+	Payload    string
+	Attempts   int64
+	LastError  string
+	Result     string
+	Status     string
+	NextAt     int64
+	CreatedAt  int64
+	UpdatedAt  int64
+}
+
 type QualityProfile struct {
 	ID              int64
 	Name            string

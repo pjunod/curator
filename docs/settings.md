@@ -345,12 +345,26 @@ What the failures mean:
 | `lacks the scan:trigger scope (403)` | Real key, wrong scopes. Mint a new one; scopes are fixed at creation. |
 | `N of M paths not indexed` | Partial: some files of a season pack landed and some did not. The per-path reasons follow. |
 
-Deliveries — successes and failures both — are recorded on the media item's
-own history, next to the import they belong to, so "why hasn't this shown up
-in plurx" is answerable without reading the server log. A successful one
-carries plurx's own answer (`scanned → plurx item 1201`, or `queued as sr-…`
-when plurx was mid-scan), which is the only place the chain *grabbed →
-downloaded → imported → indexed as item 1201* is joined up.
+**Deliveries are queued, not fired and forgotten.** A plurx notification is
+written to a row first and delivered by a worker: first attempt immediately,
+then retries at 5 s, 30 s and 2 m before it is marked failed. The row is the
+point — the common way to miss a scan is a host reboot where both
+applications come back and monarr's import finishes a few seconds before
+plurx is listening, and an in-memory retry does not survive the restart that
+causes it. Failures that retrying cannot fix (401, 403, 422, a 404 from a
+plurx too old to have the route) stop on the first attempt instead of
+spending the whole schedule postponing the message you need to read.
+
+**Delivery log** on the notifier row shows every attempt: what plurx
+answered (`scanned → plurx item 1201`, or `queued as sr-…` when plurx was
+mid-scan), or why it failed and after how many tries. The terminal outcome is
+also written onto the download's own handoff trace as a `notify_plurx` step —
+which is where *Activity* sends you when something imported but never
+appeared in plurx.
+
+Notifiers can now be **edited in place** rather than removed and re-added.
+That was worth fixing here: the delivery log hangs off the notifier id, and
+changing a URL should not throw away the record of everything before it.
 
 Enabled download clients and plurx notifiers are also probed once a minute by
 the **connections** health check. Chat notifiers and the Plex/Jellyfin

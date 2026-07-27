@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -133,43 +134,87 @@ func TestPlurxAnnouncesASeasonPackAsOneDirectory(t *testing.T) {
 	}
 }
 
-func TestPlurxRetriesWhatRetryingCanFixAndNotWhatItCannot(t *testing.T) {
-	t.Run("a 5xx is retried", func(t *testing.T) {
-		var attempts int32
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if atomic.AddInt32(&attempts, 1) < 3 {
-				w.WriteHeader(http.StatusBadGateway)
-				return
-			}
-			_, _ = w.Write([]byte(`{"status":"scanned"}`))
-		}))
-		defer srv.Close()
-		if err := plurxNotifier(srv.URL).Send(context.Background(), movieImport("/m")); err != nil {
-			t.Fatalf("a transient 502 should have been ridden out: %v", err)
-		}
-		if attempts != 3 {
-			t.Errorf("attempts = %d, want 3", attempts)
-		}
-	})
+// Retrying is the delivery queue's job — it can do it across a restart,
+// which a loop inside one Send cannot. What the adapter owns is saying
+// WHETHER retrying could help, because that knowledge lives with the status
+// codes. Getting it backwards is expensive both ways: a permanent failure
+// retried three times just delays the message somebody needs to read, and a
+// transient one marked permanent drops a scan on the floor.
+func TestPlurxSaysWhetherAFailureIsWorthRetrying(t *testing.T) {
+	cases := []struct {
+		name      string
+		status    int
+		body      string
+		permanent bool
+	}{
+		{"a 502 is the server having a moment", http.StatusBadGateway, "", false},
+		{"a 403 is a key that will not grow a scope", http.StatusForbidden, "", true},
+		{"a 401 is a credential that will not come back", http.StatusUnauthorized, "", true},
+		{"a 422 is a path that will not move", http.StatusUnprocessableEntity,
+			`{"error":"path is not under any library root","roots":[]}`, true},
+		{"a 404 is a plurx too old to have the route", http.StatusNotFound, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&attempts, 1)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
 
-	t.Run("a 403 is not", func(t *testing.T) {
-		var attempts int32
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			atomic.AddInt32(&attempts, 1)
-			w.WriteHeader(http.StatusForbidden)
-		}))
-		defer srv.Close()
-		err := plurxNotifier(srv.URL).Send(context.Background(), movieImport("/m"))
-		if err == nil {
-			t.Fatal("a 403 must be reported, not swallowed")
+			err := plurxNotifier(srv.URL).Send(context.Background(), movieImport("/m"))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if attempts != 1 {
+				t.Errorf("attempts = %d — the adapter must not retry; the queue does", attempts)
+			}
+			if got := errors.Is(err, ports.ErrNotifyPermanent); got != tc.permanent {
+				t.Errorf("permanent = %v, want %v (%v)", got, tc.permanent, err)
+			}
+		})
+	}
+}
+
+// A connection that never opened is the most retryable failure there is —
+// it is what a restarting plurx looks like.
+func TestPlurxTreatsAnUnreachableServerAsRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close() // nothing listening now
+
+	err := plurxNotifier(url).Send(context.Background(), movieImport("/m"))
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if errors.Is(err, ports.ErrNotifyPermanent) {
+		t.Errorf("an unreachable server must stay retryable: %v", err)
+	}
+}
+
+// A mixed batch stays retryable. The transient half deserves another go, and
+// a targeted scan is idempotent, so redoing the settled half costs a no-op.
+func TestPlurxKeepsAMixedBatchRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(raw), "/m/gone") {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"error":"path is not under any library root","roots":[]}`))
+			return
 		}
-		if attempts != 1 {
-			t.Errorf("attempts = %d — a key without the scope will not grow one", attempts)
-		}
-		if !strings.Contains(err.Error(), "scan:trigger") {
-			t.Errorf("the error must say what is missing, got: %v", err)
-		}
-	})
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	err := plurxNotifier(srv.URL).Send(context.Background(), movieImport("/m/gone", "/m/blip"))
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if errors.Is(err, ports.ErrNotifyPermanent) {
+		t.Errorf("one transient failure makes the batch worth retrying: %v", err)
+	}
 }
 
 // The 422 is the one people will actually hit: two containers, two different

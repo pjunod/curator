@@ -796,6 +796,73 @@ func (s *Server) TestNotifier(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// UpdateNotifier implements PUT /notifiers/{id}.
+func (s *Server) UpdateNotifier(w http.ResponseWriter, r *http.Request, id int64) {
+	if _, err := s.deps.Store.GetNotifier(r.Context(), id); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	var body apigen.UpdateNotifierJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if !body.Type.Valid() || body.Name == "" {
+		writeError(w, http.StatusBadRequest, "type and name are required")
+		return
+	}
+	cfg := notifierFromInput(apigen.AddNotifierJSONRequestBody(body))
+	cfg.ID = id
+	if err := s.deps.Store.UpdateNotifier(r.Context(), cfg); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, notifierDTO(cfg))
+}
+
+// ListDeliveries implements GET /notifiers/{id}/deliveries.
+//
+// The answer to "did it actually arrive?" — which, for a notifier that acts
+// on a media server rather than talking to a person, is the same question as
+// "is the file in my library?".
+func (s *Server) ListDeliveries(w http.ResponseWriter, r *http.Request, id int64) {
+	if _, err := s.deps.Store.GetNotifier(r.Context(), id); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	rows, err := s.deps.Store.ListDeliveries(r.Context(), id, 100)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := make([]apigen.Delivery, 0, len(rows))
+	for _, d := range rows {
+		out = append(out, apigen.Delivery{
+			Id: d.ID, NotifierId: d.NotifierID, DownloadId: ptrIfSet(d.DownloadID),
+			Event: d.Event, Attempts: d.Attempts,
+			LastError: ptrIfText(d.LastError), Result: ptrIfText(d.Result),
+			Status:    apigen.DeliveryStatus(d.Status),
+			NextAt:    ptrIfSet(d.NextAt),
+			CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func ptrIfSet(v int64) *int64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+
+func ptrIfText(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
 // DeleteNotifier implements DELETE /notifiers/{id}.
 func (s *Server) DeleteNotifier(w http.ResponseWriter, r *http.Request, id int64) {
 	if _, err := s.deps.Store.GetNotifier(r.Context(), id); err != nil {
