@@ -191,6 +191,8 @@ becomes useful — right now that reads `internal/api` at 30% and three packages
 - **[Usage guide](docs/usage.md)** — first run, adding movies/series/books, adopting an
   existing library, interactive search, automation, connecting Jellyseerr/Prowlarr/Bazarr.
 - **[Settings reference](docs/settings.md)** — every field in the Settings and System pages.
+- **[Integration](docs/integration.md)** — every seam with nzbd and plurx: what each does, the
+  wire format, where you watch it in the UI, and the command that proves it works.
 - **[Deployment](docs/deployment.md)** — storage rules for the SQLite database (why the live
   DB must not sit on NFS/Gluster), floating-node/HA patterns, backup/restore.
 - **[Architecture](docs/architecture.md)** and **[ADRs](docs/adr/)** — the design and why.
