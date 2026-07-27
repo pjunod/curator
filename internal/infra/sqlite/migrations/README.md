@@ -23,7 +23,15 @@ shared development database. So:
 
 - **Before writing a migration, check every branch, not just yours:**
   `git log --all --diff-filter=A --name-only -- internal/infra/sqlite/migrations/`
-  Take the next number above the highest anyone has claimed.
+  Take the next number above the highest anyone has claimed. `ls` is not
+  enough — it shows your branch, and your branch is not where the collision
+  comes from. (Asked how this is known: migration 23 was claimed twice, the
+  second time by whoever wrote this file.)
+- **Two files with the same number in ONE directory panic goose at
+  startup**, by name, immediately. That case is loud and cheap. The silent
+  one — the one this document exists for — is when the two never meet on
+  disk: separate branches, one shared database, and the loser skipped
+  forever with no error anywhere.
 - **If your branch and another land on the same number, renumber before
   merging** — not afterwards. Once a database has recorded the number, the
   loser is unrecoverable by ordinary means and needs a repair migration.
