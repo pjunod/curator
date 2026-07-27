@@ -3190,18 +3190,24 @@ components:
         name: { type: string }
         kind:
           type: string
-          enum: [downloadclient, mediaserver]
+          enum: [downloadclient, mediaserver, inbound]
+          description: >
+            downloadclient / mediaserver are things Monarr connects TO.
+            inbound is another application that connects to Monarr — plurx
+            pushing watch state, or a compat consumer.
         type: { type: string }
         url:
           type: string
           description: Redacted — any password is replaced before it leaves the server.
         state:
           type: string
-          enum: [live, polling, degraded, unreachable, unprobed]
+          enum: [live, polling, degraded, unreachable, unprobed, calling, quiet]
           description: >
             live = a push stream is open; polling = answering, on the 30s poll;
             degraded = answering but not working properly; unreachable = not
-            answering; unprobed = configured, but has no side-effect-free test.
+            answering; unprobed = configured, but has no side-effect-free
+            test. For inbound rows: calling = heard from recently; quiet =
+            has called at some point since startup, but not lately.
         version: { type: string }
         lastContact:
           type: integer

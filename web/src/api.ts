@@ -902,13 +902,13 @@ export const getDeliveries = (id: number) => get<Delivery[]>(`/notifiers/${id}/d
 // One remote application and whether it is talking back.
 export interface Connection {
   name: string
-  kind: 'downloadclient' | 'mediaserver'
+  kind: 'downloadclient' | 'mediaserver' | 'inbound'
   type: string
   url?: string
   /** live = a push stream is open · polling = answering, on the 30s poll ·
    *  degraded = answering but not working · unreachable = not answering ·
    *  unprobed = configured, but has no side-effect-free test. */
-  state: 'live' | 'polling' | 'degraded' | 'unreachable' | 'unprobed'
+  state: 'live' | 'polling' | 'degraded' | 'unreachable' | 'unprobed' | 'calling' | 'quiet'
   version?: string
   lastContact?: number
   lastEventSeq?: number

@@ -366,6 +366,15 @@ Notifiers can now be **edited in place** rather than removed and re-added.
 That was worth fixing here: the delivery log hangs off the notifier id, and
 changing a URL should not throw away the record of everything before it.
 
+**Both directions.** The Connections card lists what Monarr reaches out to
+*and* what reaches in — a `calls Monarr` row per other application, with what
+it last called and when. plurx's whole side of the pipeline is inbound (it
+pushes watch state and reads the calendar), so without those rows a plurx
+that was configured perfectly and calling every few minutes appeared nowhere
+at all. `calling` means heard from within the hour; `quiet` means it has
+called since Monarr started but not lately. Browsers are excluded — a person
+with a tab open is not a connection.
+
 Health checks cover every connection separately — `client:<name>`,
 `client:<name>:capacity`, `mediaserver:<name>` — because the actions differ.
 "Not answering" means grabs are piling up; "up but the disk is full" means

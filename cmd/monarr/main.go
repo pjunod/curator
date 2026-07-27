@@ -432,6 +432,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Bus:             b,
 		Health:          reg,
 		Connections:     connections,
+		Callers:         api.NewCallerRegistry(),
 		Scheduler:       sched,
 		DB:              db,
 		Library:         lib,

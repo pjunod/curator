@@ -38,6 +38,7 @@ func (e AddMediaRequestMonitor) Valid() bool {
 // Defines values for ConnectionKind.
 const (
 	Downloadclient ConnectionKind = "downloadclient"
+	Inbound        ConnectionKind = "inbound"
 	Mediaserver    ConnectionKind = "mediaserver"
 )
 
@@ -45,6 +46,8 @@ const (
 func (e ConnectionKind) Valid() bool {
 	switch e {
 	case Downloadclient:
+		return true
+	case Inbound:
 		return true
 	case Mediaserver:
 		return true
@@ -55,9 +58,11 @@ func (e ConnectionKind) Valid() bool {
 
 // Defines values for ConnectionState.
 const (
+	Calling     ConnectionState = "calling"
 	Degraded    ConnectionState = "degraded"
 	Live        ConnectionState = "live"
 	Polling     ConnectionState = "polling"
+	Quiet       ConnectionState = "quiet"
 	Unprobed    ConnectionState = "unprobed"
 	Unreachable ConnectionState = "unreachable"
 )
@@ -65,11 +70,15 @@ const (
 // Valid indicates whether the value is a known member of the ConnectionState enum.
 func (e ConnectionState) Valid() bool {
 	switch e {
+	case Calling:
+		return true
 	case Degraded:
 		return true
 	case Live:
 		return true
 	case Polling:
+		return true
+	case Quiet:
 		return true
 	case Unprobed:
 		return true
@@ -616,8 +625,10 @@ type CalendarEntry struct {
 
 // Connection defines model for Connection.
 type Connection struct {
-	Detail *string        `json:"detail,omitempty"`
-	Kind   ConnectionKind `json:"kind"`
+	Detail *string `json:"detail,omitempty"`
+
+	// Kind downloadclient / mediaserver are things Monarr connects TO. inbound is another application that connects to Monarr — plurx pushing watch state, or a compat consumer.
+	Kind ConnectionKind `json:"kind"`
 
 	// LastContact Last time something actually came through it (epoch ms).
 	LastContact *int64 `json:"lastContact,omitempty"`
@@ -626,7 +637,7 @@ type Connection struct {
 	LastEventSeq *int64 `json:"lastEventSeq,omitempty"`
 	Name         string `json:"name"`
 
-	// State live = a push stream is open; polling = answering, on the 30s poll; degraded = answering but not working properly; unreachable = not answering; unprobed = configured, but has no side-effect-free test.
+	// State live = a push stream is open; polling = answering, on the 30s poll; degraded = answering but not working properly; unreachable = not answering; unprobed = configured, but has no side-effect-free test. For inbound rows: calling = heard from recently; quiet = has called at some point since startup, but not lately.
 	State ConnectionState `json:"state"`
 	Type  string          `json:"type"`
 
@@ -635,10 +646,10 @@ type Connection struct {
 	Version *string `json:"version,omitempty"`
 }
 
-// ConnectionKind defines model for Connection.Kind.
+// ConnectionKind downloadclient / mediaserver are things Monarr connects TO. inbound is another application that connects to Monarr — plurx pushing watch state, or a compat consumer.
 type ConnectionKind string
 
-// ConnectionState live = a push stream is open; polling = answering, on the 30s poll; degraded = answering but not working properly; unreachable = not answering; unprobed = configured, but has no side-effect-free test.
+// ConnectionState live = a push stream is open; polling = answering, on the 30s poll; degraded = answering but not working properly; unreachable = not answering; unprobed = configured, but has no side-effect-free test. For inbound rows: calling = heard from recently; quiet = has called at some point since startup, but not lately.
 type ConnectionState string
 
 // CustomFormat defines model for CustomFormat.

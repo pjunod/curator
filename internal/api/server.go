@@ -43,6 +43,9 @@ type Deps struct {
 	// Connections is the monitor behind the Connections panel; nil renders
 	// the panel empty rather than failing.
 	Connections *health.ConnectionMonitor
+	// Callers remembers which other applications have called in — the
+	// inbound half of "are these apps talking".
+	Callers     *CallerRegistry
 	Scheduler   *scheduler.Scheduler
 	DB          SchemaVersioner
 	Library     *library.Service
@@ -91,13 +94,15 @@ func (s *Server) Handler() http.Handler {
 			writeError(w, http.StatusBadRequest, err.Error())
 		},
 	})
-	mux.Handle("/api/v1/", s.authGuard(apiHandler))
+	mux.Handle("/api/v1/", s.noteCallers(s.authGuard(apiHandler)))
 	mux.Handle("/metrics", s.metricsHandler())
+	// The compat personalities are machine callers by definition — Prowlarr,
+	// Jellyseerr, Bazarr — so they belong on the same list.
 	if s.deps.CompatSonarr != nil {
-		mux.Handle("/sonarr/", http.StripPrefix("/sonarr", s.deps.CompatSonarr))
+		mux.Handle("/sonarr/", s.noteCallers(http.StripPrefix("/sonarr", s.deps.CompatSonarr)))
 	}
 	if s.deps.CompatRadarr != nil {
-		mux.Handle("/radarr/", http.StripPrefix("/radarr", s.deps.CompatRadarr))
+		mux.Handle("/radarr/", s.noteCallers(http.StripPrefix("/radarr", s.deps.CompatRadarr)))
 	}
 	mux.Handle("/", s.spaHandler())
 	return s.recoverer(s.requestLogger(mux))

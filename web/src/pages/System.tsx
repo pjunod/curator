@@ -26,6 +26,8 @@ const STATE_PILL: Record<Connection['state'], string> = {
   degraded: 'pill-warning',
   unreachable: 'pill-warning',
   unprobed: 'pill-neutral',
+  calling: 'pill-ok',
+  quiet: 'pill-neutral',
 }
 
 // What the word means, for anyone who has not read the plan. `polling` is
@@ -36,6 +38,8 @@ const STATE_TITLE: Record<Connection['state'], string> = {
   degraded: 'Answering, but not working properly',
   unreachable: 'Not answering',
   unprobed: 'Configured, but never probed — its only test is the action itself',
+  calling: 'This application has called Monarr recently',
+  quiet: 'It has called since Monarr started, but not lately',
 }
 
 function ConnectionsCard() {
@@ -50,7 +54,7 @@ function ConnectionsCard() {
     <section className="panel">
       <h2>Connections</h2>
       <p className="muted">
-        The other applications Monarr talks to.{' '}
+        The other applications Monarr talks to — and the ones that talk to it.{' '}
         {q.data?.checkedAt
           ? `Last probed ${fmtRelative(new Date(q.data.checkedAt).toISOString())}.`
           : 'Not probed yet — the health check runs every minute.'}
@@ -82,7 +86,11 @@ function ConnectionsCard() {
                   </div>
                 </td>
                 <td className="muted">
-                  {c.kind === 'downloadclient' ? 'download client' : 'media server'}
+                  {c.kind === 'downloadclient'
+                    ? 'download client'
+                    : c.kind === 'inbound'
+                      ? 'calls Monarr'
+                      : 'media server'}
                 </td>
                 <td>
                   <span className={`pill ${STATE_PILL[c.state]}`} title={STATE_TITLE[c.state]}>

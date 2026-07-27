@@ -147,3 +147,67 @@ func recordJSON(t *testing.T, h func(http.ResponseWriter, *http.Request)) []byte
 	}
 	return rr.Body.Bytes()
 }
+
+// The panel used to answer "are these apps talking" in one direction only:
+// what Monarr reaches out to. plurx's whole side of the pipeline is inbound,
+// so a plurx configured perfectly and calling every few minutes appeared
+// nowhere at all — which reads, correctly, as "it is not working".
+func TestApplicationsThatCallMonarrAppearOnThePanel(t *testing.T) {
+	reg := NewCallerRegistry()
+	reg.Note("plurx/0.4.1", "/api/v1/webhooks/plurx")
+	srv := &Server{deps: Deps{Callers: reg, Bus: bus.New(nil)}}
+
+	rr := recordJSON(t, srv.GetConnections)
+	var out connectionsResponse
+	if err := json.Unmarshal(rr, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Connections) != 1 {
+		t.Fatalf("connections = %d, want the inbound caller", len(out.Connections))
+	}
+	c := out.Connections[0]
+	if c.Name != "plurx" {
+		t.Errorf("name = %q — the product token is what somebody recognizes", c.Name)
+	}
+	if c.Kind != "inbound" {
+		t.Errorf("kind = %q, want inbound", c.Kind)
+	}
+	if c.State != "calling" {
+		t.Errorf("state = %q, want calling", c.State)
+	}
+	if c.Detail == nil || !contains(*c.Detail, "/api/v1/webhooks/plurx") {
+		t.Errorf("detail should name what it called: %v", c.Detail)
+	}
+}
+
+// A person with a browser open is not a connection, and one row per Chrome
+// version would bury the row that matters.
+func TestBrowsersAreNotListedAsConnections(t *testing.T) {
+	reg := NewCallerRegistry()
+	reg.Note("Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/140", "/api/v1/items")
+	reg.Note("", "/api/v1/items")
+	reg.Note("plurx/0.4.1", "/api/v1/calendar")
+
+	got := reg.List()
+	if len(got) != 1 || got[0].Name != "plurx" {
+		t.Errorf("callers = %+v, want plurx alone", got)
+	}
+}
+
+// A caller that has not been heard from in an hour is quiet, not calling.
+// The window is generous on purpose: plurx's rail refreshes every 15 minutes
+// and its watch pushes are as rare as somebody finishing something.
+func TestACallerThatHasGoneAwayReadsAsQuiet(t *testing.T) {
+	fresh := inboundDTO(Caller{Name: "plurx", LastSeen: time.Now(), LastPath: "/x"})
+	if fresh.State != "calling" {
+		t.Errorf("state = %q for a caller heard from just now", fresh.State)
+	}
+	stale := inboundDTO(Caller{
+		Name: "plurx", LastSeen: time.Now().Add(-2 * time.Hour), LastPath: "/x",
+	})
+	if stale.State != "quiet" {
+		t.Errorf("state = %q for a caller last heard two hours ago", stale.State)
+	}
+}
+
+func contains(s, sub string) bool { return strings.Contains(s, sub) }

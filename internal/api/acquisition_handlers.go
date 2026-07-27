@@ -902,23 +902,34 @@ type connectionsResponse struct {
 // the answer is so nobody has to guess.
 func (s *Server) GetConnections(w http.ResponseWriter, r *http.Request) {
 	out := connectionsResponse{Connections: []apigen.Connection{}}
-	if s.deps.Connections == nil {
-		writeJSON(w, http.StatusOK, out)
-		return
-	}
-	states, at := s.deps.Connections.Snapshot()
-	if !at.IsZero() {
-		ms := at.UnixMilli()
-		out.CheckedAt = &ms
-	}
-	links := map[int64]acquisition.ClientLink{}
-	if s.deps.Acquisition != nil {
-		for _, l := range s.deps.Acquisition.Subscriptions() {
-			links[l.ClientID] = l
+	// The two halves are independent: inbound callers are recorded whether
+	// or not the outbound probe has ever run, and a missing monitor must not
+	// hide them.
+	if s.deps.Connections != nil {
+		states, at := s.deps.Connections.Snapshot()
+		if !at.IsZero() {
+			ms := at.UnixMilli()
+			out.CheckedAt = &ms
+		}
+		links := map[int64]acquisition.ClientLink{}
+		if s.deps.Acquisition != nil {
+			for _, l := range s.deps.Acquisition.Subscriptions() {
+				links[l.ClientID] = l
+			}
+		}
+		for _, st := range states {
+			out.Connections = append(out.Connections, connectionDTO(st, links[st.ID]))
 		}
 	}
-	for _, st := range states {
-		out.Connections = append(out.Connections, connectionDTO(st, links[st.ID]))
+	// The other direction. Everything above is something Monarr reaches out
+	// to; these are applications that reach IN — plurx pushing watch state,
+	// a compat consumer polling. Leaving them off made a plurx that was
+	// configured perfectly and calling every few minutes appear nowhere at
+	// all, which reads as "it is not working".
+	if s.deps.Callers != nil {
+		for _, c := range s.deps.Callers.List() {
+			out.Connections = append(out.Connections, inboundDTO(c))
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -943,6 +954,28 @@ func connectionDTO(st health.ConnectionState, link acquisition.ClientLink) apige
 	c.State = apigen.ConnectionState(state)
 	c.Detail = ptrIfText(detail)
 	return c
+}
+
+// inboundQuietAfter is how long since a caller was last heard from before
+// the row stops claiming it is talking to us. Generous: plurx's coming-soon
+// rail refreshes every 15 minutes and its watch pushes are as rare as
+// somebody finishing something, so a stricter window would call a perfectly
+// healthy pairing quiet all afternoon.
+const inboundQuietAfter = time.Hour
+
+func inboundDTO(c Caller) apigen.Connection {
+	seen := c.LastSeen.UnixMilli()
+	state := apigen.Calling
+	detail := fmt.Sprintf("last called %s (%d since startup)", c.LastPath, c.Calls)
+	if time.Since(c.LastSeen) > inboundQuietAfter {
+		state = apigen.Quiet
+		detail = fmt.Sprintf("nothing since %s — last called %s",
+			c.LastSeen.Format(time.RFC3339), c.LastPath)
+	}
+	return apigen.Connection{
+		Name: c.Name, Kind: apigen.Inbound, Type: c.Agent,
+		State: state, LastContact: &seen, Detail: &detail,
+	}
 }
 
 func connectionState(st health.ConnectionState, link acquisition.ClientLink) (string, string) {
