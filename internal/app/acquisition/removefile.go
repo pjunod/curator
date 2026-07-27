@@ -97,11 +97,12 @@ func (s *Service) RemoveFile(ctx context.Context, itemID, fileID int64, req Remo
 	}
 
 	if req.Blocklist {
-		switch {
-		case release == "":
+		if release == "" {
+			// An adopted file has no source release, and inventing one from
+			// the filename would blocklist a string no indexer ever offered.
 			result.Note = joinNote(result.Note,
 				"monarr did not grab this file, so there is no release to blocklist")
-		default:
+		} else {
 			reason := req.Reason
 			if reason == "" {
 				reason = "marked bad by user"

@@ -17,6 +17,7 @@ import {
   posterUrl,
   RATING_SOURCE_LABELS,
   refreshLibraryItem,
+  removeLibraryFile,
   reprobeLibraryItem,
   rescanManualEntry,
   setEpisodeMonitored,
@@ -24,7 +25,7 @@ import {
   updateLibraryItem,
   updateMediaCopy,
 } from '../api'
-import type { MediaFileInfo, MediaItemDetail } from '../api'
+import type { MediaFileInfo, MediaItemDetail, RemoveFileOptions } from '../api'
 import { ReleaseSearch } from './ReleaseSearch'
 
 // CopiesPanel: additional quality targets — the same item kept at a second
@@ -414,12 +415,118 @@ function ProvenanceBadge({ f }: { f: MediaFileInfo }) {
     release: "Taken from the grabbed release's name, which nothing measured contradicted.",
     manual: 'Set by hand.',
     failed: 'monarr could not read this file. It is on disk; its quality is unknown.',
+    implausible:
+      "monarr read this file and what it says about itself cannot be true. It is not counted toward this item being satisfied, so the search continues.",
   }
-  const cls = f.provenance === 'probe' ? 'prov-measured' : f.provenance === 'failed' ? 'prov-failed' : 'prov-claimed'
+  const cls =
+    f.provenance === 'probe'
+      ? 'prov-measured'
+      : f.provenance === 'implausible'
+        ? 'prov-implausible'
+        : f.provenance === 'failed'
+          ? 'prov-failed'
+          : 'prov-claimed'
   return (
     <span className={`prov-badge ${cls}`} title={titles[f.provenance ?? ''] ?? ''}>
       {f.provenanceLabel}
     </span>
+  )
+}
+
+/**
+ * FileActions is the row control for one file: remove it, or remove it and
+ * declare its release bad.
+ *
+ * Two buttons rather than one with a checkbox, because they are two different
+ * statements and the difference matters. "Delete" is for a copy you do not
+ * want — a duplicate, something taking up space. "Delete & blocklist" is for a
+ * copy that should never have existed: it removes the file, tells automation
+ * never to grab that release again, and starts looking for a real one.
+ *
+ * Both confirm first, and the confirmation names the file, because the button
+ * is three pixels from the row above it.
+ */
+function FileActions({
+  itemId,
+  file,
+  onDone,
+}: {
+  itemId: number
+  file: MediaFileInfo
+  onDone: () => void
+}) {
+  const [pending, setPending] = useState<'delete' | 'reject' | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+
+  const remove = useMutation({
+    mutationFn: (opts: RemoveFileOptions) => removeLibraryFile(itemId, file.id, opts),
+    onSuccess: (res) => {
+      setPending(null)
+      setNote(res.note ?? null)
+      onDone()
+    },
+    onError: () => setPending(null),
+  })
+
+  const name = file.path.split('/').pop() || file.path
+  // Nothing to blocklist for a file monarr did not grab, and a button that
+  // silently does half of what it says is worse than one that is not there.
+  const canBlocklist = Boolean(file.sourceRelease)
+
+  if (pending) {
+    const rejecting = pending === 'reject'
+    return (
+      <div className="file-confirm">
+        <div className="mono">{name}</div>
+        <p className="muted">
+          {rejecting ? (
+            <>
+              Delete this file, never grab <span className="mono">{file.sourceRelease}</span>{' '}
+              again, and search for a replacement?
+            </>
+          ) : (
+            'Delete this file from disk and from the library?'
+          )}
+        </p>
+        <div className="row-actions">
+          <button
+            className="btn-danger"
+            disabled={remove.isPending}
+            onClick={() =>
+              remove.mutate({ fromDisk: true, blocklist: rejecting, search: rejecting })
+            }
+          >
+            {remove.isPending ? 'Working…' : rejecting ? 'Delete & blocklist' : 'Delete'}
+          </button>
+          <button disabled={remove.isPending} onClick={() => setPending(null)}>
+            Cancel
+          </button>
+        </div>
+        {remove.isError && (
+          <div className="error-text">{String((remove.error as Error).message)}</div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="row-actions">
+      <button onClick={() => setPending('delete')} title="Remove this file from disk and the library">
+        Delete
+      </button>
+      <button
+        onClick={() => setPending('reject')}
+        disabled={!canBlocklist}
+        title={
+          canBlocklist
+            ? 'Delete it, never grab that release again, and search for a replacement'
+            : 'monarr did not grab this file, so there is no release to blocklist'
+        }
+      >
+        Delete &amp; blocklist
+      </button>
+      {note && <div className="muted">{note}</div>}
+    </div>
   )
 }
 
@@ -906,14 +1013,21 @@ export function MediaDetailPage() {
                 <th>Size</th>
                 <th>Episodes</th>
                 {m.copies.length > 0 && <th>Copy</th>}
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {m.files.map((f) => (
-                <tr key={f.id}>
+                <tr key={f.id} className={f.implausible ? 'row-implausible' : ''}>
                   <td className="mono">
                     {f.path}
                     {f.facts ? <div className="file-facts">{f.facts}</div> : null}
+                    {/* The reason goes next to the file, not in a tooltip. A
+                        badge saying "does not add up" without the arithmetic
+                        is just a shrug with better typography. */}
+                    {f.implausible ? (
+                      <div className="error-text">✕ {f.implausible}</div>
+                    ) : null}
                   </td>
                   <td>
                     {f.quality ? (
@@ -934,6 +1048,16 @@ export function MediaDetailPage() {
                         : 'main'}
                     </td>
                   )}
+                  <td>
+                    <FileActions
+                      itemId={m.id}
+                      file={f}
+                      onDone={() => {
+                        void qc.invalidateQueries({ queryKey: ['library-item', id] })
+                        void qc.invalidateQueries({ queryKey: ['queue'] })
+                      }}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>

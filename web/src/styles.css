@@ -2217,3 +2217,83 @@ a.pill-info:hover {
 .review-search input[type='search'] {
   min-width: 240px;
 }
+
+/* ---- interactive search ---- */
+/* The release table's problem is one column: a scene name is 90 characters and
+   will take every pixel it is offered, which is how the size, age and seeder
+   columns ended up squeezed into nothing while the Grab button wrapped. Fixed
+   layout pins everything else and lets only the title wrap. */
+.release-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.release-table th,
+.release-table td {
+  vertical-align: top;
+}
+
+/* Numbers read as a column when they line up on the right and share a width.
+   Ragged-left figures in a table are a paragraph. */
+.release-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.release-table th:nth-child(1) { width: auto; }
+.release-table th:nth-child(2) { width: 132px; }
+.release-table th:nth-child(3) { width: 88px; }
+.release-table th:nth-child(4) { width: 84px; }
+.release-table th:nth-child(5) { width: 60px; }
+.release-table th:nth-child(6) { width: 130px; }
+.release-table th:nth-child(7) { width: 86px; }
+
+/* The title wraps; nothing else in the row does. overflow-wrap rather than
+   word-break so it prefers the dots and dashes a scene name is full of. */
+.release-title {
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.release-toolbar {
+  margin: 10px 0;
+}
+
+.toolbar-spacer {
+  flex: 1;
+}
+
+/* A caution is not a refusal and must not look like one: amber, not red, and
+   it sits above the rejections rather than among them. */
+.warn-text {
+  color: var(--warning);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+/* ---- files monarr does not believe ---- */
+/* Distinct from a rejected release, which is merely dimmed. This file is on
+   disk and looks fine in every column; the row has to carry the fact that it
+   is not counting for anything. */
+.row-implausible {
+  box-shadow: inset 3px 0 0 var(--error);
+}
+
+.prov-implausible {
+  color: var(--error);
+  box-shadow: inset 0 0 0 1px var(--error);
+}
+
+/* Confirmation lives in the row rather than in a modal: the thing being
+   deleted stays on screen next to the button that deletes it. */
+.file-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 260px;
+}
+
+.file-confirm p {
+  margin: 0;
+  font-size: 13px;
+}

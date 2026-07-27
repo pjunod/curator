@@ -135,13 +135,21 @@ export interface MediaFileInfo {
   /** Recorded quality, e.g. "WEB-DL 1080p"; '' when nothing could be determined. */
   quality?: string
   /** Where `quality` came from (ADR 0013). */
-  provenance?: '' | 'probe' | 'filename' | 'release' | 'manual' | 'failed'
+  provenance?: '' | 'probe' | 'filename' | 'release' | 'manual' | 'failed' | 'implausible'
   /** Badge text for `provenance`, rendered server-side. */
   provenanceLabel?: string
   /** Whether the SOURCE half of `quality` is trustworthy enough to replace on. */
   verified?: boolean
   /** Measured facts as one line: "1080p · HEVC · HDR10 · TrueHD · 23 Mbps". */
   facts?: string
+  /**
+   * Why this file's own measurements cannot be true, in one sentence.
+   * Empty for every file that adds up. When set, the file is not counted
+   * toward the item being satisfied, so the search for a real copy goes on.
+   */
+  implausible?: string
+  /** The release that put this file here; empty for an adopted file. */
+  sourceRelease?: string
 }
 
 export interface MediaCopy {
@@ -570,6 +578,8 @@ export interface ReleaseCandidate {
   accepted: boolean
   isUpgrade: boolean
   rejections: Rejection[]
+  /** A caution that does not decline the release — today, an implausible size. */
+  warning?: string
 }
 
 export interface GrabRequest {
@@ -655,6 +665,37 @@ export const removeQueueItem = (id: number, fromClient: boolean) =>
   send('DELETE', `/queue/${id}?fromClient=${fromClient}`)
 export const importQueueItem = (id: number) => send('POST', `/queue/${id}/import`)
 export const blocklistQueueItem = (id: number) => send('POST', `/queue/${id}/blocklist`)
+
+export interface RemoveFileResult {
+  path: string
+  deletedFromDisk: boolean
+  blocklisted?: string
+  searched: boolean
+  note?: string
+}
+
+export interface RemoveFileOptions {
+  fromDisk?: boolean
+  blocklist?: boolean
+  search?: boolean
+}
+
+/**
+ * removeLibraryFile drops one file from an item.
+ *
+ * The three options are three separate statements, which is why they are not
+ * one "delete hard" flag: deleting says "I do not want this copy",
+ * blocklisting says "and never take this release again". A file removed to
+ * free space should not poison a release that was fine.
+ */
+export const removeLibraryFile = (itemId: number, fileId: number, opts: RemoveFileOptions = {}) => {
+  const qs = new URLSearchParams()
+  if (opts.fromDisk) qs.set('fromDisk', 'true')
+  if (opts.blocklist) qs.set('blocklist', 'true')
+  if (opts.search) qs.set('search', 'true')
+  const q = qs.toString()
+  return send<RemoveFileResult>('DELETE', `/library/${itemId}/files/${fileId}${q ? `?${q}` : ''}`)
+}
 export const scanImportPath = (path: string) =>
   get<ScannedFile[]>(`/import/scan?path=${encodeURIComponent(path)}`)
 /** What happened to one file in an import — including why it did not land. */

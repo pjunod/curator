@@ -15,6 +15,11 @@ const releasesXML = (items) => `<?xml version="1.0" encoding="UTF-8"?>
 ${items.join('\n')}
 </channel></rss>`
 
+// Sizes are realistic on purpose. monarr declines a release whose advertised
+// size cannot hold what its name claims (a 1080p feature at 2 MB is 2.6 kbps),
+// so the toy sizes these fixtures used to carry now correctly fail to grab.
+// The numbers below are what the named quality actually weighs: roughly
+// 5 Mbps for a 1080p WEB-DL, over the runtime fake-tmdb reports.
 const item = (title, slug, size, seeders) => `<item>
   <title>${title}</title>
   <guid>http://fake/details/${slug}</guid>
@@ -64,13 +69,13 @@ createServer((req, res) => {
     }
     if (q.get('t') === 'tvsearch' && !q.get('ep')) {
       res.end(releasesXML([
-        item('The.Test.Show.S01.1080p.WEB-DL-E2E', 'pack700', 4000000, 33),
+        item('The.Test.Show.S01.1080p.WEB-DL-E2E', 'pack700', 2_400_000_000, 33),
       ]))
       return
     }
     if (q.get('t') === 'tvsearch') {
       res.end(releasesXML([
-        item('The.Test.Show.S01E01.1080p.WEB-DL-E2E', 'pack700', 1000000, 12),
+        item('The.Test.Show.S01E01.1080p.WEB-DL-E2E', 'pack700', 1_200_000_000, 12),
       ]))
       return
     }
@@ -86,8 +91,8 @@ createServer((req, res) => {
     }
     // movie search: one good candidate, one CAM (rejected by profile rank order)
     res.end(releasesXML([
-      item('The.Test.Movie.2024.1080p.WEB-DL.x264-E2E', 'movie601', 2000000, 50),
-      item('The.Test.Movie.2024.HDCAM.x264-JUNK', 'movie601cam', 900000, 2),
+      item('The.Test.Movie.2024.1080p.WEB-DL.x264-E2E', 'movie601', 4_000_000_000, 50),
+      item('The.Test.Movie.2024.HDCAM.x264-JUNK', 'movie601cam', 900_000_000, 2),
     ]))
     return
   }
