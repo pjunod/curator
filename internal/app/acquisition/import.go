@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -157,6 +158,40 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	if len(videos) == 0 {
 		return ImportResult{}, fmt.Errorf("no media files in %s", savePath)
 	}
+	// A movie is one file. When a payload offers several, take the biggest.
+	//
+	// Only one of them can win — the others are declined as "does not improve
+	// on" whatever landed first — so the only question is which one gets to be
+	// first, and alphabetical order is a terrible way to answer it. A payload
+	// carrying the feature plus a decoy (usenet spam does this; so does the
+	// occasional stray extra) would hand the library whichever one sorted
+	// earlier, and "AAA-something.mkv" sorts earlier than most real releases.
+	//
+	// Season packs and multi-episode files are untouched: they are matched per
+	// episode, so every file in them has its own slot to win.
+	if item.Kind == domain.KindMovie && len(videos) > 1 {
+		sort.SliceStable(videos, func(i, j int) bool { return sizeOf(videos[i]) > sizeOf(videos[j]) })
+		s.log.Info("import: payload has more than one video; taking the largest",
+			"release", dl.ReleaseTitle, "files", len(videos),
+			"chosen", filepath.Base(videos[0]))
+	}
+
+	// Did we get what was advertised?
+	//
+	// This is the cheapest question in the whole pipeline and it was never
+	// asked. The indexer states a size at grab time and monarr stores it on
+	// the download row, and then nothing ever compares it to the bytes that
+	// arrived. Without that comparison "the release was a 500 MB fake" and
+	// "a 13 GB release arrived 500 MB short" are indistinguishable from the
+	// library, and they call for opposite responses: blocklist the release,
+	// or go look at the download client.
+	//
+	// It does not refuse the import. A short payload is a fact about the
+	// transfer, not a verdict on the release, and refusing here would strand
+	// legitimate imports whose indexer simply lies about size. The probe's
+	// plausibility rules already stop a runt file from satisfying the item;
+	// this exists to say WHY in terms a person can act on.
+	s.checkDelivered(ctx, dl, item.ID, videos)
 
 	epStates, err := s.episodeStates(ctx, item, scope.CopyID)
 	if err != nil {
@@ -216,6 +251,48 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	s.log.Info("imported", "item", item.Title, "files", result.Imported,
 		"skipped", len(result.Skipped()))
 	return result, nil
+}
+
+// HistoryShortDelivery records a payload that arrived materially smaller than
+// the indexer advertised.
+const HistoryShortDelivery = "short_delivery"
+
+// deliveredFloor is the fraction of the advertised size a payload has to reach
+// before monarr stops caring.
+//
+// Half, because the advertised number is honestly approximate: a usenet post's
+// size includes par2 and rar overhead the extracted media does not carry, and
+// some indexers round or report the whole posting rather than the file. Real
+// overhead runs 3-15%. Anything that arrives under half of what was promised
+// is not overhead, it is a different thing than the one that was offered.
+const deliveredFloor = 0.5
+
+// checkDelivered compares the bytes that arrived against the bytes that were
+// advertised, and says so loudly when they disagree.
+func (s *Service) checkDelivered(ctx context.Context, dl sqlite.Download, itemID int64, files []string) {
+	if dl.Size <= 0 || len(files) == 0 {
+		return // nothing was advertised, or nothing arrived to compare
+	}
+	var delivered int64
+	for _, f := range files {
+		delivered += sizeOf(f)
+	}
+	if delivered <= 0 || float64(delivered) >= float64(dl.Size)*deliveredFloor {
+		return
+	}
+	pct := float64(delivered) / float64(dl.Size) * 100
+	s.log.Warn("import: payload is far smaller than the indexer advertised",
+		"release", dl.ReleaseTitle, "indexer", dl.Indexer,
+		"advertised", dl.Size, "delivered", delivered,
+		"percent", fmt.Sprintf("%.0f%%", pct),
+		"note", "check the download client before blaming the release")
+	_ = s.db.AddHistory(ctx, HistoryShortDelivery, itemID, dl.ReleaseTitle, map[string]any{
+		"advertised": dl.Size,
+		"delivered":  delivered,
+		"percent":    fmt.Sprintf("%.0f%%", pct),
+		"files":      len(files),
+		"indexer":    dl.Indexer,
+	})
 }
 
 func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) {
@@ -511,29 +588,32 @@ func place(src, dest string) error {
 	for _, d := range created {
 		_ = applyMode(d, dirMode())
 	}
-	if _, err := os.Stat(dest); err == nil {
-		return applyMode(dest, fileMode()) // already imported; still fix the mode
+	// A file already at the destination is only "already imported" if it is
+	// the SAME file. Anything else sharing that name is a stranger.
+	//
+	// This used to be a bare existence check, and it quietly defeated every
+	// same-quality replacement in the product. The destination name is
+	// rendered from the quality, so re-grabbing a bad "Bluray 2160p" as a good
+	// "Bluray 2160p" produces the identical path: place() saw the file, said
+	// "already imported", copied nothing — and then removeExistingFiles
+	// skipped the old file too, because it is the one being kept. The row was
+	// updated from sizeOf(dest), which re-read the OLD bytes, so the library
+	// reported the new release at the old file's size and the user re-grabbed
+	// the same movie over and over watching nothing change.
+	if existing, err := os.Stat(dest); err == nil {
+		if srcInfo, serr := os.Stat(src); serr == nil && os.SameFile(existing, srcInfo) {
+			return applyMode(dest, fileMode()) // genuinely the same file
+		}
+		// Fall through and replace it. The write below goes to a temp file and
+		// renames over the destination, so the old bytes survive right up
+		// until the new ones are complete.
 	}
-	if err := os.Link(src, dest); err == nil {
-		return applyMode(dest, fileMode())
-	}
-	in, err := os.Open(src)
+
+	// Both paths land the file at a temp name first and rename over the
+	// destination. Rename is atomic and, unlike Link, does not refuse when
+	// something is already there — which is what makes replacement safe.
+	tmp, err := placeTemp(dir, src)
 	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-	out, err := os.CreateTemp(dir, ".monarr-import-*")
-	if err != nil {
-		return err
-	}
-	tmp := out.Name()
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
 		return err
 	}
 	// Chmod the temp file BEFORE the rename, so the file is never visible at
@@ -542,7 +622,55 @@ func place(src, dest string) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, dest)
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// placeTemp materialises src next to dest under a temporary name, hardlinking
+// when the filesystem allows it and copying when it does not, and returns that
+// name. The caller renames it into place.
+func placeTemp(dir, src string) (string, error) {
+	// A hardlink is free and is what makes seeding-while-imported possible;
+	// it only works within one filesystem, so a failure here is expected
+	// rather than exceptional and falls through to the copy.
+	//
+	// CreateTemp reserves a name nothing else will pick, which matters because
+	// two imports into one folder used to be able to choose the same one. The
+	// file is removed immediately: Link needs the name free, and the window
+	// between is smaller than the one a fixed name leaves open forever.
+	if reserved, err := os.CreateTemp(dir, ".monarr-link-*"); err == nil {
+		link := reserved.Name()
+		_ = reserved.Close()
+		_ = os.Remove(link)
+		if err := os.Link(src, link); err == nil {
+			return link, nil
+		}
+		_ = os.Remove(link)
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.CreateTemp(dir, ".monarr-import-*")
+	if err != nil {
+		return "", err
+	}
+	tmp := out.Name()
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	return tmp, nil
 }
 
 // missingDirs returns the folders between dir and its nearest existing

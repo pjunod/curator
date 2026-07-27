@@ -1,6 +1,7 @@
 package acquisition
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/infra/bus"
@@ -429,5 +431,56 @@ func TestImportAnnouncesOnlyTheFilesThatLanded(t *testing.T) {
 		if strings.HasPrefix(p, payload) {
 			t.Errorf("announced a path still in the download folder: %q", p)
 		}
+	}
+}
+
+// TestMoviePayloadPrefersTheLargestFile pins which file wins when a payload
+// offers more than one.
+//
+// Only one can: the rest are declined as "does not improve on" whatever landed
+// first, so the ordering IS the decision. Alphabetical order made that
+// decision by accident, and a decoy named to sort early takes the slot from
+// the feature sitting right next to it.
+func TestMoviePayloadPrefersTheLargestFile(t *testing.T) {
+	svc, db, _ := setup(t, nil, nil)
+	ctx := context.Background()
+	itemID, err := db.CreateMediaItem(ctx, domain.MediaItem{
+		Kind: domain.KindMovie, Title: "Test Movie", SortTitle: "test movie",
+		Year: 2024, IDs: domain.ExternalIDs{TMDB: 601}, Monitored: true,
+		Path: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	payload := t.TempDir()
+	// The decoy sorts first and is a fraction of the size.
+	decoy := filepath.Join(payload, "AAA.The.Test.Movie.2024.1080p.WEB-DL.mkv")
+	feature := filepath.Join(payload, "The.Test.Movie.2024.1080p.WEB-DL.mkv")
+	if err := os.WriteFile(decoy, bytes.Repeat([]byte{0x11}, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(feature, bytes.Repeat([]byte{0x22}, 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := sqlite.Download{
+		MediaItemID: itemID, ReleaseTitle: "The.Test.Movie.2024.1080p.WEB-DL.x264-GRP",
+		Quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		SavePath: payload,
+	}
+	if _, err := svc.importDownload(ctx, dl, payload, false); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	files, err := db.ListFilesForItem(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one file, got %d", len(files))
+	}
+	if files[0].Size != 1<<20 {
+		t.Errorf("imported %d bytes; the decoy won over the feature", files[0].Size)
 	}
 }

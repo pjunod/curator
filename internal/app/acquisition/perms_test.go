@@ -1,8 +1,10 @@
 package acquisition
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -114,5 +116,86 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if info.Mode().Perm() != want {
 		t.Errorf("%s is mode %o, want %o", filepath.Base(path), info.Mode().Perm(), want)
+	}
+}
+
+// TestPlaceReplacesAStrangerAtTheDestination is the bug that made re-grabbing
+// look like it did nothing.
+//
+// The destination name is rendered from the quality, so replacing a bad
+// "Bluray 2160p" with a good "Bluray 2160p" produces the identical path.
+// place() used to see a file there, conclude "already imported", and copy
+// nothing — while removeExistingFiles skipped the same file as the one being
+// kept. Nothing was replaced, and because the row is written from
+// sizeOf(dest), the library reported the NEW release at the OLD file's size.
+// A user watching a 500 MB runt refuse to become a 20 GB remux, however many
+// times they grabbed it, was watching this.
+func TestPlaceReplacesAStrangerAtTheDestination(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "lib", "Movie (2025) [Bluray 2160p].mkv")
+
+	runt := filepath.Join(dir, "runt.mkv")
+	if err := os.WriteFile(runt, bytes.Repeat([]byte{0xAA}, 512), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := place(runt, dest); err != nil {
+		t.Fatalf("first place: %v", err)
+	}
+
+	real := filepath.Join(dir, "real.mkv")
+	want := bytes.Repeat([]byte{0xBB}, 4096)
+	if err := os.WriteFile(real, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := place(real, dest); err != nil {
+		t.Fatalf("second place: %v", err)
+	}
+
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("destination still holds %d bytes of the old file; want the %d-byte replacement",
+			len(got), len(want))
+	}
+
+	// And no temp or link scaffolding is left lying in the library folder.
+	entries, err := os.ReadDir(filepath.Dir(dest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".monarr-") {
+			t.Errorf("left %q behind in the library folder", e.Name())
+		}
+	}
+}
+
+// Re-placing the very same file is still a no-op, which is what keeps a
+// retried import from re-copying 20 GB for nothing.
+func TestPlaceIsIdempotentForTheSameFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	if err := os.WriteFile(src, bytes.Repeat([]byte{0xCC}, 2048), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "lib", "Movie (2025) [Bluray 2160p].mkv")
+	if err := place(src, dest); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := place(src, dest); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("re-placing the same file replaced it; a retried import should not re-copy")
 	}
 }
