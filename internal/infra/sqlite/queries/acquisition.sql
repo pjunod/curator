@@ -105,7 +105,8 @@ FROM media_files WHERE media_item_id = ?;
 
 -- name: GetMediaFile :one
 SELECT id, media_item_id, copy_id, path, size, added_at, quality,
-       media_info, quality_provenance, quality_confidence, probed_at
+       media_info, quality_provenance, quality_confidence, probed_at,
+       source_release, source_indexer
 FROM media_files WHERE id = ?;
 
 -- name: InsertProfile :one

@@ -161,6 +161,8 @@ type MediaFile struct {
 	QualityProvenance string
 	QualityConfidence string
 	ProbedAt          int64
+	SourceRelease     string
+	SourceIndexer     string
 }
 
 type MediaFileEpisode struct {

@@ -586,7 +586,7 @@ func (q *Queries) ListAllMediaCopies(ctx context.Context) ([]MediaCopy, error) {
 }
 
 const listAllMediaFiles = `-- name: ListAllMediaFiles :many
-SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at FROM media_files ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer FROM media_files ORDER BY path
 `
 
 func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
@@ -610,6 +610,8 @@ func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
 			&i.QualityProvenance,
 			&i.QualityConfidence,
 			&i.ProbedAt,
+			&i.SourceRelease,
+			&i.SourceIndexer,
 		); err != nil {
 			return nil, err
 		}
@@ -755,7 +757,7 @@ func (q *Queries) ListMediaCopies(ctx context.Context, mediaItemID int64) ([]Med
 }
 
 const listMediaFilesForItem = `-- name: ListMediaFilesForItem :many
-SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at FROM media_files WHERE media_item_id = ? ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer FROM media_files WHERE media_item_id = ? ORDER BY path
 `
 
 func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.NullInt64) ([]MediaFile, error) {
@@ -779,6 +781,8 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.Nul
 			&i.QualityProvenance,
 			&i.QualityConfidence,
 			&i.ProbedAt,
+			&i.SourceRelease,
+			&i.SourceIndexer,
 		); err != nil {
 			return nil, err
 		}
@@ -1061,6 +1065,21 @@ func (q *Queries) SetEpisodeMonitored(ctx context.Context, arg SetEpisodeMonitor
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setMediaFileSource = `-- name: SetMediaFileSource :exec
+UPDATE media_files SET source_release = ?, source_indexer = ? WHERE id = ?
+`
+
+type SetMediaFileSourceParams struct {
+	SourceRelease string
+	SourceIndexer string
+	ID            int64
+}
+
+func (q *Queries) SetMediaFileSource(ctx context.Context, arg SetMediaFileSourceParams) error {
+	_, err := q.db.ExecContext(ctx, setMediaFileSource, arg.SourceRelease, arg.SourceIndexer, arg.ID)
+	return err
 }
 
 const setSeasonEpisodesMonitored = `-- name: SetSeasonEpisodesMonitored :exec

@@ -144,7 +144,8 @@ func (q *Queries) GetIndexer(ctx context.Context, id int64) (Indexer, error) {
 
 const getMediaFile = `-- name: GetMediaFile :one
 SELECT id, media_item_id, copy_id, path, size, added_at, quality,
-       media_info, quality_provenance, quality_confidence, probed_at
+       media_info, quality_provenance, quality_confidence, probed_at,
+       source_release, source_indexer
 FROM media_files WHERE id = ?
 `
 
@@ -160,6 +161,8 @@ type GetMediaFileRow struct {
 	QualityProvenance string
 	QualityConfidence string
 	ProbedAt          int64
+	SourceRelease     string
+	SourceIndexer     string
 }
 
 func (q *Queries) GetMediaFile(ctx context.Context, id int64) (GetMediaFileRow, error) {
@@ -177,6 +180,8 @@ func (q *Queries) GetMediaFile(ctx context.Context, id int64) (GetMediaFileRow, 
 		&i.QualityProvenance,
 		&i.QualityConfidence,
 		&i.ProbedAt,
+		&i.SourceRelease,
+		&i.SourceIndexer,
 	)
 	return i, err
 }

@@ -129,7 +129,8 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 
 	// The import scope: which copy this grab was for decides the profile,
 	// the destination folder, and which existing files count as "current".
-	scope := importScope{Dest: item.Path, ProfileID: item.QualityProfileID}
+	scope := importScope{Dest: item.Path, ProfileID: item.QualityProfileID,
+		Release: dl.ReleaseTitle, Indexer: dl.Indexer}
 	if dl.CopyID != 0 {
 		cp, err := s.db.GetMediaCopy(ctx, dl.MediaItemID, dl.CopyID)
 		if err != nil {
@@ -244,11 +245,19 @@ func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) 
 }
 
 // importScope pins an import to one copy of the item: its id (0 =
-// primary), its destination folder, and its quality profile.
+// primary), its destination folder, its quality profile, and what produced
+// the payload.
 type importScope struct {
 	CopyID    int64
 	Dest      string
 	ProfileID int64
+	// Release and Indexer name the thing being imported. They ride along here
+	// rather than as two more parameters on three near-identical signatures,
+	// and they exist so each placed file can remember its own origin —
+	// without that, "this file is bad, blocklist it" has nothing to blocklist
+	// once the download row leaves the queue.
+	Release string
+	Indexer string
 }
 
 func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
@@ -285,8 +294,9 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	if err != nil {
 		return placement{}, err
 	}
+	s.rememberSource(ctx, fileID, dest, scope)
 	// The file exists now, so stop taking the release name's word for it.
-	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle)
+	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle, item.Runtime)
 	return placement{Path: dest, Upgrade: upgrade}, nil
 }
 
@@ -323,6 +333,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 	if err != nil {
 		return placement{}, err
 	}
+	s.rememberSource(ctx, fileID, dest, scope)
 	// Books are not probed: the extension IS the format (ADR 0006), so the
 	// provenance is the filename and there is nothing to measure.
 	return placement{Path: dest, Upgrade: upgrade},
@@ -410,9 +421,28 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	if err != nil {
 		return placement{}, err
 	}
-	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle)
+	s.rememberSource(ctx, fileID, dest, scope)
+	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle, item.Runtime)
 	return placement{Path: dest, Upgrade: upgrade},
 		s.db.ReplaceFileEpisodeLinks(ctx, fileID, epIDs)
+}
+
+// rememberSource records which release put a file on disk.
+//
+// Not bookkeeping. It is the only way somebody staring at a bad file three
+// weeks later can say "and never take that release again" without going to
+// find the download in the queue, which by then is long gone. A failure here
+// is worth a line in the log and nothing more — the file imported fine, and
+// refusing the import over a missing audit field would be the tail wagging
+// the dog.
+func (s *Service) rememberSource(ctx context.Context, fileID int64, dest string, scope importScope) {
+	if scope.Release == "" {
+		return // a manual import of a folder nobody grabbed
+	}
+	if err := s.db.SetFileSource(ctx, fileID, scope.Release, scope.Indexer); err != nil {
+		s.log.Warn("import: could not record source release",
+			"file", filepath.Base(dest), "err", err)
+	}
 }
 
 // removeExistingFiles deletes replaced files (rows + disk) for the target

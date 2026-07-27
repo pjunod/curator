@@ -199,6 +199,9 @@ SELECT * FROM media_files ORDER BY path;
 -- name: DeleteMediaFile :exec
 DELETE FROM media_files WHERE id = ?;
 
+-- name: SetMediaFileSource :exec
+UPDATE media_files SET source_release = ?, source_indexer = ? WHERE id = ?;
+
 -- name: LinkFileEpisode :exec
 INSERT INTO media_file_episodes (media_file_id, episode_id)
 VALUES (?, ?)

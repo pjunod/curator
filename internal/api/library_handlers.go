@@ -9,8 +9,10 @@ import (
 	"time"
 
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
+	"github.com/monarr-media/monarr/internal/app/acquisition"
 	"github.com/monarr-media/monarr/internal/app/library"
 	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/ports"
 )
@@ -182,6 +184,18 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		verified := f.SourceVerified()
 		fi.Verified = &verified
 		fi.Facts = optStr(f.Info.Summary())
+		// Why we do not believe this file, in a sentence the UI can print.
+		// Recomputed from the stored measurement rather than persisted, so
+		// retuning a threshold re-grades the whole library for free — the
+		// provenance column already records the verdict itself.
+		if f.Provenance == mediainfo.ProvenanceImplausible {
+			if why, bad := mediainfo.Check(f.Info, m.Runtime); bad {
+				fi.Implausible = optStr(why.Reason)
+			} else {
+				fi.Implausible = optStr("this file's measurements did not add up when it was last checked")
+			}
+		}
+		fi.SourceRelease = optStr(f.SourceRelease)
 		if f.CopyID != 0 {
 			cid := f.CopyID
 			fi.CopyId = &cid
@@ -1061,6 +1075,38 @@ func (s *Server) searchInBackground(itemID int64, why string) {
 			s.deps.Log.Warn("background search failed", "item", itemID, "trigger", why, "err", err)
 		}
 	}()
+}
+
+// RemoveLibraryFile implements DELETE /library/{id}/files/{fileId}: drop one
+// file, and optionally condemn the release that produced it.
+//
+// The three flags arrive separately because they are three separate decisions
+// (see the endpoint description). The handler's only job is to not conflate
+// them, and to report back what actually happened rather than assuming every
+// part worked — a blocklist that could not find a source release is a thing
+// the user needs told, not a silent no-op.
+func (s *Server) RemoveLibraryFile(w http.ResponseWriter, r *http.Request, id int64, fileID int64,
+	params apigen.RemoveLibraryFileParams) {
+	req := acquisition.RemoveFileRequest{
+		FromDisk:  params.FromDisk != nil && *params.FromDisk,
+		Blocklist: params.Blocklist != nil && *params.Blocklist,
+		Search:    params.Search != nil && *params.Search,
+	}
+	if req.Blocklist {
+		req.Reason = "marked bad by user"
+	}
+	res, err := s.deps.Acquisition.RemoveFile(r.Context(), id, fileID, req)
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, apigen.RemoveFileResult{
+		Path:            res.Path,
+		DeletedFromDisk: res.DeletedFromDisk,
+		Blocklisted:     optStr(res.Blocklisted),
+		Searched:        res.Searched,
+		Note:            optStr(res.Note),
+	})
 }
 
 // ReprobeLibraryItem implements POST /library/{id}/probe.

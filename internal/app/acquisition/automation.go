@@ -9,6 +9,7 @@ import (
 	"github.com/monarr-media/monarr/internal/domain/decision"
 	"github.com/monarr-media/monarr/internal/domain/format"
 	"github.com/monarr-media/monarr/internal/domain/matcher"
+	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/parser"
 	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/ports"
@@ -30,6 +31,39 @@ func (s *Service) enabledIndexers(ctx context.Context) ([]ports.IndexerConfig, e
 		}
 	}
 	return enabled, nil
+}
+
+// sizeImplausible reports whether a release's advertised size can hold what
+// its name claims, and why not.
+//
+// Automation gets the veto; interactive search only gets the warning. Somebody
+// looking at a list can see "500 MB" next to "Remux 2160p" and decide for
+// themselves — maybe the tracker's size field is wrong, maybe they know
+// something monarr does not. An unattended loop at 3am cannot, and the cost of
+// it guessing wrong is a fake file that marks the item satisfied and ends the
+// search. That asymmetry runs through the whole decision engine already: gate
+// the robot, never the person.
+func sizeImplausible(claimed quality.Quality, r ports.Release, runtimeMin int) (decision.Rejection, bool) {
+	bad, ok := mediainfo.SizeImplausible(claimed, r.Size, runtimeMin)
+	if !ok {
+		return decision.Rejection{}, false
+	}
+	return decision.Rejection{Code: decision.CodeSizeImplausible, Reason: bad.Reason}, true
+}
+
+// runtimeMemo caches item runtimes for one automation pass. An RSS sweep walks
+// every release from every indexer against every wantable, so without this the
+// same handful of items get their runtime read hundreds of times per run.
+type runtimeMemo map[int64]int
+
+func (m runtimeMemo) of(ctx context.Context, s *Service, w domain.Wantable) int {
+	id := w.MediaItemID()
+	if v, ok := m[id]; ok {
+		return v
+	}
+	v := s.db.ItemRuntime(ctx, id)
+	m[id] = v
+	return v
 }
 
 // autoGrab sends an accepted release to a client on behalf of a wantable —
@@ -63,6 +97,7 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 	}
 
 	grabbed := map[string]bool{} // wantable id → grabbed this run
+	runtimes := runtimeMemo{}
 	for _, cfg := range enabled {
 		cctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
 		releases, err := s.newIndexer(cfg).FetchRSS(cctx)
@@ -86,6 +121,10 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 					continue
 				}
 				if d := decision.Decide(p.Quality, w, profile); !d.Accepted {
+					continue
+				}
+				if why, bad := sizeImplausible(p.Quality, r, runtimes.of(ctx, s, w)); bad {
+					s.log.Info("rss: declined on size", "release", r.Title, "why", why.Reason)
 					continue
 				}
 				if err := s.autoGrab(ctx, w, r); err != nil {
@@ -145,6 +184,7 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable, enab
 	}
 
 	formats, _ := s.db.ListCustomFormats(ctx)
+	runtime := s.db.ItemRuntime(ctx, w.MediaItemID())
 	type scored struct {
 		r     ports.Release
 		q     quality.Quality
@@ -178,6 +218,10 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable, enab
 					continue
 				}
 				if d := decision.Decide(p.Quality, w, profile); !d.Accepted {
+					continue
+				}
+				if why, bad := sizeImplausible(p.Quality, r, runtime); bad {
+					s.log.Info("backlog: declined on size", "release", r.Title, "why", why.Reason)
 					continue
 				}
 				cand := &scored{r: r, q: p.Quality, score: format.Score(r.Title, formats)}

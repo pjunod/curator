@@ -396,3 +396,73 @@ func TestReprobeItemForcesAMeasurement(t *testing.T) {
 		t.Errorf("re-measure did not take: %+v", after[0])
 	}
 }
+
+// TestImplausibleFileStopsCountingAsSatisfied is the HIM case, end to end.
+//
+// A file lands, it measures as far too short for the feature it is supposed to
+// be, and the question that matters is not what badge it gets — it is whether
+// the movie is still being looked for. Before this, a file that passed the
+// probe at all marked the item satisfied, so a fake copy retired the want and
+// the search stopped forever. The assertions below are in that order: the row
+// says we do not believe it, and the disk state says the item still needs one.
+func TestImplausibleFileStopsCountingAsSatisfied(t *testing.T) {
+	movieRuntime = 96 // a feature, against a one-second fixture
+	t.Cleanup(func() { movieRuntime = 0 })
+
+	svc, db, _ := newService(t)
+	ctx := context.Background()
+
+	root := t.TempDir()
+	rf, err := svc.AddRootFolder(ctx, root, domain.KindMixed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(item.Path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The name makes a strong claim. The bytes do not support it.
+	movie := filepath.Join(item.Path, "Fight Club (1999) [Remux 2160p].mkv")
+	if err := os.WriteFile(movie, fixtureBytes(t, "mkv-1080p-h264-ac3.mkv"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := db.FileQualityRecords(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected one file record, got %d", len(records))
+	}
+	if got := records[0].Provenance; got != mediainfo.ProvenanceImplausible {
+		t.Errorf("provenance = %q, want %q", got, mediainfo.ProvenanceImplausible)
+	}
+	if records[0].SourceVerified() {
+		t.Error("an implausible file must not read as source-verified")
+	}
+
+	state, err := db.DiskStateForItem(ctx, item.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.HasFiles || state.Best != nil {
+		t.Errorf("disk state = %+v; a file we disbelieve must not satisfy the item, or the hunt stops", state)
+	}
+
+	// The row is still there. Not trusting a file is not the same as losing it.
+	files, err := db.ListFilesForItem(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Errorf("file rows = %d, want 1 — the file stays visible, it just stops voting", len(files))
+	}
+}

@@ -232,12 +232,13 @@ func (e IndexerInputProtocol) Valid() bool {
 
 // Defines values for MediaFileInfoProvenance.
 const (
-	MediaFileInfoProvenanceEmpty    MediaFileInfoProvenance = ""
-	MediaFileInfoProvenanceFailed   MediaFileInfoProvenance = "failed"
-	MediaFileInfoProvenanceFilename MediaFileInfoProvenance = "filename"
-	MediaFileInfoProvenanceManual   MediaFileInfoProvenance = "manual"
-	MediaFileInfoProvenanceProbe    MediaFileInfoProvenance = "probe"
-	MediaFileInfoProvenanceRelease  MediaFileInfoProvenance = "release"
+	MediaFileInfoProvenanceEmpty       MediaFileInfoProvenance = ""
+	MediaFileInfoProvenanceFailed      MediaFileInfoProvenance = "failed"
+	MediaFileInfoProvenanceFilename    MediaFileInfoProvenance = "filename"
+	MediaFileInfoProvenanceImplausible MediaFileInfoProvenance = "implausible"
+	MediaFileInfoProvenanceManual      MediaFileInfoProvenance = "manual"
+	MediaFileInfoProvenanceProbe       MediaFileInfoProvenance = "probe"
+	MediaFileInfoProvenanceRelease     MediaFileInfoProvenance = "release"
 )
 
 // Valid indicates whether the value is a known member of the MediaFileInfoProvenance enum.
@@ -248,6 +249,8 @@ func (e MediaFileInfoProvenance) Valid() bool {
 	case MediaFileInfoProvenanceFailed:
 		return true
 	case MediaFileInfoProvenanceFilename:
+		return true
+	case MediaFileInfoProvenanceImplausible:
 		return true
 	case MediaFileInfoProvenanceManual:
 		return true
@@ -835,7 +838,10 @@ type MediaFileInfo struct {
 	// Facts The measured facts as one line, e.g. "1080p · HEVC · HDR10 · TrueHD · 23 Mbps". Empty when the file was never probed.
 	Facts *string `json:"facts,omitempty"`
 	Id    int64   `json:"id"`
-	Path  string  `json:"path"`
+
+	// Implausible Why this file's own measurements cannot be true, in one sentence ready to show. Empty for every file that adds up. When set, the file is not counted toward the item being satisfied, so the search for a real copy continues.
+	Implausible *string `json:"implausible,omitempty"`
+	Path        string  `json:"path"`
 
 	// Provenance Where `quality` came from.
 	Provenance *MediaFileInfoProvenance `json:"provenance,omitempty"`
@@ -846,6 +852,9 @@ type MediaFileInfo struct {
 	// Quality The file's recorded quality, e.g. "WEB-DL 1080p". Empty when the file exists but nothing could be determined about it -- which is not the same as the file being absent (ADR 0013).
 	Quality *string `json:"quality,omitempty"`
 	Size    int64   `json:"size"`
+
+	// SourceRelease The release that put this file here, when monarr grabbed it. Empty for an adopted file -- which is also why there is nothing to blocklist for one.
+	SourceRelease *string `json:"sourceRelease,omitempty"`
 
 	// Verified Whether the SOURCE half of `quality` is trustworthy enough to justify replacing this file (the don't-churn rule, ADR 0013).
 	Verified *bool `json:"verified,omitempty"`
@@ -1148,6 +1157,21 @@ type ReleaseCandidate struct {
 	Seeders int    `json:"seeders"`
 	Size    int64  `json:"size"`
 	Title   string `json:"title"`
+
+	// Warning A caution that does not decline the release: the profile would take it, but something does not add up. Today that means an advertised size too small to hold what the name claims.
+	Warning *string `json:"warning,omitempty"`
+}
+
+// RemoveFileResult defines model for RemoveFileResult.
+type RemoveFileResult struct {
+	// Blocklisted The release title that was blocklisted; empty if none was.
+	Blocklisted     *string `json:"blocklisted,omitempty"`
+	DeletedFromDisk bool    `json:"deletedFromDisk"`
+
+	// Note The one thing that did not work out, in plain terms -- most often that monarr did not grab this file so there was nothing to blocklist. Not an error: the deletion still happened.
+	Note     *string `json:"note,omitempty"`
+	Path     string  `json:"path"`
+	Searched bool    `json:"searched"`
 }
 
 // ReviewCounts defines model for ReviewCounts.
@@ -1457,6 +1481,18 @@ type GetScanReportParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// RemoveLibraryFileParams defines parameters for RemoveLibraryFile.
+type RemoveLibraryFileParams struct {
+	// FromDisk Delete the bytes too, not just the library record.
+	FromDisk *bool `form:"fromDisk,omitempty" json:"fromDisk,omitempty"`
+
+	// Blocklist Never grab the release that produced this file again.
+	Blocklist *bool `form:"blocklist,omitempty" json:"blocklist,omitempty"`
+
+	// Search Hunt for a replacement once the file is gone.
+	Search *bool `form:"search,omitempty" json:"search,omitempty"`
+}
+
 // SearchReleasesParams defines parameters for SearchReleases.
 type SearchReleasesParams struct {
 	Season  *int `form:"season,omitempty" json:"season,omitempty"`
@@ -1723,6 +1759,9 @@ type ServerInterface interface {
 	// SetEpisodeMonitored Monitor or unmonitor one episode
 	// (PATCH /library/{id}/episodes/{episodeId})
 	SetEpisodeMonitored(w http.ResponseWriter, r *http.Request, id int64, episodeId int64)
+	// RemoveLibraryFile Remove one file from an item, and optionally condemn its release
+	// (DELETE /library/{id}/files/{fileId})
+	RemoveLibraryFile(w http.ResponseWriter, r *http.Request, id int64, fileId int64, params RemoveLibraryFileParams)
 	// ReprobeLibraryItem Re-measure this item's files
 	// (POST /library/{id}/probe)
 	ReprobeLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
@@ -2925,6 +2964,83 @@ func (siw *ServerInterfaceWrapper) SetEpisodeMonitored(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// RemoveLibraryFile operation middleware
+func (siw *ServerInterfaceWrapper) RemoveLibraryFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "fileId" -------------
+	var fileId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "fileId", r.PathValue("fileId"), &fileId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fileId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RemoveLibraryFileParams
+
+	// ------------- Optional query parameter "fromDisk" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "fromDisk", r.URL.Query(), &params.FromDisk, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "fromDisk"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fromDisk", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "blocklist" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "blocklist", r.URL.Query(), &params.Blocklist, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "blocklist"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "blocklist", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "search" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "search", r.URL.Query(), &params.Search, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "search"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "search", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveLibraryFile(w, r, id, fileId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ReprobeLibraryItem operation middleware
 func (siw *ServerInterfaceWrapper) ReprobeLibraryItem(w http.ResponseWriter, r *http.Request) {
 
@@ -3768,6 +3884,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.DeleteMediaCopy)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.UpdateMediaCopy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/probe", wrapper.ReprobeLibraryItem)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}/files/{fileId}", wrapper.RemoveLibraryFile)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/seasons/{season}", wrapper.SetSeasonMonitored)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/episodes/{episodeId}", wrapper.SetEpisodeMonitored)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)

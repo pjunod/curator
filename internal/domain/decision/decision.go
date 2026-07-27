@@ -31,6 +31,11 @@ const (
 	// perfect. Interactive search still lists the candidate with this reason
 	// attached, and a manual grab is never gated at all.
 	CodeUnverified = "on_disk_unverified"
+	// CodeSizeImplausible is the release-side twin of ADR 0013's file checks:
+	// the advertised size cannot hold what the name claims. Unlike every other
+	// code here it says nothing about the profile — the release would be
+	// perfectly acceptable if it were real.
+	CodeSizeImplausible = "size_implausible"
 )
 
 // Rejection is one machine-readable reason a release was declined.

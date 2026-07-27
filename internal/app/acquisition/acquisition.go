@@ -18,6 +18,7 @@ import (
 	"github.com/monarr-media/monarr/internal/domain/decision"
 	"github.com/monarr-media/monarr/internal/domain/format"
 	"github.com/monarr-media/monarr/internal/domain/matcher"
+	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/parser"
 	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/infra/bus"
@@ -173,6 +174,12 @@ func (s *Service) episodeStates(ctx context.Context, item domain.MediaItem, copy
 			continue
 		}
 		rec := byID[f.ID]
+		// A measured-and-disbelieved file does not hold an episode. Same
+		// reasoning as DiskStateForItem: HasFile exists to stop monarr
+		// replacing a file it merely could not read, and this is not that.
+		if rec.Provenance == mediainfo.ProvenanceImplausible {
+			continue
+		}
 		for _, epID := range f.EpisodeIDs {
 			st := out[epID]
 			st.HasFile = true
@@ -290,6 +297,10 @@ type Candidate struct {
 	Accepted   bool                 `json:"accepted"`
 	IsUpgrade  bool                 `json:"isUpgrade"`
 	Rejections []decision.Rejection `json:"rejections"`
+	// Warning is a caution that does not decline the release: the profile
+	// would take it, but something about it does not add up. Today that is
+	// only an advertised size too small to hold what the name claims.
+	Warning string `json:"warning,omitempty"`
 }
 
 // Search fans out to every enabled indexer, parses and judges every
@@ -349,6 +360,7 @@ func (s *Service) Search(ctx context.Context, itemID int64, season, episode int)
 	wg.Wait()
 
 	formats, _ := s.db.ListCustomFormats(ctx)
+	runtimeMin := item.Runtime
 	now := time.Now()
 	seen := map[string]bool{}
 	out := make([]Candidate, 0, len(releases))
@@ -376,6 +388,13 @@ func (s *Service) Search(ctx context.Context, itemID int64, season, episode int)
 			c.Accepted = d.Accepted
 			c.IsUpgrade = d.IsUpgrade
 			c.Rejections = d.Rejections
+		}
+		// A size that cannot hold the claim is worth saying out loud even on a
+		// release the profile would take. Attached as a warning, not a
+		// rejection: the person reading this list can weigh it themselves, and
+		// gating a manual grab is something monarr has never done.
+		if why, bad := sizeImplausible(p.Quality, r, runtimeMin); bad {
+			c.Warning = why.Reason
 		}
 		out = append(out, c)
 	}

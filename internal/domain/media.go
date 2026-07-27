@@ -267,6 +267,13 @@ type MediaFile struct {
 	Provenance   mediainfo.Provenance
 	Confidence   mediainfo.Confidence
 	Info         mediainfo.Info
+
+	// SourceRelease is the release monarr grabbed to produce this file, and
+	// SourceIndexer the indexer it came from. Both empty for a file adopted
+	// from an existing library, which has no source release and therefore
+	// nothing that can be blocklisted.
+	SourceRelease string
+	SourceIndexer string
 }
 
 // SourceVerified reports whether this file's recorded SOURCE is trustworthy

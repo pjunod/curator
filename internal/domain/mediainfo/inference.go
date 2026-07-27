@@ -143,6 +143,23 @@ func Contradicts(info Info, token quality.Source) bool {
 	lossless := info.HasLosslessAudio()
 	switch token {
 	case quality.SourceRemux:
+		// Below the bottom of the ENCODE band a remux is impossible whatever
+		// the audio headers say — and the audio headers are exactly what a
+		// forged file gets right. A declared track is not a delivered track:
+		// monarr reads a codec ID out of the container, and writing "TrueHD"
+		// there costs nothing.
+		//
+		// This clause exists because its absence is how a 500 MB file named
+		// "HIM (2025) [Remux 2160p].mkv" kept the word Remux. Lossless audio
+		// was treated as evidence FOR a remux and nowhere as something that
+		// could itself be false, so declaring TrueHD made the claim
+		// unfalsifiable — the one property a check must never have.
+		if info.BitrateKbps > 0 && info.BitrateKbps < bands.bdLow {
+			return true
+		}
+		// Above that the bands are genuinely fuzzy, so the original rule
+		// stands: lossless audio earns the benefit of the doubt between
+		// bdLow and remuxFloor.
 		return !lossless && info.BitrateKbps < bands.remuxFloor
 	case quality.SourceWEBDL, quality.SourceWEBRip:
 		return lossless

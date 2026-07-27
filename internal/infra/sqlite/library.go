@@ -740,6 +740,7 @@ func (d *DB) ListFilesForItem(ctx context.Context, itemID int64) ([]domain.Media
 			EpisodeIDs: byFile[r.ID], AddedAt: time.UnixMilli(r.AddedAt),
 			Provenance: mediainfo.Provenance(r.QualityProvenance),
 			Confidence: mediainfo.Confidence(r.QualityConfidence),
+			SourceRelease: r.SourceRelease, SourceIndexer: r.SourceIndexer,
 		}
 		if r.Quality != "" {
 			f.Quality, f.QualityKnown = quality.FromString(r.Quality), true
@@ -781,4 +782,24 @@ func (d *DB) ListAllFiles(ctx context.Context) ([]domain.MediaFile, error) {
 // DeleteFile removes a file record (never touches disk).
 func (d *DB) DeleteFile(ctx context.Context, id int64) error {
 	return d.Write.DeleteMediaFile(ctx, id)
+}
+
+// SetFileSource records which release put a file on disk, so somebody looking
+// at a bad file weeks later has something to blocklist. Called at import;
+// adopted files legitimately have no source and keep the empty default.
+func (d *DB) SetFileSource(ctx context.Context, fileID int64, release, indexer string) error {
+	return d.Write.SetMediaFileSource(ctx, sqlitegen.SetMediaFileSourceParams{
+		SourceRelease: release, SourceIndexer: indexer, ID: fileID,
+	})
+}
+
+// FileSource returns the release and indexer a file came from. Both empty when
+// monarr did not grab it — an adopted file has no source release, and saying
+// so is better than guessing at one.
+func (d *DB) FileSource(ctx context.Context, fileID int64) (release, indexer string) {
+	r, err := d.Read.GetMediaFile(ctx, fileID)
+	if err != nil {
+		return "", ""
+	}
+	return r.SourceRelease, r.SourceIndexer
 }

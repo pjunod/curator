@@ -28,6 +28,13 @@ const (
 	// is the one state that means "on disk, quality unverified" — distinct
 	// from missing everywhere a decision is made (ADR 0013 §5).
 	ProvenanceFailed Provenance = "failed"
+	// ProvenanceImplausible: the file was read, and what it says about itself
+	// cannot be true (see plausible.go). This is emphatically NOT Failed.
+	// Failed means we do not know, and not knowing is a reason to leave a file
+	// alone. This means we DO know, and what we know is that the file is not
+	// what it claims — which is a reason to keep hunting, because the thing
+	// being protected from replacement turns out not to exist.
+	ProvenanceImplausible Provenance = "implausible"
 )
 
 // Confidence qualifies an INFERRED source. Resolution is never inferred once a
@@ -56,6 +63,11 @@ func (p Provenance) Measured() bool { return p == ProvenanceProbe }
 // disagree with it. A medium or low inference does not.
 func (p Provenance) Verified(c Confidence) bool {
 	switch p {
+	case ProvenanceImplausible:
+		// Not "unverified" in the cautious sense — actively disbelieved. The
+		// don't-churn rule protects files we might be wrong about; there is
+		// nothing to be wrong about here.
+		return false
 	case ProvenanceManual, ProvenanceFilename, ProvenanceRelease:
 		return true
 	case ProvenanceProbe:
@@ -78,6 +90,8 @@ func (p Provenance) Label() string {
 		return "set by hand"
 	case ProvenanceFailed:
 		return "unreadable"
+	case ProvenanceImplausible:
+		return "does not add up"
 	default:
 		return "unverified"
 	}
@@ -88,7 +102,8 @@ func (p Provenance) Label() string {
 func (p Provenance) Valid() bool {
 	switch p {
 	case ProvenanceUnknown, ProvenanceProbe, ProvenanceFilename,
-		ProvenanceRelease, ProvenanceManual, ProvenanceFailed:
+		ProvenanceRelease, ProvenanceManual, ProvenanceFailed,
+		ProvenanceImplausible:
 		return true
 	}
 	return false

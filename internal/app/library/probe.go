@@ -12,6 +12,7 @@ import (
 	"github.com/monarr-media/monarr/internal/domain/filename"
 	"github.com/monarr-media/monarr/internal/domain/mediainfo"
 	"github.com/monarr-media/monarr/internal/domain/parser"
+	"github.com/monarr-media/monarr/internal/domain/quality"
 	"github.com/monarr-media/monarr/internal/infra/probe"
 )
 
@@ -109,6 +110,26 @@ func (s *Service) ProbeFile(ctx context.Context, fileID int64) error {
 
 	hint := parser.Parse(filepath.Base(rec.Path)).Quality
 	q, prov, conf := mediainfo.Resolve(info, hint, mediainfo.ProvenanceFilename)
+
+	// Resolve judges a file against itself, and has already refused to
+	// believe one that refutes itself. The check it cannot make is the first
+	// one a person would: is this the right LENGTH? That needs the runtime
+	// the metadata provider gave for the item, which lives outside the file,
+	// so it is applied here rather than buried in the domain.
+	if bad, ok := mediainfo.DurationImplausible(info, s.db.ItemRuntime(ctx, rec.MediaItemID)); ok {
+		q = quality.Quality{Source: quality.SourceUnknown, Resolution: info.ResolutionTier()}
+		prov, conf = mediainfo.ProvenanceImplausible, mediainfo.ConfidenceNone
+		s.log.Warn("probe: not trusting this file", "file", filepath.Base(rec.Path),
+			"why", bad.Reason, "facts", info.Summary())
+	} else if prov == mediainfo.ProvenanceImplausible {
+		// Say it out loud, with the arithmetic in it. A file that quietly
+		// stopped counting is worse than one that never counted: the item
+		// goes back to being hunted and nobody knows why.
+		self, _ := mediainfo.Implausible(info)
+		s.log.Warn("probe: not trusting this file", "file", filepath.Base(rec.Path),
+			"why", self.Reason, "facts", info.Summary())
+	}
+
 	if err := s.db.SetFileMediaInfo(ctx, fileID, info, prov, conf, now); err != nil {
 		return err
 	}

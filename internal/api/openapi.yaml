@@ -1458,6 +1458,58 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /library/{id}/files/{fileId}:
+    delete:
+      operationId: removeLibraryFile
+      summary: Remove one file from an item, and optionally condemn its release
+      description: >
+        Deletes one file's library record, optionally the bytes on disk,
+        optionally blocklists the release that produced it, and optionally
+        searches for a replacement.
+
+
+        The parts are separate because they are separate statements. Deleting
+        says "I do not want this copy"; blocklisting says "and never take this
+        release again". A file deleted to free space should not poison a
+        release that was fine. A file that is a fake should do both.
+
+
+        Blocklisting needs a source release, which only exists for files monarr
+        itself grabbed. For an adopted file the deletion still happens and the
+        response says why the blocklist did not.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: fromDisk
+          in: query
+          schema: { type: boolean, default: false }
+          description: Delete the bytes too, not just the library record.
+        - name: blocklist
+          in: query
+          schema: { type: boolean, default: false }
+          description: Never grab the release that produced this file again.
+        - name: search
+          in: query
+          schema: { type: boolean, default: false }
+          description: Hunt for a replacement once the file is gone.
+      responses:
+        "200":
+          description: What actually happened.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RemoveFileResult" }
+        "404":
+          description: No such item or file, or the two do not belong together.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/{id}/seasons/{season}:
     patch:
       operationId: setSeasonMonitored
@@ -2047,7 +2099,7 @@ components:
             not the same as the file being absent (ADR 0013).
         provenance:
           type: string
-          enum: ["", probe, filename, release, manual, failed]
+          enum: ["", probe, filename, release, manual, failed, implausible]
           description: Where `quality` came from.
         provenanceLabel:
           type: string
@@ -2062,6 +2114,19 @@ components:
           description: >
             The measured facts as one line, e.g. "1080p · HEVC · HDR10 ·
             TrueHD · 23 Mbps". Empty when the file was never probed.
+        implausible:
+          type: string
+          description: >
+            Why this file's own measurements cannot be true, in one sentence
+            ready to show. Empty for every file that adds up. When set, the
+            file is not counted toward the item being satisfied, so the search
+            for a real copy continues.
+        sourceRelease:
+          type: string
+          description: >
+            The release that put this file here, when monarr grabbed it.
+            Empty for an adopted file -- which is also why there is nothing to
+            blocklist for one.
 
     MediaItemDetail:
       type: object
@@ -2774,6 +2839,29 @@ components:
         rejections:
           type: array
           items: { $ref: "#/components/schemas/Rejection" }
+        warning:
+          type: string
+          description: >
+            A caution that does not decline the release: the profile would take
+            it, but something does not add up. Today that means an advertised
+            size too small to hold what the name claims.
+
+    RemoveFileResult:
+      type: object
+      required: [path, deletedFromDisk, searched]
+      properties:
+        path: { type: string }
+        deletedFromDisk: { type: boolean }
+        blocklisted:
+          type: string
+          description: The release title that was blocklisted; empty if none was.
+        searched: { type: boolean }
+        note:
+          type: string
+          description: >
+            The one thing that did not work out, in plain terms -- most often
+            that monarr did not grab this file so there was nothing to
+            blocklist. Not an error: the deletion still happened.
 
     GrabRequest:
       type: object

@@ -31,6 +31,23 @@ func Resolve(info Info, hint quality.Quality, hintProv Provenance) (quality.Qual
 	}
 
 	tier := info.ResolutionTier()
+
+	// Before asking what the file IS, ask whether the measurement can be true
+	// at all. A self-refuting measurement supports no verdict, and — the part
+	// that actually matters — it must not be allowed to fall through to the
+	// name's claim either. The pick order below accepts any token nothing
+	// contradicts, so "inconclusive" and "obviously fabricated" would
+	// otherwise reach the same place: the filename wins.
+	//
+	// The resolution tier is still recorded. It is the one field a forged
+	// header gains nothing by lying about, and keeping it means the row says
+	// "2160p, source unknown, not believed" instead of throwing away the only
+	// fact we have.
+	if _, bad := Implausible(info); bad {
+		return quality.Quality{Source: quality.SourceUnknown, Resolution: tier},
+			ProvenanceImplausible, ConfidenceNone
+	}
+
 	verdict, confidence := InferSource(info)
 	token := hint.Source
 	contradicted := Contradicts(info, token)

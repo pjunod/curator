@@ -156,6 +156,22 @@ func (d *DB) DiskStateForItem(ctx context.Context, itemID, copyID int64) (CopyDi
 		if r.CopyID != copyID {
 			continue
 		}
+		// A file we measured and disbelieved does not count as being here.
+		//
+		// This is the one place the distinction between "unreadable" and
+		// "impossible" has to be spent, and it has to be spent in opposite
+		// directions. HasFiles is what stops monarr replacing a 17 GB file it
+		// merely could not parse (ADR 0013 §5) — protection against acting on
+		// ignorance. There is no ignorance here: the bytes were read and they
+		// refute themselves, so leaving HasFiles set would use a rule designed
+		// to protect good files to protect a fake one, and the item would sit
+		// satisfied forever holding 500 MB of nothing.
+		//
+		// The row stays in the library and stays visible; it just stops
+		// voting on whether the item is done.
+		if r.Provenance == mediainfo.ProvenanceImplausible {
+			continue
+		}
 		state.HasFiles = true
 		if !r.Known {
 			continue
@@ -171,6 +187,27 @@ func (d *DB) DiskStateForItem(ctx context.Context, itemID, copyID int64) (CopyDi
 		state.SourceVerified = bestRecord.SourceVerified()
 	}
 	return state, nil
+}
+
+// ItemRuntime returns the runtime the metadata provider gave for an item, in
+// minutes, or 0 when it is unknown or the item is gone.
+//
+// It exists so the probe path can ask "how long should this be?" without
+// loading an item's whole season and episode tree — a probe backfill runs once
+// per file over an entire library, and GetMediaItemFull on a 200-episode
+// series to read one integer is not a thing to do 200 times.
+//
+// A missing item is not an error here. The probe that wanted the runtime is
+// still worth recording without it; the duration rule simply does not run.
+func (d *DB) ItemRuntime(ctx context.Context, itemID int64) int {
+	if itemID == 0 {
+		return 0
+	}
+	r, err := d.Read.GetMediaItem(ctx, itemID)
+	if err != nil {
+		return 0
+	}
+	return int(r.Runtime)
 }
 
 // EpisodeDiskState is the same idea per episode: which episodes of one copy

@@ -25,10 +25,21 @@ func (fakeProvider) SearchSeries(ctx context.Context, q string) ([]ports.SearchR
 	return []ports.SearchResult{{Kind: domain.KindSeries, TMDBID: 100, Title: "Test Show", Year: 2020}}, nil
 }
 
+// movieRuntime is the runtime fakeProvider reports for a movie, in minutes.
+//
+// Zero by default, and that is load-bearing rather than lazy. Every media
+// fixture in this package is a 64 KiB header window off a one-second clip, so
+// any nonzero runtime makes all of them correctly implausible (a one-second
+// file of a 139-minute feature is a sample) and every probe-wiring test starts
+// failing for a reason that has nothing to do with wiring.
+//
+// Tests that want the duration rule to fire set it, and say so.
+var movieRuntime = 0
+
 func (fakeProvider) GetMovie(ctx context.Context, id int64) (domain.MediaItem, error) {
 	return domain.MediaItem{
 		Kind: domain.KindMovie, Title: "Fight Club", SortTitle: "fight club",
-		Year: 1999, IDs: domain.ExternalIDs{TMDB: id}, Runtime: 139,
+		Year: 1999, IDs: domain.ExternalIDs{TMDB: id}, Runtime: movieRuntime,
 	}, nil
 }
 
