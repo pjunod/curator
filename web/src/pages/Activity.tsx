@@ -5,6 +5,7 @@ import {
   type ManualImportRequest,
   type QueueItem,
   type ScannedFile,
+  type Stage,
   blocklistQueueItem,
   fmtBytes,
   fmtRelative,
@@ -44,6 +45,135 @@ const STEP_LABEL: Record<string, string> = {
 
 function label(map: Record<string, string>, key: string): string {
   return map[key] ?? key.replace(/_/g, ' ')
+}
+
+// One job, one row, and the stage word changes as it moves.
+//
+// Fetching, repairing, extracting and copying into the library are parts of
+// one job, not different kinds of work that belong on different screens. They
+// are separate SECTIONS because lumping them into one pile answers "how many
+// things are busy" and not "what is this one doing" — and the second question
+// is the one anybody actually opens this page with.
+//
+// The keys are the download client's own stage names. Translating them here,
+// at the edge, is deliberate: nothing between nzbd and this line has to agree
+// on English.
+const STAGE_LABEL: Record<Stage, string> = {
+  downloading: 'Downloading',
+  par_rename: 'Renaming',
+  par_verify: 'Verifying',
+  par_repair: 'Repairing',
+  rar_rename: 'Naming archives',
+  unpack: 'Extracting',
+  cleanup: 'Cleaning up',
+  move: 'Moving',
+  post_unpack_rename: 'Renaming',
+  script: 'Running scripts',
+  importing: 'Copying to library',
+  notifying: 'Notifying',
+}
+
+const STAGE_TITLE: Record<Stage, string> = {
+  downloading: 'The download client is fetching articles from the newsgroup server',
+  par_rename: 'The download client is restoring real filenames from the par2 set',
+  par_verify: 'The download client is checking the payload against its par2 blocks',
+  par_repair: 'The download client is rebuilding damaged blocks. This can take a while on a big release',
+  rar_rename: 'The download client is putting the archive volumes back in order',
+  unpack: 'The download client is extracting the archive',
+  cleanup: 'The download client is deleting the archive volumes it no longer needs',
+  move: 'The download client is moving the payload to its finished folder',
+  post_unpack_rename: 'The download client is tidying names after extraction',
+  script: 'The download client is running its post-processing scripts',
+  importing: 'Monarr is copying the files into your library. This is the one stage Monarr does itself',
+  notifying: 'Monarr is telling the media server an import landed',
+}
+
+// Sections, in the order a job passes through them. Rendered only when
+// occupied, so an idle instance shows nothing rather than eleven empty
+// headings.
+const STAGES: Stage[] = [
+  'downloading',
+  'par_rename',
+  'par_verify',
+  'par_repair',
+  'rar_rename',
+  'unpack',
+  'cleanup',
+  'move',
+  'post_unpack_rename',
+  'script',
+  'importing',
+  'notifying',
+]
+
+// Rows with nothing in flight still have to go somewhere, grouped by what a
+// person would do about them: one needs a decision, one is finished, one went
+// wrong.
+const RESTING = [
+  { key: 'waiting', label: 'Waiting', states: ['grabbed', 'downloaded', 'awaiting_import'] },
+  { key: 'done', label: 'Finished', states: ['imported'] },
+  { key: 'failed', label: 'Failed', states: ['failed'] },
+] as const
+
+type Section = { key: string; label: string; title?: string; rows: QueueItem[] }
+
+function sections(rows: QueueItem[]): Section[] {
+  const out: Section[] = []
+  const live = new Set<number>()
+  for (const stage of STAGES) {
+    const inStage = rows.filter((r) => r.stage === stage)
+    inStage.forEach((r) => live.add(r.id))
+    if (inStage.length > 0) {
+      out.push({ key: stage, label: STAGE_LABEL[stage], title: STAGE_TITLE[stage], rows: inStage })
+    }
+  }
+  for (const group of RESTING) {
+    const inGroup = rows.filter((r) => !live.has(r.id) && group.states.includes(r.state as never))
+    if (inGroup.length > 0) out.push({ key: group.key, label: group.label, rows: inGroup })
+  }
+  // Anything in a state this build has not heard of still gets shown. A row
+  // that silently vanishes because of an unrecognised word is worse than an
+  // ugly heading.
+  const placed = new Set(out.flatMap((s) => s.rows.map((r) => r.id)))
+  const rest = rows.filter((r) => !placed.has(r.id))
+  if (rest.length > 0) out.push({ key: 'other', label: 'Other', rows: rest })
+  return out
+}
+
+// Progress the row can actually stand behind.
+//
+// A stage that cannot measure itself gets no bar at all, rather than one
+// sitting at zero: an empty bar is the claim that nothing has happened, which
+// is a different and usually false statement about a job that is midway
+// through repairing a 60 GB archive.
+function StageProgress({ d }: { d: QueueItem }) {
+  const known = typeof d.total === 'number' && d.total > 0
+  const done = d.bytes ?? 0
+  const fraction = known ? Math.min(1, done / (d.total as number)) : d.stage ? null : d.progress
+
+  return (
+    <div className="stage-progress">
+      {fraction !== null && (
+        <div className="progress-track">
+          <i style={{ width: `${Math.round(fraction * 100)}%` }} />
+        </div>
+      )}
+      {known ? (
+        <div className="muted stage-bytes">
+          {fmtBytes(done)} / {fmtBytes(d.total as number)}
+          {d.bytesPerSecond ? ` · ${fmtBytes(d.bytesPerSecond)}/s` : ''}
+        </div>
+      ) : d.stage ? (
+        // Words, not digits — so this one wraps. Forcing the numeric
+        // treatment on it pushed "post-processing: par repair · 4m ago"
+        // straight out of the column and under the next one.
+        <div className="muted stage-note">
+          {d.stageDetail || 'in progress'}
+          {d.stageSince ? ` · ${fmtRelative(d.stageSince)}` : ''}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function clock(ms: number): string {
@@ -111,43 +241,55 @@ export function ActivityPage() {
                 <th></th>
                 <th>Release</th>
                 <th>Quality</th>
-                <th>State</th>
+                <th>Doing it</th>
                 <th>Progress</th>
                 <th>Added</th>
                 <th>Actions</th>
               </tr>
             </thead>
-            <tbody>
-              {rows.map((d) => (
-                <RowGroup
-                  key={d.id}
-                  d={d}
-                  open={expanded.has(d.id)}
-                  busy={busy}
-                  onToggle={() => toggle(d.id)}
-                  onImport={() => doImport.mutate(d.id)}
-                  onBlocklist={() => doBlocklist.mutate(d.id)}
-                  onRemove={() => remove.mutate(d.id)}
-                  onManual={() =>
-                    setManual({
-                      path: d.importPath || d.savePath || '',
-                      mediaItemId: d.mediaItemId,
-                      copyId: d.copyId,
-                      downloadId: d.id,
-                    })
-                  }
-                />
-              ))}
-            </tbody>
+            {sections(rows).map((section) => (
+              <tbody key={section.key}>
+                <tr className="section-row">
+                  <td colSpan={7}>
+                    <span className="section-label" title={section.title}>
+                      {section.label}
+                    </span>
+                    <span className="section-count">{section.rows.length}</span>
+                  </td>
+                </tr>
+                {section.rows.map((d) => (
+                  <RowGroup
+                    key={d.id}
+                    d={d}
+                    open={expanded.has(d.id)}
+                    busy={busy}
+                    onToggle={() => toggle(d.id)}
+                    onImport={() => doImport.mutate(d.id)}
+                    onBlocklist={() => doBlocklist.mutate(d.id)}
+                    onRemove={() => remove.mutate(d.id)}
+                    onManual={() =>
+                      setManual({
+                        path: d.importPath || d.savePath || '',
+                        mediaItemId: d.mediaItemId,
+                        copyId: d.copyId,
+                        downloadId: d.id,
+                      })
+                    }
+                  />
+                ))}
+              </tbody>
+            ))}
           </table>
         )}
       </section>
 
       <p className="muted" style={{ fontSize: 13 }}>
-        The queue refreshes every 30s from the download clients (task{' '}
-        <span className="mono">queue.refresh</span>). Expand a row to see the handoff — every step
-        from grab to import, and the exact paths Monarr used. Completed downloads import
-        automatically unless the client is set to require approval.
+        Grouped by what each job is doing right now. Stages up to and including{' '}
+        <span className="mono">Moving</span> happen inside the download client;{' '}
+        <span className="mono">Copying to library</span> is the one Monarr does itself. Clients that
+        push report a change within a second; the rest are reconciled by the 30s sweep (task{' '}
+        <span className="mono">queue.refresh</span>). Expand a row for the handoff — every step from
+        grab to import, and the exact paths Monarr used.
       </p>
     </>
   )
@@ -187,14 +329,28 @@ function RowGroup(props: {
         </td>
         <td className="muted">{d.quality}</td>
         <td>
-          <span className={`pill ${STATE_PILL[d.state] ?? 'pill-neutral'}`}>
-            {label(STATE_LABEL, d.state)}
-          </span>
+          {/*
+            While a job is in flight the section heading already says which
+            stage it is at, so repeating it here is noise — and worse than
+            noise: a row sitting under "Repairing" showed a "downloading" pill,
+            because `state` is the coarse lifecycle and cannot tell the two
+            apart. That is the same wrong claim the backend was making, left
+            on the screen.
+
+            So a moving row answers the question the section does not: WHICH
+            APPLICATION is doing this. Monarr's own name appears exactly once,
+            on the one stage Monarr performs itself.
+          */}
+          {d.stage ? (
+            <span className="muted stage-owner">{d.stagePeer || 'Monarr'}</span>
+          ) : (
+            <span className={`pill ${STATE_PILL[d.state] ?? 'pill-neutral'}`}>
+              {label(STATE_LABEL, d.state)}
+            </span>
+          )}
         </td>
         <td>
-          <div className="progress-track">
-            <i style={{ width: `${Math.round(d.progress * 100)}%` }} />
-          </div>
+          <StageProgress d={d} />
         </td>
         <td className="muted nowrap" title={d.addedAt}>
           {fmtRelative(d.addedAt)}

@@ -619,6 +619,21 @@ export interface QueueItem {
   importPath?: string
   handoff?: HandoffEntry[]
   addedAt: string
+  /**
+   * What is happening to this job right now — finer-grained than `state`,
+   * and present only while something is moving. Copying into the library is
+   * not a different kind of thing from downloading it, so it is the same row
+   * with a different stage rather than a separate surface.
+   */
+  stage?: Stage
+  stageSince?: string
+  stageDetail?: string
+  /** Which application is doing the current stage. Empty while Monarr copies. */
+  stagePeer?: string
+  /** Absent when the stage cannot measure itself — which is not the same as 0%. */
+  bytes?: number
+  total?: number
+  bytesPerSecond?: number
 }
 
 export interface ScannedFile {
@@ -922,12 +937,32 @@ export interface Connections {
   connections: Connection[]
 }
 
+/**
+ * Every stage one job passes through, in pipeline order.
+ *
+ * The post-processing names are the download client's own spellings, carried
+ * through rather than translated — nzbd does that work and owns those words.
+ * They are turned into human labels at the point of render and nowhere else.
+ */
+export type Stage =
+  | 'downloading'
+  | 'par_rename'
+  | 'par_verify'
+  | 'par_repair'
+  | 'rar_rename'
+  | 'unpack'
+  | 'cleanup'
+  | 'move'
+  | 'post_unpack_rename'
+  | 'script'
+  | 'importing'
+  | 'notifying'
+
 export interface Transfer {
   downloadId: number
   transfer?: string
   title: string
-  /** Which seam: nzbd is fetching it, Monarr is moving it, plurx is being told. */
-  stage: 'downloading' | 'importing' | 'notifying'
+  stage: Stage
   peer?: string
   outbound: boolean
   startedAt: string

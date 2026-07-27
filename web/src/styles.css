@@ -1764,12 +1764,18 @@ a.pill-info:hover {
   width: 124px;
 }
 
+/* Fits "awaiting approval" as a pill without spilling. table-layout: fixed
+   does not grow a column to fit — a too-narrow one overflows into its
+   neighbour, which had the state pill sitting on top of the progress bar. */
 .queue-table .col-state {
-  width: 120px;
+  width: 148px;
 }
 
+/* Wide enough for the byte line it now carries — "33.3 GB / 52.7 GB ·
+   41.3 MB/s" — on one line. At 120px that wrapped into a four-line ribbon and
+   made every importing row four rows tall. */
 .queue-table .col-progress {
-  width: 120px;
+  width: 210px;
 }
 
 /* Wide enough for the longest two-unit relative time ("1h 30m ago") plus
@@ -1779,7 +1785,65 @@ a.pill-info:hover {
 }
 
 .queue-table .col-actions {
-  width: 300px;
+  width: 268px;
+}
+
+/* ---- stage sections ---- */
+/* A heading row inside the table rather than a table per stage, so every
+   section keeps one column grid. Separate tables would each size their own
+   columns and the page would look like a stack of unrelated lists. */
+.queue-table .section-row td {
+  padding-top: 18px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.queue-table tbody:first-of-type .section-row td {
+  padding-top: 4px;
+}
+
+.section-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.section-count {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.stage-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* The byte line is the point of this column, so it gets to be legible:
+   tabular figures stop the digits jittering as they count up, and nowrap
+   keeps the rate on the same line as the total it belongs to. */
+.stage-bytes {
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The unmeasurable stages describe themselves in words instead of digits, so
+   this one wraps. Sharing .stage-bytes gave it nowrap and pushed
+   "post-processing: par repair · 4m ago" out of the column and underneath the
+   next one. */
+.stage-owner {
+  font-size: 13px;
+}
+
+.stage-note {
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .queue-table td {

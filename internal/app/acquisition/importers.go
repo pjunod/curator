@@ -83,6 +83,12 @@ func (s *Service) Transfers() []transfers.Transfer {
 	return s.registry.Snapshot()
 }
 
+// LiveStage is what is happening to one download right now, for its queue
+// row. Not in flight — no stage, and the row shows its persisted state alone.
+func (s *Service) LiveStage(download int64) (transfers.Transfer, bool) {
+	return s.registry.Stage(download)
+}
+
 // SetRegistry wires the in-flight registry. Optional: without one, every
 // report is a no-op and the pipeline behaves exactly as it did.
 func (s *Service) SetRegistry(r *transfers.Registry) { s.registry = r }
@@ -134,33 +140,48 @@ type importerFields struct {
 	registry   *transfers.Registry
 }
 
-// watchDownloading keeps the in-flight view honest about the stage Monarr
+// watchDownloading keeps the in-flight view honest about the stages Monarr
 // does not perform: nzbd is doing the work, and this is Monarr reporting what
 // it was told rather than what it did.
-func (s *Service) watchDownloading(dl sqlite.Download, st ports.DownloadStatus) {
+//
+// `ppStage` is nzbd's own post-processing stage when the observation carried
+// one. Monarr used to drop it — a job_pp_stage event arrived saying
+// `par_repair`, the reconciler saw StateDownloading in the status beside it,
+// and the stage name went nowhere. So a release spending twenty minutes
+// repairing a damaged archive was reported as "downloading" the entire time,
+// which is not a summary of what was happening, it is a different claim.
+func (s *Service) watchDownloading(dl sqlite.Download, st ports.DownloadStatus, ppStage string) {
 	if s.registry == nil {
 		return
 	}
 	switch st.State {
 	case ports.StateQueued, ports.StateDownloading:
+		stage := transfers.StageDownloading
+		if ppStage != "" {
+			stage = ppStage
+		}
 		h := s.registry.Begin(transfers.Transfer{
 			DownloadID: dl.ID,
 			Transfer:   dl.Transfer,
 			Title:      dl.ReleaseTitle,
-			Stage:      transfers.StageDownloading,
+			Stage:      stage,
 			Peer:       "nzbd",
 			Total:      dl.Size,
 			Detail:     st.Message,
 		})
-		if dl.Size > 0 && st.Progress > 0 {
+		// Only the fetch has a meaningful byte count. Post-processing reports
+		// no total, and a percentage invented for it would be a guess wearing
+		// a progress bar.
+		if stage == transfers.StageDownloading && dl.Size > 0 && st.Progress > 0 {
 			h.Bytes(int64(st.Progress*float64(dl.Size)), dl.Size)
 		}
 	default:
-		// Completed, failed, or gone: no longer downloading. Ending a stage
-		// that was never begun is a no-op, so this needs no guard.
-		s.registry.Begin(transfers.Transfer{
-			DownloadID: dl.ID, Stage: transfers.StageDownloading,
-		}).End()
+		// Completed, failed, or gone: nothing of this job is in flight at
+		// nzbd any more. Ending a stage that was never begun is a no-op, so
+		// this needs no guard — but it must clear every nzbd-side stage, not
+		// just downloading, or a job that fails during unpack leaves an
+		// "extracting" row behind forever.
+		s.registry.EndClientStages(dl.ID)
 	}
 }
 

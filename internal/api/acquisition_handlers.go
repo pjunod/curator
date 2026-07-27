@@ -556,6 +556,43 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request) {
 			e := d.Error
 			item.Error = &e
 		}
+		// The live stage rides on the row, not on a panel somewhere else.
+		//
+		// Copying into the library is not a different kind of thing from
+		// fetching the release — it is the next part of the same job, and
+		// putting it on its own surface made you look in two places to answer
+		// one question. So the row carries whatever is happening to it right
+		// now, down to the bytes and the rate, and the stage word changes as
+		// it moves. `state` is untouched and still the persisted lifecycle;
+		// `stage` is finer-grained, lives only while something is moving, and
+		// is the only thing that knows the difference between repairing and
+		// extracting.
+		if live, ok := s.deps.Acquisition.LiveStage(d.ID); ok {
+			stage := live.Stage
+			item.Stage = &stage
+			if live.Bytes > 0 {
+				b := live.Bytes
+				item.Bytes = &b
+			}
+			if live.Total > 0 {
+				t := live.Total
+				item.Total = &t
+			}
+			if live.BytesPerSecond > 0 {
+				r := float32(live.BytesPerSecond)
+				item.BytesPerSecond = &r
+			}
+			if live.Detail != "" {
+				dt := live.Detail
+				item.StageDetail = &dt
+			}
+			if live.Peer != "" {
+				pr := live.Peer
+				item.StagePeer = &pr
+			}
+			since := live.StartedAt
+			item.StageSince = &since
+		}
 		if len(d.Handoff) > 0 {
 			steps := make([]apigen.HandoffEntry, 0, len(d.Handoff))
 			for _, h := range d.Handoff {

@@ -1300,8 +1300,14 @@ type QualityProfile struct {
 
 // QueueItem defines model for QueueItem.
 type QueueItem struct {
-	AddedAt  time.Time `json:"addedAt"`
-	ClientId *int64    `json:"clientId,omitempty"`
+	AddedAt time.Time `json:"addedAt"`
+
+	// Bytes Bytes moved at the current stage. Absent when the stage cannot measure itself.
+	Bytes *int64 `json:"bytes,omitempty"`
+
+	// BytesPerSecond Average rate over the life of the current stage.
+	BytesPerSecond *float32 `json:"bytesPerSecond,omitempty"`
+	ClientId       *int64   `json:"clientId,omitempty"`
 
 	// CopyId The media copy this grab targets; 0 = the primary copy.
 	CopyId *int64  `json:"copyId,omitempty"`
@@ -1321,9 +1327,22 @@ type QueueItem struct {
 	// SavePath The completed-download path the client reported.
 	SavePath *string `json:"savePath,omitempty"`
 
+	// Stage What is happening to this job RIGHT NOW, finer-grained than `state` and present only while something is moving: downloading | par_rename | par_verify | par_repair | rar_rename | unpack | cleanup | move | post_unpack_rename | script | importing | notifying. The post-processing names are the download client's own spellings. Absent means nothing is in flight for this row.
+	Stage *string `json:"stage,omitempty"`
+
+	// StageDetail One line describing the current stage, in the client's words.
+	StageDetail *string `json:"stageDetail,omitempty"`
+
+	// StagePeer Which application is doing the current stage — the download client's name while it fetches and post-processes, empty while Monarr copies into the library, the media server's name while it is being told.
+	StagePeer  *string    `json:"stagePeer,omitempty"`
+	StageSince *time.Time `json:"stageSince,omitempty"`
+
 	// State grabbed | downloading | downloaded | awaiting_import | importing | imported | failed.
 	State string `json:"state"`
 	Title string `json:"title"`
+
+	// Total Bytes expected at the current stage. Absent when unknown — which is NOT the same as zero.
+	Total *int64 `json:"total,omitempty"`
 }
 
 // Rating defines model for Rating.

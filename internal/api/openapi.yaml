@@ -3452,6 +3452,37 @@ components:
         importPath:
           type: string
           description: Where Monarr looked for the files after remote path mapping.
+        stage:
+          type: string
+          description: >
+            What is happening to this job RIGHT NOW, finer-grained than
+            `state` and present only while something is moving: downloading |
+            par_rename | par_verify | par_repair | rar_rename | unpack |
+            cleanup | move | post_unpack_rename | script | importing |
+            notifying. The post-processing names are the download client's
+            own spellings. Absent means nothing is in flight for this row.
+        stageSince: { type: string, format: date-time }
+        stagePeer:
+          type: string
+          description: >
+            Which application is doing the current stage — the download client's
+            name while it fetches and post-processes, empty while Monarr copies
+            into the library, the media server's name while it is being told.
+
+        stageDetail:
+          type: string
+          description: One line describing the current stage, in the client's words.
+        bytes:
+          type: integer
+          format: int64
+          description: Bytes moved at the current stage. Absent when the stage cannot measure itself.
+        total:
+          type: integer
+          format: int64
+          description: Bytes expected at the current stage. Absent when unknown — which is NOT the same as zero.
+        bytesPerSecond:
+          type: number
+          description: Average rate over the life of the current stage.
         handoff:
           type: array
           description: The download → import handoff, step by step.

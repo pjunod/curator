@@ -117,6 +117,17 @@ type DownloadStatus struct {
 	Progress float64 // 0..1
 	SavePath string  // where the payload lands when completed
 	Message  string
+	// Stage is the client's own post-processing stage, in the client's own
+	// spelling — nzbd's `par_verify`, `unpack`, `move` and so on. Empty for a
+	// plain fetch and for clients that have no such phase.
+	//
+	// Both channels already knew this and both threw it away: the poll turned
+	// `{"post":{"stage":"par_repair"}}` into the sentence "post-processing:
+	// par repair" and dropped the name, and the event stream carried it on
+	// ClientEvent where the reconciler never looked. So twenty minutes of
+	// repairing a damaged archive was reported as "downloading" — not a
+	// summary of what was happening, a different claim about it.
+	Stage string
 	// Blameless marks a StateFailed the RELEASE is not responsible for, so
 	// it must not be blocklisted.
 	//

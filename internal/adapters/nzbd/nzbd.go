@@ -164,24 +164,24 @@ type job struct {
 // nzbd serializes `status` as a bare string for simple states and as
 // `{"post":{"stage":"unpack"}}` while post-processing runs, so this
 // decodes both shapes rather than assuming either.
-func (j job) state() (ports.DownloadState, string) {
+func (j job) state() (ports.DownloadState, string, string) {
 	var simple string
 	if json.Unmarshal(j.Status, &simple) == nil {
 		switch simple {
 		case "queued", "paused", "fetching":
-			return ports.StateQueued, ""
+			return ports.StateQueued, "", ""
 		case "post_queued":
 			// Downloading is finished; post-processing has not started.
 			// Still "downloading" to Monarr: the payload is not importable
 			// until PP says so, and a premature 'downloaded' is what makes
 			// an import find a half-unpacked folder.
-			return ports.StateDownloading, "post-processing queued"
+			return ports.StateDownloading, "post-processing queued", ""
 		case "completed":
-			return ports.StateCompleted, ""
+			return ports.StateCompleted, "", ""
 		case "failed", "deleted":
-			return ports.StateFailed, simple
+			return ports.StateFailed, simple, ""
 		default:
-			return ports.StateDownloading, ""
+			return ports.StateDownloading, "", ""
 		}
 	}
 	var post struct {
@@ -190,9 +190,11 @@ func (j job) state() (ports.DownloadState, string) {
 		} `json:"post"`
 	}
 	if json.Unmarshal(j.Status, &post) == nil && post.Post.Stage != "" {
-		return ports.StateDownloading, "post-processing: " + strings.ReplaceAll(post.Post.Stage, "_", " ")
+		return ports.StateDownloading,
+			"post-processing: " + strings.ReplaceAll(post.Post.Stage, "_", " "),
+			post.Post.Stage
 	}
-	return ports.StateDownloading, ""
+	return ports.StateDownloading, "", ""
 }
 
 // historyEntry is one row of `GET /api/v1/history`.
@@ -216,7 +218,7 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 	}
 	out := make([]ports.DownloadStatus, 0, len(queue.Jobs)+16)
 	for _, j := range queue.Jobs {
-		st, msg := j.state()
+		st, msg, stage := j.state()
 		progress := 0.0
 		if j.SizeBytes > 0 {
 			progress = float64(j.DownloadedBytes) / float64(j.SizeBytes)
@@ -227,6 +229,7 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 			State:    st,
 			Progress: progress,
 			Message:  msg,
+			Stage:    stage,
 		})
 	}
 

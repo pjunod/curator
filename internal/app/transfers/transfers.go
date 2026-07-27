@@ -23,12 +23,37 @@ import (
 	"time"
 )
 
-// Stage is where in the pipeline a transfer currently is. These are the
-// seams: each one is a boundary between two applications, or between Monarr
-// and the filesystem.
+// Stage is where in the pipeline a transfer currently is.
+//
+// One job moves through these in order, and copying into the library is not a
+// different kind of thing from downloading it — it is the next part of the
+// same job. Which is why they share a vocabulary and a row, rather than
+// living on separate panels: a release is at exactly one of these at a time,
+// and the interesting question is always which one.
+//
+// The post-processing names are nzbd's own wire spellings, deliberately not
+// translated. nzbd does that work and owns those words; inventing a parallel
+// set here would mean two vocabularies for one pipeline and a mapping table
+// to keep them from drifting. They are rendered into human words at the very
+// edge, in the UI, where nothing else depends on them.
 const (
 	// StageDownloading — nzbd is fetching it. Monarr is watching, not working.
 	StageDownloading = "downloading"
+
+	// Post-processing, inside nzbd, after the bytes have landed. Monarr used
+	// to flatten all of this back to "downloading", so a job spending twenty
+	// minutes repairing a damaged archive was indistinguishable from one
+	// still pulling articles.
+	StageParRename        = "par_rename"
+	StageParVerify        = "par_verify"
+	StageParRepair        = "par_repair"
+	StageRarRename        = "rar_rename"
+	StageUnpack           = "unpack"
+	StageCleanup          = "cleanup"
+	StageMove             = "move"
+	StagePostUnpackRename = "post_unpack_rename"
+	StageScript           = "script"
+
 	// StageImporting — Monarr is moving bytes into the library. The only
 	// stage where Monarr itself is the thing doing the work, and the one
 	// that was invisible.
@@ -37,6 +62,46 @@ const (
 	// between retries.
 	StageNotifying = "notifying"
 )
+
+// pipeline is every exclusive stage, in the order a job passes through them.
+//
+// Exclusive means what it says: a job is at exactly one of these, so entering
+// any of them ends whichever it was at before. StageNotifying is deliberately
+// absent — a notify retrying in the background genuinely can overlap the next
+// job's import, and forcing it into this sequence would make one of them
+// disappear.
+var pipeline = []string{
+	StageDownloading,
+	StageParRename, StageParVerify, StageParRepair,
+	StageRarRename, StageUnpack, StageCleanup, StageMove,
+	StagePostUnpackRename, StageScript,
+	StageImporting,
+}
+
+// Order is a stage's position in the pipeline, for sorting. Unknown stages
+// sort last rather than first: a stage this build has never heard of is more
+// likely to be a newer one than an earlier one.
+func Order(stage string) int {
+	for i, s := range pipeline {
+		if s == stage {
+			return i
+		}
+	}
+	if stage == StageNotifying {
+		return len(pipeline)
+	}
+	return len(pipeline) + 1
+}
+
+// exclusive reports whether entering this stage ends the others.
+func exclusive(stage string) bool {
+	for _, s := range pipeline {
+		if s == stage {
+			return true
+		}
+	}
+	return false
+}
 
 // Transfer is one thing in flight.
 //
@@ -116,11 +181,88 @@ func (r *Registry) Begin(t Transfer) *Handle {
 	if r == nil {
 		return &Handle{}
 	}
-	t.StartedAt = time.Now()
+	k := key{t.DownloadID, t.Stage}
 	r.mu.Lock()
-	r.m[key{t.DownloadID, t.Stage}] = t
+	// Entering an exclusive stage leaves whichever one this job was at.
+	//
+	// This is what makes a job one row rather than an accumulating pile. The
+	// stages are steps in one sequence — a release that is unpacking is no
+	// longer downloading — and a view that showed both would be describing
+	// two jobs. It also means no caller has to remember to end the previous
+	// stage, which is the kind of thing that gets remembered on the path
+	// someone was thinking about and forgotten on the other one.
+	if exclusive(t.Stage) {
+		for existing := range r.m {
+			if existing.download == t.DownloadID && existing.stage != t.Stage &&
+				exclusive(existing.stage) {
+				delete(r.m, existing)
+			}
+		}
+	}
+	// Re-entering the stage a job is already at keeps its original clock. The
+	// elapsed time answers "how long has this been unpacking", and restarting
+	// it on every repeated observation would answer "how long since the last
+	// poll" — a number that is always about thirty seconds and never useful.
+	if prev, ok := r.m[k]; ok && !prev.StartedAt.IsZero() {
+		t.StartedAt = prev.StartedAt
+		if t.Bytes == 0 {
+			t.Bytes, t.Total, t.BytesPerSecond = prev.Bytes, prev.Total, prev.BytesPerSecond
+		}
+	} else {
+		t.StartedAt = time.Now()
+	}
+	r.m[k] = t
 	r.mu.Unlock()
-	return &Handle{reg: r, k: key{t.DownloadID, t.Stage}}
+	return &Handle{reg: r, k: k}
+}
+
+// EndClientStages retires every stage the download client owns — the fetch
+// and all of post-processing — for one download.
+//
+// Used when a job stops being the client's problem: completed, failed, or
+// deleted. Clearing only `downloading` was not enough once post-processing
+// became visible; a job that died during unpack would leave an "extracting"
+// row claiming to be in progress with nothing behind it.
+func (r *Registry) EndClientStages(download int64) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k := range r.m {
+		if k.download == download && k.stage != StageImporting && k.stage != StageNotifying {
+			delete(r.m, k)
+		}
+	}
+}
+
+// Stage is the stage a download is currently at, and whether it is in flight
+// at all. The queue rows read this: one job, one row, one stage.
+func (r *Registry) Stage(download int64) (Transfer, bool) {
+	if r == nil {
+		return Transfer{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var best Transfer
+	found := false
+	for k, t := range r.m {
+		if k.download != download {
+			continue
+		}
+		// Most recently started wins.
+		//
+		// Exclusivity already guarantees at most one pipeline stage, so the
+		// only way to have two is a notify retrying alongside something else.
+		// Ordering by position in the pipeline would then pick the notify,
+		// because notifying comes last — and a job busy copying 60 GB would
+		// report itself as "notifying" on the strength of a background retry.
+		// The newest observation is the one describing what is happening now.
+		if !found || t.StartedAt.After(best.StartedAt) {
+			best, found = t, true
+		}
+	}
+	return best, found
 }
 
 // Snapshot is everything in flight, newest first.

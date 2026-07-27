@@ -194,6 +194,7 @@ func translate(name, data, id string) []ports.ClientEvent {
 				Handle: handleOf(f.Job), Name: f.Name,
 				State:   ports.StateDownloading,
 				Message: "post-processing: " + strings.ReplaceAll(f.Stage, "_", " "),
+				Stage:   f.Stage,
 			},
 		}}
 
@@ -253,7 +254,7 @@ func translate(name, data, id string) []ports.ClientEvent {
 		}
 		evs := make([]ports.ClientEvent, 0, len(f.Jobs))
 		for _, j := range f.Jobs {
-			state, msg := j.state()
+			state, msg, stage := j.state()
 			if state == ports.StateCompleted {
 				continue // not ours to declare; wait for job_pp_finished
 			}
@@ -265,7 +266,7 @@ func translate(name, data, id string) []ports.ClientEvent {
 				Handle: handleOf(j.ID), Kind: ports.EventProgress, Seq: seq,
 				Status: ports.DownloadStatus{
 					Handle: handleOf(j.ID), Name: j.Name, State: state,
-					Progress: progress, Message: msg,
+					Progress: progress, Message: msg, Stage: stage,
 				},
 			})
 		}

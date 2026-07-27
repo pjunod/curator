@@ -745,7 +745,7 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 	// in nzbd left it on the panel indefinitely. Every observation of a
 	// download reaches this function from both channels, so this is the only
 	// place that cannot be forgotten by one of them.
-	s.watchDownloading(dl, st)
+	s.watchDownloading(dl, st, st.Stage)
 
 	switch st.State {
 	case ports.StateQueued, ports.StateDownloading:
