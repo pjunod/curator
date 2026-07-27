@@ -175,17 +175,17 @@ func TestDurationImplausible(t *testing.T) {
 		{
 			name: "a theatrical cut measured against an extended runtime",
 			info: full(7_200_000), runtime: 150, want: false,
-			why:  "80% of stated — runtime metadata describes a cut, not necessarily this one",
+			why: "80% of stated — runtime metadata describes a cut, not necessarily this one",
 		},
 		{
 			name: "a double episode against a per-episode average",
 			info: full(2_640_000), runtime: 22, want: false,
-			why:  "only the short direction is checked; long files have innocent explanations",
+			why: "only the short direction is checked; long files have innocent explanations",
 		},
 		{
 			name: "no runtime known",
 			info: full(90_000), runtime: 0, want: false,
-			why:  "skip the rule rather than fail it",
+			why: "skip the rule rather than fail it",
 		},
 	}
 

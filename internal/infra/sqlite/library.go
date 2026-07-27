@@ -738,8 +738,8 @@ func (d *DB) ListFilesForItem(ctx context.Context, itemID int64) ([]domain.Media
 		f := domain.MediaFile{
 			ID: r.ID, Path: r.Path, Size: r.Size,
 			EpisodeIDs: byFile[r.ID], AddedAt: time.UnixMilli(r.AddedAt),
-			Provenance: mediainfo.Provenance(r.QualityProvenance),
-			Confidence: mediainfo.Confidence(r.QualityConfidence),
+			Provenance:    mediainfo.Provenance(r.QualityProvenance),
+			Confidence:    mediainfo.Confidence(r.QualityConfidence),
 			SourceRelease: r.SourceRelease, SourceIndexer: r.SourceIndexer,
 		}
 		if r.Quality != "" {

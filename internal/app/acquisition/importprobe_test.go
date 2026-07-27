@@ -482,7 +482,7 @@ func TestMoviePayloadPrefersTheLargestFile(t *testing.T) {
 
 	dl := sqlite.Download{
 		MediaItemID: itemID, ReleaseTitle: "The.Test.Movie.2024.1080p.WEB-DL.x264-GRP",
-		Quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		Quality:  quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
 		SavePath: payload,
 	}
 	if _, err := svc.importDownload(ctx, dl, payload, false); err != nil {
