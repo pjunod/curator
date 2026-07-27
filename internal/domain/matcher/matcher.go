@@ -13,6 +13,32 @@ import (
 
 var reNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
 
+// reElision matches the apostrophe family, which is DELETED rather than
+// turned into a separator.
+//
+// This distinction is the whole difference between matching a film and not.
+// An apostrophe inside a word is elision, not a word break: "The Carpenter's
+// Son" is two words plus a possessive, and scene names write it
+// "The.Carpenters.Son". Spacing the apostrophe gives "carpenter s son" on one
+// side and "carpenters son" on the other, and forty perfectly good releases
+// come back marked "does not match".
+//
+// The curly forms are not decoration either — TMDB overviews and titles are
+// full of U+2019, so the straight-quote-only version of this fix would miss
+// half the cases.
+//
+// Note this stays correct for apostrophes that ARE at a word boundary:
+// "Rock 'n' Roll" keeps its surrounding spaces, so deleting the quotes still
+// yields "rock n roll".
+var reElision = regexp.MustCompile("['’‘ʼ´`]+")
+
+// reAmpersand unifies the three ways a title says "and" before anything else
+// runs. Metadata writes "Tom & Jerry"; releases write ".and." or drop the word
+// entirely. Mapping & to the word and then dropping the word (see
+// NormalizeTitle) makes all three spellings agree, where the old behaviour of
+// spacing the ampersand agreed with only one of them.
+var reAmpersand = regexp.MustCompile(`&`)
+
 // reSortName matches the inverted-article convention that media libraries
 // have used forever: "Fall, The", "Lord of the Rings, The", "Thing, A".
 // Plex, Emby, Kodi and countless rename scripts all produce it, so a library
@@ -23,14 +49,26 @@ var reNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
 // thing that actually signals an inversion.
 var reSortName = regexp.MustCompile(`,\s*(the|a|an)\s*$`)
 
-// NormalizeTitle lowers, strips punctuation/articles, and collapses spacing
-// so "The Office (US)" matches "the.office.us" — and so "Fall, The" matches
-// "The Fall", which is the same title written the way a library sorts it.
+// NormalizeTitle lowers, folds, strips punctuation/articles, and collapses
+// spacing so "The Office (US)" matches "the.office.us" — and so "Fall, The"
+// matches "The Fall", which is the same title written the way a library sorts
+// it.
+//
+// The governing idea: a release name is an ASCII transliteration of a title
+// typed by someone who had a full keyboard. Everything here is a rule for
+// undoing one way that transliteration is lossy. Order matters and each step
+// says why it has to run where it does.
 func NormalizeTitle(t string) string {
 	t = strings.ToLower(t)
 	// Un-invert before punctuation goes, because the comma is the signal and
 	// stripping punctuation destroys it.
 	t = reSortName.ReplaceAllString(t, "")
+	// Fold accents before the alnum filter, or "amélie" loses its é to a
+	// space and becomes "am lie" while the release stays "amelie".
+	t = foldASCII(t)
+	// Delete elisions; do NOT space them. See reElision.
+	t = reElision.ReplaceAllString(t, "")
+	t = reAmpersand.ReplaceAllString(t, " and ")
 	t = reNonAlnum.ReplaceAllString(t, " ")
 	fields := strings.Fields(t)
 	if len(fields) > 1 {
@@ -39,7 +77,87 @@ func NormalizeTitle(t string) string {
 			fields = fields[1:]
 		}
 	}
-	return strings.Join(fields, " ")
+	// Drop "and" wherever it appears, which is what makes the three spellings
+	// of an ampersand title agree: "Tom & Jerry", "Tom.and.Jerry" and
+	// "Tom.Jerry" all reduce to "tom jerry". Dropping a word is a real loss of
+	// precision, and it is affordable here only because two titles that differ
+	// by nothing but a standalone "and" are not a thing that exists — and
+	// movies carry a year check behind this anyway.
+	out := fields[:0]
+	for _, f := range fields {
+		if f == "and" {
+			continue
+		}
+		out = append(out, f)
+	}
+	if len(out) == 0 {
+		out = fields // a title that is only the word "and" keeps it
+	}
+	return strings.Join(out, " ")
+}
+
+// asciiFold maps the Latin letters a release name cannot carry onto the ones
+// it writes instead. Lowercase only: NormalizeTitle folds after ToLower.
+//
+// A table rather than Unicode NFD because the two halves of the problem need
+// different treatment and only one of them decomposes. "é" is e + a combining
+// mark and NFD handles it; "ø", "æ", "ß" and "ð" are atomic letters with no
+// decomposition at all, so they need a mapping either way. Given that, one
+// table does the whole job with no dependency, which keeps this package
+// stdlib-only like the parser it sits beside.
+var asciiFold = map[rune]string{
+	'à': "a", 'á': "a", 'â': "a", 'ã': "a", 'ä': "a", 'å': "a", 'ā': "a", 'ă': "a", 'ą': "a",
+	'æ': "ae",
+	'ç': "c", 'ć': "c", 'ĉ': "c", 'ċ': "c", 'č': "c",
+	'ď': "d", 'đ': "d", 'ð': "d",
+	'è': "e", 'é': "e", 'ê': "e", 'ë': "e", 'ē': "e", 'ĕ': "e", 'ė': "e", 'ę': "e", 'ě': "e",
+	'ĝ': "g", 'ğ': "g", 'ġ': "g", 'ģ': "g",
+	'ĥ': "h", 'ħ': "h",
+	'ì': "i", 'í': "i", 'î': "i", 'ï': "i", 'ĩ': "i", 'ī': "i", 'ĭ': "i", 'į': "i", 'ı': "i",
+	'ĵ': "j",
+	'ķ': "k",
+	'ĺ': "l", 'ļ': "l", 'ľ': "l", 'ł': "l",
+	'ñ': "n", 'ń': "n", 'ņ': "n", 'ň': "n",
+	'ò': "o", 'ó': "o", 'ô': "o", 'õ': "o", 'ö': "o", 'ø': "o", 'ō': "o", 'ŏ': "o", 'ő': "o",
+	'œ': "oe",
+	'ŕ': "r", 'ŗ': "r", 'ř': "r",
+	'ś': "s", 'ŝ': "s", 'ş': "s", 'š': "s",
+	'ß': "ss",
+	'ţ': "t", 'ť': "t", 'ŧ': "t",
+	'ù': "u", 'ú': "u", 'û': "u", 'ü': "u", 'ũ': "u", 'ū': "u", 'ŭ': "u", 'ů': "u", 'ű': "u", 'ų': "u",
+	'ŵ': "w",
+	'ý': "y", 'ÿ': "y", 'ŷ': "y",
+	'ź': "z", 'ż': "z", 'ž': "z",
+	'þ': "th",
+}
+
+// foldASCII rewrites accented Latin letters as the ASCII a release name uses.
+// Anything not in the table is left alone — the alnum filter downstream turns
+// it into a separator, which is the right answer for a character that carries
+// no letter (a bullet, a CJK glyph, an emoji).
+func foldASCII(t string) string {
+	// Fast path: the overwhelming majority of titles are already ASCII, and
+	// this runs on every release from every indexer against every wantable.
+	ascii := true
+	for _, r := range t {
+		if r >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return t
+	}
+	var b strings.Builder
+	b.Grow(len(t))
+	for _, r := range t {
+		if sub, ok := asciiFold[r]; ok {
+			b.WriteString(sub)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // Match is a confirmed release↔wantable pairing.

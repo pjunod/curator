@@ -19,7 +19,11 @@ func TestNormalizeTitle(t *testing.T) {
 	cases := [][2]string{
 		{"The Office (US)", "office us"},
 		{"the.office.us", "office us"},
-		{"Marvel's Agents of S.H.I.E.L.D.", "marvel s agents of s h i e l d"},
+		// The apostrophe is deleted, not spaced — releases write this one
+		// "Marvels.Agents.of.S.H.I.E.L.D.", and the old spaced form matched
+		// none of them. See TestNormalizeTitleTransliteration.
+		{"Marvel's Agents of S.H.I.E.L.D.", "marvels agents of s h i e l d"},
+		{"Marvels.Agents.of.S.H.I.E.L.D.", "marvels agents of s h i e l d"},
 		{"A Quiet Place", "quiet place"},
 		{"The", "the"}, // lone article stays
 	}
@@ -259,5 +263,67 @@ func TestAnimeAbsoluteMatching(t *testing.T) {
 	p2 := parser.Parse("[Judas] Frieren Beyond Journeys End - 15-16 [1080p]")
 	if got := Match(p2, []domain.Wantable{ep15, other}); len(got) != 2 {
 		t.Errorf("run matched %d, want 2 (parsed %v)", len(got), p2.Absolute)
+	}
+}
+
+// TestNormalizeTitleTransliteration covers the ways a release name is a lossy
+// ASCII rendering of a title somebody typed with a full keyboard.
+//
+// Every pair here was a release the user saw marked "does not match" against a
+// film they were actively hunting. The apostrophe case is the one that started
+// it: forty releases of "The Carpenter's Son" on one indexer, every one of
+// them declined, because the old normalizer spaced the apostrophe and compared
+// "carpenter s son" against "carpenters son".
+func TestNormalizeTitleTransliteration(t *testing.T) {
+	same := []struct {
+		meta, release, why string
+	}{
+		{"The Carpenter's Son", "The.Carpenters.Son", "the reported bug: elision is not a word break"},
+		{"The Carpenter’s Son", "The.Carpenters.Son", "TMDB writes the curly one"},
+		{"The Carpenter's Son", "The.Carpenter's.Son", "and it still matches when the release keeps it"},
+		{"Ocean's Eleven", "Oceans.Eleven", ""},
+		{"A Hard Day's Night", "A.Hard.Days.Night", ""},
+		{"Amélie", "Amelie", "é decomposes; the old filter turned it into a space"},
+		{"Léon: The Professional", "Leon.The.Professional", ""},
+		{"Am Ende der Straße", "Am.Ende.der.Strasse", "ß has no decomposition — it needs the table"},
+		{"Vår tid är nu", "Var.tid.ar.nu", ""},
+		{"Kærlighed", "Kaerlighed", "æ expands to two letters"},
+		{"Tom & Jerry", "Tom.and.Jerry", "the ampersand spelled out"},
+		{"Tom & Jerry", "Tom.Jerry", "the ampersand dropped"},
+		{"Tom and Jerry", "Tom.&.Jerry", "and the reverse"},
+		{"Rock 'n' Roll", "Rock.n.Roll", "quotes at a word boundary still leave the spaces"},
+		{"Fall, The", "The.Fall", "the sort-name inversion still works"},
+		{"The Office (US)", "the.office.us", ""},
+	}
+	for _, c := range same {
+		a, b := NormalizeTitle(c.meta), NormalizeTitle(c.release)
+		if a != b {
+			t.Errorf("%q vs %q → %q vs %q\n  why this must match: %s", c.meta, c.release, a, b, c.why)
+		}
+	}
+
+	// Folding must not fuse titles that are genuinely different. A normalizer
+	// that matches everything is worse than one that matches nothing: a wrong
+	// match imports the wrong film over the right one.
+	distinct := [][2]string{
+		{"Heat", "Heart"},
+		{"Alien", "Aliens"},
+		{"The Thing", "The Think"},
+		{"Up", "Us"},
+	}
+	for _, c := range distinct {
+		if NormalizeTitle(c[0]) == NormalizeTitle(c[1]) {
+			t.Errorf("%q and %q normalized to the same thing (%q)", c[0], c[1], NormalizeTitle(c[0]))
+		}
+	}
+}
+
+// TestNormalizeTitleDegenerate pins the shapes that could panic or empty out.
+func TestNormalizeTitleDegenerate(t *testing.T) {
+	for _, in := range []string{"", "'", "&", "and", "The", ", the", "'''", "…", "日本語"} {
+		_ = NormalizeTitle(in) // must not panic
+	}
+	if got := NormalizeTitle("and"); got != "and" {
+		t.Errorf(`NormalizeTitle("and") = %q; a title that is only the word must keep it`, got)
 	}
 }
