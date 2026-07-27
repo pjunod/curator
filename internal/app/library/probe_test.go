@@ -13,10 +13,23 @@ import (
 	"github.com/monarr-media/monarr/internal/infra/bus"
 )
 
-// fixtureBytes is a real 1080p H.264 header window, borrowed from the prober's
-// corpus. Using the same bytes both packages test against means this test
-// fails for a wiring reason or not at all — it cannot fail because someone
-// hand-rolled an MKV wrong.
+// fixtureBytes is real container bytes borrowed from the prober's corpus.
+// Using the same bytes both packages test against means these tests fail for a
+// wiring reason or not at all — they cannot fail because someone hand-rolled
+// an MKV wrong.
+//
+// Reach for wholeFixture, not one of the 64 KiB header windows, unless the
+// test is specifically about a file being cut short. Every windowed fixture is
+// a genuinely truncated file and the prober now says so, which lands it in
+// "implausible" and out of the measured path most of these tests are checking.
+// The corpus's two intact MKVs: the ordinary case, files that are exactly as
+// long as they say they are. Everything else in testdata is a header window
+// and therefore genuinely truncated.
+const (
+	whole1080 = "mkv-1080p-h264-ac3-whole.mkv"
+	whole720  = "mkv-720p-h264-aac-whole.mkv"
+)
+
 func fixtureBytes(t *testing.T, name string) []byte {
 	t.Helper()
 	path := filepath.Join("..", "..", "domain", "mediainfo", "testdata", name)
@@ -57,7 +70,7 @@ func TestScanProbesAdoptedFileWithNoTokens(t *testing.T) {
 	}
 	// The screenshot's filename shape: a title and nothing else.
 	movie := filepath.Join(item.Path, "A Good Day to Die Hard.mkv")
-	if err := os.WriteFile(movie, fixtureBytes(t, "mkv-1080p-h264-ac3.mkv"), 0o644); err != nil {
+	if err := os.WriteFile(movie, fixtureBytes(t, whole1080), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,7 +149,7 @@ func TestScanSkipsAlreadyProbedFiles(t *testing.T) {
 	}
 	_ = os.MkdirAll(item.Path, 0o755)
 	movie := filepath.Join(item.Path, "Fight Club.mkv")
-	if err := os.WriteFile(movie, fixtureBytes(t, "mkv-720p-h264-aac.mkv"), 0o644); err != nil {
+	if err := os.WriteFile(movie, fixtureBytes(t, whole720), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Scan(ctx); err != nil {
@@ -300,7 +313,7 @@ func TestFailedProbeIsRetried(t *testing.T) {
 
 	// Whatever was wrong is fixed — here, by the file becoming readable at the
 	// same size it already had, so nothing but the retry rule can save it.
-	real := fixtureBytes(t, "mkv-1080p-h264-ac3.mkv")
+	real := fixtureBytes(t, whole1080)
 	if err := os.WriteFile(movie, real, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +377,7 @@ func TestReprobeItemForcesAMeasurement(t *testing.T) {
 	}
 	_ = os.MkdirAll(item.Path, 0o755)
 	movie := filepath.Join(item.Path, "Fight Club.mkv")
-	if err := os.WriteFile(movie, fixtureBytes(t, "mkv-720p-h264-aac.mkv"), 0o644); err != nil {
+	if err := os.WriteFile(movie, fixtureBytes(t, whole720), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Scan(ctx); err != nil {
@@ -428,7 +441,7 @@ func TestImplausibleFileStopsCountingAsSatisfied(t *testing.T) {
 	}
 	// The name makes a strong claim. The bytes do not support it.
 	movie := filepath.Join(item.Path, "Fight Club (1999) [Remux 2160p].mkv")
-	if err := os.WriteFile(movie, fixtureBytes(t, "mkv-1080p-h264-ac3.mkv"), 0o644); err != nil {
+	if err := os.WriteFile(movie, fixtureBytes(t, whole1080), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Scan(ctx); err != nil {

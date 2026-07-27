@@ -19,6 +19,14 @@ import (
 
 // corpusFile returns bytes from the prober's fixture corpus, so these tests
 // exercise the real walkers rather than a mock that always agrees with us.
+// wholeCorpusFixture is the corpus's one intact MKV. The rest are 64 KiB
+// header windows — real, and really truncated, which the prober now reports.
+// Use this one whenever a test wants an ordinary file rather than a stump.
+const (
+	wholeCorpus1080 = "mkv-1080p-h264-ac3-whole.mkv"
+	wholeCorpus720  = "mkv-720p-h264-aac-whole.mkv"
+)
+
 func corpusFile(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "domain", "mediainfo", "testdata", name))
@@ -52,7 +60,7 @@ func TestImportRecordsMeasuredQualityNotTheClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(payload, release+".mkv"),
-		corpusFile(t, "mkv-720p-h264-aac.mkv"), 0o644); err != nil {
+		corpusFile(t, wholeCorpus720), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	client.statuses = []ports.DownloadStatus{{
@@ -116,7 +124,7 @@ func TestImportKeepsAnHonestReleaseClaim(t *testing.T) {
 	// 1080p H.264 with AC-3 at a bitrate that infers WEB-DL only weakly, so
 	// the uncontradicted name is what supplies the source.
 	if err := os.WriteFile(filepath.Join(payload, release+".mkv"),
-		corpusFile(t, "mkv-1080p-h264-ac3.mkv"), 0o644); err != nil {
+		corpusFile(t, wholeCorpus1080), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	client.statuses = []ports.DownloadStatus{{

@@ -43,6 +43,10 @@ const (
 	// metadata provider gives for this item — a sample, a truncated payload,
 	// or the wrong feature entirely.
 	CodeDurationShort = "duration_short"
+	// CodeTruncated: the container declares more bytes than the file has.
+	// Not an inference from thresholds — the file says its own length and the
+	// filesystem disagrees.
+	CodeTruncated = "truncated"
 )
 
 // Implausibility is one reason a measurement cannot be believed.
@@ -144,7 +148,31 @@ const minJudgeableDurationMS = 60_000
 // whose resolution tier is unrecognized has no floor to compare against; all
 // of them get the benefit of the doubt.
 func Implausible(i Info) (Implausibility, bool) {
-	if !i.Measured() || i.BitrateKbps <= 0 || i.DurationMS < minJudgeableDurationMS {
+	if !i.Measured() {
+		return Implausibility{}, false
+	}
+	// The file is shorter than it says it is.
+	//
+	// This runs first, and it is exact arithmetic on two known lengths rather
+	// than a threshold, so it is not subject to the short-file gate the
+	// statistical rules below need.
+	//
+	// It also answers a different question from the rest of this file. The
+	// others say a file cannot be what it claims; this one says WHY, and the
+	// why decides what to do about it. A real remux's header sitting on 500 MB
+	// is either a fake somebody assembled or a download that got cut off, and
+	// from every other angle those are identical — same tracks, same chapters,
+	// same declared duration, because all of that lives at the front of the
+	// file. The declared length is what separates them: a fake is complete and
+	// small, a stump still says how big it was meant to be.
+	//
+	// Blocklist the first. Go look at the download client for the second.
+	if i.Truncated() {
+		return because(CodeTruncated,
+			"the file is cut short: the container says %s, only %s is here, %s never arrived",
+			humanSize(i.DeclaredBytes), humanSize(i.SizeBytes), humanSize(i.MissingBytes())), true
+	}
+	if i.BitrateKbps <= 0 || i.DurationMS < minJudgeableDurationMS {
 		return Implausibility{}, false
 	}
 

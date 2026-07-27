@@ -110,6 +110,13 @@ func probeMatroska(r io.ReaderAt, size int64) (Info, error) {
 	if segSize > 0 && segStart+segSize < size {
 		segEnd = segStart + segSize
 	}
+	// What the muxer said the finished file would be. mkvmerge writes a real
+	// Segment size once it knows it; a live mux writes unknown-length (-1) and
+	// declares nothing, which is why this is only recorded when positive.
+	declared := int64(0)
+	if segSize > 0 {
+		declared = segStart + segSize
+	}
 
 	var (
 		info       Info
@@ -176,6 +183,7 @@ func probeMatroska(r io.ReaderAt, size int64) (Info, error) {
 	if !haveTracks && firstErr == nil {
 		firstErr = ErrMalformed
 	}
+	info.DeclaredBytes = declared
 	return info, firstErr
 }
 

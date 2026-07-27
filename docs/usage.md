@@ -220,7 +220,21 @@ There is one more badge, and it is the only one that changes what monarr does:
 **does not add up**. It means the file was read and what it says about itself
 cannot be true — a 2160p file at 725 kbps, a declared TrueHD track the whole
 file has no room for, or a 90-second "movie". The reason prints next to the
-path, with the arithmetic. A file in this state stays exactly where it is and
+path, with the arithmetic.
+
+One of those reasons is worth reading closely, because it tells you where to
+go looking. **"The file is cut short"** means the container states its own
+finished length and the file on disk is smaller: 500 MB arrived out of a
+declared 60 GB. That is not a bad release, it is a transfer that stopped, and
+blocklisting it would punish a release that was fine. Check the download
+client, the disk, and any size caps.
+
+Every other reason means the opposite: the file is complete and is simply not
+what it claims. Those are worth blocklisting. The distinction matters because
+from every other angle the two are identical — a fake is usually built from a
+real release's header, so it has the same tracks, the same chapters and the
+same stated runtime. The declared length is the only thing that separates
+them. A file in this state stays exactly where it is and
 stops counting toward the item being complete, so monarr keeps looking for a
 real copy instead of sitting satisfied on a fake one.
 

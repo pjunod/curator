@@ -106,6 +106,45 @@ type Info struct {
 	DurationMS  int64       `json:"durationMs"`
 	BitrateKbps int64       `json:"bitrateKbps"` // overall: size*8/duration, not per-track
 	WritingApp  string      `json:"writingApp,omitempty"`
+
+	// DeclaredBytes is how long the container says it is, when it says so at
+	// all (0 = it did not). A Matroska Segment and an ISO-BMFF box both carry
+	// an explicit length, and a muxer writes it knowing the finished size.
+	//
+	// It is worth storing because it answers a question nothing else can. A
+	// file can be far too small for what it claims and be either a fake — a
+	// real remux's header stitched onto nothing — or a real download that got
+	// cut off. Those look identical from every other angle: same headers, same
+	// track list, same chapters, same declared duration, because all of that
+	// lives at the front of the file. The difference is that a truncated file
+	// still says how long it was SUPPOSED to be, and that number is bigger
+	// than the file.
+	//
+	// One is a bad release to blocklist. The other is a broken transfer to go
+	// fix. Telling somebody which one they have is the whole point.
+	DeclaredBytes int64 `json:"declaredBytes,omitempty"`
+	// SizeBytes is the file's actual length at probe time, kept alongside
+	// DeclaredBytes so the comparison survives into storage.
+	SizeBytes int64 `json:"sizeBytes,omitempty"`
+}
+
+// Truncated reports whether the container declares more bytes than the file
+// contains — proof, not inference, that the file is incomplete.
+//
+// The slack is one EBML/box header's worth. A muxer may finish a hair short of
+// its own reservation without anything being wrong, and this claim is strong
+// enough that it should only be made when it is not close.
+func (i Info) Truncated() bool {
+	const slack = 4096
+	return i.DeclaredBytes > 0 && i.SizeBytes > 0 && i.DeclaredBytes > i.SizeBytes+slack
+}
+
+// MissingBytes is how much of the file never arrived, or 0 when it is whole.
+func (i Info) MissingBytes() int64 {
+	if !i.Truncated() {
+		return 0
+	}
+	return i.DeclaredBytes - i.SizeBytes
 }
 
 // Probe reads container and stream headers from r and returns what it measured.
@@ -148,6 +187,7 @@ func Probe(r io.ReaderAt, size int64) (Info, error) {
 // finalize derives everything that depends on the file as a whole rather than
 // on one header field, and normalizes the slices so equal files compare equal.
 func (i *Info) finalize(size int64) {
+	i.SizeBytes = size
 	if i.DurationMS > 0 && size > 0 {
 		// Overall bitrate in kbit/s: bytes → bits, ms → s, bit/s → kbit/s.
 		i.BitrateKbps = size * 8 / i.DurationMS

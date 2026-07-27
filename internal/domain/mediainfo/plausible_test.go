@@ -1,6 +1,8 @@
 package mediainfo_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/monarr-media/monarr/internal/domain/mediainfo"
@@ -194,6 +196,59 @@ func TestDurationImplausible(t *testing.T) {
 			_, got := mediainfo.DurationImplausible(tc.info, tc.runtime)
 			if got != tc.want {
 				t.Errorf("implausible = %v, want %v\nwhy: %s", got, tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// TestTruncationAgainstTheCorpus checks the detector against files whose
+// truthful state is known by construction.
+//
+// The corpus is built by cutting real ffmpeg output down to a 64 KiB header
+// window (scripts/gen-mediainfo-fixtures.sh records each original's size in
+// SIZES.txt), so every one of those fixtures genuinely IS a truncated file and
+// has to be reported as one. mkv-720p-h264-aac-whole.mkv is the control: same
+// content, same encoder, never cut.
+//
+// This is the rule that separates "somebody assembled a fake" from "the
+// download stopped early", and those want opposite responses — blocklist the
+// release, or go look at the transfer. Getting it backwards sends the user to
+// the wrong place, so it is pinned against files whose answer is not a matter
+// of opinion.
+func TestTruncationAgainstTheCorpus(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"mkv-1080p-h264-ac3.mkv", true},          // 64 KiB of a 1,623,514-byte file
+		{"mkv-2160p-hevc-hdr10-truehd.mkv", true}, // 64 KiB of a 1,596,577-byte file
+		{"mkv-1080p-av1-opus.mkv", true},          // 64 KiB of a 285,484-byte file
+		{"mkv-720p-h264-aac-whole.mkv", false},    // the control: complete
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, err := os.Open(filepath.Join("testdata", c.name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			st, err := f.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, _ := mediainfo.Probe(f, st.Size())
+			if got := info.Truncated(); got != c.want {
+				t.Fatalf("Truncated() = %v, want %v (declares %d bytes, file is %d)",
+					got, c.want, info.DeclaredBytes, info.SizeBytes)
+			}
+			bad, implausible := mediainfo.Implausible(info)
+			if c.want {
+				if !implausible || bad.Code != mediainfo.CodeTruncated {
+					t.Errorf("a cut-short file must read as %q, got %q/%v",
+						mediainfo.CodeTruncated, bad.Code, implausible)
+				}
+			} else if implausible {
+				t.Errorf("the whole control file was called implausible: %s", bad.Reason)
 			}
 		})
 	}

@@ -4,6 +4,7 @@
 # Fixtures are real container headers produced by ffmpeg and then truncated to
 # a header window -- the first N KiB of an MKV or a faststart MP4 parses
 # identically to the whole file for everything the prober reads (ADR 0013 §2).
+# One MKV is deliberately left whole; see mkv-720p-h264-aac-whole.mkv below.
 # ffmpeg is a DEVELOPMENT tool only: monarr itself never shells out to it.
 #
 # Usage: scripts/gen-mediainfo-fixtures.sh   (needs ffmpeg on PATH)
@@ -56,6 +57,21 @@ trunc e.mkv mkv-576i-mpeg2-ac3.mkv 64
 
 SIZE=1280x720 gen f.mkv -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -ac 2 -f matroska
 trunc f.mkv mkv-720p-h264-aac.mkv 64
+
+# The two fixtures that are WHOLE rather than header windows.
+#
+# Every other MKV here is the first 64 KiB of a real file, which parses
+# identically for everything the prober reads -- and, since monarr learned to
+# compare a Matroska Segment's declared length against the bytes on disk, is
+# also correctly reported as TRUNCATED. That is a true statement about those
+# fixtures and useful coverage in its own right, but it leaves nothing to
+# stand in for an ordinary intact file. crf 51 keeps a whole one in the same
+# size class as the windows. Two of them, at the resolutions the app-level
+# probe tests assert.
+SIZE=1280x720 gen fw.mkv -c:v libx264 -preset ultrafast -crf 51 -pix_fmt yuv420p -c:a aac -ac 2 -f matroska
+copy fw.mkv mkv-720p-h264-aac-whole.mkv
+SIZE=1920x1080 gen aw.mkv -c:v libx264 -preset ultrafast -crf 51 -pix_fmt yuv420p -c:a ac3 -ac 6 -f matroska
+copy aw.mkv mkv-1080p-h264-ac3-whole.mkv
 
 SIZE=1920x1080 gen g.mkv -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a flac -ac 6 -f matroska
 trunc g.mkv mkv-1080p-h264-flac.mkv 64

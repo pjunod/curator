@@ -261,6 +261,33 @@ The damage was never the badge. It was that a fake file **retired the want**.
       collapses its rejections
 - [x] `phase9b-plausibility.spec.ts` — 6 e2e covering the whole chain; 80/80 green
 
+**Follow-ups from the first week in the field (v0.8.1):**
+
+- [x] Apostrophes are elision, not word breaks. `NormalizeTitle` spaced every
+      non-alphanumeric run, so "The Carpenter's Son" read as "carpenter s son"
+      against a release's "carpenters son" and forty candidates came back
+      "does not match". Accents now fold to ASCII and the three spellings of
+      an ampersand unify, both the same class of bug
+- [x] `place()` treated ANY file at the destination as already imported, so a
+      same-quality replacement copied nothing and the row was rewritten from
+      the OLD file's size — re-grabbing a bad file could never fix it. Only
+      the same inode counts now; everything else is replaced through a temp
+      name and an atomic rename
+- [x] A movie payload with several video files took whichever sorted first
+      alphabetically. It takes the largest
+- [x] `short_delivery`: the advertised size was stored at grab time and never
+      compared to what arrived. Without it "a 500 MB fake" and "a 13 GB
+      release that arrived 500 MB short" are indistinguishable and want
+      opposite responses
+- [x] **Truncation detection**: a Matroska Segment states its finished length,
+      so a file smaller than its own declaration is provably incomplete —
+      not an inference, arithmetic on two known numbers. This is the rule that
+      separates a fake from a cut-off download, which no bitrate threshold can
+      do: a fake is built from a real release's header, so it carries the same
+      tracks, chapters and stated runtime. Validated against the fixture
+      corpus, every file of which is a truncated real file by construction
+      (`SIZES.txt` records each original), plus two new whole controls
+
 ## Launch logistics
 
 - [x] `monarr-media` GitHub org (free) + private repo + initial push
