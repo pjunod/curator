@@ -267,3 +267,60 @@ func TestPlurxWithoutConfigurationFailsLoudly(t *testing.T) {
 		t.Error("a plurx notifier with no key must not silently do nothing")
 	}
 }
+
+// What plurx made of the files is the only place the chain "grabbed →
+// downloaded → imported → indexed as item 1201" is ever joined up. It has to
+// come back, not just "delivered".
+func TestPlurxReportsWhatPlurxMadeOfTheFiles(t *testing.T) {
+	var n int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&n, 1) == 1 {
+			_, _ = w.Write([]byte(`{"status":"scanned","library_id":3,
+				"items":[{"item_id":1201,"file_id":88}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"queued","request_id":"sr-9f2"}`))
+	}))
+	defer srv.Close()
+
+	target := plurxNotifier(srv.URL)
+	if err := target.Send(context.Background(), movieImport("/m/a.mkv", "/m/b.mkv")); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := target.(ports.DeliveryReporter)
+	if !ok {
+		t.Fatal("the plurx notifier must report its delivery")
+	}
+	got := r.Delivery()
+	if !strings.Contains(got, "1201") {
+		t.Errorf("plurx's item id must reach the trace, got %q", got)
+	}
+	if !strings.Contains(got, "sr-9f2") {
+		t.Errorf("a queued request id is what somebody polls; got %q", got)
+	}
+}
+
+// A partial failure still has a successful half, and losing it would throw
+// away the record of the files that DID land.
+func TestPlurxKeepsTheResultOfThePartThatWorked(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(raw), "bad.mkv") {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"error":"path is not under any library root","roots":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"scanned","items":[{"item_id":77}]}`))
+	}))
+	defer srv.Close()
+
+	target := plurxNotifier(srv.URL)
+	if err := target.Send(context.Background(), movieImport("/m/ok.mkv", "/m/bad.mkv")); err == nil {
+		t.Fatal("expected the partial failure to be reported")
+	}
+	got := target.(ports.DeliveryReporter).Delivery()
+	if !strings.Contains(got, "77") {
+		t.Errorf("the successful half was thrown away: %q", got)
+	}
+}

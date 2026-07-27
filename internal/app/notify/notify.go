@@ -124,18 +124,27 @@ func (d *Dispatcher) dispatch(ctx context.Context, event string, n ports.Notific
 		if refreshOnly(cfg) && event != "import" {
 			continue // media-server pokes only make sense after imports
 		}
+		target := d.new(cfg)
 		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		err := d.new(cfg).Send(cctx, n)
+		err := target.Send(cctx, n)
 		cancel()
+		// What the far side said, when it said anything worth keeping.
+		// Asked for after Send either way: a partial delivery has both a
+		// failure and a result, and dropping the result would lose the half
+		// that worked.
+		result := ""
+		if r, ok := target.(ports.DeliveryReporter); ok {
+			result = r.Delivery()
+		}
 		if err != nil {
 			d.log.Warn("notify: send failed", "notifier", cfg.Name, "type", cfg.Type,
 				"transfer", transferOf(n), "err", err)
-			d.record(ctx, cfg, n, err)
+			d.record(ctx, cfg, n, result, err)
 			continue
 		}
-		d.log.Debug("notify: sent", "notifier", cfg.Name, "event", event,
-			"transfer", transferOf(n))
-		d.record(ctx, cfg, n, nil)
+		d.log.Info("notify: sent", "notifier", cfg.Name, "event", event,
+			"transfer", transferOf(n), "result", result)
+		d.record(ctx, cfg, n, result, nil)
 	}
 }
 
@@ -147,7 +156,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, event string, n ports.Notific
 // is where somebody asking "why hasn't this shown up in plurx" is looking
 // anyway. Only import deliveries are recorded: history is per media item,
 // and a health notification has no item to belong to.
-func (d *Dispatcher) record(ctx context.Context, cfg ports.NotifierConfig, n ports.Notification, sendErr error) {
+func (d *Dispatcher) record(ctx context.Context, cfg ports.NotifierConfig, n ports.Notification, result string, sendErr error) {
 	if n.Import == nil || n.Import.MediaItemID == 0 || !refreshOnly(cfg) {
 		return
 	}
@@ -158,6 +167,11 @@ func (d *Dispatcher) record(ctx context.Context, cfg ports.NotifierConfig, n por
 	}
 	if n.Import.Transfer != "" {
 		detail["transfer"] = n.Import.Transfer
+	}
+	if result != "" {
+		// The far end's own words. This is where "imported" stops being the
+		// end of the story and becomes "…and plurx made item 1201 of it".
+		detail["result"] = result
 	}
 	kind := "notified"
 	if sendErr != nil {

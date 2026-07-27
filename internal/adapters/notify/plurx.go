@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +32,16 @@ import (
 type Plurx struct {
 	URL    string
 	APIKey string
+
+	// delivery accumulates what plurx said about the last Send. A notifier
+	// is built fresh per dispatch (see notify.New), so this is per-event
+	// state and not something two imports can share.
+	delivery []string
 }
+
+// Delivery implements ports.DeliveryReporter: what plurx made of the files,
+// in one line, for the transfer's trace.
+func (p *Plurx) Delivery() string { return strings.Join(p.delivery, "; ") }
 
 // plurxAttempts bounds the retry. The dispatcher gives each notifier 20
 // seconds for the whole event, and a season pack is a dozen paths, so this
@@ -52,6 +62,7 @@ func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 		return nil
 	}
 
+	p.delivery = nil
 	var failures []string
 	for _, path := range n.Import.Paths {
 		if err := p.scan(ctx, path, n.Import); err != nil {
@@ -128,8 +139,11 @@ func (p *Plurx) scan(ctx context.Context, path string, info *ports.ImportInfo) e
 			case <-time.After(time.Duration(attempt-1) * 400 * time.Millisecond):
 			}
 		}
-		err := p.post(ctx, target, body)
+		outcome, err := p.post(ctx, target, body)
 		if err == nil {
+			if outcome != "" {
+				p.delivery = append(p.delivery, outcome)
+			}
 			return nil
 		}
 		last = fmt.Errorf("%s: %w", path, err)
@@ -147,16 +161,18 @@ func (p *Plurx) scan(ctx context.Context, path string, info *ports.ImportInfo) e
 // the connection, and the server saying it is having a moment.
 var errPlurxRetryable = errors.New("retryable")
 
-func (p *Plurx) post(ctx context.Context, target string, body []byte) error {
+// post sends one request. On success it returns a one-line summary of what
+// plurx answered, for the trace.
+func (p *Plurx) post(ctx context.Context, target string, body []byte) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %s", errPlurxRetryable, err)
+		return "", fmt.Errorf("%w: %s", errPlurxRetryable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
@@ -166,25 +182,59 @@ func (p *Plurx) post(ctx context.Context, target string, body []byte) error {
 		// 202 means plurx was mid-scan and queued the request. That is a
 		// success: it is queued, not dropped, and treating it as a failure
 		// would retry work plurx has already promised to do.
-		return nil
+		return scanOutcome(raw), nil
 	case resp.StatusCode == http.StatusUnprocessableEntity:
 		// The 422 carries plurx's library roots. Carrying that message
 		// through verbatim is the difference between "422" and being able
 		// to see, in Monarr's own log, that plurx has /media mounted where
 		// Monarr has /data/media.
-		return fmt.Errorf("plurx does not have this path under any library root — %s",
+		return "", fmt.Errorf("plurx does not have this path under any library root — %s",
 			summarize(raw))
 	case resp.StatusCode == http.StatusUnauthorized:
-		return fmt.Errorf("plurx rejected the key (401) — it is unknown, revoked, "+
+		return "", fmt.Errorf("plurx rejected the key (401) — it is unknown, revoked, "+
 			"or a plurx USER token, which this route does not accept: %s", summarize(raw))
 	case resp.StatusCode == http.StatusForbidden:
-		return fmt.Errorf("the key is valid but lacks the scan:trigger scope (403): %s",
+		return "", fmt.Errorf("the key is valid but lacks the scan:trigger scope (403): %s",
 			summarize(raw))
 	case resp.StatusCode >= 500:
-		return fmt.Errorf("%w: plurx returned %d: %s", errPlurxRetryable, resp.StatusCode, summarize(raw))
+		return "", fmt.Errorf("%w: plurx returned %d: %s", errPlurxRetryable, resp.StatusCode, summarize(raw))
 	default:
-		return fmt.Errorf("plurx returned %d: %s", resp.StatusCode, summarize(raw))
+		return "", fmt.Errorf("plurx returned %d: %s", resp.StatusCode, summarize(raw))
 	}
+}
+
+// scanOutcome renders plurx's answer as one short line.
+//
+// The item id is the payoff: it is what joins "monarr imported this" to
+// "plurx made item 1201 of it", and without it the trace stops at the
+// boundary and somebody has to go and look in two UIs.
+func scanOutcome(raw []byte) string {
+	var body struct {
+		Status    string `json:"status"`
+		RequestID string `json:"request_id"`
+		Items     []struct {
+			ItemID int64 `json:"item_id"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(raw, &body) != nil {
+		return ""
+	}
+	switch body.Status {
+	case "scanned":
+		ids := make([]string, 0, len(body.Items))
+		for _, it := range body.Items {
+			ids = append(ids, strconv.FormatInt(it.ItemID, 10))
+		}
+		if len(ids) == 0 {
+			return "scanned"
+		}
+		return "scanned → plurx item " + strings.Join(ids, ", ")
+	case "queued":
+		// Not a lesser outcome, just a later one — plurx was mid-scan. The
+		// request id is what somebody polls to find out how it went.
+		return "queued as " + body.RequestID
+	}
+	return ""
 }
 
 // summarize trims a response body down to something a log line can hold.
@@ -218,7 +268,7 @@ func (p *Plurx) Test(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = p.post(ctx, strings.TrimRight(p.URL, "/")+"/api/v1/scan", body)
+	_, err = p.post(ctx, strings.TrimRight(p.URL, "/")+"/api/v1/scan", body)
 	if err == nil {
 		return nil // it somehow matched a root; the connection works either way
 	}

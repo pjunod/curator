@@ -58,3 +58,18 @@ type Notifier interface {
 	Send(ctx context.Context, n Notification) error
 	Test(ctx context.Context) error
 }
+
+// DeliveryReporter is an optional capability: a notifier whose far side
+// answered with something worth keeping.
+//
+// Optional because most have nothing to say — a webhook returning 204 tells
+// you it was accepted and no more. plurx answers a scan with what it made of
+// the files, and that belongs in the transfer's trace: it is the only place
+// the chain "grabbed → downloaded → imported → indexed as item 1201" is ever
+// joined up. Asserted for after Send, in the same shape as the download
+// clients' TaggedAdder and Subscriber.
+type DeliveryReporter interface {
+	// Delivery summarizes the last Send in one line, or "" if there is
+	// nothing to add.
+	Delivery() string
+}

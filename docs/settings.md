@@ -341,7 +341,16 @@ What the failures mean:
 
 Deliveries — successes and failures both — are recorded on the media item's
 own history, next to the import they belong to, so "why hasn't this shown up
-in plurx" is answerable without reading the server log.
+in plurx" is answerable without reading the server log. A successful one
+carries plurx's own answer (`scanned → plurx item 1201`, or `queued as sr-…`
+when plurx was mid-scan), which is the only place the chain *grabbed →
+downloaded → imported → indexed as item 1201* is joined up.
+
+Enabled download clients and plurx notifiers are also probed once a minute by
+the **connections** health check. Chat notifiers and the Plex/Jellyfin
+entries are deliberately not: testing a Discord webhook posts a message, and
+the only "test" a Plex notifier has is a full library rescan. Neither belongs
+on a timer. plurx is checkable because its test was built to be inert.
 
 ## Security
 
