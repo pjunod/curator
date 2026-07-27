@@ -53,6 +53,32 @@ type ClientConfig struct {
 	// the worst case for a client wrongly set to push is the behavior it
 	// had before. Empty means poll.
 	Mode string
+	// RemoveCompleted deletes the payload from the client once monarr has
+	// imported it.
+	//
+	// Off means every grab leaves a second full copy behind for as long as the
+	// client keeps it, and when the client's directory and the library are on
+	// different filesystems — the normal arrangement — that copy is real bytes
+	// rather than a hardlink. It adds up faster than anyone expects.
+	//
+	// Not defaulted the same way for everything. Usenet has no obligation once
+	// the download is done, so those default on. A torrent is still seeding,
+	// and monarr cannot yet tell "finished seeding" from "seeding happily", so
+	// those default off and stay a deliberate choice.
+	RemoveCompleted bool
+}
+
+// ProtocolOfClient reports whether a client type speaks usenet or torrent.
+// It lives here rather than in the acquisition service because the answer
+// changes defaults in the API layer too — a usenet client has no obligation
+// after a download and a torrent is still seeding, and that difference decides
+// what RemoveCompleted starts as.
+func ProtocolOfClient(clientType string) string {
+	switch clientType {
+	case "sabnzbd", "nzbget", "nzbd":
+		return "usenet"
+	}
+	return "torrent"
 }
 
 // Handle identifies an item inside a download client (torrent hash, nzo id).

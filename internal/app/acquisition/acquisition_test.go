@@ -30,6 +30,15 @@ func (f fakeIndexer) Test(ctx context.Context) error { return nil }
 type fakeClient struct {
 	added    []string
 	statuses []ports.DownloadStatus
+	// removed records (handle, deleteData) for every Remove, so a test can
+	// assert monarr asked the client to throw the payload away — and, just as
+	// importantly, that it did not.
+	removed []removeCall
+}
+
+type removeCall struct {
+	Handle     ports.Handle
+	DeleteData bool
 }
 
 func (f *fakeClient) Add(ctx context.Context, url, cat string) (ports.Handle, error) {
@@ -39,8 +48,11 @@ func (f *fakeClient) Add(ctx context.Context, url, cat string) (ports.Handle, er
 func (f *fakeClient) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 	return f.statuses, nil
 }
-func (f *fakeClient) Remove(ctx context.Context, h ports.Handle, del bool) error { return nil }
-func (f *fakeClient) Test(ctx context.Context) error                             { return nil }
+func (f *fakeClient) Remove(ctx context.Context, h ports.Handle, del bool) error {
+	f.removed = append(f.removed, removeCall{Handle: h, DeleteData: del})
+	return nil
+}
+func (f *fakeClient) Test(ctx context.Context) error { return nil }
 
 func setup(t *testing.T, releases []ports.Release, client *fakeClient) (*Service, *sqlite.DB, int64) {
 	t.Helper()

@@ -703,10 +703,17 @@ type DownloadClientConfig struct {
 	Password *string                   `json:"password,omitempty"`
 
 	// PathMappings Remote path mappings: when the client runs on another host or container, rewrite the completed-download path it reports into the path Monarr sees the same files at.
-	PathMappings *[]PathMapping           `json:"pathMappings,omitempty"`
-	Type         DownloadClientConfigType `json:"type"`
-	Url          string                   `json:"url"`
-	Username     *string                  `json:"username,omitempty"`
+	PathMappings *[]PathMapping `json:"pathMappings,omitempty"`
+
+	// RemoveCompleted Delete the payload from this client once Monarr has imported it.
+	//
+	// Off means every grab leaves a second full copy behind, and when the client's disk and the library are different filesystems -- the normal arrangement -- that copy is real bytes rather than a hardlink. Deleting is safe either way: a hardlinked import keeps the library's copy, because removing one name for an inode does not touch the other.
+	//
+	// Defaults on for usenet clients, which have no obligation once the download is done, and off for torrent clients, which are still seeding and which Monarr cannot yet tell "finished seeding" from "seeding happily".
+	RemoveCompleted *bool                    `json:"removeCompleted,omitempty"`
+	Type            DownloadClientConfigType `json:"type"`
+	Url             string                   `json:"url"`
+	Username        *string                  `json:"username,omitempty"`
 }
 
 // DownloadClientConfigMode How Monarr learns this client's state. 'poll' asks every 30 seconds. 'push' additionally holds the client's event stream open, so a finished download is acted on when it finishes rather than up to a poll interval later — currently only the native nzbd client can stream. Push never replaces the poll, so a stream that dies quietly costs latency, not correctness.
@@ -729,10 +736,17 @@ type DownloadClientInput struct {
 	Password *string                  `json:"password,omitempty"`
 
 	// PathMappings Remote path mappings: when the client runs on another host or container, rewrite the completed-download path it reports into the path Monarr sees the same files at.
-	PathMappings *[]PathMapping          `json:"pathMappings,omitempty"`
-	Type         DownloadClientInputType `json:"type"`
-	Url          string                  `json:"url"`
-	Username     *string                 `json:"username,omitempty"`
+	PathMappings *[]PathMapping `json:"pathMappings,omitempty"`
+
+	// RemoveCompleted Delete the payload from this client once Monarr has imported it.
+	//
+	// Off means every grab leaves a second full copy behind, and when the client's disk and the library are different filesystems -- the normal arrangement -- that copy is real bytes rather than a hardlink. Deleting is safe either way: a hardlinked import keeps the library's copy, because removing one name for an inode does not touch the other.
+	//
+	// Defaults on for usenet clients, which have no obligation once the download is done, and off for torrent clients, which are still seeding and which Monarr cannot yet tell "finished seeding" from "seeding happily".
+	RemoveCompleted *bool                   `json:"removeCompleted,omitempty"`
+	Type            DownloadClientInputType `json:"type"`
+	Url             string                  `json:"url"`
+	Username        *string                 `json:"username,omitempty"`
 }
 
 // DownloadClientInputMode How Monarr learns this client's state. 'poll' asks every 30 seconds. 'push' additionally holds the client's event stream open, so a finished download is acted on when it finishes rather than up to a poll interval later — currently only the native nzbd client can stream. Push never replaces the poll, so a stream that dies quietly costs latency, not correctness.

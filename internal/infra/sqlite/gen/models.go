@@ -31,42 +31,44 @@ type CustomFormat struct {
 }
 
 type Download struct {
-	ID           int64
-	MediaItemID  int64
-	CopyID       sql.NullInt64
-	Wantables    string
-	Season       int64
-	ReleaseTitle string
-	Indexer      string
-	Protocol     string
-	Quality      string
-	Size         int64
-	ClientID     int64
-	Handle       string
-	State        string
-	Progress     float64
-	Error        string
-	SavePath     string
-	ImportPath   string
-	HandoffLog   string
-	AddedAt      int64
-	UpdatedAt    int64
-	Transfer     string
+	ID             int64
+	MediaItemID    int64
+	CopyID         sql.NullInt64
+	Wantables      string
+	Season         int64
+	ReleaseTitle   string
+	Indexer        string
+	Protocol       string
+	Quality        string
+	Size           int64
+	ClientID       int64
+	Handle         string
+	State          string
+	Progress       float64
+	Error          string
+	SavePath       string
+	ImportPath     string
+	HandoffLog     string
+	AddedAt        int64
+	UpdatedAt      int64
+	Transfer       string
+	PayloadRemoved int64
 }
 
 type DownloadClient struct {
-	ID             int64
-	Type           string
-	Name           string
-	Url            string
-	Username       string
-	Password       string
-	Category       string
-	Enabled        int64
-	PathMappings   string
-	ManualApproval int64
-	AddedAt        int64
-	Mode           string
+	ID              int64
+	Type            string
+	Name            string
+	Url             string
+	Username        string
+	Password        string
+	Category        string
+	Enabled         int64
+	PathMappings    string
+	ManualApproval  int64
+	AddedAt         int64
+	Mode            string
+	RemoveCompleted int64
 }
 
 type Episode struct {

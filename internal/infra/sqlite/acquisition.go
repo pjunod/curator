@@ -205,6 +205,28 @@ func (d *DB) DeleteIndexer(ctx context.Context, id int64) error {
 	return d.Write.DeleteIndexer(ctx, id)
 }
 
+// ImportedWithPayload returns imported downloads whose payload is still on the
+// client's disk, oldest first, capped at limit.
+func (d *DB) ImportedWithPayload(ctx context.Context, limit int64) ([]Download, error) {
+	rows, err := d.Read.ListImportedWithPayload(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Download, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, downloadFromRow(r))
+	}
+	return out, nil
+}
+
+// MarkPayloadRemoved records that a download's bytes are no longer on the
+// client, so the sweep does not ask again.
+func (d *DB) MarkPayloadRemoved(ctx context.Context, id int64) error {
+	return d.Write.MarkPayloadRemoved(ctx, sqlitegen.MarkPayloadRemovedParams{
+		UpdatedAt: time.Now().UnixMilli(), ID: id,
+	})
+}
+
 // ---- download clients ----
 
 func clientFromRow(r sqlitegen.DownloadClient) ports.ClientConfig {
@@ -214,7 +236,7 @@ func clientFromRow(r sqlitegen.DownloadClient) ports.ClientConfig {
 		ID: r.ID, Type: r.Type, Name: r.Name, URL: r.Url,
 		Username: r.Username, Password: r.Password, Category: r.Category, Enabled: r.Enabled != 0,
 		PathMappings: maps, ManualApproval: r.ManualApproval != 0,
-		Mode: r.Mode,
+		Mode: r.Mode, RemoveCompleted: r.RemoveCompleted != 0,
 	}
 }
 
@@ -238,10 +260,11 @@ func (d *DB) AddDownloadClient(ctx context.Context, c ports.ClientConfig) (int64
 	return d.Write.InsertDownloadClient(ctx, sqlitegen.InsertDownloadClientParams{
 		Type: c.Type, Name: c.Name, Url: c.URL, Username: c.Username,
 		Password: c.Password, Category: c.Category, Enabled: boolInt(c.Enabled),
-		PathMappings:   string(maps),
-		ManualApproval: boolInt(c.ManualApproval),
-		Mode:           clientMode(c.Mode),
-		AddedAt:        time.Now().UnixMilli(),
+		PathMappings:    string(maps),
+		ManualApproval:  boolInt(c.ManualApproval),
+		Mode:            clientMode(c.Mode),
+		RemoveCompleted: boolInt(c.RemoveCompleted),
+		AddedAt:         time.Now().UnixMilli(),
 	})
 }
 
@@ -256,10 +279,11 @@ func (d *DB) UpdateDownloadClient(ctx context.Context, c ports.ClientConfig) err
 	return d.Write.UpdateDownloadClient(ctx, sqlitegen.UpdateDownloadClientParams{
 		Type: c.Type, Name: c.Name, Url: c.URL, Username: c.Username,
 		Password: c.Password, Category: c.Category, Enabled: boolInt(c.Enabled),
-		PathMappings:   string(maps),
-		ManualApproval: boolInt(c.ManualApproval),
-		Mode:           clientMode(c.Mode),
-		ID:             c.ID,
+		PathMappings:    string(maps),
+		ManualApproval:  boolInt(c.ManualApproval),
+		Mode:            clientMode(c.Mode),
+		RemoveCompleted: boolInt(c.RemoveCompleted),
+		ID:              c.ID,
 	})
 }
 

@@ -18,8 +18,8 @@ SELECT * FROM indexers WHERE id = ?;
 DELETE FROM indexers WHERE id = ?;
 
 -- name: InsertDownloadClient :one
-INSERT INTO download_clients (type, name, url, username, password, category, enabled, path_mappings, manual_approval, mode, added_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
+INSERT INTO download_clients (type, name, url, username, password, category, enabled, path_mappings, manual_approval, mode, remove_completed, added_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
 
 -- name: ListDownloadClients :many
 SELECT * FROM download_clients ORDER BY name;
@@ -30,7 +30,8 @@ SELECT * FROM download_clients WHERE id = ?;
 -- name: UpdateDownloadClient :exec
 UPDATE download_clients
 SET type = ?, name = ?, url = ?, username = ?, password = ?, category = ?,
-    enabled = ?, path_mappings = ?, manual_approval = ?, mode = ?
+    enabled = ?, path_mappings = ?, manual_approval = ?, mode = ?,
+    remove_completed = ?
 WHERE id = ?;
 
 -- name: DeleteDownloadClient :exec
@@ -71,6 +72,18 @@ UPDATE downloads SET handle = ?, transfer = ?, updated_at = ? WHERE id = ?;
 
 -- name: DeleteDownload :exec
 DELETE FROM downloads WHERE id = ?;
+
+-- name: ListImportedWithPayload :many
+-- Imported downloads whose payload has not been cleaned up yet, oldest first
+-- so a backlog drains in the order it accumulated. Bounded per sweep: asking
+-- a client to delete several hundred jobs in one burst is a good way to make
+-- it stop answering.
+SELECT * FROM downloads
+WHERE state = 'imported' AND payload_removed = 0 AND handle != ''
+ORDER BY added_at LIMIT ?;
+
+-- name: MarkPayloadRemoved :exec
+UPDATE downloads SET payload_removed = 1, updated_at = ? WHERE id = ?;
 
 -- name: SetFileQuality :exec
 UPDATE media_files SET quality = ? WHERE id = ?;

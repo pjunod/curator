@@ -266,6 +266,34 @@ is disabled for a file monarr did not grab — an adopted file has no source
 release, so there is nothing to blocklist, and the button says so rather than
 half-working.
 
+## Cleaning up after a download
+
+Once a payload has been imported, the copy in the download client's completed
+folder is doing nothing but occupying a disk. **Clean up after import**, on
+each download client in Settings → Acquisition, deletes it.
+
+Deleting is safe whichever way the file was imported. When Monarr can hardlink
+— the library and the download folder on one filesystem — the client's copy is
+just a second name for the same bytes, and removing that name leaves the
+library's. When it cannot, and it copied, the client's copy is a genuine
+duplicate and removing it frees real space. That second case is the one that
+gets expensive: a fast local disk for downloads and a big array for the library
+is the normal arrangement, and it means every grab is stored twice.
+
+The default differs by client type, because the right answer does:
+
+- **Usenet** (nzbd, SABnzbd, NZBGet) defaults **on**. There is no obligation
+  once the download finishes; the payload is scratch space.
+- **Torrents** default **off**. The client is still seeding, and Monarr cannot
+  yet tell "finished seeding" from "seeding happily", so throwing that data
+  away stays your decision.
+
+Turning it on also collects what has already piled up. An hourly
+`downloads.cleanup` task sweeps imported downloads whose payload is still on
+the client, oldest first, so enabling the setting after a year of grabbing
+clears the year of grabs too — a few dozen at a time, so the client is never
+handed hundreds of deletions at once. Run it on demand from System → Tasks.
+
 ## Interactive search
 
 Every candidate is listed, including the ones monarr would decline, each with

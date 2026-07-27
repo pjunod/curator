@@ -291,6 +291,15 @@ func clientInputToConfig(in apigen.DownloadClientInput) ports.ClientConfig {
 	if in.ManualApproval != nil {
 		cfg.ManualApproval = *in.ManualApproval
 	}
+	if in.RemoveCompleted != nil {
+		cfg.RemoveCompleted = *in.RemoveCompleted
+	} else {
+		// Unset means the caller has no opinion, so take the one the client
+		// type implies — the same split migration 0025 applied to existing
+		// rows. Usenet is finished with the payload; a torrent is still
+		// seeding and its data is not monarr's to throw away on a guess.
+		cfg.RemoveCompleted = ports.ProtocolOfClient(cfg.Type) == "usenet"
+	}
 	if in.Mode != nil {
 		cfg.Mode = string(*in.Mode)
 	}
@@ -310,6 +319,7 @@ func clientInputToConfig(in apigen.DownloadClientInput) ports.ClientConfig {
 
 func clientDTO(c ports.ClientConfig) apigen.DownloadClientConfig {
 	user, cat, enabled, manual := c.Username, c.Category, c.Enabled, c.ManualApproval
+	removeDone := c.RemoveCompleted
 	mode := apigen.DownloadClientConfigMode(c.Mode)
 	if c.Mode == "" {
 		mode = "poll"
@@ -321,7 +331,7 @@ func clientDTO(c ports.ClientConfig) apigen.DownloadClientConfig {
 	out := apigen.DownloadClientConfig{
 		Id: c.ID, Type: apigen.DownloadClientConfigType(c.Type), Name: c.Name, Url: c.URL,
 		Username: &user, Password: &masked, Category: &cat, Enabled: &enabled,
-		ManualApproval: &manual, Mode: &mode,
+		ManualApproval: &manual, Mode: &mode, RemoveCompleted: &removeDone,
 	}
 	if len(c.PathMappings) > 0 {
 		maps := make([]apigen.PathMapping, 0, len(c.PathMappings))

@@ -509,12 +509,7 @@ type GrabRequest struct {
 	Size        int64
 }
 
-func protocolOfClient(clientType string) string {
-	if clientType == "sabnzbd" || clientType == "nzbget" || clientType == "nzbd" {
-		return "usenet"
-	}
-	return "torrent"
-}
+func protocolOfClient(clientType string) string { return ports.ProtocolOfClient(clientType) }
 
 // newTransferID mints the id that names one transfer end to end
 // (nzbd/docs/INTEGRATION_PLAN.md §3.1): `t-<downloads.id>-<6 lowercase

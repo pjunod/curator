@@ -60,6 +60,18 @@ function RowTest(props: { run: () => Promise<unknown> }) {
 }
 
 // Indexer + download client management, embedded in the Settings page.
+/**
+ * isUsenetClient decides the default for "clean up after import".
+ *
+ * Usenet has no obligation once the download is done, so the payload is scratch
+ * space and deleting it is tidying up. A torrent is still seeding, and Monarr
+ * cannot yet tell "finished seeding" from "seeding happily", so throwing its
+ * data away has to stay a deliberate choice. The server applies the same split.
+ */
+function isUsenetClient(type: string): boolean {
+  return type === 'sabnzbd' || type === 'nzbget' || type === 'nzbd'
+}
+
 export function AcquisitionSettings() {
   const qc = useQueryClient()
   const indexers = useQuery({ queryKey: ['indexers'], queryFn: getIndexers })
@@ -125,15 +137,22 @@ export function AcquisitionSettings() {
     mutationFn: deleteDownloadClient,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['downloadclients'] }),
   })
-  // Toggle manual-approval on a saved client. The masked password round-trips
-  // and is preserved server-side, so this never blanks credentials.
-  const toggleApproval = useMutation({
-    mutationFn: (c: DownloadClientConfig) =>
+  // Flip one boolean on a saved client, sending the rest back untouched. The
+  // masked password round-trips and is preserved server-side, so this never
+  // blanks credentials.
+  //
+  // One mutation rather than one per checkbox: the row has two of them now and
+  // a third would otherwise mean a third near-identical copy of this payload,
+  // each an opportunity to forget a field and quietly reset it.
+  const toggleClient = useMutation({
+    mutationFn: ({ c, patch }: { c: DownloadClientConfig; patch: Partial<DownloadClientConfig> }) =>
       updateDownloadClient(c.id, {
         type: c.type, name: c.name, url: c.url,
         username: c.username, password: c.password,
         category: c.category, enabled: c.enabled,
-        manualApproval: !c.manualApproval, pathMappings: c.pathMappings,
+        manualApproval: c.manualApproval, removeCompleted: c.removeCompleted,
+        mode: c.mode, pathMappings: c.pathMappings,
+        ...patch,
       }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['downloadclients'] }),
   })
@@ -232,10 +251,30 @@ export function AcquisitionSettings() {
                     <input
                       type="checkbox"
                       checked={!!c.manualApproval}
-                      onChange={() => toggleApproval.mutate(c)}
-                      disabled={toggleApproval.isPending}
+                      onChange={() =>
+                        toggleClient.mutate({ c, patch: { manualApproval: !c.manualApproval } })
+                      }
+                      disabled={toggleClient.isPending}
                     />{' '}
                     Approve imports
+                  </label>
+                  <label
+                    className="approval-toggle"
+                    title={
+                      isUsenetClient(c.type)
+                        ? 'Delete the payload from this client once Monarr has imported it. Without this, every grab leaves a second full copy behind.'
+                        : 'Delete the payload once imported. This torrent is still seeding — turning it on throws that away.'
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!c.removeCompleted}
+                      onChange={() =>
+                        toggleClient.mutate({ c, patch: { removeCompleted: !c.removeCompleted } })
+                      }
+                      disabled={toggleClient.isPending}
+                    />{' '}
+                    Clean up after import
                   </label>
                 </td>
                 <td>
@@ -325,6 +364,17 @@ export function AcquisitionSettings() {
               onChange={(e) => setCli({ ...cli, manualApproval: e.target.checked })}
             />{' '}
             Require approval
+          </label>
+          <label
+            className="approval-toggle"
+            title="Delete the payload from the client once Monarr has imported it. Without this, every grab leaves a second full copy behind — and when the download disk and the library are different filesystems, that copy is real bytes rather than a hardlink."
+          >
+            <input
+              type="checkbox"
+              checked={cli.removeCompleted ?? isUsenetClient(cli.type)}
+              onChange={(e) => setCli({ ...cli, removeCompleted: e.target.checked })}
+            />{' '}
+            Clean up after import
           </label>
           {cli.type === 'nzbd' && (
             <label

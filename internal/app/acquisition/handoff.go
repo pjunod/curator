@@ -109,6 +109,13 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 		detail += fmt.Sprintf("; %d skipped — %s", len(skipped), result.reasons(3))
 	}
 	s.advance(ctx, &dl, "imported", 1, "", stepImported, detail)
+	// The library has the files now, so the client's copy is just occupying a
+	// disk. Inline rather than left to the hourly sweep: a night of 60 GB
+	// remuxes is several hundred gigabytes of "we will get to it".
+	s.cleanupAfterImport(ctx, downloadRef{
+		ID: dl.ID, MediaItemID: dl.MediaItemID, ClientID: dl.ClientID,
+		Handle: dl.Handle, ReleaseTitle: dl.ReleaseTitle, Size: dl.Size,
+	})
 	s.InvalidateWanted()
 	return nil
 }

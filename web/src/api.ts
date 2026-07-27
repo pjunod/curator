@@ -549,6 +549,11 @@ export interface DownloadClientInput {
   category?: string
   enabled?: boolean
   manualApproval?: boolean
+  /**
+   * Delete the payload from this client once Monarr has imported it.
+   * Defaults on for usenet, off for torrents (still seeding).
+   */
+  removeCompleted?: boolean
   /** How Monarr learns this client's state: poll every 30s, or hold its event stream open. */
   mode?: 'poll' | 'push'
   pathMappings?: PathMapping[]

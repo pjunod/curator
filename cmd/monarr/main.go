@@ -341,6 +341,17 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}); err != nil {
 		return err
 	}
+	// Cleanup: the sweep that collects payloads the inline path did not.
+	// It is what drains a backlog when somebody turns the setting on after a
+	// year of grabs — enabling it means "monarr should not be leaving these
+	// around", not "monarr should stop leaving NEW ones around".
+	if err := sched.Register(scheduler.Task{
+		Name:     acquisition.JobCleanup,
+		Interval: acquisition.CleanupInterval,
+		Fn:       acq.CleanupPayloads,
+	}); err != nil {
+		return err
+	}
 	if err := sched.Register(scheduler.Task{
 		Name:     "importlists.sync",
 		Interval: 12 * time.Hour,

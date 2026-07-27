@@ -37,11 +37,14 @@ test('the approve-imports toggle on a client persists', async ({ page, request }
 
   // Click (not check()) — the checkbox re-renders from the server round-trip,
   // so assert the persisted value rather than the element's transient state.
-  await clientRow.getByRole('checkbox').click()
+  // By name, not position: the row carries more than one checkbox now
+  // (approve-imports and clean-up-after-import), and a bare checkbox lookup
+  // is a strict-mode violation the moment a second one appears.
+  await clientRow.getByLabel('Approve imports').click()
   await expect.poll(approvalOf).toBe(true)
 
   // Restore auto-import so later runs aren't affected.
-  await clientRow.getByRole('checkbox').click()
+  await clientRow.getByLabel('Approve imports').click()
   await expect.poll(approvalOf).toBe(false)
 })
 

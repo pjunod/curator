@@ -293,6 +293,15 @@ The damage was never the badge. It was that a fake file **retired the want**.
       to wanted, the next pass grabs, lands another stump, repeat. Not
       blocklisted; the release was never the problem
 
+- [x] **Cleanup after import**: monarr never removed a payload from the
+      download client, so every grab left a second full copy behind — real
+      bytes, not a hardlink, whenever the download disk and the library are
+      different filesystems. A user found 923 GB of it. Per-client
+      `remove_completed` (migration 0025), defaulted ON for usenet and OFF for
+      torrents, which are still seeding; removal runs inline at import and an
+      hourly `downloads.cleanup` sweep drains the backlog that accumulated
+      before the setting existed
+
 **Field diagnosis, 2026-07-27 — the exactly-500 MiB movies are TRUNCATED, not
 fake.** `ffprobe` on HIM (2025): "File ended prematurely", last video packet at
 61.6 s of a 96-minute feature. 500 MiB over 61.6 s is ~68 Mbps, which is
