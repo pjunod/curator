@@ -198,12 +198,16 @@ side (N1–N7) is built; this is Monarr's.
       `ports.DeliveryReporter`. `PUT /api/v1/notifiers/{id}` (edit in place —
       the log hangs off the id) and `GET .../deliveries` + a **Delivery log**
       on the notifier row
-- [x] **§5.6 health checks** — a `connections` check probing enabled
-      download clients and plurx notifiers through the real adapters, in
-      parallel, reported as a warning because Monarr queues and catches up.
-      Chat notifiers and Plex/Jellyfin are deliberately never probed: their
-      only "test" is the action itself, and neither belongs on a one-minute
-      timer. **nzbd capacity warnings are still to do**
+- [x] **§5.6 health checks** — one line per connection
+      (`client:<name>`, `client:<name>:capacity`, `mediaserver:<name>`) via a
+      new `RegisterGroup`, since what is worth checking is configured in the
+      UI and not known when the registry is built. Probes run in parallel;
+      a client that answers while nothing comes through it is reported at
+      5 min / 30 min. nzbd capacity — low disk, quota, blocked servers,
+      paused queue — via the optional `ports.CapacityReporter`, with an
+      armed critical-health abort as an error rather than a warning. Chat
+      notifiers and Plex/Jellyfin are listed but never probed: their only
+      test is the action itself
 - [ ] §5.7 Connections panel — one screen that answers "are the three apps
       actually talking right now"
 

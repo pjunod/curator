@@ -177,6 +177,10 @@ func (s *Service) subscribeTo(ctx context.Context, cfg ports.ClientConfig, sub p
 					l.LastSeq = ev.Seq
 				}
 			})
+			// An event IS contact, and for a push-mode client it is the
+			// only kind there is between polls. Without this the contact
+			// clock would age out on a client that is working perfectly.
+			s.noteContact(cfg.ID, nil)
 			s.handleEvent(ctx, cfg, ev, pending, &flushed)
 		}
 	}

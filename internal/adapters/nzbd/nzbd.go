@@ -303,19 +303,57 @@ func (c *Client) Remove(ctx context.Context, h ports.Handle, deleteData bool) er
 	return nil
 }
 
+// statusDto is the slice of `GET /api/v1/status` Monarr reads: the version
+// (which is also how Test knows it is talking to nzbd) and the queue-hold
+// reasons.
+type statusDto struct {
+	Version        string `json:"version"`
+	DownloadPaused bool   `json:"download_paused"`
+	DiskLow        bool   `json:"disk_low"`
+	QuotaReached   bool   `json:"quota_reached"`
+	BlockedServers []int  `json:"blocked_servers"`
+	HealthAbort    bool   `json:"health_abort"`
+}
+
 // Test implements ports.DownloadClient.
 func (c *Client) Test(ctx context.Context) error {
-	var status struct {
-		Version string `json:"version"`
+	_, err := c.status(ctx)
+	return err
+}
+
+// Capacity implements ports.CapacityReporter: why nzbd is not downloading,
+// when it is up and downloading nothing.
+//
+// One small GET, on the health check's own timer. The plan hoped to reuse
+// the snapshot the queue poll already fetches — but that poll reads /jobs
+// and /history, not /status, and threading a status fetch through the
+// queue-refresh path to save one request a minute would couple two things
+// that have no other reason to know about each other.
+func (c *Client) Capacity(ctx context.Context) (ports.Capacity, error) {
+	st, err := c.status(ctx)
+	if err != nil {
+		return ports.Capacity{}, err
 	}
-	if err := c.do(ctx, http.MethodGet, "/api/v1/status", &status); err != nil {
-		return err
+	return ports.Capacity{
+		Version:        st.Version,
+		DiskLow:        st.DiskLow,
+		QuotaReached:   st.QuotaReached,
+		BlockedServers: len(st.BlockedServers),
+		HealthAbort:    st.HealthAbort,
+		Paused:         st.DownloadPaused,
+	}, nil
+}
+
+func (c *Client) status(ctx context.Context) (statusDto, error) {
+	var st statusDto
+	if err := c.do(ctx, http.MethodGet, "/api/v1/status", &st); err != nil {
+		return st, err
 	}
-	if status.Version == "" {
+	if st.Version == "" {
 		// A 200 from something that is not nzbd (a reverse proxy's index
 		// page, another app on that port) would otherwise pass the test
 		// and fail mysteriously at the first grab.
-		return fmt.Errorf("nzbd: %s answered, but not like nzbd (no version in /api/v1/status)", c.cfg.URL)
+		return st, fmt.Errorf("nzbd: %s answered, but not like nzbd (no version in /api/v1/status)", c.cfg.URL)
 	}
-	return nil
+	return st, nil
 }

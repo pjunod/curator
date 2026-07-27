@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monarr-media/monarr/internal/app/health"
 	"github.com/monarr-media/monarr/internal/domain"
 	"github.com/monarr-media/monarr/internal/domain/decision"
 	"github.com/monarr-media/monarr/internal/domain/format"
@@ -131,6 +132,13 @@ type Service struct {
 	// Live state of each push subscription, for the UI.
 	linksMu sync.Mutex
 	links   map[int64]*linkState
+
+	// When each client last actually gave us something, and what it said if
+	// it did not. A client can pass its Test while nothing has come through
+	// it for an hour — that is what a subscription dying quietly looks like,
+	// and reachability alone would call it healthy forever.
+	contactMu sync.Mutex
+	contacts  map[int64]health.Contact
 }
 
 // New returns a Service.
@@ -139,6 +147,38 @@ func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, ni IndexerFactory, nc Clie
 		log = slog.Default()
 	}
 	return &Service{db: db, bus: b, log: log, newIndexer: ni, newClient: nc, searchTimeout: 30 * time.Second}
+}
+
+// noteContact records the outcome of one exchange with a client.
+func (s *Service) noteContact(clientID int64, err error) {
+	s.contactMu.Lock()
+	defer s.contactMu.Unlock()
+	if s.contacts == nil {
+		s.contacts = map[int64]health.Contact{}
+	}
+	c := s.contacts[clientID]
+	if err != nil {
+		// The timestamp is "last time this WORKED", so a failure updates
+		// the reason and deliberately leaves the clock where it was —
+		// otherwise a client failing every 30 seconds would look freshly
+		// contacted forever.
+		c.Error = err.Error()
+	} else {
+		c.At, c.Error = time.Now(), ""
+	}
+	s.contacts[clientID] = c
+}
+
+// Contacts reports last-successful-contact per client, for the health
+// checks and the connections panel.
+func (s *Service) Contacts() map[int64]health.Contact {
+	s.contactMu.Lock()
+	defer s.contactMu.Unlock()
+	out := make(map[int64]health.Contact, len(s.contacts))
+	for k, v := range s.contacts {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *Service) publish(e bus.Event) {
@@ -618,6 +658,7 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			continue
 		}
 		statuses, err := s.newClient(cfg).Statuses(ctx)
+		s.noteContact(clientID, err)
 		if err != nil {
 			s.log.Warn("queue: client poll failed", "client", cfg.Name, "err", err)
 			continue

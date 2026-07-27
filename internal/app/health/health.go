@@ -85,6 +85,7 @@ type Registry struct {
 	last        []CheckResult
 	lastOverall Status // "" until first run
 	bus         *bus.Bus
+	groups      []GroupFunc
 	timeout     time.Duration
 	now         func() time.Time
 }
@@ -101,6 +102,23 @@ func (r *Registry) Register(name string, fn CheckFunc) {
 	r.checks = append(r.checks, namedCheck{name: name, fn: fn})
 }
 
+// GroupFunc produces several named results in one pass.
+type GroupFunc func(ctx context.Context) []CheckResult
+
+// RegisterGroup adds a check whose NAMES are not known until it runs.
+//
+// The registry is built once at startup, but the things worth checking are
+// not: download clients and media servers are configured in the UI, come and
+// go, and each deserves its own line rather than being averaged into one
+// "connections: 1 of 3 failing". A group closes that gap without making the
+// registry mutable at runtime — which would mean handling duplicate
+// registrations and removals for something that is really just one query.
+func (r *Registry) RegisterGroup(fn GroupFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.groups = append(r.groups, fn)
+}
+
 // Run executes every check (with per-check timeout and panic recovery),
 // stores the results, and publishes Changed if the overall status
 // transitioned. It returns the fresh results.
@@ -108,6 +126,8 @@ func (r *Registry) Run(ctx context.Context) []CheckResult {
 	r.mu.Lock()
 	checks := make([]namedCheck, len(r.checks))
 	copy(checks, r.checks)
+	groups := make([]GroupFunc, len(r.groups))
+	copy(groups, r.groups)
 	timeout := r.timeout
 	r.mu.Unlock()
 
@@ -121,6 +141,11 @@ func (r *Registry) Run(ctx context.Context) []CheckResult {
 		res := runCheck(ctx, c.fn, timeout)
 		results[len(results)-1].Status = res.Status
 		results[len(results)-1].Message = res.Message
+	}
+	// Groups run after the fixed checks, so the server's own health leads
+	// and the connections it depends on follow.
+	for _, g := range groups {
+		results = append(results, runGroup(ctx, g, timeout, r.now())...)
 	}
 	overall := Overall(results)
 
@@ -164,6 +189,29 @@ func Overall(results []CheckResult) Status {
 		}
 	}
 	return overall
+}
+
+// runGroup runs one group under the same timeout and panic recovery as a
+// single check. A group that dies takes its own line rather than the whole
+// run: losing the connections list must not hide the database check.
+func runGroup(ctx context.Context, fn GroupFunc, timeout time.Duration, now time.Time) (out []CheckResult) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			out = []CheckResult{{
+				Name: "connections", Status: StatusError, CheckedAt: now,
+				Message: fmt.Sprintf("check panicked: %v", rec),
+			}}
+		}
+	}()
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out = fn(cctx)
+	for i := range out {
+		if out[i].CheckedAt.IsZero() {
+			out[i].CheckedAt = now
+		}
+	}
+	return out
 }
 
 func runCheck(ctx context.Context, fn CheckFunc, timeout time.Duration) (res Result) {

@@ -12,19 +12,19 @@ import (
 )
 
 type fakeClient struct {
-	err     error
-	delay   time.Duration
-	probes  *int32
-	handles []ports.DownloadStatus
+	err      error
+	delay    time.Duration
+	probes   *int32
+	capacity ports.Capacity
+	capErr   error
+	reports  bool
 }
 
 func (f *fakeClient) Add(context.Context, string, string) (ports.Handle, error) {
 	return "", nil
 }
-func (f *fakeClient) Statuses(context.Context) ([]ports.DownloadStatus, error) {
-	return f.handles, nil
-}
-func (f *fakeClient) Remove(context.Context, ports.Handle, bool) error { return nil }
+func (f *fakeClient) Statuses(context.Context) ([]ports.DownloadStatus, error) { return nil, nil }
+func (f *fakeClient) Remove(context.Context, ports.Handle, bool) error         { return nil }
 func (f *fakeClient) Test(ctx context.Context) error {
 	if f.probes != nil {
 		atomic.AddInt32(f.probes, 1)
@@ -37,6 +37,13 @@ func (f *fakeClient) Test(ctx context.Context) error {
 		}
 	}
 	return f.err
+}
+
+// capable is a client that also reports capacity — the optional half.
+type capable struct{ *fakeClient }
+
+func (c capable) Capacity(context.Context) (ports.Capacity, error) {
+	return c.capacity, c.capErr
 }
 
 type fakeNotifier struct {
@@ -63,11 +70,22 @@ func deps(clients []ports.ClientConfig, notifiers []ports.NotifierConfig,
 	}
 }
 
-func TestConnectionsReportsWhichOneIsDownAndStaysAWarning(t *testing.T) {
-	check := Connections(deps(
+func byName(results []CheckResult) map[string]CheckResult {
+	out := map[string]CheckResult{}
+	for _, r := range results {
+		out[r.Name] = r
+	}
+	return out
+}
+
+// One line per connection, not one average. The actions differ completely:
+// "not answering" means grabs are piling up, and an averaged "1 of 3
+// failing" says which of those is happening to nobody.
+func TestConnectionsReportsEachOneSeparately(t *testing.T) {
+	group := Connections(deps(
 		[]ports.ClientConfig{
-			{Name: "qb", Type: "qbittorrent", Enabled: true},
-			{Name: "nzbd", Type: "nzbd", Enabled: true},
+			{ID: 1, Name: "qb", Type: "qbittorrent", Enabled: true},
+			{ID: 2, Name: "nzbd", Type: "nzbd", Enabled: true},
 		},
 		[]ports.NotifierConfig{{Name: "plurx", Type: "plurx", Enabled: true}},
 		func(cfg ports.ClientConfig) ports.DownloadClient {
@@ -79,92 +97,180 @@ func TestConnectionsReportsWhichOneIsDownAndStaysAWarning(t *testing.T) {
 		func(ports.NotifierConfig) ports.Notifier { return &fakeNotifier{} },
 	))
 
-	res := check(context.Background())
-	// A warning, not an error: Monarr queues and catches up when a client is
-	// down, and a red badge that clears itself teaches people to ignore it.
-	if res.Status != StatusWarning {
-		t.Errorf("status = %s, want warning", res.Status)
+	got := byName(group(context.Background()))
+	if got["client:qb"].Status != StatusOK {
+		t.Errorf("qb = %s (%s)", got["client:qb"].Status, got["client:qb"].Message)
 	}
-	if !strings.Contains(res.Message, "nzbd") {
-		t.Errorf("the message must name the failing connection: %q", res.Message)
+	broken := got["client:nzbd"]
+	if broken.Status != StatusWarning {
+		t.Errorf("nzbd = %s, want warning", broken.Status)
 	}
-	if !strings.Contains(res.Message, "connection refused") {
-		t.Errorf("the message must carry the reason through: %q", res.Message)
+	if !strings.Contains(broken.Message, "connection refused") {
+		t.Errorf("the reason must come through: %q", broken.Message)
 	}
-	if strings.Contains(res.Message, "qb:") {
-		t.Errorf("a healthy connection must not be listed as failing: %q", res.Message)
-	}
-	if !strings.Contains(res.Message, "1 of 3") {
-		t.Errorf("the message must say how much is broken: %q", res.Message)
+	if got["mediaserver:plurx"].Status != StatusOK {
+		t.Errorf("plurx = %s (%s)", got["mediaserver:plurx"].Status, got["mediaserver:plurx"].Message)
 	}
 }
 
-func TestConnectionsIsQuietWhenEverythingAnswers(t *testing.T) {
-	check := Connections(deps(
-		[]ports.ClientConfig{{Name: "qb", Type: "qbittorrent", Enabled: true}},
+// A client that is up, answering, and unable to download looks exactly like
+// an idle one from outside. Each condition has to say what it is, in words
+// somebody can act on.
+func TestCapacityNamesTheReasonNothingIsDownloading(t *testing.T) {
+	cases := []struct {
+		name   string
+		cap    ports.Capacity
+		status Status
+		says   string
+	}{
+		{"disk low", ports.Capacity{DiskLow: true}, StatusWarning, "disk is low on space"},
+		{"quota", ports.Capacity{QuotaReached: true}, StatusWarning, "quota is used up"},
+		{"blocked servers", ports.Capacity{BlockedServers: 2}, StatusWarning, "2 news server(s) are blocked"},
+		{"paused", ports.Capacity{Paused: true}, StatusWarning, "queue is paused"},
+		// Armed destruction outranks a warning: nzbd is set to park or
+		// delete on critical health.
+		{"health abort", ports.Capacity{HealthAbort: true}, StatusError, "parked or deleted"},
+		{"nothing wrong", ports.Capacity{}, StatusOK, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			group := Connections(deps(
+				[]ports.ClientConfig{{ID: 1, Name: "nzbd", Type: "nzbd", Enabled: true}},
+				nil,
+				func(ports.ClientConfig) ports.DownloadClient {
+					return capable{&fakeClient{capacity: tc.cap}}
+				},
+				nil,
+			))
+			got := byName(group(context.Background()))
+			res, ok := got["client:nzbd:capacity"]
+			if !ok {
+				t.Fatalf("no capacity line; got %v", got)
+			}
+			if res.Status != tc.status {
+				t.Errorf("status = %s, want %s (%s)", res.Status, tc.status, res.Message)
+			}
+			if tc.says != "" && !strings.Contains(res.Message, tc.says) {
+				t.Errorf("message = %q, want it to say %q in plain words", res.Message, tc.says)
+			}
+		})
+	}
+}
+
+// A client with no capacity notion must not thereby look unhealthy, and one
+// whose capacity call fails must not double-count an outage the
+// reachability line already reported.
+func TestCapacityIsOptionalAndNeverDoubleCountsAnOutage(t *testing.T) {
+	group := Connections(deps(
+		[]ports.ClientConfig{
+			{ID: 1, Name: "qb", Type: "qbittorrent", Enabled: true},
+			{ID: 2, Name: "flaky", Type: "nzbd", Enabled: true},
+		},
 		nil,
-		func(ports.ClientConfig) ports.DownloadClient { return &fakeClient{} },
+		func(cfg ports.ClientConfig) ports.DownloadClient {
+			if cfg.Name == "flaky" {
+				return capable{&fakeClient{capErr: errors.New("boom")}}
+			}
+			return &fakeClient{}
+		},
 		nil,
 	))
-	if res := check(context.Background()); res.Status != StatusOK {
-		t.Errorf("status = %s (%s), want ok", res.Status, res.Message)
+	got := byName(group(context.Background()))
+	if _, ok := got["client:qb:capacity"]; ok {
+		t.Error("a client with no capacity notion produced a capacity line")
+	}
+	if _, ok := got["client:flaky:capacity"]; ok {
+		t.Error("a failed capacity call must not add a second line for one outage")
 	}
 }
 
-// The check runs on a one-minute timer, so what it probes has to be inert.
+// Answering is not the same as working. A dead subscription passes Test
+// forever, and reachability alone would call that healthy.
+func TestAClientThatAnswersButDeliversNothingIsReported(t *testing.T) {
+	build := func(age time.Duration) map[string]CheckResult {
+		d := deps(
+			[]ports.ClientConfig{{ID: 1, Name: "nzbd", Type: "nzbd", Enabled: true}},
+			nil,
+			func(ports.ClientConfig) ports.DownloadClient { return &fakeClient{} },
+			nil,
+		)
+		d.Contacts = func() map[int64]Contact {
+			return map[int64]Contact{1: {At: time.Now().Add(-age), Error: "stream ended"}}
+		}
+		return byName(Connections(d)(context.Background()))
+	}
+
+	if got := build(time.Minute)["client:nzbd"]; got.Status != StatusOK {
+		t.Errorf("a fresh contact must be quiet: %s (%s)", got.Status, got.Message)
+	}
+	warn := build(10 * time.Minute)["client:nzbd"]
+	if warn.Status != StatusWarning {
+		t.Errorf("10m stale = %s, want warning", warn.Status)
+	}
+	if !strings.Contains(warn.Message, "stream ended") {
+		t.Errorf("the last error belongs in the message: %q", warn.Message)
+	}
+	if got := build(time.Hour)["client:nzbd"].Status; got != StatusError {
+		t.Errorf("an hour stale = %s, want error", got)
+	}
+}
+
+// The group runs on a one-minute timer, so what it probes has to be inert.
 // Testing a Discord webhook posts a message; testing a Plex notifier IS a
-// full library rescan. Neither belongs on a timer.
-func TestConnectionsNeverProbesSomethingWithSideEffects(t *testing.T) {
+// full library rescan. Both are listed, neither is touched.
+func TestNothingWithSideEffectsIsEverProbed(t *testing.T) {
 	var probes int32
-	check := Connections(deps(
+	group := Connections(deps(
 		nil,
 		[]ports.NotifierConfig{
 			{Name: "discord", Type: "discord", Enabled: true},
-			{Name: "hook", Type: "webhook", Enabled: true},
 			{Name: "plex", Type: "plex", Enabled: true},
 			{Name: "jellyfin", Type: "jellyfin", Enabled: true},
 		},
 		nil,
 		func(ports.NotifierConfig) ports.Notifier { return &fakeNotifier{probes: &probes} },
 	))
-	if res := check(context.Background()); res.Status != StatusOK {
-		t.Errorf("status = %s (%s)", res.Status, res.Message)
-	}
+	got := byName(group(context.Background()))
 	if probes != 0 {
-		t.Errorf("%d notifier(s) were probed — a health check must not post to a "+
-			"channel or start a library rescan every minute", probes)
+		t.Errorf("%d notifier(s) probed — this must not post to a channel or "+
+			"start a library rescan every minute", probes)
+	}
+	if _, ok := got["mediaserver:discord"]; ok {
+		t.Error("a chat notifier is not a media server")
+	}
+	// Listed but unprobed, and saying so: an absence must not read as an
+	// all-clear.
+	plex := got["mediaserver:plex"]
+	if plex.Status != StatusOK || !strings.Contains(plex.Message, "not probed") {
+		t.Errorf("plex = %s %q, want ok and an explanation", plex.Status, plex.Message)
 	}
 }
 
-func TestConnectionsSkipsWhatIsDisabled(t *testing.T) {
-	var clientProbes, notifierProbes int32
-	check := Connections(deps(
-		[]ports.ClientConfig{{Name: "qb", Type: "qbittorrent", Enabled: false}},
+func TestDisabledConnectionsAreSkipped(t *testing.T) {
+	var probes int32
+	group := Connections(deps(
+		[]ports.ClientConfig{{ID: 1, Name: "qb", Type: "qbittorrent", Enabled: false}},
 		[]ports.NotifierConfig{{Name: "plurx", Type: "plurx", Enabled: false}},
 		func(ports.ClientConfig) ports.DownloadClient {
-			return &fakeClient{probes: &clientProbes, err: errors.New("down")}
+			return &fakeClient{probes: &probes, err: errors.New("down")}
 		},
-		func(ports.NotifierConfig) ports.Notifier {
-			return &fakeNotifier{probes: &notifierProbes, err: errors.New("down")}
-		},
+		func(ports.NotifierConfig) ports.Notifier { return &fakeNotifier{probes: &probes} },
 	))
-	if res := check(context.Background()); res.Status != StatusOK {
-		t.Errorf("a disabled connection must not be reported: %s (%s)", res.Status, res.Message)
+	if got := group(context.Background()); len(got) != 0 {
+		t.Errorf("disabled connections reported: %v", got)
 	}
-	if clientProbes != 0 || notifierProbes != 0 {
-		t.Errorf("probed disabled connections: %d client, %d notifier", clientProbes, notifierProbes)
+	if probes != 0 {
+		t.Errorf("probed %d disabled connections", probes)
 	}
 }
 
-// One unresponsive server must not hide the state of every other one. The
-// probes run together so the check's own timeout bounds the slowest, not the
-// sum.
-func TestConnectionsProbesInParallelSoOneHangDoesNotHideTheRest(t *testing.T) {
-	check := Connections(deps(
+// One unresponsive server must not hide the state of every other one.
+func TestProbesRunTogetherSoOneHangDoesNotHideTheRest(t *testing.T) {
+	group := Connections(deps(
 		[]ports.ClientConfig{
-			{Name: "slow", Type: "qbittorrent", Enabled: true},
-			{Name: "alsoslow", Type: "sabnzbd", Enabled: true},
-			{Name: "broken", Type: "nzbd", Enabled: true},
+			{ID: 1, Name: "slow", Type: "qbittorrent", Enabled: true},
+			{ID: 2, Name: "alsoslow", Type: "sabnzbd", Enabled: true},
+			{ID: 3, Name: "broken", Type: "nzbd", Enabled: true},
 		},
 		nil,
 		func(cfg ports.ClientConfig) ports.DownloadClient {
@@ -175,14 +281,12 @@ func TestConnectionsProbesInParallelSoOneHangDoesNotHideTheRest(t *testing.T) {
 		},
 		nil,
 	))
-
 	start := time.Now()
-	res := check(context.Background())
-	elapsed := time.Since(start)
-	if elapsed > 600*time.Millisecond {
+	got := byName(group(context.Background()))
+	if elapsed := time.Since(start); elapsed > 600*time.Millisecond {
 		t.Errorf("took %s — the probes ran one after another", elapsed)
 	}
-	if !strings.Contains(res.Message, "broken") {
-		t.Errorf("the broken connection was not reported: %q", res.Message)
+	if got["client:broken"].Status != StatusWarning {
+		t.Errorf("the broken client was not reported: %v", got["client:broken"])
 	}
 }

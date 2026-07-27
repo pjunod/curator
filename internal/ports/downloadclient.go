@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
@@ -154,4 +155,51 @@ type ClientEvent struct {
 // they could not bridge as an EventReset rather than by closing.
 type Subscriber interface {
 	Subscribe(ctx context.Context) (<-chan ClientEvent, error)
+}
+
+// Capacity is a download client's own account of whether it can keep
+// working — the queue-hold reasons, in its words.
+//
+// Every field here is a state where the client is up, answering, and
+// downloading nothing. That combination is the one worth surfacing:
+// "unreachable" is obvious from the outside and gets noticed, while "fine,
+// but the destination disk is full" looks identical to "idle" until
+// somebody wonders where last night's episodes went.
+type Capacity struct {
+	Version        string
+	DiskLow        bool
+	QuotaReached   bool
+	BlockedServers int
+	HealthAbort    bool
+	Paused         bool
+}
+
+// Problems renders the capacity as plain sentences, or nothing when there
+// is nothing wrong. Plain words on purpose: a health page that says
+// "quota_reached: true" has made the reader translate.
+func (c Capacity) Problems() []string {
+	var out []string
+	if c.DiskLow {
+		out = append(out, "the destination disk is low on space")
+	}
+	if c.QuotaReached {
+		out = append(out, "the download quota is used up")
+	}
+	if c.BlockedServers > 0 {
+		out = append(out, fmt.Sprintf("%d news server(s) are blocked", c.BlockedServers))
+	}
+	if c.Paused {
+		out = append(out, "the queue is paused")
+	}
+	return out
+}
+
+// CapacityReporter is an OPTIONAL capability: a client that can say why it
+// is not downloading, beyond the queue itself.
+//
+// Optional because most clients have no such notion, and because a client
+// that cannot answer must not thereby look unhealthy. Asserted for, in the
+// same shape as TaggedAdder and Subscriber.
+type CapacityReporter interface {
+	Capacity(ctx context.Context) (Capacity, error)
 }

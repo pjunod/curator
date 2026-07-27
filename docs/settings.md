@@ -366,11 +366,30 @@ Notifiers can now be **edited in place** rather than removed and re-added.
 That was worth fixing here: the delivery log hangs off the notifier id, and
 changing a URL should not throw away the record of everything before it.
 
-Enabled download clients and plurx notifiers are also probed once a minute by
-the **connections** health check. Chat notifiers and the Plex/Jellyfin
-entries are deliberately not: testing a Discord webhook posts a message, and
-the only "test" a Plex notifier has is a full library rescan. Neither belongs
-on a timer. plurx is checkable because its test was built to be inert.
+Health checks cover every connection separately — `client:<name>`,
+`client:<name>:capacity`, `mediaserver:<name>` — because the actions differ.
+"Not answering" means grabs are piling up; "up but the disk is full" means
+grabs are being accepted and going nowhere; a revoked plurx key means imports
+are succeeding and never appearing. One averaged line would tell you none of
+that.
+
+A client that *answers* but through which nothing has actually come is
+reported too: warning after 5 minutes, error after 30. That is what a push
+subscription dying quietly looks like, and reachability alone would call it
+healthy forever.
+
+For nzbd, `client:<name>:capacity` names the reason it is up and downloading
+nothing — low disk, quota used up, blocked news servers, a paused queue — in
+plain words. An armed critical-health abort is reported as an **error**
+rather than a warning, since it means failing downloads are about to be
+parked or deleted.
+
+Chat notifiers and Plex/Jellyfin are deliberately never probed: testing a
+Discord webhook posts a message, and the only "test" a Plex notifier has is a
+full library rescan. Neither belongs on a one-minute timer. They are still
+listed, saying they were not probed, so an absence is never mistaken for an
+all-clear. plurx is probed because it has a public, side-effect-free
+`GET /api/v1/server`.
 
 ## Security
 
