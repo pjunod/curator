@@ -78,6 +78,28 @@ test.describe('the page', () => {
     await expect(page.getByText('Trending Test Movie')).toBeVisible()
   })
 
+  test('hovering a row shows its scrollbar without moving the page', async ({ page }) => {
+    await page.goto('/discover')
+    const row = page.locator('[data-list="tmdb-trending-movies"]')
+    // Wait for real cards: while the row is still fetching it renders a
+    // skeleton track, and that element is REPLACED when the data lands — so
+    // measuring it first gives a box, and measuring it again after the swap
+    // gives null on a detached node.
+    await expect(row.locator('.discover-card:not(.discover-skeleton)').first()).toBeVisible()
+    const track = row.locator('.discover-track')
+
+    // The thumb is transparent until the row is hovered, but the space it
+    // occupies is reserved always. Fourteen strips that each grew when the
+    // pointer crossed them would shove the page around under the cursor, so
+    // this height must not move — it is the whole reason the CSS colours the
+    // thumb rather than toggling the scrollbar's width.
+    const before = (await track.boundingBox())!.height
+    await row.hover()
+    await expect(page.locator('[data-list="tmdb-trending-movies"]:hover')).toHaveCount(1)
+    const after = (await track.boundingBox())!.height
+    expect(after).toBe(before)
+  })
+
   test('the kind tabs filter which rows are shown', async ({ page }) => {
     await page.goto('/discover')
     await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS)

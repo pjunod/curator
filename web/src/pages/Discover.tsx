@@ -11,6 +11,7 @@ import {
   getSettings,
   posterUrl,
 } from '../api'
+import { CardSizePicker } from '../CardSizePicker'
 import type { DiscoverFilter } from '../discover'
 import { DISCOVER_FILTERS, cardKey, rowCounts, sourceLabel, visibleLists } from '../discover'
 import { useInView } from '../useInView'
@@ -49,6 +50,7 @@ export function DiscoverPage() {
             </button>
           ))}
         </div>
+        <CardSizePicker />
       </header>
 
       {lists.isError && (

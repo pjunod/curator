@@ -8,6 +8,7 @@ import {
   triggerScan,
 } from '../api'
 import { PAGE_SIZES, Pager, PageSizePicker, sliceForPage } from '../Pager'
+import { CardSizePicker } from '../CardSizePicker'
 
 // CardBadges: the poster stays a poster. Nothing is drawn over the artwork —
 // quality, target, upgrade state and ratings all live on the item page, which
@@ -441,6 +442,7 @@ export function LibraryPage() {
             </button>
           ))}
         </div>
+        <CardSizePicker />
         <div className="head-actions">
           <button onClick={() => scan.mutate()} disabled={scan.isPending}>
             Scan disk

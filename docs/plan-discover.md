@@ -1,6 +1,6 @@
 # Plan — Discover, a browse surface inside Monarr
 
-**Status:** built 2026-07-29 (v0.10.0) · **Written:** 2026-07-29 ·
+**Status:** built 2026-07-29 (v0.10.0; poster size v0.11.0) · **Written:** 2026-07-29 ·
 **Decision:** ADR [0015](adr/0015-discovery.md)
 
 Monarr can find anything you can name and nothing you cannot. This plan adds
@@ -224,6 +224,27 @@ route, sidebar `<nav>`, the mobile **More** sheet, and the `PAGES` array in
 
 **Acceptance:** `make test-web` green, `npm run typecheck` clean.
 
+### 3.5a Follow-up — poster size, shared with the Library page
+
+Added the same day, on feedback that the default was right but unadjustable.
+An **S / M / L** control in the page head of Discover *and* the Library page,
+carried as `data-card-size` on `<html>` and read by CSS through a `--card-w`
+custom property — the theme picker's mechanism, for the theme picker's
+reason: two unrelated components that must agree on a number are cheaper as
+one attribute than as shared state, and CSS then resizes the grid without
+re-rendering it. A pre-paint script in `index.html` applies it before first
+paint, or the whole library grid reflows a frame after it draws.
+
+The two surfaces consume the token differently and that is not a bug: a strip
+card is exactly `--card-w`, while a grid column is `minmax(--card-w, 1fr)`
+under `auto-fill` and so gets stretched to divide the row. M resolves to the
+150px both pages already used, so an install that never touches the control
+is unchanged.
+
+**Acceptance:** `zz-cardsize.spec.ts` measures real geometry at each size on
+both pages, across a reload, and asserts the strip card equals the resolved
+token while the grid card is at least it.
+
 ### 3.6 M6 — e2e (`test/e2e/tests/zz-discover.spec.ts`)
 
 `test/e2e/fake-tmdb.mjs` gains the nine upstream routes. The spec sets its own
@@ -264,7 +285,7 @@ with this work; both were repaired, and both are test-or-CSS only:
 `smoke.spec.ts` kept two copies of the static health-check list and one had
 never learned about `imports`, and `phase9-layout.spec.ts` was correctly
 catching a real regression from the Activity rewrite (68575a3) that starved
-the release column to ~60 px. Result: **87/87**.
+the release column to ~60 px. Result: **90/90**.
 
 ## 6. Non-goals — do not do these
 

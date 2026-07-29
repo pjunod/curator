@@ -1,6 +1,6 @@
 # ADR 0015 — Discovery is a read-only browse surface: TMDB always, Trakt when keyed, nothing stored
 
-- **Status:** Accepted — built 2026-07-29 (v0.10.0)
+- **Status:** Accepted — built 2026-07-29 (v0.10.0; poster-size control v0.11.0)
 - **Date:** 2026-07-29
 - **Relates to:** ADR [0009](0009-root-folder-kinds.md) (a root folder carries
   a kind, which is what an add from a discover row has to respect), ADR

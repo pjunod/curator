@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-29 · v0.10.0 · Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Full gate green, 87/87 e2e · next: launch logistics + the rest of the nzbd integration**
+> **Snapshot 2026-07-29 · v0.11.0 · Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -374,8 +374,18 @@ copy-paste-a-title.
       nothing below the fold is fetched), horizontal strips with desktop-only
       arrows, All/Movies/Shows tabs, and an add dialog that is a second door
       into `library.Service.Add` — never a second policy
-- [x] `zz-discover.spec.ts` (7 e2e) + unit tests for both adapters and all
-      four cache behaviours; **87/87 e2e green**
+- [x] **Poster size (S / M / L)** in the page head of Discover *and* the
+      Library page. One `--card-w` token on `<html>`, so two components that
+      must agree on a number share an attribute rather than state, CSS
+      resizes the grid without re-rendering it, and a pre-paint script keeps
+      the library grid from reflowing a frame after it draws. M is exactly
+      what both were before, so an untouched install is unchanged
+- [x] Discover strips show their scrollbar only under the pointer, with its
+      space reserved at all times — fourteen rows that each grew 8 px on
+      hover would shove the page around under the cursor
+- [x] `zz-discover.spec.ts` (8 e2e) + `zz-cardsize.spec.ts` (2, measuring
+      real geometry) + unit tests for both adapters and all four cache
+      behaviours; **90/90 e2e green**
 
 **Two pre-existing failures on `main` repaired to get there** — both test-
 or CSS-only, no behaviour change, and neither caused by this work:

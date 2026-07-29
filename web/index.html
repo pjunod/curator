@@ -18,6 +18,13 @@
         var t = localStorage.getItem('monarr-theme')
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t
       } catch (e) {}
+      // Same, for poster card size — without it the whole library grid
+      // reflows one frame after it draws. Key kept in step with
+      // CARD_SIZE_KEY in src/cardsize.ts.
+      try {
+        var c = localStorage.getItem('monarr-card-size')
+        if (c === 's' || c === 'm' || c === 'l') document.documentElement.dataset.cardSize = c
+      } catch (e) {}
     </script>
   </head>
   <body>

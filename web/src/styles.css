@@ -483,9 +483,28 @@ button:disabled {
 }
 
 /* ---- poster grid ---- */
+/* ---- card size ---- */
+/* One token, read by both the Library grid and the Discover strips, set from
+   `data-card-size` on <html> by the picker in each page head. Two components
+   that must agree on a number are cheaper as one custom property than as
+   shared React state — and CSS resizes the grid without re-rendering it.
+   The medium value is the size everything was before the control existed, so
+   an install that never touches it looks unchanged. */
+:root {
+  --card-w: 150px;
+}
+
+:root[data-card-size='s'] {
+  --card-w: 110px;
+}
+
+:root[data-card-size='l'] {
+  --card-w: 210px;
+}
+
 .poster-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-w), 1fr));
   gap: 16px;
 }
 
@@ -516,7 +535,10 @@ button:disabled {
   aspect-ratio: 2 / 3;
   display: grid;
   place-items: center;
-  font-size: 42px;
+  /* Scales with the card, or a small card gets a letter that fills it and a
+     large one gets a letter lost in the middle. 0.28 is the ratio that keeps
+     the medium card at the 42px it has always been. */
+  font-size: calc(var(--card-w) * 0.28);
   font-weight: 700;
   color: var(--accent);
   background: var(--bg-hover);
@@ -1245,6 +1267,21 @@ a.pill-info:hover {
   margin: 10px 0;
 }
 
+/* Same segmented look as the theme picker (it shares the class), but it sits
+   inline in a page head rather than stacked in the sidebar foot, so it takes
+   its width from its three letters instead of filling the row. */
+.size-picker {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.size-picker button {
+  flex: 0 0 auto;
+  min-width: 26px;
+  padding: 3px 7px;
+  text-transform: none;
+}
+
 .theme-picker button {
   flex: 1;
   padding: 3px 0;
@@ -1629,9 +1666,24 @@ a.pill-info:hover {
     min-width: 560px;
   }
 
-  /* Posters: three across on a phone. */
+  /* Posters: three across on a phone at the default size. The whole scale
+     shifts down rather than the grid overriding it, so the size picker still
+     does something here — and so Discover's strips move with it. Repeating
+     the attribute selectors is required: `:root[data-card-size='s']` above
+     out-specifies a bare `:root` in here. */
+  :root {
+    --card-w: 105px;
+  }
+
+  :root[data-card-size='s'] {
+    --card-w: 82px;
+  }
+
+  :root[data-card-size='l'] {
+    --card-w: 140px;
+  }
+
   .poster-grid {
-    grid-template-columns: repeat(auto-fill, minmax(105px, 1fr));
     gap: 10px;
   }
 
@@ -2418,8 +2470,41 @@ a.pill-info:hover {
   scrollbar-width: thin;
 }
 
+/* The scrollbar shows on hover, but its SPACE is reserved at all times —
+   fourteen strips that each grow 8px when the pointer crosses them would
+   shove the whole page around under the cursor. So the track keeps its
+   height and only the thumb's colour changes.
+   Scoped to pointers that can hover: on touch there is nothing to hover,
+   and `:hover` latches after a tap. */
+@media (hover: hover) {
+  .discover-track {
+    scrollbar-color: transparent transparent;
+  }
+
+  .discover-section:hover .discover-track {
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .discover-track::-webkit-scrollbar {
+    height: 8px;
+  }
+
+  .discover-track::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 999px;
+  }
+
+  .discover-section:hover .discover-track::-webkit-scrollbar-thumb {
+    background: var(--border);
+  }
+
+  .discover-section:hover .discover-track::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+}
+
 .discover-card {
-  flex: 0 0 150px;
+  flex: 0 0 var(--card-w);
   scroll-snap-align: start;
   text-align: left;
   padding: 0;
@@ -2518,10 +2603,6 @@ a.pill-info:hover {
 /* Kept with the rest of the discover rules rather than in the main mobile
    block above, so the whole feature is one section to read and to delete. */
 @media (max-width: 767px) {
-  .discover-card {
-    flex-basis: 115px;
-  }
-
   /* Touch scrolls sideways natively; the arrows would only cover posters. */
   .discover-arrow {
     display: none;
