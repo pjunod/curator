@@ -1784,8 +1784,15 @@ a.pill-info:hover {
   width: 108px;
 }
 
+/* The one column that may wrap to a second line, so that the release title
+   does not. Every other width here is a stated minimum, so `auto` on the
+   title means the title absorbs whatever is left — and at 268px here the
+   leftover was about 60px, which wrapped a scene name one CHARACTER per line
+   and made the row six lines tall. Buttons wrapping onto a second line is a
+   much smaller cost than an unreadable title; the widest case (Retry ·
+   Manual import · Blocklist · Remove) is the one that now takes two. */
 .queue-table .col-actions {
-  width: 268px;
+  width: 190px;
 }
 
 /* ---- stage sections ---- */
