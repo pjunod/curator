@@ -19,6 +19,21 @@ and Metacritic scores to items with an IMDb id, on add and on every
 metadata refresh. Responses are cached for 12 h to respect the quota.
 Without a key, TMDB/Open Library ratings still work.
 
+### Trakt client id (optional)
+
+A free Trakt app client id (trakt.tv/oauth/applications — no account link,
+no OAuth) adds five rows to the [Discover](usage.md#discover) page that
+TMDB cannot answer: what is being played right now for movies and for
+shows, what is most anticipated on each, and last weekend's box office.
+Trakt's "trending" counts scrobbles — actual playback — where TMDB's counts
+lookups, which is why both are offered rather than merged (ADR
+[0015](adr/0015-discovery.md)).
+
+Without it, Discover still serves its nine TMDB rows and never mentions
+Trakt. Import lists keep their own **per-list** client id (see
+[Import lists](#import-lists)) and are unaffected either way: a list that
+works today keeps working with this field blank.
+
 ## Root folders
 
 Absolute paths, must exist and be directories when added. Each shows
@@ -299,8 +314,16 @@ added with the list's root folder, quality profile, and monitor flag.
 - **TMDB Popular / Top Rated** — no extra config.
 - **Trakt list** — a public list: Trakt username, list slug, and a Trakt
   API **client id** (free app registration; needed even for public data).
+  This is per-list and separate from the global
+  [Trakt client id](#trakt-client-id-optional) that Discover uses.
 
 Already-in-library entries are skipped, never duplicated.
+
+An import list is not the same tool as [Discover](usage.md#discover), and
+the difference is who decides: a list **adds** everything it names, on a
+timer, unattended. Discover shows you the same kind of data and adds
+nothing until you click. Use a list for "always have every new A24 release";
+use Discover for "what should I watch".
 
 ## Notifications
 

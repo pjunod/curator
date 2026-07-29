@@ -11,6 +11,7 @@ import (
 
 	apigen "github.com/monarr-media/monarr/internal/api/gen"
 	"github.com/monarr-media/monarr/internal/app/acquisition"
+	"github.com/monarr-media/monarr/internal/app/discover"
 	"github.com/monarr-media/monarr/internal/app/health"
 	"github.com/monarr-media/monarr/internal/app/library"
 	"github.com/monarr-media/monarr/internal/infra/bus"
@@ -50,6 +51,9 @@ type Deps struct {
 	DB          SchemaVersioner
 	Library     *library.Service
 	Acquisition *acquisition.Service
+	// Discover serves the browse rows (ADR 0015); nil returns an empty
+	// catalogue rather than failing, so a test server needs no provider.
+	Discover *discover.Service
 	// Store is the config storage for profiles/indexers/clients.
 	Store *sqlite.DB
 	// Factories used by the /test endpoints to probe unsaved configs.

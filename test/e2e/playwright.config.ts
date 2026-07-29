@@ -87,6 +87,10 @@ export default defineConfig({
         // the real api.tvmaze.com, and a search for "test" then returns eight
         // real shows beside the fixture's one.
         MONARR_TVMAZE_BASE_URL: `http://127.0.0.1:${TMDB_PORT}`,
+        // Trakt too (ADR 0015). Its rows only appear once a client id is set
+        // in settings, so this costs nothing until a spec opts in — and left
+        // at its default the discover spec would hit the real api.trakt.tv.
+        MONARR_TRAKT_BASE_URL: `http://127.0.0.1:${TMDB_PORT}`,
       },
     },
   ],

@@ -2368,3 +2368,172 @@ a.pill-info:hover {
   margin: 0;
   font-size: 13px;
 }
+
+/* ---- discover ---- */
+
+/* Rows scroll sideways rather than wrapping. Fourteen wrapping grids would
+   be a page you scroll for a minute to reach the bottom of; a strip per row
+   keeps every row's heading within one screen of its contents. */
+.discover-section {
+  margin-bottom: 30px;
+}
+
+/* Same weight as the heading, not a chip: it is part of the row's name
+   ("Trending this week · Shows"), not a label attached to it. */
+.discover-kind {
+  color: var(--text-muted);
+}
+
+.discover-source {
+  margin-left: 8px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.discover-blurb {
+  margin: 4px 0 0;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.discover-note {
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
+.discover-strip {
+  position: relative;
+}
+
+.discover-track {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  /* Room for the card's hover border and its focus ring, which a clipped
+     overflow would otherwise shave off the top and bottom. */
+  padding: 3px 3px 10px;
+  scrollbar-width: thin;
+}
+
+.discover-card {
+  flex: 0 0 150px;
+  scroll-snap-align: start;
+  text-align: left;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.discover-card .poster-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.discover-skeleton {
+  aspect-ratio: 2 / 3;
+  background: var(--bg-hover);
+  cursor: default;
+}
+
+/* Arrows exist because a mouse has no horizontal gesture. They are hidden
+   from assistive tech and skipped by the keyboard on purpose: the same
+   content is reachable by scrolling and by tabbing the cards themselves, so
+   exposing them would add two stops per row that lead nowhere new. */
+.discover-arrow {
+  position: absolute;
+  top: 0;
+  bottom: 13px;
+  width: 34px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text);
+  background: linear-gradient(to right, var(--bg) 55%, transparent);
+  border: none;
+  border-radius: 0;
+  opacity: 0.92;
+  transition: opacity 0.15s;
+}
+
+.discover-arrow.end {
+  right: 0;
+  background: linear-gradient(to left, var(--bg) 55%, transparent);
+}
+
+.discover-arrow.start {
+  left: 0;
+}
+
+.discover-arrow:hover {
+  color: var(--accent);
+}
+
+.discover-arrow:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The shared .modal is a fixed 720px tall so a pager can sit still between
+   pages. This one has no pager and one title's worth of content, so it takes
+   the height it needs and caps rather than padding itself out. */
+.discover-modal {
+  width: min(720px, 100%);
+  height: auto;
+  max-height: min(720px, 100%);
+}
+
+.discover-modal-body {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.discover-modal-poster {
+  flex: 0 0 180px;
+  width: 180px;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.discover-modal-detail {
+  flex: 1;
+  min-width: 0;
+}
+
+.discover-modal-detail p {
+  margin: 0 0 10px;
+}
+
+.discover-add {
+  margin-top: 4px;
+}
+
+/* Kept with the rest of the discover rules rather than in the main mobile
+   block above, so the whole feature is one section to read and to delete. */
+@media (max-width: 767px) {
+  .discover-card {
+    flex-basis: 115px;
+  }
+
+  /* Touch scrolls sideways natively; the arrows would only cover posters. */
+  .discover-arrow {
+    display: none;
+  }
+
+  .discover-modal-body {
+    flex-direction: column;
+  }
+
+  .discover-modal-poster {
+    flex-basis: auto;
+    width: 140px;
+    align-self: center;
+  }
+}

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { addIndexer, composeHostPort, fmtDuration, fmtInterval, fmtRelative, testIndexer } from './api'
+import {
+  addIndexer,
+  composeHostPort,
+  fmtDuration,
+  fmtInterval,
+  fmtRelative,
+  getDiscoverItems,
+  testIndexer,
+} from './api'
 
 describe('fmtDuration', () => {
   it('formats seconds', () => {
@@ -123,5 +131,27 @@ describe('composeHostPort', () => {
   it('passes through when host or port is empty', () => {
     expect(composeHostPort('', '6789')).toBe('')
     expect(composeHostPort('192.168.4.7', '')).toBe('192.168.4.7')
+  })
+})
+
+describe('getDiscoverItems', () => {
+  // A list id goes into a query string. The ids we ship are slugs, but the
+  // catalogue comes from the server, so encoding it is the difference
+  // between a provider being free to name its rows and a broken URL.
+  it('encodes the list id and always sends a page', async () => {
+    const orig = globalThis.fetch
+    const seen: string[] = []
+    globalThis.fetch = (async (url: string) => {
+      seen.push(url)
+      return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }) as unknown as typeof fetch
+    try {
+      await getDiscoverItems('tmdb-trending-movies')
+      await getDiscoverItems('weird id&page=99', 3)
+      expect(seen[0]).toBe('/api/v1/discover/items?list=tmdb-trending-movies&page=1')
+      expect(seen[1]).toBe('/api/v1/discover/items?list=weird%20id%26page%3D99&page=3')
+    } finally {
+      globalThis.fetch = orig
+    }
   })
 })

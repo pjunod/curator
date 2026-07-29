@@ -684,6 +684,16 @@ func (s *Service) List(ctx context.Context, kind domain.MediaKind) ([]domain.Med
 	return items, nil
 }
 
+// KnownTMDBIDs returns the TMDB ids already in the library for a kind.
+//
+// List answers the same question and is what the search handler uses, but it
+// hydrates every item and grades every upgrade to do it. That is the right
+// trade for one search box and the wrong one for a Discover page, which asks
+// about fourteen rows of thirty titles on every load (ADR 0015).
+func (s *Service) KnownTMDBIDs(ctx context.Context, kind domain.MediaKind) (map[int64]struct{}, error) {
+	return s.db.TmdbIDsByKind(ctx, kind)
+}
+
 // gradeUpgrades fills in each item's quality target and upgrade state.
 //
 // The storage layer knows what is on disk; only here is the profile known,

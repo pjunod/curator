@@ -744,6 +744,22 @@ type DirEntry struct {
 	Registered bool `json:"registered"`
 }
 
+// DiscoverList One browse row on offer. Metadata about the row, not its contents — the contents come from /discover/items, which is where the cost is.
+type DiscoverList struct {
+	// Blurb One line saying what the row actually measures. "Trending" means something different at each provider - TMDB counts lookups, Trakt counts playback - so a row without this is a ranking nobody can interpret.
+	Blurb string `json:"blurb"`
+
+	// Id Stable slug, unique across providers ("tmdb-trending-movies").
+	Id   string    `json:"id"`
+	Kind MediaKind `json:"kind"`
+
+	// Source Which provider publishes it ("tmdb", "trakt").
+	Source string `json:"source"`
+
+	// Title The row heading, e.g. "Trending this week".
+	Title string `json:"title"`
+}
+
 // DownloadClientConfig defines model for DownloadClientConfig.
 type DownloadClientConfig struct {
 	Category *string `json:"category,omitempty"`
@@ -1527,6 +1543,10 @@ type Settings struct {
 	ScanSkipPatterns     *string `json:"scanSkipPatterns,omitempty"`
 	TmdbApiKeyConfigured bool    `json:"tmdbApiKeyConfigured"`
 	TmdbApiKeyHint       string  `json:"tmdbApiKeyHint"`
+
+	// TraktClientIdConfigured Trakt client id present - adds the Trakt rows to Discover (ADR 0015). Optional: without it TMDB still serves nine rows.
+	TraktClientIdConfigured *bool   `json:"traktClientIdConfigured,omitempty"`
+	TraktClientIdHint       *string `json:"traktClientIdHint,omitempty"`
 }
 
 // SettingsUpdate defines model for SettingsUpdate.
@@ -1547,6 +1567,9 @@ type SettingsUpdate struct {
 	// ScanSkipPatterns Directory-name patterns to never offer as adoption candidates, one per line.
 	ScanSkipPatterns *string `json:"scanSkipPatterns,omitempty"`
 	TmdbApiKey       *string `json:"tmdbApiKey,omitempty"`
+
+	// TraktClientId Optional — a free Trakt app client id, which adds five rows to Discover (ADR 0015). "" clears it. Import lists keep their own per-list id and are unaffected either way.
+	TraktClientId *string `json:"traktClientId,omitempty"`
 }
 
 // SystemStatus defines model for SystemStatus.
@@ -1649,6 +1672,15 @@ type LoginJSONBody struct {
 type GetCalendarParams struct {
 	Start string `form:"start" json:"start"`
 	End   string `form:"end" json:"end"`
+}
+
+// DiscoverItemsParams defines parameters for DiscoverItems.
+type DiscoverItemsParams struct {
+	// List A list id from /discover/lists.
+	List string `form:"list" json:"list"`
+
+	// Page 1-based. Past the end of a row, the array is empty.
+	Page *int `form:"page,omitempty" json:"page,omitempty"`
 }
 
 // BrowseFilesystemParams defines parameters for BrowseFilesystem.
@@ -1895,6 +1927,12 @@ type ServerInterface interface {
 	// DeleteCustomFormat Remove a scoring rule
 	// (DELETE /customformats/{id})
 	DeleteCustomFormat(w http.ResponseWriter, r *http.Request, id int64)
+	// DiscoverItems One page of one Discover row
+	// (GET /discover/items)
+	DiscoverItems(w http.ResponseWriter, r *http.Request, params DiscoverItemsParams)
+	// ListDiscoverLists The Discover catalogue
+	// (GET /discover/lists)
+	ListDiscoverLists(w http.ResponseWriter, r *http.Request)
 	// ListDownloadClients List download clients
 	// (GET /downloadclients)
 	ListDownloadClients(w http.ResponseWriter, r *http.Request)
@@ -2299,6 +2337,66 @@ func (siw *ServerInterfaceWrapper) DeleteCustomFormat(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteCustomFormat(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DiscoverItems operation middleware
+func (siw *ServerInterfaceWrapper) DiscoverItems(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DiscoverItemsParams
+
+	// ------------- Required query parameter "list" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "list", r.URL.Query(), &params.List, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "list"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "list", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page", r.URL.Query(), &params.Page, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DiscoverItems(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListDiscoverLists operation middleware
+func (siw *ServerInterfaceWrapper) ListDiscoverLists(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDiscoverLists(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4244,6 +4342,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan/ignored", wrapper.IgnoreDir)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/filesystem", wrapper.BrowseFilesystem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/search", wrapper.SearchMetadata)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/lists", wrapper.ListDiscoverLists)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/items", wrapper.DiscoverItems)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders", wrapper.ListRootFolders)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rootfolders", wrapper.AddRootFolder)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/rootfolders/{id}", wrapper.DeleteRootFolder)

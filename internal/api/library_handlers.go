@@ -698,6 +698,10 @@ func (s *Server) GetSettings(w http.ResponseWriter, r *http.Request) {
 	omdbConfigured, omdbHint := omdbKey != "", keyHint(omdbKey)
 	out.OmdbApiKeyConfigured = &omdbConfigured
 	out.OmdbApiKeyHint = &omdbHint
+	traktID := s.readSetting(r.Context(), TraktClientIDSetting)
+	traktConfigured, traktHint := traktID != "", keyHint(traktID)
+	out.TraktClientIdConfigured = &traktConfigured
+	out.TraktClientIdHint = &traktHint
 	if patterns := s.readSetting(r.Context(), library.SkipPatternsSetting); patterns != "" {
 		out.ScanSkipPatterns = &patterns
 	}
@@ -735,6 +739,12 @@ func (s *Server) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.OmdbApiKey != nil {
 		if err := s.deps.Settings.SetMeta(r.Context(), OMDBKeySetting, strings.TrimSpace(*body.OmdbApiKey)); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if body.TraktClientId != nil {
+		if err := s.deps.Settings.SetMeta(r.Context(), TraktClientIDSetting, strings.TrimSpace(*body.TraktClientId)); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

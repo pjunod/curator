@@ -370,6 +370,21 @@ func (d *DB) GetMediaItemByKindOlid(ctx context.Context, kind domain.MediaKind, 
 	return row.ID, nil
 }
 
+// TmdbIDsByKind returns the set of TMDB ids already in the library for a
+// kind — the cheap answer to "is this one already added", for a browse row
+// that needs to ask about thirty titles at once (ADR 0015).
+func (d *DB) TmdbIDsByKind(ctx context.Context, kind domain.MediaKind) (map[int64]struct{}, error) {
+	rows, err := d.Read.TmdbIDsByKind(ctx, string(kind))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]struct{}, len(rows))
+	for _, id := range rows {
+		out[id] = struct{}{}
+	}
+	return out, nil
+}
+
 // ListMediaItems returns summaries (no children), optionally filtered by
 // kind, with completeness stats hydrated (EpisodeCount / EpisodeFileCount /
 // FileCount).

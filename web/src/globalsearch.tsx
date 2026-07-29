@@ -17,6 +17,7 @@ interface Destination {
 const PAGES: Destination[] = [
   { label: 'Library', sub: 'page', to: '/', keywords: 'library home posters movies series books' },
   { label: 'Add media', sub: 'page', to: '/add', keywords: 'add new search tmdb movie series book' },
+  { label: 'Discover', sub: 'page', to: '/discover', keywords: 'discover browse trending popular top rated new releases upcoming anticipated box office trakt what to watch' },
   { label: 'Wanted', sub: 'page', to: '/wanted', keywords: 'wanted missing cutoff upgrade backlog' },
   { label: 'Calendar', sub: 'page', to: '/calendar', keywords: 'calendar schedule air dates releases' },
   { label: 'Activity', sub: 'page', to: '/activity', keywords: 'activity queue downloads history blocklist' },

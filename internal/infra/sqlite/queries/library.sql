@@ -247,3 +247,9 @@ SELECT * FROM media_items WHERE kind = ? AND tmdb_id = ? LIMIT 1;
 
 -- name: FindItemByImdb :one
 SELECT * FROM media_items WHERE kind = ? AND imdb_id = ? LIMIT 1;
+
+-- name: TmdbIDsByKind :many
+-- Just the ids, for marking a browse row as already-added (ADR 0015). The
+-- search handler answers the same question by listing the whole library,
+-- which is fine once per search and wrong fourteen times per page load.
+SELECT tmdb_id FROM media_items WHERE kind = ? AND tmdb_id != 0;

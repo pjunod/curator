@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import type { RootKind } from '../api'
 import {
   addRootFolder,
@@ -45,6 +46,7 @@ export function SettingsPage() {
 
   const [key, setKey] = useState('')
   const [omdbKey, setOmdbKey] = useState('')
+  const [traktId, setTraktId] = useState('')
   const [newRoot, setNewRoot] = useState('')
   const [newRootKind, setNewRootKind] = useState<RootKind>('movie')
   const [skipPatterns, setSkipPatterns] = useState<string | null>(null)
@@ -64,6 +66,16 @@ export function SettingsPage() {
     onSuccess: () => {
       setOmdbKey('')
       void qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+  })
+  const saveTraktId = useMutation({
+    mutationFn: () => updateSettings({ traktClientId: traktId }),
+    onSuccess: () => {
+      setTraktId('')
+      void qc.invalidateQueries({ queryKey: ['settings'] })
+      // The catalogue gains five rows the moment this lands, and Discover
+      // has no reason to refetch it on its own.
+      void qc.invalidateQueries({ queryKey: ['discover-lists'] })
     },
   })
   const addRoot = useMutation({
@@ -187,6 +199,36 @@ export function SettingsPage() {
         </div>
         {saveOmdbKey.isSuccess && <p className="ok-text">Saved.</p>}
         {saveOmdbKey.isError && <div className="banner warning">{String((saveOmdbKey.error as Error).message)}</div>}
+
+        <h2 style={{ marginTop: 18 }}>Trakt (optional)</h2>
+        <p className="muted">
+          A free Trakt app client id adds five rows to <Link to="/discover">Discover</Link> that
+          TMDB cannot answer: what is being played right now (Trakt counts actual playback,
+          not lookups), what is most anticipated, and last weekend's box office. Create an app
+          at trakt.tv/oauth/applications and paste its client id — no account link, no OAuth.
+          Import lists keep their own per-list client id and are unaffected.
+        </p>
+        <div className="form-row">
+          <input
+            type="password"
+            placeholder={
+              settings.data?.traktClientIdConfigured
+                ? `Configured (${settings.data.traktClientIdHint}) — paste to replace`
+                : 'Paste your Trakt client id'
+            }
+            value={traktId}
+            onChange={(e) => setTraktId(e.target.value)}
+          />
+          <button
+            className="btn-accent"
+            disabled={traktId.trim() === '' || saveTraktId.isPending}
+            onClick={() => saveTraktId.mutate()}
+          >
+            Save Trakt client id
+          </button>
+        </div>
+        {saveTraktId.isSuccess && <p className="ok-text">Saved.</p>}
+        {saveTraktId.isError && <div className="banner warning">{String((saveTraktId.error as Error).message)}</div>}
       </section>
 
       <section className="panel" id="library-folders">

@@ -406,22 +406,16 @@ func (c *Client) GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem,
 
 // DiscoverMovies serves the import lists (Phase 5): kind is "popular" or
 // "top_rated"; results carry TMDB ids ready for library adds.
+//
+// The Discover browse surface (ADR 0015) reaches the same endpoints through
+// ports.DiscoverProvider, so this shares its fetch path — but keeps its own
+// signature, because import lists are a different feature with a different
+// vocabulary and changing it would move a stored `import_lists.type` value.
 func (c *Client) DiscoverMovies(ctx context.Context, kind string) ([]ports.SearchResult, error) {
 	if kind != "popular" && kind != "top_rated" {
 		return nil, fmt.Errorf("tmdb: unknown discover kind %q", kind)
 	}
-	var resp searchMovieResp
-	if err := c.get(ctx, "/movie/"+kind, nil, &resp); err != nil {
-		return nil, err
-	}
-	out := make([]ports.SearchResult, 0, len(resp.Results))
-	for _, r := range resp.Results {
-		out = append(out, ports.SearchResult{
-			Kind: domain.KindMovie, TMDBID: r.ID, Title: r.Title,
-			Year: yearOf(r.ReleaseDate), Overview: r.Overview, PosterPath: r.PosterPath,
-		})
-	}
-	return out, nil
+	return c.movieList(ctx, "/movie/"+kind, 1)
 }
 
 // FindSeriesByTVDB resolves a TVDB id to a fully hydrated series via

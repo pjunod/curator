@@ -73,9 +73,79 @@ const tv900alts = {
   ],
 }
 
+// ---- Discover rows (ADR 0015) ----
+//
+// One entry per row, with ids distinct from the add-media fixtures on
+// purpose: a spec that adds from a discover row must not be re-adding the
+// movie the library specs already added, or "in library" would be true
+// before anything was clicked.
+
+const discoverMovie = (id, title, year) => ({
+  id, title, original_title: title, release_date: `${year}-05-01`,
+  overview: `${title} is a discover fixture.`, poster_path: '',
+})
+const discoverShow = (id, name, year) => ({
+  id, name, original_name: name, first_air_date: `${year}-05-01`,
+  overview: `${name} is a discover fixture.`, poster_path: '',
+})
+
+const discoverRoutes = {
+  '/trending/movie/week': { results: [discoverMovie(6101, 'Trending Test Movie', 2026)] },
+  '/movie/now_playing': { results: [discoverMovie(6102, 'In Theaters Test Movie', 2026)] },
+  '/movie/upcoming': { results: [discoverMovie(6103, 'Upcoming Test Movie', 2027)] },
+  '/movie/popular': { results: [discoverMovie(6104, 'Popular Test Movie', 2025)] },
+  '/movie/top_rated': { results: [discoverMovie(6105, 'Top Rated Test Movie', 1994)] },
+  '/trending/tv/week': { results: [discoverShow(7101, 'Trending Test Show', 2026)] },
+  '/tv/on_the_air': { results: [discoverShow(7102, 'On The Air Test Show', 2026)] },
+  '/tv/popular': { results: [discoverShow(7103, 'Popular Test Show', 2025)] },
+  '/tv/top_rated': { results: [discoverShow(7104, 'Top Rated Test Show', 1999)] },
+}
+
+// Detail endpoints. /movie/6101 is what the spec adds. The other two exist so
+// Trakt's artwork hydration has somewhere to land — and Trakt's box-office
+// entry deliberately points at an id with NO detail route, which is the
+// hydration-failure path: that card should keep its title and lose only its
+// picture.
+const discoverDetail = {
+  '/movie/6101': {
+    ...movie601,
+    id: 6101, title: 'Trending Test Movie', release_date: '2026-05-01', imdb_id: 'tt6101001',
+  },
+  '/movie/6104': {
+    ...movie601,
+    id: 6104, title: 'Popular Test Movie', release_date: '2025-05-01',
+    poster_path: '/hydrated.jpg', imdb_id: 'tt6104001',
+  },
+  '/tv/7103': {
+    ...tv700,
+    id: 7103, name: 'Popular Test Show', first_air_date: '2025-05-01',
+    poster_path: '/hydrated-show.jpg', seasons: [],
+  },
+}
+
+// Trakt, on the same port — its paths collide with nothing else here. The
+// entities carry TMDB ids and no artwork, exactly as the real API does, so
+// the suite exercises the Discover service's hydration path.
+const traktRoutes = {
+  '/movies/trending': [
+    { watchers: 120, movie: { title: 'Trakt Trending Film', year: 2026, overview: 'Being watched.', ids: { tmdb: 6104, tvdb: 0 } } },
+  ],
+  '/shows/trending': [
+    { watchers: 40, show: { title: 'Trakt Trending Show', year: 2026, overview: 'Also watched.', ids: { tmdb: 7103, tvdb: 71030 } } },
+  ],
+  '/movies/anticipated': [],
+  '/shows/anticipated': [],
+  '/movies/boxoffice': [
+    { revenue: 9000000, movie: { title: 'Trakt Box Office Film', year: 2026, overview: 'Grossed.', ids: { tmdb: 6105, tvdb: 0 } } },
+  ],
+}
+
 // ---- Open Library (books, ADR 0006) — same fake server, distinct paths ----
 
 const routes = {
+  ...discoverRoutes,
+  ...discoverDetail,
+  ...traktRoutes,
   '/search/movie': { results: [{ id: 601, title: movie601.title, release_date: movie601.release_date, overview: movie601.overview, poster_path: '' }] },
   '/search/tv': { results: [{ id: 700, name: tv700.name, first_air_date: tv700.first_air_date, overview: tv700.overview, poster_path: '' }] },
   '/movie/601': movie601,

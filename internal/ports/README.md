@@ -13,6 +13,7 @@ Planned ports (blueprint §5):
 | `DownloadClient` | `Add`, `Statuses`, `Remove` | qBittorrent, SABnzbd | 2 |
 | `Notifier` | `OnEvent(ctx, Event) error` off the bus | webhook, Discord | 3 |
 | `ImportListProvider` | list wanted media from external services | Trakt/TMDB lists | 5 |
+| `DiscoverProvider` | publish a catalogue of curated rows, and serve one | TMDB, Trakt | 9 |
 
 Interfaces are added here together with their first consumer, not speculatively — signatures
 frozen before a real adapter exists tend to be wrong. Dependency rules (enforced by

@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-27 · v0.8.0 · Phase 8 "plausibility" built: monarr now refuses to believe a file whose own measurements cannot be true, and a fake copy no longer retires a want (the HIM case). Files can be deleted and their releases condemned; the search window pages. Landed on top of the plurx notifier + seam health checks · next: launch logistics + the rest of the nzbd integration**
+> **Snapshot 2026-07-29 · v0.10.0 · Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Full gate green, 87/87 e2e · next: launch logistics + the rest of the nzbd integration**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -20,6 +20,7 @@
 | 4 — Ecosystem compat | **5/6 ✅** (stretch deferred) | Jellyseerr/Prowlarr/Bazarr work against the shim |
 | 5 — Depth & parity | **7/7 ✅** | custom formats, client zoo, lists, anime |
 | 6 — Quality truth (ADR 0013/0014) | **9/9 ✅** | on-disk quality measured; target profiles; churn regression pinned |
+| 9 — Discover (ADR 0015) | **7/7 ✅** | browse what's good and add it without leaving the app |
 | Launch logistics | 2/6 | public repo, releases, name housekeeping |
 
 ## Phase 0 — Walking skeleton ✅ (shipped 2026-07-17)
@@ -330,6 +331,66 @@ rar/par overhead. Upstream of monarr — nzbd or the provider — and still open
 - [ ] Show it on the item page — the data is stored and read, but not yet
       rendered anywhere
 
+## Phase 9 — Discover (ADR 0015, built 2026-07-29)
+
+Plan: [docs/plan-discover.md](docs/plan-discover.md) · decision:
+[ADR 0015](docs/adr/0015-discovery.md).
+
+Monarr could find anything you could already name and nothing you could
+not: every path into the library started at a search box. The answer to
+"what should I watch" lived in a browser tab, and the round trip back was
+copy-paste-a-title.
+
+- [x] `ports.DiscoverProvider` — a provider publishes its own **catalogue**
+      (`Lists`), says whether it can serve it (`Configured`), and serves one
+      page of one row (`Discover`). The catalogue-first shape is what makes a
+      second provider additive: Trakt's rows appear because Trakt names them,
+      not because the UI learned about Trakt
+- [x] **TMDB, nine rows, no setup** — trending (movies and shows), in
+      theaters, coming soon, on the air, popular ×2, top rated ×2. Reached
+      through the existing rate-limited, cached request path; the import
+      lists' `DiscoverMovies` re-expressed over the same helper, signature
+      untouched, because its vocabulary is stored in `import_lists.type`
+- [x] **Trakt, five more, optional** — being watched right now (×2), most
+      anticipated (×2), box office. Kept separate rather than merged because
+      they answer a different question: Trakt counts scrobbles, TMDB counts
+      lookups, and a blended ranking would be unverifiable. The adapter
+      gained what it never had — a `KeyFunc` so the id comes from settings,
+      a rate limiter, and a response cache keyed on id **and** URL, since the
+      id is a header and a rotated one must not be served the old answer
+- [x] `internal/app/discover` — 30 min fresh, **stale served for up to 24 h
+      when upstream fails**, then the error. A page that goes blank because
+      TMDB had a bad thirty seconds reads as a bug; a day-old row is not
+      "less fresh", it is wrong. Artwork for providers that hand out bare ids
+      is hydrated by the new shallow `tmdb.Summary` at concurrency 6 — never
+      `GetSeries`, which would fetch every season of every show for a poster
+- [x] `GET /discover/lists` + `GET /discover/items?list=&page=`; an empty
+      catalogue is a **200 with an empty array**, not a 503, because "no
+      provider configured" is a setup screen and not a failure. `inLibrary`
+      answered by a new narrow `TmdbIDsByKind` query rather than the full
+      `Library.List` the search handler uses — fourteen rows a page load is
+      where that would have become expensive
+- [x] `/discover` page: lazy rows (an `IntersectionObserver` 400 px ahead, so
+      nothing below the fold is fetched), horizontal strips with desktop-only
+      arrows, All/Movies/Shows tabs, and an add dialog that is a second door
+      into `library.Service.Add` — never a second policy
+- [x] `zz-discover.spec.ts` (7 e2e) + unit tests for both adapters and all
+      four cache behaviours; **87/87 e2e green**
+
+**Two pre-existing failures on `main` repaired to get there** — both test-
+or CSS-only, no behaviour change, and neither caused by this work:
+
+- [x] `smoke.spec.ts` asserted that any health check beyond a fixed five must
+      be named `client:*`. The `imports` check (commit 719892b) was never
+      added to that list, so main was red. The list is now written once and
+      used twice — the drift was two copies of it
+- [x] `phase9-layout.spec.ts` was failing on 156 px queue rows. The Activity
+      rewrite (68575a3) widened the progress column to 210 px, and with every
+      other column at a stated minimum the release title is the one on
+      `width: auto` — it was left about 60 px and wrapped a scene name **one
+      character per line**. `col-actions` 268 → 190: buttons wrapping to a
+      second line is a far smaller cost than an unreadable title
+
 ## Launch logistics
 
 - [x] `monarr-media` GitHub org (free) + private repo + initial push
@@ -357,6 +418,7 @@ rar/par overhead. Upstream of monarr — nzbd or the provider — and still open
 | [0012](docs/adr/0012-manual-entries.md) | Manual entries: a library record no provider backs, episodes read off the disk |
 | [0013](docs/adr/0013-measured-quality.md) | **Proposed:** on-disk quality is measured (native probe); filename demoted to hint; unknown ≠ missing; don't churn |
 | [0014](docs/adr/0014-target-profiles.md) | **Proposed:** a profile is a floor + target + upgrades switch; grabs capped at target resolution; "Any" retired |
+| [0015](docs/adr/0015-discovery.md) | Discovery is a read-only browse surface: TMDB always, Trakt when keyed, nothing stored |
 
 ## Milestone commits
 

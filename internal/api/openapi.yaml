@@ -610,6 +610,65 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /discover/lists:
+    get:
+      operationId: listDiscoverLists
+      summary: The Discover catalogue
+      description: >
+        Every browse row on offer, from every provider that is configured
+        (ADR 0015). A provider missing its key contributes nothing rather
+        than rows that would always fail, so an empty array means "no
+        provider is set up", not "nothing is trending".
+      responses:
+        "200":
+          description: The rows this install can serve, in display order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DiscoverList"
+
+  /discover/items:
+    get:
+      operationId: discoverItems
+      summary: One page of one Discover row
+      parameters:
+        - name: list
+          in: query
+          required: true
+          description: A list id from /discover/lists.
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          description: 1-based. Past the end of a row, the array is empty.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The row's contents, marked with what is already added.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchResult"
+        "400":
+          description: No such list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The provider serving this list is not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /rootfolders:
     get:
       operationId: listRootFolders
@@ -2550,6 +2609,32 @@ components:
         inLibrary:
           type: boolean
 
+    DiscoverList:
+      type: object
+      description: >
+        One browse row on offer. Metadata about the row, not its contents —
+        the contents come from /discover/items, which is where the cost is.
+      required: [id, title, blurb, kind, source]
+      properties:
+        id:
+          type: string
+          description: Stable slug, unique across providers ("tmdb-trending-movies").
+        title:
+          type: string
+          description: The row heading, e.g. "Trending this week".
+        blurb:
+          type: string
+          description: >
+            One line saying what the row actually measures. "Trending" means
+            something different at each provider - TMDB counts lookups, Trakt
+            counts playback - so a row without this is a ranking nobody can
+            interpret.
+        kind:
+          $ref: "#/components/schemas/MediaKind"
+        source:
+          type: string
+          description: Which provider publishes it ("tmdb", "trakt").
+
     RootKind:
       type: string
       description: >
@@ -3514,6 +3599,13 @@ components:
           description: OMDb key present — enables Rotten Tomatoes / IMDb / Metacritic ratings.
         omdbApiKeyHint:
           type: string
+        traktClientIdConfigured:
+          type: boolean
+          description: >
+            Trakt client id present - adds the Trakt rows to Discover
+            (ADR 0015). Optional: without it TMDB still serves nine rows.
+        traktClientIdHint:
+          type: string
         apiKey:
           type: string
           description: >
@@ -3559,6 +3651,12 @@ components:
         omdbApiKey:
           type: string
           description: Optional — adds Rotten Tomatoes / IMDb / Metacritic ratings. "" clears it.
+        traktClientId:
+          type: string
+          description: >
+            Optional — a free Trakt app client id, which adds five rows to
+            Discover (ADR 0015). "" clears it. Import lists keep their own
+            per-list id and are unaffected either way.
         scanSkipPatterns:
           type: string
           description: Directory-name patterns to never offer as adoption candidates, one per line.

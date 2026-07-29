@@ -13,8 +13,9 @@ Readarr's retirement.
 > **Status: all planned phases complete** — library, acquisition, books, automation
 > (RSS/backlog/blocklist), Sonarr/Radarr compat personalities, and the depth tail (custom
 > formats, client zoo, import lists, anime numbering, auth, metrics). Now in real-world
-> validation. **The per-item ledger lives in [STATUS.md](STATUS.md)**; the original plan is
-> in the [roadmap](#roadmap).
+> validation, which is where **Discover** came from (browse what's trending and add it
+> without leaving the app — [ADR 0015](docs/adr/0015-discovery.md)). **The per-item ledger
+> lives in [STATUS.md](STATUS.md)**; the original plan is in the [roadmap](#roadmap).
 
 ## Why
 
@@ -188,8 +189,9 @@ becomes useful — right now that reads `internal/api` at 30% and three packages
 
 ## Documentation
 
-- **[Usage guide](docs/usage.md)** — first run, adding movies/series/books, adopting an
-  existing library, interactive search, automation, connecting Jellyseerr/Prowlarr/Bazarr.
+- **[Usage guide](docs/usage.md)** — first run, adding movies/series/books, browsing
+  Discover, adopting an existing library, interactive search, automation, connecting
+  Jellyseerr/Prowlarr/Bazarr.
 - **[Settings reference](docs/settings.md)** — every field in the Settings and System pages.
 - **[Integration](docs/integration.md)** — every seam with nzbd and plurx: what each does, the
   wire format, where you watch it in the UI, and the command that proves it works.
@@ -248,7 +250,8 @@ internal/
                         deluge, sabnzbd, nzbget, trakt, notify (webhook/discord/plex/jellyfin/plurx)
   app/                use cases over domain+ports:
                         library (add/scan/reconcile), acquisition (search/grab/
-                        queue/import + RSS/backlog/wanted), importlist, notify, health
+                        queue/import + RSS/backlog/wanted), discover (browse rows),
+                        importlist, notify, health
   infra/              technical substrate: sqlite (sqlc+goose), bus, scheduler,
                         config, logging
   api/                native /api/v1 (OpenAPI-first), SSE, auth, /metrics, SPA serving

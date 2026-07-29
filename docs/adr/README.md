@@ -19,5 +19,6 @@ accepted; a change of course gets a new ADR that supersedes the old one.
 | [0012](0012-manual-entries.md) | Manual entries: a library record no provider backs, episodes read off the disk | Accepted |
 | [0013](0013-measured-quality.md) | On-disk quality is measured (native probe), not inferred from names | Accepted |
 | [0014](0014-target-profiles.md) | A quality profile is a target, not a list with a cutoff | Accepted |
+| [0015](0015-discovery.md) | Discovery is a read-only browse surface: TMDB always, Trakt when keyed, nothing stored | Accepted |
 
 Context for all of these lives in [../architecture.md](../architecture.md).

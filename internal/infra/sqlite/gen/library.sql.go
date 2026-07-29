@@ -1314,6 +1314,36 @@ func (q *Queries) SetSeasonMonitored(ctx context.Context, arg SetSeasonMonitored
 	return result.RowsAffected()
 }
 
+const tmdbIDsByKind = `-- name: TmdbIDsByKind :many
+SELECT tmdb_id FROM media_items WHERE kind = ? AND tmdb_id != 0
+`
+
+// Just the ids, for marking a browse row as already-added (ADR 0015). The
+// search handler answers the same question by listing the whole library,
+// which is fine once per search and wrong fourteen times per page load.
+func (q *Queries) TmdbIDsByKind(ctx context.Context, kind string) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, tmdbIDsByKind, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var tmdb_id int64
+		if err := rows.Scan(&tmdb_id); err != nil {
+			return nil, err
+		}
+		items = append(items, tmdb_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const touchMediaItem = `-- name: TouchMediaItem :exec
 UPDATE media_items SET updated_at = ? WHERE id = ?
 `

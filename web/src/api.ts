@@ -360,6 +360,8 @@ export interface Settings {
   tmdbApiKeyHint: string
   omdbApiKeyConfigured?: boolean
   omdbApiKeyHint?: string
+  traktClientIdConfigured?: boolean
+  traktClientIdHint?: string
   apiKey?: string
   authRequired?: boolean
   scanSkipPatterns?: string
@@ -420,6 +422,22 @@ export const reprobeLibraryItem = (id: number) =>
   send<{ files: number }>('POST', `/library/${id}/probe`)
 export const searchMetadata = (kind: MediaKind, query: string) =>
   get<SearchResult[]>(`/metadata/search?kind=${kind}&query=${encodeURIComponent(query)}`)
+
+/** One browse row on offer (ADR 0015). Metadata about the row, not its
+ *  contents — those cost an upstream request and come from getDiscoverItems. */
+export interface DiscoverList {
+  id: string
+  title: string
+  /** What the row actually measures. "Trending" is a different number at
+   *  each provider, so the row heading alone is not enough to read it by. */
+  blurb: string
+  kind: MediaKind
+  source: string
+}
+
+export const getDiscoverLists = () => get<DiscoverList[]>('/discover/lists')
+export const getDiscoverItems = (list: string, page = 1) =>
+  get<SearchResult[]>(`/discover/items?list=${encodeURIComponent(list)}&page=${page}`)
 export const getRootFolders = () => get<RootFolder[]>('/rootfolders')
 export const addRootFolder = (path: string, kind: RootKind) =>
   send<RootFolder>('POST', '/rootfolders', { path, kind })
@@ -476,6 +494,7 @@ export const getSettings = () => get<Settings>('/settings')
 export const updateSettings = (patch: {
   tmdbApiKey?: string
   omdbApiKey?: string
+  traktClientId?: string
   authRequired?: boolean
   authUsername?: string
   authPassword?: string

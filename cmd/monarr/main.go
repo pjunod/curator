@@ -34,6 +34,7 @@ import (
 	"github.com/monarr-media/monarr/internal/adapters/tvmaze"
 	"github.com/monarr-media/monarr/internal/api"
 	"github.com/monarr-media/monarr/internal/app/acquisition"
+	"github.com/monarr-media/monarr/internal/app/discover"
 	"github.com/monarr-media/monarr/internal/app/health"
 	"github.com/monarr-media/monarr/internal/app/importlist"
 	"github.com/monarr-media/monarr/internal/app/library"
@@ -143,6 +144,20 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		WithRatings(extraRatings).
 		WithSeriesProviders(seriesChain)
 
+	// Discovery (ADR 0015): browse rows, read-only, nothing stored. TMDB is
+	// always on because its key is already required; Trakt joins it when a
+	// client id is set, and drops out of the catalogue when it is not.
+	traktDiscover := trakt.New(os.Getenv("MONARR_TRAKT_BASE_URL"), func(ctx context.Context) (string, error) {
+		v, err := db.GetMeta(ctx, api.TraktClientIDSetting)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return v, err
+	})
+	// meta.Summary, not meta.GetSeries: hydrating artwork for a row of shows
+	// through GetSeries would fetch every season of every one of them.
+	browse := discover.New(log, meta.Summary, meta, traktDiscover)
+
 	// Acquisition: real adapters injected as factories.
 	indexerFactory := func(cfg ports.IndexerConfig) ports.Indexer { return torznab.New(cfg) }
 	clientFactory := func(cfg ports.ClientConfig) ports.DownloadClient {
@@ -205,7 +220,10 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	lists := importlist.New(db, lib, importlist.Sources{
 		TMDBDiscover: meta.DiscoverMovies,
 		TraktList: func(ctx context.Context, clientID, user, slug string) ([]ports.SearchResult, error) {
-			return trakt.New(os.Getenv("MONARR_TRAKT_BASE_URL"), clientID).ListItems(ctx, user, slug)
+			// NewStatic, not New: an import list carries its own client id in
+			// its config and predates the settings-level one, so a list that
+			// works today must keep working with the global field empty.
+			return trakt.NewStatic(os.Getenv("MONARR_TRAKT_BASE_URL"), clientID).ListItems(ctx, user, slug)
 		},
 	}, log)
 
@@ -464,6 +482,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		DB:              db,
 		Library:         lib,
 		Acquisition:     acq,
+		Discover:        browse,
 		Store:           db,
 		IndexerFactory:  indexerFactory,
 		ClientFactory:   clientFactory,

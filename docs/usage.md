@@ -76,6 +76,38 @@ root folder and profile all stay put. The next title is one click, and
 Nothing touches the disk at add time — the item's folder is created on
 first import.
 
+## Discover
+
+**Discover** (sidebar) is for the other half of the problem: adding
+something when you do not already know its name. It is rows of posters —
+*Trending this week*, *In theaters now*, *Coming soon*, *Popular*, *Top
+rated*, *On the air* — read live from your metadata providers. Click a
+poster for the overview and an **Add to library** button carrying the same
+root folder / profile / monitor controls the Add page has.
+
+**How to read a row.** Every row carries one line saying what it actually
+measures, because the words do not mean the same thing everywhere: TMDB's
+*trending* counts how many people looked a title up this week, Trakt's
+counts how many have it **playing right now**. A title already in your
+library is marked *in library* on the card and offers a link to it instead
+of an Add button.
+
+**Nine rows come free**, off the TMDB key the library already needs. A free
+[Trakt client id](settings.md#trakt-client-id-optional) adds five more that
+TMDB cannot answer — being watched right now (movies and shows), most
+anticipated (movies and shows), and last weekend's box office. The **All /
+Movies / Shows** tabs filter which rows are on screen. Books have no row:
+Open Library has no popularity data worth showing.
+
+**What it costs:** nothing while you are not looking at it. Rows fetch only
+as you scroll to them, are cached for 30 minutes, and no background job
+runs. If a provider is briefly unreachable a row keeps showing its last
+contents for up to a day rather than going blank; past that the error is
+shown, because by then the row would be wrong rather than merely stale.
+
+Discover never adds anything by itself. For that, see
+[Import lists](settings.md#import-lists) — same kind of data, opposite job.
+
 ## On your phone (install as an app)
 
 The UI is a PWA: open `http://<host>:7676` on your phone and install it —
