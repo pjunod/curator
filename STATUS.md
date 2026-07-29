@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-29 · v0.11.0 · Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo). Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
+> **Snapshot 2026-07-29 · v0.11.0 · Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.4%, past the 85% target, with the floor enforced by COVERAGE_MIN.** Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -21,7 +21,7 @@
 | 5 — Depth & parity | **7/7 ✅** | custom formats, client zoo, lists, anime |
 | 6 — Quality truth (ADR 0013/0014) | **9/9 ✅** | on-disk quality measured; target profiles; churn regression pinned |
 | 9 — Discover (ADR 0015) | **7/7 ✅** | browse what's good and add it without leaving the app |
-| Launch logistics | 3/7 | public repo, releases, name housekeeping |
+| Launch logistics | 4/9 | public repo, releases, name housekeeping |
 
 ## Phase 0 — Walking skeleton ✅ (shipped 2026-07-17)
 
@@ -414,6 +414,22 @@ or CSS-only, no behaviour change, and neither caused by this work:
       — **when this happens, the orphan `badges` branch can be deleted**; the
       coverage badge no longer uses it (see below)
 - [ ] goreleaser: tagged releases with binaries + ghcr.io images (target: end of Phase 1)
+- [x] **Coverage at 86.4%, floor enforced at 85%** (2026-07-29). Was 68.4%
+      against no floor. The gap was concentrated, not spread: `internal/api`
+      held 1,126 of the 3,061 uncovered statements while every domain package
+      was already 85–100%, and the reason was structural — `newTestServer`
+      wired four dependencies, so every handler reading Store/Library/
+      Acquisition/Discover was unreachable from a test. The harness had to
+      exist before the tests could. `COVERAGE_MIN` + `scripts/coverage-gate.sh`
+      now fail the build below 85% on every push, in `make coverage` and in CI
+      after the per-package summary is written. Two things deliberately left
+      under: `cmd/monarr` (204 statements of `main()` — needs a `run(ctx, cfg)`
+      extraction, worth doing on its own) and the storage-failure branches in
+      `internal/api`/`internal/app/library`, which only fault injection reaches
+- [ ] Extract `run(ctx, cfg) error` from `cmd/monarr/main.go` so the
+      composition root can be started and shut down in a test — the last
+      package at 0%, and the only one whose coverage needs a refactor rather
+      than a test
 - [x] **Coverage badge renders while the repo is private** (2026-07-29). It
       pointed at `raw.githubusercontent.com/…/badges/coverage.svg`, and GitHub
       fetches an absolute image URL through its proxy *anonymously* — so on a
