@@ -82,6 +82,14 @@ func (f fakeClient) Statuses(context.Context) ([]ports.DownloadStatus, error) { 
 
 func (f fakeClient) Remove(context.Context, ports.Handle, bool) error { return nil }
 
+// fakeNotifier accepts every delivery, so the notifier /test endpoints have
+// a far side that answers.
+type fakeNotifier struct{}
+
+func (fakeNotifier) Send(context.Context, ports.Notification) error { return nil }
+
+func (fakeNotifier) Test(context.Context) error { return nil }
+
 // newAPIEnv wires everything the API layer can reach.
 func newAPIEnv(t *testing.T) *apiEnv {
 	t.Helper()
@@ -138,10 +146,13 @@ func newAPIEnv(t *testing.T) *apiEnv {
 		Settings:       db,
 		IndexerFactory: indexerFactory,
 		ClientFactory:  clientFactory,
-		Version:        "test",
-		Commit:         "cafebabe",
-		DataDir:        t.TempDir(),
-		StartedAt:      time.Now().Add(-time.Minute),
+		// Without this the notifier /test endpoints panic on a nil factory
+		// rather than answering, so their success paths were untestable.
+		NotifierFactory: func(ports.NotifierConfig) ports.Notifier { return fakeNotifier{} },
+		Version:         "test",
+		Commit:          "cafebabe",
+		DataDir:         t.TempDir(),
+		StartedAt:       time.Now().Add(-time.Minute),
 	})
 
 	return &apiEnv{h: srv.Handler(), srv: srv, db: db, bus: b, lib: lib, acq: acq, root: root}

@@ -79,6 +79,13 @@ jobs:
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # The floor (./COVERAGE_MIN) is enforced LAST in this step, on
+          # purpose: it fails the job that measured the number, but only after
+          # the per-package breakdown above has been written. A gate that
+          # aborts before the summary tells you that you dropped coverage and
+          # not where, which is the half of the message that costs time.
+          sh scripts/coverage-gate.sh coverage.out
+
       # The badge is a tracked file on main, linked from the README with a
       # RELATIVE path. It used to live on an orphan `badges` branch behind an
       # absolute raw.githubusercontent.com URL, which keeps bot commits out of

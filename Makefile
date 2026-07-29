@@ -13,7 +13,7 @@ SQLC         := github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 OAPI_CODEGEN := github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 GOLANGCI     := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
-.PHONY: all build go-build web test test-web test-e2e coverage coverage-html lint vet fmt gen gen-sqlc gen-api release release-check tidy clean dev-api dev-web docker bootstrap hooks
+.PHONY: all build go-build web test test-web test-e2e coverage coverage-gate coverage-html lint vet fmt gen gen-sqlc gen-api release release-check tidy clean dev-api dev-web docker bootstrap hooks
 
 all: build
 
@@ -47,6 +47,12 @@ test-e2e: build
 coverage:
 	go test -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 	@printf 'coverage: %s%% (badge: coverage.svg)\n' "$$(sh scripts/coverage-badge.sh coverage.out coverage.svg)"
+	@sh scripts/coverage-gate.sh coverage.out
+
+# The gate alone, for CI and for re-checking without re-running the suite.
+# The floor is ./COVERAGE_MIN (a ratchet); the target is in the script.
+coverage-gate:
+	@sh scripts/coverage-gate.sh coverage.out
 
 # The line-by-line view, for finding what to test next.
 coverage-html: coverage

@@ -167,6 +167,16 @@ and `docker.yml`. Least-privilege permissions, per-ref concurrency cancellation.
 
 ### Coverage
 
+**The target is 85%, and the floor is enforced.** [`COVERAGE_MIN`](COVERAGE_MIN) holds the
+number the build refuses to go below; [`scripts/coverage-gate.sh`](scripts/coverage-gate.sh)
+checks it in `make coverage` and in CI, and nags when the floor has drifted far enough below
+the real number to be worth raising. The floor is a **ratchet, not the goal**: setting it
+straight to 85% would paint the build red for a gap no single commit created, and a build
+that is always red is a build everybody learns to ignore. This way a change that *lowers*
+coverage fails immediately — while the person who lowered it is still holding it, which is
+the only moment the fix is cheap — and the target stays a real number rather than an
+aspiration nothing enforces. Raise `COVERAGE_MIN` in the commit that earns it.
+
 The number and the badge are produced by this repository, not by a coverage service.
 `make coverage` writes [`coverage.svg`](coverage.svg); CI runs the same script on every push
 to `main` and commits the file back when the number has moved. Two rules, both in
@@ -186,8 +196,8 @@ figure:
   a test.
 
 The CI step summary lists every package least-covered first, which is where the number
-becomes useful — on 2026-07-29 that read `cmd/monarr` and `internal/infra/logging` at zero,
-then `internal/api` at 33%.
+becomes useful — on 2026-07-29 that read `cmd/monarr` at zero (the composition root, wiring
+only) and `internal/app/acquisition` at 72%, with every domain package above 85%.
 
 **Why the badge is a tracked file rather than a URL.** It used to live on an orphan `badges`
 branch and be linked as `raw.githubusercontent.com/…`, which keeps the badge out of main's
