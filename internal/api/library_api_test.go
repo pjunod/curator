@@ -809,11 +809,25 @@ func TestLibBrowseFilesystemListsDirectoriesAndFlagsRegistered(t *testing.T) {
 
 	// The harness's own root is registered, and browsing its parent must say
 	// so on the row that is it.
+	//
+	// Compare against the RESOLVED path. Browse deliberately enumerates the
+	// symlink-resolved tree (library/browse.go), so the row it returns is
+	// spelled the way the filesystem spells it and not the way the root was
+	// registered. On Linux with a plain /tmp the two are the same string and
+	// the distinction is invisible; on macOS t.TempDir() sits under /var,
+	// which is a symlink to /private/var, so an equality test on the
+	// as-registered form matches nothing — and fails here, three assertions
+	// away from the mistake. The product gets this right (it puts both forms
+	// in its registered set); the test has to state the same contract.
+	rootPath := e.root
+	if resolved, err := filepath.EvalSymlinks(rootPath); err == nil {
+		rootPath = resolved
+	}
 	e.get(t, "/api/v1/filesystem?path="+filepath.Dir(e.root)+string(filepath.Separator)).
 		expect(t, http.StatusOK).into(t, &res)
 	var sawRegistered bool
 	for _, d := range res.Dirs {
-		if d.Path == e.root {
+		if d.Path == rootPath {
 			sawRegistered = d.Registered
 		}
 	}
