@@ -32,22 +32,25 @@ test.describe('API', () => {
     // added a check OR added a client, which is the wrong thing to be
     // sensitive to. Pin the ones that must always exist, and require that
     // anything extra is a client check rather than a surprise.
-    const names: string[] = body.checks.map((c: { name: string }) => c.name)
-    for (const required of [
+    //
+    // The list is written once and used twice, because the two copies drifted:
+    // `imports` was registered in cmd/monarr without being added here, and the
+    // "anything extra is a client check" guard turned that into a red suite on
+    // main. A new static check belongs in this array.
+    const STATIC_CHECKS = [
       'data-directory',
       'database',
+      'imports',
       'library-folders',
       'metadata-provider',
       'web-ui',
-    ]) {
+    ]
+    const names: string[] = body.checks.map((c: { name: string }) => c.name)
+    for (const required of STATIC_CHECKS) {
       expect(names).toContain(required)
     }
-    const extra = names.filter(
-      (n) =>
-        !['data-directory', 'database', 'library-folders', 'metadata-provider', 'web-ui'].includes(n),
-    )
-    for (const n of extra) {
-      expect(n).toMatch(/^client:/)
+    for (const n of names.filter((n) => !STATIC_CHECKS.includes(n))) {
+      expect(n).toMatch(/^client:|^mediaserver:/)
     }
   })
 
