@@ -99,8 +99,8 @@ anticipated (movies and shows), and last weekend's box office. The **All /
 Movies / Shows** tabs filter which rows are on screen. Books have no row:
 Open Library has no popularity data worth showing.
 
-**Poster size** is the **S / M / L** control in the page head, on both
-Discover and the Library page. It is one preference — set it in either place
+**Poster size** is the labelled **S / M / L** control in the page head, on
+both Discover and the Library page. It is one preference — set it in either place
 and the other follows — remembered in the browser, so it is per-device rather
 than per-account. **M** is what both pages were before the control existed, so
 leaving it alone changes nothing.
@@ -141,7 +141,7 @@ text filter is remembered per browser. Every card carries the rating star,
 the color-coded completeness pill, and a ↓ badge while something is
 downloading for it.
 
-**S / M / L** in the page head sets poster size — smaller to fit more of a
+**Poster size** (S / M / L) in the page head — smaller to fit more of a
 large library on one screen, larger for the artwork. It is the same
 preference [Discover](#discover) uses, so the two pages never disagree about
 how big a poster is, and **M** is the size everything was before the control

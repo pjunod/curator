@@ -145,9 +145,15 @@ code {
   width: 100%;
 }
 
+/* Wraps on every width, not only on phones. The head is a title plus however
+   many controls a page has accumulated, and the poster-size picker was the
+   one that tipped Library past a 1000px window: with nowrap the actions do
+   not move aside, they get crushed, and "+ Add media" leaves the screen. A
+   second line is the honest answer. */
 .page-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 20px;
 }
@@ -1270,6 +1276,18 @@ a.pill-info:hover {
 /* Same segmented look as the theme picker (it shares the class), but it sits
    inline in a page head rather than stacked in the sidebar foot, so it takes
    its width from its three letters instead of filling the row. */
+.size-picker-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.size-picker-label {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .size-picker {
   margin: 0;
   flex: 0 0 auto;

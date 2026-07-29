@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CARD_SIZES,
   CARD_SIZE_KEY,
+  CARD_SIZE_LABEL,
   DEFAULT_CARD_SIZE,
   coerceCardSize,
   readCardSize,
@@ -43,8 +44,19 @@ describe('the card size contract', () => {
   it('keeps accessible names clear of names other controls already use', () => {
     for (const s of CARD_SIZES) {
       expect(s.name.toLowerCase()).not.toContain('more')
-      expect(s.name.split(' ').length).toBeLessThanOrEqual(3)
+      expect(s.name.split(' ')).toHaveLength(1)
     }
+  })
+
+  // The label is on screen, not just in a tooltip: three letters with no
+  // subject is what this control looked like before, and it told the reader
+  // nothing. It is also the group's accessible name, so the visible text and
+  // the announced text cannot drift.
+  it('names what it sizes, not just the sizes', () => {
+    expect(CARD_SIZE_LABEL).toBe('Poster size')
+    // The buttons are one letter each; without the label there is no subject
+    // anywhere in the control.
+    expect(CARD_SIZES.every((s) => s.label.length === 1)).toBe(true)
   })
 
   it('defaults to medium, which is the size everything was before', () => {

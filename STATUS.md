@@ -374,8 +374,11 @@ copy-paste-a-title.
       nothing below the fold is fetched), horizontal strips with desktop-only
       arrows, All/Movies/Shows tabs, and an add dialog that is a second door
       into `library.Service.Add` — never a second policy
-- [x] **Poster size (S / M / L)** in the page head of Discover *and* the
-      Library page. One `--card-w` token on `<html>`, so two components that
+- [x] **Poster size (S / M / L, labelled)** in the page head of Discover
+      *and* the Library page. The label is on screen and is also the group's
+      accessible name, so the two cannot drift; `.page-head` now wraps at
+      every width, because the picker was what tipped Library past a 1000px
+      window and nowrap crushes the actions rather than moving them. One `--card-w` token on `<html>`, so two components that
       must agree on a number share an attribute rather than state, CSS
       resizes the grid without re-rendering it, and a pre-paint script keeps
       the library grid from reflowing a frame after it draws. M is exactly

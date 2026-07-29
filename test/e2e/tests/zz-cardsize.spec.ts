@@ -48,7 +48,7 @@ async function cardWidth(page: Page, selector: string): Promise<number> {
 
 function pick(page: Page, size: 'Small' | 'Medium' | 'Large') {
   return page
-    .getByRole('group', { name: 'Card size' })
+    .getByRole('group', { name: 'Poster size' })
     .getByRole('button', { name: new RegExp(size) })
     .click()
 }
@@ -99,7 +99,7 @@ test('the choice survives a reload and reaches Discover too', async ({ page }) =
   // grid draws; the picker reads the attribute back so its highlight agrees.
   expect(await page.getAttribute('html', 'data-card-size')).toBe('l')
   await expect(
-    page.getByRole('group', { name: 'Card size' }).getByRole('button', { name: /Large/ }),
+    page.getByRole('group', { name: 'Poster size' }).getByRole('button', { name: /Large/ }),
   ).toHaveAttribute('aria-pressed', 'true')
 
   // One preference, both pages. Discover was never told anything — it reads

@@ -227,7 +227,9 @@ route, sidebar `<nav>`, the mobile **More** sheet, and the `PAGES` array in
 ### 3.5a Follow-up — poster size, shared with the Library page
 
 Added the same day, on feedback that the default was right but unadjustable.
-An **S / M / L** control in the page head of Discover *and* the Library page,
+An **S / M / L** control — labelled *Poster size*, because three letters
+with no subject tell a reader nothing — in the page head of Discover *and*
+the Library page,
 carried as `data-card-size` on `<html>` and read by CSS through a `--card-w`
 custom property — the theme picker's mechanism, for the theme picker's
 reason: two unrelated components that must agree on a number are cheaper as
