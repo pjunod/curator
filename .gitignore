@@ -10,10 +10,10 @@ web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
 
-# tooling noise. The coverage badge is a local artifact here and a file on the
-# orphan `badges` branch in CI — never tracked on main.
+# tooling noise. coverage.svg is deliberately NOT listed: it is tracked on
+# main so the README can point at it with a relative path, which is the only
+# form that renders while the repo is private (README → Coverage).
 coverage.out
-coverage.svg
 coverage.html
 *.log
 .DS_Store

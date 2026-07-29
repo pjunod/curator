@@ -79,12 +79,19 @@ jobs:
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # The badge lives on an orphan `badges` branch rather than in main's
-      # history: the README needs one stable URL, and a bot commit per push is
-      # not worth putting in the log of the actual work. Nothing external is in
-      # the loop — the number is measured by the step above, the SVG is
-      # rendered by a script in this repo, and the push uses the token GitHub
-      # already gives the job.
+      # The badge is a tracked file on main, linked from the README with a
+      # RELATIVE path. It used to live on an orphan `badges` branch behind an
+      # absolute raw.githubusercontent.com URL, which keeps bot commits out of
+      # main's history — but GitHub fetches an absolute image URL through its
+      # proxy, anonymously, so on a private repository it 404s and the badge is
+      # simply broken. A relative path is served by github.com itself and
+      # honours the viewer's session, so it renders private *and* public.
+      #
+      # The cost is a bot commit whenever the number moves, which is why this
+      # exits early when the blob has not changed. Nothing external is in the
+      # loop: the number is measured by the step above, the SVG is rendered by
+      # a script in this repo, and the push uses the token GitHub already
+      # gives the job.
       - name: Publish the coverage badge
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -93,27 +100,44 @@ jobs:
           GIT_COMMITTER_NAME: monarr-ci
           GIT_COMMITTER_EMAIL: ci@monarr.invalid
         run: |
-          # Fetch into an explicit ref rather than reading FETCH_HEAD, which
-          # actions/checkout has already written and which would otherwise make
-          # main's tip the badge branch's parent.
-          ref=refs/remotes/origin/badges
-          git fetch --depth=1 origin "+refs/heads/badges:$ref" 2>/dev/null || true
+          set -eu
           blob="$(git hash-object -w coverage.svg)"
-          # Nothing to record when the number has not moved.
-          if [ "$(git rev-parse --verify -q "$ref:coverage.svg" || true)" = "$blob" ]; then
-            echo "badge unchanged at ${COVERAGE_PCT}%"
-            exit 0
-          fi
-          # Plumbing rather than a checkout: building the commit by hand keeps
-          # the working tree (and the rest of this job) untouched.
-          tree="$(printf '100644 blob %s\tcoverage.svg\n' "$blob" | git mktree)"
-          parent="$(git rev-parse --verify -q "$ref" || true)"
-          if [ -n "$parent" ]; then
-            commit="$(git commit-tree "$tree" -p "$parent" -m "coverage: ${COVERAGE_PCT}% (${GITHUB_SHA})")"
-          else
-            commit="$(git commit-tree "$tree" -m "coverage: ${COVERAGE_PCT}% (${GITHUB_SHA})")"
-          fi
-          git push origin "$commit:refs/heads/badges"
+          # Plumbing against a scratch index, so the working tree and the rest
+          # of this job are untouched. It must be a path that does NOT exist:
+          # git reads the index before writing it, and an empty file from
+          # plain `mktemp` fails with "index file smaller than expected".
+          scratch="$(mktemp -d)"
+          GIT_INDEX_FILE="$scratch/index"
+          export GIT_INDEX_FILE
+          trap 'rm -rf "$scratch"' EXIT
+
+          # main is a moving target: it can gain a real commit between this job
+          # starting and this push landing. Each attempt re-reads the current
+          # tip and rebuilds on top of it, so the badge can never revert
+          # somebody else's work — and a persistent race warns rather than
+          # failing a build over a picture.
+          for attempt in 1 2 3; do
+            git fetch --quiet --depth=1 origin main
+            base="$(git rev-parse FETCH_HEAD)"
+            if [ "$(git rev-parse --verify -q "$base:coverage.svg" || true)" = "$blob" ]; then
+              echo "badge unchanged at ${COVERAGE_PCT}%"
+              exit 0
+            fi
+            git read-tree "$base"
+            git update-index --add --cacheinfo "100644,$blob,coverage.svg"
+            tree="$(git write-tree)"
+            # [skip ci] is belt and braces: a push made with the default
+            # GITHUB_TOKEN does not trigger workflows, so this cannot loop.
+            commit="$(git commit-tree "$tree" -p "$base" \
+              -m "coverage: ${COVERAGE_PCT}% (${GITHUB_SHA}) [skip ci]")"
+            if git push origin "$commit:refs/heads/main"; then
+              echo "badge published at ${COVERAGE_PCT}%"
+              exit 0
+            fi
+            echo "main moved under attempt ${attempt}; retrying"
+            sleep 5
+          done
+          echo "::warning::coverage badge not published after 3 attempts (main kept moving)"
 
       - name: go build
         run: make go-build

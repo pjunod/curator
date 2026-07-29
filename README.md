@@ -4,7 +4,7 @@
 [![Lint](https://github.com/monarr-media/monarr/actions/workflows/lint.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/lint.yml)
 [![Compat](https://github.com/monarr-media/monarr/actions/workflows/compat.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/compat.yml)
 [![Docker](https://github.com/monarr-media/monarr/actions/workflows/docker.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/docker.yml)
-[![Coverage](https://raw.githubusercontent.com/monarr-media/monarr/badges/coverage.svg)](https://github.com/monarr-media/monarr/actions/workflows/tests.yml)
+[![Coverage](coverage.svg)](https://github.com/monarr-media/monarr/actions/workflows/tests.yml)
 
 **A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one
 acquisition pipeline — for TV, movies, and (Phase 2.5) books, filling the gap left by
@@ -168,10 +168,10 @@ and `docker.yml`. Least-privilege permissions, per-ref concurrency cancellation.
 ### Coverage
 
 The number and the badge are produced by this repository, not by a coverage service.
-`make coverage` writes `coverage.svg`; CI does the same on every push to `main` and publishes
-the file to the orphan `badges` branch, which is what the README badge points at. Two rules,
-both in [`scripts/coverage-badge.sh`](scripts/coverage-badge.sh) so nothing can report a
-different figure:
+`make coverage` writes [`coverage.svg`](coverage.svg); CI runs the same script on every push
+to `main` and commits the file back when the number has moved. Two rules, both in
+[`scripts/coverage-badge.sh`](scripts/coverage-badge.sh) so nothing can report a different
+figure:
 
 - **`-coverpkg=./...`.** Without it a package appears in the profile only if it owns a
   `_test.go` file, so what gets measured depends on where the tests happen to live rather
@@ -181,11 +181,21 @@ different figure:
   subset can flatter or understate; the point is that it is arbitrary.
 - **Generated code excluded.** sqlc and oapi-codegen contribute tens of thousands of
   statements that no one will write a test for; counting them measures how much machine
-  output the repo holds, which is not a fact about the tests. It is the difference between
-  60.7% and 65.3%, and only the second number moves when someone writes a test.
+  output the repo holds, which is not a fact about the tests. On 2026-07-29 it was the
+  difference between 63.8% and 68.4%, and only the second number moves when someone writes
+  a test.
 
 The CI step summary lists every package least-covered first, which is where the number
-becomes useful — right now that reads `internal/api` at 30% and three packages at zero.
+becomes useful — on 2026-07-29 that read `cmd/monarr` and `internal/infra/logging` at zero,
+then `internal/api` at 33%.
+
+**Why the badge is a tracked file rather than a URL.** It used to live on an orphan `badges`
+branch and be linked as `raw.githubusercontent.com/…`, which keeps the badge out of main's
+history — but GitHub fetches an absolute image URL through its proxy, anonymously, and this
+repository is private, so that image 404s for everyone. The four workflow badges above are
+served by `github.com` itself and honour the viewer's session, which is why they render and
+that one did not. A relative path is served the same way, so it works private *and* public;
+the cost is one `coverage: NN.N%` commit from CI whenever the number actually changes.
 
 ## Documentation
 
