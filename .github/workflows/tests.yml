@@ -17,10 +17,11 @@ jobs:
     name: Unit tests (Go + web)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Write access is for one thing: pushing the coverage badge to the orphan
-    # `badges` branch on main. Pull requests never reach that step.
+    # Read-only. This job used to push the coverage badge to main; it does
+    # not any more (see "Flag a stale coverage badge" below), and a token
+    # that cannot write is a better guarantee of that than a comment.
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -87,64 +88,32 @@ jobs:
           sh scripts/coverage-gate.sh coverage.out
 
       # The badge is a tracked file on main, linked from the README with a
-      # RELATIVE path. It used to live on an orphan `badges` branch behind an
-      # absolute raw.githubusercontent.com URL, which keeps bot commits out of
-      # main's history — but GitHub fetches an absolute image URL through its
-      # proxy, anonymously, so on a private repository it 404s and the badge is
-      # simply broken. A relative path is served by github.com itself and
-      # honours the viewer's session, so it renders private *and* public.
+      # RELATIVE path — the only form GitHub serves with the viewer's session,
+      # and therefore the only one that renders on a private repository.
       #
-      # The cost is a bot commit whenever the number moves, which is why this
-      # exits early when the blob has not changed. Nothing external is in the
-      # loop: the number is measured by the step above, the SVG is rendered by
-      # a script in this repo, and the push uses the token GitHub already
-      # gives the job.
-      - name: Publish the coverage badge
+      # CI does NOT commit it. It used to, and that lasted exactly one run:
+      # the bot commit landed on main, every human clone was instantly one
+      # commit behind, and `git push` started failing with a non-fast-forward
+      # for work that had nothing to do with coverage. This repository is
+      # synced between machines by git bundle, and a bundle is built against a
+      # known base — a tip that moves on its own breaks every handoff, not
+      # just the next push. A picture is not worth that.
+      #
+      # So the badge is refreshed by whoever changes coverage, in the same
+      # commit, and CI only says when the committed one has gone stale. The
+      # floor below is what actually protects the number on every push; the
+      # badge is a readout, and a readout nobody can trust to be current is
+      # still better than a repository nobody can push to.
+      - name: Flag a stale coverage badge
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GIT_AUTHOR_NAME: monarr-ci
-          GIT_AUTHOR_EMAIL: ci@monarr.invalid
-          GIT_COMMITTER_NAME: monarr-ci
-          GIT_COMMITTER_EMAIL: ci@monarr.invalid
         run: |
           set -eu
-          blob="$(git hash-object -w coverage.svg)"
-          # Plumbing against a scratch index, so the working tree and the rest
-          # of this job are untouched. It must be a path that does NOT exist:
-          # git reads the index before writing it, and an empty file from
-          # plain `mktemp` fails with "index file smaller than expected".
-          scratch="$(mktemp -d)"
-          GIT_INDEX_FILE="$scratch/index"
-          export GIT_INDEX_FILE
-          trap 'rm -rf "$scratch"' EXIT
-
-          # main is a moving target: it can gain a real commit between this job
-          # starting and this push landing. Each attempt re-reads the current
-          # tip and rebuilds on top of it, so the badge can never revert
-          # somebody else's work — and a persistent race warns rather than
-          # failing a build over a picture.
-          for attempt in 1 2 3; do
-            git fetch --quiet --depth=1 origin main
-            base="$(git rev-parse FETCH_HEAD)"
-            if [ "$(git rev-parse --verify -q "$base:coverage.svg" || true)" = "$blob" ]; then
-              echo "badge unchanged at ${COVERAGE_PCT}%"
-              exit 0
-            fi
-            git read-tree "$base"
-            git update-index --add --cacheinfo "100644,$blob,coverage.svg"
-            tree="$(git write-tree)"
-            # [skip ci] is belt and braces: a push made with the default
-            # GITHUB_TOKEN does not trigger workflows, so this cannot loop.
-            commit="$(git commit-tree "$tree" -p "$base" \
-              -m "coverage: ${COVERAGE_PCT}% (${GITHUB_SHA}) [skip ci]")"
-            if git push origin "$commit:refs/heads/main"; then
-              echo "badge published at ${COVERAGE_PCT}%"
-              exit 0
-            fi
-            echo "main moved under attempt ${attempt}; retrying"
-            sleep 5
-          done
-          echo "::warning::coverage badge not published after 3 attempts (main kept moving)"
+          if git diff --quiet -- coverage.svg; then
+            echo "coverage.svg is current at ${COVERAGE_PCT}%"
+            exit 0
+          fi
+          committed="$(git show HEAD:coverage.svg | sed -n 's/.*aria-label="coverage: \([^"]*\)".*/\1/p')"
+          echo "::warning file=coverage.svg::badge says ${committed:-unknown}, measured ${COVERAGE_PCT}% — run 'make coverage' and commit coverage.svg"
 
       - name: go build
         run: make go-build

@@ -178,8 +178,15 @@ the only moment the fix is cheap — and the target stays a real number rather t
 aspiration nothing enforces. Raise `COVERAGE_MIN` in the commit that earns it.
 
 The number and the badge are produced by this repository, not by a coverage service.
-`make coverage` writes [`coverage.svg`](coverage.svg); CI runs the same script on every push
-to `main` and commits the file back when the number has moved. Two rules, both in
+`make coverage` writes [`coverage.svg`](coverage.svg), and **whoever changes coverage commits
+it in the same commit**. CI does not push it: it did for exactly one run, and the bot commit
+put every clone one behind `main`, so the next `git push` failed with a non-fast-forward over
+a picture. This repository is synced between machines by git bundle, and a bundle is built
+against a known base — a tip that moves on its own breaks every handoff, not just the next
+push. CI now only warns when the committed badge disagrees with what it measured. The floor
+above is what protects the number on every push; the badge is a readout.
+
+Two rules decide what the number counts, both in
 [`scripts/coverage-badge.sh`](scripts/coverage-badge.sh) so nothing can report a different
 figure:
 

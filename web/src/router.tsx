@@ -140,7 +140,7 @@ function MobileShell(props: { overall: string; version: string; children: React.
               </Link>
             </nav>
             <ThemePicker />
-            <div className="muted sheet-foot">v{props.version} · movies · series · books</div>
+            <div className="muted sheet-foot">v{props.version} · movies · TV · books</div>
           </div>
         </>
       )}
@@ -203,7 +203,7 @@ function Layout() {
         <div className="sidebar-foot">
           <ThemePicker />
           <div>v{status.data?.version ?? '…'}</div>
-          <div className="muted">movies · series · books</div>
+          <div className="muted">movies · TV · books</div>
         </div>
       </aside>
       <main className="content">

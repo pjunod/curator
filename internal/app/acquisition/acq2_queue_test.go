@@ -24,9 +24,9 @@ type unreachableClient struct {
 }
 
 func (c *unreachableClient) Statuses(context.Context) ([]ports.DownloadStatus, error) {
-	c.fakeClient.mu.Lock()
-	c.fakeClient.polls++
-	c.fakeClient.mu.Unlock()
+	c.mu.Lock()
+	c.polls++
+	c.mu.Unlock()
 	return nil, c.err
 }
 
