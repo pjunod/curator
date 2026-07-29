@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-29 · v0.11.0 · Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.4%, past the 85% target, with the floor enforced by COVERAGE_MIN.** Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
+> **Snapshot 2026-07-29 · v0.12.0 · Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.5%, past the 85% target, with the floor enforced by COVERAGE_MIN.** The new tests then paid for themselves: six real defects found and fixed, a permanent auth lockout among them, plus a `make coverage` whose number depended on build-cache state (§Defects the coverage work found). Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -414,7 +414,7 @@ or CSS-only, no behaviour change, and neither caused by this work:
       — **when this happens, the orphan `badges` branch can be deleted**; the
       coverage badge no longer uses it (see below)
 - [ ] goreleaser: tagged releases with binaries + ghcr.io images (target: end of Phase 1)
-- [x] **Coverage at 86.4%, floor enforced at 85%** (2026-07-29). Was 68.4%
+- [x] **Coverage at 86.5%, floor enforced at 85%** (2026-07-29). Was 68.4%
       against no floor. The gap was concentrated, not spread: `internal/api`
       held 1,126 of the 3,061 uncovered statements while every domain package
       was already 85–100%, and the reason was structural — `newTestServer`
@@ -441,6 +441,62 @@ or CSS-only, no behaviour change, and neither caused by this work:
       rebuilding on the current tip so it can never revert a real commit.
       Generation was already local (`scripts/coverage-badge.sh`, no Codecov)
       and is unchanged
+
+## Defects the coverage work found ✅ (fixed 2026-07-29, v0.12.0)
+
+Writing tests for the handlers that had never been reachable turned up six real
+defects, not one of them theoretical. Each has a regression test in
+`internal/api/defects_test.go`, and each of those was checked to actually fail
+with its fix reverted — a test that passes either way is not a regression test.
+
+- [x] **A permanent auth lockout.** Enabling authentication checked for a
+      username and never looked at the password, but `Login` refuses on
+      `wantUser == "" || wantHash == ""`. A username with an empty password
+      therefore turned auth ON and then answered every login attempt with "no
+      credentials configured" — forever. On an install with no API key set, the
+      only way back in was editing `app_meta` by hand. The guard now reads both
+      settings, spelled the way `Login` spells them, so the two cannot drift
+- [x] **The mass editor counted rows it had not changed.** `UPDATE … WHERE
+      id = ?` succeeds against nothing, so `POST /library/bulk` answered
+      `{"updated": 1}` for a library of none. The query is `:execrows` now and
+      the store reports `ErrNotFound`
+- [x] **Three refusals answered 500.** A relative manual-entry path, an unknown
+      root-folder kind, and a blank manual title (that one wrapped in
+      `ErrNotFound`, so it answered 404 — "the endpoint does not exist" for a
+      short body). None carried a sentinel, so `libraryErr` reported a server
+      fault for a typo. They are one fact about the caller, so they share one
+      new sentinel, `library.ErrInvalidInput`, matched once
+- [x] **Deleting a profile some kind defaults to answered 500.** The same class
+      of refusal as deleting one still in use — a live reference the caller must
+      clear first — but only `ErrProfileInUse` was mapped, so an actionable
+      message arrived behind a status code that said the server broke.
+      `ErrProfileIsDefault` now joins it as a 409
+- [x] **Import lists never validated their type.** oapi-codegen already
+      generates `Valid()` from the spec's enum and five sibling creates call it;
+      this one did not, so a list of a type no syncer knows about stored
+      happily, appeared in the UI, and silently never synced — `syncOne` answers
+      "unknown list type" into a log nobody reads
+- [x] **DELETE of an absent id answered 204 on five endpoints and 404 on
+      seven**, and the spec documented 404. The five were both inconsistent and
+      untrue: they reported removing something that was never there. All five
+      queries are `:execrows` now, the spec documents their 404, and the compat
+      personality's own "indexer not found" branch — written from the start and
+      until now unreachable, because the store made delete a silent no-op —
+      finally fires
+- [x] **`make coverage` reported a number that depended on build-cache state.**
+      It did not pass `-count=1`. `go test` caches coverage profiles, and with
+      `-coverpkg=./...` a cached package's profile still carries blocks for every
+      *other* package, measured against that package's source as it was when the
+      entry was cached. Edit a file, re-run, and the merge sees two disjoint sets
+      of line ranges for it: the denominator inflates and the percentage
+      collapses. It read 71.9% against a true 86.5% — caught because the drop was
+      too large to believe, confirmed by measuring `internal/api` alone (1,599
+      statements versus 2,736 in the poisoned profile). CI was always immune (a
+      fresh checkout has no cache); a laptop was not, and a gate that reports a
+      cache-dependent number is worse than no gate
+- [ ] Left deliberately: an `internal/infra/jobs` backoff that overflows at
+      absurd attempt counts. Latent — unreachable in practice — and it needs its
+      own decision about what the ceiling should be rather than a quick clamp
 
 ## Decisions to date
 
