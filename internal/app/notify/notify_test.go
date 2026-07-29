@@ -96,12 +96,22 @@ type sink struct {
 	err       error
 	result    string
 	permanent bool
+	// seen runs inside Send, so a test can look at the world as it is DURING
+	// the attempt — which is the only moment the in-flight view has anything
+	// to say about this delivery.
+	seen func()
 }
 
 func (s *sink) Send(_ context.Context, n ports.Notification) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.sent = append(s.sent, n)
+	hook := s.seen
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.err == nil {
 		return nil
 	}

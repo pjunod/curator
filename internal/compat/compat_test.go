@@ -61,6 +61,7 @@ func (fakeProvider) GetSeries(ctx context.Context, id int64) (domain.MediaItem, 
 
 type env struct {
 	db       *sqlite.DB
+	lib      *library.Service
 	sonarr   *httptest.Server
 	radarr   *httptest.Server
 	searches *atomic.Int64
@@ -103,7 +104,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(sonarr.Close)
 	radarr := httptest.NewServer(compat.NewRadarr(deps).Handler())
 	t.Cleanup(radarr.Close)
-	return &env{db: db, sonarr: sonarr, radarr: radarr, searches: &searches, rootPath: rootPath}
+	return &env{db: db, lib: lib, sonarr: sonarr, radarr: radarr, searches: &searches, rootPath: rootPath}
 }
 
 // call performs a request the way real consumers do (X-Api-Key header).
