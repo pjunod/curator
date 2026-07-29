@@ -6,7 +6,7 @@
 # tags. Bump VERSION to cut a release. The commit is stamped separately.
 VERSION ?= $(shell sh scripts/version.sh)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
-LDFLAGS := -s -w -X github.com/monarr-media/monarr/internal/buildinfo.Version=$(VERSION) -X github.com/monarr-media/monarr/internal/buildinfo.Commit=$(COMMIT)
+LDFLAGS := -s -w -X github.com/pjunod/monarr/internal/buildinfo.Version=$(VERSION) -X github.com/pjunod/monarr/internal/buildinfo.Commit=$(COMMIT)
 
 # Tool versions are pinned here; Makefile targets and CI must agree.
 SQLC         := github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1

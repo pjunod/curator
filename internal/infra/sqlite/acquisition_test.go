@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
-	"github.com/monarr-media/monarr/internal/domain/quality"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 func TestSeededProfiles(t *testing.T) {

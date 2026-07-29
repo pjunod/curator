@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/monarr-media/monarr/internal/domain/filename"
-	"github.com/monarr-media/monarr/internal/domain/parser"
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/domain/filename"
+	"github.com/pjunod/monarr/internal/domain/parser"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 // ScannedFile is one media file found under a manual-import path, with the

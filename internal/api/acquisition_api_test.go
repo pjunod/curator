@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	apigen "github.com/monarr-media/monarr/internal/api/gen"
+	apigen "github.com/pjunod/monarr/internal/api/gen"
 )
 
 // The acquisition half of /api/v1 — indexers, clients, the queue, search and

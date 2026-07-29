@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // rpcServer answers NZBGet's JSON-RPC from a per-method table and records

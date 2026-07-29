@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
 )
 
 // FFprobeEnv names an external ffprobe binary. Opportunistic enrichment only:

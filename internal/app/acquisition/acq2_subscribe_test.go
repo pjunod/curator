@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // The push channel's own state is what the Connections panel reports, and it is

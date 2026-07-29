@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 func TestAppendAndStatuses(t *testing.T) {

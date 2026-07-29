@@ -9,11 +9,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/domain/format"
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
-	"github.com/monarr-media/monarr/internal/domain/quality"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/format"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // The unattended loops are where monarr spends every night, and every branch

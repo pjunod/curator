@@ -3,7 +3,7 @@ package mediainfo
 import (
 	"strings"
 
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // Source inference: measurements in, a verdict and a confidence out.

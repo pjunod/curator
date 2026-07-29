@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/app/transfers"
+	"github.com/pjunod/monarr/internal/app/transfers"
 )
 
 // The poll must hand the import off and return, not perform it.

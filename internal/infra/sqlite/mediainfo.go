@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
-	"github.com/monarr-media/monarr/internal/domain/quality"
-	sqlitegen "github.com/monarr-media/monarr/internal/infra/sqlite/gen"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/quality"
+	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
 )
 
 // FileQuality is everything the system knows about one library file's quality:

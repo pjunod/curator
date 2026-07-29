@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // ScanImportPath is the direct answer to "why didn't my download import": if it

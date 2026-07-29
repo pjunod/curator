@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/app/acquisition"
-	"github.com/monarr-media/monarr/internal/app/discover"
-	"github.com/monarr-media/monarr/internal/app/health"
-	"github.com/monarr-media/monarr/internal/app/library"
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/infra/bus"
-	"github.com/monarr-media/monarr/internal/infra/scheduler"
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/app/acquisition"
+	"github.com/pjunod/monarr/internal/app/discover"
+	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/app/library"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/bus"
+	"github.com/pjunod/monarr/internal/infra/scheduler"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // The fully-wired test server.

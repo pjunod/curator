@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain"
 )
 
 // Registering a base like /media and then /media/Movies used to be allowed,

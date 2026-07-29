@@ -19,8 +19,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // box64 writes the 64-bit box form: size field 1, type, then the real size as

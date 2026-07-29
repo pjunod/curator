@@ -1,5 +1,9 @@
-# binaries & runtime state
+# binaries & runtime state.
+# /monarr is listed because an 18MB build of it was committed to the root once
+# (bde394d) and nothing here would have caught it: `make build` writes to
+# /bin/, but a bare `go build ./cmd/monarr` writes ./monarr.
 /bin/
+/monarr
 /data/
 *.db
 *.db-wal

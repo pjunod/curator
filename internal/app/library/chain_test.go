@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // chainProvider is a stand-in for TVmaze: series keyed on TheTVDB ids, with

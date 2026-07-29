@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/app/discover"
-	"github.com/monarr-media/monarr/internal/app/health"
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/infra/bus"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/app/discover"
+	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/bus"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // The edges of the API: the guard in front of it, the stream out of it, the

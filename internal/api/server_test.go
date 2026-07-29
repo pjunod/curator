@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/app/health"
-	"github.com/monarr-media/monarr/internal/infra/bus"
-	"github.com/monarr-media/monarr/internal/infra/scheduler"
+	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/infra/bus"
+	"github.com/pjunod/monarr/internal/infra/scheduler"
 )
 
 type fakeDB struct{ v int64 }

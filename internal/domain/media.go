@@ -4,8 +4,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // SourceManual marks a library record no provider backs: its metadata was

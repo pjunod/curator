@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 const epRelease = "Test.Show.S01E01.1080p.WEB-DL.x264-GRP"

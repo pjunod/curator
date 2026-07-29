@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // What a person types is a host. The scheme and the port are constants the

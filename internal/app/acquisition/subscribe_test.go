@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // pushClient is a fake that can stream. Tests drive its channel directly,

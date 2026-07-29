@@ -22,7 +22,7 @@ RUN V="${VERSION:-$(sh scripts/version.sh)}" && \
     V="${V#v}" && \
     C="$(git rev-parse --short HEAD 2>/dev/null || echo none)" && \
     CGO_ENABLED=0 go build -trimpath \
-    -ldflags "-s -w -X github.com/monarr-media/monarr/internal/buildinfo.Version=$V -X github.com/monarr-media/monarr/internal/buildinfo.Commit=$C" \
+    -ldflags "-s -w -X github.com/pjunod/monarr/internal/buildinfo.Version=$V -X github.com/pjunod/monarr/internal/buildinfo.Commit=$C" \
     -o /monarr ./cmd/monarr
 # A /data skeleton owned by the default runtime user. Docker seeds a fresh
 # NAMED volume from the image's directory — contents and ownership — so this

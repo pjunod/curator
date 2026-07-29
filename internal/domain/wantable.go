@@ -3,7 +3,7 @@ package domain
 import (
 	"fmt"
 
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // WantableID is a stable identity: "movie:42", "episode:42:2:5", "season:42:2".

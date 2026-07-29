@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/domain/parser"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/parser"
 )
 
 var reNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)

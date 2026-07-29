@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
 )
 
 // The fixture corpus, mirroring the release-name parser's corpus harness: a

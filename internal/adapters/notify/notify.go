@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/adapters/httpx"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/adapters/httpx"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 var httpClient = httpx.NewClient(15 * time.Second)

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/infra/bus"
+	"github.com/pjunod/monarr/internal/infra/bus"
 )
 
 // TaskFunc does the work. It must respect ctx cancellation.

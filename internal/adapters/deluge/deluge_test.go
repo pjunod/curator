@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 func TestLoginAddStatuses(t *testing.T) {

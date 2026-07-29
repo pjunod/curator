@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // rpcServer is the harness the existing tests use, generalised: it decodes

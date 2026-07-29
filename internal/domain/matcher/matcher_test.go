@@ -3,11 +3,11 @@ package matcher
 import (
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/domain/decision"
-	"github.com/monarr-media/monarr/internal/domain/naming"
-	"github.com/monarr-media/monarr/internal/domain/parser"
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/decision"
+	"github.com/pjunod/monarr/internal/domain/naming"
+	"github.com/pjunod/monarr/internal/domain/parser"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 func q(s quality.Source, r int) *quality.Quality {

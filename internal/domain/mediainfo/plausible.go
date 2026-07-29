@@ -3,7 +3,7 @@ package mediainfo
 import (
 	"fmt"
 
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // Plausibility asks a different question from source inference. InferSource

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/monarr-media/monarr/web"
+	"github.com/pjunod/monarr/web"
 )
 
 func init() {

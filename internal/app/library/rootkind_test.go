@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain"
 )
 
 // A typed root refuses an item of another kind, which is the whole point of

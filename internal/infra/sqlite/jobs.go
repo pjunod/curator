@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	sqlitegen "github.com/monarr-media/monarr/internal/infra/sqlite/gen"
+	"github.com/pjunod/monarr/internal/domain"
+	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
 )
 
 // ErrDuplicateJob means an identical job (same dedupe_key) is already queued

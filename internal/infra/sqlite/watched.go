@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	sqlitegen "github.com/monarr-media/monarr/internal/infra/sqlite/gen"
+	"github.com/pjunod/monarr/internal/domain"
+	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
 )
 
 // PlurxWatch is one thing somebody finished, as plurx reported it.

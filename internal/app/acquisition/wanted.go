@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // wantedIndex caches "everything the system still wants": monitored

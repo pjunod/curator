@@ -15,7 +15,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // requireKeys fails naming every pinned key absent from obj.

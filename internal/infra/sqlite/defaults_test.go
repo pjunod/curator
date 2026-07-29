@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // TestDefaultProfileFallsBackToTheBuiltIn: an install that has never touched

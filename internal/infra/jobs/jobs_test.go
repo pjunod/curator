@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/infra/jobs"
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/jobs"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 func newStore(t *testing.T) *sqlite.DB {

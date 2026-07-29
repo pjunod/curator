@@ -18,16 +18,16 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/monarr-media/monarr/internal/adapters/httpx"
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/adapters/httpx"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // DefaultBaseURL is the Open Library API root.
 const DefaultBaseURL = "https://openlibrary.org"
 
 // userAgent identifies us per Open Library's API etiquette.
-const userAgent = "Monarr (github.com/monarr-media/monarr)"
+const userAgent = "Monarr (github.com/pjunod/monarr)"
 
 // Client is a BookProvider backed by Open Library. No API key needed.
 type Client struct {

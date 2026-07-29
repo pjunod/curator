@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	apigen "github.com/monarr-media/monarr/internal/api/gen"
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
+	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 // PlurxWebhook implements POST /api/v1/webhooks/plurx (master plan §11.1).

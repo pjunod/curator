@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 func watchServer(t *testing.T) (*Server, *sqlite.DB) {

@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/buildinfo"
+	"github.com/pjunod/monarr/internal/buildinfo"
 )
 
 // UserAgent is Monarr's outbound identity, e.g. "Monarr/0.3.0". Indexers

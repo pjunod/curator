@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
 )
 
 // TestResolutionTier walks the tiering rule (plan §4.2) including the cases

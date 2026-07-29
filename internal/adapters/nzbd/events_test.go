@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // sseServer serves a scripted event stream, recording the request so the

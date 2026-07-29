@@ -23,7 +23,7 @@ import (
 	"testing"
 )
 
-const module = "github.com/monarr-media/monarr"
+const module = "github.com/pjunod/monarr"
 
 // collectImports maps each package directory (relative to the repo root,
 // e.g. "internal/infra/bus") to the set of module-internal imports found in

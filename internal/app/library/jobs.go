@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain"
 )
 
 // Job kinds this service handles. Kinds are strings rather than an enum

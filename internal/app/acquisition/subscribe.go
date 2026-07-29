@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // The push channel (nzbd/docs/INTEGRATION_PLAN.md, master plan §5.2).

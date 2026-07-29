@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/buildinfo"
+	"github.com/pjunod/monarr/internal/buildinfo"
 )
 
 func TestNewClientSendsMonarrUserAgent(t *testing.T) {

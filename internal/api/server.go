@@ -9,15 +9,15 @@ import (
 	"net/http"
 	"time"
 
-	apigen "github.com/monarr-media/monarr/internal/api/gen"
-	"github.com/monarr-media/monarr/internal/app/acquisition"
-	"github.com/monarr-media/monarr/internal/app/discover"
-	"github.com/monarr-media/monarr/internal/app/health"
-	"github.com/monarr-media/monarr/internal/app/library"
-	"github.com/monarr-media/monarr/internal/infra/bus"
-	"github.com/monarr-media/monarr/internal/infra/scheduler"
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
-	"github.com/monarr-media/monarr/internal/ports"
+	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/app/acquisition"
+	"github.com/pjunod/monarr/internal/app/discover"
+	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/app/library"
+	"github.com/pjunod/monarr/internal/infra/bus"
+	"github.com/pjunod/monarr/internal/infra/scheduler"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // SchemaVersioner reports the database schema version; satisfied by

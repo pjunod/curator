@@ -6,8 +6,8 @@ package decision
 import (
 	"fmt"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // Rejection codes. These surface only in monarr's own UI — the compat shim

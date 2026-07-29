@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
 )
 
 // FuzzProbe is the standing guarantee behind ADR 0013 §2: this package reads

@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-29 · v0.12.0 · Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.5%, past the 85% target, with the floor enforced by COVERAGE_MIN.** The new tests then paid for themselves: six real defects found and fixed, a permanent auth lockout among them, plus a `make coverage` whose number depended on build-cache state (§Defects the coverage work found). Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
+> **Snapshot 2026-07-29 · v0.13.0 · Repo and module path are now `github.com/pjunod/monarr` — done while nothing outside the repo depends on the old path, which is the only time it is cheap (§Launch logistics, ADR 0001 amendment 2). Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.5%, past the 85% target, with the floor enforced by COVERAGE_MIN.** The new tests then paid for themselves: six real defects found and fixed, a permanent auth lockout among them, plus a `make coverage` whose number depended on build-cache state (§Defects the coverage work found). Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -26,7 +26,7 @@
 ## Phase 0 — Walking skeleton ✅ (shipped 2026-07-17)
 
 - [x] Repo scaffold per blueprint §12 + GPL-3.0 license
-- [x] Go module (`github.com/monarr-media/monarr`) + Makefile build orchestration
+- [x] Go module (`github.com/pjunod/monarr`) + Makefile build orchestration
 - [x] Single static binary serving the embedded React shell (go:embed, SPA fallback page)
 - [x] Spec-first `/api/v1` (OpenAPI 3 + oapi-codegen): `system/status`, `health`, `system/tasks`, `tasks/{name}/run`
 - [x] SQLite via modernc: WAL mode, single-writer discipline, read pool
@@ -407,6 +407,15 @@ or CSS-only, no behaviour change, and neither caused by this work:
 ## Launch logistics
 
 - [x] `monarr-media` GitHub org (free) + private repo + initial push
+- [x] **Moved to `pjunod/monarr`; module path renamed to match** (2026-07-29).
+      The repo left the org, and GitHub forwards traffic from a renamed
+      repository only until someone claims the old name — so the redirect was
+      never something to build a module path on. Everything is `pjunod/monarr`
+      now: `go.mod`, 242 files of imports, `arch_test.go`'s module constant,
+      both sets of LDFLAGS, the ghcr.io image, the four README badges, the
+      clone URL in usage.md. Done while nothing outside the repo depends on the
+      old path, which is the only time this is a cheap change — ADR 0001
+      amendment 2
 - [x] Container registry decision: ghcr.io (no Docker Hub subscription — ADR 0001 amendment)
 - [ ] File dormant-username request with GitHub Support for `monarr`
 - [ ] Register a domain
@@ -502,7 +511,7 @@ with its fix reverted — a test that passes either way is not a regression test
 
 | ADR | Decision |
 |---|---|
-| [0001](docs/adr/0001-name-and-license.md) | Name **Monarr**, **GPL-3.0**, port **7676**; amended: org/module `monarr-media`, images on ghcr.io |
+| [0001](docs/adr/0001-name-and-license.md) | Name **Monarr**, **GPL-3.0**, port **7676**; amended twice: images on ghcr.io, org/module now `pjunod/monarr` |
 | [0002](docs/adr/0002-single-media-table.md) | One `media_items` table + `kind`; files↔episodes n:m; Wantable abstraction |
 | [0003](docs/adr/0003-compat-personalities.md) | v3 compat as `/sonarr` + `/radarr` URL-base personalities, translation-only |
 | [0004](docs/adr/0004-sqlite-only.md) | SQLite only (modernc, WAL, single writer); no Postgres |

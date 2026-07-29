@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/infra/bus"
+	"github.com/pjunod/monarr/internal/infra/bus"
 )
 
 // Status is a check outcome, ordered by severity.

@@ -20,10 +20,10 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/monarr-media/monarr/internal/app/library"
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/domain/quality"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/app/library"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // Plausible upstream version strings: new enough that consumers enable

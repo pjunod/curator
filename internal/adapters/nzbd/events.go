@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // Subscribe implements ports.Subscriber over nzbd's `GET /api/v1/events`

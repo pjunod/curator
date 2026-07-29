@@ -22,9 +22,9 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/monarr-media/monarr/internal/adapters/httpx"
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/adapters/httpx"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // DefaultBaseURL is the Trakt API root.

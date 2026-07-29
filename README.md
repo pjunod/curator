@@ -1,10 +1,10 @@
 # Monarr
 
-[![Tests](https://github.com/monarr-media/monarr/actions/workflows/tests.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/tests.yml)
-[![Lint](https://github.com/monarr-media/monarr/actions/workflows/lint.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/lint.yml)
-[![Compat](https://github.com/monarr-media/monarr/actions/workflows/compat.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/compat.yml)
-[![Docker](https://github.com/monarr-media/monarr/actions/workflows/docker.yml/badge.svg)](https://github.com/monarr-media/monarr/actions/workflows/docker.yml)
-[![Coverage](coverage.svg)](https://github.com/monarr-media/monarr/actions/workflows/tests.yml)
+[![Tests](https://github.com/pjunod/monarr/actions/workflows/tests.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/tests.yml)
+[![Lint](https://github.com/pjunod/monarr/actions/workflows/lint.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/lint.yml)
+[![Compat](https://github.com/pjunod/monarr/actions/workflows/compat.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/compat.yml)
+[![Docker](https://github.com/pjunod/monarr/actions/workflows/docker.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/docker.yml)
+[![Coverage](coverage.svg)](https://github.com/pjunod/monarr/actions/workflows/tests.yml)
 
 **A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one
 acquisition pipeline — for TV, movies, and (Phase 2.5) books, filling the gap left by
@@ -102,7 +102,7 @@ Compose equivalent, side by side with a download client:
 ```yaml
 services:
   monarr:
-    image: monarr            # or ghcr.io/monarr-media/monarr once published
+    image: monarr            # or ghcr.io/pjunod/monarr once published
     user: "1000:1000"
     ports: ["7676:7676"]
     volumes:

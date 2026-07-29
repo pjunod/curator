@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	apigen "github.com/monarr-media/monarr/internal/api/gen"
+	apigen "github.com/pjunod/monarr/internal/api/gen"
 )
 
 // Auth hardening (Phase 5): opt-in. When the auth_required setting is

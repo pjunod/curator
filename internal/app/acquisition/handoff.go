@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // The handoff is the stretch between "the download client finished" and

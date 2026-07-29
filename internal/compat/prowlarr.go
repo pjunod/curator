@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // mountIndexers adds the indexer-management surface Prowlarr drives when it
@@ -57,7 +57,7 @@ func (p *Personality) indexerSchema(w http.ResponseWriter, r *http.Request) {
 		{
 			"name": "", "implementation": "Torznab", "implementationName": "Torznab",
 			"configContract": "TorznabSettings", "protocol": "torrent",
-			"infoLink": "https://github.com/monarr-media/monarr",
+			"infoLink": "https://github.com/pjunod/monarr",
 			"fields": []map[string]any{
 				{"name": "baseUrl", "value": ""},
 				{"name": "apiPath", "value": "/api"},
@@ -68,7 +68,7 @@ func (p *Personality) indexerSchema(w http.ResponseWriter, r *http.Request) {
 		{
 			"name": "", "implementation": "Newznab", "implementationName": "Newznab",
 			"configContract": "NewznabSettings", "protocol": "usenet",
-			"infoLink": "https://github.com/monarr-media/monarr",
+			"infoLink": "https://github.com/pjunod/monarr",
 			"fields": []map[string]any{
 				{"name": "baseUrl", "value": ""},
 				{"name": "apiPath", "value": "/api"},

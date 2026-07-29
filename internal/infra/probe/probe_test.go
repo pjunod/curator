@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
-	"github.com/monarr-media/monarr/internal/infra/probe"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/infra/probe"
 )
 
 // corpusFile borrows one of the mediainfo package's generated container

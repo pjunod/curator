@@ -10,15 +10,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/adapters/httpx"
-	apigen "github.com/monarr-media/monarr/internal/api/gen"
-	"github.com/monarr-media/monarr/internal/app/acquisition"
-	"github.com/monarr-media/monarr/internal/app/health"
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/domain/format"
-	"github.com/monarr-media/monarr/internal/domain/quality"
-	"github.com/monarr-media/monarr/internal/infra/sqlite"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/adapters/httpx"
+	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/app/acquisition"
+	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/format"
+	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 func (s *Server) acqErr(w http.ResponseWriter, err error) {

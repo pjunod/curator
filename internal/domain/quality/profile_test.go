@@ -3,7 +3,7 @@ package quality_test
 import (
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 func q(s quality.Source, res int) quality.Quality {

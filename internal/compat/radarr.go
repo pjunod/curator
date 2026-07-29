@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/monarr-media/monarr/internal/app/library"
-	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/app/library"
+	"github.com/pjunod/monarr/internal/domain"
 )
 
 // mountRadarr adds the movie-shaped surface Jellyseerr and Bazarr call.

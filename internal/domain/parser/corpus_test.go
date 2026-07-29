@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // corpusCase mirrors testdata/releases/*.json. Zero-valued expectation

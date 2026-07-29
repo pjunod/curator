@@ -30,9 +30,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/adapters/httpx"
-	"github.com/monarr-media/monarr/internal/buildinfo"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/adapters/httpx"
+	"github.com/pjunod/monarr/internal/buildinfo"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // Client speaks nzbd's native API at {url}/api/v1.

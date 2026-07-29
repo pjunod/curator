@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/app/transfers"
-	"github.com/monarr-media/monarr/internal/ports"
+	"github.com/pjunod/monarr/internal/app/transfers"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // Deleting a job in the download client must not ban the release.

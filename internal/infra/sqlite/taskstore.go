@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/infra/scheduler"
-	sqlitegen "github.com/monarr-media/monarr/internal/infra/sqlite/gen"
+	"github.com/pjunod/monarr/internal/infra/scheduler"
+	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
 )
 
 // TaskStore adapts the scheduled_tasks table to scheduler.Store.

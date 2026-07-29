@@ -1,6 +1,6 @@
 package mediainfo
 
-import "github.com/monarr-media/monarr/internal/domain/quality"
+import "github.com/pjunod/monarr/internal/domain/quality"
 
 // Resolve turns a measurement plus whatever a name claimed into the one
 // quality record monarr stores, and says where each half of it came from.

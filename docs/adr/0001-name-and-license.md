@@ -19,7 +19,7 @@ corpora, no lifting custom-format scoring rules later.
 - **Name: Monarr.** A July 2026 web/GitHub sweep found no collisions (runners-up Singularr
   and Omniarr were also clean). Before the repo goes public: register the GitHub org, the
   Docker Hub namespace, and a domain. The Go module path is
-  `github.com/monarr-media/monarr` (see Amendment below).
+  `github.com/pjunod/monarr` (see the two Amendments below).
 - **License: GPL-3.0**, matching upstream.
 
 ## Consequences
@@ -49,3 +49,34 @@ Container images: **publish to GitHub Container Registry** —
 subscription, while GHCR is free for public images, lives next to the repo, and pushes from
 GitHub Actions with the built-in `GITHUB_TOKEN`. (If a Docker Hub presence is ever wanted,
 a free *personal* account named `monarr-media` can hold the namespace at no cost.)
+
+## Amendment 2 (2026-07-29): the repo and module path are `pjunod/monarr`
+
+The repository moved out of the `monarr-media` org and onto the owner's personal account. The
+org bought nothing a personal account does not — there is one maintainer — and it was one more
+namespace to keep alive.
+
+Amendment 1 ended with "transfer the repo (GitHub redirects old URLs) and update the module
+path in one commit", and treated that redirect as cover. It is not, and that is the part worth
+recording. GitHub does forward requests from a renamed or transferred repository, but the
+forward stops the moment anything is created at the old path — and a vacated org name is
+claimable by anyone. So the redirect is a courtesy that a third party can end, on a schedule
+nobody here controls.
+
+That is survivable for a browser URL and not survivable for a Go module path. A module path is
+resolved literally: `go get github.com/monarr-media/monarr` asks that host for that repo, and
+if the answer ever changes, it changes for every downstream consumer at once, with no fix
+available except each of them editing their own imports. A path that only works while a
+redirect holds is a promise the project cannot keep.
+
+Decision: module path, repository, and container image are all **`github.com/pjunod/monarr`**
+/ **`ghcr.io/pjunod/monarr`**. Nothing outside this repo imports the module yet — no tagged
+release has been published and the repo is still private — so the change costs one mechanical
+242-file commit and breaks nothing. That is the whole reason to do it now. After the first
+public release the same edit would strand every importer, and the module proxy would keep
+serving the old path's published versions forever, so the wrong path would never fully go away.
+
+The dormant-username request for the bare `monarr` handle stays worth filing, but the same
+argument now applies to it: take it before the first public release or not at all. A prettier
+path is not worth an ecosystem-visible break, and moving again later would cost exactly what
+this commit cost — which is cheap only while the answer is "nobody depends on it".

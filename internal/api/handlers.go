@@ -5,9 +5,9 @@ import (
 	"runtime"
 	"time"
 
-	apigen "github.com/monarr-media/monarr/internal/api/gen"
-	"github.com/monarr-media/monarr/internal/app/health"
-	"github.com/monarr-media/monarr/internal/infra/scheduler"
+	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/infra/scheduler"
 )
 
 // GetSystemStatus implements GET /system/status.

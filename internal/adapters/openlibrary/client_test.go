@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain"
 )
 
 // fixtureServer replays recorded Open Library responses — the adapter's

@@ -4,9 +4,9 @@ import (
 	"errors"
 	"net/http"
 
-	apigen "github.com/monarr-media/monarr/internal/api/gen"
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/ports"
+	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // TraktClientIDSetting is the app_meta key holding the Trakt app client id.

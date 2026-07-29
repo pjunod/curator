@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/monarr-media/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain"
 )
 
 // IndexerConfig is a stored Newznab/Torznab endpoint.

@@ -3,8 +3,8 @@ package mediainfo_test
 import (
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/domain/mediainfo"
-	"github.com/monarr-media/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // vid builds a measured Info from the handful of facts inference actually

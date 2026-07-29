@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monarr-media/monarr/internal/infra/config"
-	"github.com/monarr-media/monarr/internal/infra/logging"
+	"github.com/pjunod/monarr/internal/infra/config"
+	"github.com/pjunod/monarr/internal/infra/logging"
 )
 
 // The JSON format is the one an operator points a log shipper at, so its

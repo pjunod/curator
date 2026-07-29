@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/monarr-media/monarr/internal/domain"
-	"github.com/monarr-media/monarr/internal/domain/filename"
-	"github.com/monarr-media/monarr/internal/domain/parser"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/filename"
+	"github.com/pjunod/monarr/internal/domain/parser"
 )
 
 // ManualRequest describes a library record no provider backs (ADR 0012).
