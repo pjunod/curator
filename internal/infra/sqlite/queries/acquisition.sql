@@ -14,7 +14,7 @@ SELECT * FROM indexers ORDER BY name;
 -- name: GetIndexer :one
 SELECT * FROM indexers WHERE id = ?;
 
--- name: DeleteIndexer :exec
+-- name: DeleteIndexer :execrows
 DELETE FROM indexers WHERE id = ?;
 
 -- name: InsertDownloadClient :one
@@ -34,7 +34,7 @@ SET type = ?, name = ?, url = ?, username = ?, password = ?, category = ?,
     remove_completed = ?
 WHERE id = ?;
 
--- name: DeleteDownloadClient :exec
+-- name: DeleteDownloadClient :execrows
 DELETE FROM download_clients WHERE id = ?;
 
 -- name: InsertDownload :one

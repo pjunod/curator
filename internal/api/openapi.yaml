@@ -954,6 +954,12 @@ paths:
           schema: { type: integer, format: int64 }
       responses:
         "204": { description: Removed. }
+        "404":
+          description: No such record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /indexers/{id}/test:
     post:
@@ -1073,6 +1079,12 @@ paths:
           schema: { type: integer, format: int64 }
       responses:
         "204": { description: Removed. }
+        "404":
+          description: No such record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /downloadclients/{id}/test:
     post:
@@ -1328,6 +1340,12 @@ paths:
           schema: { type: integer, format: int64 }
       responses:
         "204": { description: Removed. }
+        "404":
+          description: No such record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /importlists:
     get:
@@ -1375,6 +1393,12 @@ paths:
           schema: { type: integer, format: int64 }
       responses:
         "204": { description: Removed. }
+        "404":
+          description: No such record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /library/{id}/autosearch:
     post:
@@ -2028,6 +2052,12 @@ paths:
           schema: { type: integer, format: int64 }
       responses:
         "204": { description: Removed. }
+        "404":
+          description: No such record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /events:
     get:

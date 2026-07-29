@@ -202,7 +202,14 @@ func (d *DB) GetIndexer(ctx context.Context, id int64) (ports.IndexerConfig, err
 
 // DeleteIndexer removes an indexer config.
 func (d *DB) DeleteIndexer(ctx context.Context, id int64) error {
-	return d.Write.DeleteIndexer(ctx, id)
+	n, err := d.Write.DeleteIndexer(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ImportedWithPayload returns imported downloads whose payload is still on the
@@ -311,7 +318,14 @@ func (d *DB) GetDownloadClient(ctx context.Context, id int64) (ports.ClientConfi
 
 // DeleteDownloadClient removes a client config.
 func (d *DB) DeleteDownloadClient(ctx context.Context, id int64) error {
-	return d.Write.DeleteDownloadClient(ctx, id)
+	n, err := d.Write.DeleteDownloadClient(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ---- downloads (queue) ----

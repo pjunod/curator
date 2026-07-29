@@ -453,15 +453,18 @@ func TestCompat2IndexerListAndMissingID(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("PUT unknown indexer = %d, want 404", resp.StatusCode)
 	}
-	// DELETE of an id that is not there is idempotent: the native store's
-	// delete is a no-op on a missing row, so the handler's "indexer not
-	// found" branch never fires. That is fine for Prowlarr — it retries
-	// deletes — but it does mean the 404 the handler advertises is
-	// unreachable through the sqlite store, so pin the behaviour that
-	// actually happens rather than the one the code implies.
+	// DELETE of an id that is not there is a 404, which is what this handler
+	// was always written to return — its "indexer not found" branch was
+	// simply unreachable, because the native store's delete was a silent
+	// no-op on a missing row. Fixing the store made the code do what it says.
+	//
+	// Pinned here rather than left implicit because it is the one place the
+	// store fix is visible through a compat personality, and Prowlarr is the
+	// consumer that issues these: a 404 for an id Prowlarr did not list is
+	// the honest answer, and it retries deletes regardless.
 	resp, _ = call(t, "DELETE", base+"/indexer/9999", "")
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("DELETE unknown indexer = %d, want an idempotent 200", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("DELETE unknown indexer = %d, want 404", resp.StatusCode)
 	}
 	if after, _ := e.db.ListIndexers(ctx); len(after) != 1 {
 		t.Errorf("deleting an unknown id removed a real indexer: %+v", after)

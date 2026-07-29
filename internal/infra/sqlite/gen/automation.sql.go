@@ -26,22 +26,28 @@ func (q *Queries) CountBlocklisted(ctx context.Context, arg CountBlocklistedPara
 	return count, err
 }
 
-const deleteBlocklist = `-- name: DeleteBlocklist :exec
+const deleteBlocklist = `-- name: DeleteBlocklist :execrows
 DELETE FROM blocklist WHERE id = ?
 `
 
-func (q *Queries) DeleteBlocklist(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteBlocklist, id)
-	return err
+func (q *Queries) DeleteBlocklist(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteBlocklist, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
-const deleteCustomFormat = `-- name: DeleteCustomFormat :exec
+const deleteCustomFormat = `-- name: DeleteCustomFormat :execrows
 DELETE FROM custom_formats WHERE id = ?
 `
 
-func (q *Queries) DeleteCustomFormat(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteCustomFormat, id)
-	return err
+func (q *Queries) DeleteCustomFormat(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteCustomFormat, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteDeliveriesForNotifier = `-- name: DeleteDeliveriesForNotifier :exec
@@ -53,13 +59,16 @@ func (q *Queries) DeleteDeliveriesForNotifier(ctx context.Context, notifierID in
 	return err
 }
 
-const deleteImportList = `-- name: DeleteImportList :exec
+const deleteImportList = `-- name: DeleteImportList :execrows
 DELETE FROM import_lists WHERE id = ?
 `
 
-func (q *Queries) DeleteImportList(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteImportList, id)
-	return err
+func (q *Queries) DeleteImportList(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteImportList, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteNotifier = `-- name: DeleteNotifier :exec
@@ -632,7 +641,7 @@ func (q *Queries) SettleDelivery(ctx context.Context, arg SettleDeliveryParams) 
 	return err
 }
 
-const updateMediaItemBulk = `-- name: UpdateMediaItemBulk :exec
+const updateMediaItemBulk = `-- name: UpdateMediaItemBulk :execrows
 UPDATE media_items SET
     monitored          = COALESCE(?1, monitored),
     quality_profile_id = COALESCE(?2, quality_profile_id),
@@ -647,14 +656,17 @@ type UpdateMediaItemBulkParams struct {
 	ID               int64
 }
 
-func (q *Queries) UpdateMediaItemBulk(ctx context.Context, arg UpdateMediaItemBulkParams) error {
-	_, err := q.db.ExecContext(ctx, updateMediaItemBulk,
+func (q *Queries) UpdateMediaItemBulk(ctx context.Context, arg UpdateMediaItemBulkParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateMediaItemBulk,
 		arg.Monitored,
 		arg.QualityProfileID,
 		arg.UpdatedAt,
 		arg.ID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateNotifier = `-- name: UpdateNotifier :exec

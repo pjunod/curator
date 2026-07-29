@@ -44,8 +44,17 @@ test-e2e: build
 # rather than what they cover. scripts/coverage-badge.sh then drops generated
 # code and writes the badge — both rules live in that script so this target, CI
 # and the README badge cannot report three different numbers.
+#
+# -count=1 is load-bearing, not habit. `go test` caches coverage profiles, and
+# with -coverpkg=./... a cached package's profile still contains blocks for
+# every OTHER package — measured against the source as it was when that entry
+# was cached. Edit a file and re-run, and the merge sees two disjoint sets of
+# line ranges for it: the denominator inflates and the percentage collapses.
+# It read 71.9% against a true 86.5% here, which is exactly the kind of wrong
+# number a coverage gate must never produce. CI is immune (fresh checkout, no
+# cache); a laptop is not.
 coverage:
-	go test -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+	go test -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 	@printf 'coverage: %s%% (badge: coverage.svg)\n' "$$(sh scripts/coverage-badge.sh coverage.out coverage.svg)"
 	@sh scripts/coverage-gate.sh coverage.out
 

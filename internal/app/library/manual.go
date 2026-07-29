@@ -41,7 +41,7 @@ type ManualRequest struct {
 func (s *Service) AddManual(ctx context.Context, req ManualRequest) (domain.MediaItem, error) {
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
-		return domain.MediaItem{}, fmt.Errorf("%w: a manual entry needs a title", ErrNotFound)
+		return domain.MediaItem{}, fmt.Errorf("%w: a manual entry needs a title", ErrInvalidInput)
 	}
 	switch req.Kind {
 	case domain.KindMovie, domain.KindSeries, domain.KindBook:
@@ -49,7 +49,7 @@ func (s *Service) AddManual(ctx context.Context, req ManualRequest) (domain.Medi
 		return domain.MediaItem{}, fmt.Errorf("%w: %q", ErrUnsupportedKind, req.Kind)
 	}
 	if !filepath.IsAbs(req.Path) {
-		return domain.MediaItem{}, fmt.Errorf("a manual entry needs an absolute folder")
+		return domain.MediaItem{}, fmt.Errorf("%w: a manual entry needs an absolute folder", ErrInvalidInput)
 	}
 	clean := filepath.Clean(req.Path)
 

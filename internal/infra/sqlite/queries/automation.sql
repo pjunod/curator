@@ -10,7 +10,7 @@ SELECT COUNT(*) FROM blocklist WHERE release_title = ? AND indexer = ?;
 -- name: ListBlocklist :many
 SELECT * FROM blocklist ORDER BY created_at DESC LIMIT 500;
 
--- name: DeleteBlocklist :exec
+-- name: DeleteBlocklist :execrows
 DELETE FROM blocklist WHERE id = ?;
 
 -- name: InsertNotifier :one
@@ -49,7 +49,7 @@ INSERT INTO custom_formats (name, pattern, score) VALUES (?, ?, ?) RETURNING id;
 -- name: ListCustomFormats :many
 SELECT * FROM custom_formats ORDER BY name;
 
--- name: DeleteCustomFormat :exec
+-- name: DeleteCustomFormat :execrows
 DELETE FROM custom_formats WHERE id = ?;
 
 -- name: InsertImportList :one
@@ -60,10 +60,10 @@ RETURNING id;
 -- name: ListImportLists :many
 SELECT * FROM import_lists ORDER BY name;
 
--- name: DeleteImportList :exec
+-- name: DeleteImportList :execrows
 DELETE FROM import_lists WHERE id = ?;
 
--- name: UpdateMediaItemBulk :exec
+-- name: UpdateMediaItemBulk :execrows
 UPDATE media_items SET
     monitored          = COALESCE(sqlc.narg('monitored'), monitored),
     quality_profile_id = COALESCE(sqlc.narg('quality_profile_id'), quality_profile_id),

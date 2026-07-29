@@ -192,9 +192,19 @@ func (s *Server) applyAuthSettings(ctx context.Context, body apigen.SettingsUpda
 	if body.AuthRequired != nil {
 		val := "false"
 		if *body.AuthRequired {
-			// Refuse to lock the door with no key under it: credentials
-			// must exist before auth turns on (the API key always works).
-			if s.readSettingOr(ctx, authUserSetting, "") == "" {
+			// Refuse to lock the door with no key under it: credentials must
+			// exist before auth turns on (the API key always works).
+			//
+			// BOTH halves, and the hash is the one that matters. Login refuses
+			// on `wantUser == "" || wantHash == ""`, so checking only the
+			// username let a username with an empty password turn auth on and
+			// then answer every login with "no credentials configured" — a
+			// permanent lockout, and on an install with no API key the only way
+			// back in was editing app_meta by hand. The two conditions have to
+			// agree, so they are spelled the same way.
+			user := s.readSettingOr(ctx, authUserSetting, "")
+			hash := s.readSettingOr(ctx, authHashSetting, "")
+			if user == "" || hash == "" {
 				return errors.New("set a username and password before enabling authentication")
 			}
 			val = "true"

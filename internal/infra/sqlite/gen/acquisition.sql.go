@@ -35,22 +35,28 @@ func (q *Queries) DeleteDownload(ctx context.Context, id int64) error {
 	return err
 }
 
-const deleteDownloadClient = `-- name: DeleteDownloadClient :exec
+const deleteDownloadClient = `-- name: DeleteDownloadClient :execrows
 DELETE FROM download_clients WHERE id = ?
 `
 
-func (q *Queries) DeleteDownloadClient(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteDownloadClient, id)
-	return err
+func (q *Queries) DeleteDownloadClient(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteDownloadClient, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
-const deleteIndexer = `-- name: DeleteIndexer :exec
+const deleteIndexer = `-- name: DeleteIndexer :execrows
 DELETE FROM indexers WHERE id = ?
 `
 
-func (q *Queries) DeleteIndexer(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteIndexer, id)
-	return err
+func (q *Queries) DeleteIndexer(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteIndexer, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteProfile = `-- name: DeleteProfile :execrows

@@ -43,6 +43,17 @@ var (
 	// on a record no provider backs (ADR 0012). Not a failure: the caller
 	// skips rather than reports.
 	ErrManualEntry = errors.New("manual entry has no metadata provider")
+	// ErrInvalidInput is returned when the caller asked for something
+	// malformed — a relative path, a kind that does not exist, a blank title.
+	//
+	// It exists because libraryErr's default branch is a 500, so any refusal
+	// without a sentinel reported a server fault for a typo. Three did:
+	// a relative manual-entry path, an unknown root-folder kind, and a blank
+	// manual title (which was wrapped in ErrNotFound and answered 404).
+	// Wrapping them all in one sentinel is deliberate — "the request is
+	// wrong" is a single fact about the caller, and one match in the handler
+	// cannot drift out of step with three.
+	ErrInvalidInput = errors.New("invalid input")
 )
 
 // MediaAdded is published on the bus after a successful add.
@@ -875,7 +886,7 @@ func (s *Service) AddRootFolder(ctx context.Context, path string, kind domain.Ro
 		kind = domain.KindMixed
 	}
 	if !domain.ValidRootKind(kind) {
-		return domain.RootFolder{}, fmt.Errorf("unknown root folder kind %q", kind)
+		return domain.RootFolder{}, fmt.Errorf("%w: unknown root folder kind %q", ErrInvalidInput, kind)
 	}
 	if !filepath.IsAbs(path) {
 		return domain.RootFolder{}, fmt.Errorf("root folder path must be absolute")
@@ -941,7 +952,7 @@ func isSubPath(parent, child string) bool {
 // own kinds — this only changes how future adoption and placement route.
 func (s *Service) SetRootFolderKind(ctx context.Context, id int64, kind domain.RootKind) (domain.RootFolder, error) {
 	if !domain.ValidRootKind(kind) {
-		return domain.RootFolder{}, fmt.Errorf("unknown root folder kind %q", kind)
+		return domain.RootFolder{}, fmt.Errorf("%w: unknown root folder kind %q", ErrInvalidInput, kind)
 	}
 	if _, err := s.db.GetRootFolder(ctx, id); err != nil {
 		return domain.RootFolder{}, err

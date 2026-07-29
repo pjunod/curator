@@ -175,6 +175,13 @@ func (s *Server) DeleteProfile(w http.ResponseWriter, r *http.Request, id int64)
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, sqlite.ErrProfileInUse):
 		writeError(w, http.StatusConflict, err.Error())
+	// Being some kind's default is the same class of refusal as being in use:
+	// a live reference the caller has to clear first, not a server fault.
+	// Only ErrProfileInUse was listed, so this answered 500 — printing a
+	// perfectly actionable message ("quality profile is a default for new
+	// items: Movies") behind a status code that said the server broke.
+	case errors.Is(err, sqlite.ErrProfileIsDefault):
+		writeError(w, http.StatusConflict, err.Error())
 	default:
 		s.acqErr(w, err)
 	}
@@ -1197,8 +1204,14 @@ func importListDTO(l sqlite.ImportList) apigen.ImportList {
 // AddImportList implements POST /importlists.
 func (s *Server) AddImportList(w http.ResponseWriter, r *http.Request) {
 	var body apigen.AddImportListJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
-		writeError(w, http.StatusBadRequest, "name and type are required")
+	// Valid() comes from the spec's enum, so this cannot drift from
+	// openapi.yaml the way a second hardcoded list would. Every sibling
+	// create already called it; this one did not, so a list of a type no
+	// syncer knows about stored happily, appeared in the UI, and silently
+	// never synced — `importlist.syncOne` answers "unknown list type" into a
+	// log nobody is reading.
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" || !body.Type.Valid() {
+		writeError(w, http.StatusBadRequest, "name and a known type are required")
 		return
 	}
 	l := sqlite.ImportList{

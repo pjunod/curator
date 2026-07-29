@@ -60,7 +60,14 @@ func (d *DB) ListBlocklist(ctx context.Context) ([]BlocklistEntry, error) {
 
 // DeleteBlocklist removes one entry (the release becomes grabbable again).
 func (d *DB) DeleteBlocklist(ctx context.Context, id int64) error {
-	return d.Write.DeleteBlocklist(ctx, id)
+	n, err := d.Write.DeleteBlocklist(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ---- notifiers (Phase 3) ----
@@ -317,7 +324,14 @@ func (d *DB) ListCustomFormats(ctx context.Context) ([]format.CustomFormat, erro
 
 // DeleteCustomFormat removes a scoring rule.
 func (d *DB) DeleteCustomFormat(ctx context.Context, id int64) error {
-	return d.Write.DeleteCustomFormat(ctx, id)
+	n, err := d.Write.DeleteCustomFormat(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ---- import lists (Phase 5) ----
@@ -369,12 +383,25 @@ func (d *DB) ListImportLists(ctx context.Context) ([]ImportList, error) {
 
 // DeleteImportList removes a list source.
 func (d *DB) DeleteImportList(ctx context.Context, id int64) error {
-	return d.Write.DeleteImportList(ctx, id)
+	n, err := d.Write.DeleteImportList(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ---- bulk edit (Phase 5) ----
 
-// BulkUpdateItem applies the non-nil fields to one media item.
+// BulkUpdateItem applies the non-nil fields to one media item, and reports
+// ErrNotFound when there was no such item.
+//
+// The row count is the whole point. `UPDATE ... WHERE id = ?` succeeds against
+// nothing, so returning the bare error let the mass editor count ids that do
+// not exist: POST /library/bulk with one bogus id answered
+// {"updated": 1}, telling the user it had changed a row it had not.
 func (d *DB) BulkUpdateItem(ctx context.Context, id int64, monitored *bool, profileID *int64) error {
 	p := sqlitegen.UpdateMediaItemBulkParams{ID: id, UpdatedAt: time.Now().UnixMilli()}
 	if monitored != nil {
@@ -383,5 +410,12 @@ func (d *DB) BulkUpdateItem(ctx context.Context, id int64, monitored *bool, prof
 	if profileID != nil {
 		p.QualityProfileID = sql.NullInt64{Int64: *profileID, Valid: true}
 	}
-	return d.Write.UpdateMediaItemBulk(ctx, p)
+	n, err := d.Write.UpdateMediaItemBulk(ctx, p)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
