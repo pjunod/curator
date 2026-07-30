@@ -374,6 +374,8 @@ WHERE state IN ('grabbed', 'downloading', 'downloaded', 'awaiting_import', 'impo
 ORDER BY added_at DESC
 `
 
+// Work that is still moving. Deliberately excludes 'imported' and 'failed':
+// both are terminal, and a terminal row must never suppress a fresh search.
 func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 	rows, err := q.db.QueryContext(ctx, listActiveDownloads)
 	if err != nil {
@@ -590,56 +592,6 @@ ORDER BY added_at LIMIT ?
 // it stop answering.
 func (q *Queries) ListImportedWithPayload(ctx context.Context, limit int64) ([]Download, error) {
 	rows, err := q.db.QueryContext(ctx, listImportedWithPayload, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Download
-	for rows.Next() {
-		var i Download
-		if err := rows.Scan(
-			&i.ID,
-			&i.MediaItemID,
-			&i.CopyID,
-			&i.Wantables,
-			&i.Season,
-			&i.ReleaseTitle,
-			&i.Indexer,
-			&i.Protocol,
-			&i.Quality,
-			&i.Size,
-			&i.ClientID,
-			&i.Handle,
-			&i.State,
-			&i.Progress,
-			&i.Error,
-			&i.SavePath,
-			&i.ImportPath,
-			&i.HandoffLog,
-			&i.AddedAt,
-			&i.UpdatedAt,
-			&i.Transfer,
-			&i.PayloadRemoved,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listInFlightDownloads = `-- name: ListInFlightDownloads :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed FROM downloads WHERE state != 'imported' ORDER BY added_at DESC
-`
-
-func (q *Queries) ListInFlightDownloads(ctx context.Context) ([]Download, error) {
-	rows, err := q.db.QueryContext(ctx, listInFlightDownloads)
 	if err != nil {
 		return nil, err
 	}

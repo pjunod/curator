@@ -260,7 +260,7 @@ func TestAcq2SearchAndGrabBestRefusesAMissingProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = svc.searchAndGrabBest(ctx, domain.MovieWantable{
+	_, err = svc.searchAndGrabBest(ctx, domain.MovieWantable{
 		Item: movieID, Profile: 4242, Mon: true, Title: "Test Movie", Year: 2024,
 	}, enabled)
 	if err == nil {
@@ -396,7 +396,7 @@ func TestAcq2AutoSearchItemCoversEverySeasonAndCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := svc.AutoSearchItem(ctx, itemID); err != nil {
+	if _, err := svc.AutoSearchItem(ctx, itemID); err != nil {
 		t.Fatal(err)
 	}
 	counts := map[string]int{}
@@ -418,7 +418,7 @@ func TestAcq2AutoSearchItemReportsMissingIndexersAndItems(t *testing.T) {
 	svc, db, movieID := autoSetup(t, nil, &fakeClient{})
 	ctx := context.Background()
 
-	if err := svc.AutoSearchItem(ctx, 987654); err == nil {
+	if _, err := svc.AutoSearchItem(ctx, 987654); err == nil {
 		t.Error("auto search accepted an item that does not exist")
 	}
 	indexers, _ := db.ListIndexers(ctx)
@@ -427,7 +427,7 @@ func TestAcq2AutoSearchItemReportsMissingIndexersAndItems(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := svc.AutoSearchItem(ctx, movieID); !errors.Is(err, ErrNoIndexers) {
+	if _, err := svc.AutoSearchItem(ctx, movieID); !errors.Is(err, ErrNoIndexers) {
 		t.Errorf("err = %v, want ErrNoIndexers", err)
 	}
 }
@@ -444,7 +444,7 @@ func TestAcq2AutoSearchItemSkipsUnmonitoredTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := svc.AutoSearchItem(ctx, movieID); err != nil {
+	if _, err := svc.AutoSearchItem(ctx, movieID); err != nil {
 		t.Fatal(err)
 	}
 	if got := idx.asked(); len(got) != 0 {

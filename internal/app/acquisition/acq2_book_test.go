@@ -83,7 +83,7 @@ func TestAcq2BookIsWantedSearchedAndImported(t *testing.T) {
 	}
 
 	// 2. The automatic search finds and grabs it.
-	if err := svc.AutoSearchItem(ctx, bookID); err != nil {
+	if _, err := svc.AutoSearchItem(ctx, bookID); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.added) != 1 {

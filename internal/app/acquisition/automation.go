@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
@@ -168,7 +169,7 @@ func (s *Service) BacklogSearch(ctx context.Context) error {
 			break
 		}
 		searched++
-		if err := s.searchAndGrabBest(ctx, w, enabled); err != nil {
+		if _, err := s.searchAndGrabBest(ctx, w, enabled); err != nil {
 			s.log.Warn("backlog: search failed", "wantable", w.ID(), "err", err)
 		}
 	}
@@ -223,16 +224,64 @@ func (s *Service) watchedFirst(ctx context.Context, wanted []domain.Wantable) []
 	return append(out, rest...)
 }
 
+// searchTally counts what one wantable's search saw, so a caller can say
+// something truer than "nothing happened".
+//
+// The funnel is the diagnosis: 0 seen means the indexers returned nothing for
+// the query, seen>0 with matched 0 means the releases were for something else
+// (or the title does not normalize the same way), and matched>0 with accepted
+// 0 means the profile turned every one of them down. Those are three
+// completely different problems and they used to look identical from outside.
+type searchTally struct {
+	Seen     int    // releases returned, after de-duplication
+	Matched  int    // releases the matcher tied to this wantable
+	Accepted int    // of those, ones the profile would take
+	Grabbed  string // release title, "" if nothing was grabbed
+}
+
 // searchAndGrabBest runs the wantable's planned queries against the given
 // indexers and grabs the single best accepted release, if any.
-func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable, enabled []ports.IndexerConfig) error {
+//
+// The indexer fan-out is concurrent, as it is in interactive search. It was
+// serial, which was tolerable when only the nightly backlog called this and
+// is not now that a person can be sitting in front of it: with the 30 s
+// per-call bound, four indexers meant a two-minute worst case.
+func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
+	enabled []ports.IndexerConfig) (searchTally, error) {
+	var tally searchTally
 	profile, err := s.db.GetProfile(ctx, w.ProfileID())
 	if err != nil {
-		return err
+		return tally, err
 	}
 
 	formats, _ := s.db.ListCustomFormats(ctx)
 	runtime := s.db.ItemRuntime(ctx, w.MediaItemID())
+
+	var (
+		mu       sync.Mutex
+		releases []ports.Release
+		wg       sync.WaitGroup
+	)
+	for _, cfg := range enabled {
+		for _, q := range domain.PlanSearch(w) {
+			wg.Add(1)
+			go func(cfg ports.IndexerConfig, q domain.SearchQuery) {
+				defer wg.Done()
+				cctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
+				defer cancel()
+				rs, err := s.newIndexer(cfg).Search(cctx, q)
+				if err != nil {
+					s.log.Warn("auto search: indexer failed", "indexer", cfg.Name, "err", err)
+					return
+				}
+				mu.Lock()
+				releases = append(releases, rs...)
+				mu.Unlock()
+			}(cfg, q)
+		}
+	}
+	wg.Wait()
+
 	type scored struct {
 		r     ports.Release
 		q     quality.Quality
@@ -248,45 +297,46 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable, enab
 		return a.r.Seeders > b.r.Seeders
 	}
 	var best *scored
-	for _, cfg := range enabled {
-		for _, q := range domain.PlanSearch(w) {
-			cctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
-			releases, err := s.newIndexer(cfg).Search(cctx, q)
-			cancel()
-			if err != nil {
-				s.log.Warn("backlog: indexer failed", "indexer", cfg.Name, "err", err)
-				continue
-			}
-			for _, r := range releases {
-				if s.isBlocklisted(ctx, r.Title, r.Indexer) {
-					continue
-				}
-				p := parser.Parse(r.Title)
-				if len(matcher.Match(p, []domain.Wantable{w})) == 0 {
-					continue
-				}
-				if d := decision.Decide(p.Quality, w, profile); !d.Accepted {
-					continue
-				}
-				if why, bad := sizeImplausible(p.Quality, r, runtime); bad {
-					s.log.Info("backlog: declined on size", "release", r.Title, "why", why.Reason)
-					continue
-				}
-				cand := &scored{r: r, q: p.Quality, score: format.Score(r.Title, formats)}
-				if best == nil || better(cand, best) {
-					best = cand
-				}
-			}
+	seen := map[string]bool{}
+	for _, r := range releases {
+		// The same release can come back from two queries of one indexer.
+		key := r.Title + "|" + r.Indexer
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		tally.Seen++
+
+		if s.isBlocklisted(ctx, r.Title, r.Indexer) {
+			continue
+		}
+		p := parser.Parse(r.Title)
+		if len(matcher.Match(p, []domain.Wantable{w})) == 0 {
+			continue
+		}
+		tally.Matched++
+		if d := decision.Decide(p.Quality, w, profile); !d.Accepted {
+			continue
+		}
+		if why, bad := sizeImplausible(p.Quality, r, runtime); bad {
+			s.log.Info("auto search: declined on size", "release", r.Title, "why", why.Reason)
+			continue
+		}
+		tally.Accepted++
+		cand := &scored{r: r, q: p.Quality, score: format.Score(r.Title, formats)}
+		if best == nil || better(cand, best) {
+			best = cand
 		}
 	}
 	if best == nil {
-		return nil
+		return tally, nil
 	}
 	if err := s.autoGrab(ctx, w, best.r); err != nil {
-		return fmt.Errorf("grab %q: %w", best.r.Title, err)
+		return tally, fmt.Errorf("grab %q: %w", best.r.Title, err)
 	}
-	s.log.Info("backlog: grabbed", "release", best.r.Title, "wantable", w.ID())
-	return nil
+	tally.Grabbed = best.r.Title
+	s.log.Info("auto search: grabbed", "release", best.r.Title, "wantable", w.ID())
+	return tally, nil
 }
 
 // WantedSummary is one wanted entry for the API/UI.
@@ -346,23 +396,57 @@ func (s *Service) isBlocklisted(ctx context.Context, title, indexer string) bool
 	return blocked
 }
 
+// Skip reasons reported by AutoSearchItem for a target it did not search.
+// These are the answers to "I pressed the button and nothing happened".
+const (
+	SkipUnmonitored = "unmonitored"
+	SkipInFlight    = "downloading"
+)
+
+// AutoSearchTarget is what happened to one wantable in an auto search.
+type AutoSearchTarget struct {
+	WantableID string `json:"wantableId"`
+	Label      string `json:"label"`             // "Blade Runner (1982)", "Show season 2"
+	Skipped    string `json:"skipped,omitempty"` // set = not searched, and why
+	Seen       int    `json:"seen"`              // releases the indexers returned
+	Matched    int    `json:"matched"`           // releases that were for this
+	Accepted   int    `json:"accepted"`          // of those, ones the profile takes
+	Grabbed    string `json:"grabbed,omitempty"` // release title, if one was grabbed
+	Error      string `json:"error,omitempty"`
+}
+
+// AutoSearchOutcome is what an auto search actually did.
+//
+// This exists because the endpoint used to return 202 and nothing else. Every
+// outcome — grabbed a 2160p remux, found four releases and declined all four,
+// skipped the item entirely because a download row from March was still
+// counted as in flight — produced the same "Searching in the background"
+// banner. A button whose only feedback is identical whether it worked or not
+// is a button you cannot trust, and the notInFlight bug hid behind it for as
+// long as it did precisely because of that.
+type AutoSearchOutcome struct {
+	Targets []AutoSearchTarget `json:"targets"`
+	Grabbed int                `json:"grabbed"`
+}
+
 // AutoSearchItem searches for everything one item still wants and grabs
 // the best accepted release per wantable — Sonarr's "search on add" /
 // "automatic search" semantics: no candidate list, the decision engine
 // picks. Series search season packs (missing episodes fall to the RSS and
 // backlog loops if no pack exists).
-func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) error {
+func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchOutcome, error) {
+	var out AutoSearchOutcome
 	item, err := s.db.GetMediaItemFull(ctx, itemID)
 	if err != nil {
-		return err
+		return out, err
 	}
 	enabled, err := s.enabledIndexers(ctx)
 	if err != nil {
-		return err
+		return out, err
 	}
 	if len(enabled) == 0 {
 		s.log.Info("auto search: no enabled indexers yet", "item", item.Title)
-		return ErrNoIndexers
+		return out, ErrNoIndexers
 	}
 
 	var targets []domain.Wantable
@@ -370,7 +454,7 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) error {
 	case domain.KindMovie, domain.KindBook:
 		w, err := s.target(ctx, item, 0, 0)
 		if err != nil {
-			return err
+			return out, err
 		}
 		targets = append(targets, w)
 	case domain.KindSeries:
@@ -408,14 +492,37 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) error {
 		}
 	}
 
+	// Report on every target, including the ones that are not going to be
+	// searched. A skipped target is the single most useful thing this can
+	// say, and it is the one thing the old fire-and-forget version could not.
+	searchable := map[string]bool{}
 	for _, w := range s.notInFlight(ctx, targets) {
-		if !w.Monitored() {
-			continue
-		}
-		if err := s.searchAndGrabBest(ctx, w, enabled); err != nil {
-			s.log.Warn("auto search: failed", "wantable", w.ID(), "err", err)
-		}
+		searchable[string(w.ID())] = true
 	}
+	out.Targets = make([]AutoSearchTarget, 0, len(targets))
+	for _, w := range targets {
+		t := AutoSearchTarget{WantableID: string(w.ID()), Label: describeTarget(w)}
+		switch {
+		case !w.Monitored():
+			t.Skipped = SkipUnmonitored
+		case !searchable[string(w.ID())]:
+			t.Skipped = SkipInFlight
+		default:
+			tally, err := s.searchAndGrabBest(ctx, w, enabled)
+			t.Seen, t.Matched, t.Accepted = tally.Seen, tally.Matched, tally.Accepted
+			t.Grabbed = tally.Grabbed
+			if err != nil {
+				t.Error = err.Error()
+				s.log.Warn("auto search: failed", "wantable", w.ID(), "err", err)
+			}
+			if t.Grabbed != "" {
+				out.Grabbed++
+			}
+		}
+		out.Targets = append(out.Targets, t)
+	}
+	s.log.Info("auto search: done", "item", item.Title,
+		"targets", len(out.Targets), "grabbed", out.Grabbed)
 	s.InvalidateWanted()
-	return nil
+	return out, nil
 }

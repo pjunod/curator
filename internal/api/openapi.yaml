@@ -1405,15 +1405,22 @@ paths:
       operationId: autoSearchLibraryItem
       summary: Search for everything this item wants and grab the best releases
       description: >
-        Sonarr-style automatic search: runs in the background, no candidate
-        list — the decision engine picks. Series search per-season packs.
+        Sonarr-style automatic search: no candidate list — the decision engine
+        picks. Series search per-season packs. Runs to completion and reports
+        what it did for every target, including the ones it did not search and
+        why, so "nothing happened" is always distinguishable from "nothing was
+        wanted".
       parameters:
         - name: id
           in: path
           required: true
           schema: { type: integer, format: int64 }
       responses:
-        "202": { description: Search started in the background. }
+        "200":
+          description: The search ran; the body says what it did.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutoSearchResult" }
         "404":
           description: No such item.
           content:
@@ -3184,6 +3191,52 @@ components:
         episodes:
           type: array
           items: { type: integer }
+
+    AutoSearchResult:
+      type: object
+      required: [grabbed, targets]
+      properties:
+        grabbed:
+          type: integer
+          description: How many releases the search actually grabbed.
+        targets:
+          type: array
+          description: >
+            Every wantable the item produced, searched or not. An item with no
+            targets at all wants nothing.
+          items:
+            $ref: "#/components/schemas/AutoSearchTarget"
+
+    AutoSearchTarget:
+      type: object
+      required: [wantableId, label, seen, matched, accepted]
+      properties:
+        wantableId: { type: string }
+        label:
+          type: string
+          description: Human name for the target, e.g. "Blade Runner (1982)".
+        skipped:
+          type: string
+          description: >
+            Set when the target was not searched, and why. "unmonitored" means
+            monitoring is off for it; "downloading" means it already has a
+            download in progress.
+          enum: [unmonitored, downloading]
+        seen:
+          type: integer
+          description: Distinct releases the indexers returned for this target.
+        matched:
+          type: integer
+          description: Of those, how many the matcher tied to this target.
+        accepted:
+          type: integer
+          description: Of the matched, how many the quality profile would take.
+        grabbed:
+          type: string
+          description: Title of the release grabbed, absent if none was.
+        error:
+          type: string
+          description: Why the search or the grab failed.
 
     ImportOutcome:
       type: object

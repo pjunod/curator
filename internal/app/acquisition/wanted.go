@@ -169,10 +169,28 @@ func (s *Service) wantedEpisodes(item domain.MediaItem, profile quality.Profile,
 
 // notInFlight filters out wantables that already have an active download —
 // including episodes covered by an in-flight season pack.
+//
+// "Active" means work that is actually still moving: grabbed, downloading,
+// downloaded, awaiting import, importing. It deliberately does NOT include
+// terminal rows.
+//
+// This used to read every row that was not 'imported', which is every row
+// that ever failed — and a download row stays 'failed' forever, because
+// nothing ever transitions it out and only the user deleting it from the
+// queue removes it. Three separate paths park a row there: handleFailure (the
+// client reported the download broke), handleRemoved (the user deleted the
+// job in their client), and the import handoff. So one failure of any kind
+// made its wantable invisible to *every* search path — Auto Search, the RSS
+// sync, and the backlog pass — permanently, and silently. handleRemoved's own
+// contract ("the want stays wanted... the next deliberate search still finds
+// it") was not true.
+//
+// Suppressing on terminal rows was also redundant: a release that failed is
+// blocklisted, which is the mechanism that stops us re-grabbing the same bad
+// copy. Suppressing the whole wantable stopped us grabbing a DIFFERENT one,
+// which is exactly what should happen next.
 func (s *Service) notInFlight(ctx context.Context, wanted []domain.Wantable) []domain.Wantable {
-	// In-flight includes rows stalled at a failed import: the user resolves
-	// those by hand (retry / manual import), so don't grab a duplicate.
-	active, err := s.db.ListInFlightDownloads(ctx)
+	active, err := s.db.ListActiveDownloads(ctx)
 	if err != nil {
 		return wanted
 	}

@@ -1055,7 +1055,24 @@ export function composeHostPort(host: string, port: string): string {
   return `${scheme}${hostPart}:${p}${rest}`
 }
 
-export const autoSearchItem = (id: number) => send('POST', `/library/${id}/autosearch`)
+export interface AutoSearchTarget {
+  wantableId: string
+  label: string
+  skipped?: 'unmonitored' | 'downloading'
+  seen: number
+  matched: number
+  accepted: number
+  grabbed?: string
+  error?: string
+}
+
+export interface AutoSearchResult {
+  grabbed: number
+  targets: AutoSearchTarget[]
+}
+
+export const autoSearchItem = (id: number) =>
+  send<AutoSearchResult>('POST', `/library/${id}/autosearch`)
 export const refreshLibraryItem = (id: number) =>
   send<MediaItemDetail>('POST', `/library/${id}/refresh`)
 export const addMediaCopy = (id: number, req: MediaCopyInput) =>

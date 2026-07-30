@@ -155,7 +155,7 @@ func TestAutoSearchItemGrabsBest(t *testing.T) {
 	}, client)
 	ctx := context.Background()
 
-	if err := svc.AutoSearchItem(ctx, movieID); err != nil {
+	if _, err := svc.AutoSearchItem(ctx, movieID); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.added) != 1 || client.added[0] != "http://dl/Test.Movie.2024.1080p.BluRay.x264-BEST" {
@@ -167,7 +167,7 @@ func TestAutoSearchItemGrabsBest(t *testing.T) {
 	}
 
 	// Second call: the wantable is in flight — nothing double-grabbed.
-	if err := svc.AutoSearchItem(ctx, movieID); err != nil {
+	if _, err := svc.AutoSearchItem(ctx, movieID); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.added) != 1 {

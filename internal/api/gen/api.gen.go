@@ -35,6 +35,24 @@ func (e AddMediaRequestMonitor) Valid() bool {
 	}
 }
 
+// Defines values for AutoSearchTargetSkipped.
+const (
+	AutoSearchTargetSkippedDownloading AutoSearchTargetSkipped = "downloading"
+	AutoSearchTargetSkippedUnmonitored AutoSearchTargetSkipped = "unmonitored"
+)
+
+// Valid indicates whether the value is a known member of the AutoSearchTargetSkipped enum.
+func (e AutoSearchTargetSkipped) Valid() bool {
+	switch e {
+	case AutoSearchTargetSkippedDownloading:
+		return true
+	case AutoSearchTargetSkippedUnmonitored:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectionKind.
 const (
 	Downloadclient ConnectionKind = "downloadclient"
@@ -532,19 +550,19 @@ func (e RootKind) Valid() bool {
 
 // Defines values for TransferStage.
 const (
-	Downloading TransferStage = "downloading"
-	Importing   TransferStage = "importing"
-	Notifying   TransferStage = "notifying"
+	TransferStageDownloading TransferStage = "downloading"
+	TransferStageImporting   TransferStage = "importing"
+	TransferStageNotifying   TransferStage = "notifying"
 )
 
 // Valid indicates whether the value is a known member of the TransferStage enum.
 func (e TransferStage) Valid() bool {
 	switch e {
-	case Downloading:
+	case TransferStageDownloading:
 		return true
-	case Importing:
+	case TransferStageImporting:
 		return true
-	case Notifying:
+	case TransferStageNotifying:
 		return true
 	default:
 		return false
@@ -605,6 +623,43 @@ type AdoptionCandidate struct {
 	TvdbId *int64 `json:"tvdbId,omitempty"`
 	Year   int    `json:"year"`
 }
+
+// AutoSearchResult defines model for AutoSearchResult.
+type AutoSearchResult struct {
+	// Grabbed How many releases the search actually grabbed.
+	Grabbed int `json:"grabbed"`
+
+	// Targets Every wantable the item produced, searched or not. An item with no targets at all wants nothing.
+	Targets []AutoSearchTarget `json:"targets"`
+}
+
+// AutoSearchTarget defines model for AutoSearchTarget.
+type AutoSearchTarget struct {
+	// Accepted Of the matched, how many the quality profile would take.
+	Accepted int `json:"accepted"`
+
+	// Error Why the search or the grab failed.
+	Error *string `json:"error,omitempty"`
+
+	// Grabbed Title of the release grabbed, absent if none was.
+	Grabbed *string `json:"grabbed,omitempty"`
+
+	// Label Human name for the target, e.g. "Blade Runner (1982)".
+	Label string `json:"label"`
+
+	// Matched Of those, how many the matcher tied to this target.
+	Matched int `json:"matched"`
+
+	// Seen Distinct releases the indexers returned for this target.
+	Seen int `json:"seen"`
+
+	// Skipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress.
+	Skipped    *AutoSearchTargetSkipped `json:"skipped,omitempty"`
+	WantableId string                   `json:"wantableId"`
+}
+
+// AutoSearchTargetSkipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress.
+type AutoSearchTargetSkipped string
 
 // BackupInfo defines model for BackupInfo.
 type BackupInfo struct {

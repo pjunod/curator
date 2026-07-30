@@ -1277,20 +1277,47 @@ func (s *Server) BulkEditLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 // AutoSearchLibraryItem implements POST /library/{id}/autosearch: the
-// Sonarr-style "search automatically" — background, best-pick, no list.
+// Sonarr-style "search automatically" — best-pick, no candidate list.
+//
+// Synchronous, and it answers with what it did. It used to hand back a bare
+// 202 and run the search in a goroutine, which meant the UI said the same
+// hopeful sentence whether the search grabbed a remux, turned down everything
+// it found, or never ran at all. Interactive search on the same item already
+// blocks for the same fan-out against the same indexers, so there was never a
+// latency argument for the 202 — only the assumption that there was nothing
+// worth reporting.
+//
+// The one caller that still wants fire-and-forget is search-on-add
+// (searchInBackground): nobody is waiting on that one, and its failure must
+// not fail the edit that triggered it.
 func (s *Server) AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, id int64) {
 	if _, err := s.deps.Library.Get(r.Context(), id); err != nil {
 		s.acqErr(w, err)
 		return
 	}
-	go func(itemID int64) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		if err := s.deps.Acquisition.AutoSearchItem(ctx, itemID); err != nil {
-			s.deps.Log.Warn("auto search failed", "item", itemID, "err", err)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	out, err := s.deps.Acquisition.AutoSearchItem(ctx, id)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	targets := make([]apigen.AutoSearchTarget, 0, len(out.Targets))
+	for _, t := range out.Targets {
+		dto := apigen.AutoSearchTarget{
+			WantableId: t.WantableID, Label: t.Label,
+			Seen: t.Seen, Matched: t.Matched, Accepted: t.Accepted,
+			Grabbed: optStr(t.Grabbed), Error: optStr(t.Error),
 		}
-	}(id)
-	w.WriteHeader(http.StatusAccepted)
+		if t.Skipped != "" {
+			skipped := apigen.AutoSearchTargetSkipped(t.Skipped)
+			dto.Skipped = &skipped
+		}
+		targets = append(targets, dto)
+	}
+	writeJSON(w, http.StatusOK, apigen.AutoSearchResult{
+		Grabbed: out.Grabbed, Targets: targets,
+	})
 }
 
 // importOutcomeDTO reports what happened to every file, not just a count.

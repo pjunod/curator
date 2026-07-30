@@ -26,6 +26,7 @@ import {
   updateMediaCopy,
 } from '../api'
 import type { MediaFileInfo, MediaItemDetail, RemoveFileOptions } from '../api'
+import { describeAutoSearch } from '../autosearch'
 import { ReleaseSearch } from './ReleaseSearch'
 
 // CopiesPanel: additional quality targets — the same item kept at a second
@@ -556,7 +557,15 @@ export function MediaDetailPage() {
   const [autoMsg, setAutoMsg] = useState('')
   const auto = useMutation({
     mutationFn: () => autoSearchItem(Number(id)),
-    onSuccess: () => setAutoMsg('Searching in the background — grabs appear under Activity.'),
+    onSuccess: (res) => {
+      setAutoMsg(describeAutoSearch(res))
+      // A grab changes the queue and the item's wanted state; both are on
+      // screen, so neither should wait for the next poll to catch up.
+      if (res.grabbed > 0) {
+        void qc.invalidateQueries({ queryKey: ['library-item', id] })
+        void qc.invalidateQueries({ queryKey: ['queue'] })
+      }
+    },
     onError: (e) => setAutoMsg(`✕ ${(e as Error).message}`),
   })
   // Re-measure the files. The scan's already-probed cache is right for a
@@ -818,7 +827,7 @@ export function MediaDetailPage() {
               disabled={auto.isPending}
               onClick={() => auto.mutate()}
             >
-              Auto search
+              {auto.isPending ? 'Searching…' : 'Auto search'}
             </button>
             {(m.kind === 'movie' || m.kind === 'book') && (
               <button onClick={() => setSearching({})}>Interactive search</button>

@@ -1083,9 +1083,13 @@ func (s *Server) searchInBackground(itemID int64, why string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		if err := s.deps.Acquisition.AutoSearchItem(ctx, itemID); err != nil {
+		out, err := s.deps.Acquisition.AutoSearchItem(ctx, itemID)
+		if err != nil {
 			s.deps.Log.Warn("background search failed", "item", itemID, "trigger", why, "err", err)
+			return
 		}
+		s.deps.Log.Info("background search done", "item", itemID, "trigger", why,
+			"targets", len(out.Targets), "grabbed", out.Grabbed)
 	}()
 }
 

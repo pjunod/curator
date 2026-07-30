@@ -429,21 +429,6 @@ func (d *DB) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 	return out, nil
 }
 
-// ListInFlightDownloads returns every row that has not finished importing —
-// used to suppress re-searching a wantable that already has a download in
-// progress or stalled at a failed import.
-func (d *DB) ListInFlightDownloads(ctx context.Context) ([]Download, error) {
-	rows, err := d.Read.ListInFlightDownloads(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Download, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, downloadFromRow(r))
-	}
-	return out, nil
-}
-
 // ListRecentDownloads returns the last 100 rows, any state.
 func (d *DB) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 	rows, err := d.Read.ListRecentDownloads(ctx)

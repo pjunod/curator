@@ -44,12 +44,11 @@ INSERT INTO downloads (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
 
 -- name: ListActiveDownloads :many
+-- Work that is still moving. Deliberately excludes 'imported' and 'failed':
+-- both are terminal, and a terminal row must never suppress a fresh search.
 SELECT * FROM downloads
 WHERE state IN ('grabbed', 'downloading', 'downloaded', 'awaiting_import', 'importing')
 ORDER BY added_at DESC;
-
--- name: ListInFlightDownloads :many
-SELECT * FROM downloads WHERE state != 'imported' ORDER BY added_at DESC;
 
 -- name: ListRecentDownloads :many
 SELECT * FROM downloads ORDER BY added_at DESC LIMIT 100;

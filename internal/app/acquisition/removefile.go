@@ -171,9 +171,11 @@ func (s *Service) searchReplacement(ctx context.Context, item domain.MediaItem, 
 		// A series needs a season to build a wantable, and "which season"
 		// is not a question a file deletion answers. Fall back to the
 		// item-wide sweep, which figures it out from the wanted index.
-		return s.AutoSearchItem(ctx, item.ID)
+		_, err := s.AutoSearchItem(ctx, item.ID)
+		return err
 	}
-	return s.searchAndGrabBest(ctx, target, enabled)
+	_, err = s.searchAndGrabBest(ctx, target, enabled)
+	return err
 }
 
 func joinNote(existing, add string) string {

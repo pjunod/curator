@@ -888,7 +888,7 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 		if err != nil {
 			continue
 		}
-		if err := s.searchAndGrabBest(ctx, w, enabled); err != nil {
+		if _, err := s.searchAndGrabBest(ctx, w, enabled); err != nil {
 			s.log.Warn("re-search failed", "wantable", idStr, "err", err)
 		}
 	}

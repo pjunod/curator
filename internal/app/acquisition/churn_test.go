@@ -198,7 +198,7 @@ func TestGrabsAreCappedAtTheTargetResolution(t *testing.T) {
 	svc, _, movieID := autoSetup(t, releases, client)
 	ctx := context.Background()
 
-	if err := svc.AutoSearchItem(ctx, movieID); err != nil {
+	if _, err := svc.AutoSearchItem(ctx, movieID); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.added) != 1 {

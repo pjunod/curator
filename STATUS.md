@@ -507,6 +507,57 @@ with its fix reverted — a test that passes either way is not a regression test
       absurd attempt counts. Latent — unreachable in practice — and it needs its
       own decision about what the ceiling should be rather than a quick clamp
 
+## Auto Search did nothing ✅ (fixed 2026-07-30)
+
+Reported from the real deployment: pressing **Auto search** on a movie appeared
+to do nothing, twice; interactive search on the same movie then listed copies,
+and grabbing one from that list started downloading immediately. So releases
+existed, the profile would take one, and the automatic path still declined to
+act. Two defects — one causing it, one hiding it.
+
+- [x] **A terminal download row counted as "in flight" forever.**
+      `notInFlight` — the filter every search path runs its wantables
+      through — read `ListInFlightDownloads`, which was
+      `SELECT * FROM downloads WHERE state != 'imported'`. That is every row
+      that ever failed. Three paths park a row at `failed` and none of them
+      ever move it out: `handleFailure` (the client said the download broke),
+      `handleRemoved` (the user deleted the job in their client), and a failed
+      import handoff. Only the user deleting the row from the queue clears it.
+      So a single failure, at any point in the past, made that wantable
+      invisible to Auto Search, the 15-minute RSS sync, **and** the 12-hour
+      backlog pass — permanently and silently. `handleRemoved`'s own comment
+      promises the opposite ("the want stays wanted… the next deliberate search
+      still finds it"); it did not. The suppression was redundant besides: a
+      release that fails is blocklisted, which is what stops us re-grabbing
+      *that* copy, while retiring the whole wantable stopped us grabbing a
+      different one — the exact thing that should happen next. `notInFlight`
+      now reads `ListActiveDownloads` (grabbed · downloading · downloaded ·
+      awaiting_import · importing), so only work that is still moving suppresses
+- [x] **The endpoint could not report any of this.** `POST
+      /library/{id}/autosearch` answered a bare `202` and ran the search in a
+      goroutine, so the UI printed "Searching in the background — grabs appear
+      under Activity" whether the search grabbed a remux, declined everything
+      it found, or never ran at all. That is why a total no-op went unnoticed
+      for as long as it did. It is synchronous now and returns
+      `AutoSearchResult`: every target, searched or skipped-and-why, with the
+      funnel that makes the outcome diagnosable — releases **seen**, of those
+      **matched** to this target, of those **accepted** by the profile.
+      Whichever number went to zero first is the answer, and "no releases came
+      back", "none of them were this film" and "the profile turned all of them
+      down" are now three different sentences. Interactive search already
+      blocked on the same fan-out against the same indexers, so there was never
+      a latency argument for the 202 — only the assumption that there was
+      nothing worth saying. Search-on-add stays fire-and-forget: nobody is
+      waiting on that one
+- [x] The indexer fan-out in `searchAndGrabBest` is concurrent now, as it long
+      has been in interactive search. Serial was tolerable when only the
+      nightly backlog called it; with a person waiting and a 30 s per-call
+      bound, four indexers meant a two-minute worst case
+- [x] Regressions in `internal/app/acquisition/autosearchreport_test.go` (a
+      failed download no longer suppresses; an *active* one still does) and
+      `web/src/autosearch.test.ts` (the three no-grab outcomes must read
+      differently)
+
 ## Decisions to date
 
 | ADR | Decision |
