@@ -119,7 +119,7 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	// remuxes is several hundred gigabytes of "we will get to it".
 	s.cleanupAfterImport(ctx, downloadRef{
 		ID: dl.ID, MediaItemID: dl.MediaItemID, ClientID: dl.ClientID,
-		Handle: dl.Handle, ReleaseTitle: dl.ReleaseTitle, Size: dl.Size,
+		Handle: dl.Handle, ImportPath: imp, ReleaseTitle: dl.ReleaseTitle, Size: dl.Size,
 	})
 	s.InvalidateWanted()
 	return nil

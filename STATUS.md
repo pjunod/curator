@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-29 · v0.13.0 · Repo and module path are now `github.com/pjunod/monarr` — done while nothing outside the repo depends on the old path, which is the only time it is cheap (§Launch logistics, ADR 0001 amendment 2). Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.5%, past the 85% target, with the floor enforced by COVERAGE_MIN.** The new tests then paid for themselves: six real defects found and fixed, a permanent auth lockout among them, plus a `make coverage` whose number depended on build-cache state (§Defects the coverage work found). Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
+> **Snapshot 2026-07-31 · v0.14.0 · The re-grab loop, monarr's half: M1–M4 fixed — an import that runs out of disk now fails visibly and retries itself, cleanup removes a payload the client would not, a release already in flight is never grabbed twice, replacement searches are bounded, and the per-release history is finally reachable over the API (§The re-grab loop). Previously, 2026-07-29 · v0.13.0 · Repo and module path are now `github.com/pjunod/monarr` — done while nothing outside the repo depends on the old path, which is the only time it is cheap (§Launch logistics, ADR 0001 amendment 2). Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.5%, past the 85% target, with the floor enforced by COVERAGE_MIN.** The new tests then paid for themselves: six real defects found and fixed, a permanent auth lockout among them, plus a `make coverage` whose number depended on build-cache state (§Defects the coverage work found). Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -450,6 +450,45 @@ or CSS-only, no behaviour change, and neither caused by this work:
       rebuilding on the current tip so it can never revert a real commit.
       Generation was already local (`scripts/coverage-badge.sh`, no Codecov)
       and is unchanged
+
+## The re-grab loop — monarr's half ✅ (fixed 2026-07-31, v0.14.0)
+
+Field report 2026-07-31: a terabyte of duplicate downloads. Diagnosed live
+against nzbd (`nzbd/docs/REGRAB_LOOP_PLAN.md`); four defects feeding one
+loop, of which these four are monarr's (M1–M4 of that plan).
+
+- [x] **M1 — an import that runs out of disk fails, visibly, and finishes
+  itself later.** Per-file copy errors were recorded and stepped over, and
+  an import that placed *some* files reported success — so a season pack
+  imported its first half, the second half stayed listed as missing, the
+  payload was cleaned up, and the next backlog pass grabbed the same pack
+  again. Now an environmental failure (ENOSPC/EDQUOT, read-only or vanished
+  mount) stops the import at the first occurrence, marks the download
+  failed with `import stopped: N of M files placed`, leaves the payload
+  alone, and a `downloads.import-retry` sweep finishes it once there is
+  room — every 15 min, six attempts, then it waits for a person. Only
+  environmental failures retry; a payload monarr cannot parse fails the
+  same way forever.
+- [x] **M2 — cleanup no longer takes the client's word for it.** When the
+  download client will not or cannot delete an imported payload, monarr
+  removes the completed folder itself — the folder it just imported from —
+  and records it (`payload_removed`). Guarded: only the directory the
+  client reported, only when "clean up after import" is on for that client,
+  and never at, above, or inside a root folder.
+- [x] **M3 — the same release is not grabbed twice, and replacement is
+  bounded.** `Grab` now refuses a release already in flight (titles
+  compared with separators folded) instead of relying on the in-flight
+  filter at the automation entry points, which a manual grab, an overlapping
+  pass, and an instant post-failure re-search all walked straight past. And
+  the automatic replacement search stops after three failed grabs for one
+  want inside twelve hours, recording `regrab_capped` — five releases of one
+  movie in ten hours was the field shape.
+- [x] **M4 — the pipeline is readable.** `history_events` had been written
+  since phase 2 and read by nothing: `ListHistory` had no caller outside its
+  own package. `GET /api/v1/history?mediaItemId=&limit=` now serves the
+  per-release timeline — grab → client outcome → import result, plus the new
+  `import_blocked` / `import_retried` / `regrab_capped` events. (UI panel
+  not built yet; the data is now reachable.)
 
 ## Defects the coverage work found ✅ (fixed 2026-07-29, v0.12.0)
 

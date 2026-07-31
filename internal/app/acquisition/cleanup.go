@@ -2,6 +2,9 @@ package acquisition
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/ports"
@@ -80,10 +83,13 @@ func (s *Service) removePayload(ctx context.Context, dl downloadRef) bool {
 // downloadRef is the handful of fields cleanup needs, so both callers can pass
 // what they already have without either one re-reading the row.
 type downloadRef struct {
-	ID           int64
-	MediaItemID  int64
-	ClientID     int64
-	Handle       string
+	ID          int64
+	MediaItemID int64
+	ClientID    int64
+	Handle      string
+	// ImportPath is where monarr just imported from — the fallback target
+	// when the client will not remove its own payload.
+	ImportPath   string
 	ReleaseTitle string
 	Size         int64
 }
@@ -108,12 +114,25 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 	}
 	removed, bytes := 0, int64(0)
 	for _, dl := range rows {
-		if s.removePayload(ctx, downloadRef{
+		ref := downloadRef{
 			ID: dl.ID, MediaItemID: dl.MediaItemID, ClientID: dl.ClientID,
-			Handle: dl.Handle, ReleaseTitle: dl.ReleaseTitle, Size: dl.Size,
-		}) {
+			Handle: dl.Handle, ImportPath: dl.ImportPath,
+			ReleaseTitle: dl.ReleaseTitle, Size: dl.Size,
+		}
+		if s.removePayload(ctx, ref) {
 			removed++
 			bytes += dl.Size
+			continue
+		}
+		// The backlog gets the same disk fallback the inline path gets:
+		// most of a backlog IS the payloads a client declined to remove.
+		before := dl.ImportPath
+		s.removeImportedDir(ctx, ref)
+		if before != "" {
+			if _, err := os.Stat(before); os.IsNotExist(err) {
+				removed++
+				bytes += dl.Size
+			}
 		}
 	}
 	if removed > 0 {
@@ -129,7 +148,83 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 // immediate: on a library that grabs a dozen 60 GB remuxes overnight, an hourly
 // sweep is several hundred gigabytes late.
 func (s *Service) cleanupAfterImport(ctx context.Context, dl downloadRef) {
-	s.removePayload(ctx, dl)
+	if s.removePayload(ctx, dl) {
+		return
+	}
+	// The client would not, or could not, remove it. Ask the disk directly.
+	//
+	// This is the other half of the terabyte: monarr imported, told the
+	// client to delete the payload, the client's delete did not take, and
+	// nothing ever looked again — 90 GB per grab, in the very folder monarr
+	// had just read. The bytes are in the library now; the copy in the
+	// completed folder is nobody's.
+	s.removeImportedDir(ctx, dl)
+}
+
+// removeImportedDir deletes the completed download's own directory after a
+// verified-complete import, when the download client did not.
+//
+// Guarded, hard, in both directions: it only ever removes the directory the
+// client itself reported and monarr just imported FROM, it refuses anything
+// at or above a configured root folder, and it refuses a path that is
+// inside one — a library folder is not a payload, whatever a path mapping
+// says. A wrong deletion here is somebody's media, so every doubt is a no.
+func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
+	dir := strings.TrimSpace(dl.ImportPath)
+	if dir == "" || !filepath.IsAbs(dir) {
+		return
+	}
+	dir = filepath.Clean(dir)
+	if dir == "/" || filepath.Dir(dir) == dir {
+		return
+	}
+	cfg, err := s.db.GetDownloadClient(ctx, dl.ClientID)
+	if err != nil || !cfg.RemoveCompleted {
+		// The operator asked monarr to leave payloads alone. That answer
+		// covers the disk as much as it covers the client.
+		return
+	}
+	roots, err := s.db.ListRootFolders(ctx)
+	if err != nil {
+		return // cannot prove it is safe, so it is not
+	}
+	for _, r := range roots {
+		root := filepath.Clean(r.Path)
+		if root == "" || root == "/" {
+			continue
+		}
+		if dir == root || within(root, dir) || within(dir, root) {
+			s.log.Warn("cleanup: refusing to remove a payload dir inside a root folder",
+				"dir", dir, "root", root)
+			return
+		}
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		s.log.Warn("cleanup: could not remove the completed download's folder",
+			"dir", dir, "err", err)
+		return
+	}
+	if err := s.db.MarkPayloadRemoved(ctx, dl.ID); err != nil {
+		s.log.Warn("cleanup: could not record the removal", "download", dl.ID, "err", err)
+	}
+	s.log.Info("cleanup: removed the completed download's folder from disk",
+		"release", dl.ReleaseTitle, "dir", dir, "size", dl.Size)
+	_ = s.db.AddHistory(ctx, HistoryPayloadRemoved, dl.MediaItemID, dl.ReleaseTitle,
+		map[string]any{"dir": dir, "bytes": dl.Size, "by": "monarr (the client did not)"})
+}
+
+// within reports whether child is under parent, on path boundaries — so
+// /data/media never matches /data/media-old.
+func within(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // CleanupInterval is how often the sweep runs. Hourly: a payload nobody

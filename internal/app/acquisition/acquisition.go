@@ -568,6 +568,17 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		return 0, fmt.Errorf("%w: %s", ErrNoClient, req.Protocol)
 	}
 
+	// Already grabbed and still moving? Two automation passes that overlap,
+	// a failure that re-searched instantly, and a person pressing the
+	// button all arrive here, and only the first of them should spend
+	// 90 GB of wire. Jobs 238/239 on nuc3 were the same NZB six minutes
+	// apart, and neither client nor monarr said a word about it.
+	if existing := s.alreadyInFlight(ctx, req); existing != 0 {
+		s.log.Info("grab: already in flight; not grabbing it again",
+			"release", req.Title, "download", existing)
+		return existing, nil
+	}
+
 	p := parser.Parse(req.Title)
 	var base string
 	switch {
@@ -888,6 +899,18 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 		if err != nil {
 			continue
 		}
+		// Bounded. Five grabs of one movie in ten hours is not persistence,
+		// it is a loop with a budget, and the budget is the operator's
+		// bandwidth and disk. Once the window's grabs are spent the want
+		// stays wanted — a person can still grab by hand — and it says so.
+		if capped, spent := s.regrabCapped(ctx, w); capped {
+			s.log.Warn("re-search stopped: too many failed grabs for this want recently",
+				"wantable", idStr, "failed", spent, "window", reGrabWindow)
+			_ = s.db.AddHistory(ctx, HistoryRegrabCapped, dl.MediaItemID, dl.ReleaseTitle,
+				map[string]any{"wantable": idStr, "failed": spent,
+					"window_hours": int(reGrabWindow.Hours())})
+			continue
+		}
 		if _, err := s.searchAndGrabBest(ctx, w, enabled); err != nil {
 			s.log.Warn("re-search failed", "wantable", idStr, "err", err)
 		}
@@ -958,6 +981,15 @@ func matchStatus(dl sqlite.Download, statuses []ports.DownloadStatus) (ports.Dow
 		}
 	}
 	return ports.DownloadStatus{}, false
+}
+
+// History returns the recorded per-release events, newest first: grabbed,
+// the client's outcome, the import result, and every stop in between.
+//
+// This existed and was reachable from nothing. A pipeline you cannot see is
+// a pipeline that loops in the dark.
+func (s *Service) History(ctx context.Context) ([]sqlite.HistoryEvent, error) {
+	return s.db.ListHistory(ctx)
 }
 
 // Queue returns recent downloads for the UI.

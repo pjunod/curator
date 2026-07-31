@@ -1185,6 +1185,35 @@ paths:
                 items:
                   $ref: "#/components/schemas/QueueItem"
 
+  /history:
+    get:
+      operationId: listHistory
+      summary: What happened to a release — grab, client outcome, import result
+      description: >
+        The per-release timeline. Monarr recorded these events from the
+        beginning and surfaced none of them, which is how five consecutive
+        failed grabs of one movie in ten hours looked, from the UI, like
+        nothing happening at all. Newest first.
+      parameters:
+        - name: mediaItemId
+          in: query
+          required: false
+          description: Only this item's events. Omitted = everything, newest first.
+          schema: { type: integer, format: int64 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 100, maximum: 500 }
+      responses:
+        "200":
+          description: The timeline.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HistoryEvent"
+
   /queue/{id}:
     delete:
       operationId: removeQueueItem
@@ -3592,6 +3621,26 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    HistoryEvent:
+      type: object
+      required: [ts, type, mediaItemId, releaseTitle]
+      properties:
+        ts:
+          type: string
+          format: date-time
+        type:
+          type: string
+          description: >
+            grabbed | failed | imported | import_failed | import_blocked |
+            import_retried | regrab_capped | short_delivery | payload_removed
+            | file_removed | quality_mismatch | implausible_file.
+        mediaItemId: { type: integer, format: int64 }
+        releaseTitle: { type: string }
+        data:
+          type: object
+          additionalProperties: true
+          description: Event-specific detail, as recorded.
 
     QueueItem:
       type: object

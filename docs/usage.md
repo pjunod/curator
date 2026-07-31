@@ -338,6 +338,32 @@ the client, oldest first, so enabling the setting after a year of grabbing
 clears the year of grabs too — a few dozen at a time, so the client is never
 handed hundreds of deletions at once. Run it on demand from System → Tasks.
 
+**If the client will not delete it, Monarr does.** A download client that has
+lost the job, or whose delete quietly does not take, used to end the story
+there: Monarr asked once, was told no, and left the payload where it was
+forever. It now removes the completed folder itself — the same folder it just
+finished importing from — and records that it did. This only ever touches the
+directory the client reported, and never a path at, above, or inside a root
+folder: a path mapping pointing into the library is not permission to delete
+the library.
+
+## The same release, twice
+
+Monarr will not grab a release it already has in flight. The check is at the
+moment of the grab — not only in the automation passes that precede it — so
+two overlapping passes, an instant re-search after a failure, and the button
+in the UI all land on the same answer: the existing download's row, not a
+second copy of 90 GB. Titles are compared with the separators folded, because
+`True.Lies-HDS` and `True Lies HDS` are one release and indexers disagree
+about punctuation.
+
+Replacement is bounded too. When a download fails, Monarr searches for a
+replacement immediately — that is what you want the first time and the second
+time. After **three failed grabs for the same want inside twelve hours** it
+stops, records `regrab_capped`, and leaves the item wanted. Five releases of
+one movie in ten hours is not persistence; it is a loop with your bandwidth
+as its budget. A manual grab is never capped.
+
 ## Interactive search
 
 Every candidate is listed, including the ones monarr would decline, each with
@@ -386,6 +412,31 @@ A **manual** import is never blocked by the quality profile: you pointed at
 the folder and pressed Import, and that is the decision. It still only
 *replaces* an existing file when the new one actually outranks it — otherwise
 both stay and you choose.
+
+### An import that ran out of disk
+
+An import that stops because the destination cannot take the bytes — a full
+volume, a mount that went away — is now **failed**, not "mostly fine". It used
+to be neither: the copy failed per file, the loop carried on, and because some
+files had landed the import reported success, cleaned up the payload, and said
+nothing. A season pack would import its first half, the second half would stay
+listed as missing, and the next backlog pass would grab the same pack again —
+which is how a download folder reaches a terabyte.
+
+What happens now:
+
+- the import stops at the first out-of-space error rather than repeating it
+  once per remaining file
+- the download is marked failed, with `import stopped: N of M files placed`,
+  and the files that did land stay in the library
+- the payload is **not** cleaned up — the half that is missing still needs it
+- a `downloads.import-retry` task retries every 15 minutes, up to six times,
+  and finishes the job the moment there is room. Nobody has to notice.
+
+The retry is deliberately narrow. Only environmental failures repeat — a full
+disk, a read-only mount, a mount that vanished. An import that failed because
+monarr could not parse the payload fails the same way forever, so it is left
+for a person.
 
 ## Reading the quality row
 

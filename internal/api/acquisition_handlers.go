@@ -1391,3 +1391,43 @@ func (s *Server) ListTransfers(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// ListHistory implements GET /history — the per-release timeline.
+//
+// Monarr has written these events since the beginning and shown them
+// nowhere: `ListHistory` had no caller outside its own package. That is
+// how five consecutive failed grabs of one movie in ten hours, and two
+// grabs of the same NZB six minutes apart, looked like a quiet evening.
+// The rows were always there; this is the part that hands them over.
+func (s *Server) ListHistory(w http.ResponseWriter, r *http.Request, params apigen.ListHistoryParams) {
+	rows, err := s.deps.Acquisition.History(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	limit := 100
+	if params.Limit != nil && *params.Limit > 0 {
+		limit = *params.Limit
+	}
+	out := make([]apigen.HistoryEvent, 0, min(limit, len(rows)))
+	for _, e := range rows {
+		if params.MediaItemId != nil && e.MediaItemID != *params.MediaItemId {
+			continue
+		}
+		if len(out) >= limit {
+			break
+		}
+		ev := apigen.HistoryEvent{
+			Ts: e.At, Type: e.Type,
+			MediaItemId: e.MediaItemID, ReleaseTitle: e.ReleaseTitle,
+		}
+		// Recorded as JSON and handed over as JSON. A detail monarr could
+		// not parse is still a detail worth reading.
+		var data map[string]any
+		if len(e.Data) > 0 && json.Unmarshal([]byte(e.Data), &data) == nil {
+			ev.Data = &data
+		}
+		out = append(out, ev)
+	}
+	writeJSON(w, http.StatusOK, out)
+}

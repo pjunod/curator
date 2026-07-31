@@ -52,6 +52,10 @@ type fakeClient struct {
 	// client at all — which is what the Connections panel and the contact
 	// clock actually report on.
 	polls int
+	// removeErr makes the client refuse to delete a payload — the case the
+	// field produced, where monarr imported, asked, was told no, and left
+	// 90 GB in the completed folder forever.
+	removeErr error
 }
 
 type removeCall struct {
@@ -75,7 +79,7 @@ func (f *fakeClient) Remove(ctx context.Context, h ports.Handle, del bool) error
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removed = append(f.removed, removeCall{Handle: h, DeleteData: del})
-	return nil
+	return f.removeErr
 }
 func (f *fakeClient) Test(ctx context.Context) error { return nil }
 

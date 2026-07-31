@@ -158,6 +158,13 @@ stopped. Common cases:
 - `no media files in …` — the path is visible but holds nothing importable
   (wrong folder, or an archive Monarr doesn't unpack). Point a **Manual
   import** at the right folder.
+- `import stopped: N of M files placed …` — the destination could not take
+  the bytes (a full volume, a mount gone read-only). The files that landed
+  are in the library; the payload is deliberately left alone, and the
+  `downloads.import-retry` task finishes the job by itself once there is
+  room (every 15 minutes, up to six attempts). Free space is the only
+  action needed. This is the one import failure Monarr retries on its own:
+  everything else fails identically however many times it is repeated.
 
 Every failed row offers **Retry** (re-run the import once the underlying
 problem is fixed, using the same path), **Manual import** (browse to the
@@ -165,6 +172,21 @@ real files and pick the target title/copy yourself), **Blocklist** (declare
 the release bad — blocklists it and searches a replacement), and **Remove**.
 Nothing is auto-blocklisted on an import failure, so a config problem never
 churns through replacements behind your back.
+
+### Seeing what happened to a release
+
+`GET /api/v1/history` returns the per-release timeline — grabbed, the
+client's outcome, the import result, and every stop in between — newest
+first, filterable with `?mediaItemId=`. Monarr has recorded these events
+since the beginning and, until now, showed them to no one, which is how
+five consecutive failed grabs of one movie inside ten hours looked, from
+the outside, like a quiet evening.
+
+Event types: `grabbed`, `failed`, `imported`, `import_failed`,
+`import_blocked` (ran out of disk part-way), `import_retried`,
+`regrab_capped` (a replacement search that was deliberately not made),
+`short_delivery`, `payload_removed`, `quality_mismatch`,
+`implausible_file`, `file_removed`.
 
 ## Quality profiles
 

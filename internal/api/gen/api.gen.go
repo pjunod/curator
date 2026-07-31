@@ -949,6 +949,18 @@ type HealthReport struct {
 // HealthStatus defines model for HealthStatus.
 type HealthStatus string
 
+// HistoryEvent defines model for HistoryEvent.
+type HistoryEvent struct {
+	// Data Event-specific detail, as recorded.
+	Data         *map[string]interface{} `json:"data,omitempty"`
+	MediaItemId  int64                   `json:"mediaItemId"`
+	ReleaseTitle string                  `json:"releaseTitle"`
+	Ts           time.Time               `json:"ts"`
+
+	// Type grabbed | failed | imported | import_failed | import_blocked | import_retried | regrab_capped | short_delivery | payload_removed | file_removed | quality_mismatch | implausible_file.
+	Type string `json:"type"`
+}
+
 // IgnoredPath defines model for IgnoredPath.
 type IgnoredPath struct {
 	IgnoredAt time.Time `json:"ignoredAt"`
@@ -1744,6 +1756,13 @@ type BrowseFilesystemParams struct {
 	Path *string `form:"path,omitempty" json:"path,omitempty"`
 }
 
+// ListHistoryParams defines parameters for ListHistory.
+type ListHistoryParams struct {
+	// MediaItemId Only this item's events. Omitted = everything, newest first.
+	MediaItemId *int64 `form:"mediaItemId,omitempty" json:"mediaItemId,omitempty"`
+	Limit       *int   `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ScanImportPathParams defines parameters for ScanImportPath.
 type ScanImportPathParams struct {
 	Path string `form:"path" json:"path"`
@@ -2018,6 +2037,9 @@ type ServerInterface interface {
 	// GetHealth Run health checks and report results
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// ListHistory What happened to a release — grab, client outcome, import result
+	// (GET /history)
+	ListHistory(w http.ResponseWriter, r *http.Request, params ListHistoryParams)
 	// ManualImport Import files from a path into a chosen item/copy
 	// (POST /import/manual)
 	ManualImport(w http.ResponseWriter, r *http.Request)
@@ -2647,6 +2669,52 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListHistory operation middleware
+func (siw *ServerInterfaceWrapper) ListHistory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListHistoryParams
+
+	// ------------- Optional query parameter "mediaItemId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "mediaItemId", r.URL.Query(), &params.MediaItemId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "mediaItemId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mediaItemId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListHistory(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4423,6 +4491,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/releases", wrapper.SearchReleases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/grab", wrapper.GrabRelease)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue", wrapper.ListQueue)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/blocklist", wrapper.BlocklistQueueItem)

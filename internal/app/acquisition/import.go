@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -36,6 +37,10 @@ type FileOutcome struct {
 	Upgrade  bool   `json:"upgrade,omitempty"`
 	Quality  string `json:"quality,omitempty"`
 	Reason   string `json:"reason,omitempty"`
+	// Retryable marks a file that failed on the environment (a full disk,
+	// a mount that went away) rather than on its own merits — worth trying
+	// again unchanged, unlike a quality decision.
+	Retryable bool `json:"retryable,omitempty"`
 	// Path is where the file landed — absolute, as Monarr sees it. Empty
 	// when the file was skipped.
 	Path string `json:"path,omitempty"`
@@ -46,7 +51,20 @@ type ImportResult struct {
 	Imported int
 	Upgraded bool
 	Files    []FileOutcome
+	// Blocked is set when the import stopped on the environment rather
+	// than finishing: the remaining files were never attempted, and the
+	// download must not be treated as done.
+	Blocked error
 }
+
+// ErrImportBlocked marks an import that stopped on something about the
+// machine — a full volume, a mount that went away — rather than on the
+// payload. The retry sweep looks for exactly this.
+var ErrImportBlocked = errors.New("import stopped")
+
+// HistoryImportBlocked records a half-finished import, so "where did the
+// second half of that season go" has an answer that is not the server log.
+const HistoryImportBlocked = "import_blocked"
 
 // importedEvent assembles the ImportCompleted for one finished payload.
 //
@@ -273,6 +291,19 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		}
 		if err != nil {
 			outcome.Reason = err.Error()
+			if retryableIO(err) {
+				// Not a verdict on the file — a condition of the machine.
+				// Stop here: every remaining file would fail the same way,
+				// and half a season pack imported with no error anywhere is
+				// how a library ends up listing episodes it is sitting on.
+				outcome.Retryable = true
+				result.Files = append(result.Files, outcome)
+				result.Blocked = err
+				s.log.Error("import: stopped — the destination cannot take the files",
+					"release", dl.ReleaseTitle, "file", outcome.Name, "err", err,
+					"placed", result.Imported, "of", len(videos))
+				break
+			}
 			s.log.Warn("import: file skipped", "file", outcome.Name, "reason", err)
 		} else {
 			outcome.Imported, outcome.Upgrade = true, put.Upgrade
@@ -281,6 +312,23 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 			result.Upgraded = result.Upgraded || put.Upgrade
 		}
 		result.Files = append(result.Files, outcome)
+	}
+	// The environment first: an import that stopped because the destination
+	// could not take the bytes is a FAILED import, whether it placed none
+	// of the files or all but one. Files that did land stay in the library
+	// and are recorded here; the download is surfaced as failed so the
+	// retry sweep finishes it once there is room, and so the payload is not
+	// cleaned up out from under the half that is missing. Checked BEFORE
+	// "no files imported", or a payload whose very first file hit a full
+	// disk reads as an unparseable release and is never retried.
+	if result.Blocked != nil {
+		_ = s.db.AddHistory(ctx, HistoryImportBlocked, item.ID, dl.ReleaseTitle,
+			map[string]any{"placed": result.Imported, "of": len(videos),
+				"reason": result.Blocked.Error()})
+		s.log.Info("imported (partial)", "item", item.Title, "files", result.Imported,
+			"remaining", len(videos)-result.Imported)
+		return result, fmt.Errorf("%w: %d of %d files placed from %s before it stopped: %v",
+			ErrImportBlocked, result.Imported, len(videos), savePath, result.Blocked)
 	}
 	if result.Imported == 0 {
 		// Say WHY, per file. This is the message a user actually reads when
@@ -427,7 +475,7 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 		"Quality Full": q.Display(),
 	})
 	dest := filepath.Join(scope.Dest, naming.SafeFileName(name)+filepath.Ext(src))
-	if err := place(src, dest, transfers.Progress(ctx)); err != nil {
+	if err := placeFile(src, dest, transfers.Progress(ctx)); err != nil {
 		return placement{}, err
 	}
 	if upgrade {
@@ -466,7 +514,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 
 	dest := filepath.Join(scope.Dest,
 		naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
-	if err := place(src, dest, transfers.Progress(ctx)); err != nil {
+	if err := placeFile(src, dest, transfers.Progress(ctx)); err != nil {
 		return placement{}, err
 	}
 	if upgrade {
@@ -554,7 +602,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	dest := filepath.Join(scope.Dest,
 		naming.Render(naming.SeasonFolderTemplate, map[string]string{"season": strconv.Itoa(season)}),
 		naming.SafeFileName(base)+filepath.Ext(src))
-	if err := place(src, dest, transfers.Progress(ctx)); err != nil {
+	if err := placeFile(src, dest, transfers.Progress(ctx)); err != nil {
 		return placement{}, err
 	}
 	if upgrade {
@@ -638,6 +686,13 @@ func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem
 // download client's copy too. That is the intended trade and the same one
 // upstream makes: a seeding file that is readable is strictly better than a
 // library file that is not.
+// placeFile is `place`, behind a seam. The one thing a test cannot
+// otherwise produce on demand is a destination that refuses the bytes —
+// running as root makes a permission-denied fixture pass, and nobody can
+// fill a volume in a unit test — and "what happens when the copy fails
+// halfway" is the whole defect this package now guards against.
+var placeFile = place
+
 func place(src, dest string, onBytes func(done, total int64)) error {
 	dir := filepath.Dir(dest)
 	// Record which folders do not exist yet, so the chmod below touches only

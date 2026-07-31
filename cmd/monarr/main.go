@@ -397,6 +397,17 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}); err != nil {
 		return err
 	}
+	// Import retry: an import that stopped because the destination was full
+	// finishes itself once there is room. Without this the payload sits in
+	// `failed` while the item shows as missing, and automation grabs the
+	// same release again — the loop, with monarr's name on it.
+	if err := sched.Register(scheduler.Task{
+		Name:     acquisition.JobImportRetry,
+		Interval: acquisition.ImportRetryInterval,
+		Fn:       acq.RetryBlockedImports,
+	}); err != nil {
+		return err
+	}
 	if err := sched.Register(scheduler.Task{
 		Name:     "importlists.sync",
 		Interval: 12 * time.Hour,
