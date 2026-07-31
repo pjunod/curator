@@ -2636,3 +2636,45 @@ a.pill-info:hover {
     align-self: center;
   }
 }
+
+/* Activity: the toolbar, and the collapsed history groups.
+ *
+ * The page used to be one table that grew for the life of the install. Now
+ * the moving work is a table and everything terminal is a heading with a
+ * count you open on purpose — so these rules are mostly about making a
+ * closed group look like a closed group rather than an empty panel. */
+.activity-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.activity-toolbar input[type='search'] {
+  min-width: 260px;
+  flex: 0 1 320px;
+}
+
+.activity-group {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.activity-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.activity-group-head > button[aria-expanded] {
+  font-weight: 600;
+}
+
+.confirm-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}

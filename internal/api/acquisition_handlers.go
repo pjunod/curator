@@ -543,8 +543,12 @@ func (s *Server) GrabRelease(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListQueue implements GET /queue.
-func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.deps.Acquisition.Queue(r.Context())
+//
+// Unfiltered it is what it always was: the last hundred rows, every state.
+// With a filter it is one page of one group — which is what the Activity
+// page asks for now, because "Finished" was a section that only ever grew.
+func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen.ListQueueParams) {
+	rows, err := s.queueRows(r.Context(), params)
 	if err != nil {
 		s.acqErr(w, err)
 		return
@@ -1392,6 +1396,61 @@ func (s *Server) ListTransfers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// queueRows reads the page the parameters describe. No parameters at all
+// keeps the old behaviour exactly, so every existing consumer is untouched.
+func (s *Server) queueRows(ctx context.Context, params apigen.ListQueueParams) ([]sqlite.Download, error) {
+	search := ""
+	if params.Q != nil {
+		search = strings.TrimSpace(*params.Q)
+	}
+	if params.Filter == nil && search == "" && params.Limit == nil && params.Offset == nil {
+		return s.deps.Acquisition.Queue(ctx)
+	}
+	limit, offset := 100, 0
+	if params.Limit != nil && *params.Limit > 0 {
+		limit = min(*params.Limit, 500)
+	}
+	if params.Offset != nil && *params.Offset > 0 {
+		offset = *params.Offset
+	}
+	var filter sqlite.QueueFilter
+	if params.Filter != nil {
+		filter = sqlite.QueueFilter(*params.Filter)
+	}
+	return s.deps.Acquisition.QueuePage(ctx, filter, search, limit, offset)
+}
+
+// QueueSummary implements GET /queue/summary — the section counts, without
+// the sections.
+func (s *Server) QueueSummary(w http.ResponseWriter, r *http.Request) {
+	counts, err := s.deps.Acquisition.QueueCounts(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := apigen.QueueSummary{Counts: map[string]int{}}
+	for state, n := range counts {
+		out.Counts[state] = int(n)
+		out.Total += int(n)
+		if state != "imported" && state != "failed" {
+			out.Active += int(n)
+		}
+	}
+	days := s.deps.Acquisition.RetentionDays(r.Context())
+	out.RetentionDays = &days
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ClearFinishedQueue implements DELETE /queue/finished.
+func (s *Server) ClearFinishedQueue(w http.ResponseWriter, r *http.Request) {
+	n, err := s.deps.Acquisition.ClearFinished(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, apigen.ClearedCount{Cleared: int(n)})
+}
+
 // ListHistory implements GET /history — the per-release timeline.
 //
 // Monarr has written these events since the beginning and shown them
@@ -1400,23 +1459,24 @@ func (s *Server) ListTransfers(w http.ResponseWriter, r *http.Request) {
 // grabs of the same NZB six minutes apart, looked like a quiet evening.
 // The rows were always there; this is the part that hands them over.
 func (s *Server) ListHistory(w http.ResponseWriter, r *http.Request, params apigen.ListHistoryParams) {
-	rows, err := s.deps.Acquisition.History(r.Context())
+	limit, offset := 100, 0
+	if params.Limit != nil && *params.Limit > 0 {
+		limit = min(*params.Limit, 500)
+	}
+	if params.Offset != nil && *params.Offset > 0 {
+		offset = *params.Offset
+	}
+	var item int64
+	if params.MediaItemId != nil {
+		item = *params.MediaItemId
+	}
+	rows, err := s.deps.Acquisition.HistoryPage(r.Context(), item, limit, offset)
 	if err != nil {
 		s.acqErr(w, err)
 		return
 	}
-	limit := 100
-	if params.Limit != nil && *params.Limit > 0 {
-		limit = *params.Limit
-	}
-	out := make([]apigen.HistoryEvent, 0, min(limit, len(rows)))
+	out := make([]apigen.HistoryEvent, 0, len(rows))
 	for _, e := range rows {
-		if params.MediaItemId != nil && e.MediaItemID != *params.MediaItemId {
-			continue
-		}
-		if len(out) >= limit {
-			break
-		}
 		ev := apigen.HistoryEvent{
 			Ts: e.At, Type: e.Type,
 			MediaItemId: e.MediaItemID, ReleaseTitle: e.ReleaseTitle,

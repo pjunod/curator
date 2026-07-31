@@ -50,6 +50,7 @@ export function SettingsPage() {
   const [newRoot, setNewRoot] = useState('')
   const [newRootKind, setNewRootKind] = useState<RootKind>('movie')
   const [skipPatterns, setSkipPatterns] = useState<string | null>(null)
+  const [retentionDays, setRetentionDays] = useState<number | null>(null)
   const [adoptSummary, setAdoptSummary] = useState<string | null>(null)
   const [reviewOpen, setReviewOpen] = useState(false)
 
@@ -102,6 +103,10 @@ export function SettingsPage() {
   })
   const saveSkips = useMutation({
     mutationFn: () => updateSettings({ scanSkipPatterns: skipPatterns ?? '' }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
+  const saveRetention = useMutation({
+    mutationFn: (days: number) => updateSettings({ activityRetentionDays: days }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['settings'] }),
   })
   const adopt = useMutation({
@@ -478,6 +483,32 @@ export function SettingsPage() {
             Save skip patterns
           </button>
           {saveSkips.isSuccess && <span className="ok-text">Saved — applies on the next scan.</span>}
+        </div>
+
+        <h3 style={{ marginTop: 18 }}>Activity retention</h3>
+        <p className="muted">
+          How long finished and failed downloads, and the events behind them, are kept before
+          the daily sweep ages them out. Anything still moving is never touched, however old it
+          looks — a download stuck for six weeks is something to look at, not something to hide.
+          Set 0 to keep everything.
+        </p>
+        <div className="form-row">
+          <input
+            type="number"
+            min={0}
+            style={{ width: 110 }}
+            aria-label="Activity retention in days"
+            value={retentionDays ?? settings.data?.activityRetentionDays ?? 30}
+            onChange={(e) => setRetentionDays(Number(e.target.value))}
+          />
+          <span className="muted">days</span>
+          <button
+            disabled={retentionDays === null || saveRetention.isPending}
+            onClick={() => saveRetention.mutate(retentionDays ?? 30)}
+          >
+            Save retention
+          </button>
+          {saveRetention.isSuccess && <span className="ok-text">Saved.</span>}
         </div>
       </section>
 

@@ -1174,7 +1174,33 @@ paths:
   /queue:
     get:
       operationId: listQueue
-      summary: Recent downloads (all states)
+      summary: Recent downloads, filtered and paged
+      description: >
+        Without parameters this is the last 100 downloads in every state,
+        which is what it has always been. With them it is one page of one
+        group: `filter=active` is everything still moving or awaiting a
+        decision (the only view that has to be complete), `imported` and
+        `failed` are history and are meant to be paged.
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, imported, failed]
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive substring of the release title.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 100, maximum: 500 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
       responses:
         "200":
           description: Queue.
@@ -1184,6 +1210,36 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/QueueItem"
+
+  /queue/summary:
+    get:
+      operationId: queueSummary
+      summary: How many downloads are in each state
+      description: >
+        The section counts, without the rows. A collapsed "Finished (1,284)"
+        should cost one aggregate, not 1,284 rows over the wire.
+      responses:
+        "200":
+          description: Counts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueueSummary" }
+
+  /queue/finished:
+    delete:
+      operationId: clearFinishedQueue
+      summary: Clear the finished rows
+      description: >
+        Removes every imported row from the queue. The rows only - an
+        imported download's row is a receipt, and the files it describes are
+        in the library under the library's own records. Nothing here reads a
+        path, asks a download client, or touches a file.
+      responses:
+        "200":
+          description: How many rows were cleared.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClearedCount" }
 
   /history:
     get:
@@ -1204,6 +1260,10 @@ paths:
           in: query
           required: false
           schema: { type: integer, default: 100, maximum: 500 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
       responses:
         "200":
           description: The timeline.
@@ -3642,6 +3702,30 @@ components:
           additionalProperties: true
           description: Event-specific detail, as recorded.
 
+    QueueSummary:
+      type: object
+      required: [total, active, counts]
+      properties:
+        total: { type: integer }
+        active:
+          type: integer
+          description: Rows in a non-terminal state - what is actually moving.
+        counts:
+          type: object
+          additionalProperties: { type: integer }
+          description: Row count per state, keyed by the state string.
+        retentionDays:
+          type: integer
+          description: >
+            The window terminal rows and history events age out after.
+            0 = keep everything.
+
+    ClearedCount:
+      type: object
+      required: [cleared]
+      properties:
+        cleared: { type: integer }
+
     QueueItem:
       type: object
       required: [id, mediaItemId, title, state, progress, protocol, quality, addedAt]
@@ -3753,6 +3837,11 @@ components:
             User skip patterns, one per line, applied on top of the built-in
             defaults during the root-folder sweep. Blank lines and # comments
             are ignored.
+        activityRetentionDays:
+          type: integer
+          description: >
+            How long finished and failed downloads, and history events, are
+            kept before the daily sweep ages them out. 0 keeps everything.
         defaultProfiles:
           $ref: '#/components/schemas/DefaultProfiles'
 
@@ -3778,6 +3867,12 @@ components:
     SettingsUpdate:
       type: object
       properties:
+        activityRetentionDays:
+          type: integer
+          minimum: 0
+          description: >
+            Days to keep finished/failed downloads and history events.
+            0 keeps everything.
         tmdbApiKey:
           type: string
         omdbApiKey:

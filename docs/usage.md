@@ -487,6 +487,35 @@ or **shares the item's folder** — filenames carry the quality, and
 Jellyfin/Plex group same-folder versions as one entry. Removing a copy
 drops its records only; files on disk stay.
 
+## Activity, and keeping it finite
+
+The Activity page leads with what is **moving**: the in-flight sections
+(Downloading, Verifying, Repairing, Copying to library…) are always shown
+whole, because a partly-hidden answer to "what is happening" is not an
+answer.
+
+Everything terminal is history, and history is collapsed:
+
+- **Finished** and **Failed** are headings with a count. Open one and it
+  loads 25 rows at a time — "Show 25 more" goes further back.
+- **Filter by release title** narrows every group at once.
+- **Clear finished** removes the finished rows. The *rows*: an imported
+  download's row is a receipt, and the files are in your library under the
+  library's own records. Nothing is deleted from disk, from the library, or
+  from the download client. It asks once before it does it.
+- A single row can be dismissed with **Remove**, which has always been
+  there and has always meant the row only (there is a separate option for
+  telling the client to drop the download too).
+
+Underneath, **Activity retention** (Settings → Library) ages out finished
+and failed rows, and the events behind them, after a number of days —
+30 by default, `0` to keep everything. A daily task does the sweep. It only
+ever touches terminal rows: a download stuck in "grabbed" for six weeks is
+something to look at, not something to hide, so it stays no matter how old
+it is. Before this, nothing was ever deleted: every grab monarr had ever
+made was still in the table, and the page rendered the most recent hundred
+of them forever.
+
 ## Activity, calendar, wanted
 
 - **Activity** shows the download queue with live progress; completed

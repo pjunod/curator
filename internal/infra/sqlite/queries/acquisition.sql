@@ -53,6 +53,41 @@ ORDER BY added_at DESC;
 -- name: ListRecentDownloads :many
 SELECT * FROM downloads ORDER BY added_at DESC LIMIT 100;
 
+-- name: ListQueuePage :many
+-- One page of the queue, filtered.
+--
+-- `filter` is a group, not a raw state: 'active' is everything still moving
+-- or awaiting a decision, and it is the only view that has to be complete -
+-- Finished and Failed are history and get paged. '' means everything.
+SELECT * FROM downloads
+WHERE (? = ''
+    OR (? = 'active' AND state NOT IN ('imported', 'failed'))
+    OR state = ?)
+  AND (? = '' OR lower(release_title) LIKE '%' || lower(?) || '%')
+ORDER BY added_at DESC
+LIMIT ? OFFSET ?;
+
+-- name: CountDownloadsByState :many
+-- The section counts, without shipping the rows they count.
+SELECT state, COUNT(*) AS n FROM downloads GROUP BY state;
+
+-- name: DeleteImportedDownloads :execrows
+-- "Clear finished": the ROWS only. Nothing here touches a file, a library
+-- record, or the download client - an imported row is a receipt.
+DELETE FROM downloads WHERE state = 'imported';
+
+-- name: DeleteTerminalDownloadsBefore :execrows
+-- Retention. Terminal rows only: whatever is still moving is never swept out
+-- from under itself, however old it looks.
+DELETE FROM downloads
+WHERE state IN ('imported', 'failed') AND updated_at < ?;
+
+-- name: DeleteHistoryBefore :execrows
+DELETE FROM history_events WHERE ts < ?;
+
+-- name: CountHistory :one
+SELECT COUNT(*) FROM history_events;
+
 -- name: GetDownload :one
 SELECT * FROM downloads WHERE id = ?;
 
@@ -96,6 +131,20 @@ VALUES (?, ?, ?, ?, ?);
 
 -- name: ListHistory :many
 SELECT * FROM history_events ORDER BY ts DESC LIMIT 200;
+
+-- name: ListHistoryPage :many
+-- The per-release timeline, paged. Every item; the per-item view is its own
+-- query rather than a nullable filter - two plain statements beat one clever
+-- one that a reader has to evaluate in their head.
+SELECT * FROM history_events
+ORDER BY ts DESC
+LIMIT ? OFFSET ?;
+
+-- name: ListHistoryPageForItem :many
+SELECT * FROM history_events
+WHERE media_item_id = ?
+ORDER BY ts DESC
+LIMIT ? OFFSET ?;
 
 -- name: SetFileMediaInfo :exec
 -- The measured record and where the recorded quality came from (ADR 0013 section 3).

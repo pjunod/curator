@@ -10,7 +10,8 @@ test.describe.configure({ mode: 'serial' })
 test('queue rows stay one or two lines tall', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto('/activity')
-  const table = page.locator('.queue-table')
+  await page.getByTestId('toggle-imported').click() // finished rows start collapsed
+  const table = page.locator('.queue-table').last()
   await expect(table).toBeVisible()
 
   const rows = table.locator('tbody tr:not(.handoff-row)')
@@ -30,6 +31,7 @@ test('queue rows stay one or two lines tall', async ({ page }) => {
 test('queue columns do not overlap each other', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto('/activity')
+  await page.getByTestId('toggle-imported').click() // finished rows start collapsed
   const firstRow = page.locator('.queue-table tbody tr:not(.handoff-row)').first()
   await expect(firstRow).toBeVisible()
 

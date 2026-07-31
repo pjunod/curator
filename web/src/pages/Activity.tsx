@@ -7,11 +7,13 @@ import {
   type ScannedFile,
   type Stage,
   blocklistQueueItem,
+  clearFinishedQueue,
   fmtBytes,
   fmtRelative,
   getLibrary,
   getLibraryItem,
-  getQueue,
+  getQueuePage,
+  getQueueSummary,
   importQueueItem,
   manualImport,
   removeQueueItem,
@@ -181,18 +183,70 @@ function clock(ms: number): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
+// How many terminal rows one "show more" adds. Small on purpose: the point
+// of this page is what is happening, and the history behind it is opened
+// deliberately, a screenful at a time.
+const PAGE = 25
+
+// The groups, in the order they matter. Active is never collapsed and never
+// paged — it is the answer to "what is happening", and an answer that is
+// partly hidden is not one. Finished and Failed are history: collapsed to a
+// count, opened when asked, and paged from there.
+const GROUPS = [
+  { key: 'imported' as const, label: 'Finished' },
+  { key: 'failed' as const, label: 'Failed' },
+]
+
 export function ActivityPage() {
   const qc = useQueryClient()
-  const queue = useQuery({ queryKey: ['queue'], queryFn: getQueue, refetchInterval: 4_000 })
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [manual, setManual] = useState<Partial<ManualImportRequest> | null>(null)
+  const [search, setSearch] = useState('')
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  const [shown, setShown] = useState<Record<string, number>>({ imported: PAGE, failed: PAGE })
+  const [confirmClear, setConfirmClear] = useState(false)
 
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ['queue'] })
+  // Only the active list polls. Finished and Failed do not change on their
+  // own — something has to finish or fail first, and that moves the counts,
+  // which is what tells this page to look again.
+  const summary = useQuery({
+    queryKey: ['queue-summary'],
+    queryFn: getQueueSummary,
+    refetchInterval: 4_000,
+  })
+  const active = useQuery({
+    queryKey: ['queue', 'active', search],
+    queryFn: () => getQueuePage('active', search, 200),
+    refetchInterval: 4_000,
+  })
+  const finished = useQuery({
+    queryKey: ['queue', 'imported', search, shown.imported],
+    queryFn: () => getQueuePage('imported', search, shown.imported),
+    enabled: !!open.imported,
+  })
+  const failed = useQuery({
+    queryKey: ['queue', 'failed', search, shown.failed],
+    queryFn: () => getQueuePage('failed', search, shown.failed),
+    enabled: !!open.failed,
+  })
+
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ['queue'] })
+    void qc.invalidateQueries({ queryKey: ['queue-summary'] })
+  }
   const remove = useMutation({ mutationFn: (id: number) => removeQueueItem(id, false), onSettled: invalidate })
   const doImport = useMutation({ mutationFn: (id: number) => importQueueItem(id), onSettled: invalidate })
   const doBlocklist = useMutation({ mutationFn: (id: number) => blocklistQueueItem(id), onSettled: invalidate })
+  const clearFinished = useMutation({
+    mutationFn: clearFinishedQueue,
+    onSettled: () => {
+      setConfirmClear(false)
+      invalidate()
+    },
+  })
 
-  const busy = remove.isPending || doImport.isPending || doBlocklist.isPending
+  const busy =
+    remove.isPending || doImport.isPending || doBlocklist.isPending || clearFinished.isPending
   const toggle = (id: number) =>
     setExpanded((prev) => {
       const next = new Set(prev)
@@ -201,53 +255,97 @@ export function ActivityPage() {
       return next
     })
 
-  const rows = queue.data ?? []
+  const counts = summary.data?.counts ?? {}
+  const activeRows = active.data ?? []
+  const groupRows: Record<string, QueueItem[]> = {
+    imported: finished.data ?? [],
+    failed: failed.data ?? [],
+  }
+  const retention = summary.data?.retentionDays
+  const nothingAtAll = (summary.data?.total ?? 0) === 0
+
+  const rowProps = (d: QueueItem) => ({
+    d,
+    open: expanded.has(d.id),
+    busy,
+    onToggle: () => toggle(d.id),
+    onImport: () => doImport.mutate(d.id),
+    onBlocklist: () => doBlocklist.mutate(d.id),
+    onRemove: () => remove.mutate(d.id),
+    onManual: () =>
+      setManual({
+        path: d.importPath || d.savePath || '',
+        mediaItemId: d.mediaItemId,
+        copyId: d.copyId,
+        downloadId: d.id,
+      }),
+  })
+
+  const columns = (
+    <>
+      <colgroup>
+        <col className="col-toggle" />
+        <col className="col-release" />
+        <col className="col-quality" />
+        <col className="col-state" />
+        <col className="col-progress" />
+        <col className="col-added" />
+        <col className="col-actions" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Release</th>
+          <th>Quality</th>
+          <th>Doing it</th>
+          <th>Progress</th>
+          <th>Added</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+    </>
+  )
 
   return (
     <>
       <header className="page-head">
         <h1>Activity</h1>
-        <button
-          onClick={() => setManual(manual ? null : {})}
-          aria-expanded={!!manual}
-        >
+        <button onClick={() => setManual(manual ? null : {})} aria-expanded={!!manual}>
           {manual ? 'Close manual import' : 'Manual import'}
         </button>
       </header>
 
       {manual && <ManualImportPanel prefill={manual} onDone={() => { setManual(null); invalidate() }} />}
 
+      <div className="activity-toolbar">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter by release title"
+          aria-label="Filter by release title"
+        />
+        <span className="muted" data-testid="activity-counts">
+          {summary.data?.active ?? 0} active · {counts.imported ?? 0} finished ·{' '}
+          {counts.failed ?? 0} failed
+        </span>
+      </div>
+
+      {/* ACTIVE — always whole, never paged. */}
       <section className="panel">
-        {rows.length === 0 && (
-          <p className="muted">Nothing in the queue. Grab something from a title's search.</p>
+        {activeRows.length === 0 && (
+          <p className="muted">
+            {nothingAtAll
+              ? 'Nothing in the queue. Grab something from a title\'s search.'
+              : search
+                ? 'Nothing moving matches that.'
+                : 'Nothing moving right now.'}
+          </p>
         )}
-        {rows.length > 0 && (
+        {activeRows.length > 0 && (
           <table className="queue-table">
-            {/* An explicit column layout. Without one the release title takes
-                whatever width it likes and squeezes the actions column until
-                every button wraps onto its own line — which is what made these
-                rows six lines tall. */}
-            <colgroup>
-              <col className="col-toggle" />
-              <col className="col-release" />
-              <col className="col-quality" />
-              <col className="col-state" />
-              <col className="col-progress" />
-              <col className="col-added" />
-              <col className="col-actions" />
-            </colgroup>
-            <thead>
-              <tr>
-                <th></th>
-                <th>Release</th>
-                <th>Quality</th>
-                <th>Doing it</th>
-                <th>Progress</th>
-                <th>Added</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            {sections(rows).map((section) => (
+            {columns}
+            {sections(activeRows).map((section) => (
               <tbody key={section.key}>
                 <tr className="section-row">
                   <td colSpan={7}>
@@ -258,30 +356,85 @@ export function ActivityPage() {
                   </td>
                 </tr>
                 {section.rows.map((d) => (
-                  <RowGroup
-                    key={d.id}
-                    d={d}
-                    open={expanded.has(d.id)}
-                    busy={busy}
-                    onToggle={() => toggle(d.id)}
-                    onImport={() => doImport.mutate(d.id)}
-                    onBlocklist={() => doBlocklist.mutate(d.id)}
-                    onRemove={() => remove.mutate(d.id)}
-                    onManual={() =>
-                      setManual({
-                        path: d.importPath || d.savePath || '',
-                        mediaItemId: d.mediaItemId,
-                        copyId: d.copyId,
-                        downloadId: d.id,
-                      })
-                    }
-                  />
+                  <RowGroup key={d.id} {...rowProps(d)} />
                 ))}
               </tbody>
             ))}
           </table>
         )}
       </section>
+
+      {/* FINISHED and FAILED — collapsed to a count. This is the part that
+          used to grow without limit: every receipt monarr ever wrote, in one
+          table, forever. */}
+      {GROUPS.map((group) => {
+        const total = counts[group.key] ?? 0
+        const rows = groupRows[group.key]
+        const isOpen = !!open[group.key]
+        return (
+          <section className="panel activity-group" key={group.key}>
+            <div className="activity-group-head">
+              <button
+                className="link-button"
+                aria-expanded={isOpen}
+                data-testid={`toggle-${group.key}`}
+                onClick={() => setOpen((p) => ({ ...p, [group.key]: !p[group.key] }))}
+              >
+                {isOpen ? '▾' : '▸'} {group.label}
+                <span className="section-count">{total}</span>
+              </button>
+              {group.key === 'imported' && total > 0 && (
+                confirmClear ? (
+                  <span className="confirm-inline">
+                    Clear {total} finished row{total === 1 ? '' : 's'}?
+                    <button disabled={busy} onClick={() => clearFinished.mutate()}>
+                      Yes, clear
+                    </button>
+                    <button className="link-button" onClick={() => setConfirmClear(false)}>
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="link-button"
+                    data-testid="clear-finished"
+                    onClick={() => setConfirmClear(true)}
+                  >
+                    Clear finished
+                  </button>
+                )
+              )}
+            </div>
+            {isOpen && (
+              <>
+                {rows.length === 0 && (
+                  <p className="muted">{search ? 'Nothing here matches that.' : 'Nothing here.'}</p>
+                )}
+                {rows.length > 0 && (
+                  <table className="queue-table">
+                    {columns}
+                    <tbody>
+                      {rows.map((d) => (
+                        <RowGroup key={d.id} {...rowProps(d)} />
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                {rows.length >= (shown[group.key] ?? PAGE) && (
+                  <button
+                    className="link-button"
+                    onClick={() =>
+                      setShown((p) => ({ ...p, [group.key]: (p[group.key] ?? PAGE) + PAGE }))
+                    }
+                  >
+                    Show {PAGE} more
+                  </button>
+                )}
+              </>
+            )}
+          </section>
+        )
+      })}
 
       <p className="muted" style={{ fontSize: 13 }}>
         Grouped by what each job is doing right now. Stages up to and including{' '}
@@ -290,6 +443,13 @@ export function ActivityPage() {
         push report a change within a second; the rest are reconciled by the 30s sweep (task{' '}
         <span className="mono">queue.refresh</span>). Expand a row for the handoff — every step from
         grab to import, and the exact paths Monarr used.
+        {typeof retention === 'number' && (
+          <>
+            {' '}
+            Finished and failed rows are kept for{' '}
+            {retention === 0 ? 'ever' : `${retention} days`} (Settings → Library).
+          </>
+        )}
       </p>
     </>
   )

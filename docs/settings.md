@@ -173,9 +173,20 @@ the release bad — blocklists it and searches a replacement), and **Remove**.
 Nothing is auto-blocklisted on an import failure, so a config problem never
 churns through replacements behind your back.
 
+### Activity retention
+
+How long finished and failed downloads — and the history events behind them
+— are kept before the daily `activity.retention` sweep ages them out.
+Default **30 days**; **0** keeps everything, which is a choice rather than
+the absence of one.
+
+Only terminal rows age out. Anything still moving or awaiting a decision is
+never swept, whatever its age: a download that has been stuck for six weeks
+is a thing to investigate, not litter.
+
 ### Seeing what happened to a release
 
-`GET /api/v1/history` returns the per-release timeline — grabbed, the
+`GET /api/v1/history?mediaItemId=&limit=&offset=` returns the per-release timeline — grabbed, the
 client's outcome, the import result, and every stop in between — newest
 first, filterable with `?mediaItemId=`. Monarr has recorded these events
 since the beginning and, until now, showed them to no one, which is how

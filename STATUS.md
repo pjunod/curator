@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-31 · v0.14.0 · The re-grab loop, monarr's half: M1–M4 fixed — an import that runs out of disk now fails visibly and retries itself, cleanup removes a payload the client would not, a release already in flight is never grabbed twice, replacement searches are bounded, and the per-release history is finally reachable over the API (§The re-grab loop). Previously, 2026-07-29 · v0.13.0 · Repo and module path are now `github.com/pjunod/monarr` — done while nothing outside the repo depends on the old path, which is the only time it is cheap (§Launch logistics, ADR 0001 amendment 2). Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.5%, past the 85% target, with the floor enforced by COVERAGE_MIN.** The new tests then paid for themselves: six real defects found and fixed, a permanent auth lockout among them, plus a `make coverage` whose number depended on build-cache state (§Defects the coverage work found). Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
+> **Snapshot 2026-07-31 · v0.15.0 · Activity is finite: retention sweep, paged/filtered queue endpoints, and a page that leads with what is moving and collapses the history behind it (§Activity). Previously, v0.14.0 · The re-grab loop, monarr's half: M1–M4 fixed — an import that runs out of disk now fails visibly and retries itself, cleanup removes a payload the client would not, a release already in flight is never grabbed twice, replacement searches are bounded, and the per-release history is finally reachable over the API (§The re-grab loop). Previously, 2026-07-29 · v0.13.0 · Repo and module path are now `github.com/pjunod/monarr` — done while nothing outside the repo depends on the old path, which is the only time it is cheap (§Launch logistics, ADR 0001 amendment 2). Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.5%, past the 85% target, with the floor enforced by COVERAGE_MIN.** The new tests then paid for themselves: six real defects found and fixed, a permanent auth lockout among them, plus a `make coverage` whose number depended on build-cache state (§Defects the coverage work found). Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -450,6 +450,29 @@ or CSS-only, no behaviour change, and neither caused by this work:
       rebuilding on the current tip so it can never revert a real commit.
       Generation was already local (`scripts/coverage-badge.sh`, no Codecov)
       and is unchanged
+
+## Activity: bounded, paged, sweepable ✅ (2026-07-31, v0.15.0)
+
+The page rendered `ListRecentDownloads` — the last 100 rows, every state, one
+table — and nothing in the schema had ever deleted a download row or a history
+event. "Finished" was therefore a section that only grew, and the table under
+it grew for the life of the install.
+
+- [x] **Retention.** `activity.retention`, daily: terminal rows and history
+  events older than the window are deleted. Window is a setting
+  (Settings → Library, `activity.retention_days`), default 30 days, `0` keeps
+  everything. Rows that are still moving are never swept, at any age.
+- [x] **Paging and filtering.** `GET /queue?filter=active|imported|failed&q=&limit=&offset=`
+  (no params = the old behaviour, byte for byte) and `GET /queue/summary` for
+  the section counts, so a collapsed "Finished (1,284)" costs one aggregate
+  instead of 1,284 rows. `GET /history` gained `offset` and now pages in SQL
+  rather than filtering a fixed 200 in Go.
+- [x] **The page.** Active work always whole and never paged; Finished and
+  Failed collapsed to a count, opened deliberately, 25 rows at a time. Title
+  filter across all groups. **Clear finished** (rows only, with an inline
+  confirm) and the existing per-row Remove as a dismiss.
+- [x] Three e2e specs updated: they asserted on imported rows that are now
+  behind the collapsed section, which is the behaviour change working.
 
 ## The re-grab loop — monarr's half ✅ (fixed 2026-07-31, v0.14.0)
 

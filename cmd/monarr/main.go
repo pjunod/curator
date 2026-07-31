@@ -401,6 +401,16 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// finishes itself once there is room. Without this the payload sits in
 	// `failed` while the item shows as missing, and automation grabs the
 	// same release again — the loop, with monarr's name on it.
+	// Retention: Activity is a working record, not an archive. Terminal
+	// rows and old events age out daily, on a window the user sets
+	// (0 = keep everything). Nothing still moving is ever swept.
+	if err := sched.Register(scheduler.Task{
+		Name:     acquisition.JobRetention,
+		Interval: acquisition.RetentionInterval,
+		Fn:       acq.PruneActivity,
+	}); err != nil {
+		return err
+	}
 	if err := sched.Register(scheduler.Task{
 		Name:     acquisition.JobImportRetry,
 		Interval: acquisition.ImportRetryInterval,

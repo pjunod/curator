@@ -10,6 +10,50 @@ import (
 	"database/sql"
 )
 
+const countDownloadsByState = `-- name: CountDownloadsByState :many
+SELECT state, COUNT(*) AS n FROM downloads GROUP BY state
+`
+
+type CountDownloadsByStateRow struct {
+	State string
+	N     int64
+}
+
+// The section counts, without shipping the rows they count.
+func (q *Queries) CountDownloadsByState(ctx context.Context) ([]CountDownloadsByStateRow, error) {
+	rows, err := q.db.QueryContext(ctx, countDownloadsByState)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountDownloadsByStateRow
+	for rows.Next() {
+		var i CountDownloadsByStateRow
+		if err := rows.Scan(&i.State, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const countHistory = `-- name: CountHistory :one
+SELECT COUNT(*) FROM history_events
+`
+
+func (q *Queries) CountHistory(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countHistory)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countProfileReferences = `-- name: CountProfileReferences :one
 SELECT
   (SELECT COUNT(*) FROM media_items  mi WHERE mi.quality_profile_id = ?1) +
@@ -47,6 +91,32 @@ func (q *Queries) DeleteDownloadClient(ctx context.Context, id int64) (int64, er
 	return result.RowsAffected()
 }
 
+const deleteHistoryBefore = `-- name: DeleteHistoryBefore :execrows
+DELETE FROM history_events WHERE ts < ?
+`
+
+func (q *Queries) DeleteHistoryBefore(ctx context.Context, ts int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteHistoryBefore, ts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteImportedDownloads = `-- name: DeleteImportedDownloads :execrows
+DELETE FROM downloads WHERE state = 'imported'
+`
+
+// "Clear finished": the ROWS only. Nothing here touches a file, a library
+// record, or the download client - an imported row is a receipt.
+func (q *Queries) DeleteImportedDownloads(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteImportedDownloads)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteIndexer = `-- name: DeleteIndexer :execrows
 DELETE FROM indexers WHERE id = ?
 `
@@ -65,6 +135,21 @@ DELETE FROM quality_profiles WHERE id = ?
 
 func (q *Queries) DeleteProfile(ctx context.Context, id int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteProfile, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteTerminalDownloadsBefore = `-- name: DeleteTerminalDownloadsBefore :execrows
+DELETE FROM downloads
+WHERE state IN ('imported', 'failed') AND updated_at < ?
+`
+
+// Retention. Terminal rows only: whatever is still moving is never swept out
+// from under itself, however old it looks.
+func (q *Queries) DeleteTerminalDownloadsBefore(ctx context.Context, updatedAt int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteTerminalDownloadsBefore, updatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -580,6 +665,93 @@ func (q *Queries) ListHistory(ctx context.Context) ([]HistoryEvent, error) {
 	return items, nil
 }
 
+const listHistoryPage = `-- name: ListHistoryPage :many
+SELECT id, ts, type, media_item_id, release_title, data FROM history_events
+ORDER BY ts DESC
+LIMIT ? OFFSET ?
+`
+
+type ListHistoryPageParams struct {
+	Limit  int64
+	Offset int64
+}
+
+// The per-release timeline, paged. Every item; the per-item view is its own
+// query rather than a nullable filter - two plain statements beat one clever
+// one that a reader has to evaluate in their head.
+func (q *Queries) ListHistoryPage(ctx context.Context, arg ListHistoryPageParams) ([]HistoryEvent, error) {
+	rows, err := q.db.QueryContext(ctx, listHistoryPage, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HistoryEvent
+	for rows.Next() {
+		var i HistoryEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ts,
+			&i.Type,
+			&i.MediaItemID,
+			&i.ReleaseTitle,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHistoryPageForItem = `-- name: ListHistoryPageForItem :many
+SELECT id, ts, type, media_item_id, release_title, data FROM history_events
+WHERE media_item_id = ?
+ORDER BY ts DESC
+LIMIT ? OFFSET ?
+`
+
+type ListHistoryPageForItemParams struct {
+	MediaItemID int64
+	Limit       int64
+	Offset      int64
+}
+
+func (q *Queries) ListHistoryPageForItem(ctx context.Context, arg ListHistoryPageForItemParams) ([]HistoryEvent, error) {
+	rows, err := q.db.QueryContext(ctx, listHistoryPageForItem, arg.MediaItemID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HistoryEvent
+	for rows.Next() {
+		var i HistoryEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ts,
+			&i.Type,
+			&i.MediaItemID,
+			&i.ReleaseTitle,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listImportedWithPayload = `-- name: ListImportedWithPayload :many
 SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed FROM downloads
 WHERE state = 'imported' AND payload_removed = 0 AND handle != ''
@@ -690,6 +862,85 @@ func (q *Queries) ListProfiles(ctx context.Context) ([]QualityProfile, error) {
 			&i.Name,
 			&i.Definition,
 			&i.UpgradesAllowed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQueuePage = `-- name: ListQueuePage :many
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed FROM downloads
+WHERE (? = ''
+    OR (? = 'active' AND state NOT IN ('imported', 'failed'))
+    OR state = ?)
+  AND (? = '' OR lower(release_title) LIKE '%' || lower(?) || '%')
+ORDER BY added_at DESC
+LIMIT ? OFFSET ?
+`
+
+type ListQueuePageParams struct {
+	Column1 interface{}
+	Column2 interface{}
+	State   string
+	Column4 interface{}
+	LOWER   string
+	Limit   int64
+	Offset  int64
+}
+
+// One page of the queue, filtered.
+//
+// `filter` is a group, not a raw state: 'active' is everything still moving
+// or awaiting a decision, and it is the only view that has to be complete -
+// Finished and Failed are history and get paged. ” means everything.
+func (q *Queries) ListQueuePage(ctx context.Context, arg ListQueuePageParams) ([]Download, error) {
+	rows, err := q.db.QueryContext(ctx, listQueuePage,
+		arg.Column1,
+		arg.Column2,
+		arg.State,
+		arg.Column4,
+		arg.LOWER,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Download
+	for rows.Next() {
+		var i Download
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.CopyID,
+			&i.Wantables,
+			&i.Season,
+			&i.ReleaseTitle,
+			&i.Indexer,
+			&i.Protocol,
+			&i.Quality,
+			&i.Size,
+			&i.ClientID,
+			&i.Handle,
+			&i.State,
+			&i.Progress,
+			&i.Error,
+			&i.SavePath,
+			&i.ImportPath,
+			&i.HandoffLog,
+			&i.AddedAt,
+			&i.UpdatedAt,
+			&i.Transfer,
+			&i.PayloadRemoved,
 		); err != nil {
 			return nil, err
 		}

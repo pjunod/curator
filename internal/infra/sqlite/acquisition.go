@@ -571,3 +571,105 @@ func (d *DB) AddHistory(ctx context.Context, eventType string, mediaItemID int64
 		MediaItemID: mediaItemID, ReleaseTitle: releaseTitle, Data: string(raw),
 	})
 }
+
+// ---- the Activity page's own reads -------------------------------------
+//
+// The page used to render whatever `ListRecentDownloads` handed back — one
+// table, every state, capped at a hundred rows and growing until it hit the
+// cap. These are the queries that let it show a page of one group instead:
+// the work in flight is always complete, and everything terminal is paged.
+
+// QueueFilter names a group of states, not a state: "active" is everything
+// still moving or awaiting a decision, which is the one view that has to be
+// whole. "" is everything.
+type QueueFilter string
+
+const (
+	QueueActive   QueueFilter = "active"
+	QueueImported QueueFilter = "imported"
+	QueueFailed   QueueFilter = "failed"
+)
+
+// QueuePage returns one page of the queue, filtered by group and by a
+// case-insensitive substring of the release title.
+func (d *DB) QueuePage(ctx context.Context, filter QueueFilter, search string, limit, offset int) ([]Download, error) {
+	f := string(filter)
+	rows, err := d.Read.ListQueuePage(ctx, sqlitegen.ListQueuePageParams{
+		Column1: f, Column2: f, State: f,
+		Column4: search, LOWER: search,
+		Limit: int64(limit), Offset: int64(offset),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Download, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, downloadFromRow(r))
+	}
+	return out, nil
+}
+
+// QueueCounts is how many downloads are in each state, for the section
+// headings — so a collapsed "Finished (1,284)" costs one aggregate rather
+// than 1,284 rows over the wire.
+func (d *DB) QueueCounts(ctx context.Context) (map[string]int64, error) {
+	rows, err := d.Read.CountDownloadsByState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		out[r.State] = r.N
+	}
+	return out, nil
+}
+
+// ClearImportedDownloads drops every imported row. The ROWS: an imported
+// download's row is a receipt, and the files it describes are in the
+// library under the library's own records.
+func (d *DB) ClearImportedDownloads(ctx context.Context) (int64, error) {
+	return d.Write.DeleteImportedDownloads(ctx)
+}
+
+// PruneTerminalDownloads deletes imported/failed rows last touched before
+// `before`. Never touches a row that is still moving, however old.
+func (d *DB) PruneTerminalDownloads(ctx context.Context, before time.Time) (int64, error) {
+	return d.Write.DeleteTerminalDownloadsBefore(ctx, before.UnixMilli())
+}
+
+// PruneHistory deletes history events older than `before`.
+func (d *DB) PruneHistory(ctx context.Context, before time.Time) (int64, error) {
+	return d.Write.DeleteHistoryBefore(ctx, before.UnixMilli())
+}
+
+// HistoryCount is the total number of recorded events.
+func (d *DB) HistoryCount(ctx context.Context) (int64, error) {
+	return d.Read.CountHistory(ctx)
+}
+
+// HistoryPage returns one page of the timeline, newest first. `item` of 0
+// means every item.
+func (d *DB) HistoryPage(ctx context.Context, item int64, limit, offset int) ([]HistoryEvent, error) {
+	var rows []sqlitegen.HistoryEvent
+	var err error
+	if item == 0 {
+		rows, err = d.Read.ListHistoryPage(ctx, sqlitegen.ListHistoryPageParams{
+			Limit: int64(limit), Offset: int64(offset),
+		})
+	} else {
+		rows, err = d.Read.ListHistoryPageForItem(ctx, sqlitegen.ListHistoryPageForItemParams{
+			MediaItemID: item, Limit: int64(limit), Offset: int64(offset),
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]HistoryEvent, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, HistoryEvent{
+			ID: r.ID, At: time.UnixMilli(r.Ts), Type: r.Type,
+			MediaItemID: r.MediaItemID, ReleaseTitle: r.ReleaseTitle, Data: r.Data,
+		})
+	}
+	return out, nil
+}

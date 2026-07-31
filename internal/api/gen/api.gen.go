@@ -569,6 +569,27 @@ func (e TransferStage) Valid() bool {
 	}
 }
 
+// Defines values for ListQueueParamsFilter.
+const (
+	ListQueueParamsFilterActive   ListQueueParamsFilter = "active"
+	ListQueueParamsFilterFailed   ListQueueParamsFilter = "failed"
+	ListQueueParamsFilterImported ListQueueParamsFilter = "imported"
+)
+
+// Valid indicates whether the value is a known member of the ListQueueParamsFilter enum.
+func (e ListQueueParamsFilter) Valid() bool {
+	switch e {
+	case ListQueueParamsFilterActive:
+		return true
+	case ListQueueParamsFilterFailed:
+		return true
+	case ListQueueParamsFilterImported:
+		return true
+	default:
+		return false
+	}
+}
+
 // AddMediaRequest defines model for AddMediaRequest.
 type AddMediaRequest struct {
 	Kind MediaKind `json:"kind"`
@@ -703,6 +724,11 @@ type CalendarEntry struct {
 
 	// TmdbId The item's TMDB id, so a consumer can resolve this entry against its own library by id rather than by title. For an episode this is the SHOW's id — an episode's own identity does not name the series it belongs to. Absent when unknown.
 	TmdbId *int64 `json:"tmdbId,omitempty"`
+}
+
+// ClearedCount defines model for ClearedCount.
+type ClearedCount struct {
+	Cleared int `json:"cleared"`
 }
 
 // Connection defines model for Connection.
@@ -1428,6 +1454,19 @@ type QueueItem struct {
 	Total *int64 `json:"total,omitempty"`
 }
 
+// QueueSummary defines model for QueueSummary.
+type QueueSummary struct {
+	// Active Rows in a non-terminal state - what is actually moving.
+	Active int `json:"active"`
+
+	// Counts Row count per state, keyed by the state string.
+	Counts map[string]int `json:"counts"`
+
+	// RetentionDays The window terminal rows and history events age out after. 0 = keep everything.
+	RetentionDays *int `json:"retentionDays,omitempty"`
+	Total         int  `json:"total"`
+}
+
 // Rating defines model for Rating.
 type Rating struct {
 	// Scale 10, 5, or 100 — render 94/100 as "94%".
@@ -1593,6 +1632,9 @@ type SeasonInfo struct {
 
 // Settings defines model for Settings.
 type Settings struct {
+	// ActivityRetentionDays How long finished and failed downloads, and history events, are kept before the daily sweep ages them out. 0 keeps everything.
+	ActivityRetentionDays *int `json:"activityRetentionDays,omitempty"`
+
 	// ApiKey Monarr's own API key — what consumers send as X-Api-Key to the /sonarr and /radarr personalities (and, once auth hardening is on, to /api/v1).
 	ApiKey *string `json:"apiKey,omitempty"`
 
@@ -1618,6 +1660,9 @@ type Settings struct {
 
 // SettingsUpdate defines model for SettingsUpdate.
 type SettingsUpdate struct {
+	// ActivityRetentionDays Days to keep finished/failed downloads and history events. 0 keeps everything.
+	ActivityRetentionDays *int `json:"activityRetentionDays,omitempty"`
+
 	// AuthPassword Stored salted-hashed; never returned.
 	AuthPassword *string `json:"authPassword,omitempty"`
 
@@ -1761,6 +1806,7 @@ type ListHistoryParams struct {
 	// MediaItemId Only this item's events. Omitted = everything, newest first.
 	MediaItemId *int64 `form:"mediaItemId,omitempty" json:"mediaItemId,omitempty"`
 	Limit       *int   `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset      *int   `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
 // ScanImportPathParams defines parameters for ScanImportPath.
@@ -1866,6 +1912,19 @@ type SearchMetadataParams struct {
 	Kind  MediaKind `form:"kind" json:"kind"`
 	Query string    `form:"query" json:"query"`
 }
+
+// ListQueueParams defines parameters for ListQueue.
+type ListQueueParams struct {
+	Filter *ListQueueParamsFilter `form:"filter,omitempty" json:"filter,omitempty"`
+
+	// Q Case-insensitive substring of the release title.
+	Q      *string `form:"q,omitempty" json:"q,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int    `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListQueueParamsFilter defines parameters for ListQueue.
+type ListQueueParamsFilter string
 
 // RemoveQueueItemParams defines parameters for RemoveQueueItem.
 type RemoveQueueItemParams struct {
@@ -2190,9 +2249,15 @@ type ServerInterface interface {
 	// UpdateProfile Replace a quality profile
 	// (PUT /profiles/{id})
 	UpdateProfile(w http.ResponseWriter, r *http.Request, id int64)
-	// ListQueue Recent downloads (all states)
+	// ListQueue Recent downloads, filtered and paged
 	// (GET /queue)
-	ListQueue(w http.ResponseWriter, r *http.Request)
+	ListQueue(w http.ResponseWriter, r *http.Request, params ListQueueParams)
+	// ClearFinishedQueue Clear the finished rows
+	// (DELETE /queue/finished)
+	ClearFinishedQueue(w http.ResponseWriter, r *http.Request)
+	// QueueSummary How many downloads are in each state
+	// (GET /queue/summary)
+	QueueSummary(w http.ResponseWriter, r *http.Request)
 	// RemoveQueueItem Remove a queue row (optionally from the client too)
 	// (DELETE /queue/{id})
 	RemoveQueueItem(w http.ResponseWriter, r *http.Request, id int64, params RemoveQueueItemParams)
@@ -2709,6 +2774,19 @@ func (siw *ServerInterfaceWrapper) ListHistory(w http.ResponseWriter, r *http.Re
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
 		}
 		return
 	}
@@ -3985,8 +4063,94 @@ func (siw *ServerInterfaceWrapper) UpdateProfile(w http.ResponseWriter, r *http.
 // ListQueue operation middleware
 func (siw *ServerInterfaceWrapper) ListQueue(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListQueueParams
+
+	// ------------- Optional query parameter "filter" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "filter", r.URL.Query(), &params.Filter, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "filter"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "filter", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListQueue(w, r)
+		siw.Handler.ListQueue(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ClearFinishedQueue operation middleware
+func (siw *ServerInterfaceWrapper) ClearFinishedQueue(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClearFinishedQueue(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// QueueSummary operation middleware
+func (siw *ServerInterfaceWrapper) QueueSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.QueueSummary(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4491,6 +4655,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/releases", wrapper.SearchReleases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/grab", wrapper.GrabRelease)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue", wrapper.ListQueue)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue/summary", wrapper.QueueSummary)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/finished", wrapper.ClearFinishedQueue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)

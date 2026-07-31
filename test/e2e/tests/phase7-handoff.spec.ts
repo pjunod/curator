@@ -11,6 +11,7 @@ const MOVIE_RELEASE = 'The.Test.Movie.2024.1080p.WEB-DL.x264-E2E'
 
 test('an imported download lays out its handoff step by step', async ({ page }) => {
   await page.goto('/activity')
+  await page.getByTestId('toggle-imported').click() // finished rows start collapsed
   const row = page.locator('tr', { hasText: MOVIE_RELEASE }).first()
   await expect(row).toBeVisible()
 

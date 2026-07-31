@@ -712,6 +712,12 @@ func (s *Server) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	authOn := s.authRequired(r.Context())
 	out.AuthRequired = &authOn
+	if s.deps.Acquisition != nil {
+		// Always the resolved window, never a blank that reads as "off":
+		// this one decides what gets deleted.
+		days := s.deps.Acquisition.RetentionDays(r.Context())
+		out.ActivityRetentionDays = &days
+	}
 	// Always the resolved answer, including built-in fallbacks — a settings
 	// screen showing nothing for "default profile" is how you end up believing
 	// there isn't one.
@@ -747,6 +753,12 @@ func (s *Server) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.TraktClientId != nil {
 		if err := s.deps.Settings.SetMeta(r.Context(), TraktClientIDSetting, strings.TrimSpace(*body.TraktClientId)); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if body.ActivityRetentionDays != nil && s.deps.Acquisition != nil {
+		if err := s.deps.Acquisition.SetRetentionDays(r.Context(), *body.ActivityRetentionDays); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

@@ -365,6 +365,7 @@ export interface Settings {
   apiKey?: string
   authRequired?: boolean
   scanSkipPatterns?: string
+  activityRetentionDays?: number
   defaultProfiles?: DefaultProfiles
 }
 
@@ -499,6 +500,7 @@ export const updateSettings = (patch: {
   authUsername?: string
   authPassword?: string
   scanSkipPatterns?: string
+  activityRetentionDays?: number
   defaultProfiles?: Partial<DefaultProfiles>
 }) => send('PUT', '/settings', patch)
 export const triggerScan = () => send('POST', '/library/scan')
@@ -700,6 +702,39 @@ export const searchReleases = (itemId: number, season?: number, episode?: number
 }
 export const grabRelease = (req: GrabRequest) => send<{ id: number }>('POST', '/grab', req)
 export const getQueue = () => get<QueueItem[]>('/queue')
+
+// One page of one group. `active` is everything still moving or awaiting a
+// decision and is always fetched whole; the terminal groups are history and
+// are paged, because "Finished" is a section that only ever grows.
+export type QueueFilter = 'active' | 'imported' | 'failed'
+
+export const getQueuePage = (filter: QueueFilter, q = '', limit = 100, offset = 0) => {
+  const p = new URLSearchParams({ filter, limit: String(limit), offset: String(offset) })
+  if (q.trim()) p.set('q', q.trim())
+  return get<QueueItem[]>(`/queue?${p.toString()}`)
+}
+
+export interface QueueSummary {
+  total: number
+  active: number
+  counts: Record<string, number>
+  retentionDays?: number
+}
+export const getQueueSummary = () => get<QueueSummary>('/queue/summary')
+export const clearFinishedQueue = () => send<{ cleared: number }>('DELETE', '/queue/finished')
+
+export interface HistoryEvent {
+  ts: string
+  type: string
+  mediaItemId: number
+  releaseTitle: string
+  data?: Record<string, unknown>
+}
+export const getHistory = (mediaItemId?: number, limit = 100, offset = 0) => {
+  const p = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (mediaItemId) p.set('mediaItemId', String(mediaItemId))
+  return get<HistoryEvent[]>(`/history?${p.toString()}`)
+}
 export const removeQueueItem = (id: number, fromClient: boolean) =>
   send('DELETE', `/queue/${id}?fromClient=${fromClient}`)
 export const importQueueItem = (id: number) => send('POST', `/queue/${id}/import`)
