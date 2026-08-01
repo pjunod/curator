@@ -173,7 +173,7 @@ Every request carries `X-Nzbd-Client: monarr/<version>`.
 
 ```bash
 MONARR=http://127.0.0.1:7676
-KEY=<Settings → Security → Reveal>
+KEY=<Access → API access → Reveal>
 
 curl -sS -H "X-Api-Key: $KEY" "$MONARR/api/v1/system/connections" | python3 -m json.tool
 curl -sS -H "X-Api-Key: $KEY" "$MONARR/api/v1/health"             | python3 -m json.tool
@@ -578,7 +578,7 @@ per-delivery outcomes (the delivery log).
 
 ```bash
 NZBD=http://127.0.0.1:6789;  TOK=<nzbd api.token>
-MONARR=http://127.0.0.1:7676; KEY=<Settings → Security → Reveal>
+MONARR=http://127.0.0.1:7676; KEY=<Access → API access → Reveal>
 PLURX=http://127.0.0.1:32400
 ```
 

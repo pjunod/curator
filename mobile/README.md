@@ -49,17 +49,17 @@ server's v0.18.5 Compose template; multicast cannot leave the main container's
 bridge. QR and manual entry remain visible while the scan runs and remain
 available when the server is otherwise reachable.
 
-For QR pairing, open **Monarr web → Settings → Security → Reveal → Link a
-mobile app**, enter the address the phone can reach, show the QR, then choose
-**Scan pairing QR** in the native app. The code includes the API key; show it
-only to a trusted device.
+For QR pairing, open **Monarr web → Access → Mobile pairing → Show pairing
+QR**, enter the address the phone can reach, then choose **Scan pairing QR**
+in the native app. The code includes the API key, so show it only to a trusted
+device.
 
 For manual entry, `localhost` points at the phone, not the Monarr host. A bare
 direct host such as `192.168.1.20` automatically uses Monarr's default port,
 `7676`; explicit ports and HTTPS reverse-proxy URLs are preserved. Bracket a
 literal IPv6 address when including a port: `http://[fd12:3456::20]:7676`.
 
-On first connect, copy the key from **Monarr web → Settings → Security →
+On first connect, copy the key from **Monarr web → Access → API access →
 Reveal**. The key is optional only while native API authentication is off.
 An `http://` LAN address is supported for homelabs; use HTTPS or a trusted VPN
 for access outside the local network because cleartext HTTP exposes the API

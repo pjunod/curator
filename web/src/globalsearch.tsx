@@ -24,6 +24,10 @@ const PAGES: Destination[] = [
   { label: 'Dashboard', sub: 'page', to: '/dashboard', keywords: 'dashboard status overview stats' },
   { label: 'System', sub: 'page', to: '/system', keywords: 'system tasks backups logs health version' },
   { label: 'Settings', sub: 'page', to: '/settings', keywords: 'settings configuration' },
+  { label: 'Access', sub: 'page', to: '/access', keywords: 'access users login security api key mobile pairing qr code' },
+  { label: 'User login', sub: 'access', to: '/access', hash: 'user-login', keywords: 'users login username password authentication security' },
+  { label: 'Mobile pairing', sub: 'access', to: '/access', hash: 'mobile-pairing', keywords: 'mobile phone tablet app qr code link pair connect' },
+  { label: 'API access', sub: 'access', to: '/access', hash: 'api-access', keywords: 'api key integration sonarr radarr reveal credential' },
   { label: 'Metadata provider', sub: 'setting', to: '/settings', hash: 'metadata', keywords: 'tmdb api key metadata provider' },
   { label: 'Root folders', sub: 'setting', to: '/settings', hash: 'rootfolders', keywords: 'root folders storage library paths disk' },
   { label: 'Disk scan', sub: 'setting', to: '/settings', hash: 'scan', keywords: 'scan disk rescan reconcile import existing' },
@@ -32,7 +36,6 @@ const PAGES: Destination[] = [
   { label: 'Custom formats', sub: 'setting', to: '/settings', hash: 'customformats', keywords: 'custom formats scoring preferred words' },
   { label: 'Import lists', sub: 'setting', to: '/settings', hash: 'importlists', keywords: 'import lists trakt tmdb popular discover' },
   { label: 'Notifications', sub: 'setting', to: '/settings', hash: 'notifications', keywords: 'notifications webhook discord plex jellyfin plurx' },
-  { label: 'Security', sub: 'setting', to: '/settings', hash: 'security', keywords: 'security authentication login password api key' },
 ]
 
 // GlobalSearch is the sidebar's find-anything box: library items by title,

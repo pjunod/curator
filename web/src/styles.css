@@ -683,17 +683,7 @@ label.inline {
   align-items: center;
 }
 
-.mobile-pairing {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.mobile-pairing h3 {
-  margin: 0 0 6px;
-}
-
-.mobile-pairing .add-controls input {
+.mobile-pairing-panel .add-controls input {
   min-width: min(420px, 100%);
 }
 

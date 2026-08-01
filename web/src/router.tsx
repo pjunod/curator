@@ -18,6 +18,7 @@ import { AddMediaPage } from './pages/AddMedia'
 import { DiscoverPage } from './pages/Discover'
 import { MediaDetailPage } from './pages/MediaDetail'
 import { SettingsPage } from './pages/Settings'
+import { AccessPage } from './pages/Access'
 import { ActivityPage } from './pages/Activity'
 import { CalendarPage } from './pages/Calendar'
 import { LoginPage } from './pages/Login'
@@ -135,6 +136,9 @@ function MobileShell(props: { overall: string; version: string; children: React.
               <Link to="/settings" activeProps={{ className: 'active' }}>
                 Settings
               </Link>
+              <Link to="/access" activeProps={{ className: 'active' }}>
+                Access
+              </Link>
               <Link to="/add" activeProps={{ className: 'active' }}>
                 + Add media
               </Link>
@@ -197,6 +201,9 @@ function Layout() {
           </Link>
           <Link to="/settings" activeProps={{ className: 'active' }}>
             Settings
+          </Link>
+          <Link to="/access" activeProps={{ className: 'active' }}>
+            Access
           </Link>
         </nav>
         <GlobalSearch />
@@ -293,6 +300,12 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 })
 
+const accessRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/access',
+  component: AccessPage,
+})
+
 const routeTree = rootRoute.addChildren([
   libraryRoute,
   dashboardRoute,
@@ -305,6 +318,7 @@ const routeTree = rootRoute.addChildren([
   activityRoute,
   systemRoute,
   settingsRoute,
+  accessRoute,
 ])
 
 export const router = createRouter({ routeTree })

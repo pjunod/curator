@@ -157,17 +157,68 @@ export function ImportListSettings() {
   )
 }
 
-// SecuritySettings shows the API key and manages auth hardening (Phase 5).
-export function SecuritySettings() {
-  const qc = useQueryClient()
+// MobilePairingSettings deliberately stands on its own on the Access page.
+// Pairing used to be nested behind API-key reveal in Security,
+// which made a shipped feature indistinguishable from a missing one.
+export function MobilePairingSettings() {
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [revealed, setRevealed] = useState(false)
   const [pairingVisible, setPairingVisible] = useState(false)
   const [pairingAddress, setPairingAddress] = useState(() =>
     typeof window === 'undefined' ? '' : window.location.origin,
   )
+  const apiKey = settings.data?.apiKey ?? ''
+
+  return (
+    <section className="panel mobile-pairing-panel" id="mobile-pairing">
+      <h2>Mobile pairing</h2>
+      <p className="muted">
+        Enter the address this phone can reach, then show and scan the code from the
+        Monarr app. The QR contains the API key, so show it only to a device you trust.
+      </p>
+      <div className="add-controls">
+        <input
+          aria-label="Mobile pairing server address"
+          value={pairingAddress}
+          placeholder="http://192.168.1.20:7676"
+          onChange={(event) => setPairingAddress(event.target.value)}
+        />
+        <button
+          className="btn-accent"
+          disabled={!pairingAddress.trim() || !apiKey}
+          onClick={() => setPairingVisible((value) => !value)}
+        >
+          {pairingVisible ? 'Hide pairing QR' : 'Show pairing QR'}
+        </button>
+      </div>
+      {settings.isPending && <p className="muted">Loading the pairing key…</p>}
+      {settings.isError && (
+        <div className="banner warning">The pairing key could not be loaded. Reload Access and try again.</div>
+      )}
+      {pairingVisible && apiKey && (
+        <div className="pairing-code">
+          <QRCode
+            aria-label="Monarr mobile pairing QR code"
+            bgColor="#ffffff"
+            fgColor="#111111"
+            level="M"
+            size={220}
+            value={buildPairingCode(pairingAddress, apiKey)}
+          />
+          <span className="muted">Monarr app → Scan pairing QR</span>
+        </div>
+      )}
+    </section>
+  )
+}
+
+// UserLoginSettings manages browser-session authentication. It lives on the
+// Access page because login, mobile pairing, and API credentials are three
+// ways into the same server rather than general application settings.
+export function UserLoginSettings() {
+  const qc = useQueryClient()
+  const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
 
   const save = useMutation({
     mutationFn: (enable: boolean) =>
@@ -184,61 +235,17 @@ export function SecuritySettings() {
 
   const authOn = settings.data?.authRequired ?? false
   return (
-    <section className="panel" id="security">
-      <h2>Security</h2>
+    <section className="panel" id="user-login">
+      <h2>User login</h2>
       <p className="muted">
-        The API key authenticates external apps (X-Api-Key) — including the /sonarr and
-        /radarr personalities. Enabling authentication additionally locks the Monarr API
-        and UI behind a login.
+        Enabling authentication locks the Monarr API and web interface behind a login.
+        The API key remains a separate bypass for trusted apps and integrations.
       </p>
       <div className="detail-facts">
-        <span>API key:</span>
-        {revealed ? (
-          <span className="mono">{settings.data?.apiKey ?? '—'}</span>
-        ) : (
-          <button onClick={() => setRevealed(true)}>Reveal</button>
-        )}
         <span className={authOn ? 'pill pill-ok' : 'pill pill-neutral'}>
           auth {authOn ? 'enabled' : 'disabled'}
         </span>
       </div>
-      {revealed && settings.data?.apiKey && (
-        <div className="mobile-pairing">
-          <h3>Link a mobile app</h3>
-          <p className="muted">
-            Enter the address this phone can reach, then scan the code from the Monarr app.
-            The QR contains the API key, so show it only to a device you trust.
-          </p>
-          <div className="add-controls">
-            <input
-              aria-label="Mobile pairing server address"
-              value={pairingAddress}
-              placeholder="http://192.168.1.20:7676"
-              onChange={(event) => setPairingAddress(event.target.value)}
-            />
-            <button
-              className="btn-accent"
-              disabled={!pairingAddress.trim()}
-              onClick={() => setPairingVisible((value) => !value)}
-            >
-              {pairingVisible ? 'Hide pairing QR' : 'Show pairing QR'}
-            </button>
-          </div>
-          {pairingVisible && (
-            <div className="pairing-code">
-              <QRCode
-                aria-label="Monarr mobile pairing QR code"
-                bgColor="#ffffff"
-                fgColor="#111111"
-                level="M"
-                size={220}
-                value={buildPairingCode(pairingAddress, settings.data.apiKey)}
-              />
-              <span className="muted">Monarr app → Scan pairing QR</span>
-            </div>
-          )}
-        </div>
-      )}
       <div className="add-controls" style={{ marginTop: 12 }}>
         <input placeholder="Username" autoComplete="off" value={username}
           onChange={(e) => setUsername(e.target.value)} />
@@ -255,6 +262,32 @@ export function SecuritySettings() {
         )}
       </div>
       {save.isError && <div className="banner warning">{String((save.error as Error).message)}</div>}
+    </section>
+  )
+}
+
+// APIKeySettings exposes the integration credential only after an explicit
+// action. Mobile pairing uses the same key without requiring its raw value to
+// be placed on screen.
+export function APIKeySettings() {
+  const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+  const [revealed, setRevealed] = useState(false)
+
+  return (
+    <section className="panel" id="api-access">
+      <h2>API access</h2>
+      <p className="muted">
+        Trusted apps authenticate with X-Api-Key, including the /sonarr and /radarr
+        compatibility endpoints. Keep this credential private.
+      </p>
+      <div className="detail-facts">
+        <span>API key:</span>
+        {revealed ? (
+          <span className="mono">{settings.data?.apiKey ?? '—'}</span>
+        ) : (
+          <button onClick={() => setRevealed(true)}>Reveal</button>
+        )}
+      </div>
     </section>
   )
 }

@@ -131,9 +131,10 @@ the connection screen. QR and manual setup stay visible while that search runs:
    including IPv4 and IPv6; it does not guess a subnet or scan an address
    range. Results appear as soon as they answer; **Search again** repeats the
    five-second browse when network conditions change.
-2. **Scan pairing QR** reads the code shown by **Settings → Security →
-   Reveal → Link a mobile app**. Enter an address the phone can reach before
-   showing the code. The QR transfers that address and the API key.
+2. **Scan pairing QR** reads the code shown by **Access → Mobile pairing →
+   Show pairing QR**. You do not have to reveal the raw API key first. Enter
+   an address the phone can reach before showing the code. The QR transfers
+   that address and the API key.
 3. **Enter it manually** accepts a LAN IP/hostname, a VPN address such as
    Tailscale, or an HTTPS reverse proxy. `localhost` means the phone itself. A
    bare direct host automatically uses Monarr's default port, `7676`; explicit
@@ -157,7 +158,8 @@ additional quality copies, each with its own name, profile, location, and
 monitoring state. Copy removal keeps every file already on disk. Discover,
 Wanted, downloads/imports, the calendar, and server health are native too.
 **More → Open web interface** hands off to the browser for defining profiles
-and root folders or configuring indexers, clients, notifiers, and security.
+and root folders, configuring indexers, clients, and notifiers, or managing
+login, pairing, and API keys under Access.
 
 **More → Appearance** keeps two preferences on this device. **Item size**
 changes Library tiles and Discover results between Small, Medium, and Large;
@@ -674,7 +676,7 @@ Monarr impersonates Sonarr and Radarr for apps that speak their v3 API
 | Prowlarr | same URLs, as "Sonarr"/"Radarr" apps | its indexer sync lands in Monarr's indexer list |
 | Bazarr | same URLs | series/episodes/files enumerate normally |
 
-All three ask for an API key: **Settings → Security → Reveal**. Anything a
+All three ask for an API key: **Access → API access → Reveal**. Anything a
 consumer calls that the shim doesn't implement is logged
 (`compat: unknown v3 request …`) — send that log line in an issue.
 

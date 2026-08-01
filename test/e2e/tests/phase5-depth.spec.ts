@@ -75,14 +75,17 @@ test('security surface: api key exposed, auth off by default, metrics opt-in', a
   expect(metrics.status()).toBe(404)
 })
 
-test('security surface creates a mobile pairing QR only after reveal', async ({ page }) => {
-  await page.goto('/settings')
-  const security = page.locator('#security')
-  await security.getByRole('button', { name: 'Reveal' }).click()
-  await expect(security.getByRole('heading', { name: 'Link a mobile app' })).toBeVisible()
+test('access exposes mobile pairing without revealing the raw API key', async ({ page }) => {
+  await page.goto('/access')
+  const pairing = page.locator('#mobile-pairing')
+  const apiAccess = page.locator('#api-access')
+  await expect(page.getByRole('heading', { level: 1, name: 'Access' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Access' })).toBeVisible()
+  await expect(pairing.getByRole('heading', { name: 'Mobile pairing' })).toBeVisible()
+  await expect(apiAccess.getByRole('button', { name: 'Reveal' })).toBeVisible()
 
-  await security.getByLabel('Mobile pairing server address').fill('http://[fd12:3456::20]:7676')
-  await security.getByRole('button', { name: 'Show pairing QR' }).click()
-  await expect(security.locator('.pairing-code svg')).toBeVisible()
-  await expect(security).toContainText('Monarr app → Scan pairing QR')
+  await pairing.getByLabel('Mobile pairing server address').fill('http://[fd12:3456::20]:7676')
+  await pairing.getByRole('button', { name: 'Show pairing QR' }).click()
+  await expect(pairing.locator('.pairing-code svg')).toBeVisible()
+  await expect(pairing).toContainText('Monarr app → Scan pairing QR')
 })

@@ -30,7 +30,7 @@ describe('MonarrClient', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 401 })))
     const client = new MonarrClient({ baseUrl: 'http://monarr.local:7676', apiKey: 'wrong' })
 
-    await expect(client.getHealth()).rejects.toThrow('Settings → Security')
+    await expect(client.getHealth()).rejects.toThrow('Access → API access')
   })
 
   it('sends item edits to the detail endpoint', async () => {

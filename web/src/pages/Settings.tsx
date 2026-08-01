@@ -22,7 +22,7 @@ import {
 } from '../api'
 import { AcquisitionSettings } from './SettingsAcquisition'
 import { QualityProfileSettings } from './SettingsProfiles'
-import { CustomFormatSettings, ImportListSettings, SecuritySettings } from './SettingsDepth'
+import { CustomFormatSettings, ImportListSettings } from './SettingsDepth'
 import { NotifierSettings } from './SettingsNotifiers'
 import { PathInput } from '../PathInput'
 import { ReviewWindow } from '../ReviewWindow'
@@ -518,7 +518,6 @@ export function SettingsPage() {
       <CustomFormatSettings />
       <ImportListSettings />
       <NotifierSettings />
-      <SecuritySettings />
 
       {reviewOpen && <ReviewWindow onClose={() => setReviewOpen(false)} />}
     </>

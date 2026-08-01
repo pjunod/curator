@@ -1,6 +1,15 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-08-01 · v0.18.5 · Docker discovery now has the missing host-network advertiser companion, matching the working nzbd deployment pattern and putting `_monarr._tcp` onto the physical LAN without exposing data or credentials (§Native mobile apps). Previously, v0.18.4 · Native Activity added confirmed failed-row clearing. Previously, v0.18.3 · Web Activity added Clear failed directly on the Failed grouping. Previously, v0.18.2 · Native appearance added persistent Small/Medium/Large item sizing and Auto/Light/Dark themes. Previously, v0.18.1 · Native setup starts DNS-SD discovery automatically and displays verified Wi-Fi servers as they answer, with QR and manual setup still visible. Previously, v0.18.0 · Discovery added without subnet scanning, using both IPv4 and IPv6 service addresses, plus security-gated QR pairing from the web UI. Previously, v0.17.0 · Native item detail now edits monitoring, quality profile, root folder, and path; series seasons can be monitored independently; movies and series can add, edit, and remove additional quality copies without deleting their files (§Native mobile apps). Previously, v0.16.1 · Native direct-host connections supply Monarr's default port (`7676`) while preserving explicit ports and reverse-proxy URLs; signed real-device builds verified for both platforms. Previously, v0.16.0 · Native iOS and Android companion built from one Expo/React Native codebase: secure server/key connection, Library/Discover/Wanted/Activity/Calendar/health workflows, real store identifiers and EAS profiles, and CI compilation for both native runtimes (§Native mobile apps). Previously, v0.15.0 · Activity is finite: retention sweep, paged/filtered queue endpoints, and a page that leads with what is moving and collapses the history behind it (§Activity). Previously, v0.14.0 · The re-grab loop, monarr's half: M1–M4 fixed — an import that runs out of disk now fails visibly and retries itself, cleanup removes a payload the client would not, a release already in flight is never grabbed twice, replacement searches are bounded, and the per-release history is finally reachable over the API (§The re-grab loop). Previously, 2026-07-29 · v0.13.0 · Repo and module path are now `github.com/pjunod/monarr` — done while nothing outside the repo depends on the old path, which is the only time it is cheap (§Launch logistics, ADR 0001 amendment 2). Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.5%, past the 85% target, with the floor enforced by COVERAGE_MIN.** The new tests then paid for themselves: six real defects found and fixed, a permanent auth lockout among them, plus a `make coverage` whose number depended on build-cache state (§Defects the coverage work found). Full gate green, 92/92 e2e · next: signed TestFlight/Play internal builds + launch logistics**
+> **Snapshot 2026-08-01 · v0.19.1 · Access is now a first-class web tab with
+> separate User login, Mobile pairing, and API access sections. The pairing
+> QR is visible after one explicit action and does not require revealing the
+> raw API key (§Native mobile apps).**
+>
+> Previously: v0.19.0 added configurable download-priority policies · v0.18.5
+> put Docker DNS-SD discovery onto the physical LAN · v0.18.4 added native
+> failed-row clearing · v0.18.2 added native size and appearance controls.
+> Full gate green: lint · Go · 47 web unit tests · 33 native unit tests ·
+> 92/92 browser tests.
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -24,7 +33,7 @@
 | Native mobile apps | **7/7 ✅** | daily workflows compile for native iOS + Android runtimes |
 | Launch logistics | 4/9 | public repo, releases, name housekeeping |
 
-## Native mobile apps ✅ (built 2026-08-01, v0.18.4)
+## Native mobile apps ✅ (built 2026-08-01, v0.19.1)
 
 - [x] One Expo/React Native project produces iOS and Android bundles
 - [x] First-run setup automatically discovers and displays IPv4/IPv6 servers
@@ -146,7 +155,9 @@ ready, but credentials are deliberately not repository state.
 - [x] More download clients: **Transmission** (RPC + 409 session handshake), **Deluge** (web JSON-RPC), **NZBGet** (JSON-RPC append-by-URL, usenet routing) — contract-tested, in the client factory + settings UI
 - [x] Import lists: TMDB Popular/Top Rated + public Trakt lists (per-list client id); `importlists.sync` (12 h) adds missing entries with list policy, duplicate-safe; API/UI CRUD
 - [x] Anime absolute numbering: `[Group] Show - 15` parsing (v2/ranges), absolute matching on episodes, cumulative absolute numbers derived at TMDB hydration (AniDB/TVDB mapping tables remain the refinement path); corpus 70/70
-- [x] Auth hardening: API key everywhere (X-Api-Key / ?apikey=), opt-in `authRequired` gate on /api/v1 with salted-hash credentials + session login (UI login page); refuses to enable without credentials; key revealed in Settings → Security
+- [x] Access tab: user login, mobile pairing QR, and separately revealed API
+      key; opt-in `authRequired` gate on `/api/v1` uses salted-hash credentials
+      plus browser sessions and refuses to enable without credentials
 - [x] Mass editor: select-mode on the Library page → bulk monitor/unmonitor/profile via `POST /library/bulk`
 - [x] Optional Prometheus `/metrics` (`MONARR_METRICS=true`): build info, items by kind, active queue, wanted total, uptime — hand-rolled exposition, no new dependency
 

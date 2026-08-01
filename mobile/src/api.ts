@@ -67,7 +67,7 @@ export class MonarrClient {
         if (text.trim()) message = text.trim()
       }
       if (response.status === 401) {
-        message = 'Authentication failed. Check the API key in Settings → Security.'
+        message = 'Authentication failed. Check the API key in Access → API access.'
       }
       throw new ApiError(message, response.status)
     }

@@ -514,28 +514,47 @@ an explicit override until changed. Item size applies one **Small**, **Medium**,
 or **Large** choice to both Library tiles and Discover results; Medium preserves
 the layout from native app versions before v0.18.2.
 
-## Security
+## Access
 
-- **API key** — generated on first start, shown here (**Reveal**). This is
-  what Prowlarr/Jellyseerr/Bazarr use as `X-Api-Key` against `/sonarr` and
-  `/radarr`, and what scripts can use against `/api/v1` (`X-Api-Key`
-  header or `?apikey=`). The native iOS/Android app also uses this key and
-  stores it in the device keychain/keystore. After revealing it, **Link a
-  mobile app** can create a pairing QR containing the key and a phone-reachable
-  server address. The app starts local Wi-Fi discovery automatically; use the
-  QR when multicast discovery cannot cross a guest network, VLAN, or VPN. A
-  Docker install needs the v0.18.5 Compose template's host-network
-  `monarr-discovery` companion because the main container's bridge cannot
-  reach the physical LAN; the companion advertises the host port and never
-  reads this key. Show the QR only to a trusted device. You can instead copy
-  the key into the app's first-run connection screen. Use HTTPS or a trusted
-  VPN outside your LAN, because plain HTTP exposes the header in transit.
-- **Authentication** — off by default; the compat personalities are always
-  key-gated regardless. Set a username + password, then **Save & enable
-  auth**: `/api/v1` (and therefore the UI) now requires the API key or a
-  session from the login page. Credentials are stored salted-and-hashed.
-  Enabling is refused until credentials exist, so you can't lock yourself
-  out; the API key always works as a bypass.
+Access has its own navigation tab because browser users, mobile pairing, and
+integration credentials are all ways into the same server. General media and
+automation configuration stays under Settings.
+
+### User login
+
+Authentication is off by default; the compatibility personalities are always
+key-gated regardless. Set a username and password, then select **Save & enable
+auth**. `/api/v1` and the web interface then require either the API key or a
+session from the login page. Credentials are stored salted-and-hashed.
+Enabling is refused until credentials exist, so you cannot lock yourself out;
+the API key always works as a bypass.
+
+### Mobile pairing
+
+**Access → Mobile pairing** defaults to the browser's current server address;
+replace that address when the phone uses a different LAN name, IP address,
+reverse proxy, or VPN route. Select **Show pairing QR**, then use **Scan
+pairing QR** in the native app. The code contains both the address and
+Monarr's API key, so showing it is an explicit action and it should only be
+scanned by a device you trust. The raw key stays hidden in the separate API
+access section.
+
+Automatic Wi-Fi discovery is normally the shorter path. The QR is the
+deterministic fallback when multicast cannot cross a guest network, VLAN, or
+VPN. A Docker install needs the v0.18.5-or-newer Compose template's
+host-network `monarr-discovery` companion because the main container's bridge
+cannot reach the physical LAN; the companion advertises only the host and
+port and never reads the pairing key.
+
+### API access
+
+The API key is generated on first start and shown only after **Reveal**. This
+is what Prowlarr/Jellyseerr/Bazarr use as `X-Api-Key` against `/sonarr` and
+`/radarr`, and what scripts can use against `/api/v1` (`X-Api-Key` header or
+`?apikey=`). The native iOS/Android app also uses this key and stores it in the
+device keychain/keystore. You can copy the revealed key into the app's manual
+connection form instead of using Mobile pairing. Use HTTPS or a trusted VPN
+outside your LAN, because plain HTTP exposes the header in transit.
 
 ## System page
 

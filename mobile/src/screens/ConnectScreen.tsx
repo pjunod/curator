@@ -146,7 +146,7 @@ export function ConnectScreen({
           <View style={styles.scannerHeader}>
             <Wordmark size={30} />
             <Text style={[styles.scannerTitle, { color: theme.text }]}>Scan the pairing code</Text>
-            <Text style={[styles.scannerHint, { color: theme.muted }]}>Open Monarr web → Settings → Security and reveal the mobile pairing QR.</Text>
+            <Text style={[styles.scannerHint, { color: theme.muted }]}>Open Monarr web → Access → Mobile pairing → Show pairing QR.</Text>
           </View>
           <View style={[styles.cameraFrame, { borderColor: theme.accent }]}>
             <CameraView
@@ -214,7 +214,7 @@ export function ConnectScreen({
 
           <View style={styles.labelBlock}>
             <Text style={[styles.label, { color: theme.text }]}>API key</Text>
-            <Text style={[styles.hint, { color: theme.muted }]}>Settings → Security → Reveal; optional when auth is off</Text>
+            <Text style={[styles.hint, { color: theme.muted }]}>Access → API access → Reveal; optional when auth is off</Text>
           </View>
           <Field
             autoCapitalize="none"
