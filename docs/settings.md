@@ -507,10 +507,13 @@ the layout from native app versions before v0.18.2.
   stores it in the device keychain/keystore. After revealing it, **Link a
   mobile app** can create a pairing QR containing the key and a phone-reachable
   server address. The app starts local Wi-Fi discovery automatically; use the
-  QR when multicast discovery cannot cross a guest network, VLAN, or VPN.
-  Show that code only to a trusted device. You can instead copy the key into
-  the app's first-run connection screen. Use HTTPS or a trusted VPN outside
-  your LAN, because plain HTTP exposes the header in transit.
+  QR when multicast discovery cannot cross a guest network, VLAN, or VPN. A
+  Docker install needs the v0.18.5 Compose template's host-network
+  `monarr-discovery` companion because the main container's bridge cannot
+  reach the physical LAN; the companion advertises the host port and never
+  reads this key. Show the QR only to a trusted device. You can instead copy
+  the key into the app's first-run connection screen. Use HTTPS or a trusted
+  VPN outside your LAN, because plain HTTP exposes the header in transit.
 - **Authentication** — off by default; the compat personalities are always
   key-gated regardless. Set a username + password, then **Save & enable
   auth**: `/api/v1` (and therefore the UI) now requires the API key or a

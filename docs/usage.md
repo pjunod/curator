@@ -23,13 +23,18 @@ Dockerfile lives in `deploy/`):
 docker build -f deploy/Dockerfile -t monarr .
 docker run -d --name monarr -p 7676:7676 --user 1000:1000 \
   -v /srv/monarr:/data -v /srv/pool:/pool monarr
+docker run -d --name monarr-discovery --restart unless-stopped \
+  --network host monarr advertise --name monarr --port 7676
 ```
 
 `/data` holds the database and backups; `/pool` holds your media library
 *and* your download client's completed folder — the mount rules and a
 worked pool layout are in the README's Docker section. After code updates:
 `docker compose up -d --build` again (it rebuilds and swaps the container
-only when the image changed).
+only when the image changed). The tracked Compose template includes a
+host-network `monarr-discovery` companion because multicast DNS cannot leave a
+normal Docker bridge; the companion advertises port `7676` and does not read
+the database or proxy traffic.
 
 ## First run
 
@@ -137,10 +142,12 @@ the connection screen. QR and manual setup stay visible while that search runs:
    `http://[fd12:3456::20]:7676`.
 
 DNS-SD stays inside the network's multicast domain. Guest Wi-Fi, isolated
-VLANs, some VPNs, and Docker bridge networking can prevent advertisements
-from reaching the phone even when the server itself is reachable. Use the QR
-or manual address in that case, or provide an mDNS reflector/host networking
-where appropriate.
+VLANs, and some VPNs can prevent advertisements from reaching the phone even
+when the server itself is reachable. Docker installs must run the
+host-network `monarr-discovery` companion included in the v0.18.5 Compose
+template; a copied `docker-compose.yml` is gitignored, so add that service to
+older copies yourself. Use the QR or manual address when multicast domains are
+deliberately separated.
 
 The app covers the daily mobile loop: browse and filter the library; inspect a
 title; edit its monitoring, quality profile, root folder, and path; change

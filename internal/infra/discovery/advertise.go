@@ -23,7 +23,24 @@ type registerFunc func(instance, service, domain string, port int, text []string
 // Advertising is best-effort: a locked-down multicast interface must not stop
 // the media server itself from starting.
 func Start(port int, version string, log *slog.Logger) func() {
-	return start(port, version, log, func(instance, service, domain string, port int, text []string) (func(), error) {
+	shutdown, err := publish("", port, version, log, systemRegister(log))
+	if err != nil {
+		log.Warn("local discovery unavailable", "service", ServiceType, "err", err)
+		return func() {}
+	}
+	return shutdown
+}
+
+// Publish advertises an HTTP endpoint that is already exposed on this host.
+// Unlike Start, errors are returned: the standalone Docker companion has no
+// other job, so failing loudly lets the container restart instead of sitting
+// healthy while advertising nothing.
+func Publish(instance string, port int, version string, log *slog.Logger) (func(), error) {
+	return publish(instance, port, version, log, systemRegister(log))
+}
+
+func systemRegister(log *slog.Logger) registerFunc {
+	return func(instance, service, domain string, port int, text []string) (func(), error) {
 		if port < 1 || port > 65535 {
 			return nil, fmt.Errorf("invalid service port %d", port)
 		}
@@ -38,15 +55,18 @@ func Start(port int, version string, log *slog.Logger) func() {
 				log.Warn("local discovery shutdown failed", "service", ServiceType, "err", err)
 			}
 		}, nil
-	})
+	}
 }
 
-func start(port int, version string, log *slog.Logger, register registerFunc) func() {
+func publish(instance string, port int, version string, log *slog.Logger, register registerFunc) (func(), error) {
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
 		hostname = "server"
 	}
-	instance := fmt.Sprintf("Monarr on %s", hostname)
+	instance = strings.TrimSpace(instance)
+	if instance == "" {
+		instance = fmt.Sprintf("Monarr on %s", hostname)
+	}
 	// The Android DNSSD resolver exposes every A/AAAA answer but currently
 	// reports the service instance as its host. Carry the real SRV target in
 	// TXT as a portable fallback, especially for scoped link-local IPv6 where
@@ -59,11 +79,10 @@ func start(port int, version string, log *slog.Logger, register registerFunc) fu
 		"version=" + version,
 	})
 	if err != nil {
-		log.Warn("local discovery unavailable", "service", ServiceType, "err", err)
-		return func() {}
+		return nil, err
 	}
-	log.Info("local discovery advertised", "service", ServiceType, "port", port)
-	return shutdown
+	log.Info("local discovery advertised", "service", ServiceType, "instance", instance, "port", port)
+	return shutdown, nil
 }
 
 func localHostName(hostname string) string {

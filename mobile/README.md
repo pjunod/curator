@@ -43,8 +43,10 @@ iOS Simulator / Android emulator. In a native build, the connection screen
 immediately browses `_monarr._tcp` with DNS-SD and displays verified servers as
 they answer. The server supplies its real service port and resolved IPv4/IPv6
 addresses; the app never assumes a subnet size or probes an address range.
-DNS-SD may be blocked by guest Wi-Fi, VLAN isolation, a VPN, or Docker bridge
-networking. QR and manual entry remain visible while the scan runs and remain
+DNS-SD may be blocked by guest Wi-Fi, VLAN isolation, or a VPN. A Docker
+install must run the host-network `monarr-discovery` companion included in the
+server's v0.18.5 Compose template; multicast cannot leave the main container's
+bridge. QR and manual entry remain visible while the scan runs and remain
 available when the server is otherwise reachable.
 
 For QR pairing, open **Monarr web → Settings → Security → Reveal → Link a

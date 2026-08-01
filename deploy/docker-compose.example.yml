@@ -47,6 +47,19 @@ services:
       - ${MONARR_POOL:-/srv/pool}:/pool
     restart: unless-stopped
 
+  # A normal Docker bridge cannot put multicast DNS onto the physical LAN.
+  # This companion runs only Monarr's DNS-SD advertiser on the Linux host
+  # network; the main container still owns the API, database, and files.
+  monarr-discovery:
+    image: monarr
+    container_name: monarr-discovery
+    network_mode: host
+    command: ["advertise", "--name", "${MONARR_DISCOVERY_NAME:-monarr}", "--port", "7676"]
+    depends_on:
+      monarr:
+        condition: service_started
+    restart: unless-stopped
+
   # ---- optional: a download client on the same pool ----------------------
   # Uncomment if you don't already run one. Point Monarr at
   # http://qbittorrent:8080 (same compose network) and set its save path

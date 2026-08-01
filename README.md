@@ -110,6 +110,12 @@ services:
       - /srv/pool:/pool
     restart: unless-stopped
 
+  monarr-discovery:
+    image: monarr
+    network_mode: host       # DNS-SD multicast must reach the physical LAN
+    command: ["advertise", "--name", "monarr", "--port", "7676"]
+    restart: unless-stopped
+
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
     environment: [PUID=1000, PGID=1000, WEBUI_PORT=8080]

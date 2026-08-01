@@ -47,6 +47,26 @@ updates. Built-in defaults: `/srv/monarr` (config), `/srv/pool` (media +
 downloads), user `1000:1000` — the `.env` only needs the values where your
 setup differs.
 
+## Why discovery has a second container
+
+A Docker bridge is a multicast boundary: Monarr can serve port `7676` through
+the published TCP mapping while its `_monarr._tcp` announcement remains trapped
+inside the bridge. The Compose template therefore runs `monarr-discovery` from
+the same image with host networking. That process only advertises the host's
+existing port; it does not open the database, proxy requests, or read keys and
+media.
+
+If you copied `docker-compose.example.yml` before v0.18.5, copy the
+`monarr-discovery` service into your gitignored `docker-compose.yml`, then run:
+
+```bash
+docker compose up -d --build   # rebuild both processes and expose DNS-SD on the LAN
+```
+
+Set `MONARR_DISCOVERY_NAME` in `.env` when `monarr` is not a useful name in the
+native server picker. Host networking is the requirement: publishing UDP 5353
+through a bridge does not reproduce multicast DNS.
+
 Storage rules (what must not sit on NFS/Gluster, floating-node patterns):
 [docs/deployment.md](../docs/deployment.md). Mount rules and a worked
 pool layout: the README's Docker section.

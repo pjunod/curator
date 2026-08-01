@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -53,6 +54,21 @@ import (
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if len(os.Args) > 1 && os.Args[1] == "advertise" {
+		log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+		if err := runAdvertise(ctx, os.Args[2:], os.Stdout, log, discovery.Publish); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
+			log.Error("discovery companion exited with error", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -60,9 +76,6 @@ func main() {
 	}
 	log := logging.New(os.Stderr, cfg)
 	slog.SetDefault(log)
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	if err := run(ctx, cfg, log); err != nil {
 		log.Error("monarr exited with error", "err", err)
