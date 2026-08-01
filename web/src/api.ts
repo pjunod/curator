@@ -178,6 +178,8 @@ export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' |
   releaseDate: string
   runtime: number
   qualityProfileId: number
+  downloadPriority: number
+  downloadPriorityOverride: number | null
   rootFolderId: number
   ended: boolean
   ids: ExternalIds
@@ -190,6 +192,8 @@ export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' |
 export interface UpdateMediaItemRequest {
   monitored?: boolean
   qualityProfileId?: number
+  downloadPriority?: number
+  inheritDownloadPriority?: boolean
   rootFolderId?: number // recomputes the folder; 0 clears the assignment
   path?: string // explicit absolute folder; wins over rootFolderId
 }
@@ -216,6 +220,7 @@ export interface AddMediaRequest {
   olid?: string
   rootFolderId?: number
   qualityProfileId?: number
+  downloadPriority?: number
   monitored?: boolean
   monitor?: 'all' | 'latest' | 'none' // series: which seasons start monitored
   searchNow?: boolean
@@ -531,6 +536,7 @@ export interface QualityProfile {
   target: Quality
   floor?: Quality
   upgradesAllowed: boolean
+  downloadPriority: number
   sentence: string
   /** How many items/copies/lists use it; non-zero means delete is refused. */
   inUse?: number
@@ -541,6 +547,7 @@ export interface ProfileInput {
   target: { source: string; resolution?: number }
   floor?: { source: string; resolution?: number }
   upgradesAllowed?: boolean
+  downloadPriority?: number
 }
 
 export interface IndexerInput {

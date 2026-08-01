@@ -9,6 +9,7 @@ import {
   updateProfile,
   updateSettings,
 } from '../api'
+import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 
 // The quality vocabulary, worst to best on each axis. Kept here rather than
 // fetched because it is a property of the model, not of the deployment — and
@@ -62,6 +63,7 @@ const blankDraft = (): Draft => ({
   floorSource: 'hdtv',
   floorResolution: 1080,
   upgradesAllowed: true,
+  downloadPriority: 0,
 })
 
 interface Draft {
@@ -73,6 +75,7 @@ interface Draft {
   floorSource: string
   floorResolution: number
   upgradesAllowed: boolean
+  downloadPriority: number
 }
 
 function draftOf(p: QualityProfile): Draft {
@@ -86,6 +89,7 @@ function draftOf(p: QualityProfile): Draft {
     floorSource: p.floor?.source ?? p.target.source,
     floorResolution: p.floor?.resolution ?? p.target.resolution,
     upgradesAllowed: p.upgradesAllowed,
+    downloadPriority: p.downloadPriority,
   }
 }
 
@@ -95,6 +99,7 @@ function toInput(d: Draft): ProfileInput {
     name: d.name.trim(),
     target: { source: d.targetSource, resolution: res },
     upgradesAllowed: d.upgradesAllowed,
+    downloadPriority: d.downloadPriority,
   }
   if (d.hasFloor) {
     body.floor = {
@@ -285,6 +290,22 @@ function ProfileForm(props: {
         />
         Set a floor — below this, do not grab at all
       </label>
+
+      <label>
+        Download priority
+        <select
+          aria-label="Download priority"
+          value={d.downloadPriority}
+          onChange={(e) => set({ downloadPriority: Number(e.target.value) })}
+        >
+          {DOWNLOAD_PRIORITIES.map((priority) => (
+            <option key={priority.value} value={priority.value}>
+              {priority.label}
+            </option>
+          ))}
+        </select>
+        <span className="muted"> Applied when an item does not have its own override.</span>
+      </label>
       {d.hasFloor && (
         <div className="form-row">
           <label>
@@ -420,6 +441,7 @@ export function QualityProfileSettings() {
             <tr>
               <th>Name</th>
               <th>What it does</th>
+              <th>Priority</th>
               <th>Default for</th>
               <th>In use</th>
               <th></th>
@@ -434,6 +456,7 @@ export function QualityProfileSettings() {
                     <strong>{p.name}</strong>
                   </td>
                   <td className="muted">{p.sentence}</td>
+                  <td>{downloadPriorityLabel(p.downloadPriority)}</td>
                   <td>
                     {isDefaultFor.length === 0 ? (
                       <span className="muted">—</span>

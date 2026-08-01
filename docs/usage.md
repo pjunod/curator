@@ -150,8 +150,9 @@ older copies yourself. Use the QR or manual address when multicast domains are
 deliberately separated.
 
 The app covers the daily mobile loop: browse and filter the library; inspect a
-title; edit its monitoring, quality profile, root folder, and path; change
-season monitoring; and start a search. Movies and series can also keep
+title; edit its monitoring, quality profile, inherited or per-item download
+priority, root folder, and path; change season monitoring; and start a search.
+Movies and series can also keep
 additional quality copies, each with its own name, profile, location, and
 monitoring state. Copy removal keeps every file already on disk. Discover,
 Wanted, downloads/imports, the calendar, and server health are native too.
@@ -238,7 +239,8 @@ for when you want to pick a specific release yourself.
 
 **Automatic** — three entry points, all using the decision engine (the
 profile's target and floor, upgrade rules, custom-format scores) to pick
-the best accepted release with no list to review:
+the best accepted release with no list to review. Once chosen, the profile's
+download priority or the item's override travels with the grab to nzbd:
 
 - **Search on add** (checkbox on the add form, on by default) fires the
   moment an item is added.
@@ -283,6 +285,8 @@ usual questions at a glance:
   nothing; series count monitored episodes aired to date), and a
   **↓ downloading** pill whenever a grab for this item is in flight.
 - **Profile** — the quality profile driving grabs and upgrades.
+- **Download priority** — the effective level nzbd receives, plus whether it
+  comes from the profile or is an item override.
 - **Ratings** — labeled chips per source: TMDB (/10) for movies & series
   and Open Library (/5) for books come free; add an OMDb key (Settings →
   Metadata → Extra ratings) and Rotten Tomatoes, IMDb, and Metacritic
@@ -299,9 +303,11 @@ Actions up top:
 - **Re-measure files** — read the files again and record what is actually in
   them. Use it after fixing a permission or a mount that made a probe fail;
   a routine scan skips files it has already measured at the same size.
-- **Edit** — change monitoring, quality profile, root folder, or the
-  folder path itself. Changing the root recomputes the folder from the
-  naming rules; **files on disk are never moved** by an edit.
+- **Edit** — change monitoring, quality profile, download priority, root
+  folder, or the folder path itself. Choose **Profile default** to inherit,
+  or one of six explicit levels from Very low through Force. Changing the
+  root recomputes the folder from the naming rules; **files on disk are never
+  moved** by an edit.
 - **Refresh metadata** — re-fetch from the provider right now: new
   episodes for a continuing series, updated poster/status/rating. The
   `metadata.refresh` task does this for the whole library every 12 h
@@ -606,6 +612,13 @@ page (the ▸) to see the handoff step by step, each with a timestamp:
 the download client *reported*, and where Monarr *looked* after any remote
 path mapping. When an import stops, the trace ends at **failed** with the
 exact reason — no guessing.
+
+For nzbd, the admission request also carries the effective download priority.
+Normal is `0`; High and Very high move the job ahead of normal work; Low and
+Very low let other work go first. Force (`900`) is an operator exception that
+can run through queue pauses and quota holds, but never through nzbd's disk
+safety guard. Download clients without a native priority capability continue
+to receive the grab normally and ignore this field.
 
 Every row carries the controls for its state:
 

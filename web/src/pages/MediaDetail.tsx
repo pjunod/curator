@@ -27,6 +27,7 @@ import {
 } from '../api'
 import type { MediaFileInfo, MediaItemDetail, RemoveFileOptions } from '../api'
 import { describeAutoSearch } from '../autosearch'
+import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ReleaseSearch } from './ReleaseSearch'
 
 // CopiesPanel: additional quality targets — the same item kept at a second
@@ -205,6 +206,9 @@ function EditPanel(props: {
 
   const [monitored, setMonitored] = useState(item.monitored)
   const [profileId, setProfileId] = useState(item.qualityProfileId)
+  const [downloadPriority, setDownloadPriority] = useState(
+    item.downloadPriorityOverride === null ? 'inherit' : String(item.downloadPriorityOverride),
+  )
   const [rootId, setRootId] = useState<number>(item.rootFolderId)
   const [path, setPath] = useState(item.path)
 
@@ -216,6 +220,12 @@ function EditPanel(props: {
         qualityProfileId: profileId,
       }
       if (rootId !== item.rootFolderId) req.rootFolderId = rootId
+      const originalPriority =
+        item.downloadPriorityOverride === null ? 'inherit' : String(item.downloadPriorityOverride)
+      if (downloadPriority !== originalPriority) {
+        if (downloadPriority === 'inherit') req.inheritDownloadPriority = true
+        else req.downloadPriority = Number(downloadPriority)
+      }
       // An explicit path edit wins over the root-folder recompute.
       if (path !== item.path) req.path = path
       return updateLibraryItem(item.id, req)
@@ -261,6 +271,25 @@ function EditPanel(props: {
             {profiles.data?.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Download priority
+          <select
+            aria-label="Download priority"
+            value={downloadPriority}
+            onChange={(e) => setDownloadPriority(e.target.value)}
+          >
+            <option value="inherit">
+              Profile default — {downloadPriorityLabel(
+                profiles.data?.find((p) => p.id === profileId)?.downloadPriority ?? 0,
+              )}
+            </option>
+            {DOWNLOAD_PRIORITIES.map((priority) => (
+              <option key={priority.value} value={priority.value}>
+                {priority.label}
               </option>
             ))}
           </select>
@@ -781,6 +810,14 @@ export function MediaDetailPage() {
                   be explained — and a model the UI has to apologise for is the
                   wrong model. Deleting the apology was part of the fix. */}
               {profileSentence ? <span className="muted"> — {profileSentence}</span> : null}
+            </div>
+
+            <div className="fact-label">Download priority</div>
+            <div>
+              {downloadPriorityLabel(m.downloadPriority)}{' '}
+              <span className="muted">
+                {m.downloadPriorityOverride === null ? '(from profile)' : '(item override)'}
+              </span>
             </div>
 
             {(m.ratings.length > 0 || m.ratingVotes > 0) && (

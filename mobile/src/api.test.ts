@@ -41,6 +41,7 @@ describe('MonarrClient', () => {
     await client.updateLibraryItem(42, {
       monitored: false,
       qualityProfileId: 7,
+      downloadPriority: 100,
       rootFolderId: 3,
       path: '/media/movies/Arrival (2016)',
     })
@@ -51,6 +52,7 @@ describe('MonarrClient', () => {
     expect(JSON.parse(String(init.body))).toEqual({
       monitored: false,
       qualityProfileId: 7,
+      downloadPriority: 100,
       rootFolderId: 3,
       path: '/media/movies/Arrival (2016)',
     })

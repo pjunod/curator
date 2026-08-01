@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react'
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { formatBytes } from '../format'
+import {
+  DOWNLOAD_PRIORITIES,
+  INHERIT_DOWNLOAD_PRIORITY,
+  downloadPriorityLabel,
+} from '../downloadPriority'
 import { Poster } from '../components/Media'
 import {
   AppScreen,
@@ -33,6 +38,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
   const [seasonSaving, setSeasonSaving] = useState<number | null>(null)
   const [draftMonitored, setDraftMonitored] = useState(false)
   const [draftProfileId, setDraftProfileId] = useState(0)
+  const [draftDownloadPriority, setDraftDownloadPriority] = useState(INHERIT_DOWNLOAD_PRIORITY)
   const [draftRootId, setDraftRootId] = useState(0)
   const [draftPath, setDraftPath] = useState('')
   const [pathEdited, setPathEdited] = useState(false)
@@ -49,6 +55,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
     if (!item) return
     setDraftMonitored(item.monitored)
     setDraftProfileId(item.qualityProfileId)
+    setDraftDownloadPriority(item.downloadPriorityOverride ?? INHERIT_DOWNLOAD_PRIORITY)
     setDraftRootId(item.rootFolderId)
     setDraftPath(item.path)
     setPathEdited(false)
@@ -65,6 +72,11 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
     const patch: UpdateMediaItemRequest = {}
     if (draftMonitored !== item.monitored) patch.monitored = draftMonitored
     if (draftProfileId !== item.qualityProfileId) patch.qualityProfileId = draftProfileId
+    const originalPriority = item.downloadPriorityOverride ?? INHERIT_DOWNLOAD_PRIORITY
+    if (draftDownloadPriority !== originalPriority) {
+      if (draftDownloadPriority === INHERIT_DOWNLOAD_PRIORITY) patch.inheritDownloadPriority = true
+      else patch.downloadPriority = draftDownloadPriority
+    }
     if (draftRootId !== item.rootFolderId) patch.rootFolderId = draftRootId
     if (pathEdited && draftPath !== item.path) patch.path = draftPath
     if (Object.keys(patch).length === 0) {
@@ -183,6 +195,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
             <View style={styles.badges}>
               <Badge label={item.monitored ? 'Monitored' : 'Unmonitored'} tone={item.monitored ? 'ok' : 'neutral'} />
               <Badge label={selectedProfileName} />
+              <Badge label={`${downloadPriorityLabel(item.downloadPriority)} priority`} />
               {item.quality ? <Badge label={item.quality} tone={item.qualityVerified ? 'ok' : 'neutral'} /> : null}
               {item.upgrade ? <Badge label={item.upgrade} tone={item.upgrade === 'met' ? 'ok' : 'warning'} /> : null}
             </View>
@@ -214,6 +227,23 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
             onChange={setDraftProfileId}
             disabled={saving}
             empty={profilesResource.loading ? 'Loading profiles…' : profilesResource.error || 'No quality profiles are available.'}
+          />
+
+          <ChoiceGroup
+            label="Download priority"
+            options={[
+              {
+                id: INHERIT_DOWNLOAD_PRIORITY,
+                label: `Profile default — ${downloadPriorityLabel(
+                  profiles.find((profile) => profile.id === draftProfileId)?.downloadPriority ?? 0,
+                )}`,
+              },
+              ...DOWNLOAD_PRIORITIES.map((priority) => ({ id: priority.value, label: priority.label })),
+            ]}
+            selected={draftDownloadPriority}
+            onChange={setDraftDownloadPriority}
+            disabled={saving}
+            empty="No download priority choices are available."
           />
 
           <ChoiceGroup

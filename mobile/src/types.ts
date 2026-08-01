@@ -108,6 +108,8 @@ export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' |
   releaseDate: string
   runtime: number
   qualityProfileId: number
+  downloadPriority: number
+  downloadPriorityOverride: number | null
   rootFolderId: number
   ended: boolean
   seasons: SeasonInfo[]
@@ -118,6 +120,8 @@ export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' |
 export interface UpdateMediaItemRequest {
   monitored?: boolean
   qualityProfileId?: number
+  downloadPriority?: number
+  inheritDownloadPriority?: boolean
   rootFolderId?: number
   path?: string
 }
@@ -156,6 +160,7 @@ export interface AddMediaRequest {
   olid?: string
   rootFolderId?: number
   qualityProfileId?: number
+  downloadPriority?: number
   monitored?: boolean
   monitor?: 'all' | 'latest' | 'none'
   searchNow?: boolean
@@ -182,6 +187,7 @@ export interface QualityProfile {
   name: string
   sentence: string
   upgradesAllowed: boolean
+  downloadPriority: number
 }
 
 export interface WantedItem {

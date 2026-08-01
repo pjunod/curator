@@ -207,9 +207,9 @@ Event types: `grabbed`, `failed`, `imported`, `import_failed`,
 
 ## Quality profiles
 
-A profile is a **target**, an optional **floor**, and an **upgrades**
-switch (ADR 0014). Three sentences are the whole model, and they are the
-sentence the UI prints on every profile:
+A profile is a **target**, an optional **floor**, an **upgrades** switch,
+and a **download priority** (ADR 0014). The first three decide what Monarr
+wants; priority decides which accepted grab nzbd works on first.
 
 > Hunt the best release at or below the target's resolution. While what's
 > on disk is below the target and upgrades are on, keep looking; once the
@@ -217,13 +217,13 @@ sentence the UI prints on every profile:
 
 Five seeded profiles, editable under **Settings → Quality profiles**:
 
-| ID | Name | Target | Floor |
-|---|---|---|---|
-| 1 | 1080p | WEB-DL 1080p | — |
-| 2 | HD-1080p | WEB-DL 1080p | HDTV 1080p |
-| 3 | 4K | WEB-DL 2160p | WEB-DL 2160p |
-| 4 | Ebook | EPUB | — |
-| 5 | Audiobook | M4B | — |
+| ID | Name | Target | Floor | Download priority |
+|---|---|---|---|---|
+| 1 | 1080p | WEB-DL 1080p | — | Normal |
+| 2 | HD-1080p | WEB-DL 1080p | HDTV 1080p | Normal |
+| 3 | 4K | WEB-DL 2160p | WEB-DL 2160p | Normal |
+| 4 | Ebook | EPUB | — | Normal |
+| 5 | Audiobook | M4B | — | Normal |
 
 Ids are stable — items, copies and import lists reference profiles by id —
 so an upgrade from 0.5.x rewrites these rows in place rather than
@@ -250,6 +250,21 @@ unless a profile explicitly targets one, and the three format families
 (film/TV · ebook · audiobook) never satisfy each other — an M4B is not a
 better EPUB, it answers a different question.
 
+**What download priority does:** every grab sent to nzbd carries the
+profile's level unless the item has its own override. Higher levels are
+scheduled before lower ones; they do not change which release Monarr picks.
+The six levels are **Very low** (`-100`) · **Low** (`-50`) · **Normal**
+(`0`) · **High** (`50`) · **Very high** (`100`) · **Force** (`900`). Force
+also runs through nzbd's queue pauses and quota holds, so use it for an
+intentional exception rather than as the everyday high setting. Disk safety
+still wins.
+
+Set a profile to High, then make it the default for Movies or Series, to
+prioritize that whole kind. For a new-release show or one film, open the item,
+choose **Edit → Download priority**, and set an override. **Profile default**
+clears that override; future changes to the profile then apply again. An item
+override applies to its primary and additional quality copies.
+
 ### Defaults for new items
 
 Under the profile table, one default per media kind — **Movies**,
@@ -272,7 +287,8 @@ points at is somehow gone, adds fall back to the built-in rather than
 failing: a preference is never allowed to be the reason an add breaks.
 
 The add screen names the default it is about to use ("Default — 1080p")
-rather than saying only "(default)".
+rather than saying only "(default)". Download priority can be changed from
+the item page after the title is added.
 
 **Deleting a profile** is refused while any item, copy, or import list
 references it; the row shows the count and the button is disabled. It is
