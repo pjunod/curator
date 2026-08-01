@@ -17,6 +17,7 @@ Monarr data or metadata provider keys live on the phone.
 - Server status and health, with a handoff to the web UI for administration.
 - Automatic first-run Wi-Fi discovery over DNS-SD and camera-based pairing by
   QR.
+- Per-device Auto/Light/Dark theme and Small/Medium/Large item-size choices.
 - One saved server address and API key. The API key is stored with Android
   Keystore or iOS Keychain through Expo SecureStore.
 
@@ -60,6 +61,11 @@ Reveal**. The key is optional only while native API authentication is off.
 An `http://` LAN address is supported for homelabs; use HTTPS or a trusted VPN
 for access outside the local network because cleartext HTTP exposes the API
 key in transit.
+
+Under **More → Appearance**, Item size changes both Library tiles and Discover
+results; Medium is the original layout. Theme starts on Auto, follows the
+device's light/dark setting, and resolves an unspecified system setting to
+dark. Both choices persist on that device.
 
 ## Verify a change
 

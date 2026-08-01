@@ -1,8 +1,10 @@
 import * as SecureStore from 'expo-secure-store'
 import { sanitizeConnection } from './connection'
+import { DEFAULT_PREFERENCES, sanitizePreferences, type AppPreferences } from './preferences'
 import type { Connection } from './types'
 
 const connectionKey = 'monarr.connection.v1'
+const preferencesKey = 'monarr.preferences.v1'
 
 export async function loadConnection(): Promise<Connection | null> {
   const encoded = await SecureStore.getItemAsync(connectionKey)
@@ -26,4 +28,20 @@ export async function saveConnection(connection: Connection): Promise<Connection
 
 export async function clearConnection(): Promise<void> {
   await SecureStore.deleteItemAsync(connectionKey)
+}
+
+export async function loadPreferences(): Promise<AppPreferences> {
+  const encoded = await SecureStore.getItemAsync(preferencesKey)
+  if (!encoded) return DEFAULT_PREFERENCES
+  try {
+    return sanitizePreferences(JSON.parse(encoded))
+  } catch {
+    return DEFAULT_PREFERENCES
+  }
+}
+
+export async function savePreferences(preferences: AppPreferences): Promise<void> {
+  await SecureStore.setItemAsync(preferencesKey, JSON.stringify(sanitizePreferences(preferences)), {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  })
 }

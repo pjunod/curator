@@ -151,6 +151,12 @@ Wanted, downloads/imports, the calendar, and server health are native too.
 **More → Open web interface** hands off to the browser for defining profiles
 and root folders or configuring indexers, clients, notifiers, and security.
 
+**More → Appearance** keeps two preferences on this device. **Item size**
+changes Library tiles and Discover results between Small, Medium, and Large;
+Medium is the layout used before the selector existed. **Theme** defaults to
+Auto, which follows the device's light or dark setting and uses dark when the
+device reports no preference. Light and Dark are explicit overrides.
+
 The API key is stored in iOS Keychain or Android Keystore. Plain `http://` is
 supported because many Monarr servers live only on a trusted LAN, but it does
 not encrypt the key in transit. The pairing QR also contains the key, so show

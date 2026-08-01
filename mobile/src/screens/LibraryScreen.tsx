@@ -3,6 +3,8 @@ import { FlatList, StyleSheet, Text, useWindowDimensions, View } from 'react-nat
 import type { MonarrClient } from '../api'
 import { LibraryCard } from '../components/Media'
 import { AppScreen, Chip, Field, Header, LoadingState, MessageState, Wordmark } from '../components/UI'
+import { libraryGrid } from '../preferences'
+import { usePreferences } from '../preferences-context'
 import { useTheme } from '../theme'
 import type { MediaItemSummary, MediaKind } from '../types'
 import { useResource } from '../useResource'
@@ -19,6 +21,7 @@ export function LibraryScreen({
   onOpen: (id: number) => void
 }) {
   const theme = useTheme()
+  const { itemSize } = usePreferences()
   const { width } = useWindowDimensions()
   const [kind, setKind] = useState<KindFilter>('all')
   const [query, setQuery] = useState('')
@@ -34,18 +37,17 @@ export function LibraryScreen({
       `${item.title} ${item.author} ${item.year}`.toLocaleLowerCase().includes(needle),
     )
   }, [query, resource.data])
-  const columns = width >= 900 ? 4 : width >= 600 ? 3 : 2
-  const cardWidth = Math.max(132, Math.floor((width - 32 - 12 * (columns - 1)) / columns))
+  const { columns, slotWidth, cardWidth } = libraryGrid(width, itemSize)
 
   return (
     <AppScreen>
       <Header title="Library" left={<Wordmark size={19} />} subtitle={`${resource.data?.length ?? 0} titles`} />
       <FlatList<MediaItemSummary>
-        key={`${columns}-column-library`}
+        key={`${itemSize}-${columns}-column-library`}
         data={items}
         keyExtractor={(item) => String(item.id)}
         numColumns={columns}
-        columnWrapperStyle={styles.columns}
+        columnWrapperStyle={columns > 1 ? styles.columns : undefined}
         contentContainerStyle={styles.content}
         refreshing={resource.refreshing}
         onRefresh={() => void resource.refresh()}
@@ -73,7 +75,9 @@ export function LibraryScreen({
           )
         }
         renderItem={({ item }) => (
-          <LibraryCard item={item} width={cardWidth} onPress={() => onOpen(item.id)} />
+          <View style={[styles.cardSlot, { width: columns > 1 ? slotWidth : '100%' }]}>
+            <LibraryCard item={item} width={cardWidth} itemSize={itemSize} onPress={() => onOpen(item.id)} />
+          </View>
         )}
       />
       {resource.error && resource.data ? <Text style={[styles.staleError, { color: theme.error }]}>{resource.error}</Text> : null}
@@ -84,6 +88,7 @@ export function LibraryScreen({
 const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
   columns: { gap: 12 },
+  cardSlot: { alignItems: 'center' },
   controls: { gap: 12, marginBottom: 18 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   staleError: { fontSize: 12, textAlign: 'center', padding: 6 },

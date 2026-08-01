@@ -3,6 +3,7 @@ import { ActivityIndicator, BackHandler, Pressable, StyleSheet, Text, View } fro
 import { StatusBar } from 'expo-status-bar'
 import { SafeAreaProvider, SafeAreaView, initialWindowMetrics } from 'react-native-safe-area-context'
 import { MonarrClient } from './src/api'
+import { PreferencesProvider } from './src/preferences-context'
 import { clearConnection, loadConnection, saveConnection } from './src/storage'
 import { useTheme } from './src/theme'
 import type { Connection, SystemStatus } from './src/types'
@@ -20,9 +21,11 @@ type Overlay = { name: 'detail'; id: number } | { name: 'calendar' }
 
 export default function App() {
   return (
-    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <MonarrApp />
-    </SafeAreaProvider>
+    <PreferencesProvider>
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+        <MonarrApp />
+      </SafeAreaProvider>
+    </PreferencesProvider>
   )
 }
 

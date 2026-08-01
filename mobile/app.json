@@ -2,7 +2,7 @@
   "expo": {
     "name": "Monarr",
     "slug": "monarr",
-    "version": "0.18.1",
+    "version": "0.18.2",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "monarr",
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.pjunod.monarr",
-      "buildNumber": "5",
+      "buildNumber": "6",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -27,7 +27,7 @@
     },
     "android": {
       "package": "com.pjunod.monarr",
-      "versionCode": 5,
+      "versionCode": 6,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",

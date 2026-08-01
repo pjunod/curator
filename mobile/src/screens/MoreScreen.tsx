@@ -1,7 +1,8 @@
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { formatUptime } from '../format'
-import { AppScreen, Badge, Button, Header, InlineError, LoadingState, Panel, SectionTitle, Wordmark } from '../components/UI'
+import { AppScreen, Badge, Button, Chip, Header, InlineError, LoadingState, Panel, SectionTitle, Wordmark } from '../components/UI'
+import { usePreferences } from '../preferences-context'
 import { useTheme } from '../theme'
 import type { Connection } from '../types'
 import { useResource } from '../useResource'
@@ -18,6 +19,7 @@ export function MoreScreen({
   onDisconnect: () => void
 }) {
   const theme = useTheme()
+  const { theme: themePreference, itemSize, setTheme, setItemSize } = usePreferences()
   const resource = useResource(async () => {
     const [status, health] = await Promise.all([client.getStatus(), client.getHealth()])
     return { status, health }
@@ -43,6 +45,28 @@ export function MoreScreen({
             <Text style={[styles.chevron, { color: theme.accent }]}>›</Text>
           </Panel>
         </Pressable>
+
+        <SectionTitle>Appearance</SectionTitle>
+        <Panel style={styles.appearancePanel}>
+          <View style={styles.preferenceBlock}>
+            <Text style={[styles.preferenceLabel, { color: theme.text }]}>Theme</Text>
+            <Text style={[styles.linkHint, { color: theme.muted }]}>Auto follows this device. If it reports no preference, Monarr uses dark.</Text>
+            <View style={styles.choiceRow}>
+              {(['auto', 'light', 'dark'] as const).map((value) => (
+                <Chip key={value} label={`${value[0]?.toUpperCase()}${value.slice(1)}`} selected={themePreference === value} onPress={() => setTheme(value)} />
+              ))}
+            </View>
+          </View>
+          <View style={[styles.preferenceBlock, styles.preferenceDivider, { borderTopColor: theme.border }]}>
+            <Text style={[styles.preferenceLabel, { color: theme.text }]}>Item size</Text>
+            <Text style={[styles.linkHint, { color: theme.muted }]}>Medium matches the previous layout. Small fits more titles on screen.</Text>
+            <View style={styles.choiceRow}>
+              {(['small', 'medium', 'large'] as const).map((value) => (
+                <Chip key={value} label={`${value[0]?.toUpperCase()}${value.slice(1)}`} selected={itemSize === value} onPress={() => setItemSize(value)} />
+              ))}
+            </View>
+          </View>
+        </Panel>
 
         <SectionTitle>Server</SectionTitle>
         {resource.loading && !resource.data ? <LoadingState /> : null}
@@ -106,6 +130,11 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   linkTitle: { fontSize: 16, fontWeight: '700' },
   linkHint: { fontSize: 12, lineHeight: 17, marginTop: 2 },
+  appearancePanel: { gap: 16 },
+  preferenceBlock: { gap: 8 },
+  preferenceDivider: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 16 },
+  preferenceLabel: { fontSize: 14, fontWeight: '700' },
+  choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   chevron: { fontSize: 32, lineHeight: 34 },
   serverPanel: { gap: 10 },
   serverHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 4 },

@@ -3,6 +3,7 @@ import { ActivityIndicator, Modal, ScrollView, StyleSheet, Switch, Text, View } 
 import type { MonarrClient } from '../api'
 import { SearchCard } from '../components/Media'
 import { AppScreen, Button, Chip, Field, Header, IconButton, InlineError, LoadingState, MessageState, Panel, SectionTitle, Wordmark } from '../components/UI'
+import { usePreferences } from '../preferences-context'
 import { useTheme } from '../theme'
 import type { AddMediaRequest, MediaKind, SearchResult } from '../types'
 import { useResource } from '../useResource'
@@ -15,6 +16,7 @@ export function DiscoverScreen({
   onAdded: (id: number) => void
 }) {
   const theme = useTheme()
+  const { itemSize } = usePreferences()
   const [kind, setKind] = useState<MediaKind>('movie')
   const [listID, setListID] = useState('')
   const [query, setQuery] = useState('')
@@ -104,6 +106,7 @@ export function DiscoverScreen({
             <SearchCard
               key={`${item.kind}:${item.tmdbId || item.tvdbId || item.olid}`}
               item={item}
+              itemSize={itemSize}
               onAdd={() => setAdding(item)}
             />
           ))}

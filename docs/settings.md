@@ -483,6 +483,15 @@ refused. A notification for something Monarr does not manage returns 200 with
 `matched: false` rather than a 404 — plurx retries failures, and there is
 nothing to retry about a film Monarr was never asked to look after.
 
+## Native app appearance
+
+**More → Appearance** stores Theme and Item size on that phone or tablet.
+Theme defaults to **Auto**: it follows the device's light or dark setting and
+uses dark if the operating system reports neither. **Light** and **Dark** hold
+an explicit override until changed. Item size applies one **Small**, **Medium**,
+or **Large** choice to both Library tiles and Discover results; Medium preserves
+the layout from native app versions before v0.18.2.
+
 ## Security
 
 - **API key** — generated on first start, shown here (**Reveal**). This is
