@@ -23,18 +23,20 @@ import (
 // out rather than reusing apigen so a field being renamed in the generated
 // model shows up here as a failed assertion instead of silently compiling.
 type libDetail struct {
-	ID               int64  `json:"id"`
-	Kind             string `json:"kind"`
-	Title            string `json:"title"`
-	Year             int    `json:"year"`
-	Monitored        bool   `json:"monitored"`
-	Path             string `json:"path"`
-	Source           string `json:"source"`
-	Runtime          int    `json:"runtime"`
-	QualityProfileID int64  `json:"qualityProfileId"`
-	RootFolderID     int64  `json:"rootFolderId"`
-	Genres           []string
-	Seasons          []struct {
+	ID                       int64  `json:"id"`
+	Kind                     string `json:"kind"`
+	Title                    string `json:"title"`
+	Year                     int    `json:"year"`
+	Monitored                bool   `json:"monitored"`
+	Path                     string `json:"path"`
+	Source                   string `json:"source"`
+	Runtime                  int    `json:"runtime"`
+	QualityProfileID         int64  `json:"qualityProfileId"`
+	DownloadPriority         int    `json:"downloadPriority"`
+	DownloadPriorityOverride *int   `json:"downloadPriorityOverride"`
+	RootFolderID             int64  `json:"rootFolderId"`
+	Genres                   []string
+	Seasons                  []struct {
 		Number    int  `json:"number"`
 		Monitored bool `json:"monitored"`
 		Episodes  []struct {
@@ -76,12 +78,13 @@ type libRoot struct {
 }
 
 type libProfile struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name"`
-	Sentence        string `json:"sentence"`
-	UpgradesAllowed bool   `json:"upgradesAllowed"`
-	InUse           *int   `json:"inUse"`
-	Target          struct {
+	ID               int64  `json:"id"`
+	Name             string `json:"name"`
+	Sentence         string `json:"sentence"`
+	UpgradesAllowed  bool   `json:"upgradesAllowed"`
+	DownloadPriority int    `json:"downloadPriority"`
+	InUse            *int   `json:"inUse"`
+	Target           struct {
 		Source     string `json:"source"`
 		Resolution int    `json:"resolution"`
 		Display    string `json:"display"`
@@ -330,6 +333,15 @@ func TestLibUpdateItemAppliesOnlyWhatWasSent(t *testing.T) {
 	}
 	if item.Monitored {
 		t.Error("the earlier monitored:false was clobbered by an unrelated PATCH")
+	}
+
+	e.patch(t, path, `{"downloadPriority":100}`).expect(t, http.StatusOK).into(t, &item)
+	if item.DownloadPriority != 100 || item.DownloadPriorityOverride == nil || *item.DownloadPriorityOverride != 100 {
+		t.Errorf("priority override was not applied: %+v", item)
+	}
+	e.patch(t, path, `{"inheritDownloadPriority":true}`).expect(t, http.StatusOK).into(t, &item)
+	if item.DownloadPriority != 0 || item.DownloadPriorityOverride != nil {
+		t.Errorf("priority did not return to the profile default: %+v", item)
 	}
 }
 
@@ -1051,9 +1063,9 @@ func TestLibProfileCreateUpdateDelete(t *testing.T) {
 
 	var created libProfile
 	e.post(t, "/api/v1/profiles",
-		`{"name":"Remux only","target":{"source":"remux","resolution":2160},"upgradesAllowed":false}`).
+		`{"name":"Remux only","target":{"source":"remux","resolution":2160},"upgradesAllowed":false,"downloadPriority":100}`).
 		expect(t, http.StatusCreated).into(t, &created)
-	if created.ID == 0 || created.Target.Source != "remux" || created.UpgradesAllowed {
+	if created.ID == 0 || created.Target.Source != "remux" || created.UpgradesAllowed || created.DownloadPriority != 100 {
 		t.Fatalf("created = %+v", created)
 	}
 	if created.Sentence == "" {
@@ -1063,9 +1075,9 @@ func TestLibProfileCreateUpdateDelete(t *testing.T) {
 	path := "/api/v1/profiles/" + strconv.FormatInt(created.ID, 10)
 	var updated libProfile
 	e.put(t, path, `{"name":"Remux 1080p","target":{"source":"remux","resolution":1080},`+
-		`"floor":{"source":"webdl","resolution":1080}}`).
+		`"floor":{"source":"webdl","resolution":1080},"downloadPriority":-50}`).
 		expect(t, http.StatusOK).into(t, &updated)
-	if updated.Name != "Remux 1080p" || updated.Target.Resolution != 1080 {
+	if updated.Name != "Remux 1080p" || updated.Target.Resolution != 1080 || updated.DownloadPriority != -50 {
 		t.Errorf("updated = %+v", updated)
 	}
 
@@ -1087,6 +1099,8 @@ func TestLibProfileInputRefusals(t *testing.T) {
 			`"floor":{"source":""}}`, "floor needs a quality"},
 		{"floor above target", `{"name":"Impossible","target":{"source":"hdtv","resolution":720},` +
 			`"floor":{"source":"remux","resolution":2160}}`, "nothing would ever be grabbed"},
+		{"unsupported priority", `{"name":"Odd","target":{"source":"webdl","resolution":1080},` +
+			`"downloadPriority":25}`, "download priority"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rr := e.post(t, "/api/v1/profiles", tc.body).expect(t, http.StatusBadRequest)

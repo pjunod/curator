@@ -12,6 +12,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/acquisition"
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/downloadpriority"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/ports"
@@ -109,25 +110,27 @@ func optStr(s string) *string {
 
 func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 	d := apigen.MediaItemDetail{
-		Id:               m.ID,
-		Kind:             apigen.MediaKind(m.Kind),
-		Title:            m.Title,
-		Year:             m.Year,
-		PosterPath:       m.PosterPath,
-		BackdropPath:     m.BackdropPath,
-		Overview:         m.Overview,
-		Genres:           m.Genres,
-		Status:           m.Status,
-		ReleaseDate:      m.ReleaseDate,
-		Runtime:          m.Runtime,
-		Rating:           float32(m.Rating),
-		RatingVotes:      m.RatingVotes,
-		Ratings:          ratingsDTO(m.Ratings),
-		Monitored:        m.Monitored,
-		QualityProfileId: m.QualityProfileID,
-		Path:             m.Path,
-		RootFolderId:     m.RootFolderID,
-		Ended:            m.Ended,
+		Id:                       m.ID,
+		Kind:                     apigen.MediaKind(m.Kind),
+		Title:                    m.Title,
+		Year:                     m.Year,
+		PosterPath:               m.PosterPath,
+		BackdropPath:             m.BackdropPath,
+		Overview:                 m.Overview,
+		Genres:                   m.Genres,
+		Status:                   m.Status,
+		ReleaseDate:              m.ReleaseDate,
+		Runtime:                  m.Runtime,
+		Rating:                   float32(m.Rating),
+		RatingVotes:              m.RatingVotes,
+		Ratings:                  ratingsDTO(m.Ratings),
+		Monitored:                m.Monitored,
+		QualityProfileId:         m.QualityProfileID,
+		DownloadPriority:         m.DownloadPriority,
+		DownloadPriorityOverride: m.DownloadPriorityOverride,
+		Path:                     m.Path,
+		RootFolderId:             m.RootFolderID,
+		Ended:                    m.Ended,
 		Ids: apigen.ExternalIds{
 			Tmdb: m.IDs.TMDB,
 		},
@@ -274,6 +277,14 @@ func (s *Server) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
 	if body.QualityProfileId != nil {
 		req.QualityProfileID = *body.QualityProfileId
 	}
+	if body.DownloadPriority != nil {
+		priority := *body.DownloadPriority
+		if !downloadpriority.Valid(priority) {
+			writeError(w, http.StatusBadRequest, "download priority must be one of -100, -50, 0, 50, 100, or 900")
+			return
+		}
+		req.DownloadPriority = &priority
+	}
 	if body.Monitor != nil {
 		req.Monitor = string(*body.Monitor)
 	}
@@ -309,11 +320,23 @@ func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id in
 		return
 	}
 	before, beforeErr := s.deps.Library.Get(r.Context(), id)
+	if body.DownloadPriority != nil && !downloadpriority.Valid(*body.DownloadPriority) {
+		writeError(w, http.StatusBadRequest, "download priority must be one of -100, -50, 0, 50, 100, or 900")
+		return
+	}
+	if body.DownloadPriority != nil && body.InheritDownloadPriority != nil && *body.InheritDownloadPriority {
+		writeError(w, http.StatusBadRequest, "choose a download priority or inherit from the profile, not both")
+		return
+	}
+	setDownloadPriority := body.DownloadPriority != nil ||
+		(body.InheritDownloadPriority != nil && *body.InheritDownloadPriority)
 	item, err := s.deps.Library.UpdateItem(r.Context(), id, library.UpdateRequest{
-		Monitored:        body.Monitored,
-		QualityProfileID: body.QualityProfileId,
-		RootFolderID:     body.RootFolderId,
-		Path:             body.Path,
+		Monitored:           body.Monitored,
+		QualityProfileID:    body.QualityProfileId,
+		RootFolderID:        body.RootFolderId,
+		Path:                body.Path,
+		SetDownloadPriority: setDownloadPriority,
+		DownloadPriority:    body.DownloadPriority,
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "path must be absolute") || strings.Contains(err.Error(), "root folder") {

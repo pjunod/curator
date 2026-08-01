@@ -592,7 +592,9 @@ func (e ListQueueParamsFilter) Valid() bool {
 
 // AddMediaRequest defines model for AddMediaRequest.
 type AddMediaRequest struct {
-	Kind MediaKind `json:"kind"`
+	// DownloadPriority Optional per-item override; absent inherits the quality profile.
+	DownloadPriority *int      `json:"downloadPriority,omitempty"`
+	Kind             MediaKind `json:"kind"`
 
 	// Monitor Series only — which seasons start monitored: every season, only the latest, or none (add a 20-season show and hunt just the newest). Specials always start unmonitored.
 	Monitor   *AddMediaRequestMonitor `json:"monitor,omitempty"`
@@ -1166,17 +1168,23 @@ type MediaItemDetail struct {
 	BackdropPath string `json:"backdropPath"`
 
 	// Copies Additional quality copies of this item.
-	Copies     []MediaCopy     `json:"copies"`
-	Ended      bool            `json:"ended"`
-	Files      []MediaFileInfo `json:"files"`
-	Genres     []string        `json:"genres"`
-	Id         int64           `json:"id"`
-	Ids        ExternalIds     `json:"ids"`
-	Kind       MediaKind       `json:"kind"`
-	Monitored  bool            `json:"monitored"`
-	Overview   string          `json:"overview"`
-	Path       string          `json:"path"`
-	PosterPath string          `json:"posterPath"`
+	Copies []MediaCopy `json:"copies"`
+
+	// DownloadPriority Effective scheduler priority after applying the per-item override or inheriting the selected quality profile. Supported values are -100, -50, 0, 50, 100, and 900 (force).
+	DownloadPriority int `json:"downloadPriority"`
+
+	// DownloadPriorityOverride NULL means inherit downloadPriority from the quality profile.
+	DownloadPriorityOverride *int            `json:"downloadPriorityOverride"`
+	Ended                    bool            `json:"ended"`
+	Files                    []MediaFileInfo `json:"files"`
+	Genres                   []string        `json:"genres"`
+	Id                       int64           `json:"id"`
+	Ids                      ExternalIds     `json:"ids"`
+	Kind                     MediaKind       `json:"kind"`
+	Monitored                bool            `json:"monitored"`
+	Overview                 string          `json:"overview"`
+	Path                     string          `json:"path"`
+	PosterPath               string          `json:"posterPath"`
 
 	// Quality The weakest quality among the primary copy's files ("1080p WEB-DL"); empty when nothing is on disk or no quality was recorded. Weakest because that is what decides whether the item is still being hunted.
 	Quality          *string `json:"quality,omitempty"`
@@ -1345,10 +1353,12 @@ type PlurxWatchedEventKind string
 
 // ProfileInput defines model for ProfileInput.
 type ProfileInput struct {
-	Floor           *QualityInput `json:"floor,omitempty"`
-	Name            string        `json:"name"`
-	Target          QualityInput  `json:"target"`
-	UpgradesAllowed *bool         `json:"upgradesAllowed,omitempty"`
+	// DownloadPriority One of -100, -50, 0, 50, 100, or 900 (force).
+	DownloadPriority *int          `json:"downloadPriority,omitempty"`
+	Floor            *QualityInput `json:"floor,omitempty"`
+	Name             string        `json:"name"`
+	Target           QualityInput  `json:"target"`
+	UpgradesAllowed  *bool         `json:"upgradesAllowed,omitempty"`
 }
 
 // Proposal defines model for Proposal.
@@ -1394,8 +1404,10 @@ type QualityInput struct {
 
 // QualityProfile defines model for QualityProfile.
 type QualityProfile struct {
-	Floor *Quality `json:"floor,omitempty"`
-	Id    int64    `json:"id"`
+	// DownloadPriority Default scheduler priority for items that inherit from this profile.
+	DownloadPriority int      `json:"downloadPriority"`
+	Floor            *Quality `json:"floor,omitempty"`
+	Id               int64    `json:"id"`
 
 	// InUse How many items, copies and import lists reference this profile. Non-zero means DELETE will be refused with 409.
 	InUse *int   `json:"inUse,omitempty"`
@@ -1750,7 +1762,12 @@ type UnmatchedDir struct {
 
 // UpdateMediaItemRequest Per-item edit; absent fields are left as they are.
 type UpdateMediaItemRequest struct {
-	Monitored *bool `json:"monitored,omitempty"`
+	// DownloadPriority Set a per-item override (-100, -50, 0, 50, 100, or 900).
+	DownloadPriority *int `json:"downloadPriority,omitempty"`
+
+	// InheritDownloadPriority Clear the per-item override and inherit from the quality profile.
+	InheritDownloadPriority *bool `json:"inheritDownloadPriority,omitempty"`
+	Monitored               *bool `json:"monitored,omitempty"`
 
 	// Path Explicit absolute folder; wins over rootFolderId. "" clears it.
 	Path             *string `json:"path,omitempty"`

@@ -57,6 +57,26 @@ func TestSeededProfiles(t *testing.T) {
 	}
 }
 
+func TestProfileDownloadPriorityRoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	p := quality.Profile{
+		Name: "Urgent 1080p", Target: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		UpgradesAllowed: true, DownloadPriority: 100,
+	}
+	id, err := db.AddProfile(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetProfile(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DownloadPriority != 100 {
+		t.Fatalf("download priority = %d, want 100", got.DownloadPriority)
+	}
+}
+
 func TestIndexerAndClientCRUD(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()

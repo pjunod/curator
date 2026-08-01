@@ -106,7 +106,7 @@ func (c *Client) do(ctx context.Context, method, path string, out any) error {
 
 // Add implements ports.DownloadClient.
 func (c *Client) Add(ctx context.Context, downloadURL, category string) (ports.Handle, error) {
-	return c.AddTagged(ctx, downloadURL, category, "", "")
+	return c.AddWithOptions(ctx, downloadURL, category, ports.AddOptions{})
 }
 
 // AddTagged implements ports.TaggedAdder: the same add, with the release name
@@ -117,19 +117,26 @@ func (c *Client) Add(ctx context.Context, downloadURL, category string) (ports.H
 // on its completion event, and in its history row — without Monarr writing
 // it twice or nzbd learning anything about Monarr.
 func (c *Client) AddTagged(ctx context.Context, downloadURL, category, name, transfer string) (ports.Handle, error) {
+	return c.AddWithOptions(ctx, downloadURL, category, ports.AddOptions{Name: name, Transfer: transfer})
+}
+
+// AddWithOptions implements ports.ConfiguredAdder and puts Monarr's release
+// metadata and effective scheduler priority on the job at admission time.
+func (c *Client) AddWithOptions(ctx context.Context, downloadURL, category string, options ports.AddOptions) (ports.Handle, error) {
 	q := url.Values{}
 	q.Set("url", downloadURL)
+	q.Set("priority", strconv.Itoa(options.Priority))
 	if category != "" {
 		q.Set("category", category)
 	}
-	if name != "" {
-		q.Set("name", name)
+	if options.Name != "" {
+		q.Set("name", options.Name)
 	}
-	if transfer != "" {
+	if options.Transfer != "" {
 		// A JSON object of string→string. Keys starting with `*` are
 		// nzbd's internal namespace and are refused with a 422; ours never
 		// is, but the encoding is exact either way.
-		params, err := json.Marshal(map[string]string{TransferParam: transfer})
+		params, err := json.Marshal(map[string]string{TransferParam: options.Transfer})
 		if err != nil {
 			return "", err
 		}

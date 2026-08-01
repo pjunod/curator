@@ -15,6 +15,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/acquisition"
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/downloadpriority"
 	"github.com/pjunod/monarr/internal/domain/format"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -47,7 +48,8 @@ func (s *Server) acqErr(w http.ResponseWriter, err error) {
 func profileDTO(p quality.Profile, inUse int64) apigen.QualityProfile {
 	qp := apigen.QualityProfile{
 		Id: p.ID, Name: p.Name, Target: qualityDTO(p.Target),
-		UpgradesAllowed: p.UpgradesAllowed, Sentence: p.Sentence(),
+		UpgradesAllowed: p.UpgradesAllowed, DownloadPriority: p.DownloadPriority,
+		Sentence: p.Sentence(),
 	}
 	if p.Floor != nil {
 		f := qualityDTO(*p.Floor)
@@ -81,6 +83,14 @@ func profileFromInput(in apigen.ProfileInput) (quality.Profile, error) {
 	p := quality.Profile{Name: name, Target: target, UpgradesAllowed: true}
 	if in.UpgradesAllowed != nil {
 		p.UpgradesAllowed = *in.UpgradesAllowed
+	}
+	if in.DownloadPriority != nil {
+		p.DownloadPriority = *in.DownloadPriority
+	}
+	if !downloadpriority.Valid(p.DownloadPriority) {
+		return quality.Profile{}, fmt.Errorf(
+			"download priority must be one of -100, -50, 0, 50, 100, or 900",
+		)
 	}
 	if in.Floor != nil {
 		floor := quality.Quality{Source: quality.Source(strings.TrimSpace(in.Floor.Source))}

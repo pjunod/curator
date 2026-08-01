@@ -119,8 +119,13 @@ type MediaItem struct {
 
 	Monitored        bool
 	QualityProfileID int64
-	RootFolderID     int64  // 0 = none assigned
-	Path             string // absolute on-disk folder; "" if unassigned
+	// DownloadPriority is the effective value after profile inheritance.
+	// DownloadPriorityOverride is non-nil only when this item replaces the
+	// profile's default. The override applies to primary and additional copies.
+	DownloadPriority         int
+	DownloadPriorityOverride *int
+	RootFolderID             int64  // 0 = none assigned
+	Path                     string // absolute on-disk folder; "" if unassigned
 
 	// Series-only.
 	Ended   bool

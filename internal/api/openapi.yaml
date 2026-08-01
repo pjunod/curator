@@ -2510,6 +2510,8 @@ components:
         - ratings
         - monitored
         - qualityProfileId
+        - downloadPriority
+        - downloadPriorityOverride
         - copies
         - path
         - rootFolderId
@@ -2584,6 +2586,16 @@ components:
         qualityProfileId:
           type: integer
           format: int64
+        downloadPriority:
+          type: integer
+          description: >
+            Effective scheduler priority after applying the per-item override
+            or inheriting the selected quality profile. Supported values are
+            -100, -50, 0, 50, 100, and 900 (force).
+        downloadPriorityOverride:
+          type: integer
+          nullable: true
+          description: NULL means inherit downloadPriority from the quality profile.
         copies:
           type: array
           items: { $ref: "#/components/schemas/MediaCopy" }
@@ -2636,6 +2648,9 @@ components:
           type: integer
           format: int64
           description: 0/absent = kind default (Any; Ebook for books).
+        downloadPriority:
+          type: integer
+          description: Optional per-item override; absent inherits the quality profile.
         monitored:
           type: boolean
           default: true
@@ -2708,6 +2723,12 @@ components:
         qualityProfileId:
           type: integer
           format: int64
+        downloadPriority:
+          type: integer
+          description: Set a per-item override (-100, -50, 0, 50, 100, or 900).
+        inheritDownloadPriority:
+          type: boolean
+          description: Clear the per-item override and inherit from the quality profile.
         rootFolderId:
           type: integer
           format: int64
@@ -3080,7 +3101,7 @@ components:
 
     QualityProfile:
       type: object
-      required: [id, name, target, upgradesAllowed, sentence]
+      required: [id, name, target, upgradesAllowed, downloadPriority, sentence]
       properties:
         id: { type: integer, format: int64 }
         name: { type: string }
@@ -3089,6 +3110,9 @@ components:
         floor:
           $ref: "#/components/schemas/Quality"
         upgradesAllowed: { type: boolean }
+        downloadPriority:
+          type: integer
+          description: Default scheduler priority for items that inherit from this profile.
         sentence:
           type: string
           description: >
@@ -3118,6 +3142,10 @@ components:
         floor:
           $ref: "#/components/schemas/QualityInput"
         upgradesAllowed: { type: boolean, default: true }
+        downloadPriority:
+          type: integer
+          default: 0
+          description: One of -100, -50, 0, 50, 100, or 900 (force).
 
     IndexerInput:
       type: object

@@ -101,8 +101,10 @@ func TestAddCarriesTheTransferID(t *testing.T) {
 	var rec recorder
 	srv := fake(t, &rec, nil)
 
-	h, err := client(t, srv, "", "tok").AddTagged(context.Background(),
-		"https://indexer/x.nzb", "tv", "Show.S01E01.1080p.WEB-DL-GRP", "t-42-a3f9c1")
+	h, err := client(t, srv, "", "tok").AddWithOptions(context.Background(),
+		"https://indexer/x.nzb", "tv", ports.AddOptions{
+			Name: "Show.S01E01.1080p.WEB-DL-GRP", Transfer: "t-42-a3f9c1", Priority: 100,
+		})
 	if err != nil {
 		t.Fatalf("AddTagged: %v", err)
 	}
@@ -120,6 +122,9 @@ func TestAddCarriesTheTransferID(t *testing.T) {
 	}
 	if got := rec.query.Get("name"); got != "Show.S01E01.1080p.WEB-DL-GRP" {
 		t.Errorf("name = %q, want the release title", got)
+	}
+	if got := rec.query.Get("priority"); got != "100" {
+		t.Errorf("priority = %q, want 100", got)
 	}
 	var params map[string]string
 	if err := json.Unmarshal([]byte(rec.query.Get("params")), &params); err != nil {

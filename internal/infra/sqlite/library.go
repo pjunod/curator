@@ -70,6 +70,11 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		AddedAt:          time.UnixMilli(r.AddedAt),
 		UpdatedAt:        time.UnixMilli(r.UpdatedAt),
 	}
+	if r.DownloadPriority.Valid {
+		priority := int(r.DownloadPriority.Int64)
+		item.DownloadPriority = priority
+		item.DownloadPriorityOverride = &priority
+	}
 	if r.RootFolderID.Valid {
 		item.RootFolderID = r.RootFolderID.Int64
 	}
@@ -94,6 +99,7 @@ func insertParams(m domain.MediaItem, now time.Time) sqlitegen.InsertMediaItemPa
 		Year:             int64(m.Year),
 		Author:           m.Author,
 		QualityProfileID: profileID,
+		DownloadPriority: nullableInt(m.DownloadPriorityOverride),
 		TmdbID:           m.IDs.TMDB,
 		ImdbID:           m.IDs.IMDB,
 		TvdbID:           m.IDs.TVDB,
@@ -127,6 +133,13 @@ func boolInt(b bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+func nullableInt(value *int) sql.NullInt64 {
+	if value == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: int64(*value), Valid: true}
 }
 
 func marshalRatings(rs []domain.Rating) string {
@@ -190,6 +203,13 @@ func (d *DB) GetMediaItemFull(ctx context.Context, id int64) (domain.MediaItem, 
 		return domain.MediaItem{}, wrapNotFound(err)
 	}
 	item := itemToDomain(row)
+	if item.DownloadPriorityOverride == nil {
+		profile, err := d.GetProfile(ctx, item.QualityProfileID)
+		if err != nil {
+			return domain.MediaItem{}, err
+		}
+		item.DownloadPriority = profile.DownloadPriority
+	}
 
 	if item.Kind == domain.KindSeries {
 		seasons, err := d.Read.ListSeasons(ctx, id)
@@ -516,6 +536,7 @@ func (d *DB) UpdateMediaItemPlacement(ctx context.Context, m domain.MediaItem) e
 	p := sqlitegen.UpdateMediaItemPlacementParams{
 		Monitored:        boolInt(m.Monitored),
 		QualityProfileID: m.QualityProfileID,
+		DownloadPriority: nullableInt(m.DownloadPriorityOverride),
 		Path:             m.Path,
 		UpdatedAt:        time.Now().UnixMilli(),
 		ID:               m.ID,

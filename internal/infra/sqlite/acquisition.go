@@ -21,8 +21,9 @@ import (
 // the database that still holds the old allowed+cutoff form, and carrying a
 // dual-format reader for a state that cannot exist is how dead code survives.
 type profileDef struct {
-	Target qualityDef  `json:"target"`
-	Floor  *qualityDef `json:"floor"`
+	Target           qualityDef  `json:"target"`
+	Floor            *qualityDef `json:"floor"`
+	DownloadPriority int         `json:"downloadPriority,omitempty"`
 }
 
 type qualityDef struct {
@@ -41,7 +42,7 @@ func profileFromRow(r sqlitegen.QualityProfile) (quality.Profile, error) {
 	}
 	p := quality.Profile{
 		ID: r.ID, Name: r.Name, UpgradesAllowed: r.UpgradesAllowed != 0,
-		Target: def.Target.quality(),
+		Target: def.Target.quality(), DownloadPriority: def.DownloadPriority,
 	}
 	if def.Floor != nil {
 		f := def.Floor.quality()
@@ -83,7 +84,10 @@ var ErrProfileInUse = errors.New("quality profile is still in use")
 
 // profileDefinition renders a profile into the stored JSON.
 func profileDefinition(p quality.Profile) (string, error) {
-	def := profileDef{Target: qualityDef{Source: string(p.Target.Source), Resolution: p.Target.Resolution}}
+	def := profileDef{
+		Target:           qualityDef{Source: string(p.Target.Source), Resolution: p.Target.Resolution},
+		DownloadPriority: p.DownloadPriority,
+	}
 	if p.Floor != nil {
 		def.Floor = &qualityDef{Source: string(p.Floor.Source), Resolution: p.Floor.Resolution}
 	}

@@ -165,6 +165,22 @@ type TaggedAdder interface {
 	AddTagged(ctx context.Context, downloadURL, category, name, transfer string) (Handle, error)
 }
 
+// AddOptions carries optional metadata a capable client can apply atomically
+// when it creates a download. Priority is nzbd-compatible: higher values are
+// scheduled first and 900 is force.
+type AddOptions struct {
+	Name     string
+	Transfer string
+	Priority int
+}
+
+// ConfiguredAdder is the most capable optional add path. Callers prefer it to
+// TaggedAdder so priority, display name, and transfer id cross the boundary in
+// the one request that creates the client job.
+type ConfiguredAdder interface {
+	AddWithOptions(ctx context.Context, downloadURL, category string, options AddOptions) (Handle, error)
+}
+
 // ClientEventKind is what a pushed event says happened.
 type ClientEventKind string
 

@@ -539,11 +539,36 @@ func newTransferID(downloadID int64) string {
 // the client can hold them. The type assertion is the whole mechanism: clients
 // that cannot tag a download are added exactly as before, and Monarr keeps the
 // id on its own row so its trace is still threaded.
-func addToClient(ctx context.Context, c ports.DownloadClient, downloadURL, category, name, transfer string) (ports.Handle, error) {
+func addToClient(ctx context.Context, c ports.DownloadClient, downloadURL, category, name, transfer string, priority int) (ports.Handle, error) {
+	if configured, ok := c.(ports.ConfiguredAdder); ok {
+		return configured.AddWithOptions(ctx, downloadURL, category, ports.AddOptions{
+			Name: name, Transfer: transfer, Priority: priority,
+		})
+	}
 	if tagger, ok := c.(ports.TaggedAdder); ok && transfer != "" {
 		return tagger.AddTagged(ctx, downloadURL, category, name, transfer)
 	}
 	return c.Add(ctx, downloadURL, category)
+}
+
+func (s *Service) downloadPriority(ctx context.Context, item domain.MediaItem, copyID int64) (int, error) {
+	if item.DownloadPriorityOverride != nil {
+		return *item.DownloadPriorityOverride, nil
+	}
+	if copyID == 0 {
+		return item.DownloadPriority, nil
+	}
+	for _, copy := range item.Copies {
+		if copy.ID != copyID {
+			continue
+		}
+		profile, err := s.db.GetProfile(ctx, copy.QualityProfileID)
+		if err != nil {
+			return 0, err
+		}
+		return profile.DownloadPriority, nil
+	}
+	return 0, fmt.Errorf("%w: copy %d", ErrNotFound, copyID)
 }
 
 // Grab sends the release to the right client by protocol and records the
@@ -566,6 +591,10 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	}
 	if cfg == nil {
 		return 0, fmt.Errorf("%w: %s", ErrNoClient, req.Protocol)
+	}
+	priority, err := s.downloadPriority(ctx, item, req.CopyID)
+	if err != nil {
+		return 0, err
 	}
 
 	// Already grabbed and still moving? Two automation passes that overlap,
@@ -614,7 +643,9 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		return 0, err
 	}
 	transfer := newTransferID(id)
-	handle, err := addToClient(ctx, s.newClient(*cfg), req.DownloadURL, cfg.Category, req.Title, transfer)
+	handle, err := addToClient(
+		ctx, s.newClient(*cfg), req.DownloadURL, cfg.Category, req.Title, transfer, priority,
+	)
 	if err != nil {
 		// Nothing downstream ever saw this row: no event, no trace entry,
 		// no history. Dropping it is the honest undo.
@@ -642,10 +673,10 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	}
 	s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, detail)
 	_ = s.db.AddHistory(ctx, "grabbed", item.ID, req.Title,
-		map[string]any{"indexer": req.Indexer, "protocol": req.Protocol})
+		map[string]any{"indexer": req.Indexer, "protocol": req.Protocol, "downloadPriority": priority})
 	s.publish(ReleaseGrabbed{MediaItemID: item.ID, Title: req.Title,
 		Indexer: req.Indexer, Protocol: req.Protocol})
-	s.log.Info("grabbed", "title", req.Title, "client", cfg.Name)
+	s.log.Info("grabbed", "title", req.Title, "client", cfg.Name, "download_priority", priority)
 	return id, nil
 }
 

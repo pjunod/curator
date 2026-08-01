@@ -19,11 +19,21 @@ type taggingClient struct {
 	gotURL      string
 	gotCategory string
 	gotName     string
+	gotPriority int
 	addErr      error
 }
 
 func (c *taggingClient) AddTagged(ctx context.Context, url, cat, name, transfer string) (ports.Handle, error) {
 	c.gotTransfer, c.gotURL, c.gotCategory, c.gotName = transfer, url, cat, name
+	if c.addErr != nil {
+		return "", c.addErr
+	}
+	return "h-tagged", nil
+}
+
+func (c *taggingClient) AddWithOptions(ctx context.Context, url, cat string, options ports.AddOptions) (ports.Handle, error) {
+	c.gotTransfer, c.gotURL, c.gotCategory, c.gotName = options.Transfer, url, cat, options.Name
+	c.gotPriority = options.Priority
 	if c.addErr != nil {
 		return "", c.addErr
 	}
@@ -40,6 +50,14 @@ func TestGrabSendsTheTransferIDToATaggingClient(t *testing.T) {
 	svc, db, itemID := setup(t, nil, &client.fakeClient)
 	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
 	ctx := context.Background()
+	profile, err := db.GetProfile(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.DownloadPriority = 50
+	if err := db.UpdateProfile(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
 
 	id, err := svc.Grab(ctx, GrabRequest{
 		MediaItemID: itemID, Season: 1, Episode: 1,
@@ -65,6 +83,9 @@ func TestGrabSendsTheTransferIDToATaggingClient(t *testing.T) {
 	if client.gotName != "Test.Show.S01E01.1080p.WEB-DL-X" {
 		t.Errorf("name = %q, want the release title", client.gotName)
 	}
+	if client.gotPriority != 50 {
+		t.Errorf("priority = %d, want the quality profile's high priority", client.gotPriority)
+	}
 
 	dl, err := db.GetDownload(ctx, id)
 	if err != nil {
@@ -81,6 +102,34 @@ func TestGrabSendsTheTransferIDToATaggingClient(t *testing.T) {
 	// someone starts reading when a transfer goes wrong.
 	if len(dl.Handoff) == 0 || !strings.Contains(dl.Handoff[0].Detail, client.gotTransfer) {
 		t.Errorf("handoff trace opens with %v, want it to name the transfer id", dl.Handoff)
+	}
+}
+
+func TestGrabItemPriorityOverridesTheProfile(t *testing.T) {
+	client := &taggingClient{}
+	svc, db, itemID := setup(t, nil, &client.fakeClient)
+	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	ctx := context.Background()
+
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priority := -50
+	item.DownloadPriorityOverride = &priority
+	if err := db.UpdateMediaItemPlacement(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.Grab(ctx, GrabRequest{
+		MediaItemID: itemID, Season: 1, Episode: 1,
+		Title: "Test.Show.S01E01.1080p.WEB-DL-P", DownloadURL: "https://idx/p.nzb",
+		Indexer: "idx", Protocol: "torrent", Size: 1,
+	}); err != nil {
+		t.Fatalf("Grab: %v", err)
+	}
+	if client.gotPriority != -50 {
+		t.Errorf("priority = %d, want the per-item low override", client.gotPriority)
 	}
 }
 

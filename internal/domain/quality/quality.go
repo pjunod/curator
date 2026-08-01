@@ -169,6 +169,9 @@ type Profile struct {
 	// UpgradesAllowed governs whether an item that already has a file keeps
 	// being hunted. It has no bearing on missing items.
 	UpgradesAllowed bool
+	// DownloadPriority is passed to a capable download client when this
+	// profile supplies the item or copy's effective priority.
+	DownloadPriority int
 }
 
 // Met reports whether what is on disk satisfies the profile — the point at

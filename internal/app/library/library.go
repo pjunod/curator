@@ -271,6 +271,8 @@ type AddRequest struct {
 	// this kind" (Settings → Profiles), which falls back to the built-in when
 	// nothing has been chosen.
 	QualityProfileID int64
+	// DownloadPriority overrides the selected profile when non-nil.
+	DownloadPriority *int
 	Monitored        bool
 	// Monitor picks which seasons start monitored (series only):
 	// "all" (default), "latest" (newest season only), or "none".
@@ -370,6 +372,7 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	applyMonitorPreset(&item, req.Monitor)
 	item.Monitored = req.Monitored
 	item.QualityProfileID = req.QualityProfileID
+	item.DownloadPriorityOverride = req.DownloadPriority
 	if item.QualityProfileID == 0 {
 		// Nothing was chosen, so the kind's configured default applies. It
 		// resolves to the built-in when unset or dangling, which is what the
@@ -409,8 +412,12 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 type UpdateRequest struct {
 	Monitored        *bool
 	QualityProfileID *int64
-	RootFolderID     *int64  // 0 clears the assignment (and the path)
-	Path             *string // explicit folder override; wins over RootFolderID's recompute
+	// SetDownloadPriority distinguishes "leave unchanged" from clearing the
+	// nullable override. DownloadPriority nil plus true means inherit.
+	SetDownloadPriority bool
+	DownloadPriority    *int
+	RootFolderID        *int64  // 0 clears the assignment (and the path)
+	Path                *string // explicit folder override; wins over RootFolderID's recompute
 }
 
 // UpdateItem applies a per-item edit: monitoring, quality profile, and
@@ -426,6 +433,9 @@ func (s *Service) UpdateItem(ctx context.Context, id int64, req UpdateRequest) (
 	}
 	if req.QualityProfileID != nil && *req.QualityProfileID != 0 {
 		item.QualityProfileID = *req.QualityProfileID
+	}
+	if req.SetDownloadPriority {
+		item.DownloadPriorityOverride = req.DownloadPriority
 	}
 	if req.RootFolderID != nil {
 		if *req.RootFolderID == 0 {

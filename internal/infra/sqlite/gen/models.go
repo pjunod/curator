@@ -203,6 +203,7 @@ type MediaItem struct {
 	RatingVotes      int64
 	Ratings          string
 	Source           string
+	DownloadPriority sql.NullInt64
 }
 
 type Notifier struct {
