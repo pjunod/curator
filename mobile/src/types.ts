@@ -91,6 +91,15 @@ export interface MediaFileInfo {
   sourceRelease?: string
 }
 
+export interface MediaCopy {
+  id: number
+  name: string
+  qualityProfileId: number
+  rootFolderId: number
+  path: string
+  monitored: boolean
+}
+
 export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' | 'episodeFileCount' | 'fileCount'> {
   backdropPath: string
   overview: string
@@ -103,6 +112,27 @@ export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' |
   ended: boolean
   seasons: SeasonInfo[]
   files: MediaFileInfo[]
+  copies: MediaCopy[]
+}
+
+export interface UpdateMediaItemRequest {
+  monitored?: boolean
+  qualityProfileId?: number
+  rootFolderId?: number
+  path?: string
+}
+
+export interface AddMediaCopyRequest {
+  qualityProfileId: number
+  rootFolderId?: number
+  name?: string
+  monitored?: boolean
+}
+
+export interface UpdateMediaCopyRequest {
+  name?: string
+  qualityProfileId?: number
+  monitored?: boolean
 }
 
 export interface SearchResult {

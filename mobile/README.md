@@ -10,16 +10,19 @@ Monarr data or metadata provider keys live on the phone.
 
 ## What the app owns
 
-- Library browsing, filtering, item detail, monitoring, and search-now.
+- Library browsing, filtering, item detail, item/profile/location editing,
+  season monitoring, additional quality copies, and search-now.
 - Discover and metadata search, including root/profile choices when adding.
 - Wanted items, backlog search, active and retained activity, and calendar.
 - Server status and health, with a handoff to the web UI for administration.
+- First-run Wi-Fi discovery over DNS-SD and camera-based pairing by QR.
 - One saved server address and API key. The API key is stored with Android
   Keystore or iOS Keychain through Expo SecureStore.
 
-The native app does not configure indexers, download clients, notifiers,
-root folders, profiles, or server security. Those changes are infrequent,
-carry more destructive edges, and remain in the full web interface.
+The native app assigns existing root folders and quality profiles to items and
+copies, but does not define those resources or configure indexers, download
+clients, notifiers, or server security. Those system-level changes remain in
+the full web interface.
 
 ## Run it on a device
 
@@ -32,9 +35,23 @@ npm ci                    # exact dependencies from package-lock.json
 npm start                 # show the Expo QR code and simulator controls
 ```
 
-Open the QR code with Expo Go, or press `i` / `a` for an available iOS
-Simulator / Android emulator. Enter the same address the phone can reach —
-`localhost` points at the phone, not the Monarr host.
+Open the development QR code with Expo Go, or press `i` / `a` for an available
+iOS Simulator / Android emulator. In a native build, **Find Monarr on Wi-Fi**
+browses `_monarr._tcp` with DNS-SD. The server supplies its real service port
+and resolved IPv4/IPv6 addresses; the app never assumes a subnet size or probes
+an address range. DNS-SD may be blocked by guest Wi-Fi, VLAN isolation, a VPN,
+or Docker bridge networking. Manual entry and pairing QR remain available when
+the server is otherwise reachable.
+
+For QR pairing, open **Monarr web → Settings → Security → Reveal → Link a
+mobile app**, enter the address the phone can reach, show the QR, then choose
+**Scan pairing QR** in the native app. The code includes the API key; show it
+only to a trusted device.
+
+For manual entry, `localhost` points at the phone, not the Monarr host. A bare
+direct host such as `192.168.1.20` automatically uses Monarr's default port,
+`7676`; explicit ports and HTTPS reverse-proxy URLs are preserved. Bracket a
+literal IPv6 address when including a port: `http://[fd12:3456::20]:7676`.
 
 On first connect, copy the key from **Monarr web → Settings → Security →
 Reveal**. The key is optional only while native API authentication is off.
@@ -82,6 +99,6 @@ After real-device QA, submit with `eas submit --platform android` and
 - [`src/storage.ts`](src/storage.ts) — keychain/keystore connection storage.
 - `src/screens/` — one native screen per daily workflow.
 - `src/components/` — themed controls and media cards shared by screens.
-- [`app.json`](app.json) — native identifiers, LAN transport, icons, splash,
-  and secure-storage plugins.
+- [`app.json`](app.json) — native identifiers, LAN discovery, camera access,
+  icons, splash, and secure-storage plugins.
 - [`eas.json`](eas.json) — preview and production signing/build profiles.

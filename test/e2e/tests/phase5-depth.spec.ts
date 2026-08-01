@@ -74,3 +74,15 @@ test('security surface: api key exposed, auth off by default, metrics opt-in', a
   const metrics = await request.get('/metrics')
   expect(metrics.status()).toBe(404)
 })
+
+test('security surface creates a mobile pairing QR only after reveal', async ({ page }) => {
+  await page.goto('/settings')
+  const security = page.locator('#security')
+  await security.getByRole('button', { name: 'Reveal' }).click()
+  await expect(security.getByRole('heading', { name: 'Link a mobile app' })).toBeVisible()
+
+  await security.getByLabel('Mobile pairing server address').fill('http://[fd12:3456::20]:7676')
+  await security.getByRole('button', { name: 'Show pairing QR' }).click()
+  await expect(security.locator('.pairing-code svg')).toBeVisible()
+  await expect(security).toContainText('Monarr app → Scan pairing QR')
+})

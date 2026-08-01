@@ -1,6 +1,6 @@
 {
   "name": "monarr-mobile",
-  "version": "0.16.0",
+  "version": "0.18.0",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -16,12 +16,15 @@
   "dependencies": {
     "expo": "~57.0.1",
     "expo-build-properties": "~57.0.8",
+    "expo-camera": "~57.0.3",
+    "expo-network": "~57.0.1",
     "expo-secure-store": "~57.0.1",
     "expo-splash-screen": "~57.0.5",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
     "react-native": "0.86.2",
-    "react-native-safe-area-context": "~5.7.0"
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-zeroconf": "^0.14.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

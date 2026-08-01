@@ -6,6 +6,27 @@ describe('normalizeServerUrl', () => {
     expect(normalizeServerUrl('192.168.1.20:7676')).toBe('http://192.168.1.20:7676')
   })
 
+  it('adds the Monarr default port when none is provided', () => {
+    expect(normalizeServerUrl('192.168.1.20')).toBe('http://192.168.1.20:7676')
+    expect(normalizeServerUrl('http://monarr.local')).toBe('http://monarr.local:7676')
+    expect(normalizeServerUrl('https://media.example.com/monarr')).toBe(
+      'https://media.example.com/monarr',
+    )
+  })
+
+  it('preserves explicitly selected ports, including protocol defaults', () => {
+    expect(normalizeServerUrl('http://monarr.local:8080')).toBe('http://monarr.local:8080')
+    expect(normalizeServerUrl('http://monarr.local:80')).toBe('http://monarr.local')
+    expect(normalizeServerUrl('https://media.example.com:443/monarr')).toBe(
+      'https://media.example.com/monarr',
+    )
+  })
+
+  it('adds the default port to a bracketed IPv6 host', () => {
+    expect(normalizeServerUrl('[2001:db8::1]')).toBe('http://[2001:db8::1]:7676')
+    expect(normalizeServerUrl('http://[2001:db8::1]:8080')).toBe('http://[2001:db8::1]:8080')
+  })
+
   it('accepts a reverse proxy path and strips a pasted API suffix', () => {
     expect(normalizeServerUrl('https://media.example.com/monarr/api/v1/')).toBe(
       'https://media.example.com/monarr',

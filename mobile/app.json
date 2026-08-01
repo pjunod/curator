@@ -2,7 +2,7 @@
   "expo": {
     "name": "Monarr",
     "slug": "monarr",
-    "version": "0.16.0",
+    "version": "0.18.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "monarr",
@@ -11,12 +11,15 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.pjunod.monarr",
-      "buildNumber": "1",
+      "buildNumber": "4",
       "config": {
         "usesNonExemptEncryption": false
       },
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Monarr connects to the media server you choose on your local network.",
+        "NSBonjourServices": [
+          "_monarr._tcp."
+        ],
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }
@@ -24,7 +27,13 @@
     },
     "android": {
       "package": "com.pjunod.monarr",
-      "versionCode": 1,
+      "versionCode": 4,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.CHANGE_WIFI_MULTICAST_STATE"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0e1117"
@@ -33,6 +42,15 @@
     },
     "plugins": [
       "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Monarr to scan a server pairing QR code.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      "./plugins/withOptionalCamera",
       [
         "expo-splash-screen",
         {

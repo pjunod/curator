@@ -44,6 +44,7 @@ import (
 	"github.com/pjunod/monarr/internal/compat"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/config"
+	"github.com/pjunod/monarr/internal/infra/discovery"
 	"github.com/pjunod/monarr/internal/infra/jobs"
 	"github.com/pjunod/monarr/internal/infra/logging"
 	"github.com/pjunod/monarr/internal/infra/scheduler"
@@ -521,6 +522,8 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	stopDiscovery := discovery.Start(cfg.Port, buildinfo.Version, log)
+	defer stopDiscovery()
 
 	errCh := make(chan error, 1)
 	go func() {

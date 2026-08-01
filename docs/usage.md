@@ -117,21 +117,42 @@ Discover never adds anything by itself. For that, see
 ## Native iOS and Android app
 
 Monarr's native companion connects to the server you already run; it does not
-run the automation engine on the phone. On first launch, enter the server URL
-and the key from **Settings → Security → Reveal**. The address must be one the
-phone can reach: a LAN IP/hostname, a VPN address such as Tailscale, or an
-HTTPS reverse proxy. `localhost` means the phone itself.
+run the automation engine on the phone. On first launch, choose one of three
+connection paths:
 
-The app covers the daily mobile loop: browse and filter the library, inspect a
-title, change monitoring, start a search, browse Discover, add media with a
-root/profile choice, work the Wanted list, watch downloads/imports, read the
-calendar, and check server health. **More → Open web interface** hands off to
-the browser for indexers, clients, notifiers, profiles, root folders, and
-security settings.
+1. **Find Monarr on Wi-Fi** browses the local DNS-SD service
+   (`_monarr._tcp`). It uses the addresses and port announced by the server,
+   including IPv4 and IPv6; it does not guess a subnet or scan an address
+   range.
+2. **Scan pairing QR** reads the code shown by **Settings → Security →
+   Reveal → Link a mobile app**. Enter an address the phone can reach before
+   showing the code. The QR transfers that address and the API key.
+3. **Enter it manually** accepts a LAN IP/hostname, a VPN address such as
+   Tailscale, or an HTTPS reverse proxy. `localhost` means the phone itself. A
+   bare direct host automatically uses Monarr's default port, `7676`; explicit
+   ports and HTTPS reverse-proxy URLs are preserved. Put literal IPv6
+   addresses in brackets when a port is present, for example
+   `http://[fd12:3456::20]:7676`.
+
+DNS-SD stays inside the network's multicast domain. Guest Wi-Fi, isolated
+VLANs, some VPNs, and Docker bridge networking can prevent advertisements
+from reaching the phone even when the server itself is reachable. Use the QR
+or manual address in that case, or provide an mDNS reflector/host networking
+where appropriate.
+
+The app covers the daily mobile loop: browse and filter the library; inspect a
+title; edit its monitoring, quality profile, root folder, and path; change
+season monitoring; and start a search. Movies and series can also keep
+additional quality copies, each with its own name, profile, location, and
+monitoring state. Copy removal keeps every file already on disk. Discover,
+Wanted, downloads/imports, the calendar, and server health are native too.
+**More → Open web interface** hands off to the browser for defining profiles
+and root folders or configuring indexers, clients, notifiers, and security.
 
 The API key is stored in iOS Keychain or Android Keystore. Plain `http://` is
 supported because many Monarr servers live only on a trusted LAN, but it does
-not encrypt the key in transit; use HTTPS or a trusted VPN outside that LAN.
+not encrypt the key in transit. The pairing QR also contains the key, so show
+it only to a trusted device. Use HTTPS or a trusted VPN outside that LAN.
 Development, real-device testing, and store build commands live in the
 [mobile app guide](../mobile/README.md).
 

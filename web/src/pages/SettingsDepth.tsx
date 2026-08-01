@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import QRCode from 'react-qr-code'
 import type { ImportList } from '../api'
 import {
   addCustomFormat, addImportList, deleteCustomFormat, deleteImportList,
   getCustomFormats, getImportLists, getProfiles, getRootFolders, getSettings,
   updateSettings,
 } from '../api'
+import { buildPairingCode } from '../pairing'
 
 // CustomFormatSettings manages regex scoring rules (Phase 5).
 export function CustomFormatSettings() {
@@ -162,6 +164,10 @@ export function SecuritySettings() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [revealed, setRevealed] = useState(false)
+  const [pairingVisible, setPairingVisible] = useState(false)
+  const [pairingAddress, setPairingAddress] = useState(() =>
+    typeof window === 'undefined' ? '' : window.location.origin,
+  )
 
   const save = useMutation({
     mutationFn: (enable: boolean) =>
@@ -196,6 +202,43 @@ export function SecuritySettings() {
           auth {authOn ? 'enabled' : 'disabled'}
         </span>
       </div>
+      {revealed && settings.data?.apiKey && (
+        <div className="mobile-pairing">
+          <h3>Link a mobile app</h3>
+          <p className="muted">
+            Enter the address this phone can reach, then scan the code from the Monarr app.
+            The QR contains the API key, so show it only to a device you trust.
+          </p>
+          <div className="add-controls">
+            <input
+              aria-label="Mobile pairing server address"
+              value={pairingAddress}
+              placeholder="http://192.168.1.20:7676"
+              onChange={(event) => setPairingAddress(event.target.value)}
+            />
+            <button
+              className="btn-accent"
+              disabled={!pairingAddress.trim()}
+              onClick={() => setPairingVisible((value) => !value)}
+            >
+              {pairingVisible ? 'Hide pairing QR' : 'Show pairing QR'}
+            </button>
+          </div>
+          {pairingVisible && (
+            <div className="pairing-code">
+              <QRCode
+                aria-label="Monarr mobile pairing QR code"
+                bgColor="#ffffff"
+                fgColor="#111111"
+                level="M"
+                size={220}
+                value={buildPairingCode(pairingAddress, settings.data.apiKey)}
+              />
+              <span className="muted">Monarr app → Scan pairing QR</span>
+            </div>
+          )}
+        </div>
+      )}
       <div className="add-controls" style={{ marginTop: 12 }}>
         <input placeholder="Username" autoComplete="off" value={username}
           onChange={(e) => setUsername(e.target.value)} />

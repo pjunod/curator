@@ -1,4 +1,5 @@
 import type {
+  AddMediaCopyRequest,
   AddMediaRequest,
   CalendarEntry,
   Connection,
@@ -14,6 +15,8 @@ import type {
   RootFolder,
   SearchResult,
   SystemStatus,
+  UpdateMediaCopyRequest,
+  UpdateMediaItemRequest,
   WantedItem,
 } from './types'
 
@@ -87,8 +90,16 @@ export class MonarrClient {
   getLibrary = (kind?: MediaKind): Promise<MediaItemSummary[]> =>
     this.get(`/library${kind ? `?kind=${kind}` : ''}`)
   getLibraryItem = (id: number): Promise<MediaItemDetail> => this.get(`/library/${id}`)
-  updateLibraryItem = (id: number, patch: { monitored?: boolean }): Promise<MediaItemDetail> =>
+  updateLibraryItem = (id: number, patch: UpdateMediaItemRequest): Promise<MediaItemDetail> =>
     this.send('PATCH', `/library/${id}`, patch)
+  addMediaCopy = (id: number, input: AddMediaCopyRequest): Promise<MediaItemDetail> =>
+    this.send('POST', `/library/${id}/copies`, input)
+  updateMediaCopy = (id: number, copyId: number, patch: UpdateMediaCopyRequest): Promise<MediaItemDetail> =>
+    this.send('PATCH', `/library/${id}/copies/${copyId}`, patch)
+  deleteMediaCopy = (id: number, copyId: number): Promise<MediaItemDetail> =>
+    this.send('DELETE', `/library/${id}/copies/${copyId}`)
+  setSeasonMonitored = (id: number, season: number, monitored: boolean): Promise<MediaItemDetail> =>
+    this.send('PATCH', `/library/${id}/seasons/${season}`, { monitored })
   searchMetadata = (kind: MediaKind, query: string): Promise<SearchResult[]> =>
     this.get(`/metadata/search?kind=${kind}&query=${encodeURIComponent(query)}`)
   getDiscoverLists = (): Promise<DiscoverList[]> => this.get('/discover/lists')
