@@ -18,11 +18,12 @@ type taggingClient struct {
 	gotTransfer string
 	gotURL      string
 	gotCategory string
+	gotName     string
 	addErr      error
 }
 
-func (c *taggingClient) AddTagged(ctx context.Context, url, cat, transfer string) (ports.Handle, error) {
-	c.gotTransfer, c.gotURL, c.gotCategory = transfer, url, cat
+func (c *taggingClient) AddTagged(ctx context.Context, url, cat, name, transfer string) (ports.Handle, error) {
+	c.gotTransfer, c.gotURL, c.gotCategory, c.gotName = transfer, url, cat, name
 	if c.addErr != nil {
 		return "", c.addErr
 	}
@@ -60,6 +61,9 @@ func TestGrabSendsTheTransferIDToATaggingClient(t *testing.T) {
 	}
 	if client.gotCategory != "monarr" {
 		t.Errorf("category = %q, want the client's configured category", client.gotCategory)
+	}
+	if client.gotName != "Test.Show.S01E01.1080p.WEB-DL-X" {
+		t.Errorf("name = %q, want the release title", client.gotName)
 	}
 
 	dl, err := db.GetDownload(ctx, id)

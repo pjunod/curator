@@ -93,15 +93,16 @@ func client(t *testing.T, srv *httptest.Server, user, pass string) *Client {
 	return New(ports.ClientConfig{Type: "nzbd", Name: "nzbd", URL: srv.URL, Username: user, Password: pass})
 }
 
-// The transfer id is the whole reason this adapter speaks the native API:
-// it must reach nzbd at admit time, encoded exactly, or the trace this
-// integration exists to produce has a hole at its first hop.
+// The release name and transfer id are why this adapter speaks the native API:
+// both must reach nzbd at admit time, encoded exactly, or nzbd shows an indexer
+// hash and the trace this integration exists to produce has a hole at its first
+// hop.
 func TestAddCarriesTheTransferID(t *testing.T) {
 	var rec recorder
 	srv := fake(t, &rec, nil)
 
 	h, err := client(t, srv, "", "tok").AddTagged(context.Background(),
-		"https://indexer/x.nzb", "tv", "t-42-a3f9c1")
+		"https://indexer/x.nzb", "tv", "Show.S01E01.1080p.WEB-DL-GRP", "t-42-a3f9c1")
 	if err != nil {
 		t.Fatalf("AddTagged: %v", err)
 	}
@@ -116,6 +117,9 @@ func TestAddCarriesTheTransferID(t *testing.T) {
 	}
 	if got := rec.query.Get("category"); got != "tv" {
 		t.Errorf("category = %q", got)
+	}
+	if got := rec.query.Get("name"); got != "Show.S01E01.1080p.WEB-DL-GRP" {
+		t.Errorf("name = %q, want the release title", got)
 	}
 	var params map[string]string
 	if err := json.Unmarshal([]byte(rec.query.Get("params")), &params); err != nil {

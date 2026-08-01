@@ -535,13 +535,13 @@ func newTransferID(downloadID int64) string {
 	return fmt.Sprintf("t-%d-%x", downloadID, b)
 }
 
-// addToClient sends the release, carrying the transfer id when the client
-// can hold one. The type assertion is the whole mechanism: clients that
-// cannot tag a download are added exactly as before, and Monarr keeps the
+// addToClient sends the release, carrying its human name and transfer id when
+// the client can hold them. The type assertion is the whole mechanism: clients
+// that cannot tag a download are added exactly as before, and Monarr keeps the
 // id on its own row so its trace is still threaded.
-func addToClient(ctx context.Context, c ports.DownloadClient, downloadURL, category, transfer string) (ports.Handle, error) {
+func addToClient(ctx context.Context, c ports.DownloadClient, downloadURL, category, name, transfer string) (ports.Handle, error) {
 	if tagger, ok := c.(ports.TaggedAdder); ok && transfer != "" {
-		return tagger.AddTagged(ctx, downloadURL, category, transfer)
+		return tagger.AddTagged(ctx, downloadURL, category, name, transfer)
 	}
 	return c.Add(ctx, downloadURL, category)
 }
@@ -614,7 +614,7 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		return 0, err
 	}
 	transfer := newTransferID(id)
-	handle, err := addToClient(ctx, s.newClient(*cfg), req.DownloadURL, cfg.Category, transfer)
+	handle, err := addToClient(ctx, s.newClient(*cfg), req.DownloadURL, cfg.Category, req.Title, transfer)
 	if err != nil {
 		// Nothing downstream ever saw this row: no event, no trace entry,
 		// no history. Dropping it is the honest undo.

@@ -106,21 +106,24 @@ func (c *Client) do(ctx context.Context, method, path string, out any) error {
 
 // Add implements ports.DownloadClient.
 func (c *Client) Add(ctx context.Context, downloadURL, category string) (ports.Handle, error) {
-	return c.AddTagged(ctx, downloadURL, category, "")
+	return c.AddTagged(ctx, downloadURL, category, "", "")
 }
 
-// AddTagged implements ports.TaggedAdder: the same add, with Monarr's
-// transfer id set as a job parameter at admit time.
+// AddTagged implements ports.TaggedAdder: the same add, with the release name
+// and Monarr's transfer id set at admit time.
 //
 // The param rides nzbd's existing plumbing from the queue into history and
 // into the compat `Parameters` array, so the id is visible in nzbd's UI,
 // on its completion event, and in its history row — without Monarr writing
 // it twice or nzbd learning anything about Monarr.
-func (c *Client) AddTagged(ctx context.Context, downloadURL, category, transfer string) (ports.Handle, error) {
+func (c *Client) AddTagged(ctx context.Context, downloadURL, category, name, transfer string) (ports.Handle, error) {
 	q := url.Values{}
 	q.Set("url", downloadURL)
 	if category != "" {
 		q.Set("category", category)
+	}
+	if name != "" {
+		q.Set("name", name)
 	}
 	if transfer != "" {
 		// A JSON object of string→string. Keys starting with `*` are

@@ -150,8 +150,9 @@ type DownloadClient interface {
 }
 
 // TaggedAdder is an OPTIONAL capability: a client that can carry Monarr's
-// transfer id onto the download itself, so the same id is visible in the
-// client's UI, in whatever it reports back, and in Monarr's handoff trace.
+// release name and transfer id onto the download itself, so the client can
+// show the human title from the first queued frame and the same id is visible
+// there, in whatever it reports back, and in Monarr's handoff trace.
 // Grepping one id across both applications is the point.
 //
 // Optional rather than part of DownloadClient because most clients have
@@ -161,7 +162,7 @@ type DownloadClient interface {
 // that does not implement this gets a plain Add and Monarr keeps the id
 // on its own row.
 type TaggedAdder interface {
-	AddTagged(ctx context.Context, downloadURL, category, transfer string) (Handle, error)
+	AddTagged(ctx context.Context, downloadURL, category, name, transfer string) (Handle, error)
 }
 
 // ClientEventKind is what a pushed event says happened.
