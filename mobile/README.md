@@ -15,7 +15,8 @@ Monarr data or metadata provider keys live on the phone.
 - Discover and metadata search, including root/profile choices when adding.
 - Wanted items, backlog search, active and retained activity, and calendar.
 - Server status and health, with a handoff to the web UI for administration.
-- First-run Wi-Fi discovery over DNS-SD and camera-based pairing by QR.
+- Automatic first-run Wi-Fi discovery over DNS-SD and camera-based pairing by
+  QR.
 - One saved server address and API key. The API key is stored with Android
   Keystore or iOS Keychain through Expo SecureStore.
 
@@ -36,12 +37,13 @@ npm start                 # show the Expo QR code and simulator controls
 ```
 
 Open the development QR code with Expo Go, or press `i` / `a` for an available
-iOS Simulator / Android emulator. In a native build, **Find Monarr on Wi-Fi**
-browses `_monarr._tcp` with DNS-SD. The server supplies its real service port
-and resolved IPv4/IPv6 addresses; the app never assumes a subnet size or probes
-an address range. DNS-SD may be blocked by guest Wi-Fi, VLAN isolation, a VPN,
-or Docker bridge networking. Manual entry and pairing QR remain available when
-the server is otherwise reachable.
+iOS Simulator / Android emulator. In a native build, the connection screen
+immediately browses `_monarr._tcp` with DNS-SD and displays verified servers as
+they answer. The server supplies its real service port and resolved IPv4/IPv6
+addresses; the app never assumes a subnet size or probes an address range.
+DNS-SD may be blocked by guest Wi-Fi, VLAN isolation, a VPN, or Docker bridge
+networking. QR and manual entry remain visible while the scan runs and remain
+available when the server is otherwise reachable.
 
 For QR pairing, open **Monarr web → Settings → Security → Reveal → Link a
 mobile app**, enter the address the phone can reach, show the QR, then choose

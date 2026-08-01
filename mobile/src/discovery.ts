@@ -8,26 +8,35 @@ const SCAN_DURATION_MS = 5000
 export async function discoverMonarrServers(
   apiKey: string,
   onResolved: (count: number) => void,
+  onDiscovered: (server: DiscoveredServer) => void = () => {},
 ): Promise<DiscoveredServer[]> {
   const state = await Network.getNetworkStateAsync()
   if (state.type !== Network.NetworkStateType.WIFI || !state.isConnected) {
     throw new Error('Connect this device to Wi-Fi before searching for Monarr.')
   }
 
-  const services = await browseServices(onResolved)
-  const found = await Promise.all(services.map(async (service) => {
+  const probes: Promise<DiscoveredServer | null>[] = []
+  await browseServices(onResolved, (service) => {
     const candidates = serviceBaseUrls(service)
-    const probes = await Promise.all(
+    const probe = Promise.all(
       candidates.map((baseUrl) => probeMonarrServer(service.name, baseUrl, apiKey)),
-    )
-    return probes.find((result) => result !== null) ?? null
-  }))
+    ).then((results) => {
+      const found = results.find((result) => result !== null) ?? null
+      if (found) onDiscovered(found)
+      return found
+    })
+    probes.push(probe)
+  })
+  const found = await Promise.all(probes)
   return found
     .filter((result): result is DiscoveredServer => result !== null)
     .sort((left, right) => left.name.localeCompare(right.name))
 }
 
-function browseServices(onResolved: (count: number) => void): Promise<ZeroconfService[]> {
+function browseServices(
+  onResolved: (count: number) => void,
+  onService: (service: ZeroconfService) => void,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const zeroconf = new Zeroconf()
     const services = new Map<string, ZeroconfService>()
@@ -48,12 +57,15 @@ function browseServices(onResolved: (count: number) => void): Promise<ZeroconfSe
       clearTimeout(timer)
       cleanup()
       if (error) reject(error)
-      else resolve([...services.values()])
+      else resolve()
     }
 
     zeroconf.on('resolved', (service: ZeroconfService) => {
-      services.set(service.fullName ?? service.name, service)
+      const key = service.fullName ?? service.name
+      if (services.has(key)) return
+      services.set(key, service)
       onResolved(services.size)
+      onService(service)
     })
     zeroconf.on('error', (error: Error) => finish(error))
     const timer = setTimeout(() => finish(), SCAN_DURATION_MS)

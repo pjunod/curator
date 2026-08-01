@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native'
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera'
 import { MonarrClient } from '../api'
@@ -23,11 +23,17 @@ export function ConnectScreen({
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [connecting, setConnecting] = useState(false)
-  const [discovering, setDiscovering] = useState(false)
+  const [discovering, setDiscovering] = useState(true)
   const [resolvedCount, setResolvedCount] = useState(0)
   const [discovered, setDiscovered] = useState<DiscoveredServer[]>([])
   const [scanningQr, setScanningQr] = useState(false)
   const [qrHandled, setQrHandled] = useState(false)
+  const apiKeyRef = useRef(apiKey)
+  const scanGeneration = useRef(0)
+
+  useEffect(() => {
+    apiKeyRef.current = apiKey
+  }, [apiKey])
 
   const connectWith = async (candidate: Connection) => {
     setConnecting(true)
@@ -46,14 +52,28 @@ export function ConnectScreen({
 
   const connect = () => connectWith({ baseUrl: server, apiKey })
 
-  const findOnWifi = async () => {
+  const findOnWifi = useCallback(async (automatic = false) => {
+    const generation = ++scanGeneration.current
     setDiscovering(true)
     setResolvedCount(0)
     setDiscovered([])
     setError('')
     setMessage('Looking for Monarr DNS-SD services on this Wi-Fi network…')
     try {
-      const servers = await discoverMonarrServers(apiKey, setResolvedCount)
+      const servers = await discoverMonarrServers(
+        apiKeyRef.current,
+        (count) => {
+          if (scanGeneration.current === generation) setResolvedCount(count)
+        },
+        (found) => {
+          if (scanGeneration.current !== generation) return
+          setDiscovered((current) => {
+            if (current.some((server) => server.baseUrl === found.baseUrl)) return current
+            return [...current, found].sort((left, right) => left.name.localeCompare(right.name))
+          })
+        },
+      )
+      if (scanGeneration.current !== generation) return
       setDiscovered(servers)
       setMessage(
         servers.length === 0
@@ -61,12 +81,25 @@ export function ConnectScreen({
           : `Found ${servers.length} Monarr ${servers.length === 1 ? 'server' : 'servers'}.`,
       )
     } catch (cause) {
-      setMessage('')
-      setError(cause instanceof Error ? cause.message : 'Local discovery could not start.')
+      if (scanGeneration.current !== generation) return
+      const detail = cause instanceof Error ? cause.message : 'Local discovery could not start.'
+      if (automatic) {
+        setMessage(detail)
+      } else {
+        setMessage('')
+        setError(detail)
+      }
     } finally {
-      setDiscovering(false)
+      if (scanGeneration.current === generation) setDiscovering(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    void findOnWifi(true)
+    return () => {
+      scanGeneration.current += 1
+    }
+  }, [findOnWifi])
 
   const useDiscoveredServer = (found: DiscoveredServer) => {
     setServer(found.baseUrl)
@@ -140,15 +173,8 @@ export function ConnectScreen({
         </View>
 
         <Panel style={styles.form}>
-          <Text style={[styles.panelTitle, { color: theme.text }]}>Fast setup</Text>
-          <Text style={[styles.hint, { color: theme.muted }]}>Discover Monarr on Wi-Fi over DNS-SD, or transfer the address and API key with a pairing QR.</Text>
-          <Button
-            label={discovering ? `Searching…${resolvedCount ? ` ${resolvedCount} announced` : ''}` : 'Find Monarr on Wi-Fi'}
-            disabled={discovering || connecting}
-            secondary
-            onPress={() => void findOnWifi()}
-          />
-          <Button label="Scan pairing QR" disabled={discovering || connecting} secondary onPress={() => void openQrScanner()} />
+          <Text style={[styles.panelTitle, { color: theme.text }]}>Nearby Monarr servers</Text>
+          <Text style={[styles.hint, { color: theme.muted }]}>Monarr searches this Wi-Fi automatically. Choose a server when it appears, or use either option below.</Text>
           {discovered.map((found) => (
             <View key={`${found.name}-${found.baseUrl}`} style={[styles.result, { borderColor: theme.border }]}>
               <View style={styles.resultText}>
@@ -160,6 +186,13 @@ export function ConnectScreen({
             </View>
           ))}
           {message ? <Text style={[styles.message, { color: theme.muted }]}>{message}</Text> : null}
+          <Button
+            label={discovering ? `Searching…${resolvedCount ? ` ${resolvedCount} announced` : ''}` : 'Search again'}
+            disabled={discovering || connecting}
+            secondary
+            onPress={() => void findOnWifi()}
+          />
+          <Button label="Scan pairing QR" disabled={connecting} secondary onPress={() => void openQrScanner()} />
           <InlineError message={error} />
         </Panel>
 

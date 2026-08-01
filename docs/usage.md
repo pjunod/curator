@@ -117,13 +117,15 @@ Discover never adds anything by itself. For that, see
 ## Native iOS and Android app
 
 Monarr's native companion connects to the server you already run; it does not
-run the automation engine on the phone. On first launch, choose one of three
-connection paths:
+run the automation engine on the phone. On first launch, it immediately
+searches the current Wi-Fi network and puts each verified server at the top of
+the connection screen. QR and manual setup stay visible while that search runs:
 
-1. **Find Monarr on Wi-Fi** browses the local DNS-SD service
+1. **Automatic Wi-Fi discovery** browses the local DNS-SD service
    (`_monarr._tcp`). It uses the addresses and port announced by the server,
    including IPv4 and IPv6; it does not guess a subnet or scan an address
-   range.
+   range. Results appear as soon as they answer; **Search again** repeats the
+   five-second browse when network conditions change.
 2. **Scan pairing QR** reads the code shown by **Settings → Security →
    Reveal → Link a mobile app**. Enter an address the phone can reach before
    showing the code. The QR transfers that address and the API key.
