@@ -116,6 +116,7 @@ export class MonarrClient {
   getQueue = (filter: 'active' | 'imported' | 'failed', limit = 30): Promise<QueueItem[]> =>
     this.get(`/queue?filter=${filter}&limit=${limit}&offset=0`)
   getQueueSummary = (): Promise<QueueSummary> => this.get('/queue/summary')
+  clearFailedQueue = (): Promise<{ cleared: number }> => this.send('DELETE', '/queue/failed')
   getHistory = (limit = 40): Promise<HistoryEvent[]> => this.get(`/history?limit=${limit}&offset=0`)
   getCalendar = (start: string, end: string): Promise<CalendarEntry[]> =>
     this.get(`/calendar?start=${start}&end=${end}`)

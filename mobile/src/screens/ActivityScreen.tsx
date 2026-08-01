@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Alert, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { formatBytes, formatRelative } from '../format'
-import { AppScreen, Badge, Chip, Header, InlineError, LoadingState, MessageState, Panel, Wordmark } from '../components/UI'
+import { AppScreen, Badge, Button, Chip, Header, InlineError, LoadingState, MessageState, Panel, Wordmark } from '../components/UI'
 import { useTheme } from '../theme'
 import type { QueueItem } from '../types'
 import { useResource } from '../useResource'
@@ -12,10 +12,37 @@ type ActivityFilter = 'active' | 'imported' | 'failed'
 export function ActivityScreen({ client, onOpen }: { client: MonarrClient; onOpen: (id: number) => void }) {
   const theme = useTheme()
   const [filter, setFilter] = useState<ActivityFilter>('active')
+  const [clearingFailed, setClearingFailed] = useState(false)
+  const [clearError, setClearError] = useState('')
   const resource = useResource(async () => {
     const [summary, items] = await Promise.all([client.getQueueSummary(), client.getQueue(filter)])
     return { summary, items }
   }, [client, filter])
+  const failedCount = resource.data?.summary.counts.failed ?? 0
+
+  const clearFailed = async () => {
+    setClearingFailed(true)
+    setClearError('')
+    try {
+      await client.clearFailedQueue()
+      await resource.refresh()
+    } catch (cause) {
+      setClearError(cause instanceof Error ? cause.message : 'Could not clear failed activity.')
+    } finally {
+      setClearingFailed(false)
+    }
+  }
+
+  const confirmClearFailed = () => {
+    Alert.alert(
+      `Clear ${failedCount} failed row${failedCount === 1 ? '' : 's'}?`,
+      'This removes Activity rows only. It does not delete files or remove anything from a download client.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Yes, clear', style: 'destructive', onPress: () => void clearFailed() },
+      ],
+    )
+  }
 
   return (
     <AppScreen>
@@ -32,7 +59,12 @@ export function ActivityScreen({ client, onOpen }: { client: MonarrClient; onOpe
         <View style={styles.filters}>
           {(['active', 'imported', 'failed'] as const).map((value) => <Chip key={value} label={value.charAt(0).toUpperCase() + value.slice(1)} selected={filter === value} onPress={() => setFilter(value)} />)}
         </View>
-        <InlineError message={resource.error} />
+        {filter === 'failed' && failedCount > 0 ? (
+          <View style={styles.bulkAction}>
+            <Button compact secondary disabled={clearingFailed} label={clearingFailed ? 'Clearing…' : 'Clear failed'} onPress={confirmClearFailed} />
+          </View>
+        ) : null}
+        <InlineError message={clearError || resource.error} />
         {resource.loading && !resource.data ? <LoadingState label="Loading activity…" /> : null}
         {!resource.loading && !resource.error && resource.data?.items.length === 0 ? <MessageState title={`No ${filter} activity`} message={filter === 'active' ? 'Downloads and imports in progress will appear here.' : `No retained ${filter} rows.`} /> : null}
         <View style={styles.items}>
@@ -88,6 +120,7 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 22, fontWeight: '800' },
   statLabel: { fontSize: 11, marginTop: 2 },
   filters: { flexDirection: 'row', gap: 7, marginBottom: 14 },
+  bulkAction: { alignItems: 'flex-end', marginBottom: 14 },
   items: { gap: 9 },
   item: { gap: 7 },
   itemHead: { flexDirection: 'row', gap: 10, justifyContent: 'space-between' },

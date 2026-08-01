@@ -17,6 +17,7 @@ Monarr data or metadata provider keys live on the phone.
 - Server status and health, with a handoff to the web UI for administration.
 - Automatic first-run Wi-Fi discovery over DNS-SD and camera-based pairing by
   QR.
+- Confirmed bulk clearing for retained failures under Activity → Failed.
 - Per-device Auto/Light/Dark theme and Small/Medium/Large item-size choices.
 - One saved server address and API key. The API key is stored with Android
   Keystore or iOS Keychain through Expo SecureStore.

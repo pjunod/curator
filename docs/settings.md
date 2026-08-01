@@ -176,7 +176,8 @@ churns through replacements behind your back.
 When the failures are no longer useful, **Clear failed** on the Failed
 grouping dismisses all failed Activity rows after confirmation. This cleans
 up the queue view only: it does not delete a payload or library file, change
-a blocklist, or remove anything from a download client.
+a blocklist, or remove anything from a download client. The native app shows
+the same action beneath Activity's filters when Failed is selected.
 
 ### Activity retention
 

@@ -556,7 +556,8 @@ Everything terminal is history, and history is collapsed:
 - **Clear failed** sits on the Failed grouping and removes every failed row
   after the same inline confirmation. It dismisses Activity records only:
   payloads, library files, blocklists, and download-client jobs stay as they
-  are.
+  are. In the native app, select the Failed filter to reveal the matching
+  button beneath the filters.
 - A single row can be dismissed with **Remove**, which has always been
   there and has always meant the row only (there is a separate option for
   telling the client to drop the download too).

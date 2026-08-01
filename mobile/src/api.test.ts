@@ -69,6 +69,19 @@ describe('MonarrClient', () => {
     expect(JSON.parse(String(init.body))).toEqual({ monitored: false })
   })
 
+  it('clears every failed Activity row through the bulk endpoint', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ cleared: 3 }), { status: 200 }))
+    vi.stubGlobal('fetch', fetch)
+    const client = new MonarrClient({ baseUrl: 'http://monarr.local:7676', apiKey: '' })
+
+    await expect(client.clearFailedQueue()).resolves.toEqual({ cleared: 3 })
+
+    expect(fetch).toHaveBeenCalledWith(
+      'http://monarr.local:7676/api/v1/queue/failed',
+      expect.objectContaining({ method: 'DELETE', body: undefined }),
+    )
+  })
+
   it('adds, edits, and removes additional quality copies', async () => {
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{}', { status: 200 })))
     vi.stubGlobal('fetch', fetch)
