@@ -114,7 +114,28 @@ shown, because by then the row would be wrong rather than merely stale.
 Discover never adds anything by itself. For that, see
 [Import lists](settings.md#import-lists) — same kind of data, opposite job.
 
-## On your phone (install as an app)
+## Native iOS and Android app
+
+Monarr's native companion connects to the server you already run; it does not
+run the automation engine on the phone. On first launch, enter the server URL
+and the key from **Settings → Security → Reveal**. The address must be one the
+phone can reach: a LAN IP/hostname, a VPN address such as Tailscale, or an
+HTTPS reverse proxy. `localhost` means the phone itself.
+
+The app covers the daily mobile loop: browse and filter the library, inspect a
+title, change monitoring, start a search, browse Discover, add media with a
+root/profile choice, work the Wanted list, watch downloads/imports, read the
+calendar, and check server health. **More → Open web interface** hands off to
+the browser for indexers, clients, notifiers, profiles, root folders, and
+security settings.
+
+The API key is stored in iOS Keychain or Android Keystore. Plain `http://` is
+supported because many Monarr servers live only on a trusted LAN, but it does
+not encrypt the key in transit; use HTTPS or a trusted VPN outside that LAN.
+Development, real-device testing, and store build commands live in the
+[mobile app guide](../mobile/README.md).
+
+## PWA fallback (install the web UI)
 
 The UI is a PWA: open `http://<host>:7676` on your phone and install it —
 **iOS Safari**: Share → *Add to Home Screen*; **Android Chrome**: menu →

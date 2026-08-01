@@ -5,6 +5,7 @@ bin
 data
 web/node_modules
 web/dist
+mobile
 docs
 test
 testdata

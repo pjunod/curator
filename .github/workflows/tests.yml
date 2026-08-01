@@ -158,3 +158,27 @@ jobs:
           name: playwright-report
           path: test/e2e/playwright-report/
           retention-days: 7
+
+  mobile:
+    name: Mobile (iOS + Android bundles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install, test, and validate Expo configuration
+        working-directory: mobile
+        run: |
+          npm ci
+          npm run check
+          npm run doctor
+
+      - name: Produce iOS and Android application bundles
+        working-directory: mobile
+        run: npm run export

@@ -13,7 +13,7 @@ SQLC         := github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 OAPI_CODEGEN := github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 GOLANGCI     := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
-.PHONY: all build go-build web test test-web test-e2e coverage coverage-gate coverage-html lint vet fmt gen gen-sqlc gen-api release release-check tidy clean dev-api dev-web docker bootstrap hooks
+.PHONY: all build go-build web test test-web test-mobile mobile-export test-e2e coverage coverage-gate coverage-html lint vet fmt gen gen-sqlc gen-api release release-check tidy clean dev-api dev-web dev-mobile docker bootstrap hooks
 
 all: build
 
@@ -34,6 +34,15 @@ test:
 
 test-web: web/node_modules
 	cd web && npm run -s test
+
+mobile/node_modules: mobile/package-lock.json
+	cd mobile && npm ci
+
+test-mobile: mobile/node_modules
+	cd mobile && npm run check
+
+mobile-export: mobile/node_modules
+	cd mobile && npm run doctor && npm run export
 
 test-e2e: build
 	cd test/e2e && npm ci && npm test
@@ -122,6 +131,9 @@ dev-api:
 
 dev-web:
 	cd web && npm run dev
+
+dev-mobile: mobile/node_modules
+	cd mobile && npm start
 
 docker:
 	docker build -t monarr:dev .

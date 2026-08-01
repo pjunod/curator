@@ -138,8 +138,13 @@ make build          # builds web UI, embeds it, compiles ./bin/monarr
 make hooks          # once per clone: installs the git pre-commit/pre-push hooks
 make dev-api        # terminal 1: go run (API on :7676, serves fallback page)
 make dev-web        # terminal 2: vite dev server on :5173, proxies /api → :7676
+make dev-mobile     # Expo dev server for the native iOS/Android app
 make gen            # regenerate sqlc + oapi-codegen output after editing SQL/spec
 ```
+
+The native [iOS and Android app](mobile/README.md) connects to an existing
+Monarr server. It owns the daily phone workflows — Library, Discover, Wanted,
+Activity, Calendar, and health — while full administration stays in the web UI.
 
 ## Testing
 
@@ -148,6 +153,8 @@ The suite is a pyramid; every layer runs in CI and the fast layers run in git ho
 ```sh
 make test           # Go unit tests, incl. the architecture-rules test (internal/arch_test.go)
 make test-web       # web unit tests (vitest)
+make test-mobile    # mobile strict TypeScript + Vitest
+make mobile-export  # Expo Doctor + production bundles for iOS and Android
 make lint           # golangci-lint (pinned version, same as CI)
 make coverage       # Go coverage: prints the percentage, writes coverage.svg
 make coverage-html  # the same run, as a browsable line-by-line report
@@ -161,9 +168,10 @@ Git hooks (installed by `make hooks`, versioned in `.githooks/`): **pre-commit**
 and web unit suites. E2E stays in CI to keep pushes fast.
 
 CI runs four workflows on every push/PR — `tests.yml` (Go unit tests with `-race` and
-coverage, web vitest, a check that sqlc/oapi-codegen output is current, and the Playwright
-E2E suite against the compiled binary), `lint.yml`, `compat.yml` (Sonarr/Radarr conformance),
-and `docker.yml`. Least-privilege permissions, per-ref concurrency cancellation.
+coverage, web vitest, mobile tests plus both native bundles, a check that
+sqlc/oapi-codegen output is current, and the Playwright E2E suite against the
+compiled binary), `lint.yml`, `compat.yml` (Sonarr/Radarr conformance), and
+`docker.yml`. Least-privilege permissions, per-ref concurrency cancellation.
 
 ### Coverage
 
@@ -219,6 +227,8 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
 - **[Usage guide](docs/usage.md)** — first run, adding movies/series/books, browsing
   Discover, adopting an existing library, interactive search, automation, connecting
   Jellyseerr/Prowlarr/Bazarr.
+- **[Mobile app](mobile/README.md)** — run, verify, build, and submit the native iOS and
+  Android companion.
 - **[Settings reference](docs/settings.md)** — every field in the Settings and System pages.
 - **[Integration](docs/integration.md)** — every seam with nzbd and plurx: what each does, the
   wire format, where you watch it in the UI, and the command that proves it works.
@@ -284,6 +294,7 @@ internal/
   api/                native /api/v1 (OpenAPI-first), SSE, auth, /metrics, SPA serving
   compat/             Sonarr/Radarr v3 personalities (translation-only over app)
 web/                  React + TypeScript + Vite UI, embedded via go:embed
+mobile/               Expo + React Native app for iOS and Android
 deploy/               Dockerfile + compose template (copy to docker-compose.yml, yours to edit)
 test/e2e/             Playwright suite booting the real binary against fake services
 test/conformance/     docker-compose harness vs real Jellyseerr/Prowlarr/Bazarr

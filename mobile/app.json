@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "Monarr",
+    "slug": "monarr",
+    "version": "0.16.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "scheme": "monarr",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#0e1117",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pjunod.monarr",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Monarr connects to the media server you choose on your local network.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.pjunod.monarr",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0e1117"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0e1117",
+          "image": "./assets/splash.png",
+          "imageWidth": 180,
+          "resizeMode": "contain"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ]
+  }
+}

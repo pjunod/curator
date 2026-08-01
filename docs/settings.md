@@ -488,7 +488,10 @@ nothing to retry about a film Monarr was never asked to look after.
 - **API key** — generated on first start, shown here (**Reveal**). This is
   what Prowlarr/Jellyseerr/Bazarr use as `X-Api-Key` against `/sonarr` and
   `/radarr`, and what scripts can use against `/api/v1` (`X-Api-Key`
-  header or `?apikey=`).
+  header or `?apikey=`). The native iOS/Android app also uses this key and
+  stores it in the device keychain/keystore; copy it into the app's first-run
+  connection screen. Use HTTPS or a trusted VPN outside your LAN, because
+  plain HTTP exposes the header in transit.
 - **Authentication** — off by default; the compat personalities are always
   key-gated regardless. Set a username + password, then **Save & enable
   auth**: `/api/v1` (and therefore the UI) now requires the API key or a

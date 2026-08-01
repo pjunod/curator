@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-07-31 · v0.15.0 · Activity is finite: retention sweep, paged/filtered queue endpoints, and a page that leads with what is moving and collapses the history behind it (§Activity). Previously, v0.14.0 · The re-grab loop, monarr's half: M1–M4 fixed — an import that runs out of disk now fails visibly and retries itself, cleanup removes a payload the client would not, a release already in flight is never grabbed twice, replacement searches are bounded, and the per-release history is finally reachable over the API (§The re-grab loop). Previously, 2026-07-29 · v0.13.0 · Repo and module path are now `github.com/pjunod/monarr` — done while nothing outside the repo depends on the old path, which is the only time it is cheap (§Launch logistics, ADR 0001 amendment 2). Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.5%, past the 85% target, with the floor enforced by COVERAGE_MIN.** The new tests then paid for themselves: six real defects found and fixed, a permanent auth lockout among them, plus a `make coverage` whose number depended on build-cache state (§Defects the coverage work found). Full gate green, 90/90 e2e · next: launch logistics + the rest of the nzbd integration**
+> **Snapshot 2026-08-01 · v0.16.0 · Native iOS and Android companion built from one Expo/React Native codebase: secure server/key connection, Library/Discover/Wanted/Activity/Calendar/health workflows, real store identifiers and EAS profiles, and CI compilation for both native runtimes (§Native mobile apps). Previously, v0.15.0 · Activity is finite: retention sweep, paged/filtered queue endpoints, and a page that leads with what is moving and collapses the history behind it (§Activity). Previously, v0.14.0 · The re-grab loop, monarr's half: M1–M4 fixed — an import that runs out of disk now fails visibly and retries itself, cleanup removes a payload the client would not, a release already in flight is never grabbed twice, replacement searches are bounded, and the per-release history is finally reachable over the API (§The re-grab loop). Previously, 2026-07-29 · v0.13.0 · Repo and module path are now `github.com/pjunod/monarr` — done while nothing outside the repo depends on the old path, which is the only time it is cheap (§Launch logistics, ADR 0001 amendment 2). Phase 9 "Discover" built: rows of trending / in theaters / coming soon / top rated, read live from TMDB (nine rows, no setup) and Trakt (five more, behind an optional client id), added to the library without leaving the page. No table, no job, nothing stored. Poster size is now S/M/L on both Discover and the Library grid. Two pre-existing red e2e specs on main repaired on the way through (§Phase 9). Coverage badge fixed (it could never render from raw.githubusercontent.com on a private repo) and CI no longer pushes it. **Test coverage 68.4% -> 86.5%, past the 85% target, with the floor enforced by COVERAGE_MIN.** The new tests then paid for themselves: six real defects found and fixed, a permanent auth lockout among them, plus a `make coverage` whose number depended on build-cache state (§Defects the coverage work found). Full gate green, 90/90 e2e · next: signed TestFlight/Play internal builds + launch logistics**
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -21,7 +21,22 @@
 | 5 — Depth & parity | **7/7 ✅** | custom formats, client zoo, lists, anime |
 | 6 — Quality truth (ADR 0013/0014) | **9/9 ✅** | on-disk quality measured; target profiles; churn regression pinned |
 | 9 — Discover (ADR 0015) | **7/7 ✅** | browse what's good and add it without leaving the app |
+| Native mobile apps | **7/7 ✅** | daily workflows compile for native iOS + Android runtimes |
 | Launch logistics | 4/9 | public repo, releases, name housekeeping |
+
+## Native mobile apps ✅ (built 2026-08-01, v0.16.0)
+
+- [x] One Expo/React Native project produces iOS and Android bundles
+- [x] First-run server connection normalizes LAN/VPN/reverse-proxy URLs
+- [x] API key persists only in iOS Keychain / Android Keystore
+- [x] Library/detail, monitoring, search-now, Discover, and add flows
+- [x] Wanted, Activity/queue progress, Calendar, System health, and web handoff
+- [x] Strict TypeScript and API/format/connection unit tests
+- [x] Expo Doctor plus both native production bundles run in CI
+
+Signed TestFlight and Play internal builds still require the release owner's
+Apple/Google/Expo accounts and real-device QA; the code and build profiles are
+ready, but credentials are deliberately not repository state.
 
 ## Phase 0 — Walking skeleton ✅ (shipped 2026-07-17)
 
