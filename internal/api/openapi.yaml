@@ -1241,6 +1241,21 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ClearedCount" }
 
+  /queue/failed:
+    delete:
+      operationId: clearFailedQueue
+      summary: Clear the failed rows
+      description: >
+        Removes every failed row from Activity. The rows only - this does not
+        delete a payload, remove a library file, change a blocklist, or ask a
+        download client to remove anything.
+      responses:
+        "200":
+          description: How many rows were cleared.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClearedCount" }
+
   /history:
     get:
       operationId: listHistory

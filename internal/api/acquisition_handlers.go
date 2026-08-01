@@ -1451,6 +1451,16 @@ func (s *Server) ClearFinishedQueue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, apigen.ClearedCount{Cleared: int(n)})
 }
 
+// ClearFailedQueue implements DELETE /queue/failed.
+func (s *Server) ClearFailedQueue(w http.ResponseWriter, r *http.Request) {
+	n, err := s.deps.Acquisition.ClearFailed(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, apigen.ClearedCount{Cleared: int(n)})
+}
+
 // ListHistory implements GET /history — the per-release timeline.
 //
 // Monarr has written these events since the beginning and shown them

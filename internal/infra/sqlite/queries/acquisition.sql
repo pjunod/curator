@@ -76,6 +76,11 @@ SELECT state, COUNT(*) AS n FROM downloads GROUP BY state;
 -- record, or the download client - an imported row is a receipt.
 DELETE FROM downloads WHERE state = 'imported';
 
+-- name: DeleteFailedDownloads :execrows
+-- "Clear failed" has the same boundary: dismiss the Activity rows without
+-- touching payloads, library records, blocklists, or download clients.
+DELETE FROM downloads WHERE state = 'failed';
+
 -- name: DeleteTerminalDownloadsBefore :execrows
 -- Retention. Terminal rows only: whatever is still moving is never swept out
 -- from under itself, however old it looks.

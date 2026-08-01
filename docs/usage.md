@@ -553,6 +553,10 @@ Everything terminal is history, and history is collapsed:
   download's row is a receipt, and the files are in your library under the
   library's own records. Nothing is deleted from disk, from the library, or
   from the download client. It asks once before it does it.
+- **Clear failed** sits on the Failed grouping and removes every failed row
+  after the same inline confirmation. It dismisses Activity records only:
+  payloads, library files, blocklists, and download-client jobs stay as they
+  are.
 - A single row can be dismissed with **Remove**, which has always been
   there and has always meant the row only (there is a separate option for
   telling the client to drop the download too).

@@ -98,6 +98,19 @@ func (s *Service) ClearFinished(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
+// ClearFailed drops failed rows from the queue view on demand.
+//
+// The rows only. Clearing Activity is not a second attempt at cleanup: it
+// does not touch payloads, library records, blocklists, or download clients.
+func (s *Service) ClearFailed(ctx context.Context) (int64, error) {
+	n, err := s.db.ClearFailedDownloads(ctx)
+	if err != nil {
+		return 0, err
+	}
+	s.log.Info("activity: cleared failed rows", "rows", n)
+	return n, nil
+}
+
 // QueuePage is one page of the queue for the Activity page.
 func (s *Service) QueuePage(ctx context.Context, filter sqlite.QueueFilter, search string, limit, offset int) ([]sqlite.Download, error) {
 	return s.db.QueuePage(ctx, filter, search, limit, offset)

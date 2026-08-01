@@ -72,3 +72,41 @@ test('a long file list scrolls instead of growing the page', async ({ page }) =>
   const box = await scroller.boundingBox()
   expect(box?.height ?? 0).toBeLessThanOrEqual(360)
 })
+
+test('all failed rows can be cleared from their grouping after confirmation', async ({ page }) => {
+  let failed = 2
+  const finished = 3
+  let deletes = 0
+
+  await page.route('**/api/v1/queue/summary', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ total: failed + finished, active: 0, counts: { failed, imported: finished }, retentionDays: 30 }),
+    })
+  })
+  await page.route('**/api/v1/queue?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: '[]' })
+  })
+  await page.route('**/api/v1/queue/failed', async (route) => {
+    expect(route.request().method()).toBe('DELETE')
+    deletes += 1
+    const cleared = failed
+    failed = 0
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ cleared }) })
+  })
+
+  await page.goto('/activity')
+  const failedGroup = page.locator('.activity-group').filter({ has: page.getByTestId('toggle-failed') })
+  const finishedGroup = page.locator('.activity-group').filter({ has: page.getByTestId('toggle-imported') })
+  await expect(failedGroup.getByTestId('clear-failed')).toBeVisible()
+  await expect(finishedGroup.getByTestId('clear-finished')).toBeVisible()
+
+  await failedGroup.getByTestId('clear-failed').click()
+  await expect(page.getByText('Clear 2 failed rows?')).toBeVisible()
+  await page.getByRole('button', { name: 'Yes, clear' }).click()
+
+  await expect.poll(() => deletes).toBe(1)
+  await expect(page.getByTestId('activity-counts')).toContainText('0 failed')
+  await expect(page.getByTestId('clear-failed')).toHaveCount(0)
+  await expect(finishedGroup.getByTestId('clear-finished')).toBeVisible()
+})

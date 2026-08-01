@@ -631,6 +631,12 @@ func (d *DB) ClearImportedDownloads(ctx context.Context) (int64, error) {
 	return d.Write.DeleteImportedDownloads(ctx)
 }
 
+// ClearFailedDownloads drops every failed row from Activity. It deliberately
+// leaves files, blocklists, library records, and download clients alone.
+func (d *DB) ClearFailedDownloads(ctx context.Context) (int64, error) {
+	return d.Write.DeleteFailedDownloads(ctx)
+}
+
 // PruneTerminalDownloads deletes imported/failed rows last touched before
 // `before`. Never touches a row that is still moving, however old.
 func (d *DB) PruneTerminalDownloads(ctx context.Context, before time.Time) (int64, error) {

@@ -2252,6 +2252,9 @@ type ServerInterface interface {
 	// ListQueue Recent downloads, filtered and paged
 	// (GET /queue)
 	ListQueue(w http.ResponseWriter, r *http.Request, params ListQueueParams)
+	// ClearFailedQueue Clear the failed rows
+	// (DELETE /queue/failed)
+	ClearFailedQueue(w http.ResponseWriter, r *http.Request)
 	// ClearFinishedQueue Clear the finished rows
 	// (DELETE /queue/finished)
 	ClearFinishedQueue(w http.ResponseWriter, r *http.Request)
@@ -4132,6 +4135,20 @@ func (siw *ServerInterfaceWrapper) ListQueue(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// ClearFailedQueue operation middleware
+func (siw *ServerInterfaceWrapper) ClearFailedQueue(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClearFailedQueue(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ClearFinishedQueue operation middleware
 func (siw *ServerInterfaceWrapper) ClearFinishedQueue(w http.ResponseWriter, r *http.Request) {
 
@@ -4657,6 +4674,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue", wrapper.ListQueue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue/summary", wrapper.QueueSummary)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/finished", wrapper.ClearFinishedQueue)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/failed", wrapper.ClearFailedQueue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)

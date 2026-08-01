@@ -91,6 +91,20 @@ func (q *Queries) DeleteDownloadClient(ctx context.Context, id int64) (int64, er
 	return result.RowsAffected()
 }
 
+const deleteFailedDownloads = `-- name: DeleteFailedDownloads :execrows
+DELETE FROM downloads WHERE state = 'failed'
+`
+
+// "Clear failed" has the same boundary: dismiss the Activity rows without
+// touching payloads, library records, blocklists, or download clients.
+func (q *Queries) DeleteFailedDownloads(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteFailedDownloads)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteHistoryBefore = `-- name: DeleteHistoryBefore :execrows
 DELETE FROM history_events WHERE ts < ?
 `

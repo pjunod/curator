@@ -722,6 +722,7 @@ export interface QueueSummary {
 }
 export const getQueueSummary = () => get<QueueSummary>('/queue/summary')
 export const clearFinishedQueue = () => send<{ cleared: number }>('DELETE', '/queue/finished')
+export const clearFailedQueue = () => send<{ cleared: number }>('DELETE', '/queue/failed')
 
 export interface HistoryEvent {
   ts: string

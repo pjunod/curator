@@ -7,6 +7,7 @@ import {
   type ScannedFile,
   type Stage,
   blocklistQueueItem,
+  clearFailedQueue,
   clearFinishedQueue,
   fmtBytes,
   fmtRelative,
@@ -204,7 +205,7 @@ export function ActivityPage() {
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [shown, setShown] = useState<Record<string, number>>({ imported: PAGE, failed: PAGE })
-  const [confirmClear, setConfirmClear] = useState(false)
+  const [confirmClear, setConfirmClear] = useState<'imported' | 'failed' | null>(null)
 
   // Only the active list polls. Finished and Failed do not change on their
   // own — something has to finish or fail first, and that moves the counts,
@@ -240,13 +241,21 @@ export function ActivityPage() {
   const clearFinished = useMutation({
     mutationFn: clearFinishedQueue,
     onSettled: () => {
-      setConfirmClear(false)
+      setConfirmClear(null)
+      invalidate()
+    },
+  })
+  const clearFailed = useMutation({
+    mutationFn: clearFailedQueue,
+    onSettled: () => {
+      setConfirmClear(null)
       invalidate()
     },
   })
 
   const busy =
-    remove.isPending || doImport.isPending || doBlocklist.isPending || clearFinished.isPending
+    remove.isPending || doImport.isPending || doBlocklist.isPending ||
+    clearFinished.isPending || clearFailed.isPending
   const toggle = (id: number) =>
     setExpanded((prev) => {
       const next = new Set(prev)
@@ -371,6 +380,8 @@ export function ActivityPage() {
         const total = counts[group.key] ?? 0
         const rows = groupRows[group.key]
         const isOpen = !!open[group.key]
+        const action = group.key === 'imported' ? clearFinished : clearFailed
+        const actionLabel = group.key === 'imported' ? 'finished' : 'failed'
         return (
           <section className="panel activity-group" key={group.key}>
             <div className="activity-group-head">
@@ -383,24 +394,24 @@ export function ActivityPage() {
                 {isOpen ? '▾' : '▸'} {group.label}
                 <span className="section-count">{total}</span>
               </button>
-              {group.key === 'imported' && total > 0 && (
-                confirmClear ? (
+              {total > 0 && (
+                confirmClear === group.key ? (
                   <span className="confirm-inline">
-                    Clear {total} finished row{total === 1 ? '' : 's'}?
-                    <button disabled={busy} onClick={() => clearFinished.mutate()}>
+                    Clear {total} {actionLabel} row{total === 1 ? '' : 's'}?
+                    <button disabled={busy} onClick={() => action.mutate()}>
                       Yes, clear
                     </button>
-                    <button className="link-button" onClick={() => setConfirmClear(false)}>
+                    <button className="link-button" onClick={() => setConfirmClear(null)}>
                       Cancel
                     </button>
                   </span>
                 ) : (
                   <button
                     className="link-button"
-                    data-testid="clear-finished"
-                    onClick={() => setConfirmClear(true)}
+                    data-testid={`clear-${actionLabel}`}
+                    onClick={() => setConfirmClear(group.key)}
                   >
-                    Clear finished
+                    Clear {actionLabel}
                   </button>
                 )
               )}

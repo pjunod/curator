@@ -213,6 +213,36 @@ func TestClearFinishedRemovesOnlyImportedRows(t *testing.T) {
 	}
 }
 
+// "Clear failed" dismisses failures and leaves every other state alone.
+func TestClearFailedRemovesOnlyFailedRows(t *testing.T) {
+	svc, db, itemID := setupUsenet(t, &fakeClient{})
+	ctx := context.Background()
+	clients, _ := db.ListDownloadClients(ctx)
+	cid := clients[0].ID
+
+	insertRow(t, db, itemID, cid, "Broken.One", "failed", 0)
+	insertRow(t, db, itemID, cid, "Broken.Two", "failed", 0)
+	keepFinished := insertRow(t, db, itemID, cid, "Done", "imported", 0)
+	keepActive := insertRow(t, db, itemID, cid, "Moving", "downloading", 0)
+
+	n, err := svc.ClearFailed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("cleared %d rows, want 2", n)
+	}
+	for _, id := range []int64{keepFinished, keepActive} {
+		if _, err := db.GetDownload(ctx, id); err != nil {
+			t.Errorf("clearing failed took row %d with it: %v", id, err)
+		}
+	}
+	counts, _ := db.QueueCounts(ctx)
+	if counts["failed"] != 0 {
+		t.Errorf("failed rows survived: %v", counts)
+	}
+}
+
 // The timeline pages too, and a per-item view is a filter on the same data.
 func TestHistoryPaging(t *testing.T) {
 	svc, db, itemID := setupUsenet(t, &fakeClient{})

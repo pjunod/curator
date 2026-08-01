@@ -621,6 +621,37 @@ func TestAcqBlocklistQueueItemBansTheRelease(t *testing.T) {
 	}
 }
 
+// Clearing the Failed grouping goes through its own bulk endpoint. The
+// response says how many Activity rows disappeared, and the blocklist stays:
+// dismissing a failure must not make the same bad release eligible again.
+func TestAcqClearFailedQueueLeavesTheBlocklistAlone(t *testing.T) {
+	e := newAPIEnv(t)
+	acqAddClient(t, e, "qbittorrent")
+	item := e.addMovie(t)
+	id := acqGrab(t, e, item)
+
+	e.post(t, "/api/v1/queue/"+acqItoa(id)+"/blocklist", "").expect(t, http.StatusNoContent)
+
+	rr := e.del(t, "/api/v1/queue/failed").expect(t, http.StatusOK)
+	var cleared apigen.ClearedCount
+	rr.into(t, &cleared)
+	if cleared.Cleared != 1 {
+		t.Errorf("cleared = %d, want the one failed row", cleared.Cleared)
+	}
+
+	var queue []apigen.QueueItem
+	e.get(t, "/api/v1/queue?filter=failed").expect(t, http.StatusOK).into(t, &queue)
+	if len(queue) != 0 {
+		t.Errorf("failed rows survived clear: %+v", queue)
+	}
+
+	var entries []apigen.BlocklistEntry
+	e.get(t, "/api/v1/blocklist").expect(t, http.StatusOK).into(t, &entries)
+	if len(entries) != 1 {
+		t.Errorf("clearing failed changed the blocklist: %+v", entries)
+	}
+}
+
 // Blocklisting a row that is gone is a 404 rather than a no-op success: the
 // button reports what it did, and "banned" for a row that does not exist is
 // a lie the operator will act on.

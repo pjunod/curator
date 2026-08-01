@@ -173,6 +173,11 @@ the release bad — blocklists it and searches a replacement), and **Remove**.
 Nothing is auto-blocklisted on an import failure, so a config problem never
 churns through replacements behind your back.
 
+When the failures are no longer useful, **Clear failed** on the Failed
+grouping dismisses all failed Activity rows after confirmation. This cleans
+up the queue view only: it does not delete a payload or library file, change
+a blocklist, or remove anything from a download client.
+
 ### Activity retention
 
 How long finished and failed downloads — and the history events behind them
