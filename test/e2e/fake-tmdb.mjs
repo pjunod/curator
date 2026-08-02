@@ -123,6 +123,23 @@ const discoverDetail = {
   },
 }
 
+// Five movies sharing one release date, so a month cell overflows its chip
+// budget and the "+N more" day panel has something to open. Nothing else
+// reaches them: they are added by the calendar spec, by id.
+const crowdedDay = '2020-01-15'
+const crowdedMovies = Object.fromEntries(
+  ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo'].map((name, i) => [
+    `/movie/${6200 + i}`,
+    {
+      ...movie601,
+      id: 6200 + i,
+      title: `Crowded ${name}`,
+      release_date: crowdedDay,
+      imdb_id: `tt620000${i}`,
+    },
+  ]),
+)
+
 // Trakt, on the same port — its paths collide with nothing else here. The
 // entities carry TMDB ids and no artwork, exactly as the real API does, so
 // the suite exercises the Discover service's hydration path.
@@ -145,6 +162,7 @@ const traktRoutes = {
 const routes = {
   ...discoverRoutes,
   ...discoverDetail,
+  ...crowdedMovies,
   ...traktRoutes,
   '/search/movie': { results: [{ id: 601, title: movie601.title, release_date: movie601.release_date, overview: movie601.overview, poster_path: '' }] },
   '/search/tv': { results: [{ id: 700, name: tv700.name, first_air_date: tv700.first_air_date, overview: tv700.overview, poster_path: '' }] },
@@ -195,6 +213,28 @@ const tvmazeShows = [
     image: { medium: '', original: '' },
     rating: { average: 8.1 },
     externals: { tvrage: null, thetvdb: 510000, imdb: 'tt5100001' },
+    // Deliberately schedule-less: half the calendar's rows are date-only in
+    // any real library (streaming drops), and both render paths need one.
+  },
+  {
+    // The TMDB series ("The Test Show", tv700) as TVmaze knows it. It exists
+    // ONLY so the airing enrichment (ADR 0016) has a schedule to find —
+    // `searchable: false` keeps it out of /search/shows, because the chain
+    // specs assert what a search returns and this show is not theirs.
+    id: 5700,
+    searchable: false,
+    name: 'The Test Show',
+    premiered: '2020-01-01',
+    status: 'Ended',
+    genres: ['Comedy'],
+    averageRuntime: 30,
+    summary: '<p>The series the suite imports.</p>',
+    image: { medium: '', original: '' },
+    rating: { average: 8.2 },
+    externals: { tvrage: null, thetvdb: 700700, imdb: 'tt7000001' },
+    schedule: { time: '21:00', days: ['Wednesday'] },
+    network: { name: 'E2E One', country: { name: 'United States', code: 'US', timezone: 'America/New_York' } },
+    webChannel: null,
   },
 ]
 
@@ -212,14 +252,20 @@ createServer((req, res) => {
   if (pathname === '/search/shows') {
     const q = (searchParams.get('q') ?? '').toLowerCase()
     const hits = tvmazeShows
-      .filter((s) => s.name.toLowerCase().includes(q) && q.length > 2)
+      .filter((s) => s.searchable !== false && s.name.toLowerCase().includes(q) && q.length > 2)
       .map((show) => ({ score: 1, show }))
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify(hits))
     return
   }
   if (pathname === '/lookup/shows') {
-    const show = tvmazeShows.find((s) => String(s.externals.thetvdb) === searchParams.get('thetvdb'))
+    // Keyed on TheTVDB id first, IMDb second — both are real TVmaze lookup
+    // keys and the airing provider falls back to the second one.
+    const tvdb = searchParams.get('thetvdb')
+    const imdb = searchParams.get('imdb')
+    const show = tvmazeShows.find((s) =>
+      tvdb ? String(s.externals.thetvdb) === tvdb : imdb ? s.externals.imdb === imdb : false,
+    )
     if (!show) {
       res.writeHead(404, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ status: 404 }))

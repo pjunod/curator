@@ -120,6 +120,11 @@ test('calendar page renders a month grid', async ({ page }) => {
   // The grid always renders: 7 day-of-week headers even with no entries.
   await expect(page.locator('.cal-dow')).toHaveCount(7)
   await expect(page.locator('.cal-cell').first()).toBeVisible()
+  // Month is the desktop default; the other view is one click away. The
+  // rebuilt page's own surfaces are covered by zz-calendar.spec.ts — this
+  // line only pins that the toggle exists beside the grid that was here
+  // first.
+  await expect(page.getByRole('group', { name: 'Calendar view' })).toBeVisible()
 })
 
 test('wanted page renders with loop status', async ({ page }) => {
