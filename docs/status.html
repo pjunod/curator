@@ -93,14 +93,14 @@
   <header>
     <h1>Monarr — Project Status</h1>
     <div class="sub">Unified Sonarr + Radarr + books rewrite in Go · explicit ledger of planned vs. done ·
-      mirrors <code>STATUS.md</code> snapshot 2026-08-01 · <b>v0.19.1</b> · page generated 2026-08-02</div>
+      mirrors <code>STATUS.md</code> snapshot 2026-08-02 · <b>v0.20.0</b> · page generated 2026-08-02</div>
   </header>
 
   <div class="tiles">
-    <div class="tile"><div class="v">v0.19.1</div><div class="l">Access tab · pairing QR · download priorities</div></div>
+    <div class="tile"><div class="v">v0.20.0</div><div class="l">calendar rebuilt · agenda view · TVmaze air times</div></div>
     <div class="tile"><div class="v">11/12 ✓</div><div class="l">phase groups complete — launch logistics remains</div></div>
-    <div class="tile"><div class="v">92/92</div><div class="l">e2e green · 47 web + 33 native unit · lint 0</div></div>
-    <div class="tile"><div class="v">86.5%</div><div class="l">coverage, floor enforced at 85%</div></div>
+    <div class="tile"><div class="v">98/98</div><div class="l">e2e green · 72 web + 45 native unit · lint 0</div></div>
+    <div class="tile"><div class="v">85.5%</div><div class="l">coverage, floor enforced at 85%</div></div>
   </div>
 
   <!-- ══════════ Phases at a glance ══════════ -->
@@ -114,7 +114,7 @@
         <li class="done-item"><span class="phase-n">1 — Library</span><span class="m done">13/13 ✓</span><span class="t">TMDB port/adapter, add flows, browse UI, scan + reconcile</span></li>
         <li class="done-item"><span class="phase-n">2 — Acquisition core</span><span class="m done">16/16 ✓</span><span class="t">parser + golden corpus + fuzz, matcher, decisions, torznab, qbit/SAB, importer/renamer</span></li>
         <li class="done-item"><span class="phase-n">2.5 — Books (ADR 0006)</span><span class="m done">7/7 ✓</span><span class="t">Open Library, book parser corpus, format ladder, Calibre-friendly naming</span></li>
-        <li class="done-item"><span class="phase-n">3 — Automation</span><span class="m done">9/9 ✓</span><span class="t">wanted index, RSS 15m, backlog 12h, blocklist + re-search, calendar, notifiers, backups</span></li>
+        <li class="done-item"><span class="phase-n">3 — Automation</span><span class="m done">9/9 ✓</span><span class="t">wanted index, RSS 15m, backlog 12h, blocklist + re-search, calendar (month + agenda, TVmaze air times), notifiers, backups</span></li>
         <li class="done-item"><span class="phase-n">4 — Ecosystem compat</span><span class="m done">5/6 ✓</span><span class="t">/sonarr + /radarr v3 vs real Jellyseerr/Prowlarr/Bazarr; the *arr DB importer stretch deferred post-1.0 (adoption is the path, ADR 0005)</span></li>
         <li class="done-item"><span class="phase-n">5 — Depth &amp; parity</span><span class="m done">7/7 ✓</span><span class="t">custom formats, transmission/deluge/nzbget, import lists, anime absolute, auth + Access tab, mass editor, /metrics</span></li>
         <li class="done-item"><span class="phase-n">6 — Quality truth</span><span class="m done">9/9 ✓</span><span class="t">native MKV/MP4 prober, measured quality, target profiles, unknown ≠ missing (ADR 0013/0014)</span></li>
@@ -175,7 +175,7 @@
     <ul class="items">
       <li class="done-item"><span class="m done">✓ done</span><span class="t">Repo at <code>pjunod/monarr</code>, module path renamed to match (242 files) — done while nothing external depends on the old path</span></li>
       <li class="done-item"><span class="m done">✓ done</span><span class="t">Images on ghcr.io (ADR 0001 amendment)</span></li>
-      <li class="done-item"><span class="m done">✓ done</span><span class="t">Coverage 86.5% with an enforced 85% floor (<code>COVERAGE_MIN</code> fails the build, locally and in CI)</span></li>
+      <li class="done-item"><span class="m done">✓ done</span><span class="t">Coverage 85.5% with an enforced 85% floor (<code>COVERAGE_MIN</code> fails the build, locally and in CI)</span></li>
       <li class="done-item"><span class="m done">✓ done</span><span class="t">Coverage badge renders on the private repo (tracked on main, linked relatively — the proxy fetches anonymously, so absolute URLs 404)</span></li>
       <li class="done-item"><span class="m done">✓ done</span><span class="t">GitHub org + initial private push (since superseded by the pjunod move)</span></li>
       <li><span class="m you">👤 Paul</span><span class="t">File the dormant-username request for <code>monarr</code> · register a domain</span></li>
@@ -186,24 +186,26 @@
     </ul>
   </section>
 
-  <!-- ══════════ New future plans ══════════ -->
+  <!-- ══════════ Shipped: the calendar ══════════ -->
   <section>
-    <h2>New — the calendar, rebuilt <span class="chip new">★ planned 2026-08-02</span> <span class="ev"><code>docs/plan-calendar.md</code> @ <code>0ee70cc</code> · ready to build</span></h2>
-    <p class="blurb">The oldest page in the app gets rebuilt twice over: a readable month and a rich chronological agenda, with real air times underneath. Six milestones, each with a runnable acceptance check; plurx is named as the protected calendar consumer — every API change is additive.</p>
+    <h2>The calendar, rebuilt <span class="chip done">✓ built</span> <span class="ev"><code>docs/plan-calendar.md</code> · v0.20.0 · 2026-08-02</span></h2>
+    <div class="meter"><div class="track"><div class="fill" style="width:100%"></div></div><div class="n">6 / 6 milestones</div></div>
+    <p class="blurb">The oldest page in the app, rebuilt twice over: a month you can read at a glance and a rich chronological agenda, with real air times underneath both. Every API change is additive — plurx reads <code>/calendar</code> in production and <code>detail</code> is frozen.</p>
     <ul class="items">
-      <li><span class="m todo">○ M1</span><span class="t">ADR 0016 + migration 0028: <code>airs_time</code>/<code>airs_timezone</code>/<code>network</code> from <b>TVmaze</b> (keyless, already in the series chain) — enrichment rides <code>metadata.refresh</code>, best-effort, no new job</span></li>
-      <li><span class="m todo">○ M2</span><span class="t">Calendar API grows optional fields — <code>airDateUtc</code> (composed per date in the show's timezone: DST-correct), <code>posterPath</code>, <code>network</code>, structured episode fields, <code>runtime</code>, <code>monitored</code>; <code>detail</code> frozen for plurx</span></li>
-      <li><span class="m todo">○ M3</span><span class="t">Month grid redesigned: state-as-color chips (on disk · missing · unaired · unmonitored), times on chips, "+N more" day panel, a legend; Month|Agenda toggle with <code>?view=</code>/<code>?date=</code> params</span></li>
-      <li><span class="m todo">○ M3</span><span class="t">New Agenda view: rolling from Today, sticky day headers, poster rows — title, <code>S02E04 — name</code>, <code>HBO · 9:00 PM</code>, status pill — infinite scroll both directions</span></li>
-      <li><span class="m todo">○ M4</span><span class="t">Native app CalendarScreen rebuilt as the same rich agenda (SectionList, posters, times, pull-to-refresh)</span></li>
-      <li><span class="m todo">○ M5–6</span><span class="t">e2e (fake TVmaze gains schedules; <code>zz-calendar.spec.ts</code>), docs, VERSION minor, STATUS.md ledger</span></li>
+      <li class="done-item"><span class="m done">✓ M1</span><span class="t">ADR 0016 + migration 0028: <code>airs_time</code>/<code>airs_timezone</code>/<code>network</code> from <b>TVmaze</b> (keyless, already in the series chain) — enrichment rides <code>metadata.refresh</code>, best-effort, no new job, no new table</span></li>
+      <li class="done-item"><span class="m done">✓ M2</span><span class="t">Calendar API grew optional fields — <code>airDateUtc</code> (composed per date in the show's own timezone: DST-correct for free), <code>posterPath</code>, <code>network</code>, structured episode fields, <code>runtime</code>, <code>monitored</code>; <code>detail</code> byte-identical</span></li>
+      <li class="done-item"><span class="m done">✓ M3</span><span class="t">Month grid redesigned: colour carries state and nothing else does (on disk · aired-and-missing · upcoming · unmonitored dims), times on the chips, a "+N more" day panel, a legend; Month|Agenda toggle with <code>?view=</code>/<code>?date=</code></span></li>
+      <li class="done-item"><span class="m done">✓ M3</span><span class="t">New Agenda view: rolling from today, sticky day headers, poster rows — title, <code>S02E04 — name</code>, <code>E2E One · 9:00 PM</code>, status pill — loading forward as you scroll, backwards on a button</span></li>
+      <li class="done-item"><span class="m done">✓ M4</span><span class="t">Native CalendarScreen rebuilt as the same rich agenda (SectionList, sticky headers, posters, times, pull-to-refresh) — <b>device smoke test is yours</b>, there is no RN e2e</span></li>
+      <li class="done-item"><span class="m done">✓ M5–6</span><span class="t">e2e: fake TVmaze gained schedules and <code>zz-calendar.spec.ts</code> proves the DST instant on the wire; docs, VERSION 0.20.0, STATUS.md ledger</span></li>
     </ul>
+    <p class="blurb">Honest by design: streaming originals, movies and books stay <b>date-only</b>. A guessed midnight would sort ahead of every real evening slot and mean nothing.</p>
   </section>
 
   <!-- ══════════ Decisions ══════════ -->
   <section>
     <h2>Decisions to date <span class="ev">docs/adr/ — the authority on behaviour</span></h2>
-    <details><summary>ADRs 0001–0015 (+0016 planned)</summary>
+    <details><summary>ADRs 0001–0016</summary>
       <ul class="items">
         <li class="done-item"><span class="m done">0001</span><span class="t">Name Monarr, GPL-3.0, port 7676; amended: ghcr.io images, <code>pjunod/monarr</code></span></li>
         <li class="done-item"><span class="m done">0002</span><span class="t">One <code>media_items</code> table + kind; files↔episodes n:m; Wantable abstraction</span></li>
@@ -217,13 +219,13 @@
         <li class="done-item"><span class="m done">0012</span><span class="t">Manual entries: a record no provider backs, episodes read off the disk</span></li>
         <li class="done-item"><span class="m done">0013–14</span><span class="t">Quality is measured, not inferred; profiles are floor + target + upgrades ("Any" retired)</span></li>
         <li class="done-item"><span class="m done">0015</span><span class="t">Discovery is a read-only browse surface: TMDB always, Trakt when keyed, nothing stored</span></li>
-        <li><span class="m todo">0016</span><span class="t">Planned (calendar plan M1): air times from TVmaze's show-level schedule, composed at read time</span></li>
+        <li class="done-item"><span class="m done">0016</span><span class="t">Air times from TVmaze's show-level schedule, composed to UTC per date at read time — absent beats guessed</span></li>
       </ul>
     </details>
   </section>
 
   <footer>
-    Authoritative copy: <code>STATUS.md</code> in <code>pjunod/monarr</code> (updated every working session; this page mirrors the 2026-08-01 snapshot + the 2026-08-02 calendar plan) ·
+    Authoritative copy: <code>STATUS.md</code> in <code>pjunod/monarr</code> (updated every working session; this page mirrors the 2026-08-02 snapshot, v0.20.0) ·
     plans: <code>docs/plan-calendar.md</code> · <code>docs/plan-integration.md</code> · <code>docs/plan-discover.md</code> · decisions: <code>docs/adr/</code>
   </footer>
 </div>
