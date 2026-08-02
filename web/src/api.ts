@@ -900,6 +900,21 @@ export interface CalendarEntry {
   title: string
   detail: string
   hasFile: boolean
+  // Everything below is optional on the wire (ADR 0016). The server may be
+  // older than this build — plurx and the native app ship separately — so
+  // every consumer here treats absent as "unknown" and renders without it.
+  tmdbId?: number
+  imdbId?: string
+  posterPath?: string
+  /** Exact UTC instant, episodes with a known broadcast slot only. Absent
+   *  means the schedule is unknown, NOT midnight. */
+  airDateUtc?: string
+  network?: string
+  seasonNumber?: number
+  episodeNumber?: number
+  episodeTitle?: string
+  runtime?: number
+  monitored?: boolean
 }
 
 export interface WantedItem {

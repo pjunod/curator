@@ -16,6 +16,10 @@
   --ok: #3fb27f;
   --warning: #e5a53d;
   --error: #e05d5d;
+  /* State washes for the calendar chips: the same idea as --accent-soft,
+     one per state, so color says state and nothing else does. */
+  --ok-soft: rgba(63, 178, 127, 0.18);
+  --error-soft: rgba(224, 93, 93, 0.18);
 }
 
 /* System light preference — unless the user forced dark. Keep this block
@@ -35,6 +39,8 @@
     --ok: #1f8e5c;
     --warning: #99660f;
     --error: #c23b3b;
+    --ok-soft: rgba(31, 142, 92, 0.16);
+    --error-soft: rgba(194, 59, 59, 0.16);
   }
 }
 
@@ -53,6 +59,8 @@
   --ok: #1f8e5c;
   --warning: #99660f;
   --error: #c23b3b;
+  --ok-soft: rgba(31, 142, 92, 0.16);
+  --error-soft: rgba(194, 59, 59, 0.16);
 }
 
 * {
@@ -803,11 +811,26 @@ h3.muted {
 .cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
+  /* Rows sized together, not by content: one crowded Thursday would
+     otherwise stretch its whole week and make the month read as lopsided.
+     Overflow past four chips becomes a "+N more" button instead. */
+  grid-auto-rows: minmax(112px, auto);
   gap: 1px;
   background: var(--border);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
+}
+
+.cal-month-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.cal-nav {
+  padding: 2px 10px;
 }
 
 .cal-dow {
@@ -836,6 +859,12 @@ h3.muted {
 .cal-out .cal-daynum {
   color: var(--text-muted);
   opacity: 0.5;
+}
+
+/* A faint wash on today's cell as well as the ring on its number: the ring
+   finds the day, the wash finds the week it is in. */
+.cal-cell.cal-today {
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-raised));
 }
 
 .cal-today .cal-daynum {
@@ -870,13 +899,32 @@ h3.muted {
 }
 
 .cal-entry:hover {
-  background: var(--accent-soft);
+  filter: brightness(1.2);
   text-decoration: none;
 }
 
+/* State is the only thing carried by color, and there are exactly three of
+   them. Filled = settled (we have it, or it aired without us); outlined =
+   still ahead. Kind gets a glyph instead, so the two never compete. */
 .cal-have {
-  background: var(--accent-soft);
+  background: var(--ok-soft);
   border-color: transparent;
+}
+
+.cal-missing {
+  background: var(--error-soft);
+  border-color: transparent;
+}
+
+.cal-upcoming {
+  background: transparent;
+  border-color: var(--accent);
+}
+
+/* Not monitored is a second axis, so it dims rather than recoloring — and
+   no strike-through: the title still has to be readable. */
+.cal-unmonitored {
+  opacity: 0.5;
 }
 
 .cal-entry-title {
@@ -886,6 +934,61 @@ h3.muted {
 .cal-entry-detail {
   color: var(--text-muted);
   margin-left: 4px;
+}
+
+.cal-entry-time {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+
+.cal-kind {
+  color: var(--text-muted);
+  margin-right: 3px;
+}
+
+.cal-more {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  text-align: left;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.cal-more:hover {
+  color: var(--accent);
+}
+
+.cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+.cal-legend .cal-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  display: inline-block;
+  margin-left: 10px;
+}
+
+.cal-legend .cal-swatch:first-child {
+  margin-left: 0;
+}
+
+.cal-legend-sep {
+  margin: 0 4px;
+}
+
+.cal-day-modal .modal-body {
+  padding: 0 16px 16px;
 }
 
 /* ---- pill-info (in-flight downloads) ---- */
@@ -1765,38 +1868,148 @@ a.pill-info:hover {
   }
 }
 
-/* ---- mobile calendar agenda ---- */
+/* ---- calendar agenda (the rolling list; the phone layout is this too) ---- */
 .cal-agenda {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
+}
+
+.cal-agenda-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.cal-agenda-end {
+  text-align: center;
+  font-size: 12px;
+  padding: 12px 0 4px;
 }
 
 .cal-agenda .cal-day {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.cal-agenda .cal-day.cal-today {
-  border-color: var(--accent);
-}
-
+/* Sticky against the content scroller: the day you are reading stays named
+   while its rows go past. */
 .cal-day-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
-  margin-bottom: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.cal-agenda .cal-entry {
+.cal-agenda .cal-day.cal-today .cal-day-head {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.cal-day-empty {
+  font-size: 13px;
+  margin: 0;
+}
+
+.cal-rows {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 8px;
-  padding: 8px 6px;
+}
+
+/* The row: poster, what it is, and a right rail of when/where/state. Shared
+   by the agenda and the month's day panel, and the model the native app's
+   row follows. */
+.cal-row {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.cal-row:hover {
+  background: var(--bg-hover);
+  text-decoration: none;
+}
+
+.cal-row-poster {
+  width: 56px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--bg-hover);
+}
+
+.cal-row-main {
+  min-width: 0;
+}
+
+.cal-row-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-row-sub,
+.cal-row-note {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-row-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  text-align: right;
+}
+
+.cal-row-when {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.cal-row-network {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Skeletons are REPLACED by real rows, never filled in place — a spec that
+   counts .cal-row must exclude this class. */
+.cal-skeleton {
+  height: 100px;
+  background: var(--bg-hover);
+  border-color: transparent;
+}
+
+@media (max-width: 767px) {
+  .cal-row {
+    grid-template-columns: 44px 1fr auto;
+  }
+
+  .cal-row-poster {
+    width: 44px;
+    height: 66px;
+  }
 }
 
 /* ---- activity: handoff trace, row actions, manual import ---- */

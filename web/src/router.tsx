@@ -21,6 +21,7 @@ import { SettingsPage } from './pages/Settings'
 import { AccessPage } from './pages/Access'
 import { ActivityPage } from './pages/Activity'
 import { CalendarPage } from './pages/Calendar'
+import type { CalendarSearch } from './pages/Calendar'
 import { LoginPage } from './pages/Login'
 import { WantedPage } from './pages/Wanted'
 import type { MediaKind } from './api'
@@ -280,6 +281,17 @@ const calendarRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/calendar',
   component: CalendarPage,
+  // Both params optional: ?view deep-links a view (and beats the stored
+  // choice), ?date anchors the month shown / the day the agenda opens at.
+  // Anything else is dropped rather than trusted — these end up in a Date
+  // constructor and a render branch.
+  validateSearch: (search: Record<string, unknown>): CalendarSearch => ({
+    view: search.view === 'month' || search.view === 'agenda' ? search.view : undefined,
+    date:
+      typeof search.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(search.date)
+        ? search.date
+        : undefined,
+  }),
 })
 
 const activityRoute = createRoute({
