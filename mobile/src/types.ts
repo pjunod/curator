@@ -239,4 +239,17 @@ export interface CalendarEntry {
   title: string
   detail: string
   hasFile: boolean
+  // Optional on the wire (ADR 0016) — and optional here for a second reason:
+  // the app ships separately from the server, so a phone on a new build
+  // routinely talks to an old one. Every field below must render absent.
+  posterPath?: string
+  /** Exact UTC instant; episodes with a known broadcast slot only. Absent
+   *  means the schedule is unknown, NOT midnight. */
+  airDateUtc?: string
+  network?: string
+  seasonNumber?: number
+  episodeNumber?: number
+  episodeTitle?: string
+  runtime?: number
+  monitored?: boolean
 }
