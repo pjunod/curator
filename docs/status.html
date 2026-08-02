@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monarr — Project Status</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:        #f9f9f7;
+    --surface:     #fcfcfb;
+    --ink:         #0b0b0b;
+    --ink-2:       #52514e;
+    --muted:       #898781;
+    --grid:        #e1e0d9;
+    --border:      rgba(11,11,11,0.10);
+    --meter:       #2a78d6;
+    --good:        #0ca30c;
+    --good-text:   #006300;
+    --warn:        #fab219;
+    --warn-text:   #8a5f00;
+    --neutral:     #c3c2b7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page:        #0d0d0d;
+      --surface:     #1a1a19;
+      --ink:         #ffffff;
+      --ink-2:       #c3c2b7;
+      --muted:       #898781;
+      --grid:        #2c2c2a;
+      --border:      rgba(255,255,255,0.10);
+      --meter:       #3987e5;
+      --good:        #0ca30c;
+      --good-text:   #0ca30c;
+      --warn:        #fab219;
+      --warn-text:   #fab219;
+      --neutral:     #383835;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 28px 20px 60px; }
+  header h1 { font-size: 22px; margin: 0 0 2px; }
+  header .sub { color: var(--ink-2); font-size: 13px; }
+  header .sub code { color: var(--muted); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 22px 0; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .tile .v { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; }
+  .tile .l { color: var(--ink-2); font-size: 12px; margin-top: 2px; }
+
+  section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 18px; margin: 14px 0; }
+  section h2 { font-size: 15px; margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  section h2 .ev { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: auto; }
+  section p.blurb { color: var(--ink-2); font-size: 13px; margin: 10px 0 0; }
+
+  .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600;
+          border-radius: 999px; padding: 2px 9px; border: 1px solid var(--border); color: var(--ink-2); }
+  .chip.done { color: var(--good-text); border-color: color-mix(in srgb, var(--good) 45%, transparent); }
+  .chip.prog { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+  .chip.next { color: var(--ink); }
+  .chip.new  { color: var(--meter); border-color: color-mix(in srgb, var(--meter) 45%, transparent); }
+
+  .meter { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; }
+  .meter .track { flex: 1; height: 8px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+  .meter .fill  { height: 100%; background: var(--meter); border-radius: 4px 0 0 4px; }
+  .meter .fill.full { border-radius: 4px; }
+  .meter .n { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  ul.items { list-style: none; margin: 10px 0 0; padding: 0; }
+  ul.items li { display: flex; gap: 9px; padding: 4px 0; align-items: baseline; }
+  ul.items li + li { border-top: 1px solid color-mix(in srgb, var(--grid) 55%, transparent); }
+  .m { flex: none; width: 74px; font-size: 11px; font-weight: 650; display: inline-flex; align-items: center; gap: 4px; }
+  .m.done    { color: var(--good-text); }
+  .m.partial { color: color-mix(in srgb, var(--warn) 70%, var(--ink)); }
+  .m.todo    { color: var(--muted); }
+  .m.you     { color: var(--ink-2); }
+  li .t { color: var(--ink-2); }
+  li.done-item .t { color: var(--ink); }
+  .phase-n { flex: none; width: 168px; font-weight: 600; color: var(--ink); }
+  details summary { cursor: pointer; color: var(--ink-2); font-size: 12.5px; margin-top: 8px; user-select: none; }
+  footer { color: var(--muted); font-size: 12px; margin-top: 26px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Monarr — Project Status</h1>
+    <div class="sub">Unified Sonarr + Radarr + books rewrite in Go · explicit ledger of planned vs. done ·
+      mirrors <code>STATUS.md</code> snapshot 2026-08-01 · <b>v0.19.1</b> · page generated 2026-08-02</div>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><div class="v">v0.19.1</div><div class="l">Access tab · pairing QR · download priorities</div></div>
+    <div class="tile"><div class="v">11/12 ✓</div><div class="l">phase groups complete — launch logistics remains</div></div>
+    <div class="tile"><div class="v">92/92</div><div class="l">e2e green · 47 web + 33 native unit · lint 0</div></div>
+    <div class="tile"><div class="v">86.5%</div><div class="l">coverage, floor enforced at 85%</div></div>
+  </div>
+
+  <!-- ══════════ Phases at a glance ══════════ -->
+  <section>
+    <h2>Phases 0–9 + native apps — the planned product, built <span class="chip done">✓ complete</span> <span class="ev">definition-of-done met per phase</span></h2>
+    <div class="meter"><div class="track"><div class="fill" style="width:99%"></div></div><div class="n">104 / 105 items (the 1 open is a deferred stretch)</div></div>
+    <details><summary>Per-phase ledger</summary>
+      <ul class="items">
+        <li class="done-item"><span class="phase-n">0 — Walking skeleton</span><span class="m done">17/17 ✓</span><span class="t"><code>docker run</code> → UI, status, SSE, scheduler, health, migrations, ADRs 0001–0006</span></li>
+        <li class="done-item"><span class="phase-n">0.5 — Tests, hooks, CI</span><span class="m done">7/7 ✓</span><span class="t">full pyramid green locally and in CI; STATUS.md as the ledger</span></li>
+        <li class="done-item"><span class="phase-n">1 — Library</span><span class="m done">13/13 ✓</span><span class="t">TMDB port/adapter, add flows, browse UI, scan + reconcile</span></li>
+        <li class="done-item"><span class="phase-n">2 — Acquisition core</span><span class="m done">16/16 ✓</span><span class="t">parser + golden corpus + fuzz, matcher, decisions, torznab, qbit/SAB, importer/renamer</span></li>
+        <li class="done-item"><span class="phase-n">2.5 — Books (ADR 0006)</span><span class="m done">7/7 ✓</span><span class="t">Open Library, book parser corpus, format ladder, Calibre-friendly naming</span></li>
+        <li class="done-item"><span class="phase-n">3 — Automation</span><span class="m done">9/9 ✓</span><span class="t">wanted index, RSS 15m, backlog 12h, blocklist + re-search, calendar, notifiers, backups</span></li>
+        <li class="done-item"><span class="phase-n">4 — Ecosystem compat</span><span class="m done">5/6 ✓</span><span class="t">/sonarr + /radarr v3 vs real Jellyseerr/Prowlarr/Bazarr; the *arr DB importer stretch deferred post-1.0 (adoption is the path, ADR 0005)</span></li>
+        <li class="done-item"><span class="phase-n">5 — Depth &amp; parity</span><span class="m done">7/7 ✓</span><span class="t">custom formats, transmission/deluge/nzbget, import lists, anime absolute, auth + Access tab, mass editor, /metrics</span></li>
+        <li class="done-item"><span class="phase-n">6 — Quality truth</span><span class="m done">9/9 ✓</span><span class="t">native MKV/MP4 prober, measured quality, target profiles, unknown ≠ missing (ADR 0013/0014)</span></li>
+        <li class="done-item"><span class="phase-n">9 — Discover</span><span class="m done">7/7 ✓</span><span class="t">TMDB 9 rows + Trakt 5 optional, stale-tolerant cache, add-from-poster, poster size S/M/L (ADR 0015)</span></li>
+        <li class="done-item"><span class="phase-n">Native mobile apps</span><span class="m done">7/7 ✓</span><span class="t">one Expo/RN codebase → iOS + Android: DNS-SD discovery, QR pairing, Keychain/Keystore, daily workflows, CI bundles (v0.19.1)</span></li>
+      </ul>
+    </details>
+  </section>
+
+  <!-- ══════════ Integration ══════════ -->
+  <section>
+    <h2>The nzbd ↔ monarr ↔ plurx pipeline <span class="chip done">✓ built</span> <span class="ev">docs/plan-integration.md §5 + §11.1</span></h2>
+    <div class="meter"><div class="track"><div class="fill" style="width:92%"></div></div><div class="n">11 / 12 items</div></div>
+    <p class="blurb">Events instead of timers at every seam; one transfer id from grab to playable; verified against a real nzbd end to end.</p>
+    <details><summary>Items</summary>
+      <ul class="items">
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Native <code>nzbd</code> client (its own type, migration 0020): add/status/remove/test, PP as named stages, hand-deleted jobs ≠ bad releases</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Transfer id <code>t-&lt;id&gt;-&lt;hex&gt;</code> sent at add time — opens the handoff trace</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Push subscription (SSE, resume + backoff) beside the poll, never instead of it; Live-updates toggle only for clients that can stream</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">One reconciler for poll + push, serialized per download; the trace names which channel delivered each step</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">plurx notifier: "index this path, it is tmdb 949" on a persistent delivery queue (migration 0024) — 5 s/30 s/2 m retries, terminal 4xx never retried, plurx's answer lands on the trace</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Health checks per connection + nzbd capacity (low disk, quota, paused queue)</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Connections panel: live | polling | degraded | unreachable — polling styled as healthy, because it is the fallback working</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Watched-push received: <code>POST /webhooks/plurx</code> matched by external id only (unknown item = 200 <code>matched:false</code>), per-user, migration 0026</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Backlog prioritization: watched-in-30-days searched first — a stable partition, not a score</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">No deletion path on either side — recorded decision (plan §11.1, settled 2026-07-27)</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Verified against a real nzbd: real stages, real completion, fixtures captured from that run</span></li>
+        <li><span class="m todo">○ todo</span><span class="t">Show watched-by on the item page — the data is stored and read, not yet rendered anywhere</span></li>
+      </ul>
+    </details>
+  </section>
+
+  <!-- ══════════ Field hardening ══════════ -->
+  <section>
+    <h2>Field hardening — what the real deployment taught <span class="chip done">✓ defects closed</span> <span class="ev">v0.8.1 → v0.15.0 · 2026-07-27 → 07-31</span></h2>
+    <p class="blurb">Phase 8 was real-world validation, and it paid: every defect below was found by the live install, fixed with a regression test, and is pinned in <code>STATUS.md</code> with its full story.</p>
+    <details><summary>Items</summary>
+      <ul class="items">
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Plausibility (Phase 8): a 500 MB "Remux 2160p" fake can no longer retire a want — bitrate floors, audio contradiction, runtime check; implausible files stop voting; RSS/backlog gated, the person only warned</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Truncation is proof, not judgement: a Matroska file smaller than its own declared Segment length is refused at import — the one refusal in the import path (placing it loops)</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Title normalization: apostrophes are elision ("The Carpenter's Son" matches "carpenters son"); accents fold; three ampersand spellings unify</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t"><code>place()</code> replaces through a temp name + atomic rename — re-grabbing a bad file can actually fix it now</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Cleanup after import (migration 0025): 923 GB of duplicate payloads never removed from clients — <code>remove_completed</code> ON for usenet, OFF for seeding torrents, hourly sweep drains the backlog</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Re-grab loop (v0.14.0, M1–M4): ENOSPC imports fail visibly and finish later; monarr removes payloads itself when the client won't; the same release is never grabbed twice; 3-failures-in-12h caps replacement; <code>GET /history?mediaItemId=</code> makes the pipeline readable</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Auto Search did nothing: a failed row suppressed its wantable <b>forever</b> (RSS, backlog, and the button); now only moving work suppresses, and the endpoint returns the seen → matched → accepted funnel so "why no grab" is one read</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Activity bounded (v0.15.0): 30-day retention sweep, paged + filtered queue, collapsed Finished/Failed with counts, confirmed Clear actions</span></li>
+        <li class="done-item"><span class="m done">✓ done</span><span class="t">Coverage work found 6 real defects (permanent auth lockout, phantom bulk updates, 500s for refusals, unvalidated import-list types, lying DELETEs, cache-poisoned coverage number) — each with a revert-verified regression test</span></li>
+        <li><span class="m todo">○ open</span><span class="t">The exactly-500-MiB movies are TRUNCATED upstream (measured: ~68 Mbps to 61.6 s, a real DV remux cut off at a round cap) — the cause lives in nzbd or the provider, tracked there</span></li>
+        <li><span class="m todo">○ parked</span><span class="t">Jobs backoff overflow at absurd attempt counts — latent, unreachable in practice; needs a ceiling decision, not a quick clamp</span></li>
+      </ul>
+    </details>
+  </section>
+
+  <!-- ══════════ Launch logistics ══════════ -->
+  <section>
+    <h2>Launch logistics — the road to public <span class="chip prog">🚧 in progress</span> <span class="ev">most items are yours to run</span></h2>
+    <div class="meter"><div class="track"><div class="fill" style="width:50%"></div></div><div class="n">5 / 10 items</div></div>
+    <ul class="items">
+      <li class="done-item"><span class="m done">✓ done</span><span class="t">Repo at <code>pjunod/monarr</code>, module path renamed to match (242 files) — done while nothing external depends on the old path</span></li>
+      <li class="done-item"><span class="m done">✓ done</span><span class="t">Images on ghcr.io (ADR 0001 amendment)</span></li>
+      <li class="done-item"><span class="m done">✓ done</span><span class="t">Coverage 86.5% with an enforced 85% floor (<code>COVERAGE_MIN</code> fails the build, locally and in CI)</span></li>
+      <li class="done-item"><span class="m done">✓ done</span><span class="t">Coverage badge renders on the private repo (tracked on main, linked relatively — the proxy fetches anonymously, so absolute URLs 404)</span></li>
+      <li class="done-item"><span class="m done">✓ done</span><span class="t">GitHub org + initial private push (since superseded by the pjunod move)</span></li>
+      <li><span class="m you">👤 Paul</span><span class="t">File the dormant-username request for <code>monarr</code> · register a domain</span></li>
+      <li><span class="m you">👤 Paul</span><span class="t">Flip the repo public + branch ruleset requiring the four CI checks — then delete the orphan <code>badges</code> branch</span></li>
+      <li><span class="m you">👤 Paul</span><span class="t">Signed TestFlight + Play internal builds: needs your Apple/Google/Expo accounts and real-device QA — code and build profiles are ready</span></li>
+      <li><span class="m todo">○ todo</span><span class="t">goreleaser: tagged releases with binaries + ghcr.io images</span></li>
+      <li><span class="m todo">○ todo</span><span class="t">Extract <code>run(ctx, cfg) error</code> from <code>cmd/monarr/main.go</code> — the last package at 0% coverage, and the only one needing a refactor rather than a test</span></li>
+    </ul>
+  </section>
+
+  <!-- ══════════ New future plans ══════════ -->
+  <section>
+    <h2>New — the calendar, rebuilt <span class="chip new">★ planned 2026-08-02</span> <span class="ev"><code>docs/plan-calendar.md</code> @ <code>0ee70cc</code> · ready to build</span></h2>
+    <p class="blurb">The oldest page in the app gets rebuilt twice over: a readable month and a rich chronological agenda, with real air times underneath. Six milestones, each with a runnable acceptance check; plurx is named as the protected calendar consumer — every API change is additive.</p>
+    <ul class="items">
+      <li><span class="m todo">○ M1</span><span class="t">ADR 0016 + migration 0028: <code>airs_time</code>/<code>airs_timezone</code>/<code>network</code> from <b>TVmaze</b> (keyless, already in the series chain) — enrichment rides <code>metadata.refresh</code>, best-effort, no new job</span></li>
+      <li><span class="m todo">○ M2</span><span class="t">Calendar API grows optional fields — <code>airDateUtc</code> (composed per date in the show's timezone: DST-correct), <code>posterPath</code>, <code>network</code>, structured episode fields, <code>runtime</code>, <code>monitored</code>; <code>detail</code> frozen for plurx</span></li>
+      <li><span class="m todo">○ M3</span><span class="t">Month grid redesigned: state-as-color chips (on disk · missing · unaired · unmonitored), times on chips, "+N more" day panel, a legend; Month|Agenda toggle with <code>?view=</code>/<code>?date=</code> params</span></li>
+      <li><span class="m todo">○ M3</span><span class="t">New Agenda view: rolling from Today, sticky day headers, poster rows — title, <code>S02E04 — name</code>, <code>HBO · 9:00 PM</code>, status pill — infinite scroll both directions</span></li>
+      <li><span class="m todo">○ M4</span><span class="t">Native app CalendarScreen rebuilt as the same rich agenda (SectionList, posters, times, pull-to-refresh)</span></li>
+      <li><span class="m todo">○ M5–6</span><span class="t">e2e (fake TVmaze gains schedules; <code>zz-calendar.spec.ts</code>), docs, VERSION minor, STATUS.md ledger</span></li>
+    </ul>
+  </section>
+
+  <!-- ══════════ Decisions ══════════ -->
+  <section>
+    <h2>Decisions to date <span class="ev">docs/adr/ — the authority on behaviour</span></h2>
+    <details><summary>ADRs 0001–0015 (+0016 planned)</summary>
+      <ul class="items">
+        <li class="done-item"><span class="m done">0001</span><span class="t">Name Monarr, GPL-3.0, port 7676; amended: ghcr.io images, <code>pjunod/monarr</code></span></li>
+        <li class="done-item"><span class="m done">0002</span><span class="t">One <code>media_items</code> table + kind; files↔episodes n:m; Wantable abstraction</span></li>
+        <li class="done-item"><span class="m done">0003</span><span class="t">v3 compat as /sonarr + /radarr URL-base personalities, translation-only</span></li>
+        <li class="done-item"><span class="m done">0004</span><span class="t">SQLite only (modernc, WAL, single writer)</span></li>
+        <li class="done-item"><span class="m done">0005</span><span class="t">Migration by filesystem adoption; *arr DB import is a stretch</span></li>
+        <li class="done-item"><span class="m done">0006</span><span class="t">Books as a third media kind (ebooks + audiobooks)</span></li>
+        <li class="done-item"><span class="m done">0007–8</span><span class="t">Multi-host execution: leased job queue on SQLite; Postgres only for clustered mode</span></li>
+        <li class="done-item"><span class="m done">0009–10</span><span class="t">Root folders carry a kind; scan proposes, adoption is bulk work with a confidence bar</span></li>
+        <li class="done-item"><span class="m done">0011</span><span class="t">Series metadata is a chain: TheTVDB when keyed, TVmaze free, TMDB always</span></li>
+        <li class="done-item"><span class="m done">0012</span><span class="t">Manual entries: a record no provider backs, episodes read off the disk</span></li>
+        <li class="done-item"><span class="m done">0013–14</span><span class="t">Quality is measured, not inferred; profiles are floor + target + upgrades ("Any" retired)</span></li>
+        <li class="done-item"><span class="m done">0015</span><span class="t">Discovery is a read-only browse surface: TMDB always, Trakt when keyed, nothing stored</span></li>
+        <li><span class="m todo">0016</span><span class="t">Planned (calendar plan M1): air times from TVmaze's show-level schedule, composed at read time</span></li>
+      </ul>
+    </details>
+  </section>
+
+  <footer>
+    Authoritative copy: <code>STATUS.md</code> in <code>pjunod/monarr</code> (updated every working session; this page mirrors the 2026-08-01 snapshot + the 2026-08-02 calendar plan) ·
+    plans: <code>docs/plan-calendar.md</code> · <code>docs/plan-integration.md</code> · <code>docs/plan-discover.md</code> · decisions: <code>docs/adr/</code>
+  </footer>
+</div>
+</body>
+</html>
