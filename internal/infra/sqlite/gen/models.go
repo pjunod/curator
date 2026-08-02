@@ -204,6 +204,9 @@ type MediaItem struct {
 	Ratings          string
 	Source           string
 	DownloadPriority sql.NullInt64
+	AirsTime         string
+	AirsTimezone     string
+	Network          string
 }
 
 type Notifier struct {

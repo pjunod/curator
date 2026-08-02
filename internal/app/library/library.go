@@ -76,6 +76,7 @@ type Service struct {
 	series  []ports.SeriesProvider
 	books   ports.BookProvider
 	ratings ports.RatingsProvider // optional (OMDb): RT/IMDb/Metacritic
+	airing  ports.AiringProvider  // optional (TVmaze): broadcast slot, ADR 0016
 	bus     *bus.Bus
 	log     *slog.Logger
 	// queue is optional: without it, work that would be enqueued runs
@@ -109,6 +110,48 @@ func (s *Service) WithSeriesProviders(p ...ports.SeriesProvider) *Service {
 func (s *Service) WithRatings(rp ports.RatingsProvider) *Service {
 	s.ratings = rp
 	return s
+}
+
+// WithAiring attaches the broadcast-slot provider (TVmaze) and returns s.
+// Omitting it leaves every item date-only, which is what the calendar showed
+// before ADR 0016.
+func (s *Service) WithAiring(ap ports.AiringProvider) *Service {
+	s.airing = ap
+	return s
+}
+
+// enrichAiring fills the item's broadcast slot — time, timezone, network —
+// from the airing provider (ADR 0016). Series only: a movie has a release
+// date and no weekly slot, and a book has neither.
+//
+// Best-effort by contract, exactly like enrichRatings: no provider, no ids,
+// or an upstream failure all mean "no schedule known", and the refresh
+// carries on. What it must NOT do is blank a slot it already knows because
+// this one call failed — a show whose schedule was fetched last week keeps
+// it until a successful fetch says otherwise.
+func (s *Service) enrichAiring(ctx context.Context, item *domain.MediaItem, stored domain.MediaItem) {
+	if item.Kind != domain.KindSeries {
+		return
+	}
+	// Carry the stored slot forward first: the fresh record came from a
+	// metadata provider that knows nothing about schedules, so its fields
+	// are zero and would otherwise erase what is already there.
+	item.AirsTime, item.AirsTimezone, item.Network = stored.AirsTime, stored.AirsTimezone, stored.Network
+	if s.airing == nil || (item.IDs.TVDB == 0 && item.IDs.IMDB == "") {
+		return
+	}
+	got, err := s.airing.Airing(ctx, item.IDs.TVDB, item.IDs.IMDB)
+	if err != nil {
+		if !errors.Is(err, ports.ErrProviderNotConfigured) {
+			s.log.Debug("library: airing enrichment failed",
+				"title", item.Title, "tvdb", item.IDs.TVDB, "err", err)
+		}
+		return
+	}
+	// An empty answer is authoritative: a show that moved to streaming has
+	// no broadcast instant any more, and keeping the old one would keep
+	// putting it on the calendar at 9 PM forever.
+	item.AirsTime, item.AirsTimezone, item.Network = got.Time, got.Timezone, got.Network
 }
 
 // enrichRatings merges provider-external ratings (RT/IMDb/Metacritic via
@@ -369,6 +412,8 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	}
 
 	s.enrichRatings(ctx, &item)
+	// Nothing stored yet — an add starts with whatever the provider says.
+	s.enrichAiring(ctx, &item, domain.MediaItem{})
 	applyMonitorPreset(&item, req.Monitor)
 	item.Monitored = req.Monitored
 	item.QualityProfileID = req.QualityProfileID
@@ -534,6 +579,7 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 		fresh.PosterPath = stored.PosterPath
 	}
 	s.enrichRatings(ctx, &fresh)
+	s.enrichAiring(ctx, &fresh, stored)
 
 	// Season flags are the user's: known seasons keep their stored flag,
 	// and NEW episodes appearing in them inherit it (existing episodes keep

@@ -147,6 +147,23 @@ type show struct {
 		TheTVDB *int64  `json:"thetvdb"`
 		IMDB    *string `json:"imdb"`
 	} `json:"externals"`
+	// The broadcast slot (ADR 0016). A show carries EITHER a network (linear
+	// broadcaster, with a country and therefore a timezone) or a webChannel
+	// (streaming, country usually null and schedule.time usually ""), and
+	// occasionally neither.
+	Schedule struct {
+		Time string   `json:"time"`
+		Days []string `json:"days"`
+	} `json:"schedule"`
+	Network    *channel `json:"network"`
+	WebChannel *channel `json:"webChannel"`
+}
+
+type channel struct {
+	Name    string `json:"name"`
+	Country *struct {
+		Timezone string `json:"timezone"`
+	} `json:"country"`
 }
 
 type searchHit struct {

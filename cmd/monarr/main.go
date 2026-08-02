@@ -20,6 +20,13 @@ import (
 	"syscall"
 	"time"
 
+	// The calendar composes air times in the network's own timezone (ADR
+	// 0016) via time.LoadLocation, which reads /usr/share/zoneinfo — absent
+	// from the minimal deploy image. Embedding the database makes every
+	// install able to load a zone; without it, times would silently vanish
+	// in containers and be right on a developer's laptop.
+	_ "time/tzdata"
+
 	"github.com/pjunod/monarr/internal/adapters/deluge"
 	"github.com/pjunod/monarr/internal/adapters/notify"
 	"github.com/pjunod/monarr/internal/adapters/nzbd"
@@ -156,7 +163,11 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	lib := library.New(db, meta, b, log).
 		WithBooks(books).
 		WithRatings(extraRatings).
-		WithSeriesProviders(seriesChain)
+		WithSeriesProviders(seriesChain).
+		// The same client, deliberately: one cache, one rate limiter, and a
+		// series refresh that just hydrated through the chain gets its
+		// schedule out of the response cache for free (ADR 0016).
+		WithAiring(seriesChain)
 
 	// Discovery (ADR 0015): browse rows, read-only, nothing stored. TMDB is
 	// always on because its key is already required; Trakt joins it when a

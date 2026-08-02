@@ -102,6 +102,30 @@ type RatingsProvider interface {
 	Ratings(ctx context.Context, imdbID string) ([]domain.Rating, error)
 }
 
+// Airing is a series' broadcast slot as its source publishes it: a
+// network-local wall-clock time, the timezone that clock is in, and the
+// channel's display name. Any field may be empty, and empty means unknown —
+// never a default (ADR 0016).
+type Airing struct {
+	Time     string // "21:00", 24h network-local; "" = unknown
+	Timezone string // IANA name, e.g. "America/New_York"; "" = unknown
+	Network  string // display name, e.g. "HBO", "Netflix"; "" = unknown
+}
+
+// AiringProvider supplies the show-level schedule the calendar composes air
+// times from (ADR 0016). TVmaze implements it keylessly; a keyed TheTVDB
+// adapter could implement it later, which is why nothing here names a
+// provider.
+//
+// Optional in exactly the sense RatingsProvider is: callers treat
+// ErrProviderNotConfigured, an unknown show, and an upstream failure alike as
+// "no schedule known", never as an error. Both ids are passed because lookup
+// keys differ per provider; a provider uses whichever it can and returns the
+// zero value when it can use neither.
+type AiringProvider interface {
+	Airing(ctx context.Context, tvdbID int64, imdbID string) (Airing, error)
+}
+
 // BookProvider hydrates book entries (ADR 0006) — a separate port because
 // book metadata comes from a different upstream (Open Library) with its own
 // identity scheme (work OLID), auth (none), and rate policy.

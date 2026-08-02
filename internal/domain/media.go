@@ -113,6 +113,17 @@ type MediaItem struct {
 	RatingVotes  int // 0 = no rating known; Rating is provider-scale (TMDB /10, Open Library /5)
 	Ratings      []Rating
 
+	// Broadcast slot, series only (ADR 0016). AirsTime is network-local
+	// wall clock ("21:00", 24h) and AirsTimezone an IANA name; the pair is
+	// composed with an episode's air date into a UTC instant at read time,
+	// which is what keeps DST and timeslot moves correct. Network is a
+	// display name ("HBO", "Netflix"). Empty means unknown — streaming
+	// originals publish no broadcast instant, and a guessed time would be
+	// worse than a date-only row.
+	AirsTime     string
+	AirsTimezone string
+	Network      string
+
 	// Source names the provider this record came from ("tmdb", "tvmaze",
 	// "openlibrary") or SourceManual when none did (ADR 0012).
 	Source string
