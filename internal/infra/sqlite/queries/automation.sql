@@ -28,9 +28,13 @@ SELECT * FROM notifiers WHERE id = ?;
 DELETE FROM notifiers WHERE id = ?;
 
 -- name: ListEpisodesAiring :many
+-- The calendar's episode half. airs_time/airs_timezone are the show-level
+-- slot (ADR 0016); the UTC instant is composed per air date at read time,
+-- never stored, so DST and timeslot moves stay correct.
 SELECT e.id, e.media_item_id, e.season_number, e.episode_number,
-       e.title AS episode_title, e.air_date, m.title AS series_title,
-       m.tmdb_id, m.imdb_id,
+       e.title AS episode_title, e.air_date, e.monitored, m.title AS series_title,
+       m.tmdb_id, m.imdb_id, m.poster_path, m.runtime,
+       m.network, m.airs_time, m.airs_timezone,
        EXISTS(SELECT 1 FROM media_file_episodes mfe WHERE mfe.episode_id = e.id) AS has_file
 FROM episodes e JOIN media_items m ON m.id = e.media_item_id
 WHERE e.air_date >= ? AND e.air_date <= ?
@@ -38,6 +42,7 @@ ORDER BY e.air_date, m.title, e.season_number, e.episode_number;
 
 -- name: ListItemsReleasedBetween :many
 SELECT m.id, m.kind, m.title, m.author, m.release_date, m.tmdb_id, m.imdb_id,
+       m.poster_path, m.runtime, m.monitored,
        EXISTS(SELECT 1 FROM media_files f WHERE f.media_item_id = m.id) AS has_file
 FROM media_items m
 WHERE m.kind != 'series' AND m.release_date >= ? AND m.release_date <= ?

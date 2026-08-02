@@ -245,6 +245,23 @@ type CalendarEntry struct {
 	// belongs to, and the thing a reader wants beside "S04E02" is the show.
 	TmdbID int64  `json:"tmdbId,omitempty"`
 	ImdbID string `json:"imdbId,omitempty"`
+
+	// Presentation extras, added with the calendar rebuild. Every one of
+	// them is additive: `detail` still carries the same string it always
+	// did, because plurx parses it in production (internal/api/callers.go).
+	PosterPath    string `json:"posterPath,omitempty"`
+	Runtime       int    `json:"runtime,omitempty"` // minutes; 0 = unknown
+	Monitored     bool   `json:"monitored"`
+	SeasonNumber  int    `json:"seasonNumber,omitempty"`  // episodes
+	EpisodeNumber int    `json:"episodeNumber,omitempty"` // episodes
+	EpisodeTitle  string `json:"episodeTitle,omitempty"`  // episodes
+	Network       string `json:"network,omitempty"`       // episodes
+	// AirsTime and AirsTimezone are the show's slot as stored (ADR 0016) —
+	// the API layer composes them with Date into a UTC instant. They stay
+	// here rather than being composed in this package because composing is
+	// presentation, and this one is the storage seam.
+	AirsTime     string `json:"-"`
+	AirsTimezone string `json:"-"`
 }
 
 // Calendar returns episodes airing and movies/books released in [start, end]
@@ -272,6 +289,11 @@ func (d *DB) Calendar(ctx context.Context, start, end string) ([]CalendarEntry, 
 			Date: e.AirDate, Kind: "episode", MediaItemID: e.MediaItemID,
 			Title: e.SeriesTitle, Detail: detail, HasFile: e.HasFile,
 			TmdbID: e.TmdbID, ImdbID: e.ImdbID,
+			PosterPath: e.PosterPath, Runtime: int(e.Runtime),
+			Monitored:    e.Monitored != 0,
+			SeasonNumber: int(e.SeasonNumber), EpisodeNumber: int(e.EpisodeNumber),
+			EpisodeTitle: e.EpisodeTitle, Network: e.Network,
+			AirsTime: e.AirsTime, AirsTimezone: e.AirsTimezone,
 		})
 	}
 	for _, m := range items {
@@ -283,6 +305,8 @@ func (d *DB) Calendar(ctx context.Context, start, end string) ([]CalendarEntry, 
 			Date: m.ReleaseDate, Kind: m.Kind, MediaItemID: m.ID,
 			Title: m.Title, Detail: detail, HasFile: m.HasFile,
 			TmdbID: m.TmdbID, ImdbID: m.ImdbID,
+			PosterPath: m.PosterPath, Runtime: int(m.Runtime),
+			Monitored: m.Monitored != 0,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

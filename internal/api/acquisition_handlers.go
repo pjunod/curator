@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pjunod/monarr/internal/adapters/httpx"
@@ -779,9 +780,81 @@ func (s *Server) GetCalendar(w http.ResponseWriter, r *http.Request, params apig
 			imdb := e.ImdbID
 			entry.ImdbId = &imdb
 		}
+		// The presentation extras, added with the calendar rebuild. Same
+		// rule as the ids throughout: absent means unknown, because a zero
+		// runtime and a 0-minute runtime are not the same claim.
+		if e.PosterPath != "" {
+			p := e.PosterPath
+			entry.PosterPath = &p
+		}
+		if e.Runtime > 0 {
+			rt := e.Runtime
+			entry.Runtime = &rt
+		}
+		mon := e.Monitored
+		entry.Monitored = &mon
+		if e.Kind == "episode" {
+			season, ep := e.SeasonNumber, e.EpisodeNumber
+			entry.SeasonNumber, entry.EpisodeNumber = &season, &ep
+			if e.EpisodeTitle != "" {
+				t := e.EpisodeTitle
+				entry.EpisodeTitle = &t
+			}
+			if e.Network != "" {
+				n := e.Network
+				entry.Network = &n
+			}
+			if at, ok := composeAirTime(e.Date, e.AirsTime, e.AirsTimezone); ok {
+				entry.AirDateUtc = &at
+			}
+		}
 		out = append(out, entry)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// locationCache memoizes time.LoadLocation, which reads and parses the
+// zoneinfo database on every call — the calendar asks for the same handful
+// of zones once per row.
+var locationCache sync.Map // string -> *time.Location
+
+func loadLocation(name string) (*time.Location, bool) {
+	if v, ok := locationCache.Load(name); ok {
+		loc, ok := v.(*time.Location)
+		return loc, ok
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		// Cache the failure too: an unknown zone name stored on an item is
+		// wrong permanently, not intermittently, and retrying the parse on
+		// every row of every request buys nothing.
+		locationCache.Store(name, (*time.Location)(nil))
+		return nil, false
+	}
+	locationCache.Store(name, loc)
+	return loc, true
+}
+
+// composeAirTime turns an air DATE plus the show's broadcast slot into the
+// exact UTC instant that episode airs (ADR 0016).
+//
+// Composing here rather than storing an instant is what makes DST correct
+// for free: a 21:00 America/New_York show is 02:00Z in January and 01:00Z in
+// July, and each date carries its own offset. Any piece missing or
+// unparsable returns false and the field is omitted — never guessed.
+func composeAirTime(date, airsTime, tz string) (time.Time, bool) {
+	if date == "" || airsTime == "" || tz == "" {
+		return time.Time{}, false
+	}
+	loc, ok := loadLocation(tz)
+	if !ok {
+		return time.Time{}, false
+	}
+	t, err := time.ParseInLocation("2006-01-02 15:04", date+" "+airsTime, loc)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t.UTC(), true
 }
 
 // ---- notifiers (Phase 3) ----

@@ -712,9 +712,17 @@ type BrowseResult struct {
 
 // CalendarEntry defines model for CalendarEntry.
 type CalendarEntry struct {
-	Date    string `json:"date"`
-	Detail  string `json:"detail"`
-	HasFile bool   `json:"hasFile"`
+	// AirDateUtc The exact instant this episode airs, composed from the show's broadcast slot and this date (ADR 0016). ABSENT whenever the schedule is unknown — streaming originals, movies and books have no broadcast instant, and a guessed midnight would sort and read as if it were real. Consumers pair it with `date`, which is always present.
+	AirDateUtc *time.Time `json:"airDateUtc,omitempty"`
+	Date       string     `json:"date"`
+	Detail     string     `json:"detail"`
+
+	// EpisodeNumber Episodes only — what `detail` encodes, machine-readable.
+	EpisodeNumber *int `json:"episodeNumber,omitempty"`
+
+	// EpisodeTitle Episodes only; absent when the provider has no title yet.
+	EpisodeTitle *string `json:"episodeTitle,omitempty"`
+	HasFile      bool    `json:"hasFile"`
 
 	// ImdbId The item's IMDb id (the show's, for an episode).
 	ImdbId *string `json:"imdbId,omitempty"`
@@ -722,7 +730,22 @@ type CalendarEntry struct {
 	// Kind episode | movie | book
 	Kind        string `json:"kind"`
 	MediaItemId int64  `json:"mediaItemId"`
-	Title       string `json:"title"`
+
+	// Monitored The episode's own monitored flag for episodes, the item's otherwise. An unmonitored entry still appears on the calendar — it is dated news either way — but nothing is hunting for it.
+	Monitored *bool `json:"monitored,omitempty"`
+
+	// Network Broadcaster or streaming service, display only ("HBO", "Netflix").
+	Network *string `json:"network,omitempty"`
+
+	// PosterPath Artwork, exactly as the library serves it elsewhere: a TMDB-relative path, or an absolute URL for book covers. Absent when the item has none.
+	PosterPath *string `json:"posterPath,omitempty"`
+
+	// Runtime Minutes. Absent when unknown.
+	Runtime *int `json:"runtime,omitempty"`
+
+	// SeasonNumber Episodes only — what `detail` encodes, machine-readable.
+	SeasonNumber *int   `json:"seasonNumber,omitempty"`
+	Title        string `json:"title"`
 
 	// TmdbId The item's TMDB id, so a consumer can resolve this entry against its own library by id rather than by title. For an episode this is the SHOW's id — an episode's own identity does not name the series it belongs to. Absent when unknown.
 	TmdbId *int64 `json:"tmdbId,omitempty"`
