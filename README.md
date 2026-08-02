@@ -328,7 +328,7 @@ adapters import only ports+domain, compat never touches infra/adapters directly.
 | 1 — Library | TMDB, add/browse movies & series, root folders, disk reconcile | real folders imported and browsable |
 | 2 — Acquisition core | parser+golden corpus, matcher, decisions, Torznab, qBit+SABnzbd, import+rename | search → grab → correctly named file |
 | 2.5 — Books ([ADR 0006](docs/adr/0006-books-third-media-kind.md)) | `book` kind end-to-end: ebooks + audiobooks, book metadata adapter, book parser rules, format quality ladder | grab an ebook and an audiobook, correctly named |
-| 3 — Automation | wanted index, RSS loop, failed-download handling, calendar, notifiers | runs unattended for a month |
+| 3 — Automation | wanted index, RSS loop, failed-download handling, calendar (month grid + rolling agenda with TVmaze air times), notifiers | runs unattended for a month |
 | 4 — Ecosystem | Sonarr/Radarr v3 compat shim, conformance vs real tools | Jellyseerr/Prowlarr/Bazarr don't notice the swap |
 | 5 — Depth | custom formats, more clients, import lists, anime numbering | parity tail |
 

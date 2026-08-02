@@ -13,7 +13,9 @@ Monarr data or metadata provider keys live on the phone.
 - Library browsing, filtering, item detail, item/profile/location editing,
   season monitoring, additional quality copies, and search-now.
 - Discover and metadata search, including root/profile choices when adding.
-- Wanted items, backlog search, active and retained activity, and calendar.
+- Wanted items, backlog search, active and retained activity, and the
+  calendar agenda — poster rows with episode, air time, network and status,
+  loading further ahead as you scroll.
 - Server status and health, with a handoff to the web UI for administration.
 - Automatic first-run Wi-Fi discovery over DNS-SD and camera-based pairing by
   QR.

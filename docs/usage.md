@@ -182,8 +182,10 @@ The UI is a PWA: open `http://<host>:7676` on your phone and install it —
 with its own icon, and below tablet width the whole app switches to a
 phone layout: bottom tabs for Library / Wanted / Calendar / Activity,
 with a **More** sheet holding Dashboard, System, Settings, Add, the
-global search, and the theme picker. The calendar becomes an agenda,
-wide tables scroll sideways, posters run three across. Posters are
+global search, and the theme picker. The calendar becomes the agenda —
+the same rich list the desktop view offers, full width: poster, episode,
+air time, network, status. Wide tables scroll sideways, posters run three
+across. Posters are
 cached for snappy loads; live data always comes from the server, so
 offline you get the shell and an error rather than stale numbers. New
 Monarr builds update the installed app on the next launch.
@@ -595,13 +597,62 @@ of them forever.
   `Author/Title/Title - Author.ext` — using hardlinks when the download and
   library share a filesystem. **Expand any row** (the ▸) to see the
   handoff, below.
-- **Calendar** is a month grid: episode air dates and movie/book release
-  dates land on their days, filled when the file is on disk, outlined when
-  it isn't. Page with ← / Today / →.
+- **Calendar** has two views, switched with the **Month · Agenda** toggle in
+  the page head. The choice is remembered.
 - **Wanted** lists everything monitored that's missing or below cutoff,
   shows when the RSS and backlog loops last ran / run next, and offers
   **Search all now** plus a per-item **Search** button that grabs the best
   accepted release for just that entry.
+
+### The calendar's two views
+
+**Month** is the grid. Every entry is a chip on its day, and the chip's
+colour is its *state* — nothing else uses colour, so the legend under the
+grid is the whole vocabulary:
+
+| Chip | Means |
+|---|---|
+| green, filled | on disk |
+| red, filled | it aired (or released) and you don't have it |
+| outlined | still ahead — upcoming, not missing |
+| faded | not monitored: still news, but nothing is hunting for it |
+
+A small glyph, not a colour, marks the kind: **▸** movie, **▪** book,
+nothing for the common case of an episode. A day with more than four
+entries shows the first four and a **+N more** button, which opens that
+day as full rows rather than stretching the week. ← / Today / → page the
+month.
+
+**Agenda** is a chronological list, opening pinned at today and scrolling
+outward: sticky day headers (*Today*, *Tomorrow*, then weekday and date),
+poster thumbnails, `S02E04 — Episode title · 34 min`, the network, the air
+time, and a status pill. It keeps loading forward as you scroll; **Load
+earlier** at the top walks backwards. On a phone the whole page is this
+list — a seven-column grid at 390px is unreadable.
+
+Two URL parameters, both optional: `?view=month|agenda` deep-links a view
+(and beats the remembered choice), and `?date=YYYY-MM-DD` anchors the month
+shown, or the day the agenda opens at.
+
+### Where the times come from
+
+Air times are looked up from **TVmaze**, which needs no key and no account
+and is already part of the series metadata chain. A series refresh stores
+the show's slot — the network's local air time, its timezone, the channel
+name — and each entry's exact instant is worked out from that when the
+calendar is read, so the daylight-saving change and a show moving nights
+are both handled without anything being re-fetched. Times appear in *your*
+local timezone.
+
+**Streaming shows, movies and books stay date-only, and that is the source
+being honest rather than a bug.** A Netflix original has no broadcast
+instant to publish; showing it at midnight would put it first in every
+evening's list and mean nothing. Where there is no stated schedule, Monarr
+shows no time.
+
+Times fill in on the normal metadata refresh cadence, so a library that has
+just upgraded gets them over the following day — or immediately, if you run
+**metadata.refresh** from the System page or hit **Refresh** on an item.
 
 ## The handoff: download to library
 

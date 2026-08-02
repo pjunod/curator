@@ -1,15 +1,17 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-08-01 · v0.19.1 · Access is now a first-class web tab with
-> separate User login, Mobile pairing, and API access sections. The pairing
-> QR is visible after one explicit action and does not require revealing the
-> raw API key (§Native mobile apps).**
+> **Snapshot 2026-08-02 · v0.20.0 · The calendar is rebuilt (ADR 0016). The
+> month grid now says what state every entry is in, a new rolling Agenda view
+> lists everything as poster rows on web and native, and episodes carry real
+> air times — from TVmaze's show-level schedule, keyless, composed to UTC per
+> date so daylight saving and timeslot moves are right for free
+> (§Phase 3 — Automation).**
 >
-> Previously: v0.19.0 added configurable download-priority policies · v0.18.5
-> put Docker DNS-SD discovery onto the physical LAN · v0.18.4 added native
-> failed-row clearing · v0.18.2 added native size and appearance controls.
-> Full gate green: lint · Go · 47 web unit tests · 33 native unit tests ·
-> 92/92 browser tests.
+> Previously: v0.19.1 made Access a first-class web tab · v0.19.0 added
+> configurable download-priority policies · v0.18.5 put Docker DNS-SD
+> discovery onto the physical LAN · v0.18.4 added native failed-row clearing.
+> Full gate green: lint · Go · 72 web unit tests · 45 native unit tests ·
+> 98/98 browser tests.
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -135,6 +137,7 @@ ready, but credentials are deliberately not repository state.
 - [x] Backlog search (12 h + manual): planned queries per wantable, best accepted release grabbed, 20/run cap
 - [x] Failed-download handling: blocklist (unique release+indexer, `GET/DELETE /blocklist`) + automatic re-search on client failure or import error
 - [x] Calendar (API + UI): airing episodes + movie/book release dates, agenda view with -7/+30 day paging
+- [x] Calendar rebuilt (2026-08-02, v0.20.0, [ADR 0016](docs/adr/0016-air-times.md)): month grid carries state as colour with a `+N more` day panel and a legend; new rolling **Agenda** view (sticky day headers, poster rows, `SxxEyy`, network, status pill) on web and native; real air times from TVmaze's show-level schedule composed to UTC per date; `/calendar` gains `airDateUtc`/`network`/`posterPath`/`season`/`episode`/`episodeTitle`/`runtime`/`monitored`, all optional, `detail` untouched
 - [x] Webhook notifier (stable lowercase JSON wire format)
 - [x] Discord notifier (embeds via webhook URL)
 - [x] Plex/Jellyfin library-refresh notifiers (poked on imports only, never chatter)

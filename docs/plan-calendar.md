@@ -1,7 +1,15 @@
 # Plan — Calendar, rebuilt: a readable month and a rich agenda
 
-**Status:** ready to build · **Written:** 2026-08-02 ·
-**Decision:** ADR 0016 (air times from TVmaze — §3.1 writes it)
+**Status:** built 2026-08-02 (v0.20.0) · **Written:** 2026-08-02 ·
+**Decision:** [ADR 0016](adr/0016-air-times.md) (air times from TVmaze)
+
+> One deliberate divergence from §3.3, recorded in the ADR's consequences:
+> what decides whether a time is usable is the presence of a **timezone**,
+> not whether the channel is a `network` or a `webChannel`. TVmaze gives BBC
+> iPlayer a country (`Europe/London`) and a 22:00 slot while giving Netflix
+> `country: null` — reading the zone off whichever channel object is present
+> keeps Netflix date-only and gives iPlayer its real time, with no case where
+> a clock is shown without a stated zone to read it in.
 
 The calendar is the oldest page in the app — a Phase 3 month grid of text
 chips, date-only, no artwork, unchanged while every page around it grew up.
