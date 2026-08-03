@@ -273,8 +273,18 @@ func TestLibAddRefusals(t *testing.T) {
 // because "search on add" has twice been implemented inline.
 func TestLibAddWithSearchNowStillAnswersImmediately(t *testing.T) {
 	e := newAPIEnv(t)
-	var item libDetail
+	// Search-on-add without a destination is refused before the title is
+	// stored, otherwise a successful download can only fail hours later when
+	// import discovers there is nowhere to put it.
 	e.post(t, "/api/v1/library", `{"kind":"movie","tmdbId":550,"searchNow":true}`).
+		expect(t, http.StatusBadRequest)
+	roots, err := e.db.ListRootFolders(context.Background())
+	if err != nil || len(roots) == 0 {
+		t.Fatalf("roots = %v err %v", roots, err)
+	}
+	var item libDetail
+	e.post(t, "/api/v1/library", `{"kind":"movie","tmdbId":550,"rootFolderId":`+
+		strconv.FormatInt(roots[0].ID, 10)+`,"searchNow":true}`).
 		expect(t, http.StatusCreated).into(t, &item)
 	if item.ID == 0 || item.Title != "Fight Club" {
 		t.Errorf("detail = %+v", item)

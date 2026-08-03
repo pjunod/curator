@@ -29,6 +29,8 @@ func (s *Server) acqErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, acquisition.ErrNoClient):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, acquisition.ErrNoLibraryFolder):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, acquisition.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
 	default:
@@ -657,6 +659,20 @@ func (s *Server) ImportQueueItem(w http.ResponseWriter, r *http.Request, id int6
 	}
 }
 
+// CancelQueueImport implements POST /queue/{id}/cancel-import. Cancellation
+// keeps the completed payload and returns the row to a restartable state.
+func (s *Server) CancelQueueImport(w http.ResponseWriter, r *http.Request, id int64) {
+	err := s.deps.Acquisition.CancelImport(r.Context(), id)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, acquisition.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+	default:
+		writeError(w, http.StatusBadRequest, err.Error())
+	}
+}
+
 // BlocklistQueueItem implements POST /queue/{id}/blocklist: declare the
 // release bad, blocklist it, and search a replacement.
 func (s *Server) BlocklistQueueItem(w http.ResponseWriter, r *http.Request, id int64) {
@@ -698,6 +714,9 @@ func (s *Server) ManualImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := acquisition.ManualImportRequest{Path: in.Path, MediaItemID: in.MediaItemId}
+	if in.Paths != nil {
+		req.Paths = *in.Paths
+	}
 	if in.CopyId != nil {
 		req.CopyID = *in.CopyId
 	}

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -214,7 +215,12 @@ func (r *httptestRecorder) into(t *testing.T, v any) {
 // most of the per-item endpoints.
 func (e *apiEnv) addMovie(t *testing.T) int64 {
 	t.Helper()
-	rr := e.post(t, "/api/v1/library", `{"kind":"movie","tmdbId":550}`)
+	roots, err := e.db.ListRootFolders(context.Background())
+	if err != nil || len(roots) == 0 {
+		t.Fatalf("seeding movie root: roots=%v err=%v", roots, err)
+	}
+	rr := e.post(t, "/api/v1/library", `{"kind":"movie","tmdbId":550,"rootFolderId":`+
+		fmt.Sprint(roots[0].ID)+`}`)
 	if rr.Code != http.StatusCreated && rr.Code != http.StatusOK {
 		t.Fatalf("seeding a movie: status %d, body %s", rr.Code, rr.Body.String())
 	}

@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,13 +20,15 @@ import (
 // Steps recorded in the log (a superset of the persisted states — the log
 // is finer-grained than the state column):
 const (
-	stepGrabbed     = "grabbed"
-	stepDownloading = "downloading"
-	stepDownloaded  = "downloaded"
-	stepAwaiting    = "awaiting_import"
-	stepImporting   = "importing"
-	stepImported    = "imported"
-	stepFailed      = "failed"
+	stepGrabbed         = "grabbed"
+	stepDownloading     = "downloading"
+	stepDownloaded      = "downloaded"
+	stepAwaiting        = "awaiting_import"
+	stepImporting       = "importing"
+	stepImportCancelled = "import_cancelled"
+	stepImportRecovered = "import_recovered"
+	stepImported        = "imported"
+	stepFailed          = "failed"
 )
 
 // advance records one handoff step: it appends a log entry, sets the new
@@ -101,6 +104,11 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	// is for. A manual import is the override and passes manual=true.
 	result, err := s.importDownload(ctx, dl, imp, false)
 	if err != nil {
+		// An intentional cancel already returns the durable row to downloaded.
+		// Do not race that with a misleading failed/context-canceled state.
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
 		s.failImport(ctx, &dl, err.Error())
 		return err
 	}
@@ -140,7 +148,17 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	if dl.ImportPath == "" && dl.SavePath == "" {
 		return fmt.Errorf("no download path recorded yet — wait for the download to finish")
 	}
-	return s.runImport(ctx, dl)
+	if s.ImportRunning(id) {
+		return fmt.Errorf("import is already running")
+	}
+	cfg, err := s.db.GetDownloadClient(ctx, dl.ClientID)
+	if err != nil {
+		return err
+	}
+	if !s.enqueueImport(ctx, dl, cfg) {
+		return fmt.Errorf("import is already queued")
+	}
+	return nil
 }
 
 // BlocklistReplace declares a download's release bad: it removes the payload

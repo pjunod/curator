@@ -2285,6 +2285,24 @@ a.pill-info:hover {
   margin: 10px 0;
 }
 
+.manual-import-path-help {
+  margin: -4px 0 10px;
+  font-size: 12px;
+}
+
+.scan-result tbody tr {
+  cursor: pointer;
+}
+
+.scan-result tbody tr.scan-selected {
+  background: var(--accent-soft);
+}
+
+.scan-select {
+  width: 34px;
+  text-align: center;
+}
+
 .approval-toggle {
   display: inline-flex;
   align-items: center;
@@ -2342,6 +2360,12 @@ a.pill-info:hover {
 .path-suggestions li button.taken {
   opacity: 0.55;
   cursor: default;
+}
+
+.path-suggestion-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
 }
 
 /* ---- modal window (the adoption review queue) ---- */

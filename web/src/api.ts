@@ -676,6 +676,8 @@ export interface ScannedFile {
 
 export interface ManualImportRequest {
   path: string
+  /** Exact files chosen from the scan. Empty/absent keeps the legacy whole-path behavior. */
+  paths?: string[]
   mediaItemId: number
   copyId?: number
   downloadId?: number
@@ -746,6 +748,7 @@ export const getHistory = (mediaItemId?: number, limit = 100, offset = 0) => {
 export const removeQueueItem = (id: number, fromClient: boolean) =>
   send('DELETE', `/queue/${id}?fromClient=${fromClient}`)
 export const importQueueItem = (id: number) => send('POST', `/queue/${id}/import`)
+export const cancelQueueImport = (id: number) => send('POST', `/queue/${id}/cancel-import`)
 export const blocklistQueueItem = (id: number) => send('POST', `/queue/${id}/blocklist`)
 
 export interface RemoveFileResult {

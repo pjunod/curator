@@ -301,7 +301,7 @@ func TestHistoryIsReadable(t *testing.T) {
 func failPlacement(t *testing.T, errno syscall.Errno) func() {
 	t.Helper()
 	prev := placeFile
-	placeFile = func(src, dest string, onBytes func(done, total int64)) error {
+	placeFile = func(_ context.Context, src, dest string, onBytes func(done, total int64)) error {
 		return &os.PathError{Op: "write", Path: dest, Err: errno}
 	}
 	restored := false

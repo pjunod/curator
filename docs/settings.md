@@ -144,6 +144,15 @@ That reported path must be **openable by Monarr as-is**:
   container at `/pool/downloads/...` → map `/data/completed` →
   `/pool/downloads`.
 
+Activity → **Manual import** starts at `/pool/downloads`, which is the
+standard deployment's completed folder. It is a convenience default, not a
+second client setting: if your client finishes elsewhere, type that absolute
+path. The field enumerates matching directories as you type and offers a
+**Parent folder** row. If the default does not exist in your deployment,
+choose **Filesystem root** and descend from `/`. You can navigate the
+filesystem Monarr sees without copying names from a separate directory
+listing.
+
 ### When an import can't proceed
 
 A completed download that Monarr can't place is **not** silently dropped or
@@ -157,7 +166,7 @@ stopped. Common cases:
   mount or add a remote path mapping (above), then press **Retry**.
 - `no media files in …` — the path is visible but holds nothing importable
   (wrong folder, or an archive Monarr doesn't unpack). Point a **Manual
-  import** at the right folder.
+  import** at the right folder, scan it, and select the exact files to use.
 - `import stopped: N of M files placed …` — the destination could not take
   the bytes (a full volume, a mount gone read-only). The files that landed
   are in the library; the payload is deliberately left alone, and the
@@ -172,6 +181,14 @@ real files and pick the target title/copy yourself), **Blocklist** (declare
 the release bad — blocklists it and searches a replacement), and **Remove**.
 Nothing is auto-blocklisted on an import failure, so a config problem never
 churns through replacements behind your back.
+
+An **importing** row with a live worker shows its bytes, total, rate, elapsed
+time, and current detail. If Monarr stopped after persisting `importing`, the
+worker disappeared but the row survived; that row is labelled **interrupted**
+instead of pretending to be busy forever. **Restart import** queues it again,
+and **Cancel import** stops queued/live work while keeping the source payload
+for a later restart. The normal client reconciliation also restarts an
+interrupted row automatically after Monarr comes back up.
 
 When the failures are no longer useful, **Clear failed** on the Failed
 grouping dismisses all failed Activity rows after confirmation. This cleans

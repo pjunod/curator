@@ -288,6 +288,11 @@ func (s *Server) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
 	if body.Monitor != nil {
 		req.Monitor = string(*body.Monitor)
 	}
+	if body.SearchNow != nil && *body.SearchNow && req.RootFolderID == 0 {
+		writeError(w, http.StatusBadRequest,
+			"choose a library root folder before searching for a download")
+		return
+	}
 	item, err := s.deps.Library.Add(r.Context(), req)
 	if err != nil {
 		s.libraryErr(w, err)

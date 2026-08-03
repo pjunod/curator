@@ -204,6 +204,82 @@ func TestAcq2ManualImportRefusesWithoutATarget(t *testing.T) {
 	}
 }
 
+// The preview is a chooser, not decoration. When two files are listed and
+// the user selects one, the other one must not be imported merely because it
+// shares the scanned directory.
+func TestAcq2ManualImportImportsOnlySelectedFiles(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	payload := t.TempDir()
+	chosen := filepath.Join(payload, "Test.Show.S01E01.1080p.WEB-DL.mkv")
+	other := filepath.Join(payload, "Test.Show.S01E02.1080p.WEB-DL.mkv")
+	for _, p := range []string{chosen, other} {
+		if err := os.WriteFile(p, []byte("video"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res, err := svc.ManualImport(ctx, ManualImportRequest{
+		Path: payload, Paths: []string{chosen}, MediaItemID: itemID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Imported != 1 || len(res.Files) != 1 || res.Files[0].Name != filepath.Base(chosen) {
+		t.Fatalf("selected import = %+v, want only %s", res, filepath.Base(chosen))
+	}
+	files, err := db.ListFilesForItem(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || strings.Contains(files[0].Path, "E02") {
+		t.Fatalf("library files = %+v, unselected file was imported", files)
+	}
+}
+
+func TestAcq2ManualImportRejectsASelectionOutsideTheScannedPath(t *testing.T) {
+	svc, _, itemID := setup(t, nil, &fakeClient{})
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "Test.Show.S01E01.mkv")
+	if err := os.WriteFile(outside, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.ManualImport(context.Background(), ManualImportRequest{
+		Path: root, Paths: []string{outside}, MediaItemID: itemID,
+	})
+	if err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("outside selection err = %v", err)
+	}
+}
+
+func TestAcq2ManualImportRejectsAnEmptyExplicitSelection(t *testing.T) {
+	svc, _, itemID := setup(t, nil, &fakeClient{})
+	_, err := svc.ManualImport(context.Background(), ManualImportRequest{
+		Path: t.TempDir(), Paths: []string{}, MediaItemID: itemID,
+	})
+	if err == nil || !strings.Contains(err.Error(), "no files selected") {
+		t.Fatalf("empty selection err = %v", err)
+	}
+}
+
+func TestAcq2ManualImportFileSelectionCannotSwitchToASibling(t *testing.T) {
+	svc, _, itemID := setup(t, nil, &fakeClient{})
+	dir := t.TempDir()
+	root := filepath.Join(dir, "Test.Show.S01E01.mkv")
+	sibling := filepath.Join(dir, "Test.Show.S01E02.mkv")
+	for _, p := range []string{root, sibling} {
+		if err := os.WriteFile(p, []byte("video"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := svc.ManualImport(context.Background(), ManualImportRequest{
+		Path: root, Paths: []string{sibling}, MediaItemID: itemID,
+	})
+	if err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("sibling selection err = %v", err)
+	}
+}
+
 // A download id that does not exist is a stale tab, not an import — it must
 // fail before anything is placed.
 func TestAcq2ManualImportRejectsAnUnknownDownload(t *testing.T) {

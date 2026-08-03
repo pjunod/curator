@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import {
   type ImportOutcome,
   type ManualImportRequest,
@@ -7,6 +8,7 @@ import {
   type ScannedFile,
   type Stage,
   blocklistQueueItem,
+  cancelQueueImport,
   clearFailedQueue,
   clearFinishedQueue,
   fmtBytes,
@@ -20,6 +22,7 @@ import {
   removeQueueItem,
   scanImportPath,
 } from '../api'
+import { PathInput } from '../PathInput'
 
 const STATE_PILL: Record<string, string> = {
   imported: 'pill-ok',
@@ -42,6 +45,8 @@ const STEP_LABEL: Record<string, string> = {
   downloaded: 'Downloaded',
   awaiting_import: 'Awaiting approval',
   importing: 'Importing',
+  import_cancelled: 'Import cancelled',
+  import_recovered: 'Import recovered',
   imported: 'Imported',
   failed: 'Failed',
 }
@@ -150,6 +155,9 @@ function sections(rows: QueueItem[]): Section[] {
 // is a different and usually false statement about a job that is midway
 // through repairing a 60 GB archive.
 function StageProgress({ d }: { d: QueueItem }) {
+  if (d.state === 'importing' && !d.stage) {
+    return <span className="error-text">No importer is running</span>
+  }
   const known = typeof d.total === 'number' && d.total > 0
   const done = d.bytes ?? 0
   const fraction = known ? Math.min(1, done / (d.total as number)) : d.stage ? null : d.progress
@@ -206,6 +214,7 @@ export function ActivityPage() {
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [shown, setShown] = useState<Record<string, number>>({ imported: PAGE, failed: PAGE })
   const [confirmClear, setConfirmClear] = useState<'imported' | 'failed' | null>(null)
+  const [actionErr, setActionErr] = useState('')
 
   // Only the active list polls. Finished and Failed do not change on their
   // own — something has to finish or fail first, and that moves the counts,
@@ -236,7 +245,18 @@ export function ActivityPage() {
     void qc.invalidateQueries({ queryKey: ['queue-summary'] })
   }
   const remove = useMutation({ mutationFn: (id: number) => removeQueueItem(id, false), onSettled: invalidate })
-  const doImport = useMutation({ mutationFn: (id: number) => importQueueItem(id), onSettled: invalidate })
+  const doImport = useMutation({
+    mutationFn: (id: number) => importQueueItem(id),
+    onMutate: () => setActionErr(''),
+    onError: (e: Error) => setActionErr(e.message),
+    onSettled: invalidate,
+  })
+  const cancelImport = useMutation({
+    mutationFn: (id: number) => cancelQueueImport(id),
+    onMutate: () => setActionErr(''),
+    onError: (e: Error) => setActionErr(e.message),
+    onSettled: invalidate,
+  })
   const doBlocklist = useMutation({ mutationFn: (id: number) => blocklistQueueItem(id), onSettled: invalidate })
   const clearFinished = useMutation({
     mutationFn: clearFinishedQueue,
@@ -254,7 +274,7 @@ export function ActivityPage() {
   })
 
   const busy =
-    remove.isPending || doImport.isPending || doBlocklist.isPending ||
+    remove.isPending || doImport.isPending || cancelImport.isPending || doBlocklist.isPending ||
     clearFinished.isPending || clearFailed.isPending
   const toggle = (id: number) =>
     setExpanded((prev) => {
@@ -279,6 +299,7 @@ export function ActivityPage() {
     busy,
     onToggle: () => toggle(d.id),
     onImport: () => doImport.mutate(d.id),
+    onCancelImport: () => cancelImport.mutate(d.id),
     onBlocklist: () => doBlocklist.mutate(d.id),
     onRemove: () => remove.mutate(d.id),
     onManual: () =>
@@ -325,6 +346,8 @@ export function ActivityPage() {
       </header>
 
       {manual && <ManualImportPanel prefill={manual} onDone={() => { setManual(null); invalidate() }} />}
+
+      {actionErr && <div className="banner warning">{actionErr}</div>}
 
       <div className="activity-toolbar">
         <input
@@ -472,6 +495,7 @@ function RowGroup(props: {
   busy: boolean
   onToggle: () => void
   onImport: () => void
+  onCancelImport: () => void
   onBlocklist: () => void
   onRemove: () => void
   onManual: () => void
@@ -479,7 +503,9 @@ function RowGroup(props: {
   const { d, open, busy } = props
   const canImport = d.state === 'awaiting_import' || d.state === 'downloaded'
   const canRetry = d.state === 'failed'
-  const canBlocklist = d.state !== 'imported'
+  const interruptedImport = d.state === 'importing' && !d.stage
+  const activeImport = d.stage === 'importing'
+  const canBlocklist = d.state !== 'imported' && !activeImport
 
   return (
     <>
@@ -512,7 +538,9 @@ function RowGroup(props: {
             APPLICATION is doing this. Monarr's own name appears exactly once,
             on the one stage Monarr performs itself.
           */}
-          {d.stage ? (
+          {interruptedImport ? (
+            <span className="pill pill-warning">interrupted</span>
+          ) : d.stage ? (
             <span className="muted stage-owner">{d.stagePeer || 'Monarr'}</span>
           ) : (
             <span className={`pill ${STATE_PILL[d.state] ?? 'pill-neutral'}`}>
@@ -543,14 +571,31 @@ function RowGroup(props: {
                 </button>
               </>
             )}
+            {interruptedImport && (
+              <button onClick={props.onImport} disabled={busy}>
+                Restart import
+              </button>
+            )}
+            {(activeImport || interruptedImport) && (
+              <button className="btn-danger" onClick={props.onCancelImport} disabled={busy}>
+                Cancel import
+              </button>
+            )}
+            {d.error?.includes('no library folder assigned') && (
+              <Link to="/library/$id" params={{ id: String(d.mediaItemId) }}>
+                Assign folder
+              </Link>
+            )}
             {canBlocklist && (
               <button className="btn-danger" onClick={props.onBlocklist} disabled={busy}>
                 Blocklist
               </button>
             )}
-            <button onClick={props.onRemove} disabled={busy}>
-              Remove
-            </button>
+            {!activeImport && !interruptedImport && (
+              <button onClick={props.onRemove} disabled={busy}>
+                Remove
+              </button>
+            )}
           </div>
         </td>
       </tr>
@@ -613,10 +658,13 @@ function ManualImportPanel({
   prefill: Partial<ManualImportRequest>
   onDone: () => void
 }) {
-  const [path, setPath] = useState(prefill.path ?? '')
+  // This is the completed-download folder in Monarr's standard deployment.
+  // Queue-row manual imports still win with their exact recorded path.
+  const [path, setPath] = useState(prefill.path ?? '/pool/downloads/')
   const [itemId, setItemId] = useState<number>(prefill.mediaItemId ?? 0)
   const [copyId, setCopyId] = useState<number>(prefill.copyId ?? 0)
   const [scanned, setScanned] = useState<ScannedFile[] | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [scanErr, setScanErr] = useState<string>('')
   const [importErr, setImportErr] = useState<string>('')
   const [done, setDone] = useState<string>('')
@@ -633,6 +681,10 @@ function ManualImportPanel({
     mutationFn: () => scanImportPath(path),
     onSuccess: (files) => {
       setScanned(files)
+      // A single-file result is unambiguous. A directory with several files
+      // needs an explicit choice so one title cannot accidentally swallow a
+      // neighbour from the completed folder.
+      setSelected(new Set(files.length === 1 ? [files[0].path] : []))
       setScanErr('')
     },
     onError: (e: Error) => {
@@ -645,6 +697,7 @@ function ManualImportPanel({
     mutationFn: () =>
       manualImport({
         path,
+        paths: [...selected],
         mediaItemId: itemId,
         copyId: copyId || undefined,
         downloadId: prefill.downloadId,
@@ -679,19 +732,26 @@ function ManualImportPanel({
       </p>
 
       <div className="form-row">
-        <label>
-          Path
-          <input
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            placeholder="/pool/downloads/Some.Release.2024.1080p"
-            style={{ minWidth: 360 }}
-          />
-        </label>
+        <label htmlFor="manual-import-path">Path</label>
+        <PathInput
+          id="manual-import-path"
+          value={path}
+          onChange={(next) => {
+            setPath(next)
+            setScanned(null)
+            setSelected(new Set())
+          }}
+          placeholder="/pool/downloads/Some.Release.2024.1080p"
+          showParent
+        />
         <button onClick={() => scan.mutate()} disabled={!path || scan.isPending}>
-          Scan
+          {scan.isPending ? 'Scanning…' : 'Scan'}
         </button>
       </div>
+      <p className="muted manual-import-path-help">
+        Starts in Monarr&apos;s completed-download folder. Type another absolute path or choose a
+        folder suggestion; use Parent folder to navigate back up.
+      </p>
       {scanErr && <p className="error-text">{scanErr}</p>}
 
       {scanned && (
@@ -703,6 +763,16 @@ function ManualImportPanel({
             <table>
               <thead>
                 <tr>
+                  <th className="scan-select">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all files"
+                      checked={scanned.length > 0 && selected.size === scanned.length}
+                      onChange={(e) =>
+                        setSelected(e.target.checked ? new Set(scanned.map((f) => f.path)) : new Set())
+                      }
+                    />
+                  </th>
                   <th>File</th>
                   <th>Kind</th>
                   <th>Quality</th>
@@ -712,7 +782,34 @@ function ManualImportPanel({
               </thead>
               <tbody>
                 {scanned.map((f) => (
-                  <tr key={f.path}>
+                  <tr
+                    key={f.path}
+                    className={selected.has(f.path) ? 'scan-selected' : undefined}
+                    onClick={() =>
+                      setSelected((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(f.path)) next.delete(f.path)
+                        else next.add(f.path)
+                        return next
+                      })
+                    }
+                  >
+                    <td className="scan-select">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${f.name}`}
+                        checked={selected.has(f.path)}
+                        onChange={() =>
+                          setSelected((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(f.path)) next.delete(f.path)
+                            else next.add(f.path)
+                            return next
+                          })
+                        }
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </td>
                     <td className="mono">{f.name}</td>
                     <td className="muted">{f.kind}</td>
                     <td className="muted">{f.quality || '—'}</td>
@@ -762,11 +859,17 @@ function ManualImportPanel({
         <button
           className="btn-accent"
           onClick={() => run.mutate()}
-          disabled={!path || !itemId || run.isPending}
+          disabled={!path || !itemId || selected.size === 0 || run.isPending}
         >
-          Import
+          {run.isPending ? 'Importing…' : `Import selected (${selected.size})`}
         </button>
       </div>
+      {scanned && scanned.length > 1 && selected.size === 0 && (
+        <p className="muted">Select one or more files above to import.</p>
+      )}
+      {selected.size > 0 && !itemId && (
+        <p className="muted">Choose the library title these selected files belong to.</p>
+      )}
       {importErr && <p className="error-text">{importErr}</p>}
       {done && <p className="ok-text">{done}</p>}
       {/* Per-file outcomes. An import that declines everything used to say

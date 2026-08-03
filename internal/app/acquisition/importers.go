@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -44,8 +45,10 @@ const (
 
 // importJob is one download ready to be moved into the library.
 type importJob struct {
-	dl  sqlite.Download
-	cfg ports.ClientConfig
+	dl     sqlite.Download
+	cfg    ports.ClientConfig
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // StartImporters launches the import workers. Cancel ctx to stop them, then
@@ -54,6 +57,8 @@ type importJob struct {
 func (s *Service) StartImporters(ctx context.Context) {
 	s.importOnce.Do(func() {
 		s.importCh = make(chan importJob, importQueue)
+		s.importCtx = ctx
+		s.importJobs = map[int64]context.CancelFunc{}
 	})
 	for i := 0; i < importWorkers; i++ {
 		s.importWG.Add(1)
@@ -67,7 +72,7 @@ func (s *Service) StartImporters(ctx context.Context) {
 					if !ok {
 						return
 					}
-					s.runImportTracked(ctx, job)
+					s.runImportTracked(job.ctx, job)
 				}
 			}
 		}()
@@ -100,18 +105,43 @@ func (s *Service) SetRegistry(r *transfers.Registry) { s.registry = r }
 // existing test, and ManualImport, working unchanged. A test that calls
 // RefreshQueue and then asserts the row is `imported` is asserting something
 // true and should not have to learn about workers to keep doing so.
-func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig) {
+func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig) bool {
 	if s.importCh == nil {
 		s.runImportTracked(ctx, importJob{dl: dl, cfg: cfg})
-		return
+		return true
 	}
+
+	// One queued OR running job per download. This is also the durable-row
+	// recovery guard: repeated 30-second observations of an orphaned
+	// "importing" row must not enqueue the same payload over and over while it
+	// waits behind a large copy.
+	s.importMu.Lock()
+	if s.importJobs == nil {
+		s.importJobs = map[int64]context.CancelFunc{}
+	}
+	if _, exists := s.importJobs[dl.ID]; exists {
+		s.importMu.Unlock()
+		return false
+	}
+	parent := s.importCtx
+	if parent == nil {
+		parent = ctx
+	}
+	jobCtx, cancel := context.WithCancel(parent)
+	s.importJobs[dl.ID] = cancel
 	select {
-	case s.importCh <- importJob{dl: dl, cfg: cfg}:
+	case s.importCh <- importJob{dl: dl, cfg: cfg, ctx: jobCtx, cancel: cancel}:
+		s.importMu.Unlock()
+		return true
 	default:
+		delete(s.importJobs, dl.ID)
+		s.importMu.Unlock()
+		cancel()
 		// Full. The next sweep sees the same completed download and offers
 		// it again, so this costs 30 seconds and nothing else.
 		s.log.Warn("import queue full; deferring to the next sweep",
 			"download", dl.ID, "release", dl.ReleaseTitle)
+		return false
 	}
 }
 
@@ -119,6 +149,43 @@ func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg por
 // whole of it — which is the entire point: before this, a running import was
 // visible nowhere at all.
 func (s *Service) runImportTracked(ctx context.Context, job importJob) {
+	if job.cancel != nil {
+		defer func() {
+			job.cancel()
+			s.importMu.Lock()
+			delete(s.importJobs, job.dl.ID)
+			s.importMu.Unlock()
+		}()
+	}
+	if ctx.Err() != nil {
+		return // cancelled while it was still waiting for a worker
+	}
+
+	if job.cancel != nil {
+		// Restart, cancel, poll and push can all address this row concurrently.
+		// An asynchronous copy owns the same per-download lock as reconciliation
+		// so there is never a second importer writing underneath it. The inline
+		// test path is already called with this lock held by reconciliation.
+		unlock := s.lockDownload(job.dl.ID)
+		defer unlock()
+		fresh, err := s.db.GetDownload(ctx, job.dl.ID)
+		if err != nil {
+			return
+		}
+		if fresh.State == "imported" || ctx.Err() != nil {
+			return
+		}
+		// The normal path persisted these before enqueue. Keeping a non-empty
+		// value carried by the job also preserves the documented inline/test
+		// seam where a caller can hand off a just-observed path directly.
+		if job.dl.ImportPath == "" {
+			job.dl.ImportPath = fresh.ImportPath
+		}
+		if job.dl.SavePath == "" {
+			job.dl.SavePath = fresh.SavePath
+		}
+		job.dl.State, job.dl.Handoff = fresh.State, fresh.Handoff
+	}
 	h := s.registry.Begin(transfers.Transfer{
 		DownloadID: job.dl.ID,
 		Transfer:   job.dl.Transfer,
@@ -131,6 +198,51 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 	_ = s.runImport(transfers.WithHandle(ctx, h), job.dl)
 }
 
+// ImportRunning includes work waiting for one of the bounded workers. Live
+// transfer state alone cannot see that gap, which is how a queued restart
+// could otherwise be mistaken for another orphan and enqueued twice.
+func (s *Service) ImportRunning(download int64) bool {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	_, ok := s.importJobs[download]
+	return ok
+}
+
+// CancelImport stops a queued/running import and returns the row to the
+// downloaded state so it can be restarted later. The source payload is left
+// alone. Any destination temp file is removed by the copy path.
+func (s *Service) CancelImport(ctx context.Context, id int64) error {
+	dl, err := s.db.GetDownload(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.importMu.Lock()
+	cancel := s.importJobs[id]
+	s.importMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if dl.State != "importing" && cancel == nil {
+		return fmt.Errorf("download is not importing")
+	}
+
+	// Cancel before waiting for the import's row lock. A long cross-filesystem
+	// copy observes the context, removes its temp file, and releases the lock;
+	// then this durable transition is the final word.
+	unlock := s.lockDownload(id)
+	defer unlock()
+	dl, err = s.db.GetDownload(ctx, id)
+	if err != nil {
+		return err
+	}
+	if dl.State == "imported" {
+		return fmt.Errorf("import already finished")
+	}
+	s.advance(ctx, &dl, "downloaded", dl.Progress, "", stepImportCancelled,
+		"import cancelled; payload kept and ready to restart")
+	return nil
+}
+
 // importerFields is the state StartImporters needs. Kept beside the workers
 // rather than in the Service literal so the two are read together.
 type importerFields struct {
@@ -138,6 +250,9 @@ type importerFields struct {
 	importCh   chan importJob
 	importWG   sync.WaitGroup
 	registry   *transfers.Registry
+	importCtx  context.Context
+	importMu   sync.Mutex
+	importJobs map[int64]context.CancelFunc
 }
 
 // watchDownloading keeps the in-flight view honest about the stages Monarr
