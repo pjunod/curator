@@ -48,7 +48,16 @@ type importJob struct {
 	dl     sqlite.Download
 	cfg    ports.ClientConfig
 	ctx    context.Context
+	ticket *importTicket
+}
+
+// importTicket is the durable row's in-memory place in the worker queue.
+// Identity matters: a cancelled queued job can remain in the channel until a
+// worker reaches it, while the same download is restarted with a new ticket.
+// The stale job must not delete or cancel the newer one when it is drained.
+type importTicket struct {
 	cancel context.CancelFunc
+	queued bool
 }
 
 // StartImporters launches the import workers. Cancel ctx to stop them, then
@@ -58,7 +67,7 @@ func (s *Service) StartImporters(ctx context.Context) {
 	s.importOnce.Do(func() {
 		s.importCh = make(chan importJob, importQueue)
 		s.importCtx = ctx
-		s.importJobs = map[int64]context.CancelFunc{}
+		s.importJobs = map[int64]*importTicket{}
 	})
 	for i := 0; i < importWorkers; i++ {
 		s.importWG.Add(1)
@@ -78,6 +87,34 @@ func (s *Service) StartImporters(ctx context.Context) {
 		}()
 	}
 	s.log.Info("import workers started", "workers", importWorkers)
+	s.importRecoverOnce.Do(func() { s.recoverManualImports(ctx) })
+}
+
+// recoverManualImports restores standalone manual jobs after a process
+// restart. Client-backed imports are rediscovered by the next completed
+// client observation; a manual row has no client to report it, so startup is
+// its recovery signal.
+func (s *Service) recoverManualImports(ctx context.Context) {
+	rows, err := s.db.ListActiveDownloads(ctx)
+	if err != nil {
+		s.log.Warn("manual import recovery: could not list activity", "err", err)
+		return
+	}
+	for _, dl := range rows {
+		if dl.Protocol != "manual" || dl.ClientID != 0 ||
+			(dl.State != "downloaded" && dl.State != "importing") {
+			continue
+		}
+		unlock := s.lockDownload(dl.ID)
+		if dl.State == "importing" {
+			s.advance(ctx, &dl, "downloaded", dl.Progress, "", stepImportRecovered,
+				"manual import was interrupted by restart; queued again")
+		}
+		if !s.enqueueImport(ctx, dl, ports.ClientConfig{}) {
+			s.log.Warn("manual import recovery: queue full", "download", dl.ID)
+		}
+		unlock()
+	}
 }
 
 // WaitImporters blocks until every worker has stopped.
@@ -117,7 +154,7 @@ func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg por
 	// waits behind a large copy.
 	s.importMu.Lock()
 	if s.importJobs == nil {
-		s.importJobs = map[int64]context.CancelFunc{}
+		s.importJobs = map[int64]*importTicket{}
 	}
 	if _, exists := s.importJobs[dl.ID]; exists {
 		s.importMu.Unlock()
@@ -128,9 +165,10 @@ func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg por
 		parent = ctx
 	}
 	jobCtx, cancel := context.WithCancel(parent)
-	s.importJobs[dl.ID] = cancel
+	ticket := &importTicket{cancel: cancel, queued: true}
+	s.importJobs[dl.ID] = ticket
 	select {
-	case s.importCh <- importJob{dl: dl, cfg: cfg, ctx: jobCtx, cancel: cancel}:
+	case s.importCh <- importJob{dl: dl, cfg: cfg, ctx: jobCtx, ticket: ticket}:
 		s.importMu.Unlock()
 		return true
 	default:
@@ -149,11 +187,13 @@ func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg por
 // whole of it — which is the entire point: before this, a running import was
 // visible nowhere at all.
 func (s *Service) runImportTracked(ctx context.Context, job importJob) {
-	if job.cancel != nil {
+	if job.ticket != nil {
 		defer func() {
-			job.cancel()
+			job.ticket.cancel()
 			s.importMu.Lock()
-			delete(s.importJobs, job.dl.ID)
+			if s.importJobs[job.dl.ID] == job.ticket {
+				delete(s.importJobs, job.dl.ID)
+			}
 			s.importMu.Unlock()
 		}()
 	}
@@ -161,7 +201,7 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 		return // cancelled while it was still waiting for a worker
 	}
 
-	if job.cancel != nil {
+	if job.ticket != nil {
 		// Restart, cancel, poll and push can all address this row concurrently.
 		// An asynchronous copy owns the same per-download lock as reconciliation
 		// so there is never a second importer writing underneath it. The inline
@@ -185,6 +225,11 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 			job.dl.SavePath = fresh.SavePath
 		}
 		job.dl.State, job.dl.Handoff = fresh.State, fresh.Handoff
+		s.importMu.Lock()
+		if s.importJobs[job.dl.ID] == job.ticket {
+			job.ticket.queued = false
+		}
+		s.importMu.Unlock()
 	}
 	h := s.registry.Begin(transfers.Transfer{
 		DownloadID: job.dl.ID,
@@ -202,10 +247,23 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 // transfer state alone cannot see that gap, which is how a queued restart
 // could otherwise be mistaken for another orphan and enqueued twice.
 func (s *Service) ImportRunning(download int64) bool {
+	return s.ImportStatus(download) != ""
+}
+
+// ImportStatus distinguishes work waiting behind the bounded workers from a
+// copy that owns a worker. The transfer registry deliberately contains only
+// data actually moving, so it cannot answer the queued half of this question.
+func (s *Service) ImportStatus(download int64) string {
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
-	_, ok := s.importJobs[download]
-	return ok
+	ticket := s.importJobs[download]
+	if ticket == nil {
+		return ""
+	}
+	if ticket.queued {
+		return "queued"
+	}
+	return "running"
 }
 
 // CancelImport stops a queued/running import and returns the row to the
@@ -217,12 +275,12 @@ func (s *Service) CancelImport(ctx context.Context, id int64) error {
 		return err
 	}
 	s.importMu.Lock()
-	cancel := s.importJobs[id]
+	ticket := s.importJobs[id]
 	s.importMu.Unlock()
-	if cancel != nil {
-		cancel()
+	if ticket != nil {
+		ticket.cancel()
 	}
-	if dl.State != "importing" && cancel == nil {
+	if dl.State != "importing" && ticket == nil {
 		return fmt.Errorf("download is not importing")
 	}
 
@@ -238,6 +296,11 @@ func (s *Service) CancelImport(ctx context.Context, id int64) error {
 	if dl.State == "imported" {
 		return fmt.Errorf("import already finished")
 	}
+	s.importMu.Lock()
+	if s.importJobs[id] == ticket {
+		delete(s.importJobs, id)
+	}
+	s.importMu.Unlock()
 	s.advance(ctx, &dl, "downloaded", dl.Progress, "", stepImportCancelled,
 		"import cancelled; payload kept and ready to restart")
 	return nil
@@ -246,13 +309,14 @@ func (s *Service) CancelImport(ctx context.Context, id int64) error {
 // importerFields is the state StartImporters needs. Kept beside the workers
 // rather than in the Service literal so the two are read together.
 type importerFields struct {
-	importOnce sync.Once
-	importCh   chan importJob
-	importWG   sync.WaitGroup
-	registry   *transfers.Registry
-	importCtx  context.Context
-	importMu   sync.Mutex
-	importJobs map[int64]context.CancelFunc
+	importOnce        sync.Once
+	importRecoverOnce sync.Once
+	importCh          chan importJob
+	importWG          sync.WaitGroup
+	registry          *transfers.Registry
+	importCtx         context.Context
+	importMu          sync.Mutex
+	importJobs        map[int64]*importTicket
 }
 
 // watchDownloading keeps the in-flight view honest about the stages Monarr

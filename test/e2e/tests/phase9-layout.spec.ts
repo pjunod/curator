@@ -1,3 +1,5 @@
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 
 // Layout regressions are invisible to every other kind of test: the data is
@@ -54,13 +56,17 @@ test('queue columns do not overlap each other', async ({ page }) => {
 })
 
 test('a long file list scrolls instead of growing the page', async ({ page }) => {
+  const dir = mkdtempSync(join(process.env.E2E_MEDIA_ROOT!, 'long-import-'))
+  for (let i = 1; i <= 30; i++) {
+    writeFileSync(join(dir, `Test.Show.S01E${String(i).padStart(2, '0')}.1080p.WEB-DL.mkv`), 'x')
+  }
   await page.goto('/activity')
   await page.getByRole('button', { name: 'Manual import' }).click()
   // The folder preview and the per-file import report are both unbounded —
   // a season pack is 24 rows and a mis-pointed path can be hundreds.
   const panel = page.locator('.manual-import')
   await expect(panel).toBeVisible()
-  await panel.getByRole('textbox').first().fill(process.env.E2E_MEDIA_ROOT ?? '/tmp')
+  await panel.getByRole('textbox').first().fill(dir)
   await panel.getByRole('button', { name: 'Scan' }).click()
 
   // The media root the suite created has files in it, so the preview must

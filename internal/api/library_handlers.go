@@ -316,6 +316,19 @@ func (s *Server) GetLibraryItem(w http.ResponseWriter, r *http.Request, id int64
 	writeJSON(w, http.StatusOK, detailDTO(item))
 }
 
+// GetLibraryPlacementSuggestion implements GET /library/{id}/placement-suggestion.
+func (s *Server) GetLibraryPlacementSuggestion(w http.ResponseWriter, r *http.Request, id int64) {
+	suggestion, err := s.deps.Library.SuggestPlacement(r.Context(), id)
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, apigen.PlacementSuggestion{
+		RootFolderId: suggestion.RootFolderID,
+		Path:         suggestion.Path,
+	})
+}
+
 // UpdateLibraryItem implements PATCH /library/{id}: per-item edit of
 // monitoring, quality profile, and location.
 func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id int64) {
@@ -364,6 +377,15 @@ func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id in
 		*body.QualityProfileId != before.QualityProfileID
 	if profileChanged && item.Monitored && s.deps.Acquisition != nil {
 		s.searchInBackground(item.ID, "profile change")
+	}
+	// Older search-added rows could exist without a destination. Once this
+	// edit supplies one, the thing that blocked their imports is gone, so put
+	// them back on the importer without requiring a second trip to Activity.
+	if beforeErr == nil && before.Path == "" && item.Path != "" && s.deps.Acquisition != nil {
+		if queued, retryErr := s.deps.Acquisition.RetryFolderlessImports(r.Context(), item.ID); retryErr != nil {
+			s.deps.Log.Warn("library: could not retry folderless imports",
+				"item", item.ID, "queued", queued, "err", retryErr)
+		}
 	}
 	writeJSON(w, http.StatusOK, detailDTO(item))
 }

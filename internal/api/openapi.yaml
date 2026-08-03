@@ -146,6 +146,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
     patch:
       operationId: updateLibraryItem
       summary: Edit an item's monitoring, quality profile, or location
@@ -204,6 +205,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /library/{id}/placement-suggestion:
+    get:
+      operationId: getLibraryPlacementSuggestion
+      summary: Suggest the default root and exact folder for an existing item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The same placement Add media would choose by default.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlacementSuggestion" }
+        "400":
+          description: No compatible root folder is configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /library/scan:
     post:
@@ -1394,6 +1421,17 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /import/default-path:
+    get:
+      operationId: getManualImportDefaultPath
+      summary: Completed-download folder Monarr sees for manual imports
+      responses:
+        "200":
+          description: Configured, learned, or standard completed-download path.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportPathDefault" }
+
   /import/manual:
     post:
       operationId: manualImport
@@ -1404,18 +1442,14 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/ManualImportRequest" }
       responses:
-        "200":
-          description: >
-            Imported. Reports what happened to EVERY file, including the ones
-            that did not land and why — a refusal without a reason is
-            indistinguishable from a bug.
+        "202":
+          description: Accepted as an Activity job; the import continues in the background.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ImportOutcome" }
+              schema: { $ref: "#/components/schemas/ManualImportAccepted" }
         "400":
           description: >
-            Nothing imported. The message names each file and the reason it
-            was declined.
+            The path, selection, or target is invalid; no job was queued.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3346,6 +3380,12 @@ components:
           type: array
           items: { type: integer }
 
+    ImportPathDefault:
+      type: object
+      required: [path]
+      properties:
+        path: { type: string }
+
     AutoSearchResult:
       type: object
       required: [grabbed, targets]
@@ -3392,38 +3432,6 @@ components:
           type: string
           description: Why the search or the grab failed.
 
-    ImportOutcome:
-      type: object
-      required: [files, imported, upgrade]
-      properties:
-        imported:
-          type: integer
-          description: How many files landed in the library.
-        upgrade:
-          type: boolean
-          description: Whether any of them replaced something already there.
-        files:
-          type: array
-          description: Every file considered, in payload order.
-          items:
-            $ref: "#/components/schemas/ImportedFile"
-
-    ImportedFile:
-      type: object
-      required: [name, imported]
-      properties:
-        name: { type: string }
-        imported: { type: boolean }
-        upgrade:
-          type: boolean
-          description: This file replaced one already in the library.
-        quality:
-          type: string
-          description: The quality monarr judged the file by, e.g. "WEB-DL 1080p".
-        reason:
-          type: string
-          description: Why it was not imported. Empty when it was.
-
     ManualImportRequest:
       type: object
       required: [path, mediaItemId]
@@ -3448,6 +3456,24 @@ components:
           description: >
             Tie the import to a stuck queue row so it's marked imported (or
             failed) by this attempt. 0 = a standalone import.
+
+    ManualImportAccepted:
+      type: object
+      required: [downloadId]
+      properties:
+        downloadId:
+          type: integer
+          format: int64
+          description: Activity row that now owns the background import.
+
+    PlacementSuggestion:
+      type: object
+      required: [rootFolderId, path]
+      properties:
+        rootFolderId: { type: integer, format: int64 }
+        path:
+          type: string
+          description: Exact default folder path produced by Monarr's naming rules.
 
     CustomFormatInput:
       type: object
@@ -3863,6 +3889,13 @@ components:
         importPath:
           type: string
           description: Where Monarr looked for the files after remote path mapping.
+        importState:
+          type: string
+          enum: [queued, running]
+          description: >
+            The in-memory importer state. `queued` means the job was accepted
+            and is waiting for one of the bounded import workers; `running`
+            means a worker owns it. Absent means no importer owns this row.
         stage:
           type: string
           description: >

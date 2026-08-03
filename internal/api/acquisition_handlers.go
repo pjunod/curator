@@ -617,6 +617,10 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			since := live.StartedAt
 			item.StageSince = &since
 		}
+		if state := s.deps.Acquisition.ImportStatus(d.ID); state != "" {
+			importState := apigen.QueueItemImportState(state)
+			item.ImportState = &importState
+		}
 		if len(d.Handoff) > 0 {
 			steps := make([]apigen.HandoffEntry, 0, len(d.Handoff))
 			for _, h := range d.Handoff {
@@ -705,8 +709,16 @@ func (s *Server) ScanImportPath(w http.ResponseWriter, r *http.Request, params a
 	writeJSON(w, http.StatusOK, out)
 }
 
-// ManualImport implements POST /import/manual: import files from a path into
-// a chosen item/copy.
+// GetManualImportDefaultPath implements GET /import/default-path.
+func (s *Server) GetManualImportDefaultPath(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, apigen.ImportPathDefault{
+		Path: s.deps.Acquisition.ManualImportDefaultPath(r.Context()),
+	})
+}
+
+// ManualImport implements POST /import/manual: validate the selection and
+// queue an Activity job. Copying belongs to an importer worker, never to the
+// request goroutine.
 func (s *Server) ManualImport(w http.ResponseWriter, r *http.Request) {
 	var in apigen.ManualImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Path == "" || in.MediaItemId == 0 {
@@ -723,12 +735,12 @@ func (s *Server) ManualImport(w http.ResponseWriter, r *http.Request) {
 	if in.DownloadId != nil {
 		req.DownloadID = *in.DownloadId
 	}
-	result, err := s.deps.Acquisition.ManualImport(r.Context(), req)
+	id, err := s.deps.Acquisition.QueueManualImport(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, importOutcomeDTO(result))
+	writeJSON(w, http.StatusAccepted, apigen.ManualImportAccepted{DownloadId: id})
 }
 
 // ListWanted implements GET /wanted.
@@ -1424,27 +1436,6 @@ func (s *Server) AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, i
 	writeJSON(w, http.StatusOK, apigen.AutoSearchResult{
 		Grabbed: out.Grabbed, Targets: targets,
 	})
-}
-
-// importOutcomeDTO reports what happened to every file, not just a count.
-// The per-file reason is the whole point: "no files imported from <path>" is
-// a true sentence that helps nobody.
-func importOutcomeDTO(r acquisition.ImportResult) apigen.ImportOutcome {
-	out := apigen.ImportOutcome{
-		Imported: r.Imported, Upgrade: r.Upgraded,
-		Files: make([]apigen.ImportedFile, 0, len(r.Files)),
-	}
-	for _, f := range r.Files {
-		fi := apigen.ImportedFile{Name: f.Name, Imported: f.Imported}
-		fi.Quality = optStr(f.Quality)
-		fi.Reason = optStr(f.Reason)
-		if f.Upgrade {
-			up := true
-			fi.Upgrade = &up
-		}
-		out.Files = append(out.Files, fi)
-	}
-	return out
 }
 
 // ListTransfers implements GET /system/transfers — the data plane.

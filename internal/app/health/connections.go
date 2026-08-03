@@ -63,11 +63,8 @@ type ConnectionState struct {
 	// is a different problem from "answering, but quiet", and only this
 	// tells them apart.
 	LastError string
-	// Busy: a sweep of this client is in flight. Staleness does not apply
-	// while it is set — see [Contact.Busy].
-	Busy     bool
-	Capacity *ports.Capacity
-	Version  string
+	Capacity  *ports.Capacity
+	Version   string
 }
 
 // ConnectionMonitor probes the remote applications once and serves both
@@ -174,9 +171,11 @@ func (st ConnectionState) results() []CheckResult {
 // LastError here instead, which is empty whenever nothing actually failed —
 // an amber badge with a blank cell beside it.
 func (st ConnectionState) StaleMessage() string {
-	msg := fmt.Sprintf("answering, but nothing has come through it for %s", roughly(st.StaleFor))
+	msg := fmt.Sprintf("reachability test answers, but Monarr's queue-status poll has not completed successfully for %s", roughly(st.StaleFor))
 	if st.LastError != "" {
 		msg += " (last error: " + oneLine(st.LastError) + ")"
+	} else {
+		msg += "; check whether the queue.refresh task is still running"
 	}
 	return msg
 }

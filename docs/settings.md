@@ -144,14 +144,14 @@ That reported path must be **openable by Monarr as-is**:
   container at `/pool/downloads/...` → map `/data/completed` →
   `/pool/downloads`.
 
-Activity → **Manual import** starts at `/pool/downloads`, which is the
-standard deployment's completed folder. It is a convenience default, not a
-second client setting: if your client finishes elsewhere, type that absolute
-path. The field enumerates matching directories as you type and offers a
-**Parent folder** row. If the default does not exist in your deployment,
-choose **Filesystem root** and descend from `/`. You can navigate the
-filesystem Monarr sees without copying names from a separate directory
-listing.
+Activity → **Manual import** starts at the completed folder Monarr sees. A
+remote-path mapping's local prefix is authoritative; without one, Monarr uses
+the parent of a recent completed payload, then `/pool/downloads` as the
+standard-deployment fallback. This is a convenience default, not a second
+client setting. The field enumerates matching directories as you type and
+offers a **Parent folder** row; **Filesystem root** descends from `/`. You can
+navigate the filesystem Monarr sees without copying names from a separate
+directory listing.
 
 ### When an import can't proceed
 
@@ -477,10 +477,17 @@ grabs are being accepted and going nowhere; a revoked plurx key means imports
 are succeeding and never appearing. One averaged line would tell you none of
 that.
 
-A client that *answers* but through which nothing has actually come is
-reported too: warning after 5 minutes, error after 30. That is what a push
-subscription dying quietly looks like, and reachability alone would call it
-healthy forever.
+A client whose reachability test answers but whose queue-status poll has not
+completed successfully is reported too: warning after 5 minutes, error after
+30. The Detail column names the stalled operation, its age, and the last
+error when one exists; without an upstream error it points you to the running
+`queue.refresh` task. Reachability and queue polling are different facts, and
+the page says which one failed.
+
+A library copy no longer waits inside `queue.refresh`: importer-owned rows
+are skipped until their worker finishes. A multi-gigabyte import therefore
+cannot freeze the client's contact clock and falsely degrade nzbd while nzbd
+is answering normally.
 
 For nzbd, `client:<name>:capacity` names the reason it is up and downloading
 nothing — low disk, quota used up, blocked news servers, a paused queue — in

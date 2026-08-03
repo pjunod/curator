@@ -24,6 +24,8 @@ const (
 	stepDownloading     = "downloading"
 	stepDownloaded      = "downloaded"
 	stepAwaiting        = "awaiting_import"
+	stepImportQueued    = "import_queued"
+	stepManualQueued    = "manual_import_queued"
 	stepImporting       = "importing"
 	stepImportCancelled = "import_cancelled"
 	stepImportRecovered = "import_recovered"
@@ -100,9 +102,21 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	}
 	s.advance(ctx, &dl, "importing", 1, "", stepImporting,
 		"looking for media files in "+orNone(imp))
-	// Automatic import: gated by the profile, because that is what a profile
-	// is for. A manual import is the override and passes manual=true.
-	result, err := s.importDownload(ctx, dl, imp, false)
+	// A manual selection is part of the durable handoff trace. Read the newest
+	// one backwards so a retry after a failed copy imports exactly what the
+	// person selected, even after a process restart.
+	var selected []string
+	manual := false
+	for i := len(dl.Handoff) - 1; i >= 0; i-- {
+		if dl.Handoff[i].Step == stepManualQueued {
+			selected = dl.Handoff[i].Paths
+			manual = true
+			break
+		}
+	}
+	// Automatic import is gated by the profile. A manual import is the
+	// explicit override and passes manual=true.
+	result, err := s.importDownloadFiles(ctx, dl, imp, selected, manual)
 	if err != nil {
 		// An intentional cancel already returns the durable row to downloaded.
 		// Do not race that with a misleading failed/context-canceled state.
@@ -113,6 +127,9 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 		return err
 	}
 	detail := fmt.Sprintf("imported %d file(s) into the library", result.Imported)
+	if manual {
+		detail = fmt.Sprintf("manually imported %d selected file(s) into the library", result.Imported)
+	}
 	if result.Upgraded {
 		detail += " (upgrade)"
 	}
@@ -138,6 +155,28 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 // the underlying problem (a mount, a path mapping) is fixed. It uses the
 // path captured at download time.
 func (s *Service) ImportNow(ctx context.Context, id int64) error {
+	// Keep the historical inline seam for focused service tests. Production
+	// always starts the bounded workers and takes the asynchronous path below.
+	if s.importCh == nil {
+		dl, err := s.db.GetDownload(ctx, id)
+		if err != nil {
+			return err
+		}
+		if dl.State == "imported" {
+			return nil
+		}
+		if dl.ImportPath == "" && dl.SavePath == "" {
+			return fmt.Errorf("no download path recorded yet — wait for the download to finish")
+		}
+		return s.runImport(ctx, dl)
+	}
+
+	// Queueing and the durable transition are one per-download decision. A
+	// worker may receive the channel item immediately, but it takes this same
+	// lock before it can import, so Activity cannot observe the old failed row
+	// after the retry has already been accepted.
+	unlock := s.lockDownload(id)
+	defer unlock()
 	dl, err := s.db.GetDownload(ctx, id)
 	if err != nil {
 		return err
@@ -151,14 +190,38 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	if s.ImportRunning(id) {
 		return fmt.Errorf("import is already running")
 	}
-	cfg, err := s.db.GetDownloadClient(ctx, dl.ClientID)
-	if err != nil {
-		return err
+	var cfg ports.ClientConfig
+	if dl.ClientID != 0 {
+		cfg, err = s.db.GetDownloadClient(ctx, dl.ClientID)
+		if err != nil {
+			return err
+		}
 	}
 	if !s.enqueueImport(ctx, dl, cfg) {
 		return fmt.Errorf("import is already queued")
 	}
+	s.advance(ctx, &dl, "downloaded", dl.Progress, "", stepImportQueued,
+		"waiting for an import worker")
 	return nil
+}
+
+// RetryFolderlessImports queues every failed import whose only blocker was
+// this item's missing library destination. Saving the destination is the fix;
+// asking the user to return to Activity and press Retry on every row adds no
+// useful decision.
+func (s *Service) RetryFolderlessImports(ctx context.Context, itemID int64) (int, error) {
+	ids, err := s.db.ListFolderlessFailedDownloadIDsForItem(ctx, itemID)
+	if err != nil {
+		return 0, err
+	}
+	queued := 0
+	for _, id := range ids {
+		if err := s.ImportNow(ctx, id); err != nil {
+			return queued, fmt.Errorf("retry import %d: %w", id, err)
+		}
+		queued++
+	}
+	return queued, nil
 }
 
 // BlocklistReplace declares a download's release bad: it removes the payload

@@ -420,6 +420,12 @@ async function send<T = void>(method: string, path: string, body?: unknown): Pro
 export const getLibrary = (kind?: MediaKind) =>
   get<MediaItemSummary[]>(`/library${kind ? `?kind=${kind}` : ''}`)
 export const getLibraryItem = (id: number) => get<MediaItemDetail>(`/library/${id}`)
+export interface PlacementSuggestion {
+  rootFolderId: number
+  path: string
+}
+export const getLibraryPlacementSuggestion = (id: number) =>
+  get<PlacementSuggestion>(`/library/${id}/placement-suggestion`)
 export const addLibraryItem = (req: AddMediaRequest) =>
   send<MediaItemDetail>('POST', '/library', req)
 export const deleteLibraryItem = (id: number) => send('DELETE', `/library/${id}`)
@@ -645,6 +651,8 @@ export interface QueueItem {
   error?: string
   savePath?: string
   importPath?: string
+  /** Whether the bounded Monarr importer is waiting for a worker or owns one. */
+  importState?: 'queued' | 'running'
   handoff?: HandoffEntry[]
   addedAt: string
   /**
@@ -783,24 +791,13 @@ export const removeLibraryFile = (itemId: number, fileId: number, opts: RemoveFi
 }
 export const scanImportPath = (path: string) =>
   get<ScannedFile[]>(`/import/scan?path=${encodeURIComponent(path)}`)
-/** What happened to one file in an import — including why it did not land. */
-export interface ImportedFile {
-  name: string
-  imported: boolean
-  upgrade?: boolean
-  quality?: string
-  /** Why it was declined. Empty when it was imported. */
-  reason?: string
-}
-
-export interface ImportOutcome {
-  imported: number
-  upgrade: boolean
-  files: ImportedFile[]
+export const getManualImportDefaultPath = () => get<{ path: string }>('/import/default-path')
+export interface ManualImportAccepted {
+  downloadId: number
 }
 
 export const manualImport = (req: ManualImportRequest) =>
-  send<ImportOutcome>('POST', '/import/manual', req)
+  send<ManualImportAccepted>('POST', '/import/manual', req)
 
 export function posterUrl(path: string, size: 'w185' | 'w342' | 'w500' = 'w342'): string {
   if (!path) return ''

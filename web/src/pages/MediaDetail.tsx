@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate, useParams } from '@tanstack/react-router'
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import {
   ACTIVE_DOWNLOAD_STATES,
   addMediaCopy,
@@ -11,6 +11,7 @@ import {
   fmtBytes,
   fmtRatingValue,
   getLibraryItem,
+  getLibraryPlacementSuggestion,
   getProfiles,
   getQueue,
   getRootFolders,
@@ -198,11 +199,18 @@ function EditPanel(props: {
   item: MediaItemDetail
   onClose: () => void
   onSaved?: (message: string) => void
+  repairLocation?: boolean
 }) {
   const { item } = props
   const qc = useQueryClient()
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
+  const suggestion = useQuery({
+    queryKey: ['library-placement-suggestion', item.id],
+    queryFn: () => getLibraryPlacementSuggestion(item.id),
+    enabled: props.repairLocation === true && item.path === '',
+    retry: false,
+  })
 
   const [monitored, setMonitored] = useState(item.monitored)
   const [profileId, setProfileId] = useState(item.qualityProfileId)
@@ -211,6 +219,13 @@ function EditPanel(props: {
   )
   const [rootId, setRootId] = useState<number>(item.rootFolderId)
   const [path, setPath] = useState(item.path)
+
+  useEffect(() => {
+    if (item.path === '' && path === '' && suggestion.data) {
+      setRootId(suggestion.data.rootFolderId)
+      setPath(suggestion.data.path)
+    }
+  }, [item.path, path, suggestion.data])
 
   const profileChanged = profileId !== item.qualityProfileId
   const save = useMutation({
@@ -238,6 +253,8 @@ function EditPanel(props: {
       // difference between "monarr is working on it" and "nothing happened".
       if (profileChanged && monitored) {
         props.onSaved?.('Profile changed — searching for the new target in the background.')
+      } else if (item.path === '' && path !== '') {
+        props.onSaved?.('Folder assigned — affected imports were queued automatically.')
       }
       props.onClose()
     },
@@ -252,6 +269,9 @@ function EditPanel(props: {
         </button>
       </h2>
       {save.isError && <div className="banner warning">{String((save.error as Error).message)}</div>}
+      {suggestion.isError && props.repairLocation && (
+        <div className="banner warning">{String((suggestion.error as Error).message)}</div>
+      )}
       <div className="form-grid">
         <label>
           Monitored
@@ -562,10 +582,11 @@ function FileActions({
 
 export function MediaDetailPage() {
   const { id } = useParams({ from: '/library/$id' })
+  const search = useSearch({ from: '/library/$id' })
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [confirming, setConfirming] = useState(false)
-  const [editing, setEditing] = useState(false)
+  const [editing, setEditing] = useState(search.assignFolder === true)
   // Interactive search target: null = closed; {season?, episode?} = open.
   const [searching, setSearching] = useState<{ season?: number; episode?: number } | null>(null)
   // Season disclosure state. Season 1 opens by default; anything the user
@@ -919,7 +940,12 @@ export function MediaDetailPage() {
       {autoMsg && <div className="banner">{autoMsg}</div>}
 
       {editing && (
-        <EditPanel item={m} onClose={() => setEditing(false)} onSaved={setAutoMsg} />
+        <EditPanel
+          item={m}
+          repairLocation={search.assignFolder === true}
+          onClose={() => setEditing(false)}
+          onSaved={setAutoMsg}
+        />
       )}
 
       {m.kind !== 'book' && <CopiesPanel item={m} />}

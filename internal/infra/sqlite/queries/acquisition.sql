@@ -106,6 +106,18 @@ SET state = ?, progress = ?, error = ?, save_path = ?, import_path = ?,
     handoff_log = ?, updated_at = ?
 WHERE id = ?;
 
+-- name: UpdateDownloadTarget :exec
+UPDATE downloads
+SET media_item_id = ?, copy_id = ?, import_path = ?, updated_at = ?
+WHERE id = ?;
+
+-- name: ListFolderlessFailedDownloadIDsForItem :many
+SELECT id FROM downloads
+WHERE media_item_id = ?
+  AND state = 'failed'
+  AND error = 'item has no library folder assigned'
+ORDER BY added_at;
+
 -- name: SetDownloadHandle :exec
 UPDATE downloads SET handle = ?, transfer = ?, updated_at = ? WHERE id = ?;
 

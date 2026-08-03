@@ -2,13 +2,32 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
 	"github.com/pjunod/monarr/internal/domain"
 )
+
+func TestAcqManualImportIsAcceptedAsAnActivityJob(t *testing.T) {
+	e := newAPIEnv(t)
+	itemID := e.addMovie(t)
+	p := filepath.Join(t.TempDir(), "Fight.Club.1999.1080p.WEB-DL-MANUAL.mkv")
+	if err := os.WriteFile(p, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"path":%q,"paths":[%q],"mediaItemId":%d}`, p, p, itemID)
+	rr := e.post(t, "/api/v1/import/manual", body).expect(t, http.StatusAccepted)
+	var accepted apigen.ManualImportAccepted
+	rr.into(t, &accepted)
+	if accepted.DownloadId == 0 {
+		t.Fatalf("manual import returned no Activity row: %s", rr.Body.String())
+	}
+}
 
 // The acquisition half of /api/v1 — indexers, clients, the queue, search and
 // grab, custom formats, import lists, the blocklist, the calendar, wanted,
