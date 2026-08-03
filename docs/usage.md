@@ -467,18 +467,22 @@ arrives unmonitored.
 
 ## When an import doesn't import
 
-The manual import panel (Activity → Manual import) now reports what happened
-to **every** file, including the ones it declined and why — "no files
-imported from `<path>`" on its own is true and useless.
+The manual import panel (Activity → Manual import) validates the selected
+files, queues an Activity job, and closes immediately. The copy continues in
+the background, so an 18 GB file never turns the panel into a progress modal.
+Expand the Activity row for the per-file result and the exact reason anything
+was declined — "no files imported from `<path>`" on its own is true and
+useless.
 
-It opens at `/pool/downloads`, the completed-download folder in Monarr's
-standard deployment. The path field is also a filesystem browser: type an
-absolute path to enumerate matching folders, choose a folder to descend, or
-use **Parent folder** to go back up. If that standard default is not mounted,
-**Filesystem root** starts navigation at `/`. After **Scan**, check the exact
-files to import. A folder with several media files starts with none selected,
-because silently importing a neighbouring release into the chosen title is
-worse than asking for one deliberate click.
+The panel starts at the completed-download folder Monarr actually sees: the
+local side of a configured remote-path mapping first, then the parent of a
+recent completed payload, then `/pool/downloads` as the standard-deployment
+fallback. The path field is also a filesystem browser: type an absolute path
+to enumerate matching folders, choose a folder to descend, or use **Parent
+folder** to go back up. **Filesystem root** starts navigation at `/`. After
+**Scan**, check the exact files to import. A folder with several media files
+starts with none selected, because silently importing a neighbouring release
+into the chosen title is worse than asking for one deliberate click.
 
 Common reasons, and what they mean:
 
@@ -487,7 +491,7 @@ Common reasons, and what they mean:
 | `… does not improve on the … already here (profile "X")` | Only automation is gated by the profile. A manual import is the override and goes ahead anyway. |
 | `no known episodes for S20 [18 19 20]` | monarr has no episode records for those numbers — refresh the series metadata first. |
 | `cannot determine episodes from "<name>"` | The filename carries no `S00E00` pattern monarr recognises. |
-| `item has no library folder assigned` | This can remain on older rows created before the add/grab guard. Press **Assign folder**, save the item's location, then **Retry**. New search/add and grab requests are refused before downloading when no destination exists. |
+| `item has no library folder assigned` | This can remain on older rows created before the add/grab guard. Press **Assign folder**: the form opens with Monarr's default root and exact folder name filled in. Saving queues every affected failed import automatically. New search/add and grab requests are refused before downloading when no destination exists. |
 
 A **manual** import is never blocked by the quality profile: you pointed at
 the folder and pressed Import, and that is the decision. It still only
@@ -701,7 +705,7 @@ Every row carries the controls for its state:
   a restartable **downloaded** state.
 - **Manual import** — browse Monarr to the real files (a folder or a single
   file), select exactly which scan results belong, pick the target title and
-  copy, and import.
+  copy, and queue the import.
   Use it when automation couldn't resolve the payload, or to pull in files
   you placed by hand. It's also on the top of the Activity page for imports
   not tied to any download.
@@ -716,6 +720,12 @@ shows bytes copied, total bytes, average rate, elapsed time, and the current
 detail. A durable row left behind by a stopped process instead says
 **interrupted · No importer is running**; a full progress bar is not used as
 a substitute for status.
+
+An accepted import waiting behind the two bounded workers sits under
+**Waiting to copy**, says **queued**, and offers **Cancel import**. It is not
+an interrupted job and pressing Retry again is neither necessary nor
+accepted. The durable handoff trace records `Queued for import` before the
+worker starts.
 
 **Require approval per client** (Settings → Download clients) flips a
 client from hands-free to hold-for-approval: its completed downloads park at

@@ -60,6 +60,24 @@ type libDetail struct {
 	} `json:"copies"`
 }
 
+func TestLibraryPlacementSuggestionNamesTheExactDefaultFolder(t *testing.T) {
+	e := newAPIEnv(t)
+	rr := e.post(t, "/api/v1/library", `{"kind":"movie","tmdbId":550}`).
+		expect(t, http.StatusCreated)
+	var item libDetail
+	rr.into(t, &item)
+
+	var got struct {
+		RootFolderID int64  `json:"rootFolderId"`
+		Path         string `json:"path"`
+	}
+	e.get(t, "/api/v1/library/"+strconv.FormatInt(item.ID, 10)+"/placement-suggestion").
+		expect(t, http.StatusOK).into(t, &got)
+	if got.RootFolderID == 0 || got.Path != filepath.Join(e.root, "Fight Club (1999)") {
+		t.Fatalf("placement suggestion = %+v", got)
+	}
+}
+
 type libSummary struct {
 	ID        int64  `json:"id"`
 	Kind      string `json:"kind"`

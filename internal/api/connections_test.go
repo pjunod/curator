@@ -131,6 +131,9 @@ func TestADegradedConnectionAlwaysSaysWhy(t *testing.T) {
 		if !strings.Contains(*c.Detail, "48m") {
 			t.Errorf("detail = %q, want it to name how long it has been quiet", *c.Detail)
 		}
+		if !strings.Contains(*c.Detail, "queue-status poll") {
+			t.Errorf("detail = %q, want it to name the operation that stopped completing", *c.Detail)
+		}
 		return
 	}
 	t.Fatal("the client was not listed")

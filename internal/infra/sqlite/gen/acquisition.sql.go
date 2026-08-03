@@ -645,6 +645,37 @@ func (q *Queries) ListFileQualityRecordsForItem(ctx context.Context, mediaItemID
 	return items, nil
 }
 
+const listFolderlessFailedDownloadIDsForItem = `-- name: ListFolderlessFailedDownloadIDsForItem :many
+SELECT id FROM downloads
+WHERE media_item_id = ?
+  AND state = 'failed'
+  AND error = 'item has no library folder assigned'
+ORDER BY added_at
+`
+
+func (q *Queries) ListFolderlessFailedDownloadIDsForItem(ctx context.Context, mediaItemID int64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listFolderlessFailedDownloadIDsForItem, mediaItemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHistory = `-- name: ListHistory :many
 SELECT id, ts, type, media_item_id, release_title, data FROM history_events ORDER BY ts DESC LIMIT 200
 `
@@ -1210,6 +1241,31 @@ func (q *Queries) UpdateDownloadState(ctx context.Context, arg UpdateDownloadSta
 		arg.State,
 		arg.Progress,
 		arg.Error,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const updateDownloadTarget = `-- name: UpdateDownloadTarget :exec
+UPDATE downloads
+SET media_item_id = ?, copy_id = ?, import_path = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateDownloadTargetParams struct {
+	MediaItemID int64
+	CopyID      sql.NullInt64
+	ImportPath  string
+	UpdatedAt   int64
+	ID          int64
+}
+
+func (q *Queries) UpdateDownloadTarget(ctx context.Context, arg UpdateDownloadTargetParams) error {
+	_, err := q.db.ExecContext(ctx, updateDownloadTarget,
+		arg.MediaItemID,
+		arg.CopyID,
+		arg.ImportPath,
 		arg.UpdatedAt,
 		arg.ID,
 	)

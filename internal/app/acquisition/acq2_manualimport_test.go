@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
@@ -62,6 +64,21 @@ func TestAcq2ScanImportPathListsMediaAndSkipsSamples(t *testing.T) {
 	}
 	if book.Path != bookPath {
 		t.Errorf("book path = %q", book.Path)
+	}
+}
+
+func TestManualImportDefaultsToTheCompletedFolderMonarrSees(t *testing.T) {
+	svc, db, _ := setup(t, nil, &fakeClient{})
+	clients, err := db.ListDownloadClients(context.Background())
+	if err != nil || len(clients) == 0 {
+		t.Fatalf("clients = %+v, err = %v", clients, err)
+	}
+	clients[0].PathMappings = []ports.PathMapping{{Remote: "/downloads/done", Local: "/working/monarr/completed"}}
+	if err := db.UpdateDownloadClient(context.Background(), clients[0]); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.ManualImportDefaultPath(context.Background()); got != "/working/monarr/completed" {
+		t.Fatalf("manual import default = %q", got)
 	}
 }
 
@@ -321,6 +338,66 @@ func TestAcq2ManualImportHonoursTheChosenCopy(t *testing.T) {
 	}
 	if files[0].CopyID != copyID || !strings.HasPrefix(files[0].Path, copyDir) {
 		t.Errorf("manual import landed outside the copy: %+v", files[0])
+	}
+}
+
+func TestQueuedManualImportReturnsBeforeCopyAndPersistsTheSelection(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	svc.SetRegistry(transfers.New())
+	workerCtx, stop := context.WithCancel(context.Background())
+	svc.StartImporters(workerCtx)
+	t.Cleanup(func() { stop(); svc.WaitImporters() })
+
+	payload := t.TempDir()
+	selected := filepath.Join(payload, "Test.Show.S01E01.1080p.WEB-DL-MANUAL.mkv")
+	if err := os.WriteFile(selected, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	previous := placeFile
+	placeFile = func(ctx context.Context, _, _ string, _ func(done, total int64)) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	t.Cleanup(func() { placeFile = previous })
+
+	id, err := svc.QueueManualImport(context.Background(), ManualImportRequest{
+		Path: payload, Paths: []string{selected}, MediaItemID: itemID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id == 0 {
+		t.Fatal("queued manual import returned no Activity row")
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued manual import did not reach a worker")
+	}
+	dl, err := db.GetDownload(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dl.Protocol != "manual" || dl.MediaItemID != itemID {
+		t.Fatalf("manual Activity row = %+v", dl)
+	}
+	found := false
+	for _, h := range dl.Handoff {
+		if h.Step == stepManualQueued && len(h.Paths) == 1 && h.Paths[0] == selected {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("manual selection was not durable: %+v", dl.Handoff)
+	}
+	if svc.ImportStatus(id) == "" {
+		t.Fatal("manual import is copying but Activity cannot see its importer")
+	}
+	if err := svc.CancelImport(context.Background(), id); err != nil {
+		t.Fatal(err)
 	}
 }
 

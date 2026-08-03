@@ -49,18 +49,24 @@ test('the approve-imports toggle on a client persists', async ({ page, request }
   await expect.poll(approvalOf).toBe(false)
 })
 
-test('manual import scans a folder and skips samples', async ({ page }) => {
+test('manual import scans a folder and skips samples', async ({ page, request }) => {
   const dir = mkdtempSync(join(process.env.E2E_MEDIA_ROOT!, 'manual-'))
   writeFileSync(join(dir, 'Some.Movie.2021.1080p.WEB-DL.x264-GRP.mkv'), 'x')
   writeFileSync(join(dir, 'Another.Movie.2022.720p.WEB-DL.x264-GRP.mkv'), 'x')
   writeFileSync(join(dir, 'sample.mkv'), 's')
 
+  const learnedDefault = await (await request.get('/api/v1/import/default-path')).json()
   await page.goto('/activity')
+  let submitted: any
+  await page.route('**/api/v1/import/manual', async (route) => {
+    submitted = route.request().postDataJSON()
+    await route.fulfill({ status: 202, contentType: 'application/json', body: '{"downloadId":991}' })
+  })
   await page.getByRole('button', { name: 'Manual import' }).click()
 
   const panel = page.locator('.manual-import')
   await expect(panel).toBeVisible()
-  await expect(panel.getByLabel('Path')).toHaveValue('/pool/downloads/')
+  await expect(panel.getByLabel('Path')).toHaveValue(learnedDefault.path)
   await panel.getByLabel('Path').click()
   await expect(panel.getByRole('button', { name: /Filesystem root/ })).toBeVisible()
   await panel.getByLabel('Path').fill(dir)
@@ -71,11 +77,48 @@ test('manual import scans a folder and skips samples', async ({ page }) => {
   await expect(panel.getByText('sample.mkv')).toHaveCount(0)
   // Scan results are actionable rows now. A multi-file folder starts with
   // nothing selected so one title cannot accidentally absorb its neighbour.
-  await expect(panel.getByRole('button', { name: 'Import selected (0)' })).toBeDisabled()
+  await expect(panel.getByRole('button', { name: 'Queue selected (0)' })).toBeDisabled()
   await panel.getByLabel('Select Some.Movie.2021.1080p.WEB-DL.x264-GRP.mkv').check()
   // The target-title picker is populated from the library.
   const picker = panel.getByRole('combobox').first()
   await expect(picker.locator('option', { hasText: 'The Test Movie' })).toHaveCount(1)
   await picker.selectOption({ label: 'The Test Movie (2024)' })
-  await expect(panel.getByRole('button', { name: 'Import selected (1)' })).toBeEnabled()
+  const queue = panel.getByRole('button', { name: 'Queue selected (1)' })
+  await expect(queue).toBeEnabled()
+  await queue.click()
+  await expect(panel).toBeHidden()
+  expect(submitted.paths).toEqual([join(dir, 'Some.Movie.2021.1080p.WEB-DL.x264-GRP.mkv')])
+})
+
+test('an accepted import waiting for a worker is shown as queued, not interrupted', async ({ page }) => {
+  await page.route('**/api/v1/queue/summary', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ total: 1, active: 1, counts: { downloaded: 1 }, retentionDays: 30 }),
+    })
+  })
+  await page.route('**/api/v1/queue?*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([{
+        id: 991,
+        mediaItemId: 1,
+        title: 'Waiting.Release.2026.1080p.WEB-DL',
+        state: 'downloaded',
+        importState: 'queued',
+        progress: 1,
+        protocol: 'usenet',
+        quality: 'WEB-DL 1080p',
+        addedAt: new Date().toISOString(),
+      }]),
+    })
+  })
+
+  await page.goto('/activity')
+  await expect(page.getByText('Waiting to copy')).toBeVisible()
+  const row = page.locator('tr', { hasText: 'Waiting.Release.2026' })
+  await expect(row.getByText('queued', { exact: true })).toBeVisible()
+  await expect(row.getByText('Waiting for an import worker')).toBeVisible()
+  await expect(row.getByRole('button', { name: 'Cancel import' })).toBeVisible()
+  await expect(row.getByRole('button', { name: 'Restart import' })).toHaveCount(0)
 })

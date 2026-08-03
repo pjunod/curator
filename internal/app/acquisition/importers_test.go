@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -188,6 +189,173 @@ func TestThePollDoesNotWaitForTheImport(t *testing.T) {
 			t.Fatalf("the worker never ran the import; state = %q", dl.State)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A later poll must not wait on the per-download lock held by a running copy.
+// That was the remaining route by which a large import froze nzbd's contact
+// clock and made a healthy client appear degraded.
+func TestThePollDoesNotWaitBehindARunningImporter(t *testing.T) {
+	client := &fakeClient{}
+	svc, _, _ := setup(t, nil, client)
+	svc.SetRegistry(transfers.New())
+	workerCtx, stop := context.WithCancel(context.Background())
+	svc.StartImporters(workerCtx)
+	t.Cleanup(func() { stop(); svc.WaitImporters() })
+
+	id := grabEpisode(t, svc)
+	dir := payloadDir(t)
+	client.statuses = completed(dir)
+
+	started := make(chan struct{})
+	previous := placeFile
+	placeFile = func(ctx context.Context, _, _ string, _ func(done, total int64)) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	t.Cleanup(func() { placeFile = previous })
+
+	if err := svc.RefreshQueue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("importer did not start")
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- svc.RefreshQueue(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queue refresh waited behind the importer; client health will go stale")
+	}
+	if err := svc.CancelImport(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQueuedImportsAreVisibleAndCanBeCancelled(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setup(t, nil, client)
+	svc.SetRegistry(transfers.New())
+	workerCtx, stop := context.WithCancel(context.Background())
+	svc.StartImporters(workerCtx)
+	t.Cleanup(func() { stop(); svc.WaitImporters() })
+
+	clients, err := db.ListDownloadClients(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeDownload := func(episode int) int64 {
+		dir := t.TempDir()
+		name := fmt.Sprintf("Test.Show.S01E01.1080p.WEB-DL-QUEUE%d.mkv", episode)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("video"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		id, err := db.InsertDownload(context.Background(), sqlite.Download{
+			MediaItemID:  itemID,
+			WantableIDs:  []string{fmt.Sprintf("episode:%d:1:1", itemID)},
+			ReleaseTitle: name,
+			Protocol:     "torrent",
+			ClientID:     clients[0].ID,
+			State:        "downloaded",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		dl, _ := db.GetDownload(context.Background(), id)
+		dl.ImportPath = dir
+		if err := db.UpdateDownloadHandoff(context.Background(), dl); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	started := make(chan struct{}, importWorkers)
+	previous := placeFile
+	placeFile = func(ctx context.Context, _, _ string, _ func(done, total int64)) error {
+		started <- struct{}{}
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	t.Cleanup(func() { placeFile = previous })
+
+	first, second, waiting := makeDownload(1), makeDownload(2), makeDownload(3)
+	if err := svc.ImportNow(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ImportNow(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	for range importWorkers {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("import worker did not fill")
+		}
+	}
+	if err := svc.ImportNow(context.Background(), waiting); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.ImportStatus(waiting); got != "queued" {
+		t.Fatalf("waiting import status = %q, want queued", got)
+	}
+	if err := svc.CancelImport(context.Background(), waiting); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.ImportStatus(waiting); got != "" {
+		t.Fatalf("cancelled queued import status = %q, want empty", got)
+	}
+	dl, err := db.GetDownload(context.Background(), waiting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dl.State != "downloaded" {
+		t.Fatalf("cancelled queued row state = %q, want downloaded", dl.State)
+	}
+	_ = svc.CancelImport(context.Background(), first)
+	_ = svc.CancelImport(context.Background(), second)
+}
+
+func TestFolderlessFailuresAreRetriedAfterPlacementIsRepaired(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	payload := payloadDir(t)
+	id, err := db.InsertDownload(context.Background(), sqlite.Download{
+		MediaItemID:  itemID,
+		WantableIDs:  []string{fmt.Sprintf("episode:%d:1:1", itemID)},
+		ReleaseTitle: "Test.Show.S01E01.1080p.WEB-DL-FOLDERLESS",
+		Protocol:     "torrent",
+		State:        "failed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dl, _ := db.GetDownload(context.Background(), id)
+	dl.ImportPath = payload
+	dl.Error = ErrNoLibraryFolder.Error()
+	if err := db.UpdateDownloadHandoff(context.Background(), dl); err != nil {
+		t.Fatal(err)
+	}
+
+	queued, err := svc.RetryFolderlessImports(context.Background(), itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued != 1 {
+		t.Fatalf("retried = %d, want 1", queued)
+	}
+	dl, err = db.GetDownload(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dl.State != "imported" {
+		t.Fatalf("repaired import state = %q (%s), want imported", dl.State, dl.Error)
 	}
 }
 

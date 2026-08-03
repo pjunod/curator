@@ -235,10 +235,17 @@ const dashboardRoute = createRoute({
   component: Dashboard,
 })
 
+interface MediaDetailSearch {
+  assignFolder?: boolean
+}
+
 const mediaDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/library/$id',
   component: MediaDetailPage,
+  validateSearch: (search: Record<string, unknown>): MediaDetailSearch => ({
+    assignFolder: search.assignFolder === true || search.assignFolder === 'true' ? true : undefined,
+  }),
 })
 
 interface AddSearch {

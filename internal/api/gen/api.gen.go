@@ -524,6 +524,24 @@ func (e ProposalConfidence) Valid() bool {
 	}
 }
 
+// Defines values for QueueItemImportState.
+const (
+	Queued  QueueItemImportState = "queued"
+	Running QueueItemImportState = "running"
+)
+
+// Valid indicates whether the value is a known member of the QueueItemImportState enum.
+func (e QueueItemImportState) Valid() bool {
+	switch e {
+	case Queued:
+		return true
+	case Running:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RootKind.
 const (
 	RootKindBook   RootKind = "book"
@@ -1052,31 +1070,9 @@ type ImportListInput struct {
 // ImportListInputType defines model for ImportListInput.Type.
 type ImportListInputType string
 
-// ImportOutcome defines model for ImportOutcome.
-type ImportOutcome struct {
-	// Files Every file considered, in payload order.
-	Files []ImportedFile `json:"files"`
-
-	// Imported How many files landed in the library.
-	Imported int `json:"imported"`
-
-	// Upgrade Whether any of them replaced something already there.
-	Upgrade bool `json:"upgrade"`
-}
-
-// ImportedFile defines model for ImportedFile.
-type ImportedFile struct {
-	Imported bool   `json:"imported"`
-	Name     string `json:"name"`
-
-	// Quality The quality monarr judged the file by, e.g. "WEB-DL 1080p".
-	Quality *string `json:"quality,omitempty"`
-
-	// Reason Why it was not imported. Empty when it was.
-	Reason *string `json:"reason,omitempty"`
-
-	// Upgrade This file replaced one already in the library.
-	Upgrade *bool `json:"upgrade,omitempty"`
+// ImportPathDefault defines model for ImportPathDefault.
+type ImportPathDefault struct {
+	Path string `json:"path"`
 }
 
 // Indexer defines model for Indexer.
@@ -1105,6 +1101,12 @@ type IndexerInput struct {
 
 // IndexerInputProtocol defines model for IndexerInput.Protocol.
 type IndexerInputProtocol string
+
+// ManualImportAccepted defines model for ManualImportAccepted.
+type ManualImportAccepted struct {
+	// DownloadId Activity row that now owns the background import.
+	DownloadId int64 `json:"downloadId"`
+}
 
 // ManualImportRequest defines model for ManualImportRequest.
 type ManualImportRequest struct {
@@ -1354,6 +1356,13 @@ type PathMapping struct {
 	Remote string `json:"remote"`
 }
 
+// PlacementSuggestion defines model for PlacementSuggestion.
+type PlacementSuggestion struct {
+	// Path Exact default folder path produced by Monarr's naming rules.
+	Path         string `json:"path"`
+	RootFolderId int64  `json:"rootFolderId"`
+}
+
 // PlurxWatchedEvent defines model for PlurxWatchedEvent.
 type PlurxWatchedEvent struct {
 	Episode *int `json:"episode,omitempty"`
@@ -1465,11 +1474,14 @@ type QueueItem struct {
 	Id      int64           `json:"id"`
 
 	// ImportPath Where Monarr looked for the files after remote path mapping.
-	ImportPath  *string `json:"importPath,omitempty"`
-	MediaItemId int64   `json:"mediaItemId"`
-	Progress    float32 `json:"progress"`
-	Protocol    string  `json:"protocol"`
-	Quality     string  `json:"quality"`
+	ImportPath *string `json:"importPath,omitempty"`
+
+	// ImportState The in-memory importer state. `queued` means the job was accepted and is waiting for one of the bounded import workers; `running` means a worker owns it. Absent means no importer owns this row.
+	ImportState *QueueItemImportState `json:"importState,omitempty"`
+	MediaItemId int64                 `json:"mediaItemId"`
+	Progress    float32               `json:"progress"`
+	Protocol    string                `json:"protocol"`
+	Quality     string                `json:"quality"`
 
 	// SavePath The completed-download path the client reported.
 	SavePath *string `json:"savePath,omitempty"`
@@ -1491,6 +1503,9 @@ type QueueItem struct {
 	// Total Bytes expected at the current stage. Absent when unknown — which is NOT the same as zero.
 	Total *int64 `json:"total,omitempty"`
 }
+
+// QueueItemImportState The in-memory importer state. `queued` means the job was accepted and is waiting for one of the bounded import workers; `running` means a worker owns it. Absent means no importer owns this row.
+type QueueItemImportState string
 
 // QueueSummary defines model for QueueSummary.
 type QueueSummary struct {
@@ -2142,6 +2157,9 @@ type ServerInterface interface {
 	// ListHistory What happened to a release — grab, client outcome, import result
 	// (GET /history)
 	ListHistory(w http.ResponseWriter, r *http.Request, params ListHistoryParams)
+	// GetManualImportDefaultPath Completed-download folder Monarr sees for manual imports
+	// (GET /import/default-path)
+	GetManualImportDefaultPath(w http.ResponseWriter, r *http.Request)
 	// ManualImport Import files from a path into a chosen item/copy
 	// (POST /import/manual)
 	ManualImport(w http.ResponseWriter, r *http.Request)
@@ -2241,6 +2259,9 @@ type ServerInterface interface {
 	// RemoveLibraryFile Remove one file from an item, and optionally condemn its release
 	// (DELETE /library/{id}/files/{fileId})
 	RemoveLibraryFile(w http.ResponseWriter, r *http.Request, id int64, fileId int64, params RemoveLibraryFileParams)
+	// GetLibraryPlacementSuggestion Suggest the default root and exact folder for an existing item
+	// (GET /library/{id}/placement-suggestion)
+	GetLibraryPlacementSuggestion(w http.ResponseWriter, r *http.Request, id int64)
 	// ReprobeLibraryItem Re-measure this item's files
 	// (POST /library/{id}/probe)
 	ReprobeLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
@@ -2842,6 +2863,20 @@ func (siw *ServerInterfaceWrapper) ListHistory(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListHistory(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetManualImportDefaultPath operation middleware
+func (siw *ServerInterfaceWrapper) GetManualImportDefaultPath(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetManualImportDefaultPath(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3660,6 +3695,32 @@ func (siw *ServerInterfaceWrapper) RemoveLibraryFile(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RemoveLibraryFile(w, r, id, fileId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetLibraryPlacementSuggestion operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryPlacementSuggestion(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryPlacementSuggestion(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4704,6 +4765,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}", wrapper.DeleteLibraryItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}", wrapper.GetLibraryItem)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}", wrapper.UpdateLibraryItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/placement-suggestion", wrapper.GetLibraryPlacementSuggestion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan", wrapper.ScanLibrary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/report", wrapper.GetScanReport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/review", wrapper.GetReviewQueue)
@@ -4753,6 +4815,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/cancel-import", wrapper.CancelQueueImport)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/blocklist", wrapper.BlocklistQueueItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/scan", wrapper.ScanImportPath)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/default-path", wrapper.GetManualImportDefaultPath)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/manual", wrapper.ManualImport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/customformats", wrapper.ListCustomFormats)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/customformats", wrapper.AddCustomFormat)

@@ -465,6 +465,39 @@ type UpdateRequest struct {
 	Path                *string // explicit folder override; wins over RootFolderID's recompute
 }
 
+// PlacementSuggestion is the same root-and-name decision Add media would
+// have made for an item. It is used when repairing an older item that reached
+// the library without a destination.
+type PlacementSuggestion struct {
+	RootFolderID int64
+	Path         string
+}
+
+// SuggestPlacement chooses the first compatible root (the Add page default)
+// and applies Monarr's naming rules. Keeping this on the server prevents the
+// repair form from growing a second, subtly different folder-name algorithm.
+func (s *Service) SuggestPlacement(ctx context.Context, id int64) (PlacementSuggestion, error) {
+	item, err := s.db.GetMediaItemFull(ctx, id)
+	if err != nil {
+		return PlacementSuggestion{}, err
+	}
+	roots, err := s.db.ListRootFolders(ctx)
+	if err != nil {
+		return PlacementSuggestion{}, err
+	}
+	for _, rf := range roots {
+		if !rf.Kind.Accepts(item.Kind) {
+			continue
+		}
+		folder := naming.FolderName(item.Title, item.Year)
+		if item.Kind == domain.KindBook {
+			folder = naming.BookFolder(item.Author, item.Title)
+		}
+		return PlacementSuggestion{RootFolderID: rf.ID, Path: filepath.Join(rf.Path, folder)}, nil
+	}
+	return PlacementSuggestion{}, fmt.Errorf("%w: no library root accepts %s", ErrInvalidInput, item.Kind)
+}
+
 // UpdateItem applies a per-item edit: monitoring, quality profile, and
 // location. Changing the root folder recomputes the item folder from the
 // naming rules; files already on disk are never moved.

@@ -342,6 +342,10 @@ type HandoffEntry struct {
 	Step   string `json:"step"`
 	At     int64  `json:"at"`
 	Detail string `json:"detail,omitempty"`
+	// Paths is populated only for a queued manual import. Keeping the exact
+	// selection in the durable trace means a process restart or later retry
+	// cannot silently widen "these files" back to "everything in the folder".
+	Paths []string `json:"paths,omitempty"`
 }
 
 // Download is a queue row (persisted Download state machine, blueprint §4.2).
@@ -446,6 +450,12 @@ func (d *DB) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 	return out, nil
 }
 
+// ListFolderlessFailedDownloadIDsForItem returns the older failed imports
+// that became actionable when an item's missing destination was repaired.
+func (d *DB) ListFolderlessFailedDownloadIDsForItem(ctx context.Context, itemID int64) ([]int64, error) {
+	return d.Read.ListFolderlessFailedDownloadIDsForItem(ctx, itemID)
+}
+
 // UpdateDownloadState transitions a queue row.
 func (d *DB) UpdateDownloadState(ctx context.Context, id int64, state string, progress float64, errMsg string) error {
 	return d.Write.UpdateDownloadState(ctx, sqlitegen.UpdateDownloadStateParams{
@@ -466,6 +476,19 @@ func (d *DB) UpdateDownloadHandoff(ctx context.Context, dl Download) error {
 		State: dl.State, Progress: dl.Progress, Error: dl.Error,
 		SavePath: dl.SavePath, ImportPath: dl.ImportPath,
 		HandoffLog: string(log), UpdatedAt: time.Now().UnixMilli(), ID: dl.ID,
+	})
+}
+
+// UpdateDownloadTarget persists the target chosen in a manual-import form.
+// It is deliberately separate from stage transitions: many automatic
+// handoff callers carry only a partial Download and must never erase copy_id.
+func (d *DB) UpdateDownloadTarget(ctx context.Context, dl Download) error {
+	return d.Write.UpdateDownloadTarget(ctx, sqlitegen.UpdateDownloadTargetParams{
+		MediaItemID: dl.MediaItemID,
+		CopyID:      sql.NullInt64{Int64: dl.CopyID, Valid: dl.CopyID != 0},
+		ImportPath:  dl.ImportPath,
+		UpdatedAt:   time.Now().UnixMilli(),
+		ID:          dl.ID,
 	})
 }
 

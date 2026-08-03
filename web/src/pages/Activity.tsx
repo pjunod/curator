@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
-  type ImportOutcome,
   type ManualImportRequest,
   type QueueItem,
   type ScannedFile,
@@ -15,6 +14,7 @@ import {
   fmtRelative,
   getLibrary,
   getLibraryItem,
+  getManualImportDefaultPath,
   getQueuePage,
   getQueueSummary,
   importQueueItem,
@@ -44,6 +44,7 @@ const STEP_LABEL: Record<string, string> = {
   downloading: 'Downloading',
   downloaded: 'Downloaded',
   awaiting_import: 'Awaiting approval',
+  import_queued: 'Queued for import',
   importing: 'Importing',
   import_cancelled: 'Import cancelled',
   import_recovered: 'Import recovered',
@@ -128,8 +129,20 @@ type Section = { key: string; label: string; title?: string; rows: QueueItem[] }
 function sections(rows: QueueItem[]): Section[] {
   const out: Section[] = []
   const live = new Set<number>()
+  const queued = rows.filter((r) => r.importState === 'queued')
   for (const stage of STAGES) {
-    const inStage = rows.filter((r) => r.stage === stage)
+    if (stage === 'importing' && queued.length > 0) {
+      queued.forEach((r) => live.add(r.id))
+      out.push({
+        key: 'import-queued',
+        label: 'Waiting to copy',
+        title: 'Accepted by Monarr and waiting for an available import worker',
+        rows: queued,
+      })
+    }
+    const inStage = rows.filter(
+      (r) => !live.has(r.id) && r.importState !== 'queued' && r.stage === stage,
+    )
     inStage.forEach((r) => live.add(r.id))
     if (inStage.length > 0) {
       out.push({ key: stage, label: STAGE_LABEL[stage], title: STAGE_TITLE[stage], rows: inStage })
@@ -155,7 +168,13 @@ function sections(rows: QueueItem[]): Section[] {
 // is a different and usually false statement about a job that is midway
 // through repairing a 60 GB archive.
 function StageProgress({ d }: { d: QueueItem }) {
-  if (d.state === 'importing' && !d.stage) {
+  if (d.importState === 'queued') {
+    return <span className="muted">Waiting for an import worker</span>
+  }
+  if (d.importState === 'running' && !d.stage) {
+    return <span className="muted">Starting importer…</span>
+  }
+  if (d.state === 'importing' && !d.stage && !d.importState) {
     return <span className="error-text">No importer is running</span>
   }
   const known = typeof d.total === 'number' && d.total > 0
@@ -501,11 +520,14 @@ function RowGroup(props: {
   onManual: () => void
 }) {
   const { d, open, busy } = props
-  const canImport = d.state === 'awaiting_import' || d.state === 'downloaded'
+  const queuedImport = d.importState === 'queued'
+  const startingImport = d.importState === 'running' && !d.stage
+  const canImport = (d.state === 'awaiting_import' || d.state === 'downloaded') && !d.importState
   const canRetry = d.state === 'failed'
-  const interruptedImport = d.state === 'importing' && !d.stage
+  const interruptedImport = d.state === 'importing' && !d.stage && !d.importState
   const activeImport = d.stage === 'importing'
-  const canBlocklist = d.state !== 'imported' && !activeImport
+  const importerOwned = queuedImport || startingImport || activeImport
+  const canBlocklist = d.state !== 'imported' && !importerOwned
 
   return (
     <>
@@ -538,7 +560,11 @@ function RowGroup(props: {
             APPLICATION is doing this. Monarr's own name appears exactly once,
             on the one stage Monarr performs itself.
           */}
-          {interruptedImport ? (
+          {queuedImport ? (
+            <span className="pill pill-neutral">queued</span>
+          ) : startingImport ? (
+            <span className="muted stage-owner">Monarr</span>
+          ) : interruptedImport ? (
             <span className="pill pill-warning">interrupted</span>
           ) : d.stage ? (
             <span className="muted stage-owner">{d.stagePeer || 'Monarr'}</span>
@@ -576,13 +602,17 @@ function RowGroup(props: {
                 Restart import
               </button>
             )}
-            {(activeImport || interruptedImport) && (
+            {(importerOwned || interruptedImport) && (
               <button className="btn-danger" onClick={props.onCancelImport} disabled={busy}>
                 Cancel import
               </button>
             )}
             {d.error?.includes('no library folder assigned') && (
-              <Link to="/library/$id" params={{ id: String(d.mediaItemId) }}>
+              <Link
+                to="/library/$id"
+                params={{ id: String(d.mediaItemId) }}
+                search={{ assignFolder: true }}
+              >
                 Assign folder
               </Link>
             )}
@@ -591,7 +621,7 @@ function RowGroup(props: {
                 Blocklist
               </button>
             )}
-            {!activeImport && !interruptedImport && (
+            {!importerOwned && !interruptedImport && (
               <button onClick={props.onRemove} disabled={busy}>
                 Remove
               </button>
@@ -658,19 +688,23 @@ function ManualImportPanel({
   prefill: Partial<ManualImportRequest>
   onDone: () => void
 }) {
-  // This is the completed-download folder in Monarr's standard deployment.
-  // Queue-row manual imports still win with their exact recorded path.
-  const [path, setPath] = useState(prefill.path ?? '/pool/downloads/')
+  // The API learns the completed-download folder from path mappings or recent
+  // rows. Queue-row manual imports still win with their exact recorded path.
+  const [path, setPath] = useState(prefill.path ?? '')
   const [itemId, setItemId] = useState<number>(prefill.mediaItemId ?? 0)
   const [copyId, setCopyId] = useState<number>(prefill.copyId ?? 0)
   const [scanned, setScanned] = useState<ScannedFile[] | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [scanErr, setScanErr] = useState<string>('')
   const [importErr, setImportErr] = useState<string>('')
-  const [done, setDone] = useState<string>('')
-  const [outcome, setOutcome] = useState<ImportOutcome | null>(null)
 
   const library = useQuery({ queryKey: ['library'], queryFn: () => getLibrary() })
+  const defaultPath = useQuery({
+    queryKey: ['manual-import-default-path'],
+    queryFn: getManualImportDefaultPath,
+    enabled: !prefill.path,
+  })
+  const shownPath = path || defaultPath.data?.path || ''
   const itemDetail = useQuery({
     queryKey: ['library', itemId],
     queryFn: () => getLibraryItem(itemId),
@@ -678,7 +712,7 @@ function ManualImportPanel({
   })
 
   const scan = useMutation({
-    mutationFn: () => scanImportPath(path),
+    mutationFn: () => scanImportPath(shownPath),
     onSuccess: (files) => {
       setScanned(files)
       // A single-file result is unambiguous. A directory with several files
@@ -696,27 +730,20 @@ function ManualImportPanel({
   const run = useMutation({
     mutationFn: () =>
       manualImport({
-        path,
+        path: shownPath,
         paths: [...selected],
         mediaItemId: itemId,
         copyId: copyId || undefined,
         downloadId: prefill.downloadId,
       }),
-    onSuccess: (res) => {
+    onSuccess: () => {
       setImportErr('')
-      setOutcome(res)
-      const skipped = res.files.filter((f) => !f.imported)
-      setDone(
-        skipped.length
-          ? `Imported ${res.imported} file(s); ${skipped.length} skipped.`
-          : `Imported ${res.imported} file(s).`,
-      )
-      // A clean import can close itself. One that skipped something must not:
-      // the reasons are the reason the panel is still open.
-      if (!skipped.length) setTimeout(onDone, 1200)
+      // The importer owns the rest. Close immediately so the accepted job is
+      // visible in Activity and this form never becomes a progress modal for
+      // a multi-gigabyte copy.
+      onDone()
     },
     onError: (e: Error) => {
-      setOutcome(null)
       setImportErr(e.message)
     },
   })
@@ -735,7 +762,7 @@ function ManualImportPanel({
         <label htmlFor="manual-import-path">Path</label>
         <PathInput
           id="manual-import-path"
-          value={path}
+          value={shownPath}
           onChange={(next) => {
             setPath(next)
             setScanned(null)
@@ -744,7 +771,7 @@ function ManualImportPanel({
           placeholder="/pool/downloads/Some.Release.2024.1080p"
           showParent
         />
-        <button onClick={() => scan.mutate()} disabled={!path || scan.isPending}>
+        <button onClick={() => scan.mutate()} disabled={!shownPath || scan.isPending}>
           {scan.isPending ? 'Scanning…' : 'Scan'}
         </button>
       </div>
@@ -859,9 +886,9 @@ function ManualImportPanel({
         <button
           className="btn-accent"
           onClick={() => run.mutate()}
-          disabled={!path || !itemId || selected.size === 0 || run.isPending}
+          disabled={!shownPath || !itemId || selected.size === 0 || run.isPending}
         >
-          {run.isPending ? 'Importing…' : `Import selected (${selected.size})`}
+          {run.isPending ? 'Queueing…' : `Queue selected (${selected.size})`}
         </button>
       </div>
       {scanned && scanned.length > 1 && selected.size === 0 && (
@@ -871,39 +898,6 @@ function ManualImportPanel({
         <p className="muted">Choose the library title these selected files belong to.</p>
       )}
       {importErr && <p className="error-text">{importErr}</p>}
-      {done && <p className="ok-text">{done}</p>}
-      {/* Per-file outcomes. An import that declines everything used to say
-          only "no files imported from <path>", which is true and useless —
-          the reasons existed, they just never reached the person who needed
-          them. */}
-      {outcome && outcome.files.some((f) => !f.imported) && (
-        <div className="log-scroll">
-          <table className="import-outcome">
-          <thead>
-            <tr>
-              <th>File</th>
-              <th>Result</th>
-              <th>Why</th>
-            </tr>
-          </thead>
-          <tbody>
-            {outcome.files.map((f) => (
-              <tr key={f.name}>
-                <td className="mono">{f.name}</td>
-                <td>
-                  {f.imported ? (
-                    <span className="pill pill-ok">imported{f.upgrade ? ' · upgrade' : ''}</span>
-                  ) : (
-                    <span className="pill pill-neutral">skipped</span>
-                  )}
-                </td>
-                <td className="muted">{f.reason || '—'}</td>
-              </tr>
-            ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </section>
   )
 }

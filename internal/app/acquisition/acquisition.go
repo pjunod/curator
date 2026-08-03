@@ -752,6 +752,15 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 				continue // not visible yet (magnet resolving, etc.)
 			}
 			seen[dl.ID] = true
+			// An importer owns this row's per-download lock for the whole
+			// placement. Waiting for that lock here would put a multi-gigabyte
+			// file copy back onto the queue-refresh goroutine, freezing every
+			// client's contact clock and falsely reporting the client as
+			// degraded. The import worker already owns the next state change;
+			// this observation has nothing useful to add until it is done.
+			if s.ImportRunning(dl.ID) {
+				continue
+			}
 			s.reconcileDownload(ctx, dl, cfg, st, "poll")
 		}
 		// Anything this client no longer mentions is not moving, whatever the

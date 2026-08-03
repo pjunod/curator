@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain/filename"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // ScannedFile is one media file found under a manual-import path, with the
@@ -92,6 +94,37 @@ type ManualImportRequest struct {
 	DownloadID  int64 // 0 = not tied to a queue row
 }
 
+// ManualImportDefaultPath returns the completed-download folder Monarr sees.
+// A configured remote-path mapping is authoritative; otherwise a recent
+// completed payload teaches us the folder. The standard deployment path is
+// only the final fallback.
+func (s *Service) ManualImportDefaultPath(ctx context.Context) string {
+	if clients, err := s.db.ListDownloadClients(ctx); err == nil {
+		for _, client := range clients {
+			if !client.Enabled {
+				continue
+			}
+			for _, mapping := range client.PathMappings {
+				if strings.TrimSpace(mapping.Local) != "" {
+					return filepath.Clean(mapping.Local)
+				}
+			}
+		}
+	}
+	if rows, err := s.db.ListRecentDownloads(ctx); err == nil {
+		for _, dl := range rows {
+			p := dl.ImportPath
+			if p == "" {
+				p = dl.SavePath
+			}
+			if p != "" {
+				return filepath.Dir(filepath.Clean(p))
+			}
+		}
+	}
+	return "/pool/downloads"
+}
+
 // ManualImport imports the media at a path into a chosen item/copy — the
 // escape hatch when automation can't resolve the payload. When tied to a
 // download row it records the outcome on that row's handoff trace.
@@ -139,4 +172,86 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (Im
 	}
 	s.InvalidateWanted()
 	return result, nil
+}
+
+// QueueManualImport validates a manual selection, records it as a durable
+// Activity job, and returns as soon as the bounded importer accepts it. The
+// HTTP request must never stay open while an 18 GB file is copied.
+func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest) (int64, error) {
+	if strings.TrimSpace(req.Path) == "" || req.MediaItemID == 0 {
+		return 0, fmt.Errorf("path and target item are required")
+	}
+	item, err := s.db.GetMediaItemFull(ctx, req.MediaItemID)
+	if err != nil {
+		return 0, err
+	}
+	isMedia := filename.IsVideo
+	if item.Kind == "book" {
+		isMedia = filename.IsBook
+	}
+	if req.Paths == nil {
+		files, scanErr := collectFiles(req.Path, isMedia)
+		if scanErr != nil {
+			return 0, scanErr
+		}
+		if len(files) == 0 {
+			return 0, fmt.Errorf("no media files in %s", req.Path)
+		}
+	} else {
+		if len(req.Paths) == 0 {
+			return 0, fmt.Errorf("no files selected")
+		}
+		if _, err := selectedFiles(req.Path, req.Paths, isMedia); err != nil {
+			return 0, err
+		}
+	}
+
+	id := req.DownloadID
+	if id == 0 {
+		id, err = s.db.InsertDownload(ctx, sqlite.Download{
+			MediaItemID:  req.MediaItemID,
+			CopyID:       req.CopyID,
+			ReleaseTitle: filepath.Base(filepath.Clean(req.Path)),
+			Protocol:     "manual",
+			State:        "downloaded",
+		})
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	unlock := s.lockDownload(id)
+	defer unlock()
+	dl, err := s.db.GetDownload(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	if s.ImportRunning(id) {
+		return 0, fmt.Errorf("import is already running")
+	}
+	dl.MediaItemID = req.MediaItemID
+	dl.CopyID = req.CopyID
+	dl.ImportPath = req.Path
+	if err := s.db.UpdateDownloadTarget(ctx, dl); err != nil {
+		return 0, err
+	}
+	dl.Error = ""
+	dl.State = "downloaded"
+	selection := fmt.Sprintf("%d selected file(s)", len(req.Paths))
+	if req.Paths == nil {
+		selection = "all media files"
+	}
+	dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{
+		Step: stepManualQueued, At: time.Now().UnixMilli(),
+		Detail: selection + " waiting for an import worker",
+		Paths:  append([]string(nil), req.Paths...),
+	})
+	if err := s.db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		return 0, err
+	}
+	if !s.enqueueImport(ctx, dl, ports.ClientConfig{}) {
+		s.failImport(ctx, &dl, "import queue is full; try again shortly")
+		return 0, fmt.Errorf("import queue is full; try again shortly")
+	}
+	return id, nil
 }
