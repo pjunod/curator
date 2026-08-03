@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/domain"
 )
 
 // The acquisition half of /api/v1 — indexers, clients, the queue, search and
@@ -533,6 +534,23 @@ func TestAcqGrabRefusals(t *testing.T) {
 	e.post(t, "/api/v1/grab", `{"mediaItemId":9999,"title":"Some.Release",
 		"downloadUrl":"http://indexer.invalid/1","protocol":"torrent"}`).
 		expect(t, http.StatusNotFound)
+
+	// A monitored/searchable item may predate root-folder enforcement. It is
+	// still cheaper to refuse the grab now than download gigabytes and fail at
+	// import with "no library folder assigned".
+	homeless, err := e.db.CreateMediaItem(context.Background(), domain.MediaItem{
+		Kind: domain.KindMovie, Title: "Homeless", SortTitle: "homeless", Year: 2026,
+		IDs: domain.ExternalIDs{TMDB: 987654}, QualityProfileID: 1, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := e.post(t, "/api/v1/grab", `{"mediaItemId":`+acqItoa(homeless)+`,
+		"title":"Homeless.2026.1080p","downloadUrl":"http://indexer.invalid/h",
+		"protocol":"torrent"}`).expect(t, http.StatusBadRequest)
+	if msg := acqMessage(t, rr); !strings.Contains(msg, "library folder") {
+		t.Errorf("message = %q, want the missing destination named", msg)
+	}
 }
 
 // ---- queue ----
@@ -566,6 +584,31 @@ func TestAcqImportQueueItemBeforeAnythingLanded(t *testing.T) {
 func TestAcqImportQueueItemUnknownRow(t *testing.T) {
 	e := newAPIEnv(t)
 	e.post(t, "/api/v1/queue/9999/import", "").expect(t, http.StatusNotFound)
+}
+
+// A stale importing row has no worker to stop, but it is still cancellable:
+// cancellation is the user's way to return it to a truthful, restartable
+// state instead of deleting the only record of what happened.
+func TestAcqCancelOrphanedImportMakesItRestartable(t *testing.T) {
+	e := newAPIEnv(t)
+	acqAddClient(t, e, "qbittorrent")
+	item := e.addMovie(t)
+	id := acqGrab(t, e, item)
+	if err := e.db.UpdateDownloadState(context.Background(), id, "importing", 1, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	e.post(t, "/api/v1/queue/"+acqItoa(id)+"/cancel-import", "").
+		expect(t, http.StatusNoContent)
+	var queue []apigen.QueueItem
+	e.get(t, "/api/v1/queue").expect(t, http.StatusOK).into(t, &queue)
+	if len(queue) != 1 || queue[0].State != "downloaded" {
+		t.Fatalf("queue after cancel = %+v, want a downloaded/restartable row", queue)
+	}
+
+	e.post(t, "/api/v1/queue/9999/cancel-import", "").expect(t, http.StatusNotFound)
+	e.post(t, "/api/v1/queue/"+acqItoa(id)+"/cancel-import", "").
+		expect(t, http.StatusBadRequest)
 }
 
 // Blocklisting from the queue does both halves of what the button promises:

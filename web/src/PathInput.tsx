@@ -16,11 +16,14 @@ export function PathInput({
   onChange,
   placeholder,
   id,
+  showParent = false,
 }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
   id?: string
+  /** Show an explicit way back up when the field is being used as a browser. */
+  showParent?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [debounced, setDebounced] = useState(value)
@@ -53,6 +56,7 @@ export function PathInput({
   })
 
   const dirs = suggestions.data?.dirs ?? []
+  const canBrowseRoot = showParent && debounced !== '/'
 
   return (
     <div className="path-input" ref={wrapRef}>
@@ -72,8 +76,24 @@ export function PathInput({
           if (e.key === 'Escape') setOpen(false)
         }}
       />
-      {open && dirs.length > 0 && (
+      {open && (dirs.length > 0 || (showParent && suggestions.data?.parent) || canBrowseRoot) && (
         <ul className="path-suggestions">
+          {showParent && suggestions.data?.parent && (
+            <li>
+              <button
+                type="button"
+                title={suggestions.data.parent}
+                onClick={() => {
+                  const parent = suggestions.data!.parent
+                  onChange(parent === '/' ? '/' : parent + '/')
+                  setOpen(true)
+                }}
+              >
+                <span aria-hidden="true">↰</span> Parent folder
+                <span className="muted path-suggestion-detail">{suggestions.data.parent}</span>
+              </button>
+            </li>
+          )}
           {dirs.slice(0, 50).map((d) => (
             <li key={d.path}>
               <button
@@ -92,6 +112,20 @@ export function PathInput({
               </button>
             </li>
           ))}
+          {canBrowseRoot && (
+            <li>
+              <button
+                type="button"
+                title="Start at the server filesystem root"
+                onClick={() => {
+                  onChange('/')
+                  setOpen(true)
+                }}
+              >
+                Filesystem root <span className="muted path-suggestion-detail">/</span>
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </div>

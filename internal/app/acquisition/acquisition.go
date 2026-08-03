@@ -37,9 +37,10 @@ type (
 
 // Errors surfaced to the API layer.
 var (
-	ErrNoIndexers = errors.New("no enabled indexers configured")
-	ErrNoClient   = errors.New("no enabled download client for this protocol")
-	ErrNotFound   = sqlite.ErrNotFound
+	ErrNoIndexers      = errors.New("no enabled indexers configured")
+	ErrNoClient        = errors.New("no enabled download client for this protocol")
+	ErrNoLibraryFolder = errors.New("item has no library folder assigned")
+	ErrNotFound        = sqlite.ErrNotFound
 )
 
 // Events.
@@ -578,6 +579,22 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	dest := item.Path
+	if req.CopyID != 0 {
+		cp, err := s.db.GetMediaCopy(ctx, item.ID, req.CopyID)
+		if err != nil {
+			return 0, err
+		}
+		if cp.Path != "" {
+			dest = cp.Path
+		}
+	}
+	if dest == "" {
+		// Refuse before talking to the download client. Discovering there is
+		// nowhere to put a title only after all of its bytes arrived is the
+		// expensive end of this validation.
+		return 0, ErrNoLibraryFolder
+	}
 	clients, err := s.db.ListDownloadClients(ctx)
 	if err != nil {
 		return 0, err
@@ -821,7 +838,19 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		// someone is already on it; only 'grabbed'/'downloading' should
 		// start an import from here.
 		switch dl.State {
-		case "imported", "awaiting_import", "importing", "downloaded", "failed":
+		case "imported", "awaiting_import", "downloaded", "failed":
+			return
+		case "importing":
+			if s.ImportRunning(dl.ID) {
+				return
+			}
+			// "importing" is durable; the worker and its registry are not. A
+			// process restart used to strand this row forever because every
+			// later client observation treated the word itself as proof that a
+			// worker still existed. Record the recovery and hand it to a worker.
+			s.advance(ctx, &dl, "downloaded", dl.Progress, "", stepImportRecovered,
+				"previous import was interrupted; restarting from the payload")
+			s.enqueueImport(ctx, dl, cfg)
 			return
 		}
 		s.onDownloaded(ctx, dl, cfg, st, source)

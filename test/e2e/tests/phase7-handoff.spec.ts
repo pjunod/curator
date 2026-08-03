@@ -52,6 +52,7 @@ test('the approve-imports toggle on a client persists', async ({ page, request }
 test('manual import scans a folder and skips samples', async ({ page }) => {
   const dir = mkdtempSync(join(process.env.E2E_MEDIA_ROOT!, 'manual-'))
   writeFileSync(join(dir, 'Some.Movie.2021.1080p.WEB-DL.x264-GRP.mkv'), 'x')
+  writeFileSync(join(dir, 'Another.Movie.2022.720p.WEB-DL.x264-GRP.mkv'), 'x')
   writeFileSync(join(dir, 'sample.mkv'), 's')
 
   await page.goto('/activity')
@@ -59,12 +60,22 @@ test('manual import scans a folder and skips samples', async ({ page }) => {
 
   const panel = page.locator('.manual-import')
   await expect(panel).toBeVisible()
+  await expect(panel.getByLabel('Path')).toHaveValue('/pool/downloads/')
+  await panel.getByLabel('Path').click()
+  await expect(panel.getByRole('button', { name: /Filesystem root/ })).toBeVisible()
   await panel.getByLabel('Path').fill(dir)
   await panel.getByRole('button', { name: 'Scan' }).click()
 
   await expect(panel.getByText('Some.Movie.2021.1080p.WEB-DL.x264-GRP.mkv')).toBeVisible()
+  await expect(panel.getByText('Another.Movie.2022.720p.WEB-DL.x264-GRP.mkv')).toBeVisible()
   await expect(panel.getByText('sample.mkv')).toHaveCount(0)
+  // Scan results are actionable rows now. A multi-file folder starts with
+  // nothing selected so one title cannot accidentally absorb its neighbour.
+  await expect(panel.getByRole('button', { name: 'Import selected (0)' })).toBeDisabled()
+  await panel.getByLabel('Select Some.Movie.2021.1080p.WEB-DL.x264-GRP.mkv').check()
   // The target-title picker is populated from the library.
   const picker = panel.getByRole('combobox').first()
   await expect(picker.locator('option', { hasText: 'The Test Movie' })).toHaveCount(1)
+  await picker.selectOption({ label: 'The Test Movie (2024)' })
+  await expect(panel.getByRole('button', { name: 'Import selected (1)' })).toBeEnabled()
 })

@@ -280,6 +280,9 @@ function AddDialog(props: {
   // rejected POST.
   const eligibleRoots = (roots.data ?? []).filter((rf) => rf.kind === 'mixed' || rf.kind === r.kind)
   const eligibleIds = eligibleRoots.map((rf) => rf.id).join(',')
+  const selectedRootId = eligibleRoots.some((rf) => rf.id === rootId)
+    ? rootId
+    : eligibleRoots[0]?.id
   useEffect(() => {
     if (eligibleRoots.length === 0) {
       setRootId(undefined)
@@ -309,7 +312,7 @@ function AddDialog(props: {
         kind: r.kind,
         tmdbId: r.tmdbId || undefined,
         tvdbId: r.tvdbId,
-        rootFolderId: rootId,
+        rootFolderId: selectedRootId,
         qualityProfileId: profileId === '' ? undefined : Number(profileId),
         monitored,
         monitor: r.kind === 'series' ? monitor : undefined,
@@ -369,10 +372,10 @@ function AddDialog(props: {
                 <label className="inline">
                   Root folder{' '}
                   <select
-                    value={rootId ?? ''}
+                    value={selectedRootId ?? ''}
                     onChange={(e) => setRootId(e.target.value ? Number(e.target.value) : undefined)}
                   >
-                    <option value="">(none)</option>
+                    {eligibleRoots.length === 0 && <option value="">No matching root folder</option>}
                     {eligibleRoots.map((rf) => (
                       <option key={rf.id} value={rf.id}>
                         {rf.path}
@@ -384,7 +387,7 @@ function AddDialog(props: {
                 {roots.data && roots.data.length > 0 && eligibleRoots.length === 0 && (
                   <span className="muted">
                     no root folder holds {r.kind === 'series' ? 'TV' : 'movies'} — add one in
-                    Settings, or the item lands with no folder
+                    Settings before adding or downloading this title
                   </span>
                 )}
                 <label className="inline">
@@ -446,7 +449,8 @@ function AddDialog(props: {
           {!props.added && !r.inLibrary && (
             <button
               className="btn-accent"
-              disabled={add.isPending}
+              disabled={add.isPending || !selectedRootId}
+              title={!selectedRootId ? 'Add a matching root folder in Settings first' : undefined}
               onClick={() => add.mutate()}
             >
               {add.isPending ? 'Adding…' : 'Add to library'}

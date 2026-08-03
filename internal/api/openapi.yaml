@@ -1332,6 +1332,28 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /queue/{id}/cancel-import:
+    post:
+      operationId: cancelQueueImport
+      summary: Stop a queued or running import and keep its source payload
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Cancelled; the row is ready to restart. }
+        "400":
+          description: The row is not importing, or finished before cancellation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /queue/{id}/blocklist:
     post:
       operationId: blocklistQueueItem
@@ -3407,6 +3429,14 @@ components:
       required: [path, mediaItemId]
       properties:
         path: { type: string }
+        paths:
+          type: array
+          description: >
+            Exact files selected from the scan. Every path must be a media
+            file under path. Absent imports the whole path for backwards
+            compatibility; an explicit selection must contain a file.
+          minItems: 1
+          items: { type: string }
         mediaItemId: { type: integer, format: int64 }
         copyId:
           type: integer

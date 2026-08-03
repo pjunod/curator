@@ -157,6 +157,13 @@ func (r ImportResult) reasons(limit int) string {
 // second-guessing them with "does not improve on" is the same mistake as
 // gating a manual grab (which monarr has never done).
 func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePath string, manual bool) (ImportResult, error) {
+	return s.importDownloadFiles(ctx, dl, savePath, nil, manual)
+}
+
+// importDownloadFiles is the selected-file form of importDownload. A nil
+// selection preserves the automatic/legacy whole-payload behavior; a
+// present selection imports exactly what the manual-import scan offered.
+func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, savePath string, selected []string, manual bool) (ImportResult, error) {
 	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
 	if err != nil {
 		return ImportResult{}, err
@@ -178,14 +185,22 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 		}
 	}
 	if scope.Dest == "" {
-		return ImportResult{}, fmt.Errorf("item has no library folder assigned")
+		return ImportResult{}, ErrNoLibraryFolder
 	}
 
 	isMedia := filename.IsVideo
 	if item.Kind == domain.KindBook {
 		isMedia = filename.IsBook
 	}
-	videos, err := collectFiles(savePath, isMedia)
+	var videos []string
+	if selected == nil {
+		videos, err = collectFiles(savePath, isMedia)
+	} else {
+		if len(selected) == 0 {
+			return ImportResult{}, fmt.Errorf("no files selected")
+		}
+		videos, err = selectedFiles(savePath, selected, isMedia)
+	}
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -290,6 +305,9 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 			put, err = s.importEpisodeFile(ctx, item, scope, profile, epStates, src, p, q, dl.ReleaseTitle, manual)
 		}
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return result, err
+			}
 			outcome.Reason = err.Error()
 			if retryableIO(err) {
 				// Not a verdict on the file — a condition of the machine.
@@ -343,6 +361,47 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 	s.log.Info("imported", "item", item.Title, "files", result.Imported,
 		"skipped", len(result.Skipped()))
 	return result, nil
+}
+
+// selectedFiles validates the browser's selection at the trust boundary.
+// The scan result can go stale and an API caller can submit anything, so each
+// entry must still be a real media file beneath the scanned path.
+func selectedFiles(root string, selected []string, isMedia func(string) bool) ([]string, error) {
+	root = filepath.Clean(root)
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return nil, fmt.Errorf("payload missing: %w", err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("payload missing: %w", err)
+	}
+	out := make([]string, 0, len(selected))
+	seen := map[string]bool{}
+	for _, raw := range selected {
+		p := filepath.Clean(raw)
+		resolved, resolveErr := filepath.EvalSymlinks(p)
+		outside := resolveErr != nil
+		if rootInfo.IsDir() && !outside {
+			rel, relErr := filepath.Rel(resolvedRoot, resolved)
+			outside = relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+		} else if !rootInfo.IsDir() && !outside {
+			outside = resolved != resolvedRoot
+		}
+		if outside {
+			return nil, fmt.Errorf("selected file is outside %s: %s", root, raw)
+		}
+		info, err := os.Stat(p)
+		if err != nil || info.IsDir() || !isMedia(p) ||
+			strings.Contains(strings.ToLower(filepath.Base(p)), "sample") {
+			return nil, fmt.Errorf("selected file is not importable: %s", raw)
+		}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 // truncatedPayload reports whether a file declares more bytes than it has, and
@@ -475,7 +534,7 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 		"Quality Full": q.Display(),
 	})
 	dest := filepath.Join(scope.Dest, naming.SafeFileName(name)+filepath.Ext(src))
-	if err := placeFile(src, dest, transfers.Progress(ctx)); err != nil {
+	if err := placeFile(ctx, src, dest, transfers.Progress(ctx)); err != nil {
 		return placement{}, err
 	}
 	if upgrade {
@@ -514,7 +573,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 
 	dest := filepath.Join(scope.Dest,
 		naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
-	if err := placeFile(src, dest, transfers.Progress(ctx)); err != nil {
+	if err := placeFile(ctx, src, dest, transfers.Progress(ctx)); err != nil {
 		return placement{}, err
 	}
 	if upgrade {
@@ -602,7 +661,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	dest := filepath.Join(scope.Dest,
 		naming.Render(naming.SeasonFolderTemplate, map[string]string{"season": strconv.Itoa(season)}),
 		naming.SafeFileName(base)+filepath.Ext(src))
-	if err := placeFile(src, dest, transfers.Progress(ctx)); err != nil {
+	if err := placeFile(ctx, src, dest, transfers.Progress(ctx)); err != nil {
 		return placement{}, err
 	}
 	if upgrade {
@@ -691,9 +750,16 @@ func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem
 // running as root makes a permission-denied fixture pass, and nobody can
 // fill a volume in a unit test — and "what happens when the copy fails
 // halfway" is the whole defect this package now guards against.
-var placeFile = place
+var placeFile = placeContext
 
 func place(src, dest string, onBytes func(done, total int64)) error {
+	return placeContext(context.Background(), src, dest, onBytes)
+}
+
+func placeContext(ctx context.Context, src, dest string, onBytes func(done, total int64)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dir := filepath.Dir(dest)
 	// Record which folders do not exist yet, so the chmod below touches only
 	// the ones monarr is about to create. Walking up and fixing whatever it
@@ -733,7 +799,7 @@ func place(src, dest string, onBytes func(done, total int64)) error {
 	// Both paths land the file at a temp name first and rename over the
 	// destination. Rename is atomic and, unlike Link, does not refuse when
 	// something is already there — which is what makes replacement safe.
-	tmp, err := placeTemp(dir, src, onBytes)
+	tmp, err := placeTemp(ctx, dir, src, onBytes)
 	if err != nil {
 		return err
 	}
@@ -753,7 +819,7 @@ func place(src, dest string, onBytes func(done, total int64)) error {
 // placeTemp materialises src next to dest under a temporary name, hardlinking
 // when the filesystem allows it and copying when it does not, and returns that
 // name. The caller renames it into place.
-func placeTemp(dir, src string, onBytes func(done, total int64)) (string, error) {
+func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total int64)) (string, error) {
 	// A hardlink is free and is what makes seeding-while-imported possible;
 	// it only works within one filesystem, so a failure here is expected
 	// rather than exceptional and falls through to the copy.
@@ -791,7 +857,8 @@ func placeTemp(dir, src string, onBytes func(done, total int64)) (string, error)
 	if fi, serr := in.Stat(); serr == nil {
 		total = fi.Size()
 	}
-	if _, err := io.Copy(out, &countingReader{r: in, total: total, on: onBytes}); err != nil {
+	reader := &contextReader{ctx: ctx, r: &countingReader{r: in, total: total, on: onBytes}}
+	if _, err := io.Copy(out, reader); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return "", err
@@ -801,6 +868,20 @@ func placeTemp(dir, src string, onBytes func(done, total int64)) (string, error)
 		return "", err
 	}
 	return tmp, nil
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	select {
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	default:
+		return r.r.Read(p)
+	}
 }
 
 // missingDirs returns the folders between dir and its nearest existing

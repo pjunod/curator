@@ -72,6 +72,9 @@ export function AddMediaPage() {
   // wrong root in front of them, preselected.
   const eligibleRoots = (roots.data ?? []).filter((rf) => rf.kind === 'mixed' || rf.kind === kind)
   const eligibleIds = eligibleRoots.map((rf) => rf.id).join(',')
+  const selectedRootId = eligibleRoots.some((rf) => rf.id === rootId)
+    ? rootId
+    : eligibleRoots[0]?.id
 
   useEffect(() => {
     if (eligibleRoots.length === 0) {
@@ -97,7 +100,7 @@ export function AddMediaPage() {
   const add = useMutation({
     mutationFn: (r: SearchResult) => {
       const common = {
-        rootFolderId: rootId,
+        rootFolderId: selectedRootId,
         qualityProfileId: profileId === '' ? undefined : Number(profileId),
         monitored,
         monitor: r.kind === 'series' ? monitor : undefined,
@@ -164,10 +167,10 @@ export function AddMediaPage() {
         <label className="inline">
           Root folder{' '}
           <select
-            value={rootId ?? ''}
+            value={selectedRootId ?? ''}
             onChange={(e) => setRootId(e.target.value ? Number(e.target.value) : undefined)}
           >
-            <option value="">(none)</option>
+            {eligibleRoots.length === 0 && <option value="">No matching root folder</option>}
             {eligibleRoots.map((rf) => (
               <option key={rf.id} value={rf.id}>
                 {rf.path}
@@ -179,7 +182,7 @@ export function AddMediaPage() {
         {roots.data && roots.data.length > 0 && eligibleRoots.length === 0 && (
           <span className="muted">
             no root folder holds {kind === 'series' ? 'TV' : kind === 'book' ? 'books' : 'movies'} —
-            add one in Settings, or the item lands with no folder
+            add one in Settings before adding or downloading this title
           </span>
         )}
         <label className="inline">
@@ -282,7 +285,12 @@ export function AddMediaPage() {
                 if (r.inLibrary) return <span className="pill pill-ok">in library</span>
                 const busy = pendingKey === resultKey(r)
                 return (
-                  <button className="btn-accent" disabled={busy} onClick={() => add.mutate(r)}>
+                  <button
+                    className="btn-accent"
+                    disabled={busy || !selectedRootId}
+                    title={!selectedRootId ? 'Add a matching root folder in Settings first' : undefined}
+                    onClick={() => add.mutate(r)}
+                  >
                     {busy ? 'Adding…' : 'Add'}
                   </button>
                 )

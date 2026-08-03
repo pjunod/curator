@@ -86,6 +86,7 @@ func (s *Service) ScanImportPath(ctx context.Context, path string) ([]ScannedFil
 // queue row so that row is marked imported (or failed) by the attempt.
 type ManualImportRequest struct {
 	Path        string
+	Paths       []string // exact files selected from the scan; nil = whole Path
 	MediaItemID int64
 	CopyID      int64
 	DownloadID  int64 // 0 = not tied to a queue row
@@ -118,7 +119,7 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (Im
 	// manual=true: the user pointed at this folder and pressed Import. The
 	// profile gates AUTOMATION; telling a person "does not improve on" after
 	// they explicitly asked is the same mistake as gating a manual grab.
-	result, err := s.importDownload(ctx, dl, req.Path, true)
+	result, err := s.importDownloadFiles(ctx, dl, req.Path, req.Paths, true)
 	files := result.Imported
 	if req.DownloadID != 0 {
 		row, gerr := s.db.GetDownload(ctx, req.DownloadID)

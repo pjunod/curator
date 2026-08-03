@@ -63,6 +63,11 @@ show the author next to each result. Pick a root folder, a quality profile
 you set it under Settings → Quality profiles), monitoring state, and
 whether to **Search on add** (on by default: the best accepted release is
 grabbed automatically right after adding, Sonarr-style). Hit **Add**.
+The Add action stays disabled until a root that accepts that media kind is
+available. The API also refuses search-on-add without a root, and every grab
+checks the destination again before it contacts a download client. This is
+why a missing setting cannot turn into a completed download that only then
+fails with `item has no library folder assigned`.
 
 **Adding several things is one screen.** Adding does not navigate away:
 the row turns into *added* with an **Open** link, a strip at the top keeps
@@ -466,6 +471,15 @@ The manual import panel (Activity → Manual import) now reports what happened
 to **every** file, including the ones it declined and why — "no files
 imported from `<path>`" on its own is true and useless.
 
+It opens at `/pool/downloads`, the completed-download folder in Monarr's
+standard deployment. The path field is also a filesystem browser: type an
+absolute path to enumerate matching folders, choose a folder to descend, or
+use **Parent folder** to go back up. If that standard default is not mounted,
+**Filesystem root** starts navigation at `/`. After **Scan**, check the exact
+files to import. A folder with several media files starts with none selected,
+because silently importing a neighbouring release into the chosen title is
+worse than asking for one deliberate click.
+
 Common reasons, and what they mean:
 
 | Reason | What to do |
@@ -473,7 +487,7 @@ Common reasons, and what they mean:
 | `… does not improve on the … already here (profile "X")` | Only automation is gated by the profile. A manual import is the override and goes ahead anyway. |
 | `no known episodes for S20 [18 19 20]` | monarr has no episode records for those numbers — refresh the series metadata first. |
 | `cannot determine episodes from "<name>"` | The filename carries no `S00E00` pattern monarr recognises. |
-| `item has no library folder assigned` | Set a root folder / path on the item. |
+| `item has no library folder assigned` | This can remain on older rows created before the add/grab guard. Press **Assign folder**, save the item's location, then **Retry**. New search/add and grab requests are refused before downloading when no destination exists. |
 
 A **manual** import is never blocked by the quality profile: you pointed at
 the folder and pressed Import, and that is the decision. It still only
@@ -679,8 +693,15 @@ Every row carries the controls for its state:
   require approval), imports it right now.
 - **Retry** — on a **failed** row, re-runs the import using the same path,
   for after you've fixed a mount or added a path mapping.
+- **Restart import** — on an interrupted **importing** row with no live
+  worker, queues the saved payload again. Monarr also recovers these rows on
+  the next completed-download observation after a restart.
+- **Cancel import** — stops a queued or live import, removes any unfinished
+  destination temp file, keeps the completed payload, and returns the row to
+  a restartable **downloaded** state.
 - **Manual import** — browse Monarr to the real files (a folder or a single
-  file), preview what it found, pick the target title and copy, and import.
+  file), select exactly which scan results belong, pick the target title and
+  copy, and import.
   Use it when automation couldn't resolve the payload, or to pull in files
   you placed by hand. It's also on the top of the Activity page for imports
   not tied to any download.
@@ -689,6 +710,12 @@ Every row carries the controls for its state:
   handoff gets blocklisted — an import failure never does it on its own, so
   a mount problem never churns silently through replacements.
 - **Remove** — drop the row (leaves the client and any files alone).
+
+An **importing** row is only called live when a worker exists. A live row
+shows bytes copied, total bytes, average rate, elapsed time, and the current
+detail. A durable row left behind by a stopped process instead says
+**interrupted · No importer is running**; a full progress bar is not used as
+a substitute for status.
 
 **Require approval per client** (Settings → Download clients) flips a
 client from hands-free to hold-for-approval: its completed downloads park at

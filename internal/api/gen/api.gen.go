@@ -1115,6 +1115,9 @@ type ManualImportRequest struct {
 	DownloadId  *int64 `json:"downloadId,omitempty"`
 	MediaItemId int64  `json:"mediaItemId"`
 	Path        string `json:"path"`
+
+	// Paths Exact files selected from the scan. Every path must be a media file under path. Absent imports the whole path for backwards compatibility; an explicit selection must contain a file.
+	Paths *[]string `json:"paths,omitempty"`
 }
 
 // MediaCopy defines model for MediaCopy.
@@ -2307,6 +2310,9 @@ type ServerInterface interface {
 	// BlocklistQueueItem Declare the release bad — blocklist it and search a replacement
 	// (POST /queue/{id}/blocklist)
 	BlocklistQueueItem(w http.ResponseWriter, r *http.Request, id int64)
+	// CancelQueueImport Stop a queued or running import and keep its source payload
+	// (POST /queue/{id}/cancel-import)
+	CancelQueueImport(w http.ResponseWriter, r *http.Request, id int64)
 	// ImportQueueItem Import a download now — approve a held one, or retry a failed one
 	// (POST /queue/{id}/import)
 	ImportQueueItem(w http.ResponseWriter, r *http.Request, id int64)
@@ -4285,6 +4291,32 @@ func (siw *ServerInterfaceWrapper) BlocklistQueueItem(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// CancelQueueImport operation middleware
+func (siw *ServerInterfaceWrapper) CancelQueueImport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelQueueImport(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ImportQueueItem operation middleware
 func (siw *ServerInterfaceWrapper) ImportQueueItem(w http.ResponseWriter, r *http.Request) {
 
@@ -4718,6 +4750,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/cancel-import", wrapper.CancelQueueImport)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/blocklist", wrapper.BlocklistQueueItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/scan", wrapper.ScanImportPath)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/manual", wrapper.ManualImport)
