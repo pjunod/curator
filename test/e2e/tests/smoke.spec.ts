@@ -116,6 +116,6 @@ test.describe('UI', () => {
   test('SPA deep links and unknown routes serve the shell', async ({ page }) => {
     const res = await page.goto('/definitely/not/a/route')
     expect(res?.status()).toBe(200)
-    await expect(page.locator('.wordmark')).toContainText('monarr')
+    await expect(page.locator('.wordmark')).toContainText('noirr_curator')
   })
 })
