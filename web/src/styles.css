@@ -1,7 +1,7 @@
-/* Theme: dark is the default (systems without a light/dark preference get
-   dark); a system light preference switches the palette via the media
-   query below. color-scheme keeps native controls (inputs, selects,
-   scrollbars) in step. */
+/* Display engine. Layout is structure, palette is paint, and appearance picks
+   the palette's light/dark variant. The pre-paint script sets all three data
+   attributes before this sheet is parsed. Classic repeats Monarr's shipped
+   colors exactly and remains the default. */
 :root {
   color-scheme: dark;
   --bg: #0e1117;
@@ -20,32 +20,12 @@
      one per state, so color says state and nothing else does. */
   --ok-soft: rgba(63, 178, 127, 0.18);
   --error-soft: rgba(224, 93, 93, 0.18);
+  --radius: 12px;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-/* System light preference — unless the user forced dark. Keep this block
-   identical to :root[data-theme='light'] below. */
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) {
-    color-scheme: light;
-    --bg: #f4f5f8;
-    --bg-raised: #ffffff;
-    --bg-hover: #e9ebf1;
-    --border: #d7dbe4;
-    --text: #1b212b;
-    --text-muted: #5b6472;
-    --accent: #6a58d8;
-    --on-accent: #ffffff;
-    --accent-soft: rgba(106, 88, 216, 0.14);
-    --ok: #1f8e5c;
-    --warning: #99660f;
-    --error: #c23b3b;
-    --ok-soft: rgba(31, 142, 92, 0.16);
-    --error-soft: rgba(194, 59, 59, 0.16);
-  }
-}
-
-/* Forced light (theme picker), regardless of system preference. */
-:root[data-theme='light'] {
+:root[data-mode='light'] {
   color-scheme: light;
   --bg: #f4f5f8;
   --bg-raised: #ffffff;
@@ -63,6 +43,96 @@
   --error-soft: rgba(194, 59, 59, 0.16);
 }
 
+/* The plurx catalogue, translated onto Monarr's semantic tokens. Status
+   colors remain status colors in every scheme; only their treatment changes. */
+:root[data-palette='terminal'] {
+  --bg: #050705; --bg-raised: #0b100b; --bg-hover: #111a12; --border: #1e3020;
+  --text: #c9e8c0; --text-muted: #7a9670; --accent: #3fe170; --on-accent: #041508;
+  --ok: #3fe170; --warning: #d9c25a; --error: #ff7066; --radius: 0px;
+  --font-ui: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+:root[data-palette='terminal'][data-mode='light'] {
+  --bg: #eee8d5; --bg-raised: #fdf6e3; --bg-hover: #e6dfc8; --border: #d5cdb4;
+  --text: #073642; --text-muted: #657b83; --accent: #6e7f00; --on-accent: #fdf6e3;
+  --ok: #5c6900; --warning: #7d5e00; --error: #ba2a27;
+}
+:root[data-palette='noirr'] {
+  --bg: #0a0a0c; --bg-raised: #101014; --bg-hover: #16161b; --border: rgba(255,255,255,.08);
+  --text: #ededef; --text-muted: #9a9aa3; --accent: #e5484d; --on-accent: #fff;
+  --ok: #5fb582; --warning: #d9a05b; --error: #ff7a66; --radius: 10px;
+}
+:root[data-palette='noirr'][data-mode='light'] {
+  --bg: #f2efe8; --bg-raised: #faf8f2; --bg-hover: #fff; --border: rgba(24,22,20,.12);
+  --text: #1a1a1e; --text-muted: #5d5c63; --accent: #c2343a; --on-accent: #fff;
+  --ok: #307a54; --warning: #8d6425; --error: #aa5438;
+}
+:root[data-palette='amber'] {
+  --bg: #191a1d; --bg-raised: #212327; --bg-hover: #2a2d32; --border: #383c43;
+  --text: #eceef0; --text-muted: #9aa0a7; --accent: #e5a00d; --on-accent: #1c1303;
+  --ok: #52b788; --warning: #f2c14e; --error: #ee7168; --radius: 8px;
+}
+:root[data-palette='amber'][data-mode='light'] {
+  --bg: #f3f4f6; --bg-raised: #fff; --bg-hover: #e9ebee; --border: #d5d9de;
+  --text: #1e2124; --text-muted: #5f666d; --accent: #8b5e00; --on-accent: #fff;
+  --ok: #246b49; --warning: #8a6116; --error: #bd332d;
+}
+:root[data-palette='giallo'] {
+  --bg: #0c0a06; --bg-raised: #14100a; --bg-hover: #1c160d; --border: rgba(240,200,120,.10);
+  --text: #f2e9d8; --text-muted: #a89c85; --accent: #e8a33d; --on-accent: #1a1002;
+  --ok: #5fb582; --warning: #c9723a; --error: #e5484d; --radius: 10px;
+}
+:root[data-palette='giallo'][data-mode='light'] {
+  --bg: #f5eed9; --bg-raised: #fbf7ea; --bg-hover: #fff; --border: rgba(90,70,30,.14);
+  --text: #241d10; --text-muted: #6e6350; --accent: #7f4e00; --on-accent: #fff;
+  --ok: #2c734d; --warning: #8a6116; --error: #b23a35;
+}
+:root[data-palette='silver'] {
+  --bg: #0a0a0b; --bg-raised: #131315; --bg-hover: #1b1b1e; --border: rgba(255,255,255,.10);
+  --text: #f2f2f2; --text-muted: #9a9a9e; --accent: #e8e8ea; --on-accent: #0a0a0b;
+  --ok: #9fbfa8; --warning: #c9b48c; --error: #d09088; --radius: 6px;
+}
+:root[data-palette='silver'][data-mode='light'] {
+  --bg: #f4f4f2; --bg-raised: #fff; --bg-hover: #eaeae7; --border: rgba(20,20,20,.14);
+  --text: #141416; --text-muted: #66666a; --accent: #1a1a1c; --on-accent: #fff;
+  --ok: #467353; --warning: #765f28; --error: #a05248;
+}
+:root[data-palette='void'] {
+  --bg: #000; --bg-raised: #0a0a0a; --bg-hover: #131313; --border: rgba(255,255,255,.13);
+  --text: #e8e8e8; --text-muted: #8a8a8a; --accent: #4cc2ff; --on-accent: #001018;
+  --ok: #34d399; --warning: #fbbf24; --error: #f87171;
+}
+:root[data-palette='vhs'] {
+  --bg: #140d22; --bg-raised: #1d1430; --bg-hover: #291c42; --border: rgba(255,120,220,.16);
+  --text: #f4e9ff; --text-muted: #a78fc7; --accent: #ff4fd8; --on-accent: #22041c;
+  --ok: #3ddc97; --warning: #ffb454; --error: #ff5c7a; --radius: 14px;
+}
+:root[data-palette='paper'] {
+  --bg: #171715; --bg-raised: #201f1c; --bg-hover: #2a2823; --border: #454139;
+  --text: #f2eee6; --text-muted: #aaa49a; --accent: #9db2ff; --on-accent: #101322;
+  --ok: #6fc49a; --warning: #e2c36f; --error: #ff8a80; --radius: 6px;
+}
+:root[data-palette='paper'][data-mode='light'] {
+  --bg: #f4f0e8; --bg-raised: #fffdf8; --bg-hover: #e9e2d7; --border: #c8bfb2;
+  --text: #1f2328; --text-muted: #5f625f; --accent: #3451b2; --on-accent: #fff;
+  --ok: #26724c; --warning: #765c00; --error: #b3261e;
+}
+:root[data-palette='tide'] {
+  --bg: #071412; --bg-raised: #0d1e1b; --bg-hover: #142a25; --border: #2a4841;
+  --text: #e4f2ed; --text-muted: #93aaa2; --accent: #73d6b1; --on-accent: #052019;
+  --ok: #6fd39f; --warning: #e5c875; --error: #ff8a80; --radius: 10px;
+}
+:root[data-palette='tide'][data-mode='light'] {
+  --bg: #edf4f0; --bg-raised: #fbfdfa; --bg-hover: #dfeae4; --border: #bccfc5;
+  --text: #14201c; --text-muted: #586a62; --accent: #176b54; --on-accent: #fff;
+  --ok: #196b48; --warning: #735b0b; --error: #b33a32;
+}
+
+:root {
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --ok-soft: color-mix(in srgb, var(--ok) 18%, transparent);
+  --error-soft: color-mix(in srgb, var(--error) 18%, transparent);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -71,12 +141,12 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.55 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font: 15px/1.55 var(--font-ui);
 }
 
 .mono,
 code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.92em;
 }
 
@@ -1444,6 +1514,121 @@ a.pill-info:hover {
   font-weight: 600;
 }
 
+/* One compact display control carries three independent choices. It opens
+   upward in the desktop sidebar and becomes an in-flow card in the phone More
+   sheet, where there is no room for an anchored popover. */
+.display-settings {
+  position: relative;
+  margin: 10px 0;
+}
+
+.display-settings > summary {
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 9px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.display-settings > summary::-webkit-details-marker {
+  display: none;
+}
+
+.display-settings > summary::before {
+  content: '◐ ';
+  color: var(--accent);
+}
+
+.display-settings[open] > summary,
+.display-settings > summary:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.display-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 7px);
+  z-index: 60;
+  width: 230px;
+  padding: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 36px color-mix(in srgb, #000 38%, transparent);
+}
+
+.display-menu label {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.display-menu label:last-of-type {
+  margin-bottom: 0;
+}
+
+.display-menu select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: max(0px, calc(var(--radius) - 4px));
+  font: 13px/1.3 var(--font-ui);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.display-menu p {
+  margin: 9px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Palette treatments that are more than color. They are deliberately scoped,
+   so Classic remains byte-for-byte the old structural experience. */
+:root[data-palette='terminal'] button,
+:root[data-palette='terminal'] input,
+:root[data-palette='terminal'] select,
+:root[data-palette='terminal'] .panel,
+:root[data-palette='terminal'] .card,
+:root[data-palette='terminal'] .poster-card {
+  border-radius: 0;
+}
+
+:root[data-palette='vhs'] body {
+  background-image: repeating-linear-gradient(
+    180deg,
+    transparent 0,
+    transparent 3px,
+    color-mix(in srgb, var(--accent) 3%, transparent) 3px,
+    color-mix(in srgb, var(--accent) 3%, transparent) 4px
+  );
+}
+
+:root[data-palette='paper'] .prose {
+  max-width: 68ch;
+}
+
+:root[data-palette='void'] .panel,
+:root[data-palette='void'] .card,
+:root[data-palette='void'] .poster-card {
+  box-shadow: none;
+}
+
 .global-search {
   /* Sits directly under the nav links; the sidebar's own gap spaces it.
      margin-top: -14px tucks it closer to the menu than to the content. */
@@ -1645,6 +1830,188 @@ a.pill-info:hover {
 }
 
 /* ============================================================
+   Optional layouts. No Classic selector appears in this section: the
+   unqualified rules above are the saved, shipped layout and remain the
+   fallback for an absent or unknown preference.
+   ============================================================ */
+
+/* Plex: a stronger navigation rail and a wider working canvas. Monarr already
+   had a sidebar, so this variant earns its name through the pinned media-app
+   rail, active edge marker, and shelf-like content scale rather than by moving
+   links merely for the sake of movement. */
+:root[data-layout='plex'] .app {
+  grid-template-columns: 252px minmax(0, 1fr);
+}
+
+:root[data-layout='plex'] .sidebar {
+  padding: 16px 12px;
+  gap: 16px;
+  background: color-mix(in srgb, var(--bg-raised) 78%, var(--bg));
+  box-shadow: 10px 0 34px color-mix(in srgb, #000 10%, transparent);
+  z-index: 20;
+}
+
+:root[data-layout='plex'] .wordmark {
+  padding: 3px 10px 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+:root[data-layout='plex'] .sidebar nav a {
+  position: relative;
+  padding: 9px 11px 9px 14px;
+  border-radius: max(0px, calc(var(--radius) - 4px));
+}
+
+:root[data-layout='plex'] .sidebar nav a.active {
+  background: var(--accent-soft);
+}
+
+:root[data-layout='plex'] .sidebar nav a.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+:root[data-layout='plex'] .content {
+  max-width: 1380px;
+  padding: 26px 34px 64px;
+}
+
+:root[data-layout='plex'] .poster-card {
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+:root[data-layout='plex'] .poster-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  box-shadow: 0 10px 30px color-mix(in srgb, #000 20%, transparent);
+}
+
+/* Theater: the management surface becomes a broad top-deck with more room for
+   dense tables and poster shelves. The same React tree is restyled, which lets
+   a switch preserve route state, open editors, and query caches. */
+:root[data-layout='theater'] .app {
+  display: block;
+}
+
+:root[data-layout='theater'] .sidebar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  width: 100%;
+  height: auto;
+  padding: 10px 22px;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  border-right: 0;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+:root[data-layout='theater'] .wordmark {
+  flex: none;
+  padding: 0;
+}
+
+:root[data-layout='theater'] .sidebar nav {
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+:root[data-layout='theater'] .sidebar nav::-webkit-scrollbar {
+  display: none;
+}
+
+:root[data-layout='theater'] .sidebar nav a {
+  flex: none;
+  padding: 7px 9px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+:root[data-layout='theater'] .sidebar nav a.active {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+:root[data-layout='theater'] .global-search {
+  flex: 0 1 210px;
+  margin: 0;
+  padding: 0;
+}
+
+:root[data-layout='theater'] .global-search .search-results {
+  left: 0;
+  right: 0;
+}
+
+:root[data-layout='theater'] .sidebar-foot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  white-space: nowrap;
+}
+
+:root[data-layout='theater'] .sidebar-foot > .muted {
+  display: none;
+}
+
+:root[data-layout='theater'] .display-settings {
+  margin: 0;
+  order: 2;
+}
+
+:root[data-layout='theater'] .display-menu {
+  left: auto;
+  right: 0;
+  top: calc(100% + 7px);
+  bottom: auto;
+}
+
+:root[data-layout='theater'] .content {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 34px 42px 72px;
+}
+
+:root[data-layout='theater'] .page-head h1 {
+  font-size: clamp(25px, 2.2vw, 34px);
+  letter-spacing: -0.03em;
+}
+
+:root[data-layout='theater'] .panel,
+:root[data-layout='theater'] .card {
+  box-shadow: 0 14px 42px color-mix(in srgb, #000 12%, transparent);
+}
+
+@media (max-width: 1040px) and (min-width: 768px) {
+  :root[data-layout='theater'] .sidebar {
+    flex-wrap: wrap;
+  }
+
+  :root[data-layout='theater'] .sidebar nav {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+
+/* ============================================================
    Mobile (< 768px) — the phone shell and page adaptations.
    Breakpoint mirrors MOBILE_QUERY in useIsMobile.ts.
    ============================================================ */
@@ -1767,6 +2134,67 @@ a.pill-info:hover {
 
 /* ---- page adaptations ---- */
 @media (max-width: 767px) {
+  .more-sheet .display-settings {
+    margin: 0;
+  }
+
+  .more-sheet .display-menu {
+    position: static;
+    width: 100%;
+    margin-top: 8px;
+    box-shadow: none;
+  }
+
+  :root[data-layout='plex'] .mobile-top {
+    background: color-mix(in srgb, var(--bg-raised) 82%, var(--bg));
+    box-shadow: 0 8px 24px color-mix(in srgb, #000 12%, transparent);
+  }
+
+  :root[data-layout='plex'] .mobile-tab.active {
+    box-shadow: inset 0 3px 0 var(--accent);
+    background: var(--accent-soft);
+  }
+
+  /* Theater moves primary navigation above the canvas on phones. CSS order
+     keeps the live page mounted; switching layouts never loses scroll or data. */
+  :root[data-layout='theater'] .app-mobile {
+    display: flex;
+  }
+
+  :root[data-layout='theater'] .mobile-top {
+    order: 0;
+    position: static;
+    justify-content: center;
+    border-bottom: 0;
+    padding-bottom: 6px;
+  }
+
+  :root[data-layout='theater'] .mobile-tabs {
+    position: sticky;
+    top: 0;
+    order: 1;
+    border-top: 0;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(18px);
+  }
+
+  :root[data-layout='theater'] .mobile-content {
+    order: 2;
+    padding-top: 22px;
+    padding-bottom: calc(28px + env(safe-area-inset-bottom));
+  }
+
+  :root[data-layout='theater'] .mobile-tab {
+    padding: 10px 0;
+  }
+
+  :root[data-layout='theater'] .mobile-tab.active {
+    color: var(--on-accent);
+    background: var(--accent);
+  }
+
   /* The desktop 240px input floor overflows phones. */
   input[type='search'],
   input[type='text'],

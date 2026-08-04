@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Link,
   Outlet,
@@ -26,47 +26,63 @@ import { LoginPage } from './pages/Login'
 import { WantedPage } from './pages/Wanted'
 import type { MediaKind } from './api'
 import { getHealth, getStatus } from './api'
+import {
+  LAYOUTS,
+  PALETTES,
+  applyDisplaySettings,
+  loadDisplaySettings,
+  saveDisplaySettings,
+  type Appearance,
+  type DisplaySettings,
+  type LayoutId,
+  type PaletteId,
+} from './display'
 
-type Theme = 'auto' | 'light' | 'dark'
-
-function savedTheme(): Theme {
-  try {
-    const t = localStorage.getItem('monarr-theme')
-    if (t === 'light' || t === 'dark') return t
-  } catch {
-    /* storage unavailable (private mode) — fall through to auto */
+function DisplayPicker() {
+  const [settings, setSettings] = useState<DisplaySettings>(loadDisplaySettings)
+  const update = (change: Partial<DisplaySettings>) => {
+    const next = { ...settings, ...change }
+    setSettings(next)
+    saveDisplaySettings(next)
   }
-  return 'auto'
-}
 
-// ThemePicker: manual light/dark override on top of the OS preference.
-// 'auto' clears the override so prefers-color-scheme decides again.
-function ThemePicker() {
-  const [theme, setTheme] = useState<Theme>(savedTheme)
-  const pick = (t: Theme) => {
-    setTheme(t)
-    if (t === 'auto') delete document.documentElement.dataset.theme
-    else document.documentElement.dataset.theme = t
-    try {
-      if (t === 'auto') localStorage.removeItem('monarr-theme')
-      else localStorage.setItem('monarr-theme', t)
-    } catch {
-      /* still applies for this page */
-    }
-  }
+  useEffect(() => {
+    applyDisplaySettings(settings)
+    if (settings.appearance !== 'auto') return
+    const media = window.matchMedia('(prefers-color-scheme: light)')
+    const changed = () => applyDisplaySettings(settings)
+    media.addEventListener('change', changed)
+    return () => media.removeEventListener('change', changed)
+  }, [settings])
+
+  const palette = PALETTES.find((candidate) => candidate.id === settings.palette)
   return (
-    <div className="theme-picker" role="group" aria-label="Theme">
-      {(['auto', 'light', 'dark'] as const).map((t) => (
-        <button
-          key={t}
-          className={t === theme ? 'active' : ''}
-          aria-pressed={t === theme}
-          onClick={() => pick(t)}
-        >
-          {t}
-        </button>
-      ))}
-    </div>
+    <details className="display-settings">
+      <summary>Display</summary>
+      <div className="display-menu">
+        <label>
+          <span>Layout</span>
+          <select value={settings.layout} onChange={(event) => update({ layout: event.target.value as LayoutId })}>
+            {LAYOUTS.map((layout) => <option key={layout.id} value={layout.id}>{layout.name}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Color scheme</span>
+          <select value={settings.palette} onChange={(event) => update({ palette: event.target.value as PaletteId })}>
+            {PALETTES.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Appearance</span>
+          <select value={settings.appearance} onChange={(event) => update({ appearance: event.target.value as Appearance })}>
+            <option value="auto">Auto (system)</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        {palette?.darkOnly && <p>{palette.name} is a midnight-only scheme and stays dark.</p>}
+      </div>
+    </details>
   )
 }
 
@@ -144,7 +160,7 @@ function MobileShell(props: { overall: string; version: string; children: React.
                 + Add media
               </Link>
             </nav>
-            <ThemePicker />
+            <DisplayPicker />
             <div className="muted sheet-foot">v{props.version} · movies · TV · books</div>
           </div>
         </>
@@ -209,7 +225,7 @@ function Layout() {
         </nav>
         <GlobalSearch />
         <div className="sidebar-foot">
-          <ThemePicker />
+          <DisplayPicker />
           <div>v{status.data?.version ?? '…'}</div>
           <div className="muted">movies · TV · books</div>
         </div>
