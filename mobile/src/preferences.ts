@@ -1,14 +1,49 @@
 export type ThemePreference = 'auto' | 'light' | 'dark'
 export type ItemSize = 'small' | 'medium' | 'large'
+export type LayoutPreference = 'classic' | 'plex' | 'theater'
+export type PalettePreference =
+  | 'classic'
+  | 'terminal'
+  | 'noirr'
+  | 'amber'
+  | 'giallo'
+  | 'silver'
+  | 'void'
+  | 'vhs'
+  | 'paper'
+  | 'tide'
+
+export const LAYOUT_OPTIONS: ReadonlyArray<{ id: LayoutPreference; name: string }> = [
+  { id: 'classic', name: 'Classic' },
+  { id: 'plex', name: 'Plex' },
+  { id: 'theater', name: 'Theater' },
+]
+
+export const PALETTE_OPTIONS: ReadonlyArray<{ id: PalettePreference; name: string; darkOnly?: boolean }> = [
+  { id: 'classic', name: 'Classic' },
+  { id: 'terminal', name: 'Terminal' },
+  { id: 'noirr', name: 'noirr' },
+  { id: 'amber', name: 'Amber' },
+  { id: 'giallo', name: 'Giallo' },
+  { id: 'silver', name: 'Silver' },
+  { id: 'void', name: 'Void', darkOnly: true },
+  { id: 'vhs', name: 'VHS', darkOnly: true },
+  { id: 'paper', name: 'Paper' },
+  { id: 'tide', name: 'Tide' },
+]
 
 export interface AppPreferences {
   theme: ThemePreference
   itemSize: ItemSize
+  layout: LayoutPreference
+  palette: PalettePreference
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
   theme: 'auto',
   itemSize: 'medium',
+  layout: 'classic',
+  palette: 'classic',
 }
 
 export function sanitizePreferences(value: unknown): AppPreferences {
@@ -19,13 +54,25 @@ export function sanitizePreferences(value: unknown): AppPreferences {
     itemSize: candidate.itemSize === 'small' || candidate.itemSize === 'large'
       ? candidate.itemSize
       : 'medium',
+    layout: LAYOUT_OPTIONS.some((option) => option.id === candidate.layout)
+      ? candidate.layout as LayoutPreference
+      : 'classic',
+    palette: PALETTE_OPTIONS.some((option) => option.id === candidate.palette)
+      ? candidate.palette as PalettePreference
+      : 'classic',
   }
+}
+
+export function isDarkOnlyPalette(palette: PalettePreference): boolean {
+  return PALETTE_OPTIONS.find((option) => option.id === palette)?.darkOnly === true
 }
 
 export function resolveTheme(
   preference: ThemePreference,
   system: 'light' | 'dark' | 'unspecified' | null | undefined,
+  palette: PalettePreference = 'classic',
 ): 'light' | 'dark' {
+  if (isDarkOnlyPalette(palette)) return 'dark'
   if (preference === 'light' || preference === 'dark') return preference
   return system === 'light' ? 'light' : 'dark'
 }

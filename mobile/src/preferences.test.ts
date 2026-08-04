@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PREFERENCES, libraryGrid, resolveTheme, sanitizePreferences } from './preferences'
+import { DEFAULT_PREFERENCES, LAYOUT_OPTIONS, PALETTE_OPTIONS, libraryGrid, resolveTheme, sanitizePreferences } from './preferences'
 
 describe('app preferences', () => {
   it('keeps the existing item layout as the medium default', () => {
-    expect(DEFAULT_PREFERENCES).toEqual({ theme: 'auto', itemSize: 'medium' })
+    expect(DEFAULT_PREFERENCES).toEqual({
+      theme: 'auto',
+      itemSize: 'medium',
+      layout: 'classic',
+      palette: 'classic',
+    })
     expect(sanitizePreferences(null)).toEqual(DEFAULT_PREFERENCES)
     expect(sanitizePreferences({ theme: 'sepia', itemSize: 'huge' })).toEqual(DEFAULT_PREFERENCES)
   })
@@ -12,11 +17,23 @@ describe('app preferences', () => {
     expect(sanitizePreferences({ theme: 'light', itemSize: 'small' })).toEqual({
       theme: 'light',
       itemSize: 'small',
+      layout: 'classic',
+      palette: 'classic',
     })
-    expect(sanitizePreferences({ theme: 'dark', itemSize: 'large' })).toEqual({
+    expect(sanitizePreferences({ theme: 'dark', itemSize: 'large', layout: 'theater', palette: 'tide' })).toEqual({
       theme: 'dark',
       itemSize: 'large',
+      layout: 'theater',
+      palette: 'tide',
     })
+  })
+
+  it('ships the shared display catalogue with Classic as the safe fallback', () => {
+    expect(LAYOUT_OPTIONS.map((option) => option.id)).toEqual(['classic', 'plex', 'theater'])
+    expect(PALETTE_OPTIONS.map((option) => option.id)).toEqual([
+      'classic', 'terminal', 'noirr', 'amber', 'giallo', 'silver', 'void', 'vhs', 'paper', 'tide',
+    ])
+    expect(sanitizePreferences({ layout: 'future', palette: 'missing' })).toEqual(DEFAULT_PREFERENCES)
   })
 
   it('follows the system in auto mode and falls back to dark', () => {
@@ -30,6 +47,11 @@ describe('app preferences', () => {
   it('honors explicit theme overrides', () => {
     expect(resolveTheme('light', 'dark')).toBe('light')
     expect(resolveTheme('dark', 'light')).toBe('dark')
+  })
+
+  it('keeps midnight-only palettes dark', () => {
+    expect(resolveTheme('light', 'light', 'void')).toBe('dark')
+    expect(resolveTheme('auto', 'light', 'vhs')).toBe('dark')
   })
 
   it('keeps medium at the previous column count and scales around it', () => {

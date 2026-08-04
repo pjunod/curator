@@ -11,10 +11,12 @@ import {
   type ViewStyle,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { useTopNavigation } from '../navigation-context'
 import { useTheme, type Theme } from '../theme'
 
-export function AppScreen({ children, scroll = false }: PropsWithChildren<{ scroll?: boolean }>) {
+export function AppScreen({ children, scroll = false, forceTopInset = false }: PropsWithChildren<{ scroll?: boolean; forceTopInset?: boolean }>) {
   const theme = useTheme()
+  const topNavigation = useTopNavigation()
   const body = scroll ? (
     <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       {children}
@@ -23,7 +25,7 @@ export function AppScreen({ children, scroll = false }: PropsWithChildren<{ scro
     children
   )
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={[styles.screen, { backgroundColor: theme.bg }]}>
+    <SafeAreaView edges={forceTopInset || !topNavigation ? ['top', 'left', 'right'] : ['left', 'right']} style={[styles.screen, { backgroundColor: theme.bg }]}>
       {body}
     </SafeAreaView>
   )
