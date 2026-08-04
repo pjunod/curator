@@ -179,7 +179,7 @@ function AddSheet({
 
   return (
     <Modal animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <AppScreen>
+      <AppScreen forceTopInset>
         <Header title={`Add ${item.kind === 'series' ? 'series' : item.kind}`} left={<IconButton label="Close" glyph="×" onPress={onClose} />} />
         <ScrollView contentContainerStyle={styles.sheetContent}>
           <Text style={[styles.addTitle, { color: theme.text }]}>{item.title}</Text>

@@ -2,6 +2,7 @@ import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'r
 import type { MonarrClient } from '../api'
 import { formatUptime } from '../format'
 import { AppScreen, Badge, Button, Chip, Header, InlineError, LoadingState, Panel, SectionTitle, Wordmark } from '../components/UI'
+import { LAYOUT_OPTIONS, PALETTE_OPTIONS } from '../preferences'
 import { usePreferences } from '../preferences-context'
 import { useTheme } from '../theme'
 import type { Connection } from '../types'
@@ -19,7 +20,16 @@ export function MoreScreen({
   onDisconnect: () => void
 }) {
   const theme = useTheme()
-  const { theme: themePreference, itemSize, setTheme, setItemSize } = usePreferences()
+  const {
+    theme: themePreference,
+    itemSize,
+    layout,
+    palette,
+    setTheme,
+    setItemSize,
+    setLayout,
+    setPalette,
+  } = usePreferences()
   const resource = useResource(async () => {
     const [status, health] = await Promise.all([client.getStatus(), client.getHealth()])
     return { status, health }
@@ -46,10 +56,28 @@ export function MoreScreen({
           </Panel>
         </Pressable>
 
-        <SectionTitle>Appearance</SectionTitle>
+        <SectionTitle>Display</SectionTitle>
         <Panel style={styles.appearancePanel}>
           <View style={styles.preferenceBlock}>
-            <Text style={[styles.preferenceLabel, { color: theme.text }]}>Theme</Text>
+            <Text style={[styles.preferenceLabel, { color: theme.text }]}>Layout</Text>
+            <Text style={[styles.linkHint, { color: theme.muted }]}>Classic is the original mobile interface. Plex emphasizes pinned navigation; Theater moves navigation into a top deck.</Text>
+            <View style={styles.choiceRow}>
+              {LAYOUT_OPTIONS.map((option) => (
+                <Chip key={option.id} label={option.name} selected={layout === option.id} onPress={() => setLayout(option.id)} />
+              ))}
+            </View>
+          </View>
+          <View style={[styles.preferenceBlock, styles.preferenceDivider, { borderTopColor: theme.border }]}>
+            <Text style={[styles.preferenceLabel, { color: theme.text }]}>Color scheme</Text>
+            <Text style={[styles.linkHint, { color: theme.muted }]}>Void and VHS are midnight-only; the other schemes follow the selected appearance.</Text>
+            <View style={styles.choiceRow}>
+              {PALETTE_OPTIONS.map((option) => (
+                <Chip key={option.id} label={option.name} selected={palette === option.id} onPress={() => setPalette(option.id)} />
+              ))}
+            </View>
+          </View>
+          <View style={[styles.preferenceBlock, styles.preferenceDivider, { borderTopColor: theme.border }]}>
+            <Text style={[styles.preferenceLabel, { color: theme.text }]}>Appearance</Text>
             <Text style={[styles.linkHint, { color: theme.muted }]}>Auto follows this device. If it reports no preference, Monarr uses dark.</Text>
             <View style={styles.choiceRow}>
               {(['auto', 'light', 'dark'] as const).map((value) => (

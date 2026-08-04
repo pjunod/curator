@@ -181,11 +181,15 @@ Wanted, downloads/imports, the calendar, and server health are native too.
 and root folders, configuring indexers, clients, and notifiers, or managing
 login, pairing, and API keys under Access.
 
-**More → Appearance** keeps two preferences on this device. **Item size**
-changes Library tiles and Discover results between Small, Medium, and Large;
-Medium is the layout used before the selector existed. **Theme** defaults to
-Auto, which follows the device's light or dark setting and uses dark when the
-device reports no preference. Light and Dark are explicit overrides.
+**More → Display** keeps four independent preferences on this device.
+**Layout** offers Classic, Plex, and Theater; Classic preserves the previous
+native navigation, Plex emphasizes the bottom bar on phones and pins a rail on
+tablets, and Theater moves navigation into a top deck. **Color scheme** offers
+the same ten schemes as the web UI. **Appearance** defaults to Auto, follows
+the device's light or dark setting, and uses dark when the device reports no
+preference; Void and VHS stay dark. **Item size** changes Library tiles and
+Discover results between Small, Medium, and Large, with Medium preserving the
+previous density.
 
 The API key is stored in iOS Keychain or Android Keystore. Plain `http://` is
 supported because many Monarr servers live only on a trusted LAN, but it does

@@ -20,7 +20,8 @@ Monarr data or metadata provider keys live on the phone.
 - Automatic first-run Wi-Fi discovery over DNS-SD and camera-based pairing by
   QR.
 - Confirmed bulk clearing for retained failures under Activity → Failed.
-- Per-device Auto/Light/Dark theme and Small/Medium/Large item-size choices.
+- Per-device Classic/Plex/Theater layout, ten color schemes, independent
+  Auto/Light/Dark appearance, and Small/Medium/Large item-size choices.
 - One saved server address and API key. The API key is stored with Android
   Keystore or iOS Keychain through Expo SecureStore.
 
@@ -67,10 +68,15 @@ An `http://` LAN address is supported for homelabs; use HTTPS or a trusted VPN
 for access outside the local network because cleartext HTTP exposes the API
 key in transit.
 
-Under **More → Appearance**, Item size changes both Library tiles and Discover
-results; Medium is the original layout. Theme starts on Auto, follows the
-device's light/dark setting, and resolves an unspecified system setting to
-dark. Both choices persist on that device.
+Under **More → Display**, Layout switches among Classic, Plex, and Theater.
+Classic is the native navigation the app shipped before this selector. Plex
+uses a stronger bottom bar on phones and a pinned rail on tablets; Theater
+moves primary navigation into a top deck. Color scheme offers Classic,
+Terminal, noirr, Amber, Giallo, Silver, Void, VHS, Paper, and Tide. Appearance
+starts on Auto, follows the device's light/dark setting, and resolves an
+unspecified system setting to dark; Void and VHS always stay dark. Item size
+still changes both Library tiles and Discover results, with Medium preserving
+their previous density. Every choice persists on that device.
 
 ## Verify a change
 
@@ -107,7 +113,8 @@ After real-device QA, submit with `eas submit --platform android` and
 
 ## Layout
 
-- [`App.tsx`](App.tsx) — connection lifecycle, stack state, and bottom tabs.
+- [`App.tsx`](App.tsx) — connection lifecycle, stack state, and layout-aware
+  navigation chrome.
 - [`src/api.ts`](src/api.ts) — typed `/api/v1` client and error handling.
 - [`src/storage.ts`](src/storage.ts) — keychain/keystore connection storage.
 - `src/screens/` — one native screen per daily workflow.
