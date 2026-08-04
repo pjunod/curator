@@ -180,7 +180,17 @@ code {
 }
 
 .wordmark span {
-  color: var(--accent);
+  color: #e5484d;
+}
+
+:root[data-mode='light'] .wordmark span {
+  color: #c2343a;
+}
+
+.wordmark small {
+  color: var(--text-muted);
+  font-size: .72em;
+  margin-left: .55em;
 }
 
 .sidebar nav {

@@ -132,7 +132,7 @@ export function NotifierSettings() {
       <p className="muted">
         Webhook and Discord targets get grab/import/failure events. Plex and Jellyfin are
         poked to rescan their libraries after every import. plurx is told the exact folders
-        that landed and the TMDB/IMDb ids Monarr already knows, so it indexes one folder
+        that landed and the TMDB/IMDb ids Curator already knows, so it indexes one folder
         instead of sweeping the library — and never has to guess the title from a filename.
         Media-server deliveries are queued and retried, so a plurx that was restarting when
         an import finished still gets told; <strong>Delivery log</strong> shows what happened

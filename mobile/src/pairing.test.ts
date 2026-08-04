@@ -23,7 +23,7 @@ describe('parsePairingCode', () => {
   })
 
   it('rejects unrelated and unsupported codes', () => {
-    expect(() => parsePairingCode('https://example.com')).toThrow('not a Monarr pairing')
+    expect(() => parsePairingCode('https://example.com')).toThrow('not a Curator pairing')
     expect(() => parsePairingCode('monarr://pair?v=2&server=monarr.local')).toThrow('unsupported')
   })
 })

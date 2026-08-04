@@ -38,7 +38,7 @@ export function Dashboard() {
       </header>
 
       {status.isError && (
-        <div className="card error-card">Could not reach the Monarr API: {String(status.error)}</div>
+        <div className="card error-card">Could not reach the Curator API: {String(status.error)}</div>
       )}
 
       <section className="cards">

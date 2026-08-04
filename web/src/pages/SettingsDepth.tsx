@@ -173,7 +173,7 @@ export function MobilePairingSettings() {
       <h2>Mobile pairing</h2>
       <p className="muted">
         Enter the address this phone can reach, then show and scan the code from the
-        Monarr app. The QR contains the API key, so show it only to a device you trust.
+        Curator app. The QR contains the API key, so show it only to a device you trust.
       </p>
       <div className="add-controls">
         <input
@@ -197,14 +197,14 @@ export function MobilePairingSettings() {
       {pairingVisible && apiKey && (
         <div className="pairing-code">
           <QRCode
-            aria-label="Monarr mobile pairing QR code"
+            aria-label="Curator mobile pairing QR code"
             bgColor="#ffffff"
             fgColor="#111111"
             level="M"
             size={220}
             value={buildPairingCode(pairingAddress, apiKey)}
           />
-          <span className="muted">Monarr app → Scan pairing QR</span>
+          <span className="muted">Curator app → Scan pairing QR</span>
         </div>
       )}
     </section>
@@ -238,7 +238,7 @@ export function UserLoginSettings() {
     <section className="panel" id="user-login">
       <h2>User login</h2>
       <p className="muted">
-        Enabling authentication locks the Monarr API and web interface behind a login.
+        Enabling authentication locks the Curator API and web interface behind a login.
         The API key remains a separate bypass for trusted apps and integrations.
       </p>
       <div className="detail-facts">

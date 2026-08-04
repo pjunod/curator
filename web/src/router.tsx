@@ -113,7 +113,7 @@ function MobileShell(props: { overall: string; version: string; children: React.
     <div className="app-mobile">
       <header className="mobile-top">
         <div className="wordmark">
-          mon<span>arr</span>
+          noirr<span>_</span><small>curator</small>
         </div>
       </header>
       <main className="content mobile-content">{props.children}</main>
@@ -187,7 +187,7 @@ function Layout() {
     <div className="app">
       <aside className="sidebar">
         <div className="wordmark">
-          mon<span>arr</span>
+          noirr<span>_</span><small>curator</small>
         </div>
         <nav>
           <Link

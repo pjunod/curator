@@ -94,7 +94,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
       await resource.refresh()
       setActionMessage(
         profileChanged && draftMonitored
-          ? 'Profile changed — Monarr is searching for the new target in the background.'
+          ? 'Profile changed — Curator is searching for the new target in the background.'
           : 'Item changes saved.',
       )
     } catch (cause) {
@@ -162,7 +162,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
       setCopyName('')
       setCopyRootId(0)
       setCopyMonitored(true)
-      setActionMessage('Additional copy added — Monarr will hunt it like any other wanted item.')
+      setActionMessage('Additional copy added — Curator will hunt it like any other wanted item.')
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : 'Could not add this copy.')
     } finally {
@@ -442,7 +442,7 @@ function CopyEditor({
   const confirmRemove = () => {
     Alert.alert(
       'Remove this copy?',
-      'Monarr will remove the copy record and stop managing it. Files already on disk will be kept.',
+      'Curator will remove the copy record and stop managing it. Files already on disk will be kept.',
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Remove copy', style: 'destructive', onPress: () => void remove() },

@@ -64,7 +64,7 @@ function RowTest(props: { run: () => Promise<unknown> }) {
  * isUsenetClient decides the default for "clean up after import".
  *
  * Usenet has no obligation once the download is done, so the payload is scratch
- * space and deleting it is tidying up. A torrent is still seeding, and Monarr
+ * space and deleting it is tidying up. A torrent is still seeding, and Curator
  * cannot yet tell "finished seeding" from "seeding happily", so throwing its
  * data away has to stay a deliberate choice. The server applies the same split.
  */
@@ -85,7 +85,7 @@ export function AcquisitionSettings() {
   const [cliPort, setCliPort] = useState(CLIENT_DEFAULT_PORTS.qbittorrent)
   const [cliMsg, setCliMsg] = useState('')
   // Remote path mapping (optional): the client's completed folder as IT
-  // reports it, and the path Monarr sees the same files at.
+  // reports it, and the path Curator sees the same files at.
   const [mapRemote, setMapRemote] = useState('')
   const [mapLocal, setMapLocal] = useState('')
   const cliPayload = (): DownloadClientInput => ({
@@ -211,10 +211,10 @@ export function AcquisitionSettings() {
         <h2>Download clients</h2>
         <p className="muted">
           Downloads land wherever the client itself is configured to put finished files
-          (NZBGet's DestDir / category folder, qBittorrent's save path, …) — Monarr then
-          imports from the path the client reports. That path must be visible to Monarr; if
+          (NZBGet's DestDir / category folder, qBittorrent's save path, …) — Curator then
+          imports from the path the client reports. That path must be visible to Curator; if
           the client runs on another host or container and reports a different path than
-          Monarr mounts, set a remote path mapping below.
+          Curator mounts, set a remote path mapping below.
         </p>
         <table>
           <tbody>
@@ -262,7 +262,7 @@ export function AcquisitionSettings() {
                     className="approval-toggle"
                     title={
                       isUsenetClient(c.type)
-                        ? 'Delete the payload from this client once Monarr has imported it. Without this, every grab leaves a second full copy behind.'
+                        ? 'Delete the payload from this client once Curator has imported it. Without this, every grab leaves a second full copy behind.'
                         : 'Delete the payload once imported. This torrent is still seeding — turning it on throws that away.'
                     }
                   >
@@ -351,7 +351,7 @@ export function AcquisitionSettings() {
           />
           <span className="muted">→</span>
           <input
-            placeholder="Same folder as Monarr sees it (e.g. /pool/downloads)"
+            placeholder="Same folder as Curator sees it (e.g. /pool/downloads)"
             aria-label="Local path"
             value={mapLocal}
             onChange={(e) => setMapLocal(e.target.value)}
@@ -367,7 +367,7 @@ export function AcquisitionSettings() {
           </label>
           <label
             className="approval-toggle"
-            title="Delete the payload from the client once Monarr has imported it. Without this, every grab leaves a second full copy behind — and when the download disk and the library are different filesystems, that copy is real bytes rather than a hardlink."
+            title="Delete the payload from the client once Curator has imported it. Without this, every grab leaves a second full copy behind — and when the download disk and the library are different filesystems, that copy is real bytes rather than a hardlink."
           >
             <input
               type="checkbox"

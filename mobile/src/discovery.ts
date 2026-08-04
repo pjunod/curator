@@ -12,7 +12,7 @@ export async function discoverMonarrServers(
 ): Promise<DiscoveredServer[]> {
   const state = await Network.getNetworkStateAsync()
   if (state.type !== Network.NetworkStateType.WIFI || !state.isConnected) {
-    throw new Error('Connect this device to Wi-Fi before searching for Monarr.')
+    throw new Error('Connect this device to Wi-Fi before searching for Curator.')
   }
 
   const probes: Promise<DiscoveredServer | null>[] = []

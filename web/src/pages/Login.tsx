@@ -21,7 +21,7 @@ export function LoginPage() {
   return (
     <div style={{ maxWidth: 360, margin: '10vh auto' }}>
       <section className="panel">
-        <h2>Sign in to Monarr</h2>
+        <h2>Sign in to Curator</h2>
         <form
           onSubmit={(e) => {
             e.preventDefault()

@@ -17,13 +17,13 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['apple-touch-icon.png'],
       manifest: {
-        name: 'Monarr',
-        short_name: 'Monarr',
-        description: 'Movies, series, and books — one automation pipeline.',
+        name: 'Noirr Curator',
+        short_name: 'Curator',
+        description: 'Find, evaluate, import, and organize movies, series, and books.',
         start_url: '/',
         display: 'standalone',
-        background_color: '#0e1117',
-        theme_color: '#0e1117',
+        background_color: '#0a0a0c',
+        theme_color: '#0a0a0c',
         icons: [
           { src: '/pwa-192.png', sizes: '192x192', type: 'image/png' },
           { src: '/pwa-512.png', sizes: '512x512', type: 'image/png' },

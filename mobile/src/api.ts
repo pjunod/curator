@@ -50,9 +50,9 @@ export class MonarrClient {
       })
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new ApiError('The Monarr server did not respond in 30 seconds.', 0)
+        throw new ApiError('The Curator server did not respond in 30 seconds.', 0)
       }
-      throw new ApiError('Could not reach this Monarr server. Check the address and your network.', 0)
+      throw new ApiError('Could not reach this Curator server. Check the address and your network.', 0)
     } finally {
       clearTimeout(timeout)
     }

@@ -24,16 +24,16 @@ export function parsePairingCode(value: string): Connection {
   try {
     code = new URL(value.trim())
   } catch {
-    throw new Error('This is not a Monarr pairing QR code.')
+    throw new Error('This is not a Curator pairing QR code.')
   }
   if (code.protocol !== PAIRING_PROTOCOL || code.hostname !== PAIRING_HOST) {
-    throw new Error('This is not a Monarr pairing QR code.')
+    throw new Error('This is not a Curator pairing QR code.')
   }
   if (code.searchParams.get('v') !== '1') {
-    throw new Error('This Monarr pairing code uses an unsupported version.')
+    throw new Error('This Curator pairing code uses an unsupported version.')
   }
   const server = code.searchParams.get('server')
-  if (!server) throw new Error('This Monarr pairing code has no server address.')
+  if (!server) throw new Error('This Curator pairing code has no server address.')
   return sanitizeConnection({ baseUrl: server, apiKey: code.searchParams.get('key') ?? '' })
 }
 

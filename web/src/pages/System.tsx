@@ -38,29 +38,29 @@ const STATE_TITLE: Record<Connection['state'], string> = {
   degraded: 'Answering, but not working properly',
   unreachable: 'Not answering',
   unprobed: 'Configured, but never probed — its only test is the action itself',
-  calling: 'This application has called Monarr recently',
-  quiet: 'It has called since Monarr started, but not lately',
+  calling: 'This application has called Curator recently',
+  quiet: 'It has called since Curator started, but not lately',
 }
 
 // Direction stated, not inferred.
 //
-// One application legitimately appears twice — plurx is both something Monarr
-// pushes to and something that calls Monarr — and when both rows carry the
+// One application legitimately appears twice — plurx is both something Curator
+// pushes to and something that calls Curator — and when both rows carry the
 // same name, one green and one amber, the second reads as a stale duplicate of
 // the first. It is not: they are two settings that fail independently, and
 // conflating them sends you to fix the half that already works. So the Kind
 // cell leads with the direction instead of leaving it to be deduced from
-// "media server" versus "calls Monarr".
+// "media server" versus "calls Curator".
 const KIND_LABEL: Record<Connection['kind'], string> = {
   downloadclient: '→ download client',
   mediaserver: '→ media server',
-  inbound: '← calls Monarr',
+  inbound: '← calls Curator',
 }
 
 const KIND_TITLE: Record<Connection['kind'], string> = {
-  downloadclient: 'Outbound: Monarr polls this client for queue and history',
-  mediaserver: 'Outbound: Monarr tells this server when an import finishes',
-  inbound: 'Inbound: this application calls Monarr. Configured on its side, not here',
+  downloadclient: 'Outbound: Curator polls this client for queue and history',
+  mediaserver: 'Outbound: Curator tells this server when an import finishes',
+  inbound: 'Inbound: this application calls Curator. Configured on its side, not here',
 }
 
 function ConnectionsCard() {
@@ -75,7 +75,7 @@ function ConnectionsCard() {
     <section className="panel">
       <h2>Connections</h2>
       <p className="muted">
-        The other applications Monarr talks to (→) — and the ones that talk to it
+        The other applications Curator talks to (→) — and the ones that talk to it
         (←). One application can appear as both; the two directions are separate
         settings and fail separately.{' '}
         {q.data?.checkedAt

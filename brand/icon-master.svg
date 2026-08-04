@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>noirr curator app icon</title>
+  <desc>A lowercase c and uppercase U in warm white, with a red underscore beneath the c.</desc>
+  <rect width="1024" height="1024" fill="#0a0a0c"/>
+  <g fill="none" stroke="#ededef" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M407 543 A95 95 0 1 0 407 677" stroke-width="90"/>
+    <path d="M570 360 V640 C570 805 790 805 790 640 V360" stroke-width="110"/>
+  </g>
+  <path d="M290 790 H390" fill="none" stroke="#e5484d" stroke-width="48" stroke-linecap="round"/>
+</svg>
