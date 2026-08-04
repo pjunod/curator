@@ -16,14 +16,19 @@ test('bottom tabs navigate; sidebar is gone', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible()
 })
 
-test('More sheet carries search, nav, and the theme picker', async ({ page }) => {
+test('More sheet carries search, nav, and the Display controls', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: 'More' }).click()
 
   const sheet = page.getByRole('dialog', { name: 'More' })
   await expect(sheet).toBeVisible()
   await expect(sheet.getByRole('searchbox', { name: 'Search media and settings' })).toBeVisible()
-  await expect(sheet.getByRole('group', { name: 'Theme' })).toBeVisible()
+  const display = sheet.locator('details.display-settings')
+  await expect(display.locator('summary')).toBeVisible()
+  await display.locator('summary').click()
+  await expect(display.getByLabel('Layout')).toBeVisible()
+  await expect(display.getByLabel('Color scheme')).toBeVisible()
+  await expect(display.getByLabel('Appearance')).toBeVisible()
 
   // Navigating from the sheet closes it.
   await sheet.getByRole('link', { name: 'Settings' }).click()

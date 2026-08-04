@@ -1,25 +1,39 @@
 import { expect, test } from '@playwright/test'
 
-// Validation-era UI batch: theme picker, sidebar search, the labeled fact
+// Validation-era UI batch: display picker, sidebar search, the labeled fact
 // grid (location chip, profile, rating, external links), release info
 // links, per-item edit, and metadata refresh.
 test.describe.configure({ mode: 'serial' })
 
-test('theme picker: manual light/dark override persists, auto clears it', async ({ page }) => {
+test('display picker: layout, palette, and appearance persist independently', async ({ page }) => {
   await page.goto('/')
   const html = page.locator('html')
+  const display = page.locator('details.display-settings')
 
-  await page.getByRole('group', { name: 'Theme' }).getByRole('button', { name: 'light' }).click()
-  await expect(html).toHaveAttribute('data-theme', 'light')
+  await display.locator('summary').click()
+  await display.getByLabel('Layout').selectOption('theater')
+  await display.getByLabel('Color scheme').selectOption('tide')
+  await display.getByLabel('Appearance').selectOption('light')
+  await expect(html).toHaveAttribute('data-layout', 'theater')
+  await expect(html).toHaveAttribute('data-palette', 'tide')
+  await expect(html).toHaveAttribute('data-mode', 'light')
 
   await page.reload()
-  await expect(html).toHaveAttribute('data-theme', 'light') // pre-paint script
+  await expect(html).toHaveAttribute('data-layout', 'theater') // pre-paint script
+  await expect(html).toHaveAttribute('data-palette', 'tide')
+  await expect(html).toHaveAttribute('data-mode', 'light')
 
-  await page.getByRole('group', { name: 'Theme' }).getByRole('button', { name: 'dark' }).click()
-  await expect(html).toHaveAttribute('data-theme', 'dark')
+  await display.locator('summary').click()
+  await display.getByLabel('Appearance').selectOption('dark')
+  await expect(html).toHaveAttribute('data-mode', 'dark')
 
-  await page.getByRole('group', { name: 'Theme' }).getByRole('button', { name: 'auto' }).click()
-  await expect(html).not.toHaveAttribute('data-theme')
+  // Leave the serial suite on the shipped defaults.
+  await display.getByLabel('Layout').selectOption('classic')
+  await display.getByLabel('Color scheme').selectOption('classic')
+  await display.getByLabel('Appearance').selectOption('auto')
+  await expect(html).toHaveAttribute('data-layout', 'classic')
+  await expect(html).toHaveAttribute('data-palette', 'classic')
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('monarr-theme'))).toBe('auto')
 })
 
 test('sidebar search finds media and settings sections', async ({ page }) => {

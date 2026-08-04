@@ -4,6 +4,26 @@ Everything on the Settings and System pages, field by field. Process-level
 configuration (port, data dir, log level) is environment-based and lives in
 the [README](../README.md#configuration).
 
+## Display preferences
+
+**Display** at the bottom of the desktop navigation (or in the phone's
+**More** sheet) keeps three browser-local choices:
+
+- **Layout** changes structure without changing routes or data. **Classic** is
+  the exact navigation layout Monarr shipped before this selector and remains
+  the default. **Plex** strengthens the pinned media rail and opens a wider
+  working canvas. **Theater** moves navigation into a broad top deck. All three
+  adapt to phones and tablets.
+- **Color scheme** selects Classic, Terminal, noirr, Amber, Giallo, Silver,
+  Void, VHS, Paper, or Tide. Status colors retain their meaning in every
+  scheme. Void and VHS are intentionally midnight-only.
+- **Appearance** independently selects Auto (follow the device), Light, or
+  Dark. Changing appearance never changes layout or color scheme.
+
+These values live in the browser, not the server account, so a desktop and a
+phone can use different combinations. Unknown preferences written by a newer
+build fall back safely to Classic.
+
 ## Metadata provider (TMDB)
 
 One key serves movies and TV. Paste a TMDB **v3 API key** or a **v4 read

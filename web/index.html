@@ -12,11 +12,25 @@
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f5f8" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <script>
-      // Apply the saved manual theme before first paint (no flash).
-      // 'auto' / unset leaves it to the OS prefers-color-scheme query.
+      // Apply layout, palette, and appearance before first paint. Classic is
+      // deliberately the fallback: it is the layout Monarr shipped before
+      // display choices existed, so an unknown future preference stays safe.
       try {
-        var t = localStorage.getItem('monarr-theme')
-        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t
+        var layouts = ['classic', 'plex', 'theater']
+        var palettes = ['classic', 'terminal', 'noirr', 'amber', 'giallo', 'silver', 'void', 'vhs', 'paper', 'tide']
+        var layout = localStorage.getItem('monarr-layout') || 'classic'
+        var palette = localStorage.getItem('monarr-palette') || 'classic'
+        var appearance = localStorage.getItem('monarr-theme') || 'auto'
+        if (!layouts.includes(layout)) layout = 'classic'
+        if (!palettes.includes(palette)) palette = 'classic'
+        if (!['auto', 'light', 'dark'].includes(appearance)) appearance = 'auto'
+        var darkOnly = palette === 'void' || palette === 'vhs'
+        var systemLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
+        var mode = darkOnly ? 'dark' : appearance === 'auto' ? (systemLight ? 'light' : 'dark') : appearance
+        document.documentElement.dataset.layout = layout
+        document.documentElement.dataset.palette = palette
+        document.documentElement.dataset.mode = mode
+        document.documentElement.style.colorScheme = mode
       } catch (e) {}
       // Same, for poster card size — without it the whole library grid
       // reflows one frame after it draws. Key kept in step with

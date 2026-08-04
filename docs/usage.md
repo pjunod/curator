@@ -54,6 +54,21 @@ Open `http://<host>:7676`. Three things make the app functional, all under
 The **System** page shows health checks; anything missing from the list
 above appears there as a warning.
 
+## Layouts and color schemes
+
+Open **Display** at the bottom of the desktop navigation, or in **More** on a
+phone. Layout, color scheme, and room brightness are separate choices: switch
+one without losing the other two. **Classic** is the pre-existing Monarr
+layout and the default, **Plex** is the stronger media rail, and **Theater**
+uses a wide top navigation deck. The color catalogue matches plurx: Classic,
+Terminal, noirr, Amber, Giallo, Silver, Void, VHS, Paper, and Tide, each with
+light and dark appearances where the design supports both. Void and VHS stay
+dark by design.
+
+The choice is remembered per browser. Switching layouts restyles the current
+page in place, so open forms, fetched data, and the current route remain where
+they were.
+
 ## Adding media
 
 **+ Add media** (Library page) → pick the Movie / Series / Book tab →
@@ -187,7 +202,8 @@ The UI is a PWA: open `http://<host>:7676` on your phone and install it —
 with its own icon, and below tablet width the whole app switches to a
 phone layout: bottom tabs for Library / Wanted / Calendar / Activity,
 with a **More** sheet holding Dashboard, System, Settings, Add, the
-global search, and the theme picker. The calendar becomes the agenda —
+global search, and the Display controls. The selected Plex and Theater
+layouts also adapt the phone navigation. The calendar becomes the agenda —
 the same rich list the desktop view offers, full width: poster, episode,
 air time, network, status. Wide tables scroll sideways, posters run three
 across. Posters are
