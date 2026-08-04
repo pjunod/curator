@@ -79,7 +79,7 @@ export function MoreScreen({
           </View>
           <View style={[styles.preferenceBlock, styles.preferenceDivider, { borderTopColor: theme.border }]}>
             <Text style={[styles.preferenceLabel, { color: theme.text }]}>Appearance</Text>
-            <Text style={[styles.linkHint, { color: theme.muted }]}>Auto follows this device. If it reports no preference, Monarr uses dark.</Text>
+            <Text style={[styles.linkHint, { color: theme.muted }]}>Auto follows this device. If it reports no preference, Curator uses dark.</Text>
             <View style={styles.choiceRow}>
               {(['auto', 'light', 'dark'] as const).map((value) => (
                 <Chip key={value} label={`${value[0]?.toUpperCase()}${value.slice(1)}`} selected={themePreference === value} onPress={() => setTheme(value)} />

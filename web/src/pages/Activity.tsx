@@ -93,8 +93,8 @@ const STAGE_TITLE: Record<Stage, string> = {
   move: 'The download client is moving the payload to its finished folder',
   post_unpack_rename: 'The download client is tidying names after extraction',
   script: 'The download client is running its post-processing scripts',
-  importing: 'Monarr is copying the files into your library. This is the one stage Monarr does itself',
-  notifying: 'Monarr is telling the media server an import landed',
+  importing: 'Curator is copying the files into your library. This is the one stage Curator does itself',
+  notifying: 'Curator is telling the media server an import landed',
 }
 
 // Sections, in the order a job passes through them. Rendered only when
@@ -136,7 +136,7 @@ function sections(rows: QueueItem[]): Section[] {
       out.push({
         key: 'import-queued',
         label: 'Waiting to copy',
-        title: 'Accepted by Monarr and waiting for an available import worker',
+        title: 'Accepted by Curator and waiting for an available import worker',
         rows: queued,
       })
     }
@@ -416,7 +416,7 @@ export function ActivityPage() {
       </section>
 
       {/* FINISHED and FAILED — collapsed to a count. This is the part that
-          used to grow without limit: every receipt monarr ever wrote, in one
+          used to grow without limit: every receipt Curator ever wrote, in one
           table, forever. */}
       {GROUPS.map((group) => {
         const total = counts[group.key] ?? 0
@@ -492,10 +492,10 @@ export function ActivityPage() {
       <p className="muted" style={{ fontSize: 13 }}>
         Grouped by what each job is doing right now. Stages up to and including{' '}
         <span className="mono">Moving</span> happen inside the download client;{' '}
-        <span className="mono">Copying to library</span> is the one Monarr does itself. Clients that
+        <span className="mono">Copying to library</span> is the one Curator does itself. Clients that
         push report a change within a second; the rest are reconciled by the 30s sweep (task{' '}
         <span className="mono">queue.refresh</span>). Expand a row for the handoff — every step from
-        grab to import, and the exact paths Monarr used.
+        grab to import, and the exact paths Curator used.
         {typeof retention === 'number' && (
           <>
             {' '}
@@ -557,17 +557,17 @@ function RowGroup(props: {
             on the screen.
 
             So a moving row answers the question the section does not: WHICH
-            APPLICATION is doing this. Monarr's own name appears exactly once,
-            on the one stage Monarr performs itself.
+            APPLICATION is doing this. Curator's own name appears exactly once,
+            on the one stage Curator performs itself.
           */}
           {queuedImport ? (
             <span className="pill pill-neutral">queued</span>
           ) : startingImport ? (
-            <span className="muted stage-owner">Monarr</span>
+            <span className="muted stage-owner">Curator</span>
           ) : interruptedImport ? (
             <span className="pill pill-warning">interrupted</span>
           ) : d.stage ? (
-            <span className="muted stage-owner">{d.stagePeer || 'Monarr'}</span>
+            <span className="muted stage-owner">{d.stagePeer || 'Curator'}</span>
           ) : (
             <span className={`pill ${STATE_PILL[d.state] ?? 'pill-neutral'}`}>
               {label(STATE_LABEL, d.state)}
@@ -655,7 +655,7 @@ function HandoffDetail({ d }: { d: QueueItem }) {
           )}
           {d.importPath && d.importPath !== d.savePath && (
             <div>
-              <span className="muted">Monarr looked in</span>{' '}
+              <span className="muted">Curator looked in</span>{' '}
               <span className="path-chip">{d.importPath}</span>
             </div>
           )}
@@ -754,8 +754,8 @@ function ManualImportPanel({
     <section className="panel manual-import">
       <h2>Manual import</h2>
       <p className="muted" style={{ fontSize: 13 }}>
-        Point Monarr at a folder or file, choose where it belongs, and import it — for a download
-        Monarr couldn't place automatically, or files you moved into place yourself.
+        Point Curator at a folder or file, choose where it belongs, and import it — for a download
+        Curator couldn't place automatically, or files you moved into place yourself.
       </p>
 
       <div className="form-row">
@@ -776,7 +776,7 @@ function ManualImportPanel({
         </button>
       </div>
       <p className="muted manual-import-path-help">
-        Starts in Monarr&apos;s completed-download folder. Type another absolute path or choose a
+        Starts in Curator&apos;s completed-download folder. Type another absolute path or choose a
         folder suggestion; use Parent folder to navigate back up.
       </p>
       {scanErr && <p className="error-text">{scanErr}</p>}
@@ -784,7 +784,7 @@ function ManualImportPanel({
       {scanned && (
         <div className="scan-result">
           {scanned.length === 0 ? (
-            <p className="error-text">No media files found there. Check the path is reachable from Monarr's container.</p>
+            <p className="error-text">No media files found there. Check the path is reachable from Curator's container.</p>
           ) : (
             <div className="log-scroll">
             <table>

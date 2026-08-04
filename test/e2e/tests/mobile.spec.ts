@@ -54,7 +54,7 @@ test('PWA: manifest served with the right type, service worker registers', async
   expect(res.status()).toBe(200)
   expect(res.headers()['content-type']).toContain('manifest')
   const manifest = await res.json()
-  expect(manifest.name).toBe('Monarr')
+  expect(manifest.name).toBe('Noirr Curator')
   expect(manifest.display).toBe('standalone')
   expect(manifest.icons.length).toBeGreaterThanOrEqual(3)
 

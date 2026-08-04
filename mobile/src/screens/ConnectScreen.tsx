@@ -44,7 +44,7 @@ export function ConnectScreen({
       const status = await new MonarrClient(connection).getStatus()
       await onConnected(connection, status)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not connect to Monarr.')
+      setError(cause instanceof Error ? cause.message : 'Could not connect to Curator.')
     } finally {
       setConnecting(false)
     }
@@ -58,7 +58,7 @@ export function ConnectScreen({
     setResolvedCount(0)
     setDiscovered([])
     setError('')
-    setMessage('Looking for Monarr DNS-SD services on this Wi-Fi network…')
+    setMessage('Looking for Curator DNS-SD services on this Wi-Fi network…')
     try {
       const servers = await discoverMonarrServers(
         apiKeyRef.current,
@@ -77,8 +77,8 @@ export function ConnectScreen({
       setDiscovered(servers)
       setMessage(
         servers.length === 0
-          ? 'No Monarr servers answered. Make sure the server is running v0.18.0 or newer and multicast DNS is allowed on this Wi-Fi network.'
-          : `Found ${servers.length} Monarr ${servers.length === 1 ? 'server' : 'servers'}.`,
+          ? 'No Curator servers answered. Make sure the server is running v0.18.0 or newer and multicast DNS is allowed on this Wi-Fi network.'
+          : `Found ${servers.length} Curator ${servers.length === 1 ? 'server' : 'servers'}.`,
       )
     } catch (cause) {
       if (scanGeneration.current !== generation) return
@@ -117,7 +117,7 @@ export function ConnectScreen({
     let permission = cameraPermission
     if (!permission?.granted) permission = await requestCameraPermission()
     if (!permission.granted) {
-      setError('Camera access is required to scan a Monarr pairing QR code.')
+      setError('Camera access is required to scan a Curator pairing QR code.')
       return
     }
     setQrHandled(false)
@@ -146,7 +146,7 @@ export function ConnectScreen({
           <View style={styles.scannerHeader}>
             <Wordmark size={30} />
             <Text style={[styles.scannerTitle, { color: theme.text }]}>Scan the pairing code</Text>
-            <Text style={[styles.scannerHint, { color: theme.muted }]}>Open Monarr web → Access → Mobile pairing → Show pairing QR.</Text>
+            <Text style={[styles.scannerHint, { color: theme.muted }]}>Open Curator web → Access → Mobile pairing → Show pairing QR.</Text>
           </View>
           <View style={[styles.cameraFrame, { borderColor: theme.accent }]}>
             <CameraView
@@ -169,18 +169,18 @@ export function ConnectScreen({
         <View style={styles.hero}>
           <Wordmark size={38} />
           <Text style={[styles.title, { color: theme.text }]}>Your media, from your pocket.</Text>
-          <Text style={[styles.subtitle, { color: theme.muted }]}>Connect this device to the Monarr server you already run.</Text>
+          <Text style={[styles.subtitle, { color: theme.muted }]}>Connect this device to the Curator server you already run.</Text>
         </View>
 
         <Panel style={styles.form}>
-          <Text style={[styles.panelTitle, { color: theme.text }]}>Nearby Monarr servers</Text>
-          <Text style={[styles.hint, { color: theme.muted }]}>Monarr searches this Wi-Fi automatically. Choose a server when it appears, or use either option below.</Text>
+          <Text style={[styles.panelTitle, { color: theme.text }]}>Nearby Curator servers</Text>
+          <Text style={[styles.hint, { color: theme.muted }]}>Curator searches this Wi-Fi automatically. Choose a server when it appears, or use either option below.</Text>
           {discovered.map((found) => (
             <View key={`${found.name}-${found.baseUrl}`} style={[styles.result, { borderColor: theme.border }]}>
               <View style={styles.resultText}>
                 <Text style={[styles.resultName, { color: theme.text }]}>{found.name}</Text>
                 <Text style={[styles.resultUrl, { color: theme.muted }]}>{found.baseUrl}</Text>
-                {found.status ? <Badge label={`Monarr ${found.status.version}`} tone="ok" /> : <Badge label="API key required" tone="warning" />}
+                {found.status ? <Badge label={`Curator ${found.status.version}`} tone="ok" /> : <Badge label="API key required" tone="warning" />}
               </View>
               <Button label={found.requiresApiKey ? 'Use' : 'Connect'} compact disabled={connecting} onPress={() => useDiscoveredServer(found)} />
             </View>
@@ -219,7 +219,7 @@ export function ConnectScreen({
           <Field
             autoCapitalize="none"
             autoCorrect={false}
-            placeholder="Monarr API key"
+            placeholder="Curator API key"
             secureTextEntry
             returnKeyType="go"
             value={apiKey}

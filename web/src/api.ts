@@ -571,7 +571,7 @@ export interface Indexer extends IndexerInput {
 
 export interface PathMapping {
   remote: string // path prefix as the download client reports it
-  local: string // the same location as Monarr sees it
+  local: string // the same location as Curator sees it
 }
 
 export interface DownloadClientInput {
@@ -584,11 +584,11 @@ export interface DownloadClientInput {
   enabled?: boolean
   manualApproval?: boolean
   /**
-   * Delete the payload from this client once Monarr has imported it.
+   * Delete the payload from this client once Curator has imported it.
    * Defaults on for usenet, off for torrents (still seeding).
    */
   removeCompleted?: boolean
-  /** How Monarr learns this client's state: poll every 30s, or hold its event stream open. */
+  /** How Curator learns this client's state: poll every 30s, or hold its event stream open. */
   mode?: 'poll' | 'push'
   pathMappings?: PathMapping[]
 }
@@ -651,7 +651,7 @@ export interface QueueItem {
   error?: string
   savePath?: string
   importPath?: string
-  /** Whether the bounded Monarr importer is waiting for a worker or owns one. */
+  /** Whether the bounded Curator importer is waiting for a worker or owns one. */
   importState?: 'queued' | 'running'
   handoff?: HandoffEntry[]
   addedAt: string
@@ -664,7 +664,7 @@ export interface QueueItem {
   stage?: Stage
   stageSince?: string
   stageDetail?: string
-  /** Which application is doing the current stage. Empty while Monarr copies. */
+  /** Which application is doing the current stage. Empty while Curator copies. */
   stagePeer?: string
   /** Absent when the stage cannot measure itself — which is not the same as 0%. */
   bytes?: number

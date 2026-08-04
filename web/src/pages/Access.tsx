@@ -4,7 +4,7 @@ import {
   UserLoginSettings,
 } from './SettingsDepth'
 
-// AccessPage keeps every way into Monarr in one place: browser login,
+// AccessPage keeps every way into Curator in one place: browser login,
 // mobile pairing, and the raw API credential used by integrations.
 export function AccessPage() {
   return (

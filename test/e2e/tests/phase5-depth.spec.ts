@@ -87,5 +87,5 @@ test('access exposes mobile pairing without revealing the raw API key', async ({
   await pairing.getByLabel('Mobile pairing server address').fill('http://[fd12:3456::20]:7676')
   await pairing.getByRole('button', { name: 'Show pairing QR' }).click()
   await expect(pairing.locator('.pairing-code svg')).toBeVisible()
-  await expect(pairing).toContainText('Monarr app → Scan pairing QR')
+  await expect(pairing).toContainText('Curator app → Scan pairing QR')
 })

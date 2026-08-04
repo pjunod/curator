@@ -250,7 +250,7 @@ function EditPanel(props: {
       void qc.invalidateQueries({ queryKey: ['library'] })
       void qc.invalidateQueries({ queryKey: ['wanted'] })
       // A profile change starts a search server-side. Saying so is the whole
-      // difference between "monarr is working on it" and "nothing happened".
+      // difference between "Curator is working on it" and "nothing happened".
       if (profileChanged && monitored) {
         props.onSaved?.('Profile changed — searching for the new target in the background.')
       } else if (item.path === '' && path !== '') {
@@ -384,13 +384,13 @@ function QualityFacts({ m }: { m: MediaItemDetail }) {
         : `at or above ${target || 'the target'}`,
       cls: 'qf-met',
       why: unverified
-        ? `The resolution on disk matches ${target || 'the target'}, but monarr could only guess at the source. Rather than replace a file that may already be perfect on a guess, it stops here. Interactive search still lets you grab anything you like.`
+        ? `The resolution on disk matches ${target || 'the target'}, but Curator could only guess at the source. Rather than replace a file that may already be perfect on a guess, it stops here. Interactive search still lets you grab anything you like.`
         : `What is on disk is at or above ${target || 'the target'}, so nothing better will be sought.`,
     },
     seeking: {
       word: `upgrading to ${target || 'better'}`,
       cls: 'qf-seeking',
-      why: `Below ${target || 'the target'}, and the profile allows upgrades — monarr is still looking for better.`,
+      why: `Below ${target || 'the target'}, and the profile allows upgrades — Curator is still looking for better.`,
     },
     capped: {
       word: `below ${target || 'the target'} · upgrades off`,
@@ -432,9 +432,9 @@ function QualityFacts({ m }: { m: MediaItemDetail }) {
         ) : (
           <span
             className="muted"
-            title="The file is on disk; monarr could not read it. That is not the same as the file being missing, and nothing here guesses."
+            title="The file is on disk; Curator could not read it. That is not the same as the file being missing, and nothing here guesses."
           >
-            on disk — monarr could not read this file
+            on disk — Curator could not read this file
           </span>
         )}
       </span>
@@ -464,9 +464,9 @@ function ProvenanceBadge({ f }: { f: MediaFileInfo }) {
     filename: "Taken from the file's name, which nothing measured contradicted.",
     release: "Taken from the grabbed release's name, which nothing measured contradicted.",
     manual: 'Set by hand.',
-    failed: 'monarr could not read this file. It is on disk; its quality is unknown.',
+    failed: 'Curator could not read this file. It is on disk; its quality is unknown.',
     implausible:
-      "monarr read this file and what it says about itself cannot be true. It is not counted toward this item being satisfied, so the search continues.",
+      "Curator read this file and what it says about itself cannot be true. It is not counted toward this item being satisfied, so the search continues.",
   }
   const cls =
     f.provenance === 'probe'
@@ -519,7 +519,7 @@ function FileActions({
   })
 
   const name = file.path.split('/').pop() || file.path
-  // Nothing to blocklist for a file monarr did not grab, and a button that
+  // Nothing to blocklist for a file Curator did not grab, and a button that
   // silently does half of what it says is worse than one that is not there.
   const canBlocklist = Boolean(file.sourceRelease)
 
@@ -570,7 +570,7 @@ function FileActions({
         title={
           canBlocklist
             ? 'Delete it, never grab that release again, and search for a replacement'
-            : 'monarr did not grab this file, so there is no release to blocklist'
+            : 'Curator did not grab this file, so there is no release to blocklist'
         }
       >
         Delete &amp; blocklist

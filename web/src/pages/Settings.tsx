@@ -239,7 +239,7 @@ export function SettingsPage() {
       <section className="panel" id="library-folders">
         <h2>Library folders</h2>
         <p className="muted">
-          Root folders are the only places Monarr looks. A scan reconciles what is on disk
+          Root folders are the only places Curator looks. A scan reconciles what is on disk
           against the library, and anything it finds that no item claims is listed below as a
           candidate to match.
         </p>
