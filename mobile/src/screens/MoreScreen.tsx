@@ -1,5 +1,6 @@
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
+import { APP_VERSION } from '../app-version'
 import { formatUptime } from '../format'
 import { AppScreen, Badge, Button, Chip, Header, InlineError, LoadingState, Panel, SectionTitle, Wordmark } from '../components/UI'
 import { LAYOUT_OPTIONS, PALETTE_OPTIONS } from '../preferences'
@@ -94,6 +95,11 @@ export function MoreScreen({
               ))}
             </View>
           </View>
+        </Panel>
+
+        <SectionTitle>App</SectionTitle>
+        <Panel>
+          <InfoRow label="Version" value={APP_VERSION} />
         </Panel>
 
         <SectionTitle>Server</SectionTitle>
