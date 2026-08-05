@@ -110,6 +110,11 @@ rated*, *On the air* — read live from your metadata providers. Click a
 poster for the overview and an **Add to library** button carrying the same
 root folder / profile / monitor controls the Add page has.
 
+The native add sheet preselects the first root folder that accepts the title's
+media kind. You can choose another compatible root, but you cannot add the
+title until one is selected; there is no implied server-default root because
+an omitted destination would leave the item with nowhere to import downloads.
+
 **How to read a row.** Every row carries one line saying what it actually
 measures, because the words do not mean the same thing everywhere: TMDB's
 *trending* counts how many people looked a title up this week, Trakt's

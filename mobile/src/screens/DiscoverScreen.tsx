@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
+import { compatibleRootFolders, resolveRootFolderID } from '../addMediaOptions'
 import type { MonarrClient } from '../api'
 import { SearchCard } from '../components/Media'
 import { AppScreen, Button, Chip, Field, Header, IconButton, InlineError, LoadingState, MessageState, Panel, SectionTitle, Wordmark } from '../components/UI'
@@ -144,7 +145,10 @@ function AddSheet({
     const [roots, profiles] = await Promise.all([client.getRootFolders(), client.getProfiles()])
     return { roots, profiles }
   }, [client, item.kind])
-  const compatibleRoots = (options.data?.roots ?? []).filter((root) => root.kind === item.kind || root.kind === 'mixed')
+  const compatibleRoots = useMemo(
+    () => compatibleRootFolders(options.data?.roots ?? [], item.kind),
+    [item.kind, options.data?.roots],
+  )
   const [rootID, setRootID] = useState(0)
   const [profileID, setProfileID] = useState(0)
   const [monitored, setMonitored] = useState(true)
@@ -153,7 +157,15 @@ function AddSheet({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
+  useEffect(() => {
+    setRootID((current) => resolveRootFolderID(current, compatibleRoots))
+  }, [compatibleRoots])
+
   const add = async () => {
+    if (!rootID) {
+      setError('Choose a compatible root folder before adding this title.')
+      return
+    }
     setSubmitting(true)
     setError('')
     const request: AddMediaRequest = {
@@ -161,7 +173,7 @@ function AddSheet({
       tmdbId: item.tmdbId || undefined,
       tvdbId: item.tvdbId,
       olid: item.olid,
-      rootFolderId: rootID || undefined,
+      rootFolderId: rootID,
       qualityProfileId: profileID || undefined,
       monitored,
       searchNow,
@@ -190,11 +202,13 @@ function AddSheet({
 
           <SectionTitle>Root folder</SectionTitle>
           <View style={styles.wrap}>
-            <Chip label="Server default" selected={rootID === 0} onPress={() => setRootID(0)} />
             {compatibleRoots.map((root) => (
               <Chip key={root.id} label={root.path.split('/').filter(Boolean).pop() ?? root.path} selected={rootID === root.id} onPress={() => setRootID(root.id)} />
             ))}
           </View>
+          {!options.loading && options.data && compatibleRoots.length === 0 ? (
+            <InlineError message={`No root folder is configured for ${item.kind === 'series' ? 'TV' : `${item.kind}s`}. Add one in the web settings first.`} />
+          ) : null}
 
           <SectionTitle>Quality profile</SectionTitle>
           <View style={styles.wrap}>
@@ -218,7 +232,7 @@ function AddSheet({
             <OptionSwitch label="Search now" hint="Start an automatic search as soon as this is added." value={searchNow} onChange={setSearchNow} />
           </Panel>
           <InlineError message={error} />
-          <Button label={submitting ? 'Adding…' : `Add ${item.title}`} disabled={submitting || options.loading} onPress={() => void add()} />
+          <Button label={submitting ? 'Adding…' : `Add ${item.title}`} disabled={submitting || options.loading || !rootID} onPress={() => void add()} />
         </ScrollView>
       </AppScreen>
     </Modal>
