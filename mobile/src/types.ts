@@ -1,4 +1,5 @@
 export type MediaKind = 'movie' | 'series' | 'book'
+export type BookType = 'ebook' | 'audiobook'
 export type HealthStatus = 'ok' | 'warning' | 'error'
 
 export interface Connection {
@@ -44,6 +45,7 @@ export interface MediaItemSummary {
   title: string
   year: number
   author: string
+  bookType?: BookType
   posterPath: string
   monitored: boolean
   path: string
@@ -158,6 +160,7 @@ export interface AddMediaRequest {
   tmdbId?: number
   tvdbId?: number
   olid?: string
+  bookType?: BookType
   rootFolderId?: number
   qualityProfileId?: number
   downloadPriority?: number
@@ -188,6 +191,7 @@ export interface QualityProfile {
   sentence: string
   upgradesAllowed: boolean
   downloadPriority: number
+  target: { source: string; resolution: number; display: string }
 }
 
 export interface WantedItem {

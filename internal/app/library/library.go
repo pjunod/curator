@@ -303,8 +303,12 @@ func (s *Service) seriesByTVDB(ctx context.Context, tvdbID int64) (domain.MediaI
 // AddRequest is what the API sends to put something in the library.
 // TMDBID identifies movies/series; OLID identifies books (ADR 0006).
 type AddRequest struct {
-	Kind   domain.MediaKind
-	TMDBID int64
+	Kind domain.MediaKind
+	// BookType chooses the ebook or audiobook default when Kind is book.
+	// An explicit QualityProfileID remains authoritative and is validated
+	// against this value when both are present.
+	BookType quality.BookType
+	TMDBID   int64
 	// TVDBID identifies a series that came from the chain rather than from
 	// TMDB (ADR 0011). Exactly one of TMDBID/TVDBID/OLID identifies the item.
 	TVDBID       int64
@@ -422,7 +426,21 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 		// Nothing was chosen, so the kind's configured default applies. It
 		// resolves to the built-in when unset or dangling, which is what the
 		// hardcoded constant here used to do unconditionally.
-		item.QualityProfileID = s.db.DefaultProfileID(ctx, item.Kind)
+		if item.Kind == domain.KindBook {
+			bookType := req.BookType
+			if bookType == "" {
+				bookType = quality.BookTypeEbook
+			}
+			if !quality.ValidBookType(bookType) {
+				return domain.MediaItem{}, fmt.Errorf("%w: unknown book type %q", ErrInvalidInput, bookType)
+			}
+			item.QualityProfileID = s.db.DefaultBookProfileID(ctx, bookType)
+		} else {
+			item.QualityProfileID = s.db.DefaultProfileID(ctx, item.Kind)
+		}
+	}
+	if err := s.validateItemProfile(ctx, item.Kind, item.QualityProfileID, req.BookType); err != nil {
+		return domain.MediaItem{}, err
 	}
 	if req.RootFolderID != 0 {
 		rf, err := s.db.GetRootFolder(ctx, req.RootFolderID)
@@ -450,7 +468,34 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	}
 	s.log.Info("library: added", "kind", item.Kind, "title", item.Title, "id", id)
 	s.publish(MediaAdded{ID: id, Kind: string(item.Kind), Title: item.Title})
-	return s.db.GetMediaItemFull(ctx, id)
+	// Return the same graded representation List/Get expose. BookType is
+	// derived from the profile target at the API boundary, so returning an
+	// ungraded row here would make the create response uniquely omit it.
+	return s.Get(ctx, id)
+}
+
+func (s *Service) validateItemProfile(ctx context.Context, kind domain.MediaKind, profileID int64, bookType quality.BookType) error {
+	p, err := s.db.GetProfile(ctx, profileID)
+	if err != nil {
+		return fmt.Errorf("%w: quality profile: %v", ErrInvalidInput, err)
+	}
+	profileBookType := quality.BookTypeForSource(p.Target.Source)
+	if kind == domain.KindBook {
+		if profileBookType == "" {
+			return fmt.Errorf("%w: profile %q is for video, not books", ErrInvalidInput, p.Name)
+		}
+		if bookType != "" && (!quality.ValidBookType(bookType) || profileBookType != bookType) {
+			return fmt.Errorf("%w: profile %q is for %s, not %s", ErrInvalidInput, p.Name, profileBookType, bookType)
+		}
+		return nil
+	}
+	if profileBookType != "" {
+		return fmt.Errorf("%w: profile %q is for books, not %s", ErrInvalidInput, p.Name, kind)
+	}
+	if bookType != "" {
+		return fmt.Errorf("%w: book type only applies to books", ErrInvalidInput)
+	}
+	return nil
 }
 
 // UpdateRequest is a per-item edit; nil fields are left as they are.
@@ -510,6 +555,9 @@ func (s *Service) UpdateItem(ctx context.Context, id int64, req UpdateRequest) (
 		item.Monitored = *req.Monitored
 	}
 	if req.QualityProfileID != nil && *req.QualityProfileID != 0 {
+		if err := s.validateItemProfile(ctx, item.Kind, *req.QualityProfileID, ""); err != nil {
+			return domain.MediaItem{}, err
+		}
 		item.QualityProfileID = *req.QualityProfileID
 	}
 	if req.SetDownloadPriority {

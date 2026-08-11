@@ -137,11 +137,12 @@ test('library All view groups by kind, each section with its own controls', asyn
 
   // Grouped sections, fixed order — no interleaving — each with a toolbar.
   const heads = page.locator('.lib-section-head')
-  await expect(heads).toHaveCount(3)
+  await expect(heads).toHaveCount(4)
   await expect(heads.nth(0)).toContainText('Movies')
   await expect(heads.nth(1)).toContainText('TV')
-  await expect(heads.nth(2)).toContainText('Books')
-  await expect(page.locator('.section-toolbar')).toHaveCount(3)
+  await expect(heads.nth(2)).toContainText('Ebooks')
+  await expect(heads.nth(3)).toContainText('Audiobooks')
+  await expect(page.locator('.section-toolbar')).toHaveCount(4)
 
   // The Movies text filter touches ONLY the Movies section.
   await page.getByRole('searchbox', { name: 'Filter Movies by title' }).fill('zzz-no-match')
@@ -157,9 +158,12 @@ test('library All view groups by kind, each section with its own controls', asyn
   await expect(page.getByText('Nothing in Movies matches')).not.toBeVisible()
   await page.getByRole('combobox', { name: 'Show TV' }).selectOption('all')
 
-  // Books get an Author sort option; Movies must not.
+  // Both book families get an Author sort option; Movies must not.
   await expect(
-    page.getByRole('combobox', { name: 'Sort Books' }).locator('option[value="author"]'),
+    page.getByRole('combobox', { name: 'Sort Ebooks' }).locator('option[value="author"]'),
+  ).toHaveCount(1)
+  await expect(
+    page.getByRole('combobox', { name: 'Sort Audiobooks' }).locator('option[value="author"]'),
   ).toHaveCount(1)
   await expect(
     page.getByRole('combobox', { name: 'Sort Movies' }).locator('option[value="author"]'),

@@ -12,6 +12,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/scheduler"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -19,6 +20,20 @@ import (
 )
 
 type stubProvider struct{ configured bool }
+
+func TestBookDTOsExposeTheProfileDerivedSubtype(t *testing.T) {
+	item := domain.MediaItem{
+		Kind: domain.KindBook, QualityTarget: quality.Quality{Source: quality.SourceM4B},
+	}
+	summary := summaryDTO(item)
+	detail := detailDTO(item)
+	if summary.BookType == nil || string(*summary.BookType) != "audiobook" {
+		t.Fatalf("summary bookType = %v", summary.BookType)
+	}
+	if detail.BookType == nil || string(*detail.BookType) != "audiobook" {
+		t.Fatalf("detail bookType = %v", detail.BookType)
+	}
+}
 
 func (p stubProvider) SearchMovies(ctx context.Context, q string) ([]ports.SearchResult, error) {
 	if !p.configured {

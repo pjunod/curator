@@ -2228,6 +2228,20 @@ a.pill-info:hover {
     flex-wrap: wrap;
   }
 
+  /* Five library media tabs no longer fit every phone once their counts are
+     present. Keep the strip inside the visual viewport instead of letting its
+     intrinsic width auto-zoom the whole page and displace fixed touch targets. */
+  .page-head > .tabs {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .page-head > .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
   .head-actions {
     margin-left: 0;
     flex-wrap: wrap;

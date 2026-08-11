@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -110,6 +111,28 @@ func TestMovieSearchUsesPlainSearch(t *testing.T) {
 	}
 	if !contains((*queries)[0], "t=search") {
 		t.Errorf("movie query should use t=search: %q", (*queries)[0])
+	}
+}
+
+func TestBookSearchUsesTheSelectedFormatFamilyCategory(t *testing.T) {
+	srv, queries := newServer(t)
+	c := New(ports.IndexerConfig{Name: "idx", URL: srv.URL, APIKey: "k", Protocol: "torrent"})
+
+	for _, tc := range []struct {
+		bookType quality.BookType
+		want     string
+	}{
+		{quality.BookTypeEbook, "cat=7000%2C7020"},
+		{quality.BookTypeAudiobook, "cat=3030"},
+	} {
+		if _, err := c.Search(context.Background(), domain.SearchQuery{
+			Q: "Andy Weir Project Hail Mary", Kind: domain.KindBook, BookType: tc.bookType,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got := (*queries)[len(*queries)-1]; !contains(got, tc.want) {
+			t.Errorf("%s query %q missing %q", tc.bookType, got, tc.want)
+		}
 	}
 }
 

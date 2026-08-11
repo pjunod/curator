@@ -51,6 +51,10 @@ const payloads = {
     name: 'The Test Book by Test Author M4B',
     files: ['The Test Book.m4b'],
   },
+  book901m4b: {
+    name: 'Audio Author - The Test Audiobook M4B',
+    files: ['01 - Opening.m4b', '02 - Middle.m4b', '03 - Ending.m4b'],
+  },
 }
 
 const torrents = [] // {hash, name, content_path}
@@ -79,13 +83,16 @@ createServer((req, res) => {
       ]))
       return
     }
-    // book search: t=search with the Newznab book categories (7000s/3030).
-    // One EPUB (accepted by the Ebook profile) and one M4B audiobook
-    // (rejected: not in the Ebook profile's allowed set).
+    // Ebook and audiobook profiles search their own Newznab categories.
     if ((q.get('cat') ?? '').includes('7000')) {
       res.end(releasesXML([
         item('Test Author - The Test Book (2024) EPUB', 'book900', 800000, 21),
-        item('The Test Book by Test Author M4B', 'book900m4b', 300000000, 9),
+      ]))
+      return
+    }
+    if ((q.get('cat') ?? '').includes('3030')) {
+      res.end(releasesXML([
+        item('Audio Author - The Test Audiobook M4B', 'book901m4b', 300000000, 9),
       ]))
       return
     }

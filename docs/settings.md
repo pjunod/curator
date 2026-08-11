@@ -71,7 +71,7 @@ Torznab (torrent) and Newznab (usenet) share one implementation.
 | URL | API root **without** `/api` — Monarr appends it (`https://api.drunkenslug.com`, or a Prowlarr feed like `http://prowlarr:9696/1`) |
 | API key | the indexer's key |
 | Protocol | `torrent` or `usenet` — decides which download client gets grabs |
-| Categories | optional comma-separated Newznab category ids; empty = server defaults (book searches then pin 7000/7020/3030 automatically) |
+| Categories | optional comma-separated Newznab category ids; empty = server defaults (ebook searches use 7000/7020; audiobook searches use 3030) |
 
 **Test** performs a `t=caps` request. Prowlarr users don't need to add
 feeds manually — point Prowlarr at the compat personalities and its app
@@ -287,6 +287,12 @@ unless a profile explicitly targets one, and the three format families
 (film/TV · ebook · audiobook) never satisfy each other — an M4B is not a
 better EPUB, it answers a different question.
 
+Audiobook profiles can target **MP3, WMA, AAC, OGG, Opus, M4A, M4B, FLAC,
+or WAV**. M4B remains the seeded target because it commonly carries one
+book plus chapter markers; multipart releases in any supported audio format
+are imported as numbered parts in lexical source order. Ebook profiles keep
+the PDF, MOBI, AZW3, and EPUB vocabulary.
+
 **What download priority does:** every grab sent to nzbd carries the
 profile's level unless the item has its own override. Higher levels are
 scheduled before lower ones; they do not change which release Monarr picks.
@@ -304,20 +310,22 @@ override applies to its primary and additional quality copies.
 
 ### Defaults for new items
 
-Under the profile table, one default per media kind — **Movies**,
-**Series**, **Books** — is what an item gets when you add it without
+Under the profile table, separate defaults for **Movies**, **Series**,
+**Ebooks**, and **Audiobooks** are what an item gets when you add it without
 picking a profile. The table's **Default for** column shows the same
 answer from the other direction, so you can see at a glance which profile
 new titles land on.
 
-Per kind rather than one global default, for two reasons: a book cannot
+Per family rather than one global default, for two reasons: a book cannot
 use a video profile at all (the format families never satisfy each other,
 above), and wanting 4K films alongside 1080p television is the ordinary
-case rather than an exotic one. The Books picker offers only ebook and
-audiobook profiles; the film and TV pickers offer only video ones.
+case rather than an exotic one. The Ebook and Audiobook pickers each offer
+only profiles from their own format family; the film and TV pickers offer
+only video ones.
 
 Unset, the defaults are the values that used to be hardcoded — **1080p**
-for films and television, **Ebook** for books — so upgrading changes
+for films and television, **Ebook** for ebooks, and **Audiobook** for
+audiobooks — so upgrading changes
 nothing until you choose. Changing a default affects only what you add
 afterwards; nothing already in the library moves. If the profile a default
 points at is somehow gone, adds fall back to the built-in rather than

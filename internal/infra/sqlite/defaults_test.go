@@ -26,6 +26,32 @@ func TestDefaultProfileFallsBackToTheBuiltIn(t *testing.T) {
 	if got := db.DefaultProfileID(ctx, domain.KindBook); got != quality.EbookProfileID {
 		t.Fatalf("book default = %d, want %d", got, quality.EbookProfileID)
 	}
+	if got := db.DefaultBookProfileID(ctx, quality.BookTypeAudiobook); got != quality.AudiobookProfileID {
+		t.Fatalf("audiobook default = %d, want %d", got, quality.AudiobookProfileID)
+	}
+}
+
+func TestAudiobookDefaultIsIndependentAndFamilyChecked(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	id, err := db.AddProfile(ctx, quality.Profile{
+		Name: "Lossless audio", Target: quality.Quality{Source: quality.SourceFLAC}, UpgradesAllowed: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetDefaultBookProfile(ctx, quality.BookTypeAudiobook, id); err != nil {
+		t.Fatalf("set audiobook default: %v", err)
+	}
+	if got := db.DefaultBookProfileID(ctx, quality.BookTypeAudiobook); got != id {
+		t.Fatalf("audiobook default = %d, want %d", got, id)
+	}
+	if got := db.DefaultProfileID(ctx, domain.KindBook); got != quality.EbookProfileID {
+		t.Fatalf("ebook default moved with audiobook: %d", got)
+	}
+	if err := db.SetDefaultBookProfile(ctx, quality.BookTypeAudiobook, quality.EbookProfileID); !errors.Is(err, ErrProfileFamilyMismatch) {
+		t.Fatalf("ebook profile as audiobook default error = %v", err)
+	}
 }
 
 // TestSetAndReadDefaultProfile: the round trip, which is the whole feature.

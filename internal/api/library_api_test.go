@@ -943,9 +943,10 @@ func TestLibSettingsRoundTripMasksSecrets(t *testing.T) {
 		TraktConfigured bool   `json:"traktClientIdConfigured"`
 		AuthRequired    bool   `json:"authRequired"`
 		DefaultProfiles struct {
-			Movie  int64 `json:"movie"`
-			Series int64 `json:"series"`
-			Book   int64 `json:"book"`
+			Movie     int64 `json:"movie"`
+			Series    int64 `json:"series"`
+			Book      int64 `json:"book"`
+			Audiobook int64 `json:"audiobook"`
 		} `json:"defaultProfiles"`
 	}
 	e.get(t, "/api/v1/settings").expect(t, http.StatusOK).into(t, &before)
@@ -955,7 +956,7 @@ func TestLibSettingsRoundTripMasksSecrets(t *testing.T) {
 	// Always the resolved answer, including the built-in fallbacks: a settings
 	// screen showing nothing for "default profile" is how you end up believing
 	// there isn't one.
-	if before.DefaultProfiles.Movie == 0 || before.DefaultProfiles.Book == 0 {
+	if before.DefaultProfiles.Movie == 0 || before.DefaultProfiles.Book == 0 || before.DefaultProfiles.Audiobook == 0 {
 		t.Errorf("default profiles must resolve to the built-ins: %+v", before.DefaultProfiles)
 	}
 
@@ -1033,16 +1034,17 @@ func TestLibSettingsDefaultProfilesAreValidated(t *testing.T) {
 	e.put(t, "/api/v1/settings", `{"defaultProfiles":{"movie":3}}`).expect(t, http.StatusNoContent)
 	var out struct {
 		DefaultProfiles struct {
-			Movie  int64 `json:"movie"`
-			Series int64 `json:"series"`
-			Book   int64 `json:"book"`
+			Movie     int64 `json:"movie"`
+			Series    int64 `json:"series"`
+			Book      int64 `json:"book"`
+			Audiobook int64 `json:"audiobook"`
 		} `json:"defaultProfiles"`
 	}
 	e.get(t, "/api/v1/settings").expect(t, http.StatusOK).into(t, &out)
 	if out.DefaultProfiles.Movie != 3 {
 		t.Errorf("movie default = %d, want 3", out.DefaultProfiles.Movie)
 	}
-	if out.DefaultProfiles.Series != 1 || out.DefaultProfiles.Book != 4 {
+	if out.DefaultProfiles.Series != 1 || out.DefaultProfiles.Book != 4 || out.DefaultProfiles.Audiobook != 5 {
 		t.Errorf("an unsent kind was changed: %+v", out.DefaultProfiles)
 	}
 

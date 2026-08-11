@@ -7,8 +7,9 @@
 [![Coverage](coverage.svg)](https://github.com/pjunod/monarr/actions/workflows/tests.yml)
 
 **A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one
-acquisition pipeline — for TV, movies, and (Phase 2.5) books, filling the gap left by
-Readarr's retirement.
+acquisition pipeline — for TV, movies, ebooks, and audiobooks, filling the gap left by
+Readarr's retirement. Audiobooks get their own defaults, indexer routing, library views,
+and multipart-track import while remaining books in the shared metadata model.
 
 > **Status: all planned phases complete** — library, acquisition, books, automation
 > (RSS/backlog/blocklist), Sonarr/Radarr compat personalities, and the depth tail (custom

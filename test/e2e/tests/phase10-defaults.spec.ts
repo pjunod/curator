@@ -11,15 +11,18 @@ test('the default profile for each kind is visible and changeable', async ({ pag
   const panel = page.locator('#profiles')
   await expect(panel).toBeVisible()
 
-  // Out of the box: films and television start on 1080p, books on Ebook.
+  // Out of the box: films and television start on 1080p, with independent
+  // Ebook and Audiobook defaults for the two book families.
   const defaults = panel.getByTestId('profile-defaults')
   await expect(defaults).toBeVisible()
   const movies = defaults.getByLabel('Default profile for Movies')
   const series = defaults.getByLabel('Default profile for Series')
-  const books = defaults.getByLabel('Default profile for Books')
+  const books = defaults.getByLabel('Default profile for Ebooks')
+  const audiobooks = defaults.getByLabel('Default profile for Audiobooks')
   await expect(movies).toHaveValue('1')
   await expect(series).toHaveValue('1')
   await expect(books).toHaveValue('4')
+  await expect(audiobooks).toHaveValue('5')
 
   // The table says which kinds start on each profile, so the answer is visible
   // without scrolling to the picker.
@@ -38,7 +41,8 @@ test('the default profile for each kind is visible and changeable', async ({ pag
 
   // A book cannot be offered a video profile at all — format families never
   // compete, so the option must not exist rather than fail on save.
-  await expect(books.locator('option')).toHaveCount(2) // Ebook + Audiobook
+  await expect(books.locator('option')).toHaveCount(1)
+  await expect(audiobooks.locator('option')).toHaveCount(1)
   await expect(books.locator('option', { hasText: '4K' })).toHaveCount(0)
 
   // Put it back so later specs see the library they expect.

@@ -15,6 +15,17 @@ import (
 // same model, second vocabulary; Resolution stays 0 for all book formats.
 type Source string
 
+// BookType is the format family a book profile curates. It is deliberately
+// not a MediaKind: ebooks and audiobooks share metadata, folders, and the
+// standalone book wantable, while search categories and file handling need
+// to know which edition the selected profile is asking for.
+type BookType string
+
+const (
+	BookTypeEbook     BookType = "ebook"
+	BookTypeAudiobook BookType = "audiobook"
+)
+
 // Known sources.
 const (
 	SourceUnknown  Source = "unknown"
@@ -28,14 +39,21 @@ const (
 	SourceRemux    Source = "remux"
 
 	// Book formats (Phase 2.5). Ebooks worst→best: PDF < MOBI < AZW3 < EPUB.
-	// Audiobooks: MP3 < M4B. The two families never compete in practice —
-	// profiles keep them apart — but ranks are total for determinism.
+	// Audiobook formats share a family; their total ordering keeps profile
+	// upgrades deterministic while the profile itself remains the authority.
 	SourcePDF  Source = "pdf"
 	SourceMOBI Source = "mobi"
 	SourceAZW3 Source = "azw3"
 	SourceEPUB Source = "epub"
 	SourceMP3  Source = "mp3"
+	SourceWMA  Source = "wma"
+	SourceAAC  Source = "aac"
+	SourceOGG  Source = "ogg"
+	SourceOPUS Source = "opus"
+	SourceM4A  Source = "m4a"
 	SourceM4B  Source = "m4b"
+	SourceFLAC Source = "flac"
+	SourceWAV  Source = "wav"
 )
 
 // IsBookFormat reports whether s is one of the book-format sources.
@@ -54,7 +72,30 @@ func IsEbookFormat(s Source) bool {
 
 // IsAudiobookFormat reports whether s is a narrated-book format.
 func IsAudiobookFormat(s Source) bool {
-	return s == SourceMP3 || s == SourceM4B
+	switch s {
+	case SourceMP3, SourceWMA, SourceAAC, SourceOGG, SourceOPUS,
+		SourceM4A, SourceM4B, SourceFLAC, SourceWAV:
+		return true
+	}
+	return false
+}
+
+// BookTypeForSource returns the book family a format belongs to. The empty
+// value means the source is video or unknown.
+func BookTypeForSource(s Source) BookType {
+	switch {
+	case IsEbookFormat(s):
+		return BookTypeEbook
+	case IsAudiobookFormat(s):
+		return BookTypeAudiobook
+	default:
+		return ""
+	}
+}
+
+// ValidBookType reports whether t is an API-selectable book family.
+func ValidBookType(t BookType) bool {
+	return t == BookTypeEbook || t == BookTypeAudiobook
 }
 
 // IsScreenCapture reports whether s is a recording of a screening rather than
@@ -101,7 +142,10 @@ func (q Quality) Display() string {
 		SourceDVD: "DVD", SourceHDTV: "HDTV", SourceWEBRip: "WEBRip",
 		SourceWEBDL: "WEB-DL", SourceBluray: "Bluray", SourceRemux: "Remux",
 		SourcePDF: "PDF", SourceMOBI: "MOBI", SourceAZW3: "AZW3",
-		SourceEPUB: "EPUB", SourceMP3: "MP3", SourceM4B: "M4B",
+		SourceEPUB: "EPUB", SourceMP3: "MP3", SourceWMA: "WMA",
+		SourceAAC: "AAC", SourceOGG: "OGG", SourceOPUS: "Opus",
+		SourceM4A: "M4A", SourceM4B: "M4B", SourceFLAC: "FLAC",
+		SourceWAV: "WAV",
 	}[q.Source]
 	if name == "" {
 		name = string(q.Source)
@@ -128,7 +172,8 @@ var sourceRank = map[Source]int{
 	// Book formats rank at resolution 0; ordering within each family is what
 	// matters (profiles keep ebooks and audiobooks apart).
 	SourcePDF: 1, SourceMOBI: 2, SourceAZW3: 3, SourceEPUB: 4,
-	SourceMP3: 5, SourceM4B: 6,
+	SourceMP3: 1, SourceWMA: 2, SourceAAC: 3, SourceOGG: 4,
+	SourceOPUS: 5, SourceM4A: 6, SourceM4B: 7, SourceFLAC: 8, SourceWAV: 9,
 }
 
 var resolutionRank = map[int]int{0: 0, 480: 1, 720: 2, 1080: 3, 2160: 4}
@@ -289,7 +334,9 @@ var videoVocabulary = []Quality{
 
 var bookVocabulary = []Quality{
 	{SourcePDF, 0}, {SourceMOBI, 0}, {SourceAZW3, 0}, {SourceEPUB, 0},
-	{SourceMP3, 0}, {SourceM4B, 0},
+	{SourceMP3, 0}, {SourceWMA, 0}, {SourceAAC, 0}, {SourceOGG, 0},
+	{SourceOPUS, 0}, {SourceM4A, 0}, {SourceM4B, 0}, {SourceFLAC, 0},
+	{SourceWAV, 0},
 }
 
 // Vocabulary returns every known quality on the axis a target lives on,

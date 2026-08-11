@@ -2348,6 +2348,13 @@ components:
       type: string
       enum: [movie, series, book]
 
+    BookType:
+      type: string
+      enum: [ebook, audiobook]
+      description: >
+        The book edition curated by the selected quality profile. This is a
+        subtype of the persistent book kind, not a separate library kind.
+
     Rating:
       type: object
       required: [source, value, scale]
@@ -2383,6 +2390,8 @@ components:
         author:
           type: string
           description: Books only (ADR 0006); empty for movies/series.
+        bookType:
+          $ref: "#/components/schemas/BookType"
         posterPath:
           type: string
         monitored:
@@ -2589,6 +2598,8 @@ components:
         author:
           type: string
           description: Books only (ADR 0006); empty for movies/series.
+        bookType:
+          $ref: "#/components/schemas/BookType"
         posterPath:
           type: string
         backdropPath:
@@ -2697,13 +2708,15 @@ components:
         olid:
           type: string
           description: Open Library work id — identifies books (ADR 0006).
+        bookType:
+          $ref: "#/components/schemas/BookType"
         rootFolderId:
           type: integer
           format: int64
         qualityProfileId:
           type: integer
           format: int64
-          description: 0/absent = kind default (Any; Ebook for books).
+          description: 0/absent = kind default (the matching bookType default for books).
         downloadPriority:
           type: integer
           description: Optional per-item override; absent inherits the quality profile.
@@ -3995,7 +4008,7 @@ components:
         name one, per media kind. Always fully populated on read: an unset or
         dangling setting resolves to the built-in, so this is the effective
         answer rather than only what has been saved.
-      required: [movie, series, book]
+      required: [movie, series, book, audiobook]
       properties:
         movie:  { type: integer, format: int64 }
         series: { type: integer, format: int64 }
@@ -4003,9 +4016,12 @@ components:
           type: integer
           format: int64
           description: >
-            Must target a book format. Format families never compete
-            (ADR 0014 §7), so a video profile here would leave every book
-            wanted forever with nothing able to satisfy it.
+            Ebook default retained under the historical book key for API
+            compatibility. Must target an ebook format.
+        audiobook:
+          type: integer
+          format: int64
+          description: Must target an audiobook format.
 
     SettingsUpdate:
       type: object
@@ -4051,3 +4067,4 @@ components:
         movie:  { type: integer, format: int64 }
         series: { type: integer, format: int64 }
         book:   { type: integer, format: int64 }
+        audiobook: { type: integer, format: int64 }

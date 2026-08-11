@@ -50,6 +50,13 @@ func TestComposeAirTimeRefusesToGuess(t *testing.T) {
 			}
 		})
 	}
+	// The failed zone lookup is cached. Its sentinel must remain a failure on
+	// later calls rather than turning into a nil *time.Location panic.
+	for i := 0; i < 2; i++ {
+		if _, ok := composeAirTime("2026-01-11", "21:00", "Mars/Olympus"); ok {
+			t.Fatal("cached unknown zone unexpectedly composed a time")
+		}
+	}
 }
 
 // An episode entry carries the rebuilt calendar's presentation fields, and

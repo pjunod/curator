@@ -288,7 +288,10 @@ function EditPanel(props: {
             value={profileId}
             onChange={(e) => setProfileId(Number(e.target.value))}
           >
-            {profiles.data?.map((p) => (
+            {profiles.data?.filter((p) => {
+              const isBookProfile = ['pdf', 'mobi', 'azw3', 'epub', 'mp3', 'wma', 'aac', 'ogg', 'opus', 'm4a', 'm4b', 'flac', 'wav'].includes(p.target.source)
+              return (item.kind === 'book') === isBookProfile
+            }).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
@@ -777,7 +780,9 @@ export function MediaDetailPage() {
             {m.title} <span className="muted">({m.year || '—'})</span>
           </h1>
           <div className="detail-facts muted">
-            <span className="pill pill-neutral">{m.kind}</span>
+            <span className="pill pill-neutral">
+              {m.kind === 'book' ? (m.bookType === 'audiobook' ? 'audiobook' : 'ebook') : m.kind}
+            </span>
             {m.author && <span>by {m.author}</span>}
             {m.status && <span>{m.status}</span>}
             {m.runtime > 0 && <span>{m.runtime} min</span>}

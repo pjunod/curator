@@ -56,3 +56,19 @@ func TestIsVideo(t *testing.T) {
 		t.Error("non-video extensions must not match")
 	}
 }
+
+func TestAudiobookExtensions(t *testing.T) {
+	want := map[string]string{
+		"chapter.MP3": "mp3", "book.m4b": "m4b", "book.m4a": "m4a",
+		"book.aac": "aac", "book.flac": "flac", "book.ogg": "ogg",
+		"book.opus": "opus", "book.wav": "wav", "book.wma": "wma",
+	}
+	for name, source := range want {
+		if !IsBook(name) {
+			t.Errorf("%s was not recognized as a book file", name)
+		}
+		if got := BookQualitySource(name); got != source {
+			t.Errorf("BookQualitySource(%q) = %q, want %q", name, got, source)
+		}
+	}
+}

@@ -1,4 +1,13 @@
-import type { CalendarEntry, MediaItemSummary, Rating } from './types'
+import type { BookType, CalendarEntry, MediaItemSummary, Rating } from './types'
+
+const EBOOK_SOURCES = new Set(['pdf', 'mobi', 'azw3', 'epub'])
+const AUDIOBOOK_SOURCES = new Set(['mp3', 'wma', 'aac', 'ogg', 'opus', 'm4a', 'm4b', 'flac', 'wav'])
+
+export function bookTypeForSource(source: string): BookType | undefined {
+  if (EBOOK_SOURCES.has(source)) return 'ebook'
+  if (AUDIOBOOK_SOURCES.has(source)) return 'audiobook'
+  return undefined
+}
 
 export function posterUrl(path: string, size: 'w185' | 'w342' | 'w500' = 'w342'): string {
   if (!path) return ''
