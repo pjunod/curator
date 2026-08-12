@@ -89,7 +89,7 @@ describe('MonarrClient', () => {
     vi.stubGlobal('fetch', fetch)
     const client = new MonarrClient({ baseUrl: 'http://monarr.local:7676', apiKey: '' })
 
-    await client.addMediaCopy(42, { qualityProfileId: 5, name: 'Travel', monitored: true })
+    await client.addMediaCopy(42, { bookType: 'audiobook', qualityProfileId: 5, monitored: true })
     await client.updateMediaCopy(42, 9, { qualityProfileId: 4, name: 'Tablet', monitored: false })
     await client.deleteMediaCopy(42, 9)
 
@@ -98,7 +98,7 @@ describe('MonarrClient', () => {
       'http://monarr.local:7676/api/v1/library/42/copies',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ qualityProfileId: 5, name: 'Travel', monitored: true }),
+        body: JSON.stringify({ bookType: 'audiobook', qualityProfileId: 5, monitored: true }),
       }),
     )
     expect(fetch).toHaveBeenNthCalledWith(

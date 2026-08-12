@@ -93,13 +93,13 @@
   <header>
     <h1>Monarr — Project Status</h1>
     <div class="sub">Unified Sonarr + Radarr + books rewrite in Go · explicit ledger of planned vs. done ·
-      mirrors <code>STATUS.md</code> snapshot 2026-08-02 · <b>v0.20.0</b> · page generated 2026-08-02</div>
+      mirrors <code>STATUS.md</code> snapshot 2026-08-12 · <b>v0.24.0</b> · page generated 2026-08-12</div>
   </header>
 
   <div class="tiles">
-    <div class="tile"><div class="v">v0.20.0</div><div class="l">calendar rebuilt · agenda view · TVmaze air times</div></div>
+    <div class="tile"><div class="v">v0.24.0</div><div class="l">side-by-side ebook + audiobook editions</div></div>
     <div class="tile"><div class="v">11/12 ✓</div><div class="l">phase groups complete — launch logistics remains</div></div>
-    <div class="tile"><div class="v">98/98</div><div class="l">e2e green · 72 web + 45 native unit · lint 0</div></div>
+    <div class="tile"><div class="v">101/101</div><div class="l">e2e green · 76 web + 52 native unit · lint 0</div></div>
     <div class="tile"><div class="v">85.5%</div><div class="l">coverage, floor enforced at 85%</div></div>
   </div>
 
@@ -113,7 +113,7 @@
         <li class="done-item"><span class="phase-n">0.5 — Tests, hooks, CI</span><span class="m done">7/7 ✓</span><span class="t">full pyramid green locally and in CI; STATUS.md as the ledger</span></li>
         <li class="done-item"><span class="phase-n">1 — Library</span><span class="m done">13/13 ✓</span><span class="t">TMDB port/adapter, add flows, browse UI, scan + reconcile</span></li>
         <li class="done-item"><span class="phase-n">2 — Acquisition core</span><span class="m done">16/16 ✓</span><span class="t">parser + golden corpus + fuzz, matcher, decisions, torznab, qbit/SAB, importer/renamer</span></li>
-        <li class="done-item"><span class="phase-n">2.5 — Books (ADR 0006)</span><span class="m done">7/7 ✓</span><span class="t">Open Library, book parser corpus, format ladder, Calibre-friendly naming</span></li>
+        <li class="done-item"><span class="phase-n">2.5 — Books (ADR 0006/0018)</span><span class="m done">8/8 ✓</span><span class="t">Open Library, side-by-side ebook/audiobook editions, independent acquisition, Calibre-friendly naming</span></li>
         <li class="done-item"><span class="phase-n">3 — Automation</span><span class="m done">9/9 ✓</span><span class="t">wanted index, RSS 15m, backlog 12h, blocklist + re-search, calendar (month + agenda, TVmaze air times), notifiers, backups</span></li>
         <li class="done-item"><span class="phase-n">4 — Ecosystem compat</span><span class="m done">5/6 ✓</span><span class="t">/sonarr + /radarr v3 vs real Jellyseerr/Prowlarr/Bazarr; the *arr DB importer stretch deferred post-1.0 (adoption is the path, ADR 0005)</span></li>
         <li class="done-item"><span class="phase-n">5 — Depth &amp; parity</span><span class="m done">7/7 ✓</span><span class="t">custom formats, transmission/deluge/nzbget, import lists, anime absolute, auth + Access tab, mass editor, /metrics</span></li>
@@ -205,7 +205,7 @@
   <!-- ══════════ Decisions ══════════ -->
   <section>
     <h2>Decisions to date <span class="ev">docs/adr/ — the authority on behaviour</span></h2>
-    <details><summary>ADRs 0001–0016</summary>
+    <details><summary>ADRs 0001–0018</summary>
       <ul class="items">
         <li class="done-item"><span class="m done">0001</span><span class="t">Name Monarr, GPL-3.0, port 7676; amended: ghcr.io images, <code>pjunod/monarr</code></span></li>
         <li class="done-item"><span class="m done">0002</span><span class="t">One <code>media_items</code> table + kind; files↔episodes n:m; Wantable abstraction</span></li>
@@ -220,12 +220,13 @@
         <li class="done-item"><span class="m done">0013–14</span><span class="t">Quality is measured, not inferred; profiles are floor + target + upgrades ("Any" retired)</span></li>
         <li class="done-item"><span class="m done">0015</span><span class="t">Discovery is a read-only browse surface: TMDB always, Trakt when keyed, nothing stored</span></li>
         <li class="done-item"><span class="m done">0016</span><span class="t">Air times from TVmaze's show-level schedule, composed to UTC per date at read time — absent beats guessed</span></li>
+        <li class="done-item"><span class="m done">0017–18</span><span class="t">Audiobook format routing and multipart import; ebook and audiobook coexist as independent editions of one book work</span></li>
       </ul>
     </details>
   </section>
 
   <footer>
-    Authoritative copy: <code>STATUS.md</code> in <code>pjunod/monarr</code> (updated every working session; this page mirrors the 2026-08-02 snapshot, v0.20.0) ·
+    Authoritative copy: <code>STATUS.md</code> in <code>pjunod/monarr</code> (updated every working session; this page mirrors the 2026-08-12 snapshot, v0.24.0) ·
     plans: <code>docs/plan-calendar.md</code> · <code>docs/plan-integration.md</code> · <code>docs/plan-discover.md</code> · decisions: <code>docs/adr/</code>
   </footer>
 </div>

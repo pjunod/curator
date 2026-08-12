@@ -99,7 +99,11 @@ type MediaItem struct {
 	SortTitle string
 	Year      int
 	Author    string // books only (ADR 0006); "" for movies/series
-	IDs       ExternalIDs
+	// BookType is the primary edition's medium. It is persisted independently
+	// from QualityProfileID: a profile governs preferences WITHIN an edition
+	// and must never turn an ebook into an audiobook (ADR 0018).
+	BookType quality.BookType
+	IDs      ExternalIDs
 
 	// Metadata cache (hydrated from the provider).
 	Overview     string
@@ -143,7 +147,7 @@ type MediaItem struct {
 	Seasons []Season
 
 	Files  []MediaFile
-	Copies []MediaCopy // additional quality targets (movies/series)
+	Copies []MediaCopy // additional quality targets or book editions
 
 	// Completeness, derived for list views (hydrated by ListMediaItems, zero
 	// elsewhere): monitored aired episodes vs those with files, and the raw
@@ -173,15 +177,18 @@ type MediaItem struct {
 	UpdatedAt time.Time
 }
 
-// MediaCopy is an ADDITIONAL quality target for one item: the same
-// movie/series kept at a second (third, …) quality, each copy with its own
-// profile and its own automation lifecycle. Path "" means the copy shares
-// the item's folder (filenames carry [Quality], so versions coexist);
-// otherwise the copy lives in its own folder under its own root.
+// MediaCopy is an additional acquisition target for one item. For movies and
+// series that means another quality copy. For books it means the other
+// first-class edition (ebook or audiobook). Every target has its own profile,
+// files, downloads, and automation lifecycle. Path "" means it shares the
+// item's folder; otherwise it lives in its own folder under its own root.
 type MediaCopy struct {
-	ID               int64
-	MediaItemID      int64
-	Name             string // display label, e.g. "720p for dad"; "" = profile name
+	ID          int64
+	MediaItemID int64
+	Name        string // display label, e.g. "720p for dad"; "" = profile name
+	// BookType is set only for book editions. It is immutable after creation;
+	// profile changes are restricted to the same format family.
+	BookType         quality.BookType
 	QualityProfileID int64
 	RootFolderID     int64  // 0 = same folder as the item
 	Path             string // "" = item folder

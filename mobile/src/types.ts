@@ -1,5 +1,11 @@
 export type MediaKind = 'movie' | 'series' | 'book'
 export type BookType = 'ebook' | 'audiobook'
+
+export interface BookEditionSummary {
+  bookType: BookType
+  monitored: boolean
+  fileCount: number
+}
 export type HealthStatus = 'ok' | 'warning' | 'error'
 
 export interface Connection {
@@ -46,6 +52,8 @@ export interface MediaItemSummary {
   year: number
   author: string
   bookType?: BookType
+  bookTypes?: BookType[]
+  bookEditions?: BookEditionSummary[]
   posterPath: string
   monitored: boolean
   path: string
@@ -95,6 +103,7 @@ export interface MediaFileInfo {
 
 export interface MediaCopy {
   id: number
+  bookType?: BookType
   name: string
   qualityProfileId: number
   rootFolderId: number
@@ -129,6 +138,7 @@ export interface UpdateMediaItemRequest {
 }
 
 export interface AddMediaCopyRequest {
+  bookType?: BookType
   qualityProfileId: number
   rootFolderId?: number
   name?: string
@@ -153,6 +163,7 @@ export interface SearchResult {
   overview: string
   posterPath: string
   inLibrary: boolean
+  bookTypes?: BookType[]
 }
 
 export interface AddMediaRequest {

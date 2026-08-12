@@ -43,7 +43,8 @@ func bookSetup(t *testing.T, releases []ports.Release, client *fakeClient) (*Ser
 	id, err := db.CreateMediaItem(ctx, domain.MediaItem{
 		Kind: domain.KindBook, Title: "Project Hail Mary", SortTitle: "project hail mary",
 		Author: "Andy Weir", Year: 2021, IDs: domain.ExternalIDs{OLID: "OL17091839W"},
-		Monitored: true, Path: t.TempDir(), QualityProfileID: quality.EbookProfileID,
+		BookType: quality.BookTypeEbook, Monitored: true, Path: t.TempDir(),
+		QualityProfileID: quality.EbookProfileID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -227,12 +228,9 @@ func TestAcq2ManualBookImportIsNotGatedByTheProfile(t *testing.T) {
 func TestAcq2MultipartAudiobookImportsEveryTrackWithStableNames(t *testing.T) {
 	svc, db, bookID := bookSetup(t, nil, &fakeClient{})
 	ctx := context.Background()
-	item, err := db.GetMediaItemFull(ctx, bookID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	item.QualityProfileID = quality.AudiobookProfileID
-	if err := db.UpdateMediaItemPlacement(ctx, item); err != nil {
+	if _, err := db.W.ExecContext(ctx,
+		`UPDATE media_items SET book_type = 'audiobook', quality_profile_id = ? WHERE id = ?`,
+		quality.AudiobookProfileID, bookID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -266,9 +264,9 @@ func TestAcq2MultipartAudiobookImportsEveryTrackWithStableNames(t *testing.T) {
 func TestAcq2AudiobookRejectsEbookPayloadBeforePlacingAnything(t *testing.T) {
 	svc, db, bookID := bookSetup(t, nil, &fakeClient{})
 	ctx := context.Background()
-	item, _ := db.GetMediaItemFull(ctx, bookID)
-	item.QualityProfileID = quality.AudiobookProfileID
-	if err := db.UpdateMediaItemPlacement(ctx, item); err != nil {
+	if _, err := db.W.ExecContext(ctx,
+		`UPDATE media_items SET book_type = 'audiobook', quality_profile_id = ? WHERE id = ?`,
+		quality.AudiobookProfileID, bookID); err != nil {
 		t.Fatal(err)
 	}
 	payload := t.TempDir()
@@ -295,12 +293,79 @@ func TestAcq2DescribeTargetNamesEveryKind(t *testing.T) {
 		{domain.MovieWantable{Title: "Heat", Year: 1995}, "Heat (1995)"},
 		{domain.EpisodeWantable{Title: "Test Show", Season: 1, Episode: 2}, "Test Show S01E02"},
 		{domain.SeasonWantable{Title: "Test Show", Season: 3}, "Test Show season 3"},
-		{domain.BookWantable{Title: "Project Hail Mary", Author: "Andy Weir"}, "Project Hail Mary by Andy Weir"},
+		{domain.BookWantable{Title: "Project Hail Mary", Author: "Andy Weir", BookType: quality.BookTypeAudiobook}, "Audiobook: Project Hail Mary by Andy Weir"},
 		{domain.BookWantable{Title: "Beowulf"}, "Beowulf"},
 	}
 	for _, c := range cases {
 		if got := describeTarget(c.w); got != c.want {
 			t.Errorf("describeTarget(%T) = %q, want %q", c.w, got, c.want)
 		}
+	}
+}
+
+func TestAcq2BookEditionsWantSearchAndGrabIndependently(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, bookID := bookSetup(t, []ports.Release{
+		{Title: "Andy Weir - Project Hail Mary EPUB", DownloadURL: "http://dl/ebook", Indexer: "idx", Protocol: "torrent", Seeders: 2},
+		{Title: "Andy Weir - Project Hail Mary M4B", DownloadURL: "http://dl/audio", Indexer: "idx", Protocol: "torrent", Seeders: 3},
+	}, client)
+	ctx := context.Background()
+	copyID, err := db.AddMediaCopy(ctx, domain.MediaCopy{
+		MediaItemID: bookID, BookType: quality.BookTypeAudiobook,
+		QualityProfileID: quality.AudiobookProfileID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wanted, err := svc.Wanted(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int64{}
+	for _, target := range wanted {
+		got[string(target.ID())] = target.ProfileID()
+	}
+	if got["book:"+itoa(bookID)] != quality.EbookProfileID ||
+		got["book:"+itoa(bookID)+":c"+itoa(copyID)] != quality.AudiobookProfileID {
+		t.Fatalf("book edition wantables = %#v", got)
+	}
+
+	ebooks, err := svc.SearchCopy(ctx, bookID, 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audio, err := svc.SearchCopy(ctx, bookID, copyID, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := func(candidates []Candidate) string {
+		for _, candidate := range candidates {
+			if candidate.Accepted {
+				return candidate.Release.Title
+			}
+		}
+		return ""
+	}
+	if title := accepted(ebooks); !strings.HasSuffix(title, "EPUB") {
+		t.Errorf("ebook search accepted %q", title)
+	}
+	if title := accepted(audio); !strings.HasSuffix(title, "M4B") {
+		t.Errorf("audiobook search accepted %q", title)
+	}
+
+	if _, err := svc.Grab(ctx, GrabRequest{
+		MediaItemID: bookID, CopyID: copyID, Season: -1,
+		Title: "Andy Weir - Project Hail Mary M4B", DownloadURL: "http://dl/audio",
+		Indexer: "idx", Protocol: "torrent",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	active, err := db.ListActiveDownloads(ctx)
+	if err != nil || len(active) != 1 {
+		t.Fatalf("active downloads = %+v err %v", active, err)
+	}
+	if active[0].CopyID != copyID || active[0].WantableIDs[0] != "book:"+itoa(bookID)+":c"+itoa(copyID) {
+		t.Errorf("audiobook download = %+v", active[0])
 	}
 }

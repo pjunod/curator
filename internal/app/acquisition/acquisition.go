@@ -275,11 +275,22 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 			if err != nil {
 				return nil, err
 			}
+			bookType := item.BookType
+			monitored := item.Monitored
+			if cp != nil {
+				bookType = cp.BookType
+				monitored = monitored && cp.Monitored
+			}
+			// In-memory fixtures and pre-ADR callers may omit the explicit field;
+			// persisted rows are backfilled by migration 0029.
+			if !quality.ValidBookType(bookType) {
+				bookType = quality.BookTypeForSource(profile.Target.Source)
+			}
 			return domain.BookWantable{
-				Item: item.ID, Profile: profileID, Mon: item.Monitored,
+				Item: item.ID, Profile: profileID, Mon: monitored,
 				Title: item.Title, Author: item.Author, Year: item.Year,
 				Have: state.Best, Files: state.HasFiles, Verified: state.SourceVerified,
-				BookType: quality.BookTypeForSource(profile.Target.Source),
+				BookType: bookType, Copy: copyID, CopyName: copyName,
 			}, nil
 		}
 		mon := item.Monitored
@@ -342,6 +353,9 @@ func copyLabel(c domain.MediaCopy) string {
 	if c.Name != "" {
 		return c.Name
 	}
+	if quality.ValidBookType(c.BookType) {
+		return string(c.BookType)
+	}
 	return fmt.Sprintf("copy %d", c.ID)
 }
 
@@ -368,15 +382,30 @@ type Candidate struct {
 // release against the target wantable, and returns ranked candidates with
 // rejection reasons attached (never filtered out — upstream's best UX).
 func (s *Service) Search(ctx context.Context, itemID int64, season, episode int) ([]Candidate, error) {
+	return s.SearchCopy(ctx, itemID, 0, season, episode)
+}
+
+// SearchCopy is interactive search for one independently curated target.
+// copyID zero selects the primary; a non-zero book copy is the other edition,
+// and a non-zero video copy is an additional quality target.
+func (s *Service) SearchCopy(ctx context.Context, itemID, copyID int64, season, episode int) ([]Candidate, error) {
 	item, err := s.db.GetMediaItemFull(ctx, itemID)
 	if err != nil {
 		return nil, err
 	}
-	target, err := s.target(ctx, item, season, episode)
+	var cp *domain.MediaCopy
+	if copyID != 0 {
+		copy, err := s.db.GetMediaCopy(ctx, itemID, copyID)
+		if err != nil {
+			return nil, err
+		}
+		cp = &copy
+	}
+	target, err := s.targetCopy(ctx, item, season, episode, cp)
 	if err != nil {
 		return nil, err
 	}
-	profile, err := s.db.GetProfile(ctx, item.QualityProfileID)
+	profile, err := s.db.GetProfile(ctx, target.ProfileID())
 	if err != nil {
 		return nil, err
 	}
@@ -486,10 +515,17 @@ func describeTarget(w domain.Wantable) string {
 	case domain.SeasonWantable:
 		return fmt.Sprintf("%s season %d", t.Title, t.Season)
 	case domain.BookWantable:
-		if t.Author != "" {
-			return fmt.Sprintf("%s by %s", t.Title, t.Author)
+		prefix := ""
+		switch t.BookType {
+		case quality.BookTypeEbook:
+			prefix = "Ebook: "
+		case quality.BookTypeAudiobook:
+			prefix = "Audiobook: "
 		}
-		return t.Title
+		if t.Author != "" {
+			return fmt.Sprintf("%s%s by %s", prefix, t.Title, t.Author)
+		}
+		return prefix + t.Title
 	}
 	return "target"
 }

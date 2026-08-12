@@ -213,6 +213,22 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 		size   int64
 		copyID int64
 	}
+	// A shared book folder needs content-based routing. Profiles decide which
+	// formats are preferred inside an edition; the extension decides whether
+	// a file is an ebook or audiobook at all. Separate copy folders remain
+	// explicit and therefore keep their folder's copy id.
+	bookCopyID := func(path string) int64 {
+		bookType := quality.BookTypeForSource(quality.Source(filename.BookQualitySource(path)))
+		if bookType == item.BookType {
+			return 0
+		}
+		for _, cp := range copies {
+			if cp.BookType == bookType {
+				return cp.ID
+			}
+		}
+		return 0 // no matching edition exists; preserve historical scan behaviour
+	}
 	onDisk := map[string]foundFile{} // path -> size + copy attribution
 	walk := func(root string, copyID int64) error {
 		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -223,7 +239,11 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 			if ierr != nil {
 				return nil // vanished mid-walk; skip
 			}
-			onDisk[path] = foundFile{size: info.Size(), copyID: copyID}
+			attributedCopy := copyID
+			if item.Kind == domain.KindBook && copyID == 0 {
+				attributedCopy = bookCopyID(path)
+			}
+			onDisk[path] = foundFile{size: info.Size(), copyID: attributedCopy}
 			return nil
 		})
 	}
@@ -265,6 +285,17 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 		fileID, err := s.db.UpsertFile(ctx, item.ID, ff.copyID, path, ff.size)
 		if err != nil {
 			return linked, removed, err
+		}
+		// Upsert deliberately preserves importer attribution. A book file in a
+		// shared folder is the one safe exception: format family is explicit in
+		// the extension, so once both editions exist a scan can repair an older
+		// row that predates edition-aware storage.
+		if item.Kind == domain.KindBook {
+			if old, ok := existingByPath[path]; ok && old.CopyID != ff.copyID {
+				if err := s.db.UpdateFileCopy(ctx, fileID, ff.copyID); err != nil {
+					return linked, removed, err
+				}
+			}
 		}
 		// The filename is a hint now, not the authority (ADR 0013 §3): it
 		// seeds a quality so an unprobed library still has something to show,

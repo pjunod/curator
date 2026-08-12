@@ -48,6 +48,7 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		SortTitle: r.SortTitle,
 		Year:      int(r.Year),
 		Author:    r.Author,
+		BookType:  quality.BookType(r.BookType),
 		IDs: domain.ExternalIDs{
 			TMDB: r.TmdbID, IMDB: r.ImdbID, TVDB: r.TvdbID,
 			ISBN13: r.Isbn13, OLID: r.Olid, ASIN: r.Asin,
@@ -101,6 +102,7 @@ func insertParams(m domain.MediaItem, now time.Time) sqlitegen.InsertMediaItemPa
 		SortTitle:        m.SortTitle,
 		Year:             int64(m.Year),
 		Author:           m.Author,
+		BookType:         string(m.BookType),
 		QualityProfileID: profileID,
 		DownloadPriority: nullableInt(m.DownloadPriorityOverride),
 		TmdbID:           m.IDs.TMDB,
@@ -162,6 +164,18 @@ func marshalRatings(rs []domain.Rating) string {
 // and episodes, in one transaction. Returns the new id, or ErrDuplicate if
 // the (kind, tmdb id) pair already exists.
 func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, error) {
+	// Callers predating ADR 0018 (notably adoption and compatibility tests)
+	// do not know about the explicit edition field. Resolve it once at the
+	// persistence boundary so every stored book has a stable medium; after the
+	// row exists, profile changes never rewrite this value.
+	if m.Kind == domain.KindBook && !quality.ValidBookType(m.BookType) {
+		if p, err := d.GetProfile(ctx, m.QualityProfileID); err == nil {
+			m.BookType = quality.BookTypeForSource(p.Target.Source)
+		}
+		if !quality.ValidBookType(m.BookType) {
+			m.BookType = quality.BookTypeEbook
+		}
+	}
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -276,6 +290,7 @@ func (d *DB) GetMediaItemFull(ctx context.Context, id int64) (domain.MediaItem, 
 func copyFromRow(r sqlitegen.MediaCopy) domain.MediaCopy {
 	c := domain.MediaCopy{
 		ID: r.ID, MediaItemID: r.MediaItemID, Name: r.Name,
+		BookType:         quality.BookType(r.BookType),
 		QualityProfileID: r.QualityProfileID, Path: r.Path,
 		Monitored: r.Monitored != 0, AddedAt: time.UnixMilli(r.AddedAt),
 	}
@@ -289,6 +304,7 @@ func copyFromRow(r sqlitegen.MediaCopy) domain.MediaCopy {
 func (d *DB) AddMediaCopy(ctx context.Context, c domain.MediaCopy) (int64, error) {
 	p := sqlitegen.InsertMediaCopyParams{
 		MediaItemID: c.MediaItemID, Name: c.Name,
+		BookType:         string(c.BookType),
 		QualityProfileID: c.QualityProfileID, Path: c.Path,
 		Monitored: boolInt(c.Monitored), AddedAt: time.Now().UnixMilli(),
 	}
@@ -323,7 +339,7 @@ func (d *DB) GetMediaCopy(ctx context.Context, itemID, copyID int64) (domain.Med
 // UpdateMediaCopy stores name/profile/monitored edits for a copy.
 func (d *DB) UpdateMediaCopy(ctx context.Context, c domain.MediaCopy) error {
 	n, err := d.Write.UpdateMediaCopy(ctx, sqlitegen.UpdateMediaCopyParams{
-		Name: c.Name, QualityProfileID: c.QualityProfileID,
+		Name: c.Name, BookType: string(c.BookType), QualityProfileID: c.QualityProfileID,
 		Monitored: boolInt(c.Monitored), ID: c.ID, MediaItemID: c.MediaItemID,
 	})
 	if err != nil {
@@ -433,9 +449,30 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 	for _, s := range stats {
 		byID[s.ID] = s
 	}
+	copyRows, err := d.Read.ListAllMediaCopies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	copiesByItem := make(map[int64][]domain.MediaCopy)
+	for _, row := range copyRows {
+		copy := copyFromRow(row)
+		copiesByItem[copy.MediaItemID] = append(copiesByItem[copy.MediaItemID], copy)
+	}
+	files, err := d.ListAllFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filesByItem := make(map[int64][]domain.MediaFile)
+	for _, file := range files {
+		if file.MediaItemID != 0 {
+			filesByItem[file.MediaItemID] = append(filesByItem[file.MediaItemID], file)
+		}
+	}
 	out := make([]domain.MediaItem, 0, len(rows))
 	for _, r := range rows {
 		item := itemToDomain(r)
+		item.Copies = copiesByItem[item.ID]
+		item.Files = filesByItem[item.ID]
 		if s, ok := byID[r.ID]; ok {
 			item.EpisodeCount = int(s.AiredEpisodes)
 			item.EpisodeFileCount = int(s.HaveEpisodes)
@@ -741,6 +778,18 @@ func (d *DB) UpsertFile(ctx context.Context, itemID, copyID int64, path string, 
 		p.CopyID = sql.NullInt64{Int64: copyID, Valid: true}
 	}
 	return d.Write.UpsertMediaFile(ctx, p)
+}
+
+// UpdateFileCopy moves a file between acquisition targets of the same item.
+// It is intentionally separate from UpsertFile: ordinary rescans preserve
+// importer attribution, while the book scanner can make the narrower,
+// extension-backed correction when ebook and audiobook share a folder.
+func (d *DB) UpdateFileCopy(ctx context.Context, fileID, copyID int64) error {
+	p := sqlitegen.UpdateMediaFileCopyParams{ID: fileID}
+	if copyID != 0 {
+		p.CopyID = sql.NullInt64{Int64: copyID, Valid: true}
+	}
+	return d.Write.UpdateMediaFileCopy(ctx, p)
 }
 
 // ReplaceFileEpisodeLinks sets the exact episode set a file covers.

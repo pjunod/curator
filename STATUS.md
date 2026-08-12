@@ -1,17 +1,14 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-08-02 · v0.20.0 · The calendar is rebuilt (ADR 0016). The
-> month grid now says what state every entry is in, a new rolling Agenda view
-> lists everything as poster rows on web and native, and episodes carry real
-> air times — from TVmaze's show-level schedule, keyless, composed to UTC per
-> date so daylight saving and timeslot moves are right for free
-> (§Phase 3 — Automation).**
+> **Snapshot 2026-08-12 · v0.24.0 · Ebook and audiobook editions now coexist
+> on one book work (ADR 0018). Search, monitoring, profiles, downloads, imports,
+> wanted state, and progress are independently targeted per edition; web and
+> native library/detail surfaces show both together (§Phase 2.5 — Books).**
 >
-> Previously: v0.19.1 made Access a first-class web tab · v0.19.0 added
-> configurable download-priority policies · v0.18.5 put Docker DNS-SD
-> discovery onto the physical LAN · v0.18.4 added native failed-row clearing.
-> Full gate green: lint · Go · 72 web unit tests · 45 native unit tests ·
-> 98/98 browser tests.
+> Previously: v0.23.0 added audiobook curation · v0.20.0 rebuilt the calendar ·
+> v0.19.1 made Access a first-class web tab · v0.19.0 added configurable
+> download-priority policies. Full gate green: lint · Go · 76 web unit tests ·
+> 52 native unit tests · web build · 101/101 browser tests.
 >
 > This is the explicit work ledger: every deliverable we've committed to, and whether it is
 > done. Checked = shipped and verified, not "mostly there". Update at the end of every
@@ -26,7 +23,7 @@
 | 0.5 — Tests, hooks, CI hardening | **7/7 ✅** | full pyramid green locally and in CI |
 | 1 — Library | **13/13 ✅** | real media folders imported and browsable |
 | 2 — Acquisition core | **16/16 ✅** | search → grab → import → correctly named file (movie + season pack) |
-| 2.5 — Books (ADR 0006) | **7/7 ✅** | grab an ebook and an audiobook, correctly named |
+| 2.5 — Books (ADR 0006/0018) | **8/8 ✅** | keep and curate ebook + audiobook editions of one work |
 | 3 — Automation | **9/9 ✅** | runs unattended for a month |
 | 4 — Ecosystem compat | **5/6 ✅** (stretch deferred) | Jellyseerr/Prowlarr/Bazarr work against the shim |
 | 5 — Depth & parity | **7/7 ✅** | custom formats, client zoo, lists, anime |
@@ -120,15 +117,16 @@ ready, but credentials are deliberately not repository state.
 - [x] Importer: scan payload, map files→Wantables, per-file decisions
 - [x] Renamer with Sonarr/Radarr-compatible tokens; hardlink-or-copy import
 
-## Phase 2.5 — Books (ADR 0006) ✅ (shipped 2026-07-18)
+## Phase 2.5 — Books (ADR 0006/0018) ✅ (shipped 2026-07-18; editions 2026-08-12)
 
 - [x] Metadata bake-off → **Open Library** (open data, no key, work-level ids, covers; Google Books rate-limits anonymous callers, Hardcover needs an account) — `BookProvider` port + adapter, fixture contract-tested
 - [x] Book external IDs end-to-end (isbn13 from editions, work OLID, asin column reserved) — unique `(kind, olid)`
 - [x] Book-mode parser rules + golden corpus (12 cases seeded from Readarr/scene naming patterns; literal Readarr suite port remains an easy extension) — author extraction, order-swap tolerant matching
-- [x] Book `SearchPlanner`/`ReleaseMatcher` (author+title queries); profile-derived subtype routes ebooks to Torznab 7000/7020 and audiobooks to 3030
+- [x] Book `SearchPlanner`/`ReleaseMatcher` (author+title queries); persisted edition type routes ebooks to Torznab 7000/7020 and audiobooks to 3030
 - [x] Format families: PDF/MOBI/AZW3/EPUB ebooks plus MP3/WMA/AAC/OGG/Opus/M4A/M4B/FLAC/WAV audiobooks; seeded **Ebook** (id 4) and **Audiobook** (id 5) profiles with independent defaults
 - [x] `{Author Name}/{Book Title}` naming, Calibre-friendly single files (`Title - Author.ext`) and stable multipart audiobook names (`… - 001.ext`); import + scan grade book files by extension
-- [x] First-class Ebook/Audiobook add choices, library tabs, badges, same-family profile pickers, API `bookType`, and web/native curation — e2e covers EPUB plus a three-part M4B audiobook
+- [x] First-class Ebook/Audiobook add choices, library tabs, badges, same-family profile pickers, API `bookType`, and web/native curation — e2e covers one work holding EPUB + M4B together and a separate three-part M4B import
+- [x] Side-by-side editions (ADR 0018): one Open Library work owns ebook and audiobook targets independently; API `bookTypes`, per-edition search/grab/wanted/import/files, add-the-missing-edition flows, and shared-folder scan attribution
 
 ## Phase 3 — Automation ✅ (shipped 2026-07-18)
 
@@ -676,7 +674,8 @@ act. Two defects — one causing it, one hiding it.
 | [0014](docs/adr/0014-target-profiles.md) | **Proposed:** a profile is a floor + target + upgrades switch; grabs capped at target resolution; "Any" retired |
 | [0015](docs/adr/0015-discovery.md) | Discovery is a read-only browse surface: TMDB always, Trakt when keyed, nothing stored |
 | [0016](docs/adr/0016-air-times.md) | Calendar schedule enrichment carries exact UTC air times where providers know them |
-| [0017](docs/adr/0017-audiobook-curation.md) | Audiobooks are a profile-derived book subtype with separate search/default/UI behavior and multipart import |
+| [0017](docs/adr/0017-audiobook-curation.md) | Audiobook format routing and multipart import; profile-derived identity superseded by ADR 0018 |
+| [0018](docs/adr/0018-side-by-side-book-editions.md) | Ebook and audiobook are persistent, independently curated editions of one Open Library work |
 
 ## Milestone commits
 

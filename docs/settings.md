@@ -287,6 +287,11 @@ unless a profile explicitly targets one, and the three format families
 (film/TV · ebook · audiobook) never satisfy each other — an M4B is not a
 better EPUB, it answers a different question.
 
+For books, the edition medium is stored independently from its profile. A
+profile chooses preferred formats **within** an ebook or audiobook edition;
+it cannot turn one into the other. One Open Library work may keep both
+editions, each with its own profile, monitoring, search, files, and upgrades.
+
 Audiobook profiles can target **MP3, WMA, AAC, OGG, Opus, M4A, M4B, FLAC,
 or WAV**. M4B remains the seeded target because it commonly carries one
 book plus chapter markers; multipart releases in any supported audio format
@@ -322,6 +327,10 @@ above), and wanting 4K films alongside 1080p television is the ordinary
 case rather than an exotic one. The Ebook and Audiobook pickers each offer
 only profiles from their own format family; the film and TV pickers offer
 only video ones.
+
+When the other edition is added to a book already in the library, its own
+family default is used unless you explicitly choose another matching profile.
+Changing either default affects only editions added afterwards.
 
 Unset, the defaults are the values that used to be hardcoded — **1080p**
 for films and television, **Ebook** for ebooks, and **Audiobook** for

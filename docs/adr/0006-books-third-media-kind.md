@@ -3,8 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-07-17
 
-Audiobook subtype curation and multipart import are refined by
-[ADR 0017](0017-audiobook-curation.md).
+Audiobook subtype curation and multipart import were refined by
+[ADR 0017](0017-audiobook-curation.md); side-by-side edition identity is
+defined by [ADR 0018](0018-side-by-side-book-editions.md).
 
 ## Context
 

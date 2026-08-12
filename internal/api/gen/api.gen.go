@@ -628,7 +628,7 @@ func (e ListQueueParamsFilter) Valid() bool {
 
 // AddMediaRequest defines model for AddMediaRequest.
 type AddMediaRequest struct {
-	// BookType The book edition curated by the selected quality profile. This is a subtype of the persistent book kind, not a separate library kind.
+	// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
 	BookType *BookType `json:"bookType,omitempty"`
 
 	// DownloadPriority Optional per-item override; absent inherits the quality profile.
@@ -740,7 +740,17 @@ type BlocklistEntry struct {
 	ReleaseTitle string    `json:"releaseTitle"`
 }
 
-// BookType The book edition curated by the selected quality profile. This is a subtype of the persistent book kind, not a separate library kind.
+// BookEditionSummary defines model for BookEditionSummary.
+type BookEditionSummary struct {
+	// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
+	BookType BookType `json:"bookType"`
+
+	// FileCount Files attributed to this edition, excluding the other edition.
+	FileCount int  `json:"fileCount"`
+	Monitored bool `json:"monitored"`
+}
+
+// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
 type BookType string
 
 // BrowseResult defines model for BrowseResult.
@@ -1009,6 +1019,8 @@ type ExternalIds struct {
 
 // GrabRequest defines model for GrabRequest.
 type GrabRequest struct {
+	// CopyId Additional quality copy or book edition; absent/0 selects the primary target.
+	CopyId      *int64  `json:"copyId,omitempty"`
 	DownloadUrl string  `json:"downloadUrl"`
 	Episode     *int    `json:"episode,omitempty"`
 	Indexer     *string `json:"indexer,omitempty"`
@@ -1152,9 +1164,11 @@ type ManualImportRequest struct {
 
 // MediaCopy defines model for MediaCopy.
 type MediaCopy struct {
-	Id        int64  `json:"id"`
-	Monitored bool   `json:"monitored"`
-	Name      string `json:"name"`
+	// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
+	BookType  *BookType `json:"bookType,omitempty"`
+	Id        int64     `json:"id"`
+	Monitored bool      `json:"monitored"`
+	Name      string    `json:"name"`
 
 	// Path The copy's folder; "" = shares the item's folder.
 	Path             string `json:"path"`
@@ -1164,7 +1178,9 @@ type MediaCopy struct {
 
 // MediaCopyInput defines model for MediaCopyInput.
 type MediaCopyInput struct {
-	Monitored *bool `json:"monitored,omitempty"`
+	// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
+	BookType  *BookType `json:"bookType,omitempty"`
+	Monitored *bool     `json:"monitored,omitempty"`
 
 	// Name Display label, e.g. "720p for dad".
 	Name             *string `json:"name,omitempty"`
@@ -1223,10 +1239,13 @@ type MediaItemDetail struct {
 	Author       string `json:"author"`
 	BackdropPath string `json:"backdropPath"`
 
-	// BookType The book edition curated by the selected quality profile. This is a subtype of the persistent book kind, not a separate library kind.
+	// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
 	BookType *BookType `json:"bookType,omitempty"`
 
-	// Copies Additional quality copies of this item.
+	// BookTypes Book editions curated for this work. The primary remains in bookType for compatibility.
+	BookTypes *[]BookType `json:"bookTypes,omitempty"`
+
+	// Copies Additional video quality copies or independently curated book editions.
 	Copies []MediaCopy `json:"copies"`
 
 	// DownloadPriority Effective scheduler priority after applying the per-item override or inheriting the selected quality profile. Supported values are -100, -50, 0, 50, 100, and 900 (force).
@@ -1286,8 +1305,14 @@ type MediaItemSummary struct {
 	// Author Books only (ADR 0006); empty for movies/series.
 	Author string `json:"author"`
 
-	// BookType The book edition curated by the selected quality profile. This is a subtype of the persistent book kind, not a separate library kind.
+	// BookEditions Per-edition completeness for book library views. Empty/absent for video.
+	BookEditions *[]BookEditionSummary `json:"bookEditions,omitempty"`
+
+	// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
 	BookType *BookType `json:"bookType,omitempty"`
+
+	// BookTypes Book editions curated for this work. Empty/absent for movies and series.
+	BookTypes *[]BookType `json:"bookTypes,omitempty"`
 
 	// EpisodeCount Monitored episodes aired to date (series; 0 otherwise).
 	EpisodeCount int `json:"episodeCount"`
@@ -1691,9 +1716,12 @@ type ScannedFile struct {
 
 // SearchResult defines model for SearchResult.
 type SearchResult struct {
-	Author    *string   `json:"author,omitempty"`
-	InLibrary bool      `json:"inLibrary"`
-	Kind      MediaKind `json:"kind"`
+	Author *string `json:"author,omitempty"`
+
+	// BookTypes Which editions of this Open Library work are already curated.
+	BookTypes *[]BookType `json:"bookTypes,omitempty"`
+	InLibrary bool        `json:"inLibrary"`
+	Kind      MediaKind   `json:"kind"`
 
 	// Olid Present for book results (ADR 0006).
 	Olid       *string `json:"olid,omitempty"`
@@ -1997,6 +2025,9 @@ type RemoveLibraryFileParams struct {
 type SearchReleasesParams struct {
 	Season  *int `form:"season,omitempty" json:"season,omitempty"`
 	Episode *int `form:"episode,omitempty" json:"episode,omitempty"`
+
+	// CopyId Additional quality copy or book edition; absent/0 selects the primary target.
+	CopyId *int64 `form:"copyId,omitempty" json:"copyId,omitempty"`
 }
 
 // SearchMetadataParams defines parameters for SearchMetadata.
@@ -2302,7 +2333,7 @@ type ServerInterface interface {
 	// RefreshLibraryItem Re-hydrate this item's metadata from its provider
 	// (POST /library/{id}/refresh)
 	RefreshLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
-	// SearchReleases Interactive search for a movie, episode, or season pack
+	// SearchReleases Interactive search for one item target or book edition
 	// (GET /library/{id}/releases)
 	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
 	// RescanManualEntry Re-read a manual series' folder for episodes that have appeared
@@ -3856,6 +3887,19 @@ func (siw *ServerInterfaceWrapper) SearchReleases(w http.ResponseWriter, r *http
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "episode"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "episode", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "copyId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "copyId", r.URL.Query(), &params.CopyId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "copyId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "copyId", Err: err})
 		}
 		return
 	}

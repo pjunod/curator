@@ -97,6 +97,15 @@ function matchesFilter(m: MediaItemSummary, f: FilterKey): boolean {
   }
 }
 
+// The same work may appear in both book sections. Give each section the
+// monitoring/completeness of the edition it represents instead of the
+// aggregate file count, or an audiobook would make a missing ebook look done.
+function asBookEdition(m: MediaItemSummary, bookType?: BookType): MediaItemSummary {
+  if (!bookType) return m
+  const edition = m.bookEditions?.find((candidate) => candidate.bookType === bookType)
+  return edition ? { ...m, monitored: edition.monitored, fileCount: edition.fileCount } : m
+}
+
 function compare(a: MediaItemSummary, b: MediaItemSummary, key: SortKey): number {
   switch (key) {
     case 'year':
@@ -318,7 +327,9 @@ export function LibraryPage() {
     if (!items.data) return undefined
     const counts = { movie: 0, series: 0, ebook: 0, audiobook: 0, total: items.data.length }
     for (const m of items.data) {
-      if (m.kind === 'book') counts[m.bookType ?? 'ebook']++
+      if (m.kind === 'book') {
+        for (const edition of m.bookTypes ?? [m.bookType ?? 'ebook']) counts[edition]++
+      }
       else counts[m.kind]++
     }
     return counts
@@ -341,6 +352,7 @@ export function LibraryPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkProfile, setBulkProfile] = useState<number | ''>('')
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles, enabled: editing })
+  const selectedHasBook = (items.data ?? []).some((item) => selected.has(item.id) && item.kind === 'book')
   const bulk = useMutation({
     mutationFn: (patch: { monitored?: boolean; qualityProfileId?: number }) =>
       bulkEditLibrary({ ids: [...selected], ...patch }),
@@ -428,7 +440,12 @@ export function LibraryPage() {
           <div className="muted poster-sub">
             <span>
               {m.kind === 'book'
-                ? [m.author, m.bookType === 'audiobook' ? 'Audiobook' : 'Ebook'].filter(Boolean).join(' · ')
+                ? [
+                    m.author,
+                    ...(m.bookTypes ?? [m.bookType ?? 'ebook']).map((edition) =>
+                      edition === 'audiobook' ? 'Audiobook' : 'Ebook',
+                    ),
+                  ].filter(Boolean).join(' · ')
                 : `${m.year || '—'} · ${m.kind}`}
             </span>
             <CardBadges m={m} downloading={downloading.has(m.id)} />
@@ -482,18 +499,24 @@ export function LibraryPage() {
           <button disabled={selected.size === 0 || bulk.isPending} onClick={() => bulk.mutate({ monitored: false })}>
             Unmonitor
           </button>{' '}
-          <select value={bulkProfile} onChange={(e) => setBulkProfile(e.target.value ? Number(e.target.value) : '')}>
-            <option value="">(profile…)</option>
-            {profiles.data?.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>{' '}
-          <button
-            disabled={selected.size === 0 || bulkProfile === '' || bulk.isPending}
-            onClick={() => bulk.mutate({ qualityProfileId: Number(bulkProfile) })}
-          >
-            Apply profile
-          </button>
+          {selectedHasBook ? (
+            <span className="muted">Book profiles are changed per edition on the book page.</span>
+          ) : (
+            <>
+              <select value={bulkProfile} onChange={(e) => setBulkProfile(e.target.value ? Number(e.target.value) : '')}>
+                <option value="">(profile…)</option>
+                {profiles.data?.filter((p) => !['pdf', 'mobi', 'azw3', 'epub', 'mp3', 'wma', 'aac', 'ogg', 'opus', 'm4a', 'm4b', 'flac', 'wav'].includes(p.target.source)).map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>{' '}
+              <button
+                disabled={selected.size === 0 || bulkProfile === '' || bulk.isPending}
+                onClick={() => bulk.mutate({ qualityProfileId: Number(bulkProfile) })}
+              >
+                Apply profile
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -539,9 +562,11 @@ export function LibraryPage() {
         // The All view: everything, grouped by kind — never interleaved —
         // and every section runs its OWN filter/sort strip.
         KIND_SECTIONS.map((section) => {
-          const all = (items.data ?? []).filter((m) =>
-            m.kind === section.kind && (!section.bookType || (m.bookType ?? 'ebook') === section.bookType),
-          )
+          const all = (items.data ?? [])
+            .filter((m) => m.kind === section.kind && (
+              !section.bookType || (m.bookTypes ?? [m.bookType ?? 'ebook']).includes(section.bookType)
+            ))
+            .map((m) => asBookEdition(m, section.bookType))
           if (all.length === 0) return null
           const group = applySection(all, controls[section.key])
           const size = controls[section.key].pageSize
@@ -601,9 +626,11 @@ export function LibraryPage() {
         // A flat kind tab: the same section state, one grid.
         (() => {
           const section = KIND_SECTIONS.find((s) => s.key === tab)!
-          const all = (items.data ?? []).filter((m) =>
-            m.kind === section.kind && (!section.bookType || (m.bookType ?? 'ebook') === section.bookType),
-          )
+          const all = (items.data ?? [])
+            .filter((m) => m.kind === section.kind && (
+              !section.bookType || (m.bookTypes ?? [m.bookType ?? 'ebook']).includes(section.bookType)
+            ))
+            .map((m) => asBookEdition(m, section.bookType))
           const group = applySection(all, controls[section.key])
           const size = controls[section.key].pageSize
           const page = pages[section.key]

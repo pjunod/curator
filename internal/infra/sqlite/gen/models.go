@@ -149,6 +149,7 @@ type MediaCopy struct {
 	Path             string
 	Monitored        int64
 	AddedAt          int64
+	BookType         string
 }
 
 type MediaFile struct {
@@ -207,6 +208,7 @@ type MediaItem struct {
 	AirsTime         string
 	AirsTimezone     string
 	Network          string
+	BookType         string
 }
 
 type Notifier struct {

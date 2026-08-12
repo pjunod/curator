@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -73,12 +74,71 @@ func bookTypeDTO(m domain.MediaItem) *apigen.BookType {
 	if m.Kind != domain.KindBook {
 		return nil
 	}
-	bookType := quality.BookTypeForSource(m.QualityTarget.Source)
+	bookType := m.BookType
+	if !quality.ValidBookType(bookType) {
+		bookType = quality.BookTypeForSource(m.QualityTarget.Source)
+	}
 	if !quality.ValidBookType(bookType) {
 		return nil
 	}
 	v := apigen.BookType(bookType)
 	return &v
+}
+
+func bookTypesDTO(m domain.MediaItem) *[]apigen.BookType {
+	if m.Kind != domain.KindBook {
+		return nil
+	}
+	have := map[quality.BookType]bool{}
+	if t := bookTypeDTO(m); t != nil {
+		have[quality.BookType(*t)] = true
+	}
+	for _, edition := range m.Copies {
+		if quality.ValidBookType(edition.BookType) {
+			have[edition.BookType] = true
+		}
+	}
+	out := make([]apigen.BookType, 0, len(have))
+	for _, bookType := range []quality.BookType{quality.BookTypeEbook, quality.BookTypeAudiobook} {
+		if have[bookType] {
+			out = append(out, apigen.BookType(bookType))
+		}
+	}
+	return &out
+}
+
+func bookEditionsDTO(m domain.MediaItem) *[]apigen.BookEditionSummary {
+	if m.Kind != domain.KindBook {
+		return nil
+	}
+	fileCounts := map[int64]int{}
+	for _, file := range m.Files {
+		fileCounts[file.CopyID]++
+	}
+	primaryType := m.BookType
+	if !quality.ValidBookType(primaryType) {
+		primaryType = quality.BookTypeForSource(m.QualityTarget.Source)
+	}
+	if !quality.ValidBookType(primaryType) {
+		return nil
+	}
+	out := []apigen.BookEditionSummary{{
+		BookType: apigen.BookType(primaryType), Monitored: m.Monitored,
+		FileCount: fileCounts[0],
+	}}
+	for _, edition := range m.Copies {
+		if !quality.ValidBookType(edition.BookType) {
+			continue
+		}
+		out = append(out, apigen.BookEditionSummary{
+			BookType: apigen.BookType(edition.BookType), Monitored: edition.Monitored,
+			FileCount: fileCounts[edition.ID],
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].BookType == "ebook" && out[j].BookType != "ebook"
+	})
+	return &out
 }
 
 func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
@@ -101,6 +161,8 @@ func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 	}
 	out.Source = optStr(m.Source)
 	out.BookType = bookTypeDTO(m)
+	out.BookTypes = bookTypesDTO(m)
+	out.BookEditions = bookEditionsDTO(m)
 	if quality.Rank(m.Quality) > 0 {
 		out.Quality = optStr(m.Quality.Display())
 	}
@@ -156,6 +218,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 	}
 	d.Author = m.Author
 	d.BookType = bookTypeDTO(m)
+	d.BookTypes = bookTypesDTO(m)
 	d.Ids.Imdb = optStr(m.IDs.IMDB)
 	d.Ids.Isbn13 = optStr(m.IDs.ISBN13)
 	d.Ids.Olid = optStr(m.IDs.OLID)
@@ -234,10 +297,15 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 	}
 	d.Copies = []apigen.MediaCopy{}
 	for _, c := range m.Copies {
-		d.Copies = append(d.Copies, apigen.MediaCopy{
+		copyDTO := apigen.MediaCopy{
 			Id: c.ID, Name: c.Name, QualityProfileId: c.QualityProfileID,
 			RootFolderId: c.RootFolderID, Path: c.Path, Monitored: c.Monitored,
-		})
+		}
+		if quality.ValidBookType(c.BookType) {
+			bookType := apigen.BookType(c.BookType)
+			copyDTO.BookType = &bookType
+		}
+		d.Copies = append(d.Copies, copyDTO)
 	}
 	return d
 }
@@ -407,8 +475,8 @@ func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id in
 	writeJSON(w, http.StatusOK, detailDTO(item))
 }
 
-// AddMediaCopy implements POST /library/{id}/copies: an additional quality
-// target with its own profile and automation lifecycle.
+// AddMediaCopy implements POST /library/{id}/copies: an additional video
+// quality target or the other independently curated book edition.
 func (s *Server) AddMediaCopy(w http.ResponseWriter, r *http.Request, id int64) {
 	var body apigen.AddMediaCopyJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -416,6 +484,9 @@ func (s *Server) AddMediaCopy(w http.ResponseWriter, r *http.Request, id int64) 
 		return
 	}
 	req := library.CopyRequest{QualityProfileID: body.QualityProfileId, Monitored: true}
+	if body.BookType != nil {
+		req.BookType = quality.BookType(*body.BookType)
+	}
 	if body.RootFolderId != nil {
 		req.RootFolderID = *body.RootFolderId
 	}
@@ -625,10 +696,10 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 		return
 	}
 	// Mark results already in the library (movies/series by TMDB id,
-	// books by Open Library work id).
+	// books by Open Library work id, including which editions are present).
 	inLib := map[int64]bool{}
 	inLibTvdb := map[int64]bool{}
-	inLibOlid := map[string]bool{}
+	inLibOlid := map[string][]apigen.BookType{}
 	if items, err := s.deps.Library.List(r.Context(), domain.MediaKind(params.Kind)); err == nil {
 		for _, it := range items {
 			inLib[it.IDs.TMDB] = true
@@ -636,7 +707,9 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 				inLibTvdb[it.IDs.TVDB] = true
 			}
 			if it.IDs.OLID != "" {
-				inLibOlid[it.IDs.OLID] = true
+				if types := bookTypesDTO(it); types != nil {
+					inLibOlid[it.IDs.OLID] = *types
+				}
 			}
 		}
 	}
@@ -662,7 +735,9 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 		// Add button offers a duplicate.
 		switch {
 		case res.OLID != "":
-			sr.InLibrary = inLibOlid[res.OLID]
+			owned := inLibOlid[res.OLID]
+			sr.InLibrary = len(owned) > 0
+			sr.BookTypes = &owned
 		case res.TMDBID != 0:
 			sr.InLibrary = inLib[res.TMDBID]
 		default:

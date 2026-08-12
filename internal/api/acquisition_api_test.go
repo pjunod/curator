@@ -468,6 +468,41 @@ func TestAcqSearchReleasesUnknownItem(t *testing.T) {
 	e.get(t, "/api/v1/library/9999/releases").expect(t, http.StatusNotFound)
 }
 
+func TestAcqBookReleaseSearchAndGrabTargetOneEdition(t *testing.T) {
+	e := newAPIEnv(t)
+	ebook := e.addBookEdition(t, "ebook")
+	book := e.addBookEdition(t, "audiobook")
+	if ebook.ID != book.ID || len(book.Copies) != 1 {
+		t.Fatalf("book editions did not share one item: ebook=%+v both=%+v", ebook, book)
+	}
+	copyID := book.Copies[0].ID
+	acqAddIndexer(t, e)
+	acqAddClient(t, e, "qbittorrent")
+
+	var ebookCandidates, audioCandidates []apigen.ReleaseCandidate
+	e.get(t, "/api/v1/library/"+acqItoa(book.ID)+"/releases").
+		expect(t, http.StatusOK).into(t, &ebookCandidates)
+	e.get(t, "/api/v1/library/"+acqItoa(book.ID)+"/releases?copyId="+acqItoa(copyID)).
+		expect(t, http.StatusOK).into(t, &audioCandidates)
+	if len(ebookCandidates) != 1 || !ebookCandidates[0].Accepted || !strings.HasSuffix(ebookCandidates[0].Title, "EPUB") {
+		t.Fatalf("ebook candidates = %+v", ebookCandidates)
+	}
+	if len(audioCandidates) != 1 || !audioCandidates[0].Accepted || !strings.HasSuffix(audioCandidates[0].Title, "M4B") {
+		t.Fatalf("audiobook candidates = %+v", audioCandidates)
+	}
+
+	e.post(t, "/api/v1/grab", `{
+		"mediaItemId":`+acqItoa(book.ID)+`,"copyId":`+acqItoa(copyID)+`,
+		"title":"Andy Weir - Project Hail Mary M4B",
+		"downloadUrl":"http://indexer.invalid/book","protocol":"torrent"}`).
+		expect(t, http.StatusCreated)
+	var queue []apigen.QueueItem
+	e.get(t, "/api/v1/queue").expect(t, http.StatusOK).into(t, &queue)
+	if len(queue) != 1 || queue[0].CopyId == nil || *queue[0].CopyId != copyID {
+		t.Fatalf("audiobook queue row = %+v", queue)
+	}
+}
+
 // ---- grab ----
 
 // A grab records a queue row that describes the download, and the queue

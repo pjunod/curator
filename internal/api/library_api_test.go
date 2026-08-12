@@ -23,18 +23,20 @@ import (
 // out rather than reusing apigen so a field being renamed in the generated
 // model shows up here as a failed assertion instead of silently compiling.
 type libDetail struct {
-	ID                       int64  `json:"id"`
-	Kind                     string `json:"kind"`
-	Title                    string `json:"title"`
-	Year                     int    `json:"year"`
-	Monitored                bool   `json:"monitored"`
-	Path                     string `json:"path"`
-	Source                   string `json:"source"`
-	Runtime                  int    `json:"runtime"`
-	QualityProfileID         int64  `json:"qualityProfileId"`
-	DownloadPriority         int    `json:"downloadPriority"`
-	DownloadPriorityOverride *int   `json:"downloadPriorityOverride"`
-	RootFolderID             int64  `json:"rootFolderId"`
+	ID                       int64    `json:"id"`
+	Kind                     string   `json:"kind"`
+	Title                    string   `json:"title"`
+	Year                     int      `json:"year"`
+	Monitored                bool     `json:"monitored"`
+	Path                     string   `json:"path"`
+	Source                   string   `json:"source"`
+	Runtime                  int      `json:"runtime"`
+	QualityProfileID         int64    `json:"qualityProfileId"`
+	DownloadPriority         int      `json:"downloadPriority"`
+	DownloadPriorityOverride *int     `json:"downloadPriorityOverride"`
+	RootFolderID             int64    `json:"rootFolderId"`
+	BookType                 string   `json:"bookType"`
+	BookTypes                []string `json:"bookTypes"`
 	Genres                   []string
 	Seasons                  []struct {
 		Number    int  `json:"number"`
@@ -57,6 +59,7 @@ type libDetail struct {
 		RootFolderID     int64  `json:"rootFolderId"`
 		Path             string `json:"path"`
 		Monitored        bool   `json:"monitored"`
+		BookType         string `json:"bookType"`
 	} `json:"copies"`
 }
 
@@ -928,6 +931,59 @@ func TestLibMetadataSearchMarksWhatIsAlreadyOwned(t *testing.T) {
 	}
 }
 
+func TestLibBookSearchAndDetailExposeOwnedEditions(t *testing.T) {
+	e := newAPIEnv(t)
+	e.lib.WithBooks(fakeBookProvider{})
+
+	type bookResult struct {
+		OLID      string   `json:"olid"`
+		InLibrary bool     `json:"inLibrary"`
+		BookTypes []string `json:"bookTypes"`
+	}
+	var results []bookResult
+	e.get(t, "/api/v1/metadata/search?kind=book&query=hail").
+		expect(t, http.StatusOK).into(t, &results)
+	if len(results) != 1 || results[0].InLibrary || len(results[0].BookTypes) != 0 {
+		t.Fatalf("book before add = %+v", results)
+	}
+
+	item := e.addBookEdition(t, "ebook")
+	e.get(t, "/api/v1/metadata/search?kind=book&query=hail").
+		expect(t, http.StatusOK).into(t, &results)
+	if !results[0].InLibrary || strings.Join(results[0].BookTypes, ",") != "ebook" {
+		t.Fatalf("book after ebook add = %+v", results[0])
+	}
+
+	item = e.addBookEdition(t, "audiobook")
+	if item.BookType != "ebook" || strings.Join(item.BookTypes, ",") != "ebook,audiobook" {
+		t.Fatalf("side-by-side detail = %+v", item)
+	}
+	if len(item.Copies) != 1 || item.Copies[0].BookType != "audiobook" {
+		t.Fatalf("edition copies = %+v", item.Copies)
+	}
+	if _, err := e.db.UpsertFile(context.Background(), item.ID, item.Copies[0].ID, "/books/phm.m4b", 10); err != nil {
+		t.Fatal(err)
+	}
+	var libraryRows []struct {
+		ID           int64 `json:"id"`
+		BookEditions []struct {
+			BookType  string `json:"bookType"`
+			FileCount int    `json:"fileCount"`
+		} `json:"bookEditions"`
+	}
+	e.get(t, "/api/v1/library").expect(t, http.StatusOK).into(t, &libraryRows)
+	if len(libraryRows) != 1 || len(libraryRows[0].BookEditions) != 2 ||
+		libraryRows[0].BookEditions[0].BookType != "ebook" || libraryRows[0].BookEditions[0].FileCount != 0 ||
+		libraryRows[0].BookEditions[1].BookType != "audiobook" || libraryRows[0].BookEditions[1].FileCount != 1 {
+		t.Fatalf("per-edition library state = %+v", libraryRows)
+	}
+	e.get(t, "/api/v1/metadata/search?kind=book&query=hail").
+		expect(t, http.StatusOK).into(t, &results)
+	if strings.Join(results[0].BookTypes, ",") != "ebook,audiobook" {
+		t.Fatalf("owned editions in search = %+v", results[0])
+	}
+}
+
 // ---- settings ----
 
 // Settings round-trip with the secrets masked. The hint is the last four
@@ -1199,6 +1255,26 @@ func TestLibBulkEditReportsWhatItChanged(t *testing.T) {
 	// An empty selection is the caller's mistake, not a no-op success.
 	e.post(t, "/api/v1/library/bulk", `{"ids":[]}`).expect(t, http.StatusBadRequest)
 	e.post(t, "/api/v1/library/bulk", `{"monitored":true}`).expect(t, http.StatusBadRequest)
+}
+
+func TestLibBulkEditCannotTurnAnEbookIntoAnAudiobookProfile(t *testing.T) {
+	e := newAPIEnv(t)
+	book := e.addBookEdition(t, "ebook")
+	var res struct {
+		Updated int `json:"updated"`
+	}
+	e.post(t, "/api/v1/library/bulk",
+		`{"ids":[`+strconv.FormatInt(book.ID, 10)+`],"qualityProfileId":5}`).
+		expect(t, http.StatusOK).into(t, &res)
+	if res.Updated != 0 {
+		t.Fatalf("cross-edition bulk edit updated %d rows", res.Updated)
+	}
+	var after libDetail
+	e.get(t, "/api/v1/library/"+strconv.FormatInt(book.ID, 10)).
+		expect(t, http.StatusOK).into(t, &after)
+	if after.BookType != "ebook" || after.QualityProfileID != 4 {
+		t.Fatalf("bulk profile changed the edition: %+v", after)
+	}
 }
 
 // ---- scan, report, review queue ----

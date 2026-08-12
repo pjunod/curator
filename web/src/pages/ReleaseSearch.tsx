@@ -26,9 +26,11 @@ export function ReleaseSearch(props: {
   mediaItemId: number
   season?: number
   episode?: number
+  copyId?: number
+  label?: string
   onClose: () => void
 }) {
-  const { mediaItemId, season, episode } = props
+  const { mediaItemId, season, episode, copyId } = props
   const [grabbed, setGrabbed] = useState<string | null>(null)
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
@@ -36,8 +38,8 @@ export function ReleaseSearch(props: {
   const [size, setSize] = useState(50)
 
   const search = useQuery({
-    queryKey: ['releases', mediaItemId, season ?? -1, episode ?? -1],
-    queryFn: () => searchReleases(mediaItemId, season, episode),
+    queryKey: ['releases', mediaItemId, copyId ?? 0, season ?? -1, episode ?? -1],
+    queryFn: () => searchReleases(mediaItemId, season, episode, copyId),
     retry: false,
     staleTime: 60_000,
   })
@@ -45,7 +47,7 @@ export function ReleaseSearch(props: {
   const grab = useMutation({
     mutationFn: (c: ReleaseCandidate) =>
       grabRelease({
-        mediaItemId, season, episode,
+        mediaItemId, copyId, season, episode,
         title: c.title, downloadUrl: c.downloadUrl, indexer: c.indexer,
         protocol: c.protocol, size: c.size,
       }),
@@ -68,12 +70,13 @@ export function ReleaseSearch(props: {
   const current = clampPage(page, filtered.length, size)
   const visible = sliceForPage(filtered, current, size)
 
-  const label =
+  const label = props.label ?? (
     season !== undefined && episode !== undefined
       ? `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
       : season !== undefined
         ? `Season ${season} pack`
-        : 'movie'
+        : 'item'
+  )
 
   return (
     <section className="panel">
