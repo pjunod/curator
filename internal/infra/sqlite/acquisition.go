@@ -137,12 +137,8 @@ func (d *DB) DeleteProfile(ctx context.Context, id int64) error {
 	// it would leave the setting dangling and every future add of that kind
 	// would quietly land back on the built-in.
 	if kinds := d.defaultingKinds(ctx, id); len(kinds) > 0 {
-		names := make([]string, len(kinds))
-		for i, k := range kinds {
-			names[i] = string(k)
-		}
 		return fmt.Errorf("%w: new %s items use it — pick a different default first",
-			ErrProfileIsDefault, strings.Join(names, " and "))
+			ErrProfileIsDefault, strings.Join(kinds, " and "))
 	}
 	n, err := d.Write.DeleteProfile(ctx, id)
 	if err != nil {

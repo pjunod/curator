@@ -194,6 +194,18 @@ const routes = {
   '/works/OL900E2EW/editions.json': {
     entries: [{ publish_date: '2024', isbn_13: ['9781000000001'] }],
   },
+  '/works/OL901A2AW.json': {
+    title: 'The Test Audiobook',
+    description: 'A multipart audiobook that exists only inside the e2e suite.',
+    covers: [],
+    subjects: ['Testing'],
+    first_publish_date: '2025',
+    authors: [{ author: { key: '/authors/OL901A2AA' } }],
+  },
+  '/authors/OL901A2AA.json': { name: 'Audio Author' },
+  '/works/OL901A2AW/editions.json': {
+    entries: [{ publish_date: '2025', isbn_13: ['9781000000002'] }],
+  },
 }
 
 // ---- TVmaze (the series chain, ADR 0011) — same fake, distinct paths ----
@@ -247,6 +259,18 @@ const tvmazeEpisodes = {
 
 createServer((req, res) => {
   const { pathname, searchParams } = new URL(req.url, 'http://x')
+
+  if (pathname === '/search.json' && /audio/i.test(searchParams.get('q') ?? '')) {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({
+      numFound: 1,
+      docs: [{
+        key: '/works/OL901A2AW', title: 'The Test Audiobook',
+        author_name: ['Audio Author'], first_publish_year: 2025, cover_i: 0,
+      }],
+    }))
+    return
+  }
 
   // TVmaze: /search/shows, /lookup/shows?thetvdb= (301), /shows/{id}/episodes
   if (pathname === '/search/shows') {

@@ -48,6 +48,7 @@ export interface BusEvent {
 // ---- Phase 1: library ----
 
 export type MediaKind = 'movie' | 'series' | 'book'
+export type BookType = 'ebook' | 'audiobook'
 
 export interface MediaItemSummary {
   id: number
@@ -55,6 +56,7 @@ export interface MediaItemSummary {
   title: string
   year: number
   author: string // books only; '' otherwise
+  bookType?: BookType
   posterPath: string
   monitored: boolean
   path: string
@@ -218,6 +220,7 @@ export interface AddMediaRequest {
   tmdbId?: number
   tvdbId?: number
   olid?: string
+  bookType?: BookType
   rootFolderId?: number
   qualityProfileId?: number
   downloadPriority?: number
@@ -358,6 +361,7 @@ export interface DefaultProfiles {
   movie: number
   series: number
   book: number
+  audiobook: number
 }
 
 export interface Settings {

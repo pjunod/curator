@@ -6,10 +6,10 @@ import { AppScreen, Chip, Field, Header, LoadingState, MessageState, Wordmark } 
 import { libraryGrid } from '../preferences'
 import { usePreferences } from '../preferences-context'
 import { useTheme } from '../theme'
-import type { MediaItemSummary, MediaKind } from '../types'
+import type { BookType, MediaItemSummary, MediaKind } from '../types'
 import { useResource } from '../useResource'
 
-type KindFilter = 'all' | MediaKind
+type KindFilter = 'all' | Exclude<MediaKind, 'book'> | BookType
 
 export function LibraryScreen({
   client,
@@ -26,14 +26,17 @@ export function LibraryScreen({
   const [kind, setKind] = useState<KindFilter>('all')
   const [query, setQuery] = useState('')
   const resource = useResource(
-    () => client.getLibrary(kind === 'all' ? undefined : kind),
+    () => client.getLibrary(kind === 'ebook' || kind === 'audiobook' || kind === 'all' ? undefined : kind),
     [client, kind, refreshKey],
   )
 
   const items = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
-    if (!needle) return resource.data ?? []
-    return (resource.data ?? []).filter((item) =>
+    const byType = (resource.data ?? []).filter((item) =>
+      kind === 'ebook' || kind === 'audiobook' ? item.kind === 'book' && (item.bookType ?? 'ebook') === kind : true,
+    )
+    if (!needle) return byType
+    return byType.filter((item) =>
       `${item.title} ${item.author} ${item.year}`.toLocaleLowerCase().includes(needle),
     )
   }, [query, resource.data])
@@ -56,7 +59,7 @@ export function LibraryScreen({
           <View style={styles.controls}>
             <Field placeholder="Search titles and authors" value={query} onChangeText={setQuery} />
             <View style={styles.chips}>
-              {(['all', 'movie', 'series', 'book'] as const).map((value) => (
+              {(['all', 'movie', 'series', 'ebook', 'audiobook'] as const).map((value) => (
                 <Chip key={value} label={value === 'all' ? 'All' : value === 'series' ? 'TV' : `${value[0]?.toUpperCase()}${value.slice(1)}s`} selected={kind === value} onPress={() => setKind(value)} />
               ))}
             </View>

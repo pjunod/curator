@@ -271,10 +271,15 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 			return nil, err
 		}
 		if item.Kind == domain.KindBook {
+			profile, err := s.db.GetProfile(ctx, profileID)
+			if err != nil {
+				return nil, err
+			}
 			return domain.BookWantable{
 				Item: item.ID, Profile: profileID, Mon: item.Monitored,
 				Title: item.Title, Author: item.Author, Year: item.Year,
 				Have: state.Best, Files: state.HasFiles, Verified: state.SourceVerified,
+				BookType: quality.BookTypeForSource(profile.Target.Source),
 			}, nil
 		}
 		mon := item.Monitored

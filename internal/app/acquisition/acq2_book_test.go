@@ -224,6 +224,66 @@ func TestAcq2ManualBookImportIsNotGatedByTheProfile(t *testing.T) {
 	}
 }
 
+func TestAcq2MultipartAudiobookImportsEveryTrackWithStableNames(t *testing.T) {
+	svc, db, bookID := bookSetup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	item, err := db.GetMediaItemFull(ctx, bookID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.QualityProfileID = quality.AudiobookProfileID
+	if err := db.UpdateMediaItemPlacement(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := t.TempDir()
+	for _, name := range []string{"01-opening.mp3", "02-middle.mp3", "03-ending.mp3"} {
+		if err := os.WriteFile(filepath.Join(payload, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := svc.importDownload(ctx, sqlite.Download{
+		MediaItemID: bookID, ReleaseTitle: "Andy Weir - Project Hail Mary MP3", Indexer: "idx",
+	}, payload, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Imported != 3 {
+		t.Fatalf("multipart audiobook imported %d files: %+v", res.Imported, res.Files)
+	}
+	files, err := db.ListFilesForItem(ctx, bookID)
+	if err != nil || len(files) != 3 {
+		t.Fatalf("files = %+v err %v", files, err)
+	}
+	for i, file := range files {
+		want := " - 00" + itoa(int64(i+1)) + ".mp3"
+		if !strings.HasSuffix(file.Path, want) {
+			t.Errorf("part %d path = %q, want suffix %q", i+1, file.Path, want)
+		}
+	}
+}
+
+func TestAcq2AudiobookRejectsEbookPayloadBeforePlacingAnything(t *testing.T) {
+	svc, db, bookID := bookSetup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	item, _ := db.GetMediaItemFull(ctx, bookID)
+	item.QualityProfileID = quality.AudiobookProfileID
+	if err := db.UpdateMediaItemPlacement(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	payload := t.TempDir()
+	if err := os.WriteFile(filepath.Join(payload, "wrong.epub"), []byte("ebook"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.importDownload(ctx, sqlite.Download{MediaItemID: bookID}, payload, false)
+	if err == nil || !strings.Contains(err.Error(), "not accepted") {
+		t.Fatalf("wrong-family import = %+v err %v", res, err)
+	}
+	if files, _ := db.ListFilesForItem(ctx, bookID); len(files) != 0 {
+		t.Fatalf("wrong-family payload placed files: %+v", files)
+	}
+}
+
 // describeTarget is what a rejected candidate says it did not match. Getting it
 // wrong turns "does not match Project Hail Mary by Andy Weir" into "does not
 // match target", which is the same as saying nothing.

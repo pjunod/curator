@@ -137,6 +137,23 @@ func TestProfileBasics(t *testing.T) {
 	}
 }
 
+func TestAudiobookFormatParsing(t *testing.T) {
+	cases := map[string]quality.Source{
+		"Author - Title AAC":  quality.SourceAAC,
+		"Author - Title FLAC": quality.SourceFLAC,
+		"Author - Title M4A":  quality.SourceM4A,
+		"Author - Title OGG":  quality.SourceOGG,
+		"Author - Title OPUS": quality.SourceOPUS,
+		"Author - Title WAV":  quality.SourceWAV,
+		"Author - Title WMA":  quality.SourceWMA,
+	}
+	for release, want := range cases {
+		if got := Parse(release).Quality.Source; got != want {
+			t.Errorf("Parse(%q) source = %q, want %q", release, got, want)
+		}
+	}
+}
+
 func FuzzParse(f *testing.F) {
 	f.Add("Show.Name.S01E02.1080p.WEB-DL.x264-GROUP")
 	f.Add("Movie (2024) [1080p] REMUX")

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
@@ -266,7 +267,7 @@ func (fakeBooks) GetBook(ctx context.Context, olid string) (domain.MediaItem, er
 }
 
 func TestAddBook(t *testing.T) {
-	svc, db, _ := newService(t)
+	svc, _, _ := newService(t)
 	svc.WithBooks(fakeBooks{})
 	ctx := context.Background()
 
@@ -304,6 +305,30 @@ func TestAddBook(t *testing.T) {
 		t.Errorf("dup add err = %v", err)
 	}
 
-	// Explicit Audiobook profile is honored.
-	_ = db
+}
+
+func TestAddAudiobookUsesItsOwnDefaultAndChecksTheProfileFamily(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.WithBooks(fakeBooks{})
+	ctx := context.Background()
+
+	if _, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindBook, OLID: "OL17091839W", BookType: quality.BookTypeAudiobook,
+		QualityProfileID: quality.EbookProfileID,
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ebook profile accepted for audiobook add: %v", err)
+	}
+
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindBook, OLID: "OL17091839W", BookType: quality.BookTypeAudiobook,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.QualityProfileID != quality.AudiobookProfileID {
+		t.Errorf("audiobook profile = %d, want %d", item.QualityProfileID, quality.AudiobookProfileID)
+	}
+	if got := quality.BookTypeForSource(item.QualityTarget.Source); got != quality.BookTypeAudiobook {
+		t.Errorf("created audiobook target type = %q", got)
+	}
 }

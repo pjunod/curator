@@ -28,7 +28,9 @@ export function LibraryCard({ item, width, itemSize, onPress }: { item: MediaIte
       <Poster path={item.posterPath} title={item.title} width={width} />
       <Text numberOfLines={2} style={[styles.cardTitle, { color: theme.text, fontSize: textSize, lineHeight: textSize + 4 }]}>{item.title}</Text>
       <Text numberOfLines={1} style={[styles.cardMeta, { color: theme.muted, fontSize: Math.max(10, textSize - 2) }]}>
-        {item.author || item.year || item.kind} {!item.monitored ? ' · unmonitored' : ''}
+        {item.kind === 'book'
+          ? [item.author, item.bookType === 'audiobook' ? 'Audiobook' : 'Ebook'].filter(Boolean).join(' · ')
+          : item.year || item.kind} {!item.monitored ? ' · unmonitored' : ''}
       </Text>
       <Badge label={state.label} tone={state.tone} />
     </Pressable>

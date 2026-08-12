@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import type { MediaItemSummary, MediaKind } from '../api'
+import type { BookType, MediaItemSummary, MediaKind } from '../api'
 import {
   ACTIVE_DOWNLOAD_STATES, bulkEditLibrary, completeness, getLibrary,
   getProfiles, getQueue, getReviewQueue, getScanReport, getSettings, posterUrl,
@@ -39,18 +39,22 @@ function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
   )
 }
 
-const KIND_TABS: { label: string; kind?: MediaKind }[] = [
-  { label: 'All' },
-  { label: 'Movies', kind: 'movie' },
-  { label: 'TV', kind: 'series' },
-  { label: 'Books', kind: 'book' },
+type LibraryTab = 'all' | 'movie' | 'series' | BookType
+
+const KIND_TABS: { label: string; key: LibraryTab }[] = [
+  { label: 'All', key: 'all' },
+  { label: 'Movies', key: 'movie' },
+  { label: 'TV', key: 'series' },
+  { label: 'Ebooks', key: 'ebook' },
+  { label: 'Audiobooks', key: 'audiobook' },
 ]
 
 // The All view groups by kind in this order — never interleaved.
-const KIND_SECTIONS: { kind: MediaKind; label: string }[] = [
-  { kind: 'movie', label: 'Movies' },
-  { kind: 'series', label: 'TV' },
-  { kind: 'book', label: 'Books' },
+const KIND_SECTIONS: { key: Exclude<LibraryTab, 'all'>; kind: MediaKind; bookType?: BookType; label: string }[] = [
+  { key: 'movie', kind: 'movie', label: 'Movies' },
+  { key: 'series', kind: 'series', label: 'TV' },
+  { key: 'ebook', kind: 'book', bookType: 'ebook', label: 'Ebooks' },
+  { key: 'audiobook', kind: 'book', bookType: 'audiobook', label: 'Audiobooks' },
 ]
 
 type SortKey = 'title' | 'author' | 'year' | 'added' | 'rating'
@@ -121,7 +125,9 @@ interface SectionState {
   pageSize: number
 }
 
-function loadSection(kind: MediaKind): SectionState {
+type SectionKey = Exclude<LibraryTab, 'all'>
+
+function loadSection(key: SectionKey): SectionState {
   const state: SectionState = {
     q: '',
     filter: 'all',
@@ -130,7 +136,10 @@ function loadSection(kind: MediaKind): SectionState {
     pageSize: 100,
   }
   try {
-    const raw = localStorage.getItem(`monarr-lib-${kind}`)
+    // The old Books section becomes Ebooks on upgrade, so retain its saved
+    // controls while Audiobooks receives an independent clean slate.
+    const raw = localStorage.getItem(`monarr-lib-${key}`) ??
+      (key === 'ebook' ? localStorage.getItem('monarr-lib-book') : null)
     if (raw) {
       const saved = JSON.parse(raw) as Partial<SectionState>
       if (FILTERS.some((f) => f.key === saved.filter)) state.filter = saved.filter as FilterKey
@@ -148,10 +157,10 @@ function loadSection(kind: MediaKind): SectionState {
   return state
 }
 
-function persistSection(kind: MediaKind, s: SectionState) {
+function persistSection(key: SectionKey, s: SectionState) {
   try {
     localStorage.setItem(
-      `monarr-lib-${kind}`,
+      `monarr-lib-${key}`,
       JSON.stringify({
         filter: s.filter,
         sortKey: s.sortKey,
@@ -273,14 +282,15 @@ function HiddenNotice(props: {
 }
 
 export function LibraryPage() {
-  const [kind, setKind] = useState<MediaKind | undefined>(undefined)
+  const [tab, setTab] = useState<LibraryTab>('all')
   // Page number per kind. Not persisted: coming back to the library on
   // page 9 of a list that has since changed is disorienting, and the
   // page-size preference is the part worth remembering.
-  const [pages, setPages] = useState<Record<MediaKind, number>>({
+  const [pages, setPages] = useState<Record<SectionKey, number>>({
     movie: 0,
     series: 0,
-    book: 0,
+    ebook: 0,
+    audiobook: 0,
   })
   const qc = useQueryClient()
 
@@ -306,8 +316,11 @@ export function LibraryPage() {
   // ambiguous — "Books 0" answers the question "is this broken?".
   const kindCounts = useMemo(() => {
     if (!items.data) return undefined
-    const counts = { movie: 0, series: 0, book: 0, total: items.data.length }
-    for (const m of items.data) counts[m.kind]++
+    const counts = { movie: 0, series: 0, ebook: 0, audiobook: 0, total: items.data.length }
+    for (const m of items.data) {
+      if (m.kind === 'book') counts[m.bookType ?? 'ebook']++
+      else counts[m.kind]++
+    }
     return counts
   }, [items.data])
 
@@ -356,22 +369,24 @@ export function LibraryPage() {
   })
   const unmatchedTotal = reviewCount.data ?? 0
 
-  // Every kind owns its controls; the flat tabs reuse the same state.
-  const [controls, setControls] = useState<Record<MediaKind, SectionState>>(() => ({
+  // Every first-class library section owns its controls; the flat tabs reuse
+  // that state. Ebooks and Audiobooks therefore sort/filter independently.
+  const [controls, setControls] = useState<Record<SectionKey, SectionState>>(() => ({
     movie: loadSection('movie'),
     series: loadSection('series'),
-    book: loadSection('book'),
+    ebook: loadSection('ebook'),
+    audiobook: loadSection('audiobook'),
   }))
-  const updateSection = (k: MediaKind, patch: Partial<SectionState>) => {
+  const updateSection = (key: SectionKey, patch: Partial<SectionState>) => {
     setControls((prev) => {
-      const next = { ...prev, [k]: { ...prev[k], ...patch } }
-      persistSection(k, next[k])
+      const next = { ...prev, [key]: { ...prev[key], ...patch } }
+      persistSection(key, next[key])
       return next
     })
     // Any change to what the list contains or how it is ordered invalidates
     // the page number: page 7 of the old ordering is not page 7 of the new
     // one, and a stale page can leave the grid looking empty.
-    setPages((prev) => ({ ...prev, [k]: 0 }))
+    setPages((prev) => ({ ...prev, [key]: 0 }))
   }
 
   const renderCard = (m: MediaItemSummary) =>
@@ -412,7 +427,9 @@ export function LibraryPage() {
           </div>
           <div className="muted poster-sub">
             <span>
-              {m.kind === 'book' && m.author ? m.author : `${m.year || '—'} · ${m.kind}`}
+              {m.kind === 'book'
+                ? [m.author, m.bookType === 'audiobook' ? 'Audiobook' : 'Ebook'].filter(Boolean).join(' · ')
+                : `${m.year || '—'} · ${m.kind}`}
             </span>
             <CardBadges m={m} downloading={downloading.has(m.id)} />
           </div>
@@ -429,14 +446,14 @@ export function LibraryPage() {
             <button
               key={t.label}
               role="tab"
-              aria-selected={kind === t.kind}
-              className={kind === t.kind ? 'tab active' : 'tab'}
-              onClick={() => setKind(t.kind)}
+              aria-selected={tab === t.key}
+              className={tab === t.key ? 'tab active' : 'tab'}
+              onClick={() => setTab(t.key)}
             >
               {t.label}
               {kindCounts && (
                 <span className="tab-count">
-                  {t.kind ? kindCounts[t.kind] : kindCounts.total}
+                  {t.key === 'all' ? kindCounts.total : kindCounts[t.key]}
                 </span>
               )}
             </button>
@@ -518,18 +535,20 @@ export function LibraryPage() {
         </div>
       )}
 
-      {kind === undefined ? (
+      {tab === 'all' ? (
         // The All view: everything, grouped by kind — never interleaved —
         // and every section runs its OWN filter/sort strip.
         KIND_SECTIONS.map((section) => {
-          const all = (items.data ?? []).filter((m) => m.kind === section.kind)
+          const all = (items.data ?? []).filter((m) =>
+            m.kind === section.kind && (!section.bookType || (m.bookType ?? 'ebook') === section.bookType),
+          )
           if (all.length === 0) return null
-          const group = applySection(all, controls[section.kind])
-          const size = controls[section.kind].pageSize
-          const page = pages[section.kind]
+          const group = applySection(all, controls[section.key])
+          const size = controls[section.key].pageSize
+          const page = pages[section.key]
           const visible = sliceForPage(group, page, size)
           return (
-            <section key={section.kind} className="lib-section">
+            <section key={section.key} className="lib-section">
               <div className="lib-section-bar">
                 <h2 className="lib-section-head">
                   {section.label} <span className="muted">({all.length})</span>
@@ -537,8 +556,8 @@ export function LibraryPage() {
                 <SectionToolbar
                   kind={section.kind}
                   label={section.label}
-                  state={controls[section.kind]}
-                  onChange={(patch) => updateSection(section.kind, patch)}
+                  state={controls[section.key]}
+                  onChange={(patch) => updateSection(section.key, patch)}
                   shown={group.length}
                   total={all.length}
                 />
@@ -548,9 +567,9 @@ export function LibraryPage() {
                 shown={group.length}
                 total={all.length}
                 filterActive={
-                  controls[section.kind].filter !== 'all' || controls[section.kind].q.trim() !== ''
+                  controls[section.key].filter !== 'all' || controls[section.key].q.trim() !== ''
                 }
-                onClear={() => updateSection(section.kind, { filter: 'all', q: '' })}
+                onClear={() => updateSection(section.key, { filter: 'all', q: '' })}
               />
               {visible.length > 0 ? (
                 <div className="poster-grid">{visible.map(renderCard)}</div>
@@ -559,7 +578,7 @@ export function LibraryPage() {
                   Nothing in {section.label} matches the current filter.{' '}
                   <button
                     className="link-button"
-                    onClick={() => updateSection(section.kind, { filter: 'all', q: '' })}
+                    onClick={() => updateSection(section.key, { filter: 'all', q: '' })}
                   >
                     Show all {all.length}
                   </button>
@@ -571,7 +590,7 @@ export function LibraryPage() {
                     page={page}
                     size={size}
                     total={group.length}
-                    onPage={(n) => setPages((prev) => ({ ...prev, [section.kind]: n }))}
+                    onPage={(n) => setPages((prev) => ({ ...prev, [section.key]: n }))}
                   />
                 </div>
               )}
@@ -581,21 +600,23 @@ export function LibraryPage() {
       ) : (
         // A flat kind tab: the same section state, one grid.
         (() => {
-          const section = KIND_SECTIONS.find((s) => s.kind === kind)!
-          const all = (items.data ?? []).filter((m) => m.kind === kind)
-          const group = applySection(all, controls[kind])
-          const size = controls[kind].pageSize
-          const page = pages[kind]
+          const section = KIND_SECTIONS.find((s) => s.key === tab)!
+          const all = (items.data ?? []).filter((m) =>
+            m.kind === section.kind && (!section.bookType || (m.bookType ?? 'ebook') === section.bookType),
+          )
+          const group = applySection(all, controls[section.key])
+          const size = controls[section.key].pageSize
+          const page = pages[section.key]
           const visible = sliceForPage(group, page, size)
           return (
             <>
               {all.length > 0 && (
                 <div className="lib-section-bar">
                   <SectionToolbar
-                    kind={kind}
+                    kind={section.kind}
                     label={section.label}
-                    state={controls[kind]}
-                    onChange={(patch) => updateSection(kind, patch)}
+                    state={controls[section.key]}
+                    onChange={(patch) => updateSection(section.key, patch)}
                     shown={group.length}
                     total={all.length}
                   />
@@ -605,8 +626,8 @@ export function LibraryPage() {
                 label={section.label}
                 shown={group.length}
                 total={all.length}
-                filterActive={controls[kind].filter !== 'all' || controls[kind].q.trim() !== ''}
-                onClear={() => updateSection(kind, { filter: 'all', q: '' })}
+                filterActive={controls[section.key].filter !== 'all' || controls[section.key].q.trim() !== ''}
+                onClear={() => updateSection(section.key, { filter: 'all', q: '' })}
               />
               <div className="poster-grid">{visible.map(renderCard)}</div>
               {all.length > 0 && group.length === 0 && (
@@ -614,7 +635,7 @@ export function LibraryPage() {
                   Nothing in {section.label} matches the current filter.{' '}
                   <button
                     className="link-button"
-                    onClick={() => updateSection(kind, { filter: 'all', q: '' })}
+                    onClick={() => updateSection(section.key, { filter: 'all', q: '' })}
                   >
                     Show all {all.length}
                   </button>
@@ -626,7 +647,7 @@ export function LibraryPage() {
                     page={page}
                     size={size}
                     total={group.length}
-                    onPage={(n) => setPages((prev) => ({ ...prev, [kind]: n }))}
+                    onPage={(n) => setPages((prev) => ({ ...prev, [section.key]: n }))}
                   />
                 </div>
               )}

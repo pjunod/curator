@@ -3,6 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-07-17
 
+Audiobook subtype curation and multipart import are refined by
+[ADR 0017](0017-audiobook-curation.md).
+
 ## Context
 
 The v0.2 blueprint listed books as a non-goal ("Readarr territory"). That territory no longer
@@ -32,8 +35,8 @@ abstain.
 - **Ebooks and audiobooks ship together**, modeled as **one `book` kind** whose quality
   ladder spans formats: ebook qualities (EPUB, AZW3, MOBI, PDF) and audiobook qualities
   (M4B, MP3) are ordinary quality groups in ordinary QualityProfiles. "Ebook", "Audiobook",
-  or "Either" is just a profile choice — no new domain concept. Collecting *both* editions of
-  one book is explicitly out of scope for v1 (one file per book per profile cutoff; an
+  or "Either" is a profile choice rather than a new persistent media kind. Collecting *both* editions of
+  one book is explicitly out of scope for v1 (one edition per book per profile cutoff; an
   editions model can be revisited on demand).
 - **External IDs extended**: `isbn10`/`isbn13`, `olid` (Open Library), `asin` (Audible)
   alongside tmdb/imdb/tvdb.

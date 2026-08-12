@@ -69,6 +69,18 @@ func ratingsDTO(rs []domain.Rating) []apigen.Rating {
 	return out
 }
 
+func bookTypeDTO(m domain.MediaItem) *apigen.BookType {
+	if m.Kind != domain.KindBook {
+		return nil
+	}
+	bookType := quality.BookTypeForSource(m.QualityTarget.Source)
+	if !quality.ValidBookType(bookType) {
+		return nil
+	}
+	v := apigen.BookType(bookType)
+	return &v
+}
+
 func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 	out := apigen.MediaItemSummary{
 		Id:               m.ID,
@@ -88,6 +100,7 @@ func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 		AddedAt:          m.AddedAt,
 	}
 	out.Source = optStr(m.Source)
+	out.BookType = bookTypeDTO(m)
 	if quality.Rank(m.Quality) > 0 {
 		out.Quality = optStr(m.Quality.Display())
 	}
@@ -142,6 +155,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		d.Genres = []string{}
 	}
 	d.Author = m.Author
+	d.BookType = bookTypeDTO(m)
 	d.Ids.Imdb = optStr(m.IDs.IMDB)
 	d.Ids.Isbn13 = optStr(m.IDs.ISBN13)
 	d.Ids.Olid = optStr(m.IDs.OLID)
@@ -267,6 +281,9 @@ func (s *Server) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Olid != nil {
 		req.OLID = *body.Olid
+	}
+	if body.BookType != nil {
+		req.BookType = quality.BookType(*body.BookType)
 	}
 	if body.Monitored != nil {
 		req.Monitored = *body.Monitored
@@ -774,9 +791,10 @@ func (s *Server) GetSettings(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Store != nil {
 		d := s.deps.Store.DefaultProfiles(r.Context())
 		out.DefaultProfiles = &apigen.DefaultProfiles{
-			Movie:  d[domain.KindMovie],
-			Series: d[domain.KindSeries],
-			Book:   d[domain.KindBook],
+			Movie:     d[domain.KindMovie],
+			Series:    d[domain.KindSeries],
+			Book:      d[domain.KindBook],
+			Audiobook: s.deps.Store.DefaultBookProfileID(r.Context(), quality.BookTypeAudiobook),
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -848,6 +866,11 @@ func (s *Server) applyDefaultProfiles(ctx context.Context, in apigen.DefaultProf
 			continue
 		}
 		if err := s.deps.Store.SetDefaultProfile(ctx, kind, *id); err != nil {
+			return err
+		}
+	}
+	if in.Audiobook != nil {
+		if err := s.deps.Store.SetDefaultBookProfile(ctx, quality.BookTypeAudiobook, *in.Audiobook); err != nil {
 			return err
 		}
 	}

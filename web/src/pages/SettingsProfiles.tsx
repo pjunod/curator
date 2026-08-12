@@ -35,7 +35,14 @@ const EBOOK_FORMATS = [
 ]
 const AUDIOBOOK_FORMATS = [
   { value: 'mp3', label: 'MP3' },
+  { value: 'wma', label: 'WMA' },
+  { value: 'aac', label: 'AAC' },
+  { value: 'ogg', label: 'OGG' },
+  { value: 'opus', label: 'Opus' },
+  { value: 'm4a', label: 'M4A' },
   { value: 'm4b', label: 'M4B' },
+  { value: 'flac', label: 'FLAC' },
+  { value: 'wav', label: 'WAV' },
 ]
 
 type Axis = 'video' | 'ebook' | 'audiobook'
@@ -132,10 +139,11 @@ function previewSentence(d: Draft): string {
 // The three kinds a default can be set for, in the order the library lists
 // them. Books share one setting: a book item is one kind, and whether it wants
 // EPUB or M4B is exactly what choosing a profile decides.
-const DEFAULT_KINDS: { key: keyof DefaultProfiles; label: string; book: boolean }[] = [
-  { key: 'movie', label: 'Movies', book: false },
-  { key: 'series', label: 'Series', book: false },
-  { key: 'book', label: 'Books', book: true },
+const DEFAULT_KINDS: { key: keyof DefaultProfiles; label: string; axis: Axis }[] = [
+  { key: 'movie', label: 'Movies', axis: 'video' },
+  { key: 'series', label: 'Series', axis: 'video' },
+  { key: 'book', label: 'Ebooks', axis: 'ebook' },
+  { key: 'audiobook', label: 'Audiobooks', axis: 'audiobook' },
 ]
 
 /**
@@ -174,11 +182,11 @@ function DefaultProfileSettings(props: { profiles: QualityProfile[] }) {
         touch anything already in the library.
       </p>
       <div className="form-row">
-        {DEFAULT_KINDS.map(({ key, label, book }) => {
+        {DEFAULT_KINDS.map(({ key, label, axis }) => {
           // Only same-axis profiles are offered: format families never
           // compete, so a book on a video profile would sit wanted forever
           // with nothing able to satisfy it.
-          const eligible = props.profiles.filter((p) => (axisOf(p.target.source) !== 'video') === book)
+          const eligible = props.profiles.filter((p) => axisOf(p.target.source) === axis)
           return (
             <label key={key}>
               {label}

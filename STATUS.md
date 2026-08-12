@@ -125,10 +125,10 @@ ready, but credentials are deliberately not repository state.
 - [x] Metadata bake-off → **Open Library** (open data, no key, work-level ids, covers; Google Books rate-limits anonymous callers, Hardcover needs an account) — `BookProvider` port + adapter, fixture contract-tested
 - [x] Book external IDs end-to-end (isbn13 from editions, work OLID, asin column reserved) — unique `(kind, olid)`
 - [x] Book-mode parser rules + golden corpus (12 cases seeded from Readarr/scene naming patterns; literal Readarr suite port remains an easy extension) — author extraction, order-swap tolerant matching
-- [x] Book `SearchPlanner`/`ReleaseMatcher` (author+title queries; Torznab 7000/7020 + 3030)
-- [x] Format quality ladder: PDF<MOBI<AZW3<EPUB + MP3<M4B; seeded **Ebook** (id 4) and **Audiobook** (id 5) profiles; books default to Ebook
-- [x] `{Author Name}/{Book Title}` naming, Calibre-friendly (`Title - Author.ext`); import + scan grade book files by extension
-- [x] Add/browse books in the UI (Book tab in Add, Books library filter, author on detail, release search + grab) — e2e: search → add → grab EPUB → auto-import, M4B rejected by profile
+- [x] Book `SearchPlanner`/`ReleaseMatcher` (author+title queries); profile-derived subtype routes ebooks to Torznab 7000/7020 and audiobooks to 3030
+- [x] Format families: PDF/MOBI/AZW3/EPUB ebooks plus MP3/WMA/AAC/OGG/Opus/M4A/M4B/FLAC/WAV audiobooks; seeded **Ebook** (id 4) and **Audiobook** (id 5) profiles with independent defaults
+- [x] `{Author Name}/{Book Title}` naming, Calibre-friendly single files (`Title - Author.ext`) and stable multipart audiobook names (`… - 001.ext`); import + scan grade book files by extension
+- [x] First-class Ebook/Audiobook add choices, library tabs, badges, same-family profile pickers, API `bookType`, and web/native curation — e2e covers EPUB plus a three-part M4B audiobook
 
 ## Phase 3 — Automation ✅ (shipped 2026-07-18)
 
@@ -675,6 +675,8 @@ act. Two defects — one causing it, one hiding it.
 | [0013](docs/adr/0013-measured-quality.md) | **Proposed:** on-disk quality is measured (native probe); filename demoted to hint; unknown ≠ missing; don't churn |
 | [0014](docs/adr/0014-target-profiles.md) | **Proposed:** a profile is a floor + target + upgrades switch; grabs capped at target resolution; "Any" retired |
 | [0015](docs/adr/0015-discovery.md) | Discovery is a read-only browse surface: TMDB always, Trakt when keyed, nothing stored |
+| [0016](docs/adr/0016-air-times.md) | Calendar schedule enrichment carries exact UTC air times where providers know them |
+| [0017](docs/adr/0017-audiobook-curation.md) | Audiobooks are a profile-derived book subtype with separate search/default/UI behavior and multipart import |
 
 ## Milestone commits
 

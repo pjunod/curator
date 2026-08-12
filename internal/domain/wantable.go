@@ -250,6 +250,7 @@ type BookWantable struct {
 	Title    string
 	Author   string
 	Year     int
+	BookType quality.BookType
 }
 
 // ID implements Wantable.
@@ -285,6 +286,9 @@ type SearchQuery struct {
 	Episode int // 0 = unset
 	// Kind steers indexer category selection (books → Torznab 7000s/3030).
 	Kind MediaKind
+	// BookType narrows book searches to ebook or audiobook categories. Empty
+	// preserves the broad legacy query for callers without a resolved profile.
+	BookType quality.BookType
 }
 
 // PlanSearch builds the indexer queries for a wantable — one of exactly two
@@ -309,12 +313,12 @@ func PlanSearch(w Wantable) []SearchQuery {
 		}}
 	case BookWantable:
 		if t.Author == "" {
-			return []SearchQuery{{Q: t.Title, Kind: KindBook}}
+			return []SearchQuery{{Q: t.Title, Kind: KindBook, BookType: t.BookType}}
 		}
 		// Author+title is the discriminating query; title-only casts wider.
 		return []SearchQuery{
-			{Q: fmt.Sprintf("%s %s", t.Author, t.Title), Kind: KindBook},
-			{Q: t.Title, Kind: KindBook},
+			{Q: fmt.Sprintf("%s %s", t.Author, t.Title), Kind: KindBook, BookType: t.BookType},
+			{Q: t.Title, Kind: KindBook, BookType: t.BookType},
 		}
 	default:
 		return nil

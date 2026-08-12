@@ -852,7 +852,11 @@ var locationCache sync.Map // string -> *time.Location
 func loadLocation(name string) (*time.Location, bool) {
 	if v, ok := locationCache.Load(name); ok {
 		loc, ok := v.(*time.Location)
-		return loc, ok
+		// Failed lookups are cached as a typed nil. A type assertion still
+		// succeeds for that sentinel, so check the pointer too; otherwise the
+		// second request for an unknown zone reaches ParseInLocation with a nil
+		// location and panics instead of cleanly omitting the air time.
+		return loc, ok && loc != nil
 	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {

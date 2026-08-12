@@ -71,7 +71,7 @@ they were.
 
 ## Adding media
 
-**+ Add media** (Library page) → pick the Movie / Series / Book tab →
+**+ Add media** (Library page) → pick Movie / Series / Ebook / Audiobook →
 type a title. Movies and series search TMDB; books search Open Library and
 show the author next to each result. Pick a root folder, a quality profile
 (or leave the default — the picker names it, e.g. "Default — 1080p", and
@@ -93,10 +93,10 @@ root folder and profile all stay put. The next title is one click, and
 - *Movies* arrive hydrated with year, overview, poster, runtime.
 - *Series* arrive with every season and episode; specials (season 0) start
   unmonitored, like upstream.
-- *Books* arrive with author, first-publish year, and ISBN, and default to
-  the **Ebook** quality profile (change the Books default under Settings →
-  Quality profiles, or switch an item to **Audiobook** via the mass editor
-  if you want M4B/MP3 instead).
+- *Ebooks and audiobooks* share Open Library metadata (author,
+  first-publish year, ISBN) but have independent defaults and same-family
+  profile pickers. Audiobook searches use audiobook indexer categories and
+  support MP3, WMA, AAC, OGG, Opus, M4A, M4B, FLAC, and WAV.
 
 Nothing touches the disk at add time — the item's folder is created on
 first import.
@@ -222,13 +222,13 @@ Monarr builds update the installed app on the next launch.
 
 ## The library page
 
-The **All** tab shows everything, grouped into Movies / Series / Books
-sections (never interleaved); the kind tabs show flat grids. **Each
+The **All** tab shows everything, grouped into Movies / TV / Ebooks /
+Audiobooks (never interleaved); those tabs show flat grids. **Each
 section carries its own controls** in its header bar: a title/author
 text filter, a state filter (monitored, unmonitored, missing,
 incomplete, complete), and a sort (title, year, recently added, rating —
 books also sort by author) with an ascending/descending toggle. The same
-per-kind settings drive that kind's flat tab, and everything but the
+per-section settings drive that section's flat tab, and everything but the
 text filter is remembered per browser. Every card carries the rating star,
 the color-coded completeness pill, and a ↓ badge while something is
 downloading for it.
@@ -523,6 +523,13 @@ the folder and pressed Import, and that is the decision. It still only
 *replaces* an existing file when the new one actually outranks it — otherwise
 both stay and you choose.
 
+An audiobook payload containing several audio files is curated as one
+edition. Monarr sorts the source paths, imports every compatible part, and
+names them `Title - Author - 001.ext`, `002`, and so on. A single-file
+audiobook keeps the Calibre-style `Title - Author.ext` name. Changing a
+book between Ebook and Audiobook profiles changes what it hunts; Monarr does
+not keep both editions of the same Open Library work as separate items yet.
+
 ### An import that ran out of disk
 
 An import that stops because the destination cannot take the bytes — a full
@@ -775,8 +782,8 @@ is replaced on disk. A release that isn't strictly better is rejected as
 ## The mass editor
 
 Library page → **Edit** → click items to select → bulk **Monitor** /
-**Unmonitor** / apply a quality profile. This is also the way to flip a
-book between the Ebook and Audiobook profiles.
+**Unmonitor** / apply a quality profile. An individual book can also switch
+between Ebook and Audiobook profiles from its detail page.
 
 ## Connecting the ecosystem
 
@@ -811,8 +818,9 @@ the filename. It holds a scoped `plx_` key, never a plurx admin token. See
   download client reported. Fix the container mounts so both see the same
   path, or set a **remote path mapping** on the client (Settings →
   Download clients — see `docs/settings.md`).
-- **Search finds nothing** — check the indexer Test passes, and remember
-  book searches need book categories (7000s/3030) supported by the indexer.
+- **Search finds nothing** — check the indexer Test passes. With categories
+  left empty, Monarr routes ebooks to 7000/7020 and audiobooks to 3030;
+  explicitly configured indexer categories still override those defaults.
 - **Everything rejected** — read the rejection reasons; usually the
   profile doesn't allow the found qualities, or the release title doesn't
   match (year off by >1, different title).

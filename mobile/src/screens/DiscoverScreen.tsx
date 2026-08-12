@@ -3,10 +3,11 @@ import { ActivityIndicator, Modal, ScrollView, StyleSheet, Switch, Text, View } 
 import { compatibleRootFolders, resolveRootFolderID } from '../addMediaOptions'
 import type { MonarrClient } from '../api'
 import { SearchCard } from '../components/Media'
+import { bookTypeForSource } from '../format'
 import { AppScreen, Button, Chip, Field, Header, IconButton, InlineError, LoadingState, MessageState, Panel, SectionTitle, Wordmark } from '../components/UI'
 import { usePreferences } from '../preferences-context'
 import { useTheme } from '../theme'
-import type { AddMediaRequest, MediaKind, SearchResult } from '../types'
+import type { AddMediaRequest, BookType, MediaKind, SearchResult } from '../types'
 import { useResource } from '../useResource'
 
 export function DiscoverScreen({
@@ -19,6 +20,7 @@ export function DiscoverScreen({
   const theme = useTheme()
   const { itemSize } = usePreferences()
   const [kind, setKind] = useState<MediaKind>('movie')
+  const [bookType, setBookType] = useState<BookType>('ebook')
   const [listID, setListID] = useState('')
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[] | null>(null)
@@ -69,6 +71,12 @@ export function DiscoverScreen({
             <Chip key={value} label={value === 'series' ? 'TV' : `${value.charAt(0).toUpperCase()}${value.slice(1)}s`} selected={kind === value} onPress={() => setKind(value)} />
           ))}
         </View>
+        {kind === 'book' ? (
+          <View style={styles.kinds}>
+            <Chip label="Ebooks" selected={bookType === 'ebook'} onPress={() => setBookType('ebook')} />
+            <Chip label="Audiobooks" selected={bookType === 'audiobook'} onPress={() => setBookType('audiobook')} />
+          </View>
+        ) : null}
 
         <View style={styles.searchRow}>
           <Field
@@ -118,6 +126,7 @@ export function DiscoverScreen({
         <AddSheet
           client={client}
           item={adding}
+          initialBookType={bookType}
           onClose={() => setAdding(null)}
           onAdded={(id) => {
             setAdding(null)
@@ -132,11 +141,13 @@ export function DiscoverScreen({
 function AddSheet({
   client,
   item,
+  initialBookType,
   onClose,
   onAdded,
 }: {
   client: MonarrClient
   item: SearchResult
+  initialBookType: BookType
   onClose: () => void
   onAdded: (id: number) => void
 }) {
@@ -151,6 +162,7 @@ function AddSheet({
   )
   const [rootID, setRootID] = useState(0)
   const [profileID, setProfileID] = useState(0)
+  const [bookType, setBookType] = useState<BookType>(initialBookType)
   const [monitored, setMonitored] = useState(true)
   const [searchNow, setSearchNow] = useState(false)
   const [monitor, setMonitor] = useState<'all' | 'latest' | 'none'>('all')
@@ -173,6 +185,7 @@ function AddSheet({
       tmdbId: item.tmdbId || undefined,
       tvdbId: item.tvdbId,
       olid: item.olid,
+      bookType: item.kind === 'book' ? bookType : undefined,
       rootFolderId: rootID,
       qualityProfileId: profileID || undefined,
       monitored,
@@ -211,9 +224,18 @@ function AddSheet({
           ) : null}
 
           <SectionTitle>Quality profile</SectionTitle>
+          {item.kind === 'book' ? (
+            <View style={styles.wrap}>
+              <Chip label="Ebook" selected={bookType === 'ebook'} onPress={() => { setBookType('ebook'); setProfileID(0) }} />
+              <Chip label="Audiobook" selected={bookType === 'audiobook'} onPress={() => { setBookType('audiobook'); setProfileID(0) }} />
+            </View>
+          ) : null}
           <View style={styles.wrap}>
             <Chip label="Server default" selected={profileID === 0} onPress={() => setProfileID(0)} />
-            {(options.data?.profiles ?? []).map((profile) => (
+            {(options.data?.profiles ?? []).filter((profile) => {
+              const profileBookType = bookTypeForSource(profile.target.source)
+              return item.kind === 'book' ? profileBookType === bookType : profileBookType === undefined
+            }).map((profile) => (
               <Chip key={profile.id} label={profile.name} selected={profileID === profile.id} onPress={() => setProfileID(profile.id)} />
             ))}
           </View>

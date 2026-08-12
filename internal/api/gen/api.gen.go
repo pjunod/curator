@@ -53,6 +53,24 @@ func (e AutoSearchTargetSkipped) Valid() bool {
 	}
 }
 
+// Defines values for BookType.
+const (
+	Audiobook BookType = "audiobook"
+	Ebook     BookType = "ebook"
+)
+
+// Valid indicates whether the value is a known member of the BookType enum.
+func (e BookType) Valid() bool {
+	switch e {
+	case Audiobook:
+		return true
+	case Ebook:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectionKind.
 const (
 	Downloadclient ConnectionKind = "downloadclient"
@@ -610,6 +628,9 @@ func (e ListQueueParamsFilter) Valid() bool {
 
 // AddMediaRequest defines model for AddMediaRequest.
 type AddMediaRequest struct {
+	// BookType The book edition curated by the selected quality profile. This is a subtype of the persistent book kind, not a separate library kind.
+	BookType *BookType `json:"bookType,omitempty"`
+
 	// DownloadPriority Optional per-item override; absent inherits the quality profile.
 	DownloadPriority *int      `json:"downloadPriority,omitempty"`
 	Kind             MediaKind `json:"kind"`
@@ -621,7 +642,7 @@ type AddMediaRequest struct {
 	// Olid Open Library work id — identifies books (ADR 0006).
 	Olid *string `json:"olid,omitempty"`
 
-	// QualityProfileId 0/absent = kind default (Any; Ebook for books).
+	// QualityProfileId 0/absent = kind default (the matching bookType default for books).
 	QualityProfileId *int64 `json:"qualityProfileId,omitempty"`
 	RootFolderId     *int64 `json:"rootFolderId,omitempty"`
 
@@ -718,6 +739,9 @@ type BlocklistEntry struct {
 	Reason       string    `json:"reason"`
 	ReleaseTitle string    `json:"releaseTitle"`
 }
+
+// BookType The book edition curated by the selected quality profile. This is a subtype of the persistent book kind, not a separate library kind.
+type BookType string
 
 // BrowseResult defines model for BrowseResult.
 type BrowseResult struct {
@@ -824,7 +848,10 @@ type CustomFormatInput struct {
 
 // DefaultProfiles The quality profile a newly added item gets when the add form does not name one, per media kind. Always fully populated on read: an unset or dangling setting resolves to the built-in, so this is the effective answer rather than only what has been saved.
 type DefaultProfiles struct {
-	// Book Must target a book format. Format families never compete (ADR 0014 §7), so a video profile here would leave every book wanted forever with nothing able to satisfy it.
+	// Audiobook Must target an audiobook format.
+	Audiobook int64 `json:"audiobook"`
+
+	// Book Ebook default retained under the historical book key for API compatibility. Must target an ebook format.
 	Book   int64 `json:"book"`
 	Movie  int64 `json:"movie"`
 	Series int64 `json:"series"`
@@ -832,9 +859,10 @@ type DefaultProfiles struct {
 
 // DefaultProfilesUpdate Partial: only the kinds present are changed. A profile that does not exist, or that lives on the wrong format axis for the kind, is refused with 400 rather than saved and discovered later.
 type DefaultProfilesUpdate struct {
-	Book   *int64 `json:"book,omitempty"`
-	Movie  *int64 `json:"movie,omitempty"`
-	Series *int64 `json:"series,omitempty"`
+	Audiobook *int64 `json:"audiobook,omitempty"`
+	Book      *int64 `json:"book,omitempty"`
+	Movie     *int64 `json:"movie,omitempty"`
+	Series    *int64 `json:"series,omitempty"`
 }
 
 // Delivery defines model for Delivery.
@@ -1195,6 +1223,9 @@ type MediaItemDetail struct {
 	Author       string `json:"author"`
 	BackdropPath string `json:"backdropPath"`
 
+	// BookType The book edition curated by the selected quality profile. This is a subtype of the persistent book kind, not a separate library kind.
+	BookType *BookType `json:"bookType,omitempty"`
+
 	// Copies Additional quality copies of this item.
 	Copies []MediaCopy `json:"copies"`
 
@@ -1254,6 +1285,9 @@ type MediaItemSummary struct {
 
 	// Author Books only (ADR 0006); empty for movies/series.
 	Author string `json:"author"`
+
+	// BookType The book edition curated by the selected quality profile. This is a subtype of the persistent book kind, not a separate library kind.
+	BookType *BookType `json:"bookType,omitempty"`
 
 	// EpisodeCount Monitored episodes aired to date (series; 0 otherwise).
 	EpisodeCount int `json:"episodeCount"`

@@ -10,6 +10,25 @@ func q(s quality.Source, res int) quality.Quality {
 	return quality.Quality{Source: s, Resolution: res}
 }
 
+func TestAudiobookFormatsShareAFirstClassBookFamily(t *testing.T) {
+	formats := []quality.Source{
+		quality.SourceMP3, quality.SourceWMA, quality.SourceAAC, quality.SourceOGG,
+		quality.SourceOPUS, quality.SourceM4A, quality.SourceM4B, quality.SourceFLAC,
+		quality.SourceWAV,
+	}
+	for _, source := range formats {
+		if !quality.IsAudiobookFormat(source) {
+			t.Errorf("%s is not an audiobook format", source)
+		}
+		if got := quality.BookTypeForSource(source); got != quality.BookTypeAudiobook {
+			t.Errorf("BookTypeForSource(%s) = %q", source, got)
+		}
+	}
+	if got := quality.BookTypeForSource(quality.SourceEPUB); got != quality.BookTypeEbook {
+		t.Errorf("EPUB book type = %q", got)
+	}
+}
+
 func ptr(v quality.Quality) *quality.Quality { return &v }
 
 // TestProfileLattice enumerates the decision surface of ADR 0014 §2: every

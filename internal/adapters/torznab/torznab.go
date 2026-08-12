@@ -16,6 +16,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/adapters/httpx"
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -114,7 +115,14 @@ func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Rele
 	params.Set("q", q.Q)
 	cats := c.cfg.Categories
 	if len(cats) == 0 && q.Kind == domain.KindBook {
-		cats = []int{7000, 7020, 3030} // Books, Ebook, Audio/Audiobook
+		switch q.BookType {
+		case quality.BookTypeEbook:
+			cats = []int{7000, 7020} // Books, Ebook
+		case quality.BookTypeAudiobook:
+			cats = []int{3030} // Audio/Audiobook
+		default:
+			cats = []int{7000, 7020, 3030} // broad legacy book search
+		}
 	}
 	if len(cats) > 0 {
 		strs := make([]string, len(cats))

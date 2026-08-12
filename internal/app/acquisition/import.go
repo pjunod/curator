@@ -207,6 +207,12 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	if len(videos) == 0 {
 		return ImportResult{}, fmt.Errorf("no media files in %s", savePath)
 	}
+	// Multipart audiobook names are positional. WalkDir is lexical already,
+	// but manual selection order is a UI detail and must not change the track
+	// numbers assigned to the same payload on a retry.
+	if item.Kind == domain.KindBook {
+		sort.Strings(videos)
+	}
 	// A movie is one file. When a payload offers several, take the biggest.
 	//
 	// Only one of them can win — the others are declined as "does not improve
@@ -251,15 +257,54 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		return ImportResult{}, err
 	}
 
+	// Book payloads are checked as a set before any bytes move. In particular,
+	// a multipart audiobook is one edition: accepting track 01 and only then
+	// discovering track 02 is the wrong family would leave a curated folder
+	// that can never be complete.
+	var bookQualities []quality.Quality
+	var audioPlan *bookImportPlan
+	if item.Kind == domain.KindBook {
+		bookQualities = make([]quality.Quality, len(videos))
+		outcomes := make([]FileOutcome, 0, len(videos))
+		for i, src := range videos {
+			q := quality.Quality{Source: quality.Source(filename.BookQualitySource(src))}
+			bookQualities[i] = q
+			if quality.BookTypeForSource(q.Source) != quality.BookTypeForSource(profile.Target.Source) {
+				outcomes = append(outcomes, FileOutcome{
+					Name: filepath.Base(src), Quality: q.Display(),
+					Reason: fmt.Sprintf("%s is not accepted by the %s profile", q.Display(), profile.Name),
+				})
+				continue
+			}
+			if !manual && !profile.Acceptable(q) {
+				outcomes = append(outcomes, FileOutcome{
+					Name: filepath.Base(src), Quality: q.Display(),
+					Reason: fmt.Sprintf("%s is below the floor for profile %q", q.Display(), profile.Name),
+				})
+			}
+		}
+		if len(outcomes) > 0 {
+			result := ImportResult{Files: outcomes}
+			return result, fmt.Errorf("no files imported from %s — %s", savePath, result.reasons(5))
+		}
+		if quality.BookTypeForSource(profile.Target.Source) == quality.BookTypeAudiobook && len(videos) > 1 {
+			audioPlan, err = s.planBookImport(ctx, item, scope, profile, bookQualities, manual)
+			if err != nil {
+				outcomes = outcomes[:0]
+				for i, src := range videos {
+					outcomes = append(outcomes, FileOutcome{Name: filepath.Base(src), Quality: bookQualities[i].Display(), Reason: err.Error()})
+				}
+				return ImportResult{Files: outcomes}, fmt.Errorf("no files imported from %s — %v", savePath, err)
+			}
+		}
+	}
+
 	result := ImportResult{Files: make([]FileOutcome, 0, len(videos))}
-	for _, src := range videos {
+	for fileIndex, src := range videos {
 		p := parser.Parse(filepath.Base(src))
 		q := p.Quality
 		if item.Kind == domain.KindBook {
-			// The extension is the authority on a book file's format.
-			if ext := filename.BookQualitySource(src); ext != "" {
-				q = quality.Quality{Source: quality.Source(ext)}
-			}
+			q = bookQualities[fileIndex]
 		} else if q.Source == quality.SourceUnknown && q.Resolution == 0 {
 			// Single files often carry the quality only on the release name.
 			q = dl.Quality
@@ -300,7 +345,8 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		case domain.KindMovie:
 			put, err = s.importMovieFile(ctx, item, scope, profile, src, q, dl.ReleaseTitle, manual)
 		case domain.KindBook:
-			put, err = s.importBookFile(ctx, item, scope, profile, src, q, manual)
+			put, err = s.importBookFile(ctx, item, scope, profile, src, q, manual,
+				fileIndex, len(videos), audioPlan)
 		default:
 			put, err = s.importEpisodeFile(ctx, item, scope, profile, epStates, src, p, q, dl.ReleaseTitle, manual)
 		}
@@ -330,6 +376,15 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			result.Upgraded = result.Upgraded || put.Upgrade
 		}
 		result.Files = append(result.Files, outcome)
+	}
+	if audioPlan != nil && result.Blocked == nil && result.Imported == len(videos) && audioPlan.Upgrade {
+		keep := make([]string, 0, len(result.Files))
+		for _, outcome := range result.Files {
+			if outcome.Imported {
+				keep = append(keep, outcome.Path)
+			}
+		}
+		s.removeExistingFiles(ctx, item, scope.CopyID, nil, keep...)
 	}
 	// The environment first: an import that stopped because the destination
 	// could not take the bytes is a FAILED import, whether it placed none
@@ -553,7 +608,53 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 // importBookFile places one book file into <library>/<Author>/<Title>/ as
 // "Title - Author.ext" (Calibre-friendly, ADR 0006), with the same
 // upgrade-or-reject semantics as movies.
-func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, manual bool) (placement, error) {
+type bookImportPlan struct {
+	Upgrade bool
+}
+
+func (s *Service) planBookImport(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, qualities []quality.Quality, manual bool) (*bookImportPlan, error) {
+	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
+	if err != nil {
+		return nil, err
+	}
+	worst := qualities[0]
+	for _, q := range qualities[1:] {
+		if quality.Better(worst, q) {
+			worst = q
+		}
+	}
+	plan := &bookImportPlan{}
+	if state.Best == nil {
+		return plan, nil
+	}
+	plan.Upgrade = profile.Upgrade(worst, *state.Best, state.SourceVerified)
+	if !plan.Upgrade && !manual {
+		return nil, fmt.Errorf("%s audiobook does not improve on the %s already here (profile %q)",
+			worst.Display(), state.Best.Display(), profile.Name)
+	}
+	plan.Upgrade = plan.Upgrade || quality.Better(worst, *state.Best)
+	return plan, nil
+}
+
+func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, manual bool, part, total int, plan *bookImportPlan) (placement, error) {
+	if plan != nil {
+		base := naming.BookFileName(item.Author, item.Title)
+		if total > 1 {
+			base += fmt.Sprintf(" - %03d", part+1)
+		}
+		dest := filepath.Join(scope.Dest, base+strings.ToLower(filepath.Ext(src)))
+		if err := placeFile(ctx, src, dest, transfers.Progress(ctx)); err != nil {
+			return placement{}, err
+		}
+		fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
+		if err != nil {
+			return placement{}, err
+		}
+		s.rememberSource(ctx, fileID, dest, scope)
+		return placement{Path: dest, Upgrade: plan.Upgrade},
+			s.db.SetFileQualityFrom(ctx, fileID, q,
+				mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+	}
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return placement{}, err
@@ -699,17 +800,21 @@ func (s *Service) rememberSource(ctx context.Context, fileID int64, dest string,
 // scope: all of ONE COPY's item files for movies, or that copy's files
 // linked to the given episodes. Other copies' files are never touched —
 // upgrading the 4K primary must not delete the 720p copy.
-func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem, copyID int64, episodeIDs []int64, keep string) {
+func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem, copyID int64, episodeIDs []int64, keep ...string) {
 	files, err := s.db.ListFilesForItem(ctx, item.ID)
 	if err != nil {
 		return
 	}
 	covered := map[int64]bool{}
+	kept := map[string]bool{}
+	for _, path := range keep {
+		kept[path] = true
+	}
 	for _, id := range episodeIDs {
 		covered[id] = true
 	}
 	for _, f := range files {
-		if f.Path == keep || f.CopyID != copyID {
+		if kept[f.Path] || f.CopyID != copyID {
 			continue
 		}
 		if episodeIDs != nil {

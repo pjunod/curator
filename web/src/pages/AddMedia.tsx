@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
-import type { MediaKind, SearchResult } from '../api'
+import type { BookType, MediaKind, SearchResult } from '../api'
 import {
   addLibraryItem,
   getProfiles,
@@ -40,6 +40,7 @@ export function AddMediaPage() {
   const [kind, setKind] = useState<MediaKind>(
     search.kind === 'series' || search.kind === 'book' ? search.kind : 'movie',
   )
+  const [bookType, setBookType] = useState<BookType>('ebook')
   const [query, setQuery] = useState(search.q ?? '')
   const debouncedQuery = useDebounced(query, 400)
 
@@ -59,8 +60,16 @@ export function AddMediaPage() {
 
   // The default the server will apply, named rather than implied. "(default)"
   // on its own is a promise with no content.
-  const defaultProfileId = settings.data?.defaultProfiles?.[kind]
+  const defaultProfileId = kind === 'book'
+    ? settings.data?.defaultProfiles?.[bookType === 'audiobook' ? 'audiobook' : 'book']
+    : settings.data?.defaultProfiles?.[kind]
   const defaultProfileName = profiles.data?.find((p) => p.id === defaultProfileId)?.name
+  const ebookSources = new Set(['pdf', 'mobi', 'azw3', 'epub'])
+  const audiobookSources = new Set(['mp3', 'wma', 'aac', 'ogg', 'opus', 'm4a', 'm4b', 'flac', 'wav'])
+  const eligibleProfiles = (profiles.data ?? []).filter((p) => {
+    if (kind !== 'book') return !ebookSources.has(p.target.source) && !audiobookSources.has(p.target.source)
+    return bookType === 'ebook' ? ebookSources.has(p.target.source) : audiobookSources.has(p.target.source)
+  })
   const [monitored, setMonitored] = useState(true)
   const [monitor, setMonitor] = useState<'all' | 'latest' | 'none'>('all')
   const [searchNow, setSearchNow] = useState(true)
@@ -108,7 +117,7 @@ export function AddMediaPage() {
       }
       return addLibraryItem(
         r.kind === 'book'
-          ? { kind: r.kind, olid: r.olid, ...common }
+          ? { kind: r.kind, olid: r.olid, bookType, ...common }
           // A series from the provider chain is identified by its TVDB id and
           // has no TMDB one (ADR 0011); sending tmdbId: 0 would ask TMDB for
           // series zero.
@@ -136,15 +145,24 @@ export function AddMediaPage() {
       <header className="page-head">
         <h1>Add media</h1>
         <div className="tabs" role="tablist">
-          {(['movie', 'series', 'book'] as MediaKind[]).map((k) => (
+          {([
+            { label: 'Movie', kind: 'movie' as MediaKind },
+            { label: 'Series', kind: 'series' as MediaKind },
+            { label: 'Ebook', kind: 'book' as MediaKind, bookType: 'ebook' as BookType },
+            { label: 'Audiobook', kind: 'book' as MediaKind, bookType: 'audiobook' as BookType },
+          ]).map((tab) => (
             <button
-              key={k}
+              key={tab.label}
               role="tab"
-              aria-selected={kind === k}
-              className={kind === k ? 'tab active' : 'tab'}
-              onClick={() => setKind(k)}
+              aria-selected={kind === tab.kind && (tab.kind !== 'book' || bookType === tab.bookType)}
+              className={kind === tab.kind && (tab.kind !== 'book' || bookType === tab.bookType) ? 'tab active' : 'tab'}
+              onClick={() => {
+                setKind(tab.kind)
+                if (tab.bookType) setBookType(tab.bookType)
+                setProfileId('')
+              }}
             >
-              {k === 'movie' ? 'Movie' : k === 'series' ? 'Series' : 'Book'}
+              {tab.label}
             </button>
           ))}
         </div>
@@ -195,7 +213,7 @@ export function AddMediaPage() {
             <option value="">
               {defaultProfileName ? `Default — ${defaultProfileName}` : 'Default'}
             </option>
-            {profiles.data?.map((p) => (
+            {eligibleProfiles.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>

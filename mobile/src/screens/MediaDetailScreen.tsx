@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
-import { formatBytes } from '../format'
+import { bookTypeForSource, formatBytes } from '../format'
 import {
   DOWNLOAD_PRIORITIES,
   INHERIT_DOWNLOAD_PRIORITY,
@@ -50,6 +50,9 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
   const item = resource.data
   const profiles = profilesResource.data ?? []
   const roots = rootsResource.data ?? []
+  const eligibleProfiles = profiles.filter((profile) =>
+    (item?.kind === 'book') === (bookTypeForSource(profile.target.source) !== undefined),
+  )
 
   useEffect(() => {
     if (!item) return
@@ -185,7 +188,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
 
   return (
     <AppScreen>
-      <Header title={item.title} subtitle={item.kind === 'series' ? 'TV series' : item.kind} left={<IconButton label="Back" glyph="‹" onPress={onBack} />} />
+      <Header title={item.title} subtitle={item.kind === 'series' ? 'TV series' : item.kind === 'book' ? (item.bookType === 'audiobook' ? 'Audiobook' : 'Ebook') : item.kind} left={<IconButton label="Back" glyph="‹" onPress={onBack} />} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.hero}>
           <Poster path={item.posterPath} title={item.title} width={126} />
@@ -195,6 +198,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
             <View style={styles.badges}>
               <Badge label={item.monitored ? 'Monitored' : 'Unmonitored'} tone={item.monitored ? 'ok' : 'neutral'} />
               <Badge label={selectedProfileName} />
+              {item.kind === 'book' ? <Badge label={item.bookType === 'audiobook' ? 'Audiobook' : 'Ebook'} /> : null}
               <Badge label={`${downloadPriorityLabel(item.downloadPriority)} priority`} />
               {item.quality ? <Badge label={item.quality} tone={item.qualityVerified ? 'ok' : 'neutral'} /> : null}
               {item.upgrade ? <Badge label={item.upgrade} tone={item.upgrade === 'met' ? 'ok' : 'warning'} /> : null}
@@ -222,7 +226,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
 
           <ChoiceGroup
             label="Quality profile"
-            options={profiles.map((profile) => ({ id: profile.id, label: profile.name }))}
+            options={eligibleProfiles.map((profile) => ({ id: profile.id, label: profile.name }))}
             selected={draftProfileId}
             onChange={setDraftProfileId}
             disabled={saving}

@@ -24,6 +24,10 @@ import (
 // television is the ordinary case rather than an exotic one.
 const defaultProfilePrefix = "default_profile."
 
+// DefaultAudiobookProfileSetting is separate from the historical book
+// setting, which remains the ebook default for backwards compatibility.
+const DefaultAudiobookProfileSetting = defaultProfilePrefix + "audiobook"
+
 // DefaultProfileSetting is the app_meta key holding the default for a kind.
 // Exported so tests and the settings handler name the same string monarr does.
 func DefaultProfileSetting(kind domain.MediaKind) string {
@@ -59,6 +63,9 @@ func fallbackDefault(kind domain.MediaKind) int64 {
 // or dangling setting all resolve to the built-in. Adding a movie must not
 // break because a profile was deleted out from under a setting.
 func (d *DB) DefaultProfileID(ctx context.Context, kind domain.MediaKind) int64 {
+	if kind == domain.KindBook {
+		return d.DefaultBookProfileID(ctx, quality.BookTypeEbook)
+	}
 	raw, err := d.GetMeta(ctx, DefaultProfileSetting(kind))
 	if err != nil {
 		return fallbackDefault(kind)
@@ -69,6 +76,29 @@ func (d *DB) DefaultProfileID(ctx context.Context, kind domain.MediaKind) int64 
 	}
 	if _, err := d.GetProfile(ctx, id); err != nil {
 		return fallbackDefault(kind)
+	}
+	return id
+}
+
+// DefaultBookProfileID returns the default profile for one book format
+// family. Existing installs keep default_profile.book as their ebook setting;
+// the audiobook setting falls back independently to the seeded profile.
+func (d *DB) DefaultBookProfileID(ctx context.Context, bookType quality.BookType) int64 {
+	key, fallback := DefaultProfileSetting(domain.KindBook), quality.EbookProfileID
+	if bookType == quality.BookTypeAudiobook {
+		key, fallback = DefaultAudiobookProfileSetting, quality.AudiobookProfileID
+	}
+	raw, err := d.GetMeta(ctx, key)
+	if err != nil {
+		return fallback
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		return fallback
+	}
+	p, err := d.GetProfile(ctx, id)
+	if err != nil || quality.BookTypeForSource(p.Target.Source) != bookType {
+		return fallback
 	}
 	return id
 }
@@ -87,6 +117,9 @@ func (d *DB) DefaultProfiles(ctx context.Context) map[domain.MediaKind]int64 {
 // SetDefaultProfile points a kind at a profile, refusing a profile that does
 // not exist or lives on the wrong format axis.
 func (d *DB) SetDefaultProfile(ctx context.Context, kind domain.MediaKind, id int64) error {
+	if kind == domain.KindBook {
+		return d.SetDefaultBookProfile(ctx, quality.BookTypeEbook, id)
+	}
 	if !domain.ValidKind(kind) {
 		return fmt.Errorf("unknown media kind %q", kind)
 	}
@@ -98,6 +131,26 @@ func (d *DB) SetDefaultProfile(ctx context.Context, kind domain.MediaKind, id in
 		return err
 	}
 	return d.SetMeta(ctx, DefaultProfileSetting(kind), strconv.FormatInt(id, 10))
+}
+
+// SetDefaultBookProfile points one book family at a same-family profile.
+func (d *DB) SetDefaultBookProfile(ctx context.Context, bookType quality.BookType, id int64) error {
+	if !quality.ValidBookType(bookType) {
+		return fmt.Errorf("unknown book type %q", bookType)
+	}
+	p, err := d.GetProfile(ctx, id)
+	if err != nil {
+		return fmt.Errorf("quality profile: %w", err)
+	}
+	if got := quality.BookTypeForSource(p.Target.Source); got != bookType {
+		return fmt.Errorf("%w: %q targets %s, not %s",
+			ErrProfileFamilyMismatch, p.Name, got, bookType)
+	}
+	key := DefaultProfileSetting(domain.KindBook)
+	if bookType == quality.BookTypeAudiobook {
+		key = DefaultAudiobookProfileSetting
+	}
+	return d.SetMeta(ctx, key, strconv.FormatInt(id, 10))
 }
 
 // checkFamily refuses a book default on a video profile and vice versa.
@@ -118,13 +171,20 @@ func checkFamily(kind domain.MediaKind, p quality.Profile) error {
 // Only explicit settings count: a profile that merely happens to be the
 // built-in fallback is not a reference, and refusing to delete profile 1 on
 // that basis would be a rule nobody asked for.
-func (d *DB) defaultingKinds(ctx context.Context, id int64) []domain.MediaKind {
-	var out []domain.MediaKind
+func (d *DB) defaultingKinds(ctx context.Context, id int64) []string {
+	var out []string
 	want := strconv.FormatInt(id, 10)
 	for _, k := range []domain.MediaKind{domain.KindMovie, domain.KindSeries, domain.KindBook} {
 		if raw, err := d.GetMeta(ctx, DefaultProfileSetting(k)); err == nil && raw == want {
-			out = append(out, k)
+			label := string(k)
+			if k == domain.KindBook {
+				label = "ebook"
+			}
+			out = append(out, label)
 		}
+	}
+	if raw, err := d.GetMeta(ctx, DefaultAudiobookProfileSetting); err == nil && raw == want {
+		out = append(out, "audiobook")
 	}
 	return out
 }
