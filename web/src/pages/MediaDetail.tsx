@@ -15,6 +15,7 @@ import {
   getProfiles,
   getQueue,
   getRootFolders,
+  getSettings,
   posterUrl,
   RATING_SOURCE_LABELS,
   refreshLibraryItem,
@@ -26,7 +27,7 @@ import {
   updateLibraryItem,
   updateMediaCopy,
 } from '../api'
-import type { MediaFileInfo, MediaItemDetail, RemoveFileOptions } from '../api'
+import type { BookType, MediaFileInfo, MediaItemDetail, RemoveFileOptions } from '../api'
 import { describeAutoSearch } from '../autosearch'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ReleaseSearch } from './ReleaseSearch'
@@ -178,6 +179,197 @@ function CopiesPanel(props: { item: MediaItemDetail }) {
   )
 }
 
+const EBOOK_SOURCES = new Set(['pdf', 'mobi', 'azw3', 'epub'])
+const AUDIOBOOK_SOURCES = new Set(['mp3', 'wma', 'aac', 'ogg', 'opus', 'm4a', 'm4b', 'flac', 'wav'])
+const bookTypeForSource = (source: string): BookType | undefined => {
+  if (EBOOK_SOURCES.has(source)) return 'ebook'
+  if (AUDIOBOOK_SOURCES.has(source)) return 'audiobook'
+  return undefined
+}
+
+// BookEditionsPanel makes medium a first-class target. Ebook and audiobook
+// are peers with their own profiles, files, search buttons, and automation;
+// neither is presented as a quality setting for the other.
+function BookEditionsPanel(props: {
+  item: MediaItemDetail
+  onSearch: (copyId: number, bookType: BookType) => void
+}) {
+  const { item } = props
+  const qc = useQueryClient()
+  const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
+  const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+  const [addingType, setAddingType] = useState<BookType | null>(null)
+  const [profileId, setProfileId] = useState<number | ''>('')
+  const [msg, setMsg] = useState('')
+
+  const refreshCache = (detail: MediaItemDetail) => {
+    qc.setQueryData(['library-item', String(item.id)], detail)
+    void qc.invalidateQueries({ queryKey: ['library'] })
+    void qc.invalidateQueries({ queryKey: ['wanted'] })
+  }
+  const eligibleProfiles = (profiles.data ?? []).filter(
+    (profile) => addingType && bookTypeForSource(profile.target.source) === addingType,
+  )
+  const defaultProfileId = addingType === 'audiobook'
+    ? settings.data?.defaultProfiles?.audiobook
+    : settings.data?.defaultProfiles?.book
+  const chosenProfileId = profileId === '' ? defaultProfileId : Number(profileId)
+
+  const add = useMutation({
+    mutationFn: () => {
+      if (!addingType || !chosenProfileId) throw new Error('Choose a profile for this edition.')
+      return addMediaCopy(item.id, {
+        bookType: addingType,
+        qualityProfileId: chosenProfileId,
+      })
+    },
+    onSuccess: (detail) => {
+      refreshCache(detail)
+      setMsg(`${addingType === 'audiobook' ? 'Audiobook' : 'Ebook'} added — it now has its own search and files.`)
+      setAddingType(null)
+      setProfileId('')
+    },
+    onError: (e) => setMsg(`✕ ${(e as Error).message}`),
+  })
+  const toggle = useMutation({
+    mutationFn: (v: { copyId: number; monitored: boolean }) =>
+      updateMediaCopy(item.id, v.copyId, { monitored: v.monitored }),
+    onSuccess: refreshCache,
+  })
+  const changeProfile = useMutation({
+    mutationFn: (v: { copyId: number; profileId: number }) =>
+      updateMediaCopy(item.id, v.copyId, { qualityProfileId: v.profileId }),
+    onSuccess: (detail) => {
+      refreshCache(detail)
+      setMsg('Edition profile updated.')
+    },
+    onError: (e) => setMsg(`✕ ${(e as Error).message}`),
+  })
+  const del = useMutation({
+    mutationFn: (copyId: number) => deleteMediaCopy(item.id, copyId),
+    onSuccess: (detail) => {
+      refreshCache(detail)
+      setMsg('Edition removed from curation; files on disk were kept.')
+    },
+  })
+
+  const primaryType = item.bookType ?? 'ebook'
+  const editions = [
+    {
+      bookType: primaryType,
+      copyId: 0,
+      profileId: item.qualityProfileId,
+      monitored: item.monitored,
+      path: item.path,
+    },
+    ...item.copies
+      .filter((copy): copy is typeof copy & { bookType: BookType } => Boolean(copy.bookType))
+      .map((copy) => ({
+        bookType: copy.bookType,
+        copyId: copy.id,
+        profileId: copy.qualityProfileId,
+        monitored: copy.monitored,
+        path: copy.path || item.path,
+      })),
+  ]
+  const owned = new Set(editions.map((edition) => edition.bookType))
+  const missing = (['ebook', 'audiobook'] as const).filter((bookType) => !owned.has(bookType))
+  const profileName = (id: number) => profiles.data?.find((profile) => profile.id === id)?.name ?? `#${id}`
+  const fileCount = (copyId: number) => item.files.filter((file) => (file.copyId ?? 0) === copyId).length
+
+  return (
+    <section className="panel" id="book-editions">
+      <h2>Editions</h2>
+      <p className="muted">
+        Ebook and audiobook are separate editions of this work. Each is searched, downloaded,
+        imported, and upgraded independently; the profile only chooses formats within that edition.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Edition</th><th>Profile</th><th>Status</th><th>Files</th><th>Location</th><th></th></tr>
+        </thead>
+        <tbody>
+          {editions.map((edition) => (
+            <tr key={edition.bookType} className={edition.monitored ? '' : 'row-unmonitored'}>
+              <td><strong>{edition.bookType === 'audiobook' ? 'Audiobook' : 'Ebook'}</strong></td>
+              <td>
+                {edition.copyId === 0 ? profileName(edition.profileId) : (
+                  <select
+                    aria-label={`${edition.bookType} profile`}
+                    value={edition.profileId}
+                    disabled={changeProfile.isPending}
+                    onChange={(event) => changeProfile.mutate({
+                      copyId: edition.copyId,
+                      profileId: Number(event.target.value),
+                    })}
+                  >
+                    {(profiles.data ?? [])
+                      .filter((profile) => bookTypeForSource(profile.target.source) === edition.bookType)
+                      .map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                  </select>
+                )}
+              </td>
+              <td>
+                {edition.copyId === 0 ? (
+                  <span className={`pill ${edition.monitored ? 'pill-ok' : 'pill-neutral'}`}>
+                    {edition.monitored ? 'monitored' : 'unmonitored'}
+                  </span>
+                ) : (
+                  <label className="inline">
+                    <input
+                      type="checkbox"
+                      checked={edition.monitored}
+                      disabled={toggle.isPending}
+                      onChange={(event) => toggle.mutate({ copyId: edition.copyId, monitored: event.target.checked })}
+                    /> monitored
+                  </label>
+                )}
+              </td>
+              <td>{fileCount(edition.copyId)}</td>
+              <td><code className="path-chip">{edition.path || 'no folder assigned'}</code></td>
+              <td>
+                <button onClick={() => props.onSearch(edition.copyId, edition.bookType)}>Search</button>{' '}
+                {edition.copyId !== 0 && (
+                  <button disabled={del.isPending} onClick={() => del.mutate(edition.copyId)}>Remove</button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {missing.map((bookType) => (
+        <div className="form-row" key={bookType}>
+          {addingType !== bookType ? (
+            <button className="btn-accent" onClick={() => { setAddingType(bookType); setProfileId(''); setMsg('') }}>
+              + Add {bookType === 'audiobook' ? 'audiobook' : 'ebook'} edition
+            </button>
+          ) : (
+            <>
+              <strong>Add {bookType === 'audiobook' ? 'audiobook' : 'ebook'}</strong>
+              <select
+                aria-label={`${bookType} profile`}
+                value={profileId}
+                onChange={(event) => setProfileId(event.target.value ? Number(event.target.value) : '')}
+              >
+                <option value="">
+                  {defaultProfileId ? `Server default — ${profileName(defaultProfileId)}` : 'Server default'}
+                </option>
+                {eligibleProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+              </select>
+              <button className="btn-accent" disabled={!chosenProfileId || add.isPending} onClick={() => add.mutate()}>
+                {add.isPending ? 'Adding…' : 'Add edition'}
+              </button>
+              <button onClick={() => setAddingType(null)}>Cancel</button>
+            </>
+          )}
+        </div>
+      ))}
+      {msg && <p className={msg.startsWith('✕') ? 'error-text' : 'ok-text'}>{msg}</p>}
+    </section>
+  )
+}
+
 // externalLinks builds the provider pages for an item — always new-tab.
 function externalLinks(m: MediaItemDetail): { label: string; href: string }[] {
   const out: { label: string; href: string }[] = []
@@ -289,8 +481,10 @@ function EditPanel(props: {
             onChange={(e) => setProfileId(Number(e.target.value))}
           >
             {profiles.data?.filter((p) => {
-              const isBookProfile = ['pdf', 'mobi', 'azw3', 'epub', 'mp3', 'wma', 'aac', 'ogg', 'opus', 'm4a', 'm4b', 'flac', 'wav'].includes(p.target.source)
-              return (item.kind === 'book') === isBookProfile
+              const profileBookType = bookTypeForSource(p.target.source)
+              return item.kind === 'book'
+                ? profileBookType === (item.bookType ?? 'ebook')
+                : profileBookType === undefined
             }).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -590,8 +784,14 @@ export function MediaDetailPage() {
   const qc = useQueryClient()
   const [confirming, setConfirming] = useState(false)
   const [editing, setEditing] = useState(search.assignFolder === true)
-  // Interactive search target: null = closed; {season?, episode?} = open.
-  const [searching, setSearching] = useState<{ season?: number; episode?: number } | null>(null)
+  // Interactive search target: null = closed. copyId selects an additional
+  // quality copy or book edition; zero/absent is the primary target.
+  const [searching, setSearching] = useState<{
+    season?: number
+    episode?: number
+    copyId?: number
+    label?: string
+  } | null>(null)
   // Season disclosure state. Season 1 opens by default; anything the user
   // toggles is remembered for the life of the page.
   const [openSeasons, setOpenSeasons] = useState<Record<number, boolean>>({})
@@ -781,7 +981,9 @@ export function MediaDetailPage() {
           </h1>
           <div className="detail-facts muted">
             <span className="pill pill-neutral">
-              {m.kind === 'book' ? (m.bookType === 'audiobook' ? 'audiobook' : 'ebook') : m.kind}
+              {m.kind === 'book'
+                ? (m.bookTypes ?? [m.bookType ?? 'ebook']).join(' + ')
+                : m.kind}
             </span>
             {m.author && <span>by {m.author}</span>}
             {m.status && <span>{m.status}</span>}
@@ -892,7 +1094,7 @@ export function MediaDetailPage() {
             >
               {auto.isPending ? 'Searching…' : 'Auto search'}
             </button>
-            {(m.kind === 'movie' || m.kind === 'book') && (
+            {m.kind === 'movie' && (
               <button onClick={() => setSearching({})}>Interactive search</button>
             )}
             <button onClick={() => setEditing(true)}>Edit</button>
@@ -953,13 +1155,25 @@ export function MediaDetailPage() {
         />
       )}
 
-      {m.kind !== 'book' && <CopiesPanel item={m} />}
+      {m.kind === 'book' ? (
+        <BookEditionsPanel
+          item={m}
+          onSearch={(copyId, bookType) => setSearching({
+            copyId: copyId || undefined,
+            label: bookType === 'audiobook' ? 'audiobook' : 'ebook',
+          })}
+        />
+      ) : (
+        <CopiesPanel item={m} />
+      )}
 
       {searching && (
         <ReleaseSearch
           mediaItemId={m.id}
           season={searching.season}
           episode={searching.episode}
+          copyId={searching.copyId}
+          label={searching.label}
           onClose={() => setSearching(null)}
         />
       )}

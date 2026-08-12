@@ -79,11 +79,11 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 			out = append(out, s.wantedEpisodes(item, profile, epStates, nil)...)
 		}
 
-		// Additional copies: each monitored copy wants its own file set at
-		// its own profile — the 720p copy hunts even when the 4K is done.
+		// Additional targets: a video copy or the other book edition wants its
+		// own file set at its own profile.
 		for i := range item.Copies {
 			cp := item.Copies[i]
-			if !cp.Monitored || item.Kind == domain.KindBook {
+			if !cp.Monitored {
 				continue
 			}
 			copyProfile, err := s.db.GetProfile(ctx, cp.QualityProfileID)
@@ -91,7 +91,7 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 				continue
 			}
 			switch item.Kind {
-			case domain.KindMovie:
+			case domain.KindMovie, domain.KindBook:
 				w, err := s.targetCopy(ctx, item, 0, 0, &cp)
 				if err != nil {
 					continue

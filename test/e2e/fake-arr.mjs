@@ -91,6 +91,12 @@ createServer((req, res) => {
       return
     }
     if ((q.get('cat') ?? '').includes('3030')) {
+      if ((q.get('q') ?? '').toLowerCase().includes('test book')) {
+        res.end(releasesXML([
+          item('The Test Book by Test Author M4B', 'book900m4b', 180000000, 12),
+        ]))
+        return
+      }
       res.end(releasesXML([
         item('Audio Author - The Test Audiobook M4B', 'book901m4b', 300000000, 9),
       ]))

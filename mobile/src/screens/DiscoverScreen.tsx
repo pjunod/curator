@@ -116,6 +116,7 @@ export function DiscoverScreen({
               key={`${item.kind}:${item.tmdbId || item.tvdbId || item.olid}`}
               item={item}
               itemSize={itemSize}
+              bookType={item.kind === 'book' ? bookType : undefined}
               onAdd={() => setAdding(item)}
             />
           ))}
@@ -205,7 +206,7 @@ function AddSheet({
   return (
     <Modal animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <AppScreen forceTopInset>
-        <Header title={`Add ${item.kind === 'series' ? 'series' : item.kind}`} left={<IconButton label="Close" glyph="×" onPress={onClose} />} />
+        <Header title={`Add ${item.kind === 'book' ? bookType : item.kind === 'series' ? 'series' : item.kind}`} left={<IconButton label="Close" glyph="×" onPress={onClose} />} />
         <ScrollView contentContainerStyle={styles.sheetContent}>
           <Text style={[styles.addTitle, { color: theme.text }]}>{item.title}</Text>
           <Text style={[styles.blurb, { color: theme.muted }]}>{item.author || item.year}</Text>
@@ -226,8 +227,8 @@ function AddSheet({
           <SectionTitle>Quality profile</SectionTitle>
           {item.kind === 'book' ? (
             <View style={styles.wrap}>
-              <Chip label="Ebook" selected={bookType === 'ebook'} onPress={() => { setBookType('ebook'); setProfileID(0) }} />
-              <Chip label="Audiobook" selected={bookType === 'audiobook'} onPress={() => { setBookType('audiobook'); setProfileID(0) }} />
+              <Chip label={`Ebook${(item.bookTypes ?? []).includes('ebook') ? ' · owned' : ''}`} selected={bookType === 'ebook'} onPress={() => { setBookType('ebook'); setProfileID(0) }} />
+              <Chip label={`Audiobook${(item.bookTypes ?? []).includes('audiobook') ? ' · owned' : ''}`} selected={bookType === 'audiobook'} onPress={() => { setBookType('audiobook'); setProfileID(0) }} />
             </View>
           ) : null}
           <View style={styles.wrap}>

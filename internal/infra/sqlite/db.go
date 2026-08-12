@@ -101,6 +101,8 @@ func (d *DB) Migrate(ctx context.Context) error {
 var requiredColumns = []struct{ table, column string }{
 	{"downloads", "transfer"},
 	{"download_clients", "mode"},
+	{"media_items", "book_type"},
+	{"media_copies", "book_type"},
 }
 
 // verifySchema refuses to start on a database that goose considers migrated

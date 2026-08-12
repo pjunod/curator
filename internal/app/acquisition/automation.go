@@ -469,14 +469,15 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 			targets = append(targets, w)
 		}
 	}
-	// Each monitored copy is its own automation target.
+	// Each monitored copy is its own automation target, including the other
+	// first-class edition of a book.
 	for i := range item.Copies {
 		cp := item.Copies[i]
-		if !cp.Monitored || item.Kind == domain.KindBook {
+		if !cp.Monitored {
 			continue
 		}
 		switch item.Kind {
-		case domain.KindMovie:
+		case domain.KindMovie, domain.KindBook:
 			if w, err := s.targetCopy(ctx, item, 0, 0, &cp); err == nil {
 				targets = append(targets, w)
 			}

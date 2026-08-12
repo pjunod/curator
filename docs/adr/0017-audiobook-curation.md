@@ -1,9 +1,13 @@
 # ADR 0017 — Audiobook acquisition and curation
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR 0018](0018-side-by-side-book-editions.md)
 - **Date:** 2026-08-11
 
 ## Context
+
+This record describes the first audiobook implementation. ADR 0018 preserves
+its format support, category routing, and multipart import while replacing the
+profile-derived, one-edition identity model.
 
 ADR 0006 shipped ebooks and audiobooks under one `book` media kind, with
 their format family selected by a quality profile. That was sufficient for

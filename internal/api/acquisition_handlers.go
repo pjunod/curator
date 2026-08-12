@@ -15,6 +15,7 @@ import (
 	apigen "github.com/pjunod/monarr/internal/api/gen"
 	"github.com/pjunod/monarr/internal/app/acquisition"
 	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/downloadpriority"
 	"github.com/pjunod/monarr/internal/domain/format"
@@ -488,13 +489,17 @@ func (s *Server) DeleteDownloadClient(w http.ResponseWriter, r *http.Request, id
 // SearchReleases implements GET /library/{id}/releases.
 func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params apigen.SearchReleasesParams) {
 	season, episode := 0, 0
+	copyID := int64(0)
 	if params.Season != nil {
 		season = *params.Season
 	}
 	if params.Episode != nil {
 		episode = *params.Episode
 	}
-	cands, err := s.deps.Acquisition.Search(r.Context(), id, season, episode)
+	if params.CopyId != nil {
+		copyID = *params.CopyId
+	}
+	cands, err := s.deps.Acquisition.SearchCopy(r.Context(), id, copyID, season, episode)
 	if err != nil {
 		s.acqErr(w, err)
 		return
@@ -540,6 +545,9 @@ func (s *Server) GrabRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Episode != nil {
 		req.Episode = *in.Episode
+	}
+	if in.CopyId != nil {
+		req.CopyID = *in.CopyId
 	}
 	if in.Indexer != nil {
 		req.Indexer = *in.Indexer
@@ -1388,7 +1396,9 @@ func (s *Server) BulkEditLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 	updated := 0
 	for _, id := range body.Ids {
-		if err := s.deps.Store.BulkUpdateItem(r.Context(), id, body.Monitored, body.QualityProfileId); err == nil {
+		if _, err := s.deps.Library.UpdateItem(r.Context(), id, library.UpdateRequest{
+			Monitored: body.Monitored, QualityProfileID: body.QualityProfileId,
+		}); err == nil {
 			updated++
 		}
 	}

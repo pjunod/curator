@@ -6,6 +6,7 @@ import {
   fmtInterval,
   fmtRelative,
   getDiscoverItems,
+  searchReleases,
   testIndexer,
 } from './api'
 
@@ -150,6 +151,23 @@ describe('getDiscoverItems', () => {
       await getDiscoverItems('weird id&page=99', 3)
       expect(seen[0]).toBe('/api/v1/discover/items?list=tmdb-trending-movies&page=1')
       expect(seen[1]).toBe('/api/v1/discover/items?list=weird%20id%26page%3D99&page=3')
+    } finally {
+      globalThis.fetch = orig
+    }
+  })
+})
+
+describe('book edition release search', () => {
+  it('scopes interactive search to the selected edition copy', async () => {
+    const orig = globalThis.fetch
+    const seen: string[] = []
+    globalThis.fetch = (async (url: string) => {
+      seen.push(url)
+      return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }) as unknown as typeof fetch
+    try {
+      await searchReleases(42, undefined, undefined, 9)
+      expect(seen).toEqual(['/api/v1/library/42/releases?copyId=9'])
     } finally {
       globalThis.fetch = orig
     }

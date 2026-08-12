@@ -8,7 +8,8 @@ import { expect, test } from '@playwright/test'
 test.describe.configure({ mode: 'serial' })
 
 let bookId = 0
-let audiobookId = 0
+let audiobookCopyId = 0
+let standaloneAudiobookId = 0
 
 async function refreshQueueUntil(request: any, pred: (rows: any[]) => boolean) {
   await expect
@@ -75,7 +76,51 @@ test('grab EPUB → auto-import → Calibre-friendly file name', async ({ reques
   )
 })
 
-test('add and import a multipart audiobook', async ({ request }) => {
+test('add the audiobook beside the ebook and curate it independently', async ({ request }) => {
+  const roots = await (await request.get('/api/v1/rootfolders')).json()
+  const added = await request.post('/api/v1/library', {
+    data: {
+      kind: 'book', bookType: 'audiobook', olid: 'OL900E2EW',
+      rootFolderId: roots[0].id, monitored: true,
+    },
+  })
+  expect(added.status()).toBe(201)
+  const item = await added.json()
+  expect(item.id).toBe(bookId)
+  expect(item.bookType).toBe('ebook')
+  expect(item.bookTypes).toEqual(['ebook', 'audiobook'])
+  expect(item.qualityProfileId).toBe(4)
+  expect(item.copies).toHaveLength(1)
+  expect(item.copies[0].bookType).toBe('audiobook')
+  expect(item.copies[0].qualityProfileId).toBe(5)
+  audiobookCopyId = item.copies[0].id
+
+  const cands = await (
+    await request.get(`/api/v1/library/${bookId}/releases?copyId=${audiobookCopyId}`)
+  ).json()
+  expect(cands).toHaveLength(1)
+  expect(cands[0].quality).toBe('M4B')
+  expect(cands[0].accepted).toBe(true)
+  const pick = cands[0]
+  expect((await request.post('/api/v1/grab', {
+    data: {
+      mediaItemId: bookId, copyId: audiobookCopyId,
+      title: pick.title, downloadUrl: pick.downloadUrl,
+      indexer: pick.indexer, protocol: pick.protocol, size: pick.size,
+    },
+  })).status()).toBe(201)
+  await refreshQueueUntil(request, (rows) =>
+    rows.some((r) => r.title === pick.title && r.copyId === audiobookCopyId && r.state === 'imported'),
+  )
+  const detail = await (await request.get(`/api/v1/library/${bookId}`)).json()
+  expect(detail.files).toHaveLength(2)
+  expect(detail.files).toEqual(expect.arrayContaining([
+    expect.objectContaining({ copyId: audiobookCopyId, path: expect.stringContaining('The Test Book - Test Author.m4b') }),
+    expect.objectContaining({ path: expect.stringContaining('The Test Book - Test Author.epub') }),
+  ]))
+})
+
+test('a standalone audiobook still imports every multipart track', async ({ request }) => {
   const results = await (
     await request.get('/api/v1/metadata/search?kind=book&query=test%20audiobook')
   ).json()
@@ -89,25 +134,25 @@ test('add and import a multipart audiobook', async ({ request }) => {
   })
   expect(added.status()).toBe(201)
   const item = await added.json()
-  audiobookId = item.id
+  standaloneAudiobookId = item.id
   expect(item.bookType).toBe('audiobook')
   expect(item.qualityProfileId).toBe(5)
 
-  const cands = await (await request.get(`/api/v1/library/${audiobookId}/releases`)).json()
+  const cands = await (await request.get(`/api/v1/library/${standaloneAudiobookId}/releases`)).json()
   expect(cands).toHaveLength(1)
   expect(cands[0].quality).toBe('M4B')
   expect(cands[0].accepted).toBe(true)
   const pick = cands[0]
   expect((await request.post('/api/v1/grab', {
     data: {
-      mediaItemId: audiobookId, title: pick.title, downloadUrl: pick.downloadUrl,
+      mediaItemId: standaloneAudiobookId, title: pick.title, downloadUrl: pick.downloadUrl,
       indexer: pick.indexer, protocol: pick.protocol, size: pick.size,
     },
   })).status()).toBe(201)
   await refreshQueueUntil(request, (rows) =>
     rows.some((r) => r.title === pick.title && r.state === 'imported'),
   )
-  const detail = await (await request.get(`/api/v1/library/${audiobookId}`)).json()
+  const detail = await (await request.get(`/api/v1/library/${standaloneAudiobookId}`)).json()
   expect(detail.files).toHaveLength(3)
   expect(detail.files.map((f: any) => f.path)).toEqual(expect.arrayContaining([
     expect.stringContaining('The Test Audiobook - Audio Author - 001.m4b'),
@@ -116,7 +161,7 @@ test('add and import a multipart audiobook', async ({ request }) => {
   ]))
 })
 
-test('library separates ebooks and audiobooks', async ({ page }) => {
+test('library shows one work in both edition sections', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('tab', { name: 'Ebooks' }).click()
   await expect(page.getByText('The Test Book')).toBeVisible()
@@ -125,5 +170,10 @@ test('library separates ebooks and audiobooks', async ({ page }) => {
   await page.getByRole('tab', { name: 'Audiobooks' }).click()
   await expect(page.getByText('The Test Audiobook')).toBeVisible()
   await expect(page.getByText('Audio Author')).toBeVisible()
-  await expect(page.getByText('The Test Book')).toHaveCount(0)
+  await expect(page.getByText('The Test Book')).toBeVisible()
+
+  await page.goto(`/library/${bookId}`)
+  await expect(page.getByRole('heading', { name: 'Editions' })).toBeVisible()
+  await expect(page.getByRole('row', { name: /Ebook/ })).toBeVisible()
+  await expect(page.getByRole('row', { name: /Audiobook/ })).toBeVisible()
 })

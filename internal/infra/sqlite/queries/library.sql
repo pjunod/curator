@@ -1,13 +1,13 @@
 -- name: InsertMediaItem :one
 INSERT INTO media_items (
-    kind, title, sort_title, year, author,
+    kind, title, sort_title, year, author, book_type,
     source,
     tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin,
     overview, poster_path, backdrop_path, genres, status, release_date, runtime,
     rating, rating_votes, ratings,
     airs_time, airs_timezone, network,
     monitored, quality_profile_id, download_priority, root_folder_id, path, ended, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: UpdateMediaItemMetadata :exec
@@ -170,8 +170,8 @@ ON CONFLICT (path) DO UPDATE SET
 RETURNING id;
 
 -- name: InsertMediaCopy :one
-INSERT INTO media_copies (media_item_id, name, quality_profile_id, root_folder_id, path, monitored, added_at)
-VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id;
+INSERT INTO media_copies (media_item_id, name, book_type, quality_profile_id, root_folder_id, path, monitored, added_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
 
 -- name: ListMediaCopies :many
 SELECT * FROM media_copies WHERE media_item_id = ? ORDER BY id;
@@ -183,7 +183,7 @@ SELECT * FROM media_copies ORDER BY media_item_id, id;
 SELECT * FROM media_copies WHERE id = ? AND media_item_id = ?;
 
 -- name: UpdateMediaCopy :execrows
-UPDATE media_copies SET name = ?, quality_profile_id = ?, monitored = ?
+UPDATE media_copies SET name = ?, book_type = ?, quality_profile_id = ?, monitored = ?
 WHERE id = ? AND media_item_id = ?;
 
 -- name: DeleteMediaCopy :execrows
@@ -200,6 +200,12 @@ SELECT * FROM media_files ORDER BY path;
 
 -- name: DeleteMediaFile :exec
 DELETE FROM media_files WHERE id = ?;
+
+-- name: UpdateMediaFileCopy :exec
+-- Book editions may share a folder. Once both editions exist, a rescan can
+-- classify a previously linked file by its extension without changing the
+-- aggregate item it belongs to.
+UPDATE media_files SET copy_id = ? WHERE id = ?;
 
 -- name: SetMediaFileSource :exec
 UPDATE media_files SET source_release = ?, source_indexer = ? WHERE id = ?;

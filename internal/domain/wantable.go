@@ -28,6 +28,8 @@ func WantableCopy(w Wantable) int64 {
 		return t.Copy
 	case SeasonWantable:
 		return t.Copy
+	case BookWantable:
+		return t.Copy
 	}
 	return 0
 }
@@ -40,6 +42,8 @@ func WantableCopyName(w Wantable) string {
 	case EpisodeWantable:
 		return t.CopyName
 	case SeasonWantable:
+		return t.CopyName
+	case BookWantable:
 		return t.CopyName
 	}
 	return ""
@@ -251,10 +255,17 @@ type BookWantable struct {
 	Author   string
 	Year     int
 	BookType quality.BookType
+	// Copy is the independently curated book edition target. Zero is the
+	// primary edition stored on the media item; non-zero identifies the other
+	// edition in media_copies (ADR 0018).
+	Copy     int64
+	CopyName string
 }
 
 // ID implements Wantable.
-func (b BookWantable) ID() WantableID { return WantableID(fmt.Sprintf("book:%d", b.Item)) }
+func (b BookWantable) ID() WantableID {
+	return WantableID(copySuffix(fmt.Sprintf("book:%d", b.Item), b.Copy))
+}
 
 // MediaItemID implements Wantable.
 func (b BookWantable) MediaItemID() int64 { return b.Item }

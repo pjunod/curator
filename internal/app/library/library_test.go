@@ -332,3 +332,121 @@ func TestAddAudiobookUsesItsOwnDefaultAndChecksTheProfileFamily(t *testing.T) {
 		t.Errorf("created audiobook target type = %q", got)
 	}
 }
+
+func TestBookWorkOwnsEbookAndAudiobookIndependently(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.WithBooks(fakeBooks{})
+	ctx := context.Background()
+
+	root := t.TempDir()
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindBook))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindBook, OLID: "OL17091839W", BookType: quality.BookTypeEbook,
+		RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err = svc.Add(ctx, AddRequest{
+		Kind: domain.KindBook, OLID: "OL17091839W", BookType: quality.BookTypeAudiobook,
+		RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatalf("adding the other edition: %v", err)
+	}
+	if item.BookType != quality.BookTypeEbook || item.QualityProfileID != quality.EbookProfileID {
+		t.Fatalf("primary edition changed while adding audiobook: %+v", item)
+	}
+	if len(item.Copies) != 1 {
+		t.Fatalf("additional editions = %+v, want one", item.Copies)
+	}
+	audio := item.Copies[0]
+	if audio.BookType != quality.BookTypeAudiobook || audio.QualityProfileID != quality.AudiobookProfileID {
+		t.Errorf("audiobook edition = %+v", audio)
+	}
+	if audio.Path != "" || item.Path == "" {
+		t.Errorf("editions should share the established book folder: item=%q copy=%q", item.Path, audio.Path)
+	}
+
+	if _, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindBook, OLID: "OL17091839W", BookType: quality.BookTypeAudiobook,
+	}); !errors.Is(err, ErrAlreadyExists) {
+		t.Errorf("duplicate audiobook err = %v", err)
+	}
+	if _, err := svc.UpdateItem(ctx, item.ID, UpdateRequest{QualityProfileID: ptrInt64(quality.AudiobookProfileID)}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("primary ebook accepted an audiobook profile: %v", err)
+	}
+	if _, err := svc.UpdateCopy(ctx, item.ID, audio.ID, nil, ptrInt64(quality.EbookProfileID), nil); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("audiobook edition accepted an ebook profile: %v", err)
+	}
+}
+
+func ptrInt64(v int64) *int64 { return &v }
+
+func TestBookScanAttributesSharedFolderFilesToTheirEditions(t *testing.T) {
+	svc, db, _ := newService(t)
+	svc.WithBooks(fakeBooks{})
+	ctx := context.Background()
+
+	root := t.TempDir()
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindBook))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindBook, OLID: "OL17091839W", BookType: quality.BookTypeEbook,
+		RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err = svc.Add(ctx, AddRequest{
+		Kind: domain.KindBook, OLID: "OL17091839W", BookType: quality.BookTypeAudiobook,
+		RootFolderID: rf.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(item.Path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	epub := filepath.Join(item.Path, "Project Hail Mary.epub")
+	m4b := filepath.Join(item.Path, "Project Hail Mary.m4b")
+	if err := os.WriteFile(epub, []byte("ebook"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(m4b, []byte("audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a pre-edition scan that had attributed every book file to the
+	// primary row. The edition-aware scan should repair the audio row too.
+	if _, err := db.UpsertFile(ctx, item.ID, 0, m4b, 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	files, err := db.ListFilesForItem(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("files = %+v", files)
+	}
+	audioCopyID := item.Copies[0].ID
+	for _, file := range files {
+		switch filepath.Ext(file.Path) {
+		case ".epub":
+			if file.CopyID != 0 {
+				t.Errorf("ebook attributed to copy %d", file.CopyID)
+			}
+		case ".m4b":
+			if file.CopyID != audioCopyID {
+				t.Errorf("audiobook attributed to copy %d, want %d", file.CopyID, audioCopyID)
+			}
+		}
+	}
+}

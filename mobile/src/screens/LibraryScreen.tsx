@@ -33,13 +33,19 @@ export function LibraryScreen({
   const items = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
     const byType = (resource.data ?? []).filter((item) =>
-      kind === 'ebook' || kind === 'audiobook' ? item.kind === 'book' && (item.bookType ?? 'ebook') === kind : true,
-    )
+      kind === 'ebook' || kind === 'audiobook'
+        ? item.kind === 'book' && (item.bookTypes ?? [item.bookType ?? 'ebook']).includes(kind)
+        : true,
+    ).map((item) => {
+      if (kind !== 'ebook' && kind !== 'audiobook') return item
+      const edition = item.bookEditions?.find((candidate) => candidate.bookType === kind)
+      return edition ? { ...item, monitored: edition.monitored, fileCount: edition.fileCount } : item
+    })
     if (!needle) return byType
     return byType.filter((item) =>
       `${item.title} ${item.author} ${item.year}`.toLocaleLowerCase().includes(needle),
     )
-  }, [query, resource.data])
+  }, [kind, query, resource.data])
   const { columns, slotWidth, cardWidth } = libraryGrid(width, itemSize)
 
   return (

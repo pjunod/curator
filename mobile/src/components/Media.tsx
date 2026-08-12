@@ -2,7 +2,7 @@ import { Image, Pressable, StyleSheet, Text, View } from 'react-native'
 import { completeness, posterUrl } from '../format'
 import type { ItemSize } from '../preferences'
 import { useTheme } from '../theme'
-import type { MediaItemSummary, SearchResult } from '../types'
+import type { BookType, MediaItemSummary, SearchResult } from '../types'
 import { Badge, Button } from './UI'
 
 export function Poster({ path, title, width = 150 }: { path: string; title: string; width?: number }) {
@@ -29,7 +29,12 @@ export function LibraryCard({ item, width, itemSize, onPress }: { item: MediaIte
       <Text numberOfLines={2} style={[styles.cardTitle, { color: theme.text, fontSize: textSize, lineHeight: textSize + 4 }]}>{item.title}</Text>
       <Text numberOfLines={1} style={[styles.cardMeta, { color: theme.muted, fontSize: Math.max(10, textSize - 2) }]}>
         {item.kind === 'book'
-          ? [item.author, item.bookType === 'audiobook' ? 'Audiobook' : 'Ebook'].filter(Boolean).join(' · ')
+          ? [
+              item.author,
+              ...(item.bookTypes ?? [item.bookType ?? 'ebook']).map((edition) =>
+                edition === 'audiobook' ? 'Audiobook' : 'Ebook',
+              ),
+            ].filter(Boolean).join(' · ')
           : item.year || item.kind} {!item.monitored ? ' · unmonitored' : ''}
       </Text>
       <Badge label={state.label} tone={state.tone} />
@@ -37,7 +42,7 @@ export function LibraryCard({ item, width, itemSize, onPress }: { item: MediaIte
   )
 }
 
-export function SearchCard({ item, itemSize, onAdd, adding = false }: { item: SearchResult; itemSize: ItemSize; onAdd: () => void; adding?: boolean }) {
+export function SearchCard({ item, itemSize, onAdd, bookType, adding = false }: { item: SearchResult; itemSize: ItemSize; onAdd: () => void; bookType?: BookType; adding?: boolean }) {
   const theme = useTheme()
   const sizing = itemSize === 'small'
     ? { poster: 64, padding: 8, gap: 10, title: 14, overviewLines: 2 }
@@ -51,7 +56,18 @@ export function SearchCard({ item, itemSize, onAdd, adding = false }: { item: Se
         <Text numberOfLines={2} style={[styles.searchTitle, { color: theme.text, fontSize: sizing.title, lineHeight: sizing.title + 4 }]}>{item.title}</Text>
         <Text numberOfLines={1} style={[styles.cardMeta, { color: theme.muted }]}>{item.author || item.year || item.kind}</Text>
         <Text numberOfLines={sizing.overviewLines} style={[styles.overview, { color: theme.muted }]}>{item.overview || 'No overview available.'}</Text>
-        {item.inLibrary ? <Badge label="In library" tone="ok" /> : <Button compact label={adding ? 'Adding…' : 'Add'} disabled={adding} onPress={onAdd} />}
+        {item.kind === 'book' && bookType && (item.bookTypes ?? []).includes(bookType) ? (
+          <Badge label={`${bookType === 'audiobook' ? 'Audiobook' : 'Ebook'} in library`} tone="ok" />
+        ) : item.inLibrary && item.kind !== 'book' ? (
+          <Badge label="In library" tone="ok" />
+        ) : (
+          <Button
+            compact
+            label={adding ? 'Adding…' : item.kind === 'book' && bookType ? `Add ${bookType}` : 'Add'}
+            disabled={adding}
+            onPress={onAdd}
+          />
+        )}
       </View>
     </View>
   )

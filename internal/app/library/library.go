@@ -304,9 +304,9 @@ func (s *Service) seriesByTVDB(ctx context.Context, tvdbID int64) (domain.MediaI
 // TMDBID identifies movies/series; OLID identifies books (ADR 0006).
 type AddRequest struct {
 	Kind domain.MediaKind
-	// BookType chooses the ebook or audiobook default when Kind is book.
-	// An explicit QualityProfileID remains authoritative and is validated
-	// against this value when both are present.
+	// BookType chooses the edition being added when Kind is book. It is
+	// persistent identity, not a quality inferred from the profile: the same
+	// Open Library work may own one ebook and one audiobook (ADR 0018).
 	BookType quality.BookType
 	TMDBID   int64
 	// TVDBID identifies a series that came from the chain rather than from
@@ -401,8 +401,8 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 		if s.books == nil {
 			return domain.MediaItem{}, ports.ErrProviderNotConfigured
 		}
-		if _, err := s.db.GetMediaItemByKindOlid(ctx, req.Kind, req.OLID); err == nil {
-			return domain.MediaItem{}, ErrAlreadyExists
+		if existingID, err := s.db.GetMediaItemByKindOlid(ctx, req.Kind, req.OLID); err == nil {
+			return s.addExistingBookEdition(ctx, existingID, req)
 		} else if !errors.Is(err, sqlite.ErrNotFound) {
 			return domain.MediaItem{}, err
 		}
@@ -420,6 +420,15 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	s.enrichAiring(ctx, &item, domain.MediaItem{})
 	applyMonitorPreset(&item, req.Monitor)
 	item.Monitored = req.Monitored
+	if item.Kind == domain.KindBook {
+		item.BookType = req.BookType
+		if item.BookType == "" {
+			item.BookType = quality.BookTypeEbook
+		}
+		if !quality.ValidBookType(item.BookType) {
+			return domain.MediaItem{}, fmt.Errorf("%w: unknown book type %q", ErrInvalidInput, item.BookType)
+		}
+	}
 	item.QualityProfileID = req.QualityProfileID
 	item.DownloadPriorityOverride = req.DownloadPriority
 	if item.QualityProfileID == 0 {
@@ -427,19 +436,12 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 		// resolves to the built-in when unset or dangling, which is what the
 		// hardcoded constant here used to do unconditionally.
 		if item.Kind == domain.KindBook {
-			bookType := req.BookType
-			if bookType == "" {
-				bookType = quality.BookTypeEbook
-			}
-			if !quality.ValidBookType(bookType) {
-				return domain.MediaItem{}, fmt.Errorf("%w: unknown book type %q", ErrInvalidInput, bookType)
-			}
-			item.QualityProfileID = s.db.DefaultBookProfileID(ctx, bookType)
+			item.QualityProfileID = s.db.DefaultBookProfileID(ctx, item.BookType)
 		} else {
 			item.QualityProfileID = s.db.DefaultProfileID(ctx, item.Kind)
 		}
 	}
-	if err := s.validateItemProfile(ctx, item.Kind, item.QualityProfileID, req.BookType); err != nil {
+	if err := s.validateItemProfile(ctx, item.Kind, item.QualityProfileID, item.BookType); err != nil {
 		return domain.MediaItem{}, err
 	}
 	if req.RootFolderID != 0 {
@@ -468,10 +470,71 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	}
 	s.log.Info("library: added", "kind", item.Kind, "title", item.Title, "id", id)
 	s.publish(MediaAdded{ID: id, Kind: string(item.Kind), Title: item.Title})
-	// Return the same graded representation List/Get expose. BookType is
-	// derived from the profile target at the API boundary, so returning an
-	// ungraded row here would make the create response uniquely omit it.
+	// Return the same graded representation List/Get expose.
 	return s.Get(ctx, id)
+}
+
+// addExistingBookEdition turns a duplicate work add into the missing edition
+// add. The Open Library work remains the aggregate root; the new target gets
+// an independent profile, files, downloads, wanted state, and search scope.
+func (s *Service) addExistingBookEdition(ctx context.Context, itemID int64, req AddRequest) (domain.MediaItem, error) {
+	item, err := s.db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	bookType := req.BookType
+	if bookType == "" {
+		bookType = quality.BookTypeEbook
+	}
+	if !quality.ValidBookType(bookType) {
+		return domain.MediaItem{}, fmt.Errorf("%w: unknown book type %q", ErrInvalidInput, bookType)
+	}
+	if item.BookType == bookType {
+		return domain.MediaItem{}, fmt.Errorf("%w: %s edition already present", ErrAlreadyExists, bookType)
+	}
+	for _, edition := range item.Copies {
+		if edition.BookType == bookType {
+			return domain.MediaItem{}, fmt.Errorf("%w: %s edition already present", ErrAlreadyExists, bookType)
+		}
+	}
+	profileID := req.QualityProfileID
+	if profileID == 0 {
+		profileID = s.db.DefaultBookProfileID(ctx, bookType)
+	}
+	if err := s.validateItemProfile(ctx, domain.KindBook, profileID, bookType); err != nil {
+		return domain.MediaItem{}, err
+	}
+
+	// A book added before roots were configured needs one shared destination
+	// before either edition can import. If it already has a destination, the
+	// second edition shares it unless the caller deliberately selected a
+	// different root.
+	if item.Path == "" && req.RootFolderID != 0 {
+		rootID := req.RootFolderID
+		monitored := item.Monitored || req.Monitored
+		if _, err := s.UpdateItem(ctx, itemID, UpdateRequest{
+			Monitored: &monitored, RootFolderID: &rootID,
+		}); err != nil {
+			return domain.MediaItem{}, err
+		}
+		item, err = s.db.GetMediaItemFull(ctx, itemID)
+		if err != nil {
+			return domain.MediaItem{}, err
+		}
+	} else if req.Monitored && !item.Monitored {
+		monitored := true
+		if _, err := s.UpdateItem(ctx, itemID, UpdateRequest{Monitored: &monitored}); err != nil {
+			return domain.MediaItem{}, err
+		}
+	}
+	copyRoot := req.RootFolderID
+	if copyRoot == item.RootFolderID {
+		copyRoot = 0
+	}
+	return s.AddCopy(ctx, itemID, CopyRequest{
+		BookType: bookType, QualityProfileID: profileID,
+		RootFolderID: copyRoot, Monitored: req.Monitored,
+	})
 }
 
 func (s *Service) validateItemProfile(ctx context.Context, kind domain.MediaKind, profileID int64, bookType quality.BookType) error {
@@ -555,7 +618,7 @@ func (s *Service) UpdateItem(ctx context.Context, id int64, req UpdateRequest) (
 		item.Monitored = *req.Monitored
 	}
 	if req.QualityProfileID != nil && *req.QualityProfileID != 0 {
-		if err := s.validateItemProfile(ctx, item.Kind, *req.QualityProfileID, ""); err != nil {
+		if err := s.validateItemProfile(ctx, item.Kind, *req.QualityProfileID, item.BookType); err != nil {
 			return domain.MediaItem{}, err
 		}
 		item.QualityProfileID = *req.QualityProfileID
@@ -687,30 +750,45 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	return s.db.GetMediaItemFull(ctx, id)
 }
 
-// CopyRequest describes a new additional quality target for an item.
+// CopyRequest describes a new additional acquisition target for an item.
 type CopyRequest struct {
+	BookType         quality.BookType // required for a book edition; empty for video copies
 	QualityProfileID int64
 	RootFolderID     int64 // 0 = share the item's folder (filenames carry [Quality])
 	Name             string
 	Monitored        bool
 }
 
-// AddCopy registers an additional quality copy for a movie or series: its
-// own profile, and either its own folder under the chosen root or the
-// item's folder. The automation treats it as a first-class target.
+// AddCopy registers an additional quality copy for video or the other
+// first-class edition for a book. The automation treats both as independent
+// targets; the UI deliberately calls the latter an edition, not a quality.
 func (s *Service) AddCopy(ctx context.Context, itemID int64, req CopyRequest) (domain.MediaItem, error) {
 	item, err := s.db.GetMediaItemFull(ctx, itemID)
 	if err != nil {
 		return domain.MediaItem{}, err
 	}
-	if item.Kind == domain.KindBook {
-		return domain.MediaItem{}, fmt.Errorf("%w: books have no quality copies", ErrUnsupportedKind)
-	}
 	if _, err := s.db.GetProfile(ctx, req.QualityProfileID); err != nil {
 		return domain.MediaItem{}, fmt.Errorf("quality profile: %w", err)
 	}
+	if err := s.validateItemProfile(ctx, item.Kind, req.QualityProfileID, req.BookType); err != nil {
+		return domain.MediaItem{}, err
+	}
+	if item.Kind == domain.KindBook {
+		if !quality.ValidBookType(req.BookType) {
+			return domain.MediaItem{}, fmt.Errorf("%w: book edition type is required", ErrInvalidInput)
+		}
+		if item.BookType == req.BookType {
+			return domain.MediaItem{}, fmt.Errorf("%w: %s edition already present", ErrAlreadyExists, req.BookType)
+		}
+		for _, other := range item.Copies {
+			if other.BookType == req.BookType {
+				return domain.MediaItem{}, fmt.Errorf("%w: %s edition already present", ErrAlreadyExists, req.BookType)
+			}
+		}
+	}
 	cp := domain.MediaCopy{
 		MediaItemID: itemID, Name: strings.TrimSpace(req.Name),
+		BookType:         req.BookType,
 		QualityProfileID: req.QualityProfileID, Monitored: req.Monitored,
 	}
 	if req.RootFolderID != 0 {
@@ -719,7 +797,11 @@ func (s *Service) AddCopy(ctx context.Context, itemID int64, req CopyRequest) (d
 			return domain.MediaItem{}, fmt.Errorf("root folder: %w", err)
 		}
 		cp.RootFolderID = rf.ID
-		cp.Path = filepath.Join(rf.Path, naming.FolderName(item.Title, item.Year))
+		folder := naming.FolderName(item.Title, item.Year)
+		if item.Kind == domain.KindBook {
+			folder = naming.BookFolder(item.Author, item.Title)
+		}
+		cp.Path = filepath.Join(rf.Path, folder)
 		if cp.Path == item.Path {
 			return domain.MediaItem{}, fmt.Errorf(
 				"copy folder would collide with the item's own folder — pick a different root, or omit the root to share the folder")
@@ -741,6 +823,10 @@ func (s *Service) AddCopy(ctx context.Context, itemID int64, req CopyRequest) (d
 
 // UpdateCopy edits a copy's name, profile, or monitoring.
 func (s *Service) UpdateCopy(ctx context.Context, itemID, copyID int64, name *string, profileID *int64, monitored *bool) (domain.MediaItem, error) {
+	item, err := s.db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
 	cp, err := s.db.GetMediaCopy(ctx, itemID, copyID)
 	if err != nil {
 		return domain.MediaItem{}, err
@@ -749,8 +835,8 @@ func (s *Service) UpdateCopy(ctx context.Context, itemID, copyID int64, name *st
 		cp.Name = strings.TrimSpace(*name)
 	}
 	if profileID != nil && *profileID != 0 {
-		if _, err := s.db.GetProfile(ctx, *profileID); err != nil {
-			return domain.MediaItem{}, fmt.Errorf("quality profile: %w", err)
+		if err := s.validateItemProfile(ctx, item.Kind, *profileID, cp.BookType); err != nil {
+			return domain.MediaItem{}, err
 		}
 		cp.QualityProfileID = *profileID
 	}

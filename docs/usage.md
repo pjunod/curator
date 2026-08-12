@@ -98,6 +98,12 @@ root folder and profile all stay put. The next title is one click, and
   profile pickers. Audiobook searches use audiobook indexer categories and
   support MP3, WMA, AAC, OGG, Opus, M4A, M4B, FLAC, and WAV.
 
+Choosing Ebook or Audiobook adds that edition, not a quality label. If the
+same Open Library work already has the other edition, **Add ebook** or **Add
+audiobook** attaches the missing edition to the existing book. The result row
+names the editions already in the library instead of disabling both choices.
+You can also add the missing edition from the book detail page.
+
 Nothing touches the disk at add time — the item's folder is created on
 first import.
 
@@ -233,6 +239,10 @@ text filter is remembered per browser. Every card carries the rating star,
 the color-coded completeness pill, and a ↓ badge while something is
 downloading for it.
 
+A work with both editions appears in both the Ebook and Audiobook sections,
+with one shared detail page. The All count still counts the work once; the
+edition tabs count the editions they contain.
+
 **Poster size** (S / M / L) in the page head — smaller to fit more of a
 large library on one screen, larger for the artwork. It is the same
 preference [Discover](#discover) uses, so the two pages never disagree about
@@ -286,9 +296,10 @@ download priority or the item's override travels with the grab to nzbd:
 - The **Wanted** page lists everything still missing or below cutoff, shows
   when the loops last ran, and has **Search all now**.
 
-**Interactive search** — **Interactive search** on movie/book detail pages;
-on a series, each season has **Search pack** and each episode a **Search**
-button. Every release the indexers returned is shown — including rejected
+**Interactive search** — **Interactive search** on movie detail pages and a
+separate **Search** action on each book edition; on a series, each season has
+**Search pack** and each episode a **Search** button. Every release the
+indexers returned is shown — including rejected
 ones, with the reason attached (`above target`, `below floor`,
 `not an upgrade`, `target met`, `does not match …`). **Grab** sends your
 pick to the right client, with no decision gate — interactive search is
@@ -526,9 +537,10 @@ both stay and you choose.
 An audiobook payload containing several audio files is curated as one
 edition. Monarr sorts the source paths, imports every compatible part, and
 names them `Title - Author - 001.ext`, `002`, and so on. A single-file
-audiobook keeps the Calibre-style `Title - Author.ext` name. Changing a
-book between Ebook and Audiobook profiles changes what it hunts; Monarr does
-not keep both editions of the same Open Library work as separate items yet.
+audiobook keeps the Calibre-style `Title - Author.ext` name. Ebook and
+audiobook editions can share that book folder, but keep separate profiles,
+monitoring, wanted state, downloads, files, and upgrades. A rescan assigns
+files in a shared folder to the edition identified by their extension.
 
 ### An import that ran out of disk
 
@@ -782,8 +794,9 @@ is replaced on disk. A release that isn't strictly better is rejected as
 ## The mass editor
 
 Library page → **Edit** → click items to select → bulk **Monitor** /
-**Unmonitor** / apply a quality profile. An individual book can also switch
-between Ebook and Audiobook profiles from its detail page.
+**Unmonitor** / apply a quality profile. A book profile can only update the
+matching medium; applying an audiobook profile never converts or replaces an
+ebook. Add or remove the other edition from the book's **Editions** panel.
 
 ## Connecting the ecosystem
 

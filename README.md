@@ -8,8 +8,9 @@
 
 **A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one
 acquisition pipeline — for TV, movies, ebooks, and audiobooks, filling the gap left by
-Readarr's retirement. Audiobooks get their own defaults, indexer routing, library views,
-and multipart-track import while remaining books in the shared metadata model.
+Readarr's retirement. Ebooks and audiobooks coexist as independently curated editions of
+one book work, with their own profiles, monitoring, searches, downloads, files, library
+views, and multipart-track import.
 
 > **Status: all planned phases complete** — library, acquisition, books, automation
 > (RSS/backlog/blocklist), Sonarr/Radarr compat personalities, and the depth tail (custom
@@ -328,7 +329,7 @@ adapters import only ports+domain, compat never touches infra/adapters directly.
 | **0 — Walking skeleton** *(this)* | repo+CI, embedded UI, status API, SQLite+sqlc+goose, config, slog, bus, scheduler, health | `docker run` → UI loads, status reports, tests pass |
 | 1 — Library | TMDB, add/browse movies & series, root folders, disk reconcile | real folders imported and browsable |
 | 2 — Acquisition core | parser+golden corpus, matcher, decisions, Torznab, qBit+SABnzbd, import+rename | search → grab → correctly named file |
-| 2.5 — Books ([ADR 0006](docs/adr/0006-books-third-media-kind.md)) | `book` kind end-to-end: ebooks + audiobooks, book metadata adapter, book parser rules, format quality ladder | grab an ebook and an audiobook, correctly named |
+| 2.5 — Books ([ADR 0006](docs/adr/0006-books-third-media-kind.md), [ADR 0018](docs/adr/0018-side-by-side-book-editions.md)) | `book` kind end-to-end: side-by-side ebook/audiobook editions, metadata, parser rules, format quality ladders | keep and curate both editions of one work |
 | 3 — Automation | wanted index, RSS loop, failed-download handling, calendar (month grid + rolling agenda with TVmaze air times), notifiers | runs unattended for a month |
 | 4 — Ecosystem | Sonarr/Radarr v3 compat shim, conformance vs real tools | Jellyseerr/Prowlarr/Bazarr don't notice the swap |
 | 5 — Depth | custom formats, more clients, import lists, anime numbering | parity tail |

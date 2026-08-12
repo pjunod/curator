@@ -21,5 +21,7 @@ accepted; a change of course gets a new ADR that supersedes the old one.
 | [0014](0014-target-profiles.md) | A quality profile is a target, not a list with a cutoff | Accepted |
 | [0015](0015-discovery.md) | Discovery is a read-only browse surface: TMDB always, Trakt when keyed, nothing stored | Accepted |
 | [0016](0016-air-times.md) | Air times from TVmaze's show-level schedule, composed to UTC per date at read time | Accepted |
+| [0017](0017-audiobook-curation.md) | Audiobook acquisition, format routing, and multipart import | Superseded by [0018](0018-side-by-side-book-editions.md) |
+| [0018](0018-side-by-side-book-editions.md) | Ebook and audiobook editions coexist under one book work | Accepted |
 
 Context for all of these lives in [../architecture.md](../architecture.md).

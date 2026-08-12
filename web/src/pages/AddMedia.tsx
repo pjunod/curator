@@ -14,7 +14,8 @@ import {
 // resultKey identifies a search result across renders and refetches. The list
 // has no server-side id before the item exists, and the same title can come
 // back from more than one provider, so the tuple is the identity.
-const resultKey = (r: SearchResult) => `${r.kind}-${r.olid ?? ''}-${r.tmdbId}-${r.tvdbId ?? 0}`
+const resultKey = (r: SearchResult, bookType?: BookType) =>
+  `${r.kind}-${r.olid ?? ''}-${r.tmdbId}-${r.tvdbId ?? 0}${r.kind === 'book' ? `-${bookType ?? 'ebook'}` : ''}`
 
 // AddedItem is one thing added during this visit to the page.
 interface AddedItem {
@@ -124,7 +125,7 @@ export function AddMediaPage() {
           : { kind: r.kind, tmdbId: r.tmdbId || undefined, tvdbId: r.tvdbId, ...common },
       )
     },
-    onMutate: (r: SearchResult) => setPendingKey(resultKey(r)),
+    onMutate: (r: SearchResult) => setPendingKey(resultKey(r, bookType)),
     onSettled: () => setPendingKey(null),
     onSuccess: (item, r) => {
       // Without this the Library page keeps serving its cached list and the
@@ -136,7 +137,7 @@ export function AddMediaPage() {
       void qc.invalidateQueries({ queryKey: ['wanted'] })
       // Stay put. The search, the tab, and every option above are still set,
       // so the next add is one click rather than a round trip.
-      setAdded((prev) => [{ key: resultKey(r), id: item.id, title: item.title || r.title }, ...prev])
+      setAdded((prev) => [{ key: resultKey(r, bookType), id: item.id, title: item.title || r.title }, ...prev])
     },
   })
 
@@ -289,7 +290,7 @@ export function AddMediaPage() {
             </div>
             <div className="result-action">
               {(() => {
-                const just = addedByKey.get(resultKey(r))
+                const just = addedByKey.get(resultKey(r, bookType))
                 if (just) {
                   return (
                     <>
@@ -300,8 +301,12 @@ export function AddMediaPage() {
                     </>
                   )
                 }
-                if (r.inLibrary) return <span className="pill pill-ok">in library</span>
-                const busy = pendingKey === resultKey(r)
+                const selectedEditionPresent = r.kind === 'book' && (r.bookTypes ?? []).includes(bookType)
+                if (selectedEditionPresent) {
+                  return <span className="pill pill-ok">{bookType} in library</span>
+                }
+                if (r.inLibrary && r.kind !== 'book') return <span className="pill pill-ok">in library</span>
+                const busy = pendingKey === resultKey(r, bookType)
                 return (
                   <button
                     className="btn-accent"
@@ -309,7 +314,7 @@ export function AddMediaPage() {
                     title={!selectedRootId ? 'Add a matching root folder in Settings first' : undefined}
                     onClick={() => add.mutate(r)}
                   >
-                    {busy ? 'Adding…' : 'Add'}
+                    {busy ? 'Adding…' : r.kind === 'book' ? `Add ${bookType}` : 'Add'}
                   </button>
                 )
               })()}

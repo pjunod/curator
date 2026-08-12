@@ -50,13 +50,24 @@ export interface BusEvent {
 export type MediaKind = 'movie' | 'series' | 'book'
 export type BookType = 'ebook' | 'audiobook'
 
+export interface BookEditionSummary {
+  bookType: BookType
+  monitored: boolean
+  fileCount: number
+}
+
 export interface MediaItemSummary {
   id: number
   kind: MediaKind
   title: string
   year: number
   author: string // books only; '' otherwise
+  /** Primary edition retained for wire compatibility. */
   bookType?: BookType
+  /** Every independently curated edition this work owns. */
+  bookTypes?: BookType[]
+  /** Per-edition state used by the Ebook and Audiobook library views. */
+  bookEditions?: BookEditionSummary[]
   posterPath: string
   monitored: boolean
   path: string
@@ -130,7 +141,7 @@ export interface SeasonInfo {
 
 export interface MediaFileInfo {
   id: number
-  copyId?: number // which quality copy owns this file; absent/0 = primary
+  copyId?: number // which quality copy/book edition owns this file; absent/0 = primary
   path: string
   size: number
   episodeIds: number[]
@@ -156,6 +167,7 @@ export interface MediaFileInfo {
 
 export interface MediaCopy {
   id: number
+  bookType?: BookType // present for a book edition; absent for video copies
   name: string // '' = unnamed; show the profile instead
   qualityProfileId: number
   rootFolderId: number
@@ -164,6 +176,7 @@ export interface MediaCopy {
 }
 
 export interface MediaCopyInput {
+  bookType?: BookType
   qualityProfileId: number
   rootFolderId?: number // 0/absent = share the item's folder
   name?: string
@@ -213,6 +226,8 @@ export interface SearchResult {
   overview: string
   posterPath: string
   inLibrary: boolean
+  /** Book editions already present for this Open Library work. */
+  bookTypes?: BookType[]
 }
 
 export interface AddMediaRequest {
@@ -627,6 +642,7 @@ export interface ReleaseCandidate {
 
 export interface GrabRequest {
   mediaItemId: number
+  copyId?: number
   season?: number
   episode?: number
   title: string
@@ -714,10 +730,11 @@ export const updateDownloadClient = (id: number, c: DownloadClientInput) =>
   send<DownloadClientConfig>('PUT', `/downloadclients/${id}`, c)
 export const testDownloadClient = (c: DownloadClientInput) => send('POST', '/downloadclients/test', c)
 export const deleteDownloadClient = (id: number) => send('DELETE', `/downloadclients/${id}`)
-export const searchReleases = (itemId: number, season?: number, episode?: number) => {
+export const searchReleases = (itemId: number, season?: number, episode?: number, copyId?: number) => {
   const p = new URLSearchParams()
   if (season !== undefined) p.set('season', String(season))
   if (episode !== undefined) p.set('episode', String(episode))
+  if (copyId) p.set('copyId', String(copyId))
   const qs = p.toString()
   return get<ReleaseCandidate[]>(`/library/${itemId}/releases${qs ? `?${qs}` : ''}`)
 }

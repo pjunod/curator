@@ -1138,7 +1138,7 @@ paths:
   /library/{id}/releases:
     get:
       operationId: searchReleases
-      summary: Interactive search for a movie, episode, or season pack
+      summary: Interactive search for one item target or book edition
       parameters:
         - name: id
           in: path
@@ -1152,6 +1152,11 @@ paths:
           in: query
           required: false
           schema: { type: integer }
+        - name: copyId
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+          description: Additional quality copy or book edition; absent/0 selects the primary target.
       responses:
         "200":
           description: Ranked candidates with rejection reasons attached.
@@ -2352,8 +2357,20 @@ components:
       type: string
       enum: [ebook, audiobook]
       description: >
-        The book edition curated by the selected quality profile. This is a
-        subtype of the persistent book kind, not a separate library kind.
+        A persistent edition medium under the book kind. The quality profile
+        chooses formats within this medium and cannot change it (ADR 0018).
+
+    BookEditionSummary:
+      type: object
+      required: [bookType, monitored, fileCount]
+      properties:
+        bookType:
+          $ref: "#/components/schemas/BookType"
+        monitored:
+          type: boolean
+        fileCount:
+          type: integer
+          description: Files attributed to this edition, excluding the other edition.
 
     Rating:
       type: object
@@ -2392,6 +2409,14 @@ components:
           description: Books only (ADR 0006); empty for movies/series.
         bookType:
           $ref: "#/components/schemas/BookType"
+        bookTypes:
+          type: array
+          items: { $ref: "#/components/schemas/BookType" }
+          description: Book editions curated for this work. Empty/absent for movies and series.
+        bookEditions:
+          type: array
+          items: { $ref: "#/components/schemas/BookEditionSummary" }
+          description: Per-edition completeness for book library views. Empty/absent for video.
         posterPath:
           type: string
         monitored:
@@ -2600,6 +2625,10 @@ components:
           description: Books only (ADR 0006); empty for movies/series.
         bookType:
           $ref: "#/components/schemas/BookType"
+        bookTypes:
+          type: array
+          items: { $ref: "#/components/schemas/BookType" }
+          description: Book editions curated for this work. The primary remains in bookType for compatibility.
         posterPath:
           type: string
         backdropPath:
@@ -2666,7 +2695,7 @@ components:
         copies:
           type: array
           items: { $ref: "#/components/schemas/MediaCopy" }
-          description: Additional quality copies of this item.
+          description: Additional video quality copies or independently curated book editions.
         path:
           type: string
         rootFolderId:
@@ -2742,6 +2771,9 @@ components:
       type: object
       required: [qualityProfileId]
       properties:
+        bookType:
+          $ref: "#/components/schemas/BookType"
+          description: Required when adding the other edition to a book; absent for video quality copies.
         qualityProfileId:
           type: integer
           format: int64
@@ -2767,6 +2799,9 @@ components:
       type: object
       required: [id, name, qualityProfileId, rootFolderId, path, monitored]
       properties:
+        bookType:
+          $ref: "#/components/schemas/BookType"
+          description: Present for a book edition; absent for video quality copies.
         id: { type: integer, format: int64 }
         name: { type: string }
         qualityProfileId: { type: integer, format: int64 }
@@ -2839,6 +2874,10 @@ components:
           type: string
         inLibrary:
           type: boolean
+        bookTypes:
+          type: array
+          items: { $ref: "#/components/schemas/BookType" }
+          description: Which editions of this Open Library work are already curated.
 
     DiscoverList:
       type: object
@@ -3371,6 +3410,10 @@ components:
       required: [mediaItemId, title, downloadUrl, protocol]
       properties:
         mediaItemId: { type: integer, format: int64 }
+        copyId:
+          type: integer
+          format: int64
+          description: Additional quality copy or book edition; absent/0 selects the primary target.
         season: { type: integer }
         episode: { type: integer }
         title: { type: string }

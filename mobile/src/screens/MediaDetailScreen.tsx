@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { bookTypeForSource, formatBytes } from '../format'
@@ -23,7 +23,7 @@ import {
   SectionTitle,
 } from '../components/UI'
 import { useTheme } from '../theme'
-import type { MediaCopy, QualityProfile, UpdateMediaItemRequest } from '../types'
+import type { BookType, MediaCopy, QualityProfile, UpdateMediaItemRequest } from '../types'
 import { useResource } from '../useResource'
 
 export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient; id: number; onBack: () => void }) {
@@ -50,9 +50,21 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
   const item = resource.data
   const profiles = profilesResource.data ?? []
   const roots = rootsResource.data ?? []
-  const eligibleProfiles = profiles.filter((profile) =>
-    (item?.kind === 'book') === (bookTypeForSource(profile.target.source) !== undefined),
-  )
+  const primaryBookType = item?.kind === 'book' ? item.bookType ?? 'ebook' : undefined
+  const ownedBookTypes = item?.kind === 'book'
+    ? item.bookTypes ?? [primaryBookType ?? 'ebook']
+    : []
+  const missingBookType = item?.kind === 'book'
+    ? (['ebook', 'audiobook'] as const).find((bookType) => !ownedBookTypes.includes(bookType))
+    : undefined
+  const eligibleProfiles = profiles.filter((profile) => {
+    const profileBookType = bookTypeForSource(profile.target.source)
+    return item?.kind === 'book' ? profileBookType === primaryBookType : profileBookType === undefined
+  })
+  const copyProfiles = useMemo(() => profiles.filter((profile) => {
+    const profileBookType = bookTypeForSource(profile.target.source)
+    return item?.kind === 'book' ? profileBookType === missingBookType : profileBookType === undefined
+  }), [item?.kind, missingBookType, profiles])
 
   useEffect(() => {
     if (!item) return
@@ -65,10 +77,10 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
   }, [item])
 
   useEffect(() => {
-    if (copyProfileId !== 0 || profiles.length === 0) return
-    const alternate = profiles.find((profile) => profile.id !== item?.qualityProfileId)
-    setCopyProfileId(alternate?.id ?? item?.qualityProfileId ?? profiles[0]?.id ?? 0)
-  }, [copyProfileId, item?.qualityProfileId, profiles])
+    if (copyProfileId !== 0 || copyProfiles.length === 0) return
+    const alternate = copyProfiles.find((profile) => profile.id !== item?.qualityProfileId)
+    setCopyProfileId(alternate?.id ?? copyProfiles[0]?.id ?? 0)
+  }, [copyProfileId, copyProfiles, item?.qualityProfileId])
 
   const saveItem = async () => {
     if (!item) return
@@ -156,16 +168,19 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
     setActionMessage('')
     try {
       await client.addMediaCopy(id, {
+        bookType: item?.kind === 'book' ? missingBookType : undefined,
         qualityProfileId: copyProfileId,
-        rootFolderId: copyRootId || undefined,
-        name: copyName.trim() || undefined,
+        rootFolderId: item?.kind === 'book' ? undefined : copyRootId || undefined,
+        name: item?.kind === 'book' ? undefined : copyName.trim() || undefined,
         monitored: copyMonitored,
       })
       await resource.refresh()
       setCopyName('')
       setCopyRootId(0)
       setCopyMonitored(true)
-      setActionMessage('Additional copy added — Curator will hunt it like any other wanted item.')
+      setActionMessage(item?.kind === 'book'
+        ? `${missingBookType === 'audiobook' ? 'Audiobook' : 'Ebook'} edition added — it is curated independently.`
+        : 'Additional copy added — Curator will hunt it like any other wanted item.')
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : 'Could not add this copy.')
     } finally {
@@ -188,7 +203,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
 
   return (
     <AppScreen>
-      <Header title={item.title} subtitle={item.kind === 'series' ? 'TV series' : item.kind === 'book' ? (item.bookType === 'audiobook' ? 'Audiobook' : 'Ebook') : item.kind} left={<IconButton label="Back" glyph="‹" onPress={onBack} />} />
+      <Header title={item.title} subtitle={item.kind === 'series' ? 'TV series' : item.kind === 'book' ? ownedBookTypes.map((bookType) => bookType === 'audiobook' ? 'Audiobook' : 'Ebook').join(' + ') : item.kind} left={<IconButton label="Back" glyph="‹" onPress={onBack} />} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.hero}>
           <Poster path={item.posterPath} title={item.title} width={126} />
@@ -198,7 +213,9 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
             <View style={styles.badges}>
               <Badge label={item.monitored ? 'Monitored' : 'Unmonitored'} tone={item.monitored ? 'ok' : 'neutral'} />
               <Badge label={selectedProfileName} />
-              {item.kind === 'book' ? <Badge label={item.bookType === 'audiobook' ? 'Audiobook' : 'Ebook'} /> : null}
+              {item.kind === 'book' ? ownedBookTypes.map((bookType) => (
+                <Badge key={bookType} label={bookType === 'audiobook' ? 'Audiobook' : 'Ebook'} />
+              )) : null}
               <Badge label={`${downloadPriorityLabel(item.downloadPriority)} priority`} />
               {item.quality ? <Badge label={item.quality} tone={item.qualityVerified ? 'ok' : 'neutral'} /> : null}
               {item.upgrade ? <Badge label={item.upgrade} tone={item.upgrade === 'met' ? 'ok' : 'warning'} /> : null}
@@ -305,7 +322,57 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
           </>
         ) : null}
 
-        {item.kind !== 'book' ? (
+        {item.kind === 'book' ? (
+          <>
+            <SectionTitle>Editions</SectionTitle>
+            <Text style={[styles.sectionHint, { color: theme.muted }]}>Ebook and audiobook are separate targets. Each has its own profile, files, downloads, and automation.</Text>
+            <Panel style={styles.copyCard}>
+              <View style={styles.copyHeader}>
+                <View style={styles.flex}>
+                  <Text style={[styles.actionTitle, { color: theme.text }]}>{primaryBookType === 'audiobook' ? 'Audiobook' : 'Ebook'}</Text>
+                  <Text style={[styles.meta, { color: theme.muted }]}>
+                    {profileName(profiles, item.qualityProfileId)} · {item.files.filter((file) => !file.copyId).length} files · primary edition
+                  </Text>
+                </View>
+                <Badge label={item.monitored ? 'Monitored' : 'Off'} tone={item.monitored ? 'ok' : 'neutral'} />
+              </View>
+            </Panel>
+            {copies.filter((copy) => copy.bookType).map((copy) => (
+              <BookEditionEditor
+                key={copy.id}
+                client={client}
+                itemId={id}
+                copy={copy}
+                profiles={profiles.filter((profile) => bookTypeForSource(profile.target.source) === copy.bookType)}
+                fileCount={item.files.filter((file) => file.copyId === copy.id).length}
+                onRefresh={resource.refresh}
+                onMessage={(message) => {
+                  setActionError('')
+                  setActionMessage(message)
+                }}
+              />
+            ))}
+            {missingBookType ? (
+              <Panel style={styles.formPanel}>
+                <Text style={[styles.actionTitle, { color: theme.text }]}>Add {missingBookType === 'audiobook' ? 'audiobook' : 'ebook'} edition</Text>
+                <Text style={[styles.actionHint, { color: theme.muted }]}>It will share this book's folder but keep an independent acquisition lifecycle.</Text>
+                <ChoiceGroup
+                  label={`${missingBookType === 'audiobook' ? 'Audiobook' : 'Ebook'} profile`}
+                  options={copyProfiles.map((profile) => ({ id: profile.id, label: profile.name }))}
+                  selected={copyProfileId}
+                  onChange={setCopyProfileId}
+                  disabled={addingCopy}
+                  empty={profilesResource.loading ? 'Loading profiles…' : profilesResource.error || 'No matching profiles are available.'}
+                />
+                <View style={styles.monitorRow}>
+                  <Text style={[styles.fieldLabel, styles.flex, { color: theme.text }]}>Monitor this edition</Text>
+                  <Switch disabled={addingCopy} value={copyMonitored} onValueChange={setCopyMonitored} trackColor={{ true: theme.accent }} />
+                </View>
+                <Button label={addingCopy ? 'Adding edition…' : `Add ${missingBookType}`} disabled={addingCopy || copyProfileId === 0} onPress={() => void addCopy()} />
+              </Panel>
+            ) : null}
+          </>
+        ) : (
           <>
             <SectionTitle>Quality copies</SectionTitle>
             <Text style={[styles.sectionHint, { color: theme.muted }]}>Keep another quality target for this title. Each copy is monitored and upgraded independently.</Text>
@@ -333,7 +400,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
               </View>
               <ChoiceGroup
                 label="Quality profile"
-                options={profiles.map((profile) => ({ id: profile.id, label: profile.name }))}
+                options={copyProfiles.map((profile) => ({ id: profile.id, label: profile.name }))}
                 selected={copyProfileId}
                 onChange={setCopyProfileId}
                 disabled={addingCopy}
@@ -354,7 +421,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
               <Button label={addingCopy ? 'Adding copy…' : 'Add copy'} disabled={addingCopy || copyProfileId === 0} onPress={() => void addCopy()} />
             </Panel>
           </>
-        ) : null}
+        )}
 
         <SectionTitle>Files</SectionTitle>
         {item.files.length === 0 ? (
@@ -368,7 +435,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
                 <Text style={[styles.meta, { color: theme.muted }]}>{formatBytes(file.size)}</Text>
               </View>
               <Text style={[styles.meta, { color: theme.muted }]}>{file.facts || file.quality || 'Quality unknown'}</Text>
-              {copy ? <Badge label={copy.name || profileName(profiles, copy.qualityProfileId)} /> : null}
+              {copy ? <Badge label={copy.bookType === 'audiobook' ? 'Audiobook' : copy.bookType === 'ebook' ? 'Ebook' : copy.name || profileName(profiles, copy.qualityProfileId)} /> : null}
               {file.implausible ? <Badge label="Implausible metadata" tone="error" /> : file.provenanceLabel ? <Badge label={file.provenanceLabel} tone={file.verified ? 'ok' : 'neutral'} /> : null}
             </Panel>
           )
@@ -382,6 +449,99 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
         ) : null}
       </ScrollView>
     </AppScreen>
+  )
+}
+
+function BookEditionEditor({
+  client,
+  itemId,
+  copy,
+  profiles,
+  fileCount,
+  onRefresh,
+  onMessage,
+}: {
+  client: MonarrClient
+  itemId: number
+  copy: MediaCopy
+  profiles: QualityProfile[]
+  fileCount: number
+  onRefresh: () => Promise<void>
+  onMessage: (message: string) => void
+}) {
+  const theme = useTheme()
+  const [profileId, setProfileId] = useState(copy.qualityProfileId)
+  const [monitored, setMonitored] = useState(copy.monitored)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const label = copy.bookType === 'audiobook' ? 'Audiobook' : 'Ebook'
+
+  useEffect(() => {
+    setProfileId(copy.qualityProfileId)
+    setMonitored(copy.monitored)
+  }, [copy])
+
+  const save = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await client.updateMediaCopy(itemId, copy.id, { qualityProfileId: profileId, monitored })
+      await onRefresh()
+      onMessage(`${label} edition updated.`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not update this edition.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const remove = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await client.deleteMediaCopy(itemId, copy.id)
+      await onRefresh()
+      onMessage(`${label} edition removed. Files on disk were kept.`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not remove this edition.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Panel style={styles.copyCard}>
+      <View style={styles.copyHeader}>
+        <View style={styles.flex}>
+          <Text style={[styles.actionTitle, { color: theme.text }]}>{label}</Text>
+          <Text style={[styles.meta, { color: theme.muted }]}>{fileCount} {fileCount === 1 ? 'file' : 'files'} · {copy.path || 'same book folder'}</Text>
+        </View>
+        <Badge label={copy.monitored ? 'Monitored' : 'Off'} tone={copy.monitored ? 'ok' : 'neutral'} />
+      </View>
+      <InlineError message={error} />
+      <ChoiceGroup
+        label={`${label} profile`}
+        options={profiles.map((profile) => ({ id: profile.id, label: profile.name }))}
+        selected={profileId}
+        onChange={setProfileId}
+        disabled={busy}
+        empty="No matching profiles are available."
+      />
+      <View style={styles.monitorRow}>
+        <Text style={[styles.fieldLabel, styles.flex, { color: theme.text }]}>Monitor this edition</Text>
+        <Switch disabled={busy} value={monitored} onValueChange={setMonitored} trackColor={{ true: theme.accent }} />
+      </View>
+      <View style={styles.buttonRow}>
+        <Button compact label={busy ? 'Saving…' : 'Save'} disabled={busy} onPress={() => void save()} />
+        <Button compact secondary label="Remove" disabled={busy} onPress={() => Alert.alert(
+          `Remove ${label.toLowerCase()} edition?`,
+          'Curator will stop managing this edition. Files already on disk will be kept.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Remove edition', style: 'destructive', onPress: () => void remove() },
+          ],
+        )} />
+      </View>
+    </Panel>
   )
 }
 

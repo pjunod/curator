@@ -52,7 +52,22 @@ type fakeIndexer struct{ cfg ports.IndexerConfig }
 
 func (f fakeIndexer) Test(context.Context) error { return nil }
 
-func (f fakeIndexer) Search(_ context.Context, _ domain.SearchQuery) ([]ports.Release, error) {
+func (f fakeIndexer) Search(_ context.Context, q domain.SearchQuery) ([]ports.Release, error) {
+	return f.search(q)
+}
+
+func (f fakeIndexer) search(q domain.SearchQuery) ([]ports.Release, error) {
+	if q.Kind == domain.KindBook {
+		format := "EPUB"
+		if q.BookType == "audiobook" {
+			format = "M4B"
+		}
+		return []ports.Release{{
+			Title: "Andy Weir - Project Hail Mary " + format, DownloadURL: "http://indexer.invalid/book",
+			Indexer: f.cfg.Name, IndexerID: f.cfg.ID, Protocol: f.cfg.Protocol,
+			Size: 400 << 20, Seeders: 20, PublishDate: time.Now().Add(-time.Hour),
+		}}, nil
+	}
 	return []ports.Release{{
 		Title:       "Fight.Club.1999.1080p.WEB-DL.x264-TEST",
 		DownloadURL: "http://indexer.invalid/1",
@@ -90,6 +105,23 @@ type fakeNotifier struct{}
 func (fakeNotifier) Send(context.Context, ports.Notification) error { return nil }
 
 func (fakeNotifier) Test(context.Context) error { return nil }
+
+type fakeBookProvider struct{}
+
+func (fakeBookProvider) SearchBooks(context.Context, string) ([]ports.SearchResult, error) {
+	return []ports.SearchResult{{
+		Kind: domain.KindBook, OLID: "OL17091839W", Title: "Project Hail Mary",
+		Author: "Andy Weir", Year: 2021,
+	}}, nil
+}
+
+func (fakeBookProvider) GetBook(_ context.Context, olid string) (domain.MediaItem, error) {
+	return domain.MediaItem{
+		Kind: domain.KindBook, Title: "Project Hail Mary", SortTitle: "project hail mary",
+		Author: "Andy Weir", Year: 2021,
+		IDs: domain.ExternalIDs{OLID: olid, ISBN13: "9780593135204"},
+	}, nil
+}
 
 // newAPIEnv wires everything the API layer can reach.
 func newAPIEnv(t *testing.T) *apiEnv {
@@ -232,6 +264,21 @@ func (e *apiEnv) addMovie(t *testing.T) int64 {
 		t.Fatalf("seeded movie has no id: %s", rr.Body.String())
 	}
 	return item.ID
+}
+
+func (e *apiEnv) addBookEdition(t *testing.T, bookType string) libDetail {
+	t.Helper()
+	e.lib.WithBooks(fakeBookProvider{})
+	roots, err := e.db.ListRootFolders(context.Background())
+	if err != nil || len(roots) == 0 {
+		t.Fatalf("seeding book root: roots=%v err=%v", roots, err)
+	}
+	rr := e.post(t, "/api/v1/library", `{"kind":"book","olid":"OL17091839W","bookType":"`+
+		bookType+`","rootFolderId":`+fmt.Sprint(roots[0].ID)+`}`)
+	rr.expect(t, http.StatusCreated)
+	var item libDetail
+	rr.into(t, &item)
+	return item
 }
 
 // setting writes an app_meta value, for handlers gated on configuration.
