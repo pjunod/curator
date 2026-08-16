@@ -14,10 +14,10 @@
     "doctor": "expo-doctor"
   },
   "dependencies": {
-    "expo": "~57.0.12",
-    "expo-build-properties": "~57.0.10",
+    "expo": "~57.0.13",
+    "expo-build-properties": "~57.0.11",
     "expo-camera": "~57.0.3",
-    "expo-constants": "~57.0.10",
+    "expo-constants": "~57.0.11",
     "expo-network": "~57.0.1",
     "expo-secure-store": "~57.0.1",
     "expo-splash-screen": "~57.0.6",
