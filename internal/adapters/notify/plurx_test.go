@@ -375,24 +375,46 @@ func TestPlurxKeepsTheResultOfThePartThatWorked(t *testing.T) {
 	}
 }
 
-// plurx has no book library kind (plan §10.7), so a book import must be
-// declined rather than sent — and the decline has to be visible, because
-// silence looks exactly like a bug to someone whose audiobook never showed
-// up.
-func TestPlurxDeclinesBooksOutLoud(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Error("plurx was told about a book — it has no library kind for one")
+// A book is path-identified: the Books library decides whether the imported
+// files are text or audio and derives author/title identity from the shelf.
+// Curator must still close the handoff immediately instead of leaving the
+// periodic Cinema scan to discover the edition hours later.
+func TestPlurxSendsBookImportsToTheBooksLibrary(t *testing.T) {
+	var got map[string]any
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &got)
+		_, _ = w.Write([]byte(`{"status":"scanned","items":[{"item_id":1401}]}`))
 	}))
 	defer srv.Close()
 
 	n := movieImport("/media/books/Some Author/Some Title")
 	n.Import.Kind = "book"
+	n.Import.TmdbID = 0
+	n.Import.ImdbID = ""
 	target := plurxNotifier(srv.URL)
 	if err := target.Send(context.Background(), n); err != nil {
-		t.Fatalf("declining a book is not a delivery failure: %v", err)
+		t.Fatalf("book targeted scan: %v", err)
 	}
-	got := target.(ports.DeliveryReporter).Delivery()
-	if !strings.Contains(got, "book") {
-		t.Errorf("the trace must explain the absence, got %q", got)
+	if auth != "Bearer plx_secret" {
+		t.Errorf("Authorization = %q", auth)
+	}
+	if got["path"] != "/media/books/Some Author/Some Title" {
+		t.Errorf("path = %v", got["path"])
+	}
+	if got["hint"] != "book" {
+		t.Errorf("hint = %v, want book", got["hint"])
+	}
+	if got["ids"] != nil || got["series"] != nil {
+		t.Errorf("book request invented provider ids: %v", got)
+	}
+	if got["correlation_id"] != "t-42-a3f9c1" {
+		t.Errorf("correlation_id = %v", got["correlation_id"])
+	}
+	delivery := target.(ports.DeliveryReporter).Delivery()
+	if !strings.Contains(delivery, "1401") {
+		t.Errorf("Cinema's book item id must close the transfer trace, got %q", delivery)
 	}
 }

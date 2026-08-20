@@ -3,6 +3,11 @@
 **Status:** ready to build · **Written:** 2026-07-26 ·
 **Companions:** `nzbd/docs/INTEGRATION_PLAN.md`, `plurx/docs/INTEGRATION-PLAN.md`
 
+**Amended 2026-08-20:** Cinema now has first-class Books libraries. The
+original no-books boundary recorded below is historical; §5.5 and §10 now
+require book imports to send an exact-path targeted scan with `hint:"book"`
+and no movie/series provider ids.
+
 This is the canonical plan for making the three apps behave like one
 pipeline: monarr grabs, nzbd downloads and unpacks, monarr imports, plurx
 scans and plays — with events instead of timers at every seam, and a
@@ -157,8 +162,9 @@ they are sketched separately in §11.)
 - Config TOML is `deny_unknown_fields` (13 lines); runtime settings live
   in the DB behind `GET/PUT /api/v1/settings`. New knobs go in the DB,
   not the TOML.
-- Library kinds are `movies | shows | home` — **no books**. Monarr book
-  imports therefore never notify plurx (§10).
+- At this plan's 2026-07-26 baseline library kinds were
+  `movies | shows | home`. Cinema added first-class `books` libraries before
+  the 2026-08-20 amendment, so book imports now use the targeted-scan seam.
 
 ### 2.4 The four load-bearing gaps
 
@@ -528,9 +534,9 @@ populated; `handoff_test.go` asserts the transfer id present.
   status(pending|ok|failed), created_at, updated_at}` — retried 3× with
   5 s / 30 s / 2 m backoff. On terminal result, write the handoff trace:
   step `notify_plurx`, detail `"plurx scanned: item #1201, 1 added"` or
-  `"plurx notify failed after 3 attempts: connection refused"`. Books:
-  skip plurx entirely (no plurx kind), note it in the trace
-  (`"plurx: skipped (book)"`) so the absence is explained, not silent.
+  `"plurx notify failed after 3 attempts: connection refused"`. Books use
+  the same queue with `hint:"book"`, an exact directory, and no TMDB/IMDb
+  fields; Cinema's Books library owns file-derived identity.
 - API + UI: `GET /api/v1/notifiers/{id}/deliveries` (last 100), rendered
   as an expandable log on the notifier card in
   `SettingsNotifiers.tsx` (`TYPE_FIELDS` gains plurx: url + apiKey).
@@ -690,8 +696,9 @@ of these is blocking should stop and flag it.
    in its ARCHITECTURE) — it scans what monarr placed, nothing more.
 6. **Monarr never holds a plurx admin token** — scoped key only. If the
    key can read `/settings`, P1 is not done.
-7. **No book notifications to plurx** (no book library kind exists
-   there). Skip with an explanatory trace entry, don't invent a kind.
+7. **No invented provider ids for book notifications.** Send the exact path
+   with `hint:"book"`; Cinema's Books library decides text versus audio and
+   derives identity from the shelf.
 8. **nzbd gains no outbound HTTP** in these phases — no webhook
    subsystem, no knowledge of monarr's address. That was the §3
    direction decision; revisit only as a new plan.

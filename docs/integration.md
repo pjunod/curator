@@ -288,6 +288,10 @@ the same folder is nine wasted scans.
 {"path":"/media/movies/Some Film (1999)","hint":"movie",
  "ids":{"tmdb":603,"imdb":"tt0133093"},
  "correlation_id":"t-43-b1e207","source":"monarr"}
+
+// a book: the Books library derives text/audio and shelf identity from disk
+{"path":"/media/books/Andy Weir/Project Hail Mary","hint":"book",
+ "correlation_id":"t-44-c4d812","source":"monarr"}
 ```
 
 Where the ids go depends on what the path is, and the asymmetry is deliberate:
@@ -295,6 +299,9 @@ an episode's own TMDB id is not what identifies the series it belongs to, so
 putting the show's id in `ids` would stamp it on the episode row. For a series
 Monarr sends the show's TMDB id only — plurx keys episodes off it alone, and
 sending an IMDb id there would be inventing precision plurx does not use.
+Books carry no provider ids across this seam. The resolved Cinema library is
+authoritative, and its scanner derives ebook versus audiobook plus the
+author/title identity from the files and shelf path.
 
 **What Monarr holds.** A **scoped key** (`scan:trigger`), never a plurx admin
 token. A token *is* a user, so an admin token handed to a neighbouring app
@@ -609,8 +616,9 @@ notifier not configured at all.
 
 - **Never holds a plurx admin token.** A scoped `scan:trigger` key only. See
   §4 for why the distinction is not cosmetic.
-- **Never sends books to plurx.** plurx does not do books; a scan request for
-  one is declined with an explanatory trace entry rather than silently dropped.
+- **Never invents provider ids for books.** Book imports reach Cinema with an
+  exact path and `hint:"book"`; Cinema's Books library identifies them from
+  disk rather than pretending TMDB knows publications.
 - **Never deletes anything on watch state.** No cleanup policy, no
   unmonitoring, no auto-delete path exists — not disabled, not built.
 - **Never matches on titles across a seam.** Ids only, in both directions.

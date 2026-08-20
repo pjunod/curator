@@ -56,15 +56,6 @@ func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 	}
 	p.delivery = nil
 
-	// plurx has no book library kind (plan §10.7). Telling it about one
-	// would mean inventing a kind on its behalf, and the alternative —
-	// staying silent — leaves somebody wondering why their audiobook never
-	// appeared. So: decline, out loud, and let the trace carry the reason.
-	if n.Import.Kind == "book" {
-		p.delivery = []string{"skipped (book — plurx has no book library kind)"}
-		return nil
-	}
-
 	// One request per DIRECTORY, not per file. A season pack is one folder
 	// and a dozen files; a dozen requests naming the same folder is a dozen
 	// chances for one to fail and eleven scans of work already done.
@@ -116,6 +107,14 @@ type plurxIDs struct {
 // would stamp it on the episode row.
 func scanBody(path string, info *ports.ImportInfo) plurxScanRequest {
 	req := plurxScanRequest{Path: path, CorrelationID: info.Transfer, Source: "monarr"}
+	if info.Kind == "book" {
+		// The Books library decides whether each file is text or audio. The
+		// hint names the import honestly but carries no provider ids: plurx
+		// derives book identity from the author/title path and never sends it
+		// through TMDB.
+		req.Hint = "book"
+		return req
+	}
 	if info.Kind == "series" {
 		req.Hint = "episode"
 		// Only the TMDB id belongs to the show; plurx keys episodes off the
