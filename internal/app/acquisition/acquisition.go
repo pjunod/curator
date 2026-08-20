@@ -77,8 +77,8 @@ type (
 		// saying the same thing is a dozen chances for one to fail.
 		Dirs []string `json:"dirs,omitempty"`
 		// MediaItemKind is movie | series | book. Not a bool: "not a movie"
-		// is three different things downstream, and books have no plurx
-		// library kind at all (plan §10.7).
+		// is three different things downstream, and the plurx notifier needs
+		// the distinction to shape ids versus path-identified Books scans.
 		MediaItemKind string `json:"mediaItemKind,omitempty"`
 		Title         string `json:"title,omitempty"`
 		// TmdbID and ImdbID identify the ITEM — for a series that is the

@@ -359,7 +359,7 @@ func TestImportAnnouncesTheExactPathsAndIDs(t *testing.T) {
 		}
 	}
 	if ev.MediaItemKind != "series" {
-		t.Errorf("kind = %q — it decides whose id TmdbID is, and whether plurx is told at all", ev.MediaItemKind)
+		t.Errorf("kind = %q — it decides whose id TmdbID is and how plurx is told", ev.MediaItemKind)
 	}
 	if ev.TmdbID != 100 {
 		t.Errorf("TmdbID = %d, want the SHOW's id", ev.TmdbID)

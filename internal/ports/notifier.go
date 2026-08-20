@@ -56,8 +56,9 @@ type ImportInfo struct {
 	// need a path mapping, the same caveat download clients carry.
 	Paths []string `json:"paths,omitempty"`
 	Dirs  []string `json:"dirs,omitempty"`
-	// Kind is movie | series | book. Books have no plurx library kind, so
-	// this is what lets a notifier decline rather than invent one.
+	// Kind is movie | series | book. The plurx notifier uses it to keep
+	// movie ids, series ids, and path-identified Books imports on their
+	// honest request shapes.
 	Kind  string `json:"kind,omitempty"`
 	Title string `json:"title,omitempty"`
 	// TmdbID and ImdbID identify the item: for a series, the SHOW.
