@@ -1,9 +1,9 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-08-12 · v0.24.0 · Ebook and audiobook editions now coexist
-> on one book work (ADR 0018). Search, monitoring, profiles, downloads, imports,
-> wanted state, and progress are independently targeted per edition; web and
-> native library/detail surfaces show both together (§Phase 2.5 — Books).**
+> **Snapshot 2026-08-21 · v0.24.1 · Curator now hands Cinema exact book work
+> and edition metadata when an ebook or audiobook import lands. Search,
+> monitoring, profiles, downloads, imports, wanted state, and progress remain
+> independently targeted per edition (§Phase 2.5 — Books).**
 >
 > Previously: v0.23.0 added audiobook curation · v0.20.0 rebuilt the calendar ·
 > v0.19.1 made Access a first-class web tab · v0.19.0 added configurable
@@ -215,7 +215,9 @@ side (N1–N7) is built; this is Monarr's.
       directory. The httptest fixtures are payloads captured from that run
 - [x] **§5.4–5.5 import paths + the plurx notifier** — `ImportCompleted`
       carries the absolute paths that landed, the item's TMDB/IMDb ids,
-      whether they are episodes, and the transfer id; the three per-file
+      whether they are episodes, and the transfer id; book events also carry
+      Curator's author, persisted medium, exact work/edition ids, and a
+      strictly allowlisted Open Library cover URL. The three per-file
       importers return where each file went. The `plurx` notifier sits with
       Plex and Jellyfin in the import-only group but is not a refresh poke:
       it says "index this path, it is tmdb 949". Scoped `plx_` key, never an

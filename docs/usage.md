@@ -820,10 +820,13 @@ events; Plex and Jellyfin entries are library-refresh pokes fired after
 imports. **Test** delivers a test event immediately.
 
 A **plurx** entry is not a poke: it receives the exact paths that landed and
-the TMDB/IMDb ids Monarr already knows, so plurx indexes one folder instead
-of sweeping a library — and identifies it by id rather than by guessing at
-the filename. It holds a scoped `plx_` key, never a plurx admin token. See
-`docs/settings.md` for the setup and what each failure means.
+the identity Monarr already knows, so plurx indexes one folder instead of
+sweeping a library — and identifies it without guessing at the filename.
+Movies and series carry their normal ids. Books carry Curator's title,
+author, ebook/audiobook medium, stable work and edition ids, and a bounded
+Open Library cover URL when available. Exact work ids relate editions; title
+and author do not. The notifier holds a scoped `plx_` key, never a plurx
+admin token. See `docs/settings.md` for setup and failure meanings.
 
 ## Troubleshooting quick hits
 

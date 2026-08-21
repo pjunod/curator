@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/domain"
@@ -90,7 +92,7 @@ func importedEvent(item domain.MediaItem, dl sqlite.Download, r ImportResult) Im
 			dirs = append(dirs, dir)
 		}
 	}
-	return ImportCompleted{
+	event := ImportCompleted{
 		MediaItemID:   item.ID,
 		Release:       dl.ReleaseTitle,
 		Files:         r.Imported,
@@ -104,6 +106,83 @@ func importedEvent(item domain.MediaItem, dl sqlite.Download, r ImportResult) Im
 		DownloadID:    dl.ID,
 		Transfer:      dl.Transfer,
 	}
+	if item.Kind == domain.KindBook {
+		event.BookTitle = curatorBookText(item.Title)
+		event.BookAuthor = curatorBookText(item.Author)
+		event.BookMedium = importedBookMedium(item, dl)
+		event.BookWorkID = curatorBookWorkID(item)
+		event.BookEditionID = fmt.Sprintf("curator:item:%d:%s", item.ID, event.BookMedium)
+		event.BookCoverURL = openLibraryCoverURL(item.PosterPath)
+		// An incomplete legacy row should still trigger the same targeted scan,
+		// but not attach a malformed `book` object that Cinema must reject.
+		if event.BookMedium == "" {
+			event.BookWorkID = ""
+			event.BookEditionID = ""
+		}
+	}
+	return event
+}
+
+func curatorBookText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 512 {
+		return ""
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return ""
+		}
+	}
+	return value
+}
+
+func importedBookMedium(item domain.MediaItem, dl sqlite.Download) string {
+	if dl.CopyID == 0 && quality.ValidBookType(item.BookType) {
+		return string(item.BookType)
+	}
+	for _, copy := range item.Copies {
+		if copy.ID == dl.CopyID && quality.ValidBookType(copy.BookType) {
+			return string(copy.BookType)
+		}
+	}
+	medium := quality.BookTypeForSource(dl.Quality.Source)
+	if quality.ValidBookType(medium) {
+		return string(medium)
+	}
+	return ""
+}
+
+func curatorBookWorkID(item domain.MediaItem) string {
+	olid := strings.TrimSpace(item.IDs.OLID)
+	if isOpenLibraryWorkID(olid) {
+		return "curator:openlibrary:" + olid
+	}
+	return fmt.Sprintf("curator:item:%d", item.ID)
+}
+
+func isOpenLibraryWorkID(value string) bool {
+	if len(value) < 4 || !strings.HasPrefix(value, "OL") || !strings.HasSuffix(value, "W") {
+		return false
+	}
+	for _, r := range value[2 : len(value)-1] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func openLibraryCoverURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 2_048 {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() != "covers.openlibrary.org" ||
+		parsed.Port() != "" || parsed.User != nil {
+		return ""
+	}
+	return value
 }
 
 // placement is what importing one file produced: where it landed, and

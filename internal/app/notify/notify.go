@@ -70,6 +70,15 @@ func (d *Dispatcher) Run(ctx context.Context) {
 				Fields: map[string]string{"indexer": e.Indexer, "protocol": e.Protocol},
 			})
 		case e := <-imports:
+			var book *ports.BookImportInfo
+			if e.MediaItemKind == "book" && e.BookMedium != "" &&
+				e.BookWorkID != "" && e.BookEditionID != "" {
+				book = &ports.BookImportInfo{
+					Title: e.BookTitle, Author: e.BookAuthor, Medium: e.BookMedium,
+					WorkID: e.BookWorkID, EditionID: e.BookEditionID,
+					CoverURL: e.BookCoverURL,
+				}
+			}
 			d.dispatch(ctx, "import", ports.Notification{
 				Event: "import", Title: "Import completed", Body: e.Release,
 				Fields: map[string]string{
@@ -86,6 +95,7 @@ func (d *Dispatcher) Run(ctx context.Context) {
 					Dirs:        e.Dirs,
 					Kind:        e.MediaItemKind,
 					Title:       e.Title,
+					Book:        book,
 					TmdbID:      e.TmdbID,
 					ImdbID:      e.ImdbID,
 					Transfer:    e.Transfer,
