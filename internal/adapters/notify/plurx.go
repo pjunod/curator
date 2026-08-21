@@ -86,12 +86,13 @@ func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 }
 
 type plurxScanRequest struct {
-	Path          string    `json:"path"`
-	IDs           *plurxIDs `json:"ids,omitempty"`
-	Hint          string    `json:"hint,omitempty"`
-	Series        *plurxIDs `json:"series,omitempty"`
-	CorrelationID string    `json:"correlation_id,omitempty"`
-	Source        string    `json:"source"`
+	Path          string                `json:"path"`
+	IDs           *plurxIDs             `json:"ids,omitempty"`
+	Hint          string                `json:"hint,omitempty"`
+	Series        *plurxIDs             `json:"series,omitempty"`
+	Book          *ports.BookImportInfo `json:"book,omitempty"`
+	CorrelationID string                `json:"correlation_id,omitempty"`
+	Source        string                `json:"source"`
 }
 
 type plurxIDs struct {
@@ -108,11 +109,11 @@ type plurxIDs struct {
 func scanBody(path string, info *ports.ImportInfo) plurxScanRequest {
 	req := plurxScanRequest{Path: path, CorrelationID: info.Transfer, Source: "monarr"}
 	if info.Kind == "book" {
-		// The Books library decides whether each file is text or audio. The
-		// hint names the import honestly but carries no provider ids: plurx
-		// derives book identity from the author/title path and never sends it
-		// through TMDB.
+		// The scanner still decides what each file actually is. Curator's
+		// explicit work/edition facts avoid a second provider match and allow
+		// related editions without ever joining on title + author.
 		req.Hint = "book"
+		req.Book = info.Book
 		return req
 	}
 	if info.Kind == "series" {

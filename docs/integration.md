@@ -289,8 +289,12 @@ the same folder is nine wasted scans.
  "ids":{"tmdb":603,"imdb":"tt0133093"},
  "correlation_id":"t-43-b1e207","source":"monarr"}
 
-// a book: the Books library derives text/audio and shelf identity from disk
+// a book: exact Curator facts; work_id is the sole edition relationship key
 {"path":"/media/books/Andy Weir/Project Hail Mary","hint":"book",
+ "book":{"title":"Project Hail Mary","author":"Andy Weir","medium":"ebook",
+         "work_id":"curator:openlibrary:OL17091839W",
+         "edition_id":"curator:item:84:ebook",
+         "cover_url":"https://covers.openlibrary.org/b/id/123-L.jpg"},
  "correlation_id":"t-44-c4d812","source":"monarr"}
 ```
 
@@ -299,9 +303,16 @@ an episode's own TMDB id is not what identifies the series it belongs to, so
 putting the show's id in `ids` would stamp it on the episode row. For a series
 Monarr sends the show's TMDB id only — plurx keys episodes off it alone, and
 sending an IMDb id there would be inventing precision plurx does not use.
-Books carry no provider ids across this seam. The resolved Cinema library is
-authoritative, and its scanner derives ebook versus audiobook plus the
-author/title identity from the files and shelf path.
+Books carry a separate `book` object, not movie/series ids. Curator sends the
+title, author, persisted edition medium, stable work id, stable edition id,
+and—when it has one—an exact Open Library HTTPS cover URL. The scanner still
+validates the file family. Cinema relates editions only when `work_id` is an
+exact match; title and author are display facts, never a fuzzy join. An Open
+Library work uses `curator:openlibrary:<OL…W>`; a manual work falls back to
+`curator:item:<media-item-id>`, and editions use
+`curator:item:<media-item-id>:<ebook|audiobook>`. The cover field is omitted
+unless its parsed host is exactly `covers.openlibrary.org`, with HTTPS, no
+credentials, and no explicit port.
 
 **What Monarr holds.** A **scoped key** (`scan:trigger`), never a plurx admin
 token. A token *is* a user, so an admin token handed to a neighbouring app

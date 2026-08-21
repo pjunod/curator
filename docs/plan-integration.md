@@ -3,10 +3,11 @@
 **Status:** ready to build · **Written:** 2026-07-26 ·
 **Companions:** `nzbd/docs/INTEGRATION_PLAN.md`, `plurx/docs/INTEGRATION-PLAN.md`
 
-**Amended 2026-08-20:** Cinema now has first-class Books libraries. The
+**Amended 2026-08-21:** Cinema now has first-class Books libraries. The
 original no-books boundary recorded below is historical; §5.5 and §10 now
 require book imports to send an exact-path targeted scan with `hint:"book"`
-and no movie/series provider ids.
+and a separate explicit work/edition object, with no movie/series provider
+ids.
 
 This is the canonical plan for making the three apps behave like one
 pipeline: monarr grabs, nzbd downloads and unpacks, monarr imports, plurx
@@ -305,8 +306,16 @@ POST /api/v1/scan          (scope scan:trigger)
 {
   "path": "/media/movies/Heat (1995)",        // absolute, a dir or file
   "ids": { "tmdb": 949, "imdb": "tt0113277" }, // optional, both optional
-  "hint": "movie",                             // movie|episode|season, opt
+  "hint": "movie",                             // movie|episode|season|book
   "series": { "tmdb": 1396 },                  // for episodes: the SHOW id
+  "book": {                                      // only for hint=book
+    "title": "The Dispossessed",
+    "author": "Ursula K. Le Guin",
+    "medium": "ebook",
+    "work_id": "curator:openlibrary:OL87320W",
+    "edition_id": "curator:item:84:ebook",
+    "cover_url": "https://covers.openlibrary.org/b/id/123-L.jpg"
+  },
   "correlation_id": "t-42-a3f9c1",             // optional, echoed back
   "source": "monarr"                           // free-form label
 }
@@ -340,6 +349,10 @@ Semantics (normative):
   For episodes, `series.tmdb` applies to the show item; season/episode
   numbers still come from the filename parse (they are monarr's naming
   and reliable).
+- If `book` is present, Cinema applies Curator's bounded title, author,
+  medium, work id, edition id, and optional Open Library cover after file
+  placement. `work_id` is the only relationship key for ebook/audiobook
+  editions; title and author never participate in linking.
 
 ### 3.6 monarr surfaces
 
@@ -525,9 +538,10 @@ populated; `handoff_test.go` asserts the transfer id present.
   `{url, apiKey}`; implements a new optional capability
   `PathScanner` — `ScanPaths(ctx, ImportInfo) ([]ScanResult, error)` —
   instead of the blind `Send`. For each dir in `Dirs`: POST §3.5 body
-  with ids and `correlation_id = Transfer`. `refreshOnly()` treatment
-  applies (import events only) — plurx is never spammed with grab/health
-  chatter.
+  with ids and `correlation_id = Transfer`. Book requests carry a separate
+  exact work/edition object, with no movie/series ids. `refreshOnly()`
+  treatment applies (import events only) — plurx is never spammed with
+  grab/health chatter.
 - Dispatcher (`internal/app/notify/notify.go`): deliveries for plurx go
   through a small persistent queue — new table `notifier_deliveries
   {id, notifier_id, download_id, event, payload, attempts, last_error,
@@ -535,8 +549,10 @@ populated; `handoff_test.go` asserts the transfer id present.
   5 s / 30 s / 2 m backoff. On terminal result, write the handoff trace:
   step `notify_plurx`, detail `"plurx scanned: item #1201, 1 added"` or
   `"plurx notify failed after 3 attempts: connection refused"`. Books use
-  the same queue with `hint:"book"`, an exact directory, and no TMDB/IMDb
-  fields; Cinema's Books library owns file-derived identity.
+  the same queue with `hint:"book"`, an exact directory, no TMDB/IMDb fields,
+  and Curator's title, author, persisted medium, stable work/edition ids, and
+  optional allowlisted Open Library cover. Cinema still owns file-derived
+  format validation.
 - API + UI: `GET /api/v1/notifiers/{id}/deliveries` (last 100), rendered
   as an expandable log on the notifier card in
   `SettingsNotifiers.tsx` (`TYPE_FIELDS` gains plurx: url + apiKey).
@@ -696,9 +712,10 @@ of these is blocking should stop and flag it.
    in its ARCHITECTURE) — it scans what monarr placed, nothing more.
 6. **Monarr never holds a plurx admin token** — scoped key only. If the
    key can read `/settings`, P1 is not done.
-7. **No invented provider ids for book notifications.** Send the exact path
-   with `hint:"book"`; Cinema's Books library decides text versus audio and
-   derives identity from the shelf.
+7. **No invented movie ids or fuzzy book identity.** Send the exact path with
+   `hint:"book"` and Curator's explicit work/edition object. Cinema verifies
+   text versus audio from the file and relates editions by exact work id;
+   title and author never become a join key.
 8. **nzbd gains no outbound HTTP** in these phases — no webhook
    subsystem, no knowledge of monarr's address. That was the §3
    direction decision; revisit only as a new plan.

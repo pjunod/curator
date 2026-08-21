@@ -69,7 +69,15 @@ func TestDispatcherRoutesByFlags(t *testing.T) {
 	// A grab: hook has OnGrab=false; plex is refresh-only (import events only).
 	b.Publish(acquisition.ReleaseGrabbed{Title: "X.2024.1080p"})
 	// An import: both fire.
-	b.Publish(acquisition.ImportCompleted{Release: "X.2024.1080p", Files: 1})
+	b.Publish(acquisition.ImportCompleted{
+		MediaItemID: 84, Release: "The.Dispossessed.EPUB", Files: 1,
+		MediaItemKind: "book", Title: "The Dispossessed",
+		BookTitle: "The Dispossessed", BookAuthor: "Ursula K. Le Guin",
+		BookMedium:    "ebook",
+		BookWorkID:    "curator:openlibrary:OL87320W",
+		BookEditionID: "curator:item:84:ebook",
+		BookCoverURL:  "https://covers.openlibrary.org/b/id/123-L.jpg",
+	})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -86,6 +94,15 @@ func TestDispatcherRoutesByFlags(t *testing.T) {
 	}
 	if len(rec["hook"].sent) > 0 && rec["hook"].sent[0].Event != "import" {
 		t.Errorf("hook got event %q", rec["hook"].sent[0].Event)
+	}
+	if len(rec["hook"].sent) > 0 {
+		book := rec["hook"].sent[0].Import.Book
+		if book == nil || book.Medium != "ebook" ||
+			book.WorkID != "curator:openlibrary:OL87320W" ||
+			book.EditionID != "curator:item:84:ebook" ||
+			book.Author != "Ursula K. Le Guin" {
+			t.Errorf("book handoff = %+v", book)
+		}
 	}
 }
 

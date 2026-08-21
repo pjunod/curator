@@ -446,18 +446,20 @@ use Discover for "what should I watch".
 
 One request per imported **directory**, not per file: a season pack is one
 folder and a dozen files, and a dozen requests naming the same folder would
-be a dozen chances for one to fail. Book imports use the same targeted path:
-the request carries `hint:"book"` and no movie/series ids, because Cinema's
-Books library derives ebook-versus-audiobook and author/title identity from
-the imported files and their shelf path.
+be a dozen chances for one to fail. Book imports use the same targeted path
+and carry `hint:"book"` plus Curator's exact title, author, persisted
+ebook/audiobook medium, stable work id, stable edition id, and an Open Library
+cover URL when available. Cinema verifies the files, but it does not have to
+repeat Curator's provider match. Editions are related by an exact work id;
+title and author never become identity.
 
 **plurx is different from the other two.** Plex and Jellyfin get a poke —
 "something changed, sweep your library" — and then identify the new file by
 searching for its filename, which is the step that puts the 2015 remake's
-poster on the 1995 film. plurx is told the exact paths that landed and, for
-movies/series, the TMDB/IMDb ids Monarr already holds, so it indexes one
-folder and matches by id. Books are path-identified instead; nothing invents
-a TMDB id for them.
+poster on the 1995 film. plurx is told the exact paths that landed and the
+identity Curator already holds, so it indexes one folder and does not repeat
+a fuzzy match. Movies and series use TMDB/IMDb fields. Books use the separate
+work/edition contract above; nothing invents a movie id for them.
 
 Its key is a **scoped** plurx key (`plx_…`, scope `scan:trigger`), never a
 plurx admin token. That distinction is the reason scoped keys exist: a plurx

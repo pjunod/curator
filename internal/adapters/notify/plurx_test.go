@@ -375,10 +375,9 @@ func TestPlurxKeepsTheResultOfThePartThatWorked(t *testing.T) {
 	}
 }
 
-// A book is path-identified: the Books library decides whether the imported
-// files are text or audio and derives author/title identity from the shelf.
-// Curator must still close the handoff immediately instead of leaving the
-// periodic Cinema scan to discover the edition hours later.
+// A book keeps movie/series ids out of the request but carries the work and
+// edition facts Curator already proved. Cinema still verifies text versus
+// audio from the files; it does not fuzzy-link title + author.
 func TestPlurxSendsBookImportsToTheBooksLibrary(t *testing.T) {
 	var got map[string]any
 	var auth string
@@ -394,6 +393,11 @@ func TestPlurxSendsBookImportsToTheBooksLibrary(t *testing.T) {
 	n.Import.Kind = "book"
 	n.Import.TmdbID = 0
 	n.Import.ImdbID = ""
+	n.Import.Book = &ports.BookImportInfo{
+		Title: "The Dispossessed", Author: "Ursula K. Le Guin", Medium: "ebook",
+		WorkID: "curator:openlibrary:OL87320W", EditionID: "curator:item:84:ebook",
+		CoverURL: "https://covers.openlibrary.org/b/id/123-L.jpg",
+	}
 	target := plurxNotifier(srv.URL)
 	if err := target.Send(context.Background(), n); err != nil {
 		t.Fatalf("book targeted scan: %v", err)
@@ -410,11 +414,34 @@ func TestPlurxSendsBookImportsToTheBooksLibrary(t *testing.T) {
 	if got["ids"] != nil || got["series"] != nil {
 		t.Errorf("book request invented provider ids: %v", got)
 	}
+	book, _ := got["book"].(map[string]any)
+	if book == nil || book["title"] != "The Dispossessed" ||
+		book["author"] != "Ursula K. Le Guin" || book["medium"] != "ebook" ||
+		book["work_id"] != "curator:openlibrary:OL87320W" ||
+		book["edition_id"] != "curator:item:84:ebook" ||
+		book["cover_url"] != "https://covers.openlibrary.org/b/id/123-L.jpg" {
+		t.Errorf("book metadata = %v", got["book"])
+	}
 	if got["correlation_id"] != "t-42-a3f9c1" {
 		t.Errorf("correlation_id = %v", got["correlation_id"])
 	}
 	delivery := target.(ports.DeliveryReporter).Delivery()
 	if !strings.Contains(delivery, "1401") {
 		t.Errorf("Cinema's book item id must close the transfer trace, got %q", delivery)
+	}
+}
+
+func TestPlurxKeepsLegacyBookEventsAdditive(t *testing.T) {
+	info := &ports.ImportInfo{Kind: "book", Transfer: "t-legacy"}
+	req := scanBody("/media/books/Legacy/Book", info)
+	if req.Hint != "book" || req.Book != nil {
+		t.Fatalf("legacy book scan = hint %q book %+v", req.Hint, req.Book)
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"book":`) {
+		t.Errorf("legacy request grew an incomplete book object: %s", raw)
 	}
 }

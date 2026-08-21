@@ -78,9 +78,18 @@ type (
 		Dirs []string `json:"dirs,omitempty"`
 		// MediaItemKind is movie | series | book. Not a bool: "not a movie"
 		// is three different things downstream, and the plurx notifier needs
-		// the distinction to shape ids versus path-identified Books scans.
+		// the distinction to shape ids versus explicit Books work/edition scans.
 		MediaItemKind string `json:"mediaItemKind,omitempty"`
 		Title         string `json:"title,omitempty"`
+		// Book metadata is explicit Curator knowledge carried to Cinema at the
+		// import boundary. WorkID is the only cross-edition relationship key;
+		// title and author are display facts and are never used as identity.
+		BookTitle     string `json:"bookTitle,omitempty"`
+		BookAuthor    string `json:"bookAuthor,omitempty"`
+		BookMedium    string `json:"bookMedium,omitempty"`
+		BookWorkID    string `json:"bookWorkId,omitempty"`
+		BookEditionID string `json:"bookEditionId,omitempty"`
+		BookCoverURL  string `json:"bookCoverUrl,omitempty"`
 		// TmdbID and ImdbID identify the ITEM — for a series that is the
 		// show, never the episode: an episode's own id is not what
 		// identifies the series it belongs to. 0 / "" when unknown.

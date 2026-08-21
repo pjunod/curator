@@ -57,15 +57,31 @@ type ImportInfo struct {
 	Paths []string `json:"paths,omitempty"`
 	Dirs  []string `json:"dirs,omitempty"`
 	// Kind is movie | series | book. The plurx notifier uses it to keep
-	// movie ids, series ids, and path-identified Books imports on their
+	// movie ids, series ids, and explicit Books work/edition facts on their
 	// honest request shapes.
 	Kind  string `json:"kind,omitempty"`
 	Title string `json:"title,omitempty"`
+	// Book carries Curator's explicit edition facts. It is absent for every
+	// non-book import and for a legacy/incomplete book event. WorkID, never a
+	// title/author comparison, is what allows Cinema to relate editions.
+	Book *BookImportInfo `json:"book,omitempty"`
 	// TmdbID and ImdbID identify the item: for a series, the SHOW.
 	TmdbID int64  `json:"tmdbId,omitempty"`
 	ImdbID string `json:"imdbId,omitempty"`
 	// Transfer names this transfer end to end, across applications.
 	Transfer string `json:"transfer,omitempty"`
+}
+
+// BookImportInfo is the additive Curator → Cinema book handoff contract.
+// Medium is ebook | audiobook. CoverURL is omitted unless it is an HTTPS
+// Open Library cover URL; Cinema validates the same boundary before fetch.
+type BookImportInfo struct {
+	Title     string `json:"title,omitempty"`
+	Author    string `json:"author,omitempty"`
+	Medium    string `json:"medium"`
+	WorkID    string `json:"work_id"`
+	EditionID string `json:"edition_id"`
+	CoverURL  string `json:"cover_url,omitempty"`
 }
 
 // Notifier delivers notifications. Library-refresh notifiers (Plex,
