@@ -21,6 +21,24 @@ type chainProvider struct {
 	hydrates *int
 }
 
+// dualIDProvider models TMDB's hydrated series response: search results carry
+// only a TMDB id, while GetSeries also reveals the shared TVDB identity.
+// That second id is what lets Monarr recognize a series first added through
+// TVmaze as the same aggregate rather than a second title.
+type dualIDProvider struct {
+	adoptProvider
+	tvdbID int64
+}
+
+func (p dualIDProvider) GetSeries(ctx context.Context, id int64) (domain.MediaItem, error) {
+	item, err := p.adoptProvider.GetSeries(ctx, id)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	item.IDs.TVDB = p.tvdbID
+	return item, nil
+}
+
 func (p chainProvider) Name() string { return p.name }
 
 func (p chainProvider) SearchSeries(context.Context, string) ([]ports.SearchResult, error) {
@@ -213,6 +231,45 @@ func TestAddBySeriesChainKeysTheItemOnItsTVDBID(t *testing.T) {
 	}
 }
 
+// A TMDB search row does not carry external ids. The shared TVDB identity is
+// learned only when the row is hydrated, so duplicate detection has to run
+// again against the hydrated aggregate. This is the real-world path that
+// produced two Dexter: New Blood cards for one show.
+func TestAddHydrationCollapsesTheSameSeriesAcrossIDSpaces(t *testing.T) {
+	const tmdbID, tvdbID = int64(131927), int64(412366)
+	svc, _, _ := newService(t)
+	svc.meta = dualIDProvider{
+		adoptProvider: adoptProvider{series: []ports.SearchResult{
+			series(tmdbID, "Dexter: New Blood", 2021),
+		}},
+		tvdbID: tvdbID,
+	}
+	svc.series = []ports.SeriesProvider{chainProvider{
+		name:    "tvmaze",
+		results: []ports.SearchResult{chained(tvdbID, "Dexter: New Blood", 2021)},
+	}}
+	ctx := context.Background()
+
+	if _, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindSeries, TVDBID: tvdbID, Monitored: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindSeries, TMDBID: tmdbID, Monitored: true,
+	}); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("the hydrated TVDB identity should stop a second item, got %v", err)
+	}
+
+	items, err := svc.List(ctx, domain.KindSeries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("one series identity must produce one item, got %d", len(items))
+	}
+}
+
 // Two series that neither provider has a TVDB id for must not collapse onto
 // each other. A zero id means "unknown", and treating it as a value is how
 // every un-keyed series becomes the same row.
@@ -270,6 +327,29 @@ func TestInteractiveSearchMergesTheChainAndDropsDuplicates(t *testing.T) {
 	// The first link keeps its position; the chain's extras follow.
 	if res[0].Title != "Cunk on..." || res[len(res)-1].Title != "Cunk on Earth" {
 		t.Errorf("want the first provider first and the chain's addition last, got %v", titles)
+	}
+}
+
+func TestInteractiveSearchMergesCrossProviderIDs(t *testing.T) {
+	const tmdbID, tvdbID = int64(131927), int64(412366)
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{series: []ports.SearchResult{
+		series(tmdbID, "Dexter: New Blood", 2021),
+	}}
+	svc.series = []ports.SeriesProvider{chainProvider{
+		name:    "tvmaze",
+		results: []ports.SearchResult{chained(tvdbID, "Dexter: New Blood", 2021)},
+	}}
+
+	got, err := svc.Search(context.Background(), domain.KindSeries, "dexter new blood")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("the same result from two providers should collapse, got %d", len(got))
+	}
+	if got[0].TMDBID != tmdbID || got[0].TVDBID != tvdbID {
+		t.Fatalf("collapsed result lost an identity: %+v", got[0])
 	}
 }
 

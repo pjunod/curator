@@ -81,6 +81,22 @@ func TestDuplicateKindTmdbRejected(t *testing.T) {
 	}
 }
 
+func TestDuplicateKindTvdbRejectedAcrossDifferentTmdbIDs(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	first := sampleSeries()
+	first.IDs.TMDB = 0
+	if _, err := db.CreateMediaItem(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	second := sampleSeries()
+	second.IDs.TMDB = 131927
+	if _, err := db.CreateMediaItem(ctx, second); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("shared TVDB identity should be duplicate, got %v", err)
+	}
+}
+
 func TestListAndDelete(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()

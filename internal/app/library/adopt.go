@@ -653,6 +653,16 @@ func (s *Service) itemHolding(ctx context.Context, path string) (domain.MediaIte
 		if it.Path == path {
 			return it, true
 		}
+		copies, err := s.db.ListMediaCopies(ctx, it.ID)
+		if err != nil {
+			s.log.Warn("adopt: could not check copy folders", "item", it.ID, "err", err)
+			continue
+		}
+		for _, cp := range copies {
+			if cp.Path == path {
+				return it, true
+			}
+		}
 	}
 	return domain.MediaItem{}, false
 }
