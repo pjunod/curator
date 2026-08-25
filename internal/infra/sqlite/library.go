@@ -162,7 +162,7 @@ func marshalRatings(rs []domain.Rating) string {
 
 // CreateMediaItem inserts the aggregate root and, for series, its seasons
 // and episodes, in one transaction. Returns the new id, or ErrDuplicate if
-// the (kind, tmdb id) pair already exists.
+// the item already exists under a stable external identity.
 func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, error) {
 	// Callers predating ADR 0018 (notably adoption and compatibility tests)
 	// do not know about the explicit edition field. Resolve it once at the
@@ -182,6 +182,21 @@ func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, er
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := d.Write.WithTx(tx)
+	// The schema's historical unique index covers TMDB. TVDB identity also
+	// needs an atomic check inside the single-writer transaction: a series
+	// first added through TVmaze and later hydrated through TMDB otherwise
+	// has different TMDB values but is still exactly the same aggregate.
+	if m.IDs.TVDB != 0 {
+		_, lookupErr := q.GetMediaItemByKindTvdb(ctx, sqlitegen.GetMediaItemByKindTvdbParams{
+			Kind: string(m.Kind), TvdbID: m.IDs.TVDB,
+		})
+		switch {
+		case lookupErr == nil:
+			return 0, ErrDuplicate
+		case !errors.Is(lookupErr, sql.ErrNoRows):
+			return 0, lookupErr
+		}
+	}
 
 	id, err := q.InsertMediaItem(ctx, insertParams(m, time.Now()))
 	if err != nil {

@@ -251,11 +251,13 @@ func (s *Service) appendSeriesChain(
 	if len(s.series) == 0 {
 		return have
 	}
-	seen := make(map[string]bool, len(have))
-	for _, r := range have {
-		seen[titleYearKey(r)] = true
+	// We enrich duplicate rows with identities learned from later providers;
+	// copy first so a provider-owned/cached result slice is never mutated.
+	out := append([]ports.SearchResult(nil), have...)
+	seen := make(map[string]int, len(out))
+	for i, r := range out {
+		seen[titleYearKey(r)] = i
 	}
-	out := have
 	for _, p := range s.series {
 		if ctx.Err() != nil {
 			return out
@@ -267,10 +269,21 @@ func (s *Service) appendSeriesChain(
 			continue
 		}
 		for _, r := range res {
-			if seen[titleYearKey(r)] {
+			key := titleYearKey(r)
+			if i, duplicate := seen[key]; duplicate {
+				// Search rows from TMDB carry only TMDB identity, while the
+				// matching TVmaze row carries TVDB identity. Collapsing the
+				// duplicate without merging those ids loses the only fact that
+				// proves a TVDB-keyed library item is already this series.
+				if out[i].TMDBID == 0 {
+					out[i].TMDBID = r.TMDBID
+				}
+				if out[i].TVDBID == 0 {
+					out[i].TVDBID = r.TVDBID
+				}
 				continue
 			}
-			seen[titleYearKey(r)] = true
+			seen[key] = len(out)
 			out = append(out, r)
 		}
 	}
@@ -413,6 +426,23 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	}
 	if err != nil {
 		return domain.MediaItem{}, err
+	}
+	if item.IDs.TMDB == 0 {
+		item.IDs.TMDB = req.TMDBID
+	}
+	if item.IDs.TVDB == 0 {
+		item.IDs.TVDB = req.TVDBID
+	}
+	if item.Kind == domain.KindMovie || item.Kind == domain.KindSeries {
+		// TMDB search results do not include external ids; GetSeries does.
+		// Check again after hydration so an item first added through a
+		// TVDB-keyed provider cannot be added a second time through TMDB.
+		hydrated := req
+		hydrated.TMDBID = item.IDs.TMDB
+		hydrated.TVDBID = item.IDs.TVDB
+		if err := s.existingByAnyID(ctx, hydrated); err != nil {
+			return domain.MediaItem{}, err
+		}
 	}
 
 	s.enrichRatings(ctx, &item)
@@ -815,6 +845,12 @@ func (s *Service) AddCopy(ctx context.Context, itemID int64, req CopyRequest) (d
 	id, err := s.db.AddMediaCopy(ctx, cp)
 	if err != nil {
 		return domain.MediaItem{}, err
+	}
+	// The folder may be present in the last scan/review snapshot from before
+	// the user attached it as a copy. It is claimed now; leaving stale work
+	// behind lets the adoption job turn this copy into another media item.
+	if cp.Path != "" {
+		s.dropFromOutstanding(ctx, cp.Path)
 	}
 	s.log.Info("library: copy added", "item", item.Title, "copy", id,
 		"profile", req.QualityProfileID, "path", cp.Path)

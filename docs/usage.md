@@ -616,6 +616,13 @@ or **shares the item's folder** — filenames carry the quality, and
 Jellyfin/Plex group same-folder versions as one entry. Removing a copy
 drops its records only; files on disk stay.
 
+A separate copy folder is claimed by that item as soon as you add it. Even
+if an earlier scan had already listed the folder for adoption, it is removed
+from that queue and will not become a second library item. Series identity is
+also checked across TMDB and TVDB after metadata hydration, so the same show
+cannot split into two cards merely because the two paths named it through
+different providers.
+
 ## Activity, and keeping it finite
 
 The Activity page leads with what is **moving**: the in-flight sections

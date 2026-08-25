@@ -248,6 +248,112 @@ func TestScanReconciles(t *testing.T) {
 	_ = db
 }
 
+// A separate copy folder may have appeared in the previous scan as
+// unmatched. Claiming it as a copy has to remove that stale adoption work
+// immediately; otherwise the adoption job can turn the copy into a second
+// media item after the user has already attached it to the first one.
+func TestAddCopyClaimsAStaleUnmatchedFolder(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+
+	primaryRoot, copyRoot := t.TempDir(), t.TempDir()
+	primaryRF, err := svc.AddRootFolder(ctx, primaryRoot, domain.RootKindOf(domain.KindSeries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyRF, err := svc.AddRootFolder(ctx, copyRoot, domain.RootKindOf(domain.KindSeries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindSeries, TMDBID: 100, RootFolderID: primaryRF.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(item.Path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	copyPath := filepath.Join(copyRoot, "Test Show (2020)")
+	if err := os.MkdirAll(copyPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before, err := svc.Scan(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.UnmatchedTotal != 1 || before.UnmatchedDirs[0].Path != copyPath {
+		t.Fatalf("precondition: copy folder should be unmatched, got %+v", before.UnmatchedDirs)
+	}
+
+	got, err := svc.AddCopy(ctx, item.ID, CopyRequest{
+		QualityProfileID: 2, RootFolderID: copyRF.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Copies) != 1 || got.Copies[0].Path != copyPath {
+		t.Fatalf("copy was not attached at %q: %+v", copyPath, got.Copies)
+	}
+	after, ok, err := svc.LastScanReport(ctx)
+	if err != nil || !ok {
+		t.Fatalf("last scan report: ok=%v err=%v", ok, err)
+	}
+	if after.UnmatchedTotal != 0 || len(after.UnmatchedDirs) != 0 {
+		t.Fatalf("claimed copy folder remained eligible for adoption: %+v", after.UnmatchedDirs)
+	}
+}
+
+func TestAdoptionRecognizesASeparateCopyFolderAsHeld(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+
+	primaryRoot, copyRoot := t.TempDir(), t.TempDir()
+	primaryRF, err := svc.AddRootFolder(ctx, primaryRoot, domain.RootKindOf(domain.KindSeries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyRF, err := svc.AddRootFolder(ctx, copyRoot, domain.RootKindOf(domain.KindSeries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := svc.Add(ctx, AddRequest{
+		Kind: domain.KindSeries, TMDBID: 100, RootFolderID: primaryRF.ID, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(item.Path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	copyPath := filepath.Join(copyRoot, "Test Show (2020)")
+	if err := os.MkdirAll(copyPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddCopy(ctx, item.ID, CopyRequest{
+		QualityProfileID: 2, RootFolderID: copyRF.ID, Monitored: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = svc.adoptOne(ctx, Proposal{
+		RootFolderID: copyRF.ID,
+		Path:         copyPath,
+		Candidates:   []ports.SearchResult{series(100, "Test Show", 2020)},
+	})
+	if err != nil {
+		t.Fatalf("an adoption retry for a held copy folder should be a no-op: %v", err)
+	}
+	items, err := svc.List(ctx, domain.KindSeries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("copy folder adoption created a second item: %d", len(items))
+	}
+}
+
 // fakeBooks implements ports.BookProvider with canned data.
 type fakeBooks struct{}
 
