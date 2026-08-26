@@ -3,6 +3,7 @@ import {
   coerceAppearance,
   coerceLayout,
   coercePalette,
+  PALETTES,
   resolveDisplayMode,
 } from './display'
 
@@ -22,5 +23,12 @@ describe('display preferences', () => {
   it('keeps midnight-only palettes dark', () => {
     expect(resolveDisplayMode({ appearance: 'light', palette: 'void' }, true)).toBe('dark')
     expect(resolveDisplayMode({ appearance: 'light', palette: 'vhs' }, true)).toBe('dark')
+    expect(resolveDisplayMode({ appearance: 'light', palette: 'panoptic' }, true)).toBe('dark')
+    expect(resolveDisplayMode({ appearance: 'auto', palette: 'redline' }, true)).toBe('dark')
+  })
+
+  it('ships both cockpit palettes in the display catalogue', () => {
+    expect(PALETTES.map((palette) => palette.id)).toContain('panoptic')
+    expect(PALETTES.map((palette) => palette.id)).toContain('redline')
   })
 })

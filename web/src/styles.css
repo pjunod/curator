@@ -126,6 +126,20 @@
   --text: #14201c; --text-muted: #586a62; --accent: #176b54; --on-accent: #fff;
   --ok: #196b48; --warning: #735b0b; --error: #b33a32;
 }
+:root[data-palette='panoptic'] {
+  --bg: #0a0a0f; --bg-raised: #10131b; --bg-hover: #171c25; --border: rgba(138,232,255,.16);
+  --text: #e8eaed; --text-muted: #9eaab2; --accent: #00d4ff; --on-accent: #001014;
+  --ok: #5ce1b4; --warning: #ffd178; --error: #ff8191; --radius: 12px;
+  --cockpit-glass: rgba(12,14,22,.78); --cockpit-strong: rgba(9,12,18,.90);
+  --cockpit-glow: rgba(0,212,255,.34);
+}
+:root[data-palette='redline'] {
+  --bg: #070708; --bg-raised: #111214; --bg-hover: #191a1d; --border: rgba(255,122,128,.17);
+  --text: #f0eded; --text-muted: #aaa1a3; --accent: #ff5964; --on-accent: #170204;
+  --ok: #6ccf9a; --warning: #f6c760; --error: #ff9f70; --radius: 12px;
+  --cockpit-glass: rgba(16,13,15,.80); --cockpit-strong: rgba(10,9,11,.92);
+  --cockpit-glow: rgba(255,55,70,.32);
+}
 
 :root {
   --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
@@ -1637,6 +1651,120 @@ a.pill-info:hover {
 :root[data-palette='void'] .card,
 :root[data-palette='void'] .poster-card {
   box-shadow: none;
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse at 50% -18%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 42%),
+    repeating-linear-gradient(180deg, transparent 0 3px, color-mix(in srgb, var(--accent) 1.8%, transparent) 3px 4px);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) .sidebar,
+:root:is([data-palette='panoptic'],[data-palette='redline']) .mobile-top,
+:root:is([data-palette='panoptic'],[data-palette='redline']) .mobile-tabs,
+:root:is([data-palette='panoptic'],[data-palette='redline']) .more-sheet {
+  background: var(--cockpit-strong);
+  border-color: var(--border);
+  -webkit-backdrop-filter: blur(24px) saturate(1.35);
+  backdrop-filter: blur(24px) saturate(1.35);
+  box-shadow: inset 0 1px rgba(255,255,255,.035), 0 10px 30px rgba(0,0,0,.26);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) .wordmark {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  text-shadow: 0 0 24px var(--cockpit-glow);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) .wordmark span {
+  color: var(--accent);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) .wordmark::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  vertical-align: 2px;
+  box-shadow: 0 0 9px var(--cockpit-glow), inset 0 0 5px var(--cockpit-glow);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) .sidebar nav a,
+:root:is([data-palette='panoptic'],[data-palette='redline']) .sheet-nav a,
+:root:is([data-palette='panoptic'],[data-palette='redline']) .mobile-tab,
+:root:is([data-palette='panoptic'],[data-palette='redline']) .card-label,
+:root:is([data-palette='panoptic'],[data-palette='redline']) th {
+  font-family: var(--font-mono);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) .page-head h1,
+:root:is([data-palette='panoptic'],[data-palette='redline']) h2 {
+  font-family: var(--font-mono);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) h2::before {
+  content: '//';
+  color: var(--accent);
+  text-shadow: 0 0 10px var(--cockpit-glow);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) .panel,
+:root:is([data-palette='panoptic'],[data-palette='redline']) .card,
+:root:is([data-palette='panoptic'],[data-palette='redline']) .poster-card,
+:root:is([data-palette='panoptic'],[data-palette='redline']) .display-menu,
+:root:is([data-palette='panoptic'],[data-palette='redline']) .search-results {
+  background: var(--cockpit-glass);
+  border-color: var(--border);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
+  box-shadow: 0 12px 34px rgba(0,0,0,.58), inset 0 1px rgba(255,255,255,.035);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) button:not(.btn-danger) {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) button:not(.btn-danger):hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 16px var(--cockpit-glow);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) input,
+:root:is([data-palette='panoptic'],[data-palette='redline']) select,
+:root:is([data-palette='panoptic'],[data-palette='redline']) textarea {
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border-color: var(--border);
+  caret-color: var(--accent);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) .poster-card {
+  transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) .poster-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 0 20px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+:root:is([data-palette='panoptic'],[data-palette='redline']) ::selection {
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .global-search {
