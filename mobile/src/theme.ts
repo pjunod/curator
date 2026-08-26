@@ -144,6 +144,20 @@ const palettes: Record<PalettePreference, PaletteThemes> = {
       ok: '#196b48', warning: '#735b0b', error: '#b33a32',
     }),
   },
+  panoptic: {
+    dark: makeTheme(true, {
+      bg: '#0a0a0f', raised: '#10131b', hover: '#171c25', border: '#293e48',
+      text: '#e8eaed', muted: '#9eaab2', accent: '#00d4ff', onAccent: '#001014',
+      ok: '#5ce1b4', warning: '#ffd178', error: '#ff8191',
+    }),
+  },
+  redline: {
+    dark: makeTheme(true, {
+      bg: '#070708', raised: '#111214', hover: '#191a1d', border: '#44282c',
+      text: '#f0eded', muted: '#aaa1a3', accent: '#ff5964', onAccent: '#170204',
+      ok: '#6ccf9a', warning: '#f6c760', error: '#ff9f70',
+    }),
+  },
 }
 
 export function paletteTheme(palette: PalettePreference, mode: 'light' | 'dark'): Theme {

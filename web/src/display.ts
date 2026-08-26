@@ -11,6 +11,8 @@ export type PaletteId =
   | 'vhs'
   | 'paper'
   | 'tide'
+  | 'panoptic'
+  | 'redline'
 
 export interface DisplaySettings {
   appearance: Appearance
@@ -35,6 +37,8 @@ export const PALETTES: ReadonlyArray<{ id: PaletteId; name: string; darkOnly?: b
   { id: 'vhs', name: 'VHS', darkOnly: true },
   { id: 'paper', name: 'Paper' },
   { id: 'tide', name: 'Tide' },
+  { id: 'panoptic', name: 'Panoptic', darkOnly: true },
+  { id: 'redline', name: 'Redline', darkOnly: true },
 ]
 
 export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {

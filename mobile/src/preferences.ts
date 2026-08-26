@@ -12,6 +12,8 @@ export type PalettePreference =
   | 'vhs'
   | 'paper'
   | 'tide'
+  | 'panoptic'
+  | 'redline'
 
 export const LAYOUT_OPTIONS: ReadonlyArray<{ id: LayoutPreference; name: string }> = [
   { id: 'classic', name: 'Classic' },
@@ -30,6 +32,8 @@ export const PALETTE_OPTIONS: ReadonlyArray<{ id: PalettePreference; name: strin
   { id: 'vhs', name: 'VHS', darkOnly: true },
   { id: 'paper', name: 'Paper' },
   { id: 'tide', name: 'Tide' },
+  { id: 'panoptic', name: 'Panoptic', darkOnly: true },
+  { id: 'redline', name: 'Redline', darkOnly: true },
 ]
 
 export interface AppPreferences {
