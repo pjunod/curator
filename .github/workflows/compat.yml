@@ -22,7 +22,7 @@ concurrency:
 jobs:
   conformance:
     name: Fake-consumer flows + contract shapes
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
 
   e2e:
     name: Personalities against the real binary
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +60,13 @@ jobs:
         working-directory: test/e2e
         run: |
           npm ci
-          npx playwright install --with-deps chromium
+          if [ "${CI_RUNNER_MODE}" = github ]; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install chromium
+          fi
+        env:
+          CI_RUNNER_MODE: ${{ vars.CI_RUNNER_MODE || 'self-hosted' }}
 
       - name: Run compat e2e chain
         working-directory: test/e2e
