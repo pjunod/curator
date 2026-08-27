@@ -68,6 +68,18 @@ An `http://` LAN address is supported for homelabs; use HTTPS or a trusted VPN
 for access outside the local network because cleartext HTTP exposes the API
 key in transit.
 
+To install a self-contained build on a paired iPhone, use the Release device
+script and choose the phone when prompted:
+
+```bash
+npm run ios:device
+```
+
+Release builds embed the JavaScript bundle and keep working when this Mac and
+Metro are offline. Xcode and `expo run:ios` default to Debug; a Debug build is
+only for active development and will stop at the splash screen with “No script
+URL provided” whenever Metro is not running.
+
 Under **More → Display**, Layout switches among Classic, Plex, and Theater.
 Classic is the native navigation the app shipped before this selector. Plex
 uses a stronger bottom bar on phones and a pinned rail on tablets; Theater
