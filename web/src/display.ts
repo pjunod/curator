@@ -13,6 +13,7 @@ export type PaletteId =
   | 'tide'
   | 'panoptic'
   | 'redline'
+  | 'panovic'
 
 export interface DisplaySettings {
   appearance: Appearance
@@ -39,6 +40,7 @@ export const PALETTES: ReadonlyArray<{ id: PaletteId; name: string; darkOnly?: b
   { id: 'tide', name: 'Tide' },
   { id: 'panoptic', name: 'Panoptic', darkOnly: true },
   { id: 'redline', name: 'Redline', darkOnly: true },
+  { id: 'panovic', name: 'Panovic', darkOnly: true },
 ]
 
 export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {

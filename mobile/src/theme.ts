@@ -158,6 +158,13 @@ const palettes: Record<PalettePreference, PaletteThemes> = {
       ok: '#6ccf9a', warning: '#f6c760', error: '#ff9f70',
     }),
   },
+  panovic: {
+    dark: makeTheme(true, {
+      bg: '#000000', raised: '#181818', hover: '#242424', border: 'rgba(255, 255, 255, 0.06)',
+      text: '#e8e6e1', muted: '#9a9aa0', accent: '#f0723b', onAccent: '#140a00',
+      ok: '#5fb582', warning: '#d9a05b', error: '#ff7a66',
+    }),
+  },
 }
 
 export function paletteTheme(palette: PalettePreference, mode: 'light' | 'dark'): Theme {
