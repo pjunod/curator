@@ -15,7 +15,7 @@ concurrency:
 jobs:
   unit:
     name: Unit tests (Go + web)
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
     timeout-minutes: 20
     # Read-only. This job used to push the coverage badge to main; it does
     # not any more (see "Flag a stale coverage badge" below), and a token
@@ -120,7 +120,7 @@ jobs:
 
   e2e:
     name: End-to-end (real binary + browser)
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -145,7 +145,13 @@ jobs:
         working-directory: test/e2e
         run: |
           npm ci
-          npx playwright install --with-deps chromium
+          if [ "${CI_RUNNER_MODE}" = github ]; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install chromium
+          fi
+        env:
+          CI_RUNNER_MODE: ${{ vars.CI_RUNNER_MODE || 'self-hosted' }}
 
       - name: Run E2E suite
         working-directory: test/e2e
@@ -161,7 +167,7 @@ jobs:
 
   mobile:
     name: Mobile (iOS + Android bundles)
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
