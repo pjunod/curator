@@ -14,14 +14,14 @@
       // display choices existed, so an unknown future preference stays safe.
       try {
         var layouts = ['classic', 'plex', 'theater']
-        var palettes = ['classic', 'terminal', 'noirr', 'amber', 'giallo', 'silver', 'void', 'vhs', 'paper', 'tide', 'panoptic', 'redline', 'panovic']
+        var palettes = ['classic', 'terminal', 'noirr', 'amber', 'giallo', 'silver', 'void', 'vhs', 'paper', 'tide', 'panoptic', 'redline', 'panovic', 'copper']
         var layout = localStorage.getItem('monarr-layout') || 'classic'
         var palette = localStorage.getItem('monarr-palette') || 'classic'
         var appearance = localStorage.getItem('monarr-theme') || 'auto'
         if (!layouts.includes(layout)) layout = 'classic'
         if (!palettes.includes(palette)) palette = 'classic'
         if (!['auto', 'light', 'dark'].includes(appearance)) appearance = 'auto'
-        var darkOnly = palette === 'void' || palette === 'vhs' || palette === 'panoptic' || palette === 'redline' || palette === 'panovic'
+        var darkOnly = palette === 'void' || palette === 'vhs' || palette === 'panoptic' || palette === 'redline' || palette === 'panovic' || palette === 'copper'
         var systemLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
         var mode = darkOnly ? 'dark' : appearance === 'auto' ? (systemLight ? 'light' : 'dark') : appearance
         document.documentElement.dataset.layout = layout

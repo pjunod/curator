@@ -15,6 +15,7 @@ export type PalettePreference =
   | 'panoptic'
   | 'redline'
   | 'panovic'
+  | 'copper'
 
 export const LAYOUT_OPTIONS: ReadonlyArray<{ id: LayoutPreference; name: string }> = [
   { id: 'classic', name: 'Classic' },
@@ -35,7 +36,8 @@ export const PALETTE_OPTIONS: ReadonlyArray<{ id: PalettePreference; name: strin
   { id: 'tide', name: 'Tide' },
   { id: 'panoptic', name: 'Panoptic', darkOnly: true },
   { id: 'redline', name: 'Redline', darkOnly: true },
-  { id: 'panovic', name: 'Panovic', darkOnly: true },
+  { id: 'panovic', name: 'Burnt Pumpkin', darkOnly: true },
+  { id: 'copper', name: 'Copper', darkOnly: true },
 ]
 
 export interface AppPreferences {
