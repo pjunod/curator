@@ -24,12 +24,20 @@ const (
        "downloaded_bytes":250,"dupe_key":"","dupe_score":0,"failed_articles":0,
        "failed_bytes":0,"files_done":0,"files_total":1,"health":1000,"id":1,
        "name":"Show.S01E01","params":[["monarr-transfer","t-42-a3f9c1"]],
-       "pp_done":false,"priority":0,"rate_bps":0,"remaining_bytes":750,
+       "pp_done":false,"ready":false,"priority":0,"rate_bps":0,"remaining_bytes":750,
        "retried_articles":0,"size_bytes":1000,"status":"queued","total_articles":1},
       {"id":2,"name":"Movie.2024","status":{"post":{"stage":"par_verify"}},
-       "size_bytes":100,"downloaded_bytes":100,"params":[]},
+       "size_bytes":100,"downloaded_bytes":100,"pp_done":false,"ready":false,
+       "stages":[{"stage":"par_verify","started_at_unix":1000,"ms":null}],"params":[]},
       {"id":3,"name":"Other.2024","status":"post_queued",
-       "size_bytes":100,"downloaded_bytes":100,"params":[]}
+       "size_bytes":100,"downloaded_bytes":100,"pp_done":false,"ready":false,"params":[]},
+      {"id":4,"name":"Recovery.2024","status":"completed",
+       "size_bytes":100,"downloaded_bytes":100,"pp_done":false,"ready":false,
+       "stages":[{"stage":"par_verify","started_at_unix":1000,"ms":null}],"params":[]},
+      {"id":5,"name":"Downloaded.2024","status":"completed",
+       "size_bytes":100,"downloaded_bytes":100,"pp_done":false,"ready":false,"params":[]},
+      {"id":10,"name":"Show.S01E00","status":"completed",
+       "size_bytes":1000,"downloaded_bytes":1000,"pp_done":true,"ready":true,"params":[]}
     ]}`
 
 	historyJSON = `{"entries":[
@@ -192,8 +200,8 @@ func TestStatusesMapsQueueAndHistory(t *testing.T) {
 	for _, s := range got {
 		by[s.Handle] = s
 	}
-	if len(by) != 7 {
-		t.Fatalf("got %d statuses, want 3 queued + 4 history", len(by))
+	if len(by) != 9 {
+		t.Fatalf("got %d unique statuses, want 5 live + 4 historical", len(by))
 	}
 
 	// A queued job, with progress from the byte counters.
@@ -210,6 +218,18 @@ func TestStatusesMapsQueueAndHistory(t *testing.T) {
 	}
 	if s := by["3"]; s.State != ports.StateDownloading {
 		t.Errorf("job 3 (post_queued) = %+v, want downloading", s)
+	}
+	// Delayed PAR recovery used to produce this contradictory wire shape:
+	// top-level completed, ready false, and an open verification span. The
+	// open stage is the real activity and download completion is not import
+	// permission.
+	if s := by["4"]; s.State != ports.StateDownloading || s.Stage != "par_verify" ||
+		!strings.Contains(s.Message, "par verify") {
+		t.Errorf("job 4 (delayed PAR recovery) = %+v, want active verification", s)
+	}
+	if s := by["5"]; s.State != ports.StateDownloading ||
+		!strings.Contains(s.Message, "download complete") {
+		t.Errorf("job 5 (download phase complete) = %+v, want to wait for PP", s)
 	}
 
 	// History: success carries the final directory, which is the whole
@@ -239,6 +259,28 @@ func TestStatusesMapsQueueAndHistory(t *testing.T) {
 	}
 }
 
+func TestStatusesPreferAnUnrelatedLiveJobOverSameTitleHistory(t *testing.T) {
+	srv := fake(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+		switch r.URL.Path {
+		case "/api/v1/jobs":
+			_, _ = w.Write([]byte(`{"jobs":[{"id":20,"name":"Same.Release","status":"queued"}]}`))
+			return true
+		case "/api/v1/history":
+			_, _ = w.Write([]byte(`{"entries":[{"job":10,"name":"Same.Release","status":"SUCCESS","final_dir":"/old/Same.Release"}]}`))
+			return true
+		default:
+			return false
+		}
+	})
+	got, err := client(t, srv, "", "tok").Statuses(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Handle != "20" || got[1].Handle != "10" {
+		t.Fatalf("status order = %+v, want live job before same-title history", got)
+	}
+}
+
 // `final_dir` is null for anything that never produced a directory. A
 // decoder that chokes on it would break the whole poll, not one row.
 func TestNullFinalDirIsNotAnError(t *testing.T) {
@@ -251,6 +293,28 @@ func TestNullFinalDirIsNotAnError(t *testing.T) {
 		if s.Handle == "11" && s.SavePath != "" {
 			t.Errorf("null final_dir became %q", s.SavePath)
 		}
+	}
+}
+
+// A malformed SUCCESS response without final_dir is not permission to import
+// from an empty path. A subsequent valid form completes normally.
+func TestSuccessWithoutFinalDirWaitsForThePath(t *testing.T) {
+	early := statusOfHistory(historyEntry{
+		Job: 14, Name: "Still.Post.Processing", Status: "SUCCESS",
+	})
+	if early.State != ports.StateDownloading {
+		t.Fatalf("early state = %q, want downloading until final_dir exists", early.State)
+	}
+	if early.SavePath != "" || !strings.Contains(early.Message, "waiting for final path") {
+		t.Errorf("early status = %+v, want an explicit wait with no path", early)
+	}
+
+	ready := statusOfHistory(historyEntry{
+		Job: 14, Name: "Still.Post.Processing", Status: "SUCCESS",
+		FinalDir: "/downloads/complete/Still.Post.Processing",
+	})
+	if ready.State != ports.StateCompleted || ready.SavePath == "" {
+		t.Errorf("ready status = %+v, want completed with final_dir", ready)
 	}
 }
 

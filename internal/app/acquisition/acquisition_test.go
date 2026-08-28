@@ -221,6 +221,84 @@ func TestGrabAndImportEpisode(t *testing.T) {
 	}
 }
 
+// A client can report a download phase as completed before it knows the final
+// payload path. Completion without a path must remain active; a later poll
+// carrying the path should import exactly once instead of leaving a false
+// failed row that can never self-heal.
+func TestAPathlessCompletionWaitsForTheLaterPath(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setup(t, nil, client)
+	ctx := context.Background()
+	release := "Test.Show.S01E01.1080p.WEB-DL.x264-PATH-RACE"
+
+	id, err := svc.Grab(ctx, GrabRequest{
+		MediaItemID: itemID, Season: 1, Episode: 1,
+		Title: release, DownloadURL: "magnet:path-race",
+		Indexer: "idx", Protocol: "torrent", Size: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The early client observation says complete but has no import path yet.
+	client.statuses = []ports.DownloadStatus{{
+		Handle: "h1", Name: release, State: ports.StateCompleted, Progress: 1,
+	}}
+	if err := svc.RefreshQueue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dl, _ := db.GetDownload(ctx, id)
+	if dl.State != "downloading" || dl.Error != "" {
+		t.Fatalf("early state = %q (%s), want an active wait", dl.State, dl.Error)
+	}
+	if dl.SavePath != "" || dl.ImportPath != "" {
+		t.Fatalf("early paths = save %q import %q, want neither persisted", dl.SavePath, dl.ImportPath)
+	}
+	for _, h := range dl.Handoff {
+		if h.Step == stepDownloaded || h.Step == stepImporting || h.Step == stepFailed {
+			t.Fatalf("pathless completion crossed the import boundary: %+v", dl.Handoff)
+		}
+	}
+
+	// Post-processing finishes and the same job's next observation has the
+	// path. It now crosses the boundary and imports normally.
+	payload := filepath.Join(t.TempDir(), release)
+	if err := os.MkdirAll(payload, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(payload, release+".mkv"), []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client.statuses = []ports.DownloadStatus{{
+		Handle: "h1", Name: release, State: ports.StateCompleted,
+		Progress: 1, SavePath: payload,
+	}}
+	if err := svc.RefreshQueue(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	dl, _ = db.GetDownload(ctx, id)
+	if dl.State != "imported" || dl.SavePath != payload {
+		t.Fatalf("final state = %q path %q error %q, want imported from %q",
+			dl.State, dl.SavePath, dl.Error, payload)
+	}
+	item, _ := db.GetMediaItemFull(ctx, itemID)
+	if len(item.Files) != 1 {
+		t.Fatalf("files = %+v, want exactly one imported file", item.Files)
+	}
+
+	// A ready queue row can remain visible for a tick after the final event.
+	// That stale progress observation must not undo the durable import.
+	svc.reconcileDownload(ctx, dl, ports.ClientConfig{}, ports.DownloadStatus{
+		Handle: "h1", Name: release, State: ports.StateDownloading, Progress: 1,
+		Message: "post-processing complete; waiting for final path",
+	}, "push")
+	dl, _ = db.GetDownload(ctx, id)
+	if dl.State != "imported" {
+		t.Fatalf("stale progress moved imported download backward to %q", dl.State)
+	}
+}
+
 func TestSeasonPackImportFansOut(t *testing.T) {
 	client := &fakeClient{}
 	svc, db, itemID := setup(t, nil, client)

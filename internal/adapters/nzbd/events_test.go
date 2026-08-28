@@ -110,6 +110,21 @@ func TestPpFinishedBecomesACompletionWithItsPath(t *testing.T) {
 	}
 }
 
+func TestPpFinishedSuccessWithoutAPathKeepsWaiting(t *testing.T) {
+	srv := newSSE(t, []string{
+		frame("17-1", "job_pp_finished", `{"job":7,"name":"Show","pp_status":"SUCCESS","final_dir":null}`),
+	}, true)
+	c := New(ports.ClientConfig{URL: srv.URL})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, _ := c.Subscribe(ctx)
+
+	ev := recv(t, ch)
+	if ev.Kind != ports.EventProgress || ev.Status.State != ports.StateDownloading {
+		t.Fatalf("pathless success = %+v, want a non-terminal wait", ev)
+	}
+}
+
 // A failed post-processing run is a failure, and it carries nzbd's own
 // reason rather than a generic one.
 func TestPpFinishedFailureBecomesAFailure(t *testing.T) {
@@ -165,7 +180,7 @@ func TestStagesAreProgressNotCompletion(t *testing.T) {
 // before post-processing has touched the files.
 func TestTickIsProgressOnly(t *testing.T) {
 	srv := newSSE(t, []string{
-		frame("", "tick", `{"status":{},"jobs":[{"id":1,"name":"A","status":"queued","size_bytes":100,"downloaded_bytes":25},{"id":2,"name":"B","status":"completed","size_bytes":100,"downloaded_bytes":100},{"id":3,"name":"C","status":{"post":{"stage":"unpack"}},"size_bytes":100,"downloaded_bytes":100}]}`),
+		frame("", "tick", `{"status":{},"jobs":[{"id":1,"name":"A","status":"queued","size_bytes":100,"downloaded_bytes":25},{"id":2,"name":"B","status":"completed","size_bytes":100,"downloaded_bytes":100},{"id":3,"name":"C","status":{"post":{"stage":"unpack"}},"size_bytes":100,"downloaded_bytes":100},{"id":4,"name":"D","status":"completed","size_bytes":100,"downloaded_bytes":100,"pp_done":true,"ready":true}]}`),
 	}, true)
 	c := New(ports.ClientConfig{URL: srv.URL})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -173,18 +188,23 @@ func TestTickIsProgressOnly(t *testing.T) {
 	ch, _ := c.Subscribe(ctx)
 
 	got := map[ports.Handle]ports.ClientEvent{}
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		ev := recv(t, ch)
 		got[ev.Handle] = ev
 	}
-	if _, leaked := got["2"]; leaked {
-		t.Error("a 'completed' job in a tick was pushed as an event — completion comes from job_pp_finished only")
+	if ev := got["2"]; ev.Kind != ports.EventProgress ||
+		ev.Status.State != ports.StateDownloading ||
+		!strings.Contains(ev.Status.Message, "download complete") {
+		t.Errorf("job 2 = %+v, want download-phase completion to remain progress until job_pp_finished", ev)
 	}
 	if ev := got["1"]; ev.Kind != ports.EventProgress || ev.Status.Progress != 0.25 {
 		t.Errorf("job 1 = %+v, want progress 0.25", ev)
 	}
 	if ev := got["3"]; ev.Status.State != ports.StateDownloading {
 		t.Errorf("job 3 (unpacking) = %+v, want still downloading", ev)
+	}
+	if _, leaked := got["4"]; leaked {
+		t.Error("a finalized queue row emitted stale progress after job_pp_finished")
 	}
 }
 

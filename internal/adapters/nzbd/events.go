@@ -216,7 +216,14 @@ func translate(name, data, id string) []ports.ClientEvent {
 			Job: f.Job, Name: f.Name, Status: f.PpStatus, FinalDir: f.FinalDir,
 		})
 		kind := ports.EventCompleted
-		if st.State != ports.StateCompleted {
+		switch st.State {
+		case ports.StateDownloading:
+			// A nominal success without final_dir is not actionable yet and
+			// is not a failure. Keep it live until polling finds the durable
+			// history row with its path.
+			kind = ports.EventProgress
+		case ports.StateCompleted:
+		default:
 			kind = ports.EventFailed
 		}
 		return []ports.ClientEvent{{Handle: st.Handle, Kind: kind, Seq: seq, Status: st}}
@@ -254,6 +261,12 @@ func translate(name, data, id string) []ports.ClientEvent {
 		}
 		evs := make([]ports.ClientEvent, 0, len(f.Jobs))
 		for _, j := range f.Jobs {
+			// job_pp_finished owns the terminal transition. A later queue tick
+			// can still carry the finalized row until nzbd retires it; emitting
+			// progress for that row would move downloaded/imported backward.
+			if j.downloadComplete() && (j.Ready || j.PPDone) {
+				continue
+			}
 			state, msg, stage := j.state()
 			if state == ports.StateCompleted {
 				continue // not ours to declare; wait for job_pp_finished

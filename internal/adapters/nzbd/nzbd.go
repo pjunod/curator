@@ -166,6 +166,19 @@ type job struct {
 	Status          json.RawMessage `json:"status"`
 	SizeBytes       int64           `json:"size_bytes"`
 	DownloadedBytes int64           `json:"downloaded_bytes"`
+	PPDone          bool            `json:"pp_done"`
+	Ready           bool            `json:"ready"`
+	Stages          []stageSpan     `json:"stages"`
+}
+
+type stageSpan struct {
+	Stage string `json:"stage"`
+	MS    *int64 `json:"ms"`
+}
+
+func (j job) downloadComplete() bool {
+	var simple string
+	return json.Unmarshal(j.Status, &simple) == nil && simple == "completed"
 }
 
 // state maps a job's status to Monarr's lifecycle, and reports the
@@ -175,6 +188,22 @@ type job struct {
 // `{"post":{"stage":"unpack"}}` while post-processing runs, so this
 // decodes both shapes rather than assuming either.
 func (j job) state() (ports.DownloadState, string, string) {
+	// The timeline is the durable activity fact during delayed-PAR recovery.
+	// nzbd temporarily switches the top-level status back into its download
+	// lifecycle while fetching recovery volumes, but deliberately leaves the
+	// post-processing span open. Prefer that open stage over the coarse status
+	// so a poll says "checking integrity", not "completed".
+	if !j.Ready && !j.PPDone {
+		for i := len(j.Stages) - 1; i >= 0; i-- {
+			if j.Stages[i].MS == nil && j.Stages[i].Stage != "" {
+				stage := j.Stages[i].Stage
+				return ports.StateDownloading,
+					"post-processing: " + strings.ReplaceAll(stage, "_", " "),
+					stage
+			}
+		}
+	}
+
 	var simple string
 	if json.Unmarshal(j.Status, &simple) == nil {
 		switch simple {
@@ -187,7 +216,14 @@ func (j job) state() (ports.DownloadState, string, string) {
 			// an import find a half-unpacked folder.
 			return ports.StateDownloading, "post-processing queued", ""
 		case "completed":
-			return ports.StateCompleted, "", ""
+			// In nzbd this names the article-download phase, not payload
+			// readiness. The importable path is published only in durable
+			// history / job_pp_finished after post-processing. Even a ready
+			// queue row therefore waits for its authoritative history row.
+			if j.Ready || j.PPDone {
+				return ports.StateDownloading, "post-processing complete; waiting for final path", ""
+			}
+			return ports.StateDownloading, "download complete; waiting for post-processing", ""
 		case "failed", "deleted":
 			return ports.StateFailed, simple, ""
 		default:
@@ -226,8 +262,25 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 	if err := c.do(ctx, http.MethodGet, "/api/v1/jobs", &queue); err != nil {
 		return nil, err
 	}
-	out := make([]ports.DownloadStatus, 0, len(queue.Jobs)+16)
+	var hist struct {
+		Entries []historyEntry `json:"entries"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/history?limit=100", &hist); err != nil {
+		return nil, err
+	}
+	out := make([]ports.DownloadStatus, 0, len(queue.Jobs)+len(hist.Entries))
+	historical := make(map[int64]struct{}, len(hist.Entries))
+	for _, h := range hist.Entries {
+		historical[h.Job] = struct{}{}
+	}
 	for _, j := range queue.Jobs {
+		// PP finalization writes history before setting ready on the live job.
+		// During that overlap the history row is the only observation carrying
+		// final_dir, so do not let the pathless queue copy win matchStatus's
+		// first-match rule.
+		if _, ok := historical[j.ID]; ok {
+			continue
+		}
 		st, msg, stage := j.state()
 		progress := 0.0
 		if j.SizeBytes > 0 {
@@ -242,13 +295,9 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 			Stage:    stage,
 		})
 	}
-
-	var hist struct {
-		Entries []historyEntry `json:"entries"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/api/v1/history?limit=100", &hist); err != nil {
-		return nil, err
-	}
+	// Unrelated live rows must precede history. A failed handle write falls
+	// back to release-title matching; history-first ordering can otherwise
+	// bind a new download to an older job with the same release title.
 	for _, h := range hist.Entries {
 		out = append(out, statusOfHistory(h))
 	}
@@ -272,6 +321,12 @@ func statusOfHistory(h historyEntry) ports.DownloadStatus {
 		SavePath: h.FinalDir,
 	}
 	switch {
+	case strings.HasPrefix(h.Status, "SUCCESS") && strings.TrimSpace(h.FinalDir) == "":
+		// SUCCESS without a final path violates nzbd's handoff contract. Keep
+		// the row active instead of turning a malformed response into an import
+		// from the process working directory.
+		st.State = ports.StateDownloading
+		st.Message = "post-processing: waiting for final path"
 	case strings.HasPrefix(h.Status, "SUCCESS"):
 		st.State = ports.StateCompleted
 	case h.Status == "DELETED" || strings.HasPrefix(h.Status, "DELETED"):
