@@ -33,18 +33,22 @@ describe('display preferences', () => {
     expect(resolveDisplayMode({ appearance: 'light', palette: 'panoptic' }, true)).toBe('dark')
     expect(resolveDisplayMode({ appearance: 'auto', palette: 'redline' }, true)).toBe('dark')
     expect(resolveDisplayMode({ appearance: 'light', palette: 'panovic' }, true)).toBe('dark')
+    expect(resolveDisplayMode({ appearance: 'light', palette: 'copper' }, true)).toBe('dark')
   })
 
   it('ships every cockpit palette in the display catalogue', () => {
     expect(PALETTES.map((palette) => palette.id)).toContain('panoptic')
     expect(PALETTES.map((palette) => palette.id)).toContain('redline')
     expect(PALETTES.map((palette) => palette.id)).toContain('panovic')
+    expect(PALETTES.map((palette) => palette.id)).toContain('copper')
   })
 
-  it('keeps Panovic in the cockpit family with its shared contract palette', () => {
-    expect(styles).toMatch(/:root\[data-palette='panovic'\]\s*\{[^}]*--bg: #000000;[^}]*--accent: #f0723b; --accent2: #8e4a1e;[^}]*--on-accent: #140a00;/s)
-    expect(styles).not.toMatch(/:root:is\(\[data-palette='panoptic'\],\[data-palette='redline'\]\)/)
-    expect(index).toMatch(/var palettes = \[[^\]]*'panovic'/)
+  it('keeps Burnt Pumpkin and Copper in the cockpit family with their contract palettes', () => {
+    expect(styles).toMatch(/:root\[data-palette='panovic'\]\s*\{[^}]*--bg: #000000;[^}]*--accent: #e8871e; --accent2: #81420b;[^}]*--on-accent: #150b00;/s)
+    expect(styles).toMatch(/:root\[data-palette='copper'\]\s*\{[^}]*--bg: #000000;[^}]*--accent: #cf7643; --accent2: #70402b;[^}]*--on-accent: #160b06;/s)
+    expect(styles).not.toMatch(/:root:is\(\[data-palette='panoptic'\],\[data-palette='redline'\],\[data-palette='panovic'\]\)/)
+    expect(index).toMatch(/var palettes = \[[^\]]*'panovic'[^\]]*'copper'/)
     expect(index).toContain("palette === 'panovic'")
+    expect(index).toContain("palette === 'copper'")
   })
 })

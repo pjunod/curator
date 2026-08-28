@@ -70,7 +70,7 @@ export function MoreScreen({
           </View>
           <View style={[styles.preferenceBlock, styles.preferenceDivider, { borderTopColor: theme.border }]}>
             <Text style={[styles.preferenceLabel, { color: theme.text }]}>Color scheme</Text>
-            <Text style={[styles.linkHint, { color: theme.muted }]}>Void, VHS, Panoptic, Redline, and Panovic are midnight-only; the other schemes follow the selected appearance.</Text>
+            <Text style={[styles.linkHint, { color: theme.muted }]}>Void, VHS, Panoptic, Redline, Burnt Pumpkin, and Copper are midnight-only; the other schemes follow the selected appearance.</Text>
             <View style={styles.choiceRow}>
               {PALETTE_OPTIONS.map((option) => (
                 <Chip key={option.id} label={option.name} selected={palette === option.id} onPress={() => setPalette(option.id)} />

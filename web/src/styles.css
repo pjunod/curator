@@ -142,9 +142,16 @@
 }
 :root[data-palette='panovic'] {
   --bg: #000000; --bg-raised: #181818; --bg-hover: #242424; --border: rgba(255,255,255,.06);
-  --text: #e8e6e1; --text-muted: #9a9aa0; --accent: #f0723b; --accent2: #8e4a1e; --on-accent: #140a00;
+  --text: #e8e6e1; --text-muted: #9a9aa0; --accent: #e8871e; --accent2: #81420b; --on-accent: #150b00;
   --ok: #5fb582; --warning: #d9a05b; --error: #ff7a66; --radius: 10px;
-  --cockpit-glass: var(--bg-raised); --cockpit-strong: var(--bg); --cockpit-glow: rgba(240,114,59,.35);
+  --cockpit-glass: var(--bg-raised); --cockpit-strong: var(--bg); --cockpit-glow: rgba(232,135,30,.30);
+  --cockpit-shadow: 0 4px 14px rgba(0,0,0,.8);
+}
+:root[data-palette='copper'] {
+  --bg: #000000; --bg-raised: #181818; --bg-hover: #242424; --border: rgba(255,255,255,.06);
+  --text: #e8e6e1; --text-muted: #9a9aa0; --accent: #cf7643; --accent2: #70402b; --on-accent: #160b06;
+  --ok: #5fb582; --warning: #d9a05b; --error: #ff7a66; --radius: 10px;
+  --cockpit-glass: var(--bg-raised); --cockpit-strong: var(--bg); --cockpit-glow: rgba(207,118,67,.28);
   --cockpit-shadow: 0 4px 14px rgba(0,0,0,.8);
 }
 
@@ -1660,17 +1667,17 @@ a.pill-info:hover {
   box-shadow: none;
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) body {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) body {
   background-color: var(--bg);
   background-image:
     radial-gradient(ellipse at 50% -18%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 42%),
     repeating-linear-gradient(180deg, transparent 0 3px, color-mix(in srgb, var(--accent) 1.8%, transparent) 3px 4px);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .sidebar,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .mobile-top,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .mobile-tabs,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .more-sheet {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .sidebar,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .mobile-top,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .mobile-tabs,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .more-sheet {
   background: var(--cockpit-strong);
   border-color: var(--border);
   -webkit-backdrop-filter: blur(24px) saturate(1.35);
@@ -1678,7 +1685,7 @@ a.pill-info:hover {
   box-shadow: inset 0 1px rgba(255,255,255,.035), 0 10px 30px rgba(0,0,0,.26);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .wordmark {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .wordmark {
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 16px;
@@ -1687,11 +1694,11 @@ a.pill-info:hover {
   text-shadow: 0 0 24px var(--cockpit-glow);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .wordmark span {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .wordmark span {
   color: var(--accent);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .wordmark::after {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .wordmark::after {
   content: '';
   display: inline-block;
   width: 6px;
@@ -1703,34 +1710,34 @@ a.pill-info:hover {
   box-shadow: 0 0 9px var(--cockpit-glow), inset 0 0 5px var(--cockpit-glow);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .sidebar nav a,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .sheet-nav a,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .mobile-tab,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .card-label,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) th {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .sidebar nav a,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .sheet-nav a,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .mobile-tab,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .card-label,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) th {
   font-family: var(--font-mono);
   letter-spacing: .09em;
   text-transform: uppercase;
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .page-head h1,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) h2 {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .page-head h1,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) h2 {
   font-family: var(--font-mono);
   letter-spacing: .12em;
   text-transform: uppercase;
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) h2::before {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) h2::before {
   content: '//';
   color: var(--accent);
   text-shadow: 0 0 10px var(--cockpit-glow);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .panel,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .card,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .poster-card,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .display-menu,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .search-results {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .panel,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .card,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .poster-card,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .display-menu,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .search-results {
   background: var(--cockpit-glass);
   border-color: var(--border);
   -webkit-backdrop-filter: blur(20px) saturate(1.3);
@@ -1738,38 +1745,38 @@ a.pill-info:hover {
   box-shadow: var(--cockpit-shadow, 0 12px 34px rgba(0,0,0,.58)), inset 0 1px rgba(255,255,255,.035);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) button:not(.btn-danger) {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) button:not(.btn-danger) {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) button:not(.btn-danger):hover:not(:disabled) {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) button:not(.btn-danger):hover:not(:disabled) {
   background: var(--accent);
   color: var(--on-accent);
   border-color: var(--accent);
   box-shadow: 0 0 16px var(--cockpit-glow);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) input,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) select,
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) textarea {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) input,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) select,
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) textarea {
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   border-color: var(--border);
   caret-color: var(--accent);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .poster-card {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .poster-card {
   transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) .poster-card:hover {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) .poster-card:hover {
   border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
     0 0 20px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic']) ::selection {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) ::selection {
   background: var(--accent);
   color: var(--on-accent);
 }

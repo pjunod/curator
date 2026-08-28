@@ -31,7 +31,7 @@ describe('app preferences', () => {
   it('ships the shared display catalogue with Classic as the safe fallback', () => {
     expect(LAYOUT_OPTIONS.map((option) => option.id)).toEqual(['classic', 'plex', 'theater'])
     expect(PALETTE_OPTIONS.map((option) => option.id)).toEqual([
-      'classic', 'terminal', 'noirr', 'amber', 'giallo', 'silver', 'void', 'vhs', 'paper', 'tide', 'panoptic', 'redline', 'panovic',
+      'classic', 'terminal', 'noirr', 'amber', 'giallo', 'silver', 'void', 'vhs', 'paper', 'tide', 'panoptic', 'redline', 'panovic', 'copper',
     ])
     expect(sanitizePreferences({ layout: 'future', palette: 'missing' })).toEqual(DEFAULT_PREFERENCES)
   })
@@ -55,6 +55,7 @@ describe('app preferences', () => {
     expect(resolveTheme('light', 'light', 'panoptic')).toBe('dark')
     expect(resolveTheme('auto', 'light', 'redline')).toBe('dark')
     expect(resolveTheme('light', 'light', 'panovic')).toBe('dark')
+    expect(resolveTheme('light', 'light', 'copper')).toBe('dark')
   })
 
   it('keeps medium at the previous column count and scales around it', () => {

@@ -161,7 +161,14 @@ const palettes: Record<PalettePreference, PaletteThemes> = {
   panovic: {
     dark: makeTheme(true, {
       bg: '#000000', raised: '#181818', hover: '#242424', border: 'rgba(255, 255, 255, 0.06)',
-      text: '#e8e6e1', muted: '#9a9aa0', accent: '#f0723b', onAccent: '#140a00',
+      text: '#e8e6e1', muted: '#9a9aa0', accent: '#e8871e', onAccent: '#150b00',
+      ok: '#5fb582', warning: '#d9a05b', error: '#ff7a66',
+    }),
+  },
+  copper: {
+    dark: makeTheme(true, {
+      bg: '#000000', raised: '#181818', hover: '#242424', border: 'rgba(255, 255, 255, 0.06)',
+      text: '#e8e6e1', muted: '#9a9aa0', accent: '#cf7643', onAccent: '#160b06',
       ok: '#5fb582', warning: '#d9a05b', error: '#ff7a66',
     }),
   },
