@@ -855,6 +855,31 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		dl = fresh
 	}
 
+	// A completion is not actionable without the location of its payload.
+	// A download-client adapter can misclassify a download-phase completion as
+	// payload readiness, or receive a terminal response before its path. Never
+	// persist that empty path and never let the importer turn
+	// it into the misleading "payload missing: stat : no such file" failure.
+	// Keep the download active until a later observation supplies the path.
+	if st.State == ports.StateCompleted && strings.TrimSpace(st.SavePath) == "" {
+		st.State = ports.StateDownloading
+		st.Progress = 1
+		if st.Message == "" {
+			st.Message = "download client reports completion; waiting for payload path"
+		}
+	}
+
+	// Progress can be stale by the time it acquires this row's lock: a final
+	// event may have already crossed the import boundary while a preceding
+	// tick was waiting. Never let queued/downloading observations move durable
+	// handoff or terminal states backward.
+	if st.State == ports.StateQueued || st.State == ports.StateDownloading {
+		switch dl.State {
+		case "awaiting_import", "downloaded", "importing", "imported", "failed":
+			return
+		}
+	}
+
 	// The in-flight view is maintained here, not at the call sites.
 	//
 	// It used to be updated only from the poll, so a download that changed

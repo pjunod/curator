@@ -2,6 +2,8 @@ package acquisition
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -183,6 +185,52 @@ func TestProgressIsCoalescedButStateChangesAreNot(t *testing.T) {
 	got, _ = db.GetDownload(ctx, dl.ID)
 	if got.State == "downloading" {
 		t.Error("the completion waited behind coalesced progress")
+	}
+}
+
+func TestBufferedProgressCannotUndoAPollCompletion(t *testing.T) {
+	client := newPushClient()
+	svc, db, itemID := setup(t, nil, &client.fakeClient)
+	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	ctx := context.Background()
+	release := "Test.Show.S01E01.1080p.WEB-DL-PROGRESS-RACE"
+	dl := grabOne(t, svc, db, itemID, release)
+	cfg, _ := db.GetDownloadClient(ctx, dl.ClientID)
+
+	var flushed time.Time
+	svc.handleEvent(ctx, cfg, ports.ClientEvent{
+		Handle: ports.Handle(dl.Handle), Kind: ports.EventProgress,
+		Status: ports.DownloadStatus{
+			Handle: ports.Handle(dl.Handle), State: ports.StateDownloading, Progress: 0.1,
+		},
+	}, map[int64]float64{}, &flushed)
+	pending := map[int64]float64{dl.ID: 0.8}
+
+	payload := filepath.Join(t.TempDir(), release)
+	if err := os.MkdirAll(payload, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(payload, release+".mkv"), []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client.statuses = []ports.DownloadStatus{{
+		Handle: ports.Handle(dl.Handle), Name: release, State: ports.StateCompleted,
+		Progress: 1, SavePath: payload,
+	}}
+	if err := svc.RefreshQueue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := db.GetDownload(ctx, dl.ID); got.State != "imported" {
+		t.Fatalf("poll completion reached %q, want imported", got.State)
+	}
+
+	svc.flushPendingProgress(ctx, cfg, pending)
+	got, _ := db.GetDownload(ctx, dl.ID)
+	if got.State != "imported" {
+		t.Fatalf("buffered progress moved imported download backward to %q", got.State)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("flushed progress remains buffered: %v", pending)
 	}
 }
 

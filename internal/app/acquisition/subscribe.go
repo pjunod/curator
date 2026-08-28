@@ -216,10 +216,7 @@ func (s *Service) handleEvent(ctx context.Context, cfg ports.ClientConfig, ev po
 				return
 			}
 			*flushed = time.Now()
-			for id, p := range pending {
-				_ = s.db.UpdateDownloadState(ctx, id, "downloading", p, "")
-				delete(pending, id)
-			}
+			s.flushPendingProgress(ctx, cfg, pending)
 			return
 		}
 	}
@@ -236,6 +233,23 @@ func (s *Service) handleEvent(ctx context.Context, cfg ports.ClientConfig, ev po
 		return
 	}
 	s.reconcileDownload(ctx, dl, cfg, ev.Status, source)
+}
+
+// flushPendingProgress re-reads and serializes each buffered observation
+// through the common reconciler. A poll or terminal event may have advanced a
+// row while its percentage waited in memory; writing SQLite directly here
+// would move imported/failed work backward to downloading.
+func (s *Service) flushPendingProgress(ctx context.Context, cfg ports.ClientConfig, pending map[int64]float64) {
+	for id, progress := range pending {
+		dl, err := s.db.GetDownload(ctx, id)
+		if err == nil {
+			s.reconcileDownload(ctx, dl, cfg, ports.DownloadStatus{
+				Handle: ports.Handle(dl.Handle), Name: dl.ReleaseTitle,
+				State: ports.StateDownloading, Progress: progress,
+			}, "push progress flush")
+		}
+		delete(pending, id)
+	}
 }
 
 // downloadByHandle finds the active download a pushed event refers to.
