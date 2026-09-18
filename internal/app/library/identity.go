@@ -153,7 +153,7 @@ func (s *Service) EnqueueIdentityRefresh(ctx context.Context, itemID int64, expl
 	if s.queue == nil {
 		return s.RefreshIdentity(ctx, itemID, explicit)
 	}
-	priority := 80
+	priority := int64(80)
 	if explicit {
 		priority = 40
 	}
@@ -161,13 +161,13 @@ func (s *Service) EnqueueIdentityRefresh(ctx context.Context, itemID int64, expl
 	return err
 }
 
-func (s *Service) enqueueIdentity(ctx context.Context, itemID int64, priority int) (bool, error) {
+func (s *Service) enqueueIdentity(ctx context.Context, itemID int64, priority int64) (bool, error) {
 	payload := fmt.Sprintf(`{"itemId":%d}`, itemID)
 	return s.queue.EnqueueUnique(ctx, domain.Job{Kind: JobIdentityRefresh, Payload: payload, DedupeKey: fmt.Sprintf("%s:%d", JobIdentityRefresh, itemID), Priority: priority})
 }
 
 func (s *Service) AddManualAlias(ctx context.Context, itemID int64, title string, searchable bool) (domain.TitleAlias, error) {
-	if _, err := s.db.GetMediaItem(ctx, itemID); err != nil {
+	if _, err := s.db.GetMediaItemFull(ctx, itemID); err != nil {
 		return domain.TitleAlias{}, err
 	}
 	alias, err := s.db.AddManualAlias(ctx, itemID, title, searchable)
