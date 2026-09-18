@@ -21,6 +21,7 @@ type IndexerConfig struct {
 // Release is one indexer result (transient; persisted only in history and
 // on grab — blueprint §4.2).
 type Release struct {
+	GUID        string                 `json:"guid,omitempty"`
 	Title       string                 `json:"title"`
 	DownloadURL string                 `json:"downloadUrl"`
 	InfoURL     string                 `json:"infoUrl,omitempty"`
@@ -57,6 +58,12 @@ type IndexerCapabilities struct {
 // and parameters the caller may use.
 type IndexerCapabilitiesProvider interface {
 	Capabilities(context.Context) (IndexerCapabilities, error)
+}
+
+// IndexerCapabilityInvalidator lets a protocol adapter downgrade a mode that
+// the server advertised but rejected at runtime.
+type IndexerCapabilityInvalidator interface {
+	InvalidateSearchCapability(mode string)
 }
 
 // Indexer speaks Newznab/Torznab.

@@ -668,16 +668,23 @@ func (d *DB) UpdateMediaItemPlacement(ctx context.Context, m domain.MediaItem) e
 // episodes: new ones appear, existing ones keep their monitored flags, and
 // nothing is ever deleted — files may point at episode rows.
 func (d *DB) UpdateMediaItemMetadata(ctx context.Context, id int64, m domain.MediaItem) error {
-	genres, _ := json.Marshal(m.Genres)
-	if m.Genres == nil {
-		genres = []byte("[]")
-	}
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := d.Write.WithTx(tx)
+	if err := updateMediaItemMetadata(ctx, q, id, m); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func updateMediaItemMetadata(ctx context.Context, q *sqlitegen.Queries, id int64, m domain.MediaItem) error {
+	genres, _ := json.Marshal(m.Genres)
+	if m.Genres == nil {
+		genres = []byte("[]")
+	}
 
 	if err := q.UpdateMediaItemMetadata(ctx, sqlitegen.UpdateMediaItemMetadataParams{
 		Title:        m.Title,
@@ -727,7 +734,7 @@ func (d *DB) UpdateMediaItemMetadata(ctx context.Context, id int64, m domain.Med
 			}
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // DeleteMediaItem removes the item; children cascade.

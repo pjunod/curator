@@ -1,6 +1,6 @@
 # Release identity — aliases, country qualifiers, and direct ID search
 
-**Status:** implementation in progress on `codex/release-identity`; no behavior is merged ·
+**Status:** implementation complete on `codex/release-identity`; adversarial review addressed, validation pending; no behavior is merged ·
 **Written:** 2026-09-17 · **Baseline:** `0da1c75` ·
 **Adversarial revision:** 2026-09-17
 

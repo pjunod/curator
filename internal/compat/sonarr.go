@@ -105,7 +105,7 @@ func (p *Personality) lookupSeries(w http.ResponseWriter, r *http.Request) {
 	term := strings.TrimSpace(r.URL.Query().Get("term"))
 
 	results, err := p.deps.Library.Search(r.Context(), domain.KindSeries, term)
-	if (err != nil || len(results) == 0) && p.deps.ResolveTVDB != nil {
+	if allowLegacyTVDBFallback(err) && p.deps.ResolveTVDB != nil {
 		if tvdbStr, ok := strings.CutPrefix(strings.ToLower(term), "tvdb:"); ok {
 			if tvdbID, parseErr := strconv.ParseInt(tvdbStr, 10, 64); parseErr == nil {
 				if item, resolveErr := p.deps.ResolveTVDB(r.Context(), tvdbID); resolveErr == nil {
@@ -146,7 +146,7 @@ func (p *Personality) addSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results, err := p.deps.Library.ResolveExternal(r.Context(), domain.KindSeries, domain.ExternalRef{Provider: "tvdb", Value: strconv.FormatInt(body.TVDBID, 10)})
-	if (err != nil || len(results) != 1) && p.deps.ResolveTVDB != nil {
+	if allowLegacyTVDBFallback(err) && p.deps.ResolveTVDB != nil {
 		if item, resolveErr := p.deps.ResolveTVDB(r.Context(), body.TVDBID); resolveErr == nil {
 			results = []ports.SearchResult{{Kind: domain.KindSeries, TMDBID: item.IDs.TMDB, TVDBID: body.TVDBID, IMDBID: item.IDs.IMDB, Source: item.Source, HydrationSource: item.Source}}
 			err = nil
@@ -180,6 +180,14 @@ func (p *Personality) addSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	roots, _ := p.deps.Library.ListRootFolders(r.Context())
 	writeJSON(w, http.StatusCreated, p.seriesDTO(item, roots))
+}
+
+func allowLegacyTVDBFallback(err error) bool {
+	if errors.Is(err, ports.ErrProviderNotConfigured) {
+		return true
+	}
+	var remote *ports.RemoteError
+	return errors.As(err, &remote) && (remote.Category == ports.RemoteUnsupportedQuery || remote.Category == ports.RemoteUnsupportedHydration)
 }
 
 // errRootKindMismatch is returned when a client posts a rootFolderPath whose

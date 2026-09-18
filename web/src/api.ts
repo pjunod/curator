@@ -690,6 +690,7 @@ export interface ReleaseCandidate {
   isUpgrade: boolean
   rejections: Rejection[]
   match: MatchEvidence
+  candidateToken: string
   /** A caution that does not decline the release — today, an implausible size. */
   warning?: string
 }
@@ -704,7 +705,13 @@ export interface GrabRequest {
   indexer?: string
   protocol: string
   size?: number
-  match?: MatchEvidence
+  candidateToken?: string
+}
+
+export interface ReleaseSearchResponse {
+  candidates: ReleaseCandidate[]
+  partial: boolean
+  reason?: string
 }
 
 export interface HandoffEntry {
@@ -787,13 +794,20 @@ export const updateDownloadClient = (id: number, c: DownloadClientInput) =>
   send<DownloadClientConfig>('PUT', `/downloadclients/${id}`, c)
 export const testDownloadClient = (c: DownloadClientInput) => send('POST', '/downloadclients/test', c)
 export const deleteDownloadClient = (id: number) => send('DELETE', `/downloadclients/${id}`)
-export const searchReleases = (itemId: number, season?: number, episode?: number, copyId?: number) => {
+export const searchReleases = async (itemId: number, season?: number, episode?: number, copyId?: number): Promise<ReleaseSearchResponse> => {
   const p = new URLSearchParams()
   if (season !== undefined) p.set('season', String(season))
   if (episode !== undefined) p.set('episode', String(episode))
   if (copyId) p.set('copyId', String(copyId))
   const qs = p.toString()
-  return get<ReleaseCandidate[]>(`/library/${itemId}/releases${qs ? `?${qs}` : ''}`)
+  const path = `/library/${itemId}/releases${qs ? `?${qs}` : ''}`
+  const res = await fetch(`/api/v1${path}`)
+  if (!res.ok) await parseError(res, `GET ${path}: ${res.status} ${res.statusText}`)
+  return {
+    candidates: await res.json() as ReleaseCandidate[],
+    partial: res.headers.get('X-Monarr-Search-Partial') === 'true',
+    reason: res.headers.get('X-Monarr-Search-Reason') || undefined,
+  }
 }
 export const grabRelease = (req: GrabRequest) => send<{ id: number }>('POST', '/grab', req)
 export const getQueue = () => get<QueueItem[]>('/queue')

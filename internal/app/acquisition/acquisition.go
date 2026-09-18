@@ -135,6 +135,8 @@ type Service struct {
 	identityMu       sync.Mutex
 	identityRevision int64
 	identityCache    matcher.IdentityIndex
+	candidateMu      sync.Mutex
+	candidateTokens  map[string]candidateRecord
 
 	// One mutex per download id, so the 30 s poll and an event arriving
 	// for the same download cannot both decide to import it. The map only
@@ -396,10 +398,69 @@ type Candidate struct {
 	IsUpgrade  bool                 `json:"isUpgrade"`
 	Rejections []decision.Rejection `json:"rejections"`
 	Match      domain.MatchEvidence `json:"match"`
+	Token      string               `json:"candidateToken"`
 	// Warning is a caution that does not decline the release: the profile
 	// would take it, but something about it does not add up. Today that is
 	// only an advertised size too small to hold what the name claims.
 	Warning string `json:"warning,omitempty"`
+}
+
+type candidateRecord struct {
+	expiresAt                   time.Time
+	itemID, copyID              int64
+	season, episode             int
+	title, downloadURL, indexer string
+	evidence                    domain.MatchEvidence
+}
+
+func (s *Service) issueCandidateToken(itemID, copyID int64, season, episode int, release ports.Release, evidence domain.MatchEvidence) string {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return ""
+	}
+	token := fmt.Sprintf("%x", random)
+	now := time.Now()
+	s.candidateMu.Lock()
+	defer s.candidateMu.Unlock()
+	if s.candidateTokens == nil {
+		s.candidateTokens = make(map[string]candidateRecord)
+	}
+	for key, record := range s.candidateTokens {
+		if now.After(record.expiresAt) {
+			delete(s.candidateTokens, key)
+		}
+	}
+	// Bound memory even if clients continually search and never grab. Tokens
+	// are advisory provenance, so evicting the oldest-ish arbitrary entry only
+	// turns a late click into an explicitly recorded manual override.
+	if len(s.candidateTokens) >= 2048 {
+		for key := range s.candidateTokens {
+			delete(s.candidateTokens, key)
+			break
+		}
+	}
+	s.candidateTokens[token] = candidateRecord{
+		expiresAt: now.Add(10 * time.Minute), itemID: itemID, copyID: copyID,
+		season: season, episode: episode, title: release.Title,
+		downloadURL: release.DownloadURL, indexer: release.Indexer, evidence: evidence,
+	}
+	return token
+}
+
+func (s *Service) consumeCandidateToken(req GrabRequest) (domain.MatchEvidence, bool) {
+	if req.CandidateToken == "" {
+		return domain.MatchEvidence{}, false
+	}
+	s.candidateMu.Lock()
+	defer s.candidateMu.Unlock()
+	record, ok := s.candidateTokens[req.CandidateToken]
+	delete(s.candidateTokens, req.CandidateToken)
+	if !ok || time.Now().After(record.expiresAt) || record.itemID != req.MediaItemID ||
+		record.copyID != req.CopyID || record.season != req.Season || record.episode != req.Episode ||
+		record.title != req.Title || record.downloadURL != req.DownloadURL || record.indexer != req.Indexer {
+		return domain.MatchEvidence{}, false
+	}
+	return record.evidence, true
 }
 
 // Search fans out to every enabled indexer, parses and judges every
@@ -413,29 +474,36 @@ func (s *Service) Search(ctx context.Context, itemID int64, season, episode int)
 // copyID zero selects the primary; a non-zero book copy is the other edition,
 // and a non-zero video copy is an additional quality target.
 func (s *Service) SearchCopy(ctx context.Context, itemID, copyID int64, season, episode int) ([]Candidate, error) {
+	candidates, _, err := s.SearchCopyDetailed(ctx, itemID, copyID, season, episode)
+	return candidates, err
+}
+
+// SearchCopyDetailed also reports per-indexer failures so callers can
+// distinguish an authoritative empty result from an incomplete search.
+func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, season, episode int) ([]Candidate, SearchStatus, error) {
 	item, err := s.db.GetMediaItemFull(ctx, itemID)
 	if err != nil {
-		return nil, err
+		return nil, SearchStatus{}, err
 	}
 	var cp *domain.MediaCopy
 	if copyID != 0 {
 		copy, err := s.db.GetMediaCopy(ctx, itemID, copyID)
 		if err != nil {
-			return nil, err
+			return nil, SearchStatus{}, err
 		}
 		cp = &copy
 	}
 	target, err := s.targetCopy(ctx, item, season, episode, cp)
 	if err != nil {
-		return nil, err
+		return nil, SearchStatus{}, err
 	}
 	profile, err := s.db.GetProfile(ctx, target.ProfileID())
 	if err != nil {
-		return nil, err
+		return nil, SearchStatus{}, err
 	}
 	indexers, err := s.db.ListIndexers(ctx)
 	if err != nil {
-		return nil, err
+		return nil, SearchStatus{}, err
 	}
 	var enabled []ports.IndexerConfig
 	for _, ic := range indexers {
@@ -444,12 +512,13 @@ func (s *Service) SearchCopy(ctx context.Context, itemID, copyID int64, season, 
 		}
 	}
 	if len(enabled) == 0 {
-		return nil, ErrNoIndexers
+		return nil, SearchStatus{}, ErrNoIndexers
 	}
 
 	var (
 		mu       sync.Mutex
 		releases []ports.Release
+		status   SearchStatus
 		wg       sync.WaitGroup
 	)
 	for _, cfg := range enabled {
@@ -457,23 +526,14 @@ func (s *Service) SearchCopy(ctx context.Context, itemID, copyID int64, season, 
 		go func(cfg ports.IndexerConfig) {
 			defer wg.Done()
 			indexer := s.newIndexer(cfg)
-			queries, err := queriesForIndexer(ctx, indexer, target, true)
-			if err != nil {
-				s.log.Warn("search: indexer capabilities unavailable", "indexer", cfg.Name, "err", err)
-				return
+			rs, reasons := s.executeIndexerSearch(ctx, indexer, target, true, nil)
+			mu.Lock()
+			releases = append(releases, rs...)
+			for _, reason := range reasons {
+				status.Reasons = append(status.Reasons, cfg.Name+": "+reason)
 			}
-			for tier, q := range queries {
-				cctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
-				rs, err := indexer.Search(cctx, q)
-				cancel()
-				if err != nil {
-					s.log.Warn("search: indexer failed", "indexer", cfg.Name, "tier", tier+1, "err", err)
-					continue
-				}
-				mu.Lock()
-				releases = append(releases, rs...)
-				mu.Unlock()
-			}
+			status.Partial = status.Partial || len(reasons) > 0
+			mu.Unlock()
 		}(cfg)
 	}
 	wg.Wait()
@@ -483,17 +543,11 @@ func (s *Service) SearchCopy(ctx context.Context, itemID, copyID int64, season, 
 	now := time.Now()
 	identityIndex, err := s.allIdentity(ctx, now)
 	if err != nil {
-		return nil, err
+		return nil, status, err
 	}
-	seen := map[string]bool{}
+	releases = deduplicateReleases(releases)
 	out := make([]Candidate, 0, len(releases))
 	for _, r := range releases {
-		key := r.Title + "|" + r.Indexer
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-
 		p := parser.Parse(r.Title)
 		c := Candidate{Release: r, Quality: p.Quality, QualityStr: p.Quality.Display(),
 			Score: format.Score(r.Title, formats), Formats: format.Matches(r.Title, formats)}
@@ -502,6 +556,7 @@ func (s *Service) SearchCopy(ctx context.Context, itemID, copyID int64, season, 
 		}
 		match := releaseMatch(r, p, target, identityIndex)
 		c.Match = matchEvidence(p, target, r, match)
+		c.Token = s.issueCandidateToken(itemID, copyID, season, episode, r, c.Match)
 		if !match.Matched {
 			c.Rejections = []decision.Rejection{{
 				Code:   "not_matched",
@@ -537,7 +592,7 @@ func (s *Service) SearchCopy(ctx context.Context, itemID, copyID int64, season, 
 		}
 		return out[i].Release.Seeders > out[j].Release.Seeders
 	})
-	return out, nil
+	return out, status, nil
 }
 
 func describeTarget(w domain.Wantable) string {
@@ -579,16 +634,17 @@ func age(d time.Duration) string {
 
 // GrabRequest is what the UI sends back from a chosen candidate.
 type GrabRequest struct {
-	MediaItemID   int64
-	CopyID        int64 // 0 = the primary copy
-	Season        int   // -1 for movies
-	Episode       int   // 0 = whole season / movie
-	Title         string
-	DownloadURL   string
-	Indexer       string
-	Protocol      string
-	Size          int64
-	MatchEvidence *domain.MatchEvidence
+	MediaItemID    int64
+	CopyID         int64 // 0 = the primary copy
+	Season         int   // -1 for movies
+	Episode        int   // 0 = whole season / movie
+	Title          string
+	DownloadURL    string
+	Indexer        string
+	Protocol       string
+	Size           int64
+	CandidateToken string
+	MatchEvidence  *domain.MatchEvidence
 }
 
 func protocolOfClient(clientType string) string { return ports.ProtocolOfClient(clientType) }
@@ -705,6 +761,16 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	evidence := domain.MatchEvidence{Version: 1, Method: "manual_override", Code: "identity_unresolved", Reason: "Manually grabbed without retained search evidence", OriginalTitle: req.Title, ParsedTitle: p.Title}
 	if req.MatchEvidence != nil {
 		evidence = *req.MatchEvidence
+	} else if verified, ok := s.consumeCandidateToken(req); ok {
+		if verified.Matched {
+			evidence = verified
+		} else {
+			evidence = domain.MatchEvidence{
+				Version: 1, Method: "manual_override", Code: "manual_override",
+				Reason:        "Manually grabbed after rejection: " + verified.Reason,
+				OriginalTitle: req.Title, ParsedTitle: p.Title,
+			}
+		}
 	}
 	var base string
 	switch {

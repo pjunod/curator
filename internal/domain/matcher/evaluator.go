@@ -126,6 +126,13 @@ func Evaluate(e ReleaseEvidence, want domain.Wantable, index IdentityIndex) Matc
 	if literalKey == "" {
 		literalKey = NormalizeTitle(rawTitle)
 	}
+	if !yearCompatible(kindOf(want), e.Parsed, target.Year) {
+		actual := e.Parsed.Year
+		if kindOf(want) == domain.KindSeries {
+			actual = e.Parsed.SeriesTitleYear
+		}
+		return rejected("year_conflict", fmt.Sprintf("Release year %d differs from library year %d", actual, target.Year))
+	}
 	titleHits := collectTitleHits(index, kindOf(want), literalKey, variants, e.Parsed)
 	idItems, matchedID, idErr := resolveReleaseIDs(index, kindOf(want), e.IDs)
 	if idErr != "" {

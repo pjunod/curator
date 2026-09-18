@@ -499,10 +499,15 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 	if params.CopyId != nil {
 		copyID = *params.CopyId
 	}
-	cands, err := s.deps.Acquisition.SearchCopy(r.Context(), id, copyID, season, episode)
+	cands, status, err := s.deps.Acquisition.SearchCopyDetailed(r.Context(), id, copyID, season, episode)
 	if err != nil {
 		s.acqErr(w, err)
 		return
+	}
+	if status.Partial {
+		w.Header().Set("X-Monarr-Search-Partial", "true")
+		reason := strings.NewReplacer("\r", " ", "\n", " ").Replace(strings.Join(status.Reasons, "; "))
+		w.Header().Set("X-Monarr-Search-Reason", reason)
 	}
 	out := make([]apigen.ReleaseCandidate, 0, len(cands))
 	for _, c := range cands {
@@ -512,7 +517,7 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 			Indexer: c.Release.Indexer, Protocol: c.Release.Protocol,
 			Size: c.Release.Size, Seeders: c.Release.Seeders, Age: c.Age,
 			Quality: c.QualityStr, Score: c.Score, Accepted: c.Accepted, IsUpgrade: c.IsUpgrade,
-			Rejections: []apigen.Rejection{}, Match: match,
+			Rejections: []apigen.Rejection{}, Match: match, CandidateToken: c.Token,
 		}
 		if len(c.Formats) > 0 {
 			fs := c.Formats
@@ -560,20 +565,8 @@ func (s *Server) GrabRelease(w http.ResponseWriter, r *http.Request) {
 	if in.Size != nil {
 		req.Size = *in.Size
 	}
-	if in.Match != nil {
-		evidence := domain.MatchEvidence{
-			Version: in.Match.Version, Matched: in.Match.Matched, Reason: in.Match.Reason,
-			Method: stringValue(in.Match.Method), Code: stringValue(in.Match.Code), Country: stringValue(in.Match.Country),
-			OriginalTitle: stringValue(in.Match.OriginalTitle), ParsedTitle: stringValue(in.Match.ParsedTitle),
-			TargetTitle: stringValue(in.Match.TargetTitle), MatchedTitle: stringValue(in.Match.MatchedTitle),
-		}
-		if in.Match.MatchedId != nil {
-			evidence.MatchedID = &domain.ExternalID{Provider: in.Match.MatchedId.Provider, Value: in.Match.MatchedId.Value}
-		}
-		if in.Match.Warnings != nil {
-			evidence.Warnings = append([]string(nil), (*in.Match.Warnings)...)
-		}
-		req.MatchEvidence = &evidence
+	if in.CandidateToken != nil {
+		req.CandidateToken = *in.CandidateToken
 	}
 	id, err := s.deps.Acquisition.Grab(r.Context(), req)
 	if err != nil {
@@ -1110,13 +1103,6 @@ func ptrIfText(v string) *string {
 		return nil
 	}
 	return &v
-}
-
-func stringValue(v *string) string {
-	if v == nil {
-		return ""
-	}
-	return *v
 }
 
 func apiMatchEvidence(e domain.MatchEvidence) apigen.MatchEvidence {

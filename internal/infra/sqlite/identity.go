@@ -336,6 +336,64 @@ func (d *DB) UpdateMediaIdentity(ctx context.Context, itemID int64, incoming dom
 	return tx.Commit()
 }
 
+// RefreshMediaItemMetadata commits verified external IDs, provider metadata,
+// episode rows, historical-title evidence, and cache invalidation together.
+func (d *DB) RefreshMediaItemMetadata(ctx context.Context, itemID int64, fresh domain.MediaItem) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+	stored, err := q.GetMediaItem(ctx, itemID)
+	if err != nil {
+		return wrapNotFound(err)
+	}
+	merged := domain.ExternalIDs{TMDB: stored.TmdbID, IMDB: stored.ImdbID, TVDB: stored.TvdbID}
+	if err := mergeExternalIDs(&merged, fresh.IDs); err != nil {
+		return err
+	}
+	for _, ref := range refsOf(merged) {
+		var matches []sqlitegen.MediaItem
+		switch ref.Provider {
+		case "tmdb":
+			matches, err = q.FindMediaItemsByKindTmdb(ctx, sqlitegen.FindMediaItemsByKindTmdbParams{Kind: stored.Kind, TmdbID: merged.TMDB})
+		case "tvdb":
+			matches, err = q.FindMediaItemsByKindTvdb(ctx, sqlitegen.FindMediaItemsByKindTvdbParams{Kind: stored.Kind, TvdbID: merged.TVDB})
+		case "imdb":
+			matches, err = q.FindMediaItemsByKindImdb(ctx, sqlitegen.FindMediaItemsByKindImdbParams{Kind: stored.Kind, ImdbID: merged.IMDB})
+		}
+		if err != nil {
+			return err
+		}
+		for _, match := range matches {
+			if match.ID != itemID {
+				return fmt.Errorf("%w: %s %s already belongs to item %d", ErrIdentityConflict, ref.Provider, ref.Value, match.ID)
+			}
+		}
+	}
+	fresh.IDs = merged
+	now := time.Now()
+	if err := q.UpdateMediaExternalIDs(ctx, sqlitegen.UpdateMediaExternalIDsParams{TmdbID: merged.TMDB, ImdbID: merged.IMDB, TvdbID: merged.TVDB, UpdatedAt: now.UnixMilli(), ID: itemID}); err != nil {
+		return err
+	}
+	if stored.Title != "" && fresh.Title != "" && matcher.NormalizeTitle(stored.Title) != matcher.NormalizeTitle(fresh.Title) {
+		_, aliasErr := q.InsertMediaAlias(ctx, aliasParams(itemID, domain.TitleAlias{
+			Title: stored.Title, Source: "local", Scope: "work", Role: "historical", Searchable: true,
+		}))
+		if aliasErr != nil && !isConstraint(aliasErr) {
+			return aliasErr
+		}
+	}
+	if err := updateMediaItemMetadata(ctx, q, itemID, fresh); err != nil {
+		return err
+	}
+	if _, err := q.BumpIdentityRevision(ctx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func mergeExternalIDs(stored *domain.ExternalIDs, incoming domain.ExternalIDs) error {
 	if incoming.TMDB != 0 {
 		if stored.TMDB != 0 && stored.TMDB != incoming.TMDB {

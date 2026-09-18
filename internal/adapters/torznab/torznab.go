@@ -35,9 +35,10 @@ var _ ports.IndexerCapabilitiesProvider = (*Client)(nil)
 const capabilitiesTTL = 24 * time.Hour
 
 type capabilityCacheEntry struct {
-	caps  ports.IndexerCapabilities
-	err   error
-	ready chan struct{}
+	caps       ports.IndexerCapabilities
+	err        error
+	retryAfter time.Time
+	ready      chan struct{}
 }
 
 var capabilityCache = struct {
@@ -118,6 +119,24 @@ func (c *Client) Capabilities(ctx context.Context) (ports.IndexerCapabilities, e
 	return c.capabilities(ctx, false)
 }
 
+func (c *Client) InvalidateSearchCapability(mode string) {
+	key := cacheKey(c.cfg)
+	capabilityCache.Lock()
+	defer capabilityCache.Unlock()
+	entry := capabilityCache.entries[key]
+	if entry == nil || entry.ready != nil || entry.err != nil {
+		return
+	}
+	switch mode {
+	case "tv":
+		entry.caps.TV.Known, entry.caps.TV.Available = true, false
+	case "movie":
+		entry.caps.Movie.Known, entry.caps.Movie.Available = true, false
+	case "generic":
+		entry.caps.Generic.Known, entry.caps.Generic.Available = true, false
+	}
+}
+
 func (c *Client) capabilities(ctx context.Context, force bool) (ports.IndexerCapabilities, error) {
 	key := cacheKey(c.cfg)
 	capabilityCache.Lock()
@@ -133,9 +152,11 @@ func (c *Client) capabilities(ctx context.Context, force bool) (ports.IndexerCap
 			}
 		}
 		if entry.err != nil {
-			caps, err := entry.caps, entry.err
-			capabilityCache.Unlock()
-			return caps, err
+			if time.Now().Before(entry.retryAfter) {
+				caps, err := entry.caps, entry.err
+				capabilityCache.Unlock()
+				return caps, err
+			}
 		}
 		if time.Since(entry.caps.FetchedAt) < capabilitiesTTL {
 			caps, err := entry.caps, entry.err
@@ -163,18 +184,37 @@ func (c *Client) capabilities(ctx context.Context, force bool) (ports.IndexerCap
 			}
 		}
 	}
-	if err != nil && previous != nil && previous.ready == nil && !capabilityFatal(err) {
+	if err != nil && previous != nil && previous.ready == nil && previous.err == nil && !previous.caps.FetchedAt.IsZero() && !capabilityFatal(err) {
 		caps = previous.caps
 		caps.Degraded = true
 		err = nil
 	}
 	capabilityCache.Lock()
 	ready := pending.ready
-	pending.caps, pending.err = caps, err
-	pending.ready = nil
+	if err != nil && !capabilityFatal(err) {
+		delete(capabilityCache.entries, key)
+	} else {
+		pending.caps, pending.err = caps, err
+		pending.retryAfter = capabilityRetryAfter(err)
+		pending.ready = nil
+	}
 	capabilityCache.Unlock()
 	close(ready)
+	if err != nil && !capabilityFatal(err) {
+		return ports.IndexerCapabilities{Degraded: true}, nil
+	}
 	return caps, err
+}
+
+func capabilityRetryAfter(err error) time.Time {
+	if err == nil {
+		return time.Time{}
+	}
+	var remote *ports.RemoteError
+	if errors.As(err, &remote) && !remote.RetryAt.IsZero() {
+		return remote.RetryAt
+	}
+	return time.Now().Add(time.Minute)
 }
 
 func capabilityFatal(err error) bool {
@@ -319,6 +359,7 @@ func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Rele
 	out := make([]ports.Release, 0, len(feed.Channel.Items))
 	for _, it := range feed.Channel.Items {
 		r := ports.Release{
+			GUID:      strings.TrimSpace(it.GUID),
 			Title:     strings.TrimSpace(it.Title),
 			Size:      it.Size,
 			Indexer:   c.cfg.Name,

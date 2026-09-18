@@ -49,12 +49,12 @@ export function ReleaseSearch(props: {
       grabRelease({
         mediaItemId, copyId, season, episode,
         title: c.title, downloadUrl: c.downloadUrl, indexer: c.indexer,
-        protocol: c.protocol, size: c.size, match: c.match,
+        protocol: c.protocol, size: c.size, candidateToken: c.candidateToken,
       }),
     onSuccess: (_res, c) => setGrabbed(c.title),
   })
 
-  const all = useMemo(() => search.data ?? [], [search.data])
+  const all = useMemo(() => search.data?.candidates ?? [], [search.data])
   const acceptedCount = useMemo(() => all.filter((c) => c.accepted).length, [all])
 
   const filtered = useMemo(() => {
@@ -88,6 +88,11 @@ export function ReleaseSearch(props: {
       </h2>
 
       {search.isFetching && <p className="muted">Searching indexers…</p>}
+      {search.data?.partial && (
+        <div className="banner warning">
+          Results are incomplete{search.data.reason ? `: ${search.data.reason}` : '.'}
+        </div>
+      )}
       {search.isError && <div className="banner warning">{String((search.error as Error).message)}</div>}
       {grab.isError && <div className="banner warning">{String((grab.error as Error).message)}</div>}
       {grabbed && (

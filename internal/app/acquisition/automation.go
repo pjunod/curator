@@ -306,22 +306,7 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 		go func(cfg ports.IndexerConfig) {
 			defer wg.Done()
 			indexer := s.newIndexer(cfg)
-			queries, err := queriesForIndexer(ctx, indexer, w, false)
-			if err != nil {
-				s.log.Warn("auto search: indexer capabilities unavailable", "indexer", cfg.Name, "err", err)
-				return
-			}
-			for tier, q := range queries {
-				cctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
-				rs, err := indexer.Search(cctx, q)
-				cancel()
-				if err != nil {
-					s.log.Warn("auto search: indexer failed", "indexer", cfg.Name, "tier", tier+1, "err", err)
-					continue
-				}
-				mu.Lock()
-				releases = append(releases, rs...)
-				mu.Unlock()
+			eligible := func(rs []ports.Release) bool {
 				eligible := false
 				for _, release := range rs {
 					if s.isBlocklisted(ctx, release.Title, release.Indexer) {
@@ -340,10 +325,15 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 					eligible = true
 					break
 				}
-				if eligible {
-					break
-				}
+				return eligible
 			}
+			rs, reasons := s.executeIndexerSearch(ctx, indexer, w, false, eligible)
+			for _, reason := range reasons {
+				s.log.Warn("auto search: indexer incomplete", "indexer", cfg.Name, "reason", reason)
+			}
+			mu.Lock()
+			releases = append(releases, rs...)
+			mu.Unlock()
 		}(cfg)
 	}
 	wg.Wait()
@@ -364,14 +354,7 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 		return a.r.Seeders > b.r.Seeders
 	}
 	var best *scored
-	seen := map[string]bool{}
-	for _, r := range releases {
-		// The same release can come back from two queries of one indexer.
-		key := r.Title + "|" + r.Indexer
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
+	for _, r := range deduplicateReleases(releases) {
 		tally.Seen++
 
 		if s.isBlocklisted(ctx, r.Title, r.Indexer) {

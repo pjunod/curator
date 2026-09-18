@@ -3,6 +3,8 @@ package acquisition
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
@@ -10,6 +12,58 @@ import (
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/ports"
 )
+
+func deduplicateReleases(releases []ports.Release) []ports.Release {
+	out := make([]ports.Release, 0, len(releases))
+	positions := make(map[string]int, len(releases))
+	for _, release := range releases {
+		key := release.GUID
+		if key != "" {
+			key = "guid|" + release.Indexer + "|" + key
+		} else if release.DownloadURL != "" {
+			key = "url|" + release.Indexer + "|" + release.DownloadURL
+		}
+		if key == "" {
+			out = append(out, release)
+			continue
+		}
+		if pos, ok := positions[key]; ok {
+			mergeReleaseIdentity(&out[pos], release)
+			continue
+		}
+		positions[key] = len(out)
+		out = append(out, release)
+	}
+	return out
+}
+
+func mergeReleaseIdentity(dst *ports.Release, src ports.Release) {
+	dst.IDIssues = append(dst.IDIssues, src.IDIssues...)
+	merge := func(provider, current, incoming string, assign func()) {
+		if incoming == "" {
+			return
+		}
+		if current == "" {
+			assign()
+			return
+		}
+		if !strings.EqualFold(current, incoming) {
+			dst.IDIssues = append(dst.IDIssues, domain.IdentityIssue{
+				Code: "conflicting_ids", Provider: provider, Values: []string{current, incoming},
+			})
+		}
+	}
+	merge("tmdb", idString(dst.IDs.TMDB), idString(src.IDs.TMDB), func() { dst.IDs.TMDB = src.IDs.TMDB })
+	merge("tvdb", idString(dst.IDs.TVDB), idString(src.IDs.TVDB), func() { dst.IDs.TVDB = src.IDs.TVDB })
+	merge("imdb", dst.IDs.IMDB, src.IDs.IMDB, func() { dst.IDs.IMDB = src.IDs.IMDB })
+}
+
+func idString(value int64) string {
+	if value == 0 {
+		return ""
+	}
+	return strconv.FormatInt(value, 10)
+}
 
 func (s *Service) allIdentity(ctx context.Context, now time.Time) (matcher.IdentityIndex, error) {
 	s.identityMu.Lock()

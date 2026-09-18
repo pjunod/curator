@@ -11,30 +11,34 @@ import (
 // queriesForIndexer converts the domain's ordered alternatives into wire
 // queries that one indexer's advertised capabilities can actually answer.
 // Unknown capabilities deliberately permit one generic canonical probe only.
-func queriesForIndexer(ctx context.Context, indexer ports.Indexer, w domain.Wantable, interactive bool) ([]domain.SearchQuery, error) {
+func queriesForIndexer(ctx context.Context, indexer ports.Indexer, w domain.Wantable, interactive bool) ([]domain.SearchQuery, []string, error) {
 	if _, ok := w.(domain.BookWantable); ok {
-		return domain.PlanSearch(w), nil
+		return domain.PlanSearch(w), nil, nil
 	}
 	plan := domain.PlanVideoSearch(w)
 	if len(plan.Titles) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	provider, ok := indexer.(ports.IndexerCapabilitiesProvider)
 	if !ok {
 		q := plan.Titles[0]
 		q.Mode = "generic"
 		q.SeasonSet, q.EpisodeSet = false, false
-		return []domain.SearchQuery{q}, nil
+		return []domain.SearchQuery{q}, nil, nil
 	}
 	caps, err := provider.Capabilities(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	var warnings []string
+	if caps.Degraded {
+		warnings = append(warnings, "capability discovery failed; used generic fallback")
 	}
 	if !caps.Generic.Known && !caps.TV.Known && !caps.Movie.Known {
 		q := plan.Titles[0]
 		q.Mode = "generic"
 		q.SeasonSet, q.EpisodeSet = false, false
-		return []domain.SearchQuery{q}, nil
+		return []domain.SearchQuery{q}, warnings, nil
 	}
 
 	idLimit, titleLimit := 1, 2
@@ -75,9 +79,9 @@ func queriesForIndexer(ctx context.Context, indexer ports.Indexer, w domain.Want
 		titles++
 	}
 	if len(queries) == 0 {
-		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery, Cause: fmt.Errorf("indexer advertises no compatible search mode")}
+		return nil, warnings, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery, Cause: fmt.Errorf("indexer advertises no compatible search mode")}
 	}
-	return queries, nil
+	return queries, warnings, nil
 }
 
 func capabilityForKind(caps ports.IndexerCapabilities, kind domain.MediaKind) ports.IndexerSearchCapability {

@@ -1224,6 +1224,13 @@ paths:
       responses:
         "200":
           description: Ranked candidates with rejection reasons attached.
+          headers:
+            X-Monarr-Search-Partial:
+              description: True when one or more indexers or query modes failed.
+              schema: { type: boolean }
+            X-Monarr-Search-Reason:
+              description: Semicolon-separated, credential-redacted incomplete-search reasons.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -3516,7 +3523,7 @@ components:
 
     ReleaseCandidate:
       type: object
-      required: [title, downloadUrl, indexer, protocol, size, seeders, age, quality, score, accepted, isUpgrade, rejections, match]
+      required: [title, downloadUrl, indexer, protocol, size, seeders, age, quality, score, accepted, isUpgrade, rejections, match, candidateToken]
       properties:
         title: { type: string }
         downloadUrl: { type: string }
@@ -3541,6 +3548,9 @@ components:
           items: { $ref: "#/components/schemas/Rejection" }
         match:
           $ref: "#/components/schemas/MatchEvidence"
+        candidateToken:
+          type: string
+          description: Opaque short-lived server proof binding this row to its displayed match evidence.
         warning:
           type: string
           description: >
@@ -3581,9 +3591,9 @@ components:
         indexer: { type: string }
         protocol: { type: string }
         size: { type: integer, format: int64 }
-        match:
-          $ref: "#/components/schemas/MatchEvidence"
-          description: The search-time evidence shown to the person approving this grab.
+        candidateToken:
+          type: string
+          description: Opaque token returned by Release Search. Absent means an explicit manual override.
 
     ScannedFile:
       type: object

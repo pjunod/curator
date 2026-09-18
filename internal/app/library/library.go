@@ -954,10 +954,7 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 		}
 	}
 
-	if err := s.db.UpdateMediaIdentity(ctx, id, fresh.IDs); err != nil {
-		return domain.MediaItem{}, err
-	}
-	if err := s.db.UpdateMediaItemMetadata(ctx, id, fresh); err != nil {
+	if err := s.db.RefreshMediaItemMetadata(ctx, id, fresh); err != nil {
 		return domain.MediaItem{}, err
 	}
 	s.log.Info("library: metadata refreshed", "kind", stored.Kind, "title", fresh.Title, "id", id)

@@ -4,8 +4,9 @@ Companion to [the reviewed implementation plan](plan-release-identity.md) —
 this page records what is built, reviewed, validated, and delivered. The plan
 remains the behavioral contract and acceptance matrix.
 
-**Updated:** 2026-09-17 · **Branch:** `codex/release-identity` · **State:** in
-progress · **Draft PR:** [#27](https://github.com/pjunod/monarr/pull/27)
+**Updated:** 2026-09-17 · **Branch:** `codex/release-identity` · **State:**
+review findings addressed; fast lane pending · **Draft PR:**
+[#27](https://github.com/pjunod/monarr/pull/27)
 
 ## Delivery state
 
@@ -19,7 +20,7 @@ progress · **Draft PR:** [#27](https://github.com/pjunod/monarr/pull/27)
 | M4 capability-aware query tiers | implemented; validation deferred | Cached capabilities, typed protocol errors, 3-query automatic and 5-query interactive budgets |
 | M5 shared matching and provenance | implemented; validation deferred | One evaluator for interactive/RSS/backlog/pre-grab; versioned download evidence and revision cache |
 | M6 UI, docs, and version | implemented; validation deferred | Web/mobile identity diagnostics and explanations, ADR 0019, operator docs, 0.25.0 version |
-| Adversarial review | pending | Run once, after implementation is ready to merge |
+| Adversarial review | complete; findings addressed | One final review found provenance forgery, year bypass, cache/timeout/dedup/atomicity/fallback defects, a compile error, and two diagnostics gaps; all were corrected before validation |
 | Fast-lane validation | pending | Run once after review findings are addressed |
 | Pull request and merge | draft PR open | One batched PR; mark ready and merge only after review and fast lane are green |
 
@@ -44,3 +45,22 @@ progress · **Draft PR:** [#27](https://github.com/pjunod/monarr/pull/27)
 - The request mentioned a Plurx developer-settings enable section. This is a
   Monarr change, so no unrelated Plurx UI is modified. Monarr identity status
   will live on media/search diagnostics instead of gating the feature.
+
+## Adversarial review resolution
+
+- Search candidates now carry opaque, short-lived, bounded server tokens;
+  clients cannot author persisted evidence, and rejected/expired selections
+  are recorded as manual overrides.
+- Explicit release years remain hard conflicts even when an external ID
+  matches.
+- Capability failures retry, honor rate-limit times, degrade to one generic
+  query when safe, and runtime unsupported modes are invalidated.
+- Each indexer gets one deadline across all tiers. Authentication and rate
+  limits stop further requests.
+- Releases deduplicate by indexer GUID or exact download URL. Repeated rows
+  merge identity evidence and contradictory IDs become rejections.
+- Provider metadata, verified IDs, historical canonical aliases, episodes,
+  and identity revision invalidation commit atomically.
+- Compatibility fallback is limited to unsupported/unconfigured provider
+  paths. Partial search headers and the web notice distinguish incomplete
+  results from an authoritative empty response.

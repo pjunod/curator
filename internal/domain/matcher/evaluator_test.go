@@ -99,6 +99,19 @@ func TestEvaluateIDCanRescueTitleButNotConflictOrCoverage(t *testing.T) {
 	}
 }
 
+func TestEvaluateMatchingIDCannotOverrideExplicitWrongYear(t *testing.T) {
+	now := time.Now()
+	item := domain.MediaItem{ID: 9, Kind: domain.KindSeries, Title: "Example", Year: 2020, IDs: domain.ExternalIDs{TVDB: 99}}
+	want := domain.EpisodeWantable{Item: 9, EpisodeID: 901, Title: item.Title, Year: item.Year, Season: 1, Episode: 1, Mon: true,
+		Identity: domain.MediaIdentity{Title: item.Title, Year: item.Year, IDs: item.IDs}}
+	decision := Evaluate(ReleaseEvidence{
+		Parsed: parser.Parse("Example.2024.S01E01.1080p"), IDs: domain.ExternalIDs{TVDB: 99},
+	}, want, NewIdentityIndex([]domain.MediaItem{item}, now))
+	if decision.Matched || decision.Code != "year_conflict" {
+		t.Fatalf("wrong-year ID match = %+v", decision)
+	}
+}
+
 func TestEvaluateCountryConflictSurvivesMatchingID(t *testing.T) {
 	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 	item := domain.MediaItem{ID: 9, Kind: domain.KindSeries, Title: "Show", Year: 2020,

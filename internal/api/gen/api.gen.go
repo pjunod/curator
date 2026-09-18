@@ -1085,17 +1085,19 @@ type ExternalIds struct {
 
 // GrabRequest defines model for GrabRequest.
 type GrabRequest struct {
+	// CandidateToken Opaque token returned by Release Search. Absent means an explicit manual override.
+	CandidateToken *string `json:"candidateToken,omitempty"`
+
 	// CopyId Additional quality copy or book edition; absent/0 selects the primary target.
-	CopyId      *int64         `json:"copyId,omitempty"`
-	DownloadUrl string         `json:"downloadUrl"`
-	Episode     *int           `json:"episode,omitempty"`
-	Indexer     *string        `json:"indexer,omitempty"`
-	Match       *MatchEvidence `json:"match,omitempty"`
-	MediaItemId int64          `json:"mediaItemId"`
-	Protocol    string         `json:"protocol"`
-	Season      *int           `json:"season,omitempty"`
-	Size        *int64         `json:"size,omitempty"`
-	Title       string         `json:"title"`
+	CopyId      *int64  `json:"copyId,omitempty"`
+	DownloadUrl string  `json:"downloadUrl"`
+	Episode     *int    `json:"episode,omitempty"`
+	Indexer     *string `json:"indexer,omitempty"`
+	MediaItemId int64   `json:"mediaItemId"`
+	Protocol    string  `json:"protocol"`
+	Season      *int    `json:"season,omitempty"`
+	Size        *int64  `json:"size,omitempty"`
+	Title       string  `json:"title"`
 }
 
 // HandoffEntry defines model for HandoffEntry.
@@ -1700,9 +1702,12 @@ type Rejection struct {
 
 // ReleaseCandidate defines model for ReleaseCandidate.
 type ReleaseCandidate struct {
-	Accepted    bool   `json:"accepted"`
-	Age         string `json:"age"`
-	DownloadUrl string `json:"downloadUrl"`
+	Accepted bool   `json:"accepted"`
+	Age      string `json:"age"`
+
+	// CandidateToken Opaque short-lived server proof binding this row to its displayed match evidence.
+	CandidateToken string `json:"candidateToken"`
+	DownloadUrl    string `json:"downloadUrl"`
 
 	// Formats Names of matched custom formats.
 	Formats    *[]string     `json:"formats,omitempty"`
