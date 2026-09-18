@@ -2,12 +2,14 @@ package compat
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // mountRadarr adds the movie-shaped surface Jellyseerr and Bazarr call.
@@ -83,23 +85,20 @@ func (p *Personality) getMovie(w http.ResponseWriter, r *http.Request) {
 func (p *Personality) lookupMovies(w http.ResponseWriter, r *http.Request) {
 	term := strings.TrimSpace(r.URL.Query().Get("term"))
 	results := []map[string]any{}
-	if tmdbStr, ok := strings.CutPrefix(strings.ToLower(term), "tmdb:"); ok {
-		tmdbID, _ := strconv.ParseInt(tmdbStr, 10, 64)
-		// Hydrate directly through the library's metadata path: search by id
-		// is not a thing, so surface a minimal lookup result.
-		writeJSON(w, http.StatusOK, []map[string]any{{
-			"tmdbId": tmdbID, "title": "", "titleSlug": tmdbStr, "year": 0,
-		}})
-		return
-	}
 	found, err := p.deps.Library.Search(r.Context(), domain.KindMovie, term)
 	if err != nil {
+		if raw, ok := strings.CutPrefix(strings.ToLower(term), "tmdb:"); ok && (errors.Is(err, ports.ErrProviderNotConfigured) || errors.Is(err, library.ErrUnsupportedHydration)) {
+			if id, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil && id > 0 {
+				writeJSON(w, http.StatusOK, []map[string]any{{"tmdbId": id, "titleSlug": strconv.FormatInt(id, 10), "title": term, "year": 0, "overview": ""}})
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, results)
 		return
 	}
 	for _, res := range found {
 		results = append(results, map[string]any{
-			"tmdbId": res.TMDBID, "title": res.Title, "year": res.Year,
+			"tmdbId": res.TMDBID, "imdbId": res.IMDBID, "title": res.Title, "year": res.Year,
 			"overview": res.Overview, "titleSlug": strconv.FormatInt(res.TMDBID, 10),
 			"remotePoster": res.PosterPath,
 		})

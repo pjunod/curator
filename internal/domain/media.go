@@ -102,8 +102,11 @@ type MediaItem struct {
 	// BookType is the primary edition's medium. It is persisted independently
 	// from QualityProfileID: a profile governs preferences WITHIN an edition
 	// and must never turn an ebook into an audiobook (ADR 0018).
-	BookType quality.BookType
-	IDs      ExternalIDs
+	BookType        quality.BookType
+	IDs             ExternalIDs
+	Aliases         []TitleAlias
+	Countries       []CountryEvidence
+	IdentitySources []IdentitySourceStatus
 
 	// Metadata cache (hydrated from the provider).
 	Overview     string

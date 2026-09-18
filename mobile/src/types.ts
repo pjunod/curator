@@ -126,6 +126,32 @@ export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' |
   seasons: SeasonInfo[]
   files: MediaFileInfo[]
   copies: MediaCopy[]
+  ids: { tmdb: number; tvdb?: number; imdb?: string; isbn13?: string; olid?: string; asin?: string }
+  aliases: TitleAlias[]
+  countries: CountryEvidence[]
+  identitySources: IdentitySourceStatus[]
+}
+
+export interface TitleAlias {
+  id: number
+  title: string
+  source: string
+  sourceId: string
+  language: string
+  marketCountry: string
+  scope: 'work' | 'season' | 'unsupported_numbering'
+  role: 'original' | 'alternate' | 'historical' | 'manual'
+  searchable: boolean
+}
+
+export interface CountryEvidence { code: string; source: string; basis: string }
+export interface IdentitySourceStatus {
+  source: string
+  countries: CountryEvidence[]
+  fetchedAt?: string
+  attemptedAt?: string
+  retryAfter?: string
+  lastError: string
 }
 
 export interface UpdateMediaItemRequest {
@@ -155,7 +181,9 @@ export interface SearchResult {
   kind: MediaKind
   tmdbId: number
   tvdbId?: number
+  imdbId?: string
   source?: string
+  hydrationSource?: string
   olid?: string
   author?: string
   title: string
@@ -170,6 +198,8 @@ export interface AddMediaRequest {
   kind: MediaKind
   tmdbId?: number
   tvdbId?: number
+  imdbId?: string
+  hydrationSource?: string
   olid?: string
   bookType?: BookType
   rootFolderId?: number
@@ -215,6 +245,21 @@ export interface WantedItem {
   copy: string
 }
 
+export interface MatchEvidence {
+  version: number
+  matched: boolean
+  method?: string
+  code?: string
+  reason: string
+  originalTitle?: string
+  parsedTitle?: string
+  targetTitle?: string
+  matchedTitle?: string
+  matchedId?: { provider: string; value: string }
+  country?: string
+  warnings?: string[]
+}
+
 export interface QueueItem {
   id: number
   mediaItemId: number
@@ -230,6 +275,7 @@ export interface QueueItem {
   bytes?: number
   total?: number
   bytesPerSecond?: number
+  match?: MatchEvidence
 }
 
 export interface QueueSummary {

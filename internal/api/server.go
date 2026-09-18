@@ -122,6 +122,10 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, apigen.Error{Message: msg})
 }
 
+func writeCodedError(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, apigen.Error{Code: &code, Message: msg})
+}
+
 // statusRecorder captures the response code for request logging.
 type statusRecorder struct {
 	http.ResponseWriter

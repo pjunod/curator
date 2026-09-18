@@ -23,5 +23,6 @@ accepted; a change of course gets a new ADR that supersedes the old one.
 | [0016](0016-air-times.md) | Air times from TVmaze's show-level schedule, composed to UTC per date at read time | Accepted |
 | [0017](0017-audiobook-curation.md) | Audiobook acquisition, format routing, and multipart import | Superseded by [0018](0018-side-by-side-book-editions.md) |
 | [0018](0018-side-by-side-book-editions.md) | Ebook and audiobook editions coexist under one book work | Accepted |
+| [0019](0019-release-identity-evidence.md) | Release identity is evidence, not a normalized title | Accepted |
 
 Context for all of these lives in [../architecture.md](../architecture.md).

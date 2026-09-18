@@ -10,6 +10,18 @@ import (
 	"database/sql"
 )
 
+const bumpIdentityRevision = `-- name: BumpIdentityRevision :one
+UPDATE media_identity_revision SET revision = revision + 1 WHERE id = 1
+RETURNING revision
+`
+
+func (q *Queries) BumpIdentityRevision(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, bumpIdentityRevision)
+	var revision int64
+	err := row.Scan(&revision)
+	return revision, err
+}
+
 const clearFileEpisodeLinks = `-- name: ClearFileEpisodeLinks :exec
 DELETE FROM media_file_episodes WHERE media_file_id = ?
 `
@@ -26,6 +38,24 @@ DELETE FROM ignored_paths WHERE path = ?
 func (q *Queries) DeleteIgnoredPath(ctx context.Context, path string) error {
 	_, err := q.db.ExecContext(ctx, deleteIgnoredPath, path)
 	return err
+}
+
+const deleteManualAlias = `-- name: DeleteManualAlias :execrows
+DELETE FROM media_aliases
+WHERE id = ? AND media_item_id = ? AND source = 'manual' AND role = 'manual'
+`
+
+type DeleteManualAliasParams struct {
+	ID          int64
+	MediaItemID int64
+}
+
+func (q *Queries) DeleteManualAlias(ctx context.Context, arg DeleteManualAliasParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteManualAlias, arg.ID, arg.MediaItemID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteMediaCopy = `-- name: DeleteMediaCopy :execrows
@@ -69,6 +99,21 @@ DELETE FROM media_items WHERE id = ?
 
 func (q *Queries) DeleteMediaItem(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteMediaItem, id)
+	return err
+}
+
+const deleteReplaceableProviderAliases = `-- name: DeleteReplaceableProviderAliases :exec
+DELETE FROM media_aliases
+WHERE media_item_id = ? AND source = ? AND role IN ('original', 'alternate')
+`
+
+type DeleteReplaceableProviderAliasesParams struct {
+	MediaItemID int64
+	Source      string
+}
+
+func (q *Queries) DeleteReplaceableProviderAliases(ctx context.Context, arg DeleteReplaceableProviderAliasesParams) error {
+	_, err := q.db.ExecContext(ctx, deleteReplaceableProviderAliases, arg.MediaItemID, arg.Source)
 	return err
 }
 
@@ -185,6 +230,210 @@ func (q *Queries) FindItemByTmdb(ctx context.Context, arg FindItemByTmdbParams) 
 	return i, err
 }
 
+const findMediaItemsByKindImdb = `-- name: FindMediaItemsByKindImdb :many
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes, ratings, source, download_priority, airs_time, airs_timezone, network, book_type FROM media_items WHERE kind = ? AND imdb_id = ? AND imdb_id != '' ORDER BY id
+`
+
+type FindMediaItemsByKindImdbParams struct {
+	Kind   string
+	ImdbID string
+}
+
+func (q *Queries) FindMediaItemsByKindImdb(ctx context.Context, arg FindMediaItemsByKindImdbParams) ([]MediaItem, error) {
+	rows, err := q.db.QueryContext(ctx, findMediaItemsByKindImdb, arg.Kind, arg.ImdbID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaItem
+	for rows.Next() {
+		var i MediaItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Title,
+			&i.SortTitle,
+			&i.Year,
+			&i.TmdbID,
+			&i.ImdbID,
+			&i.TvdbID,
+			&i.Isbn13,
+			&i.Olid,
+			&i.Asin,
+			&i.Overview,
+			&i.PosterPath,
+			&i.BackdropPath,
+			&i.Genres,
+			&i.Status,
+			&i.ReleaseDate,
+			&i.Runtime,
+			&i.Monitored,
+			&i.RootFolderID,
+			&i.Path,
+			&i.Ended,
+			&i.AddedAt,
+			&i.UpdatedAt,
+			&i.QualityProfileID,
+			&i.Author,
+			&i.Rating,
+			&i.RatingVotes,
+			&i.Ratings,
+			&i.Source,
+			&i.DownloadPriority,
+			&i.AirsTime,
+			&i.AirsTimezone,
+			&i.Network,
+			&i.BookType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findMediaItemsByKindTmdb = `-- name: FindMediaItemsByKindTmdb :many
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes, ratings, source, download_priority, airs_time, airs_timezone, network, book_type FROM media_items WHERE kind = ? AND tmdb_id = ? AND tmdb_id != 0 ORDER BY id
+`
+
+type FindMediaItemsByKindTmdbParams struct {
+	Kind   string
+	TmdbID int64
+}
+
+func (q *Queries) FindMediaItemsByKindTmdb(ctx context.Context, arg FindMediaItemsByKindTmdbParams) ([]MediaItem, error) {
+	rows, err := q.db.QueryContext(ctx, findMediaItemsByKindTmdb, arg.Kind, arg.TmdbID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaItem
+	for rows.Next() {
+		var i MediaItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Title,
+			&i.SortTitle,
+			&i.Year,
+			&i.TmdbID,
+			&i.ImdbID,
+			&i.TvdbID,
+			&i.Isbn13,
+			&i.Olid,
+			&i.Asin,
+			&i.Overview,
+			&i.PosterPath,
+			&i.BackdropPath,
+			&i.Genres,
+			&i.Status,
+			&i.ReleaseDate,
+			&i.Runtime,
+			&i.Monitored,
+			&i.RootFolderID,
+			&i.Path,
+			&i.Ended,
+			&i.AddedAt,
+			&i.UpdatedAt,
+			&i.QualityProfileID,
+			&i.Author,
+			&i.Rating,
+			&i.RatingVotes,
+			&i.Ratings,
+			&i.Source,
+			&i.DownloadPriority,
+			&i.AirsTime,
+			&i.AirsTimezone,
+			&i.Network,
+			&i.BookType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findMediaItemsByKindTvdb = `-- name: FindMediaItemsByKindTvdb :many
+SELECT id, kind, title, sort_title, year, tmdb_id, imdb_id, tvdb_id, isbn13, olid, asin, overview, poster_path, backdrop_path, genres, status, release_date, runtime, monitored, root_folder_id, path, ended, added_at, updated_at, quality_profile_id, author, rating, rating_votes, ratings, source, download_priority, airs_time, airs_timezone, network, book_type FROM media_items WHERE kind = ? AND tvdb_id = ? AND tvdb_id != 0 ORDER BY id
+`
+
+type FindMediaItemsByKindTvdbParams struct {
+	Kind   string
+	TvdbID int64
+}
+
+func (q *Queries) FindMediaItemsByKindTvdb(ctx context.Context, arg FindMediaItemsByKindTvdbParams) ([]MediaItem, error) {
+	rows, err := q.db.QueryContext(ctx, findMediaItemsByKindTvdb, arg.Kind, arg.TvdbID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaItem
+	for rows.Next() {
+		var i MediaItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Title,
+			&i.SortTitle,
+			&i.Year,
+			&i.TmdbID,
+			&i.ImdbID,
+			&i.TvdbID,
+			&i.Isbn13,
+			&i.Olid,
+			&i.Asin,
+			&i.Overview,
+			&i.PosterPath,
+			&i.BackdropPath,
+			&i.Genres,
+			&i.Status,
+			&i.ReleaseDate,
+			&i.Runtime,
+			&i.Monitored,
+			&i.RootFolderID,
+			&i.Path,
+			&i.Ended,
+			&i.AddedAt,
+			&i.UpdatedAt,
+			&i.QualityProfileID,
+			&i.Author,
+			&i.Rating,
+			&i.RatingVotes,
+			&i.Ratings,
+			&i.Source,
+			&i.DownloadPriority,
+			&i.AirsTime,
+			&i.AirsTimezone,
+			&i.Network,
+			&i.BookType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getEpisodeByNumber = `-- name: GetEpisodeByNumber :one
 SELECT id, media_item_id, season_number, episode_number, absolute_num, title, air_date, monitored FROM episodes
 WHERE media_item_id = ? AND season_number = ? AND episode_number = ?
@@ -208,6 +457,30 @@ func (q *Queries) GetEpisodeByNumber(ctx context.Context, arg GetEpisodeByNumber
 		&i.Title,
 		&i.AirDate,
 		&i.Monitored,
+	)
+	return i, err
+}
+
+const getIdentitySource = `-- name: GetIdentitySource :one
+SELECT media_item_id, source, countries, fetched_at, attempted_at, retry_after, last_error FROM media_identity_sources WHERE media_item_id = ? AND source = ?
+`
+
+type GetIdentitySourceParams struct {
+	MediaItemID int64
+	Source      string
+}
+
+func (q *Queries) GetIdentitySource(ctx context.Context, arg GetIdentitySourceParams) (MediaIdentitySource, error) {
+	row := q.db.QueryRowContext(ctx, getIdentitySource, arg.MediaItemID, arg.Source)
+	var i MediaIdentitySource
+	err := row.Scan(
+		&i.MediaItemID,
+		&i.Source,
+		&i.Countries,
+		&i.FetchedAt,
+		&i.AttemptedAt,
+		&i.RetryAfter,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -462,6 +735,17 @@ func (q *Queries) GetRootFolder(ctx context.Context, id int64) (RootFolder, erro
 	return i, err
 }
 
+const identityRevision = `-- name: IdentityRevision :one
+SELECT revision FROM media_identity_revision WHERE id = 1
+`
+
+func (q *Queries) IdentityRevision(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, identityRevision)
+	var revision int64
+	err := row.Scan(&revision)
+	return revision, err
+}
+
 const insertEpisode = `-- name: InsertEpisode :one
 INSERT INTO episodes (
     media_item_id, season_number, episode_number, absolute_num,
@@ -509,6 +793,45 @@ type InsertIgnoredPathParams struct {
 func (q *Queries) InsertIgnoredPath(ctx context.Context, arg InsertIgnoredPathParams) error {
 	_, err := q.db.ExecContext(ctx, insertIgnoredPath, arg.Path, arg.Reason, arg.IgnoredAt)
 	return err
+}
+
+const insertMediaAlias = `-- name: InsertMediaAlias :one
+INSERT INTO media_aliases (
+    media_item_id, title, normalized_title, source, source_id, language,
+    market_country, scope, role, searchable
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id
+`
+
+type InsertMediaAliasParams struct {
+	MediaItemID     int64
+	Title           string
+	NormalizedTitle string
+	Source          string
+	SourceID        string
+	Language        string
+	MarketCountry   string
+	Scope           string
+	Role            string
+	Searchable      int64
+}
+
+func (q *Queries) InsertMediaAlias(ctx context.Context, arg InsertMediaAliasParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, insertMediaAlias,
+		arg.MediaItemID,
+		arg.Title,
+		arg.NormalizedTitle,
+		arg.Source,
+		arg.SourceID,
+		arg.Language,
+		arg.MarketCountry,
+		arg.Scope,
+		arg.Role,
+		arg.Searchable,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertMediaCopy = `-- name: InsertMediaCopy :one
@@ -687,6 +1010,80 @@ func (q *Queries) LinkFileEpisode(ctx context.Context, arg LinkFileEpisodeParams
 	return err
 }
 
+const listAllIdentitySources = `-- name: ListAllIdentitySources :many
+SELECT media_item_id, source, countries, fetched_at, attempted_at, retry_after, last_error FROM media_identity_sources ORDER BY media_item_id, source
+`
+
+func (q *Queries) ListAllIdentitySources(ctx context.Context) ([]MediaIdentitySource, error) {
+	rows, err := q.db.QueryContext(ctx, listAllIdentitySources)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaIdentitySource
+	for rows.Next() {
+		var i MediaIdentitySource
+		if err := rows.Scan(
+			&i.MediaItemID,
+			&i.Source,
+			&i.Countries,
+			&i.FetchedAt,
+			&i.AttemptedAt,
+			&i.RetryAfter,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllMediaAliases = `-- name: ListAllMediaAliases :many
+SELECT id, media_item_id, title, normalized_title, source, source_id, language, market_country, scope, role, searchable FROM media_aliases ORDER BY media_item_id, id
+`
+
+func (q *Queries) ListAllMediaAliases(ctx context.Context) ([]MediaAlias, error) {
+	rows, err := q.db.QueryContext(ctx, listAllMediaAliases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaAlias
+	for rows.Next() {
+		var i MediaAlias
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.Title,
+			&i.NormalizedTitle,
+			&i.Source,
+			&i.SourceID,
+			&i.Language,
+			&i.MarketCountry,
+			&i.Scope,
+			&i.Role,
+			&i.Searchable,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllMediaCopies = `-- name: ListAllMediaCopies :many
 SELECT id, media_item_id, name, quality_profile_id, root_folder_id, path, monitored, added_at, book_type FROM media_copies ORDER BY media_item_id, id
 `
@@ -832,6 +1229,41 @@ func (q *Queries) ListFileEpisodeLinksForItem(ctx context.Context, mediaItemID s
 	return items, nil
 }
 
+const listIdentitySources = `-- name: ListIdentitySources :many
+SELECT media_item_id, source, countries, fetched_at, attempted_at, retry_after, last_error FROM media_identity_sources WHERE media_item_id = ? ORDER BY source
+`
+
+func (q *Queries) ListIdentitySources(ctx context.Context, mediaItemID int64) ([]MediaIdentitySource, error) {
+	rows, err := q.db.QueryContext(ctx, listIdentitySources, mediaItemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaIdentitySource
+	for rows.Next() {
+		var i MediaIdentitySource
+		if err := rows.Scan(
+			&i.MediaItemID,
+			&i.Source,
+			&i.Countries,
+			&i.FetchedAt,
+			&i.AttemptedAt,
+			&i.RetryAfter,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listIgnoredPaths = `-- name: ListIgnoredPaths :many
 SELECT path, reason, ignored_at FROM ignored_paths ORDER BY path
 `
@@ -846,6 +1278,45 @@ func (q *Queries) ListIgnoredPaths(ctx context.Context) ([]IgnoredPath, error) {
 	for rows.Next() {
 		var i IgnoredPath
 		if err := rows.Scan(&i.Path, &i.Reason, &i.IgnoredAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMediaAliases = `-- name: ListMediaAliases :many
+SELECT id, media_item_id, title, normalized_title, source, source_id, language, market_country, scope, role, searchable FROM media_aliases WHERE media_item_id = ? ORDER BY id
+`
+
+func (q *Queries) ListMediaAliases(ctx context.Context, mediaItemID int64) ([]MediaAlias, error) {
+	rows, err := q.db.QueryContext(ctx, listMediaAliases, mediaItemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaAlias
+	for rows.Next() {
+		var i MediaAlias
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.Title,
+			&i.NormalizedTitle,
+			&i.Source,
+			&i.SourceID,
+			&i.Language,
+			&i.MarketCountry,
+			&i.Scope,
+			&i.Role,
+			&i.Searchable,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1443,6 +1914,30 @@ func (q *Queries) UpdateMediaCopy(ctx context.Context, arg UpdateMediaCopyParams
 	return result.RowsAffected()
 }
 
+const updateMediaExternalIDs = `-- name: UpdateMediaExternalIDs :exec
+UPDATE media_items SET tmdb_id = ?, imdb_id = ?, tvdb_id = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateMediaExternalIDsParams struct {
+	TmdbID    int64
+	ImdbID    string
+	TvdbID    int64
+	UpdatedAt int64
+	ID        int64
+}
+
+func (q *Queries) UpdateMediaExternalIDs(ctx context.Context, arg UpdateMediaExternalIDsParams) error {
+	_, err := q.db.ExecContext(ctx, updateMediaExternalIDs,
+		arg.TmdbID,
+		arg.ImdbID,
+		arg.TvdbID,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
 const updateMediaFileCopy = `-- name: UpdateMediaFileCopy :exec
 UPDATE media_files SET copy_id = ? WHERE id = ?
 `
@@ -1608,6 +2103,42 @@ func (q *Queries) UpsertEpisodeMeta(ctx context.Context, arg UpsertEpisodeMetaPa
 		arg.Title,
 		arg.AirDate,
 		arg.Monitored,
+	)
+	return err
+}
+
+const upsertIdentitySource = `-- name: UpsertIdentitySource :exec
+INSERT INTO media_identity_sources (
+    media_item_id, source, countries, fetched_at, attempted_at, retry_after,
+    last_error
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (media_item_id, source) DO UPDATE SET
+    countries = excluded.countries,
+    fetched_at = excluded.fetched_at,
+    attempted_at = excluded.attempted_at,
+    retry_after = excluded.retry_after,
+    last_error = excluded.last_error
+`
+
+type UpsertIdentitySourceParams struct {
+	MediaItemID int64
+	Source      string
+	Countries   string
+	FetchedAt   int64
+	AttemptedAt int64
+	RetryAfter  int64
+	LastError   string
+}
+
+func (q *Queries) UpsertIdentitySource(ctx context.Context, arg UpsertIdentitySourceParams) error {
+	_, err := q.db.ExecContext(ctx, upsertIdentitySource,
+		arg.MediaItemID,
+		arg.Source,
+		arg.Countries,
+		arg.FetchedAt,
+		arg.AttemptedAt,
+		arg.RetryAfter,
+		arg.LastError,
 	)
 	return err
 }

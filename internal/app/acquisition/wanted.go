@@ -155,7 +155,8 @@ func (s *Service) wantedEpisodes(item domain.MediaItem, profile quality.Profile,
 			ep := domain.EpisodeWantable{
 				Item: item.ID, EpisodeID: e.ID, Profile: profileID,
 				Mon: true, Title: item.Title, Year: item.Year,
-				Season: e.SeasonNumber, Episode: e.EpisodeNumber,
+				Identity: mediaIdentity(item),
+				Season:   e.SeasonNumber, Episode: e.EpisodeNumber,
 				Have: st.Have, Files: st.HasFile, Verified: st.Verified,
 				Absolute: e.AbsoluteNum, Copy: copyID, CopyName: copyName,
 			}

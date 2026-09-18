@@ -499,19 +499,25 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 	if params.CopyId != nil {
 		copyID = *params.CopyId
 	}
-	cands, err := s.deps.Acquisition.SearchCopy(r.Context(), id, copyID, season, episode)
+	cands, status, err := s.deps.Acquisition.SearchCopyDetailed(r.Context(), id, copyID, season, episode)
 	if err != nil {
 		s.acqErr(w, err)
 		return
 	}
+	if status.Partial {
+		w.Header().Set("X-Monarr-Search-Partial", "true")
+		reason := strings.NewReplacer("\r", " ", "\n", " ").Replace(strings.Join(status.Reasons, "; "))
+		w.Header().Set("X-Monarr-Search-Reason", reason)
+	}
 	out := make([]apigen.ReleaseCandidate, 0, len(cands))
 	for _, c := range cands {
+		match := apiMatchEvidence(c.Match)
 		rc := apigen.ReleaseCandidate{
 			Title: c.Release.Title, DownloadUrl: c.Release.DownloadURL,
 			Indexer: c.Release.Indexer, Protocol: c.Release.Protocol,
 			Size: c.Release.Size, Seeders: c.Release.Seeders, Age: c.Age,
 			Quality: c.QualityStr, Score: c.Score, Accepted: c.Accepted, IsUpgrade: c.IsUpgrade,
-			Rejections: []apigen.Rejection{},
+			Rejections: []apigen.Rejection{}, Match: match, CandidateToken: c.Token,
 		}
 		if len(c.Formats) > 0 {
 			fs := c.Formats
@@ -520,6 +526,10 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 		if c.Release.InfoURL != "" {
 			u := c.Release.InfoURL
 			rc.InfoUrl = &u
+		}
+		if c.Warning != "" {
+			warning := c.Warning
+			rc.Warning = &warning
 		}
 		for _, rej := range c.Rejections {
 			rc.Rejections = append(rc.Rejections, apigen.Rejection{Code: rej.Code, Reason: rej.Reason})
@@ -555,6 +565,9 @@ func (s *Server) GrabRelease(w http.ResponseWriter, r *http.Request) {
 	if in.Size != nil {
 		req.Size = *in.Size
 	}
+	if in.CandidateToken != nil {
+		req.CandidateToken = *in.CandidateToken
+	}
 	id, err := s.deps.Acquisition.Grab(r.Context(), req)
 	if err != nil {
 		s.acqErr(w, err)
@@ -583,6 +596,10 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			Title: d.ReleaseTitle, State: d.State, Progress: float32(d.Progress),
 			Protocol: d.Protocol, Quality: d.Quality.Display(),
 			SavePath: &save, ImportPath: &imp, AddedAt: d.AddedAt,
+		}
+		if d.MatchEvidence.Version > 0 {
+			match := apiMatchEvidence(d.MatchEvidence)
+			item.Match = &match
 		}
 		if d.Error != "" {
 			e := d.Error
@@ -1086,6 +1103,26 @@ func ptrIfText(v string) *string {
 		return nil
 	}
 	return &v
+}
+
+func apiMatchEvidence(e domain.MatchEvidence) apigen.MatchEvidence {
+	match := apigen.MatchEvidence{
+		Version: e.Version, Matched: e.Matched, Reason: e.Reason,
+		Method: ptrIfText(e.Method), Code: ptrIfText(e.Code), Country: ptrIfText(e.Country),
+		OriginalTitle: ptrIfText(e.OriginalTitle), ParsedTitle: ptrIfText(e.ParsedTitle),
+		TargetTitle: ptrIfText(e.TargetTitle), MatchedTitle: ptrIfText(e.MatchedTitle),
+	}
+	if e.MatchedID != nil {
+		match.MatchedId = &struct {
+			Provider string `json:"provider"`
+			Value    string `json:"value"`
+		}{Provider: e.MatchedID.Provider, Value: e.MatchedID.Value}
+	}
+	if len(e.Warnings) > 0 {
+		warnings := e.Warnings
+		match.Warnings = &warnings
+	}
+	return match
 }
 
 // DeleteNotifier implements DELETE /notifiers/{id}.

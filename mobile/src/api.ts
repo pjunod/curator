@@ -24,6 +24,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code?: string,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -60,16 +61,18 @@ export class MonarrClient {
     const text = await response.text()
     if (!response.ok) {
       let message = `${response.status} ${response.statusText}`.trim()
+      let code: string | undefined
       try {
-        const body = JSON.parse(text) as { message?: string }
+        const body = JSON.parse(text) as { message?: string; code?: string }
         if (body.message) message = body.message
+        code = body.code
       } catch {
         if (text.trim()) message = text.trim()
       }
       if (response.status === 401) {
         message = 'Authentication failed. Check the API key in Access → API access.'
       }
-      throw new ApiError(message, response.status)
+      throw new ApiError(message, response.status, code)
     }
     return (text ? JSON.parse(text) : undefined) as T
   }

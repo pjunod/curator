@@ -53,6 +53,7 @@ type Download struct {
 	UpdatedAt      int64
 	Transfer       string
 	PayloadRemoved int64
+	MatchEvidence  string
 }
 
 type DownloadClient struct {
@@ -140,6 +141,20 @@ type Job struct {
 	FinishedAt         int64
 }
 
+type MediaAlias struct {
+	ID              int64
+	MediaItemID     int64
+	Title           string
+	NormalizedTitle string
+	Source          string
+	SourceID        string
+	Language        string
+	MarketCountry   string
+	Scope           string
+	Role            string
+	Searchable      int64
+}
+
 type MediaCopy struct {
 	ID               int64
 	MediaItemID      int64
@@ -171,6 +186,21 @@ type MediaFile struct {
 type MediaFileEpisode struct {
 	MediaFileID int64
 	EpisodeID   int64
+}
+
+type MediaIdentityRevision struct {
+	ID       int64
+	Revision int64
+}
+
+type MediaIdentitySource struct {
+	MediaItemID int64
+	Source      string
+	Countries   string
+	FetchedAt   int64
+	AttemptedAt int64
+	RetryAfter  int64
+	LastError   string
 }
 
 type MediaItem struct {

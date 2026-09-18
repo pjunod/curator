@@ -14,10 +14,17 @@ import (
 
 // Parsed is the structured reading of a release title.
 type Parsed struct {
-	Title    string // cleaned series/movie title
-	Year     int    // movie year or series year hint; 0 unknown
-	Season   int    // -1 = none
-	Episodes []int  // empty for movies and season packs
+	Title string // cleaned series/movie title
+	// RawTitle is the structural title segment before bracket cleanup. Identity
+	// matching uses it so a country qualifier is not destroyed by parsing.
+	RawTitle string
+	// LeadingBracket preserves a leading token when it could be a country
+	// qualifier rather than an anime release group.
+	LeadingBracket  string
+	Year            int   // movie year or series year hint; 0 unknown
+	SeriesTitleYear int   // explicit year before a series season/episode marker
+	Season          int   // -1 = none
+	Episodes        []int // empty for movies and season packs
 	// SeasonPack: a season marker with no episode ("Show S02", "Season 2
 	// Complete") — one download satisfying many episode wantables.
 	SeasonPack bool
@@ -44,16 +51,17 @@ var (
 	reSeasonOnly    = regexp.MustCompile(`(?i)\b(?:S(\d{1,2})|Season[ ._-]?(\d{1,2}))(?:[ ._-]?(?:Complete|COMPLETE))?\b`)
 	// Anime absolute numbering: " - 15", " - 015v2", " - 15-16" after the
 	// title (only trusted when a [Group] prefix marked the release as anime).
-	reAbsolute    = regexp.MustCompile(`\s-\s(\d{1,4})(?:-(\d{1,4}))?(?:v\d)?\s*(?:\[|$|\()`)
-	reYear        = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
-	reResolution  = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p|4k|uhd)\b`)
-	reProper      = regexp.MustCompile(`(?i)\bPROPER\b`)
-	reRepack      = regexp.MustCompile(`(?i)\b(?:REPACK|RERIP)\b`)
-	reCodec       = regexp.MustCompile(`(?i)\b(x264|x265|h\.?264|h\.?265|HEVC|XviD|AV1)\b`)
-	reContainer   = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|m4v|ts|wmv)$`)
-	reGroupSuffix = regexp.MustCompile(`-([A-Za-z0-9][A-Za-z0-9_]{1,24})$`)
-	reCleanJunk   = regexp.MustCompile(`[._]+`)
-	reMultiSpace  = regexp.MustCompile(`\s{2,}`)
+	reAbsolute        = regexp.MustCompile(`\s-\s(\d{1,4})(?:-(\d{1,4}))?(?:v\d)?\s*(?:\[|$|\()`)
+	reYear            = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
+	reSeriesTitleYear = regexp.MustCompile(`(?i)(?:^|[ ._\[(])(19\d{2}|20\d{2})(?:\))?$`)
+	reResolution      = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p|4k|uhd)\b`)
+	reProper          = regexp.MustCompile(`(?i)\bPROPER\b`)
+	reRepack          = regexp.MustCompile(`(?i)\b(?:REPACK|RERIP)\b`)
+	reCodec           = regexp.MustCompile(`(?i)\b(x264|x265|h\.?264|h\.?265|HEVC|XviD|AV1)\b`)
+	reContainer       = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|m4v|ts|wmv)$`)
+	reGroupSuffix     = regexp.MustCompile(`-([A-Za-z0-9][A-Za-z0-9_]{1,24})$`)
+	reCleanJunk       = regexp.MustCompile(`[._]+`)
+	reMultiSpace      = regexp.MustCompile(`\s{2,}`)
 )
 
 // sourcePatterns are matched in order; first hit wins. Book formats come
@@ -105,9 +113,16 @@ func Parse(release string) Parsed {
 	// Container extension off the end first.
 	s = reContainer.ReplaceAllString(s, "")
 
-	// Anime-style "[Group] Title ..." prefix.
+	// Anime-style "[Group] Title ..." prefix. A recognized country token is
+	// retained separately rather than misclassified as a release group.
+	leadingCountry := ""
 	if m := reBracketPrefix.FindStringSubmatch(s); m != nil {
-		p.Group = m[1]
+		if countryBracket(m[1]) {
+			p.LeadingBracket = m[1]
+			leadingCountry = s[:len(m[0])]
+		} else {
+			p.Group = m[1]
+		}
 		s = s[len(m[0]):]
 	}
 
@@ -123,8 +138,10 @@ func Parse(release string) Parsed {
 	sxe := reSxxEyy.FindStringSubmatchIndex(s)
 	nxx := reNxx.FindStringSubmatchIndex(s)
 
+	structuralSeries := false
 	switch {
 	case sxe != nil:
+		structuralSeries = true
 		claim(sxe[0:2])
 		p.Season = atoi(s[sxe[2]:sxe[3]])
 		p.Episodes = []int{atoi(s[sxe[4]:sxe[5]])}
@@ -138,6 +155,7 @@ func Parse(release string) Parsed {
 		claim(daily[0:2])
 		p.Daily = s[daily[2]:daily[3]] + "-" + s[daily[4]:daily[5]] + "-" + s[daily[6]:daily[7]]
 	case nxx != nil:
+		structuralSeries = true
 		claim(nxx[0:2])
 		p.Season = atoi(s[nxx[2]:nxx[3]])
 		p.Episodes = []int{atoi(s[nxx[4]:nxx[5]])}
@@ -170,6 +188,7 @@ func Parse(release string) Parsed {
 				num = s[m[4]:m[5]]
 			}
 			if num != "" {
+				structuralSeries = true
 				claim(m[0:2])
 				p.Season = atoi(num)
 				p.SeasonPack = true
@@ -203,9 +222,26 @@ func Parse(release string) Parsed {
 		p.Quality.Resolution = 1080
 	}
 
+	// Series identity years are read only from the title segment before the
+	// structural marker. A later episode-title year must never become the
+	// series year.
+	if structuralSeries {
+		rawTitle := s[:titleEnd]
+		matchTitle := strings.TrimRight(rawTitle, " ._")
+		if m := reSeriesTitleYear.FindStringSubmatchIndex(matchTitle); m != nil {
+			p.SeriesTitleYear = atoi(rawTitle[m[2]:m[3]])
+			p.Year = p.SeriesTitleYear
+			// Drop the delimiter together with the qualifier, unless the year is
+			// the only title token (numeric titles stay literal).
+			if strings.TrimSpace(cleanTitle(rawTitle[:m[0]])) != "" {
+				titleEnd = m[0]
+			}
+		}
+	}
+
 	// Movie year: last standalone year token (avoids years inside titles
 	// like "2001 A Space Odyssey 1968"), unless it's part of a daily date.
-	if p.Daily == "" {
+	if p.Daily == "" && !structuralSeries {
 		years := reYear.FindAllStringIndex(s, -1)
 		for i := len(years) - 1; i >= 0; i-- {
 			y := years[i]
@@ -231,6 +267,14 @@ func Parse(release string) Parsed {
 		}
 	}
 
+	rawEnd := titleEnd
+	if structuralSeries && p.SeriesTitleYear != 0 {
+		// RawTitle intentionally retains the metadata year qualifier.
+		if marker := earliestSeriesMarker(s); marker >= 0 {
+			rawEnd = marker
+		}
+	}
+	p.RawTitle = strings.TrimSpace(leadingCountry + strings.TrimSpace(s[:rawEnd]))
 	p.Title = cleanTitle(s[:titleEnd])
 
 	// Book-format releases (ADR 0006): the blob usually carries an author —
@@ -241,6 +285,25 @@ func Parse(release string) Parsed {
 		p.Author, p.Title = splitBookTitle(p.Title)
 	}
 	return p
+}
+
+func countryBracket(s string) bool {
+	s = strings.ToUpper(strings.NewReplacer(".", "", " ", "").Replace(strings.TrimSpace(s)))
+	switch s {
+	case "US", "USA", "UK", "GB", "AU", "CA", "NZ", "UNITEDSTATES", "UNITEDKINGDOM", "AUSTRALIA", "CANADA", "NEWZEALAND":
+		return true
+	}
+	return false
+}
+
+func earliestSeriesMarker(s string) int {
+	end := -1
+	for _, re := range []*regexp.Regexp{reSxxEyy, reNxx, reSeasonOnly} {
+		if m := re.FindStringIndex(s); m != nil && (end < 0 || m[0] < end) {
+			end = m[0]
+		}
+	}
+	return end
 }
 
 // splitBookTitle separates author from title in a book release blob.

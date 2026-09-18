@@ -103,6 +103,16 @@ Node dies → start Monarr elsewhere, drop the newest snapshot in as
 a media manager is usually fine: the library rebuilds from disk truth by
 design (ADR 0005).
 
+## Release identity migration
+
+Schema version 30 adds identity aliases, provider snapshots, an identity
+revision counter, and versioned match evidence on downloads. The migration
+backfills each existing video's current canonical title and external IDs as a
+local snapshot; identity enrichment then refreshes provider evidence in the
+background. Upgrade all workers together because older workers do not
+understand the new refresh job or schema. Before upgrading, keep the normal
+SQLite backup; downgrading requires restoring that pre-upgrade database.
+
 A snapshot from `backups/` is always safe to copy while Monarr runs —
 that's the point of `VACUUM INTO`. Copying the *live* `monarr.db` while
 the process runs is not.

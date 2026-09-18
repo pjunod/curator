@@ -36,6 +36,68 @@ SELECT * FROM media_items WHERE kind = ? AND tmdb_id = ?;
 -- multi-byte character here corrupts every query after it in the file.)
 SELECT * FROM media_items WHERE kind = ? AND tvdb_id = ? AND tvdb_id != 0;
 
+-- name: FindMediaItemsByKindImdb :many
+SELECT * FROM media_items WHERE kind = ? AND imdb_id = ? AND imdb_id != '' ORDER BY id;
+
+-- name: FindMediaItemsByKindTvdb :many
+SELECT * FROM media_items WHERE kind = ? AND tvdb_id = ? AND tvdb_id != 0 ORDER BY id;
+
+-- name: FindMediaItemsByKindTmdb :many
+SELECT * FROM media_items WHERE kind = ? AND tmdb_id = ? AND tmdb_id != 0 ORDER BY id;
+
+-- name: ListMediaAliases :many
+SELECT * FROM media_aliases WHERE media_item_id = ? ORDER BY id;
+
+-- name: ListAllMediaAliases :many
+SELECT * FROM media_aliases ORDER BY media_item_id, id;
+
+-- name: InsertMediaAlias :one
+INSERT INTO media_aliases (
+    media_item_id, title, normalized_title, source, source_id, language,
+    market_country, scope, role, searchable
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id;
+
+-- name: DeleteReplaceableProviderAliases :exec
+DELETE FROM media_aliases
+WHERE media_item_id = ? AND source = ? AND role IN ('original', 'alternate');
+
+-- name: DeleteManualAlias :execrows
+DELETE FROM media_aliases
+WHERE id = ? AND media_item_id = ? AND source = 'manual' AND role = 'manual';
+
+-- name: GetIdentitySource :one
+SELECT * FROM media_identity_sources WHERE media_item_id = ? AND source = ?;
+
+-- name: ListIdentitySources :many
+SELECT * FROM media_identity_sources WHERE media_item_id = ? ORDER BY source;
+
+-- name: ListAllIdentitySources :many
+SELECT * FROM media_identity_sources ORDER BY media_item_id, source;
+
+-- name: UpsertIdentitySource :exec
+INSERT INTO media_identity_sources (
+    media_item_id, source, countries, fetched_at, attempted_at, retry_after,
+    last_error
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (media_item_id, source) DO UPDATE SET
+    countries = excluded.countries,
+    fetched_at = excluded.fetched_at,
+    attempted_at = excluded.attempted_at,
+    retry_after = excluded.retry_after,
+    last_error = excluded.last_error;
+
+-- name: IdentityRevision :one
+SELECT revision FROM media_identity_revision WHERE id = 1;
+
+-- name: BumpIdentityRevision :one
+UPDATE media_identity_revision SET revision = revision + 1 WHERE id = 1
+RETURNING revision;
+
+-- name: UpdateMediaExternalIDs :exec
+UPDATE media_items SET tmdb_id = ?, imdb_id = ?, tvdb_id = ?, updated_at = ?
+WHERE id = ?;
+
 -- name: GetMediaItemByKindOlid :one
 SELECT * FROM media_items WHERE kind = ? AND olid = ?;
 

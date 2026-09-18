@@ -52,6 +52,8 @@ type cacheEntry struct {
 }
 
 var _ ports.SeriesProvider = (*Client)(nil)
+var _ ports.ExternalLookupProvider = (*Client)(nil)
+var _ ports.IdentityMetadataProvider = (*Client)(nil)
 
 // New returns a Client. baseURL "" means DefaultBaseURL.
 func New(baseURL string) *Client {
@@ -101,7 +103,10 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 	// does not follow them reads an empty body as "no such series".
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("tvmaze: %w", err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return &ports.RemoteError{Category: ports.RemoteTransport, Cause: fmt.Errorf("tvmaze request failed")}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -111,18 +116,32 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 	}
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return fmt.Errorf("tvmaze: not found (404): %s", path)
+		return &ports.RemoteError{Category: ports.RemoteNotFound, HTTPStatus: resp.StatusCode}
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return fmt.Errorf("tvmaze: rate limited (429)")
+		return &ports.RemoteError{Category: ports.RemoteRateLimit, HTTPStatus: resp.StatusCode, RetryAt: retryAt(resp.Header.Get("Retry-After"))}
 	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("tvmaze: unexpected status %d for %s", resp.StatusCode, path)
+		return &ports.RemoteError{Category: ports.RemoteInvalidResponse, HTTPStatus: resp.StatusCode}
 	}
 
 	c.mu.Lock()
 	c.cache[full] = cacheEntry{body: body, expires: time.Now().Add(c.ttl)}
 	c.mu.Unlock()
 
-	return json.Unmarshal(body, out)
+	if err := json.Unmarshal(body, out); err != nil {
+		return &ports.RemoteError{Category: ports.RemoteInvalidResponse, HTTPStatus: resp.StatusCode, Cause: err}
+	}
+	return nil
+}
+
+func retryAt(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		return time.Now().Add(time.Duration(seconds) * time.Second)
+	}
+	parsed, _ := http.ParseTime(value)
+	return parsed
 }
 
 // ---- wire shapes (only the fields we consume) ----
@@ -162,7 +181,15 @@ type show struct {
 type channel struct {
 	Name    string `json:"name"`
 	Country *struct {
+		Code     string `json:"code"`
 		Timezone string `json:"timezone"`
+	} `json:"country"`
+}
+
+type aka struct {
+	Name    string `json:"name"`
+	Country *struct {
+		Code string `json:"code"`
 	} `json:"country"`
 }
 
@@ -201,13 +228,15 @@ func (c *Client) SearchSeries(ctx context.Context, query string) ([]ports.Search
 			continue
 		}
 		out = append(out, ports.SearchResult{
-			Kind:       domain.KindSeries,
-			TVDBID:     *h.Show.Externals.TheTVDB,
-			Source:     "tvmaze",
-			Title:      h.Show.Name,
-			Year:       yearOf(h.Show.Premiered),
-			Overview:   plainText(h.Show.Summary),
-			PosterPath: poster(h.Show),
+			Kind:            domain.KindSeries,
+			TVDBID:          *h.Show.Externals.TheTVDB,
+			IMDBID:          deref(h.Show.Externals.IMDB),
+			Source:          "tvmaze",
+			HydrationSource: "tvmaze",
+			Title:           h.Show.Name,
+			Year:            yearOf(h.Show.Premiered),
+			Overview:        plainText(h.Show.Summary),
+			PosterPath:      poster(h.Show),
 		})
 	}
 	return out, nil
@@ -222,7 +251,25 @@ func (c *Client) GetSeriesByTVDB(ctx context.Context, tvdbID int64) (domain.Medi
 		return domain.MediaItem{}, err
 	}
 	if s.ID == 0 {
-		return domain.MediaItem{}, fmt.Errorf("tvmaze: no series for tvdb id %d", tvdbID)
+		return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteNotFound, HTTPStatus: http.StatusNotFound}
+	}
+	actualTVDB := int64(0)
+	if s.Externals.TheTVDB != nil {
+		actualTVDB = *s.Externals.TheTVDB
+	}
+	if actualTVDB == 0 {
+		return domain.MediaItem{}, &ports.RemoteError{
+			Category:    ports.RemoteUnsupportedHydration,
+			ExpectedIDs: domain.ExternalIDs{TVDB: tvdbID},
+			ActualIDs:   domain.ExternalIDs{IMDB: deref(s.Externals.IMDB)},
+		}
+	}
+	if actualTVDB != 0 && actualTVDB != tvdbID {
+		return domain.MediaItem{}, &ports.RemoteError{
+			Category:    ports.RemoteIdentityConflict,
+			ExpectedIDs: domain.ExternalIDs{TVDB: tvdbID},
+			ActualIDs:   domain.ExternalIDs{TVDB: actualTVDB, IMDB: deref(s.Externals.IMDB)},
+		}
 	}
 
 	var eps []episode
@@ -237,9 +284,10 @@ func (c *Client) GetSeriesByTVDB(ctx context.Context, tvdbID int64) (domain.Medi
 		SortTitle: domain.SortTitle(s.Name),
 		Year:      yearOf(s.Premiered),
 		IDs: domain.ExternalIDs{
-			TVDB: tvdbID,
+			TVDB: actualTVDB,
 			IMDB: deref(s.Externals.IMDB),
 		},
+		Source:      "tvmaze",
 		Overview:    plainText(s.Summary),
 		PosterPath:  poster(s),
 		Genres:      s.Genres,
@@ -254,6 +302,107 @@ func (c *Client) GetSeriesByTVDB(ctx context.Context, tvdbID int64) (domain.Medi
 	}
 	item.Seasons = seasonsOf(eps)
 	return item, nil
+}
+
+// LookupExternal resolves TVDB/IMDb through TVmaze's exact endpoint without
+// doing a text search. A result without a TVDB add key is returned as an
+// unsupported hydration outcome so the resolver can continue to TMDB.
+func (c *Client) LookupExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) ([]ports.SearchResult, error) {
+	if kind != domain.KindSeries || (ref.Provider != "tvdb" && ref.Provider != "imdb") {
+		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+	}
+	params := url.Values{}
+	if ref.Provider == "tvdb" {
+		params.Set("thetvdb", ref.Value)
+	} else {
+		params.Set("imdb", ref.Value)
+	}
+	var s show
+	if err := c.get(ctx, "/lookup/shows", params, &s); err != nil {
+		return nil, err
+	}
+	actual := domain.ExternalIDs{IMDB: deref(s.Externals.IMDB)}
+	if s.Externals.TheTVDB != nil {
+		actual.TVDB = *s.Externals.TheTVDB
+	}
+	if externalContradiction(ref, actual) {
+		return nil, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: expectedIDs(ref), ActualIDs: actual}
+	}
+	if actual.TVDB == 0 {
+		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedHydration, ActualIDs: actual}
+	}
+	return []ports.SearchResult{{
+		Kind: domain.KindSeries, TVDBID: actual.TVDB, IMDBID: actual.IMDB,
+		Source: "tvmaze", HydrationSource: "tvmaze", Title: s.Name,
+		Year: yearOf(s.Premiered), Overview: plainText(s.Summary), PosterPath: poster(s),
+	}}, nil
+}
+
+// IdentityMetadata fetches the show and AKA endpoint as one provider
+// snapshot. An AKA failure never publishes an authoritative empty list.
+func (c *Client) IdentityMetadata(ctx context.Context, kind domain.MediaKind, ids domain.ExternalIDs) (ports.IdentityMetadata, error) {
+	if kind != domain.KindSeries {
+		return ports.IdentityMetadata{}, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+	}
+	params := url.Values{}
+	if ids.TVDB != 0 {
+		params.Set("thetvdb", strconv.FormatInt(ids.TVDB, 10))
+	} else if ids.IMDB != "" {
+		params.Set("imdb", ids.IMDB)
+	} else {
+		return ports.IdentityMetadata{}, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+	}
+	var s show
+	if err := c.get(ctx, "/lookup/shows", params, &s); err != nil {
+		return ports.IdentityMetadata{}, err
+	}
+	actual := domain.ExternalIDs{IMDB: deref(s.Externals.IMDB)}
+	if s.Externals.TheTVDB != nil {
+		actual.TVDB = *s.Externals.TheTVDB
+	}
+	if (ids.TVDB != 0 && actual.TVDB != 0 && ids.TVDB != actual.TVDB) || (ids.IMDB != "" && actual.IMDB != "" && !strings.EqualFold(ids.IMDB, actual.IMDB)) {
+		return ports.IdentityMetadata{}, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: ids, ActualIDs: actual}
+	}
+	var akas []aka
+	if err := c.get(ctx, fmt.Sprintf("/shows/%d/akas", s.ID), nil, &akas); err != nil {
+		return ports.IdentityMetadata{}, err
+	}
+	out := ports.IdentityMetadata{}
+	for _, row := range akas {
+		if strings.TrimSpace(row.Name) == "" {
+			continue
+		}
+		alias := domain.TitleAlias{Title: row.Name, Source: "tvmaze", SourceID: strconv.FormatInt(s.ID, 10), Scope: "work", Role: "alternate"}
+		if row.Country != nil {
+			alias.MarketCountry = strings.ToUpper(row.Country.Code)
+		}
+		out.Aliases = append(out.Aliases, alias)
+	}
+	if s.Network != nil && s.Network.Country != nil && s.Network.Country.Code != "" {
+		out.Countries = append(out.Countries, domain.CountryEvidence{Code: strings.ToUpper(s.Network.Country.Code), Source: "tvmaze", Basis: "network"})
+	}
+	return out, nil
+}
+
+func externalContradiction(ref domain.ExternalRef, ids domain.ExternalIDs) bool {
+	switch ref.Provider {
+	case "tvdb":
+		return ids.TVDB != 0 && strconv.FormatInt(ids.TVDB, 10) != ref.Value
+	case "imdb":
+		return ids.IMDB != "" && !strings.EqualFold(ids.IMDB, ref.Value)
+	}
+	return false
+}
+
+func expectedIDs(ref domain.ExternalRef) domain.ExternalIDs {
+	switch ref.Provider {
+	case "tvdb":
+		v, _ := strconv.ParseInt(ref.Value, 10, 64)
+		return domain.ExternalIDs{TVDB: v}
+	case "imdb":
+		return domain.ExternalIDs{IMDB: ref.Value}
+	}
+	return domain.ExternalIDs{}
 }
 
 // seasonsOf turns TVmaze's flat episode list into monarr's seasons.

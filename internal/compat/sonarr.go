@@ -10,6 +10,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // mountSonarr adds the series-shaped surface Jellyseerr and Bazarr call.
@@ -99,28 +100,21 @@ func (p *Personality) getSeries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p.seriesDTO(item, roots))
 }
 
-// lookupSeries handles term= text or "tvdb:12345" (Jellyseerr's add flow).
+// lookupSeries shares native exact-ID parsing and provider routing.
 func (p *Personality) lookupSeries(w http.ResponseWriter, r *http.Request) {
 	term := strings.TrimSpace(r.URL.Query().Get("term"))
-	roots, _ := p.deps.Library.ListRootFolders(r.Context())
-
-	if tvdbStr, ok := strings.CutPrefix(strings.ToLower(term), "tvdb:"); ok {
-		tvdbID, _ := strconv.ParseInt(tvdbStr, 10, 64)
-		if p.deps.ResolveTVDB == nil {
-			writeJSON(w, http.StatusOK, []any{})
-			return
-		}
-		item, err := p.deps.ResolveTVDB(r.Context(), tvdbID)
-		if err != nil {
-			writeJSON(w, http.StatusOK, []any{})
-			return
-		}
-		item.IDs.TVDB = tvdbID // /find confirms the mapping; keep the id
-		writeJSON(w, http.StatusOK, []map[string]any{p.seriesDTO(item, roots)})
-		return
-	}
 
 	results, err := p.deps.Library.Search(r.Context(), domain.KindSeries, term)
+	if allowLegacyTVDBFallback(err) && p.deps.ResolveTVDB != nil {
+		if tvdbStr, ok := strings.CutPrefix(strings.ToLower(term), "tvdb:"); ok {
+			if tvdbID, parseErr := strconv.ParseInt(tvdbStr, 10, 64); parseErr == nil {
+				if item, resolveErr := p.deps.ResolveTVDB(r.Context(), tvdbID); resolveErr == nil {
+					results = []ports.SearchResult{{Kind: domain.KindSeries, TMDBID: item.IDs.TMDB, TVDBID: tvdbID, IMDBID: item.IDs.IMDB, Title: item.Title, Year: item.Year, Overview: item.Overview, PosterPath: item.PosterPath, Source: item.Source, HydrationSource: item.Source}}
+					err = nil
+				}
+			}
+		}
+	}
 	if err != nil {
 		writeJSON(w, http.StatusOK, []any{})
 		return
@@ -131,6 +125,7 @@ func (p *Personality) lookupSeries(w http.ResponseWriter, r *http.Request) {
 			"title": res.Title, "year": res.Year, "overview": res.Overview,
 			"titleSlug": slug(res.Title), "seasons": []any{},
 			"remotePoster": res.PosterPath, "tmdbId": res.TMDBID,
+			"tvdbId": res.TVDBID, "imdbId": res.IMDBID,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -150,15 +145,18 @@ func (p *Personality) addSeries(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "tvdbId required"})
 		return
 	}
-	if p.deps.ResolveTVDB == nil {
+	results, err := p.deps.Library.ResolveExternal(r.Context(), domain.KindSeries, domain.ExternalRef{Provider: "tvdb", Value: strconv.FormatInt(body.TVDBID, 10)})
+	if allowLegacyTVDBFallback(err) && p.deps.ResolveTVDB != nil {
+		if item, resolveErr := p.deps.ResolveTVDB(r.Context(), body.TVDBID); resolveErr == nil {
+			results = []ports.SearchResult{{Kind: domain.KindSeries, TMDBID: item.IDs.TMDB, TVDBID: body.TVDBID, IMDBID: item.IDs.IMDB, Source: item.Source, HydrationSource: item.Source}}
+			err = nil
+		}
+	}
+	if err != nil || len(results) != 1 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "tvdb resolution unavailable"})
 		return
 	}
-	resolved, err := p.deps.ResolveTVDB(r.Context(), body.TVDBID)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"message": err.Error()})
-		return
-	}
+	resolved := results[0]
 
 	rootID, err := p.rootIDByPath(r, body.RootFolderPath)
 	if err != nil {
@@ -166,7 +164,8 @@ func (p *Personality) addSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := library.AddRequest{
-		Kind: domain.KindSeries, TMDBID: resolved.IDs.TMDB,
+		Kind: domain.KindSeries, TMDBID: resolved.TMDBID, TVDBID: resolved.TVDBID,
+		IMDBID: resolved.IMDBID, HydrationSource: resolved.HydrationSource,
 		QualityProfileID: body.QualityProfileID, Monitored: body.Monitored,
 		RootFolderID: rootID,
 	}
@@ -181,6 +180,14 @@ func (p *Personality) addSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	roots, _ := p.deps.Library.ListRootFolders(r.Context())
 	writeJSON(w, http.StatusCreated, p.seriesDTO(item, roots))
+}
+
+func allowLegacyTVDBFallback(err error) bool {
+	if errors.Is(err, ports.ErrProviderNotConfigured) {
+		return true
+	}
+	var remote *ports.RemoteError
+	return errors.As(err, &remote) && (remote.Category == ports.RemoteUnsupportedQuery || remote.Category == ports.RemoteUnsupportedHydration)
 }
 
 // errRootKindMismatch is returned when a client posts a rootFolderPath whose

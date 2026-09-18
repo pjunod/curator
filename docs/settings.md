@@ -65,6 +65,28 @@ so re-adding the same root restores the association.
 
 Torznab (torrent) and Newznab (usenet) share one implementation.
 
+Monarr reads and caches each indexer's capabilities, then uses only the TVDB,
+IMDb, or TMDB query forms it advertises. Capability or protocol errors are
+reported separately from an ordinary empty result. Unknown capabilities fall
+back to one canonical-title query instead of fanning out guesses.
+
+## Release identity readiness
+
+There is no feature switch and incomplete metadata does not disable manual
+work. Each movie or series detail page shows the canonical identity, external
+IDs, aliases, country evidence, provider snapshot time, and last refresh error.
+That panel is the advisory readiness check:
+
+- external IDs and a recent successful snapshot support the safest matching;
+- aliases expand bounded fallback searches and explain regional names;
+- a missing or failed snapshot means automatic matching has less evidence;
+- **Refresh identity** retries enrichment immediately;
+- manual aliases can be added or removed without changing the canonical title.
+
+Explicit contradictions remain automatic rejections even when readiness is
+incomplete. A person can still choose a release with a manual grab, which is
+recorded as such in Activity.
+
 | Field | Meaning |
 |---|---|
 | Name | display name |

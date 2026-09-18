@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
+import { ApiError } from '../api'
 import type { BookType, MediaKind, SearchResult } from '../api'
 import {
   addLibraryItem,
@@ -15,7 +16,18 @@ import {
 // has no server-side id before the item exists, and the same title can come
 // back from more than one provider, so the tuple is the identity.
 const resultKey = (r: SearchResult, bookType?: BookType) =>
-  `${r.kind}-${r.olid ?? ''}-${r.tmdbId}-${r.tvdbId ?? 0}${r.kind === 'book' ? `-${bookType ?? 'ebook'}` : ''}`
+  `${r.kind}-${r.olid ?? ''}-${r.tmdbId}-${r.tvdbId ?? 0}-${r.imdbId ?? ''}${r.kind === 'book' ? `-${bookType ?? 'ebook'}` : ''}`
+
+const searchError = (error: unknown) => {
+  if (!(error instanceof ApiError)) return String((error as Error).message)
+  switch (error.code) {
+    case 'invalid_external_id': return 'That external ID is not valid. Use tvdb:414217, imdb:tt16867040, or tmdb:550.'
+    case 'identity_conflict': return 'More than one record claims that identity. Resolve the conflict before adding it.'
+    case 'provider_unavailable': return 'The metadata provider is unavailable. Try again when it is reachable.'
+    case 'unsupported_hydration': return 'That title was identified, but no configured provider can safely add it.'
+    default: return error.message
+  }
+}
 
 // AddedItem is one thing added during this visit to the page.
 interface AddedItem {
@@ -122,7 +134,14 @@ export function AddMediaPage() {
           // A series from the provider chain is identified by its TVDB id and
           // has no TMDB one (ADR 0011); sending tmdbId: 0 would ask TMDB for
           // series zero.
-          : { kind: r.kind, tmdbId: r.tmdbId || undefined, tvdbId: r.tvdbId, ...common },
+          : {
+              kind: r.kind,
+              tmdbId: r.tmdbId || undefined,
+              tvdbId: r.tvdbId,
+              imdbId: r.imdbId,
+              hydrationSource: r.hydrationSource,
+              ...common,
+            },
       )
     },
     onMutate: (r: SearchResult) => setPendingKey(resultKey(r, bookType)),
@@ -175,9 +194,9 @@ export function AddMediaPage() {
           type="search"
           placeholder={
             kind === 'movie'
-              ? 'Search movies on TMDB…'
+              ? 'Search title, imdb:tt0137523, or tmdb:550…'
               : kind === 'series'
-                ? 'Search series on TMDB…'
+                ? 'Search title, tvdb:414217, or imdb:tt16867040…'
                 : 'Search books on Open Library…'
           }
           value={query}
@@ -249,8 +268,8 @@ export function AddMediaPage() {
         </label>
       </div>
 
-      {results.isError && <div className="banner warning">{String((results.error as Error).message)}</div>}
-      {add.isError && <div className="banner warning">{String((add.error as Error).message)}</div>}
+      {results.isError && <div className="banner warning">{searchError(results.error)}</div>}
+      {add.isError && <div className="banner warning">{searchError(add.error)}</div>}
 
       {added.length > 0 && (
         <div className="added-strip" data-testid="added-strip">

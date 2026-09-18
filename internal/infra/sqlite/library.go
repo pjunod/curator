@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/matcher"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
@@ -21,6 +22,10 @@ var ErrNotFound = errors.New("not found")
 // ErrDuplicate is returned when a unique constraint rejects an insert
 // (e.g. the same TMDB id added twice, or a root folder path re-added).
 var ErrDuplicate = errors.New("already exists")
+
+// ErrIdentityConflict means known IDs name different rows or contradict a
+// stored value. It is inspectable and must never be collapsed to duplicate.
+var ErrIdentityConflict = errors.New("identity conflict")
 
 func wrapNotFound(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
@@ -164,6 +169,18 @@ func marshalRatings(rs []domain.Rating) string {
 // and episodes, in one transaction. Returns the new id, or ErrDuplicate if
 // the item already exists under a stable external identity.
 func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, error) {
+	if (m.Kind == domain.KindMovie || m.Kind == domain.KindSeries) && m.Source == "" {
+		switch {
+		case m.IDs.TMDB != 0:
+			m.Source = "tmdb"
+		case m.IDs.TVDB != 0:
+			m.Source = "tvmaze"
+		default:
+			// Imported/manual and legacy callers can have no provider identity.
+			// Persist that fact explicitly instead of inventing a provider.
+			m.Source = "manual"
+		}
+	}
 	// Callers predating ADR 0018 (notably adoption and compatibility tests)
 	// do not know about the explicit edition field. Resolve it once at the
 	// persistence boundary so every stored book has a stable medium; after the
@@ -182,20 +199,11 @@ func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, er
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := d.Write.WithTx(tx)
-	// The schema's historical unique index covers TMDB. TVDB identity also
-	// needs an atomic check inside the single-writer transaction: a series
-	// first added through TVmaze and later hydrated through TMDB otherwise
-	// has different TMDB values but is still exactly the same aggregate.
-	if m.IDs.TVDB != 0 {
-		_, lookupErr := q.GetMediaItemByKindTvdb(ctx, sqlitegen.GetMediaItemByKindTvdbParams{
-			Kind: string(m.Kind), TvdbID: m.IDs.TVDB,
-		})
-		switch {
-		case lookupErr == nil:
-			return 0, ErrDuplicate
-		case !errors.Is(lookupErr, sql.ErrNoRows):
-			return 0, lookupErr
-		}
+	// Check every supplied identity inside the writer transaction. Search and
+	// add may be minutes apart, and different IDs resolving to different rows
+	// are a conflict rather than an arbitrary duplicate.
+	if collisionErr := checkCreateIdentity(ctx, q, m); collisionErr != nil {
+		return 0, collisionErr
 	}
 
 	id, err := q.InsertMediaItem(ctx, insertParams(m, time.Now()))
@@ -225,10 +233,56 @@ func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, er
 			}
 		}
 	}
+	if err := insertInitialIdentity(ctx, q, id, m); err != nil {
+		return 0, err
+	}
+	if _, err := q.BumpIdentityRevision(ctx); err != nil {
+		return 0, err
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return id, nil
+}
+
+func checkCreateIdentity(ctx context.Context, q *sqlitegen.Queries, item domain.MediaItem) error {
+	claimed := map[int64]sqlitegen.MediaItem{}
+	add := func(rows []sqlitegen.MediaItem) {
+		for _, row := range rows {
+			claimed[row.ID] = row
+		}
+	}
+	if item.IDs.TMDB != 0 {
+		rows, err := q.FindMediaItemsByKindTmdb(ctx, sqlitegen.FindMediaItemsByKindTmdbParams{Kind: string(item.Kind), TmdbID: item.IDs.TMDB})
+		if err != nil {
+			return err
+		}
+		add(rows)
+	}
+	if item.IDs.TVDB != 0 {
+		rows, err := q.FindMediaItemsByKindTvdb(ctx, sqlitegen.FindMediaItemsByKindTvdbParams{Kind: string(item.Kind), TvdbID: item.IDs.TVDB})
+		if err != nil {
+			return err
+		}
+		add(rows)
+	}
+	if item.IDs.IMDB != "" {
+		rows, err := q.FindMediaItemsByKindImdb(ctx, sqlitegen.FindMediaItemsByKindImdbParams{Kind: string(item.Kind), ImdbID: strings.ToLower(item.IDs.IMDB)})
+		if err != nil {
+			return err
+		}
+		add(rows)
+	}
+	if len(claimed) > 1 {
+		return ErrIdentityConflict
+	}
+	for _, row := range claimed {
+		if item.IDs.TMDB != 0 && row.TmdbID != 0 && item.IDs.TMDB != row.TmdbID || item.IDs.TVDB != 0 && row.TvdbID != 0 && item.IDs.TVDB != row.TvdbID || item.IDs.IMDB != "" && row.ImdbID != "" && !strings.EqualFold(item.IDs.IMDB, row.ImdbID) {
+			return ErrIdentityConflict
+		}
+		return ErrDuplicate
+	}
+	return nil
 }
 
 // GetMediaItemFull loads an item with seasons, episodes, files, and links.
@@ -238,6 +292,9 @@ func (d *DB) GetMediaItemFull(ctx context.Context, id int64) (domain.MediaItem, 
 		return domain.MediaItem{}, wrapNotFound(err)
 	}
 	item := itemToDomain(row)
+	if err := d.loadItemIdentity(ctx, &item); err != nil {
+		return domain.MediaItem{}, err
+	}
 	if item.DownloadPriorityOverride == nil {
 		profile, err := d.GetProfile(ctx, item.QualityProfileID)
 		if err != nil {
@@ -496,6 +553,9 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 		}
 		out = append(out, item)
 	}
+	if err := d.loadAllIdentity(ctx, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -610,16 +670,23 @@ func (d *DB) UpdateMediaItemPlacement(ctx context.Context, m domain.MediaItem) e
 // episodes: new ones appear, existing ones keep their monitored flags, and
 // nothing is ever deleted — files may point at episode rows.
 func (d *DB) UpdateMediaItemMetadata(ctx context.Context, id int64, m domain.MediaItem) error {
-	genres, _ := json.Marshal(m.Genres)
-	if m.Genres == nil {
-		genres = []byte("[]")
-	}
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := d.Write.WithTx(tx)
+	if err := updateMediaItemMetadata(ctx, q, id, m); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func updateMediaItemMetadata(ctx context.Context, q *sqlitegen.Queries, id int64, m domain.MediaItem) error {
+	genres, _ := json.Marshal(m.Genres)
+	if m.Genres == nil {
+		genres = []byte("[]")
+	}
 
 	if err := q.UpdateMediaItemMetadata(ctx, sqlitegen.UpdateMediaItemMetadataParams{
 		Title:        m.Title,
@@ -669,12 +736,34 @@ func (d *DB) UpdateMediaItemMetadata(ctx context.Context, id int64, m domain.Med
 			}
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // DeleteMediaItem removes the item; children cascade.
 func (d *DB) DeleteMediaItem(ctx context.Context, id int64) error {
-	return d.Write.DeleteMediaItem(ctx, id)
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+	if err := q.DeleteMediaItem(ctx, id); err != nil {
+		return err
+	}
+	if _, err := q.BumpIdentityRevision(ctx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func aliasParams(itemID int64, alias domain.TitleAlias) sqlitegen.InsertMediaAliasParams {
+	return sqlitegen.InsertMediaAliasParams{
+		MediaItemID: itemID, Title: strings.TrimSpace(alias.Title),
+		NormalizedTitle: matcher.NormalizeTitle(alias.Title),
+		Source:          alias.Source, SourceID: alias.SourceID, Language: alias.Language,
+		MarketCountry: alias.MarketCountry, Scope: alias.Scope, Role: alias.Role,
+		Searchable: boolInt(alias.Searchable),
+	}
 }
 
 // GetEpisodeID resolves (item, season, episode) to an episode id.

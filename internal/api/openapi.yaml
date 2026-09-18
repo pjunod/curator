@@ -232,6 +232,58 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /library/{id}/aliases:
+    post:
+      operationId: addLibraryAlias
+      summary: Add an operator-maintained title alias
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddAliasRequest" }
+      responses:
+        "201":
+          description: The stored alias.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TitleAlias" }
+        "400":
+          description: Invalid alias.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Duplicate alias for this item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /library/{id}/aliases/{aliasId}:
+    delete:
+      operationId: deleteLibraryAlias
+      summary: Remove an operator-maintained title alias
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: aliasId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Removed. }
+        "404":
+          description: No such manual alias.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/scan:
     post:
       operationId: scanLibrary
@@ -625,7 +677,19 @@ paths:
                 items:
                   $ref: "#/components/schemas/SearchResult"
         "400":
-          description: Unsupported kind.
+          description: Unsupported kind or invalid external ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: More than one record claims the identity, or a provider contradicted it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The identity resolved but no supported provider can hydrate it.
           content:
             application/json:
               schema:
@@ -1160,6 +1224,13 @@ paths:
       responses:
         "200":
           description: Ranked candidates with rejection reasons attached.
+          headers:
+            X-Monarr-Search-Partial:
+              description: True when one or more indexers or query modes failed.
+              schema: { type: boolean }
+            X-Monarr-Search-Reason:
+              description: Semicolon-separated, credential-redacted incomplete-search reasons.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -2346,8 +2417,55 @@ components:
       type: object
       required: [message]
       properties:
+        code:
+          type: string
+          description: Stable machine-readable classification when available.
         message:
           type: string
+
+    AddAliasRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 256 }
+        searchable:
+          type: boolean
+          default: false
+
+    TitleAlias:
+      type: object
+      required: [id, title, source, sourceId, language, marketCountry, scope, role, searchable]
+      properties:
+        id: { type: integer, format: int64 }
+        title: { type: string }
+        source: { type: string }
+        sourceId: { type: string }
+        language: { type: string }
+        marketCountry: { type: string }
+        scope: { type: string, enum: [work, season, unsupported_numbering] }
+        role: { type: string, enum: [original, alternate, historical, manual] }
+        searchable: { type: boolean }
+
+    CountryEvidence:
+      type: object
+      required: [code, source, basis]
+      properties:
+        code: { type: string }
+        source: { type: string }
+        basis: { type: string }
+
+    IdentitySourceStatus:
+      type: object
+      required: [source, countries, lastError]
+      properties:
+        source: { type: string }
+        countries:
+          type: array
+          items: { $ref: "#/components/schemas/CountryEvidence" }
+        fetchedAt: { type: string, format: date-time }
+        attemptedAt: { type: string, format: date-time }
+        retryAfter: { type: string, format: date-time }
+        lastError: { type: string }
 
     MediaKind:
       type: string
@@ -2610,6 +2728,9 @@ components:
         - seasons
         - files
         - addedAt
+        - aliases
+        - countries
+        - identitySources
       properties:
         id:
           type: integer
@@ -2638,6 +2759,15 @@ components:
           description: >
             Which provider this record came from, or "manual" when none did
             (ADR 0012). A manual entry has no metadata to refresh against.
+        aliases:
+          type: array
+          items: { $ref: "#/components/schemas/TitleAlias" }
+        countries:
+          type: array
+          items: { $ref: "#/components/schemas/CountryEvidence" }
+        identitySources:
+          type: array
+          items: { $ref: "#/components/schemas/IdentitySourceStatus" }
         quality:
           type: string
           description: >
@@ -2734,6 +2864,12 @@ components:
             Identifies a series that came from the provider chain rather than
             TMDB (ADR 0011). Exactly one of tmdbId / tvdbId / olid identifies
             the item.
+        imdbId:
+          type: string
+          description: Canonical tt-prefixed IMDb title ID used to verify an exact lookup.
+        hydrationSource:
+          type: string
+          description: Provider that supplies and later refreshes this item's episode/movie record.
         olid:
           type: string
           description: Open Library work id — identifies books (ADR 0006).
@@ -2856,6 +2992,11 @@ components:
           description: >
             Set for a series the provider chain supplied (ADR 0011); such a
             result has no tmdbId.
+        imdbId:
+          type: string
+        hydrationSource:
+          type: string
+          description: Provider selected to hydrate and later refresh this result.
         source:
           type: string
           description: Which provider produced it ("tmdb", "tvmaze").
@@ -3356,9 +3497,33 @@ components:
         code: { type: string }
         reason: { type: string }
 
+    MatchEvidence:
+      type: object
+      required: [version, matched, reason]
+      properties:
+        version: { type: integer }
+        matched: { type: boolean }
+        method: { type: string }
+        code: { type: string }
+        reason: { type: string }
+        originalTitle: { type: string }
+        parsedTitle: { type: string }
+        targetTitle: { type: string }
+        matchedTitle: { type: string }
+        matchedId:
+          type: object
+          required: [provider, value]
+          properties:
+            provider: { type: string }
+            value: { type: string }
+        country: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+
     ReleaseCandidate:
       type: object
-      required: [title, downloadUrl, indexer, protocol, size, seeders, age, quality, score, accepted, isUpgrade, rejections]
+      required: [title, downloadUrl, indexer, protocol, size, seeders, age, quality, score, accepted, isUpgrade, rejections, match, candidateToken]
       properties:
         title: { type: string }
         downloadUrl: { type: string }
@@ -3381,6 +3546,11 @@ components:
         rejections:
           type: array
           items: { $ref: "#/components/schemas/Rejection" }
+        match:
+          $ref: "#/components/schemas/MatchEvidence"
+        candidateToken:
+          type: string
+          description: Opaque short-lived server proof binding this row to its displayed match evidence.
         warning:
           type: string
           description: >
@@ -3421,6 +3591,9 @@ components:
         indexer: { type: string }
         protocol: { type: string }
         size: { type: integer, format: int64 }
+        candidateToken:
+          type: string
+          description: Opaque token returned by Release Search. Absent means an explicit manual override.
 
     ScannedFile:
       type: object
@@ -3983,6 +4156,9 @@ components:
         bytesPerSecond:
           type: number
           description: Average rate over the life of the current stage.
+        match:
+          $ref: "#/components/schemas/MatchEvidence"
+          description: Why this release was accepted when it was grabbed.
         handoff:
           type: array
           description: The download → import handoff, step by step.

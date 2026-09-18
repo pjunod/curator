@@ -35,7 +35,15 @@ const APIKeySetting = "api_key"
 func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, library.ErrAlreadyExists):
-		writeError(w, http.StatusConflict, err.Error())
+		writeCodedError(w, http.StatusConflict, "already_exists", err.Error())
+	case errors.As(err, new(*library.IdentityConflictError)):
+		writeCodedError(w, http.StatusConflict, "identity_conflict", err.Error())
+	case errors.Is(err, library.ErrInvalidExternalID):
+		writeCodedError(w, http.StatusBadRequest, "invalid_external_id", err.Error())
+	case errors.Is(err, library.ErrProviderUnavailable):
+		writeCodedError(w, http.StatusServiceUnavailable, "provider_unavailable", err.Error())
+	case errors.Is(err, library.ErrUnsupportedHydration):
+		writeCodedError(w, http.StatusUnprocessableEntity, "unsupported_hydration", err.Error())
 	case errors.Is(err, library.ErrUnsupportedKind):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, library.ErrManualEntry):
@@ -45,7 +53,7 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, library.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ports.ErrProviderNotConfigured):
-		writeError(w, http.StatusServiceUnavailable,
+		writeCodedError(w, http.StatusServiceUnavailable, "provider_unavailable",
 			"TMDB API key not configured — set it under Settings")
 	case errors.Is(err, library.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
@@ -209,9 +217,12 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		Ids: apigen.ExternalIds{
 			Tmdb: m.IDs.TMDB,
 		},
-		Seasons: []apigen.SeasonInfo{},
-		Files:   []apigen.MediaFileInfo{},
-		AddedAt: m.AddedAt,
+		Seasons:         []apigen.SeasonInfo{},
+		Files:           []apigen.MediaFileInfo{},
+		AddedAt:         m.AddedAt,
+		Aliases:         []apigen.TitleAlias{},
+		Countries:       []apigen.CountryEvidence{},
+		IdentitySources: []apigen.IdentitySourceStatus{},
 	}
 	if m.Genres == nil {
 		d.Genres = []string{}
@@ -285,6 +296,33 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		d.Files = append(d.Files, fi)
 	}
 	d.Source = optStr(m.Source)
+	for _, alias := range m.Aliases {
+		d.Aliases = append(d.Aliases, apigen.TitleAlias{
+			Id: alias.ID, Title: alias.Title, Source: alias.Source, SourceId: alias.SourceID,
+			Language: alias.Language, MarketCountry: alias.MarketCountry,
+			Scope: apigen.TitleAliasScope(alias.Scope), Role: apigen.TitleAliasRole(alias.Role),
+			Searchable: alias.Searchable,
+		})
+	}
+	for _, country := range m.Countries {
+		d.Countries = append(d.Countries, apigen.CountryEvidence{Code: country.Code, Source: country.Source, Basis: country.Basis})
+	}
+	for _, source := range m.IdentitySources {
+		row := apigen.IdentitySourceStatus{Source: source.Source, Countries: []apigen.CountryEvidence{}, LastError: source.LastError}
+		for _, country := range source.Countries {
+			row.Countries = append(row.Countries, apigen.CountryEvidence{Code: country.Code, Source: country.Source, Basis: country.Basis})
+		}
+		if !source.FetchedAt.IsZero() {
+			row.FetchedAt = &source.FetchedAt
+		}
+		if !source.AttemptedAt.IsZero() {
+			row.AttemptedAt = &source.AttemptedAt
+		}
+		if !source.RetryAfter.IsZero() {
+			row.RetryAfter = &source.RetryAfter
+		}
+		d.IdentitySources = append(d.IdentitySources, row)
+	}
 	if quality.Rank(m.Quality) > 0 {
 		d.Quality = optStr(m.Quality.Display())
 	}
@@ -347,6 +385,12 @@ func (s *Server) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
 	if body.TvdbId != nil {
 		req.TVDBID = *body.TvdbId
 	}
+	if body.ImdbId != nil {
+		req.IMDBID = *body.ImdbId
+	}
+	if body.HydrationSource != nil {
+		req.HydrationSource = *body.HydrationSource
+	}
 	if body.Olid != nil {
 		req.OLID = *body.Olid
 	}
@@ -399,6 +443,39 @@ func (s *Server) GetLibraryItem(w http.ResponseWriter, r *http.Request, id int64
 		return
 	}
 	writeJSON(w, http.StatusOK, detailDTO(item))
+}
+
+// AddLibraryAlias implements POST /library/{id}/aliases.
+func (s *Server) AddLibraryAlias(w http.ResponseWriter, r *http.Request, id int64) {
+	var body apigen.AddLibraryAliasJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	searchable := false
+	if body.Searchable != nil {
+		searchable = *body.Searchable
+	}
+	alias, err := s.deps.Library.AddManualAlias(r.Context(), id, body.Title, searchable)
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, apigen.TitleAlias{
+		Id: alias.ID, Title: alias.Title, Source: alias.Source, SourceId: alias.SourceID,
+		Language: alias.Language, MarketCountry: alias.MarketCountry,
+		Scope: apigen.TitleAliasScope(alias.Scope), Role: apigen.TitleAliasRole(alias.Role),
+		Searchable: alias.Searchable,
+	})
+}
+
+// DeleteLibraryAlias implements DELETE /library/{id}/aliases/{aliasId}.
+func (s *Server) DeleteLibraryAlias(w http.ResponseWriter, r *http.Request, id, aliasID int64) {
+	if err := s.deps.Library.DeleteManualAlias(r.Context(), id, aliasID); err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // GetLibraryPlacementSuggestion implements GET /library/{id}/placement-suggestion.
@@ -699,12 +776,16 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 	// books by Open Library work id, including which editions are present).
 	inLib := map[int64]bool{}
 	inLibTvdb := map[int64]bool{}
+	inLibImdb := map[string]bool{}
 	inLibOlid := map[string][]apigen.BookType{}
 	if items, err := s.deps.Library.List(r.Context(), domain.MediaKind(params.Kind)); err == nil {
 		for _, it := range items {
 			inLib[it.IDs.TMDB] = true
 			if it.IDs.TVDB != 0 {
 				inLibTvdb[it.IDs.TVDB] = true
+			}
+			if it.IDs.IMDB != "" {
+				inLibImdb[strings.ToLower(it.IDs.IMDB)] = true
 			}
 			if it.IDs.OLID != "" {
 				if types := bookTypesDTO(it); types != nil {
@@ -726,6 +807,8 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 			PosterPath: res.PosterPath,
 		}
 		sr.Source = optStr(res.Source)
+		sr.ImdbId = optStr(res.IMDBID)
+		sr.HydrationSource = optStr(res.HydrationSource)
 		if res.TVDBID != 0 {
 			id := res.TVDBID
 			sr.TvdbId = &id
@@ -740,8 +823,10 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 			sr.BookTypes = &owned
 		case res.TMDBID != 0:
 			sr.InLibrary = inLib[res.TMDBID]
-		default:
+		case res.TVDBID != 0:
 			sr.InLibrary = inLibTvdb[res.TVDBID]
+		default:
+			sr.InLibrary = inLibImdb[strings.ToLower(res.IMDBID)]
 		}
 		out = append(out, sr)
 	}

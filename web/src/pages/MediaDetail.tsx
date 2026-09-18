@@ -3,10 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import {
   ACTIVE_DOWNLOAD_STATES,
+  addLibraryAlias,
   addMediaCopy,
   autoSearchItem,
   completeness,
   deleteLibraryItem,
+  deleteLibraryAlias,
   deleteMediaCopy,
   fmtBytes,
   fmtRatingValue,
@@ -31,6 +33,71 @@ import type { BookType, MediaFileInfo, MediaItemDetail, RemoveFileOptions } from
 import { describeAutoSearch } from '../autosearch'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ReleaseSearch } from './ReleaseSearch'
+
+function IdentityPanel({ item }: { item: MediaItemDetail }) {
+  const qc = useQueryClient()
+  const [title, setTitle] = useState('')
+  const [searchable, setSearchable] = useState(false)
+  const [message, setMessage] = useState('')
+  const aliases = item.aliases ?? []
+  const sources = item.identitySources ?? []
+  const add = useMutation({
+    mutationFn: () => addLibraryAlias(item.id, title.trim(), searchable),
+    onSuccess: () => {
+      setTitle('')
+      setSearchable(false)
+      setMessage('Alias added.')
+      void qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+    },
+    onError: (error) => setMessage(`✕ ${(error as Error).message}`),
+  })
+  const remove = useMutation({
+    mutationFn: (aliasId: number) => deleteLibraryAlias(item.id, aliasId),
+    onSuccess: () => {
+      setMessage('Alias removed.')
+      void qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+    },
+    onError: (error) => setMessage(`✕ ${(error as Error).message}`),
+  })
+
+  return (
+    <section className="panel">
+      <h2>Identity</h2>
+      <p className="muted">
+        Release matching uses these verified IDs, aliases, and country facts. Provider aliases are read-only;
+        manual aliases can be matching-only or explicitly included in indexer searches.
+      </p>
+      <div className="fact-grid">
+        <div className="fact-label">Provider</div><div>{item.source || 'unknown'}</div>
+        <div className="fact-label">IDs</div>
+        <div className="fact-pills">
+          {item.ids.tmdb ? <span className="pill pill-neutral">TMDB {item.ids.tmdb}</span> : null}
+          {item.ids.tvdb ? <span className="pill pill-neutral">TVDB {item.ids.tvdb}</span> : null}
+          {item.ids.imdb ? <span className="pill pill-neutral">IMDb {item.ids.imdb}</span> : null}
+        </div>
+        <div className="fact-label">Country evidence</div>
+        <div>{(item.countries ?? []).length > 0 ? item.countries.map((c) => `${c.code} (${c.basis}, ${c.source})`).join(' · ') : <span className="muted">none known</span>}</div>
+        <div className="fact-label">Refresh</div>
+        <div>{sources.length > 0 ? sources.map((s) => `${s.source}: ${s.fetchedAt ? new Date(s.fetchedAt).toLocaleString() : s.lastError ? `failed — ${s.lastError}` : 'pending'}`).join(' · ') : <span className="muted">identity enrichment pending</span>}</div>
+      </div>
+      <ul className="result-list">
+        {aliases.map((alias) => (
+          <li key={alias.id} className="result-note">
+            <strong>{alias.title}</strong>{' '}
+            <span className="muted">{alias.role} · {alias.source}{alias.marketCountry ? ` · ${alias.marketCountry}` : ''}{alias.searchable ? ' · searchable' : ''}</span>{' '}
+            {alias.role === 'manual' && <button disabled={remove.isPending} onClick={() => remove.mutate(alias.id)}>Remove</button>}
+          </li>
+        ))}
+      </ul>
+      <div className="form-row">
+        <input aria-label="Manual title alias" value={title} maxLength={256} placeholder="Alternate release title" onChange={(event) => setTitle(event.target.value)} />
+        <label className="inline"><input type="checkbox" checked={searchable} onChange={(event) => setSearchable(event.target.checked)} /> Include in indexer searches</label>
+        <button disabled={!title.trim() || add.isPending} onClick={() => add.mutate()}>{add.isPending ? 'Adding…' : 'Add alias'}</button>
+      </div>
+      {message && <p className={message.startsWith('✕') ? 'error-text' : 'ok-text'}>{message}</p>}
+    </section>
+  )
+}
 
 // CopiesPanel: additional quality targets — the same item kept at a second
 // quality, each copy with its own profile, location, and automation.
@@ -1154,6 +1221,8 @@ export function MediaDetailPage() {
           onSaved={setAutoMsg}
         />
       )}
+
+      {m.kind !== 'book' && <IdentityPanel item={m} />}
 
       {m.kind === 'book' ? (
         <BookEditionsPanel
