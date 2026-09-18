@@ -83,6 +83,7 @@ type MovieWantable struct {
 	Verified bool
 	Title    string
 	Year     int
+	Identity MediaIdentity
 	// Copy is the media copy this wantable hunts for (0 = the primary).
 	// Copies carry their own profile and their own on-disk file set.
 	Copy     int64
@@ -128,6 +129,7 @@ type EpisodeWantable struct {
 	Verified  bool
 	Title     string // series title
 	Year      int
+	Identity  MediaIdentity
 	Season    int
 	Episode   int
 	Absolute  int // anime absolute number; 0 = unknown
@@ -172,6 +174,7 @@ type SeasonWantable struct {
 	Mon      bool
 	Title    string
 	Year     int
+	Identity MediaIdentity
 	Season   int
 	Episodes []EpisodeWantable // the episodes a pack would satisfy
 	Copy     int64
@@ -292,9 +295,12 @@ func (b BookWantable) SourceVerified() bool { return b.Verified }
 
 // SearchQuery is what a planner emits for indexers (blueprint §4.1).
 type SearchQuery struct {
-	Q       string
-	Season  int // 0 = unset
-	Episode int // 0 = unset
+	Q          string
+	Season     int // retained for compatibility; use SeasonSet for season zero
+	Episode    int // retained for compatibility; use EpisodeSet for presence
+	SeasonSet  bool
+	EpisodeSet bool
+	ID         *ExternalRef
 	// Kind steers indexer category selection (books → Torznab 7000s/3030).
 	Kind MediaKind
 	// BookType narrows book searches to ebook or audiobook categories. Empty
@@ -302,26 +308,93 @@ type SearchQuery struct {
 	BookType quality.BookType
 }
 
+// SearchPlan separates exact-ID alternatives from bounded title fallbacks.
+type SearchPlan struct {
+	IDs    []SearchQuery
+	Titles []SearchQuery
+}
+
+// PlanVideoSearch builds deterministic alternatives. Capability filtering
+// and the automatic/interactive budgets live in the executor.
+func PlanVideoSearch(w Wantable) SearchPlan {
+	var ident MediaIdentity
+	var canonical SearchQuery
+	switch t := w.(type) {
+	case MovieWantable:
+		ident = t.Identity
+		if ident.Title == "" {
+			ident.Title, ident.Year, ident.IDs = t.Title, t.Year, t.Identity.IDs
+		}
+		q := ident.Title
+		if ident.Year > 0 {
+			q = fmt.Sprintf("%s %d", ident.Title, ident.Year)
+		}
+		canonical = SearchQuery{Q: q, Kind: KindMovie}
+	case EpisodeWantable:
+		ident = t.Identity
+		if ident.Title == "" {
+			ident.Title, ident.Year = t.Title, t.Year
+		}
+		canonical = SearchQuery{Q: fmt.Sprintf("%s S%02dE%02d", ident.Title, t.Season, t.Episode), Season: t.Season, Episode: t.Episode, SeasonSet: true, EpisodeSet: true, Kind: KindSeries}
+	case SeasonWantable:
+		ident = t.Identity
+		if ident.Title == "" {
+			ident.Title, ident.Year = t.Title, t.Year
+		}
+		canonical = SearchQuery{Q: fmt.Sprintf("%s S%02d", ident.Title, t.Season), Season: t.Season, SeasonSet: true, Kind: KindSeries}
+	default:
+		return SearchPlan{}
+	}
+	plan := SearchPlan{Titles: []SearchQuery{canonical}}
+	appendID := func(provider, value string) {
+		if value == "" || value == "0" {
+			return
+		}
+		q := canonical
+		q.Q = ""
+		q.ID = &ExternalRef{Provider: provider, Value: value}
+		plan.IDs = append(plan.IDs, q)
+	}
+	if canonical.Kind == KindSeries {
+		if ident.IDs.TVDB > 0 {
+			appendID("tvdb", fmt.Sprintf("%d", ident.IDs.TVDB))
+		}
+		appendID("imdb", ident.IDs.IMDB)
+		if ident.IDs.TMDB > 0 {
+			appendID("tmdb", fmt.Sprintf("%d", ident.IDs.TMDB))
+		}
+	} else {
+		appendID("imdb", ident.IDs.IMDB)
+		if ident.IDs.TMDB > 0 {
+			appendID("tmdb", fmt.Sprintf("%d", ident.IDs.TMDB))
+		}
+	}
+	seen := map[string]bool{canonical.Q: true}
+	for _, a := range ident.Aliases {
+		if !a.Searchable || a.Scope != "work" || a.Title == "" || seen[a.Title] {
+			continue
+		}
+		q := canonical
+		q.Q = a.Title
+		if canonical.Kind == KindMovie && ident.Year > 0 {
+			q.Q = fmt.Sprintf("%s %d", a.Title, ident.Year)
+		}
+		plan.Titles = append(plan.Titles, q)
+		seen[a.Title] = true
+	}
+	return plan
+}
+
 // PlanSearch builds the indexer queries for a wantable — one of exactly two
 // places media-kind knowledge lives (the other is the matcher).
 func PlanSearch(w Wantable) []SearchQuery {
 	switch t := w.(type) {
 	case MovieWantable:
-		q := t.Title
-		if t.Year > 0 {
-			q = fmt.Sprintf("%s %d", t.Title, t.Year)
-		}
-		return []SearchQuery{{Q: q, Kind: KindMovie}}
+		return PlanVideoSearch(t).Titles[:1]
 	case EpisodeWantable:
-		return []SearchQuery{{
-			Q:      fmt.Sprintf("%s S%02dE%02d", t.Title, t.Season, t.Episode),
-			Season: t.Season, Episode: t.Episode, Kind: KindSeries,
-		}}
+		return PlanVideoSearch(t).Titles[:1]
 	case SeasonWantable:
-		return []SearchQuery{{
-			Q:      fmt.Sprintf("%s S%02d", t.Title, t.Season),
-			Season: t.Season, Kind: KindSeries,
-		}}
+		return PlanVideoSearch(t).Titles[:1]
 	case BookWantable:
 		if t.Author == "" {
 			return []SearchQuery{{Q: t.Title, Kind: KindBook, BookType: t.BookType}}
