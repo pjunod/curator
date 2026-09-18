@@ -243,6 +243,10 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
 - **[Deployment](docs/deployment.md)** — storage rules for the SQLite database (why the live
   DB must not sit on NFS/Gluster), floating-node/HA patterns, backup/restore.
 - **[Architecture](docs/architecture.md)** and **[ADRs](docs/adr/)** — the design and why.
+- **[Release identity plan](docs/plan-release-identity.md)** — implementation contract for
+  aliases, optional country qualifiers, direct TVDB/IMDb lookup, and indexer ID fallbacks.
+- **[Release identity status](docs/RELEASE_IDENTITY_STATUS.md)** — live implementation,
+  review, validation, and delivery state for that plan.
 
 ## Configuration
 
