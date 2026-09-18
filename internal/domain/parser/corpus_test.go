@@ -154,6 +154,29 @@ func TestAudiobookFormatParsing(t *testing.T) {
 	}
 }
 
+func TestSeriesIdentityTitlePreservation(t *testing.T) {
+	tests := []struct {
+		in      string
+		title   string
+		raw     string
+		year    int
+		leading string
+		group   string
+	}{
+		{"Show.2024.S01E01", "Show", "Show.2024.", 2024, "", ""},
+		{"Show.2024.S01E01.Summer.of.1999", "Show", "Show.2024.", 2024, "", ""},
+		{"Doctor.Who.(2005).S01E01", "Doctor Who", "Doctor.Who.(2005).", 2005, "", ""},
+		{"[US] Show S01E01", "Show", "[US] Show", 0, "US", ""},
+		{"[SubsPlease] Show - 15 [1080p]", "Show", "Show", 0, "", "SubsPlease"},
+	}
+	for _, tt := range tests {
+		got := Parse(tt.in)
+		if got.Title != tt.title || got.RawTitle != tt.raw || got.SeriesTitleYear != tt.year || got.LeadingBracket != tt.leading || got.Group != tt.group {
+			t.Errorf("Parse(%q) identity = title %q raw %q year %d leading %q group %q", tt.in, got.Title, got.RawTitle, got.SeriesTitleYear, got.LeadingBracket, got.Group)
+		}
+	}
+}
+
 func FuzzParse(f *testing.F) {
 	f.Add("Show.Name.S01E02.1080p.WEB-DL.x264-GROUP")
 	f.Add("Movie (2024) [1080p] REMUX")

@@ -5,7 +5,7 @@ this page records what is built, reviewed, validated, and delivered. The plan
 remains the behavioral contract and acceptance matrix.
 
 **Updated:** 2026-09-17 · **Branch:** `codex/release-identity` · **State:** in
-progress
+progress · **Draft PR:** [#27](https://github.com/pjunod/monarr/pull/27)
 
 ## Delivery state
 
@@ -13,7 +13,7 @@ progress
 |---|---|---|
 | Isolated clone | complete | `/private/tmp/monarr-release-identity`, baseline `0da1c75` |
 | Plan and repository guidance | complete | Plan §1–§13 and `CLAUDE.md` read before implementation |
-| M1 pure identity contracts | in progress | Parser, variants, evaluator, and fixtures pending |
+| M1 pure identity contracts | implemented; validation deferred | Strict ID grammar, raw-title/series-year parser evidence, qualifier variants, ranked evaluator, conflict/coverage safeguards, and UK/US fixtures |
 | M2 persistence and enrichment | pending | Migration, storage, provider snapshots, and jobs pending |
 | M3 direct external-ID resolution | pending | Native and compatibility paths pending |
 | M4 capability-aware query tiers | pending | Three-query automatic and five-query interactive budgets pending |
