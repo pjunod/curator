@@ -97,6 +97,7 @@ function ActivityRow({ item, onOpen }: { item: QueueItem; onOpen: () => void }) 
         <Badge label={item.stage || item.state} tone={tone} />
       </View>
       <Text style={[styles.itemMeta, { color: theme.muted }]}>{[item.quality, item.protocol, formatRelative(item.addedAt)].filter(Boolean).join(' · ')}</Text>
+      {item.match?.reason ? <Text style={[styles.itemMeta, { color: theme.muted }]}>Match: {item.match.reason}</Text> : null}
       {item.stageDetail ? <Text style={[styles.itemMeta, { color: theme.muted }]}>{item.stageDetail}</Text> : null}
       {item.total ? <Text style={[styles.itemMeta, { color: theme.muted }]}>{formatBytes(item.bytes ?? 0)} / {formatBytes(item.total)}{item.bytesPerSecond ? ` · ${formatBytes(item.bytesPerSecond)}/s` : ''}</Text> : null}
       {filterNeedsProgress(item) ? (

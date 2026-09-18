@@ -49,7 +49,7 @@ export function ReleaseSearch(props: {
       grabRelease({
         mediaItemId, copyId, season, episode,
         title: c.title, downloadUrl: c.downloadUrl, indexer: c.indexer,
-        protocol: c.protocol, size: c.size,
+        protocol: c.protocol, size: c.size, match: c.match,
       }),
     onSuccess: (_res, c) => setGrabbed(c.title),
   })
@@ -196,6 +196,9 @@ function ReleaseRow({ c, busy, onGrab }: { c: ReleaseCandidate; busy: boolean; o
           )}
         </div>
         {c.isUpgrade && <span className="ok-text">upgrade</span>}
+        {c.match.matched && (
+          <div className="ok-text">✓ {c.match.reason}</div>
+        )}
         {/* A size that cannot hold the claim is worth saying even on a release
             the profile would take — but it is a caution, not a refusal, and it
             has to read as one. */}

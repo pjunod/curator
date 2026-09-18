@@ -231,6 +231,32 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
           <Button label={searching ? 'Starting search…' : 'Search now'} disabled={searching} onPress={() => void searchNow()} />
         </Panel>
 
+        {item.kind !== 'book' ? (
+          <>
+            <SectionTitle>Identity</SectionTitle>
+            <Panel style={styles.formPanel}>
+              <Text style={[styles.actionHint, { color: theme.muted }]}>Release matching uses these verified facts. They are advisory diagnostics, not an enable gate.</Text>
+              <View style={styles.badges}>
+                {item.ids.tmdb ? <Badge label={`TMDB ${item.ids.tmdb}`} /> : null}
+                {item.ids.tvdb ? <Badge label={`TVDB ${item.ids.tvdb}`} /> : null}
+                {item.ids.imdb ? <Badge label={`IMDb ${item.ids.imdb}`} /> : null}
+              </View>
+              {(item.countries ?? []).length > 0 ? <Text style={[styles.meta, { color: theme.muted }]}>Countries: {item.countries.map((country) => `${country.code} (${country.basis})`).join(' · ')}</Text> : null}
+              {(item.aliases ?? []).map((alias) => (
+                <View key={alias.id} style={styles.rowBetween}>
+                  <Text style={[styles.rowTitle, { color: theme.text }]}>{alias.title}</Text>
+                  <Text style={[styles.meta, { color: theme.muted }]}>{alias.role} · {alias.source}{alias.searchable ? ' · searchable' : ''}</Text>
+                </View>
+              ))}
+              {(item.identitySources ?? []).map((source) => (
+                <Text key={source.source} style={[styles.meta, { color: source.lastError ? theme.warning : theme.muted }]}>
+                  {source.source}: {source.fetchedAt ? `refreshed ${new Date(source.fetchedAt).toLocaleString()}` : source.lastError || 'pending'}
+                </Text>
+              ))}
+            </Panel>
+          </>
+        ) : null}
+
         <SectionTitle>Edit item</SectionTitle>
         <Panel style={styles.formPanel}>
           <View style={styles.monitorRow}>

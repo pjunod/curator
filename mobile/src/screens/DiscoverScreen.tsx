@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import { compatibleRootFolders, resolveRootFolderID } from '../addMediaOptions'
+import { ApiError } from '../api'
 import type { MonarrClient } from '../api'
 import { SearchCard } from '../components/Media'
 import { bookTypeForSource } from '../format'
@@ -53,7 +54,16 @@ export function DiscoverScreen({
     try {
       setResults(await client.searchMetadata(kind, clean))
     } catch (cause) {
-      setSearchError(cause instanceof Error ? cause.message : 'Search failed.')
+      if (cause instanceof ApiError) {
+        setSearchError({
+          invalid_external_id: 'That external ID is invalid. Use tvdb:414217, imdb:tt16867040, or tmdb:550.',
+          identity_conflict: 'More than one record claims that identity.',
+          provider_unavailable: 'The metadata provider is unavailable. Try again later.',
+          unsupported_hydration: 'That title was identified, but no configured provider can safely add it.',
+        }[cause.code ?? ''] ?? cause.message)
+      } else {
+        setSearchError(cause instanceof Error ? cause.message : 'Search failed.')
+      }
     } finally {
       setSearching(false)
     }
@@ -81,7 +91,7 @@ export function DiscoverScreen({
         <View style={styles.searchRow}>
           <Field
             style={styles.flex}
-            placeholder={`Search ${kind === 'series' ? 'TV series' : `${kind}s`}`}
+            placeholder={kind === 'series' ? 'Title, tvdb:414217, or IMDb ID' : kind === 'movie' ? 'Title, IMDb ID, or tmdb:550' : 'Search books'}
             returnKeyType="search"
             value={query}
             onChangeText={(value) => {
@@ -185,6 +195,8 @@ function AddSheet({
       kind: item.kind,
       tmdbId: item.tmdbId || undefined,
       tvdbId: item.tvdbId,
+      imdbId: item.imdbId,
+      hydrationSource: item.hydrationSource,
       olid: item.olid,
       bookType: item.kind === 'book' ? bookType : undefined,
       rootFolderId: rootID,

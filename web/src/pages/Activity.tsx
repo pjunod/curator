@@ -544,6 +544,7 @@ function RowGroup(props: {
         </td>
         <td className="mono">
           {d.title}
+          {d.match?.reason && <div className="muted">Match: {d.match.reason}</div>}
           {d.error && <div className="error-text">{d.error}</div>}
         </td>
         <td className="muted">{d.quality}</td>

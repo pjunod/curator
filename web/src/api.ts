@@ -202,6 +202,32 @@ export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' |
   files: MediaFileInfo[]
   copies: MediaCopy[]
   addedAt: string
+  aliases: TitleAlias[]
+  countries: CountryEvidence[]
+  identitySources: IdentitySourceStatus[]
+}
+
+export interface TitleAlias {
+  id: number
+  title: string
+  source: string
+  sourceId: string
+  language: string
+  marketCountry: string
+  scope: 'work' | 'season' | 'unsupported_numbering'
+  role: 'original' | 'alternate' | 'historical' | 'manual'
+  searchable: boolean
+}
+
+export interface CountryEvidence { code: string; source: string; basis: string }
+
+export interface IdentitySourceStatus {
+  source: string
+  countries: CountryEvidence[]
+  fetchedAt?: string
+  attemptedAt?: string
+  retryAfter?: string
+  lastError: string
 }
 
 export interface UpdateMediaItemRequest {
@@ -218,7 +244,9 @@ export interface SearchResult {
   tmdbId: number
   /** Set when the series came from the provider chain rather than TMDB. */
   tvdbId?: number
+  imdbId?: string
   source?: string
+  hydrationSource?: string
   olid?: string
   author?: string
   title: string
@@ -234,6 +262,8 @@ export interface AddMediaRequest {
   kind: MediaKind
   tmdbId?: number
   tvdbId?: number
+  imdbId?: string
+  hydrationSource?: string
   olid?: string
   bookType?: BookType
   rootFolderId?: number
@@ -397,22 +427,26 @@ export interface Settings {
  *  resolvable conflict (409) from a flat rejection (400). */
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  code?: string
+  constructor(message: string, status: number, code?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
   }
 }
 
 async function parseError(res: Response, fallback: string): Promise<never> {
   let msg = fallback
+  let code: string | undefined
   try {
-    const body = (await res.json()) as { message?: string }
+    const body = (await res.json()) as { message?: string; code?: string }
     if (body.message) msg = body.message
+    code = body.code
   } catch {
     /* keep fallback */
   }
-  throw new ApiError(msg, res.status)
+  throw new ApiError(msg, res.status, code)
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -448,6 +482,10 @@ export const getLibraryPlacementSuggestion = (id: number) =>
 export const addLibraryItem = (req: AddMediaRequest) =>
   send<MediaItemDetail>('POST', '/library', req)
 export const deleteLibraryItem = (id: number) => send('DELETE', `/library/${id}`)
+export const addLibraryAlias = (id: number, title: string, searchable = false) =>
+  send<TitleAlias>('POST', `/library/${id}/aliases`, { title, searchable })
+export const deleteLibraryAlias = (id: number, aliasId: number) =>
+  send<void>('DELETE', `/library/${id}/aliases/${aliasId}`)
 /** Re-measure an item's files, ignoring the already-probed cache. */
 export const reprobeLibraryItem = (id: number) =>
   send<{ files: number }>('POST', `/library/${id}/probe`)
@@ -621,6 +659,21 @@ export interface Rejection {
   reason: string
 }
 
+export interface MatchEvidence {
+  version: number
+  matched: boolean
+  method?: string
+  code?: string
+  reason: string
+  originalTitle?: string
+  parsedTitle?: string
+  targetTitle?: string
+  matchedTitle?: string
+  matchedId?: { provider: string; value: string }
+  country?: string
+  warnings?: string[]
+}
+
 export interface ReleaseCandidate {
   title: string
   downloadUrl: string
@@ -636,6 +689,7 @@ export interface ReleaseCandidate {
   accepted: boolean
   isUpgrade: boolean
   rejections: Rejection[]
+  match: MatchEvidence
   /** A caution that does not decline the release — today, an implausible size. */
   warning?: string
 }
@@ -650,6 +704,7 @@ export interface GrabRequest {
   indexer?: string
   protocol: string
   size?: number
+  match?: MatchEvidence
 }
 
 export interface HandoffEntry {
@@ -690,6 +745,8 @@ export interface QueueItem {
   bytes?: number
   total?: number
   bytesPerSecond?: number
+  /** Persisted explanation of why this release was accepted. */
+  match?: MatchEvidence
 }
 
 export interface ScannedFile {
