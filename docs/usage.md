@@ -278,6 +278,20 @@ table open and closed, and neither control interferes with the other.
 
 ## Getting releases
 
+### Find by external ID
+
+The Add search accepts ordinary text plus exact `tmdb:<digits>`,
+`tvdb:<digits>`, `imdb:tt<digits>`, or a bare IMDb title ID. Exact input is
+validated strictly and resolves one provider record rather than falling back
+to a similarly named title. If a provider returns conflicting IDs, Monarr
+shows an identity-conflict error and does not add or merge the result.
+
+On a movie or series detail page, **Identity** lists the canonical title,
+external IDs, aliases, country evidence, and provider snapshot health. Use
+**Refresh identity** after correcting provider data, or add a manual alias for
+a real release spelling. Manual aliases are evidence; they do not change
+episode numbering.
+
 Automatic is the default posture — the interactive search is the override
 for when you want to pick a specific release yourself.
 
@@ -488,6 +502,11 @@ but its advertised size cannot hold what its name claims — a "2160p Remux"
 listed at 500 MB. That is a caution for you, not a refusal. Unattended
 searches (RSS and backlog) do decline these outright, because nobody is there
 to weigh it and the cost of guessing wrong is a fake file that ends the hunt.
+
+Release Search explains the identity decision for every row: matched external
+ID, canonical title, alias, country convention, or the exact conflict that
+rejected it. The accepted explanation is stored with the grab and remains
+visible on its Activity row.
 
 ## Monitoring: series, seasons, episodes
 

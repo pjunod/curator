@@ -1,7 +1,8 @@
 # ADR 0011 — Series metadata is a chain, not a provider: TVDB when keyed, TVmaze free, TMDB always
 
-- **Status:** Accepted — TVmaze first (no key, buildable now), TheTVDB when a
-  key exists. Neither is built yet.
+- **Status:** Accepted — TVmaze first (no key), TheTVDB when a key exists.
+  TVmaze and TMDB lookup/enrichment are implemented; the paid TheTVDB adapter
+  remains future work.
 - **Date:** 2026-07-25 (revised the same day from the Proposed single-provider
   version, after TVmaze turned out to hand out TheTVDB ids for free)
 - **Relates to:** ADR [0005](0005-filesystem-adoption.md) (adoption is the
