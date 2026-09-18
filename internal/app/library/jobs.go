@@ -24,7 +24,8 @@ const (
 	// timeout, hits provider rate limits, and a failure halfway through
 	// leaves nothing. It is also the concrete workload that makes the
 	// queue worth having on a single instance.
-	JobAdopt = "library.adopt"
+	JobAdopt           = "library.adopt"
+	JobIdentityRefresh = "library.identity.refresh"
 )
 
 // JobEnqueuer is the slice of the queue this service needs. Narrow on
@@ -48,6 +49,20 @@ func RegisterJobHandlers[H ~func(ctx context.Context, j domain.Job) error](
 	if err := register(JobAdopt, H(func(ctx context.Context, _ domain.Job) error {
 		_, err := s.RunAdoption(ctx)
 		return err
+	})); err != nil {
+		return err
+	}
+	if err := register(JobIdentityRefresh, H(func(ctx context.Context, j domain.Job) error {
+		var payload struct {
+			ItemID int64 `json:"itemId"`
+		}
+		if err := json.Unmarshal([]byte(j.Payload), &payload); err != nil {
+			return fmt.Errorf("identity job payload: %w", err)
+		}
+		if payload.ItemID == 0 {
+			return fmt.Errorf("identity job: no item id")
+		}
+		return s.RefreshIdentity(ctx, payload.ItemID, false)
 	})); err != nil {
 		return err
 	}

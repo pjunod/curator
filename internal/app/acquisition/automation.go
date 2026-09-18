@@ -10,7 +10,6 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/decision"
 	"github.com/pjunod/monarr/internal/domain/format"
-	"github.com/pjunod/monarr/internal/domain/matcher"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
@@ -70,13 +69,29 @@ func (m runtimeMemo) of(ctx context.Context, s *Service, w domain.Wantable) int 
 
 // autoGrab sends an accepted release to a client on behalf of a wantable —
 // the unattended twin of the interactive grab.
-func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Release) error {
+func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Release, evidence domain.MatchEvidence) error {
+	if _, book := w.(domain.BookWantable); !book {
+		index, err := s.allIdentity(ctx, time.Now())
+		if err != nil {
+			return err
+		}
+		if work, ok := index.Works[w.MediaItemID()]; ok {
+			w = wantableWithIdentity(w, work.Identity)
+		}
+		parsed := parser.Parse(r.Title)
+		match := releaseMatch(r, parsed, w, index)
+		if !match.Matched {
+			return fmt.Errorf("identity changed before grab: %s", match.Reason)
+		}
+		evidence = matchEvidence(parsed, w, r, match)
+	}
 	season, episode := wantableGrabTarget(w)
 	_, err := s.Grab(ctx, GrabRequest{
 		MediaItemID: w.MediaItemID(), CopyID: domain.WantableCopy(w),
 		Season: season, Episode: episode,
 		Title: r.Title, DownloadURL: r.DownloadURL, Indexer: r.Indexer,
 		Protocol: r.Protocol, Size: r.Size,
+		MatchEvidence: &evidence,
 	})
 	return err
 }
@@ -94,6 +109,10 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 		return nil
 	}
 	wanted = s.watchedFirst(ctx, wanted)
+	identityIndex, err := s.allIdentity(ctx, time.Now())
+	if err != nil {
+		return err
+	}
 	enabled, err := s.enabledIndexers(ctx)
 	if err != nil || len(enabled) == 0 {
 		return err
@@ -102,8 +121,20 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 	grabbed := map[string]bool{} // wantable id → grabbed this run
 	runtimes := runtimeMemo{}
 	for _, cfg := range enabled {
+		indexer := s.newIndexer(cfg)
+		if provider, ok := indexer.(ports.IndexerCapabilitiesProvider); ok {
+			caps, capsErr := provider.Capabilities(ctx)
+			if capsErr != nil {
+				s.log.Warn("rss: capabilities unavailable", "indexer", cfg.Name, "err", capsErr)
+				continue
+			}
+			if caps.Generic.Known && !caps.Generic.Available {
+				s.log.Info("rss: skipped because generic search is disabled", "indexer", cfg.Name)
+				continue
+			}
+		}
 		cctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
-		releases, err := s.newIndexer(cfg).FetchRSS(cctx)
+		releases, err := indexer.FetchRSS(cctx)
 		cancel()
 		if err != nil {
 			s.log.Warn("rss: fetch failed", "indexer", cfg.Name, "err", err)
@@ -114,8 +145,11 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 				continue
 			}
 			p := parser.Parse(r.Title)
-			for _, m := range matcher.Match(p, wanted) {
-				w := m.Wantable
+			for _, w := range wanted {
+				match := releaseMatch(r, p, w, identityIndex)
+				if !match.Matched {
+					continue
+				}
 				if grabbed[string(w.ID())] {
 					continue
 				}
@@ -130,7 +164,8 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 					s.log.Info("rss: declined on size", "release", r.Title, "why", why.Reason)
 					continue
 				}
-				if err := s.autoGrab(ctx, w, r); err != nil {
+				evidence := matchEvidence(p, w, r, match)
+				if err := s.autoGrab(ctx, w, r, evidence); err != nil {
 					s.log.Warn("rss: grab failed", "release", r.Title, "err", err)
 					continue
 				}
@@ -256,6 +291,10 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 
 	formats, _ := s.db.ListCustomFormats(ctx)
 	runtime := s.db.ItemRuntime(ctx, w.MediaItemID())
+	identityIndex, err := s.allIdentity(ctx, time.Now())
+	if err != nil {
+		return tally, err
+	}
 
 	var (
 		mu       sync.Mutex
@@ -263,29 +302,57 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 		wg       sync.WaitGroup
 	)
 	for _, cfg := range enabled {
-		for _, q := range domain.PlanSearch(w) {
-			wg.Add(1)
-			go func(cfg ports.IndexerConfig, q domain.SearchQuery) {
-				defer wg.Done()
+		wg.Add(1)
+		go func(cfg ports.IndexerConfig) {
+			defer wg.Done()
+			indexer := s.newIndexer(cfg)
+			queries, err := queriesForIndexer(ctx, indexer, w, false)
+			if err != nil {
+				s.log.Warn("auto search: indexer capabilities unavailable", "indexer", cfg.Name, "err", err)
+				return
+			}
+			for tier, q := range queries {
 				cctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
-				defer cancel()
-				rs, err := s.newIndexer(cfg).Search(cctx, q)
+				rs, err := indexer.Search(cctx, q)
+				cancel()
 				if err != nil {
-					s.log.Warn("auto search: indexer failed", "indexer", cfg.Name, "err", err)
-					return
+					s.log.Warn("auto search: indexer failed", "indexer", cfg.Name, "tier", tier+1, "err", err)
+					continue
 				}
 				mu.Lock()
 				releases = append(releases, rs...)
 				mu.Unlock()
-			}(cfg, q)
-		}
+				eligible := false
+				for _, release := range rs {
+					if s.isBlocklisted(ctx, release.Title, release.Indexer) {
+						continue
+					}
+					parsed := parser.Parse(release.Title)
+					if !releaseMatch(release, parsed, w, identityIndex).Matched {
+						continue
+					}
+					if !decision.Decide(parsed.Quality, w, profile).Accepted {
+						continue
+					}
+					if _, bad := sizeImplausible(parsed.Quality, release, runtime); bad {
+						continue
+					}
+					eligible = true
+					break
+				}
+				if eligible {
+					break
+				}
+			}
+		}(cfg)
 	}
 	wg.Wait()
 
 	type scored struct {
-		r     ports.Release
-		q     quality.Quality
-		score int
+		r        ports.Release
+		q        quality.Quality
+		score    int
+		evidence domain.MatchEvidence
 	}
 	better := func(a, b *scored) bool { // is a strictly better than b
 		if quality.Rank(a.q) != quality.Rank(b.q) {
@@ -311,7 +378,8 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 			continue
 		}
 		p := parser.Parse(r.Title)
-		if len(matcher.Match(p, []domain.Wantable{w})) == 0 {
+		match := releaseMatch(r, p, w, identityIndex)
+		if !match.Matched {
 			continue
 		}
 		tally.Matched++
@@ -323,7 +391,7 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 			continue
 		}
 		tally.Accepted++
-		cand := &scored{r: r, q: p.Quality, score: format.Score(r.Title, formats)}
+		cand := &scored{r: r, q: p.Quality, score: format.Score(r.Title, formats), evidence: matchEvidence(p, w, r, match)}
 		if best == nil || better(cand, best) {
 			best = cand
 		}
@@ -331,7 +399,7 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 	if best == nil {
 		return tally, nil
 	}
-	if err := s.autoGrab(ctx, w, best.r); err != nil {
+	if err := s.autoGrab(ctx, w, best.r, best.evidence); err != nil {
 		return tally, fmt.Errorf("grab %q: %w", best.r.Title, err)
 	}
 	tally.Grabbed = best.r.Title

@@ -11,10 +11,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/pjunod/monarr/internal/domain"
-	"github.com/pjunod/monarr/internal/domain/matcher"
+	identityinput "github.com/pjunod/monarr/internal/domain/identity"
 	"github.com/pjunod/monarr/internal/domain/naming"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
@@ -53,8 +54,22 @@ var (
 	// Wrapping them all in one sentinel is deliberate — "the request is
 	// wrong" is a single fact about the caller, and one match in the handler
 	// cannot drift out of step with three.
-	ErrInvalidInput = errors.New("invalid input")
+	ErrInvalidInput         = errors.New("invalid input")
+	ErrInvalidExternalID    = errors.New("invalid external id")
+	ErrProviderUnavailable  = errors.New("metadata provider unavailable")
+	ErrUnsupportedHydration = errors.New("external id resolved without a supported hydration route")
 )
+
+// IdentityConflictError carries the affected local rows when known.
+type IdentityConflictError struct {
+	ItemIDs []int64
+	Cause   error
+}
+
+func (e *IdentityConflictError) Error() string {
+	return fmt.Sprintf("identity conflict for library items %v", e.ItemIDs)
+}
+func (e *IdentityConflictError) Unwrap() error { return e.Cause }
 
 // MediaAdded is published on the bus after a successful add.
 type MediaAdded struct {
@@ -81,7 +96,8 @@ type Service struct {
 	log     *slog.Logger
 	// queue is optional: without it, work that would be enqueued runs
 	// inline, so the queue stays an addition rather than a dependency.
-	queue JobEnqueuer
+	queue       JobEnqueuer
+	identitySem chan struct{}
 }
 
 // New returns a Service. bus may be nil (tests).
@@ -89,7 +105,7 @@ func New(db *sqlite.DB, meta ports.MetadataProvider, b *bus.Bus, log *slog.Logge
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{db: db, meta: meta, bus: b, log: log}
+	return &Service{db: db, meta: meta, bus: b, log: log, identitySem: make(chan struct{}, 2)}
 }
 
 // WithBooks attaches the book metadata provider (ADR 0006) and returns s.
@@ -197,6 +213,13 @@ func (s *Service) publish(e bus.Event) {
 // scan over six hundred folders should not spend a request per folder on
 // providers the first one already answered for.
 func (s *Service) Search(ctx context.Context, kind domain.MediaKind, query string) ([]ports.SearchResult, error) {
+	ref, recognized, parseErr := identityinput.ParseInput(query, kind)
+	if recognized {
+		if parseErr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidExternalID, parseErr)
+		}
+		return s.ResolveExternal(ctx, kind, ref)
+	}
 	if kind != domain.KindSeries {
 		return s.searchPrimary(ctx, kind, query)
 	}
@@ -212,6 +235,83 @@ func (s *Service) Search(ctx context.Context, kind domain.MediaKind, query strin
 		return nil, err
 	}
 	return merged, nil
+}
+
+// ResolveExternal resolves one exact ID without a text search. Local hits
+// remain available offline and ambiguity is returned rather than hidden.
+func (s *Service) ResolveExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) ([]ports.SearchResult, error) {
+	local, err := s.db.FindMediaItemsByExternalID(ctx, kind, ref)
+	if err != nil {
+		return nil, err
+	}
+	if len(local) > 1 {
+		ids := make([]int64, len(local))
+		for i, item := range local {
+			ids[i] = item.ID
+		}
+		return nil, &IdentityConflictError{ItemIDs: ids, Cause: sqlite.ErrIdentityConflict}
+	}
+	if len(local) == 1 {
+		return []ports.SearchResult{resultFromItem(local[0], local[0].Source)}, nil
+	}
+
+	var providers []ports.ExternalLookupProvider
+	if kind == domain.KindSeries && (ref.Provider == "tvdb" || ref.Provider == "imdb") {
+		for _, candidate := range s.series {
+			if provider, ok := candidate.(ports.ExternalLookupProvider); ok {
+				providers = append(providers, provider)
+			}
+		}
+	}
+	if provider, ok := s.meta.(ports.ExternalLookupProvider); ok {
+		providers = append(providers, provider)
+	}
+	var unsupported bool
+	for _, provider := range providers {
+		results, lookupErr := provider.LookupExternal(ctx, kind, ref)
+		if lookupErr == nil {
+			if len(results) > 1 {
+				return nil, &IdentityConflictError{Cause: sqlite.ErrIdentityConflict}
+			}
+			if len(results) == 0 {
+				continue
+			}
+			if !addable(results[0]) {
+				unsupported = true
+				continue
+			}
+			return results, nil
+		}
+		if errors.Is(lookupErr, ports.ErrProviderNotConfigured) {
+			continue
+		}
+		var remote *ports.RemoteError
+		if errors.As(lookupErr, &remote) {
+			switch remote.Category {
+			case ports.RemoteNotFound:
+				continue
+			case ports.RemoteUnsupportedHydration, ports.RemoteUnsupportedQuery:
+				unsupported = true
+				continue
+			case ports.RemoteIdentityConflict:
+				return nil, &IdentityConflictError{Cause: lookupErr}
+			default:
+				return nil, fmt.Errorf("%w: %v", ErrProviderUnavailable, lookupErr)
+			}
+		}
+		return nil, fmt.Errorf("%w: %v", ErrProviderUnavailable, lookupErr)
+	}
+	if unsupported {
+		return nil, ErrUnsupportedHydration
+	}
+	return nil, nil
+}
+
+func addable(result ports.SearchResult) bool {
+	return result.TMDBID != 0 || (result.Kind == domain.KindSeries && result.TVDBID != 0)
+}
+func resultFromItem(item domain.MediaItem, source string) ports.SearchResult {
+	return ports.SearchResult{Kind: item.Kind, TMDBID: item.IDs.TMDB, TVDBID: item.IDs.TVDB, IMDBID: item.IDs.IMDB, Source: source, HydrationSource: item.Source, Title: item.Title, Year: item.Year, Overview: item.Overview, PosterPath: item.PosterPath}
 }
 
 // searchPrimary asks only the first link: TMDB for video, Open Library for
@@ -241,10 +341,9 @@ func (s *Service) searchPrimary(ctx context.Context, kind domain.MediaKind, quer
 // stricter rule — see propose: there, "usable" means "clears the bar", so
 // the chain engages exactly where matching fails.)
 //
-// Duplicates are collapsed on normalized title plus year, since a TMDB
-// search result carries no TVDB id to compare against. Two records that
-// agree on both are the same show often enough, and the cost of being wrong
-// is one missing row in a list the user is reading anyway.
+// Duplicates collapse only on a verified shared ID with no conflicting known
+// namespace. Equal title/year alone is not identity: regional remakes often
+// have both.
 func (s *Service) appendSeriesChain(
 	ctx context.Context, query string, have []ports.SearchResult,
 ) []ports.SearchResult {
@@ -254,10 +353,6 @@ func (s *Service) appendSeriesChain(
 	// We enrich duplicate rows with identities learned from later providers;
 	// copy first so a provider-owned/cached result slice is never mutated.
 	out := append([]ports.SearchResult(nil), have...)
-	seen := make(map[string]int, len(out))
-	for i, r := range out {
-		seen[titleYearKey(r)] = i
-	}
 	for _, p := range s.series {
 		if ctx.Err() != nil {
 			return out
@@ -269,29 +364,36 @@ func (s *Service) appendSeriesChain(
 			continue
 		}
 		for _, r := range res {
-			key := titleYearKey(r)
-			if i, duplicate := seen[key]; duplicate {
-				// Search rows from TMDB carry only TMDB identity, while the
-				// matching TVmaze row carries TVDB identity. Collapsing the
-				// duplicate without merging those ids loses the only fact that
-				// proves a TVDB-keyed library item is already this series.
+			duplicate := -1
+			for i := range out {
+				if verifiedSameResult(out[i], r) {
+					duplicate = i
+					break
+				}
+			}
+			if duplicate >= 0 {
+				i := duplicate
 				if out[i].TMDBID == 0 {
 					out[i].TMDBID = r.TMDBID
 				}
 				if out[i].TVDBID == 0 {
 					out[i].TVDBID = r.TVDBID
 				}
+				if out[i].IMDBID == "" {
+					out[i].IMDBID = r.IMDBID
+				}
 				continue
 			}
-			seen[key] = len(out)
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-func titleYearKey(r ports.SearchResult) string {
-	return fmt.Sprintf("%s|%d", matcher.NormalizeTitle(r.Title), r.Year)
+func verifiedSameResult(a, b ports.SearchResult) bool {
+	shared := a.TMDBID != 0 && a.TMDBID == b.TMDBID || a.TVDBID != 0 && a.TVDBID == b.TVDBID || a.IMDBID != "" && strings.EqualFold(a.IMDBID, b.IMDBID)
+	conflict := a.TMDBID != 0 && b.TMDBID != 0 && a.TMDBID != b.TMDBID || a.TVDBID != 0 && b.TVDBID != 0 && a.TVDBID != b.TVDBID || a.IMDBID != "" && b.IMDBID != "" && !strings.EqualFold(a.IMDBID, b.IMDBID)
+	return shared && !conflict
 }
 
 // seriesByTVDB hydrates a series from whichever link of the chain knows the
@@ -324,9 +426,11 @@ type AddRequest struct {
 	TMDBID   int64
 	// TVDBID identifies a series that came from the chain rather than from
 	// TMDB (ADR 0011). Exactly one of TMDBID/TVDBID/OLID identifies the item.
-	TVDBID       int64
-	OLID         string
-	RootFolderID int64 // optional; 0 = no folder assigned yet
+	TVDBID          int64
+	IMDBID          string
+	HydrationSource string
+	OLID            string
+	RootFolderID    int64 // optional; 0 = no folder assigned yet
 	// QualityProfileID is optional; 0 means "use the configured default for
 	// this kind" (Settings → Profiles), which falls back to the built-in when
 	// nothing has been chosen.
@@ -342,29 +446,81 @@ type AddRequest struct {
 // existingByAnyID returns ErrAlreadyExists when the library already holds
 // this title under any id the request carries.
 func (s *Service) existingByAnyID(ctx context.Context, req AddRequest) error {
-	lookups := []func() (int64, error){}
+	var refs []domain.ExternalRef
 	if req.TMDBID != 0 {
-		lookups = append(lookups, func() (int64, error) {
-			return s.db.GetMediaItemByKindTmdb(ctx, req.Kind, req.TMDBID)
-		})
+		refs = append(refs, domain.ExternalRef{Provider: "tmdb", Value: fmt.Sprintf("%d", req.TMDBID)})
 	}
 	if req.TVDBID != 0 {
-		lookups = append(lookups, func() (int64, error) {
-			return s.db.GetMediaItemByKindTvdb(ctx, req.Kind, req.TVDBID)
-		})
+		refs = append(refs, domain.ExternalRef{Provider: "tvdb", Value: fmt.Sprintf("%d", req.TVDBID)})
 	}
-	if len(lookups) == 0 {
+	if req.IMDBID != "" {
+		refs = append(refs, domain.ExternalRef{Provider: "imdb", Value: req.IMDBID})
+	}
+	if len(refs) == 0 {
 		return fmt.Errorf("%w: an id is required to add a %s", ErrNotFound, req.Kind)
 	}
-	for _, look := range lookups {
-		switch _, err := look(); {
-		case err == nil:
-			return ErrAlreadyExists
-		case !errors.Is(err, sqlite.ErrNotFound):
+	claimed := map[int64]domain.MediaItem{}
+	for _, ref := range refs {
+		items, err := s.db.FindMediaItemsByExternalID(ctx, req.Kind, ref)
+		if err != nil {
 			return err
 		}
+		for _, item := range items {
+			claimed[item.ID] = item
+		}
+	}
+	if len(claimed) > 1 {
+		ids := make([]int64, 0, len(claimed))
+		for id := range claimed {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		return &IdentityConflictError{ItemIDs: ids, Cause: sqlite.ErrIdentityConflict}
+	}
+	for _, item := range claimed {
+		// A request that joins an existing identity on one namespace while
+		// contradicting another is corruption evidence, not a duplicate add.
+		if (req.TMDBID != 0 && item.IDs.TMDB != 0 && req.TMDBID != item.IDs.TMDB) ||
+			(req.TVDBID != 0 && item.IDs.TVDB != 0 && req.TVDBID != item.IDs.TVDB) ||
+			(req.IMDBID != "" && item.IDs.IMDB != "" && !strings.EqualFold(req.IMDBID, item.IDs.IMDB)) {
+			return &IdentityConflictError{ItemIDs: []int64{item.ID}, Cause: sqlite.ErrIdentityConflict}
+		}
+		return ErrAlreadyExists
 	}
 	return nil
+}
+
+func (s *Service) hydrateAdd(ctx context.Context, req AddRequest) (domain.MediaItem, error) {
+	switch req.HydrationSource {
+	case "":
+		// Legacy requests preserve baseline routing.
+		if req.Kind == domain.KindMovie {
+			return s.meta.GetMovie(ctx, req.TMDBID)
+		}
+		if req.TMDBID != 0 {
+			return s.meta.GetSeries(ctx, req.TMDBID)
+		}
+		return s.seriesByTVDB(ctx, req.TVDBID)
+	case "tmdb":
+		if req.Kind == domain.KindMovie {
+			return s.meta.GetMovie(ctx, req.TMDBID)
+		}
+		return s.meta.GetSeries(ctx, req.TMDBID)
+	default:
+		if req.Kind != domain.KindSeries {
+			return domain.MediaItem{}, fmt.Errorf("%w: hydration source %s", ErrInvalidInput, req.HydrationSource)
+		}
+		for _, provider := range s.series {
+			if provider.Name() == req.HydrationSource {
+				item, err := provider.GetSeriesByTVDB(ctx, req.TVDBID)
+				if err == nil {
+					item.Source = provider.Name()
+				}
+				return item, err
+			}
+		}
+		return domain.MediaItem{}, fmt.Errorf("%w: hydration source %s is not configured", ErrProviderUnavailable, req.HydrationSource)
+	}
 }
 
 // applyMonitorPreset flips season/episode flags per the add-time choice.
@@ -402,14 +558,7 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 		if err := s.existingByAnyID(ctx, req); err != nil {
 			return domain.MediaItem{}, err
 		}
-		switch {
-		case req.Kind == domain.KindMovie:
-			item, err = s.meta.GetMovie(ctx, req.TMDBID)
-		case req.TMDBID != 0:
-			item, err = s.meta.GetSeries(ctx, req.TMDBID)
-		default:
-			item, err = s.seriesByTVDB(ctx, req.TVDBID)
-		}
+		item, err = s.hydrateAdd(ctx, req)
 	case domain.KindBook:
 		if s.books == nil {
 			return domain.MediaItem{}, ports.ErrProviderNotConfigured
@@ -427,11 +576,30 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	if err != nil {
 		return domain.MediaItem{}, err
 	}
+	if (req.TMDBID != 0 && item.IDs.TMDB != 0 && req.TMDBID != item.IDs.TMDB) ||
+		(req.TVDBID != 0 && item.IDs.TVDB != 0 && req.TVDBID != item.IDs.TVDB) ||
+		(req.IMDBID != "" && item.IDs.IMDB != "" && !strings.EqualFold(req.IMDBID, item.IDs.IMDB)) {
+		return domain.MediaItem{}, &IdentityConflictError{Cause: sqlite.ErrIdentityConflict}
+	}
 	if item.IDs.TMDB == 0 {
 		item.IDs.TMDB = req.TMDBID
 	}
 	if item.IDs.TVDB == 0 {
 		item.IDs.TVDB = req.TVDBID
+	}
+	if item.IDs.IMDB == "" {
+		item.IDs.IMDB = req.IMDBID
+	}
+	if item.Kind == domain.KindMovie || item.Kind == domain.KindSeries {
+		if req.HydrationSource != "" {
+			item.Source = req.HydrationSource
+		} else if item.Source == "" {
+			if item.IDs.TMDB != 0 {
+				item.Source = "tmdb"
+			} else {
+				item.Source = "tvmaze"
+			}
+		}
 	}
 	if item.Kind == domain.KindMovie || item.Kind == domain.KindSeries {
 		// TMDB search results do not include external ids; GetSeries does.
@@ -440,6 +608,7 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 		hydrated := req
 		hydrated.TMDBID = item.IDs.TMDB
 		hydrated.TVDBID = item.IDs.TVDB
+		hydrated.IMDBID = item.IDs.IMDB
 		if err := s.existingByAnyID(ctx, hydrated); err != nil {
 			return domain.MediaItem{}, err
 		}
@@ -500,6 +669,11 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	}
 	s.log.Info("library: added", "kind", item.Kind, "title", item.Title, "id", id)
 	s.publish(MediaAdded{ID: id, Kind: string(item.Kind), Title: item.Title})
+	if item.Kind != domain.KindBook {
+		if err := s.EnqueueIdentityRefresh(ctx, id, false); err != nil {
+			s.log.Warn("library: identity enrichment deferred", "id", id, "err", err)
+		}
+	}
 	// Return the same graded representation List/Get expose.
 	return s.Get(ctx, id)
 }
@@ -710,14 +884,20 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 
 	var fresh domain.MediaItem
 	switch {
-	case stored.Kind == domain.KindMovie:
+	case stored.Kind == domain.KindMovie && stored.Source == "tmdb":
 		fresh, err = s.meta.GetMovie(ctx, stored.IDs.TMDB)
-	case stored.Kind == domain.KindSeries && stored.IDs.TMDB != 0:
+	case stored.Kind == domain.KindSeries && stored.Source == "tmdb":
 		fresh, err = s.meta.GetSeries(ctx, stored.IDs.TMDB)
 	case stored.Kind == domain.KindSeries:
-		// Reached through the chain (ADR 0011), so it has a TVDB id and no
-		// TMDB one — asking TMDB for series zero is not a refresh.
-		fresh, err = s.seriesByTVDB(ctx, stored.IDs.TVDB)
+		for _, provider := range s.series {
+			if provider.Name() == stored.Source {
+				fresh, err = provider.GetSeriesByTVDB(ctx, stored.IDs.TVDB)
+				break
+			}
+		}
+		if fresh.Title == "" && err == nil {
+			err = fmt.Errorf("%w: hydration source %s is not configured", ErrProviderUnavailable, stored.Source)
+		}
 	case stored.Kind == domain.KindBook:
 		if s.books == nil {
 			return domain.MediaItem{}, ports.ErrProviderNotConfigured
@@ -752,6 +932,7 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	if fresh.PosterPath == "" {
 		fresh.PosterPath = stored.PosterPath
 	}
+	fresh.Source = stored.Source
 	s.enrichRatings(ctx, &fresh)
 	s.enrichAiring(ctx, &fresh, stored)
 
@@ -773,10 +954,18 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 		}
 	}
 
+	if err := s.db.UpdateMediaIdentity(ctx, id, fresh.IDs); err != nil {
+		return domain.MediaItem{}, err
+	}
 	if err := s.db.UpdateMediaItemMetadata(ctx, id, fresh); err != nil {
 		return domain.MediaItem{}, err
 	}
 	s.log.Info("library: metadata refreshed", "kind", stored.Kind, "title", fresh.Title, "id", id)
+	if fresh.Kind != domain.KindBook {
+		if err := s.EnqueueIdentityRefresh(ctx, id, true); err != nil {
+			s.log.Warn("library: identity enrichment deferred after refresh", "id", id, "err", err)
+		}
+	}
 	return s.db.GetMediaItemFull(ctx, id)
 }
 

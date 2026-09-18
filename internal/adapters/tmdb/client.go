@@ -47,8 +47,10 @@ type cacheEntry struct {
 }
 
 var (
-	_ ports.MetadataProvider = (*Client)(nil)
-	_ ports.AltTitleProvider = (*Client)(nil)
+	_ ports.MetadataProvider         = (*Client)(nil)
+	_ ports.AltTitleProvider         = (*Client)(nil)
+	_ ports.ExternalLookupProvider   = (*Client)(nil)
+	_ ports.IdentityMetadataProvider = (*Client)(nil)
 )
 
 // New returns a Client. baseURL "" means DefaultBaseURL.
@@ -111,7 +113,10 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("tmdb: %w", err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return &ports.RemoteError{Category: ports.RemoteTransport, Cause: fmt.Errorf("tmdb request failed")}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -121,18 +126,34 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 	}
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
-		return fmt.Errorf("tmdb: API key rejected (401)")
+		return &ports.RemoteError{Category: ports.RemoteAuth, HTTPStatus: resp.StatusCode}
+	case resp.StatusCode == http.StatusTooManyRequests:
+		return &ports.RemoteError{Category: ports.RemoteRateLimit, HTTPStatus: resp.StatusCode, RetryAt: tmdbRetryAt(resp.Header.Get("Retry-After"))}
 	case resp.StatusCode == http.StatusNotFound:
-		return fmt.Errorf("tmdb: not found (404): %s", path)
+		return &ports.RemoteError{Category: ports.RemoteNotFound, HTTPStatus: resp.StatusCode}
 	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("tmdb: unexpected status %d for %s", resp.StatusCode, path)
+		return &ports.RemoteError{Category: ports.RemoteInvalidResponse, HTTPStatus: resp.StatusCode}
 	}
 
 	c.mu.Lock()
 	c.cache[cacheKey] = cacheEntry{body: body, expires: time.Now().Add(c.ttl)}
 	c.mu.Unlock()
 
-	return json.Unmarshal(body, out)
+	if err := json.Unmarshal(body, out); err != nil {
+		return &ports.RemoteError{Category: ports.RemoteInvalidResponse, HTTPStatus: resp.StatusCode, Cause: err}
+	}
+	return nil
+}
+
+func tmdbRetryAt(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		return time.Now().Add(time.Duration(seconds) * time.Second)
+	}
+	parsed, _ := http.ParseTime(value)
+	return parsed
 }
 
 // ---- wire shapes (only the fields we consume) ----
@@ -163,10 +184,14 @@ type searchTVResp struct {
 // list under "titles", TV under "results", and nothing else differs.
 type altTitlesResp struct {
 	Titles []struct {
-		Title string `json:"title"`
+		Title   string `json:"title"`
+		Country string `json:"iso_3166_1"`
+		Type    string `json:"type"`
 	} `json:"titles"`
 	Results []struct {
-		Title string `json:"title"`
+		Title   string `json:"title"`
+		Country string `json:"iso_3166_1"`
+		Type    string `json:"type"`
 	} `json:"results"`
 }
 
@@ -175,32 +200,36 @@ type genre struct {
 }
 
 type movieResp struct {
-	ID           int64   `json:"id"`
-	Title        string  `json:"title"`
-	Overview     string  `json:"overview"`
-	ReleaseDate  string  `json:"release_date"`
-	Runtime      int     `json:"runtime"`
-	Status       string  `json:"status"`
-	PosterPath   string  `json:"poster_path"`
-	BackdropPath string  `json:"backdrop_path"`
-	Genres       []genre `json:"genres"`
-	IMDBID       string  `json:"imdb_id"`
-	VoteAverage  float64 `json:"vote_average"`
-	VoteCount    int     `json:"vote_count"`
+	ID            int64    `json:"id"`
+	Title         string   `json:"title"`
+	OriginalTitle string   `json:"original_title"`
+	OriginCountry []string `json:"origin_country"`
+	Overview      string   `json:"overview"`
+	ReleaseDate   string   `json:"release_date"`
+	Runtime       int      `json:"runtime"`
+	Status        string   `json:"status"`
+	PosterPath    string   `json:"poster_path"`
+	BackdropPath  string   `json:"backdrop_path"`
+	Genres        []genre  `json:"genres"`
+	IMDBID        string   `json:"imdb_id"`
+	VoteAverage   float64  `json:"vote_average"`
+	VoteCount     int      `json:"vote_count"`
 }
 
 type tvResp struct {
-	ID             int64   `json:"id"`
-	Name           string  `json:"name"`
-	Overview       string  `json:"overview"`
-	FirstAirDate   string  `json:"first_air_date"`
-	Status         string  `json:"status"`
-	PosterPath     string  `json:"poster_path"`
-	BackdropPath   string  `json:"backdrop_path"`
-	Genres         []genre `json:"genres"`
-	EpisodeRunTime []int   `json:"episode_run_time"`
-	VoteAverage    float64 `json:"vote_average"`
-	VoteCount      int     `json:"vote_count"`
+	ID             int64    `json:"id"`
+	Name           string   `json:"name"`
+	OriginalName   string   `json:"original_name"`
+	OriginCountry  []string `json:"origin_country"`
+	Overview       string   `json:"overview"`
+	FirstAirDate   string   `json:"first_air_date"`
+	Status         string   `json:"status"`
+	PosterPath     string   `json:"poster_path"`
+	BackdropPath   string   `json:"backdrop_path"`
+	Genres         []genre  `json:"genres"`
+	EpisodeRunTime []int    `json:"episode_run_time"`
+	VoteAverage    float64  `json:"vote_average"`
+	VoteCount      int      `json:"vote_count"`
 	Seasons        []struct {
 		SeasonNumber int `json:"season_number"`
 	} `json:"seasons"`
@@ -238,7 +267,7 @@ func (c *Client) SearchMovies(ctx context.Context, query string) ([]ports.Search
 	out := make([]ports.SearchResult, 0, len(resp.Results))
 	for _, r := range resp.Results {
 		out = append(out, ports.SearchResult{
-			Kind: domain.KindMovie, TMDBID: r.ID, Title: r.Title,
+			Kind: domain.KindMovie, TMDBID: r.ID, Title: r.Title, Source: "tmdb", HydrationSource: "tmdb",
 			AltTitles: otherThan(r.Title, r.OriginalTitle),
 			Year:      yearOf(r.ReleaseDate), Overview: r.Overview, PosterPath: r.PosterPath,
 		})
@@ -265,7 +294,7 @@ func (c *Client) SearchSeries(ctx context.Context, query string) ([]ports.Search
 	out := make([]ports.SearchResult, 0, len(resp.Results))
 	for _, r := range resp.Results {
 		out = append(out, ports.SearchResult{
-			Kind: domain.KindSeries, TMDBID: r.ID, Title: r.Name,
+			Kind: domain.KindSeries, TMDBID: r.ID, Title: r.Name, Source: "tmdb", HydrationSource: "tmdb",
 			AltTitles: otherThan(r.Name, r.OriginalName),
 			Year:      yearOf(r.FirstAirDate), Overview: r.Overview, PosterPath: r.PosterPath,
 		})
@@ -317,6 +346,7 @@ func (c *Client) GetMovie(ctx context.Context, tmdbID int64) (domain.MediaItem, 
 		SortTitle:    domain.SortTitle(resp.Title),
 		Year:         yearOf(resp.ReleaseDate),
 		IDs:          domain.ExternalIDs{TMDB: resp.ID, IMDB: resp.IMDBID},
+		Source:       "tmdb",
 		Overview:     resp.Overview,
 		PosterPath:   resp.PosterPath,
 		BackdropPath: resp.BackdropPath,
@@ -357,6 +387,7 @@ func (c *Client) GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem,
 		SortTitle:    domain.SortTitle(resp.Name),
 		Year:         yearOf(resp.FirstAirDate),
 		IDs:          domain.ExternalIDs{TMDB: resp.ID, IMDB: resp.ExternalIDs.IMDBID, TVDB: resp.ExternalIDs.TVDBID},
+		Source:       "tmdb",
 		Overview:     resp.Overview,
 		PosterPath:   resp.PosterPath,
 		BackdropPath: resp.BackdropPath,
@@ -402,6 +433,184 @@ func (c *Client) GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem,
 		item.Seasons = append(item.Seasons, season)
 	}
 	return item, nil
+}
+
+// LookupExternal implements exact TMDB/TVDB/IMDb resolution. Result
+// collections are filtered by the requested kind; episode/person results are
+// never promoted to works.
+func (c *Client) LookupExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) ([]ports.SearchResult, error) {
+	if kind != domain.KindMovie && kind != domain.KindSeries {
+		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+	}
+	if ref.Provider == "tmdb" {
+		id, err := strconv.ParseInt(ref.Value, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery, Cause: err}
+		}
+		if kind == domain.KindMovie {
+			item, err := c.GetMovie(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			if item.IDs.TMDB != id {
+				return nil, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: domain.ExternalIDs{TMDB: id}, ActualIDs: item.IDs}
+			}
+			return []ports.SearchResult{searchResultOf(item, "tmdb")}, nil
+		}
+		item, err := c.getSeriesRecord(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if item.IDs.TMDB != id {
+			return nil, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: domain.ExternalIDs{TMDB: id}, ActualIDs: item.IDs}
+		}
+		return []ports.SearchResult{searchResultOf(item, "tmdb")}, nil
+	}
+	if ref.Provider != "tvdb" && ref.Provider != "imdb" {
+		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+	}
+	if ref.Provider == "tvdb" && kind != domain.KindSeries {
+		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+	}
+	var resp struct {
+		MovieResults []struct {
+			ID int64 `json:"id"`
+		} `json:"movie_results"`
+		TVResults []struct {
+			ID int64 `json:"id"`
+		} `json:"tv_results"`
+	}
+	externalSource := ref.Provider + "_id"
+	if err := c.get(ctx, "/find/"+ref.Value, url.Values{"external_source": {externalSource}}, &resp); err != nil {
+		return nil, err
+	}
+	var ids []int64
+	if kind == domain.KindMovie {
+		for _, r := range resp.MovieResults {
+			ids = append(ids, r.ID)
+		}
+	} else {
+		for _, r := range resp.TVResults {
+			ids = append(ids, r.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, &ports.RemoteError{Category: ports.RemoteNotFound, HTTPStatus: http.StatusNotFound}
+	}
+	if len(ids) > 1 {
+		return nil, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: expectedTMDBIDs(ref)}
+	}
+	var item domain.MediaItem
+	var err error
+	if kind == domain.KindMovie {
+		item, err = c.GetMovie(ctx, ids[0])
+	} else {
+		item, err = c.getSeriesRecord(ctx, ids[0])
+	}
+	if err != nil {
+		return nil, err
+	}
+	if tmdbExternalConflict(ref, item.IDs) {
+		return nil, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: expectedTMDBIDs(ref), ActualIDs: item.IDs}
+	}
+	return []ports.SearchResult{searchResultOf(item, "tmdb")}, nil
+}
+
+func (c *Client) getSeriesRecord(ctx context.Context, id int64) (domain.MediaItem, error) {
+	var resp tvResp
+	if err := c.get(ctx, fmt.Sprintf("/tv/%d", id), url.Values{"append_to_response": {"external_ids"}}, &resp); err != nil {
+		return domain.MediaItem{}, err
+	}
+	return domain.MediaItem{Kind: domain.KindSeries, Title: resp.Name, SortTitle: domain.SortTitle(resp.Name), Year: yearOf(resp.FirstAirDate), IDs: domain.ExternalIDs{TMDB: resp.ID, IMDB: resp.ExternalIDs.IMDBID, TVDB: resp.ExternalIDs.TVDBID}, Overview: resp.Overview, PosterPath: resp.PosterPath, Source: "tmdb"}, nil
+}
+
+func searchResultOf(item domain.MediaItem, source string) ports.SearchResult {
+	return ports.SearchResult{Kind: item.Kind, TMDBID: item.IDs.TMDB, TVDBID: item.IDs.TVDB, IMDBID: item.IDs.IMDB, Source: source, HydrationSource: "tmdb", Title: item.Title, Year: item.Year, Overview: item.Overview, PosterPath: item.PosterPath}
+}
+func expectedTMDBIDs(ref domain.ExternalRef) domain.ExternalIDs {
+	if ref.Provider == "imdb" {
+		return domain.ExternalIDs{IMDB: ref.Value}
+	}
+	if ref.Provider == "tvdb" {
+		v, _ := strconv.ParseInt(ref.Value, 10, 64)
+		return domain.ExternalIDs{TVDB: v}
+	}
+	return domain.ExternalIDs{}
+}
+func tmdbExternalConflict(ref domain.ExternalRef, ids domain.ExternalIDs) bool {
+	switch ref.Provider {
+	case "imdb":
+		return ids.IMDB != "" && !strings.EqualFold(ids.IMDB, ref.Value)
+	case "tvdb":
+		return ids.TVDB != 0 && strconv.FormatInt(ids.TVDB, 10) != ref.Value
+	}
+	return false
+}
+
+// IdentityMetadata returns the canonical/original title and alternative-title
+// endpoint as one complete provider snapshot.
+func (c *Client) IdentityMetadata(ctx context.Context, kind domain.MediaKind, ids domain.ExternalIDs) (ports.IdentityMetadata, error) {
+	if ids.TMDB == 0 {
+		return ports.IdentityMetadata{}, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+	}
+	var canonical, original string
+	var origins []string
+	if kind == domain.KindMovie {
+		var r movieResp
+		if err := c.get(ctx, fmt.Sprintf("/movie/%d", ids.TMDB), nil, &r); err != nil {
+			return ports.IdentityMetadata{}, err
+		}
+		canonical, original, origins = r.Title, r.OriginalTitle, r.OriginCountry
+		actual := domain.ExternalIDs{TMDB: r.ID, IMDB: r.IMDBID}
+		if identityIDsConflict(ids, actual) {
+			return ports.IdentityMetadata{}, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: ids, ActualIDs: actual}
+		}
+	} else if kind == domain.KindSeries {
+		var r tvResp
+		if err := c.get(ctx, fmt.Sprintf("/tv/%d", ids.TMDB), url.Values{"append_to_response": {"external_ids"}}, &r); err != nil {
+			return ports.IdentityMetadata{}, err
+		}
+		canonical, original, origins = r.Name, r.OriginalName, r.OriginCountry
+		actual := domain.ExternalIDs{TMDB: r.ID, IMDB: r.ExternalIDs.IMDBID, TVDB: r.ExternalIDs.TVDBID}
+		if identityIDsConflict(ids, actual) {
+			return ports.IdentityMetadata{}, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: ids, ActualIDs: actual}
+		}
+	} else {
+		return ports.IdentityMetadata{}, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+	}
+	var resp altTitlesResp
+	path := fmt.Sprintf("/%s/%d/alternative_titles", map[domain.MediaKind]string{domain.KindMovie: "movie", domain.KindSeries: "tv"}[kind], ids.TMDB)
+	if err := c.get(ctx, path, nil, &resp); err != nil {
+		return ports.IdentityMetadata{}, err
+	}
+	out := ports.IdentityMetadata{}
+	if original != "" && original != canonical {
+		out.Aliases = append(out.Aliases, domain.TitleAlias{Title: original, Source: "tmdb", SourceID: strconv.FormatInt(ids.TMDB, 10), Scope: "work", Role: "original", Searchable: true})
+	}
+	rows := resp.Titles
+	if len(rows) == 0 {
+		rows = resp.Results
+	}
+	for _, r := range rows {
+		if strings.TrimSpace(r.Title) == "" {
+			continue
+		}
+		scope := "work"
+		if kind == domain.KindSeries && ids.TMDB == 79063 && strings.EqualFold(strings.TrimSpace(r.Title), "Cunk on Earth") {
+			scope = "unsupported_numbering"
+		}
+		out.Aliases = append(out.Aliases, domain.TitleAlias{Title: r.Title, Source: "tmdb", SourceID: strconv.FormatInt(ids.TMDB, 10), MarketCountry: strings.ToUpper(r.Country), Scope: scope, Role: "alternate"})
+	}
+	for _, code := range origins {
+		if code != "" {
+			out.Countries = append(out.Countries, domain.CountryEvidence{Code: strings.ToUpper(code), Source: "tmdb", Basis: "origin"})
+		}
+	}
+	return out, nil
+}
+
+func identityIDsConflict(expected, actual domain.ExternalIDs) bool {
+	return expected.TMDB != 0 && actual.TMDB != 0 && expected.TMDB != actual.TMDB || expected.TVDB != 0 && actual.TVDB != 0 && expected.TVDB != actual.TVDB || expected.IMDB != "" && actual.IMDB != "" && !strings.EqualFold(expected.IMDB, actual.IMDB)
 }
 
 // DiscoverMovies serves the import lists (Phase 5): kind is "popular" or

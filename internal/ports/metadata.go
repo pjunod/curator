@@ -8,6 +8,8 @@ package ports
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 )
@@ -26,12 +28,16 @@ type SearchResult struct {
 	// the one id every series source agrees on — TVmaze publishes TheTVDB's
 	// ids, so a library built with no TVDB key is still keyed for one.
 	TVDBID int64
+	IMDBID string
 	// Source names the provider that produced this result ("tmdb", "tvmaze",
 	// …), for display and for logs. Identity is the ids, never this.
 	Source string
-	OLID   string
-	Author string
-	Title  string
+	// HydrationSource is the provider whose episode/movie record Add must
+	// persist and later refresh. Source only says who discovered the mapping.
+	HydrationSource string
+	OLID            string
+	Author          string
+	Title           string
 	// AltTitles are other names the same work is released under: the
 	// original-language title, a regional retitle, a festival title. One
 	// work having several names is ordinary — "Cunk on Life" is released as
@@ -46,6 +52,64 @@ type SearchResult struct {
 	Overview   string
 	PosterPath string
 }
+
+// IdentityMetadata is one complete provider snapshot. Callers replace it as
+// a unit only after every endpoint contributing to the snapshot succeeds.
+type IdentityMetadata struct {
+	Aliases   []domain.TitleAlias
+	Countries []domain.CountryEvidence
+}
+
+// ExternalLookupProvider is an optional exact-ID capability.
+type ExternalLookupProvider interface {
+	LookupExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) ([]SearchResult, error)
+}
+
+// IdentityMetadataProvider supplies aliases and country evidence for an
+// already verified set of IDs.
+type IdentityMetadataProvider interface {
+	IdentityMetadata(ctx context.Context, kind domain.MediaKind, ids domain.ExternalIDs) (IdentityMetadata, error)
+}
+
+// RemoteError is a structured adapter failure. Category drives fallback;
+// Error text remains diagnostic only and never contains credentials or URLs.
+type RemoteError struct {
+	Category     string
+	HTTPStatus   int
+	ProtocolCode string
+	RetryAt      time.Time
+	ExpectedIDs  domain.ExternalIDs
+	ActualIDs    domain.ExternalIDs
+	Cause        error
+}
+
+func (e *RemoteError) Error() string {
+	if e == nil {
+		return "remote error"
+	}
+	if e.Cause != nil {
+		return fmt.Sprintf("remote %s: %v", e.Category, e.Cause)
+	}
+	return "remote " + e.Category
+}
+
+func (e *RemoteError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+const (
+	RemoteNotFound             = "not_found"
+	RemoteAuth                 = "auth"
+	RemoteRateLimit            = "rate_limit"
+	RemoteUnsupportedQuery     = "unsupported_query"
+	RemoteUnsupportedHydration = "unsupported_hydration"
+	RemoteTransport            = "transport"
+	RemoteInvalidResponse      = "invalid_response"
+	RemoteIdentityConflict     = "identity_conflict"
+)
 
 // SeriesProvider is an additional source of series identity and episodes,
 // consulted when the one before it in the chain has nothing usable (ADR

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
 	"github.com/pjunod/monarr/internal/ports"
@@ -367,10 +368,11 @@ type Download struct {
 	// t-<id>-<6 hex>). It goes onto the download in the client and will
 	// travel on to the media server, so grepping any app's log for it
 	// reconstructs the whole story. Empty when the client cannot carry it.
-	Transfer  string
-	Handoff   []HandoffEntry
-	AddedAt   time.Time
-	UpdatedAt time.Time
+	Transfer      string
+	Handoff       []HandoffEntry
+	MatchEvidence domain.MatchEvidence
+	AddedAt       time.Time
+	UpdatedAt     time.Time
 }
 
 func downloadFromRow(r sqlitegen.Download) Download {
@@ -378,13 +380,15 @@ func downloadFromRow(r sqlitegen.Download) Download {
 	_ = json.Unmarshal([]byte(r.Wantables), &wants)
 	var handoff []HandoffEntry
 	_ = json.Unmarshal([]byte(r.HandoffLog), &handoff)
+	var evidence domain.MatchEvidence
+	_ = json.Unmarshal([]byte(r.MatchEvidence), &evidence)
 	dl := Download{
 		ID: r.ID, MediaItemID: r.MediaItemID, WantableIDs: wants, Season: int(r.Season),
 		ReleaseTitle: r.ReleaseTitle, Indexer: r.Indexer, Protocol: r.Protocol,
 		Quality: quality.FromString(r.Quality), Size: r.Size, ClientID: r.ClientID,
 		Handle: r.Handle, State: r.State, Progress: r.Progress, Error: r.Error,
 		SavePath: r.SavePath, ImportPath: r.ImportPath, Transfer: r.Transfer,
-		Handoff: handoff,
+		Handoff: handoff, MatchEvidence: evidence,
 		AddedAt: time.UnixMilli(r.AddedAt), UpdatedAt: time.UnixMilli(r.UpdatedAt),
 	}
 	if r.CopyID.Valid {
@@ -400,11 +404,13 @@ func (d *DB) InsertDownload(ctx context.Context, dl Download) (int64, error) {
 		wants = []byte("[]")
 	}
 	now := time.Now().UnixMilli()
+	evidence, _ := json.Marshal(dl.MatchEvidence)
 	p := sqlitegen.InsertDownloadParams{
 		MediaItemID: dl.MediaItemID, Wantables: string(wants), Season: int64(dl.Season),
 		ReleaseTitle: dl.ReleaseTitle, Indexer: dl.Indexer, Protocol: dl.Protocol,
 		Quality: dl.Quality.String(), Size: dl.Size, ClientID: dl.ClientID,
 		Handle: dl.Handle, State: dl.State, AddedAt: now, UpdatedAt: now,
+		MatchEvidence: string(evidence),
 	}
 	if dl.CopyID != 0 {
 		p.CopyID = sql.NullInt64{Int64: dl.CopyID, Valid: true}

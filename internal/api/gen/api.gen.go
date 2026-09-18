@@ -584,6 +584,51 @@ func (e RootKind) Valid() bool {
 	}
 }
 
+// Defines values for TitleAliasRole.
+const (
+	TitleAliasRoleAlternate  TitleAliasRole = "alternate"
+	TitleAliasRoleHistorical TitleAliasRole = "historical"
+	TitleAliasRoleManual     TitleAliasRole = "manual"
+	TitleAliasRoleOriginal   TitleAliasRole = "original"
+)
+
+// Valid indicates whether the value is a known member of the TitleAliasRole enum.
+func (e TitleAliasRole) Valid() bool {
+	switch e {
+	case TitleAliasRoleAlternate:
+		return true
+	case TitleAliasRoleHistorical:
+		return true
+	case TitleAliasRoleManual:
+		return true
+	case TitleAliasRoleOriginal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TitleAliasScope.
+const (
+	Season               TitleAliasScope = "season"
+	UnsupportedNumbering TitleAliasScope = "unsupported_numbering"
+	Work                 TitleAliasScope = "work"
+)
+
+// Valid indicates whether the value is a known member of the TitleAliasScope enum.
+func (e TitleAliasScope) Valid() bool {
+	switch e {
+	case Season:
+		return true
+	case UnsupportedNumbering:
+		return true
+	case Work:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TransferStage.
 const (
 	TransferStageDownloading TransferStage = "downloading"
@@ -626,14 +671,26 @@ func (e ListQueueParamsFilter) Valid() bool {
 	}
 }
 
+// AddAliasRequest defines model for AddAliasRequest.
+type AddAliasRequest struct {
+	Searchable *bool  `json:"searchable,omitempty"`
+	Title      string `json:"title"`
+}
+
 // AddMediaRequest defines model for AddMediaRequest.
 type AddMediaRequest struct {
 	// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
 	BookType *BookType `json:"bookType,omitempty"`
 
 	// DownloadPriority Optional per-item override; absent inherits the quality profile.
-	DownloadPriority *int      `json:"downloadPriority,omitempty"`
-	Kind             MediaKind `json:"kind"`
+	DownloadPriority *int `json:"downloadPriority,omitempty"`
+
+	// HydrationSource Provider that supplies and later refreshes this item's episode/movie record.
+	HydrationSource *string `json:"hydrationSource,omitempty"`
+
+	// ImdbId Canonical tt-prefixed IMDb title ID used to verify an exact lookup.
+	ImdbId *string   `json:"imdbId,omitempty"`
+	Kind   MediaKind `json:"kind"`
 
 	// Monitor Series only — which seasons start monitored: every season, only the latest, or none (add a 20-season show and hunt just the newest). Specials always start unmonitored.
 	Monitor   *AddMediaRequestMonitor `json:"monitor,omitempty"`
@@ -837,6 +894,13 @@ type ConnectionKind string
 // ConnectionState live = a push stream is open; polling = answering, on the 30s poll; degraded = answering but not working properly; unreachable = not answering; unprobed = configured, but has no side-effect-free test. For inbound rows: calling = heard from recently; quiet = has called at some point since startup, but not lately.
 type ConnectionState string
 
+// CountryEvidence defines model for CountryEvidence.
+type CountryEvidence struct {
+	Basis  string `json:"basis"`
+	Code   string `json:"code"`
+	Source string `json:"source"`
+}
+
 // CustomFormat defines model for CustomFormat.
 type CustomFormat struct {
 	Id   int64  `json:"id"`
@@ -1002,7 +1066,9 @@ type EpisodeInfo struct {
 
 // Error defines model for Error.
 type Error struct {
-	Message string `json:"message"`
+	// Code Stable machine-readable classification when available.
+	Code    *string `json:"code,omitempty"`
+	Message string  `json:"message"`
 }
 
 // ExternalIds defines model for ExternalIds.
@@ -1020,15 +1086,16 @@ type ExternalIds struct {
 // GrabRequest defines model for GrabRequest.
 type GrabRequest struct {
 	// CopyId Additional quality copy or book edition; absent/0 selects the primary target.
-	CopyId      *int64  `json:"copyId,omitempty"`
-	DownloadUrl string  `json:"downloadUrl"`
-	Episode     *int    `json:"episode,omitempty"`
-	Indexer     *string `json:"indexer,omitempty"`
-	MediaItemId int64   `json:"mediaItemId"`
-	Protocol    string  `json:"protocol"`
-	Season      *int    `json:"season,omitempty"`
-	Size        *int64  `json:"size,omitempty"`
-	Title       string  `json:"title"`
+	CopyId      *int64         `json:"copyId,omitempty"`
+	DownloadUrl string         `json:"downloadUrl"`
+	Episode     *int           `json:"episode,omitempty"`
+	Indexer     *string        `json:"indexer,omitempty"`
+	Match       *MatchEvidence `json:"match,omitempty"`
+	MediaItemId int64          `json:"mediaItemId"`
+	Protocol    string         `json:"protocol"`
+	Season      *int           `json:"season,omitempty"`
+	Size        *int64         `json:"size,omitempty"`
+	Title       string         `json:"title"`
 }
 
 // HandoffEntry defines model for HandoffEntry.
@@ -1068,6 +1135,16 @@ type HistoryEvent struct {
 
 	// Type grabbed | failed | imported | import_failed | import_blocked | import_retried | regrab_capped | short_delivery | payload_removed | file_removed | quality_mismatch | implausible_file.
 	Type string `json:"type"`
+}
+
+// IdentitySourceStatus defines model for IdentitySourceStatus.
+type IdentitySourceStatus struct {
+	AttemptedAt *time.Time        `json:"attemptedAt,omitempty"`
+	Countries   []CountryEvidence `json:"countries"`
+	FetchedAt   *time.Time        `json:"fetchedAt,omitempty"`
+	LastError   string            `json:"lastError"`
+	RetryAfter  *time.Time        `json:"retryAfter,omitempty"`
+	Source      string            `json:"source"`
 }
 
 // IgnoredPath defines model for IgnoredPath.
@@ -1162,6 +1239,25 @@ type ManualImportRequest struct {
 	Paths *[]string `json:"paths,omitempty"`
 }
 
+// MatchEvidence defines model for MatchEvidence.
+type MatchEvidence struct {
+	Code      *string `json:"code,omitempty"`
+	Country   *string `json:"country,omitempty"`
+	Matched   bool    `json:"matched"`
+	MatchedId *struct {
+		Provider string `json:"provider"`
+		Value    string `json:"value"`
+	} `json:"matchedId,omitempty"`
+	MatchedTitle  *string   `json:"matchedTitle,omitempty"`
+	Method        *string   `json:"method,omitempty"`
+	OriginalTitle *string   `json:"originalTitle,omitempty"`
+	ParsedTitle   *string   `json:"parsedTitle,omitempty"`
+	Reason        string    `json:"reason"`
+	TargetTitle   *string   `json:"targetTitle,omitempty"`
+	Version       int       `json:"version"`
+	Warnings      *[]string `json:"warnings,omitempty"`
+}
+
 // MediaCopy defines model for MediaCopy.
 type MediaCopy struct {
 	// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
@@ -1233,7 +1329,8 @@ type MediaFileInfoProvenance string
 
 // MediaItemDetail defines model for MediaItemDetail.
 type MediaItemDetail struct {
-	AddedAt time.Time `json:"addedAt"`
+	AddedAt time.Time    `json:"addedAt"`
+	Aliases []TitleAlias `json:"aliases"`
 
 	// Author Books only (ADR 0006); empty for movies/series.
 	Author       string `json:"author"`
@@ -1246,23 +1343,25 @@ type MediaItemDetail struct {
 	BookTypes *[]BookType `json:"bookTypes,omitempty"`
 
 	// Copies Additional video quality copies or independently curated book editions.
-	Copies []MediaCopy `json:"copies"`
+	Copies    []MediaCopy       `json:"copies"`
+	Countries []CountryEvidence `json:"countries"`
 
 	// DownloadPriority Effective scheduler priority after applying the per-item override or inheriting the selected quality profile. Supported values are -100, -50, 0, 50, 100, and 900 (force).
 	DownloadPriority int `json:"downloadPriority"`
 
 	// DownloadPriorityOverride NULL means inherit downloadPriority from the quality profile.
-	DownloadPriorityOverride *int            `json:"downloadPriorityOverride"`
-	Ended                    bool            `json:"ended"`
-	Files                    []MediaFileInfo `json:"files"`
-	Genres                   []string        `json:"genres"`
-	Id                       int64           `json:"id"`
-	Ids                      ExternalIds     `json:"ids"`
-	Kind                     MediaKind       `json:"kind"`
-	Monitored                bool            `json:"monitored"`
-	Overview                 string          `json:"overview"`
-	Path                     string          `json:"path"`
-	PosterPath               string          `json:"posterPath"`
+	DownloadPriorityOverride *int                   `json:"downloadPriorityOverride"`
+	Ended                    bool                   `json:"ended"`
+	Files                    []MediaFileInfo        `json:"files"`
+	Genres                   []string               `json:"genres"`
+	Id                       int64                  `json:"id"`
+	IdentitySources          []IdentitySourceStatus `json:"identitySources"`
+	Ids                      ExternalIds            `json:"ids"`
+	Kind                     MediaKind              `json:"kind"`
+	Monitored                bool                   `json:"monitored"`
+	Overview                 string                 `json:"overview"`
+	Path                     string                 `json:"path"`
+	PosterPath               string                 `json:"posterPath"`
 
 	// Quality The weakest quality among the primary copy's files ("1080p WEB-DL"); empty when nothing is on disk or no quality was recorded. Weakest because that is what decides whether the item is still being hunted.
 	Quality          *string `json:"quality,omitempty"`
@@ -1537,6 +1636,7 @@ type QueueItem struct {
 
 	// ImportState The in-memory importer state. `queued` means the job was accepted and is waiting for one of the bounded import workers; `running` means a worker owns it. Absent means no importer owns this row.
 	ImportState *QueueItemImportState `json:"importState,omitempty"`
+	Match       *MatchEvidence        `json:"match,omitempty"`
 	MediaItemId int64                 `json:"mediaItemId"`
 	Progress    float32               `json:"progress"`
 	Protocol    string                `json:"protocol"`
@@ -1605,13 +1705,14 @@ type ReleaseCandidate struct {
 	DownloadUrl string `json:"downloadUrl"`
 
 	// Formats Names of matched custom formats.
-	Formats    *[]string   `json:"formats,omitempty"`
-	Indexer    string      `json:"indexer"`
-	InfoUrl    *string     `json:"infoUrl,omitempty"`
-	IsUpgrade  bool        `json:"isUpgrade"`
-	Protocol   string      `json:"protocol"`
-	Quality    string      `json:"quality"`
-	Rejections []Rejection `json:"rejections"`
+	Formats    *[]string     `json:"formats,omitempty"`
+	Indexer    string        `json:"indexer"`
+	InfoUrl    *string       `json:"infoUrl,omitempty"`
+	IsUpgrade  bool          `json:"isUpgrade"`
+	Match      MatchEvidence `json:"match"`
+	Protocol   string        `json:"protocol"`
+	Quality    string        `json:"quality"`
+	Rejections []Rejection   `json:"rejections"`
 
 	// Score Custom-format score sum (Phase 5).
 	Score   int    `json:"score"`
@@ -1720,8 +1821,12 @@ type SearchResult struct {
 
 	// BookTypes Which editions of this Open Library work are already curated.
 	BookTypes *[]BookType `json:"bookTypes,omitempty"`
-	InLibrary bool        `json:"inLibrary"`
-	Kind      MediaKind   `json:"kind"`
+
+	// HydrationSource Provider selected to hydrate and later refresh this result.
+	HydrationSource *string   `json:"hydrationSource,omitempty"`
+	ImdbId          *string   `json:"imdbId,omitempty"`
+	InLibrary       bool      `json:"inLibrary"`
+	Kind            MediaKind `json:"kind"`
 
 	// Olid Present for book results (ADR 0006).
 	Olid       *string `json:"olid,omitempty"`
@@ -1826,6 +1931,25 @@ type TaskState struct {
 	NextRunAt       *time.Time `json:"nextRunAt,omitempty"`
 	Running         bool       `json:"running"`
 }
+
+// TitleAlias defines model for TitleAlias.
+type TitleAlias struct {
+	Id            int64           `json:"id"`
+	Language      string          `json:"language"`
+	MarketCountry string          `json:"marketCountry"`
+	Role          TitleAliasRole  `json:"role"`
+	Scope         TitleAliasScope `json:"scope"`
+	Searchable    bool            `json:"searchable"`
+	Source        string          `json:"source"`
+	SourceId      string          `json:"sourceId"`
+	Title         string          `json:"title"`
+}
+
+// TitleAliasRole defines model for TitleAlias.Role.
+type TitleAliasRole string
+
+// TitleAliasScope defines model for TitleAlias.Scope.
+type TitleAliasScope string
 
 // Transfer defines model for Transfer.
 type Transfer struct {
@@ -2118,6 +2242,9 @@ type IgnoreDirJSONRequestBody IgnoreDirJSONBody
 // UpdateLibraryItemJSONRequestBody defines body for UpdateLibraryItem for application/json ContentType.
 type UpdateLibraryItemJSONRequestBody = UpdateMediaItemRequest
 
+// AddLibraryAliasJSONRequestBody defines body for AddLibraryAlias for application/json ContentType.
+type AddLibraryAliasJSONRequestBody = AddAliasRequest
+
 // AddMediaCopyJSONRequestBody defines body for AddMediaCopy for application/json ContentType.
 type AddMediaCopyJSONRequestBody = MediaCopyInput
 
@@ -2306,6 +2433,12 @@ type ServerInterface interface {
 	// UpdateLibraryItem Edit an item's monitoring, quality profile, or location
 	// (PATCH /library/{id})
 	UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// AddLibraryAlias Add an operator-maintained title alias
+	// (POST /library/{id}/aliases)
+	AddLibraryAlias(w http.ResponseWriter, r *http.Request, id int64)
+	// DeleteLibraryAlias Remove an operator-maintained title alias
+	// (DELETE /library/{id}/aliases/{aliasId})
+	DeleteLibraryAlias(w http.ResponseWriter, r *http.Request, id int64, aliasId int64)
 	// AutoSearchLibraryItem Search for everything this item wants and grab the best releases
 	// (POST /library/{id}/autosearch)
 	AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
@@ -3526,6 +3659,67 @@ func (siw *ServerInterfaceWrapper) UpdateLibraryItem(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateLibraryItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddLibraryAlias operation middleware
+func (siw *ServerInterfaceWrapper) AddLibraryAlias(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddLibraryAlias(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteLibraryAlias operation middleware
+func (siw *ServerInterfaceWrapper) DeleteLibraryAlias(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "aliasId" -------------
+	var aliasId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "aliasId", r.PathValue("aliasId"), &aliasId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "aliasId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteLibraryAlias(w, r, id, aliasId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4844,6 +5038,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}", wrapper.GetLibraryItem)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}", wrapper.UpdateLibraryItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/placement-suggestion", wrapper.GetLibraryPlacementSuggestion)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/aliases", wrapper.AddLibraryAlias)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}/aliases/{aliasId}", wrapper.DeleteLibraryAlias)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan", wrapper.ScanLibrary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/report", wrapper.GetScanReport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/review", wrapper.GetReviewQueue)

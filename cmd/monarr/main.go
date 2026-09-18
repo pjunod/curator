@@ -464,6 +464,14 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		return err
 	}
 	if err := sched.Register(scheduler.Task{
+		Name:       "identity.refresh",
+		Interval:   time.Hour,
+		RunOnStart: true,
+		Fn:         lib.SweepIdentity,
+	}); err != nil {
+		return err
+	}
+	if err := sched.Register(scheduler.Task{
 		Name:     "backup.run",
 		Interval: 24 * time.Hour,
 		Fn: func(ctx context.Context) error {

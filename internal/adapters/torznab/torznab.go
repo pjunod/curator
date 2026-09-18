@@ -5,13 +5,16 @@ package torznab
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pjunod/monarr/internal/adapters/httpx"
@@ -27,6 +30,20 @@ type Client struct {
 }
 
 var _ ports.Indexer = (*Client)(nil)
+var _ ports.IndexerCapabilitiesProvider = (*Client)(nil)
+
+const capabilitiesTTL = 24 * time.Hour
+
+type capabilityCacheEntry struct {
+	caps  ports.IndexerCapabilities
+	err   error
+	ready chan struct{}
+}
+
+var capabilityCache = struct {
+	sync.Mutex
+	entries map[string]*capabilityCacheEntry
+}{entries: map[string]*capabilityCacheEntry{}}
 
 // New returns a Client for the given config.
 func New(cfg ports.IndexerConfig) *Client {
@@ -59,6 +76,112 @@ type item struct {
 	} `xml:"attr"`
 }
 
+type capsDocument struct {
+	XMLName   xml.Name `xml:"caps"`
+	Searching struct {
+		Search struct {
+			Available       string `xml:"available,attr"`
+			SupportedParams string `xml:"supportedParams,attr"`
+		} `xml:"search"`
+		TV struct {
+			Available       string `xml:"available,attr"`
+			SupportedParams string `xml:"supportedParams,attr"`
+		} `xml:"tv-search"`
+		Movie struct {
+			Available       string `xml:"available,attr"`
+			SupportedParams string `xml:"supportedParams,attr"`
+		} `xml:"movie-search"`
+	} `xml:"searching"`
+}
+
+func cacheKey(cfg ports.IndexerConfig) string {
+	// Including a one-way credential digest prevents stale capabilities from
+	// crossing a config edit without retaining or exposing the credential.
+	sum := sha256.Sum256([]byte(cfg.APIKey))
+	return fmt.Sprintf("%d|%s|%x|%v", cfg.ID, cfg.URL, sum[:8], cfg.Categories)
+}
+
+func capability(rawAvailable, rawParams string) ports.IndexerSearchCapability {
+	available := strings.ToLower(strings.TrimSpace(rawAvailable))
+	known := available == "yes" || available == "no"
+	out := ports.IndexerSearchCapability{Known: known, Available: available == "yes", Parameters: map[string]bool{}}
+	for _, value := range strings.Split(rawParams, ",") {
+		if value = strings.ToLower(strings.TrimSpace(value)); value != "" {
+			out.Parameters[value] = true
+		}
+	}
+	return out
+}
+
+// Capabilities returns a process-shared, configuration-keyed snapshot.
+func (c *Client) Capabilities(ctx context.Context) (ports.IndexerCapabilities, error) {
+	return c.capabilities(ctx, false)
+}
+
+func (c *Client) capabilities(ctx context.Context, force bool) (ports.IndexerCapabilities, error) {
+	key := cacheKey(c.cfg)
+	capabilityCache.Lock()
+	if entry := capabilityCache.entries[key]; entry != nil && !force {
+		if entry.ready != nil {
+			ready := entry.ready
+			capabilityCache.Unlock()
+			select {
+			case <-ready:
+				return c.capabilities(ctx, false)
+			case <-ctx.Done():
+				return ports.IndexerCapabilities{}, ctx.Err()
+			}
+		}
+		if entry.err != nil {
+			caps, err := entry.caps, entry.err
+			capabilityCache.Unlock()
+			return caps, err
+		}
+		if time.Since(entry.caps.FetchedAt) < capabilitiesTTL {
+			caps, err := entry.caps, entry.err
+			capabilityCache.Unlock()
+			return caps, err
+		}
+	}
+	previous := capabilityCache.entries[key]
+	pending := &capabilityCacheEntry{ready: make(chan struct{})}
+	capabilityCache.entries[key] = pending
+	capabilityCache.Unlock()
+
+	body, err := c.call(ctx, url.Values{"t": {"caps"}})
+	var caps ports.IndexerCapabilities
+	if err == nil {
+		var doc capsDocument
+		if decodeErr := xml.Unmarshal(body, &doc); decodeErr != nil || doc.XMLName.Local != "caps" {
+			err = &ports.RemoteError{Category: ports.RemoteInvalidResponse, Cause: errors.New("capabilities XML was not recognized")}
+		} else {
+			caps = ports.IndexerCapabilities{
+				Generic:   capability(doc.Searching.Search.Available, doc.Searching.Search.SupportedParams),
+				TV:        capability(doc.Searching.TV.Available, doc.Searching.TV.SupportedParams),
+				Movie:     capability(doc.Searching.Movie.Available, doc.Searching.Movie.SupportedParams),
+				FetchedAt: time.Now(),
+			}
+		}
+	}
+	if err != nil && previous != nil && previous.ready == nil && !capabilityFatal(err) {
+		caps = previous.caps
+		caps.Degraded = true
+		err = nil
+	}
+	capabilityCache.Lock()
+	ready := pending.ready
+	pending.caps, pending.err = caps, err
+	pending.ready = nil
+	capabilityCache.Unlock()
+	close(ready)
+	return caps, err
+}
+
+func capabilityFatal(err error) bool {
+	var remote *ports.RemoteError
+	return errors.As(err, &remote) && (remote.Category == ports.RemoteAuth || remote.Category == ports.RemoteRateLimit)
+}
+
 func (c *Client) call(ctx context.Context, params url.Values) ([]byte, error) {
 	params.Set("apikey", c.cfg.APIKey)
 	full := strings.TrimRight(c.cfg.URL, "/") + "/api?" + params.Encode()
@@ -68,7 +191,7 @@ func (c *Client) call(ctx context.Context, params url.Values) ([]byte, error) {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("indexer %s: %w", c.cfg.Name, err)
+		return nil, &ports.RemoteError{Category: ports.RemoteTransport, Cause: errors.New("indexer request failed")}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
@@ -76,7 +199,16 @@ func (c *Client) call(ctx context.Context, params url.Values) ([]byte, error) {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("indexer %s: status %d", c.cfg.Name, resp.StatusCode)
+		category := ports.RemoteTransport
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			category = ports.RemoteAuth
+		case http.StatusNotFound:
+			category = ports.RemoteNotFound
+		case http.StatusTooManyRequests:
+			category = ports.RemoteRateLimit
+		}
+		return nil, &ports.RemoteError{Category: category, HTTPStatus: resp.StatusCode, RetryAt: retryAt(resp.Header.Get("Retry-After"))}
 	}
 	// Newznab reports errors as XML with code/description attributes.
 	if strings.Contains(string(body[:min(len(body), 200)]), "<error") {
@@ -85,10 +217,31 @@ func (c *Client) call(ctx context.Context, params url.Values) ([]byte, error) {
 			Desc string `xml:"description,attr"`
 		}
 		if xml.Unmarshal(body, &e) == nil && e.Code != "" {
-			return nil, fmt.Errorf("indexer %s: error %s: %s", c.cfg.Name, e.Code, e.Desc)
+			category := ports.RemoteInvalidResponse
+			switch e.Code {
+			case "100", "101", "102":
+				category = ports.RemoteAuth
+			case "200", "201", "202", "203", "910":
+				category = ports.RemoteUnsupportedQuery
+			case "429":
+				category = ports.RemoteRateLimit
+			}
+			return nil, &ports.RemoteError{Category: category, HTTPStatus: resp.StatusCode, ProtocolCode: e.Code}
 		}
 	}
 	return body, nil
+}
+
+func retryAt(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	if seconds, err := strconv.Atoi(raw); err == nil {
+		return time.Now().Add(time.Duration(seconds) * time.Second)
+	}
+	parsed, _ := http.ParseTime(raw)
+	return parsed
 }
 
 // FetchRSS implements ports.Indexer: an empty-query t=search returns the
@@ -103,16 +256,38 @@ func (c *Client) FetchRSS(ctx context.Context) ([]ports.Release, error) {
 // for audiobooks — unless the indexer config narrows them.
 func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Release, error) {
 	params := url.Values{}
-	if q.Season > 0 {
+	mode := q.Mode
+	if mode == "" {
+		if q.Season > 0 {
+			mode = "tv"
+		} else {
+			mode = "generic"
+		}
+	}
+	switch mode {
+	case "tv":
 		params.Set("t", "tvsearch")
-		params.Set("season", strconv.Itoa(q.Season))
-		if q.Episode > 0 {
+		if q.SeasonSet || q.Season > 0 {
+			params.Set("season", strconv.Itoa(q.Season))
+		}
+		if q.EpisodeSet || q.Episode > 0 {
 			params.Set("ep", strconv.Itoa(q.Episode))
 		}
-	} else {
+	case "movie":
+		params.Set("t", "movie")
+	default:
 		params.Set("t", "search")
 	}
-	params.Set("q", q.Q)
+	if q.ID != nil {
+		value := q.ID.Value
+		name := q.ID.Provider + "id"
+		if mode == "movie" && q.ID.Provider == "imdb" {
+			value = strings.TrimPrefix(value, "tt")
+		}
+		params.Set(name, value)
+	} else {
+		params.Set("q", q.Q)
+	}
 	cats := c.cfg.Categories
 	if len(cats) == 0 && q.Kind == domain.KindBook {
 		switch q.BookType {
@@ -175,11 +350,88 @@ func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Rele
 				}
 			}
 		}
+		r.IDs, r.IDIssues = releaseIdentities(it.Attrs)
 		if r.Title != "" && r.DownloadURL != "" {
 			out = append(out, r)
 		}
 	}
 	return out, nil
+}
+
+func releaseIdentities(attrs []struct {
+	Name  string `xml:"name,attr"`
+	Value string `xml:"value,attr"`
+}) (domain.ExternalIDs, []domain.IdentityIssue) {
+	values := map[string][]string{}
+	for _, attr := range attrs {
+		name := strings.ToLower(strings.TrimSpace(attr.Name))
+		switch name {
+		case "tvdb", "tvdbid":
+			name = "tvdb"
+		case "tmdb", "tmdbid":
+			name = "tmdb"
+		case "imdb", "imdbid":
+			name = "imdb"
+		default:
+			continue
+		}
+		values[name] = append(values[name], strings.TrimSpace(attr.Value))
+	}
+	var ids domain.ExternalIDs
+	var issues []domain.IdentityIssue
+	for provider, raw := range values {
+		unique := map[string]bool{}
+		var valid []string
+		for _, value := range raw {
+			canonical, ok := canonicalReleaseID(provider, value)
+			if !ok {
+				issues = append(issues, domain.IdentityIssue{Code: "malformed_id", Provider: provider, Values: []string{value}})
+				continue
+			}
+			if !unique[canonical] {
+				unique[canonical] = true
+				valid = append(valid, canonical)
+			}
+		}
+		if len(valid) > 1 {
+			issues = append(issues, domain.IdentityIssue{Code: "conflicting_ids", Provider: provider, Values: valid})
+			continue
+		}
+		if len(valid) == 0 {
+			continue
+		}
+		switch provider {
+		case "imdb":
+			ids.IMDB = valid[0]
+		case "tvdb":
+			ids.TVDB, _ = strconv.ParseInt(valid[0], 10, 64)
+		case "tmdb":
+			ids.TMDB, _ = strconv.ParseInt(valid[0], 10, 64)
+		}
+	}
+	return ids, issues
+}
+
+func canonicalReleaseID(provider, value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if provider == "imdb" {
+		value = strings.ToLower(value)
+		value = strings.TrimPrefix(value, "tt")
+		if len(value) < 7 || len(value) > 12 {
+			return "", false
+		}
+		for _, r := range value {
+			if r < '0' || r > '9' {
+				return "", false
+			}
+		}
+		return "tt" + value, true
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n <= 0 {
+		return "", false
+	}
+	return strconv.FormatInt(n, 10), true
 }
 
 // infoURL picks the release's human details page: <comments> is the
@@ -197,12 +449,6 @@ func infoURL(comments, guid string) string {
 // Test implements ports.Indexer via t=caps, which every implementation
 // answers without burning API hits.
 func (c *Client) Test(ctx context.Context) error {
-	body, err := c.call(ctx, url.Values{"t": {"caps"}})
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(string(body), "<caps") {
-		return fmt.Errorf("indexer %s: caps response not recognized", c.cfg.Name)
-	}
-	return nil
+	_, err := c.capabilities(ctx, true)
+	return err
 }

@@ -40,8 +40,8 @@ DELETE FROM download_clients WHERE id = ?;
 -- name: InsertDownload :one
 INSERT INTO downloads (
     media_item_id, copy_id, wantables, season, release_title, indexer, protocol,
-    quality, size, client_id, handle, state, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
+    quality, size, client_id, handle, state, match_evidence, added_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
 
 -- name: ListActiveDownloads :many
 -- Work that is still moving. Deliberately excludes 'imported' and 'failed':

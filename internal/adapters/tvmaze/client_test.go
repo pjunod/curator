@@ -39,7 +39,7 @@ func newFixtureServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 	})
 	mux.HandleFunc("/lookup/shows", func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
-		if r.URL.Query().Get("thetvdb") != "414217" {
+		if r.URL.Query().Get("thetvdb") != "414217" && r.URL.Query().Get("imdb") != "tt16867040" {
 			http.NotFound(w, r)
 			return
 		}
@@ -54,6 +54,11 @@ func newFixtureServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 		hits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(fixture(t, "episodes_63900.json"))
+	})
+	mux.HandleFunc("/shows/63900/akas", func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(fixture(t, "akas_63900.json"))
 	})
 	return srv, &hits
 }
@@ -168,6 +173,25 @@ func TestUnknownTVDBIDIsAnError(t *testing.T) {
 	srv, _ := newFixtureServer(t)
 	if _, err := New(srv.URL).GetSeriesByTVDB(context.Background(), 1); err == nil {
 		t.Fatal("want an error for a series the provider does not have")
+	}
+}
+
+func TestExactIMDbLookupAndIdentitySnapshot(t *testing.T) {
+	srv, _ := newFixtureServer(t)
+	client := New(srv.URL)
+	results, err := client.LookupExternal(context.Background(), domain.KindSeries, domain.ExternalRef{Provider: "imdb", Value: "tt16867040"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].TVDBID != 414217 || results[0].HydrationSource != "tvmaze" {
+		t.Fatalf("results = %+v", results)
+	}
+	metadata, err := client.IdentityMetadata(context.Background(), domain.KindSeries, domain.ExternalIDs{TVDB: 414217, IMDB: "tt16867040"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metadata.Aliases) != 2 || metadata.Aliases[1].MarketCountry != "DE" || metadata.Aliases[0].Scope != "work" {
+		t.Fatalf("metadata = %+v", metadata)
 	}
 }
 

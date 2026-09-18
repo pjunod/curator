@@ -131,7 +131,10 @@ type Service struct {
 	searchTimeout time.Duration
 
 	// wanted caches the missing/upgradable index (Phase 3).
-	wanted wantedIndex
+	wanted           wantedIndex
+	identityMu       sync.Mutex
+	identityRevision int64
+	identityCache    matcher.IdentityIndex
 
 	// One mutex per download id, so the 30 s poll and an event arriving
 	// for the same download cannot both decide to import it. The map only
@@ -216,6 +219,15 @@ type episodeState struct {
 	HasFile  bool
 	Have     *quality.Quality
 	Verified bool
+}
+
+func mediaIdentity(item domain.MediaItem) domain.MediaIdentity {
+	return domain.MediaIdentity{
+		IDs: item.IDs, Title: item.Title, Year: item.Year,
+		Aliases:   append([]domain.TitleAlias(nil), item.Aliases...),
+		Countries: append([]domain.CountryEvidence(nil), item.Countries...),
+		Sources:   append([]domain.IdentitySourceStatus(nil), item.IdentitySources...),
+	}
 }
 
 // episodeStates maps episode id → what one copy has for it (copyID 0 =
@@ -308,7 +320,7 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 		}
 		return domain.MovieWantable{
 			Item: item.ID, Profile: profileID, Mon: mon,
-			Title: item.Title, Year: item.Year,
+			Title: item.Title, Year: item.Year, Identity: mediaIdentity(item),
 			Have: state.Best, Files: state.HasFiles, Verified: state.SourceVerified,
 			Copy: copyID, CopyName: copyName,
 		}, nil
@@ -333,7 +345,8 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 		return domain.EpisodeWantable{
 			Item: item.ID, EpisodeID: e.ID, Profile: profileID,
 			Mon: item.Monitored && e.Monitored && copyMon, Title: item.Title, Year: item.Year,
-			Season: e.SeasonNumber, Episode: e.EpisodeNumber,
+			Identity: mediaIdentity(item),
+			Season:   e.SeasonNumber, Episode: e.EpisodeNumber,
 			Have: st.Have, Files: st.HasFile, Verified: st.Verified,
 			Absolute: e.AbsoluteNum, Copy: copyID, CopyName: copyName,
 		}
@@ -349,7 +362,8 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 	pack := domain.SeasonWantable{
 		Item: item.ID, Profile: profileID,
 		Mon: item.Monitored && seasonObj.Monitored && copyMon, Title: item.Title, Year: item.Year,
-		Season: season, Copy: copyID, CopyName: copyName,
+		Identity: mediaIdentity(item),
+		Season:   season, Copy: copyID, CopyName: copyName,
 	}
 	for _, e := range seasonObj.Episodes {
 		pack.Episodes = append(pack.Episodes, mkEp(e))
@@ -381,6 +395,7 @@ type Candidate struct {
 	Accepted   bool                 `json:"accepted"`
 	IsUpgrade  bool                 `json:"isUpgrade"`
 	Rejections []decision.Rejection `json:"rejections"`
+	Match      domain.MatchEvidence `json:"match"`
 	// Warning is a caution that does not decline the release: the profile
 	// would take it, but something about it does not add up. Today that is
 	// only an advertised size too small to hold what the name claims.
@@ -432,35 +447,44 @@ func (s *Service) SearchCopy(ctx context.Context, itemID, copyID int64, season, 
 		return nil, ErrNoIndexers
 	}
 
-	queries := domain.PlanSearch(target)
 	var (
 		mu       sync.Mutex
 		releases []ports.Release
 		wg       sync.WaitGroup
 	)
 	for _, cfg := range enabled {
-		for _, q := range queries {
-			wg.Add(1)
-			go func(cfg ports.IndexerConfig, q domain.SearchQuery) {
-				defer wg.Done()
+		wg.Add(1)
+		go func(cfg ports.IndexerConfig) {
+			defer wg.Done()
+			indexer := s.newIndexer(cfg)
+			queries, err := queriesForIndexer(ctx, indexer, target, true)
+			if err != nil {
+				s.log.Warn("search: indexer capabilities unavailable", "indexer", cfg.Name, "err", err)
+				return
+			}
+			for tier, q := range queries {
 				cctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
-				defer cancel()
-				rs, err := s.newIndexer(cfg).Search(cctx, q)
+				rs, err := indexer.Search(cctx, q)
+				cancel()
 				if err != nil {
-					s.log.Warn("search: indexer failed", "indexer", cfg.Name, "err", err)
-					return
+					s.log.Warn("search: indexer failed", "indexer", cfg.Name, "tier", tier+1, "err", err)
+					continue
 				}
 				mu.Lock()
 				releases = append(releases, rs...)
 				mu.Unlock()
-			}(cfg, q)
-		}
+			}
+		}(cfg)
 	}
 	wg.Wait()
 
 	formats, _ := s.db.ListCustomFormats(ctx)
 	runtimeMin := item.Runtime
 	now := time.Now()
+	identityIndex, err := s.allIdentity(ctx, now)
+	if err != nil {
+		return nil, err
+	}
 	seen := map[string]bool{}
 	out := make([]Candidate, 0, len(releases))
 	for _, r := range releases {
@@ -476,11 +500,12 @@ func (s *Service) SearchCopy(ctx context.Context, itemID, copyID int64, season, 
 		if !r.PublishDate.IsZero() {
 			c.Age = age(now.Sub(r.PublishDate))
 		}
-		matches := matcher.Match(p, []domain.Wantable{target})
-		if len(matches) == 0 {
+		match := releaseMatch(r, p, target, identityIndex)
+		c.Match = matchEvidence(p, target, r, match)
+		if !match.Matched {
 			c.Rejections = []decision.Rejection{{
 				Code:   "not_matched",
-				Reason: fmt.Sprintf("does not match %s", describeTarget(target)),
+				Reason: match.Reason,
 			}}
 		} else {
 			d := decision.Decide(p.Quality, target, profile)
@@ -554,15 +579,16 @@ func age(d time.Duration) string {
 
 // GrabRequest is what the UI sends back from a chosen candidate.
 type GrabRequest struct {
-	MediaItemID int64
-	CopyID      int64 // 0 = the primary copy
-	Season      int   // -1 for movies
-	Episode     int   // 0 = whole season / movie
-	Title       string
-	DownloadURL string
-	Indexer     string
-	Protocol    string
-	Size        int64
+	MediaItemID   int64
+	CopyID        int64 // 0 = the primary copy
+	Season        int   // -1 for movies
+	Episode       int   // 0 = whole season / movie
+	Title         string
+	DownloadURL   string
+	Indexer       string
+	Protocol      string
+	Size          int64
+	MatchEvidence *domain.MatchEvidence
 }
 
 func protocolOfClient(clientType string) string { return ports.ProtocolOfClient(clientType) }
@@ -676,6 +702,10 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	}
 
 	p := parser.Parse(req.Title)
+	evidence := domain.MatchEvidence{Version: 1, Method: "manual_override", Code: "identity_unresolved", Reason: "Manually grabbed without retained search evidence", OriginalTitle: req.Title, ParsedTitle: p.Title}
+	if req.MatchEvidence != nil {
+		evidence = *req.MatchEvidence
+	}
 	var base string
 	switch {
 	case item.Kind == domain.KindMovie:
@@ -704,7 +734,7 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		MediaItemID: item.ID, CopyID: req.CopyID, WantableIDs: wants, Season: req.Season,
 		ReleaseTitle: req.Title, Indexer: req.Indexer, Protocol: req.Protocol,
 		Quality: p.Quality, Size: req.Size, ClientID: cfg.ID,
-		State: "grabbed",
+		State: "grabbed", MatchEvidence: evidence,
 	})
 	if err != nil {
 		return 0, err
@@ -740,7 +770,7 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	}
 	s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, detail)
 	_ = s.db.AddHistory(ctx, "grabbed", item.ID, req.Title,
-		map[string]any{"indexer": req.Indexer, "protocol": req.Protocol, "downloadPriority": priority})
+		map[string]any{"indexer": req.Indexer, "protocol": req.Protocol, "downloadPriority": priority, "match": evidence})
 	s.publish(ReleaseGrabbed{MediaItemID: item.ID, Title: req.Title,
 		Indexer: req.Indexer, Protocol: req.Protocol})
 	s.log.Info("grabbed", "title", req.Title, "client", cfg.Name, "download_priority", priority)

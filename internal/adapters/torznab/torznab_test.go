@@ -22,6 +22,8 @@ const feed = `<?xml version="1.0" encoding="UTF-8"?>
   <enclosure url="http://idx/dl/1.torrent" length="1073741824" type="application/x-bittorrent"/>
   <torznab:attr name="seeders" value="42"/>
   <torznab:attr name="peers" value="7"/>
+  <torznab:attr name="tvdbid" value="453187"/>
+  <torznab:attr name="imdbid" value="tt33096993"/>
 </item>
 <item>
   <title>Test.Show.S01.1080p.BluRay.x264-PACK</title>
@@ -41,7 +43,7 @@ const feed = `<?xml version="1.0" encoding="UTF-8"?>
 </channel>
 </rss>`
 
-const caps = `<?xml version="1.0"?><caps><server title="test"/></caps>`
+const caps = `<?xml version="1.0"?><caps><server title="test"/><searching><search available="yes" supportedParams="q"/><tv-search available="yes" supportedParams="q,tvdbid,imdbid,season,ep"/><movie-search available="yes" supportedParams="q,imdbid,tmdbid"/></searching></caps>`
 
 func newServer(t *testing.T) (*httptest.Server, *[]string) {
 	t.Helper()
@@ -80,6 +82,9 @@ func TestSearchParsesFeed(t *testing.T) {
 		r.Protocol != "torrent" || r.Indexer != "idx" {
 		t.Errorf("release = %+v", r)
 	}
+	if r.IDs.TVDB != 453187 || r.IDs.IMDB != "tt33096993" {
+		t.Errorf("release identities = %+v", r.IDs)
+	}
 	if rs[1].Size != 5368709120 {
 		t.Errorf("size from <size> element: %+v", rs[1])
 	}
@@ -111,6 +116,32 @@ func TestMovieSearchUsesPlainSearch(t *testing.T) {
 	}
 	if !contains((*queries)[0], "t=search") {
 		t.Errorf("movie query should use t=search: %q", (*queries)[0])
+	}
+}
+
+func TestCapabilityModesAndIDWireForms(t *testing.T) {
+	srv, queries := newServer(t)
+	c := New(ports.IndexerConfig{ID: 91, Name: "idx", URL: srv.URL, APIKey: "k", Protocol: "torrent"})
+	got, err := c.Capabilities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Generic.Available || !got.TV.Parameters["tvdbid"] || !got.Movie.Parameters["imdbid"] {
+		t.Fatalf("capabilities = %+v", got)
+	}
+	season, episode := 0, 1
+	_ = season
+	if _, err := c.Search(context.Background(), domain.SearchQuery{Mode: "tv", Kind: domain.KindSeries, ID: &domain.ExternalRef{Provider: "imdb", Value: "tt16867040"}, Season: 0, Episode: episode, SeasonSet: true, EpisodeSet: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*queries)[len(*queries)-1]; !contains(got, "t=tvsearch") || !contains(got, "imdbid=tt16867040") || !contains(got, "season=0") || !contains(got, "ep=1") || contains(got, "q=") {
+		t.Errorf("TV ID query = %q", got)
+	}
+	if _, err := c.Search(context.Background(), domain.SearchQuery{Mode: "movie", Kind: domain.KindMovie, ID: &domain.ExternalRef{Provider: "imdb", Value: "tt0137523"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*queries)[len(*queries)-1]; !contains(got, "t=movie") || !contains(got, "imdbid=0137523") {
+		t.Errorf("movie IMDb query = %q", got)
 	}
 }
 

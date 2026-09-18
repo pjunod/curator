@@ -2,6 +2,8 @@ package domain
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
@@ -295,7 +297,10 @@ func (b BookWantable) SourceVerified() bool { return b.Verified }
 
 // SearchQuery is what a planner emits for indexers (blueprint §4.1).
 type SearchQuery struct {
-	Q          string
+	Q string
+	// Mode is selected after capability filtering: generic, tv, or movie.
+	// Empty preserves the legacy adapter behavior for older callers.
+	Mode       string
 	Season     int // retained for compatibility; use SeasonSet for season zero
 	Episode    int // retained for compatibility; use EpisodeSet for presence
 	SeasonSet  bool
@@ -369,18 +374,47 @@ func PlanVideoSearch(w Wantable) SearchPlan {
 			appendID("tmdb", fmt.Sprintf("%d", ident.IDs.TMDB))
 		}
 	}
+	aliases := append([]TitleAlias(nil), ident.Aliases...)
+	aliasPriority := func(alias TitleAlias) int {
+		if alias.Role == "manual" || alias.Source == "manual" {
+			return 0
+		}
+		if alias.Role == "original" {
+			return 1
+		}
+		return 2
+	}
+	sort.SliceStable(aliases, func(i, j int) bool {
+		pi, pj := aliasPriority(aliases[i]), aliasPriority(aliases[j])
+		if pi != pj {
+			return pi < pj
+		}
+		return strings.ToLower(aliases[i].Title) < strings.ToLower(aliases[j].Title)
+	})
 	seen := map[string]bool{canonical.Q: true}
-	for _, a := range ident.Aliases {
-		if !a.Searchable || a.Scope != "work" || a.Title == "" || seen[a.Title] {
+	for _, a := range aliases {
+		if !a.Searchable || a.Scope != "work" || a.Title == "" {
 			continue
 		}
 		q := canonical
-		q.Q = a.Title
+		switch w.(type) {
+		case EpisodeWantable:
+			t := w.(EpisodeWantable)
+			q.Q = fmt.Sprintf("%s S%02dE%02d", a.Title, t.Season, t.Episode)
+		case SeasonWantable:
+			t := w.(SeasonWantable)
+			q.Q = fmt.Sprintf("%s S%02d", a.Title, t.Season)
+		default:
+			q.Q = a.Title
+		}
 		if canonical.Kind == KindMovie && ident.Year > 0 {
 			q.Q = fmt.Sprintf("%s %d", a.Title, ident.Year)
 		}
+		if seen[q.Q] {
+			continue
+		}
 		plan.Titles = append(plan.Titles, q)
-		seen[a.Title] = true
+		seen[q.Q] = true
 	}
 	return plan
 }

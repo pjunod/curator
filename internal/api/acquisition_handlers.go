@@ -506,12 +506,13 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 	}
 	out := make([]apigen.ReleaseCandidate, 0, len(cands))
 	for _, c := range cands {
+		match := apiMatchEvidence(c.Match)
 		rc := apigen.ReleaseCandidate{
 			Title: c.Release.Title, DownloadUrl: c.Release.DownloadURL,
 			Indexer: c.Release.Indexer, Protocol: c.Release.Protocol,
 			Size: c.Release.Size, Seeders: c.Release.Seeders, Age: c.Age,
 			Quality: c.QualityStr, Score: c.Score, Accepted: c.Accepted, IsUpgrade: c.IsUpgrade,
-			Rejections: []apigen.Rejection{},
+			Rejections: []apigen.Rejection{}, Match: match,
 		}
 		if len(c.Formats) > 0 {
 			fs := c.Formats
@@ -520,6 +521,10 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 		if c.Release.InfoURL != "" {
 			u := c.Release.InfoURL
 			rc.InfoUrl = &u
+		}
+		if c.Warning != "" {
+			warning := c.Warning
+			rc.Warning = &warning
 		}
 		for _, rej := range c.Rejections {
 			rc.Rejections = append(rc.Rejections, apigen.Rejection{Code: rej.Code, Reason: rej.Reason})
@@ -555,6 +560,21 @@ func (s *Server) GrabRelease(w http.ResponseWriter, r *http.Request) {
 	if in.Size != nil {
 		req.Size = *in.Size
 	}
+	if in.Match != nil {
+		evidence := domain.MatchEvidence{
+			Version: in.Match.Version, Matched: in.Match.Matched, Reason: in.Match.Reason,
+			Method: stringValue(in.Match.Method), Code: stringValue(in.Match.Code), Country: stringValue(in.Match.Country),
+			OriginalTitle: stringValue(in.Match.OriginalTitle), ParsedTitle: stringValue(in.Match.ParsedTitle),
+			TargetTitle: stringValue(in.Match.TargetTitle), MatchedTitle: stringValue(in.Match.MatchedTitle),
+		}
+		if in.Match.MatchedId != nil {
+			evidence.MatchedID = &domain.ExternalID{Provider: in.Match.MatchedId.Provider, Value: in.Match.MatchedId.Value}
+		}
+		if in.Match.Warnings != nil {
+			evidence.Warnings = append([]string(nil), (*in.Match.Warnings)...)
+		}
+		req.MatchEvidence = &evidence
+	}
 	id, err := s.deps.Acquisition.Grab(r.Context(), req)
 	if err != nil {
 		s.acqErr(w, err)
@@ -583,6 +603,10 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			Title: d.ReleaseTitle, State: d.State, Progress: float32(d.Progress),
 			Protocol: d.Protocol, Quality: d.Quality.Display(),
 			SavePath: &save, ImportPath: &imp, AddedAt: d.AddedAt,
+		}
+		if d.MatchEvidence.Version > 0 {
+			match := apiMatchEvidence(d.MatchEvidence)
+			item.Match = &match
 		}
 		if d.Error != "" {
 			e := d.Error
@@ -1086,6 +1110,33 @@ func ptrIfText(v string) *string {
 		return nil
 	}
 	return &v
+}
+
+func stringValue(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func apiMatchEvidence(e domain.MatchEvidence) apigen.MatchEvidence {
+	match := apigen.MatchEvidence{
+		Version: e.Version, Matched: e.Matched, Reason: e.Reason,
+		Method: ptrIfText(e.Method), Code: ptrIfText(e.Code), Country: ptrIfText(e.Country),
+		OriginalTitle: ptrIfText(e.OriginalTitle), ParsedTitle: ptrIfText(e.ParsedTitle),
+		TargetTitle: ptrIfText(e.TargetTitle), MatchedTitle: ptrIfText(e.MatchedTitle),
+	}
+	if e.MatchedID != nil {
+		match.MatchedId = &struct {
+			Provider string `json:"provider"`
+			Value    string `json:"value"`
+		}{Provider: e.MatchedID.Provider, Value: e.MatchedID.Value}
+	}
+	if len(e.Warnings) > 0 {
+		warnings := e.Warnings
+		match.Warnings = &warnings
+	}
+	return match
 }
 
 // DeleteNotifier implements DELETE /notifiers/{id}.

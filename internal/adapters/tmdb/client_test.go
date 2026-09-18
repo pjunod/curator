@@ -29,12 +29,16 @@ func newFixtureServer(t *testing.T) (*httptest.Server, *atomic.Int64, *atomic.Bo
 	var hits atomic.Int64
 	var sawBearer atomic.Bool
 	routes := map[string]string{
-		"/search/movie":    "search_movie.json",
-		"/search/tv":       "search_tv.json",
-		"/movie/550":       "movie_550.json",
-		"/tv/100":          "tv_100.json",
-		"/tv/100/season/0": "tv_100_season_0.json",
-		"/tv/100/season/1": "tv_100_season_1.json",
+		"/search/movie":                 "search_movie.json",
+		"/search/tv":                    "search_tv.json",
+		"/movie/550":                    "movie_550.json",
+		"/tv/100":                       "tv_100.json",
+		"/tv/100/season/0":              "tv_100_season_0.json",
+		"/tv/100/season/1":              "tv_100_season_1.json",
+		"/find/424242":                  "find_tvdb_424242.json",
+		"/find/tt0137523":               "find_imdb_tt0137523.json",
+		"/tv/100/alternative_titles":    "tv_100_alternative_titles.json",
+		"/movie/550/alternative_titles": "movie_550_alternative_titles.json",
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
@@ -182,5 +186,31 @@ func TestNotFoundAndBadKey(t *testing.T) {
 	c := New(srv.URL, staticKey("v3key"))
 	if _, err := c.GetMovie(context.Background(), 999); err == nil {
 		t.Error("404 should surface as an error")
+	}
+}
+
+func TestExactLookupAndIdentityMetadata(t *testing.T) {
+	srv, _, _ := newFixtureServer(t)
+	client := New(srv.URL, staticKey("v3key"))
+	series, err := client.LookupExternal(context.Background(), domain.KindSeries, domain.ExternalRef{Provider: "tvdb", Value: "424242"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].TMDBID != 100 || series[0].TVDBID != 424242 || series[0].HydrationSource != "tmdb" {
+		t.Fatalf("series = %+v", series)
+	}
+	movies, err := client.LookupExternal(context.Background(), domain.KindMovie, domain.ExternalRef{Provider: "imdb", Value: "tt0137523"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(movies) != 1 || movies[0].TMDBID != 550 || movies[0].IMDBID != "tt0137523" {
+		t.Fatalf("movies = %+v", movies)
+	}
+	metadata, err := client.IdentityMetadata(context.Background(), domain.KindSeries, domain.ExternalIDs{TMDB: 100, TVDB: 424242, IMDB: "tt9999999"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metadata.Aliases) != 1 || metadata.Aliases[0].Title != "Test Show US" || metadata.Aliases[0].MarketCountry != "US" {
+		t.Fatalf("metadata = %+v", metadata)
 	}
 }

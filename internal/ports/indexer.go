@@ -21,16 +21,42 @@ type IndexerConfig struct {
 // Release is one indexer result (transient; persisted only in history and
 // on grab — blueprint §4.2).
 type Release struct {
-	Title       string    `json:"title"`
-	DownloadURL string    `json:"downloadUrl"`
-	InfoURL     string    `json:"infoUrl,omitempty"`
-	Size        int64     `json:"size"`
-	PublishDate time.Time `json:"publishDate"`
-	Seeders     int       `json:"seeders"`
-	Peers       int       `json:"peers"`
-	Indexer     string    `json:"indexer"`
-	IndexerID   int64     `json:"indexerId"`
-	Protocol    string    `json:"protocol"`
+	Title       string                 `json:"title"`
+	DownloadURL string                 `json:"downloadUrl"`
+	InfoURL     string                 `json:"infoUrl,omitempty"`
+	Size        int64                  `json:"size"`
+	PublishDate time.Time              `json:"publishDate"`
+	Seeders     int                    `json:"seeders"`
+	Peers       int                    `json:"peers"`
+	Indexer     string                 `json:"indexer"`
+	IndexerID   int64                  `json:"indexerId"`
+	Protocol    string                 `json:"protocol"`
+	IDs         domain.ExternalIDs     `json:"ids,omitempty"`
+	IDIssues    []domain.IdentityIssue `json:"idIssues,omitempty"`
+}
+
+// IndexerSearchCapability describes one advertised search mode. Known=false
+// means caps were absent or malformed; Available=false with Known=true is an
+// explicit prohibition.
+type IndexerSearchCapability struct {
+	Known      bool
+	Available  bool
+	Parameters map[string]bool
+}
+
+type IndexerCapabilities struct {
+	Generic   IndexerSearchCapability
+	TV        IndexerSearchCapability
+	Movie     IndexerSearchCapability
+	FetchedAt time.Time
+	Degraded  bool
+}
+
+// IndexerCapabilitiesProvider is optional so non-Newznab adapters and tests
+// keep their existing contract. A valid snapshot controls which wire modes
+// and parameters the caller may use.
+type IndexerCapabilitiesProvider interface {
+	Capabilities(context.Context) (IndexerCapabilities, error)
 }
 
 // Indexer speaks Newznab/Torznab.
