@@ -16,6 +16,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	identityinput "github.com/pjunod/monarr/internal/domain/identity"
+	"github.com/pjunod/monarr/internal/domain/matcher"
 	"github.com/pjunod/monarr/internal/domain/naming"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
@@ -266,6 +267,9 @@ func (s *Service) ResolveExternal(ctx context.Context, kind domain.MediaKind, re
 	if provider, ok := s.meta.(ports.ExternalLookupProvider); ok {
 		providers = append(providers, provider)
 	}
+	if len(providers) == 0 {
+		return nil, ports.ErrProviderNotConfigured
+	}
 	var unsupported bool
 	for _, provider := range providers {
 		results, lookupErr := provider.LookupExternal(ctx, kind, ref)
@@ -393,7 +397,12 @@ func (s *Service) appendSeriesChain(
 func verifiedSameResult(a, b ports.SearchResult) bool {
 	shared := a.TMDBID != 0 && a.TMDBID == b.TMDBID || a.TVDBID != 0 && a.TVDBID == b.TVDBID || a.IMDBID != "" && strings.EqualFold(a.IMDBID, b.IMDBID)
 	conflict := a.TMDBID != 0 && b.TMDBID != 0 && a.TMDBID != b.TMDBID || a.TVDBID != 0 && b.TVDBID != 0 && a.TVDBID != b.TVDBID || a.IMDBID != "" && b.IMDBID != "" && !strings.EqualFold(a.IMDBID, b.IMDBID)
-	return shared && !conflict
+	// Search endpoints commonly return only their native namespace. Preserve
+	// the established cross-provider merge when the two rows have complementary
+	// IDs and the exact same kind/title/year; Add rehydrates and verifies the
+	// combined IDs before anything is persisted.
+	complementary := a.Kind == b.Kind && a.Year != 0 && a.Year == b.Year && matcher.NormalizeTitle(a.Title) == matcher.NormalizeTitle(b.Title)
+	return (shared || complementary) && !conflict
 }
 
 // seriesByTVDB hydrates a series from whichever link of the chain knows the

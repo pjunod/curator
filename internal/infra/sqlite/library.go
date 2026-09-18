@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -177,7 +176,9 @@ func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, er
 		case m.IDs.TVDB != 0:
 			m.Source = "tvmaze"
 		default:
-			return 0, fmt.Errorf("video item requires a hydration source")
+			// Imported/manual and legacy callers can have no provider identity.
+			// Persist that fact explicitly instead of inventing a provider.
+			m.Source = "manual"
 		}
 	}
 	// Callers predating ADR 0018 (notably adoption and compatibility tests)

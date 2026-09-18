@@ -2,12 +2,14 @@ package compat
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // mountRadarr adds the movie-shaped surface Jellyseerr and Bazarr call.
@@ -85,6 +87,12 @@ func (p *Personality) lookupMovies(w http.ResponseWriter, r *http.Request) {
 	results := []map[string]any{}
 	found, err := p.deps.Library.Search(r.Context(), domain.KindMovie, term)
 	if err != nil {
+		if raw, ok := strings.CutPrefix(strings.ToLower(term), "tmdb:"); ok && (errors.Is(err, ports.ErrProviderNotConfigured) || errors.Is(err, library.ErrUnsupportedHydration)) {
+			if id, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil && id > 0 {
+				writeJSON(w, http.StatusOK, []map[string]any{{"tmdbId": id, "titleSlug": strconv.FormatInt(id, 10), "title": term, "year": 0, "overview": ""}})
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, results)
 		return
 	}

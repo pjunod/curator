@@ -47,7 +47,7 @@ func TestIdentitySnapshotLifecycleAndManualSurvival(t *testing.T) {
 	if !seen[manual.Title] || !seen["Former Canonical"] || seen["Have I Got News for You US"] {
 		t.Fatalf("aliases after refresh = %+v", got.Aliases)
 	}
-	if len(got.IdentitySources) != 1 || got.IdentitySources[0].FetchedAt != now.Add(time.Hour) {
+	if len(got.IdentitySources) != 1 || !got.IdentitySources[0].FetchedAt.Equal(now.Add(time.Hour)) {
 		t.Fatalf("source = %+v", got.IdentitySources)
 	}
 	if err := db.RecordIdentityFailure(ctx, id, "tvmaze", now.Add(2*time.Hour), now.Add(3*time.Hour), "rate limited"); err != nil {

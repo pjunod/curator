@@ -87,10 +87,17 @@ func (e *RemoteError) Error() string {
 	if e == nil {
 		return "remote error"
 	}
-	if e.Cause != nil {
-		return fmt.Sprintf("remote %s: %v", e.Category, e.Cause)
+	detail := ""
+	if e.HTTPStatus != 0 {
+		detail = fmt.Sprintf(" (HTTP %d)", e.HTTPStatus)
 	}
-	return "remote " + e.Category
+	if e.Category == RemoteAuth {
+		detail += "; check the API key"
+	}
+	if e.Cause != nil {
+		return fmt.Sprintf("remote %s%s: %v", e.Category, detail, e.Cause)
+	}
+	return "remote " + e.Category + detail
 }
 
 func (e *RemoteError) Unwrap() error {

@@ -53,7 +53,7 @@ var (
 	// title (only trusted when a [Group] prefix marked the release as anime).
 	reAbsolute        = regexp.MustCompile(`\s-\s(\d{1,4})(?:-(\d{1,4}))?(?:v\d)?\s*(?:\[|$|\()`)
 	reYear            = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
-	reSeriesTitleYear = regexp.MustCompile(`(?i)(?:^|[ ._\[(])(19\d{2}|20\d{2})[ ._\])] *$`)
+	reSeriesTitleYear = regexp.MustCompile(`(?i)(?:^|[ ._\[(])(19\d{2}|20\d{2})(?:\))?$`)
 	reResolution      = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p|4k|uhd)\b`)
 	reProper          = regexp.MustCompile(`(?i)\bPROPER\b`)
 	reRepack          = regexp.MustCompile(`(?i)\b(?:REPACK|RERIP)\b`)
@@ -227,7 +227,8 @@ func Parse(release string) Parsed {
 	// series year.
 	if structuralSeries {
 		rawTitle := s[:titleEnd]
-		if m := reSeriesTitleYear.FindStringSubmatchIndex(rawTitle); m != nil {
+		matchTitle := strings.TrimRight(rawTitle, " ._")
+		if m := reSeriesTitleYear.FindStringSubmatchIndex(matchTitle); m != nil {
 			p.SeriesTitleYear = atoi(rawTitle[m[2]:m[3]])
 			p.Year = p.SeriesTitleYear
 			// Drop the delimiter together with the qualifier, unless the year is

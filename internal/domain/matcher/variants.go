@@ -81,7 +81,11 @@ func TitleVariants(raw string) []TitleVariant {
 		out = append(out, v)
 	}
 
-	fields := strings.Fields(raw)
+	// Release separators are title punctuation, not word boundaries to the
+	// parser. Treat them as spaces only for edge-qualifier recognition so
+	// "Show.US" and "Show U.S." produce the same evidence.
+	edge := strings.NewReplacer(".", " ", "_", " ").Replace(raw)
+	fields := strings.Fields(edge)
 	for _, width := range []int{2, 1} {
 		if len(fields) <= width {
 			continue
