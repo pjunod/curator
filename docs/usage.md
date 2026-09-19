@@ -372,6 +372,16 @@ Actions up top:
   `metadata.refresh` task does this for the whole library every 12 h
   (run it once from System → Tasks after upgrading to backfill ratings).
 
+Book lookups pace Open Library requests at one per second and retry
+connection resets, interrupted responses, timeouts, and temporary server
+errors up to three attempts. Retries wait 1 then 2 seconds, or longer when
+Open Library sends `Retry-After`. A requested wait over 30 seconds stops
+that lookup instead of holding up the library refresh. Permanent errors
+such as a missing work (404) are not retried. Failed work lookups leave the
+book's existing metadata intact; the scheduled task continues with other
+items and reports its first failure. Use **Run now** to retry after the
+provider recovers.
+
 The same completeness pill, rating, and ↓ badge appear on every library
 card, so the grid shows at a glance what's complete, what's partial, and
 what's moving right now.

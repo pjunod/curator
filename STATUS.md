@@ -15,7 +15,28 @@
 > working session. Design rationale: [docs/architecture.md](docs/architecture.md) ·
 > decisions: [docs/adr/](docs/adr/) · this file: state only.
 
-## Active delivery — Wanted list controls
+## Active delivery — Open Library refresh resilience
+
+**Status:** implementation complete; adversarial review next ·
+**Updated:** 2026-09-19 · **Version:** 0.25.1
+
+| Item | State | Evidence |
+|---|---|---|
+| Separate clone | complete | Work based on upstream `8ce3590`; original checkout excluded from delivery. |
+| Connection reset recovery | implemented | Three attempts with backoff for transient network and HTTP failures. |
+| Open Library pacing | implemented | One request per second; retries share the same budget. |
+| Retry-After and response cache | implemented | Respect provider delays; stop a lookup for waits over 30 seconds; cache only valid JSON. |
+| Regression coverage | written; validation pending | Reset recovery/exhaustion, interrupted body, timeouts, HTTP errors, cancellation, pacing, and cache behavior. |
+| Adversarial review | pending | Review begins only after the batch is ready to merge. |
+| Fast lane | pending review | Focused adapter/library tests, Go vet, formatting and diff checks. |
+| Delivery | pending | One PR includes code, regression tests, operator documentation, and patch version. |
+
+The operator behavior is documented under
+[Refresh metadata](docs/usage.md#the-item-page). Per the delivery request,
+this batch uses one fast lane after review instead of the full local suite.
+Existing GitHub Actions remain unchanged. No feature toggle is added.
+
+## Previous delivery — Wanted list controls
 
 **Status:** ready to merge · adversarial review addressed · fast lane green ·
 PR [#28](https://github.com/pjunod/monarr/pull/28) · **Updated:** 2026-09-19
