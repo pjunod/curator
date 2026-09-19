@@ -17,7 +17,7 @@
 
 ## Active delivery — Open Library refresh resilience
 
-**Status:** implementation complete; adversarial review next ·
+**Status:** ready to merge; adversarial review approved; fast lane green ·
 **Updated:** 2026-09-19 · **Version:** 0.25.1
 
 | Item | State | Evidence |
@@ -26,10 +26,10 @@
 | Connection reset recovery | implemented | Three attempts with backoff for transient network and HTTP failures. |
 | Open Library pacing | implemented | One request per second; retries share the same budget. |
 | Retry-After and response cache | implemented | Respect provider delays; stop a lookup for waits over 30 seconds; cache only valid JSON. |
-| Regression coverage | written; validation pending | Reset recovery/exhaustion, interrupted body, timeouts, HTTP errors, cancellation, pacing, and cache behavior. |
-| Adversarial review | pending | Review begins only after the batch is ready to merge. |
-| Fast lane | pending review | Focused adapter/library tests, Go vet, formatting and diff checks. |
-| Delivery | pending | One PR includes code, regression tests, operator documentation, and patch version. |
+| Regression coverage | green | Reset recovery/exhaustion, interrupted body, timeouts, HTTP errors, cancellation, pacing, and cache behavior. |
+| Adversarial review | approved | Independent review of `d316497` against `8ce3590`; no actionable introduced defects. |
+| Fast lane | green | Go 1.25.7: adapter/library and architecture tests (`-count=1 -shuffle=on`), scoped vet, backend build, formatting and diff checks passed. |
+| Delivery | ready for PR | One batch includes code, regression tests, operator documentation, and patch version. |
 
 The operator behavior is documented under
 [Refresh metadata](docs/usage.md#the-item-page). Per the delivery request,
