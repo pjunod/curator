@@ -8,12 +8,16 @@ package openlibrary
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -28,6 +32,8 @@ const DefaultBaseURL = "https://openlibrary.org"
 
 // userAgent identifies us per Open Library's API etiquette.
 const userAgent = "Monarr (github.com/pjunod/monarr)"
+
+const maxRetryWait = 30 * time.Second
 
 // Client is a BookProvider backed by Open Library. No API key needed.
 type Client struct {
@@ -55,8 +61,9 @@ func New(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		http:    httpx.NewClient(15 * time.Second),
-		// Open Library asks for courteous use; a few req/s is plenty.
-		limiter: rate.NewLimiter(rate.Limit(3), 3),
+		// The 3 req/s allowance requires contact information in the
+		// User-Agent. Use the default 1 req/s limit, without bursts.
+		limiter: rate.NewLimiter(rate.Every(time.Second), 1),
 		cache:   map[string]cacheEntry{},
 		ttl:     5 * time.Minute,
 	}
@@ -75,38 +82,91 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 	}
 	c.mu.Unlock()
 
-	if err := c.limiter.Wait(ctx); err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", userAgent)
+	var delay time.Duration
+	for attempt := 0; ; attempt++ {
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		// Retries consume the same rate budget as ordinary requests.
+		if err := c.limiter.Wait(ctx); err != nil {
+			return err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", userAgent)
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("openlibrary: %w", err)
+		delay = time.Second << attempt
+		retry := false
+		resp, err := c.http.Do(req)
+		if err != nil {
+			retry = retryableNetworkError(err)
+			err = fmt.Errorf("openlibrary: %w", err)
+		} else {
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+			_ = resp.Body.Close()
+			switch {
+			case resp.StatusCode == http.StatusNotFound:
+				return fmt.Errorf("openlibrary: not found (404): %s", path)
+			case resp.StatusCode != http.StatusOK:
+				err = fmt.Errorf("openlibrary: unexpected status %d for %s", resp.StatusCode, path)
+				switch resp.StatusCode {
+				case http.StatusTooManyRequests, http.StatusInternalServerError,
+					http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+					retry = true
+				}
+				delay = retryDelay(resp.Header.Get("Retry-After"), delay, time.Now())
+			case readErr != nil:
+				retry = retryableNetworkError(readErr)
+				err = fmt.Errorf("openlibrary: reading response: %w", readErr)
+			default:
+				if err := json.Unmarshal(body, out); err != nil {
+					return fmt.Errorf("openlibrary: decoding response: %w", err)
+				}
+				c.mu.Lock()
+				c.cache[full] = cacheEntry{body: body, expires: time.Now().Add(c.ttl)}
+				c.mu.Unlock()
+				return nil
+			}
+		}
+		// Three attempts total. A long Retry-After ends this lookup rather
+		// than blocking the refresh indefinitely or retrying too early.
+		if !retry || attempt == 2 || delay > maxRetryWait {
+			return err
+		}
 	}
-	defer func() { _ = resp.Body.Close() }()
+}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return fmt.Errorf("openlibrary: reading response: %w", err)
+func retryableNetworkError(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
 	}
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return fmt.Errorf("openlibrary: not found (404): %s", path)
-	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("openlibrary: unexpected status %d for %s", resp.StatusCode, path)
+	var netErr net.Error
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.EPIPE) || (errors.As(err, &netErr) && netErr.Timeout())
+}
+
+func retryDelay(header string, backoff time.Duration, now time.Time) time.Duration {
+	if seconds, err := strconv.ParseInt(strings.TrimSpace(header), 10, 64); err == nil {
+		if seconds > int64(maxRetryWait/time.Second) {
+			return maxRetryWait + time.Second
+		}
+		if seconds > 0 {
+			return max(backoff, time.Duration(seconds)*time.Second)
+		}
+	} else if when, err := http.ParseTime(header); err == nil {
+		return max(backoff, when.Sub(now))
 	}
-
-	c.mu.Lock()
-	c.cache[full] = cacheEntry{body: body, expires: time.Now().Add(c.ttl)}
-	c.mu.Unlock()
-
-	return json.Unmarshal(body, out)
+	return backoff
 }
 
 // ---- wire shapes (only the fields we consume) ----
