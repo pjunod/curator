@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { autoSearchItem, fmtRelative, getTasks, getWanted, runTask } from '../api'
@@ -51,6 +51,13 @@ export function WantedPage() {
   )
   const currentPage = clampPage(page, selected.length, pageSize)
   const visible = sliceForPage(selected, currentPage, pageSize)
+
+  // A refresh can remove enough wanted targets to eliminate the current page.
+  // Persist the clamped value so later additions do not jump back to a stale
+  // page number that was only hidden by the render-time clamp.
+  useEffect(() => {
+    if (page !== currentPage) setPage(currentPage)
+  }, [currentPage, page])
 
   const resetPage = () => setPage(0)
   const clearFilters = () => {
@@ -124,7 +131,9 @@ export function WantedPage() {
               <option value="kind">Sort: media type</option>
             </select>
             <button
-              aria-label="Toggle wanted sort direction"
+              aria-label={sortDirection === 'asc'
+                ? 'Sort direction: ascending. Change to descending'
+                : 'Sort direction: descending. Change to ascending'}
               title={sortDirection === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
               onClick={() => {
                 setSortDirection((direction) => direction === 'asc' ? 'desc' : 'asc')

@@ -17,16 +17,17 @@
 
 ## Active delivery — Wanted list controls
 
-**Status:** implementation complete · adversarial review pending · fast-lane
-tests pending · **Updated:** 2026-09-19
+**Status:** adversarial review findings addressed · fast-lane tests pending ·
+PR [#28](https://github.com/pjunod/monarr/pull/28) · **Updated:** 2026-09-19
 
 | Item | State | Evidence |
 |---|---|---|
 | Missing/upgrade reason filter with counts | complete | `web/src/pages/Wanted.tsx` |
 | Search across every visible field and target ID | complete | `web/src/wanted.ts` |
 | Title/reason/type sorting and 25–500/all pagination | complete | shared `Pager` controls |
-| Focused behavior coverage | written, not run | held for the post-review fast lane |
-| Delivery | preparing PR | Fresh clone; Forgejo has no Monarr repository, so the configured GitHub upstream is authoritative. |
+| Adversarial review | addressed | Persisted page clamp after live shrink; exposed current sort direction to assistive technology. |
+| Focused behavior coverage | written, not run | Held for the post-review fast lane. |
+| Delivery | PR open | Forgejo has no Monarr repository, so the configured GitHub upstream is authoritative. |
 
 ## Progress at a glance
 
