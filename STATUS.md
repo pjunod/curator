@@ -15,6 +15,20 @@
 > working session. Design rationale: [docs/architecture.md](docs/architecture.md) ·
 > decisions: [docs/adr/](docs/adr/) · this file: state only.
 
+## Active delivery — Wanted list controls
+
+**Status:** ready to merge · adversarial review addressed · fast lane green ·
+PR [#28](https://github.com/pjunod/monarr/pull/28) · **Updated:** 2026-09-19
+
+| Item | State | Evidence |
+|---|---|---|
+| Missing/upgrade reason filter with counts | complete | `web/src/pages/Wanted.tsx` |
+| Search across every visible field and target ID | complete | `web/src/wanted.ts` |
+| Title/reason/type sorting and 25–500/all pagination | complete | shared `Pager` controls |
+| Adversarial review | addressed | Persisted page clamp after live shrink; exposed current sort direction to assistive technology. |
+| Fast lane | green | Production build/typecheck and 82 web tests passed on `fd34b44`. |
+| Delivery | PR open | Forgejo has no Monarr repository, so the configured GitHub upstream is authoritative. |
+
 ## Progress at a glance
 
 | Phase | Done | Definition of done |

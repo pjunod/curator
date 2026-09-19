@@ -688,9 +688,13 @@ of them forever.
 - **Calendar** has two views, switched with the **Month · Agenda** toggle in
   the page head. The choice is remembered.
 - **Wanted** lists everything monitored that's missing or below cutoff,
-  shows when the RSS and backlog loops last ran / run next, and offers
-  **Search all now** plus a per-item **Search** button that grabs the best
-  accepted release for just that entry.
+  shows when the RSS and backlog loops last ran / run next, and separates
+  missing targets from upgrades with a counted **All reasons · Missing ·
+  Upgrades** filter. Search matches titles, details, media types, quality,
+  copy labels, and reason words such as `missing` or `upgrade`. Sort by title,
+  reason, or media type; the page shows 50 rows by default and offers
+  25/50/100/200/500/all page sizes. **Search all now** and each row's
+  **Search** button still grab the best accepted release for their scope.
 
 ### The calendar's two views
 
