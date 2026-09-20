@@ -687,6 +687,23 @@ func (s *Server) DeleteLibraryItem(w http.ResponseWriter, r *http.Request, id in
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RepairLibraryFolder implements POST /library/{id}/repair-folder.
+func (s *Server) RepairLibraryFolder(w http.ResponseWriter, r *http.Request, id int64) {
+	var body apigen.RepairLibraryFolderJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := s.deps.Library.RepairFolder(r.Context(), id, body.ExpectedPath, body.Path); err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	if s.deps.Acquisition != nil {
+		s.deps.Acquisition.InvalidateWanted()
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ScanLibrary implements POST /library/scan: queues the reconcile task.
 func (s *Server) ScanLibrary(w http.ResponseWriter, r *http.Request) {
 	if err := s.deps.Scheduler.Trigger(ScanTaskName); err != nil {

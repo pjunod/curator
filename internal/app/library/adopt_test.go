@@ -678,7 +678,7 @@ func TestAcceptAllPrunesTheReport(t *testing.T) {
 // the moment the user acts on it. A list that keeps naming items you have
 // already dealt with is worse than no list.
 func TestMissingListSelfHeals(t *testing.T) {
-	svc, _, _ := newService(t)
+	svc, db, _ := newService(t)
 	svc.meta = adoptProvider{movies: []ports.SearchResult{
 		movie(550, "Fight Club", 1999), movie(1, "Arrival", 2016),
 	}}
@@ -689,9 +689,7 @@ func TestMissingListSelfHeals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Two items added by title with a root: their folders are derived from
-	// the naming rules and do not exist. This is what the Add page produces,
-	// and it is where the reported phantoms came from.
+	// Two entries with recorded files whose folders have disappeared.
 	gone, err := svc.Add(ctx, AddRequest{
 		Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true,
 	})
@@ -703,6 +701,11 @@ func TestMissingListSelfHeals(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, item := range []domain.MediaItem{gone, fixable} {
+		if _, err := db.UpsertFile(ctx, item.ID, 0, filepath.Join(item.Path, "movie.mkv"), 42); err != nil {
+			t.Fatal(err)
+		}
 	}
 	report, err := svc.Scan(ctx)
 	if err != nil {
@@ -741,7 +744,7 @@ func TestMissingListSelfHeals(t *testing.T) {
 // A moved item is reported at its current path, not the one recorded when the
 // scan ran.
 func TestMissingListReportsTheCurrentPath(t *testing.T) {
-	svc, _, _ := newService(t)
+	svc, db, _ := newService(t)
 	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(550, "Fight Club", 1999)}}
 	ctx := context.Background()
 
@@ -754,6 +757,9 @@ func TestMissingListReportsTheCurrentPath(t *testing.T) {
 		Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true,
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpsertFile(ctx, item.ID, 0, filepath.Join(item.Path, "movie.mkv"), 42); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Scan(ctx); err != nil {
