@@ -379,6 +379,9 @@ func TestAcq2WantableIDsResolveMoviesAndBooks(t *testing.T) {
 	if _, ok := w.(domain.MovieWantable); !ok {
 		t.Errorf("movie id resolved to %T", w)
 	}
+	if _, err := svc.wantableFromID(ctx, "book:"+itoa(movieID)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("book id for movie = %v, want ErrNotFound", err)
+	}
 
 	bsvc, _, bookID := bookSetup(t, nil, &fakeClient{})
 	b, err := bsvc.wantableFromID(context.Background(), "book:"+itoa(bookID))
@@ -387,6 +390,9 @@ func TestAcq2WantableIDsResolveMoviesAndBooks(t *testing.T) {
 	}
 	if _, ok := b.(domain.BookWantable); !ok {
 		t.Errorf("book id resolved to %T", b)
+	}
+	if _, err := bsvc.wantableFromID(context.Background(), "movie:"+itoa(bookID)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("movie id for book = %v, want ErrNotFound", err)
 	}
 }
 

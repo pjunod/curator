@@ -335,8 +335,12 @@ download priority or the item's override travels with the grab to nzbd:
   the wanted list and waited up to twelve hours for the backlog loop.
 - **Auto search** (button on every detail page) does the same on demand —
   for series it searches per-season packs.
-- The **Wanted** page lists everything still missing or below cutoff, shows
-  when the loops last ran, and has **Search all now**.
+- The **Wanted** page groups every title once, with its missing episodes,
+  copies, or editions underneath. **Search all now** snapshots every eligible
+  target across every title and page. Counted Missing and Upgrade actions do
+  the same for one reason; a group action stays inside that title and the
+  selected reason; a child action searches only that episode, copy, or
+  edition.
 
 **Interactive search** — **Interactive search** on movie detail pages and a
 separate **Search** action on each book edition; on a series, each season has
@@ -725,14 +729,31 @@ of them forever.
   handoff, below.
 - **Calendar** has two views, switched with the **Month · Agenda** toggle in
   the page head. The choice is remembered.
-- **Wanted** lists everything monitored that's missing or below cutoff,
-  shows when the RSS and backlog loops last ran / run next, and separates
-  missing targets from upgrades with a counted **All reasons · Missing ·
-  Upgrades** filter. Search matches titles, details, media types, quality,
-  copy labels, and reason words such as `missing` or `upgrade`. Sort by title,
-  reason, or media type; the page shows 50 rows by default and offers
-  25/50/100/200/500/all page sizes. **Search all now** and each row's
-  **Search** button still grab the best accepted release for their scope.
+- **Wanted** shows one collapsed row per library title. Expanding a show lists
+  its episodes in numeric season/episode order; additional copies and book
+  editions stay separate targets. The Missing/Upgrade selector narrows both
+  the children you see and a group search's scope. Text search matches title,
+  detail, copy, media kind, reason, quality, and the raw target id, but a hit
+  keeps every sibling allowed by the reason filter so the group's count and
+  action never lie.
+- Pagination is by title, not episode. **Titles per page** remembers
+  25/50/100/200/500/all, while **Search all now** and the visible
+  **Search all Missing/Upgrade** actions always span every title and page.
+  A group action searches that complete title (or its selected reason), and
+  **Search episode/item** names one exact target including its copy or
+  edition discriminator.
+- Explicit Wanted searches run as durable background work, one target per
+  queue job. The progress panel survives reload, separates searched, skipped,
+  failed, and grabbed counts, exposes per-target outcomes, and can cancel the
+  remainder. Cancellation never removes downloads already submitted. The
+  advanced delay is the minimum gap after one target finishes and before the
+  next starts; it does not override an indexer's timeout or rate limit.
+- Series actions on Wanted deliberately search individual episodes and reject
+  season packs, because one pack recorded against one child could otherwise
+  be grabbed again for its siblings. This can cost up to three queries per
+  indexer per episode. Use the item's **Auto search** when season-pack breadth
+  is what you want; that broader action is not a substitute for a
+  Missing-only scope.
 
 ### The calendar's two views
 

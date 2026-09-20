@@ -491,13 +491,37 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// Job queue (ADR 0008 step 1). Started after the scheduler so periodic
 	// work can enqueue jobs, and worth running on a single instance for the
 	// retries and failure visibility the timer scheduler cannot give.
-	queue := jobs.New(db, b, log, jobs.Options{})
+	queue := jobs.New(db, b, log, jobs.Options{PruneHook: func(ctx context.Context, before time.Time) error {
+		_, err := db.PruneWantedSearches(ctx, before)
+		return err
+	}})
 	if err := library.RegisterJobHandlers(lib, queue.Register); err != nil {
 		return err
 	}
+	if err := acquisition.RegisterWantedSearchJobs(acq, queue.Register); err != nil {
+		return err
+	}
 	lib.WithQueue(queue)
+	acq.WithWantedSearchQueue(queue)
 	queue.Start(ctx)
 	defer queue.Wait()
+	go acq.RunWantedSearchCoordinator(ctx)
+	go func() {
+		finished, cancel := bus.Subscribe[jobs.JobFinished](b, 32)
+		defer cancel()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event := <-finished:
+				if event.Kind == acquisition.WantedSearchJobKind {
+					if err := acq.ReconcileWantedSearches(ctx); err != nil && ctx.Err() == nil {
+						log.Warn("wanted search: completion reconcile failed", "err", err)
+					}
+				}
+			}
+		}
+	}()
 
 	// Library changes invalidate the wanted index (imports do it in-service).
 	go func() {

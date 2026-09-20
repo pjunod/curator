@@ -68,6 +68,10 @@ func TestWantedIndexAndRSSAutoGrab(t *testing.T) {
 	if err != nil || len(wanted) != 1 || !wanted[0].Missing || wanted[0].MediaItemID != movieID {
 		t.Fatalf("wanted = %+v err %v", wanted, err)
 	}
+	if wanted[0].Reason != "missing" || wanted[0].Kind != "movie" || wanted[0].CopyID != 0 ||
+		wanted[0].Season != nil || wanted[0].Episode != nil {
+		t.Fatalf("structured wanted fields = %+v", wanted[0])
+	}
 
 	// RSS pass grabs it.
 	if err := svc.SyncRSS(ctx); err != nil {

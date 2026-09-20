@@ -79,6 +79,9 @@ type Options struct {
 	// Retention is how long terminal jobs are kept for inspection.
 	// Default 7 days.
 	Retention time.Duration
+	// PruneHook lets a queue-owned feature share this exact hourly retention
+	// clock instead of inventing a second policy or scheduler.
+	PruneHook func(context.Context, time.Time) error
 }
 
 // Queue claims and runs jobs.
@@ -357,8 +360,14 @@ func (q *Queue) reaper(ctx context.Context) {
 				q.log.Info("jobs: reclaimed expired leases", "count", n)
 			}
 		case <-prune.C:
-			if _, err := q.store.PruneFinishedJobs(ctx, time.Now().Add(-q.opts.Retention)); err != nil && ctx.Err() == nil {
+			before := time.Now().Add(-q.opts.Retention)
+			if _, err := q.store.PruneFinishedJobs(ctx, before); err != nil && ctx.Err() == nil {
 				q.log.Warn("jobs: prune failed", "err", err)
+			}
+			if q.opts.PruneHook != nil {
+				if err := q.opts.PruneHook(ctx, before); err != nil && ctx.Err() == nil {
+					q.log.Warn("jobs: feature prune failed", "err", err)
+				}
 			}
 		}
 	}

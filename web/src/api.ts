@@ -450,25 +450,29 @@ export interface Settings {
 export class ApiError extends Error {
   status: number
   code?: string
-  constructor(message: string, status: number, code?: string) {
+  activeRunId?: string
+  constructor(message: string, status: number, code?: string, activeRunId?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.activeRunId = activeRunId
   }
 }
 
 async function parseError(res: Response, fallback: string): Promise<never> {
   let msg = fallback
   let code: string | undefined
+  let activeRunId: string | undefined
   try {
-    const body = (await res.json()) as { message?: string; code?: string }
+    const body = (await res.json()) as { message?: string; code?: string; activeRunId?: string }
     if (body.message) msg = body.message
     code = body.code
+    activeRunId = body.activeRunId
   } catch {
     /* keep fallback */
   }
-  throw new ApiError(msg, res.status, code)
+  throw new ApiError(msg, res.status, code, activeRunId)
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -1041,6 +1045,59 @@ export interface WantedItem {
   missing: boolean
   current: string
   copy: string // media-copy label; '' = the primary
+	copyId: number
+	reason: 'missing' | 'upgrade'
+	kind: MediaKind
+	season?: number
+	episode?: number
+}
+
+export type WantedReason = 'missing' | 'upgrade'
+export type WantedSearchScope =
+  | { scope: 'all' }
+  | { scope: 'reason'; reason: WantedReason }
+  | { scope: 'group'; mediaItemId: number; reason?: WantedReason }
+  | { scope: 'target'; wantableId: string }
+
+export type WantedSearchRequest = WantedSearchScope & { targetDelayMs?: number }
+
+export interface WantedSearchRun {
+  runId: string
+  scope: WantedSearchScope
+  scopeLabel: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled'
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+  cancelRequestedAt?: string
+  targetDelayMs: number
+  selected: number
+  processed: number
+  searched: number
+  skipped: number
+  failed: number
+  grabbed: number
+  error?: string
+}
+
+export interface WantedSearchResult {
+  ordinal: number
+  wantableId: string
+  label: string
+  state: 'searched' | 'skipped' | 'failed'
+  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled'
+  seen: number
+  matched: number
+  accepted: number
+  grabbed?: string
+  error?: string
+  finishedAt: string
+}
+
+export interface WantedSearchResultsPage {
+  items: WantedSearchResult[]
+  limit: number
+  offset: number
 }
 
 export interface BlocklistEntry {
@@ -1055,6 +1112,14 @@ export interface BlocklistEntry {
 export const getCalendar = (start: string, end: string) =>
   get<CalendarEntry[]>(`/calendar?start=${start}&end=${end}`)
 export const getWanted = () => get<WantedItem[]>('/wanted')
+export const createWantedSearch = (request: WantedSearchRequest) =>
+  send<WantedSearchRun>('POST', '/wanted/searches', request)
+export const getWantedSearch = (runId: string) =>
+  get<WantedSearchRun>(`/wanted/searches/${encodeURIComponent(runId)}`)
+export const cancelWantedSearch = (runId: string) =>
+  send<WantedSearchRun>('POST', `/wanted/searches/${encodeURIComponent(runId)}/cancel`)
+export const getWantedSearchResults = (runId: string, limit = 100, offset = 0) =>
+  get<WantedSearchResultsPage>(`/wanted/searches/${encodeURIComponent(runId)}/results?limit=${limit}&offset=${offset}`)
 export const getBlocklist = () => get<BlocklistEntry[]>('/blocklist')
 export const removeBlocklistEntry = (id: number) => send('DELETE', `/blocklist/${id}`)
 
@@ -1232,7 +1297,7 @@ export function composeHostPort(host: string, port: string): string {
 export interface AutoSearchTarget {
   wantableId: string
   label: string
-  skipped?: 'unmonitored' | 'downloading'
+  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled'
   seen: number
   matched: number
   accepted: number

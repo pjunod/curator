@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -94,12 +95,35 @@ func wantableOnRow(dl sqlite.Download, id string) bool {
 		if got == id {
 			return true
 		}
-		// "season:5:2" covers "episode:5:2:7".
-		if strings.HasPrefix(got, "season:") && strings.HasPrefix(id, "episode:") {
-			if strings.HasPrefix(id, "episode:"+strings.TrimPrefix(got, "season:")+":") {
-				return true
-			}
+		// A season covers episodes only for the same item and copy. Comparing
+		// parsed coordinates avoids both `season:5:2` matching item 50 and a
+		// primary pack suppressing a secondary copy.
+		var gotItem, gotSeason, gotCopy, item, season, episode, copy int64
+		if parseSeasonWantable(got, &gotItem, &gotSeason, &gotCopy) &&
+			parseEpisodeWantable(id, &item, &season, &episode, &copy) &&
+			gotItem == item && gotSeason == season && gotCopy == copy {
+			return true
 		}
 	}
 	return false
+}
+
+func parseSeasonWantable(id string, item, season, copy *int64) bool {
+	*copy = 0
+	n, _ := fmt.Sscanf(id, "season:%d:%d:c%d", item, season, copy)
+	if n == 3 {
+		return true
+	}
+	n, _ = fmt.Sscanf(id, "season:%d:%d", item, season)
+	return n == 2
+}
+
+func parseEpisodeWantable(id string, item, season, episode, copy *int64) bool {
+	*copy = 0
+	n, _ := fmt.Sscanf(id, "episode:%d:%d:%d:c%d", item, season, episode, copy)
+	if n == 4 {
+		return true
+	}
+	n, _ = fmt.Sscanf(id, "episode:%d:%d:%d", item, season, episode)
+	return n == 3
 }
