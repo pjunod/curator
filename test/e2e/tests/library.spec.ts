@@ -29,7 +29,7 @@ test('configure TMDB key and a root folder via the settings UI', async ({ page }
 
 test('search TMDB and add a movie', async ({ page }) => {
   await page.goto('/add')
-  await page.getByPlaceholder(/Search movies/i).fill('test');
+  await page.locator('main').getByRole('searchbox').fill('test')
   await expect(page.getByText('The Test Movie')).toBeVisible()
 
   await page.getByRole('button', { name: 'Add', exact: true }).click()
@@ -48,7 +48,7 @@ test('search TMDB and add a movie', async ({ page }) => {
 test('add a series with hydrated seasons and episodes', async ({ page }) => {
   await page.goto('/add')
   await page.getByRole('tab', { name: 'Series' }).click()
-  await page.getByPlaceholder(/Search series/i).fill('test')
+  await page.locator('main').getByRole('searchbox').fill('test')
   await expect(page.getByText('The Test Show')).toBeVisible()
 
   await page.getByRole('button', { name: 'Add', exact: true }).click()
@@ -81,7 +81,7 @@ test('re-adding the same movie is rejected as already in library', async ({ page
   expect(res.status()).toBe(409)
 
   await page.goto('/add')
-  await page.getByPlaceholder(/Search movies/i).fill('test')
+  await page.locator('main').getByRole('searchbox').fill('test')
   await expect(page.getByText('in library')).toBeVisible()
 })
 
