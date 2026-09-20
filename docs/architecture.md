@@ -263,6 +263,19 @@ flowchart LR
 
 **Interactive search** — user (or seerr request) targets a Wantable → SearchPlanner builds queries → fan out to enabled indexers concurrently with per-indexer timeouts → parse/match/decide → return ranked candidates *with rejection reasons attached* → user picks or auto-grab takes the top.
 
+**Explicit Wanted search** — the API accepts an all/reason/group/target scope
+and snapshots its exact target ids from fresh authoritative Wanted state. A
+durable run owns one normal-priority queue job at a time; each job revalidates
+and searches exactly one target, checkpoints its result and cursor, then a
+coordinator enqueues the continuation after the predecessor retires. The same
+coordinator repairs enqueue gaps after restart, honors persisted cancellation,
+and interrupts a run whose chunk exhausts queue retries. Pacing lives in each
+continuation's `run_after`, so a delay never occupies a worker. Automatic
+paths share an in-process `(mediaItemId, copyId)` reservation, which serializes
+season and episode work for one copy without blocking another copy. This is a
+single-process overlap guarantee; a multi-process deployment still needs a
+store-backed acquisition reservation.
+
 **Grab → import** — grab sends to the right client by protocol → queue tracker polls clients (with jittered interval) reconciling client state to `Download` state machine → on completed: importer scans the payload directory, parses file names, maps files→Wantables via the matcher (season packs fan out here), runs per-file decisions (upgrade? quality mismatch? sample?) → hardlink-or-copy into library layout via Renamer → link `MediaFile` rows, fire `FileImported`/`UpgradeCompleted` (old file cleanup per profile), notify. Failures at any stage mark the Download failed, blocklist the release signature, and (if configured) trigger an automatic re-search — upstream's failed-download handling loop, kept.
 
 **Library reconcile** — on demand or scheduled: walk root folders, parse on-disk files, diff against DB (files added/removed/changed externally), repair links. The system must tolerate humans touching the filesystem; treating disk as a source of truth to reconcile against (rather than assuming exclusive ownership) is what makes *arr apps feel robust.

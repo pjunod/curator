@@ -780,10 +780,138 @@ func (s *Server) ListWanted(w http.ResponseWriter, r *http.Request) {
 		out = append(out, apigen.WantedItem{
 			WantableId: ws.WantableID, MediaItemId: ws.MediaItemID,
 			Title: ws.Title, Detail: ws.Detail, Missing: ws.Missing, Current: ws.Current,
-			Copy: ws.Copy,
+			Copy: ws.Copy, CopyId: ws.CopyID, Reason: apigen.WantedItemReason(ws.Reason),
+			Kind: apigen.WantedItemKind(ws.Kind), Season: ws.Season, Episode: ws.Episode,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func wantedSearchDTO(run acquisition.WantedSearchRun) apigen.WantedSearchRun {
+	scope := apigen.WantedSearchScope{Scope: apigen.WantedSearchScopeScope(run.Scope)}
+	if run.Reason != "" {
+		reason := apigen.WantedSearchScopeReason(run.Reason)
+		scope.Reason = &reason
+	}
+	if run.MediaItemID != 0 {
+		scope.MediaItemId = &run.MediaItemID
+	}
+	if run.WantableID != "" {
+		scope.WantableId = &run.WantableID
+	}
+	out := apigen.WantedSearchRun{
+		RunId: run.RunID, Scope: scope, ScopeLabel: run.ScopeLabel,
+		Status: apigen.WantedSearchRunStatus(run.Status), CreatedAt: run.CreatedAt,
+		TargetDelayMs: run.TargetDelayMs, Selected: run.Selected, Processed: run.Processed,
+		Searched: run.Searched, Skipped: run.Skipped, Failed: run.Failed, Grabbed: run.Grabbed,
+	}
+	if !run.StartedAt.IsZero() {
+		out.StartedAt = &run.StartedAt
+	}
+	if !run.FinishedAt.IsZero() {
+		out.FinishedAt = &run.FinishedAt
+	}
+	if !run.CancelRequestedAt.IsZero() {
+		out.CancelRequestedAt = &run.CancelRequestedAt
+	}
+	if run.Error != "" {
+		out.Error = &run.Error
+	}
+	return out
+}
+
+// CreateWantedSearch validates the discriminated request before the service
+// snapshots any server-owned membership.
+func (s *Server) CreateWantedSearch(w http.ResponseWriter, r *http.Request) {
+	var body apigen.WantedSearchRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req := acquisition.WantedSearchRequest{Scope: string(body.Scope), TargetDelay: body.TargetDelayMs}
+	if body.Reason != nil {
+		req.Reason = acquisition.WantedReason(*body.Reason)
+	}
+	if body.MediaItemId != nil {
+		req.MediaItemID = *body.MediaItemId
+	}
+	if body.WantableId != nil {
+		req.WantableID = *body.WantableId
+	}
+	run, err := s.deps.Acquisition.StartWantedSearch(r.Context(), req)
+	if err != nil {
+		var conflict *acquisition.WantedSearchConflict
+		switch {
+		case errors.As(err, &conflict):
+			writeJSON(w, http.StatusConflict, apigen.WantedSearchConflict{
+				ActiveRunId: conflict.ActiveRunID, CanCancel: true, Message: conflict.Message})
+		case errors.Is(err, acquisition.ErrInvalidWantedSearch):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, acquisition.ErrNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+		default:
+			s.acqErr(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusAccepted, wantedSearchDTO(run))
+}
+
+func (s *Server) GetWantedSearch(w http.ResponseWriter, r *http.Request, runID apigen.WantedSearchRunId) {
+	run, err := s.deps.Acquisition.WantedSearch(r.Context(), runID)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, wantedSearchDTO(run))
+}
+
+func (s *Server) CancelWantedSearch(w http.ResponseWriter, r *http.Request, runID apigen.WantedSearchRunId) {
+	before, err := s.deps.Acquisition.WantedSearch(r.Context(), runID)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	run, err := s.deps.Acquisition.CancelWantedSearch(r.Context(), runID)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	status := http.StatusOK
+	if before.Status == "queued" || before.Status == "running" {
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, wantedSearchDTO(run))
+}
+
+func (s *Server) ListWantedSearchResults(w http.ResponseWriter, r *http.Request, runID apigen.WantedSearchRunId, params apigen.ListWantedSearchResultsParams) {
+	limit, offset := 100, 0
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	if params.Offset != nil {
+		offset = *params.Offset
+	}
+	rows, err := s.deps.Acquisition.WantedSearchResults(r.Context(), runID, limit, offset)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	items := make([]apigen.WantedSearchResult, 0, len(rows))
+	for _, row := range rows {
+		dto := apigen.WantedSearchResult{Ordinal: row.Ordinal, WantableId: row.WantableID,
+			Label: row.Label, State: apigen.WantedSearchResultState(row.State), Seen: row.Seen,
+			Matched: row.Matched, Accepted: row.Accepted, FinishedAt: row.FinishedAt,
+			Grabbed: optStr(row.Grabbed), Error: optStr(row.Error)}
+		if row.Skipped != "" {
+			skipped := apigen.WantedSearchResultSkipped(row.Skipped)
+			dto.Skipped = &skipped
+		}
+		items = append(items, dto)
+	}
+	writeJSON(w, http.StatusOK, apigen.WantedSearchResultsPage{Items: items, Limit: limit, Offset: offset})
 }
 
 // ListBlocklist implements GET /blocklist.

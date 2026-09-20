@@ -164,11 +164,27 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 					s.log.Info("rss: declined on size", "release", r.Title, "why", why.Reason)
 					continue
 				}
-				evidence := matchEvidence(p, w, r, match)
-				if err := s.autoGrab(ctx, w, r, evidence); err != nil {
+				unlock, err := s.reservations.acquire(ctx, w)
+				if err != nil {
+					return err
+				}
+				fresh, err := s.wantableFromID(ctx, string(w.ID()))
+				if err != nil || !fresh.Monitored() || len(s.notInFlight(ctx, []domain.Wantable{fresh})) == 0 {
+					unlock()
+					continue
+				}
+				freshProfile, err := s.db.GetProfile(ctx, fresh.ProfileID())
+				if err != nil || !wants(freshProfile, fresh) || !decision.Decide(p.Quality, fresh, freshProfile).Accepted {
+					unlock()
+					continue
+				}
+				evidence := matchEvidence(p, fresh, r, match)
+				if err := s.autoGrab(ctx, fresh, r, evidence); err != nil {
+					unlock()
 					s.log.Warn("rss: grab failed", "release", r.Title, "err", err)
 					continue
 				}
+				unlock()
 				grabbed[string(w.ID())] = true
 				s.log.Info("rss: grabbed", "release", r.Title, "wantable", w.ID())
 			}
@@ -283,6 +299,51 @@ type searchTally struct {
 // per-call bound, four indexers meant a two-minute worst case.
 func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 	enabled []ports.IndexerConfig) (searchTally, error) {
+	return s.searchAndGrabBestWhere(ctx, w, enabled, nil)
+}
+
+// candidatePredicate narrows an automatic search without changing the
+// decision engine. Explicit Wanted searches use it to reject packs and
+// multi-episode releases both while planning queries and before the grab.
+type candidatePredicate func(parser.Parsed) bool
+
+func (s *Service) searchAndGrabBestWhere(ctx context.Context, w domain.Wantable,
+	enabled []ports.IndexerConfig, allowed candidatePredicate) (searchTally, error) {
+	return s.searchAndGrabBestScoped(ctx, w, enabled, allowed, nil)
+}
+
+func (s *Service) searchAndGrabBestScoped(ctx context.Context, w domain.Wantable,
+	enabled []ports.IndexerConfig, allowed candidatePredicate, beforeGrab func() error) (searchTally, error) {
+	release, err := s.reservations.acquire(ctx, w)
+	if err != nil {
+		return searchTally{}, err
+	}
+	defer release()
+	if beforeGrab != nil {
+		if err := beforeGrab(); err != nil {
+			return searchTally{}, err
+		}
+	}
+	// A caller may have waited behind a season/episode operation for this
+	// item-copy. Re-resolve after acquiring, because that predecessor may have
+	// satisfied the target or put it in flight while this caller waited.
+	fresh, err := s.wantableFromID(ctx, string(w.ID()))
+	if err != nil || !fresh.Monitored() {
+		return searchTally{}, nil
+	}
+	profile, err := s.db.GetProfile(ctx, fresh.ProfileID())
+	if err != nil {
+		return searchTally{}, err
+	}
+	if !wants(profile, fresh) || len(s.notInFlight(ctx, []domain.Wantable{fresh})) == 0 {
+		return searchTally{}, nil
+	}
+	w = fresh
+	return s.searchAndGrabBestReserved(ctx, w, enabled, allowed, beforeGrab)
+}
+
+func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantable,
+	enabled []ports.IndexerConfig, allowed candidatePredicate, beforeGrab func() error) (searchTally, error) {
 	var tally searchTally
 	profile, err := s.db.GetProfile(ctx, w.ProfileID())
 	if err != nil {
@@ -313,6 +374,9 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 						continue
 					}
 					parsed := parser.Parse(release.Title)
+					if allowed != nil && !allowed(parsed) {
+						continue
+					}
 					if !releaseMatch(release, parsed, w, identityIndex).Matched {
 						continue
 					}
@@ -361,6 +425,9 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 			continue
 		}
 		p := parser.Parse(r.Title)
+		if allowed != nil && !allowed(p) {
+			continue
+		}
 		match := releaseMatch(r, p, w, identityIndex)
 		if !match.Matched {
 			continue
@@ -382,6 +449,17 @@ func (s *Service) searchAndGrabBest(ctx context.Context, w domain.Wantable,
 	if best == nil {
 		return tally, nil
 	}
+	if capped, _ := s.regrabCapped(ctx, w); capped {
+		return tally, nil
+	}
+	if len(s.notInFlight(ctx, []domain.Wantable{w})) == 0 {
+		return tally, nil
+	}
+	if beforeGrab != nil {
+		if err := beforeGrab(); err != nil {
+			return tally, err
+		}
+	}
 	if err := s.autoGrab(ctx, w, best.r, best.evidence); err != nil {
 		return tally, fmt.Errorf("grab %q: %w", best.r.Title, err)
 	}
@@ -399,6 +477,11 @@ type WantedSummary struct {
 	Missing     bool   `json:"missing"` // false = cutoff unmet (upgrade wanted)
 	Current     string `json:"current"` // current quality display, "" if missing
 	Copy        string `json:"copy"`    // media-copy label; "" = the primary
+	Reason      string `json:"reason"`  // missing | upgrade
+	Kind        string `json:"kind"`    // movie | series | book
+	CopyID      int64  `json:"copyId"`  // 0 = primary
+	Season      *int   `json:"season,omitempty"`
+	Episode     *int   `json:"episode,omitempty"`
 }
 
 // WantedList renders the wanted index for the API, stably ordered.
@@ -411,18 +494,20 @@ func (s *Service) WantedList(ctx context.Context) ([]WantedSummary, error) {
 	for _, w := range wanted {
 		ws := WantedSummary{
 			WantableID: string(w.ID()), MediaItemID: w.MediaItemID(), Missing: true,
-			Copy: domain.WantableCopyName(w),
+			Copy: domain.WantableCopyName(w), CopyID: domain.WantableCopy(w), Reason: "missing",
 		}
 		if q, ok := w.CurrentQuality(); ok {
-			ws.Missing, ws.Current = false, q.Display()
+			ws.Missing, ws.Current, ws.Reason = false, q.Display(), "upgrade"
 		}
 		switch t := w.(type) {
 		case domain.MovieWantable:
-			ws.Title, ws.Detail = t.Title, fmt.Sprintf("(%d)", t.Year)
+			ws.Title, ws.Detail, ws.Kind = t.Title, fmt.Sprintf("(%d)", t.Year), "movie"
 		case domain.EpisodeWantable:
-			ws.Title, ws.Detail = t.Title, fmt.Sprintf("S%02dE%02d", t.Season, t.Episode)
+			season, episode := t.Season, t.Episode
+			ws.Title, ws.Detail, ws.Kind = t.Title, fmt.Sprintf("S%02dE%02d", t.Season, t.Episode), "series"
+			ws.Season, ws.Episode = &season, &episode
 		case domain.BookWantable:
-			ws.Title = t.Title
+			ws.Title, ws.Kind = t.Title, "book"
 			if t.Author != "" {
 				ws.Detail = "by " + t.Author
 			}

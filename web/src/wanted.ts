@@ -1,23 +1,100 @@
-import type { WantedItem } from './api'
+import type { WantedItem, WantedReason } from './api'
 
-export type WantedFilter = 'all' | 'missing' | 'upgrade'
+export type WantedFilter = 'all' | WantedReason
 export type WantedSort = 'title' | 'reason' | 'kind'
 
-/** The reason text is deliberately shared by the row and the text search. */
+export interface WantedGroup {
+  mediaItemId: number
+  title: string
+  kind: WantedItem['kind']
+  children: WantedItem[]
+  missing: number
+  upgrade: number
+}
+
 export function wantedReason(item: WantedItem): string {
-  return item.missing ? 'missing' : `upgrade from ${item.current || 'current quality'}`
+  return item.reason === 'missing' ? 'missing' : `upgrade from ${item.current || 'current quality'}`
 }
 
 export function wantedKind(item: WantedItem): string {
-  const kind = item.wantableId.split(':', 1)[0]
-  if (kind === 'episode' || kind === 'season') return 'series'
-  return kind
+  return item.kind
+}
+
+export function wantedText(item: WantedItem): string[] {
+  return [
+    item.title,
+    item.detail,
+    item.copy,
+    item.kind,
+    wantedReason(item),
+    item.current,
+    item.wantableId,
+  ]
+}
+
+function compareText(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+}
+
+export function compareWantedChildren(a: WantedItem, b: WantedItem): number {
+  return (a.season ?? -1) - (b.season ?? -1) ||
+    (a.episode ?? -1) - (b.episode ?? -1) ||
+    a.copyId - b.copyId ||
+    compareText(a.wantableId, b.wantableId)
+}
+
+export function groupWanted(items: WantedItem[]): WantedGroup[] {
+  const groups = new Map<number, WantedGroup>()
+  for (const item of items) {
+    let group = groups.get(item.mediaItemId)
+    if (!group) {
+      group = {
+        mediaItemId: item.mediaItemId,
+        title: item.title,
+        kind: item.kind,
+        children: [],
+        missing: 0,
+        upgrade: 0,
+      }
+      groups.set(item.mediaItemId, group)
+    }
+    group.children.push(item)
+    group[item.reason]++
+  }
+  for (const group of groups.values()) group.children.sort(compareWantedChildren)
+  return [...groups.values()]
 }
 
 /**
- * Apply all wanted-list controls in one place so filtering, searching, counts,
- * and pagination cannot quietly disagree about which rows are visible.
+ * Reason-filter children first, then retain whole groups on a text hit. Text
+ * search never narrows siblings or a group action's target count.
  */
+export function selectWantedGroups(
+  items: WantedItem[],
+  filter: WantedFilter,
+  query: string,
+  sort: WantedSort,
+  direction: 'asc' | 'desc',
+): WantedGroup[] {
+  const reasonVisible = filter === 'all' ? items : items.filter((item) => item.reason === filter)
+  const needle = query.trim().toLocaleLowerCase()
+  const groups = groupWanted(reasonVisible).filter((group) => {
+    if (!needle) return true
+    if ([group.title, group.kind].some((value) => value.toLocaleLowerCase().includes(needle))) return true
+    return group.children.some((item) => wantedText(item).some((value) => value.toLocaleLowerCase().includes(needle)))
+  })
+
+  return groups.sort((a, b) => {
+    const left = sort === 'reason' ? (a.missing > 0 ? 'missing' : 'upgrade') : sort === 'kind' ? a.kind : a.title
+    const right = sort === 'reason' ? (b.missing > 0 ? 'missing' : 'upgrade') : sort === 'kind' ? b.kind : b.title
+    const primary = compareText(left, right)
+    if (primary !== 0) return direction === 'asc' ? primary : -primary
+    return compareText(a.title, b.title) || a.mediaItemId - b.mediaItemId
+  })
+}
+
+// Retained for callers/tests that need a flat projection. New page behavior
+// uses selectWantedGroups so pagination can never split one title.
 export function selectWanted(
   items: WantedItem[],
   filter: WantedFilter,
@@ -25,32 +102,5 @@ export function selectWanted(
   sort: WantedSort,
   direction: 'asc' | 'desc',
 ): WantedItem[] {
-  const needle = query.trim().toLocaleLowerCase()
-  const selected = items.filter((item) => {
-    if (filter === 'missing' && !item.missing) return false
-    if (filter === 'upgrade' && item.missing) return false
-    if (!needle) return true
-
-    // Searching for "missing" or "upgrade" is useful in its own right, while
-    // the remaining fields make this a normal title/detail/copy search too.
-    return [
-      item.title,
-      item.detail,
-      item.copy,
-      wantedKind(item),
-      wantedReason(item),
-      item.current,
-      item.wantableId,
-    ].some((value) => value.toLocaleLowerCase().includes(needle))
-  })
-
-  const compare = (a: WantedItem, b: WantedItem): number => {
-    const left = sort === 'reason' ? wantedReason(a) : sort === 'kind' ? wantedKind(a) : a.title
-    const right = sort === 'reason' ? wantedReason(b) : sort === 'kind' ? wantedKind(b) : b.title
-    const primary = left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })
-    if (primary !== 0) return direction === 'asc' ? primary : -primary
-    return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
-  }
-
-  return [...selected].sort(compare)
+  return selectWantedGroups(items, filter, query, sort, direction).flatMap((group) => group.children)
 }

@@ -43,6 +43,12 @@ type apiEnv struct {
 	root string
 }
 
+type apiWantedQueue struct{ db *sqlite.DB }
+
+func (q apiWantedQueue) Enqueue(ctx context.Context, job domain.Job) (int64, error) {
+	return q.db.EnqueueJob(ctx, job)
+}
+
 // fakeIndexer answers a fixed candidate list, so the search and grab
 // handlers have something to rank without a network. The release is sized
 // like a real 1080p feature: the plausibility gate (ADR 0015's neighbour,
@@ -145,6 +151,7 @@ func newAPIEnv(t *testing.T) *apiEnv {
 	indexerFactory := func(cfg ports.IndexerConfig) ports.Indexer { return fakeIndexer{cfg} }
 	clientFactory := func(cfg ports.ClientConfig) ports.DownloadClient { return fakeClient{cfg} }
 	acq := acquisition.New(db, b, nil, indexerFactory, clientFactory)
+	acq.WithWantedSearchQueue(apiWantedQueue{db: db})
 
 	sched := scheduler.New(nil, b, nil)
 	for _, name := range []string{ScanTaskName, "rss.sync", "backlog.search"} {

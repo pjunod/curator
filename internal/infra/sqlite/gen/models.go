@@ -308,3 +308,44 @@ type Season struct {
 	Number      int64
 	Monitored   int64
 }
+
+type WantedSearchRun struct {
+	RunID             string
+	Scope             string
+	Reason            string
+	MediaItemID       int64
+	WantableID        string
+	ScopeLabel        string
+	Status            string
+	CreatedAt         int64
+	StartedAt         int64
+	FinishedAt        int64
+	CancelRequestedAt int64
+	TargetDelayMs     int64
+	Selected          int64
+	Processed         int64
+	Searched          int64
+	Skipped           int64
+	Failed            int64
+	Grabbed           int64
+	Cursor            int64
+	NextReadyAt       int64
+	JobID             int64
+	Error             string
+}
+
+type WantedSearchTarget struct {
+	RunID          string
+	Ordinal        int64
+	WantableID     string
+	SelectedReason string
+	Label          string
+	State          string
+	Skipped        string
+	Seen           int64
+	Matched        int64
+	Accepted       int64
+	Grabbed        string
+	Error          string
+	FinishedAt     int64
+}

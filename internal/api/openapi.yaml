@@ -2357,6 +2357,103 @@ paths:
                 items:
                   $ref: "#/components/schemas/WantedItem"
 
+  /wanted/searches:
+    post:
+      operationId: createWantedSearch
+      summary: Search an exact server-owned Wanted scope in the durable queue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WantedSearchRequest"
+      responses:
+        "202":
+          description: Accepted, or an identical active run reused.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WantedSearchRun" }
+        "400":
+          description: Invalid discriminated scope or pacing.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: The selected item or target does not exist.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: A different run owns the active slot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WantedSearchConflict" }
+
+  /wanted/searches/{runId}:
+    get:
+      operationId: getWantedSearch
+      summary: Durable progress for one explicit Wanted search
+      parameters:
+        - $ref: "#/components/parameters/WantedSearchRunId"
+      responses:
+        "200":
+          description: Current progress.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WantedSearchRun" }
+        "404":
+          description: Unknown or expired run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /wanted/searches/{runId}/results:
+    get:
+      operationId: listWantedSearchResults
+      summary: Paginated terminal target reports for a Wanted search
+      parameters:
+        - $ref: "#/components/parameters/WantedSearchRunId"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Terminal target reports in accepted order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WantedSearchResultsPage" }
+        "404":
+          description: Unknown or expired run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /wanted/searches/{runId}/cancel:
+    post:
+      operationId: cancelWantedSearch
+      summary: Stop a Wanted search after its current bounded operation drains
+      parameters:
+        - $ref: "#/components/parameters/WantedSearchRunId"
+      responses:
+        "200":
+          description: The run was already terminal and is unchanged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WantedSearchRun" }
+        "202":
+          description: Cancellation persisted; active work is draining.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WantedSearchRun" }
+        "404":
+          description: Unknown or expired run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /blocklist:
     get:
       operationId: listBlocklist
@@ -2407,6 +2504,12 @@ paths:
                 type: string
 
 components:
+  parameters:
+    WantedSearchRunId:
+      name: runId
+      in: path
+      required: true
+      schema: { type: string }
   schemas:
     SystemStatus:
       type: object
@@ -3770,8 +3873,10 @@ components:
           description: >
             Set when the target was not searched, and why. "unmonitored" means
             monitoring is off for it; "downloading" means it already has a
-            download in progress.
-          enum: [unmonitored, downloading]
+            download in progress. Exact Wanted runs can additionally report a
+            target that disappeared, changed reason, reached its re-grab cap,
+            or was left by cancellation.
+          enum: [unmonitored, downloading, no_longer_wanted, reason_changed, regrab_capped, cancelled]
         seen:
           type: integer
           description: Distinct releases the indexers returned for this target.
@@ -4134,7 +4239,7 @@ components:
 
     WantedItem:
       type: object
-      required: [wantableId, mediaItemId, title, detail, missing, current, copy]
+      required: [wantableId, mediaItemId, title, detail, missing, current, copy, reason, kind, copyId]
       properties:
         wantableId:
           type: string
@@ -4153,6 +4258,121 @@ components:
         copy:
           type: string
           description: Label of the quality copy this entry hunts for; "" = the primary.
+        reason:
+          type: string
+          enum: [missing, upgrade]
+        kind:
+          type: string
+          enum: [movie, series, book]
+        copyId:
+          type: integer
+          format: int64
+          description: 0 is the primary; positive values name an additional copy or edition.
+        season:
+          type: integer
+          description: Series episodes only.
+        episode:
+          type: integer
+          description: Series episodes only.
+
+    WantedSearchScope:
+      type: object
+      required: [scope]
+      properties:
+        scope:
+          type: string
+          enum: [all, reason, group, target]
+        reason:
+          type: string
+          enum: [missing, upgrade]
+        mediaItemId:
+          type: integer
+          format: int64
+        wantableId:
+          type: string
+
+    WantedSearchRequest:
+      type: object
+      required: [scope]
+      additionalProperties: false
+      properties:
+        scope:
+          type: string
+          enum: [all, reason, group, target]
+        reason:
+          type: string
+          enum: [missing, upgrade]
+        mediaItemId:
+          type: integer
+          format: int64
+        wantableId:
+          type: string
+        targetDelayMs:
+          type: integer
+          minimum: 0
+          maximum: 60000
+          default: 1000
+
+    WantedSearchRun:
+      type: object
+      required:
+        [runId, scope, scopeLabel, status, createdAt, targetDelayMs, selected,
+         processed, searched, skipped, failed, grabbed]
+      properties:
+        runId: { type: string }
+        scope: { $ref: "#/components/schemas/WantedSearchScope" }
+        scopeLabel: { type: string }
+        status:
+          type: string
+          enum: [queued, running, completed, failed, interrupted, cancelled]
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+        cancelRequestedAt: { type: string, format: date-time }
+        targetDelayMs: { type: integer }
+        selected: { type: integer }
+        processed: { type: integer }
+        searched: { type: integer }
+        skipped: { type: integer }
+        failed: { type: integer }
+        grabbed: { type: integer }
+        error: { type: string }
+
+    WantedSearchResult:
+      type: object
+      required: [ordinal, wantableId, label, state, seen, matched, accepted, finishedAt]
+      properties:
+        ordinal: { type: integer }
+        wantableId: { type: string }
+        label: { type: string }
+        state: { type: string, enum: [searched, skipped, failed] }
+        skipped:
+          type: string
+          enum: [unmonitored, downloading, no_longer_wanted, reason_changed, regrab_capped, cancelled]
+        seen: { type: integer }
+        matched: { type: integer }
+        accepted: { type: integer }
+        grabbed: { type: string }
+        error: { type: string }
+        finishedAt: { type: string, format: date-time }
+
+    WantedSearchResultsPage:
+      type: object
+      required: [items, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WantedSearchResult" }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    WantedSearchConflict:
+      type: object
+      required: [activeRunId, canCancel, message]
+      properties:
+        activeRunId: { type: string }
+        canCancel: { type: boolean }
+        message: { type: string }
 
     BlocklistEntry:
       type: object

@@ -37,14 +37,26 @@ func (e AddMediaRequestMonitor) Valid() bool {
 
 // Defines values for AutoSearchTargetSkipped.
 const (
-	AutoSearchTargetSkippedDownloading AutoSearchTargetSkipped = "downloading"
-	AutoSearchTargetSkippedUnmonitored AutoSearchTargetSkipped = "unmonitored"
+	AutoSearchTargetSkippedCancelled      AutoSearchTargetSkipped = "cancelled"
+	AutoSearchTargetSkippedDownloading    AutoSearchTargetSkipped = "downloading"
+	AutoSearchTargetSkippedNoLongerWanted AutoSearchTargetSkipped = "no_longer_wanted"
+	AutoSearchTargetSkippedReasonChanged  AutoSearchTargetSkipped = "reason_changed"
+	AutoSearchTargetSkippedRegrabCapped   AutoSearchTargetSkipped = "regrab_capped"
+	AutoSearchTargetSkippedUnmonitored    AutoSearchTargetSkipped = "unmonitored"
 )
 
 // Valid indicates whether the value is a known member of the AutoSearchTargetSkipped enum.
 func (e AutoSearchTargetSkipped) Valid() bool {
 	switch e {
+	case AutoSearchTargetSkippedCancelled:
+		return true
 	case AutoSearchTargetSkippedDownloading:
+		return true
+	case AutoSearchTargetSkippedNoLongerWanted:
+		return true
+	case AutoSearchTargetSkippedReasonChanged:
+		return true
+	case AutoSearchTargetSkippedRegrabCapped:
 		return true
 	case AutoSearchTargetSkippedUnmonitored:
 		return true
@@ -610,16 +622,16 @@ func (e ProposalConfidence) Valid() bool {
 
 // Defines values for QueueItemImportState.
 const (
-	Queued  QueueItemImportState = "queued"
-	Running QueueItemImportState = "running"
+	QueueItemImportStateQueued  QueueItemImportState = "queued"
+	QueueItemImportStateRunning QueueItemImportState = "running"
 )
 
 // Valid indicates whether the value is a known member of the QueueItemImportState enum.
 func (e QueueItemImportState) Valid() bool {
 	switch e {
-	case Queued:
+	case QueueItemImportStateQueued:
 		return true
-	case Running:
+	case QueueItemImportStateRunning:
 		return true
 	default:
 		return false
@@ -710,6 +722,210 @@ func (e TransferStage) Valid() bool {
 	case TransferStageImporting:
 		return true
 	case TransferStageNotifying:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WantedItemKind.
+const (
+	WantedItemKindBook   WantedItemKind = "book"
+	WantedItemKindMovie  WantedItemKind = "movie"
+	WantedItemKindSeries WantedItemKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the WantedItemKind enum.
+func (e WantedItemKind) Valid() bool {
+	switch e {
+	case WantedItemKindBook:
+		return true
+	case WantedItemKindMovie:
+		return true
+	case WantedItemKindSeries:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WantedItemReason.
+const (
+	WantedItemReasonMissing WantedItemReason = "missing"
+	WantedItemReasonUpgrade WantedItemReason = "upgrade"
+)
+
+// Valid indicates whether the value is a known member of the WantedItemReason enum.
+func (e WantedItemReason) Valid() bool {
+	switch e {
+	case WantedItemReasonMissing:
+		return true
+	case WantedItemReasonUpgrade:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WantedSearchRequestReason.
+const (
+	WantedSearchRequestReasonMissing WantedSearchRequestReason = "missing"
+	WantedSearchRequestReasonUpgrade WantedSearchRequestReason = "upgrade"
+)
+
+// Valid indicates whether the value is a known member of the WantedSearchRequestReason enum.
+func (e WantedSearchRequestReason) Valid() bool {
+	switch e {
+	case WantedSearchRequestReasonMissing:
+		return true
+	case WantedSearchRequestReasonUpgrade:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WantedSearchRequestScope.
+const (
+	WantedSearchRequestScopeAll    WantedSearchRequestScope = "all"
+	WantedSearchRequestScopeGroup  WantedSearchRequestScope = "group"
+	WantedSearchRequestScopeReason WantedSearchRequestScope = "reason"
+	WantedSearchRequestScopeTarget WantedSearchRequestScope = "target"
+)
+
+// Valid indicates whether the value is a known member of the WantedSearchRequestScope enum.
+func (e WantedSearchRequestScope) Valid() bool {
+	switch e {
+	case WantedSearchRequestScopeAll:
+		return true
+	case WantedSearchRequestScopeGroup:
+		return true
+	case WantedSearchRequestScopeReason:
+		return true
+	case WantedSearchRequestScopeTarget:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WantedSearchResultSkipped.
+const (
+	WantedSearchResultSkippedCancelled      WantedSearchResultSkipped = "cancelled"
+	WantedSearchResultSkippedDownloading    WantedSearchResultSkipped = "downloading"
+	WantedSearchResultSkippedNoLongerWanted WantedSearchResultSkipped = "no_longer_wanted"
+	WantedSearchResultSkippedReasonChanged  WantedSearchResultSkipped = "reason_changed"
+	WantedSearchResultSkippedRegrabCapped   WantedSearchResultSkipped = "regrab_capped"
+	WantedSearchResultSkippedUnmonitored    WantedSearchResultSkipped = "unmonitored"
+)
+
+// Valid indicates whether the value is a known member of the WantedSearchResultSkipped enum.
+func (e WantedSearchResultSkipped) Valid() bool {
+	switch e {
+	case WantedSearchResultSkippedCancelled:
+		return true
+	case WantedSearchResultSkippedDownloading:
+		return true
+	case WantedSearchResultSkippedNoLongerWanted:
+		return true
+	case WantedSearchResultSkippedReasonChanged:
+		return true
+	case WantedSearchResultSkippedRegrabCapped:
+		return true
+	case WantedSearchResultSkippedUnmonitored:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WantedSearchResultState.
+const (
+	WantedSearchResultStateFailed   WantedSearchResultState = "failed"
+	WantedSearchResultStateSearched WantedSearchResultState = "searched"
+	WantedSearchResultStateSkipped  WantedSearchResultState = "skipped"
+)
+
+// Valid indicates whether the value is a known member of the WantedSearchResultState enum.
+func (e WantedSearchResultState) Valid() bool {
+	switch e {
+	case WantedSearchResultStateFailed:
+		return true
+	case WantedSearchResultStateSearched:
+		return true
+	case WantedSearchResultStateSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WantedSearchRunStatus.
+const (
+	WantedSearchRunStatusCancelled   WantedSearchRunStatus = "cancelled"
+	WantedSearchRunStatusCompleted   WantedSearchRunStatus = "completed"
+	WantedSearchRunStatusFailed      WantedSearchRunStatus = "failed"
+	WantedSearchRunStatusInterrupted WantedSearchRunStatus = "interrupted"
+	WantedSearchRunStatusQueued      WantedSearchRunStatus = "queued"
+	WantedSearchRunStatusRunning     WantedSearchRunStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the WantedSearchRunStatus enum.
+func (e WantedSearchRunStatus) Valid() bool {
+	switch e {
+	case WantedSearchRunStatusCancelled:
+		return true
+	case WantedSearchRunStatusCompleted:
+		return true
+	case WantedSearchRunStatusFailed:
+		return true
+	case WantedSearchRunStatusInterrupted:
+		return true
+	case WantedSearchRunStatusQueued:
+		return true
+	case WantedSearchRunStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WantedSearchScopeReason.
+const (
+	WantedSearchScopeReasonMissing WantedSearchScopeReason = "missing"
+	WantedSearchScopeReasonUpgrade WantedSearchScopeReason = "upgrade"
+)
+
+// Valid indicates whether the value is a known member of the WantedSearchScopeReason enum.
+func (e WantedSearchScopeReason) Valid() bool {
+	switch e {
+	case WantedSearchScopeReasonMissing:
+		return true
+	case WantedSearchScopeReasonUpgrade:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WantedSearchScopeScope.
+const (
+	WantedSearchScopeScopeAll    WantedSearchScopeScope = "all"
+	WantedSearchScopeScopeGroup  WantedSearchScopeScope = "group"
+	WantedSearchScopeScopeReason WantedSearchScopeScope = "reason"
+	WantedSearchScopeScopeTarget WantedSearchScopeScope = "target"
+)
+
+// Valid indicates whether the value is a known member of the WantedSearchScopeScope enum.
+func (e WantedSearchScopeScope) Valid() bool {
+	switch e {
+	case WantedSearchScopeScopeAll:
+		return true
+	case WantedSearchScopeScopeGroup:
+		return true
+	case WantedSearchScopeScopeReason:
+		return true
+	case WantedSearchScopeScopeTarget:
 		return true
 	default:
 		return false
@@ -838,12 +1054,12 @@ type AutoSearchTarget struct {
 	// Seen Distinct releases the indexers returned for this target.
 	Seen int `json:"seen"`
 
-	// Skipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress.
+	// Skipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress. Exact Wanted runs can additionally report a target that disappeared, changed reason, reached its re-grab cap, or was left by cancellation.
 	Skipped    *AutoSearchTargetSkipped `json:"skipped,omitempty"`
 	WantableId string                   `json:"wantableId"`
 }
 
-// AutoSearchTargetSkipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress.
+// AutoSearchTargetSkipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress. Exact Wanted runs can additionally report a target that disappeared, changed reason, reached its re-grab cap, or was left by cancellation.
 type AutoSearchTargetSkipped string
 
 // BackupInfo defines model for BackupInfo.
@@ -2115,16 +2331,123 @@ type UpdateMediaItemRequest struct {
 // WantedItem defines model for WantedItem.
 type WantedItem struct {
 	// Copy Label of the quality copy this entry hunts for; "" = the primary.
-	Copy        string `json:"copy"`
-	Current     string `json:"current"`
-	Detail      string `json:"detail"`
-	MediaItemId int64  `json:"mediaItemId"`
+	Copy string `json:"copy"`
+
+	// CopyId 0 is the primary; positive values name an additional copy or edition.
+	CopyId  int64  `json:"copyId"`
+	Current string `json:"current"`
+	Detail  string `json:"detail"`
+
+	// Episode Series episodes only.
+	Episode     *int           `json:"episode,omitempty"`
+	Kind        WantedItemKind `json:"kind"`
+	MediaItemId int64          `json:"mediaItemId"`
 
 	// Missing false = on disk but below the profile cutoff.
-	Missing    bool   `json:"missing"`
+	Missing bool             `json:"missing"`
+	Reason  WantedItemReason `json:"reason"`
+
+	// Season Series episodes only.
+	Season     *int   `json:"season,omitempty"`
 	Title      string `json:"title"`
 	WantableId string `json:"wantableId"`
 }
+
+// WantedItemKind defines model for WantedItem.Kind.
+type WantedItemKind string
+
+// WantedItemReason defines model for WantedItem.Reason.
+type WantedItemReason string
+
+// WantedSearchConflict defines model for WantedSearchConflict.
+type WantedSearchConflict struct {
+	ActiveRunId string `json:"activeRunId"`
+	CanCancel   bool   `json:"canCancel"`
+	Message     string `json:"message"`
+}
+
+// WantedSearchRequest defines model for WantedSearchRequest.
+type WantedSearchRequest struct {
+	MediaItemId   *int64                     `json:"mediaItemId,omitempty"`
+	Reason        *WantedSearchRequestReason `json:"reason,omitempty"`
+	Scope         WantedSearchRequestScope   `json:"scope"`
+	TargetDelayMs *int                       `json:"targetDelayMs,omitempty"`
+	WantableId    *string                    `json:"wantableId,omitempty"`
+}
+
+// WantedSearchRequestReason defines model for WantedSearchRequest.Reason.
+type WantedSearchRequestReason string
+
+// WantedSearchRequestScope defines model for WantedSearchRequest.Scope.
+type WantedSearchRequestScope string
+
+// WantedSearchResult defines model for WantedSearchResult.
+type WantedSearchResult struct {
+	Accepted   int                        `json:"accepted"`
+	Error      *string                    `json:"error,omitempty"`
+	FinishedAt time.Time                  `json:"finishedAt"`
+	Grabbed    *string                    `json:"grabbed,omitempty"`
+	Label      string                     `json:"label"`
+	Matched    int                        `json:"matched"`
+	Ordinal    int                        `json:"ordinal"`
+	Seen       int                        `json:"seen"`
+	Skipped    *WantedSearchResultSkipped `json:"skipped,omitempty"`
+	State      WantedSearchResultState    `json:"state"`
+	WantableId string                     `json:"wantableId"`
+}
+
+// WantedSearchResultSkipped defines model for WantedSearchResult.Skipped.
+type WantedSearchResultSkipped string
+
+// WantedSearchResultState defines model for WantedSearchResult.State.
+type WantedSearchResultState string
+
+// WantedSearchResultsPage defines model for WantedSearchResultsPage.
+type WantedSearchResultsPage struct {
+	Items  []WantedSearchResult `json:"items"`
+	Limit  int                  `json:"limit"`
+	Offset int                  `json:"offset"`
+}
+
+// WantedSearchRun defines model for WantedSearchRun.
+type WantedSearchRun struct {
+	CancelRequestedAt *time.Time            `json:"cancelRequestedAt,omitempty"`
+	CreatedAt         time.Time             `json:"createdAt"`
+	Error             *string               `json:"error,omitempty"`
+	Failed            int                   `json:"failed"`
+	FinishedAt        *time.Time            `json:"finishedAt,omitempty"`
+	Grabbed           int                   `json:"grabbed"`
+	Processed         int                   `json:"processed"`
+	RunId             string                `json:"runId"`
+	Scope             WantedSearchScope     `json:"scope"`
+	ScopeLabel        string                `json:"scopeLabel"`
+	Searched          int                   `json:"searched"`
+	Selected          int                   `json:"selected"`
+	Skipped           int                   `json:"skipped"`
+	StartedAt         *time.Time            `json:"startedAt,omitempty"`
+	Status            WantedSearchRunStatus `json:"status"`
+	TargetDelayMs     int                   `json:"targetDelayMs"`
+}
+
+// WantedSearchRunStatus defines model for WantedSearchRun.Status.
+type WantedSearchRunStatus string
+
+// WantedSearchScope defines model for WantedSearchScope.
+type WantedSearchScope struct {
+	MediaItemId *int64                   `json:"mediaItemId,omitempty"`
+	Reason      *WantedSearchScopeReason `json:"reason,omitempty"`
+	Scope       WantedSearchScopeScope   `json:"scope"`
+	WantableId  *string                  `json:"wantableId,omitempty"`
+}
+
+// WantedSearchScopeReason defines model for WantedSearchScope.Reason.
+type WantedSearchScopeReason string
+
+// WantedSearchScopeScope defines model for WantedSearchScope.Scope.
+type WantedSearchScopeScope string
+
+// WantedSearchRunId defines model for WantedSearchRunId.
+type WantedSearchRunId = string
 
 // LoginJSONBody defines parameters for Login.
 type LoginJSONBody struct {
@@ -2316,6 +2639,12 @@ type UpdateRootFolderJSONBody struct {
 	Kind RootKind `json:"kind"`
 }
 
+// ListWantedSearchResultsParams defines parameters for ListWantedSearchResults.
+type ListWantedSearchResultsParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody LoginJSONBody
 
@@ -2408,6 +2737,9 @@ type UpdateRootFolderJSONRequestBody UpdateRootFolderJSONBody
 
 // UpdateSettingsJSONRequestBody defines body for UpdateSettings for application/json ContentType.
 type UpdateSettingsJSONRequestBody = SettingsUpdate
+
+// CreateWantedSearchJSONRequestBody defines body for CreateWantedSearch for application/json ContentType.
+type CreateWantedSearchJSONRequestBody = WantedSearchRequest
 
 // PlurxWebhookJSONRequestBody defines body for PlurxWebhook for application/json ContentType.
 type PlurxWebhookJSONRequestBody = PlurxWatchedEvent
@@ -2708,6 +3040,18 @@ type ServerInterface interface {
 	// ListWanted Everything still wanted (missing or below cutoff)
 	// (GET /wanted)
 	ListWanted(w http.ResponseWriter, r *http.Request)
+	// CreateWantedSearch Search an exact server-owned Wanted scope in the durable queue
+	// (POST /wanted/searches)
+	CreateWantedSearch(w http.ResponseWriter, r *http.Request)
+	// GetWantedSearch Durable progress for one explicit Wanted search
+	// (GET /wanted/searches/{runId})
+	GetWantedSearch(w http.ResponseWriter, r *http.Request, runId WantedSearchRunId)
+	// CancelWantedSearch Stop a Wanted search after its current bounded operation drains
+	// (POST /wanted/searches/{runId}/cancel)
+	CancelWantedSearch(w http.ResponseWriter, r *http.Request, runId WantedSearchRunId)
+	// ListWantedSearchResults Paginated terminal target reports for a Wanted search
+	// (GET /wanted/searches/{runId}/results)
+	ListWantedSearchResults(w http.ResponseWriter, r *http.Request, runId WantedSearchRunId, params ListWantedSearchResultsParams)
 	// PlurxWebhook Receive a watch-state notification from plurx
 	// (POST /webhooks/plurx)
 	PlurxWebhook(w http.ResponseWriter, r *http.Request)
@@ -5126,6 +5470,127 @@ func (siw *ServerInterfaceWrapper) ListWanted(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// CreateWantedSearch operation middleware
+func (siw *ServerInterfaceWrapper) CreateWantedSearch(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateWantedSearch(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetWantedSearch operation middleware
+func (siw *ServerInterfaceWrapper) GetWantedSearch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "runId" -------------
+	var runId WantedSearchRunId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runId", r.PathValue("runId"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWantedSearch(w, r, runId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelWantedSearch operation middleware
+func (siw *ServerInterfaceWrapper) CancelWantedSearch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "runId" -------------
+	var runId WantedSearchRunId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runId", r.PathValue("runId"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelWantedSearch(w, r, runId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWantedSearchResults operation middleware
+func (siw *ServerInterfaceWrapper) ListWantedSearchResults(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "runId" -------------
+	var runId WantedSearchRunId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runId", r.PathValue("runId"), &runId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListWantedSearchResultsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWantedSearchResults(w, r, runId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PlurxWebhook operation middleware
 func (siw *ServerInterfaceWrapper) PlurxWebhook(w http.ResponseWriter, r *http.Request) {
 
@@ -5356,6 +5821,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/backups", wrapper.ListBackups)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/calendar", wrapper.GetCalendar)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted", wrapper.ListWanted)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/wanted/searches", wrapper.CreateWantedSearch)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted/searches/{runId}", wrapper.GetWantedSearch)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted/searches/{runId}/results", wrapper.ListWantedSearchResults)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/wanted/searches/{runId}/cancel", wrapper.CancelWantedSearch)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/blocklist", wrapper.ListBlocklist)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/blocklist/{id}", wrapper.RemoveBlocklistEntry)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/events", wrapper.StreamEvents)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WantedItem } from './api'
-import { selectWanted, wantedKind, wantedReason } from './wanted'
+import { selectWanted, selectWantedGroups, wantedKind, wantedReason } from './wanted'
 
 function item(over: Partial<WantedItem> = {}): WantedItem {
   return {
@@ -11,6 +11,9 @@ function item(over: Partial<WantedItem> = {}): WantedItem {
     missing: true,
     current: '',
     copy: '',
+    copyId: 0,
+    reason: 'missing',
+    kind: 'movie',
     ...over,
   }
 }
@@ -24,6 +27,8 @@ const rows = [
     detail: 'Season 1',
     missing: false,
     current: 'HDTV-720p',
+    reason: 'upgrade',
+    kind: 'series',
   }),
   item({
     wantableId: 'book:3:c9',
@@ -31,6 +36,8 @@ const rows = [
     title: 'Ancillary Justice',
     detail: 'by Ann Leckie',
     copy: 'Audiobook',
+    copyId: 9,
+    kind: 'book',
   }),
 ]
 
@@ -43,6 +50,27 @@ describe('wanted list controls', () => {
     expect(selectWanted(rows, 'upgrade', '', 'title', 'asc').map((row) => row.title)).toEqual([
       'Severance',
     ])
+  })
+
+  it('groups by item id, keeps duplicate titles separate, and orders episode numbers numerically', () => {
+    const episodes = [
+      item({ wantableId: 'episode:9:1:10', mediaItemId: 9, title: 'Same', kind: 'series', season: 1, episode: 10, detail: 'S01E10' }),
+      item({ wantableId: 'episode:10:1:1', mediaItemId: 10, title: 'Same', kind: 'series', season: 1, episode: 1, detail: 'S01E01' }),
+      item({ wantableId: 'episode:9:1:2', mediaItemId: 9, title: 'Same', kind: 'series', season: 1, episode: 2, detail: 'S01E02' }),
+    ]
+    const groups = selectWantedGroups(episodes, 'all', '', 'title', 'asc')
+    expect(groups.map((group) => group.mediaItemId)).toEqual([9, 10])
+    expect(groups[0].children.map((child) => child.episode)).toEqual([2, 10])
+  })
+
+  it('retains all reason-visible siblings when text matches one child', () => {
+    const episodes = [
+      item({ wantableId: 'episode:9:1:1', mediaItemId: 9, title: 'Show', kind: 'series', season: 1, episode: 1, detail: 'Pilot' }),
+      item({ wantableId: 'episode:9:1:2:c4', mediaItemId: 9, title: 'Show', kind: 'series', season: 1, episode: 2, detail: 'Finale', copy: '4K', copyId: 4 }),
+    ]
+    const groups = selectWantedGroups(episodes, 'missing', '4k', 'title', 'asc')
+    expect(groups).toHaveLength(1)
+    expect(groups[0].children).toHaveLength(2)
   })
 
   it('searches reason, current quality, media type, detail, and copy label', () => {

@@ -132,11 +132,13 @@ type Service struct {
 
 	// wanted caches the missing/upgradable index (Phase 3).
 	wanted           wantedIndex
+	wantedQueue      wantedJobEnqueuer
 	identityMu       sync.Mutex
 	identityRevision int64
 	identityCache    matcher.IdentityIndex
 	candidateMu      sync.Mutex
 	candidateTokens  map[string]candidateRecord
+	reservations     acquisitionReservations
 
 	// One mutex per download id, so the 30 s poll and an event arriving
 	// for the same download cannot both decide to import it. The map only

@@ -14,14 +14,20 @@ verification evidence so progress is visible without reading commit history.
 - [x] Isolated clone created from a descendant of `8ce3590`; the user's
   existing checkout remains untouched.
 - [x] Implementation branch created from current `origin/main` at `58cf1e6`.
-- [~] Source contracts and migrations are being reconciled against current
-  main.
-- [ ] Structured Wanted fields and authoritative scope selection.
-- [ ] Exact-target execution, reservations, and copy-aware regrab coverage.
-- [ ] Durable run storage, one-target queue chunks, recovery, and cancellation.
-- [ ] OpenAPI endpoints, generated types, and native API handlers.
-- [ ] Grouped Wanted UI, visible reason actions, progress, and results.
-- [ ] Usage documentation and version update.
+- [x] Source contracts and migration numbering reconciled against current
+  main; migration `0031` owns durable Wanted runs.
+- [x] Structured Wanted fields and authoritative scope selection.
+- [x] Exact-target execution, reservations, pack rejection, and copy-aware
+  regrab coverage.
+- [x] Durable run storage, one-target queue chunks, recovery, cancellation,
+  and shared queue retention.
+- [x] OpenAPI endpoints, generated types, and native API handlers.
+- [x] Grouped Wanted UI, visible reason actions, progress, persisted reload
+  reconnection, and per-target results.
+- [x] Usage/architecture documentation and version `0.25.3` update.
+- [~] Acceptance fixtures cover scope membership, grouping, pack rejection,
+  copy-aware season coverage, more than 20 targets, cancellation, API
+  validation, and storage checkpointing. The final test lane has not run.
 - [ ] Adversarial review after the complete change is merge-ready.
 - [ ] One final test lane after review; exact command scope awaits resolution
   of the repository full-gate rule versus the requested fast-lane-only policy.
@@ -43,8 +49,11 @@ verification evidence so progress is visible without reading commit history.
 ## Verification — evidence is added only when run
 
 No implementation tests have been run yet. This is intentional: the requested
-workflow defers tests until after the merge-ready adversarial review. The final
-section will name every command, result, and any check left to later CI.
+workflow defers tests until after the merge-ready adversarial review. Compile
+contracts have been checked with `go build ./...` and
+`npm --prefix web run typecheck`; both passed on 2026-09-19. Code generation
+completed with the pinned SQLC and OpenAPI generators. The final section will
+name every test command, result, and any check left to later CI.
 
 ## Open item — final local gate needs one policy choice
 
