@@ -1,6 +1,6 @@
 # Search result preview — inspect a title before adding it
 
-**Status:** implemented in v0.26.0 · final adversarial review and fast lane pending
+**Status:** implemented in v0.26.0 · adversarial review findings addressed · fast lane pending
 **Written / revised:** 2026-09-19 · **Code baseline:** `6e17670`
 
 Companion to [usage.md](usage.md) and the
@@ -519,3 +519,19 @@ The [README](../README.md) now includes this proposal in its documentation
 reading path. Before building, recheck the baseline and review this revised
 contract alongside the original comments. No application behavior is changed
 by this revision.
+
+## 9. Implementation review — 2026-09-19
+
+The final adversarial agent review requested four corrections before the first
+fast-lane run. All four are addressed in the implementation:
+
+| Finding | Correction and focused coverage |
+|---|---|
+| Native 409 followed by 503 cleared a conflict | Conflict remains latched until verified success or a new selection; native component regression covers the retry sequence. |
+| URL restoration depended on search supporting OLIDs and returning addable unambiguous records | Cold URLs retain only their validated route identity and use the preview endpoint directly. Book reload and ambiguous TVDB restoration have browser regressions. In-memory selections retain their original search payload. |
+| Coded 422 left Add enabled | Both clients preserve the unsupported reason and Add block across unsuccessful retries; native and browser cases cover recovery. |
+| Native fixed footer omitted the bottom inset | Footer padding includes the safe-area bottom inset; native component coverage supplies a nonzero inset. |
+
+No tests ran before this review. The status page records the subsequent fast
+lane and merge outcome. No feature flag or additional enablement setting is
+needed for this always-available read-only view.

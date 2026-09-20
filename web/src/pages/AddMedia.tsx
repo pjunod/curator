@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useSearch } from '@tanstack/react-router'
 import { ApiError } from '../api'
 import { MetadataPreviewDrawer } from '../MetadataPreview'
-import { parsePreviewKey, previewKey } from '../metadataPreview'
+import { matchesPreviewKey, parsePreviewKey, previewKey } from '../metadataPreview'
 import type { BookType, MediaKind, SearchResult } from '../api'
 import {
   addLibraryItem,
@@ -56,15 +56,16 @@ export function AddMediaPage() {
   const qc = useQueryClient()
 
   const [kind, setKind] = useState<MediaKind>(
-    search.kind === 'series' || search.kind === 'book' ? search.kind : 'movie',
+    parsePreviewKey(search.preview)?.kind ?? (search.kind === 'series' || search.kind === 'book' ? search.kind : 'movie'),
   )
   const [bookType, setBookType] = useState<BookType>(search.bookType ?? 'ebook')
   const [query, setQuery] = useState(search.q ?? '')
   useEffect(() => {
-    if (search.kind) setKind(search.kind)
+    const routeKind = parsePreviewKey(search.preview)?.kind ?? search.kind
+    if (routeKind) setKind(routeKind)
     if (search.q !== undefined) setQuery(search.q)
     if (search.bookType) setBookType(search.bookType)
-  }, [search.kind, search.q, search.bookType])
+  }, [search.kind, search.q, search.bookType, search.preview])
   const debouncedQuery = useDebounced(query, 400)
 
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
@@ -176,15 +177,21 @@ export function AddMediaPage() {
     },
   })
 
-  const routePreview = parsePreviewKey(search.preview)
-  const restored = useQuery({
-    queryKey: ['metadata-preview-selection', search.preview],
-    queryFn: () => searchMetadata(routePreview!.kind, `${routePreview!.provider}:${routePreview!.id}`),
-    enabled: !!routePreview && (!selection || previewKey(selection) !== search.preview),
-    retry: false,
-  })
+  // A cold URL has an exact identity, not an original search payload. Keep
+  // only that identity in its Add selection; enrichment stays in the drawer.
+  // This also works for books and locally ambiguous titles that search omits.
+  const routeSelection = useMemo<SearchResult | undefined>(() => {
+    const ref = parsePreviewKey(search.preview)
+    if (!ref) return undefined
+    return { kind: ref.kind, tmdbId: ref.provider === 'tmdb' ? Number(ref.id) : 0,
+      tvdbId: ref.provider === 'tvdb' ? Number(ref.id) : undefined,
+      olid: ref.provider === 'olid' ? ref.id : undefined,
+      hydrationSource: ref.provider === 'tmdb' ? 'tmdb' : undefined,
+      title: `${ref.kind === 'series' ? 'Series' : ref.kind === 'book' ? 'Book' : 'Movie'} · ${ref.provider.toUpperCase()} ${ref.id}`,
+      year: 0, overview: '', posterPath: '', inLibrary: false }
+  }, [search.preview])
   const selected = search.preview
-    ? selection && previewKey(selection) === search.preview ? selection : restored.data?.find((item) => previewKey(item) === search.preview)
+    ? selection && matchesPreviewKey(selection, search.preview) ? selection : routeSelection
     : selection && !previewKey(selection) ? selection : undefined
   const openPreview = async (item: SearchResult) => {
     add.reset()
@@ -340,7 +347,6 @@ export function AddMediaPage() {
         </div>
       )}
 
-      {search.preview && !selected && <div className="banner" role="status">{restored.isFetching ? 'Loading selected title…' : 'This selected title is no longer available.'} <button onClick={closePreview}>Close details</button></div>}
       {selected && <MetadataPreviewDrawer
         key={resultKey(selected)} item={selected} bookType={bookType} options={addOptions}
         onClose={closePreview} onAdd={() => add.mutate(selected)} busy={add.isPending}

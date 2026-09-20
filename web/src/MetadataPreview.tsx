@@ -15,11 +15,14 @@ export function MetadataPreviewDrawer({ item, bookType, options, onClose, onAdd,
   const key = previewKey(item)
   const preview = useQuery({ queryKey: ['metadata-preview', key], queryFn: () => getMetadataPreview(previewQuery(key!)), enabled: !!key, retry: false, staleTime: 0, refetchOnMount: 'always' })
   const remoteConflict = useRef(false)
+  const unsupported = useRef<string | undefined>(undefined)
   if (preview.error instanceof ApiError && preview.error.code === 'identity_conflict') remoteConflict.current = true
-  else if (preview.isSuccess && !preview.isFetching) remoteConflict.current = false
+  else if (preview.error instanceof ApiError && preview.error.code === 'unsupported_hydration') unsupported.current = preview.error.message
+  else if (preview.isSuccess && !preview.isFetching) { remoteConflict.current = false; unsupported.current = undefined }
   const conflict = remoteConflict.current || previewIdentityConflict(item, preview.data)
   const data = conflict ? undefined : preview.data
   const state = previewState(item, bookType, data, conflict)
+  state.blocked ||= !!unsupported.current
   const links = externalLinks(item, data, conflict)
   const panel = useRef<HTMLDivElement>(null)
   const close = useRef(onClose)
@@ -67,7 +70,7 @@ export function MetadataPreviewDrawer({ item, bookType, options, onClose, onAdd,
           {!!data?.genres?.length && <p className="preview-genres">{data.genres.join(' · ')}</p>}
           <h3>Synopsis</h3><p className="preview-synopsis">{data?.overview || item.overview || 'No synopsis available.'}</p>
           {preview.isFetching && <p className="muted" role="status">Loading more details…</p>}
-          {(preview.isError || conflict) && <div className="banner warning" role="alert">{conflict ? 'The provider returned conflicting identities. Resolve this before adding.' : 'More details are unavailable. The original search information is still shown.'} <button onClick={() => void preview.refetch()}>Retry</button></div>}
+          {(preview.isError || conflict) && <div className="banner warning" role="alert">{conflict ? 'The provider returned conflicting identities. Resolve this before adding.' : unsupported.current || 'More details are unavailable. The original search information is still shown.'} <button onClick={() => void preview.refetch()}>Retry</button></div>}
           {data?.ownership === 'unknown' && <p className="muted">Library ownership could not be checked.</p>}
           {state.blocked && !conflict && <p className="banner warning">{data?.addBlockReason || 'This title cannot currently be added.'}</p>}
           {links.length > 0 && <nav className="preview-links" aria-label="External databases">{links.map((link) => <a key={link.label} href={link.url} target="_blank" rel="noopener noreferrer">{link.label} ↗<span className="sr-only"> (opens in a new tab)</span></a>)}</nav>}

@@ -1,6 +1,7 @@
 import { act, create } from 'react-test-renderer'
 import type { ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../api'
 import type { MonarrClient } from '../api'
 import type { SearchResult } from '../types'
 import { AddSheet } from './DiscoverScreen'
@@ -11,6 +12,7 @@ vi.mock('react-native', () => ({
   Keyboard: { dismiss: vi.fn() }, Linking: { openURL: vi.fn() },
   AppState: { addEventListener: () => ({ remove: vi.fn() }) },
 }))
+vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ bottom: 34, top: 0, left: 0, right: 0 }) }))
 vi.mock('../theme', () => ({ useTheme: () => ({ text: '#fff', muted: '#aaa', accent: '#abc' }) }))
 vi.mock('../preferences-context', () => ({ usePreferences: () => ({ itemSize: 'medium' }) }))
 vi.mock('../components/UI', async () => {
@@ -66,4 +68,31 @@ describe('native preview and add steps', () => {
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('STALE TITLE')
     expect(button('Continue to add').props.disabled).toBe(true)
   })
+  it('keeps a conflict blocked across failed retries until verified success', async () => {
+    const client = makeClient()
+    client.getMetadataPreview.mockRejectedValueOnce(new ApiError('Conflict', 409, 'identity_conflict'))
+      .mockRejectedValueOnce(new ApiError('Offline', 503, 'provider_unavailable'))
+    await act(async () => { renderer = create(<AddSheet client={client as unknown as MonarrClient} item={original} initialBookType="ebook" initialStep="preview" onAdded={vi.fn()} onClose={vi.fn()} />) })
+    expect(button('Continue to add').props.disabled).toBe(true)
+    await press('Retry details')
+    expect(button('Continue to add').props.disabled).toBe(true)
+    await press('Retry details')
+    expect(button('Continue to add').props.disabled).toBe(false)
+    const footer = renderer!.root.findAll((node) => node.type === ('view' as never) && Array.isArray(node.props.style) && node.props.style.some((value: { paddingBottom?: number }) => value?.paddingBottom === 34))
+    expect(footer).toHaveLength(1)
+  })
+
+  it('keeps unsupported hydration blocked through unavailable retries', async () => {
+    const client = makeClient()
+    client.getMetadataPreview.mockRejectedValueOnce(new ApiError('Unsupported title', 422, 'unsupported_hydration'))
+      .mockRejectedValueOnce(new ApiError('Offline', 503, 'provider_unavailable'))
+    await act(async () => { renderer = create(<AddSheet client={client as unknown as MonarrClient} item={original} initialBookType="ebook" initialStep="preview" onAdded={vi.fn()} onClose={vi.fn()} />) })
+    expect(button('Continue to add').props.disabled).toBe(true)
+    expect(button('IMDb ↗')).toBeDefined()
+    await press('Retry details')
+    expect(button('Continue to add').props.disabled).toBe(true)
+    await press('Retry details')
+    expect(button('Continue to add').props.disabled).toBe(false)
+  })
+
 })

@@ -56,3 +56,10 @@ export function previewIdentityConflict(item: SearchResult, preview?: MetadataPr
     !!(item.imdbId && ids.imdb && item.imdbId !== ids.imdb) ||
     !!(item.olid && ids.olid && item.olid !== ids.olid)
 }
+
+export function matchesPreviewKey(item: SearchResult, key: string): boolean {
+  const ref = parsePreviewKey(key)
+  return !!ref && item.kind === ref.kind && (ref.provider === 'olid'
+    ? item.olid === ref.id
+    : ref.provider === 'tvdb' ? item.tvdbId === Number(ref.id) : item.tmdbId === Number(ref.id))
+}

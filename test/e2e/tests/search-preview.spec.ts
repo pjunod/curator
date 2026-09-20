@@ -96,3 +96,36 @@ test('quick Add stays independent of preview', async ({ page }) => {
   expect(previews).toBe(0)
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
+
+test('book and TVDB preview URLs restore directly without a text-search resolver', async ({ page }) => {
+  // Exact search cannot provide these selections. Preview still can.
+  await page.route('**/api/v1/metadata/search?*', (route) => route.fulfill({ status: 409, json: { code: 'identity_conflict', message: 'Local ambiguity' } }))
+  await page.route('**/api/v1/metadata/preview?*', (route) => route.fulfill({ json: route.request().url().includes('olid=')
+    ? { kind: 'book', title: 'A Book', overview: 'The whole work synopsis.', ids: { olid: 'OL12W' }, ownership: 'absent', addability: 'supported' }
+    : { ...details, ownership: 'ambiguous', addability: 'conflict' } }))
+  await page.goto('/add?kind=book&preview=book%3Aolid%3AOL12W')
+  await expect(page.getByRole('dialog')).toContainText('The whole work synopsis.')
+  await page.reload()
+  await expect(page.getByRole('dialog')).toContainText('The whole work synopsis.')
+  await expect(page.getByRole('dialog').getByRole('link', { name: /Open Library/ })).toHaveAttribute('href', 'https://openlibrary.org/works/OL12W')
+  await page.goto('/add?kind=series&q=cunk&preview=series%3Atvdb%3A414217')
+  await expect(page.getByRole('dialog')).toContainText('Enriched synopsis.')
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Add to library' })).toBeDisabled()
+})
+
+test('unsupported hydration remains blocked through failed retries', async ({ page }) => {
+  let status = 422
+  await page.route('**/api/v1/metadata/preview?*', (route) => route.fulfill({ status, json: status === 200 ? details : { code: status === 422 ? 'unsupported_hydration' : 'provider_unavailable', message: 'No supported provider can add this title.' } }))
+  await page.goto('/add?kind=series&q=cunk')
+  await page.getByRole('button', { name: /View details for/ }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('No supported provider can add this title.')
+  await expect(dialog.getByRole('button', { name: 'Add to library' })).toBeDisabled()
+  await expect(dialog.getByRole('link', { name: /IMDb/ })).toBeVisible()
+  status = 503
+  await dialog.getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: 'Add to library' })).toBeDisabled()
+  status = 200
+  await dialog.getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: 'Add to library' })).toBeEnabled()
+})

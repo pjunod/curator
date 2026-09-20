@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Keyboard, Modal, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { compatibleRootFolders, resolveRootFolderID } from '../addMediaOptions'
 import { ApiError } from '../api'
 import type { MonarrClient } from '../api'
@@ -178,6 +179,7 @@ export function AddSheet({
     () => compatibleRootFolders(options.data?.roots ?? [], item.kind),
     [item.kind, options.data?.roots],
   )
+  const insets = useSafeAreaInsets()
   const [step, setStep] = useState(initialStep)
   const preview = useMetadataPreview(client, item)
   const submittingRef = useRef(false)
@@ -190,6 +192,7 @@ export function AddSheet({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const state = previewState(item, bookType, preview.data, preview.conflict)
+  state.blocked ||= !!preview.unsupported
   const back = () => {
     if (step === 'options' && initialStep === 'preview') setStep('preview')
     else onClose()
@@ -239,7 +242,7 @@ export function AddSheet({
         <Header title={step === 'preview' ? 'Title details' : `Add ${item.kind === 'book' ? bookType : item.kind === 'series' ? 'series' : item.kind}`} left={<IconButton label={step === 'options' && initialStep === 'preview' ? 'Back to details' : 'Close'} glyph={step === 'options' && initialStep === 'preview' ? '‹' : '×'} onPress={back} />} />
         <ScrollView key={step} contentContainerStyle={styles.sheetContent}>
           {step === 'preview' ? <>
-            <PreviewDetails item={item} data={preview.data} loading={preview.loading} error={preview.error} conflict={preview.conflict} retry={() => void preview.refresh()} />
+            <PreviewDetails item={item} data={preview.data} loading={preview.loading} error={preview.error} conflict={preview.conflict} unsupported={preview.unsupported} retry={() => void preview.refresh()} />
           </> : <>
           <Text style={[styles.addTitle, { color: theme.text }]}>{item.title}</Text>
           <Text style={[styles.blurb, { color: theme.muted }]}>{item.author || item.year}</Text>
@@ -291,8 +294,8 @@ export function AddSheet({
           </>}
 
         </ScrollView>
-        <View style={[styles.sheetFooter, { borderColor: theme.border }]}>
-          {state.blocked && step === 'options' ? <InlineError message={preview.data?.addBlockReason || 'Resolve the identity conflict before adding.'} /> : null}
+        <View style={[styles.sheetFooter, { borderColor: theme.border, paddingBottom: Math.max(16, insets.bottom) }]}>
+          {state.blocked && step === 'options' ? <InlineError message={preview.unsupported || preview.data?.addBlockReason || 'Resolve the identity conflict before adding.'} /> : null}
           {state.owned ? <Text style={{ color: theme.muted }}>Already in your library{item.kind === 'book' ? ` · ${bookType}` : ''}</Text> : step === 'preview' ? <Button label="Continue to add" disabled={state.blocked} onPress={() => setStep('options')} /> : <Button label={submitting ? 'Adding…' : `Add ${item.title}`} disabled={submitting || options.loading || !rootID || state.blocked} onPress={() => void add()} />}
           {state.libraryItemId ? <Button secondary label="Open in library" onPress={() => onAdded(state.libraryItemId!)} /> : null}
         </View>

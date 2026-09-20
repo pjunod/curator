@@ -6,8 +6,8 @@ import type { MetadataPreview, SearchResult } from '../types'
 import { Button, InlineError, SectionTitle } from './UI'
 import { Poster } from './Media'
 
-export function PreviewDetails({ item, data, loading, error, conflict, retry }: {
-  item: SearchResult; data?: MetadataPreview; loading: boolean; error?: Error; conflict: boolean; retry: () => void
+export function PreviewDetails({ item, data, loading, error, conflict, unsupported, retry }: {
+  item: SearchResult; data?: MetadataPreview; loading: boolean; error?: Error; conflict: boolean; unsupported?: string; retry: () => void
 }) {
   const theme = useTheme()
   const [linkError, setLinkError] = useState('')
@@ -26,7 +26,7 @@ export function PreviewDetails({ item, data, loading, error, conflict, retry }: 
     <SectionTitle>Synopsis</SectionTitle>
     <Text style={[styles.synopsis, { color: theme.text }]}>{data?.overview || item.overview || 'No synopsis available.'}</Text>
     {loading ? <Text accessibilityLiveRegion="polite" style={[styles.meta, { color: theme.muted }]}>Loading more details…</Text> : null}
-    {error ? <View style={styles.notice}><InlineError message={conflict ? 'The provider returned conflicting identities. Resolve this before adding.' : 'More details are unavailable. The original search information is still shown.'} /><Button compact secondary label="Retry details" onPress={retry} /></View> : null}
+    {error ? <View style={styles.notice}><InlineError message={conflict ? 'The provider returned conflicting identities. Resolve this before adding.' : unsupported || 'More details are unavailable. The original search information is still shown.'} /><Button compact secondary label="Retry details" onPress={retry} /></View> : null}
     {data?.ownership === 'unknown' ? <Text style={[styles.meta, { color: theme.muted }]}>Library ownership could not be checked.</Text> : null}
     {data?.addability !== 'supported' && data?.addBlockReason ? <InlineError message={data.addBlockReason} /> : null}
     <View style={styles.links}>{links.map((link) => <Button key={link.label} compact secondary label={`${link.label} ↗`} onPress={() => {
