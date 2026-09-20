@@ -15,7 +15,26 @@
 > working session. Design rationale: [docs/architecture.md](docs/architecture.md) ·
 > decisions: [docs/adr/](docs/adr/) · this file: state only.
 
-## Active delivery — Open Library refresh resilience
+## Active delivery — Folder repair
+
+**Status:** review findings addressed; preparing fast lane · **Updated:** 2026-09-19 ·
+**Version:** 0.25.2 · PR [#30](https://github.com/pjunod/monarr/pull/30)
+
+| Item | State | Evidence |
+|---|---|---|
+| Independent clone | complete | Integrated onto upstream `3aaec3f`; user checkout left untouched after the workflow instruction. |
+| Undownloaded titles | implemented | Missing-folder reporting requires previously recorded media; old reports are filtered on read. |
+| Real folder issues | implemented | Missing, inaccessible, and non-directory paths have distinct explanations. |
+| Bulk repair | implemented | Browse existing folders, apply entered paths across pages, retain per-row errors, and recheck restored drives. |
+| File preservation | implemented | Matching files retain identity, copy assignment, quality, provenance, and episode links through a transactional location update. |
+| Adversarial review | addressed | Preserve moved-file identities; remove silent retention of unavailable separate-copy records. Both findings have regression coverage. |
+| Fast lane | pending review | Focused library/API and browser regressions, web build/typecheck, lint, and API-generation consistency. |
+| Full suites | delegated | Separate batch process handles full unit failures under the 2026-09-19 workflow. Existing GitHub Actions are unchanged. |
+
+See [folder repair](docs/settings.md#disk-scan--repairing-folders-with-recorded-media)
+for operator behavior. No feature toggle is introduced.
+
+## Previous delivery — Open Library refresh resilience
 
 **Status:** ready to merge; adversarial review approved; fast lane green ·
 **Updated:** 2026-09-19 · **Version:** 0.25.1

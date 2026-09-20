@@ -250,13 +250,11 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 	if walkErr := walk(item.Path, 0); walkErr != nil {
 		return 0, 0, walkErr
 	}
-	var unavailableCopies []string
 	for _, cp := range copies {
 		if cp.Path == "" || cp.Path == item.Path {
 			continue
 		}
 		if _, statErr := os.Stat(cp.Path); statErr != nil {
-			unavailableCopies = append(unavailableCopies, cp.Path)
 			continue // copy folder not created yet — nothing to scan
 		}
 		if walkErr := walk(cp.Path, cp.ID); walkErr != nil {
@@ -304,12 +302,15 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 		// and the probe overwrites it with measurement. Book files are the
 		// exception — the extension IS the format, and there is no container
 		// to walk (ADR 0006).
-		if src := filename.BookQualitySource(path); item.Kind == domain.KindBook && src != "" {
-			_ = s.db.SetFileQualityFrom(ctx, fileID, quality.Quality{Source: quality.Source(src)},
-				mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
-		} else if q := parser.Parse(filepath.Base(path)).Quality; q.Resolution != 0 || q.Source != quality.SourceUnknown {
-			_ = s.db.SetFileQualityFrom(ctx, fileID, q,
-				mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+		old, known := existingByPath[path]
+		if !known || old.Provenance == mediainfo.ProvenanceUnknown || old.Provenance == mediainfo.ProvenanceFilename {
+			if src := filename.BookQualitySource(path); item.Kind == domain.KindBook && src != "" {
+				_ = s.db.SetFileQualityFrom(ctx, fileID, quality.Quality{Source: quality.Source(src)},
+					mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+			} else if q := parser.Parse(filepath.Base(path)).Quality; q.Resolution != 0 || q.Source != quality.SourceUnknown {
+				_ = s.db.SetFileQualityFrom(ctx, fileID, q,
+					mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+			}
 		}
 		// Measure anything we have not measured at this size. This IS the
 		// backfill: no separate migration pass, no "run this once" button —
@@ -348,16 +349,6 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 
 	for path, f := range existingByPath {
 		if _, still := onDisk[path]; !still {
-			// A missing copy folder may be on an offline drive. Retain its
-			// records just as we do for a missing primary folder, including
-			// when this scan was requested by a primary-folder repair.
-			unavailable := false
-			for _, copyPath := range unavailableCopies {
-				unavailable = unavailable || withinFolder(copyPath, path)
-			}
-			if unavailable {
-				continue
-			}
 			if err := s.db.DeleteFile(ctx, f.ID); err != nil {
 				return linked, removed, err
 			}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/filename"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 func folderProblem(path string) string {
@@ -170,10 +171,25 @@ func (s *Service) RepairFolder(ctx context.Context, id int64, expectedPath, path
 	// Use the registered root's spelling so the next scan claims the same
 	// path even when the browser returned a symlink-resolved /private/var path.
 	path = filepath.Join(selectedRoot.Path, relativePath)
-	item, err = s.UpdateItem(ctx, id, UpdateRequest{Path: &path, RootFolderID: &selectedRoot.ID})
-	if err != nil {
+	var repairs []sqlite.FilePathRepair
+	for _, file := range item.Files {
+		if !withinFolder(item.Path, file.Path) {
+			continue
+		}
+		relative, err := filepath.Rel(item.Path, file.Path)
+		if err != nil {
+			return err
+		}
+		newPath := filepath.Join(path, relative)
+		info, err := os.Stat(newPath)
+		if err == nil && info.Mode().IsRegular() && info.Size() == file.Size {
+			repairs = append(repairs, sqlite.FilePathRepair{ID: file.ID, OldPath: file.Path, NewPath: newPath})
+		}
+	}
+	if err := s.db.RepairItemFolder(ctx, id, selectedRoot.ID, expectedPath, path, repairs); err != nil {
 		return err
 	}
+	item.Path, item.RootFolderID = path, selectedRoot.ID
 	if _, _, err := s.scanItem(ctx, item, item.Copies); err != nil {
 		return fmt.Errorf("folder saved, but scanning it failed: %w", err)
 	}

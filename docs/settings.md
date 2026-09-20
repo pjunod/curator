@@ -75,7 +75,9 @@ other pages, and scans the selected folders to reconnect file records.
 Individual failures remain visible and do not stop the other repairs.
 Folders must contain media and sit under a compatible registered root;
 another title's folder, an entire root, and empty folders are rejected.
-Files are never created, moved, or deleted by repair.
+Files are never created, moved, or deleted by repair. Files with matching
+relative paths and sizes keep their identities, copy assignments, measured
+quality, release provenance, and episode links.
 
 If a drive or mount was unavailable, restore access and press **Check
 again**. If the files were deleted, restore a backup or open the title to

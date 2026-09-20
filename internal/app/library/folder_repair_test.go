@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 func TestUncreatedDestinationsAreNotFolderProblems(t *testing.T) {
@@ -52,25 +55,22 @@ func TestUncreatedDestinationsAreNotFolderProblems(t *testing.T) {
 	if err != nil || len(report.MissingItems) != 0 {
 		t.Fatalf("undownloaded primary reported: %+v, %v", report, err)
 	}
-	// Once the primary arrives, scanning it must not discard the unavailable
-	// separate copy's records. Folder repair uses the same scanner.
+	// Keep the existing separate-copy reconciliation behavior: a readable
+	// primary scan prunes vanished copy files so that copy becomes wanted.
 	if err := os.Mkdir(item.Path, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(item.Path, "primary.mkv"), []byte("video"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Scan(ctx); err != nil {
 		t.Fatal(err)
 	}
 	files, err := db.ListFilesForItem(ctx, item.ID)
-	if err != nil || len(files) != 2 {
-		t.Fatalf("scan lost the unavailable copy: %+v, %v", files, err)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("missing separate copy still appears acquired: %+v, %v", files, err)
 	}
 }
 
 func TestPreviouslyScannedFolderCanBeRepaired(t *testing.T) {
-	svc, _, _ := newService(t)
+	svc, db, _ := newService(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	rf, err := svc.AddRootFolder(ctx, root, domain.KindMixed)
@@ -84,11 +84,29 @@ func TestPreviouslyScannedFolderCanBeRepaired(t *testing.T) {
 	if err := os.Mkdir(item.Path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	name := "Test.Show.S01E01.mkv"
+	name := "Test.Show.S01E01.720p.WEB-DL.mkv"
 	if err := os.WriteFile(filepath.Join(item.Path, name), []byte("video"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	withCopy, err := svc.AddCopy(ctx, item.ID, CopyRequest{QualityProfileID: item.QualityProfileID, Name: "Shared alternate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := db.ListFilesForItem(ctx, item.ID)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("initial file: %+v, %v", files, err)
+	}
+	fileID, copyID := files[0].ID, withCopy.Copies[0].ID
+	if err := db.UpdateFileCopy(ctx, fileID, copyID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFileSource(ctx, fileID, "Original release", "Original indexer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFileQualityFrom(ctx, fileID, quality.Quality{Source: quality.SourceBluray, Resolution: 1080}, mediainfo.ProvenanceProbe, mediainfo.ConfidenceHigh); err != nil {
 		t.Fatal(err)
 	}
 	moved := filepath.Join(root, "Renamed show")
@@ -118,6 +136,17 @@ func TestPreviouslyScannedFolderCanBeRepaired(t *testing.T) {
 	if err := svc.RepairFolder(ctx, item.ID, "stale", moved); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("stale repair: %v", err)
 	}
+	// Failure after the placement UPDATE must roll it back with file paths.
+	err = db.RepairItemFolder(ctx, item.ID, rf.ID, item.Path, moved, []sqlite.FilePathRepair{
+		{ID: fileID, OldPath: "stale file path", NewPath: filepath.Join(moved, name)},
+	})
+	if err == nil {
+		t.Fatal("stale file repair unexpectedly committed")
+	}
+	unchanged, err := svc.Get(ctx, item.ID)
+	if err != nil || unchanged.Path != item.Path || unchanged.Files[0].Path != filepath.Join(item.Path, name) {
+		t.Fatalf("failed transaction changed placement or files: %+v, %v", unchanged, err)
+	}
 	if err := svc.RepairFolder(ctx, item.ID, item.Path, moved); err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +154,10 @@ func TestPreviouslyScannedFolderCanBeRepaired(t *testing.T) {
 	resolved := moved
 	if err != nil || fixed.Path != resolved || len(fixed.Files) != 1 || fixed.Files[0].Path != filepath.Join(resolved, name) || !fixed.Seasons[0].Episodes[0].HasFile {
 		t.Fatalf("repair did not relink files and episodes: %+v, %v", fixed, err)
+	}
+	f := fixed.Files[0]
+	if f.ID != fileID || f.CopyID != copyID || f.SourceRelease != "Original release" || f.SourceIndexer != "Original indexer" || f.Provenance != mediainfo.ProvenanceProbe || f.Quality.Resolution != 1080 || len(f.EpisodeIDs) != 1 {
+		t.Fatalf("repair lost file identity or metadata: %+v", f)
 	}
 	report, _, err := svc.LastScanReport(ctx)
 	if err != nil || len(report.MissingItems) != 0 {
