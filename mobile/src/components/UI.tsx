@@ -11,6 +11,7 @@ import {
   type ViewStyle,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { PUBLIC_APP_NAME, SHORT_APP_NAME } from '../branding'
 import { useTopNavigation } from '../navigation-context'
 import { useTheme, type Theme } from '../theme'
 
@@ -47,9 +48,19 @@ export function Header({ title, subtitle, left, right }: { title: string; subtit
 
 export function Wordmark({ size = 30 }: { size?: number }) {
   const theme = useTheme()
+  const compact = size <= 20
   return (
-    <Text style={{ color: theme.text, fontSize: size, fontWeight: '800', letterSpacing: 0.2 }}>
-      mon<Text style={{ color: theme.accent }}>arr</Text>
+    <Text
+      accessibilityLabel={compact ? SHORT_APP_NAME : PUBLIC_APP_NAME}
+      numberOfLines={1}
+      style={{ color: theme.text, fontSize: size, fontWeight: '800', letterSpacing: 0.2 }}
+    >
+      {compact ? 'curator' : (
+        <>
+          noirr<Text style={{ color: theme.accent }}>_</Text>
+          <Text style={{ color: theme.muted, fontSize: size * 0.72 }}> curator</Text>
+        </>
+      )}
     </Text>
   )
 }

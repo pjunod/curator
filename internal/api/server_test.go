@@ -148,7 +148,7 @@ func TestSPAServesHTMLAtRoot(t *testing.T) {
 		}
 		ct := rr.Header().Get("Content-Type")
 		body := strings.ToLower(rr.Body.String())
-		if !strings.Contains(ct, "text/html") || !strings.Contains(body, "monarr") {
+		if !strings.Contains(ct, "text/html") || !strings.Contains(body, "noirr curator") {
 			t.Errorf("%s: content-type = %q, body does not look like the shell", path, ct)
 		}
 	}

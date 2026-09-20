@@ -1,6 +1,7 @@
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { APP_VERSION } from '../app-version'
+import { displayAppName } from '../branding'
 import { formatUptime } from '../format'
 import { AppScreen, Badge, Button, Chip, Header, InlineError, LoadingState, Panel, SectionTitle, Wordmark } from '../components/UI'
 import { LAYOUT_OPTIONS, PALETTE_OPTIONS } from '../preferences'
@@ -109,7 +110,9 @@ export function MoreScreen({
           <Panel style={styles.serverPanel}>
             <View style={styles.serverHead}>
               <View>
-                <Text style={[styles.serverName, { color: theme.text }]}>{resource.data.status.appName}</Text>
+                <Text style={[styles.serverName, { color: theme.text }]}>
+                  {displayAppName(resource.data.status.appName)}
+                </Text>
                 <Text style={[styles.linkHint, { color: theme.muted }]}>v{resource.data.status.version} · {resource.data.status.commit}</Text>
               </View>
               <Badge label={resource.data.health.overall} tone={resource.data.health.overall} />
