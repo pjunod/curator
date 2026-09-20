@@ -445,7 +445,7 @@ func TestEdgeSPADeepLinksFallBackToTheShell(t *testing.T) {
 			t.Errorf("%s: cache-control = %q, want no-store", path, cc)
 		}
 		body := rr.Body.String()
-		if !strings.Contains(strings.ToLower(body), "monarr") {
+		if !strings.Contains(strings.ToLower(body), "noirr curator") {
 			t.Errorf("%s: body is not the shell: %q", path, body)
 		}
 		// A binary built without `make web` must still explain itself rather

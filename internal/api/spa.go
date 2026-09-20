@@ -23,20 +23,21 @@ const fallbackHTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Monarr</title>
+<title>Noirr Curator</title>
 <style>
   body { background: #0e1117; color: #e6e9ef; font: 16px/1.6 system-ui, sans-serif;
          display: grid; place-items: center; min-height: 100vh; margin: 0; }
   main { text-align: center; }
   h1 { font-weight: 600; letter-spacing: 0.02em; }
-  h1 span { color: #8b7cf6; }
+  h1 span { color: #e5484d; }
+  h1 small { color: #9aa3b2; font-size: 0.72em; margin-left: 0.55em; }
   code { background: #1a1f2b; padding: 0.15em 0.45em; border-radius: 6px; }
   p { color: #9aa3b2; }
 </style>
 </head>
 <body>
 <main>
-  <h1>mon<span>arr</span></h1>
+  <h1>noirr<span>_</span><small>curator</small></h1>
   <p>The server is running, but this binary was built without the web UI.</p>
   <p>Build it with <code>make build</code> (or <code>cd web && npm ci && npm run build</code>, then rebuild).</p>
   <p>The API is live at <code>/api/v1/system/status</code>.</p>
