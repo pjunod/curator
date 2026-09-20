@@ -1,3 +1,4 @@
+import { parsePreviewKey } from './metadataPreview'
 import { useEffect, useState } from 'react'
 import {
   Link,
@@ -265,6 +266,8 @@ const mediaDetailRoute = createRoute({
 })
 
 interface AddSearch {
+  preview?: string
+  bookType?: 'ebook' | 'audiobook'
   q?: string
   kind?: MediaKind
 }
@@ -274,6 +277,8 @@ const addRoute = createRoute({
   path: '/add',
   component: AddMediaPage,
   validateSearch: (search: Record<string, unknown>): AddSearch => ({
+    preview: parsePreviewKey(search.preview) ? String(search.preview) : undefined,
+    bookType: search.bookType === 'ebook' || search.bookType === 'audiobook' ? search.bookType : undefined,
     q: typeof search.q === 'string' ? search.q : undefined,
     kind:
       search.kind === 'movie' || search.kind === 'series' || search.kind === 'book'

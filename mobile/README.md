@@ -12,7 +12,9 @@ Monarr data or metadata provider keys live on the phone.
 
 - Library browsing, filtering, item detail, item/profile/location editing,
   season monitoring, additional quality copies, and search-now.
-- Discover and metadata search, including root/profile choices when adding.
+- Discover and metadata search, including full-synopsis previews, verified
+  database links, and root/profile choices retained when returning from Add
+  options to the preview. Quick Add still opens options directly.
 - Wanted items, backlog search, active and retained activity, and the
   calendar agenda — poster rows with episode, air time, network and status,
   loading further ahead as you scroll.

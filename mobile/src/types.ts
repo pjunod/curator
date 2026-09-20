@@ -194,6 +194,27 @@ export interface SearchResult {
   bookTypes?: BookType[]
 }
 
+
+/** Read-only display metadata. Never merge this into a SearchResult or Add request. */
+export interface MetadataPreview {
+  kind: MediaKind
+  title: string
+  overview: string
+  year?: number
+  author?: string
+  posterPath?: string
+  previewSource?: string
+  genres?: string[]
+  status?: string
+  runtimeMinutes?: number
+  ids: { tmdb?: number; tvdb?: number; imdb?: string; olid?: string }
+  ownership: 'absent' | 'present' | 'ambiguous' | 'unknown'
+  libraryItemId?: number
+  bookTypes?: BookType[]
+  addability: 'supported' | 'unsupported' | 'conflict'
+  addBlockReason?: string
+}
+
 export interface AddMediaRequest {
   kind: MediaKind
   tmdbId?: number

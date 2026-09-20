@@ -439,38 +439,49 @@ func (c *Client) GetSeries(ctx context.Context, tmdbID int64) (domain.MediaItem,
 // collections are filtered by the requested kind; episode/person results are
 // never promoted to works.
 func (c *Client) LookupExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) ([]ports.SearchResult, error) {
+	item, err := c.PreviewExternal(ctx, kind, ref)
+	if err != nil {
+		return nil, err
+	}
+	return []ports.SearchResult{searchResultOf(item, "tmdb")}, nil
+}
+
+// PreviewExternal shares exact-ID validation with search, without episode I/O.
+func (c *Client) PreviewExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) (domain.MediaItem, error) {
 	if kind != domain.KindMovie && kind != domain.KindSeries {
-		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+		return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
 	}
 	if ref.Provider == "tmdb" {
 		id, err := strconv.ParseInt(ref.Value, 10, 64)
 		if err != nil || id <= 0 {
-			return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery, Cause: err}
+			return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery, Cause: err}
 		}
 		if kind == domain.KindMovie {
 			item, err := c.GetMovie(ctx, id)
 			if err != nil {
-				return nil, err
+				return domain.MediaItem{}, err
 			}
 			if item.IDs.TMDB != id {
-				return nil, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: domain.ExternalIDs{TMDB: id}, ActualIDs: item.IDs}
+				return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: domain.ExternalIDs{TMDB: id}, ActualIDs: item.IDs}
 			}
-			return []ports.SearchResult{searchResultOf(item, "tmdb")}, nil
+			item.Source = "tmdb"
+			return item, nil
 		}
 		item, err := c.getSeriesRecord(ctx, id)
 		if err != nil {
-			return nil, err
+			return domain.MediaItem{}, err
 		}
 		if item.IDs.TMDB != id {
-			return nil, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: domain.ExternalIDs{TMDB: id}, ActualIDs: item.IDs}
+			return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: domain.ExternalIDs{TMDB: id}, ActualIDs: item.IDs}
 		}
-		return []ports.SearchResult{searchResultOf(item, "tmdb")}, nil
+		item.Source = "tmdb"
+		return item, nil
 	}
 	if ref.Provider != "tvdb" && ref.Provider != "imdb" {
-		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+		return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
 	}
 	if ref.Provider == "tvdb" && kind != domain.KindSeries {
-		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+		return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
 	}
 	var resp struct {
 		MovieResults []struct {
@@ -482,7 +493,7 @@ func (c *Client) LookupExternal(ctx context.Context, kind domain.MediaKind, ref 
 	}
 	externalSource := ref.Provider + "_id"
 	if err := c.get(ctx, "/find/"+ref.Value, url.Values{"external_source": {externalSource}}, &resp); err != nil {
-		return nil, err
+		return domain.MediaItem{}, err
 	}
 	var ids []int64
 	if kind == domain.KindMovie {
@@ -495,10 +506,10 @@ func (c *Client) LookupExternal(ctx context.Context, kind domain.MediaKind, ref 
 		}
 	}
 	if len(ids) == 0 {
-		return nil, &ports.RemoteError{Category: ports.RemoteNotFound, HTTPStatus: http.StatusNotFound}
+		return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteNotFound, HTTPStatus: http.StatusNotFound}
 	}
 	if len(ids) > 1 {
-		return nil, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: expectedTMDBIDs(ref)}
+		return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: expectedTMDBIDs(ref)}
 	}
 	var item domain.MediaItem
 	var err error
@@ -508,12 +519,13 @@ func (c *Client) LookupExternal(ctx context.Context, kind domain.MediaKind, ref 
 		item, err = c.getSeriesRecord(ctx, ids[0])
 	}
 	if err != nil {
-		return nil, err
+		return domain.MediaItem{}, err
 	}
 	if tmdbExternalConflict(ref, item.IDs) {
-		return nil, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: expectedTMDBIDs(ref), ActualIDs: item.IDs}
+		return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: expectedTMDBIDs(ref), ActualIDs: item.IDs}
 	}
-	return []ports.SearchResult{searchResultOf(item, "tmdb")}, nil
+	item.Source = "tmdb"
+	return item, nil
 }
 
 func (c *Client) getSeriesRecord(ctx context.Context, id int64) (domain.MediaItem, error) {
@@ -521,7 +533,11 @@ func (c *Client) getSeriesRecord(ctx context.Context, id int64) (domain.MediaIte
 	if err := c.get(ctx, fmt.Sprintf("/tv/%d", id), url.Values{"append_to_response": {"external_ids"}}, &resp); err != nil {
 		return domain.MediaItem{}, err
 	}
-	return domain.MediaItem{Kind: domain.KindSeries, Title: resp.Name, SortTitle: domain.SortTitle(resp.Name), Year: yearOf(resp.FirstAirDate), IDs: domain.ExternalIDs{TMDB: resp.ID, IMDB: resp.ExternalIDs.IMDBID, TVDB: resp.ExternalIDs.TVDBID}, Overview: resp.Overview, PosterPath: resp.PosterPath, Source: "tmdb"}, nil
+	runtime := 0
+	if len(resp.EpisodeRunTime) > 0 {
+		runtime = resp.EpisodeRunTime[0]
+	}
+	return domain.MediaItem{Kind: domain.KindSeries, Title: resp.Name, SortTitle: domain.SortTitle(resp.Name), Year: yearOf(resp.FirstAirDate), IDs: domain.ExternalIDs{TMDB: resp.ID, IMDB: resp.ExternalIDs.IMDBID, TVDB: resp.ExternalIDs.TVDBID}, Overview: resp.Overview, PosterPath: resp.PosterPath, Source: "tmdb", Genres: genreNames(resp.Genres), Status: resp.Status, Runtime: runtime}, nil
 }
 
 func searchResultOf(item domain.MediaItem, source string) ports.SearchResult {

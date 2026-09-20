@@ -1,0 +1,138 @@
+<div id="monarr-preview-web" aria-label="Monarr web search preview proposal">
+<style>
+#monarr-preview-web { --mp-bg:light-dark(#f4f5f8,#0e1117);--mp-panel:light-dark(#fff,#151a23);--mp-hover:light-dark(#e9ebf1,#1a202c);--mp-line:light-dark(#d7dbe4,#232a38);--mp-text:light-dark(#1b212b,#e6e9ef);--mp-muted:light-dark(#5b6472,#9aa3b2);--mp-accent:light-dark(#6a58d8,#8b7cf6);--mp-on:light-dark(#fff,#0e1117);--mp-ok:light-dark(#1f8e5c,#3fb27f);font:14px/1.5 system-ui,-apple-system,sans-serif;color:var(--mp-text);background:var(--mp-bg);border:1px solid var(--mp-line);border-radius:12px;overflow:hidden; }
+#monarr-preview-web * { box-sizing:border-box; }
+#monarr-preview-web button,#monarr-preview-web select,#monarr-preview-web input { font:inherit;color:inherit; }
+#monarr-preview-web button,#monarr-preview-web select { border:1px solid var(--mp-line);border-radius:7px;background:var(--mp-panel);padding:8px 12px; }
+#monarr-preview-web button:disabled {opacity:.5;cursor:not-allowed;}
+#monarr-preview-web button:hover { background:var(--mp-hover); }
+#monarr-preview-web .mp-accent { background:var(--mp-accent);color:var(--mp-on);border-color:var(--mp-accent);font-weight:600; }
+#monarr-preview-web .mp-accent:hover { filter:brightness(1.1);background:var(--mp-accent); }
+#monarr-preview-web .mp-muted { color:var(--mp-muted); }
+#monarr-preview-web .mp-shell { display:flex;min-height:850px; }
+#monarr-preview-web .mp-nav { width:152px;flex-shrink:0;background:var(--mp-panel);border-right:1px solid var(--mp-line);padding:24px 14px; }
+#monarr-preview-web .mp-brand { font-size:24px;font-weight:800;letter-spacing:-1px;margin-bottom:30px; }
+#monarr-preview-web .mp-brand span { color:var(--mp-accent); }
+#monarr-preview-web .mp-nav div:not(.mp-brand) { padding:10px;margin-bottom:4px;color:var(--mp-muted);border-radius:6px; }
+#monarr-preview-web .mp-nav .mp-current { background:var(--mp-hover);color:var(--mp-text)!important; }
+#monarr-preview-web .mp-stage { flex:1;min-width:0;position:relative;display:grid;grid-template-columns:minmax(0,1fr); }
+#monarr-preview-web .mp-page { padding:28px;grid-area:1/1; }
+#monarr-preview-web h1 { font-size:25px;margin:0 0 20px;font-weight:700; }
+#monarr-preview-web .mp-tabs { display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px; }
+#monarr-preview-web .mp-tabs .mp-active { color:var(--mp-accent);border-color:var(--mp-accent); }
+#monarr-preview-web .mp-search { display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--mp-line);background:var(--mp-panel);border-radius:8px; }
+#monarr-preview-web .mp-search input { width:100%;background:transparent;border:0;outline:none; }
+#monarr-preview-web .mp-options { display:flex;gap:12px;flex-wrap:wrap;margin:16px 0 20px; }
+#monarr-preview-web .mp-options label { display:flex;align-items:center;gap:7px;font-size:12px; }
+#monarr-preview-web .mp-row { position:relative;display:flex;align-items:center;gap:14px;padding:16px 0;border-top:1px solid var(--mp-line); }
+#monarr-preview-web .mp-hit { display:flex;align-items:center;gap:14px;text-align:left;border:0;background:transparent;padding:0;flex:1;min-width:0; }
+#monarr-preview-web .mp-hit > span:last-child {min-width:0;overflow-wrap:anywhere;}
+#monarr-preview-web .mp-identity > div:last-child {min-width:0;overflow-wrap:anywhere;}
+#monarr-preview-web .mp-hit:hover { background:transparent; }
+#monarr-preview-web .mp-hit strong { font-size:16px; }
+#monarr-preview-web .mp-snippet { display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:7px 0;color:var(--mp-muted); }
+#monarr-preview-web .mp-more { color:var(--mp-accent);font-size:12px;border:0;padding:0;background:transparent; }
+#monarr-preview-web .mp-more::after {content:"";position:absolute;inset:0;}
+#monarr-preview-web [data-quick] {position:relative;z-index:1;}
+#monarr-preview-web .mp-poster { width:65px;height:96px;flex-shrink:0;border:1px solid var(--mp-line);border-radius:7px;background:var(--mp-hover);display:flex;align-items:center;justify-content:center;text-align:center;color:var(--mp-muted);font-size:11px;padding:8px; }
+#monarr-preview-web .mp-poster-large { width:98px;height:147px; }
+#monarr-preview-web .mp-dimmer { grid-area:1/1;z-index:2;background:light-dark(rgba(20,25,35,.2),rgba(0,0,0,.48)); }
+#monarr-preview-web .mp-preview { position:relative;grid-area:1/1;justify-self:end;z-index:3;width:min(462px,100%);background:var(--mp-panel);border-left:1px solid var(--mp-line);display:flex;flex-direction:column;box-shadow:-15px 0 45px light-dark(#17203316,#0005); }
+#monarr-preview-web .mp-preview.mp-centered { inset:22px 20px auto;width:calc(100% - 40px);border:1px solid var(--mp-line);border-radius:12px;min-height:770px; }
+#monarr-preview-web .mp-preview-head { padding:17px 22px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--mp-line); }
+#monarr-preview-web .mp-preview-head button { border:0;padding:6px; }
+#monarr-preview-web .mp-body { padding:24px;flex:1; }
+#monarr-preview-web .mp-identity { display:flex;gap:18px;align-items:center; }
+#monarr-preview-web .mp-eyebrow { font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--mp-muted); }
+#monarr-preview-web h2 { font-size:25px;line-height:1.2;margin:7px 0 12px;font-weight:700; }
+#monarr-preview-web h3 { font-size:14px;margin:25px 0 8px;font-weight:600; }
+#monarr-preview-web .mp-links { display:flex;flex-wrap:wrap;gap:8px;margin-top:20px; }
+#monarr-preview-web .mp-links a { border:1px solid var(--mp-line);padding:7px 11px;border-radius:6px;color:var(--mp-text);text-decoration:none; }
+#monarr-preview-web .mp-synopsis { margin:0;line-height:1.65; }
+#monarr-preview-web .mp-foot { border-top:1px solid var(--mp-line);padding:17px 24px 22px;background:var(--mp-panel); }
+#monarr-preview-web .mp-foot-top { display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px; }
+#monarr-preview-web .mp-foot-top button { padding:4px 0;border:0;color:var(--mp-accent);background:transparent; }
+#monarr-preview-web .mp-submit { width:100%;margin-top:13px; }
+#monarr-preview-web .mp-small { font-size:12px; }
+#monarr-preview-web .mp-status { margin-top:12px;color:var(--mp-ok); }
+#monarr-preview-web .mp-error { border-left:3px solid var(--mp-accent);padding:10px;margin-top:20px;background:var(--mp-hover); }
+#monarr-preview-web [hidden] { display:none!important; }
+#monarr-preview-web svg { width:17px;height:17px; }
+@media(max-width:767px) { #monarr-preview-web .mp-nav {display:none;} #monarr-preview-web .mp-page {padding:20px;} #monarr-preview-web .mp-preview {width:100%;border:0;} }
+@media(max-width:480px) { #monarr-preview-web .mp-shell {min-height:980px;} #monarr-preview-web .mp-body {padding:20px;} #monarr-preview-web .mp-preview {width:100%;border:0;} #monarr-preview-web .mp-preview.mp-centered {inset:0;width:100%;border-radius:0;min-height:100%;} #monarr-preview-web .mp-preview-head button {min-height:44px;} }
+</style>
+<div class="mp-shell">
+<aside class="mp-nav" aria-label="App navigation"><div class="mp-brand">mon<span>arr</span></div><div>Dashboard</div><div>Library</div><div class="mp-current">＋ Add media</div><div>Discover</div><div>Wanted</div><div>Activity</div><div>Calendar</div><div>Settings</div></aside>
+<div class="mp-stage">
+<main class="mp-page"><h1>Add media</h1>
+<div class="mp-tabs" aria-label="Media type"><button class="mp-active" data-kind="movie">Movie</button><button data-kind="series">Series</button><button disabled>Ebook</button><button disabled>Audiobook</button></div>
+<div class="mp-search"><i data-lucide="search" aria-hidden="true"></i><input aria-label="Search titles" value="Northbound" readonly></div>
+<div class="mp-options"><label>Root folder <select aria-label="Root folder"><option data-page-root>/media/movies</option></select></label><label>Profile <select aria-label="Quality profile"><option>HD-1080p</option></select></label><label><input type="checkbox" checked> Monitored</label><label><input type="checkbox" checked> Search on add</label></div>
+<div class="mp-muted mp-small">Search results</div>
+<div class="mp-row"><div class="mp-hit"><span class="mp-poster">Poster<br>unavailable</span><span><strong>Northbound</strong> <span class="mp-muted">2024</span><span class="mp-snippet">When a night train stops outside an isolated mountain town, a cartographer discovers that every passenger is carrying a different map of the same place.</span><button class="mp-more" data-open="0" aria-label="View details for Northbound, 2024">View details →</button></span></div><button class="mp-accent" data-quick="0">Add</button></div>
+<div class="mp-row"><div class="mp-hit"><span class="mp-poster">Poster<br>unavailable</span><span><strong>Northbound: Winter Route</strong> <span class="mp-muted">2019</span><span class="mp-snippet">Two estranged siblings take the last bus across the border to settle their father's affairs.</span><button class="mp-more" data-open="1" aria-label="View details for Northbound: Winter Route, 2019">View details →</button></span></div><button data-quick="1">Add</button></div>
+<div class="mp-status" role="status" data-page-status></div>
+</main>
+<div class="mp-dimmer" data-dismiss></div>
+<section class="mp-preview" role="dialog" aria-modal="true" aria-label="Title preview">
+<header class="mp-preview-head"><span>Title preview</span><button aria-label="Close preview" data-close><i data-lucide="x" aria-hidden="true"></i> Close</button></header>
+<div class="mp-body"><div class="mp-identity"><div class="mp-poster mp-poster-large">Poster<br>unavailable</div><div><div class="mp-eyebrow" data-eyebrow>Movie · 2024</div><h2 data-title>Northbound</h2><div class="mp-muted" data-meta>1h 57m · Released</div><div class="mp-muted mp-small" data-genres>Mystery · Drama</div></div></div>
+<div class="mp-links"><a href="#" data-provider="IMDb">IMDb ↗</a><a href="#" data-provider="TMDB">TMDB ↗</a><a href="#" data-provider="TVDB" hidden>TVDB ↗</a></div>
+<div class="mp-error mp-small" data-error hidden><span data-error-text></span> <button data-retry>Retry</button></div>
+<h3>Synopsis</h3><p class="mp-synopsis" data-synopsis>When a night train stops outside an isolated mountain town, a cartographer discovers that every passenger is carrying a different map of the same place. With the tracks buried under fresh snow, she joins a local guide to find a route home.<br><br>As they retrace a journey her mother made thirty years earlier, familiar landmarks begin to contradict the stories she grew up with. Each passenger has a reason to keep moving, and someone on the train knows why their destination has vanished from every timetable.</p>
+<p class="mp-muted mp-small" data-source>Metadata from TMDB</p><div class="mp-status mp-small" data-link-status role="status"></div></div>
+<footer class="mp-foot"><div class="mp-foot-top"><strong class="mp-small">Add to library</strong><button data-edit>Edit options</button></div><div class="mp-muted mp-small" data-summary>/media/movies · HD-1080p<br>Monitored · Search on add</div><div data-edit-fields hidden class="mp-options"><label>Profile <select><option>HD-1080p</option><option>Ultra-HD</option></select></label><label><input type="checkbox" checked> Monitored</label><label><input type="checkbox" checked> Search on add</label></div><button class="mp-accent mp-submit" data-add>Add movie</button><div class="mp-status mp-small" role="status" data-owned hidden>In library</div><div class="mp-status mp-small" role="status" data-added hidden>Added to your library. Keep browsing or open the title.</div></footer>
+</section>
+</div></div>
+<script>
+(() => {
+const root=document.getElementById('monarr-preview-web');
+const state={largeText:false,longSynopsis:false,presentation:'drawer',kind:'movie',condition:'ready',selected:0,open:true};
+const titles=['Northbound','Northbound: Winter Route'];
+const overview=root.querySelector('[data-synopsis]').innerHTML;
+const q=s=>root.querySelector(s);
+const saved=window.openai?.widgetState?.modelContent;
+if(saved?.webPreview) Object.assign(state,saved.webPreview);
+function render(){
+ q('.mp-preview').hidden=!state.open;q('.mp-dimmer').hidden=!state.open;q('.mp-page').inert=state.open;
+ q('.mp-preview').classList.remove('mp-centered');
+ q('[data-page-root]').textContent=state.kind==='series'?'/media/tv':'/media/movies';
+ q('[data-synopsis]').style.fontSize=state.largeText?'20px':'';
+ q('[data-title]').textContent=titles[state.selected]||titles[0];
+ q('[data-eyebrow]').textContent=(state.kind==='series'?'Series':'Movie')+' · '+(state.selected?2019:2024);
+ q('[data-meta]').textContent=state.kind==='series'?'48 min per episode · Ended':'1h 57m · Released';
+ q('[data-provider="TVDB"]').hidden=state.kind!=='series';q('[data-provider="TMDB"]').hidden=state.kind==='series';
+ q('[data-source]').textContent=state.kind==='series'?'Metadata from TVmaze':'Metadata from TMDB';
+ q('[data-synopsis]').innerHTML=state.selected?'Two estranged siblings take the last bus across the border to settle their father’s affairs. A storm diverts them through the valley where they spent their childhood, bringing an unfinished argument and an unexpected inheritance back into their lives.':overview;
+ if(state.longSynopsis) q('[data-synopsis]').innerHTML+='<br><br>In the morning, an abandoned station offers shelter but no clear answers. A ledger in the waiting room records journeys that none of the passengers remembers making. The guide recognizes a name in its pages and asks the cartographer to follow a path marked only on the oldest map.<br><br>Beyond the station, the mountain road divides. One route leads back toward the train; the other follows a river beneath the ice. Before the next storm arrives, the passengers must decide which account of their journey they can trust.';
+ const messages={error:'More details couldn’t load. You can still read this synopsis and add the title.',conflict:'Provider IDs disagree. Review the identity before adding this title.',ambiguous:'Multiple library items match this title. Resolve the conflict before adding.',unsupported:'Details are available, but this provider cannot supply a supported record for adding.'};
+ q('[data-error]').hidden=!messages[state.condition];q('[data-error-text]').textContent=messages[state.condition]||'';q('[data-retry]').hidden=state.condition!=='error';
+ q('.mp-links').hidden=state.condition==='conflict';
+ q('[data-owned]').hidden=state.condition!=='owned';
+ q('[data-meta]').hidden=state.condition==='error'||state.condition==='conflict';q('[data-genres]').hidden=q('[data-meta]').hidden;
+ q('[data-source]').hidden=q('[data-meta]').hidden;
+ q('[data-provider="IMDb"]').hidden=state.condition==='error';
+ q('[data-add]').textContent=state.condition==='added'?'Open in library':state.condition==='owned'?'Open in library':['conflict','ambiguous','unsupported'].includes(state.condition)?'Cannot add':state.kind==='series'?'Add series':'Add movie';
+ q('[data-add]').disabled=['conflict','ambiguous','unsupported'].includes(state.condition);
+ q('[data-added]').hidden=state.condition!=='added';
+ root.querySelectorAll('[data-kind]').forEach(b=>b.classList.toggle('mp-active',b.dataset.kind===state.kind));
+ q('[data-summary]').innerHTML=(state.kind==='series'?'/media/tv':'/media/movies')+' · HD-1080p<br>Monitored · '+(state.kind==='series'?'All seasons · ':'')+'Search on add';
+}
+function save(){window.openai?.setWidgetState?.({modelContent:{webPreview:state}})?.catch(()=>{});}
+function change(next){Object.assign(state,next);render();save();}
+function close(){change({open:false});root.querySelector(`[data-open="${state.selected}"]`).focus();}
+root.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{change({open:true,selected:Number(b.dataset.open),condition:'ready'});q('[data-close]').focus();});
+root.querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>change({kind:b.dataset.kind}));
+q('[data-close]').onclick=close;q('[data-dismiss]').onclick=close;
+root.addEventListener('keydown',e=>{if(e.key==='Escape'&&state.open)close();});
+q('[data-edit]').onclick=()=>{q('[data-edit-fields]').hidden=!q('[data-edit-fields]').hidden;};
+q('[data-retry]').onclick=()=>change({condition:'ready'});
+q('[data-add]').onclick=()=>{if(state.condition==='added'||state.condition==='owned'){q('[data-link-status]').textContent='Library detail would open here.';}else {const button=root.querySelector(`[data-quick="${state.selected}"]`);button.textContent='Added';button.disabled=true;change({condition:'added'});}};
+root.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>{b.textContent='Added';b.disabled=true;q('[data-page-status]').textContent=titles[Number(b.dataset.quick)]+' added to library.';});
+root.querySelectorAll('[data-provider]').forEach(a=>a.onclick=e=>{e.preventDefault();q('[data-link-status]').textContent=a.dataset.provider+' would open in a new browser tab.';});
+window.addEventListener('openai:set_globals',e=>{const s=e.detail?.globals?.widgetState?.modelContent?.webPreview;if(s){Object.assign(state,s);render();}});
+render();
+if(globalThis.Tweak){const t=new Tweak({container:root,onChange:()=>{render();save();}});t.addToggle(state,'largeText',{label:'Larger reading text'});t.addToggle(state,'longSynopsis',{label:'Long synopsis'});t.addSelect(state,'kind',{label:'Media type',options:['movie','series']});t.addSelect(state,'condition',{label:'Preview state',options:[{label:'Details loaded',value:'ready'},{label:'Enrichment unavailable',value:'error'},{label:'Already in library',value:'owned'},{label:'Just added',value:'added'},{label:'Provider identity conflict',value:'conflict'},{label:'Ambiguous library match',value:'ambiguous'},{label:'Preview only',value:'unsupported'}]});}
+})();
+</script>
+</div>

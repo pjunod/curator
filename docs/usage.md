@@ -84,6 +84,27 @@ checks the destination again before it contacts a download client. This is
 why a missing setting cannot turn into a completed download that only then
 fails with `item has no library folder assigned`.
 
+**View details before adding.** Select a result's poster, title, synopsis,
+or **View details**. The web UI opens a side drawer on desktop and a full
+screen on phones. Read the complete synopsis, available genres, runtime
+(per episode for series), and provider status. IMDb, TMDB, TVDB, and Open
+Library links appear only when a known database ID is available and open
+in another tab. Escape, the backdrop, Close, or browser Back returns to the
+same search. Add options in the drawer share the page's root, profile,
+monitoring, and search-on-add choices. Quick **Add** remains separate.
+
+Native mobile uses the same details from Discover and search. **Continue
+to add** opens the existing options in the same modal; Back returns to the
+preview with those choices intact. Quick **Add** skips the preview step.
+After a successful native add, the app opens the library item.
+
+A provider outage leaves the original search information available with
+Retry. Previewing never adds an item or changes the original Add identity.
+Known library items offer **Open in library**; book ownership is specific
+to the selected edition. Conflicting identities disable Add and Open until
+resolved, while ambiguous local ownership retains readable metadata and
+verified links. Previews are always available; there is no feature switch.
+
 **Adding several things is one screen.** Adding does not navigate away:
 the row turns into *added* with an **Open** link, a strip at the top keeps
 a running list of everything added this visit, and your search text, tab,

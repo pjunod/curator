@@ -342,3 +342,8 @@ adapters import only ports+domain, compat never touches infra/adapters directly.
 
 [GPL-3.0](LICENSE), matching upstream Sonarr and Radarr — which keeps the door open to porting
 their release-parser test corpora as golden tests.
+
+The [search preview design](docs/plan-search-result-preview.md) records the web
+and native interaction contract, renderings, and Fable review dispositions.
+[Delivery status](docs/status.html#search-preview-delivery) tracks implementation
+and verification.
