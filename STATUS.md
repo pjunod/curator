@@ -15,9 +15,9 @@
 > working session. Design rationale: [docs/architecture.md](docs/architecture.md) ·
 > decisions: [docs/adr/](docs/adr/) · this file: state only.
 
-## Active delivery — Folder repair
+## Delivery — Folder repair
 
-**Status:** review findings addressed; preparing fast lane · **Updated:** 2026-09-19 ·
+**Status:** adversarial findings addressed; fast lane green · **Updated:** 2026-09-19 ·
 **Version:** 0.25.2 · PR [#30](https://github.com/pjunod/monarr/pull/30)
 
 | Item | State | Evidence |
@@ -28,8 +28,17 @@
 | Bulk repair | implemented | Browse existing folders, apply entered paths across pages, retain per-row errors, and recheck restored drives. |
 | File preservation | implemented | Matching files retain identity, copy assignment, quality, provenance, and episode links through a transactional location update. |
 | Adversarial review | addressed | Preserve moved-file identities; remove silent retention of unavailable separate-copy records. Both findings have regression coverage. |
-| Fast lane | pending review | Focused library/API and browser regressions, web build/typecheck, lint, and API-generation consistency. |
+| Fast lane | green | Go 1.25.7 focused folder service/API regressions, one bulk-repair browser test, web typecheck/production build, backend build, lint (0 issues), generated API consistency, and focused identity/search regressions. |
 | Full suites | delegated | Separate batch process handles full unit failures under the 2026-09-19 workflow. Existing GitHub Actions are unchanged. |
+
+The review fixes are in `38f840e`; `e00579e` resolves three existing
+staticcheck findings without changing behavior. Checks were run after the
+review fixes. Full local unit and browser suites were not rerun. GitHub's
+existing workflows still run automatically; the first PR run's mobile job
+failed Expo Doctor because seven pinned Expo packages are behind the SDK's
+expected patch versions. No mobile files change in this PR; that finding is
+recorded for the separate batch process. The linked PR is the authoritative
+merge state.
 
 See [folder repair](docs/settings.md#disk-scan--repairing-folders-with-recorded-media)
 for operator behavior. No feature toggle is introduced.
