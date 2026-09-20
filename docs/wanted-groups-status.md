@@ -25,12 +25,14 @@ verification evidence so progress is visible without reading commit history.
 - [x] Grouped Wanted UI, visible reason actions, progress, persisted reload
   reconnection, and per-target results.
 - [x] Usage/architecture documentation and version `0.25.3` update.
-- [~] Acceptance fixtures cover scope membership, grouping, pack rejection,
+- [x] Acceptance fixtures cover scope membership, grouping, pack rejection,
   copy-aware season coverage, more than 20 targets, cancellation, API
-  validation, and storage checkpointing. The final test lane has not run.
-- [ ] Adversarial review after the complete change is merge-ready.
-- [ ] One final test lane after review; exact command scope awaits resolution
-  of the repository full-gate rule versus the requested fast-lane-only policy.
+  validation, storage checkpointing, crash-window recovery, and final
+  validation races. The final test lane has not run.
+- [x] One merge-ready adversarial review completed. Its four findings were
+  accepted and fixed before testing: cross-kind IDs, reason drift outside
+  reason scopes, enqueue/link crash recovery, and silent final-state races.
+- [ ] One final test lane after review.
 - [ ] Pull request merged into `main`.
 
 ## Decisions — explicit scope prevents accidental broadening
@@ -55,9 +57,12 @@ contracts have been checked with `go build ./...` and
 completed with the pinned SQLC and OpenAPI generators. The final section will
 name every test command, result, and any check left to later CI.
 
-## Open item — final local gate needs one policy choice
+## Test policy decision — one post-review lane
 
 The repository requires `make lint`, `make test`, `make test-web`, and
 `make test-e2e` before handoff. The requested workflow says to run only the
-fast lane once and leave the broader unit-test pass to another process. Work
-continues while that conflict awaits a decision; it blocks only the final gate.
+fast lane once and leave the broader unit-test pass to another process. With no
+operator response and explicit authority to use best judgment, the final lane
+will prioritize the repository's mandatory pre-merge contract while running it
+only once, after review. Any failures will be repaired and only the failing
+portion rerun.

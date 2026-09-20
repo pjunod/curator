@@ -1173,9 +1173,9 @@ func (s *Service) wantableFromID(ctx context.Context, id string) (domain.Wantabl
 	var a, b, c int64
 	n, _ := fmt.Sscanf(id, "movie:%d", &a)
 	if n == 1 {
-		kind = "flat"
+		kind = "movie"
 	} else if n, _ = fmt.Sscanf(id, "book:%d", &a); n == 1 {
-		kind = "flat"
+		kind = "book"
 	} else if n, _ = fmt.Sscanf(id, "episode:%d:%d:%d", &a, &b, &c); n == 3 {
 		kind = "episode"
 	} else if n, _ = fmt.Sscanf(id, "season:%d:%d", &a, &b); n == 2 {
@@ -1186,6 +1186,11 @@ func (s *Service) wantableFromID(ctx context.Context, id string) (domain.Wantabl
 	item, err := s.db.GetMediaItemFull(ctx, a)
 	if err != nil {
 		return nil, err
+	}
+	if (kind == "movie" && item.Kind != domain.KindMovie) ||
+		(kind == "book" && item.Kind != domain.KindBook) ||
+		((kind == "episode" || kind == "season") && item.Kind != domain.KindSeries) {
+		return nil, fmt.Errorf("wantable %q does not match media kind %q: %w", id, item.Kind, ErrNotFound)
 	}
 	var cp *domain.MediaCopy
 	if copyID != 0 {
@@ -1200,8 +1205,10 @@ func (s *Service) wantableFromID(ctx context.Context, id string) (domain.Wantabl
 		return s.targetCopy(ctx, item, int(b), int(c), cp)
 	case "season":
 		return s.targetCopy(ctx, item, int(b), 0, cp)
-	default:
+	case "movie", "book":
 		return s.targetCopy(ctx, item, 0, 0, cp)
+	default:
+		return nil, fmt.Errorf("unparseable wantable id %q", id)
 	}
 }
 

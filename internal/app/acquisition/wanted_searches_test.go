@@ -122,12 +122,105 @@ func TestWantedSearchRequestRejectsConflictingOrMalformedSelectors(t *testing.T)
 		{Scope: "group", MediaItemID: 1, WantableID: "movie:1"},
 		{Scope: "target", WantableID: "season:1:2"},
 		{Scope: "target", WantableID: "episode:1:2"},
+		{Scope: "target", WantableID: "episode:1:2:0"},
 		{Scope: "target", WantableID: "movie:0"},
 	}
 	for _, req := range bad {
 		if err := validateWantedSearch(req); !errors.Is(err, ErrInvalidWantedSearch) {
 			t.Errorf("validateWantedSearch(%+v) = %v, want invalid", req, err)
 		}
+	}
+}
+
+func TestWantedSearchTargetRejectsADeclaredKindThatDoesNotMatchTheItem(t *testing.T) {
+	svc, db, movieID := autoSetup(t, nil, &fakeClient{})
+	svc.WithWantedSearchQueue(wantedDBQueue{db: db})
+	_, err := svc.StartWantedSearch(context.Background(), WantedSearchRequest{
+		Scope: "target", WantableID: "book:" + itoa(movieID),
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-kind target = %v, want ErrNotFound", err)
+	}
+}
+
+func TestWantedSearchReasonSnapshotAppliesToEveryScope(t *testing.T) {
+	missing := domain.MovieWantable{Item: 1, Mon: true}
+	upgrade := domain.MovieWantable{Item: 1, Mon: true, Have: wantedQuality(), Files: true}
+	for _, scope := range []string{"all", "reason", "group", "target"} {
+		t.Run(scope, func(t *testing.T) {
+			target := sqlite.WantedSearchTarget{SelectedReason: string(WantedMissing)}
+			if !wantedReasonMatchesSnapshot(target, missing) {
+				t.Fatal("the selected reason did not match its original target")
+			}
+			if wantedReasonMatchesSnapshot(target, upgrade) {
+				t.Fatal("a missing target that became an upgrade remained eligible")
+			}
+		})
+	}
+}
+
+func TestWantedScopedFinalValidationReportsInFlightAndRegrabCap(t *testing.T) {
+	tests := []struct {
+		name string
+		seed func(*testing.T, *sqlite.DB, int64, string)
+		err  error
+	}{
+		{
+			name: "in flight",
+			seed: func(t *testing.T, db *sqlite.DB, itemID int64, wantableID string) {
+				t.Helper()
+				if _, err := db.InsertDownload(context.Background(), sqlite.Download{
+					MediaItemID: itemID, WantableIDs: []string{wantableID},
+					ReleaseTitle: "Already.Downloading", Protocol: "torrent", State: "grabbed",
+				}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			err: errWantedInFlight,
+		},
+		{
+			name: "regrab capped",
+			seed: func(t *testing.T, db *sqlite.DB, itemID int64, wantableID string) {
+				t.Helper()
+				for i := 0; i < reGrabLimit; i++ {
+					if _, err := db.InsertDownload(context.Background(), sqlite.Download{
+						MediaItemID: itemID, WantableIDs: []string{wantableID},
+						ReleaseTitle: "Failed." + itoa(int64(i)), Protocol: "torrent", State: "failed",
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			},
+			err: errWantedRegrabCapped,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeClient{}
+			svc, db, itemID := autoSetup(t,
+				[]ports.Release{rel("Test.Movie.2024.1080p.WEB-DL.x264-GRP", 10)}, client)
+			ctx := context.Background()
+			wanted, err := svc.Wanted(ctx)
+			if err != nil || len(wanted) != 1 {
+				t.Fatalf("wanted = %v, %v", wanted, err)
+			}
+			tc.seed(t, db, itemID, string(wanted[0].ID()))
+			enabled, err := svc.enabledIndexers(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			_, err = svc.searchAndGrabBestReserved(ctx, wanted[0], enabled, exactWantedCandidate, func() error {
+				called = true
+				return tc.err
+			})
+			if !called || !errors.Is(err, tc.err) {
+				t.Fatalf("final validation called=%v err=%v, want %v", called, err, tc.err)
+			}
+			if len(client.added) != 0 {
+				t.Fatalf("grabbed despite final validation: %v", client.added)
+			}
+		})
 	}
 }
 

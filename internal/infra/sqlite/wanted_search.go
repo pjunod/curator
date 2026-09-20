@@ -275,12 +275,14 @@ func (d *DB) FinishWantedSearch(ctx context.Context, runID, status, message stri
 	return tx.Commit()
 }
 
-func (d *DB) FindLiveJobByDedupe(ctx context.Context, key string) (domain.Job, error) {
+// FindNewestJobByDedupe includes terminal rows so recovery can see a job that
+// was durably enqueued but not yet linked to its Wanted run before a crash.
+func (d *DB) FindNewestJobByDedupe(ctx context.Context, key string) (domain.Job, error) {
 	row := d.R.QueryRowContext(ctx, `SELECT id, kind, payload, state, priority,
         run_after, attempts, max_attempts, last_error, dedupe_key,
         required_capability, affinity_node, lease_owner, lease_expires_at,
         created_at, updated_at, finished_at FROM jobs
-        WHERE dedupe_key = ? AND state IN ('queued', 'leased') ORDER BY id DESC LIMIT 1`, key)
+		WHERE dedupe_key = ? ORDER BY id DESC LIMIT 1`, key)
 	job, err := scanJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return job, ErrNotFound

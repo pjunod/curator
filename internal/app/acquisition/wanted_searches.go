@@ -32,7 +32,7 @@ var (
 	errWantedRegrabCapped   = errors.New("target reached the re-grab limit")
 )
 
-var exactWantedID = regexp.MustCompile(`^(?:movie|book):[1-9][0-9]*(?::c[1-9][0-9]*)?$|^episode:[1-9][0-9]*:[0-9]+:[0-9]+(?::c[1-9][0-9]*)?$`)
+var exactWantedID = regexp.MustCompile(`^(?:movie|book):[1-9][0-9]*(?::c[1-9][0-9]*)?$|^episode:[1-9][0-9]*:[0-9]+:[1-9][0-9]*(?::c[1-9][0-9]*)?$`)
 
 type WantedReason string
 
@@ -127,6 +127,10 @@ func wantedReasonOf(w domain.Wantable) WantedReason {
 	return WantedMissing
 }
 
+func wantedReasonMatchesSnapshot(target sqlite.WantedSearchTarget, w domain.Wantable) bool {
+	return target.SelectedReason == string(wantedReasonOf(w))
+}
+
 func exactWantedCandidate(parsed parser.Parsed) bool {
 	return !parsed.SeasonPack && len(parsed.Episodes) <= 1
 }
@@ -219,6 +223,9 @@ func (s *Service) StartWantedSearch(ctx context.Context, req WantedSearchRequest
 		w, resolveErr := s.wantableFromID(ctx, req.WantableID)
 		if resolveErr != nil {
 			return WantedSearchRun{}, resolveErr
+		}
+		if string(w.ID()) != req.WantableID {
+			return WantedSearchRun{}, fmt.Errorf("%w: wanted target %q", ErrNotFound, req.WantableID)
 		}
 		selected = append(selected, w)
 	}
@@ -396,7 +403,7 @@ func (s *Service) executeWantedTarget(ctx context.Context, run sqlite.WantedSear
 	if !wants(profile, w) {
 		return skip("no_longer_wanted", "target is already satisfied")
 	}
-	if run.Reason != "" && string(wantedReasonOf(w)) != run.Reason {
+	if !wantedReasonMatchesSnapshot(target, w) {
 		return skip("reason_changed", fmt.Sprintf("target is now %s", wantedReasonOf(w)))
 	}
 	if len(s.notInFlight(ctx, []domain.Wantable{w})) == 0 {
@@ -435,7 +442,7 @@ func (s *Service) executeWantedTarget(ctx context.Context, run sqlite.WantedSear
 		if len(s.notInFlight(ctx, []domain.Wantable{fresh})) == 0 {
 			return errWantedInFlight
 		}
-		if run.Reason != "" && string(wantedReasonOf(fresh)) != run.Reason {
+		if !wantedReasonMatchesSnapshot(target, fresh) {
 			return errWantedReasonChanged
 		}
 		if capped, _ := s.regrabCapped(ctx, fresh); capped {
@@ -511,22 +518,30 @@ func (s *Service) ReconcileWantedSearches(ctx context.Context) error {
 		return err
 	}
 	for _, run := range runs {
+		job, jobErr := s.db.FindNewestJobByDedupe(ctx, "wanted.search:"+run.RunID)
+		if jobErr != nil && !errors.Is(jobErr, sqlite.ErrNotFound) {
+			return jobErr
+		}
+		hasJob := jobErr == nil
 		if !run.CancelRequestedAt.IsZero() {
-			if run.JobID == 0 {
-				if job, err := s.db.FindLiveJobByDedupe(ctx, "wanted.search:"+run.RunID); err == nil && job.State == domain.JobLeased {
-					continue
-				}
-				if err := s.db.FinishWantedSearch(ctx, run.RunID, "cancelled", "", true); err != nil {
-					return err
-				}
-				continue
-			}
-			job, err := s.db.GetJob(ctx, run.JobID)
-			if err == nil && job.State == domain.JobLeased {
+			// A leased chunk may be between its final validation and grab. Let its
+			// cancellation watcher drain it before terminalising the snapshot.
+			if hasJob && job.State == domain.JobLeased {
 				continue
 			}
 			if err := s.db.FinishWantedSearch(ctx, run.RunID, "cancelled", "", true); err != nil {
 				return err
+			}
+			continue
+		}
+		if hasJob && (job.State == domain.JobQueued || job.State == domain.JobLeased) {
+			// Enqueue and link are separate durable operations. A newer job proves
+			// enqueue committed before a crash; adopt it instead of duplicating it
+			// or trusting an older predecessor recorded on the run.
+			if run.JobID != job.ID {
+				if err := s.db.LinkWantedSearchJob(ctx, run.RunID, run.Cursor, job.ID); err != nil {
+					return err
+				}
 			}
 			continue
 		}
@@ -536,28 +551,11 @@ func (s *Service) ReconcileWantedSearches(ctx context.Context) error {
 			}
 			continue
 		}
-		if run.JobID != 0 {
-			job, err := s.db.GetJob(ctx, run.JobID)
-			if err != nil {
-				return err
-			}
-			switch job.State {
-			case domain.JobQueued, domain.JobLeased:
-				continue
-			case domain.JobFailed:
-				if err := s.db.FinishWantedSearch(ctx, run.RunID, "interrupted", job.LastError, false); err != nil {
-					return err
-				}
-				continue
-			}
-		}
-		if job, err := s.db.FindLiveJobByDedupe(ctx, "wanted.search:"+run.RunID); err == nil {
-			if err := s.db.LinkWantedSearchJob(ctx, run.RunID, run.Cursor, job.ID); err != nil {
+		if hasJob && job.State == domain.JobFailed {
+			if err := s.db.FinishWantedSearch(ctx, run.RunID, "interrupted", job.LastError, false); err != nil {
 				return err
 			}
 			continue
-		} else if !errors.Is(err, sqlite.ErrNotFound) {
-			return err
 		}
 		if err := s.enqueueWantedChunk(ctx, run); err != nil {
 			return err

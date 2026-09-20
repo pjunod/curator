@@ -449,15 +449,16 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 	if best == nil {
 		return tally, nil
 	}
-	if capped, _ := s.regrabCapped(ctx, w); capped {
-		return tally, nil
-	}
-	if len(s.notInFlight(ctx, []domain.Wantable{w})) == 0 {
-		return tally, nil
-	}
 	if beforeGrab != nil {
 		if err := beforeGrab(); err != nil {
 			return tally, err
+		}
+	} else {
+		if capped, _ := s.regrabCapped(ctx, w); capped {
+			return tally, nil
+		}
+		if len(s.notInFlight(ctx, []domain.Wantable{w})) == 0 {
+			return tally, nil
 		}
 	}
 	if err := s.autoGrab(ctx, w, best.r, best.evidence); err != nil {
