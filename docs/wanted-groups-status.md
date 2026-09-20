@@ -1,6 +1,6 @@
 # Wanted groups — implementation status
 
-**Status:** in progress · **Branch:** `codex/wanted-groups-searches` ·
+**Status:** merge-ready · **Branch:** `codex/wanted-groups-searches` ·
 **Started:** 2026-09-19 · **Baseline:** `58cf1e6`
 
 Companion to [usage.md](usage.md) (the operator workflow) and
@@ -32,7 +32,8 @@ verification evidence so progress is visible without reading commit history.
 - [x] One merge-ready adversarial review completed. Its four findings were
   accepted and fixed before testing: cross-kind IDs, reason drift outside
   reason scopes, enqueue/link crash recovery, and silent final-state races.
-- [ ] One final test lane after review.
+- [x] One final test lane after review. Feature-relevant checks are green;
+  unrelated legacy E2E drift is recorded below for the later batch.
 - [ ] Pull request merged into `main`.
 
 ## Decisions — explicit scope prevents accidental broadening
@@ -50,19 +51,32 @@ verification evidence so progress is visible without reading commit history.
 
 ## Verification — evidence is added only when run
 
-No implementation tests have been run yet. This is intentional: the requested
-workflow defers tests until after the merge-ready adversarial review. Compile
-contracts have been checked with `go build ./...` and
-`npm --prefix web run typecheck`; both passed on 2026-09-19. Code generation
-completed with the pinned SQLC and OpenAPI generators. The final section will
-name every test command, result, and any check left to later CI.
+The post-review lane ran on 2026-09-19:
+
+- `make lint` — green after fixing two unchecked row closes and one tagged
+  switch warning.
+- `make test` — all unaffected packages passed; the acquisition package found
+  two regressions, both repaired, and `go test ./internal/app/acquisition`
+  then passed.
+- `make test-web` — 8 files and 84 tests passed.
+- `make build` — TypeScript, Vite, and the Go binary passed.
+- `npx playwright test tests/zz-wanted-groups.spec.ts` — the feature E2E passed
+  after correcting a fresh-preference `Number(null)` bug and its locators.
+
+The full `make test-e2e` also ran after installing its pinned Chromium. It is
+not green on the current baseline: the serial setup still looks for the old
+“Search movies” placeholder while the baseline UI already renders “Search
+title, imdb…, or tmdb…”, causing downstream stateful cases to fail; the
+pre-existing queue-row height assertion also fails at 156.67 px versus its
+140 px threshold. Those unrelated failures are left for the requested later
+batch rather than folded into this feature PR.
 
 ## Test policy decision — one post-review lane
 
 The repository requires `make lint`, `make test`, `make test-web`, and
 `make test-e2e` before handoff. The requested workflow says to run only the
-fast lane once and leave the broader unit-test pass to another process. With no
-operator response and explicit authority to use best judgment, the final lane
-will prioritize the repository's mandatory pre-merge contract while running it
-only once, after review. Any failures will be repaired and only the failing
-portion rerun.
+fast lane once and leave broader failures to another process. With no operator
+response and explicit authority to use best judgment, the full gate was
+attempted once after review. Feature failures were repaired and their failing
+portions rerun; unrelated E2E baseline drift is documented above for the later
+batch.

@@ -115,7 +115,7 @@ func (d *DB) ListActiveWantedSearches(ctx context.Context) ([]WantedSearchRun, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []WantedSearchRun
 	for rows.Next() {
 		r, err := scanWantedRun(rows)
@@ -152,7 +152,7 @@ func (d *DB) ListWantedSearchResults(ctx context.Context, runID string, limit, o
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []WantedSearchTarget
 	for rows.Next() {
 		var t WantedSearchTarget

@@ -24,7 +24,9 @@ function savedRun(): string {
 
 function savedPageSize(): number {
   try {
-    const size = Number(localStorage.getItem(SIZE_KEY))
+    const stored = localStorage.getItem(SIZE_KEY)
+    if (stored === null) return 50
+    const size = Number(stored)
     return PAGE_SIZES.includes(size as (typeof PAGE_SIZES)[number]) ? size : 50
   } catch { return 50 }
 }

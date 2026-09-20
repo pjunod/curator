@@ -231,15 +231,16 @@ func (s *Service) StartWantedSearch(ctx context.Context, req WantedSearchRequest
 	}
 
 	label := "All wanted items"
-	if req.Scope == "reason" {
+	switch req.Scope {
+	case "reason":
 		label = fmt.Sprintf("All %s items", strings.ToUpper(string(req.Reason[:1]))+string(req.Reason[1:]))
-	} else if req.Scope == "group" {
+	case "group":
 		item, _ := s.db.GetMediaItemFull(ctx, req.MediaItemID)
 		label = item.Title
 		if req.Reason != "" {
 			label = fmt.Sprintf("%s in %s", strings.ToUpper(string(req.Reason[:1]))+string(req.Reason[1:]), item.Title)
 		}
-	} else if req.Scope == "target" {
+	case "target":
 		label = describeTarget(selected[0])
 	}
 	runID, err := wantedRunID()

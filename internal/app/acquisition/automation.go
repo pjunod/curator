@@ -314,6 +314,12 @@ func (s *Service) searchAndGrabBestWhere(ctx context.Context, w domain.Wantable,
 
 func (s *Service) searchAndGrabBestScoped(ctx context.Context, w domain.Wantable,
 	enabled []ports.IndexerConfig, allowed candidatePredicate, beforeGrab func() error) (searchTally, error) {
+	// Refuse an invalid caller snapshot explicitly. Re-resolving below is for
+	// freshness after reservation wait, not permission to silently substitute a
+	// different profile for a malformed or stale request.
+	if _, err := s.db.GetProfile(ctx, w.ProfileID()); err != nil {
+		return searchTally{}, err
+	}
 	release, err := s.reservations.acquire(ctx, w)
 	if err != nil {
 		return searchTally{}, err

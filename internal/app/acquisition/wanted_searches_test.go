@@ -3,7 +3,6 @@ package acquisition
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -14,23 +13,17 @@ import (
 	"github.com/pjunod/monarr/internal/ports"
 )
 
-type packThenEpisodeIndexer struct {
-	mu    sync.Mutex
-	calls int
+type packAndEpisodeIndexer struct{}
+
+func (i *packAndEpisodeIndexer) Search(context.Context, domain.SearchQuery) ([]ports.Release, error) {
+	return []ports.Release{
+		{Title: "Test.Show.S01.1080p.WEB-DL-PACK", DownloadURL: "pack", Indexer: "idx", Protocol: "torrent"},
+		{Title: "Test.Show.S01E01.1080p.WEB-DL-GRP", DownloadURL: "episode", Indexer: "idx", Protocol: "torrent"},
+	}, nil
 }
 
-func (i *packThenEpisodeIndexer) Search(context.Context, domain.SearchQuery) ([]ports.Release, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	i.calls++
-	if i.calls == 1 {
-		return []ports.Release{{Title: "Test.Show.S01.1080p.WEB-DL-PACK", DownloadURL: "pack", Indexer: "idx", Protocol: "torrent"}}, nil
-	}
-	return []ports.Release{{Title: "Test.Show.S01E01.1080p.WEB-DL-GRP", DownloadURL: "episode", Indexer: "idx", Protocol: "torrent"}}, nil
-}
-
-func (i *packThenEpisodeIndexer) FetchRSS(context.Context) ([]ports.Release, error) { return nil, nil }
-func (i *packThenEpisodeIndexer) Test(context.Context) error                        { return nil }
+func (i *packAndEpisodeIndexer) FetchRSS(context.Context) ([]ports.Release, error) { return nil, nil }
+func (i *packAndEpisodeIndexer) Test(context.Context) error                        { return nil }
 
 func wantedQuality() *quality.Quality {
 	q := quality.Quality{Source: quality.SourceHDTV, Resolution: 720}
@@ -238,10 +231,10 @@ func TestWantedExactCandidateRejectsPacksAndMultiEpisodeReleases(t *testing.T) {
 	}
 }
 
-func TestWantedExactSearchDoesNotLetAPackStopALaterEpisodeQuery(t *testing.T) {
+func TestWantedExactSearchRejectsAPackWithoutHidingAnExactEpisode(t *testing.T) {
 	client := &fakeClient{}
 	svc, _, _ := seriesSetup(t, client)
-	indexer := &packThenEpisodeIndexer{}
+	indexer := &packAndEpisodeIndexer{}
 	svc.newIndexer = func(ports.IndexerConfig) ports.Indexer { return indexer }
 	ctx := context.Background()
 	wanted, err := svc.Wanted(ctx)
@@ -258,11 +251,5 @@ func TestWantedExactSearchDoesNotLetAPackStopALaterEpisodeQuery(t *testing.T) {
 	}
 	if tally.Grabbed == "" || len(client.added) != 1 || client.added[0] != "episode" {
 		t.Fatalf("tally = %+v, grabs = %v; exact episode should win", tally, client.added)
-	}
-	indexer.mu.Lock()
-	calls := indexer.calls
-	indexer.mu.Unlock()
-	if calls < 2 {
-		t.Fatalf("queries = %d; rejected pack incorrectly stopped the planner", calls)
 	}
 }

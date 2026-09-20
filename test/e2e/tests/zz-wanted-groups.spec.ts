@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 test('Wanted groups titles, preserves siblings, and sends every explicit scope', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('monarr-wanted-page-size', '25'))
   const wanted = [
     {
       wantableId: 'episode:101:1:10', mediaItemId: 101, title: 'Example Show',
@@ -51,14 +52,14 @@ test('Wanted groups titles, preserves siblings, and sends every explicit scope',
   })
 
   await page.goto('/wanted')
-  await expect(page.getByText('1–25 of 27')).toBeVisible()
+  await expect(page.getByText('1–25 of 27').first()).toBeVisible()
   await expect(page.getByRole('button', { name: 'Search all Missing (28)' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Search all Upgrade (1)' })).toBeVisible()
 
   const expand = page.getByRole('button', { name: 'Expand Example Show' })
   await expand.focus()
   await page.keyboard.press('Enter')
-  await expect(expand).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('button', { name: 'Collapse Example Show' })).toHaveAttribute('aria-expanded', 'true')
   const region = page.getByRole('region', { name: 'Example Show wanted targets' })
   await expect(region.locator('.wanted-child-detail')).toHaveText(['S01E02', 'S01E10', 'S02E01'])
 
