@@ -40,18 +40,14 @@ type UnmatchedDir struct {
 	Name         string `json:"name"`
 }
 
-// MissingItem is a library item whose folder is not on disk.
-//
-// Carries the id, not just the path, because a list of paths is only ever
-// something to read. With the id the UI can offer the two things a user
-// actually wants — drop the entry, or point it somewhere real — and the most
-// common cause of these is an item added by title that was never attached to
-// any folder at all.
+// MissingItem is an unavailable folder for an item with previously recorded files.
+// An uncreated destination awaiting its first download is not a folder problem.
 type MissingItem struct {
-	ID    int64            `json:"id"`
-	Kind  domain.MediaKind `json:"kind"`
-	Title string           `json:"title"`
-	Path  string           `json:"path"`
+	ID     int64            `json:"id"`
+	Kind   domain.MediaKind `json:"kind"`
+	Title  string           `json:"title"`
+	Path   string           `json:"path"`
+	Reason string           `json:"reason"`
 }
 
 // Report is the persisted result of the last reconcile.
@@ -111,11 +107,15 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 			continue
 		}
 		claimed[item.Path] = true
-		if _, err := os.Stat(item.Path); err != nil {
-			report.MissingPaths = append(report.MissingPaths, item.Path)
-			report.MissingItems = append(report.MissingItems, MissingItem{
-				ID: item.ID, Kind: item.Kind, Title: item.Title, Path: item.Path,
-			})
+		if reason := folderProblem(item.Path); reason != "" {
+			missing, err := s.missingItem(ctx, item, reason)
+			if err != nil {
+				return report, err
+			}
+			if missing != nil {
+				report.MissingPaths = append(report.MissingPaths, item.Path)
+				report.MissingItems = append(report.MissingItems, *missing)
+			}
 			continue
 		}
 		linked, removed, err := s.scanItem(ctx, item, copies)
@@ -302,12 +302,15 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 		// and the probe overwrites it with measurement. Book files are the
 		// exception — the extension IS the format, and there is no container
 		// to walk (ADR 0006).
-		if src := filename.BookQualitySource(path); item.Kind == domain.KindBook && src != "" {
-			_ = s.db.SetFileQualityFrom(ctx, fileID, quality.Quality{Source: quality.Source(src)},
-				mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
-		} else if q := parser.Parse(filepath.Base(path)).Quality; q.Resolution != 0 || q.Source != quality.SourceUnknown {
-			_ = s.db.SetFileQualityFrom(ctx, fileID, q,
-				mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+		old, known := existingByPath[path]
+		if !known || old.Provenance == mediainfo.ProvenanceUnknown || old.Provenance == mediainfo.ProvenanceFilename {
+			if src := filename.BookQualitySource(path); item.Kind == domain.KindBook && src != "" {
+				_ = s.db.SetFileQualityFrom(ctx, fileID, quality.Quality{Source: quality.Source(src)},
+					mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+			} else if q := parser.Parse(filepath.Base(path)).Quality; q.Resolution != 0 || q.Source != quality.SourceUnknown {
+				_ = s.db.SetFileQualityFrom(ctx, fileID, q,
+					mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+			}
 		}
 		// Measure anything we have not measured at this size. This IS the
 		// backfill: no separate migration pass, no "run this once" button —
@@ -373,36 +376,54 @@ func (s *Service) LastScanReport(ctx context.Context) (Report, bool, error) {
 	if err := json.Unmarshal([]byte(raw), &r); err != nil {
 		return Report{}, false, err
 	}
-	r.pruneResolvedMissing(ctx, s)
+	if err := r.pruneResolvedMissing(ctx, s); err != nil {
+		return Report{}, false, err
+	}
 	return r, true, nil
 }
 
 // pruneResolvedMissing drops missing-folder entries that no longer apply:
 // the item was removed, or it now points at a folder that exists.
-func (r *Report) pruneResolvedMissing(ctx context.Context, s *Service) {
-	if len(r.MissingItems) == 0 {
-		return
+func (r *Report) pruneResolvedMissing(ctx context.Context, s *Service) error {
+	// Old reports may contain paths only. Resolve their identities too, so
+	// upgrading removes the old false alarms without requiring another scan.
+	if len(r.MissingItems) == 0 && len(r.MissingPaths) > 0 {
+		items, err := s.db.ListMediaItems(ctx, "")
+		if err != nil {
+			return err
+		}
+		paths := map[string]bool{}
+		for _, path := range r.MissingPaths {
+			paths[path] = true
+		}
+		for _, item := range items {
+			if paths[item.Path] {
+				r.MissingItems = append(r.MissingItems, MissingItem{ID: item.ID})
+			}
+		}
 	}
 	keptItems := make([]MissingItem, 0, len(r.MissingItems))
 	keptPaths := make([]string, 0, len(r.MissingItems))
 	for _, m := range r.MissingItems {
 		item, err := s.db.GetMediaItemFull(ctx, m.ID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
 		if err != nil {
-			continue // entry removed — nothing missing any more
+			return err
 		}
-		if item.Path == "" {
-			continue // no folder claimed, so none can be missing
+		missing, err := s.missingItem(ctx, item, folderProblem(item.Path))
+		if err != nil {
+			return err
 		}
-		if _, statErr := os.Stat(item.Path); statErr == nil {
-			continue // it was pointed at something real
+		if missing != nil {
+			keptItems = append(keptItems, *missing)
+			keptPaths = append(keptPaths, missing.Path)
 		}
-		m.Path = item.Path // report where it points now, not where it did
-		m.Title = item.Title
-		keptItems = append(keptItems, m)
-		keptPaths = append(keptPaths, item.Path)
 	}
 	r.MissingItems = keptItems
 	r.MissingPaths = keptPaths
+	return nil
 }
 
 // IgnoreDir dismisses an adoption candidate for good. Dismissals are keyed

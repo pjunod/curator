@@ -3549,3 +3549,25 @@ a.pill-info:hover {
   gap: 8px;
   font-size: 13px;
 }
+
+.folder-repair-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.folder-repair-row {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 0;
+}
+.folder-repair-row .form-row { flex-wrap: wrap; }
+.folder-repair-path {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-bottom: 8px;
+}
+.folder-repair-row label { display: block; margin-bottom: 4px; }
+.folder-repair-row .path-suggestions {
+  position: static;
+  margin-top: 4px;
+}

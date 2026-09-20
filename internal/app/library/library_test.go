@@ -186,7 +186,7 @@ func TestScanReconciles(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "Some Random Show"), 0o755)
 
 	// An item whose folder never appeared on disk.
-	ghost, err := svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true})
+	_, err = svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID, Monitored: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestScanReconciles(t *testing.T) {
 	if len(report.UnmatchedDirs) != 1 || report.UnmatchedDirs[0].Name != "Some Random Show" {
 		t.Errorf("unmatched = %+v", report.UnmatchedDirs)
 	}
-	if len(report.MissingPaths) != 1 || report.MissingPaths[0] != ghost.Path {
+	if len(report.MissingPaths) != 0 {
 		t.Errorf("missing = %+v", report.MissingPaths)
 	}
 

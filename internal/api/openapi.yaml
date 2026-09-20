@@ -206,6 +206,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /library/{id}/repair-folder:
+    post:
+      operationId: repairLibraryFolder
+      summary: Reconnect an item to an existing media folder and scan it
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedPath, path]
+              properties:
+                expectedPath:
+                  type: string
+                  description: Current item path, to reject stale repair forms.
+                path:
+                  type: string
+                  description: Existing media directory inside a compatible registered root.
+      responses:
+        "204":
+          description: Folder linked and files scanned. No files moved or created.
+        "400":
+          description: Stale form, invalid folder, empty folder, or claimed location.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/{id}/placement-suggestion:
     get:
       operationId: getLibraryPlacementSuggestion
@@ -3132,8 +3169,9 @@ components:
         missingItems:
           type: array
           description: >
-            The same set as missingPaths, with the identity needed to act on
-            them — a list of paths is only ever something to read.
+            Unavailable folders with previously recorded media files, with identity
+            and reason for repair. Uncreated destinations awaiting a first download
+            are excluded.
           items:
             $ref: "#/components/schemas/MissingItem"
 
@@ -3312,6 +3350,10 @@ components:
       type: object
       required: [id, kind, title, path]
       properties:
+        reason:
+          type: string
+          enum: [missing, inaccessible, not_directory]
+          description: Why the folder holding previously recorded files is unavailable.
         id:
           type: integer
           format: int64

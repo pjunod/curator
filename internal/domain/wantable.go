@@ -397,12 +397,10 @@ func PlanVideoSearch(w Wantable) SearchPlan {
 			continue
 		}
 		q := canonical
-		switch w.(type) {
+		switch t := w.(type) {
 		case EpisodeWantable:
-			t := w.(EpisodeWantable)
 			q.Q = fmt.Sprintf("%s S%02dE%02d", a.Title, t.Season, t.Episode)
 		case SeasonWantable:
-			t := w.(SeasonWantable)
 			q.Q = fmt.Sprintf("%s S%02d", a.Title, t.Season)
 		default:
 			q.Q = a.Title

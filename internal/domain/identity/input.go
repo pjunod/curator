@@ -57,9 +57,7 @@ func ParseInput(raw string, kind domain.MediaKind) (domain.ExternalRef, bool, er
 
 	if provider == "imdb" {
 		v := strings.ToLower(value)
-		if strings.HasPrefix(v, "tt") {
-			v = v[2:]
-		}
+		v = strings.TrimPrefix(v, "tt")
 		if !allDigits(v) || len(v) == 0 || len(v) > 12 {
 			return domain.ExternalRef{}, recognized, ErrInvalidExternalID
 		}

@@ -378,6 +378,7 @@ export interface UnmatchedDir {
 }
 
 export interface MissingItem {
+  reason?: 'missing' | 'inaccessible' | 'not_directory'
   id: number
   kind: MediaKind
   title: string
@@ -481,6 +482,8 @@ export const getLibraryPlacementSuggestion = (id: number) =>
   get<PlacementSuggestion>(`/library/${id}/placement-suggestion`)
 export const addLibraryItem = (req: AddMediaRequest) =>
   send<MediaItemDetail>('POST', '/library', req)
+export const repairLibraryFolder = (id: number, expectedPath: string, path: string) =>
+  send('POST', `/library/${id}/repair-folder`, { expectedPath, path })
 export const deleteLibraryItem = (id: number) => send('DELETE', `/library/${id}`)
 export const addLibraryAlias = (id: number, title: string, searchable = false) =>
   send<TitleAlias>('POST', `/library/${id}/aliases`, { title, searchable })

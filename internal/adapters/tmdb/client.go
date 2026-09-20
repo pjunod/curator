@@ -555,7 +555,8 @@ func (c *Client) IdentityMetadata(ctx context.Context, kind domain.MediaKind, id
 	}
 	var canonical, original string
 	var origins []string
-	if kind == domain.KindMovie {
+	switch kind {
+	case domain.KindMovie:
 		var r movieResp
 		if err := c.get(ctx, fmt.Sprintf("/movie/%d", ids.TMDB), nil, &r); err != nil {
 			return ports.IdentityMetadata{}, err
@@ -565,7 +566,7 @@ func (c *Client) IdentityMetadata(ctx context.Context, kind domain.MediaKind, id
 		if identityIDsConflict(ids, actual) {
 			return ports.IdentityMetadata{}, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: ids, ActualIDs: actual}
 		}
-	} else if kind == domain.KindSeries {
+	case domain.KindSeries:
 		var r tvResp
 		if err := c.get(ctx, fmt.Sprintf("/tv/%d", ids.TMDB), url.Values{"append_to_response": {"external_ids"}}, &r); err != nil {
 			return ports.IdentityMetadata{}, err
@@ -575,7 +576,7 @@ func (c *Client) IdentityMetadata(ctx context.Context, kind domain.MediaKind, id
 		if identityIDsConflict(ids, actual) {
 			return ports.IdentityMetadata{}, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: ids, ActualIDs: actual}
 		}
-	} else {
+	default:
 		return ports.IdentityMetadata{}, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
 	}
 	var resp altTitlesResp

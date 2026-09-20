@@ -61,6 +61,29 @@ accessibility and free space. Deleting a root folder only removes the
 registration — nothing on disk is touched. Items keep their absolute paths,
 so re-adding the same root restores the association.
 
+### Disk scan — repairing folders with recorded media
+
+**Folders needing attention** lists entries with previously recorded media
+whose assigned folder is missing, inaccessible, or no longer a directory.
+A title awaiting its first download has no folder to repair and stays out of
+this list. Existing scan reports are filtered on read, so upgrading removes
+those false alarms without another scan.
+
+Choose **Repair folders…**, browse to each title's existing folder, then
+**Apply all repairs**. The action applies every entered path, including
+other pages, and scans the selected folders to reconnect file records.
+Individual failures remain visible and do not stop the other repairs.
+Folders must contain media and sit under a compatible registered root;
+another title's folder, an entire root, and empty folders are rejected.
+Files are never created, moved, or deleted by repair. Files with matching
+relative paths and sizes keep their identities, copy assignments, measured
+quality, release provenance, and episode links.
+
+If a drive or mount was unavailable, restore access and press **Check
+again**. If the files were deleted, restore a backup or open the title to
+search for a replacement. **Remove entry** is only for titles you no longer
+want tracked; it leaves files alone.
+
 ## Indexers
 
 Torznab (torrent) and Newznab (usenet) share one implementation.

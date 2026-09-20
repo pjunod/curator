@@ -449,6 +449,27 @@ func (e MediaKind) Valid() bool {
 	}
 }
 
+// Defines values for MissingItemReason.
+const (
+	MissingItemReasonInaccessible MissingItemReason = "inaccessible"
+	MissingItemReasonMissing      MissingItemReason = "missing"
+	MissingItemReasonNotDirectory MissingItemReason = "not_directory"
+)
+
+// Valid indicates whether the value is a known member of the MissingItemReason enum.
+func (e MissingItemReason) Valid() bool {
+	switch e {
+	case MissingItemReasonInaccessible:
+		return true
+	case MissingItemReasonMissing:
+		return true
+	case MissingItemReasonNotDirectory:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NotifierType.
 const (
 	NotifierTypeDiscord  NotifierType = "discord"
@@ -1461,11 +1482,17 @@ type MediaKind string
 
 // MissingItem defines model for MissingItem.
 type MissingItem struct {
-	Id    int64     `json:"id"`
-	Kind  MediaKind `json:"kind"`
-	Path  string    `json:"path"`
-	Title string    `json:"title"`
+	Id   int64     `json:"id"`
+	Kind MediaKind `json:"kind"`
+	Path string    `json:"path"`
+
+	// Reason Why the folder holding previously recorded files is unavailable.
+	Reason *MissingItemReason `json:"reason,omitempty"`
+	Title  string             `json:"title"`
 }
+
+// MissingItemReason Why the folder holding previously recorded files is unavailable.
+type MissingItemReason string
 
 // MonitorRequest defines model for MonitorRequest.
 type MonitorRequest struct {
@@ -1791,7 +1818,7 @@ type ScanReport struct {
 	IgnoredDirs  *int `json:"ignoredDirs,omitempty"`
 	ItemsScanned int  `json:"itemsScanned"`
 
-	// MissingItems The same set as missingPaths, with the identity needed to act on them — a list of paths is only ever something to read.
+	// MissingItems Unavailable folders with previously recorded media files, with identity and reason for repair. Uncreated destinations awaiting a first download are excluded.
 	MissingItems *[]MissingItem `json:"missingItems,omitempty"`
 	MissingPaths []string       `json:"missingPaths"`
 	RootsScanned int            `json:"rootsScanned"`
@@ -2159,6 +2186,15 @@ type SearchReleasesParams struct {
 	CopyId *int64 `form:"copyId,omitempty" json:"copyId,omitempty"`
 }
 
+// RepairLibraryFolderJSONBody defines parameters for RepairLibraryFolder.
+type RepairLibraryFolderJSONBody struct {
+	// ExpectedPath Current item path, to reject stale repair forms.
+	ExpectedPath string `json:"expectedPath"`
+
+	// Path Existing media directory inside a compatible registered root.
+	Path string `json:"path"`
+}
+
 // SearchMetadataParams defines parameters for SearchMetadata.
 type SearchMetadataParams struct {
 	Kind  MediaKind `form:"kind" json:"kind"`
@@ -2258,6 +2294,9 @@ type UpdateMediaCopyJSONRequestBody = MediaCopyUpdate
 
 // SetEpisodeMonitoredJSONRequestBody defines body for SetEpisodeMonitored for application/json ContentType.
 type SetEpisodeMonitoredJSONRequestBody = MonitorRequest
+
+// RepairLibraryFolderJSONRequestBody defines body for RepairLibraryFolder for application/json ContentType.
+type RepairLibraryFolderJSONRequestBody RepairLibraryFolderJSONBody
 
 // SetSeasonMonitoredJSONRequestBody defines body for SetSeasonMonitored for application/json ContentType.
 type SetSeasonMonitoredJSONRequestBody = MonitorRequest
@@ -2474,6 +2513,9 @@ type ServerInterface interface {
 	// SearchReleases Interactive search for one item target or book edition
 	// (GET /library/{id}/releases)
 	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
+	// RepairLibraryFolder Reconnect an item to an existing media folder and scan it
+	// (POST /library/{id}/repair-folder)
+	RepairLibraryFolder(w http.ResponseWriter, r *http.Request, id int64)
 	// RescanManualEntry Re-read a manual series' folder for episodes that have appeared
 	// (POST /library/{id}/rescan)
 	RescanManualEntry(w http.ResponseWriter, r *http.Request, id int64)
@@ -4114,6 +4156,32 @@ func (siw *ServerInterfaceWrapper) SearchReleases(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// RepairLibraryFolder operation middleware
+func (siw *ServerInterfaceWrapper) RepairLibraryFolder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RepairLibraryFolder(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RescanManualEntry operation middleware
 func (siw *ServerInterfaceWrapper) RescanManualEntry(w http.ResponseWriter, r *http.Request) {
 
@@ -5042,6 +5110,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}", wrapper.DeleteLibraryItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}", wrapper.GetLibraryItem)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}", wrapper.UpdateLibraryItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/repair-folder", wrapper.RepairLibraryFolder)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/placement-suggestion", wrapper.GetLibraryPlacementSuggestion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/aliases", wrapper.AddLibraryAlias)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}/aliases/{aliasId}", wrapper.DeleteLibraryAlias)

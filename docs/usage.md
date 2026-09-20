@@ -264,8 +264,15 @@ existing collection and run **Scan disk** (Library page):
   minutes after the scan rather than blocking it.
 - Folders nobody claims are listed as **unmatched**, each with a
   **Match…** button that pre-fills the add search.
-- Items whose folders vanished are reported; their file records are pruned
-  so the items become *wanted* again.
+- Unavailable folders are reported only for entries with recorded media.
+  Titles awaiting their first download are not problems. File records are
+  retained while a whole folder is unavailable, preserving the evidence for
+  repair; individual vanished files in readable folders are pruned.
+- In **Settings → Disk scan → Folders needing attention**, choose **Repair
+  folders…** to reconnect moved folders, then **Apply all repairs** to scan
+  every entered location. Restore inaccessible drives and use **Check again**.
+  See [folder repair](settings.md#disk-scan--repairing-folders-with-recorded-media)
+  for validation rules and recovery when the files themselves are gone.
 
 Scans also run on a 12-hour schedule.
 

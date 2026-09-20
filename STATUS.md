@@ -15,7 +15,35 @@
 > working session. Design rationale: [docs/architecture.md](docs/architecture.md) ·
 > decisions: [docs/adr/](docs/adr/) · this file: state only.
 
-## Active delivery — Open Library refresh resilience
+## Delivery — Folder repair
+
+**Status:** adversarial findings addressed; fast lane green · **Updated:** 2026-09-19 ·
+**Version:** 0.25.2 · PR [#30](https://github.com/pjunod/monarr/pull/30)
+
+| Item | State | Evidence |
+|---|---|---|
+| Independent clone | complete | Integrated onto upstream `3aaec3f`; user checkout left untouched after the workflow instruction. |
+| Undownloaded titles | implemented | Missing-folder reporting requires previously recorded media; old reports are filtered on read. |
+| Real folder issues | implemented | Missing, inaccessible, and non-directory paths have distinct explanations. |
+| Bulk repair | implemented | Browse existing folders, apply entered paths across pages, retain per-row errors, and recheck restored drives. |
+| File preservation | implemented | Matching files retain identity, copy assignment, quality, provenance, and episode links through a transactional location update. |
+| Adversarial review | addressed | Preserve moved-file identities; remove silent retention of unavailable separate-copy records. Both findings have regression coverage. |
+| Fast lane | green | Go 1.25.7 focused folder service/API regressions, one bulk-repair browser test, web typecheck/production build, backend build, lint (0 issues), generated API consistency, and focused identity/search regressions. |
+| Full suites | delegated | Separate batch process handles full unit failures under the 2026-09-19 workflow. Existing GitHub Actions are unchanged. |
+
+The review fixes are in `38f840e`; `e00579e` resolves three existing
+staticcheck findings without changing behavior. Checks were run after the
+review fixes. Full local unit and browser suites were not rerun. GitHub's
+existing workflows still run automatically; the first PR run's mobile job
+failed Expo Doctor because seven pinned Expo packages are behind the SDK's
+expected patch versions. No mobile files change in this PR; that finding is
+recorded for the separate batch process. The linked PR is the authoritative
+merge state.
+
+See [folder repair](docs/settings.md#disk-scan--repairing-folders-with-recorded-media)
+for operator behavior. No feature toggle is introduced.
+
+## Previous delivery — Open Library refresh resilience
 
 **Status:** ready to merge; adversarial review approved; fast lane green ·
 **Updated:** 2026-09-19 · **Version:** 0.25.1
