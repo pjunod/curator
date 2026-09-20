@@ -9,6 +9,7 @@ import type {
   MediaItemDetail,
   MediaItemSummary,
   MediaKind,
+  MetadataPreview,
   QualityProfile,
   QueueItem,
   QueueSummary,
@@ -105,6 +106,7 @@ export class MonarrClient {
     this.send('PATCH', `/library/${id}/seasons/${season}`, { monitored })
   searchMetadata = (kind: MediaKind, query: string): Promise<SearchResult[]> =>
     this.get(`/metadata/search?kind=${kind}&query=${encodeURIComponent(query)}`)
+  getMetadataPreview = (query: string): Promise<MetadataPreview> => this.get(`/metadata/preview?${query}`)
   getDiscoverLists = (): Promise<DiscoverList[]> => this.get('/discover/lists')
   getDiscoverItems = (list: string, page = 1): Promise<SearchResult[]> =>
     this.get(`/discover/items?list=${encodeURIComponent(list)}&page=${page}`)

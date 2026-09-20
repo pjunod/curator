@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate, useSearch } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter, useSearch } from '@tanstack/react-router'
 import { ApiError } from '../api'
+import { MetadataPreviewDrawer } from '../MetadataPreview'
+import { parsePreviewKey, previewKey } from '../metadataPreview'
 import type { BookType, MediaKind, SearchResult } from '../api'
 import {
   addLibraryItem,
@@ -48,13 +50,21 @@ function useDebounced<T>(value: T, ms: number): T {
 export function AddMediaPage() {
   const search = useSearch({ from: '/add' })
   const navigate = useNavigate()
+  const router = useRouter()
+  const [selection, setSelection] = useState<SearchResult | null>(null)
+  const pushedPreview = useRef<string | undefined>(undefined)
   const qc = useQueryClient()
 
   const [kind, setKind] = useState<MediaKind>(
     search.kind === 'series' || search.kind === 'book' ? search.kind : 'movie',
   )
-  const [bookType, setBookType] = useState<BookType>('ebook')
+  const [bookType, setBookType] = useState<BookType>(search.bookType ?? 'ebook')
   const [query, setQuery] = useState(search.q ?? '')
+  useEffect(() => {
+    if (search.kind) setKind(search.kind)
+    if (search.q !== undefined) setQuery(search.q)
+    if (search.bookType) setBookType(search.bookType)
+  }, [search.kind, search.q, search.bookType])
   const debouncedQuery = useDebounced(query, 400)
 
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
@@ -144,9 +154,13 @@ export function AddMediaPage() {
             },
       )
     },
-    onMutate: (r: SearchResult) => setPendingKey(resultKey(r, bookType)),
+    onMutate: (r: SearchResult) => {
+      const key = resultKey(r, bookType)
+      setPendingKey(key)
+      return { key }
+    },
     onSettled: () => setPendingKey(null),
-    onSuccess: (item, r) => {
+    onSuccess: (item, r, context) => {
       // Without this the Library page keeps serving its cached list and the
       // new item is simply absent from its section — while the dashboard's
       // "recently added" and global search, which are different queries, both
@@ -154,55 +168,44 @@ export function AddMediaPage() {
       // cannot find".
       void qc.invalidateQueries({ queryKey: ['library'] })
       void qc.invalidateQueries({ queryKey: ['wanted'] })
+      void qc.invalidateQueries({ queryKey: ['metadata-preview'] })
+      void qc.invalidateQueries({ queryKey: ['metadata-search'] })
       // Stay put. The search, the tab, and every option above are still set,
       // so the next add is one click rather than a round trip.
-      setAdded((prev) => [{ key: resultKey(r, bookType), id: item.id, title: item.title || r.title }, ...prev])
+      setAdded((prev) => [{ key: context.key, id: item.id, title: item.title || r.title }, ...prev])
     },
   })
 
-  return (
-    <>
-      <header className="page-head">
-        <h1>Add media</h1>
-        <div className="tabs" role="tablist">
-          {([
-            { label: 'Movie', kind: 'movie' as MediaKind },
-            { label: 'Series', kind: 'series' as MediaKind },
-            { label: 'Ebook', kind: 'book' as MediaKind, bookType: 'ebook' as BookType },
-            { label: 'Audiobook', kind: 'book' as MediaKind, bookType: 'audiobook' as BookType },
-          ]).map((tab) => (
-            <button
-              key={tab.label}
-              role="tab"
-              aria-selected={kind === tab.kind && (tab.kind !== 'book' || bookType === tab.bookType)}
-              className={kind === tab.kind && (tab.kind !== 'book' || bookType === tab.bookType) ? 'tab active' : 'tab'}
-              onClick={() => {
-                setKind(tab.kind)
-                if (tab.bookType) setBookType(tab.bookType)
-                setProfileId('')
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </header>
-
-      <div className="add-controls">
-        <input
-          autoFocus
-          type="search"
-          placeholder={
-            kind === 'movie'
-              ? 'Search title, imdb:tt0137523, or tmdb:550…'
-              : kind === 'series'
-                ? 'Search title, tvdb:414217, or imdb:tt16867040…'
-                : 'Search books on Open Library…'
-          }
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <label className="inline">
+  const routePreview = parsePreviewKey(search.preview)
+  const restored = useQuery({
+    queryKey: ['metadata-preview-selection', search.preview],
+    queryFn: () => searchMetadata(routePreview!.kind, `${routePreview!.provider}:${routePreview!.id}`),
+    enabled: !!routePreview && (!selection || previewKey(selection) !== search.preview),
+    retry: false,
+  })
+  const selected = search.preview
+    ? selection && previewKey(selection) === search.preview ? selection : restored.data?.find((item) => previewKey(item) === search.preview)
+    : selection && !previewKey(selection) ? selection : undefined
+  const openPreview = async (item: SearchResult) => {
+    add.reset()
+    setSelection(item)
+    const key = previewKey(item)
+    if (!key) return
+    // Save the search context in the history entry Back will return to.
+    await navigate({ to: '/add', search: { kind, q: query, bookType }, replace: true, resetScroll: false })
+    pushedPreview.current = key
+    await navigate({ to: '/add', search: { kind, q: query, bookType, preview: key }, resetScroll: false })
+  }
+  const closePreview = () => {
+    if (search.preview && pushedPreview.current === search.preview) {
+      pushedPreview.current = undefined
+      router.history.back()
+    } else {
+      void navigate({ to: '/add', search: { kind, q: query, bookType }, replace: true, resetScroll: false })
+    }
+    setSelection(null)
+  }
+  const addOptions = (<>        <label className="inline">
           Root folder{' '}
           <select
             value={selectedRootId ?? ''}
@@ -266,6 +269,51 @@ export function AddMediaPage() {
           />{' '}
           Search on add
         </label>
+  </>)
+
+  return (
+    <>
+      <header className="page-head">
+        <h1>Add media</h1>
+        <div className="tabs" role="tablist">
+          {([
+            { label: 'Movie', kind: 'movie' as MediaKind },
+            { label: 'Series', kind: 'series' as MediaKind },
+            { label: 'Ebook', kind: 'book' as MediaKind, bookType: 'ebook' as BookType },
+            { label: 'Audiobook', kind: 'book' as MediaKind, bookType: 'audiobook' as BookType },
+          ]).map((tab) => (
+            <button
+              key={tab.label}
+              role="tab"
+              aria-selected={kind === tab.kind && (tab.kind !== 'book' || bookType === tab.bookType)}
+              className={kind === tab.kind && (tab.kind !== 'book' || bookType === tab.bookType) ? 'tab active' : 'tab'}
+              onClick={() => {
+                setKind(tab.kind)
+                if (tab.bookType) setBookType(tab.bookType)
+                setProfileId('')
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <div className="add-controls">
+        <input
+          autoFocus
+          type="search"
+          placeholder={
+            kind === 'movie'
+              ? 'Search title, imdb:tt0137523, or tmdb:550…'
+              : kind === 'series'
+                ? 'Search title, tvdb:414217, or imdb:tt16867040…'
+                : 'Search books on Open Library…'
+          }
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {addOptions}
       </div>
 
       {results.isError && <div className="banner warning">{searchError(results.error)}</div>}
@@ -292,6 +340,13 @@ export function AddMediaPage() {
         </div>
       )}
 
+      {search.preview && !selected && <div className="banner" role="status">{restored.isFetching ? 'Loading selected title…' : 'This selected title is no longer available.'} <button onClick={closePreview}>Close details</button></div>}
+      {selected && <MetadataPreviewDrawer
+        key={resultKey(selected)} item={selected} bookType={bookType} options={addOptions}
+        onClose={closePreview} onAdd={() => add.mutate(selected)} busy={add.isPending}
+        canAdd={!!selectedRootId} addedId={addedByKey.get(resultKey(selected, bookType))?.id}
+        addError={add.isError ? searchError(add.error) : undefined}
+      />}
       <ul className="result-list">
         {results.data?.map((r) => (
           <li key={resultKey(r)} className="result">
@@ -306,6 +361,7 @@ export function AddMediaPage() {
                 {r.author && <span className="muted"> · {r.author}</span>}
               </div>
               <p className="muted clamp">{r.overview}</p>
+              <button className="result-preview-trigger" aria-label={`View details for ${r.title}`} onClick={() => void openPreview(r)}>View details</button>
             </div>
             <div className="result-action">
               {(() => {
@@ -329,7 +385,7 @@ export function AddMediaPage() {
                 return (
                   <button
                     className="btn-accent"
-                    disabled={busy || !selectedRootId}
+                    disabled={add.isPending || !selectedRootId}
                     title={!selectedRootId ? 'Add a matching root folder in Settings first' : undefined}
                     onClick={() => add.mutate(r)}
                   >

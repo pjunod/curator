@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ActivityIndicator, Modal, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ActivityIndicator, Keyboard, Modal, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import { compatibleRootFolders, resolveRootFolderID } from '../addMediaOptions'
 import { ApiError } from '../api'
 import type { MonarrClient } from '../api'
 import { SearchCard } from '../components/Media'
+import { PreviewDetails } from '../components/MetadataPreview'
+import { previewState } from '../metadataPreview'
+import { useMetadataPreview } from '../useMetadataPreview'
 import { bookTypeForSource } from '../format'
 import { AppScreen, Button, Chip, Field, Header, IconButton, InlineError, LoadingState, MessageState, Panel, SectionTitle, Wordmark } from '../components/UI'
 import { usePreferences } from '../preferences-context'
@@ -27,7 +30,7 @@ export function DiscoverScreen({
   const [results, setResults] = useState<SearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState('')
-  const [adding, setAdding] = useState<SearchResult | null>(null)
+  const [adding, setAdding] = useState<{ item: SearchResult; step: 'preview' | 'options' } | null>(null)
   const lists = useResource(() => client.getDiscoverLists(), [client])
   const kindLists = useMemo(() => (lists.data ?? []).filter((list) => list.kind === kind), [kind, lists.data])
 
@@ -127,7 +130,8 @@ export function DiscoverScreen({
               item={item}
               itemSize={itemSize}
               bookType={item.kind === 'book' ? bookType : undefined}
-              onAdd={() => setAdding(item)}
+              onAdd={() => { Keyboard.dismiss(); setAdding({ item, step: 'options' }) }}
+              onPreview={() => { Keyboard.dismiss(); setAdding({ item, step: 'preview' }) }}
             />
           ))}
         </View>
@@ -136,7 +140,8 @@ export function DiscoverScreen({
       {adding ? (
         <AddSheet
           client={client}
-          item={adding}
+          item={adding.item}
+          initialStep={adding.step}
           initialBookType={bookType}
           onClose={() => setAdding(null)}
           onAdded={(id) => {
@@ -149,16 +154,18 @@ export function DiscoverScreen({
   )
 }
 
-function AddSheet({
+export function AddSheet({
   client,
   item,
   initialBookType,
+  initialStep,
   onClose,
   onAdded,
 }: {
   client: MonarrClient
   item: SearchResult
   initialBookType: BookType
+  initialStep: 'preview' | 'options'
   onClose: () => void
   onAdded: (id: number) => void
 }) {
@@ -171,6 +178,9 @@ function AddSheet({
     () => compatibleRootFolders(options.data?.roots ?? [], item.kind),
     [item.kind, options.data?.roots],
   )
+  const [step, setStep] = useState(initialStep)
+  const preview = useMetadataPreview(client, item)
+  const submittingRef = useRef(false)
   const [rootID, setRootID] = useState(0)
   const [profileID, setProfileID] = useState(0)
   const [bookType, setBookType] = useState<BookType>(initialBookType)
@@ -179,16 +189,23 @@ function AddSheet({
   const [monitor, setMonitor] = useState<'all' | 'latest' | 'none'>('all')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const state = previewState(item, bookType, preview.data, preview.conflict)
+  const back = () => {
+    if (step === 'options' && initialStep === 'preview') setStep('preview')
+    else onClose()
+  }
 
   useEffect(() => {
     setRootID((current) => resolveRootFolderID(current, compatibleRoots))
   }, [compatibleRoots])
 
   const add = async () => {
+    if (submittingRef.current || state.blocked || state.owned) return
     if (!rootID) {
       setError('Choose a compatible root folder before adding this title.')
       return
     }
+    submittingRef.current = true
     setSubmitting(true)
     setError('')
     const request: AddMediaRequest = {
@@ -202,7 +219,7 @@ function AddSheet({
       rootFolderId: rootID,
       qualityProfileId: profileID || undefined,
       monitored,
-      searchNow,
+      searchNow: monitored && searchNow,
       monitor: item.kind === 'series' ? monitor : undefined,
     }
     try {
@@ -211,15 +228,19 @@ function AddSheet({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not add this title.')
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }
 
   return (
-    <Modal animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal animationType="slide" presentationStyle="fullScreen" onRequestClose={back}>
       <AppScreen forceTopInset>
-        <Header title={`Add ${item.kind === 'book' ? bookType : item.kind === 'series' ? 'series' : item.kind}`} left={<IconButton label="Close" glyph="×" onPress={onClose} />} />
-        <ScrollView contentContainerStyle={styles.sheetContent}>
+        <Header title={step === 'preview' ? 'Title details' : `Add ${item.kind === 'book' ? bookType : item.kind === 'series' ? 'series' : item.kind}`} left={<IconButton label={step === 'options' && initialStep === 'preview' ? 'Back to details' : 'Close'} glyph={step === 'options' && initialStep === 'preview' ? '‹' : '×'} onPress={back} />} />
+        <ScrollView key={step} contentContainerStyle={styles.sheetContent}>
+          {step === 'preview' ? <>
+            <PreviewDetails item={item} data={preview.data} loading={preview.loading} error={preview.error} conflict={preview.conflict} retry={() => void preview.refresh()} />
+          </> : <>
           <Text style={[styles.addTitle, { color: theme.text }]}>{item.title}</Text>
           <Text style={[styles.blurb, { color: theme.muted }]}>{item.author || item.year}</Text>
 
@@ -267,8 +288,14 @@ function AddSheet({
             <OptionSwitch label="Search now" hint="Start an automatic search as soon as this is added." value={searchNow} onChange={setSearchNow} />
           </Panel>
           <InlineError message={error} />
-          <Button label={submitting ? 'Adding…' : `Add ${item.title}`} disabled={submitting || options.loading || !rootID} onPress={() => void add()} />
+          </>}
+
         </ScrollView>
+        <View style={[styles.sheetFooter, { borderColor: theme.border }]}>
+          {state.blocked && step === 'options' ? <InlineError message={preview.data?.addBlockReason || 'Resolve the identity conflict before adding.'} /> : null}
+          {state.owned ? <Text style={{ color: theme.muted }}>Already in your library{item.kind === 'book' ? ` · ${bookType}` : ''}</Text> : step === 'preview' ? <Button label="Continue to add" disabled={state.blocked} onPress={() => setStep('options')} /> : <Button label={submitting ? 'Adding…' : `Add ${item.title}`} disabled={submitting || options.loading || !rootID || state.blocked} onPress={() => void add()} />}
+          {state.libraryItemId ? <Button secondary label="Open in library" onPress={() => onAdded(state.libraryItemId!)} /> : null}
+        </View>
       </AppScreen>
     </Modal>
   )
@@ -295,6 +322,7 @@ const styles = StyleSheet.create({
   listChips: { gap: 7, paddingRight: 16 },
   blurb: { fontSize: 12, lineHeight: 18, marginTop: 8 },
   results: { gap: 10, marginTop: 12 },
+  sheetFooter: { padding: 16, borderTopWidth: 1, gap: 10 },
   sheetContent: { padding: 18, paddingBottom: 42 },
   addTitle: { fontSize: 25, lineHeight: 31, fontWeight: '800' },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },

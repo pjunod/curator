@@ -42,7 +42,7 @@ export function LibraryCard({ item, width, itemSize, onPress }: { item: MediaIte
   )
 }
 
-export function SearchCard({ item, itemSize, onAdd, bookType, adding = false }: { item: SearchResult; itemSize: ItemSize; onAdd: () => void; bookType?: BookType; adding?: boolean }) {
+export function SearchCard({ item, itemSize, onAdd, onPreview, bookType, adding = false }: { item: SearchResult; itemSize: ItemSize; onAdd: () => void; onPreview: () => void; bookType?: BookType; adding?: boolean }) {
   const theme = useTheme()
   const sizing = itemSize === 'small'
     ? { poster: 64, padding: 8, gap: 10, title: 14, overviewLines: 2 }
@@ -51,11 +51,16 @@ export function SearchCard({ item, itemSize, onAdd, bookType, adding = false }: 
       : { poster: 82, padding: 10, gap: 12, title: 16, overviewLines: 3 }
   return (
     <View style={[styles.searchCard, { backgroundColor: theme.raised, borderColor: theme.border, padding: sizing.padding, gap: sizing.gap }]}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`View details for ${item.title}`} onPress={onPreview} style={[styles.previewTarget, { gap: sizing.gap }]} >
       <Poster path={item.posterPath} title={item.title} width={sizing.poster} />
       <View style={styles.searchBody}>
         <Text numberOfLines={2} style={[styles.searchTitle, { color: theme.text, fontSize: sizing.title, lineHeight: sizing.title + 4 }]}>{item.title}</Text>
         <Text numberOfLines={1} style={[styles.cardMeta, { color: theme.muted }]}>{item.author || item.year || item.kind}</Text>
         <Text numberOfLines={sizing.overviewLines} style={[styles.overview, { color: theme.muted }]}>{item.overview || 'No overview available.'}</Text>
+        <Text style={{ color: theme.accent, fontSize: 12 }}>View details</Text>
+      </View>
+      </Pressable>
+      <View style={styles.searchActions}>
         {item.kind === 'book' && bookType && (item.bookTypes ?? []).includes(bookType) ? (
           <Badge label={`${bookType === 'audiobook' ? 'Audiobook' : 'Ebook'} in library`} tone="ok" />
         ) : item.inLibrary && item.kind !== 'book' ? (
@@ -79,7 +84,9 @@ const styles = StyleSheet.create({
   libraryCard: { marginBottom: 20, gap: 5 },
   cardTitle: { fontWeight: '700', marginTop: 2 },
   cardMeta: { fontSize: 12 },
-  searchCard: { flexDirection: 'row', borderWidth: 1, borderRadius: 16 },
+  previewTarget: { flexDirection: 'row', alignItems: 'flex-start' },
+  searchActions: { alignItems: 'flex-end', marginTop: 8 },
+  searchCard: { borderWidth: 1, borderRadius: 16 },
   searchBody: { flex: 1, alignItems: 'flex-start', gap: 5 },
   searchTitle: { fontWeight: '700' },
   overview: { fontSize: 12, lineHeight: 17 },
