@@ -449,6 +449,51 @@ func (e MediaKind) Valid() bool {
 	}
 }
 
+// Defines values for MetadataPreviewAddability.
+const (
+	Conflict    MetadataPreviewAddability = "conflict"
+	Supported   MetadataPreviewAddability = "supported"
+	Unsupported MetadataPreviewAddability = "unsupported"
+)
+
+// Valid indicates whether the value is a known member of the MetadataPreviewAddability enum.
+func (e MetadataPreviewAddability) Valid() bool {
+	switch e {
+	case Conflict:
+		return true
+	case Supported:
+		return true
+	case Unsupported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MetadataPreviewOwnership.
+const (
+	MetadataPreviewOwnershipAbsent    MetadataPreviewOwnership = "absent"
+	MetadataPreviewOwnershipAmbiguous MetadataPreviewOwnership = "ambiguous"
+	MetadataPreviewOwnershipPresent   MetadataPreviewOwnership = "present"
+	MetadataPreviewOwnershipUnknown   MetadataPreviewOwnership = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the MetadataPreviewOwnership enum.
+func (e MetadataPreviewOwnership) Valid() bool {
+	switch e {
+	case MetadataPreviewOwnershipAbsent:
+		return true
+	case MetadataPreviewOwnershipAmbiguous:
+		return true
+	case MetadataPreviewOwnershipPresent:
+		return true
+	case MetadataPreviewOwnershipUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MissingItemReason.
 const (
 	MissingItemReasonInaccessible MissingItemReason = "inaccessible"
@@ -1480,6 +1525,37 @@ type MediaItemSummaryUpgrade string
 // MediaKind defines model for MediaKind.
 type MediaKind string
 
+// MetadataPreview defines model for MetadataPreview.
+type MetadataPreview struct {
+	AddBlockReason *string                   `json:"addBlockReason,omitempty"`
+	Addability     MetadataPreviewAddability `json:"addability"`
+	Author         *string                   `json:"author,omitempty"`
+	BookTypes      *[]BookType               `json:"bookTypes,omitempty"`
+	Genres         *[]string                 `json:"genres,omitempty"`
+	Ids            struct {
+		Imdb *string `json:"imdb,omitempty"`
+		Olid *string `json:"olid,omitempty"`
+		Tmdb *int64  `json:"tmdb,omitempty"`
+		Tvdb *int64  `json:"tvdb,omitempty"`
+	} `json:"ids"`
+	Kind           MediaKind                `json:"kind"`
+	LibraryItemId  *int64                   `json:"libraryItemId,omitempty"`
+	Overview       string                   `json:"overview"`
+	Ownership      MetadataPreviewOwnership `json:"ownership"`
+	PosterPath     *string                  `json:"posterPath,omitempty"`
+	PreviewSource  *string                  `json:"previewSource,omitempty"`
+	RuntimeMinutes *int                     `json:"runtimeMinutes,omitempty"`
+	Status         *string                  `json:"status,omitempty"`
+	Title          string                   `json:"title"`
+	Year           *int                     `json:"year,omitempty"`
+}
+
+// MetadataPreviewAddability defines model for MetadataPreview.Addability.
+type MetadataPreviewAddability string
+
+// MetadataPreviewOwnership defines model for MetadataPreview.Ownership.
+type MetadataPreviewOwnership string
+
 // MissingItem defines model for MissingItem.
 type MissingItem struct {
 	Id   int64     `json:"id"`
@@ -2195,6 +2271,14 @@ type RepairLibraryFolderJSONBody struct {
 	Path string `json:"path"`
 }
 
+// PreviewMetadataParams defines parameters for PreviewMetadata.
+type PreviewMetadataParams struct {
+	Kind   MediaKind `form:"kind" json:"kind"`
+	TmdbId *int64    `form:"tmdbId,omitempty" json:"tmdbId,omitempty"`
+	TvdbId *int64    `form:"tvdbId,omitempty" json:"tvdbId,omitempty"`
+	Olid   *string   `form:"olid,omitempty" json:"olid,omitempty"`
+}
+
 // SearchMetadataParams defines parameters for SearchMetadata.
 type SearchMetadataParams struct {
 	Kind  MediaKind `form:"kind" json:"kind"`
@@ -2522,6 +2606,9 @@ type ServerInterface interface {
 	// SetSeasonMonitored Monitor or unmonitor one season (cascades to its episodes)
 	// (PATCH /library/{id}/seasons/{season})
 	SetSeasonMonitored(w http.ResponseWriter, r *http.Request, id int64, season int)
+	// PreviewMetadata Read a title before adding, without loading episodes or writing library state
+	// (GET /metadata/preview)
+	PreviewMetadata(w http.ResponseWriter, r *http.Request, params PreviewMetadataParams)
 	// SearchMetadata Search the metadata provider
 	// (GET /metadata/search)
 	SearchMetadata(w http.ResponseWriter, r *http.Request, params SearchMetadataParams)
@@ -4243,6 +4330,78 @@ func (siw *ServerInterfaceWrapper) SetSeasonMonitored(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// PreviewMetadata operation middleware
+func (siw *ServerInterfaceWrapper) PreviewMetadata(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PreviewMetadataParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tmdbId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tmdbId", r.URL.Query(), &params.TmdbId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tmdbId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tmdbId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tvdbId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tvdbId", r.URL.Query(), &params.TvdbId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tvdbId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tvdbId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "olid" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "olid", r.URL.Query(), &params.Olid, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "olid"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "olid", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewMetadata(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SearchMetadata operation middleware
 func (siw *ServerInterfaceWrapper) SearchMetadata(w http.ResponseWriter, r *http.Request) {
 
@@ -5127,6 +5286,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/ignored", wrapper.ListIgnoredDirs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan/ignored", wrapper.IgnoreDir)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/filesystem", wrapper.BrowseFilesystem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/preview", wrapper.PreviewMetadata)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/search", wrapper.SearchMetadata)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/lists", wrapper.ListDiscoverLists)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/items", wrapper.DiscoverItems)

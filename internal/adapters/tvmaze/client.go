@@ -308,8 +308,22 @@ func (c *Client) GetSeriesByTVDB(ctx context.Context, tvdbID int64) (domain.Medi
 // doing a text search. A result without a TVDB add key is returned as an
 // unsupported hydration outcome so the resolver can continue to TMDB.
 func (c *Client) LookupExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) ([]ports.SearchResult, error) {
+	item, err := c.PreviewExternal(ctx, kind, ref)
+	if err != nil {
+		return nil, err
+	}
+	if item.IDs.TVDB == 0 {
+		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedHydration, ActualIDs: item.IDs}
+	}
+	return []ports.SearchResult{{Kind: item.Kind, TVDBID: item.IDs.TVDB, IMDBID: item.IDs.IMDB,
+		Source: "tvmaze", HydrationSource: "tvmaze", Title: item.Title, Year: item.Year,
+		Overview: item.Overview, PosterPath: item.PosterPath}}, nil
+}
+
+// PreviewExternal retains facts even if this work has no supported Add key.
+func (c *Client) PreviewExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) (domain.MediaItem, error) {
 	if kind != domain.KindSeries || (ref.Provider != "tvdb" && ref.Provider != "imdb") {
-		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
+		return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteUnsupportedQuery}
 	}
 	params := url.Values{}
 	if ref.Provider == "tvdb" {
@@ -319,23 +333,18 @@ func (c *Client) LookupExternal(ctx context.Context, kind domain.MediaKind, ref 
 	}
 	var s show
 	if err := c.get(ctx, "/lookup/shows", params, &s); err != nil {
-		return nil, err
+		return domain.MediaItem{}, err
 	}
 	actual := domain.ExternalIDs{IMDB: deref(s.Externals.IMDB)}
 	if s.Externals.TheTVDB != nil {
 		actual.TVDB = *s.Externals.TheTVDB
 	}
 	if externalContradiction(ref, actual) {
-		return nil, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: expectedIDs(ref), ActualIDs: actual}
+		return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteIdentityConflict, ExpectedIDs: expectedIDs(ref), ActualIDs: actual}
 	}
-	if actual.TVDB == 0 {
-		return nil, &ports.RemoteError{Category: ports.RemoteUnsupportedHydration, ActualIDs: actual}
-	}
-	return []ports.SearchResult{{
-		Kind: domain.KindSeries, TVDBID: actual.TVDB, IMDBID: actual.IMDB,
-		Source: "tvmaze", HydrationSource: "tvmaze", Title: s.Name,
+	return domain.MediaItem{Kind: kind, IDs: actual, Source: "tvmaze", Title: s.Name,
 		Year: yearOf(s.Premiered), Overview: plainText(s.Summary), PosterPath: poster(s),
-	}}, nil
+		Genres: s.Genres, Status: s.Status, Runtime: s.AverageRuntime}, nil
 }
 
 // IdentityMetadata fetches the show and AKA endpoint as one provider
@@ -503,11 +512,15 @@ func deref(s *string) string {
 }
 
 var reTag = regexp.MustCompile(`<[^>]*>`)
+var reParagraph = regexp.MustCompile(`(?i)</p\s*>\s*`)
+var reBreak = regexp.MustCompile(`(?i)<br\s*/?>`)
 
 // plainText strips the HTML TVmaze puts in summaries. Everything downstream
 // — the library grid, the item page, the compat personalities — treats
 // Overview as text, and rendering it as markup would be the interesting kind
 // of bug.
 func plainText(s string) string {
+	s = reParagraph.ReplaceAllString(s, "\n\n")
+	s = reBreak.ReplaceAllString(s, "\n")
 	return strings.TrimSpace(html.UnescapeString(reTag.ReplaceAllString(s, "")))
 }

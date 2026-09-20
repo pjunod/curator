@@ -65,6 +65,13 @@ type ExternalLookupProvider interface {
 	LookupExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) ([]SearchResult, error)
 }
 
+// PreviewProvider reads a verified work record without loading seasons or
+// episodes. Add eligibility is evaluated separately so unsupported works can
+// still be inspected. It must not persist anything.
+type PreviewProvider interface {
+	PreviewExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) (domain.MediaItem, error)
+}
+
 // IdentityMetadataProvider supplies aliases and country evidence for an
 // already verified set of IDs.
 type IdentityMetadataProvider interface {

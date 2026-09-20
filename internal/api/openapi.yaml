@@ -689,6 +689,56 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /metadata/preview:
+    get:
+      operationId: previewMetadata
+      summary: Read a title before adding, without loading episodes or writing library state
+      parameters:
+        - name: kind
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/MediaKind" }
+        - name: tmdbId
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: tvdbId
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: olid
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Verified metadata with fresh ownership and Add eligibility.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetadataPreview" }
+        "400":
+          description: Invalid external ID or kind/key combination.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No provider record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Provider identity conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: No supported preview route.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Metadata provider unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /metadata/search:
     get:
       operationId: searchMetadata
@@ -3013,6 +3063,41 @@ components:
         path:
           type: string
           description: Explicit absolute folder; wins over rootFolderId. "" clears it.
+
+    MetadataPreview:
+      type: object
+      required: [kind, title, overview, ids, ownership, addability]
+      properties:
+        kind: { $ref: "#/components/schemas/MediaKind" }
+        title: { type: string }
+        year: { type: integer }
+        author: { type: string }
+        overview: { type: string }
+        posterPath: { type: string }
+        previewSource: { type: string }
+        ids:
+          type: object
+          properties:
+            tmdb: { type: integer, format: int64 }
+            tvdb: { type: integer, format: int64 }
+            imdb: { type: string }
+            olid: { type: string }
+        genres:
+          type: array
+          items: { type: string }
+        status: { type: string }
+        runtimeMinutes: { type: integer }
+        ownership:
+          type: string
+          enum: [absent, present, ambiguous, unknown]
+        libraryItemId: { type: integer, format: int64 }
+        bookTypes:
+          type: array
+          items: { $ref: "#/components/schemas/BookType" }
+        addability:
+          type: string
+          enum: [supported, unsupported, conflict]
+        addBlockReason: { type: string }
 
     SearchResult:
       type: object

@@ -95,6 +95,10 @@ func (s *Server) Handler() http.Handler {
 	apiHandler := apigen.HandlerWithOptions(s, apigen.StdHTTPServerOptions{
 		BaseURL: "/api/v1",
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			if r.URL.Path == "/api/v1/metadata/preview" {
+				writeCodedError(w, http.StatusBadRequest, "invalid_external_id", err.Error())
+				return
+			}
 			writeError(w, http.StatusBadRequest, err.Error())
 		},
 	})
