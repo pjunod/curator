@@ -1,6 +1,6 @@
 # Search result preview — inspect a title before adding it
 
-**Status:** implemented in v0.26.0 · adversarial review findings addressed · fast lane pending
+**Status:** implemented in v0.26.0 · adversarial review findings addressed · fast lane passed
 **Written / revised:** 2026-09-19 · **Code baseline:** `6e17670`
 
 Companion to [usage.md](usage.md) and the
@@ -535,3 +535,11 @@ fast-lane run. All four are addressed in the implementation:
 No tests ran before this review. The status page records the subsequent fast
 lane and merge outcome. No feature flag or additional enablement setting is
 needed for this always-available read-only view.
+
+**Fast-lane result, 2026-09-19: passed.** Go 1.25.7 and Node 22.23.2 were
+used in the independent clone. Focused Go preview tests, four web helper
+cases, four native helper cases, five native component cases, and eight
+browser scenarios passed. Only failed checks were rerun after fixes, plus
+the added long-synopsis browser case. Production web/server builds, native
+typecheck, pinned lint, and API-generation drift checks passed. Full unit
+suites were not run locally. No physical native-device result is claimed.

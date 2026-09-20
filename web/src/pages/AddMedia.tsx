@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useSearch } from '@tanstack/react-router'
 import { ApiError } from '../api'
-import { MetadataPreviewDrawer } from '../MetadataPreview'
+import { MetadataPreviewDrawer } from '../PreviewDrawer'
 import { matchesPreviewKey, parsePreviewKey, previewKey } from '../metadataPreview'
 import type { BookType, MediaKind, SearchResult } from '../api'
 import {

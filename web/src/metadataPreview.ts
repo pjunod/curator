@@ -14,7 +14,7 @@ export function previewKey(item: SearchResult): string | undefined {
 
 export function parsePreviewKey(key: unknown) {
   if (typeof key !== 'string') return undefined
-  const [kind, provider, id, extra] = key.split(':')
+  const [kind, provider, id = '', extra] = key.split(':')
   if (extra !== undefined) return undefined
   if (kind === 'book' && provider === 'olid' && workID(id)) return { kind, provider, id } as const
   if ((kind === 'movie' || kind === 'series') && (provider === 'tmdb' || (kind === 'series' && provider === 'tvdb')) && /^[1-9][0-9]*$/.test(id ?? '') && positiveID(Number(id))) return { kind, provider, id } as const

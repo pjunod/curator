@@ -50,7 +50,7 @@ func validPreviewRef(kind domain.MediaKind, ref domain.ExternalRef) bool {
 	if kind != domain.KindMovie && kind != domain.KindSeries {
 		return false
 	}
-	if ref.Provider != "tmdb" && !(kind == domain.KindSeries && ref.Provider == "tvdb") {
+	if ref.Provider != "tmdb" && (kind != domain.KindSeries || ref.Provider != "tvdb") {
 		return false
 	}
 	id, err := strconv.ParseInt(ref.Value, 10, 64)
@@ -86,7 +86,7 @@ func (s *Service) previewRecord(ctx context.Context, kind domain.MediaKind, ref 
 	if len(providers) == 0 {
 		return domain.MediaItem{}, ports.ErrProviderNotConfigured
 	}
-	var last error = ErrNotFound
+	last := ErrNotFound
 	for _, p := range providers {
 		item, err := p.PreviewExternal(ctx, kind, ref)
 		if err == nil {

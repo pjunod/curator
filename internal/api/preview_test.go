@@ -9,7 +9,6 @@ import (
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
 	"github.com/pjunod/monarr/internal/domain"
-	"github.com/pjunod/monarr/internal/ports"
 )
 
 type apiPreviewProvider struct{ stubProvider }

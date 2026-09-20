@@ -6,7 +6,7 @@ import { Link } from '@tanstack/react-router'
 import { ApiError, getMetadataPreview, posterUrl } from './api'
 import type { BookType, SearchResult } from './api'
 import { externalLinks, previewKey, previewQuery, previewState, previewIdentityConflict } from './metadataPreview'
-import './MetadataPreview.css'
+import './PreviewDrawer.css'
 
 export function MetadataPreviewDrawer({ item, bookType, options, onClose, onAdd, busy, canAdd, addedId, addError }: {
   item: SearchResult; bookType: BookType; options: ReactNode; onClose: () => void; onAdd: () => void

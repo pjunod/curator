@@ -17,7 +17,10 @@ vi.mock('../theme', () => ({ useTheme: () => ({ text: '#fff', muted: '#aaa', acc
 vi.mock('../preferences-context', () => ({ usePreferences: () => ({ itemSize: 'medium' }) }))
 vi.mock('../components/UI', async () => {
   const { createElement } = await import('react')
-  const host = (name: string) => (props: Record<string, unknown>) => createElement(name, props, props.children as never, props.left as never)
+  const host = (name: string) => (props: Record<string, unknown>) => {
+    const { children, left, ...rest } = props
+    return createElement(name, rest, children as never, left as never)
+  }
   return Object.fromEntries(['AppScreen', 'Button', 'Chip', 'Field', 'Header', 'IconButton', 'InlineError', 'LoadingState', 'MessageState', 'Panel', 'SectionTitle', 'Wordmark', 'Badge'].map((name) => [name, host(name.toLowerCase())]))
 })
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })

@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 for (const width of [1280, 320]) {
-  test(`preview navigation, accessibility and immutable Add at ${width}px`, async ({ page }) => {
+  test(`preview navigation, accessibility and immutable Add at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 850 })
     await page.route('**/api/v1/metadata/preview?*', (route) => route.fulfill({ json: details }))
     let payload: Record<string, unknown> | undefined
@@ -30,6 +30,7 @@ for (const width of [1280, 320]) {
     await expect(dialog.getByRole('link', { name: /IMDb/ })).toHaveAttribute('rel', 'noopener noreferrer')
     expect(await page.locator('#root').evaluate((node) => (node as HTMLElement).inert)).toBe(true)
     expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath(`preview-${width}.png`), fullPage: true })
     await page.keyboard.press('Tab')
     expect(await dialog.evaluate((node) => node.contains(document.activeElement))).toBe(true)
     await page.keyboard.press('Escape')
@@ -48,7 +49,7 @@ for (const width of [1280, 320]) {
     expect(payload).not.toHaveProperty('tmdbId')
     await dialog.getByRole('button', { name: 'Close details' }).click()
     await expect(page.locator('.result')).toContainText('added')
-    await expect(page.getByRole('searchbox')).toHaveValue('cunk')
+    await expect(page.locator('.add-controls').getByRole('searchbox')).toHaveValue('cunk')
   })
 }
 
@@ -128,4 +129,19 @@ test('unsupported hydration remains blocked through failed retries', async ({ pa
   status = 200
   await dialog.getByRole('button', { name: 'Retry', exact: true }).click()
   await expect(dialog.getByRole('button', { name: 'Add to library' })).toBeEnabled()
+})
+
+test('long synopsis scrolls independently while narrow-screen actions stay visible', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 650 })
+  await page.route('**/api/v1/metadata/preview?*', (route) => route.fulfill({ json: { ...details, overview: Array(50).fill('A full paragraph that stays readable without truncation.').join('\n\n') + '\n\nTHE END' } }))
+  await page.goto('/add?kind=series&q=cunk')
+  await page.getByRole('button', { name: /View details for/ }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.locator('.preview-synopsis')).toContainText('THE END')
+  const scroller = dialog.locator('.preview-scroll')
+  expect(await scroller.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true)
+  await expect(dialog.getByRole('button', { name: 'Add to library' })).toBeInViewport()
+  await scroller.evaluate((node) => { node.scrollTop = node.scrollHeight })
+  await expect(dialog.getByRole('link', { name: /IMDb/ })).toBeInViewport()
+  await expect(dialog.getByRole('button', { name: 'Add to library' })).toBeInViewport()
 })
