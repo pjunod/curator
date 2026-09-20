@@ -3684,7 +3684,7 @@ components:
             Off means every grab leaves a second full copy behind, and when the
             client's disk and the library are different filesystems -- the
             normal arrangement -- that copy is real bytes rather than a
-            hardlink. Deleting is safe either way: a hardlinked import keeps
+            hardlink. Deleting is safe either way: a hard-linked import keeps
             the library's copy, because removing one name for an inode does not
             touch the other.
 

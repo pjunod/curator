@@ -1287,7 +1287,7 @@ type DownloadClientConfig struct {
 
 	// RemoveCompleted Delete the payload from this client once Monarr has imported it.
 	//
-	// Off means every grab leaves a second full copy behind, and when the client's disk and the library are different filesystems -- the normal arrangement -- that copy is real bytes rather than a hardlink. Deleting is safe either way: a hardlinked import keeps the library's copy, because removing one name for an inode does not touch the other.
+	// Off means every grab leaves a second full copy behind, and when the client's disk and the library are different filesystems -- the normal arrangement -- that copy is real bytes rather than a hardlink. Deleting is safe either way: a hard-linked import keeps the library's copy, because removing one name for an inode does not touch the other.
 	//
 	// Defaults on for usenet clients, which have no obligation once the download is done, and off for torrent clients, which are still seeding and which Monarr cannot yet tell "finished seeding" from "seeding happily".
 	RemoveCompleted *bool                    `json:"removeCompleted,omitempty"`
@@ -1320,7 +1320,7 @@ type DownloadClientInput struct {
 
 	// RemoveCompleted Delete the payload from this client once Monarr has imported it.
 	//
-	// Off means every grab leaves a second full copy behind, and when the client's disk and the library are different filesystems -- the normal arrangement -- that copy is real bytes rather than a hardlink. Deleting is safe either way: a hardlinked import keeps the library's copy, because removing one name for an inode does not touch the other.
+	// Off means every grab leaves a second full copy behind, and when the client's disk and the library are different filesystems -- the normal arrangement -- that copy is real bytes rather than a hardlink. Deleting is safe either way: a hard-linked import keeps the library's copy, because removing one name for an inode does not touch the other.
 	//
 	// Defaults on for usenet clients, which have no obligation once the download is done, and off for torrent clients, which are still seeding and which Monarr cannot yet tell "finished seeding" from "seeding happily".
 	RemoveCompleted *bool                   `json:"removeCompleted,omitempty"`

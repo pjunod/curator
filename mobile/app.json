@@ -2,7 +2,7 @@
   "expo": {
     "name": "Noirr Curator",
     "slug": "monarr",
-    "version": "0.26.2",
+    "version": "0.26.3",
     "description": "Find, evaluate, import, and organize your media library.",
     "orientation": "default",
     "icon": "./assets/icon.png",
@@ -12,7 +12,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.pjunod.monarr",
-      "buildNumber": "22",
+      "buildNumber": "23",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -28,7 +28,7 @@
     },
     "android": {
       "package": "com.pjunod.monarr",
-      "versionCode": 22,
+      "versionCode": 23,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
@@ -53,6 +53,7 @@
       ],
       "./plugins/withOptionalCamera",
       "./plugins/withAndroidSplashApiGuard",
+      "./plugins/withIosSceneLifecycle",
       [
         "expo-splash-screen",
         {
