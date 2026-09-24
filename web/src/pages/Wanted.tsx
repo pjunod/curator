@@ -302,6 +302,14 @@ export function WantedPage() {
                             })}>{open ? '▾' : '▸'}</button>}
                           <Link to="/library/$id" params={{ id: String(group.mediaItemId) }}>{group.title}</Link>
                           {direct && <span className="muted"> {group.children[0].detail}</span>}
+                          {/* A single wanted target can be an additional copy or a
+                              book edition while the primary is satisfied — the row
+                              has to say which, or a grab lands on the wrong one. */}
+                          {direct && (group.children[0].copy || group.kind === 'book') && (
+                            <>{' '}<span className="pill pill-info">
+                              {group.kind === 'book' ? `${group.children[0].copy || 'Primary'} edition` : group.children[0].copy}
+                            </span></>
+                          )}
                         </td>
                         <td className="muted mono">{group.kind}</td>
                         <td>{group.children.length} wanted · {group.missing} missing · {group.upgrade} upgrade</td>

@@ -544,7 +544,10 @@ function RowGroup(props: {
         </td>
         <td className="mono">
           {d.title}
-          {d.match?.reason && <div className="muted">Match: {d.match.reason}</div>}
+          {/* One line, elided: the release column is what is left after the
+              fixed columns, and a four-line match sentence under every title
+              turned each row into a paragraph. The full reason is the title. */}
+          {d.match?.reason && <div className="muted queue-match" title={d.match.reason}>Match: {d.match.reason}</div>}
           {d.error && <div className="error-text">{d.error}</div>}
         </td>
         <td className="muted">{d.quality}</td>
