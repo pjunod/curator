@@ -205,6 +205,17 @@ deliberately separated.
 The app covers the daily mobile loop: browse and filter the library; inspect a
 title; edit its monitoring, quality profile, inherited or per-item download
 priority, root folder, and path; change season monitoring; and start a search.
+**Search now** is the auto search: the best accepted release is grabbed in
+the background. **Interactive search** is the same override the web offers —
+every release the indexers returned, rejected ones included with their
+reasons, a **Would be grabbed** view that narrows the list without gating
+anything, and **Grab** on any row. Movies and books search the item (each
+book edition and each quality copy has its own **Search**); on a series,
+**Search pack** on a season row opens the search on that pack and the
+season and episode chips at the top of the search re-run it for another pack
+or a single episode. A rejected release asks once before it is grabbed. An
+incomplete result — one indexer slow or down — is labelled as such rather
+than presented as the whole picture.
 Movies and series can also keep
 additional quality copies, each with its own name, profile, location, and
 monitoring state. Copy removal keeps every file already on disk. Discover,
@@ -344,7 +355,8 @@ download priority or the item's override travels with the grab to nzbd:
 
 **Interactive search** — **Interactive search** on movie detail pages and a
 separate **Search** action on each book edition; on a series, each season has
-**Search pack** and each episode a **Search** button. Every release the
+**Search pack** and each episode a **Search** button. The native app has the
+same search (see [Native iOS and Android app](#native-ios-and-android-app)). Every release the
 indexers returned is shown — including rejected
 ones, with the reason attached (`above target`, `below floor`,
 `not an upgrade`, `target met`, `does not match …`). **Grab** sends your
@@ -549,6 +561,11 @@ Release Search explains the identity decision for every row: matched external
 ID, canonical title, alias, country convention, or the exact conflict that
 rejected it. The accepted explanation is stored with the grab and remains
 visible on its Activity row.
+
+The native app runs the same search against the same endpoint and shows the
+same rows — the list scrolls instead of paging, and a rejected release asks
+once before **Grab anyway** sends it. Nothing is hidden on the phone that the
+browser would show.
 
 ## Monitoring: series, seasons, episodes
 

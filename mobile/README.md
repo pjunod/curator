@@ -12,6 +12,9 @@ Monarr data or metadata provider keys live on the phone.
 
 - Library browsing, filtering, item detail, item/profile/location editing,
   season monitoring, additional quality copies, and search-now.
+- Interactive search: every release the indexers return for an item, a
+  season pack, one episode, a quality copy, or a book edition, with rejection
+  reasons kept visible and Grab on any row (`src/screens/ReleaseSearchScreen.tsx`).
 - Discover and metadata search, including full-synopsis previews, verified
   database links, and root/profile choices retained when returning from Add
   options to the preview. Quick Add still opens options directly.

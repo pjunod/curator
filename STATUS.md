@@ -1,9 +1,11 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-08-21 · v0.24.1 · Curator now hands Cinema exact book work
-> and edition metadata when an ebook or audiobook import lands. Search,
-> monitoring, profiles, downloads, imports, wanted state, and progress remain
-> independently targeted per edition (§Phase 2.5 — Books).**
+> **Snapshot 2026-09-23 · v0.28.0 · The native app gained the web's
+> Interactive search: every release, rejections visible, Grab on any row, per
+> item / pack / episode / copy / edition.**
+>
+> Previously: v0.24.1 · Curator hands Cinema exact book work and edition
+> metadata when an ebook or audiobook import lands (§Phase 2.5 — Books).
 >
 > Previously: v0.23.0 added audiobook curation · v0.20.0 rebuilt the calendar ·
 > v0.19.1 made Access a first-class web tab · v0.19.0 added configurable
@@ -15,7 +17,25 @@
 > working session. Design rationale: [docs/architecture.md](docs/architecture.md) ·
 > decisions: [docs/adr/](docs/adr/) · this file: state only.
 
-## Delivery — Folder repair
+## Delivery — Native interactive search
+
+**Status:** built · fast lane green · awaiting adversarial review · **Updated:**
+2026-09-23 · **Version:** 0.28.0 (mobile 0.27.0, build 24) · PR: pending
+
+| Item | State | Evidence |
+|---|---|---|
+| Independent clone | complete | Branch `feat/mobile-interactive-search` on upstream `4a90fb0`; user checkout untouched. |
+| API client | complete | `searchReleases` (120 s timeout, partial-result headers) and `grabRelease` in `mobile/src/api.ts`. |
+| Search screen | complete | `mobile/src/screens/ReleaseSearchScreen.tsx`: every candidate, rejections visible, Would-be-grabbed view, Grab / Grab anyway, partial banner, season + episode chips. |
+| Detail entry points | complete | Interactive search on the item, Search pack per season, Search per quality copy / book edition. Hardware Back returns to the detail page. |
+| Feature gate | none | Nothing to enable: the screen calls the server's existing endpoints. No Developer-tab section is needed because there is no toggle. |
+| Unit coverage | green | 16 API/helper tests + 4 screen tests (`ReleaseSearchScreen.test.tsx`); strict TypeScript clean. |
+| Docs | complete | `docs/usage.md` (native app + interactive search), `mobile/README.md`. |
+| Adversarial review | pending | Runs once the PR is together, before the single full-suite run. |
+| Full gate | pending | Run once after review fixes. |
+| Deploy | pending | Server: ansible to all nodes. Clients: physical iOS/Android installs need a Mac with the devices — handoff prompt in the PR. |
+
+## Previous delivery — Folder repair
 
 **Status:** adversarial findings addressed; fast lane green · **Updated:** 2026-09-19 ·
 **Version:** 0.25.2 · PR [#30](https://github.com/pjunod/monarr/pull/30)
