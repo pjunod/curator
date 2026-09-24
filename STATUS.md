@@ -19,21 +19,21 @@
 
 ## Delivery — Native interactive search
 
-**Status:** adversarial review addressed · full gate pending · **Updated:**
-2026-09-23 · **Version:** 0.28.0 (mobile 0.27.0, build 24) · PR [#36](https://github.com/pjunod/curator/pull/36) (draft)
+**Status:** review addressed · full gate green locally · merging · **Updated:**
+2026-09-23 · **Version:** 0.28.0 (mobile 0.27.0, build 25) · PR [#36](https://github.com/pjunod/curator/pull/36)
 
 | Item | State | Evidence |
 |---|---|---|
-| Independent clone | complete | Branch `feat/mobile-interactive-search` on upstream `4a90fb0`; user checkout untouched. |
+| Independent clone | complete | Branch `feat/mobile-interactive-search` on upstream `4a90fb0`; user checkout untouched. Pushed through a scratch clone on the Mac VM because the cloud git proxy refuses this repository; the repo has since been renamed `pjunod/curator` on GitHub. |
 | API client | complete | `searchReleases` (120 s timeout, partial-result headers) and `grabRelease` in `mobile/src/api.ts`. |
-| Search screen | complete | `mobile/src/screens/ReleaseSearchScreen.tsx`: every candidate, rejections visible, Would-be-grabbed view, Grab / Grab anyway, partial banner, season + episode chips. |
-| Detail entry points | complete | Interactive search on the item, Search pack per season, Search per quality copy / book edition. Hardware Back returns to the detail page. |
-| Feature gate | none | Nothing to enable: the screen calls the server's existing endpoints. No Developer-tab section is needed because there is no toggle. |
-| Unit coverage | green | 17 API/helper tests + 7 screen tests (`ReleaseSearchScreen.test.tsx`) + 1 Go token test; strict TypeScript clean. |
-| Docs | complete | `docs/usage.md` (native app + interactive search), `mobile/README.md`. |
-| Adversarial review | addressed | 8 findings. Fixed: series copy search without a season (404), series with no seasons, copy name lost from the subtitle, late search answer overwriting a newer scope / setState after close, filter keystrokes re-rendering every row, inert chips indistinguishable, two doc inaccuracies. Found a **pre-existing server bug**: every movie/book interactive grab (web and mobile) failed candidate-token verification because search issues tokens with season 0 and the grab handler defaults to -1, so retained match evidence was downgraded to `manual_override / identity_unresolved`. Fixed in `consumeCandidateToken` with a regression test. |
-| Full gate | pending | Run once after review fixes. |
-| Deploy | pending | Server: ansible to all nodes. Clients: physical iOS/Android installs need a Mac with the devices — handoff prompt in the PR. |
+| Search screen | complete | `mobile/src/screens/ReleaseSearchScreen.tsx`: every candidate, rejections visible, Would-be-grabbed view, Grab / Grab anyway (confirm), partial banner, season + episode chips, late answers dropped. |
+| Detail entry points | complete | Interactive search on the item (series: first real season), Search pack per season, Search per quality copy / book edition (series copies open on the first season). Hardware Back returns to the detail page. |
+| Feature gate | none | Nothing to enable: the screen calls the server's existing endpoints. No Developer-tab section because there is no toggle. |
+| Adversarial review | addressed | 8 findings, all fixed (series copy without a season → 404; series with no seasons; copy name lost from subtitle; late search answer over a newer scope / setState after close; filter re-rendering every row; inert chips; two doc inaccuracies). Plus a pre-existing server bug it found: whole-item grabs (movies/books, web and mobile) failed candidate-token verification (search issues season 0, grab defaults to −1) and lost retained match evidence — fixed in `consumeCandidateToken`, regression-tested at both the service and API level. |
+| Main was red — fixed here | complete | (1) e2e fake indexer advertised no search capabilities, so season searches were generic probes answered with the movie catalogue — 6 browser specs failed from that. (2) A grab/poll race erased the `grabbed` handoff step when a client finished instantly (phase7 flake) — the step is now written before the client is asked. (3) Queue rows were 156 px because the identity line wrapped four times — one elided line now. (4) Wanted's direct row hid which copy was wanted — pill restored. (5) Coverage was 82.4 % against the 85 % floor — six new test files cover the API/library/adapter/acquisition gaps; a blank alias now answers 400 not 500. |
+| Full gate | green | Lint 0 issues · Go race+coverage (see PR) · web 88 tests + build · mobile strict TS + 89 tests + Expo Doctor + iOS/Android bundles · e2e 111/111 twice · compat chain 17/17. Not run here: `expo export --platform all` fails locally on the absent web platform (CI runs it on a runner where it passes); bundles were exported per platform instead. |
+| Deploy — server | pending | Ansible `deploy.yml -e only=monarr --limit nuc3 -e sync=false` from the Mac VM after merge. |
+| Deploy — clients | handoff | Physical iOS/Android installs need this Mac's Xcode/adb: `curator-mobile-deploy-handoff.md` (in the session outputs) is the prompt to paste into a session with that access. |
 
 ## Previous delivery — Folder repair
 
