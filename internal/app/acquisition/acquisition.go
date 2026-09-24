@@ -821,12 +821,23 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		return 0, err
 	}
 	transfer := newTransferID(id)
+	// Open the handoff trace BEFORE the client is asked, so every step from
+	// here is laid out. A client that finishes instantly (a cached torrent, a
+	// test double) can push its completion before this goroutine gets back
+	// from the add; the poller then read a trace with no first line, appended
+	// "downloaded" to it, and its write erased the "grabbed" step written a
+	// moment later. The id is in the trace's first line because that is
+	// where someone starts reading when a transfer goes wrong.
+	dl := sqlite.Download{ID: id, MediaItemID: item.ID, ReleaseTitle: req.Title,
+		State: "grabbed", Transfer: transfer}
+	s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, "sent to "+clientLabel(*cfg)+" as "+transfer)
 	handle, err := addToClient(
 		ctx, s.newClient(*cfg), req.DownloadURL, cfg.Category, req.Title, transfer, priority,
 	)
 	if err != nil {
-		// Nothing downstream ever saw this row: no event, no trace entry,
-		// no history. Dropping it is the honest undo.
+		// Nothing downstream ever saw this row: no event, no history, and
+		// the only trace entry is the one above. Dropping it is the honest
+		// undo.
 		if delErr := s.db.DeleteDownload(ctx, id); delErr != nil {
 			s.log.Warn("grab: could not remove the row for a rejected add",
 				"download", id, "err", delErr)
@@ -840,16 +851,6 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		s.log.Error("grab: download accepted but its handle could not be stored",
 			"download", id, "handle", handle, "err", err)
 	}
-	// Open the handoff trace so every step from here is laid out.
-	dl := sqlite.Download{ID: id, MediaItemID: item.ID, ReleaseTitle: req.Title,
-		State: "grabbed", Transfer: transfer}
-	detail := "sent to " + clientLabel(*cfg)
-	if transfer != "" {
-		// The id is in the trace's first line because that is where
-		// someone starts reading when a transfer goes wrong.
-		detail += " as " + transfer
-	}
-	s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, detail)
 	_ = s.db.AddHistory(ctx, "grabbed", item.ID, req.Title,
 		map[string]any{"indexer": req.Indexer, "protocol": req.Protocol, "downloadPriority": priority, "match": evidence})
 	s.publish(ReleaseGrabbed{MediaItemID: item.ID, Title: req.Title,
