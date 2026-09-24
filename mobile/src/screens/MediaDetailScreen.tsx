@@ -8,6 +8,7 @@ import {
   downloadPriorityLabel,
 } from '../downloadPriority'
 import { Poster } from '../components/Media'
+import { firstSeason } from '../releaseSearch'
 import {
   AppScreen,
   Badge,
@@ -229,12 +230,17 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
 
         <Panel style={styles.actions}>
           <Button label={searching ? 'Starting search…' : 'Search now'} disabled={searching} onPress={() => void searchNow()} />
-          <Button
-            secondary
-            label="Interactive search"
-            onPress={() => onInteractiveSearch(item.kind === 'series' ? { season: firstSeason(item.seasons) } : {})}
-          />
-          <Text style={[styles.actionHint, { color: theme.muted }]}>Search now grabs the best accepted release in the background. Interactive search lists every release the indexers return so you pick.</Text>
+          {item.kind !== 'series' || item.seasons.length > 0 ? (
+            <Button
+              secondary
+              label="Interactive search"
+              onPress={() => onInteractiveSearch(item.kind === 'series' ? { season: firstSeason(item.seasons) } : {})}
+            />
+          ) : null}
+          <Text style={[styles.actionHint, { color: theme.muted }]}>
+            Search now grabs the best accepted release in the background. Interactive search lists every release the indexers return so you pick.
+            {item.kind === 'series' && item.seasons.length === 0 ? ' Interactive search appears once this series has seasons.' : ''}
+          </Text>
         </Panel>
 
         {item.kind !== 'book' ? (
@@ -419,7 +425,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
                 profiles={profiles}
                 fileCount={item.files.filter((file) => file.copyId === copy.id).length}
                 onRefresh={resource.refresh}
-                onSearch={() => onInteractiveSearch({ copyId: copy.id })}
+                onSearch={() => onInteractiveSearch(item.kind === 'series' ? { copyId: copy.id, season: firstSeason(item.seasons) } : { copyId: copy.id })}
                 onMessage={(message) => {
                   setActionError('')
                   setActionMessage(message)
@@ -719,11 +725,6 @@ function ChoiceGroup({
       )}
     </View>
   )
-}
-
-/** The season a series-level interactive search opens on: the first one that is not specials. */
-function firstSeason(seasons: { number: number }[]): number | undefined {
-  return (seasons.find((season) => season.number > 0) ?? seasons[0])?.number
 }
 
 function profileName(profiles: QualityProfile[], id: number): string {

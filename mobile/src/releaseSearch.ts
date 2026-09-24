@@ -42,3 +42,12 @@ export function candidateKey(candidate: ReleaseCandidate): string {
 export function grabbedMessage(title: string): string {
   return `Grabbed ${title} — follow it under Activity.`
 }
+
+/**
+ * The season a series-level interactive search opens on: the first one that
+ * is not specials. A series search needs a season — the server has no
+ * whole-series scope — so callers that could pass none check for seasons.
+ */
+export function firstSeason(seasons: { number: number }[]): number | undefined {
+  return (seasons.find((season) => season.number > 0) ?? seasons[0])?.number
+}

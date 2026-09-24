@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { acceptedCount, candidateKey, filterCandidates, grabbedMessage, scopeLabel } from './releaseSearch'
+import { acceptedCount, candidateKey, filterCandidates, firstSeason, grabbedMessage, scopeLabel } from './releaseSearch'
 import type { ReleaseCandidate } from './types'
 
 const candidate = (overrides: Partial<ReleaseCandidate>): ReleaseCandidate => ({
@@ -47,5 +47,13 @@ describe('candidateKey', () => {
 describe('grabbedMessage', () => {
   it('points at Activity', () => {
     expect(grabbedMessage('X')).toContain('Activity')
+  })
+})
+
+describe('firstSeason', () => {
+  it('opens interactive search on the first real season, or specials when that is all there is', () => {
+    expect(firstSeason([{ number: 0 }, { number: 1 }, { number: 2 }])).toBe(1)
+    expect(firstSeason([{ number: 0 }])).toBe(0)
+    expect(firstSeason([])).toBeUndefined()
   })
 })

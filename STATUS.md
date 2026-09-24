@@ -19,8 +19,8 @@
 
 ## Delivery — Native interactive search
 
-**Status:** built · fast lane green · awaiting adversarial review · **Updated:**
-2026-09-23 · **Version:** 0.28.0 (mobile 0.27.0, build 24) · PR: pending
+**Status:** adversarial review addressed · full gate pending · **Updated:**
+2026-09-23 · **Version:** 0.28.0 (mobile 0.27.0, build 24) · PR [#36](https://github.com/pjunod/curator/pull/36) (draft)
 
 | Item | State | Evidence |
 |---|---|---|
@@ -29,9 +29,9 @@
 | Search screen | complete | `mobile/src/screens/ReleaseSearchScreen.tsx`: every candidate, rejections visible, Would-be-grabbed view, Grab / Grab anyway, partial banner, season + episode chips. |
 | Detail entry points | complete | Interactive search on the item, Search pack per season, Search per quality copy / book edition. Hardware Back returns to the detail page. |
 | Feature gate | none | Nothing to enable: the screen calls the server's existing endpoints. No Developer-tab section is needed because there is no toggle. |
-| Unit coverage | green | 16 API/helper tests + 4 screen tests (`ReleaseSearchScreen.test.tsx`); strict TypeScript clean. |
+| Unit coverage | green | 17 API/helper tests + 7 screen tests (`ReleaseSearchScreen.test.tsx`) + 1 Go token test; strict TypeScript clean. |
 | Docs | complete | `docs/usage.md` (native app + interactive search), `mobile/README.md`. |
-| Adversarial review | pending | Runs once the PR is together, before the single full-suite run. |
+| Adversarial review | addressed | 8 findings. Fixed: series copy search without a season (404), series with no seasons, copy name lost from the subtitle, late search answer overwriting a newer scope / setState after close, filter keystrokes re-rendering every row, inert chips indistinguishable, two doc inaccuracies. Found a **pre-existing server bug**: every movie/book interactive grab (web and mobile) failed candidate-token verification because search issues tokens with season 0 and the grab handler defaults to -1, so retained match evidence was downgraded to `manual_override / identity_unresolved`. Fixed in `consumeCandidateToken` with a regression test. |
 | Full gate | pending | Run once after review fixes. |
 | Deploy | pending | Server: ansible to all nodes. Clients: physical iOS/Android installs need a Mac with the devices — handoff prompt in the PR. |
 

@@ -457,12 +457,25 @@ func (s *Service) consumeCandidateToken(req GrabRequest) (domain.MatchEvidence, 
 	defer s.candidateMu.Unlock()
 	record, ok := s.candidateTokens[req.CandidateToken]
 	delete(s.candidateTokens, req.CandidateToken)
+	// A movie or book search issues its token with season 0 (the query has no
+	// season), while the grab handler defaults an omitted season to -1. Both
+	// mean "no season"; comparing them raw rejected every whole-item grab and
+	// downgraded its retained evidence to a manual override.
 	if !ok || time.Now().After(record.expiresAt) || record.itemID != req.MediaItemID ||
-		record.copyID != req.CopyID || record.season != req.Season || record.episode != req.Episode ||
+		record.copyID != req.CopyID || noSeason(record.season) != noSeason(req.Season) || record.episode != req.Episode ||
 		record.title != req.Title || record.downloadURL != req.DownloadURL || record.indexer != req.Indexer {
 		return domain.MatchEvidence{}, false
 	}
 	return record.evidence, true
+}
+
+// noSeason folds the two "no season" spellings (0 from a query without one,
+// -1 from a grab without one) onto one value for token comparison.
+func noSeason(season int) int {
+	if season < 0 {
+		return 0
+	}
+	return season
 }
 
 // Search fans out to every enabled indexer, parses and judges every

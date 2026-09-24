@@ -106,14 +106,46 @@ describe('ReleaseSearchScreen', () => {
     expect(client.searchReleases).toHaveBeenCalledTimes(3)
   })
 
+  it('ignores a search that answers after the screen closed', async () => {
+    const client = makeClient([])
+    let resolveSearch: (value: unknown) => void = () => undefined
+    client.searchReleases.mockImplementationOnce(() => new Promise((resolve) => { resolveSearch = resolve }))
+    await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{ season: 1 }} onBack={vi.fn()} />) })
+    expect(labelled('S2')[0]!.props.onPress).toBeUndefined()
+    const tree = renderer!
+    renderer = undefined
+    await act(async () => tree.unmount())
+    await act(async () => { resolveSearch({ candidates: [candidate({ title: 'Stale', candidateToken: 's' })], partial: false }) })
+    expect(client.searchReleases).toHaveBeenCalledOnce()
+  })
+
+  it('searches a series copy on its season and names the copy', async () => {
+    const withCopy = { ...series, copies: [{ id: 5, name: '4K shelf', qualityProfileId: 1, rootFolderId: 1, path: '', monitored: true }] } as unknown as MediaItemDetail
+    const client = makeClient([])
+    client.getLibraryItem.mockResolvedValue(withCopy)
+    await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{ copyId: 5, season: 1 }} onBack={vi.fn()} />) })
+    expect(client.searchReleases).toHaveBeenCalledWith(42, { copyId: 5, season: 1 })
+    expect(nodes('header')[0]!.props.subtitle).toBe('Show · Season 1 pack · 4K shelf')
+    await press('E1')
+    expect(client.searchReleases).toHaveBeenLastCalledWith(42, { copyId: 5, season: 1, episode: 1 })
+  })
+
+  it('does not search a series that has no seasons', async () => {
+    const client = makeClient([])
+    client.getLibraryItem.mockResolvedValue({ ...series, seasons: [] })
+    await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{}} onBack={vi.fn()} />) })
+    expect(client.searchReleases).not.toHaveBeenCalled()
+    expect(text()).toContain('No seasons are known for this series yet')
+  })
+
   it('shows the empty and failed states instead of a blank list', async () => {
     const client = makeClient([])
-    await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{}} onBack={vi.fn()} />) })
+    await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{ season: 2 }} onBack={vi.fn()} />) })
     expect(text()).toContain('No releases found on any enabled indexer.')
     await act(async () => renderer!.unmount())
 
     client.searchReleases.mockRejectedValueOnce(new Error('indexer exploded'))
-    await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{}} onBack={vi.fn()} />) })
+    await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{ season: 2 }} onBack={vi.fn()} />) })
     expect(nodes('inlineerror').some((node) => node.props.message === 'indexer exploded')).toBe(true)
   })
 })

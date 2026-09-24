@@ -210,10 +210,12 @@ the background. **Interactive search** is the same override the web offers —
 every release the indexers returned, rejected ones included with their
 reasons, a **Would be grabbed** view that narrows the list without gating
 anything, and **Grab** on any row. Movies and books search the item (each
-book edition and each quality copy has its own **Search**); on a series,
-**Search pack** on a season row opens the search on that pack and the
-season and episode chips at the top of the search re-run it for another pack
-or a single episode. A rejected release asks once before it is grabbed. An
+book edition and each quality copy has its own **Search**). On a series
+there is no whole-series scope: **Interactive search** opens on the first
+real season's pack, **Search pack** on a season row opens on that pack, a
+copy's **Search** opens on the first season for that copy, and the season
+and episode chips at the top of the search re-run it for another pack or a
+single episode. A rejected release asks once before it is grabbed. An
 incomplete result — one indexer slow or down — is labelled as such rather
 than presented as the whole picture.
 Movies and series can also keep
@@ -564,8 +566,9 @@ visible on its Activity row.
 
 The native app runs the same search against the same endpoint and shows the
 same rows — the list scrolls instead of paging, and a rejected release asks
-once before **Grab anyway** sends it. Nothing is hidden on the phone that the
-browser would show.
+once before **Grab anyway** sends it. The one thing the phone leaves out is
+the custom-format list behind the score, which the browser shows as a
+tooltip.
 
 ## Monitoring: series, seasons, episodes
 

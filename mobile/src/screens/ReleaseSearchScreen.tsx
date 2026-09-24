@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { AppScreen, Badge, Button, Chip, Field, Header, IconButton, InlineError, LoadingState, MessageState, Panel } from '../components/UI'
@@ -51,22 +51,34 @@ function ReleaseSearchBody({
   const [grabError, setGrabError] = useState('')
   const [grabbed, setGrabbed] = useState('')
 
+  // Searches take up to two minutes. A response belongs to the scope that
+  // asked for it: one that lands after the scope moved on, or after the
+  // screen closed, is dropped rather than written over the newer list.
+  const generation = useRef(0)
+  useEffect(() => () => { generation.current += 1 }, [])
   const search = useCallback(async (target: ReleaseSearchScope) => {
+    const mine = ++generation.current
     setSearching(true)
     setError('')
     setResult(null)
     try {
-      setResult(await client.searchReleases(item.id, target))
+      const response = await client.searchReleases(item.id, target)
+      if (mine === generation.current) setResult(response)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The search failed.')
+      if (mine === generation.current) setError(cause instanceof Error ? cause.message : 'The search failed.')
     } finally {
-      setSearching(false)
+      if (mine === generation.current) setSearching(false)
     }
   }, [client, item.id])
 
   useEffect(() => {
+    if (item.kind === 'series' && scope.season === undefined) {
+      // No season known yet: nothing to search, and the server would say so.
+      setSearching(false)
+      return
+    }
     void search(scope)
-  }, [search, scope])
+  }, [item.kind, search, scope])
 
   const changeScope = (next: ReleaseSearchScope) => {
     setGrabbed('')
@@ -74,7 +86,7 @@ function ReleaseSearchBody({
     setScope(next)
   }
 
-  const grab = async (candidate: ReleaseCandidate) => {
+  const grab = useCallback(async (candidate: ReleaseCandidate) => {
     const key = candidateKey(candidate)
     setGrabbing(key)
     setGrabError('')
@@ -98,9 +110,9 @@ function ReleaseSearchBody({
     } finally {
       setGrabbing(null)
     }
-  }
+  }, [client, item.id, scope])
 
-  const confirmGrab = (candidate: ReleaseCandidate) => {
+  const confirmGrab = useCallback((candidate: ReleaseCandidate) => {
     if (candidate.accepted) {
       void grab(candidate)
       return
@@ -116,17 +128,26 @@ function ReleaseSearchBody({
         { text: 'Grab anyway', onPress: () => void grab(candidate) },
       ],
     )
-  }
+  }, [grab])
 
   const all = useMemo(() => result?.candidates ?? [], [result])
   const accepted = useMemo(() => acceptedCount(all), [all])
   const visible = useMemo(() => filterCandidates(all, filter, query), [all, filter, query])
   const season = scope.season !== undefined ? item.seasons.find((candidate) => candidate.number === scope.season) : undefined
-  const label = scopeLabel(scope, scope.copyId ? (item.copies ?? []).find((copy) => copy.id === scope.copyId)?.name || 'edition' : item.kind === 'series' ? 'series' : item.kind)
+  const copy = scope.copyId ? (item.copies ?? []).find((candidate) => candidate.id === scope.copyId) : undefined
+  const copyName = copy ? (copy.bookType === 'audiobook' ? 'Audiobook' : copy.bookType === 'ebook' ? 'Ebook' : copy.name || `Copy #${copy.id}`) : undefined
+  const label = scopeLabel(scope, copyName ?? item.kind) + (copyName && scope.season !== undefined ? ` · ${copyName}` : '')
+
+  const renderRow = useCallback(({ item: candidate }: { item: ReleaseCandidate }) => (
+    <ReleaseRow candidate={candidate} busy={grabbing !== null} grabbing={grabbing === candidateKey(candidate)} onGrab={confirmGrab} />
+  ), [grabbing, confirmGrab])
 
   const header = (
     <View style={styles.headerBlock}>
-      {item.kind === 'series' ? (
+      {item.kind === 'series' && item.seasons.length === 0 ? (
+        <Text style={[styles.hint, { color: theme.muted }]}>No seasons are known for this series yet, so there is nothing to search. Refresh its metadata from the web interface.</Text>
+      ) : null}
+      {item.kind === 'series' && item.seasons.length > 0 ? (
         <Panel style={styles.scopePanel}>
           <Text style={[styles.scopeLabel, { color: theme.text }]}>Season</Text>
           <View style={styles.chips}>
@@ -166,7 +187,7 @@ function ReleaseSearchBody({
       <InlineError message={grabError} />
       {grabbed ? <Text style={[styles.success, { color: theme.ok }]}>{grabbed}</Text> : null}
 
-      {!searching && !error && all.length === 0 ? (
+      {!searching && result && all.length === 0 ? (
         <Text style={[styles.hint, { color: theme.muted }]}>No releases found on any enabled indexer.</Text>
       ) : null}
 
@@ -196,9 +217,7 @@ function ReleaseSearchBody({
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.content}
         ListHeaderComponent={header}
-        renderItem={({ item: candidate }) => (
-          <ReleaseRow candidate={candidate} busy={grabbing !== null} grabbing={grabbing === candidateKey(candidate)} onGrab={() => confirmGrab(candidate)} />
-        )}
+        renderItem={renderRow}
       />
     </AppScreen>
   )
@@ -209,7 +228,7 @@ function ReleaseSearchBody({
  * reason a search "found nothing useful" is one glance away without turning
  * every row into a paragraph.
  */
-export function ReleaseRow({ candidate, busy, grabbing, onGrab }: { candidate: ReleaseCandidate; busy: boolean; grabbing: boolean; onGrab: () => void }) {
+export const ReleaseRow = memo(function ReleaseRow({ candidate, busy, grabbing, onGrab }: { candidate: ReleaseCandidate; busy: boolean; grabbing: boolean; onGrab: (candidate: ReleaseCandidate) => void }) {
   const theme = useTheme()
   const [expanded, setExpanded] = useState(false)
   const [first, ...rest] = candidate.rejections
@@ -248,11 +267,11 @@ export function ReleaseRow({ candidate, busy, grabbing, onGrab }: { candidate: R
           ))
         : null}
       <View style={styles.actions}>
-        <Button compact secondary={!candidate.accepted} label={grabbing ? 'Grabbing…' : candidate.accepted ? 'Grab' : 'Grab anyway'} disabled={busy} onPress={onGrab} />
+        <Button compact secondary={!candidate.accepted} label={grabbing ? 'Grabbing…' : candidate.accepted ? 'Grab' : 'Grab anyway'} disabled={busy} onPress={() => onGrab(candidate)} />
       </View>
     </Panel>
   )
-}
+})
 
 const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 42, gap: 10 },
