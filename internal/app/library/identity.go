@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
@@ -169,6 +170,11 @@ func (s *Service) enqueueIdentity(ctx context.Context, itemID int64, priority in
 func (s *Service) AddManualAlias(ctx context.Context, itemID int64, title string, searchable bool) (domain.TitleAlias, error) {
 	if _, err := s.db.GetMediaItemFull(ctx, itemID); err != nil {
 		return domain.TitleAlias{}, err
+	}
+	// The store validates too, but it answers with a plain error and the API
+	// maps that to 500. A blank or oversized title is the caller's mistake.
+	if trimmed := strings.TrimSpace(title); trimmed == "" || len(trimmed) > 256 {
+		return domain.TitleAlias{}, fmt.Errorf("%w: alias title must be 1-256 characters", ErrInvalidInput)
 	}
 	alias, err := s.db.AddManualAlias(ctx, itemID, title, searchable)
 	if errors.Is(err, sqlite.ErrDuplicate) {
