@@ -19,7 +19,7 @@
 
 ## Delivery — Native interactive search
 
-**Status:** review addressed · full gate green locally · merging · **Updated:**
+**Status:** merged `7d1b5e7` · server deployed · clients handed off · **Updated:**
 2026-09-23 · **Version:** 0.28.0 (mobile 0.27.0, build 25) · PR [#36](https://github.com/pjunod/curator/pull/36)
 
 | Item | State | Evidence |
@@ -31,9 +31,9 @@
 | Feature gate | none | Nothing to enable: the screen calls the server's existing endpoints. No Developer-tab section because there is no toggle. |
 | Adversarial review | addressed | 8 findings, all fixed (series copy without a season → 404; series with no seasons; copy name lost from subtitle; late search answer over a newer scope / setState after close; filter re-rendering every row; inert chips; two doc inaccuracies). Plus a pre-existing server bug it found: whole-item grabs (movies/books, web and mobile) failed candidate-token verification (search issues season 0, grab defaults to −1) and lost retained match evidence — fixed in `consumeCandidateToken`, regression-tested at both the service and API level. |
 | Main was red — fixed here | complete | (1) e2e fake indexer advertised no search capabilities, so season searches were generic probes answered with the movie catalogue — 6 browser specs failed from that. (2) A grab/poll race erased the `grabbed` handoff step when a client finished instantly (phase7 flake) — the step is now written before the client is asked. (3) Queue rows were 156 px because the identity line wrapped four times — one elided line now. (4) Wanted's direct row hid which copy was wanted — pill restored. (5) Coverage was 82.4 % against the 85 % floor — six new test files cover the API/library/adapter/acquisition gaps; a blank alias now answers 400 not 500. |
-| Full gate | green | Lint 0 issues · Go race+coverage (see PR) · web 88 tests + build · mobile strict TS + 89 tests + Expo Doctor + iOS/Android bundles · e2e 111/111 twice · compat chain 17/17. Not run here: `expo export --platform all` fails locally on the absent web platform (CI runs it on a runner where it passes); bundles were exported per platform instead. |
-| Deploy — server | pending | Ansible `deploy.yml -e only=monarr --limit nuc3 -e sync=false` from the Mac VM after merge. |
-| Deploy — clients | handoff | Physical iOS/Android installs need this Mac's Xcode/adb: `curator-mobile-deploy-handoff.md` (in the session outputs) is the prompt to paste into a session with that access. |
+| Full gate | green | Locally: lint 0 issues · Go race+coverage 87.1 % (floor now 86.0) · web 88 tests + build · mobile strict TS + 89 tests + Expo Doctor + iOS/Android bundles · e2e 111/111 twice · compat 17/17. On GitHub for `0346afe`: Lint, Tests (unit + e2e + mobile), Compat and Docker all green — the first fully green run since `4a90fb0`. |
+| Deploy — server | complete | `deploy.yml -e only=monarr --limit nuc3 -e sync=false` from the Mac VM: nuc3 rebuilt and healthy, `/api/v1/system/status` reports 0.28.0 @ `7d1b5e7`. His `~/code/monarr` checkout was not synced (sync=false) and is untouched. |
+| Deploy — clients | handoff | Physical iOS/Android installs need this Mac's Xcode/adb: `curator-mobile-deploy-handoff.md` (session outputs) is the prompt for a session with that access. |
 
 ## Previous delivery — Folder repair
 
