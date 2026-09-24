@@ -4,6 +4,7 @@ import type {
   CalendarEntry,
   Connection,
   DiscoverList,
+  GrabRequest,
   HealthReport,
   HistoryEvent,
   MediaItemDetail,
@@ -13,6 +14,9 @@ import type {
   QualityProfile,
   QueueItem,
   QueueSummary,
+  ReleaseCandidate,
+  ReleaseSearchResponse,
+  ReleaseSearchScope,
   RootFolder,
   SearchResult,
   SystemStatus,
@@ -20,6 +24,17 @@ import type {
   UpdateMediaItemRequest,
   WantedItem,
 } from './types'
+
+export const RELEASE_SEARCH_TIMEOUT_MS = 120_000
+
+export function releasesPath(id: number, scope: ReleaseSearchScope): string {
+  const params = new URLSearchParams()
+  if (scope.season !== undefined) params.set('season', String(scope.season))
+  if (scope.episode !== undefined) params.set('episode', String(scope.episode))
+  if (scope.copyId) params.set('copyId', String(scope.copyId))
+  const query = params.toString()
+  return `/library/${id}/releases${query ? `?${query}` : ''}`
+}
 
 export class ApiError extends Error {
   constructor(
@@ -35,9 +50,17 @@ export class ApiError extends Error {
 export class MonarrClient {
   constructor(readonly connection: Connection) {}
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<T> {
+    const { body } = await this.requestWithHeaders<T>(path, init, timeoutMs)
+    return body
+  }
+
+  // Most endpoints answer in the body alone. Release search also reports
+  // whether the list is complete in response headers, so that path needs the
+  // headers back as well as the parsed body.
+  private async requestWithHeaders<T>(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<{ body: T; headers: Headers }> {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 30_000)
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
     const headers = new Headers(init.headers)
     headers.set('Accept', 'application/json')
     if (this.connection.apiKey) headers.set('X-Api-Key', this.connection.apiKey)
@@ -52,7 +75,7 @@ export class MonarrClient {
       })
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new ApiError('The Curator server did not respond in 30 seconds.', 0)
+        throw new ApiError(`The Curator server did not respond in ${Math.round(timeoutMs / 1000)} seconds.`, 0)
       }
       throw new ApiError('Could not reach this Curator server. Check the address and your network.', 0)
     } finally {
@@ -75,7 +98,7 @@ export class MonarrClient {
       }
       throw new ApiError(message, response.status, code)
     }
-    return (text ? JSON.parse(text) : undefined) as T
+    return { body: (text ? JSON.parse(text) : undefined) as T, headers: response.headers }
   }
 
   private get<T>(path: string): Promise<T> {
@@ -116,6 +139,17 @@ export class MonarrClient {
     this.send('POST', '/library', input)
   getWanted = (): Promise<WantedItem[]> => this.get('/wanted')
   autoSearchItem = (id: number): Promise<void> => this.send('POST', `/library/${id}/autosearch`)
+  // Indexers are queried live, so this waits well past the default timeout:
+  // a slow tracker is a partial result, not a dead server.
+  searchReleases = async (id: number, scope: ReleaseSearchScope = {}): Promise<ReleaseSearchResponse> => {
+    const { body, headers } = await this.requestWithHeaders<ReleaseCandidate[] | null>(releasesPath(id, scope), {}, RELEASE_SEARCH_TIMEOUT_MS)
+    return {
+      candidates: body ?? [],
+      partial: headers.get('X-Monarr-Search-Partial') === 'true',
+      reason: headers.get('X-Monarr-Search-Reason') || undefined,
+    }
+  }
+  grabRelease = (input: GrabRequest): Promise<{ id: number }> => this.send('POST', '/grab', input)
   runTask = (name: string): Promise<void> =>
     this.send('POST', `/system/tasks/${encodeURIComponent(name)}/run`)
   getQueue = (filter: 'active' | 'imported' | 'failed', limit = 30): Promise<QueueItem[]> =>

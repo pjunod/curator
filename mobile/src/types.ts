@@ -335,3 +335,63 @@ export interface CalendarEntry {
   runtime?: number
   monitored?: boolean
 }
+
+export interface Rejection {
+  code: string
+  reason: string
+}
+
+export interface MatchEvidence {
+  version: number
+  matched: boolean
+  method?: string
+  code?: string
+  reason: string
+}
+
+export interface ReleaseCandidate {
+  title: string
+  downloadUrl: string
+  infoUrl?: string
+  indexer: string
+  protocol: string
+  size: number
+  seeders: number
+  age: string
+  quality: string
+  score: number
+  formats?: string[]
+  accepted: boolean
+  isUpgrade: boolean
+  rejections: Rejection[]
+  match: MatchEvidence
+  candidateToken: string
+  /** A caution that does not decline the release — today, an implausible size. */
+  warning?: string
+}
+
+export interface ReleaseSearchScope {
+  season?: number
+  episode?: number
+  copyId?: number
+}
+
+export interface ReleaseSearchResponse {
+  candidates: ReleaseCandidate[]
+  /** True when at least one indexer failed or timed out, so the list is not the whole picture. */
+  partial: boolean
+  reason?: string
+}
+
+export interface GrabRequest {
+  mediaItemId: number
+  copyId?: number
+  season?: number
+  episode?: number
+  title: string
+  downloadUrl: string
+  indexer?: string
+  protocol: string
+  size?: number
+  candidateToken?: string
+}
