@@ -68,7 +68,18 @@ createServer((req, res) => {
   if (url.pathname === '/api') {
     res.setHeader('content-type', 'application/xml')
     if (q.get('t') === 'caps') {
-      res.end('<caps><server title="fake"/></caps>')
+      // Search planning reads these capabilities (internal/app/acquisition/
+      // searchplan.go). Without them every query is a generic probe, and a
+      // generic probe here answers with the movie catalogue — so a season
+      // search never saw the pack and the series chain failed from there.
+      res.end(
+        '<caps><server title="fake"/><searching>' +
+          '<search available="yes" supportedParams="q"/>' +
+          '<tv-search available="yes" supportedParams="q,season,ep,tvdbid"/>' +
+          '<movie-search available="yes" supportedParams="q,imdbid,tmdbid"/>' +
+          '<book-search available="yes" supportedParams="q"/>' +
+          '</searching></caps>',
+      )
       return
     }
     if (q.get('t') === 'tvsearch' && !q.get('ep')) {

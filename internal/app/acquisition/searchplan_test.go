@@ -90,3 +90,26 @@ func TestCandidateTokenBindsServerEvidenceToExactGrab(t *testing.T) {
 		t.Fatal("token accepted for a different indexer")
 	}
 }
+
+func TestCandidateTokenAcceptsWholeItemGrabWithoutSeason(t *testing.T) {
+	service := &Service{}
+	release := ports.Release{Title: "Example.2016.2160p", DownloadURL: "https://indexer.invalid/2", Indexer: "one"}
+	evidence := domain.MatchEvidence{Version: 1, Matched: true, Method: "id", Reason: "matched TMDB"}
+	// A movie search has no season, so the token is issued with 0 …
+	token := service.issueCandidateToken(9, 0, 0, 0, release, evidence)
+	// … and the grab handler spells an omitted season as -1.
+	got, ok := service.consumeCandidateToken(GrabRequest{
+		MediaItemID: 9, Season: -1, Title: release.Title,
+		DownloadURL: release.DownloadURL, Indexer: release.Indexer, CandidateToken: token,
+	})
+	if !ok || got.Reason != evidence.Reason {
+		t.Fatalf("whole-item grab lost its search evidence: ok=%v evidence=%+v", ok, got)
+	}
+	token = service.issueCandidateToken(9, 0, 2, 0, release, evidence)
+	if _, ok := service.consumeCandidateToken(GrabRequest{
+		MediaItemID: 9, Season: -1, Title: release.Title,
+		DownloadURL: release.DownloadURL, Indexer: release.Indexer, CandidateToken: token,
+	}); ok {
+		t.Fatal("a season-pack token was accepted for a whole-item grab")
+	}
+}

@@ -131,6 +131,9 @@ export function Chip({ label, selected = false, onPress }: { label: string; sele
       style={[
         styles.chip,
         { backgroundColor: selected ? theme.accentSoft : theme.raised, borderColor: selected ? theme.accent : theme.border },
+        // A chip with nothing to do reads as such — the disabled/selected
+        // state is otherwise invisible while a long search is running.
+        !onPress && !selected && styles.chipInert,
       ]}
     >
       <Text style={[styles.chipText, { color: selected ? theme.accent : theme.muted }]}>{label}</Text>
@@ -212,6 +215,7 @@ const styles = StyleSheet.create({
   iconButton: { fontSize: 30, fontWeight: '400', lineHeight: 32 },
   field: { minHeight: 46, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, fontSize: 16 },
   chip: { minHeight: 34, borderWidth: 1, borderRadius: 17, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
+  chipInert: { opacity: 0.5 },
   chipText: { fontSize: 13, fontWeight: '600' },
   badge: { alignSelf: 'flex-start', maxWidth: '100%', borderWidth: 1, borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3 },
   badgeText: { fontSize: 11, fontWeight: '700' },

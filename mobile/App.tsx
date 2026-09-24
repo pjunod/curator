@@ -8,7 +8,7 @@ import { usePreferences } from './src/preferences-context'
 import { TopNavigationProvider } from './src/navigation-context'
 import { clearConnection, loadConnection, saveConnection } from './src/storage'
 import { useTheme } from './src/theme'
-import type { Connection, SystemStatus } from './src/types'
+import type { Connection, ReleaseSearchScope, SystemStatus } from './src/types'
 import { ConnectScreen } from './src/screens/ConnectScreen'
 import { LibraryScreen } from './src/screens/LibraryScreen'
 import { DiscoverScreen } from './src/screens/DiscoverScreen'
@@ -17,9 +17,10 @@ import { ActivityScreen } from './src/screens/ActivityScreen'
 import { MoreScreen } from './src/screens/MoreScreen'
 import { MediaDetailScreen } from './src/screens/MediaDetailScreen'
 import { CalendarScreen } from './src/screens/CalendarScreen'
+import { ReleaseSearchScreen } from './src/screens/ReleaseSearchScreen'
 
 type Tab = 'library' | 'discover' | 'wanted' | 'activity' | 'more'
-type Overlay = { name: 'detail'; id: number } | { name: 'calendar' }
+type Overlay = { name: 'detail'; id: number } | { name: 'calendar' } | { name: 'releases'; id: number; scope: ReleaseSearchScope }
 
 export default function App() {
   return (
@@ -52,7 +53,9 @@ function MonarrApp() {
   useEffect(() => {
     if (!overlay) return
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      setOverlay(null)
+      // Interactive search sits on top of the detail page it came from, so
+      // Back returns there rather than dropping straight to the tab.
+      setOverlay(overlay.name === 'releases' ? { name: 'detail', id: overlay.id } : null)
       return true
     })
     return () => subscription.remove()
@@ -71,6 +74,7 @@ function MonarrApp() {
   }
 
   const openMedia = (id: number) => setOverlay({ name: 'detail', id })
+  const openReleases = (id: number, scope: ReleaseSearchScope) => setOverlay({ name: 'releases', id, scope })
 
   if (booting) {
     return (
@@ -91,7 +95,9 @@ function MonarrApp() {
 
   let content
   if (overlay?.name === 'detail') {
-    content = <MediaDetailScreen client={client} id={overlay.id} onBack={() => setOverlay(null)} />
+    content = <MediaDetailScreen client={client} id={overlay.id} onBack={() => setOverlay(null)} onInteractiveSearch={(scope) => openReleases(overlay.id, scope)} />
+  } else if (overlay?.name === 'releases') {
+    content = <ReleaseSearchScreen client={client} id={overlay.id} initialScope={overlay.scope} onBack={() => openMedia(overlay.id)} />
   } else if (overlay?.name === 'calendar') {
     content = <CalendarScreen client={client} onBack={() => setOverlay(null)} onOpen={openMedia} />
   } else if (tab === 'library') {

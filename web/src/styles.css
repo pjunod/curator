@@ -2807,6 +2807,14 @@ a.pill-info:hover {
   width: 190px;
 }
 
+/* The identity line under a queued title: one line, elided, full text on
+   hover. Wrapped it added four lines to every row. */
+.queue-table .queue-match {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---- stage sections ---- */
 /* A heading row inside the table rather than a table per stage, so every
    section keeps one column grid. Separate tables would each size their own

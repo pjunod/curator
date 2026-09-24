@@ -8,6 +8,7 @@ import {
   downloadPriorityLabel,
 } from '../downloadPriority'
 import { Poster } from '../components/Media'
+import { firstSeason } from '../releaseSearch'
 import {
   AppScreen,
   Badge,
@@ -23,10 +24,10 @@ import {
   SectionTitle,
 } from '../components/UI'
 import { useTheme } from '../theme'
-import type { BookType, MediaCopy, QualityProfile, UpdateMediaItemRequest } from '../types'
+import type { BookType, MediaCopy, QualityProfile, ReleaseSearchScope, UpdateMediaItemRequest } from '../types'
 import { useResource } from '../useResource'
 
-export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient; id: number; onBack: () => void }) {
+export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: { client: MonarrClient; id: number; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void }) {
   const theme = useTheme()
   const resource = useResource(() => client.getLibraryItem(id), [client, id])
   const profilesResource = useResource(() => client.getProfiles(), [client])
@@ -229,6 +230,17 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
 
         <Panel style={styles.actions}>
           <Button label={searching ? 'Starting search…' : 'Search now'} disabled={searching} onPress={() => void searchNow()} />
+          {item.kind !== 'series' || item.seasons.length > 0 ? (
+            <Button
+              secondary
+              label="Interactive search"
+              onPress={() => onInteractiveSearch(item.kind === 'series' ? { season: firstSeason(item.seasons) } : {})}
+            />
+          ) : null}
+          <Text style={[styles.actionHint, { color: theme.muted }]}>
+            Search now grabs the best accepted release in the background. Interactive search lists every release the indexers return so you pick.
+            {item.kind === 'series' && item.seasons.length === 0 ? ' Interactive search appears once this series has seasons.' : ''}
+          </Text>
         </Panel>
 
         {item.kind !== 'book' ? (
@@ -334,6 +346,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
                       <Text style={[styles.rowTitle, { color: theme.text }]}>Season {season.number}</Text>
                       <Text style={[styles.meta, { color: theme.muted }]}>{present}/{season.episodes.length} episodes on disk</Text>
                     </View>
+                    <Button compact secondary label="Search pack" onPress={() => onInteractiveSearch({ season: season.number })} />
                     <Switch
                       accessibilityLabel={`Monitor season ${season.number}`}
                       disabled={seasonSaving !== null}
@@ -372,6 +385,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
                 profiles={profiles.filter((profile) => bookTypeForSource(profile.target.source) === copy.bookType)}
                 fileCount={item.files.filter((file) => file.copyId === copy.id).length}
                 onRefresh={resource.refresh}
+                onSearch={() => onInteractiveSearch({ copyId: copy.id })}
                 onMessage={(message) => {
                   setActionError('')
                   setActionMessage(message)
@@ -411,6 +425,7 @@ export function MediaDetailScreen({ client, id, onBack }: { client: MonarrClient
                 profiles={profiles}
                 fileCount={item.files.filter((file) => file.copyId === copy.id).length}
                 onRefresh={resource.refresh}
+                onSearch={() => onInteractiveSearch(item.kind === 'series' ? { copyId: copy.id, season: firstSeason(item.seasons) } : { copyId: copy.id })}
                 onMessage={(message) => {
                   setActionError('')
                   setActionMessage(message)
@@ -485,6 +500,7 @@ function BookEditionEditor({
   profiles,
   fileCount,
   onRefresh,
+  onSearch,
   onMessage,
 }: {
   client: MonarrClient
@@ -493,6 +509,7 @@ function BookEditionEditor({
   profiles: QualityProfile[]
   fileCount: number
   onRefresh: () => Promise<void>
+  onSearch: () => void
   onMessage: (message: string) => void
 }) {
   const theme = useTheme()
@@ -558,6 +575,7 @@ function BookEditionEditor({
       </View>
       <View style={styles.buttonRow}>
         <Button compact label={busy ? 'Saving…' : 'Save'} disabled={busy} onPress={() => void save()} />
+        <Button compact secondary label="Search" disabled={busy} onPress={onSearch} />
         <Button compact secondary label="Remove" disabled={busy} onPress={() => Alert.alert(
           `Remove ${label.toLowerCase()} edition?`,
           'Curator will stop managing this edition. Files already on disk will be kept.',
@@ -578,6 +596,7 @@ function CopyEditor({
   profiles,
   fileCount,
   onRefresh,
+  onSearch,
   onMessage,
 }: {
   client: MonarrClient
@@ -586,6 +605,7 @@ function CopyEditor({
   profiles: QualityProfile[]
   fileCount: number
   onRefresh: () => Promise<void>
+  onSearch: () => void
   onMessage: (message: string) => void
 }) {
   const theme = useTheme()
@@ -668,6 +688,7 @@ function CopyEditor({
       </View>
       <View style={styles.buttonRow}>
         <Button label={busy ? 'Saving…' : 'Save copy'} compact disabled={busy || profileId === 0} onPress={() => void save()} />
+        <Button label="Search" compact secondary disabled={busy} onPress={onSearch} />
         <Button label="Remove" compact secondary disabled={busy} onPress={confirmRemove} />
       </View>
     </Panel>
