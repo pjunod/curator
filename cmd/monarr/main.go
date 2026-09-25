@@ -286,8 +286,9 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	reg.Register("library-folders", func(ctx context.Context) health.Result {
 		// Two items pointing at one folder: whichever scan runs last decides
 		// which of them the files attach to, and the other is a card that
-		// looks real and holds nothing. Adoption cannot create this any more;
-		// this reports the libraries that already have it.
+		// looks real and holds nothing. Item folders cannot collide any more
+		// (ADR 0020, migration 0032); this still reports a copy folder that
+		// another item also claims.
 		shared, err := lib.SharedFolders(ctx)
 		if err != nil {
 			return health.Errorf("cannot read the library: %v", err)
@@ -305,7 +306,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		first := paths[0]
 		return health.Warn(
 			"%d folder(s) are claimed by more than one item — e.g. %s is held by %s. "+
-				"Remove the duplicate from the library (files on disk are untouched)",
+				"Give one of them its own folder on its item page (files on disk are untouched)",
 			len(shared), first, strings.Join(shared[first], " and "))
 	})
 	// The seams: the other applications in the pipeline, probed through the

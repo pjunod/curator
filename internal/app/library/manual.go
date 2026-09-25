@@ -66,7 +66,7 @@ func (s *Service) AddManual(ctx context.Context, req ManualRequest) (domain.Medi
 	if !root.Kind.Accepts(req.Kind) {
 		return domain.MediaItem{}, fmt.Errorf("%w: %s holds %s", ErrRootKindMismatch, root.Path, root.Kind)
 	}
-	if err := s.folderIsFree(ctx, clean); err != nil {
+	if err := s.ensureFolderFree(ctx, clean, 0); err != nil {
 		return domain.MediaItem{}, err
 	}
 
@@ -93,7 +93,7 @@ func (s *Service) AddManual(ctx context.Context, req ManualRequest) (domain.Medi
 
 	id, err := s.db.CreateMediaItem(ctx, item)
 	if err != nil {
-		return domain.MediaItem{}, err
+		return domain.MediaItem{}, folderTakenErr(err, clean)
 	}
 	s.log.Info("library: manual entry created",
 		"kind", req.Kind, "title", title, "path", clean, "seasons", len(item.Seasons))
@@ -102,24 +102,6 @@ func (s *Service) AddManual(ctx context.Context, req ManualRequest) (domain.Medi
 	// The folder is answered for now, so stop offering it.
 	s.dropFromOutstanding(ctx, clean)
 	return s.Get(ctx, id)
-}
-
-// folderIsFree refuses a folder another item already points at.
-//
-// Without this, "add as a manual entry" is a way to end up with two records
-// for one directory — one of which will lose its files to the other on the
-// next scan, silently.
-func (s *Service) folderIsFree(ctx context.Context, path string) error {
-	items, err := s.db.ListMediaItems(ctx, "")
-	if err != nil {
-		return err
-	}
-	for _, it := range items {
-		if it.Path == path {
-			return fmt.Errorf("%w: %q already points at %s", ErrFolderConflict, it.Title, path)
-		}
-	}
-	return nil
 }
 
 // episodesFromDisk builds a season/episode list by reading the folder.

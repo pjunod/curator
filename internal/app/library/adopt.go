@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/matcher"
+	"github.com/pjunod/monarr/internal/domain/naming"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -146,7 +148,11 @@ func altLead(p Proposal) (string, bool) {
 
 // propose builds one proposal.
 func (s *Service) propose(ctx context.Context, d UnmatchedDir, rootKind domain.RootKind) Proposal {
-	parsed := parser.Parse(d.Name)
+	// A folder Monarr disambiguated ("Leviticus (2022) {tmdb-123}") names
+	// its own identity. The hint is not part of the title, so it comes off
+	// before parsing; it is used below to pick the one candidate it names.
+	name, tagProvider, tagID, tagged := naming.ParseFolderTag(d.Name)
+	parsed := parser.Parse(name)
 	p := Proposal{
 		RootFolderID: d.RootFolderID,
 		Path:         d.Path,
@@ -221,6 +227,19 @@ func (s *Service) propose(ctx context.Context, d UnmatchedDir, rootKind domain.R
 	// matches are unaffected — clearing() compares primary titles, so they
 	// stay ambiguous by construction (ADR 0010 §2).
 	p.Confidence = grade(kind, parsed, results)
+	if tagged {
+		// Two works can share a title and a year — that is the whole reason
+		// the hint exists — so title matching alone grades these folders
+		// ambiguous. The id settles it, but only if the provider actually
+		// returned that record; otherwise the ordinary grade stands.
+		for _, r := range results {
+			if resultHasTag(r, tagProvider, tagID) {
+				results = append([]ports.SearchResult{r}, filterOut(results, r)...)
+				p.Confidence = ConfidenceExact
+				break
+			}
+		}
+	}
 
 	p.Candidates = trim(results, maxProposalCandidates)
 	// Keep only the alternate names that are why a candidate is here, so a
@@ -1007,4 +1026,20 @@ func (s *Service) relinkExisting(ctx context.Context, p Proposal, win ports.Sear
 	s.log.Info("adopt: existing library item pointed at its folder",
 		"title", existing.Title, "path", p.Path, "was", existing.Path)
 	return nil
+}
+
+// resultHasTag reports whether a provider result is the record a folder's
+// {provider-id} hint names.
+func resultHasTag(r ports.SearchResult, provider, id string) bool {
+	switch provider {
+	case "tmdb":
+		return r.TMDBID != 0 && strconv.FormatInt(r.TMDBID, 10) == id
+	case "tvdb":
+		return r.TVDBID != 0 && strconv.FormatInt(r.TVDBID, 10) == id
+	case "imdb":
+		return r.IMDBID != "" && strings.EqualFold(r.IMDBID, id)
+	case "olid":
+		return r.OLID != "" && strings.EqualFold(r.OLID, id)
+	}
+	return false
 }
