@@ -102,7 +102,7 @@ export function Button({
 export function IconButton({ label, glyph, onPress }: { label: string; glyph: string; onPress: () => void }) {
   const theme = useTheme()
   return (
-    <Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress} hitSlop={10}>
+    <Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress} hitSlop={10} style={styles.iconButtonTarget}>
       <Text style={[styles.iconButton, { color: theme.accent }]}>{glyph}</Text>
     </Pressable>
   )
@@ -212,6 +212,7 @@ const styles = StyleSheet.create({
   button: { minHeight: 44, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
   buttonCompact: { minHeight: 34, borderRadius: 9, paddingHorizontal: 11 },
   buttonText: { fontWeight: '700', fontSize: 14 },
+  iconButtonTarget: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   iconButton: { fontSize: 30, fontWeight: '400', lineHeight: 32 },
   field: { minHeight: 46, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, fontSize: 16 },
   chip: { minHeight: 34, borderWidth: 1, borderRadius: 17, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
