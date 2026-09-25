@@ -110,6 +110,14 @@ type ImportList struct {
 	Enabled          int64
 }
 
+type ImportPlacement struct {
+	ID        string
+	Target    string
+	State     string
+	Data      string
+	UpdatedAt int64
+}
+
 type Indexer struct {
 	ID         int64
 	Name       string
@@ -283,6 +291,27 @@ type QualityProfile struct {
 	Name            string
 	Definition      string
 	UpgradesAllowed int64
+}
+
+type RecoveryFileResult struct {
+	ImportID string
+	FileID   string
+	Result   string
+}
+
+type RecoveryImport struct {
+	ID        string
+	State     string
+	Data      string
+	UpdatedAt int64
+}
+
+type RecoveryReceiptOutbox struct {
+	ImportID  string
+	Receipt   string
+	Delivered int64
+	LastError string
+	UpdatedAt int64
 }
 
 type RootFolder struct {

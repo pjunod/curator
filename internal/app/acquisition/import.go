@@ -14,7 +14,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/filename"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
@@ -243,6 +242,12 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 // selection preserves the automatic/legacy whole-payload behavior; a
 // present selection imports exactly what the manual-import scan offered.
 func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, savePath string, selected []string, manual bool) (ImportResult, error) {
+	if ctx.Value(targetHeldKey{}) != true {
+		s.importTargetMu.Lock()
+		defer s.importTargetMu.Unlock()
+		ctx = context.WithValue(ctx, targetHeldKey{}, true)
+	}
+
 	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
 	if err != nil {
 		return ImportResult{}, err
@@ -668,15 +673,12 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 		"Quality Full": q.Display(),
 	})
 	dest := filepath.Join(scope.Dest, naming.SafeFileName(name)+filepath.Ext(src))
-	if err := placeFile(ctx, src, dest, transfers.Progress(ctx)); err != nil {
+	fileID, err := s.commitPlacement(ctx, item, scope, src, dest, q, nil)
+	if err != nil {
 		return placement{}, err
 	}
 	if upgrade {
 		s.removeExistingFiles(ctx, item, scope.CopyID, nil, dest)
-	}
-	fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
-	if err != nil {
-		return placement{}, err
 	}
 	s.rememberSource(ctx, fileID, dest, scope)
 	// The file exists now, so stop taking the release name's word for it.
@@ -722,10 +724,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 			base += fmt.Sprintf(" - %03d", part+1)
 		}
 		dest := filepath.Join(scope.Dest, base+strings.ToLower(filepath.Ext(src)))
-		if err := placeFile(ctx, src, dest, transfers.Progress(ctx)); err != nil {
-			return placement{}, err
-		}
-		fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
+		fileID, err := s.commitPlacement(ctx, item, scope, src, dest, q, nil)
 		if err != nil {
 			return placement{}, err
 		}
@@ -753,13 +752,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 
 	dest := filepath.Join(scope.Dest,
 		naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
-	if err := placeFile(ctx, src, dest, transfers.Progress(ctx)); err != nil {
-		return placement{}, err
-	}
-	if upgrade {
-		s.removeExistingFiles(ctx, item, scope.CopyID, nil, dest)
-	}
-	fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
+	fileID, err := s.commitPlacement(ctx, item, scope, src, dest, q, nil)
 	if err != nil {
 		return placement{}, err
 	}
@@ -841,20 +834,16 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	dest := filepath.Join(scope.Dest,
 		naming.Render(naming.SeasonFolderTemplate, map[string]string{"season": strconv.Itoa(season)}),
 		naming.SafeFileName(base)+filepath.Ext(src))
-	if err := placeFile(ctx, src, dest, transfers.Progress(ctx)); err != nil {
+	fileID, err := s.commitPlacement(ctx, item, scope, src, dest, q, epIDs)
+	if err != nil {
 		return placement{}, err
 	}
 	if upgrade {
 		s.removeExistingFiles(ctx, item, scope.CopyID, epIDs, dest)
 	}
-	fileID, err := s.db.UpsertFile(ctx, item.ID, scope.CopyID, dest, sizeOf(dest))
-	if err != nil {
-		return placement{}, err
-	}
 	s.rememberSource(ctx, fileID, dest, scope)
 	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle, item.Runtime)
-	return placement{Path: dest, Upgrade: upgrade},
-		s.db.ReplaceFileEpisodeLinks(ctx, fileID, epIDs)
+	return placement{Path: dest, Upgrade: upgrade}, nil
 }
 
 // rememberSource records which release put a file on disk.
@@ -1013,11 +1002,14 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 	// file is removed immediately: Link needs the name free, and the window
 	// between is smaller than the one a fixed name leaves open forever.
 	if reserved, err := os.CreateTemp(dir, ".monarr-link-*"); err == nil {
+		_, recoveryCopy := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext)
 		link := reserved.Name()
 		_ = reserved.Close()
 		_ = os.Remove(link)
-		if err := os.Link(src, link); err == nil {
-			return link, nil
+		if !recoveryCopy {
+			if err := os.Link(src, link); err == nil {
+				return link, nil
+			}
 		}
 		_ = os.Remove(link)
 	}
@@ -1043,6 +1035,11 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 	}
 	reader := &contextReader{ctx: ctx, r: &countingReader{r: in, total: total, on: onBytes}}
 	if _, err := io.Copy(out, reader); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	if err := out.Sync(); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return "", err
