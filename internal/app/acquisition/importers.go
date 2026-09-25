@@ -87,7 +87,7 @@ func (s *Service) StartImporters(ctx context.Context) {
 		}()
 	}
 	s.log.Info("import workers started", "workers", importWorkers)
-	s.importRecoverOnce.Do(func() { s.recoverManualImports(ctx) })
+	s.importRecoverOnce.Do(func() { s.reconcilePlacements(ctx); s.startRecoveryWorker(ctx); s.recoverManualImports(ctx) })
 }
 
 // recoverManualImports restores standalone manual jobs after a process

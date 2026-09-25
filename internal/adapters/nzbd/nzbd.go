@@ -448,3 +448,40 @@ func (c *Client) status(ctx context.Context) (statusDto, error) {
 	}
 	return st, nil
 }
+
+// RecoveryRequest uses the configured Runner API credential and a separate
+// claim credential. Caller names and User-Agent strings are never authority.
+func (c *Client) RecoveryRequest(ctx context.Context, method, path, recoveryToken string, payload, out any) error {
+	var body io.Reader
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = strings.NewReader(string(raw))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.cfg.URL, "/")+"/api/v1/"+path, body)
+	if err != nil {
+		return err
+	}
+	c.authorize(req)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Nzbd-Client", clientHeader())
+	req.Header.Set("X-Recovery-Token", recoveryToken)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &APIError{StatusCode: resp.StatusCode, Message: string(raw)}
+	}
+	if out != nil {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}

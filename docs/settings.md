@@ -707,3 +707,15 @@ A pending operation, retention/recovery hold, authentication failure or
 unavailable Runner keeps the payload pending for the next hourly sweep.
 Curator never bypasses Runner by deleting its mounted directory directly.
 Queue removal falls back to History only when the queue returns HTTP 404.
+
+## Recovery and Dev settings
+
+Settings → Dev configures automatic recovery status refresh, the exact Runner
+published prefix, Curator's read-only mount and a separate recovery credential.
+Prerequisite status is advisory: it never disables enablement. Settings →
+Recovery lets you choose a staged handoff, title, library copy and selected
+files, verify the bytes and container, then queue the import.
+
+Runner's full processing tree must not be mounted as recovery input. Mount only
+`/processing/recovery/published` at `/recovery:ro` and keep it outside all library
+and ordinary completed-download roots. The configured prefixes must match.

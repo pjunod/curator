@@ -961,3 +961,21 @@ A pending operation, retention/recovery hold, authentication failure or
 unavailable Runner keeps the payload pending for the next hourly sweep.
 Curator never bypasses Runner by deleting its mounted directory directly.
 Queue removal falls back to History only when the queue returns HTTP 404.
+
+## Recover media retained by Runner
+
+1. In Runner's Files view, inspect the folder. Adopt unknown files explicitly;
+   adoption starts with Keep enabled.
+2. Select regular media files and stage recovery. Runner copies and verifies
+   them and holds the original. Temporary, archive and parity files cannot be
+   selected as media.
+3. In Curator Settings → Recovery, select the handoff, library title, copy and
+   files. Preview verifies each digest and probes its container.
+4. Queue the import from that preview. A changed target requires another
+   preview. Follow the durable import status until Runner receives the receipt.
+
+Library placement now journals intent before publishing files. A same-name
+replacement retains a rollback copy until library metadata, episode links and
+its per-file recovery receipt commit in one transaction. SQLite uses FULL
+synchronization for those receipts. Failed/partial recovery stays on hold;
+ordinary payload cleanup never handles a recovery source or staging tree.

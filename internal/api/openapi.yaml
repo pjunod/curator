@@ -1595,6 +1595,74 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ImportPathDefault" }
 
+  /import/recovery/settings:
+    get:
+      operationId: getRecoverySettings
+      responses:
+        '200':
+          description: Recovery settings and advisory prerequisites
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    put:
+      operationId: putRecoverySettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecoverySettings' }
+      responses:
+        '200': { description: Applied without prerequisite gating }
+  /import/recovery:
+    get:
+      operationId: listRecoveries
+      responses:
+        '200':
+          description: Runner recovery manifests
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, additionalProperties: true }
+    post:
+      operationId: queueRecoveryImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecoveryImportRequest' }
+      responses:
+        '202':
+          description: Durable recovery import queued
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '409': { description: Preview changed or recovery held }
+  /import/recovery/preview:
+    post:
+      operationId: previewRecoveryImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecoveryImportRequest' }
+      responses:
+        '200':
+          description: Verified staged files, probe and target generation
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /import/recovery/{id}:
+    get:
+      operationId: getRecoveryImport
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Durable import status
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
   /import/manual:
     post:
       operationId: manualImport
@@ -3893,6 +3961,25 @@ components:
           type: string
           description: Why the search or the grab failed.
 
+    RecoverySettings:
+      type: object
+      required: [enabled, local_root, remote_root]
+      properties:
+        enabled: { type: boolean }
+        local_root: { type: string }
+        remote_root: { type: string }
+        consumer_token: { type: string, writeOnly: true }
+    RecoveryImportRequest:
+      type: object
+      required: [client_id, recovery_id, media_item_id, copy_id, file_ids, target_generation, accept_unverified]
+      properties:
+        client_id: { type: integer, format: int64 }
+        recovery_id: { type: string }
+        media_item_id: { type: integer, format: int64 }
+        copy_id: { type: integer, format: int64 }
+        file_ids: { type: array, items: { type: string } }
+        target_generation: { type: string }
+        accept_unverified: { type: boolean }
     ManualImportRequest:
       type: object
       required: [path, mediaItemId]

@@ -1,0 +1,84 @@
+package api
+
+import (
+	"encoding/json"
+	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/app/acquisition"
+	"net/http"
+)
+
+func (s *Server) GetRecoverySettings(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.deps.Acquisition.RecoverySettings(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	cfg.ConsumerToken = ""
+	writeJSON(w, http.StatusOK, map[string]any{"settings": cfg, "advisory": s.deps.Acquisition.RecoveryAdvisory(r.Context())})
+}
+func (s *Server) PutRecoverySettings(w http.ResponseWriter, r *http.Request) {
+	var in apigen.RecoverySettings
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cfg := acquisition.RecoverySettings{Enabled: in.Enabled, LocalRoot: in.LocalRoot, RemoteRoot: in.RemoteRoot}
+	if in.ConsumerToken != nil {
+		cfg.ConsumerToken = *in.ConsumerToken
+	}
+	if err := s.deps.Acquisition.SetRecoverySettings(r.Context(), cfg); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+func (s *Server) ListRecoveries(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.deps.Acquisition.RunnerRecoveries(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	if rows == nil {
+		rows = []acquisition.RunnerRecovery{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+func recoveryRequest(r *http.Request) (acquisition.RecoveryRequest, error) {
+	var in apigen.RecoveryImportRequest
+	err := json.NewDecoder(r.Body).Decode(&in)
+	return acquisition.RecoveryRequest{ClientID: in.ClientId, RecoveryID: in.RecoveryId, MediaItemID: in.MediaItemId, CopyID: in.CopyId, FileIDs: in.FileIds, TargetGeneration: in.TargetGeneration, AcceptUnverified: in.AcceptUnverified}, err
+}
+func (s *Server) PreviewRecoveryImport(w http.ResponseWriter, r *http.Request) {
+	in, err := recoveryRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	preview, err := s.deps.Acquisition.PreviewRecovery(r.Context(), in)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+func (s *Server) QueueRecoveryImport(w http.ResponseWriter, r *http.Request) {
+	in, err := recoveryRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	job, err := s.deps.Acquisition.QueueRecovery(r.Context(), in)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, job)
+}
+func (s *Server) GetRecoveryImport(w http.ResponseWriter, r *http.Request, id string) {
+	job, err := s.deps.Acquisition.RecoveryImport(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
