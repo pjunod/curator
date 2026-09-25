@@ -97,7 +97,7 @@
   </header>
 
   <section id="mobile-preview-fix">
-    <h2>Mobile preview usability <span class="chip partial">ready for adversarial review</span>
+    <h2>Mobile preview usability <span class="chip partial">adversarial review approved</span>
       <span class="ev">2026-09-25 · fix/mobile-preview-safe-area</span></h2>
     <p class="blurb">Keep Close below the status bar and let people read the
       complete synopsis before adding. Work is isolated in an independent clone.</p>
@@ -105,7 +105,8 @@
       <li><span class="m done">implemented</span><span class="t">The modal measures its own safe area, icon buttons have at least a 44-point tap target, and the footer respects the home indicator.</span></li>
       <li><span class="m done">implemented</span><span class="t">Read full synopsis opens the existing preview; the complete synopsis also appears above direct-Add options. No feature toggle or gate is introduced.</span></li>
       <li><span class="m done">written</span><span class="t">Regression cases cover both entry paths, long provider text, pending-provider fallback, Close, search preservation, and safe-area boundaries with top navigation enabled or disabled.</span></li>
-      <li><span class="m todo">review</span><span class="t">Implementation complete; adversarial review comes next, followed by one CI validation pass before merge. An earlier local run passed 94 mobile tests before the workflow instruction changed.</span></li>
+      <li><span class="m done">reviewed</span><span class="t">Independent adversarial review approved commit 37580e6 with no actionable findings. Review inspected native safe-area behavior and both add paths without running tests.</span></li>
+      <li><span class="m todo">CI / merge</span><span class="t">The <a href="https://github.com/pjunod/curator/pulls?q=is%3Apr+head%3Afix%2Fmobile-preview-safe-area">delivery PR and its checks</a> carry the live validation and merge state. CI runs after review; no duplicate local unit pass. An earlier local run passed 94 mobile tests before the workflow instruction changed.</span></li>
       <li><span class="m todo">device QA</span><span class="t">Physical iPhone layout and touch behavior remain unverified. Merging does not install a new native build.</span></li>
     </ul>
   </section>
