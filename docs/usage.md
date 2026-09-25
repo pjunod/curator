@@ -953,3 +953,11 @@ admin token. See `docs/settings.md` for setup and failure meanings.
   match (year off by >1, different title).
 - **Wanted list looks stale** — it refreshes on library events; running a
   scan or any grab/import refreshes it, as does restarting.
+
+## Runner payload cleanup
+
+For native Runner clients, cleanup waits for Runner to confirm deletion.
+A pending operation, retention/recovery hold, authentication failure or
+unavailable Runner keeps the payload pending for the next hourly sweep.
+Curator never bypasses Runner by deleting its mounted directory directly.
+Queue removal falls back to History only when the queue returns HTTP 404.
