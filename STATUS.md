@@ -1,8 +1,11 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-09-23 · v0.28.0 · The native app gained the web's
-> Interactive search: every release, rejections visible, Grab on any row, per
-> item / pack / episode / copy / edition.**
+> **Snapshot 2026-09-25 · v0.28.1 · One folder, one item: two different works
+> with the same title and year (two films called Leviticus, 2022) each get
+> their own folder — `Title (Year) {tmdb-N}` for the second — and existing
+> shared folders are repaired on upgrade (ADR 0020).**
+>
+> Previously: v0.28.0 · The native app gained the web's Interactive search.
 >
 > Previously: v0.24.1 · Curator hands Cinema exact book work and edition
 > metadata when an ebook or audiobook import lands (§Phase 2.5 — Books).
@@ -17,7 +20,24 @@
 > working session. Design rationale: [docs/architecture.md](docs/architecture.md) ·
 > decisions: [docs/adr/](docs/adr/) · this file: state only.
 
-## Delivery — Native interactive search
+## Delivery — One folder, one item
+
+**Status:** full gate green · review addressed · **Updated:** 2026-09-25 ·
+**Version:** 0.28.1 · PR [#39](https://github.com/pjunod/curator/pull/39)
+
+| Item | State | Evidence |
+|---|---|---|
+| Independent clone | complete | Cloud clone of `main` @ `8e6cced`; pushed through a scratch clone in the Mac VM's `/var/tmp` (cloud git proxy refuses the repo). User checkout untouched. |
+| Folder choice | complete | Add, root-folder edit, placement suggestion and copies use `freeFolder`: plain `Title (Year)`, else `… {tmdb-N}` (tvdb / imdb / olid / monarr-id, then counter). |
+| Refusals | complete | Typed path, manual entry, copy folder held by another item → `409 folder_conflict` naming the holder. |
+| Migration 0032 | complete | Repairs shared folders (item with files keeps it), cleans stored spellings, adds unique index on `media_items.path`. Tested against the real v31 schema. |
+| Adoption | complete | Reads `{tmdb-N}` / `[tmdbid-N]` hints; holder check uses cleaned paths; a failed adoption removes the item it created. |
+| Adversarial review | addressed | 3 should-fix (copy in a held root refused; uncleaned holder → stray item; concurrent same-name adds → 409) + 4 nits, all fixed with regression tests. |
+| Full gate | green | lint 0 · Go race+coverage 87.0 % (floor 86.0) · web 88 + build · e2e 111/111. Mobile unchanged. |
+| Deploy — server | pending | ansible `deploy.yml -e only=monarr -e sync=false` after merge. |
+| Deploy — clients | n/a | No mobile change. |
+
+## Previous delivery — Native interactive search
 
 **Status:** merged `7d1b5e7` · server deployed · clients handed off · **Updated:**
 2026-09-23 · **Version:** 0.28.0 (mobile 0.27.0, build 25) · PR [#36](https://github.com/pjunod/curator/pull/36)
