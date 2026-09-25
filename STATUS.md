@@ -22,7 +22,7 @@
 
 ## Delivery — One folder, one item
 
-**Status:** full gate green · review addressed · **Updated:** 2026-09-25 ·
+**Status:** merged `e97a46f` · tagged v0.28.1 · deployed to nuc3 · **Updated:** 2026-09-25 ·
 **Version:** 0.28.1 · PR [#39](https://github.com/pjunod/curator/pull/39)
 
 | Item | State | Evidence |
@@ -33,8 +33,8 @@
 | Migration 0032 | complete | Repairs shared folders (item with files keeps it), cleans stored spellings, adds unique index on `media_items.path`. Tested against the real v31 schema. |
 | Adoption | complete | Reads `{tmdb-N}` / `[tmdbid-N]` hints; holder check uses cleaned paths; a failed adoption removes the item it created. |
 | Adversarial review | addressed | 3 should-fix (copy in a held root refused; uncleaned holder → stray item; concurrent same-name adds → 409) + 4 nits, all fixed with regression tests. |
-| Full gate | green | lint 0 · Go race+coverage 87.0 % (floor 86.0) · web 88 + build · e2e 111/111. Mobile unchanged. |
-| Deploy — server | pending | ansible `deploy.yml -e only=monarr -e sync=false` after merge. |
+| Full gate | green | Local: lint 0 · Go race+coverage 87.0 % (floor 86.0) · web 88 + build · e2e 111/111. GitHub on `657bd2b`: all 7 checks green. Mobile unchanged. |
+| Deploy — server | complete | ansible `deploy.yml -e only=monarr -e sync=false --limit nuc3` (monarr runs only there): `/api/v1/system/status` = 0.28.1 @ `e97a46f`, schema 32. Migration moved item 731 (Leviticus, tmdb 1044056) to `/20t/movies/Leviticus (2022) {tmdb-1044056}`; item 566 kept the plain folder (neither had files). `library-folders` health check now OK. |
 | Deploy — clients | n/a | No mobile change. |
 
 ## Previous delivery — Native interactive search
