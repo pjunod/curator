@@ -17,7 +17,6 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	identityinput "github.com/pjunod/monarr/internal/domain/identity"
 	"github.com/pjunod/monarr/internal/domain/matcher"
-	"github.com/pjunod/monarr/internal/domain/naming"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -37,10 +36,11 @@ var (
 	// one that is already registered (ADR 0009 §3).
 	ErrNestedRoot = errors.New("root folders may not nest")
 	// ErrFolderConflict is returned when two folders claim one title and
-	// both exist on disk. Distinct from ErrAlreadyExists because it is
-	// resolvable by the user rather than simply wrong: they know which
-	// folder holds the files.
-	ErrFolderConflict = errors.New("another folder already holds this title")
+	// both exist on disk, or when one folder would be claimed by two items
+	// (ADR 0020). Distinct from ErrAlreadyExists because it is resolvable
+	// by the user rather than simply wrong: they know which folder holds
+	// the files.
+	ErrFolderConflict = errors.New("folder conflict")
 	// ErrManualEntry is returned by provider-backed operations asked to act
 	// on a record no provider backs (ADR 0012). Not a failure: the caller
 	// skips rather than reports.
@@ -668,6 +668,17 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 	}
 
 	id, err := s.db.CreateMediaItem(ctx, item)
+	if errors.Is(err, sqlite.ErrFolderTaken) && item.RootFolderID != 0 {
+		// Another add took the folder between freeFolder's read and this
+		// insert — two same-named films arriving together from an import
+		// list and a person. The index refused the collision; choosing
+		// again finds the tagged folder instead of failing a valid add.
+		if rf, rfErr := s.db.GetRootFolder(ctx, item.RootFolderID); rfErr == nil {
+			if item.Path, err = s.freeFolder(ctx, rf.Path, item); err == nil {
+				id, err = s.db.CreateMediaItem(ctx, item)
+			}
+		}
+	}
 	if err != nil {
 		if errors.Is(err, sqlite.ErrFolderTaken) {
 			return domain.MediaItem{}, folderTakenErr(err, item.Path)
@@ -1024,11 +1035,13 @@ func (s *Service) AddCopy(ctx context.Context, itemID int64, req CopyRequest) (d
 			return domain.MediaItem{}, fmt.Errorf("root folder: %w", err)
 		}
 		cp.RootFolderID = rf.ID
-		folder := naming.FolderName(item.Title, item.Year)
-		if item.Kind == domain.KindBook {
-			folder = naming.BookFolder(item.Author, item.Title)
+		// Same rule as the item's own folder: the plain name unless another
+		// item holds it (ADR 0020). The item's own claims are excluded, so a
+		// copy in the item's root still lands on — and is refused for — the
+		// item's folder below.
+		if cp.Path, err = s.freeFolder(ctx, rf.Path, item); err != nil {
+			return domain.MediaItem{}, err
 		}
-		cp.Path = filepath.Join(rf.Path, folder)
 		if cp.Path == item.Path {
 			return domain.MediaItem{}, fmt.Errorf(
 				"copy folder would collide with the item's own folder — pick a different root, or omit the root to share the folder")

@@ -37,12 +37,13 @@ func TestMigration0032GivesEachSharedItemItsOwnFolder(t *testing.T) {
 		imdb  string
 		path  string
 	}{
-		{"Leviticus", 1001, "", shared},               // id 1: added first, no files
-		{"Leviticus", 1002, "", shared},               // id 2: owns the files
-		{"Manual Twin", 0, "", shared + "/"},          // id 3: same folder, uncleaned spelling, no ids
-		{"Lonely", 3003, "", "/movies/Lonely (2001)"}, // id 4: untouched
-		{"Unplaced", 4004, "", ""},                    // id 5: no folder at all
-		{"Unplaced 2", 5005, "", ""},                  // id 6: '' is not a claim
+		{"Leviticus", 1001, "", shared},                  // id 1: added first, no files
+		{"Leviticus", 1002, "", shared},                  // id 2: owns the files
+		{"Manual Twin", 0, "", shared + "/"},             // id 3: same folder, uncleaned spelling, no ids
+		{"Lonely", 3003, "", "/movies/Lonely (2001)"},    // id 4: untouched
+		{"Unplaced", 4004, "", ""},                       // id 5: no folder at all
+		{"Unplaced 2", 5005, "", ""},                     // id 6: '' is not a claim
+		{"Slashed", 6006, "", "/movies/Slashed (2003)/"}, // id 7: alone, stored uncleaned
 	} {
 		if _, err := db.W.ExecContext(ctx, `INSERT INTO media_items
 			(kind,title,sort_title,tmdb_id,imdb_id,path,added_at,updated_at)
@@ -66,6 +67,7 @@ func TestMigration0032GivesEachSharedItemItsOwnFolder(t *testing.T) {
 		4: "/movies/Lonely (2001)",
 		5: "",
 		6: "",
+		7: "/movies/Slashed (2003)",
 	}
 	for id, path := range want {
 		var got string
@@ -95,6 +97,14 @@ func TestMigration0032GivesEachSharedItemItsOwnFolder(t *testing.T) {
 	item.Path = shared
 	if err := db.UpdateMediaItemPlacement(ctx, item); !errors.Is(err, ErrFolderTaken) {
 		t.Fatalf("move onto a held folder: err = %v, want ErrFolderTaken", err)
+	}
+	// Cleaning is what lets the byte-comparing index see the clean spelling
+	// of a folder that was stored with a trailing slash.
+	_, err = db.CreateMediaItem(ctx, domain.MediaItem{
+		Kind: domain.KindMovie, Title: "Other", IDs: domain.ExternalIDs{TMDB: 8888}, Path: "/movies/Slashed (2003)",
+	})
+	if !errors.Is(err, ErrFolderTaken) {
+		t.Fatalf("insert onto a formerly-uncleaned folder: err = %v, want ErrFolderTaken", err)
 	}
 	// A provider-id duplicate is still reported as a duplicate, not a folder
 	// clash: the two sentinels mean different things to the caller.

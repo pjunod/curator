@@ -653,37 +653,31 @@ func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 	// files in it.
 	path := p.Path
 	if _, err := s.UpdateItem(ctx, item.ID, UpdateRequest{Path: &path}); err != nil {
+		// The item only exists to hold this folder. Leaving it behind at
+		// its naming-rule path would turn a failed adoption into a stray
+		// library entry the user never asked for.
+		if delErr := s.db.DeleteMediaItem(ctx, item.ID); delErr != nil {
+			s.log.Warn("adopt: could not remove the item a failed adoption created",
+				"id", item.ID, "err", delErr)
+		}
 		return fmt.Errorf("point %d at %s: %w", item.ID, p.Path, err)
 	}
 	return nil
 }
 
-// itemHolding returns the library item already pointed at path, if any.
+// itemHolding returns the library item already pointed at path, if any,
+// as its own folder or a copy's. Paths are compared cleaned, the same way
+// the rest of the one-folder rule compares them (ADR 0020).
 func (s *Service) itemHolding(ctx context.Context, path string) (domain.MediaItem, bool) {
-	if path == "" {
-		return domain.MediaItem{}, false
-	}
-	items, err := s.db.ListMediaItems(ctx, "")
+	holder, held, err := s.folderHolder(ctx, path, 0)
 	if err != nil {
 		s.log.Warn("adopt: could not check whether the folder is held", "err", err)
 		return domain.MediaItem{}, false
 	}
-	for _, it := range items {
-		if it.Path == path {
-			return it, true
-		}
-		copies, err := s.db.ListMediaCopies(ctx, it.ID)
-		if err != nil {
-			s.log.Warn("adopt: could not check copy folders", "item", it.ID, "err", err)
-			continue
-		}
-		for _, cp := range copies {
-			if cp.Path == path {
-				return it, true
-			}
-		}
+	if !held {
+		return domain.MediaItem{}, false
 	}
-	return domain.MediaItem{}, false
+	return domain.MediaItem{ID: holder.ItemID, Title: holder.Title}, true
 }
 
 // adoptionStateKey records which roots have been adopted at least once.

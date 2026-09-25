@@ -30,21 +30,25 @@ from producing one.
    rule's folder is held by another item, the item gets the same name plus
    a provider hint: `{tmdb-N}`, else `{tvdb-N}`, `{imdb-ttN}`, `{olid-…}`,
    and `{monarr-<id>}` for items no provider backs. A counter follows only
-   if even that is taken. The first item keeps the plain name; existing
+   if even that is taken. Two adds racing for one name are settled by the
+   index and a single re-pick. The first item keeps the plain name; existing
    folders are never renamed.
 3. **The brace form is Plex's.** `{tmdb-N}` is Plex's documented folder hint
    and Radarr's naming token, so the disambiguated folder is unambiguous to
    whatever scans the library after Monarr. Adoption parses it, and
    Jellyfin's `[tmdbid-N]`, and uses the id to pick the one candidate it
    names.
-4. **A folder the user chooses is refused, not shared.** A typed path, a
-   manual entry, a folder repair, or a copy folder that another item holds
-   answers `409 folder_conflict`, naming the holder.
+4. **A folder the user chooses is refused, not shared.** A typed path or a
+   manual entry that another item holds answers `409 folder_conflict`,
+   naming the holder. A copy folder takes the same disambiguated name the
+   item would. Folder repair keeps its own, stricter overlap check (`400`),
+   with the index behind it.
 5. **Existing damage is repaired on upgrade.** For each folder more than one
    item holds, the item with the most files keeps it (the older item on a
    tie) and each other item is pointed at its disambiguated folder. Only
-   `media_items.path` changes; nothing on disk moves, and import creates the
-   new folder on first grab.
+   `media_items.path` changes (stored spellings are also cleaned, so the
+   byte-comparing index agrees with the service); nothing on disk moves, and
+   import creates the new folder on first grab.
 
 ## Consequences
 

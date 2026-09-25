@@ -129,7 +129,11 @@ func FolderTag(provider, id string) string {
 // folderTagRE matches a trailing provider-id hint in either of the two
 // conventions a library is likely to hold: Plex/Radarr "{tmdb-123}" and
 // Jellyfin "[tmdbid-123]".
-var folderTagRE = regexp.MustCompile(`(?i)\s*[\{\[](tmdb|tvdb|imdb|olid)(?:id)?-([a-z0-9]+)[\}\]]\s*$`)
+//
+// It also reads back the two forms Monarr itself writes beyond the provider
+// hint: "{monarr-12}" for items no provider backs, and a trailing counter
+// ("{tmdb-1} (2)") for the rare case where even the tagged name was taken.
+var folderTagRE = regexp.MustCompile(`(?i)\s*[\{\[](tmdb|tvdb|imdb|olid|monarr)(?:id)?-([a-z0-9]+)[\}\]](?:\s*\(\d+\))?\s*$`)
 
 // ParseFolderTag splits a trailing provider-id hint off a folder name.
 // "Leviticus (2022) {tmdb-123}" → ("Leviticus (2022)", "tmdb", "123", true).

@@ -306,7 +306,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		first := paths[0]
 		return health.Warn(
 			"%d folder(s) are claimed by more than one item — e.g. %s is held by %s. "+
-				"Give one of them its own folder on its item page (files on disk are untouched)",
+				"Delete the extra copy from its item page, or move one item to another folder (files on disk are untouched)",
 			len(shared), first, strings.Join(shared[first], " and "))
 	})
 	// The seams: the other applications in the pipeline, probed through the

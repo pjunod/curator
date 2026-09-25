@@ -26,6 +26,8 @@ func TestParseFolderTag(t *testing.T) {
 		{"Show {TVDB-99}", "Show", "tvdb", "99", true},
 		{"Film (1999) {imdb-tt0137523}", "Film (1999)", "imdb", "tt0137523", true},
 		{"Book {olid-OL1W}", "Book", "olid", "ol1w", true},
+		{"Home Video {monarr-12}", "Home Video", "monarr", "12", true},
+		{"Leviticus (2022) {tmdb-1} (2)", "Leviticus (2022)", "tmdb", "1", true},
 		{"Leviticus (2022)", "Leviticus (2022)", "", "", false},
 		// Only a trailing hint counts; braces mid-name are part of the title.
 		{"{tmdb-1} Something", "{tmdb-1} Something", "", "", false},

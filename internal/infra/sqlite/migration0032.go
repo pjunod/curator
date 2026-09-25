@@ -68,6 +68,23 @@ func up0032(ctx context.Context, tx *sql.Tx) error {
 		return err
 	}
 
+	// The index compares bytes and every writer stores cleaned paths, so
+	// stored spellings are cleaned first ("/m/Film/" → "/m/Film"). Without
+	// this a keeper that kept "/m/Film/" would still be one item on one
+	// folder, but a second item added as "/m/Film" would sail past the
+	// index. Grouping below is by the cleaned path for the same reason.
+	for p, holders := range byPath {
+		for _, h := range holders {
+			if h.path == p {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE media_items SET path = ? WHERE id = ?`, p, h.id); err != nil {
+				return fmt.Errorf("cleaning path of item %d: %w", h.id, err)
+			}
+		}
+	}
+
 	paths := make([]string, 0, len(byPath))
 	for p := range byPath {
 		paths = append(paths, p)

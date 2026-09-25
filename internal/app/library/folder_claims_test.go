@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pjunod/monarr/internal/domain"
@@ -159,5 +160,156 @@ func TestAdoptionUsesTheFolderIDHint(t *testing.T) {
 	// A hint naming a record the provider did not return changes nothing.
 	if got := propose(t, prov, domain.RootKindOf(domain.KindMovie), "Leviticus (2022) {tmdb-9}"); got.Confidence == ConfidenceExact {
 		t.Errorf("an unknown id must not manufacture confidence, got %s", got.Confidence)
+	}
+}
+
+// A copy follows the same rule as the item: in a root where another item
+// holds the plain name it takes the tagged one, rather than being refused
+// with no way round it (a copy request carries no path).
+func TestCopyInARootWhereThePlainNameIsHeld(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{
+		movie(1001, "Leviticus", 2022), movie(1002, "Leviticus", 2022),
+	}}
+	ctx := context.Background()
+	r1, err := svc.AddRootFolder(ctx, t.TempDir(), domain.RootKindOf(domain.KindMovie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2root := t.TempDir()
+	r2, err := svc.AddRootFolder(ctx, r2root, domain.RootKindOf(domain.KindMovie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 1001, RootFolderID: r2.ID}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 1002, RootFolderID: r1.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.AddCopy(ctx, b.ID, CopyRequest{QualityProfileID: b.QualityProfileID, RootFolderID: r2.ID, Monitored: true})
+	if err != nil {
+		t.Fatalf("AddCopy: %v", err)
+	}
+	want := filepath.Join(r2root, "Leviticus (2022) {tmdb-1002}")
+	if len(got.Copies) != 1 || got.Copies[0].Path != want {
+		t.Fatalf("copies = %+v, want one at %q", got.Copies, want)
+	}
+	// In the item's own root the copy would land on the item's folder, and
+	// that is still refused.
+	if _, err := svc.AddCopy(ctx, b.ID, CopyRequest{QualityProfileID: b.QualityProfileID, RootFolderID: r1.ID, Monitored: true}); err == nil {
+		t.Fatal("a copy onto the item's own folder must be refused")
+	}
+}
+
+// Two same-named films added at the same moment (an import list and a
+// person) both succeed, in different folders. The index settles the race;
+// Add re-picks instead of failing a valid add.
+func TestConcurrentSameNameAddsBothSucceed(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{
+		movie(1001, "Leviticus", 2022), movie(1002, "Leviticus", 2022),
+	}}
+	ctx := context.Background()
+	rf, err := svc.AddRootFolder(ctx, t.TempDir(), domain.RootKindOf(domain.KindMovie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 30; i++ {
+		items, err := svc.List(ctx, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, it := range items {
+			if err := svc.Delete(ctx, it.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var wg sync.WaitGroup
+		got := make([]domain.MediaItem, 2)
+		errs := make([]error, 2)
+		for j, id := range []int64{1001, 1002} {
+			wg.Add(1)
+			go func(j int, id int64) {
+				defer wg.Done()
+				got[j], errs[j] = svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: id, RootFolderID: rf.ID})
+			}(j, id)
+		}
+		wg.Wait()
+		for j, e := range errs {
+			if e != nil {
+				t.Fatalf("iteration %d: add %d failed: %v", i, j, e)
+			}
+		}
+		if got[0].Path == got[1].Path {
+			t.Fatalf("iteration %d: both films given %s", i, got[0].Path)
+		}
+	}
+}
+
+// Adoption compares folders the same way the rest of the rule does: a
+// holder stored with a trailing slash still holds the folder, so adopting
+// the second film there adds nothing — no stray item left behind.
+func TestAdoptionSeesAnUncleanedHolder(t *testing.T) {
+	svc, db, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{
+		movie(1001, "Leviticus", 2022), movie(1002, "Leviticus", 2022),
+	}}
+	ctx := context.Background()
+	root := t.TempDir()
+	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 1001, RootFolderID: rf.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `UPDATE media_items SET path = ? WHERE id = ?`, a.Path+"/", a.ID); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "Leviticus (2022)")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AdoptOne(ctx, dir, movie(1002, "Leviticus", 2022), false); err != nil {
+		t.Fatalf("AdoptOne: %v", err)
+	}
+	items, err := svc.List(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("library has %d items, want only the holder", len(items))
+	}
+}
+
+// When pointing a freshly added item at its folder fails, the item is
+// removed again rather than left as a stray entry at its naming-rule path.
+func TestFailedAdoptionLeavesNoStrayItem(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{movie(1002, "Leviticus", 2022)}}
+	ctx := context.Background()
+	rf, err := svc.AddRootFolder(ctx, t.TempDir(), domain.RootKindOf(domain.KindMovie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A relative path gets past the holder check and is refused by
+	// UpdateItem — the point being that the follow-up write fails after Add
+	// has already created the item.
+	err = svc.adoptOne(ctx, Proposal{
+		RootFolderID: rf.ID, Path: "not/absolute",
+		Candidates: []ports.SearchResult{movie(1002, "Leviticus", 2022)},
+	})
+	if err == nil {
+		t.Fatal("adoptOne onto a relative path should fail")
+	}
+	items, err := svc.List(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("failed adoption left %d item(s) behind: %+v", len(items), items)
 	}
 }
