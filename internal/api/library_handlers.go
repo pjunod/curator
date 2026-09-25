@@ -36,6 +36,8 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, library.ErrAlreadyExists):
 		writeCodedError(w, http.StatusConflict, "already_exists", err.Error())
+	case errors.Is(err, library.ErrFolderConflict):
+		writeCodedError(w, http.StatusConflict, "folder_conflict", err.Error())
 	case errors.As(err, new(*library.IdentityConflictError)):
 		writeCodedError(w, http.StatusConflict, "identity_conflict", err.Error())
 	case errors.Is(err, library.ErrInvalidExternalID):

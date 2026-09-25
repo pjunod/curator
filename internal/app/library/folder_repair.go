@@ -187,7 +187,7 @@ func (s *Service) RepairFolder(ctx context.Context, id int64, expectedPath, path
 		}
 	}
 	if err := s.db.RepairItemFolder(ctx, id, selectedRoot.ID, expectedPath, path, repairs); err != nil {
-		return err
+		return folderTakenErr(err, path)
 	}
 	item.Path, item.RootFolderID = path, selectedRoot.ID
 	if _, _, err := s.scanItem(ctx, item, item.Copies); err != nil {

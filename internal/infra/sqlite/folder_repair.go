@@ -26,6 +26,9 @@ func (d *DB) RepairItemFolder(ctx context.Context, id, rootID int64, oldPath, ne
 		SET path = ?, root_folder_id = ?, updated_at = ? WHERE id = ? AND path = ?`,
 		newPath, rootID, time.Now().UnixMilli(), id, oldPath)
 	if err != nil {
+		if isPathConstraint(err) {
+			return ErrFolderTaken
+		}
 		return err
 	}
 	if n, err := result.RowsAffected(); err != nil || n != 1 {

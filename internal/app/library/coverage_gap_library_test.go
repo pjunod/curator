@@ -972,7 +972,7 @@ func TestGapLibHydrateAddRoutes(t *testing.T) {
 // ---- SharedFolders ----
 
 func TestGapLibSharedFolders(t *testing.T) {
-	svc, _, _ := newService(t)
+	svc, db, _ := newService(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	rf, err := svc.AddRootFolder(ctx, root, domain.KindMixed)
@@ -980,29 +980,45 @@ func TestGapLibSharedFolders(t *testing.T) {
 		t.Fatal(err)
 	}
 	// fakeProvider answers "Fight Club (1999)" for every movie id, so two
-	// distinct ids land on one folder; a third item gets no folder at all.
+	// distinct ids render to one folder name. They must NOT share it.
 	a, err := svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 551, RootFolderID: rf.ID}); err != nil {
+	b, err := svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 551, RootFolderID: rf.ID})
+	if err != nil {
 		t.Fatal(err)
 	}
-	gapAddMovie(t, svc, 552)
-	if _, err := svc.Add(ctx, AddRequest{Kind: domain.KindSeries, TMDBID: 100, RootFolderID: rf.ID}); err != nil {
-		t.Fatal(err)
+	if a.Path == b.Path {
+		t.Fatalf("two different films were given one folder: %s", a.Path)
 	}
-
 	shared, err := svc.SharedFolders(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(shared) != 1 {
-		t.Fatalf("shared = %+v, want exactly the one doubled folder", shared)
+	if len(shared) != 0 {
+		t.Fatalf("shared = %+v, want none", shared)
 	}
-	titles, ok := shared[a.Path]
-	if !ok || len(titles) != 2 || titles[0] != "Fight Club" || titles[1] != "Fight Club" {
-		t.Errorf("shared[%q] = %v", a.Path, titles)
+
+	// What the check still exists for: a copy folder written before the copy
+	// path checked other items. Plant one directly.
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO media_copies
+		(media_item_id, name, quality_profile_id, monitored, root_folder_id, path, added_at)
+		VALUES (?, 'x', ?, 1, ?, ?, 0)`, b.ID, b.QualityProfileID, rf.ID, a.Path); err != nil {
+		t.Fatal(err)
+	}
+	shared, err = svc.SharedFolders(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	labels, ok := shared[a.Path]
+	if len(shared) != 1 || !ok || len(labels) != 2 {
+		t.Fatalf("shared = %+v, want %s held by both items", shared, a.Path)
+	}
+	for _, want := range []string{fmt.Sprintf("(item %d)", a.ID), fmt.Sprintf("(item %d)", b.ID)} {
+		if !strings.Contains(strings.Join(labels, " "), want) {
+			t.Errorf("labels %v do not name %s — two identical titles are useless in the warning", labels, want)
+		}
 	}
 }
 
