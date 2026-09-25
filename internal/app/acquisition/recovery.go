@@ -14,6 +14,7 @@ import (
 	"time"
 
 	runner "github.com/pjunod/monarr/internal/adapters/nzbd"
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/infra/probe"
@@ -45,14 +46,19 @@ type RunnerRecovery struct {
 	ClientID       int64          `json:"client_id"`
 	Error          string         `json:"error,omitempty"`
 }
+type RecoveryEpisodeTarget struct {
+	Season   int   `json:"season"`
+	Episodes []int `json:"episodes"`
+}
 type RecoveryRequest struct {
-	ClientID         int64    `json:"client_id"`
-	RecoveryID       string   `json:"recovery_id"`
-	MediaItemID      int64    `json:"media_item_id"`
-	CopyID           int64    `json:"copy_id"`
-	FileIDs          []string `json:"file_ids"`
-	TargetGeneration string   `json:"target_generation"`
-	AcceptUnverified bool     `json:"accept_unverified"`
+	EpisodeTargets   map[string]RecoveryEpisodeTarget `json:"episode_targets,omitempty"`
+	ClientID         int64                            `json:"client_id"`
+	RecoveryID       string                           `json:"recovery_id"`
+	MediaItemID      int64                            `json:"media_item_id"`
+	CopyID           int64                            `json:"copy_id"`
+	FileIDs          []string                         `json:"file_ids"`
+	TargetGeneration string                           `json:"target_generation"`
+	AcceptUnverified bool                             `json:"accept_unverified"`
 }
 type RecoveryPreviewFile struct {
 	RecoveryFile
@@ -69,12 +75,17 @@ type RecoveryPreview struct {
 	Files     []RecoveryPreviewFile `json:"files"`
 	CopyBytes int64                 `json:"copy_bytes"`
 }
+type RecoveryTargetSnapshot struct {
+	Metadata string            `json:"metadata"`
+	Files    map[string]string `json:"files"`
+}
 type RecoveryImport struct {
-	ID       string          `json:"id"`
-	State    string          `json:"state"`
-	Request  RecoveryRequest `json:"request"`
-	Recovery RunnerRecovery  `json:"recovery"`
-	Error    string          `json:"error,omitempty"`
+	TargetSnapshot RecoveryTargetSnapshot `json:"target_snapshot"`
+	ID             string                 `json:"id"`
+	State          string                 `json:"state"`
+	Request        RecoveryRequest        `json:"request"`
+	Recovery       RunnerRecovery         `json:"recovery"`
+	Error          string                 `json:"error,omitempty"`
 }
 
 func (s *Service) RecoverySettings(ctx context.Context) (RecoverySettings, error) {
@@ -158,42 +169,145 @@ func (s *Service) recoveryPayload(ctx context.Context, r RunnerRecovery) (string
 			return "", fmt.Errorf("recovery mount overlaps library root")
 		}
 	}
+	clients, err := s.db.ListDownloadClients(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, client := range clients {
+		for _, mapping := range client.PathMappings {
+			if mapping.Local != "" && (within(mapping.Local, cfg.LocalRoot) || within(cfg.LocalRoot, mapping.Local)) {
+				return "", fmt.Errorf("recovery mount overlaps a completed-download path mapping")
+			}
+		}
+	}
 	path := filepath.Join(cfg.LocalRoot, r.ID, "payload")
 	if err = rejectSymlinks(path, false); err != nil {
 		return "", err
 	}
 	return path, nil
 }
-func (s *Service) targetGeneration(ctx context.Context, itemID, copyID int64) (string, string, error) {
+func (s *Service) targetSnapshot(ctx context.Context, itemID, copyID int64) (RecoveryTargetSnapshot, string, error) {
+	snapshot := RecoveryTargetSnapshot{Files: map[string]string{}}
 	item, err := s.db.GetMediaItemFull(ctx, itemID)
 	if err != nil {
-		return "", "", err
+		return snapshot, "", err
 	}
-	files, err := s.db.ListFilesForItem(ctx, itemID)
-	if err != nil {
-		return "", "", err
-	}
-	dest := item.Path
+	dest, profileID := item.Path, item.QualityProfileID
 	var copyData any
 	if copyID != 0 {
 		cp, e := s.db.GetMediaCopy(ctx, itemID, copyID)
 		if e != nil {
-			return "", "", e
+			return snapshot, "", e
 		}
 		copyData = cp
+		profileID = cp.QualityProfileID
 		if cp.Path != "" {
 			dest = cp.Path
 		}
 	}
 	if dest == "" {
-		return "", "", ErrNoLibraryFolder
+		return snapshot, "", ErrNoLibraryFolder
 	}
-	raw, err := json.Marshal([]any{item, copyData, files})
+	profile, err := s.db.GetProfile(ctx, profileID)
+	if err != nil {
+		return snapshot, "", err
+	}
+	for i := range item.Seasons {
+		for j := range item.Seasons[i].Episodes {
+			item.Seasons[i].Episodes[j].HasFile = false
+		}
+	}
+	metadata, err := json.Marshal([]any{item.ID, item.Kind, item.Title, item.Year, item.Runtime, item.Path, item.RootFolderID, profile, copyData, item.Seasons})
+	if err != nil {
+		return snapshot, "", err
+	}
+	snapshot.Metadata = fmt.Sprintf("%x", sha256.Sum256(metadata))
+	files, err := s.db.ListFilesForItem(ctx, itemID)
+	if err != nil {
+		return snapshot, "", err
+	}
+	for _, f := range files {
+		if f.CopyID != copyID {
+			continue
+		}
+		var disk any = "missing"
+		if info, e := os.Lstat(f.Path); e == nil {
+			disk = []any{info.Size(), info.ModTime().UnixNano(), info.Mode().String()}
+		} else if !errors.Is(e, os.ErrNotExist) {
+			return snapshot, "", e
+		}
+		raw, e := json.Marshal([]any{f, disk})
+		if e != nil {
+			return snapshot, "", e
+		}
+		snapshot.Files[f.Path] = fmt.Sprintf("%x", sha256.Sum256(raw))
+	}
+	return snapshot, dest, nil
+}
+func (s *Service) targetGeneration(ctx context.Context, itemID, copyID int64) (string, string, error) {
+	snapshot, dest, err := s.targetSnapshot(ctx, itemID, copyID)
 	if err != nil {
 		return "", "", err
 	}
-	return fmt.Sprintf("%x", sha256.Sum256(raw)), dest, nil
+	raw, err := json.Marshal(snapshot)
+	return fmt.Sprintf("%x", sha256.Sum256(raw)), dest, err
 }
+func (s *Service) validateRecoveryTarget(ctx context.Context, r RecoveryImport) error {
+	current, _, err := s.targetSnapshot(ctx, r.Request.MediaItemID, r.Request.CopyID)
+	if err != nil {
+		return err
+	}
+	expected := RecoveryTargetSnapshot{Metadata: r.TargetSnapshot.Metadata, Files: map[string]string{}}
+	for path, fingerprint := range r.TargetSnapshot.Files {
+		expected.Files[path] = fingerprint
+	}
+	if current.Metadata != expected.Metadata {
+		return fmt.Errorf("library metadata or profile changed; new preview required")
+	}
+	rows, err := s.db.R.QueryContext(ctx, `SELECT data FROM import_placements WHERE json_extract(data,'$.recovery_import')=?`, r.ID)
+	if err != nil {
+		return err
+	}
+	var placements []sqlite.Placement
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		var p sqlite.Placement
+		if err = json.Unmarshal([]byte(raw), &p); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		placements = append(placements, p)
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, p := range placements {
+		hash, _, e := fileDigest(ctx, p.Target)
+		if e != nil || hash != p.SHA256 {
+			continue
+		}
+		delete(current.Files, p.Target)
+		delete(expected.Files, p.Target)
+		for _, old := range p.Superseded {
+			if _, exists := current.Files[old.Path]; !exists {
+				delete(expected.Files, old.Path)
+			}
+		}
+	}
+	a, _ := json.Marshal(current)
+	b, _ := json.Marshal(expected)
+	if string(a) != string(b) {
+		return fmt.Errorf("library files changed; new preview required")
+	}
+	return nil
+}
+
 func (s *Service) PreviewRecovery(ctx context.Context, req RecoveryRequest) (RecoveryPreview, error) {
 	client, err := s.recoveryClient(ctx, req.ClientID)
 	if err != nil {
@@ -217,6 +331,11 @@ func (s *Service) PreviewRecovery(ctx context.Context, req RecoveryRequest) (Rec
 	}
 	req.TargetGeneration = generation
 	preview := RecoveryPreview{Request: req, Recovery: r, Target: dest}
+	item, err := s.db.GetMediaItemFull(ctx, req.MediaItemID)
+	if err != nil {
+		return preview, err
+	}
+
 	selected := map[string]bool{}
 	for _, id := range req.FileIDs {
 		if selected[id] {
@@ -242,7 +361,24 @@ func (s *Service) PreviewRecovery(ctx context.Context, req RecoveryRequest) (Rec
 		}
 		info, e := probe.File(path)
 		p := parser.Parse(filepath.Base(path))
+		if target, ok := req.EpisodeTargets[f.ID]; ok {
+			p.Season = target.Season
+			p.Episodes = target.Episodes
+		}
+		if len(p.Episodes) > 0 {
+			for _, ep := range p.Episodes {
+				if _, e := s.db.GetEpisodeID(ctx, req.MediaItemID, p.Season, ep); e != nil {
+					return preview, fmt.Errorf("unknown episode S%02dE%02d", p.Season, ep)
+				}
+			}
+		}
+
 		row := RecoveryPreviewFile{RecoveryFile: f, Info: info, Season: p.Season, Episodes: p.Episodes, Usable: e == nil && info.Container != "" && !mediainfo.IsUnsupported(info.Container)}
+		if item.Kind == domain.KindSeries && len(p.Episodes) == 0 {
+			row.Usable = false
+			row.Reason = "choose the episode mapping before import"
+		}
+
 		if e != nil {
 			row.Reason = e.Error()
 		}
@@ -283,7 +419,20 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 	}
 	key := preview.Recovery.Installation + "/" + preview.Recovery.ID + "/" + preview.Recovery.ManifestDigest
 	id := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
-	r := RecoveryImport{ID: id, State: "queued", Request: req, Recovery: preview.Recovery}
+	s.importTargetMu.Lock()
+	defer s.importTargetMu.Unlock()
+	snapshot, _, err := s.targetSnapshot(ctx, req.MediaItemID, req.CopyID)
+	if err != nil {
+		return RecoveryImport{}, err
+	}
+	rawSnapshot, err := json.Marshal(snapshot)
+	if err != nil {
+		return RecoveryImport{}, err
+	}
+	if fmt.Sprintf("%x", sha256.Sum256(rawSnapshot)) != req.TargetGeneration {
+		return RecoveryImport{}, fmt.Errorf("library changed while inspecting recovery; preview again")
+	}
+	r := RecoveryImport{ID: id, State: "queued", Request: req, Recovery: preview.Recovery, TargetSnapshot: snapshot}
 	raw, err := json.Marshal(r)
 	if err != nil {
 		return r, err
@@ -296,6 +445,20 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 	if err != nil {
 		return r, err
 	}
+	if existing.State == "review" {
+		oldRequest, newRequest := existing.Request, req
+		oldRequest.TargetGeneration = ""
+		newRequest.TargetGeneration = ""
+		oldRaw, _ := json.Marshal(oldRequest)
+		newRaw, _ := json.Marshal(newRequest)
+		if string(oldRaw) == string(newRaw) {
+			existing.Request = req
+			existing.TargetSnapshot = snapshot
+			existing.State = "queued"
+			existing.Error = ""
+			return existing, s.saveRecoveryImport(ctx, existing)
+		}
+	}
 	want, _ := json.Marshal(req)
 	got, _ := json.Marshal(existing.Request)
 	if string(want) != string(got) {
@@ -305,10 +468,12 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 }
 func (s *Service) RecoveryImport(ctx context.Context, id string) (RecoveryImport, error) {
 	var raw string
-	err := s.db.R.QueryRowContext(ctx, `SELECT data FROM recovery_imports WHERE id=?`, id).Scan(&raw)
+	var state string
+	err := s.db.R.QueryRowContext(ctx, `SELECT data,state FROM recovery_imports WHERE id=?`, id).Scan(&raw, &state)
 	var r RecoveryImport
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &r)
+		r.State = state
 	}
 	return r, err
 }
@@ -324,12 +489,8 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 	s.importTargetMu.Lock()
 	defer s.importTargetMu.Unlock()
 	ctx = context.WithValue(ctx, targetHeldKey{}, true)
-	generation, _, err := s.targetGeneration(ctx, r.Request.MediaItemID, r.Request.CopyID)
-	if err != nil {
+	if err := s.validateRecoveryTarget(ctx, r); err != nil {
 		return err
-	}
-	if generation != r.Request.TargetGeneration {
-		return fmt.Errorf("library target changed; review the recovery before retrying")
 	}
 	cfg, err := s.RecoverySettings(ctx)
 	if err != nil {
@@ -352,6 +513,7 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 	}
 	var paths []string
 	ids := map[string]string{}
+	targets := map[string]RecoveryEpisodeTarget{}
 	for _, f := range r.Recovery.Files {
 		if len(r.Request.FileIDs) > 0 && !selected[f.ID] {
 			continue
@@ -366,8 +528,11 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 		}
 		paths = append(paths, path)
 		ids[path] = f.ID
+		if target, ok := r.Request.EpisodeTargets[f.ID]; ok {
+			targets[path] = target
+		}
 	}
-	ctx = context.WithValue(ctx, recoveryPlacementKey{}, &recoveryPlacementContext{ImportID: r.ID, Files: ids})
+	ctx = context.WithValue(ctx, recoveryPlacementKey{}, &recoveryPlacementContext{ImportID: r.ID, Files: ids, EpisodeTargets: targets, Validate: func() error { return s.validateRecoveryTarget(ctx, r) }})
 	result, importErr := s.importDownloadFiles(ctx, sqlite.Download{MediaItemID: r.Request.MediaItemID, CopyID: r.Request.CopyID, ReleaseTitle: "recovery " + r.Recovery.ID}, root, paths, true)
 	if result.Imported != len(paths) || importErr != nil {
 		return fmt.Errorf("partial recovery remains held: %d/%d imported: %v", result.Imported, len(paths), importErr)
@@ -379,6 +544,13 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var currentState string
+	if err = tx.QueryRowContext(ctx, `SELECT state FROM recovery_imports WHERE id=?`, r.ID).Scan(&currentState); err != nil {
+		return err
+	}
+	if currentState == "cancel_pending" {
+		return context.Canceled
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT result FROM recovery_file_results WHERE import_id=? ORDER BY file_id`, r.ID)
 	if err != nil {
 		return err
@@ -418,7 +590,7 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 	return tx.Commit()
 }
 func (s *Service) recoverySweep(ctx context.Context) {
-	rows, err := s.db.R.QueryContext(ctx, `SELECT id FROM recovery_imports WHERE state='queued' ORDER BY updated_at LIMIT 5`)
+	rows, err := s.db.R.QueryContext(ctx, `SELECT id FROM recovery_imports WHERE state IN ('queued','importing','cancel_pending') ORDER BY updated_at LIMIT 5`)
 	if err != nil {
 		return
 	}
@@ -435,10 +607,46 @@ func (s *Service) recoverySweep(ctx context.Context) {
 		if e != nil {
 			continue
 		}
-		if e = s.runRecovery(ctx, r); e != nil {
-			r.State = "review"
-			r.Error = e.Error()
-			_ = s.saveRecoveryImport(ctx, r)
+		if r.State == "cancel_pending" {
+			s.ackRecoveryCancel(ctx, r)
+			continue
+		}
+		worker, cancel := context.WithCancel(ctx)
+		s.recoveryMu.Lock()
+		if s.recoveryCancels == nil {
+			s.recoveryCancels = map[string]context.CancelFunc{}
+		}
+		s.recoveryCancels[id] = cancel
+		s.recoveryMu.Unlock()
+		// Conditional update prevents a cancellation between admission and start
+		// from being overwritten by an optimistic in-memory state.
+		result, e := s.db.W.ExecContext(ctx, `UPDATE recovery_imports SET state='importing' WHERE id=? AND state IN ('queued','importing')`, id)
+		started := false
+		if e == nil {
+			n, _ := result.RowsAffected()
+			started = n == 1
+		}
+		if started {
+			e = s.runRecovery(worker, r)
+		}
+		cancel()
+		s.recoveryMu.Lock()
+		delete(s.recoveryCancels, id)
+		s.recoveryMu.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
+		latest, readErr := s.RecoveryImport(ctx, id)
+		var state string
+		_ = s.db.R.QueryRowContext(ctx, `SELECT state FROM recovery_imports WHERE id=?`, id).Scan(&state)
+		if state == "cancel_pending" {
+			s.ackRecoveryCancel(ctx, r)
+			continue
+		}
+		if e != nil && readErr == nil {
+			latest.State = "review"
+			latest.Error = e.Error()
+			_ = s.saveRecoveryImport(ctx, latest)
 			s.log.Warn("recovery import needs attention", "id", id, "err", e)
 		}
 	}
@@ -473,12 +681,30 @@ func (s *Service) recoverySweep(ctx context.Context) {
 			_, _ = s.db.W.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET last_error=?,updated_at=? WHERE import_id=?`, e.Error(), time.Now().UnixMilli(), p.id)
 			continue
 		}
-		_, e = s.db.W.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET delivered=1,last_error='' WHERE import_id=?`, p.id)
-		if e == nil {
-			r.State = "imported"
-			r.Error = ""
-			_ = s.saveRecoveryImport(ctx, r)
+		// Delivery acknowledgement and local completion are one transaction;
+		// a crash cannot strand an import behind a delivered outbox row.
+		r.State = "imported"
+		r.Error = ""
+		raw, e := json.Marshal(r)
+		if e != nil {
+			continue
 		}
+		tx, e := s.db.W.BeginTx(ctx, nil)
+		if e != nil {
+			continue
+		}
+		if _, e = tx.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET delivered=1,last_error='' WHERE import_id=?`, p.id); e == nil {
+			_, e = tx.ExecContext(ctx, `UPDATE recovery_imports SET state='imported',data=?,updated_at=? WHERE id=?`, string(raw), time.Now().UnixMilli(), p.id)
+		}
+		if e == nil {
+			e = tx.Commit()
+		} else {
+			_ = tx.Rollback()
+		}
+		if e != nil {
+			s.log.Warn("receipt acknowledgement remains pending", "id", p.id, "err", e)
+		}
+
 	}
 }
 func (s *Service) startRecoveryWorker(ctx context.Context) {
@@ -506,4 +732,68 @@ func (s *Service) RecoveryAdvisory(ctx context.Context) map[string]any {
 	}
 	info, e := os.Stat(cfg.LocalRoot)
 	return map[string]any{"credential_configured": cfg.ConsumerToken != "", "local_mount_available": e == nil && info.IsDir(), "read_only_mount": "verify in container configuration", "capacity": "source + staging + library + replacement backup may coexist"}
+}
+
+func (s *Service) CancelRecoveryImport(ctx context.Context, id string) error {
+	result, err := s.db.W.ExecContext(ctx, `UPDATE recovery_imports SET state='cancel_pending',updated_at=? WHERE id=? AND state IN ('queued','importing','review')`, time.Now().UnixMilli(), id)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("import already committed or cancellation pending")
+	}
+	s.recoveryMu.Lock()
+	cancel := s.recoveryCancels[id]
+	s.recoveryMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return nil
+}
+func (s *Service) ackRecoveryCancel(ctx context.Context, r RecoveryImport) {
+	cfg, err := s.RecoverySettings(ctx)
+	if err != nil {
+		return
+	}
+	client, err := s.recoveryClient(ctx, r.Request.ClientID)
+	if err != nil {
+		return
+	}
+	var remote RunnerRecovery
+	if err = client.RecoveryRequest(ctx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/cancel", cfg.ConsumerToken, nil, &remote); err != nil {
+		return
+	}
+	if remote.State == "cancel_pending" {
+		if err = client.RecoveryRequest(ctx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/cancel-ack", cfg.ConsumerToken, nil, nil); err != nil {
+			return
+		}
+	}
+	r.State = "cancelled"
+	r.Error = "Worker stopped; source remains on review hold"
+	_ = s.saveRecoveryImport(ctx, r)
+}
+func (s *Service) RecoveryImports(ctx context.Context) ([]RecoveryImport, error) {
+	rows, err := s.db.R.QueryContext(ctx, `SELECT data,state FROM recovery_imports ORDER BY updated_at DESC LIMIT 100`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []RecoveryImport{}
+	for rows.Next() {
+		var raw, state string
+		if err = rows.Scan(&raw, &state); err != nil {
+			return nil, err
+		}
+		var r RecoveryImport
+		if err = json.Unmarshal([]byte(raw), &r); err != nil {
+			return nil, err
+		}
+		r.State = state
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

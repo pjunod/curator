@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
@@ -14,6 +15,7 @@ import (
 // Placement is an intent persisted before a library rename. Its metadata is
 // sufficient to reconcile a published file after a crash without recopying it.
 type Placement struct {
+	Superseded     []domain.MediaFile   `json:"superseded,omitempty"`
 	ID             string               `json:"id"`
 	Source         string               `json:"source"`
 	Target         string               `json:"target"`
@@ -55,7 +57,7 @@ func (d *DB) GetPlacement(ctx context.Context, id string) (Placement, error) {
 	return p, err
 }
 func (d *DB) PendingPlacements(ctx context.Context) ([]Placement, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT data FROM import_placements WHERE state<>'committed' ORDER BY updated_at LIMIT 100`)
+	rows, err := d.R.QueryContext(ctx, `SELECT data FROM import_placements WHERE state IN ('prepared','committed') ORDER BY updated_at LIMIT 100`)
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +85,15 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var state string
+	if err = tx.QueryRowContext(ctx, `SELECT state FROM import_placements WHERE id=?`, p.ID).Scan(&state); err != nil {
+		return 0, err
+	}
+	if state == "committed" || state == "cleaned" {
+		var fid int64
+		err = tx.QueryRowContext(ctx, `SELECT id FROM media_files WHERE path=? AND media_item_id=?`, p.Target, p.ItemID).Scan(&fid)
+		return fid, err
+	}
 	q := d.Write.WithTx(tx)
 	fid, err := q.UpsertMediaFile(ctx, sqlitegen.UpsertMediaFileParams{MediaItemID: sql.NullInt64{Int64: p.ItemID, Valid: p.ItemID != 0}, CopyID: sql.NullInt64{Int64: p.CopyID, Valid: p.CopyID != 0}, Path: p.Target, Size: p.Size, AddedAt: time.Now().UnixMilli()})
 	if err != nil {

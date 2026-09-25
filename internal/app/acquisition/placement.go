@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/domain"
@@ -23,8 +24,10 @@ import (
 type targetHeldKey struct{}
 type recoveryPlacementKey struct{}
 type recoveryPlacementContext struct {
-	ImportID string
-	Files    map[string]string
+	Validate       func() error
+	EpisodeTargets map[string]RecoveryEpisodeTarget
+	ImportID       string
+	Files          map[string]string
 }
 
 // rejectSymlinks checks every existing component, including the mount root.
@@ -96,7 +99,7 @@ func syncPath(path string) error {
 	return f.Sync()
 }
 
-func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, scope importScope, src, dest string, q quality.Quality, eps []int64) (int64, error) {
+func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, scope importScope, src, dest string, q quality.Quality, eps []int64, replace bool) (int64, error) {
 	hash, size, err := fileDigest(ctx, src)
 	if err != nil {
 		return 0, err
@@ -119,8 +122,14 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		if e != nil && !errors.Is(e, os.ErrNotExist) {
 			return 0, e
 		}
-		info, _ := probe.File(src)
+		info := mediainfo.Info{}
+		if item.Kind != domain.KindBook {
+			info, _ = probe.File(src)
+		}
 		measured, prov, conf := q, mediainfo.ProvenanceRelease, mediainfo.ConfidenceNone
+		if item.Kind == domain.KindBook {
+			prov = mediainfo.ProvenanceFilename
+		}
 		if info.Measured() {
 			measured, prov, conf = mediainfo.Resolve(info, q, mediainfo.ProvenanceRelease)
 			if _, bad := mediainfo.DurationImplausible(info, item.Runtime); bad {
@@ -130,6 +139,28 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 			}
 		}
 		p = sqlite.Placement{ID: id, Source: src, Target: dest, Temporary: filepath.Join(filepath.Dir(dest), ".monarr-stage-"+id), Backup: filepath.Join(filepath.Dir(dest), ".monarr-prior-"+id), SHA256: hash, PreviousSHA256: previous, Size: size, ItemID: item.ID, CopyID: scope.CopyID, EpisodeIDs: eps, Quality: measured, Info: info, Provenance: prov, Confidence: conf, Release: scope.Release, Indexer: scope.Indexer, State: "prepared"}
+		if replace {
+			files, e := s.db.ListFilesForItem(ctx, item.ID)
+			if e != nil {
+				return 0, e
+			}
+			for _, old := range files {
+				if old.CopyID != scope.CopyID {
+					continue
+				}
+				matched := len(eps) == 0
+				for _, ep := range old.EpisodeIDs {
+					for _, wanted := range eps {
+						if ep == wanted {
+							matched = true
+						}
+					}
+				}
+				if matched {
+					p.Superseded = append(p.Superseded, old)
+				}
+			}
+		}
 		if recovery != nil {
 			p.RecoveryImport = recovery.ImportID
 			p.RecoveryFile = recovery.Files[src]
@@ -141,26 +172,65 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 			return 0, err
 		}
 	}
+	if recovery != nil && recovery.Validate != nil {
+		if err = recovery.Validate(); err != nil {
+			return 0, err
+		}
+	}
 	if err = s.publishPlacement(ctx, p); err != nil {
 		return 0, err
+	}
+	if recovery != nil && recovery.Validate != nil {
+		if err = recovery.Validate(); err != nil {
+			return 0, err
+		}
 	}
 	fid, err := s.db.CommitPlacement(ctx, p)
 	if err != nil {
 		return 0, err
 	}
-	// Old bytes survive until metadata and the recovery receipt commit together.
-	if p.PreviousSHA256 != "" {
-		if got, _, e := fileDigest(ctx, p.Backup); e == nil && got == p.PreviousSHA256 {
-			if e = os.Remove(p.Backup); e != nil {
-				return fid, e
-			}
-			if e = syncPath(filepath.Dir(p.Backup)); e != nil {
-				return fid, e
-			}
+	if p.State != "committed" {
+		if why, bad := mediainfo.DurationImplausible(p.Info, item.Runtime); bad {
+			s.recordImplausible(ctx, item.ID, dest, scope.Release, p.Info, why)
+		} else if p.Provenance == mediainfo.ProvenanceImplausible {
+			why, _ := mediainfo.Implausible(p.Info)
+			s.recordImplausible(ctx, item.ID, dest, scope.Release, p.Info, why)
 		}
+		if q.Resolution != 0 && p.Quality.Resolution != 0 && q.Resolution != p.Quality.Resolution {
+			_ = s.db.AddHistory(ctx, HistoryQualityMismatch, item.ID, scope.Release, map[string]any{"claimed": q.String(), "measured": p.Quality.String(), "file": filepath.Base(dest), "facts": p.Info.Summary()})
+		}
+	}
+	if e := s.cleanupPlacement(ctx, p); e != nil {
+		s.log.Warn("placement cleanup remains pending", "id", p.ID, "err", e)
 	}
 	return fid, nil
 }
+func (s *Service) cleanupPlacement(ctx context.Context, p sqlite.Placement) error {
+	for path, expected := range map[string]string{p.Backup: p.PreviousSHA256, p.Temporary: p.SHA256} {
+		if expected == "" {
+			continue
+		}
+		got, _, err := fileDigest(ctx, path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if got != expected {
+			return fmt.Errorf("cleanup identity mismatch: %s", path)
+		}
+		if err = os.Remove(path); err != nil {
+			return err
+		}
+		if err = syncPath(filepath.Dir(path)); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.W.ExecContext(ctx, `UPDATE import_placements SET state='cleaned',updated_at=? WHERE id=? AND state='committed'`, time.Now().UnixMilli(), p.ID)
+	return err
+}
+
 func (s *Service) publishPlacement(ctx context.Context, p sqlite.Placement) error {
 	got, _, err := fileDigest(ctx, p.Target)
 	if err == nil && got == p.SHA256 {
@@ -223,6 +293,11 @@ func (s *Service) publishPlacement(ctx context.Context, p sqlite.Placement) erro
 			return err
 		}
 	}
+	if recovery, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok && recovery.Validate != nil {
+		if err := recovery.Validate(); err != nil {
+			return err
+		}
+	}
 	current, _, e := fileDigest(ctx, p.Target)
 	if e != nil && !errors.Is(e, os.ErrNotExist) {
 		return e
@@ -247,6 +322,23 @@ func (s *Service) reconcilePlacements(ctx context.Context) {
 		return
 	}
 	for _, p := range rows {
+		// Rotate incomplete work so one damaged placement cannot starve later rows.
+		_, _ = s.db.W.ExecContext(ctx, `UPDATE import_placements SET updated_at=? WHERE id=?`, time.Now().UnixMilli(), p.ID)
+		if p.State == "committed" {
+			if e := s.cleanupPlacement(ctx, p); e != nil {
+				s.log.Warn("placement cleanup pending", "id", p.ID, "err", e)
+			}
+			continue
+		}
+		if p.RecoveryImport != "" {
+			r, e := s.RecoveryImport(ctx, p.RecoveryImport)
+			if e != nil || r.State == "cancel_pending" || r.State == "cancelled" {
+				continue
+			}
+			if e = s.validateRecoveryTarget(ctx, r); e != nil {
+				continue
+			}
+		}
 		// Reconcile only already published bytes. An old unplaced intention cannot
 		// replace a newer library file merely because the daemon restarted.
 		got, _, e := fileDigest(ctx, p.Target)
@@ -255,6 +347,8 @@ func (s *Service) reconcilePlacements(ctx context.Context) {
 		}
 		if _, e = s.db.CommitPlacement(ctx, p); e != nil {
 			s.log.Error("placement commit remains pending", "id", p.ID, "err", e)
+		} else if e = s.cleanupPlacement(ctx, p); e != nil {
+			s.log.Warn("placement cleanup pending", "id", p.ID, "err", e)
 		}
 	}
 }

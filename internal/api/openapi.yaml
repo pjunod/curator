@@ -1652,6 +1652,23 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+  /import/recovery/jobs:
+    get:
+      operationId: listRecoveryImports
+      responses:
+        '200':
+          description: Durable recovery import activity
+          content:
+            application/json:
+              schema: { type: array, items: { type: object, additionalProperties: true } }
+  /import/recovery/{id}/cancel:
+    post:
+      operationId: cancelRecoveryImport
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '202': { description: Cancellation requested; source remains held until acknowledgement }
+        '409': { description: Import already committed }
   /import/recovery/{id}:
     get:
       operationId: getRecoveryImport
@@ -3973,6 +3990,14 @@ components:
       type: object
       required: [client_id, recovery_id, media_item_id, copy_id, file_ids, target_generation, accept_unverified]
       properties:
+        episode_targets:
+          type: object
+          additionalProperties:
+            type: object
+            required: [season, episodes]
+            properties:
+              season: { type: integer }
+              episodes: { type: array, items: { type: integer } }
         client_id: { type: integer, format: int64 }
         recovery_id: { type: string }
         media_item_id: { type: integer, format: int64 }

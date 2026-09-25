@@ -386,6 +386,12 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	result := ImportResult{Files: make([]FileOutcome, 0, len(videos))}
 	for fileIndex, src := range videos {
 		p := parser.Parse(filepath.Base(src))
+		if recovery, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
+			if target, ok := recovery.EpisodeTargets[src]; ok {
+				p.Season = target.Season
+				p.Episodes = target.Episodes
+			}
+		}
 		q := p.Quality
 		if item.Kind == domain.KindBook {
 			q = bookQualities[fileIndex]
@@ -673,16 +679,13 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 		"Quality Full": q.Display(),
 	})
 	dest := filepath.Join(scope.Dest, naming.SafeFileName(name)+filepath.Ext(src))
-	fileID, err := s.commitPlacement(ctx, item, scope, src, dest, q, nil)
+	_, err = s.commitPlacement(ctx, item, scope, src, dest, q, nil, upgrade)
 	if err != nil {
 		return placement{}, err
 	}
 	if upgrade {
 		s.removeExistingFiles(ctx, item, scope.CopyID, nil, dest)
 	}
-	s.rememberSource(ctx, fileID, dest, scope)
-	// The file exists now, so stop taking the release name's word for it.
-	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle, item.Runtime)
 	return placement{Path: dest, Upgrade: upgrade}, nil
 }
 
@@ -724,14 +727,11 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 			base += fmt.Sprintf(" - %03d", part+1)
 		}
 		dest := filepath.Join(scope.Dest, base+strings.ToLower(filepath.Ext(src)))
-		fileID, err := s.commitPlacement(ctx, item, scope, src, dest, q, nil)
+		_, err := s.commitPlacement(ctx, item, scope, src, dest, q, nil, plan.Upgrade)
 		if err != nil {
 			return placement{}, err
 		}
-		s.rememberSource(ctx, fileID, dest, scope)
-		return placement{Path: dest, Upgrade: plan.Upgrade},
-			s.db.SetFileQualityFrom(ctx, fileID, q,
-				mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+		return placement{Path: dest, Upgrade: plan.Upgrade}, nil
 	}
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
@@ -752,16 +752,13 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 
 	dest := filepath.Join(scope.Dest,
 		naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
-	fileID, err := s.commitPlacement(ctx, item, scope, src, dest, q, nil)
+	_, err = s.commitPlacement(ctx, item, scope, src, dest, q, nil, upgrade)
 	if err != nil {
 		return placement{}, err
 	}
-	s.rememberSource(ctx, fileID, dest, scope)
 	// Books are not probed: the extension IS the format (ADR 0006), so the
 	// provenance is the filename and there is nothing to measure.
-	return placement{Path: dest, Upgrade: upgrade},
-		s.db.SetFileQualityFrom(ctx, fileID, q,
-			mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
+	return placement{Path: dest, Upgrade: upgrade}, nil
 }
 
 func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
@@ -834,34 +831,14 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	dest := filepath.Join(scope.Dest,
 		naming.Render(naming.SeasonFolderTemplate, map[string]string{"season": strconv.Itoa(season)}),
 		naming.SafeFileName(base)+filepath.Ext(src))
-	fileID, err := s.commitPlacement(ctx, item, scope, src, dest, q, epIDs)
+	_, err := s.commitPlacement(ctx, item, scope, src, dest, q, epIDs, upgrade)
 	if err != nil {
 		return placement{}, err
 	}
 	if upgrade {
 		s.removeExistingFiles(ctx, item, scope.CopyID, epIDs, dest)
 	}
-	s.rememberSource(ctx, fileID, dest, scope)
-	s.recordImportedQuality(ctx, item.ID, fileID, dest, q, releaseTitle, item.Runtime)
 	return placement{Path: dest, Upgrade: upgrade}, nil
-}
-
-// rememberSource records which release put a file on disk.
-//
-// Not bookkeeping. It is the only way somebody staring at a bad file three
-// weeks later can say "and never take that release again" without going to
-// find the download in the queue, which by then is long gone. A failure here
-// is worth a line in the log and nothing more — the file imported fine, and
-// refusing the import over a missing audit field would be the tail wagging
-// the dog.
-func (s *Service) rememberSource(ctx context.Context, fileID int64, dest string, scope importScope) {
-	if scope.Release == "" {
-		return // a manual import of a folder nobody grabbed
-	}
-	if err := s.db.SetFileSource(ctx, fileID, scope.Release, scope.Indexer); err != nil {
-		s.log.Warn("import: could not record source release",
-			"file", filepath.Base(dest), "err", err)
-	}
 }
 
 // removeExistingFiles deletes replaced files (rows + disk) for the target
@@ -896,10 +873,18 @@ func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem
 				continue
 			}
 		}
-		if err := s.db.DeleteFile(ctx, f.ID); err == nil {
-			if rmErr := os.Remove(f.Path); rmErr != nil && !os.IsNotExist(rmErr) {
-				s.log.Warn("import: could not remove replaced file", "path", f.Path, "err", rmErr)
-			}
+		if err := rejectSymlinks(f.Path, true); err != nil {
+			continue
+		}
+		if rmErr := os.Remove(f.Path); rmErr != nil && !os.IsNotExist(rmErr) {
+			s.log.Warn("import: could not remove replaced file; keeping its record", "path", f.Path, "err", rmErr)
+			continue
+		}
+		if err := syncPath(filepath.Dir(f.Path)); err != nil {
+			continue
+		}
+		if err := s.db.DeleteFile(ctx, f.ID); err != nil {
+			s.log.Warn("import: removed file metadata pending", "path", f.Path, "err", err)
 		}
 	}
 }

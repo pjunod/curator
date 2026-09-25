@@ -122,12 +122,14 @@ func (ImportFailed) EventType() string { return "import.failed" }
 // Service wires storage, adapters (via factories), and the bus.
 type Service struct {
 	// Shared by ordinary and recovery imports, including crash reconciliation.
-	importTargetMu sync.Mutex
-	db             *sqlite.DB
-	bus            *bus.Bus
-	log            *slog.Logger
-	newIndexer     IndexerFactory
-	newClient      ClientFactory
+	importTargetMu  sync.Mutex
+	recoveryMu      sync.Mutex
+	recoveryCancels map[string]context.CancelFunc
+	db              *sqlite.DB
+	bus             *bus.Bus
+	log             *slog.Logger
+	newIndexer      IndexerFactory
+	newClient       ClientFactory
 
 	// searchTimeout bounds each indexer call.
 	searchTimeout time.Duration

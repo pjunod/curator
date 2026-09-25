@@ -45,9 +45,18 @@ func (s *Server) ListRecoveries(w http.ResponseWriter, r *http.Request) {
 }
 func recoveryRequest(r *http.Request) (acquisition.RecoveryRequest, error) {
 	var in apigen.RecoveryImportRequest
-	err := json.NewDecoder(r.Body).Decode(&in)
-	return acquisition.RecoveryRequest{ClientID: in.ClientId, RecoveryID: in.RecoveryId, MediaItemID: in.MediaItemId, CopyID: in.CopyId, FileIDs: in.FileIds, TargetGeneration: in.TargetGeneration, AcceptUnverified: in.AcceptUnverified}, err
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		return acquisition.RecoveryRequest{}, err
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return acquisition.RecoveryRequest{}, err
+	}
+	var out acquisition.RecoveryRequest
+	err = json.Unmarshal(raw, &out)
+	return out, err
 }
+
 func (s *Server) PreviewRecoveryImport(w http.ResponseWriter, r *http.Request) {
 	in, err := recoveryRequest(r)
 	if err != nil {
@@ -81,4 +90,20 @@ func (s *Server) GetRecoveryImport(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	writeJSON(w, http.StatusOK, job)
+}
+
+func (s *Server) ListRecoveryImports(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.deps.Acquisition.RecoveryImports(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+func (s *Server) CancelRecoveryImport(w http.ResponseWriter, r *http.Request, id string) {
+	if err := s.deps.Acquisition.CancelRecoveryImport(r.Context(), id); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"state": "cancel_pending"})
 }
