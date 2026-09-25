@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 type targetHeldKey struct{}
 type recoveryPlacementKey struct{}
 type recoveryPlacementContext struct {
+	Progress       func(string, int64, int64)
 	Validate       func() error
 	EpisodeTargets map[string]RecoveryEpisodeTarget
 	ImportID       string
@@ -37,6 +39,14 @@ func rejectSymlinks(path string, missing bool) error {
 		return fmt.Errorf("absolute path required: %s", path)
 	}
 	path = filepath.Clean(path)
+	if runtime.GOOS == "darwin" {
+		for _, alias := range []string{"/var", "/tmp"} {
+			if path == alias || strings.HasPrefix(path, alias+"/") {
+				path = "/private" + path
+				break
+			}
+		}
+	}
 	cur := string(filepath.Separator)
 	for _, part := range strings.Split(strings.TrimPrefix(path, cur), string(filepath.Separator)) {
 		if part == "" {
@@ -124,7 +134,11 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		}
 		info := mediainfo.Info{}
 		if item.Kind != domain.KindBook {
-			info, _ = probe.File(src)
+			if recovery != nil {
+				info, _ = probe.NativeFile(src)
+			} else {
+				info, _ = probe.File(src)
+			}
 		}
 		measured, prov, conf := q, mediainfo.ProvenanceRelease, mediainfo.ConfidenceNone
 		if item.Kind == domain.KindBook {
@@ -258,7 +272,17 @@ func (s *Service) publishPlacement(ctx context.Context, p sqlite.Placement) erro
 	} else if errors.Is(e, os.ErrNotExist) {
 		// placeFile remains the common injection seam. Recovery copies are forced
 		// independent by placeTemp's context check.
-		if err = placeFile(ctx, p.Source, p.Temporary, transfers.Progress(ctx)); err != nil {
+		progress := transfers.Progress(ctx)
+		if recovery, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok && recovery.Progress != nil {
+			previous := progress
+			progress = func(done, total int64) {
+				if previous != nil {
+					previous(done, total)
+				}
+				recovery.Progress(p.Source, done, total)
+			}
+		}
+		if err = placeFile(ctx, p.Source, p.Temporary, progress); err != nil {
 			return err
 		}
 	} else {

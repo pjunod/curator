@@ -674,11 +674,7 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	}
 	_ = profile
 
-	name := naming.Render(naming.MovieFileTemplate, map[string]string{
-		"Movie Title": item.Title, "Release Year": strconv.Itoa(item.Year),
-		"Quality Full": q.Display(),
-	})
-	dest := filepath.Join(scope.Dest, naming.SafeFileName(name)+filepath.Ext(src))
+	dest := movieDestination(scope.Dest, item, src, q)
 	_, err = s.commitPlacement(ctx, item, scope, src, dest, q, nil, upgrade)
 	if err != nil {
 		return placement{}, err
@@ -819,18 +815,11 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		upgrade = upgrade || quality.Better(q, *worst)
 	}
 
-	epToken := fmt.Sprintf("S%02dE%02d", season, eps[0])
-	if len(eps) > 1 {
-		epToken += fmt.Sprintf("-E%02d", eps[len(eps)-1])
-	}
 	title := ""
 	if len(epTitles) > 0 {
 		title = epTitles[0]
 	}
-	base := fmt.Sprintf("%s - %s - %s [%s]", item.Title, epToken, title, q.Display())
-	dest := filepath.Join(scope.Dest,
-		naming.Render(naming.SeasonFolderTemplate, map[string]string{"season": strconv.Itoa(season)}),
-		naming.SafeFileName(base)+filepath.Ext(src))
+	dest := episodeDestination(scope.Dest, item, src, q, season, eps, title)
 	_, err := s.commitPlacement(ctx, item, scope, src, dest, q, epIDs, upgrade)
 	if err != nil {
 		return placement{}, err
@@ -839,6 +828,19 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		s.removeExistingFiles(ctx, item, scope.CopyID, epIDs, dest)
 	}
 	return placement{Path: dest, Upgrade: upgrade}, nil
+}
+
+func movieDestination(root string, item domain.MediaItem, src string, q quality.Quality) string {
+	name := naming.Render(naming.MovieFileTemplate, map[string]string{"Movie Title": item.Title, "Release Year": strconv.Itoa(item.Year), "Quality Full": q.Display()})
+	return filepath.Join(root, naming.SafeFileName(name)+filepath.Ext(src))
+}
+func episodeDestination(root string, item domain.MediaItem, src string, q quality.Quality, season int, eps []int, title string) string {
+	token := fmt.Sprintf("S%02dE%02d", season, eps[0])
+	if len(eps) > 1 {
+		token += fmt.Sprintf("-E%02d", eps[len(eps)-1])
+	}
+	base := fmt.Sprintf("%s - %s - %s [%s]", item.Title, token, title, q.Display())
+	return filepath.Join(root, naming.Render(naming.SeasonFolderTemplate, map[string]string{"season": strconv.Itoa(season)}), naming.SafeFileName(base)+filepath.Ext(src))
 }
 
 // removeExistingFiles deletes replaced files (rows + disk) for the target
@@ -883,8 +885,14 @@ func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem
 		if err := syncPath(filepath.Dir(f.Path)); err != nil {
 			continue
 		}
-		if err := s.db.DeleteFile(ctx, f.ID); err != nil {
-			s.log.Warn("import: removed file metadata pending", "path", f.Path, "err", err)
+		var deleteErr error
+		if recovery, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
+			deleteErr = s.db.DeleteRecoverySuperseded(ctx, f.ID, recovery.ImportID)
+		} else {
+			deleteErr = s.db.DeleteFile(ctx, f.ID)
+		}
+		if deleteErr != nil {
+			s.log.Warn("import: removed file metadata pending", "path", f.Path, "err", deleteErr)
 		}
 	}
 }

@@ -333,7 +333,7 @@ adapters import only ports+domain, compat never touches infra/adapters directly.
 | **0 — Walking skeleton** *(this)* | repo+CI, embedded UI, status API, SQLite+sqlc+goose, config, slog, bus, scheduler, health | `docker run` → UI loads, status reports, tests pass |
 | 1 — Library | TMDB, add/browse movies & series, root folders, disk reconcile | real folders imported and browsable |
 | 2 — Acquisition core | parser+golden corpus, matcher, decisions, Torznab, qBit+SABnzbd, import+rename | search → grab → correctly named file |
-| 2.5 — Books ([ADR 0006](docs/adr/0006-books-third-media-kind.md), [ADR 0018](docs/adr/0018-side-by-side-book-editions.md)) | `book` kind end-to-end: side-by-side ebook/audiobook editions, metadata, parser rules, format quality ladders | keep and curate both editions of one work |
+| 2.5 — Books ([ADR 0006](docs/adr/0006-books-third-media-kind.md), [ADR 0020](docs/adr/0018-side-by-side-book-editions.md)) | `book` kind end-to-end: side-by-side ebook/audiobook editions, metadata, parser rules, format quality ladders | keep and curate both editions of one work |
 | 3 — Automation | wanted index, RSS loop, failed-download handling, calendar (month grid + rolling agenda with TVmaze air times), notifiers | runs unattended for a month |
 | 4 — Ecosystem | Sonarr/Radarr v3 compat shim, conformance vs real tools | Jellyseerr/Prowlarr/Bazarr don't notice the swap |
 | 5 — Depth | custom formats, more clients, import lists, anime numbering | parity tail |
@@ -347,3 +347,5 @@ The [search preview design](docs/plan-search-result-preview.md) records the web
 and native interaction contract, renderings, and Fable review dispositions.
 [Delivery status](docs/status.html#search-preview-delivery) tracks implementation
 and verification.
+
+Runner recovery placement and cleanup are documented in [ADR 0020](docs/adr/0020-file-lifecycle-recovery.md) and the [recovery usage guide](docs/usage.md#recover-media-retained-by-runner).

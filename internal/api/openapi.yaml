@@ -1647,8 +1647,20 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/RecoveryImportRequest' }
       responses:
-        '200':
+        '202':
           description: Verified staged files, probe and target generation
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /import/recovery/previews/{id}:
+    get:
+      operationId: getRecoveryPreview
+      summary: Read a persisted recovery preview
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Preview operation
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
@@ -3990,6 +4002,7 @@ components:
       type: object
       required: [client_id, recovery_id, media_item_id, copy_id, file_ids, target_generation, accept_unverified]
       properties:
+        preview_id: { type: string }
         episode_targets:
           type: object
           additionalProperties:

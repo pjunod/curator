@@ -719,3 +719,13 @@ files, verify the bytes and container, then queue the import.
 Runner's full processing tree must not be mounted as recovery input. Mount only
 `/processing/recovery/published` at `/recovery:ro` and keep it outside all library
 and ordinary completed-download roots. The configured prefixes must match.
+
+Recovery activity and copied bytes survive page reloads. Cancellation waits for
+worker quiescence and preserves files already committed to the library. The
+preview names concrete destinations and existing files in the chosen copy.
+Native container recognition is not a full decode/completeness check.
+
+A library, profile, episode or copy edit during copying can invalidate the
+preview. The initial database revision is intentionally global: an unrelated
+library edit can also require another preview. See
+[ADR 0020](adr/0020-file-lifecycle-recovery.md) for the placement and receipt contract.

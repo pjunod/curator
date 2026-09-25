@@ -149,6 +149,11 @@ type Job struct {
 	FinishedAt         int64
 }
 
+type LifecycleLibraryRevision struct {
+	ID       int64
+	Revision int64
+}
+
 type MediaAlias struct {
 	ID              int64
 	MediaItemID     int64
@@ -303,6 +308,15 @@ type RecoveryImport struct {
 	ID        string
 	State     string
 	Data      string
+	UpdatedAt int64
+}
+
+type RecoveryPreview struct {
+	ID        string
+	State     string
+	Request   string
+	Result    string
+	Error     string
 	UpdatedAt int64
 }
 

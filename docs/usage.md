@@ -979,3 +979,19 @@ replacement retains a rollback copy until library metadata, episode links and
 its per-file recovery receipt commit in one transaction. SQLite uses FULL
 synchronization for those receipts. Failed/partial recovery stays on hold;
 ordinary payload cleanup never handles a recovery source or staging tree.
+
+Use the Recovery activity list to cancel or inspect work after closing the page.
+A cancelled import may have committed earlier files; those remain in the library
+with their receipts. Runner releases the claim only after the worker acknowledges
+that it stopped, then keeps the source for review.
+
+Recovery inspection uses only Curator's bounded native parser. The UI reports
+“Media recognized; completeness not proven.” An intact copy can faithfully copy a
+bad source. Review episode mappings and concrete destinations before importing.
+A stale library revision requires a fresh preview, including after a concurrent
+ordinary import or metadata edit.
+
+Back up Curator's database and library in one coordinated maintenance window.
+After restoring either, keep Runner sources held while reviewing recovered
+placement intentions and outbox records. Do not restore old metadata while
+pre-restore workers continue writing to the library.

@@ -2024,6 +2024,7 @@ type RecoveryImportRequest struct {
 	} `json:"episode_targets,omitempty"`
 	FileIds          []string `json:"file_ids"`
 	MediaItemId      int64    `json:"media_item_id"`
+	PreviewId        *string  `json:"preview_id,omitempty"`
 	RecoveryId       string   `json:"recovery_id"`
 	TargetGeneration string   `json:"target_generation"`
 }
@@ -2859,6 +2860,9 @@ type ServerInterface interface {
 
 	// (POST /import/recovery/preview)
 	PreviewRecoveryImport(w http.ResponseWriter, r *http.Request)
+	// GetRecoveryPreview Read a persisted recovery preview
+	// (GET /import/recovery/previews/{id})
+	GetRecoveryPreview(w http.ResponseWriter, r *http.Request, id string)
 
 	// (GET /import/recovery/settings)
 	GetRecoverySettings(w http.ResponseWriter, r *http.Request)
@@ -3679,6 +3683,32 @@ func (siw *ServerInterfaceWrapper) PreviewRecoveryImport(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PreviewRecoveryImport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecoveryPreview operation middleware
+func (siw *ServerInterfaceWrapper) GetRecoveryPreview(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecoveryPreview(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5986,6 +6016,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery", wrapper.ListRecoveries)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/recovery", wrapper.QueueRecoveryImport)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/recovery/preview", wrapper.PreviewRecoveryImport)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/previews/{id}", wrapper.GetRecoveryPreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/jobs", wrapper.ListRecoveryImports)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/recovery/{id}/cancel", wrapper.CancelRecoveryImport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/{id}", wrapper.GetRecoveryImport)

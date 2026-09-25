@@ -63,12 +63,12 @@ func (s *Server) PreviewRecoveryImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	preview, err := s.deps.Acquisition.PreviewRecovery(r.Context(), in)
+	preview, err := s.deps.Acquisition.StartRecoveryPreview(r.Context(), in)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, preview)
+	writeJSON(w, http.StatusAccepted, preview)
 }
 func (s *Server) QueueRecoveryImport(w http.ResponseWriter, r *http.Request) {
 	in, err := recoveryRequest(r)
@@ -106,4 +106,13 @@ func (s *Server) CancelRecoveryImport(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"state": "cancel_pending"})
+}
+
+func (s *Server) GetRecoveryPreview(w http.ResponseWriter, r *http.Request, id string) {
+	task, err := s.deps.Acquisition.RecoveryPreviewStatus(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
 }

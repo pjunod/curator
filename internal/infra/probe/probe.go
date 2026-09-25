@@ -79,6 +79,24 @@ func File(path string) (mediainfo.Info, error) {
 	return info, err
 }
 
+// NativeFile uses only the bounded in-process container parser. Recovery never
+// starts an optional external process while inspecting a handoff.
+func NativeFile(path string) (mediainfo.Info, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return mediainfo.Info{}, err
+	}
+	defer func() { _ = f.Close() }()
+	st, err := f.Stat()
+	if err != nil {
+		return mediainfo.Info{}, err
+	}
+	if !st.Mode().IsRegular() {
+		return mediainfo.Info{}, fmt.Errorf("probe: not a regular file")
+	}
+	return mediainfo.Probe(f, st.Size())
+}
+
 // ffprobe shells out when a binary is configured or happens to be on PATH.
 func ffprobe(path string, size int64) (mediainfo.Info, error) {
 	bin := os.Getenv(FFprobeEnv)

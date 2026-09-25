@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { cancelRecoveryImport, getRecoveryImports, fmtBytes, getLibrary, getLibraryItem, getRecoveries, getRecoveryImport, getRecoverySettings, previewRecovery, putRecoverySettings, queueRecovery } from '../api'
+import { getRecoveryPreview, cancelRecoveryImport, getRecoveryImports, fmtBytes, getLibrary, getLibraryItem, getRecoveries, getRecoveryImport, getRecoverySettings, previewRecovery, putRecoverySettings, queueRecovery } from '../api'
 import type { RecoveryPreview, RecoverySettings } from '../api'
 
 export function RecoveryEnableSettings() {
@@ -35,12 +35,15 @@ export function RecoveryImports() {
   const [episodeTargets, setEpisodeTargets] = useState<Record<string, { season: number; episodes: number[] }>>({})
   const [files, setFiles] = useState<string[]>([]), [unverified, setUnverified] = useState(false)
   const [preview, setPreview] = useState<RecoveryPreview | null>(null), [importId, setImportId] = useState('')
+  const [previewId, setPreviewId] = useState('')
+  const previewTask = useQuery({ queryKey: ['recovery-preview', previewId], queryFn: () => getRecoveryPreview(previewId), enabled: !!previewId, refetchInterval: query => ['ready', 'failed'].includes(query.state.data?.state ?? '') ? false : 2000 })
+  useEffect(() => { if (previewTask.data?.preview) setPreview(previewTask.data.preview) }, [previewTask.data])
   const item = useQuery({ queryKey: ['library', itemId], queryFn: () => getLibraryItem(itemId), enabled: itemId > 0 })
   const status = useQuery({ queryKey: ['recovery-import', importId], queryFn: () => getRecoveryImport(importId), enabled: !!importId, refetchInterval: importId ? 5000 : false })
   const recovery = recoveries.data?.find(r => r.client_id + ':' + r.id === recoveryKey)
-  const inspect = useMutation({ mutationFn: previewRecovery, onSuccess: setPreview })
+  const inspect = useMutation({ mutationFn: previewRecovery, onSuccess: task => setPreviewId(task.id) })
   const queue = useMutation({ mutationFn: queueRecovery, onSuccess: job => { setImportId(job.id); void qc.invalidateQueries({ queryKey: ['recovery-imports'] }) } })
-  const changed = () => { setPreview(null); setImportId('') }
+  const changed = () => { setPreview(null); setImportId(''); setPreviewId('') }
   return <section className="panel">
     <h2>Runner recovery imports</h2><p>Stage media in Runner’s Files view, then choose its library target. Failed or partial imports keep the original on hold.</p>
     <button onClick={() => void recoveries.refetch()}>Refresh handoffs</button>
@@ -53,11 +56,13 @@ export function RecoveryImports() {
     <label><input type="checkbox" checked={unverified} onChange={e => { setUnverified(e.target.checked); changed() }} /> Accept recognized media whose quality is unverified</label>
     <button disabled={!recovery || !itemId || !files.length || inspect.isPending} onClick={() => recovery && inspect.mutate({ client_id: recovery.client_id, recovery_id: recovery.id, media_item_id: itemId, copy_id: copyId, file_ids: files, episode_targets: episodeTargets, target_generation: '', accept_unverified: unverified })}>{inspect.isPending ? 'Verifying staged files…' : 'Preview import'}</button>
     {inspect.error && <p role="alert">{inspect.error.message}</p>}
-    {preview && <div><h3>Target: {preview.target}</h3><p>Copy {fmtBytes(preview.copy_bytes)}.</p><ul>{preview.files.map(f => <li key={f.id}>{f.path} · {f.usable ? 'ready' : f.reason}{f.episodes?.length ? ` · season ${f.season}, episodes ${f.episodes.join(', ')}` : ''}</li>)}</ul><button disabled={queue.isPending || preview.files.some(f => !f.usable)} onClick={() => queue.mutate(preview.request)}>Queue selected import</button></div>}
+    {previewTask.data && <p role="status">Preview {previewTask.data.state}{previewTask.data.error ? ": " + previewTask.data.error : ""}</p>}
+    {previewTask.error && <p role="alert">{previewTask.error.message}</p>}
+    {preview && <div><h3>Target: {preview.target}</h3><p>Copy {fmtBytes(preview.copy_bytes)}. Media recognized; completeness not proven. A matching digest proves that the copy matches its source, not that the source is healthy.</p><ul>{preview.files.map(f => <li key={f.id}>{f.path} → {f.destination} · {f.usable ? 'ready' : f.reason}{f.existing?.length ? ` · Existing files in this copy: ${f.existing.join('; ')}` : ''}{f.episodes?.length ? ` · season ${f.season}, episodes ${f.episodes.join(', ')}` : ''}</li>)}</ul><button disabled={queue.isPending || preview.files.some(f => !f.usable)} onClick={() => queue.mutate(preview.request)}>Queue selected import</button></div>}
     {queue.error && <p role="alert">{queue.error.message}</p>}
     <h3>Import activity</h3>
     {jobs.error && <p role="alert">{jobs.error.message}</p>}
-    <ul>{(jobs.data ?? []).map(job => <li key={job.id}>{job.id.slice(0, 12)} · {job.state}{job.error ? ': ' + job.error : ''} {['queued', 'importing', 'review'].includes(job.state) && <button disabled={cancel.isPending} onClick={() => cancel.mutate(job.id)}>Cancel import</button>}</li>)}</ul>
+    <ul>{(jobs.data ?? []).map(job => <li key={job.id}>{job.id.slice(0, 12)} · {job.state}{job.current_file ? ` · ${job.current_file}: ${fmtBytes(job.copied_bytes ?? 0)} / ${fmtBytes(job.total_bytes ?? 0)}` : ''}{job.error ? ': ' + job.error : ''} {['queued', 'importing', 'review'].includes(job.state) && <button disabled={cancel.isPending} onClick={() => cancel.mutate(job.id)}>Cancel import</button>}</li>)}</ul>
     {cancel.error && <p role="alert">{cancel.error.message}</p>}
     <p>Cancellation waits for the active file operation to stop. Files already committed to the library remain recorded; Runner retains the source for review.</p>
     {status.data && <p role="status">Import {status.data.state}{status.data.error ? ': ' + status.data.error : ''}</p>}

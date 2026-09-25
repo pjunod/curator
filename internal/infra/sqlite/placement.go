@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
@@ -94,6 +95,11 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 		err = tx.QueryRowContext(ctx, `SELECT id FROM media_files WHERE path=? AND media_item_id=?`, p.Target, p.ItemID).Scan(&fid)
 		return fid, err
 	}
+	if p.RecoveryImport != "" {
+		if err = checkRecoveryRevision(ctx, tx, p.RecoveryImport); err != nil {
+			return 0, err
+		}
+	}
 	q := d.Write.WithTx(tx)
 	fid, err := q.UpsertMediaFile(ctx, sqlitegen.UpsertMediaFileParams{MediaItemID: sql.NullInt64{Int64: p.ItemID, Valid: p.ItemID != 0}, CopyID: sql.NullInt64{Int64: p.CopyID, Valid: p.CopyID != 0}, Path: p.Target, Size: p.Size, AddedAt: time.Now().UnixMilli()})
 	if err != nil {
@@ -140,5 +146,51 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 			return 0, err
 		}
 	}
+	if p.RecoveryImport != "" {
+		if err = advanceRecoveryRevision(ctx, tx, p.RecoveryImport); err != nil {
+			return 0, err
+		}
+	}
 	return fid, tx.Commit()
+}
+
+func (d *DB) LibraryRevision(ctx context.Context) (int64, error) {
+	var revision int64
+	err := d.R.QueryRowContext(ctx, `SELECT revision FROM lifecycle_library_revision WHERE id=1`).Scan(&revision)
+	return revision, err
+}
+func checkRecoveryRevision(ctx context.Context, tx *sql.Tx, id string) error {
+	var matches bool
+	if err := tx.QueryRowContext(ctx, `SELECT revision=json_extract(data,'$.accepted_revision') FROM lifecycle_library_revision,recovery_imports WHERE lifecycle_library_revision.id=1 AND recovery_imports.id=?`, id).Scan(&matches); err != nil {
+		return err
+	}
+	if !matches {
+		return fmt.Errorf("library changed during recovery; a fresh preview is required")
+	}
+	return nil
+}
+func advanceRecoveryRevision(ctx context.Context, tx *sql.Tx, id string) error {
+	_, err := tx.ExecContext(ctx, `UPDATE recovery_imports SET data=json_set(data,'$.accepted_revision',(SELECT revision FROM lifecycle_library_revision WHERE id=1)) WHERE id=?`, id)
+	return err
+}
+
+// DeleteRecoverySuperseded preserves the revision lease while retiring an old
+// file row. Filesystem removal has already succeeded; a failed CAS keeps the
+// old row visible for reconciliation instead of overwriting another edit.
+func (d *DB) DeleteRecoverySuperseded(ctx context.Context, fileID int64, importID string) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = checkRecoveryRevision(ctx, tx, importID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM media_files WHERE id=?`, fileID); err != nil {
+		return err
+	}
+	if err = advanceRecoveryRevision(ctx, tx, importID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
