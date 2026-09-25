@@ -93,9 +93,11 @@ in another tab. Escape, the backdrop, Close, or browser Back returns to the
 same search. Add options in the drawer share the page's root, profile,
 monitoring, and search-on-add choices. Quick **Add** remains separate.
 
-Native mobile uses the same details from Discover and search. **Continue
+Native mobile labels the preview action **Read full synopsis** in Discover
+and search. Opening it does not add anything. **Continue
 to add** opens the existing options in the same modal; Back returns to the
-preview with those choices intact. Quick **Add** skips the preview step.
+preview with those choices intact. Quick **Add** skips the preview step,
+but still shows the complete synopsis above the options before the final Add.
 After a successful native add, the app opens the library item.
 
 A provider outage leaves the original search information available with

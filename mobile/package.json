@@ -15,8 +15,8 @@
     "doctor": "expo-doctor"
   },
   "dependencies": {
-    "expo": "~57.0.24",
-    "expo-build-properties": "~57.0.21",
+    "expo": "~57.0.25",
+    "expo-build-properties": "~57.0.22",
     "expo-camera": "~57.0.5",
     "expo-constants": "~57.0.19",
     "expo-network": "~57.0.2",

@@ -57,7 +57,7 @@ export function SearchCard({ item, itemSize, onAdd, onPreview, bookType, adding 
         <Text numberOfLines={2} style={[styles.searchTitle, { color: theme.text, fontSize: sizing.title, lineHeight: sizing.title + 4 }]}>{item.title}</Text>
         <Text numberOfLines={1} style={[styles.cardMeta, { color: theme.muted }]}>{item.author || item.year || item.kind}</Text>
         <Text numberOfLines={sizing.overviewLines} style={[styles.overview, { color: theme.muted }]}>{item.overview || 'No overview available.'}</Text>
-        <Text style={{ color: theme.accent, fontSize: 12 }}>View details</Text>
+        <Text style={{ color: theme.accent, fontSize: 12 }}>Read full synopsis</Text>
       </View>
       </Pressable>
       <View style={styles.searchActions}>

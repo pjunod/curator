@@ -17,7 +17,9 @@ Monarr data or metadata provider keys live on the phone.
   reasons kept visible and Grab on any row (`src/screens/ReleaseSearchScreen.tsx`).
 - Discover and metadata search, including full-synopsis previews, verified
   database links, and root/profile choices retained when returning from Add
-  options to the preview. Quick Add still opens options directly.
+  options to the preview. Read full synopsis opens details without adding;
+  Quick Add opens options with the complete synopsis above them. The modal
+  measures its own safe area so Close stays below the status bar.
 - Wanted items, backlog search, active and retained activity, and the
   calendar agenda — poster rows with episode, air time, network and status,
   loading further ahead as you scroll.

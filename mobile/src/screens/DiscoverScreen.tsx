@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Keyboard, Modal, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { compatibleRootFolders, resolveRootFolderID } from '../addMediaOptions'
 import { ApiError } from '../api'
 import type { MonarrClient } from '../api'
@@ -179,7 +179,6 @@ export function AddSheet({
     () => compatibleRootFolders(options.data?.roots ?? [], item.kind),
     [item.kind, options.data?.roots],
   )
-  const insets = useSafeAreaInsets()
   const [step, setStep] = useState(initialStep)
   const preview = useMetadataPreview(client, item)
   const submittingRef = useRef(false)
@@ -238,68 +237,68 @@ export function AddSheet({
 
   return (
     <Modal animationType="slide" presentationStyle="fullScreen" onRequestClose={back}>
-      <AppScreen forceTopInset>
-        <Header title={step === 'preview' ? 'Title details' : `Add ${item.kind === 'book' ? bookType : item.kind === 'series' ? 'series' : item.kind}`} left={<IconButton label={step === 'options' && initialStep === 'preview' ? 'Back to details' : 'Close'} glyph={step === 'options' && initialStep === 'preview' ? '‹' : '×'} onPress={back} />} />
-        <ScrollView key={step} contentContainerStyle={styles.sheetContent}>
-          {step === 'preview' ? <>
+      {/* A native modal has its own view hierarchy and must measure its own safe area. */}
+      <SafeAreaProvider>
+        <AppScreen forceTopInset>
+          <Header title={step === 'preview' ? 'Title details' : `Add ${item.kind === 'book' ? bookType : item.kind === 'series' ? 'series' : item.kind}`} left={<IconButton label={step === 'options' && initialStep === 'preview' ? 'Back to details' : 'Close'} glyph={step === 'options' && initialStep === 'preview' ? '‹' : '×'} onPress={back} />} />
+          <ScrollView key={step} style={styles.flex} contentContainerStyle={styles.sheetContent}>
             <PreviewDetails item={item} data={preview.data} loading={preview.loading} error={preview.error} conflict={preview.conflict} unsupported={preview.unsupported} retry={() => void preview.refresh()} />
-          </> : <>
-          <Text style={[styles.addTitle, { color: theme.text }]}>{item.title}</Text>
-          <Text style={[styles.blurb, { color: theme.muted }]}>{item.author || item.year}</Text>
+            {step === 'options' ? <>
 
-          {options.loading ? <LoadingState label="Loading server defaults…" /> : null}
-          {options.error ? <InlineError message={options.error} /> : null}
+            {options.loading ? <LoadingState label="Loading server defaults…" /> : null}
+            {options.error ? <InlineError message={options.error} /> : null}
 
-          <SectionTitle>Root folder</SectionTitle>
-          <View style={styles.wrap}>
-            {compatibleRoots.map((root) => (
-              <Chip key={root.id} label={root.path.split('/').filter(Boolean).pop() ?? root.path} selected={rootID === root.id} onPress={() => setRootID(root.id)} />
-            ))}
-          </View>
-          {!options.loading && options.data && compatibleRoots.length === 0 ? (
-            <InlineError message={`No root folder is configured for ${item.kind === 'series' ? 'TV' : `${item.kind}s`}. Add one in the web settings first.`} />
-          ) : null}
-
-          <SectionTitle>Quality profile</SectionTitle>
-          {item.kind === 'book' ? (
+            <SectionTitle>Root folder</SectionTitle>
             <View style={styles.wrap}>
-              <Chip label={`Ebook${(item.bookTypes ?? []).includes('ebook') ? ' · owned' : ''}`} selected={bookType === 'ebook'} onPress={() => { setBookType('ebook'); setProfileID(0) }} />
-              <Chip label={`Audiobook${(item.bookTypes ?? []).includes('audiobook') ? ' · owned' : ''}`} selected={bookType === 'audiobook'} onPress={() => { setBookType('audiobook'); setProfileID(0) }} />
+              {compatibleRoots.map((root) => (
+                <Chip key={root.id} label={root.path.split('/').filter(Boolean).pop() ?? root.path} selected={rootID === root.id} onPress={() => setRootID(root.id)} />
+              ))}
             </View>
-          ) : null}
-          <View style={styles.wrap}>
-            <Chip label="Server default" selected={profileID === 0} onPress={() => setProfileID(0)} />
-            {(options.data?.profiles ?? []).filter((profile) => {
-              const profileBookType = bookTypeForSource(profile.target.source)
-              return item.kind === 'book' ? profileBookType === bookType : profileBookType === undefined
-            }).map((profile) => (
-              <Chip key={profile.id} label={profile.name} selected={profileID === profile.id} onPress={() => setProfileID(profile.id)} />
-            ))}
-          </View>
+            {!options.loading && options.data && compatibleRoots.length === 0 ? (
+              <InlineError message={`No root folder is configured for ${item.kind === 'series' ? 'TV' : `${item.kind}s`}. Add one in the web settings first.`} />
+            ) : null}
 
-          {item.kind === 'series' ? (
-            <>
-              <SectionTitle>Monitor seasons</SectionTitle>
+            <SectionTitle>Quality profile</SectionTitle>
+            {item.kind === 'book' ? (
               <View style={styles.wrap}>
-                {(['all', 'latest', 'none'] as const).map((value) => <Chip key={value} label={value} selected={monitor === value} onPress={() => setMonitor(value)} />)}
+                <Chip label={`Ebook${(item.bookTypes ?? []).includes('ebook') ? ' · owned' : ''}`} selected={bookType === 'ebook'} onPress={() => { setBookType('ebook'); setProfileID(0) }} />
+                <Chip label={`Audiobook${(item.bookTypes ?? []).includes('audiobook') ? ' · owned' : ''}`} selected={bookType === 'audiobook'} onPress={() => { setBookType('audiobook'); setProfileID(0) }} />
               </View>
-            </>
-          ) : null}
+            ) : null}
+            <View style={styles.wrap}>
+              <Chip label="Server default" selected={profileID === 0} onPress={() => setProfileID(0)} />
+              {(options.data?.profiles ?? []).filter((profile) => {
+                const profileBookType = bookTypeForSource(profile.target.source)
+                return item.kind === 'book' ? profileBookType === bookType : profileBookType === undefined
+              }).map((profile) => (
+                <Chip key={profile.id} label={profile.name} selected={profileID === profile.id} onPress={() => setProfileID(profile.id)} />
+              ))}
+            </View>
 
-          <Panel style={styles.addOptions}>
-            <OptionSwitch label="Monitored" hint="Keep searching until the quality target is met." value={monitored} onChange={setMonitored} />
-            <OptionSwitch label="Search now" hint="Start an automatic search as soon as this is added." value={searchNow} onChange={setSearchNow} />
-          </Panel>
-          <InlineError message={error} />
-          </>}
+            {item.kind === 'series' ? (
+              <>
+                <SectionTitle>Monitor seasons</SectionTitle>
+                <View style={styles.wrap}>
+                  {(['all', 'latest', 'none'] as const).map((value) => <Chip key={value} label={value} selected={monitor === value} onPress={() => setMonitor(value)} />)}
+                </View>
+              </>
+            ) : null}
 
-        </ScrollView>
-        <View style={[styles.sheetFooter, { borderColor: theme.border, paddingBottom: Math.max(16, insets.bottom) }]}>
-          {state.blocked && step === 'options' ? <InlineError message={preview.unsupported || preview.data?.addBlockReason || 'Resolve the identity conflict before adding.'} /> : null}
-          {state.owned ? <Text style={{ color: theme.muted }}>Already in your library{item.kind === 'book' ? ` · ${bookType}` : ''}</Text> : step === 'preview' ? <Button label="Continue to add" disabled={state.blocked} onPress={() => setStep('options')} /> : <Button label={submitting ? 'Adding…' : `Add ${item.title}`} disabled={submitting || options.loading || !rootID || state.blocked} onPress={() => void add()} />}
-          {state.libraryItemId ? <Button secondary label="Open in library" onPress={() => onAdded(state.libraryItemId!)} /> : null}
-        </View>
-      </AppScreen>
+            <Panel style={styles.addOptions}>
+              <OptionSwitch label="Monitored" hint="Keep searching until the quality target is met." value={monitored} onChange={setMonitored} />
+              <OptionSwitch label="Search now" hint="Start an automatic search as soon as this is added." value={searchNow} onChange={setSearchNow} />
+            </Panel>
+            <InlineError message={error} />
+            </> : null}
+
+          </ScrollView>
+          <SafeAreaView edges={{ bottom: 'maximum' }} style={[styles.sheetFooter, { borderColor: theme.border }]}>
+            {state.blocked && step === 'options' ? <InlineError message={preview.unsupported || preview.data?.addBlockReason || 'Resolve the identity conflict before adding.'} /> : null}
+            {state.owned ? <Text style={{ color: theme.muted }}>Already in your library{item.kind === 'book' ? ` · ${bookType}` : ''}</Text> : step === 'preview' ? <Button label="Continue to add" disabled={state.blocked} onPress={() => setStep('options')} /> : <Button label={submitting ? 'Adding…' : `Add ${item.title}`} disabled={submitting || options.loading || !rootID || state.blocked} onPress={() => void add()} />}
+            {state.libraryItemId ? <Button secondary label="Open in library" onPress={() => onAdded(state.libraryItemId!)} /> : null}
+          </SafeAreaView>
+        </AppScreen>
+      </SafeAreaProvider>
     </Modal>
   )
 }
@@ -327,7 +326,6 @@ const styles = StyleSheet.create({
   results: { gap: 10, marginTop: 12 },
   sheetFooter: { padding: 16, borderTopWidth: 1, gap: 10 },
   sheetContent: { padding: 18, paddingBottom: 42 },
-  addTitle: { fontSize: 25, lineHeight: 31, fontWeight: '800' },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   addOptions: { gap: 17, marginTop: 24, marginBottom: 16 },
   optionRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
