@@ -130,6 +130,23 @@ You can also add the missing edition from the book detail page.
 Nothing touches the disk at add time — the item's folder is created on
 first import.
 
+**Every item gets a folder of its own.** The folder is `Title (Year)`
+(`Author/Title` for books) — unless another library item already holds that
+name, which happens whenever two different works share a title and a year
+(there are two films called *Leviticus* from 2022). The second one is then
+given `Leviticus (2022) {tmdb-…}`: the same name plus its provider id, in the
+form Plex and Radarr use. Both stay in the library, each with its own files.
+Choosing a folder by hand that another item already holds is refused with the
+holder's name, rather than silently sharing it (ADR 0020). Adoption reads the
+`{tmdb-…}` / `[tmdbid-…]` hint back, so a disambiguated folder is matched to
+exactly the film it names.
+
+Upgrading to 0.28.1 repairs libraries where this already happened: for each
+folder claimed twice, the item that owns the files keeps it and the other is
+pointed at its own `{tmdb-…}` folder. Only the library record changes;
+nothing on disk is moved, and the `library-folders` warning under
+**System → Health** clears.
+
 ## Discover
 
 **Discover** (sidebar) is for the other half of the problem: adding
