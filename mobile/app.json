@@ -12,7 +12,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.pjunod.monarr",
-      "buildNumber": "25",
+      "buildNumber": "26",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -28,7 +28,7 @@
     },
     "android": {
       "package": "com.pjunod.monarr",
-      "versionCode": 25,
+      "versionCode": 26,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
