@@ -1,4 +1,4 @@
-# ADR 0020: Durable Runner recovery handoff
+# ADR 0021: Durable Runner recovery handoff
 
 - **Status:** implemented, verification pending
 - **Date:** 2026-09-25

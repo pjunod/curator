@@ -135,10 +135,9 @@ func TestImportRetriesAreBounded(t *testing.T) {
 	}
 }
 
-// M2: the client would not remove the payload, so monarr removes the folder
-// itself. This is the other half of the terabyte — the completed dir monarr
-// had just finished reading.
-func TestPayloadDirIsRemovedWhenTheClientWillNot(t *testing.T) {
+// Native Runner owns cleanup authority; a failed response leaves its payload
+// and Curator retry record intact instead of bypassing Runner through the mount.
+func TestRunnerPayloadRemainsPendingWhenClientCannotConfirmDeletion(t *testing.T) {
 	client := &fakeClient{removeErr: errors.New("history entry not found")}
 	svc, db, itemID := setupUsenet(t, client)
 	ctx := context.Background()
@@ -156,15 +155,15 @@ func TestPayloadDirIsRemovedWhenTheClientWillNot(t *testing.T) {
 	if err := svc.runImport(ctx, dl); err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if _, err := os.Stat(payload); !os.IsNotExist(err) {
-		t.Errorf("the completed folder survived a successful import: %v", err)
+	if _, err := os.Stat(payload); err != nil {
+		t.Errorf("unconfirmed Runner payload must remain: %v", err)
 	}
 	rows, err := db.ImportedWithPayload(ctx, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 0 {
-		t.Errorf("%d row(s) still pending cleanup after the folder was removed", len(rows))
+	if len(rows) != 1 {
+		t.Errorf("expected pending Runner cleanup row, got %d", len(rows))
 	}
 }
 

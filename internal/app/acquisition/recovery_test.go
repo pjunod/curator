@@ -381,3 +381,119 @@ func TestIdenticalOrdinaryReimportAfterRemovalHasNewPlacementGeneration(t *testi
 		t.Fatal(err)
 	}
 }
+
+func TestRecoveryDiscoveryPaginatesAndExposesClientErrors(t *testing.T) {
+	svc, db, _ := autoSetup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		rows := []RunnerRecovery{}
+		if r.URL.Query().Get("offset") == "0" {
+			for i := 0; i < 100; i++ {
+				rows = append(rows, RunnerRecovery{ID: fmt.Sprintf("r%03d", i), State: "published"})
+			}
+		} else {
+			rows = append(rows, RunnerRecovery{ID: "last", State: "published"})
+		}
+		_ = json.NewEncoder(w).Encode(rows)
+	}))
+	defer server.Close()
+	id, err := db.AddDownloadClient(ctx, ports.ClientConfig{Type: "nzbd", Name: "paginated", URL: server.URL, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := svc.RunnerRecoveries(ctx)
+	if err != nil || len(rows) != 101 || rows[100].ID != "last" || rows[100].ClientID != id || calls.Load() != 2 {
+		t.Fatalf("rows=%d calls=%d err=%v", len(rows), calls.Load(), err)
+	}
+	server.Close()
+	rows, err = svc.RunnerRecoveries(ctx)
+	if err != nil || len(rows) != 1 || rows[0].Error == "" {
+		t.Fatalf("error rows=%+v err=%v", rows, err)
+	}
+}
+func TestRecoveryMountValidationAndPreviewFailureAreDurable(t *testing.T) {
+	svc, _, req, _ := recoveryFixture(t)
+	ctx := context.Background()
+	p, err := svc.PreviewRecovery(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := p.Recovery
+	bad.ID = "../escape"
+	if _, err = svc.recoveryPayload(ctx, bad); err == nil {
+		t.Fatal("traversal accepted")
+	}
+	bad = p.Recovery
+	bad.Published = "/elsewhere/abc123"
+	if _, err = svc.recoveryPayload(ctx, bad); err == nil {
+		t.Fatal("wrong publication accepted")
+	}
+	cfg, err := svc.RecoverySettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.LocalRoot = "relative"
+	if err = svc.SetRecoverySettings(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.recoveryPayload(ctx, p.Recovery); err == nil {
+		t.Fatal("relative mount accepted")
+	}
+	task, err := svc.StartRecoveryPreview(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.recoveryPreviewSweep(ctx)
+	task, err = svc.RecoveryPreviewStatus(ctx, task.ID)
+	if err != nil || task.State != "failed" || task.Error == "" {
+		t.Fatalf("task=%+v err=%v", task, err)
+	}
+	req.PreviewID = task.ID
+	if _, err = svc.acceptedRecoveryPreview(ctx, req); err == nil {
+		t.Fatal("failed preview accepted")
+	}
+	advisory := svc.RecoveryAdvisory(ctx)
+	if advisory["credential_configured"] != true || advisory["local_mount_available"] != false {
+		t.Fatalf("advisory=%v", advisory)
+	}
+}
+func TestPartialRunnerReceiptCannotBecomeLocalCompletion(t *testing.T) {
+	svc, db, req, _ := recoveryFixture(t)
+	ctx := context.Background()
+	p, err := svc.PreviewRecovery(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := svc.QueueRecovery(ctx, p.Request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.runRecovery(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"state":"partial"}`)) }))
+	defer server.Close()
+	cfg, err := db.GetDownloadClient(ctx, req.ClientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.URL = server.URL
+	if err = db.UpdateDownloadClient(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	svc.deliverRecoveryReceipts(ctx)
+	result, err := svc.RecoveryImport(ctx, job.ID)
+	if err != nil || result.State != "receipt_pending" || !strings.Contains(result.Error, "partial") {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	metrics, err := svc.RecoveryMetrics(ctx)
+	if err != nil || metrics["receipt_outbox_pending"] != 1 {
+		t.Fatalf("metrics=%v err=%v", metrics, err)
+	}
+	jobs, err := svc.RecoveryImports(ctx)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs=%v err=%v", jobs, err)
+	}
+}

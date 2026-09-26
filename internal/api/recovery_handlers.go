@@ -1,7 +1,9 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	apigen "github.com/pjunod/monarr/internal/api/gen"
 	"github.com/pjunod/monarr/internal/app/acquisition"
 	"net/http"
@@ -85,6 +87,10 @@ func (s *Server) QueueRecoveryImport(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) GetRecoveryImport(w http.ResponseWriter, r *http.Request, id string) {
 	job, err := s.deps.Acquisition.RecoveryImport(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "recovery import not found")
+		return
+	}
 	if err != nil {
 		s.acqErr(w, err)
 		return
@@ -110,6 +116,10 @@ func (s *Server) CancelRecoveryImport(w http.ResponseWriter, r *http.Request, id
 
 func (s *Server) GetRecoveryPreview(w http.ResponseWriter, r *http.Request, id string) {
 	task, err := s.deps.Acquisition.RecoveryPreviewStatus(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "recovery preview not found")
+		return
+	}
 	if err != nil {
 		s.acqErr(w, err)
 		return

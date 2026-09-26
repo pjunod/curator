@@ -28,4 +28,4 @@ accepted; a change of course gets a new ADR that supersedes the old one.
 
 Context for all of these lives in [../architecture.md](../architecture.md).
 
-- [0020: Durable Runner recovery handoff](0021-file-lifecycle-recovery.md) — placement journal, target revision and receipt-driven cleanup.
+- [0021: Durable Runner recovery handoff](0021-file-lifecycle-recovery.md) — placement journal, target revision and receipt-driven cleanup.

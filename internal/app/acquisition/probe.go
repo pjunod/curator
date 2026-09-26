@@ -3,7 +3,6 @@ package acquisition
 import (
 	"context"
 	"path/filepath"
-	"time"
 
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 )

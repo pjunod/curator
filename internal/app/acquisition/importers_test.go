@@ -284,7 +284,7 @@ func TestQueuedImportsAreVisibleAndCanBeCancelled(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	t.Cleanup(func() { placeFile = previous })
+	t.Cleanup(func() { stop(); svc.WaitImporters(); placeFile = previous })
 
 	first, second, waiting := makeDownload(1), makeDownload(2), makeDownload(3)
 	if err := svc.ImportNow(context.Background(), first); err != nil {
@@ -293,13 +293,21 @@ func TestQueuedImportsAreVisibleAndCanBeCancelled(t *testing.T) {
 	if err := svc.ImportNow(context.Background(), second); err != nil {
 		t.Fatal(err)
 	}
-	for range importWorkers {
-		select {
-		case <-started:
-		case <-time.After(5 * time.Second):
-			t.Fatal("import worker did not fill")
-		}
+	// Placement is serialized by the shared ordinary/recovery coordinator.
+	// Both workers are occupied, but only one may enter the filesystem seam.
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first placement did not start")
 	}
+	deadline := time.Now().Add(5 * time.Second)
+	for svc.ImportStatus(first) != "running" || svc.ImportStatus(second) != "running" {
+		if time.Now().After(deadline) {
+			t.Fatal("import workers did not claim both jobs")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
 	if err := svc.ImportNow(context.Background(), waiting); err != nil {
 		t.Fatal(err)
 	}
