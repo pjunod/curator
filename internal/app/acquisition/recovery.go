@@ -86,6 +86,7 @@ type RecoveryTargetSnapshot struct {
 	Files    map[string]string `json:"files"`
 }
 type RecoveryImport struct {
+	Destinations     map[string]string      `json:"destinations"`
 	CurrentFile      string                 `json:"current_file,omitempty"`
 	CopiedBytes      int64                  `json:"copied_bytes,omitempty"`
 	TotalBytes       int64                  `json:"total_bytes,omitempty"`
@@ -145,16 +146,24 @@ func (s *Service) RunnerRecoveries(ctx context.Context) ([]RunnerRecovery, error
 		if cfg.Type != "nzbd" {
 			continue
 		}
-		var rows []RunnerRecovery
-		err = runner.New(cfg).RecoveryRequest(ctx, http.MethodGet, "recoveries", "", nil, &rows)
-		if err != nil {
-			out = append(out, RunnerRecovery{ClientID: cfg.ID, Error: err.Error()})
-			continue
+		for offset := 0; offset < 10000; offset += 100 {
+			var rows []RunnerRecovery
+			err = runner.New(cfg).RecoveryRequest(ctx, http.MethodGet, "recoveries?offset="+strconv.Itoa(offset), "", nil, &rows)
+			if err != nil {
+				out = append(out, RunnerRecovery{ClientID: cfg.ID, Error: err.Error()})
+				break
+			}
+			for i := range rows {
+				rows[i].ClientID = cfg.ID
+			}
+			out = append(out, rows...)
+			if len(rows) < 100 {
+				break
+			}
+			if offset == 9900 {
+				out = append(out, RunnerRecovery{ClientID: cfg.ID, Error: "More than 10,000 active recoveries; narrow the Runner inventory before refreshing"})
+			}
 		}
-		for i := range rows {
-			rows[i].ClientID = cfg.ID
-		}
-		out = append(out, rows...)
 	}
 	return out, nil
 }
@@ -402,6 +411,13 @@ func (s *Service) PreviewRecovery(ctx context.Context, req RecoveryRequest) (Rec
 		}
 		selected[id] = true
 	}
+	if len(req.FileIDs) > 0 && len(req.FileIDs) != len(r.Files) {
+		return preview, fmt.Errorf("import the whole staged handoff; choose a smaller selection when staging in Runner")
+	}
+	if item.Kind == domain.KindMovie && len(r.Files) != 1 {
+		return preview, fmt.Errorf("a movie handoff must contain one feature file; stage alternate versions separately")
+	}
+	destinations, episodes := map[string]bool{}, map[string]bool{}
 	for _, f := range r.Files {
 		if len(req.FileIDs) > 0 && !selected[f.ID] {
 			continue
@@ -432,9 +448,13 @@ func (s *Service) PreviewRecovery(ctx context.Context, req RecoveryRequest) (Rec
 			}
 		}
 
+		namedPath := path
+		if info.Container == mediainfo.ContainerMKV || info.Container == mediainfo.ContainerMP4 {
+			namedPath = strings.TrimSuffix(path, filepath.Ext(path)) + "." + info.Container
+		}
 		row := RecoveryPreviewFile{RecoveryFile: f, Info: info, Season: p.Season, Episodes: p.Episodes, Usable: e == nil && info.Container != "" && !mediainfo.IsUnsupported(info.Container)}
 		if item.Kind == domain.KindMovie {
-			row.Destination = movieDestination(dest, item, path, p.Quality)
+			row.Destination = movieDestination(dest, item, namedPath, p.Quality)
 		} else if item.Kind == domain.KindSeries && len(p.Episodes) > 0 {
 			title := ""
 			for _, season := range item.Seasons {
@@ -446,7 +466,7 @@ func (s *Service) PreviewRecovery(ctx context.Context, req RecoveryRequest) (Rec
 					}
 				}
 			}
-			row.Destination = episodeDestination(dest, item, path, p.Quality, p.Season, p.Episodes, title)
+			row.Destination = episodeDestination(dest, item, namedPath, p.Quality, p.Season, p.Episodes, title)
 		} else if item.Kind == domain.KindBook {
 			row.Destination = filepath.Join(dest, naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(path)))
 		}
@@ -475,6 +495,22 @@ func (s *Service) PreviewRecovery(ctx context.Context, req RecoveryRequest) (Rec
 		if !info.Measured() && row.Usable && !req.AcceptUnverified {
 			row.Usable = false
 			row.Reason = "recognized container with unverified media; explicit acceptance required"
+		}
+		if row.Destination != "" {
+			canonical := strings.ToLower(filepath.Clean(row.Destination))
+			if destinations[canonical] {
+				return preview, fmt.Errorf("multiple files target the same library path: %s", row.Destination)
+			}
+			destinations[canonical] = true
+		}
+		if item.Kind == domain.KindSeries {
+			for _, ep := range p.Episodes {
+				key := fmt.Sprintf("%d:%d", p.Season, ep)
+				if episodes[key] {
+					return preview, fmt.Errorf("multiple files target episode S%02dE%02d", p.Season, ep)
+				}
+				episodes[key] = true
+			}
 		}
 		preview.Files = append(preview.Files, row)
 		preview.CopyBytes += f.Bytes
@@ -518,7 +554,11 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 	if fmt.Sprintf("%x", sha256.Sum256(rawSnapshot)) != req.TargetGeneration {
 		return RecoveryImport{}, fmt.Errorf("library changed while inspecting recovery; preview again")
 	}
-	r := RecoveryImport{ID: id, State: "queued", Request: req, Recovery: preview.Recovery, TargetSnapshot: snapshot, AcceptedRevision: snapshot.Revision}
+	destinations := map[string]string{}
+	for _, f := range preview.Files {
+		destinations[f.ID] = f.Destination
+	}
+	r := RecoveryImport{Destinations: destinations, ID: id, State: "queued", Request: req, Recovery: preview.Recovery, TargetSnapshot: snapshot, AcceptedRevision: snapshot.Revision}
 	raw, err := json.Marshal(r)
 	if err != nil {
 		return r, err
@@ -540,6 +580,7 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 		oldRaw, _ := json.Marshal(oldRequest)
 		newRaw, _ := json.Marshal(newRequest)
 		if string(oldRaw) == string(newRaw) {
+			existing.Destinations = destinations
 			existing.Request = req
 			existing.TargetSnapshot = snapshot
 			existing.AcceptedRevision = snapshot.Revision
@@ -548,8 +589,10 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 			return existing, s.saveRecoveryImport(ctx, existing)
 		}
 	}
-	want, _ := json.Marshal(req)
-	got, _ := json.Marshal(existing.Request)
+	compareRequest, compareExisting := req, existing.Request
+	compareRequest.PreviewID, compareExisting.PreviewID = "", ""
+	want, _ := json.Marshal(compareRequest)
+	got, _ := json.Marshal(compareExisting)
 	if string(want) != string(got) {
 		return r, fmt.Errorf("recovery already queued with different targets")
 	}
@@ -630,6 +673,7 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 	}
 	var paths []string
 	ids := map[string]string{}
+	destinations := map[string]string{}
 	targets := map[string]RecoveryEpisodeTarget{}
 	for _, f := range r.Recovery.Files {
 		if len(r.Request.FileIDs) > 0 && !selected[f.ID] {
@@ -645,6 +689,7 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 		}
 		paths = append(paths, path)
 		ids[path] = f.ID
+		destinations[path] = r.Destinations[f.ID]
 		if target, ok := r.Request.EpisodeTargets[f.ID]; ok {
 			targets[path] = target
 		}
@@ -657,10 +702,13 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 		lastProgress = time.Now()
 		_, _ = s.db.W.ExecContext(ctx, `UPDATE recovery_imports SET data=json_set(data,'$.current_file',?,'$.copied_bytes',?,'$.total_bytes',?),updated_at=? WHERE id=?`, filepath.Base(path), done, total, time.Now().UnixMilli(), r.ID)
 	}
-	ctx = context.WithValue(ctx, recoveryPlacementKey{}, &recoveryPlacementContext{Progress: progress, ImportID: r.ID, Files: ids, EpisodeTargets: targets, Validate: func() error { return s.validateRecoveryTarget(ctx, r) }})
+	ctx = context.WithValue(ctx, recoveryPlacementKey{}, &recoveryPlacementContext{Destinations: destinations, Progress: progress, ImportID: r.ID, Files: ids, EpisodeTargets: targets, Validate: func() error { return s.validateRecoveryTarget(ctx, r) }})
 	result, importErr := s.importDownloadFiles(ctx, sqlite.Download{MediaItemID: r.Request.MediaItemID, CopyID: r.Request.CopyID, ReleaseTitle: "recovery " + r.Recovery.ID}, root, paths, true)
 	if result.Imported != len(paths) || importErr != nil {
 		return fmt.Errorf("partial recovery remains held: %d/%d imported: %v", result.Imported, len(paths), importErr)
+	}
+	if err = s.verifyRecoveryPublications(ctx, r); err != nil {
+		return err
 	}
 	// Results originate inside the metadata transaction, never from a worker's
 	// optimistic return value. Persist the delivery outbox before contacting Runner.
@@ -806,9 +854,14 @@ func (s *Service) deliverRecoveryReceipts(ctx context.Context) {
 		if e != nil {
 			continue
 		}
-		e = client.RecoveryRequest(ctx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/receipt", cfg.ConsumerToken, json.RawMessage(p.raw), nil)
+		var remote RunnerRecovery
+		e = client.RecoveryRequest(ctx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/receipt", cfg.ConsumerToken, json.RawMessage(p.raw), &remote)
 		if e != nil {
 			_, _ = s.db.W.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET last_error=?,updated_at=? WHERE import_id=?`, e.Error(), time.Now().UnixMilli(), p.id)
+			continue
+		}
+		if remote.State != "imported" {
+			_, _ = s.db.W.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET last_error=?,updated_at=? WHERE import_id=?`, "Runner receipt state is "+remote.State+"; source remains held", time.Now().UnixMilli(), p.id)
 			continue
 		}
 		// Delivery acknowledgement and local completion are one transaction;
@@ -901,6 +954,14 @@ func (s *Service) CancelRecoveryImport(ctx context.Context, id string) error {
 	return nil
 }
 func (s *Service) ackRecoveryCancel(ctx context.Context, r RecoveryImport) {
+	s.importTargetMu.Lock()
+	err := s.rollbackRecoveryPlacements(ctx, r.ID)
+	s.importTargetMu.Unlock()
+	if err != nil {
+		r.State, r.Error = "cancel_pending", "Cancellation reconciliation: "+err.Error()
+		_ = s.saveRecoveryImport(ctx, r)
+		return
+	}
 	cfg, err := s.RecoverySettings(ctx)
 	if err != nil {
 		return

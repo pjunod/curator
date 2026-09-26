@@ -995,3 +995,10 @@ Back up Curator's database and library in one coordinated maintenance window.
 After restoring either, keep Runner sources held while reviewing recovered
 placement intentions and outbox records. Do not restore old metadata while
 pre-restore workers continue writing to the library.
+
+Recovery selection is sealed in Runner at staging time. Curator imports every
+file in that handoff together; stage separate handoffs for alternate movie
+versions. Overlapping episode assignments or destinations require a new preview.
+Recognized obfuscated video keeps its source filename and receives a native
+container extension at its library destination. Cancellation rolls back any
+published placement that has not yet committed library metadata.

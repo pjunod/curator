@@ -37,11 +37,11 @@ func (s *Server) metricsHandler() http.Handler {
 
 		if s.deps.Acquisition != nil {
 			if counts, err := s.deps.Acquisition.RecoveryMetrics(ctx); err == nil {
-				fmt.Fprintln(w, "# TYPE monarr_recovery_imports gauge")
+				_, _ = fmt.Fprintln(w, "# TYPE monarr_recovery_imports gauge")
 				for _, state := range []string{"queued", "importing", "review", "cancel_pending", "cancelled", "receipt_pending", "imported"} {
 					fmt.Fprintf(w, "monarr_recovery_imports{state=%q} %d\n", state, counts[state])
 				}
-				fmt.Fprintln(w, "# TYPE monarr_recovery_outbox_pending gauge")
+				_, _ = fmt.Fprintln(w, "# TYPE monarr_recovery_outbox_pending gauge")
 				fmt.Fprintf(w, "monarr_recovery_outbox_pending %d\n", counts["receipt_outbox_pending"])
 			}
 			active := 0

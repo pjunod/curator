@@ -16,27 +16,29 @@ import (
 // Placement is an intent persisted before a library rename. Its metadata is
 // sufficient to reconcile a published file after a crash without recopying it.
 type Placement struct {
-	Superseded     []domain.MediaFile   `json:"superseded,omitempty"`
-	ID             string               `json:"id"`
-	Source         string               `json:"source"`
-	Target         string               `json:"target"`
-	Temporary      string               `json:"temporary"`
-	Backup         string               `json:"backup"`
-	SHA256         string               `json:"sha256"`
-	PreviousSHA256 string               `json:"previous_sha256"`
-	Size           int64                `json:"size"`
-	ItemID         int64                `json:"item_id"`
-	CopyID         int64                `json:"copy_id"`
-	EpisodeIDs     []int64              `json:"episode_ids"`
-	Quality        quality.Quality      `json:"quality"`
-	Info           mediainfo.Info       `json:"info"`
-	Provenance     mediainfo.Provenance `json:"provenance"`
-	Confidence     mediainfo.Confidence `json:"confidence"`
-	Release        string               `json:"release"`
-	Indexer        string               `json:"indexer"`
-	RecoveryImport string               `json:"recovery_import,omitempty"`
-	RecoveryFile   string               `json:"recovery_file,omitempty"`
-	State          string               `json:"state"`
+	CleanupSuperseded bool                 `json:"cleanup_superseded,omitempty"`
+	SupersededDigests map[string]string    `json:"superseded_digests,omitempty"`
+	Superseded        []domain.MediaFile   `json:"superseded,omitempty"`
+	ID                string               `json:"id"`
+	Source            string               `json:"source"`
+	Target            string               `json:"target"`
+	Temporary         string               `json:"temporary"`
+	Backup            string               `json:"backup"`
+	SHA256            string               `json:"sha256"`
+	PreviousSHA256    string               `json:"previous_sha256"`
+	Size              int64                `json:"size"`
+	ItemID            int64                `json:"item_id"`
+	CopyID            int64                `json:"copy_id"`
+	EpisodeIDs        []int64              `json:"episode_ids"`
+	Quality           quality.Quality      `json:"quality"`
+	Info              mediainfo.Info       `json:"info"`
+	Provenance        mediainfo.Provenance `json:"provenance"`
+	Confidence        mediainfo.Confidence `json:"confidence"`
+	Release           string               `json:"release"`
+	Indexer           string               `json:"indexer"`
+	RecoveryImport    string               `json:"recovery_import,omitempty"`
+	RecoveryFile      string               `json:"recovery_file,omitempty"`
+	State             string               `json:"state"`
 }
 
 func (d *DB) PreparePlacement(ctx context.Context, p Placement) error {

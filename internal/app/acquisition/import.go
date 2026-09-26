@@ -256,7 +256,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	// The import scope: which copy this grab was for decides the profile,
 	// the destination folder, and which existing files count as "current".
 	scope := importScope{Dest: item.Path, ProfileID: item.QualityProfileID,
-		Release: dl.ReleaseTitle, Indexer: dl.Indexer}
+		Release: dl.ReleaseTitle, Indexer: dl.Indexer, Attempt: fmt.Sprintf("%d:%d:%s", dl.ID, dl.AddedAt.UnixNano(), dl.Handle)}
 	if dl.CopyID != 0 {
 		cp, err := s.db.GetMediaCopy(ctx, dl.MediaItemID, dl.CopyID)
 		if err != nil {
@@ -275,6 +275,12 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	isMedia := filename.IsVideo
 	if item.Kind == domain.KindBook {
 		isMedia = filename.IsBook
+	}
+	if recovery, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
+		// These exact paths were content-probed and digest-bound at admission.
+		isMedia = func(path string) bool {
+			return recovery.Files[path] != "" || recovery.Files[filepath.Join(savePath, path)] != ""
+		}
 	}
 	var videos []string
 	if selected == nil {
@@ -643,9 +649,11 @@ func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) 
 // primary), its destination folder, its quality profile, and what produced
 // the payload.
 type importScope struct {
-	CopyID    int64
-	Dest      string
-	ProfileID int64
+	Attempt      string
+	DeferCleanup bool
+	CopyID       int64
+	Dest         string
+	ProfileID    int64
 	// Release and Indexer name the thing being imported. They ride along here
 	// rather than as two more parameters on three near-identical signatures,
 	// and they exist so each placed file can remember its own origin —
@@ -675,6 +683,9 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	_ = profile
 
 	dest := movieDestination(scope.Dest, item, src, q)
+	if r, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
+		dest = r.Destinations[src]
+	}
 	_, err = s.commitPlacement(ctx, item, scope, src, dest, q, nil, upgrade)
 	if err != nil {
 		return placement{}, err
@@ -718,6 +729,7 @@ func (s *Service) planBookImport(ctx context.Context, item domain.MediaItem, sco
 
 func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, manual bool, part, total int, plan *bookImportPlan) (placement, error) {
 	if plan != nil {
+		scope.DeferCleanup = true
 		base := naming.BookFileName(item.Author, item.Title)
 		if total > 1 {
 			base += fmt.Sprintf(" - %03d", part+1)
@@ -820,6 +832,9 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		title = epTitles[0]
 	}
 	dest := episodeDestination(scope.Dest, item, src, q, season, eps, title)
+	if r, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
+		dest = r.Destinations[src]
+	}
 	_, err := s.commitPlacement(ctx, item, scope, src, dest, q, epIDs, upgrade)
 	if err != nil {
 		return placement{}, err

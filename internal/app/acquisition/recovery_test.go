@@ -14,11 +14,15 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
 func recoveryFixture(t *testing.T) (*Service, *sqlite.DB, RecoveryRequest, *atomic.Int32) {
+	return recoveryNamedFixture(t, "Recovered.2024.1080p.WEB-DL.mkv", false)
+}
+func recoveryNamedFixture(t *testing.T, name string, extra bool) (*Service, *sqlite.DB, RecoveryRequest, *atomic.Int32) {
 	t.Helper()
 	svc, db, itemID := autoSetup(t, nil, &fakeClient{})
 	ctx := context.Background()
@@ -28,11 +32,19 @@ func recoveryFixture(t *testing.T) (*Service, *sqlite.DB, RecoveryRequest, *atom
 		t.Fatal(err)
 	}
 	bytes := corpusFile(t, wholeCorpus1080)
-	name := "Recovered.2024.1080p.WEB-DL.mkv"
 	if err := os.WriteFile(filepath.Join(payload, name), bytes, 0644); err != nil {
 		t.Fatal(err)
 	}
 	manifest := RunnerRecovery{ID: "abc123", Installation: "test-installation", Generation: "generation", State: "published", ManifestDigest: "sealed", Published: "/published/abc123", Files: []RecoveryFile{{ID: "file", Path: name, Bytes: int64(len(bytes)), SHA256: fmt.Sprintf("%x", sha256.Sum256(bytes))}}}
+	if extra {
+		duplicate := manifest.Files[0]
+		duplicate.ID = "alternate"
+		duplicate.Path = "Alternate.1080p.WEB-DL.mkv"
+		if err := os.WriteFile(filepath.Join(payload, duplicate.Path), bytes, 0644); err != nil {
+			t.Fatal(err)
+		}
+		manifest.Files = append(manifest.Files, duplicate)
+	}
 	receipts := &atomic.Int32{}
 	var manifestMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -251,5 +263,121 @@ func TestRecoveryLibraryEditDuringCopyPreventsReceipt(t *testing.T) {
 	}
 	if receipts.Load() != 0 {
 		t.Fatal("receipt sent for stale library target")
+	}
+}
+
+func TestRecoveryRejectsSubsetAndCompetingMovieVersions(t *testing.T) {
+	svc, _, req, receipts := recoveryNamedFixture(t, "Feature.1080p.WEB-DL.mkv", true)
+	if _, err := svc.PreviewRecovery(context.Background(), req); err == nil || !strings.Contains(err.Error(), "whole staged") {
+		t.Fatalf("subset error=%v", err)
+	}
+	req.FileIDs = []string{"file", "alternate"}
+	if _, err := svc.PreviewRecovery(context.Background(), req); err == nil || !strings.Contains(err.Error(), "one feature") {
+		t.Fatalf("overlap error=%v", err)
+	}
+	if receipts.Load() != 0 {
+		t.Fatal("unimported files receipted")
+	}
+}
+func TestObfuscatedRecoveryUsesContentExtension(t *testing.T) {
+	svc, db, req, receipts := recoveryNamedFixture(t, "abcdef012345.bin", false)
+	ctx := context.Background()
+	preview, err := svc.PreviewRecovery(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(preview.Files[0].Destination, ".mkv") {
+		t.Fatalf("destination=%s", preview.Files[0].Destination)
+	}
+	job, err := svc.QueueRecovery(ctx, preview.Request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.recoverySweep(ctx)
+	result, err := svc.RecoveryImport(ctx, job.ID)
+	if err != nil || result.State != "imported" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	files, err := db.ListFilesForItem(ctx, req.MediaItemID)
+	if err != nil || len(files) != 1 || !strings.HasSuffix(files[0].Path, ".mkv") {
+		t.Fatalf("files=%v err=%v", files, err)
+	}
+	if receipts.Load() != 1 {
+		t.Fatal("missing final receipt")
+	}
+}
+func TestCancelledPublishedReplacementRollsBackBeforeAcknowledgement(t *testing.T) {
+	svc, db, req, _ := recoveryFixture(t)
+	ctx := context.Background()
+	preview, err := svc.PreviewRecovery(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := svc.QueueRecovery(ctx, preview.Request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "target.mkv")
+	backup := filepath.Join(root, ".prior")
+	if err = os.WriteFile(target, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(backup, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	p := sqlite.Placement{ID: "cancelled-publication", Target: target, Backup: backup, Temporary: filepath.Join(root, ".staged"), SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("new"))), PreviousSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("old"))), State: "prepared", RecoveryImport: job.ID}
+	if err = db.PreparePlacement(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.CancelRecoveryImport(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	svc.recoverySweep(ctx)
+	result, err := svc.RecoveryImport(ctx, job.ID)
+	if err != nil || result.State != "cancelled" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "old" {
+		t.Fatalf("target=%q err=%v", got, err)
+	}
+	var state string
+	if err = db.R.QueryRowContext(ctx, `SELECT state FROM import_placements WHERE id=?`, p.ID).Scan(&state); err != nil || state != "rolled_back" {
+		t.Fatalf("state=%s err=%v", state, err)
+	}
+}
+func TestIdenticalOrdinaryReimportAfterRemovalHasNewPlacementGeneration(t *testing.T) {
+	svc, db, itemID := autoSetup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	src, dest := filepath.Join(root, "source.mkv"), filepath.Join(root, "target.mkv")
+	if err = os.WriteFile(src, corpusFile(t, wholeCorpus1080), 0644); err != nil {
+		t.Fatal(err)
+	}
+	scope := importScope{Attempt: "same-download"}
+	fid, err := svc.commitPlacement(ctx, item, scope, src, dest, quality.Quality{}, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(dest); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.DeleteFile(ctx, fid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.commitPlacement(ctx, item, scope, src, dest, quality.Quality{}, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM import_placements`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("generations=%d err=%v", n, err)
+	}
+	if _, err = os.Stat(dest); err != nil {
+		t.Fatal(err)
 	}
 }

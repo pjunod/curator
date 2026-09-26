@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 type targetHeldKey struct{}
 type recoveryPlacementKey struct{}
 type recoveryPlacementContext struct {
+	Destinations   map[string]string
 	Progress       func(string, int64, int64)
 	Validate       func() error
 	EpisodeTargets map[string]RecoveryEpisodeTarget
@@ -114,13 +116,34 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 	if err != nil {
 		return 0, err
 	}
-	key := fmt.Sprintf("%d:%d:%s:%s", item.ID, scope.CopyID, dest, hash)
+	key := fmt.Sprintf("%d:%d:%s:%s:%s", item.ID, scope.CopyID, dest, hash, scope.Attempt)
 	recovery, _ := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext)
 	if recovery != nil {
 		key += "/" + recovery.ImportID
 	}
 	id := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
 	p, err := s.db.GetPlacement(ctx, id)
+	// A committed ordinary attempt is idempotent while its library result
+	// exists. A deliberate reimport after removal gets a new durable generation.
+	for generation := 0; recovery == nil && err == nil && (p.State == "committed" || p.State == "cleaned"); generation++ {
+		current, _, e := fileDigest(ctx, p.Target)
+		var present int
+		dbErr := s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM media_files WHERE path=? AND media_item_id=?`, p.Target, p.ItemID).Scan(&present)
+		if dbErr != nil {
+			return 0, dbErr
+		}
+		if e == nil && current == p.SHA256 && present > 0 {
+			break
+		}
+		if e != nil && !errors.Is(e, os.ErrNotExist) {
+			return 0, e
+		}
+		if generation >= 1000 {
+			return 0, fmt.Errorf("placement generation limit reached")
+		}
+		id = fmt.Sprintf("%x", sha256.Sum256([]byte(key+"/"+id)))
+		p, err = s.db.GetPlacement(ctx, id)
+	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
@@ -153,6 +176,8 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 			}
 		}
 		p = sqlite.Placement{ID: id, Source: src, Target: dest, Temporary: filepath.Join(filepath.Dir(dest), ".monarr-stage-"+id), Backup: filepath.Join(filepath.Dir(dest), ".monarr-prior-"+id), SHA256: hash, PreviousSHA256: previous, Size: size, ItemID: item.ID, CopyID: scope.CopyID, EpisodeIDs: eps, Quality: measured, Info: info, Provenance: prov, Confidence: conf, Release: scope.Release, Indexer: scope.Indexer, State: "prepared"}
+		p.CleanupSuperseded = replace && item.Kind == domain.KindBook && !scope.DeferCleanup
+		p.SupersededDigests = map[string]string{}
 		if replace {
 			files, e := s.db.ListFilesForItem(ctx, item.ID)
 			if e != nil {
@@ -171,6 +196,13 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 					}
 				}
 				if matched {
+					if p.CleanupSuperseded && old.Path != dest {
+						digest, _, e := fileDigest(ctx, old.Path)
+						if e != nil && !errors.Is(e, os.ErrNotExist) {
+							return 0, e
+						}
+						p.SupersededDigests[old.Path] = digest
+					}
 					p.Superseded = append(p.Superseded, old)
 				}
 			}
@@ -220,6 +252,31 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 	return fid, nil
 }
 func (s *Service) cleanupPlacement(ctx context.Context, p sqlite.Placement) error {
+	if p.CleanupSuperseded {
+		for _, old := range p.Superseded {
+			if old.Path == p.Target {
+				continue
+			}
+			got, _, err := fileDigest(ctx, old.Path)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if err == nil {
+				if got != p.SupersededDigests[old.Path] {
+					return fmt.Errorf("superseded book changed: %s", old.Path)
+				}
+				if err = os.Remove(old.Path); err != nil {
+					return err
+				}
+			}
+			if err = syncPath(filepath.Dir(old.Path)); err != nil {
+				return err
+			}
+			if err = s.db.DeleteFile(ctx, old.ID); err != nil {
+				return err
+			}
+		}
+	}
 	for path, expected := range map[string]string{p.Backup: p.PreviousSHA256, p.Temporary: p.SHA256} {
 		if expected == "" {
 			continue
@@ -248,7 +305,7 @@ func (s *Service) cleanupPlacement(ctx context.Context, p sqlite.Placement) erro
 func (s *Service) publishPlacement(ctx context.Context, p sqlite.Placement) error {
 	got, _, err := fileDigest(ctx, p.Target)
 	if err == nil && got == p.SHA256 {
-		return nil
+		return syncPublication(p.Target)
 	} // reconcile publication before DB commit
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -335,7 +392,7 @@ func (s *Service) publishPlacement(ctx context.Context, p sqlite.Placement) erro
 	if err = os.Rename(p.Temporary, p.Target); err != nil {
 		return err
 	}
-	return syncPath(filepath.Dir(p.Target))
+	return syncPublication(p.Target)
 }
 func (s *Service) reconcilePlacements(ctx context.Context) {
 	s.importTargetMu.Lock()
@@ -356,7 +413,13 @@ func (s *Service) reconcilePlacements(ctx context.Context) {
 		}
 		if p.RecoveryImport != "" {
 			r, e := s.RecoveryImport(ctx, p.RecoveryImport)
-			if e != nil || r.State == "cancel_pending" || r.State == "cancelled" {
+			if e != nil {
+				continue
+			}
+			if r.State == "cancel_pending" || r.State == "cancelled" {
+				if e = s.rollbackPlacement(ctx, p); e != nil {
+					s.log.Warn("cancelled placement needs reconciliation", "id", p.ID, "err", e)
+				}
 				continue
 			}
 			if e = s.validateRecoveryTarget(ctx, r); e != nil {
@@ -369,10 +432,142 @@ func (s *Service) reconcilePlacements(ctx context.Context) {
 		if e != nil || got != p.SHA256 {
 			continue
 		}
+		if e = syncPublication(p.Target); e != nil {
+			continue
+		}
 		if _, e = s.db.CommitPlacement(ctx, p); e != nil {
 			s.log.Error("placement commit remains pending", "id", p.ID, "err", e)
 		} else if e = s.cleanupPlacement(ctx, p); e != nil {
 			s.log.Warn("placement cleanup pending", "id", p.ID, "err", e)
 		}
 	}
+}
+
+// A previous rename is not evidence that its fsync succeeded. Recovery repeats
+// both file and directory synchronization, including newly created ancestors.
+func syncPublication(path string) error {
+	if err := syncPath(path); err != nil {
+		return err
+	}
+	for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
+		if err := syncPath(parent); err != nil {
+			return err
+		}
+		if filepath.Dir(parent) == parent {
+			return nil
+		}
+	}
+}
+func (s *Service) rollbackPlacement(ctx context.Context, p sqlite.Placement) error {
+	got, _, err := fileDigest(ctx, p.Target)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if got == p.SHA256 || (errors.Is(err, os.ErrNotExist) && p.PreviousSHA256 != "") {
+		if p.PreviousSHA256 == "" {
+			if err = os.Remove(p.Target); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		} else {
+			backup, _, e := fileDigest(ctx, p.Backup)
+			if e != nil {
+				return e
+			}
+			if backup != p.PreviousSHA256 {
+				return fmt.Errorf("rollback backup changed: %s", p.Backup)
+			}
+			if e = os.Rename(p.Backup, p.Target); e != nil {
+				return e
+			}
+			if e = syncPublication(p.Target); e != nil {
+				return e
+			}
+		}
+	} else if got != p.PreviousSHA256 {
+		return fmt.Errorf("cancelled target changed: %s", p.Target)
+	}
+	if _, err = os.Stat(filepath.Dir(p.Target)); err == nil {
+		if err = syncPath(filepath.Dir(p.Target)); err != nil {
+			return err
+		}
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err = s.cleanupPlacement(ctx, sqlite.Placement{ID: p.ID, Target: p.Target, Backup: p.Backup, Temporary: p.Temporary, SHA256: p.SHA256, PreviousSHA256: p.PreviousSHA256}); err != nil {
+		return err
+	}
+	_, err = s.db.W.ExecContext(ctx, `UPDATE import_placements SET state='rolled_back',updated_at=? WHERE id=? AND state='prepared'`, time.Now().UnixMilli(), p.ID)
+	return err
+}
+func (s *Service) rollbackRecoveryPlacements(ctx context.Context, id string) error {
+	rows, err := s.db.R.QueryContext(ctx, `SELECT data FROM import_placements WHERE state='prepared' AND json_extract(data,'$.recovery_import')=?`, id)
+	if err != nil {
+		return err
+	}
+	var placements []sqlite.Placement
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			break
+		}
+		var p sqlite.Placement
+		if err = json.Unmarshal([]byte(raw), &p); err != nil {
+			break
+		}
+		placements = append(placements, p)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, p := range placements {
+		if err = s.rollbackPlacement(ctx, p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (s *Service) verifyRecoveryPublications(ctx context.Context, r RecoveryImport) error {
+	rows, err := s.db.R.QueryContext(ctx, `SELECT data FROM import_placements WHERE state IN ('committed','cleaned') AND json_extract(data,'$.recovery_import')=?`, r.ID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	seen, files := map[string]bool{}, map[string]bool{}
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			return err
+		}
+		var p sqlite.Placement
+		if err = json.Unmarshal([]byte(raw), &p); err != nil {
+			return err
+		}
+		path := strings.ToLower(filepath.Clean(p.Target))
+		if seen[path] || files[p.RecoveryFile] {
+			return fmt.Errorf("recovery placements overlap")
+		}
+		seen[path], files[p.RecoveryFile] = true, true
+		got, size, e := fileDigest(ctx, p.Target)
+		if e != nil {
+			return e
+		}
+		if got != p.SHA256 || size != p.Size {
+			return fmt.Errorf("published recovery changed before receipt: %s", p.Target)
+		}
+		if e = syncPublication(p.Target); e != nil {
+			return e
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	if len(files) != len(r.Recovery.Files) {
+		return fmt.Errorf("not every staged file has a surviving publication")
+	}
+	return nil
 }
