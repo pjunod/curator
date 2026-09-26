@@ -728,4 +728,4 @@ Native container recognition is not a full decode/completeness check.
 A library, profile, episode or copy edit during copying can invalidate the
 preview. The initial database revision is intentionally global: an unrelated
 library edit can also require another preview. See
-[ADR 0020](adr/0020-file-lifecycle-recovery.md) for the placement and receipt contract.
+[ADR 0020](adr/0021-file-lifecycle-recovery.md) for the placement and receipt contract.

@@ -208,6 +208,9 @@ func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, er
 
 	id, err := q.InsertMediaItem(ctx, insertParams(m, time.Now()))
 	if err != nil {
+		if isPathConstraint(err) {
+			return 0, ErrFolderTaken
+		}
 		if isConstraint(err) {
 			return 0, ErrDuplicate
 		}
@@ -662,7 +665,13 @@ func (d *DB) UpdateMediaItemPlacement(ctx context.Context, m domain.MediaItem) e
 	if m.RootFolderID != 0 {
 		p.RootFolderID = sql.NullInt64{Int64: m.RootFolderID, Valid: true}
 	}
-	return d.Write.UpdateMediaItemPlacement(ctx, p)
+	if err := d.Write.UpdateMediaItemPlacement(ctx, p); err != nil {
+		if isPathConstraint(err) {
+			return ErrFolderTaken
+		}
+		return err
+	}
+	return nil
 }
 
 // UpdateMediaItemMetadata rewrites the provider-hydrated fields of an item

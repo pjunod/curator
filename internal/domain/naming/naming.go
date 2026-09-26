@@ -6,6 +6,7 @@ package naming
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -109,4 +110,40 @@ func FolderName(title string, year int) string {
 		return fmt.Sprintf("%s (%d)", name, year)
 	}
 	return name
+}
+
+// FolderTag renders the provider-id suffix that tells two same-named items
+// apart on disk: "{tmdb-123}", "{tvdb-456}", "{imdb-tt0000001}". The brace
+// form is Plex's documented folder hint and Radarr's {tmdb-…} naming token,
+// so a disambiguated folder is also an unambiguous one to every scanner
+// that reads the library after Monarr.
+func FolderTag(provider, id string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	id = strings.TrimSpace(id)
+	if provider == "" || id == "" {
+		return ""
+	}
+	return "{" + provider + "-" + id + "}"
+}
+
+// folderTagRE matches a trailing provider-id hint in either of the two
+// conventions a library is likely to hold: Plex/Radarr "{tmdb-123}" and
+// Jellyfin "[tmdbid-123]".
+//
+// It also reads back the two forms Monarr itself writes beyond the provider
+// hint: "{monarr-12}" for items no provider backs, and a trailing counter
+// ("{tmdb-1} (2)") for the rare case where even the tagged name was taken.
+var folderTagRE = regexp.MustCompile(`(?i)\s*[\{\[](tmdb|tvdb|imdb|olid|monarr)(?:id)?-([a-z0-9]+)[\}\]](?:\s*\(\d+\))?\s*$`)
+
+// ParseFolderTag splits a trailing provider-id hint off a folder name.
+// "Leviticus (2022) {tmdb-123}" → ("Leviticus (2022)", "tmdb", "123", true).
+// A name without one comes back unchanged with ok false.
+func ParseFolderTag(name string) (rest, provider, id string, ok bool) {
+	m := folderTagRE.FindStringSubmatchIndex(name)
+	if m == nil {
+		return name, "", "", false
+	}
+	return strings.TrimSpace(name[:m[0]]),
+		strings.ToLower(name[m[2]:m[3]]),
+		strings.ToLower(name[m[4]:m[5]]), true
 }

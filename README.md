@@ -348,4 +348,4 @@ and native interaction contract, renderings, and Fable review dispositions.
 [Delivery status](docs/status.html#search-preview-delivery) tracks implementation
 and verification.
 
-Runner recovery placement and cleanup are documented in [ADR 0020](docs/adr/0020-file-lifecycle-recovery.md) and the [recovery usage guide](docs/usage.md#recover-media-retained-by-runner).
+Runner recovery placement and cleanup are documented in [ADR 0020](docs/adr/0021-file-lifecycle-recovery.md) and the [recovery usage guide](docs/usage.md#recover-media-retained-by-runner).

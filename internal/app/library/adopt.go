@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/matcher"
+	"github.com/pjunod/monarr/internal/domain/naming"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -146,7 +148,11 @@ func altLead(p Proposal) (string, bool) {
 
 // propose builds one proposal.
 func (s *Service) propose(ctx context.Context, d UnmatchedDir, rootKind domain.RootKind) Proposal {
-	parsed := parser.Parse(d.Name)
+	// A folder Monarr disambiguated ("Leviticus (2022) {tmdb-123}") names
+	// its own identity. The hint is not part of the title, so it comes off
+	// before parsing; it is used below to pick the one candidate it names.
+	name, tagProvider, tagID, tagged := naming.ParseFolderTag(d.Name)
+	parsed := parser.Parse(name)
 	p := Proposal{
 		RootFolderID: d.RootFolderID,
 		Path:         d.Path,
@@ -221,6 +227,19 @@ func (s *Service) propose(ctx context.Context, d UnmatchedDir, rootKind domain.R
 	// matches are unaffected — clearing() compares primary titles, so they
 	// stay ambiguous by construction (ADR 0010 §2).
 	p.Confidence = grade(kind, parsed, results)
+	if tagged {
+		// Two works can share a title and a year — that is the whole reason
+		// the hint exists — so title matching alone grades these folders
+		// ambiguous. The id settles it, but only if the provider actually
+		// returned that record; otherwise the ordinary grade stands.
+		for _, r := range results {
+			if resultHasTag(r, tagProvider, tagID) {
+				results = append([]ports.SearchResult{r}, filterOut(results, r)...)
+				p.Confidence = ConfidenceExact
+				break
+			}
+		}
+	}
 
 	p.Candidates = trim(results, maxProposalCandidates)
 	// Keep only the alternate names that are why a candidate is here, so a
@@ -634,37 +653,31 @@ func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 	// files in it.
 	path := p.Path
 	if _, err := s.UpdateItem(ctx, item.ID, UpdateRequest{Path: &path}); err != nil {
+		// The item only exists to hold this folder. Leaving it behind at
+		// its naming-rule path would turn a failed adoption into a stray
+		// library entry the user never asked for.
+		if delErr := s.db.DeleteMediaItem(ctx, item.ID); delErr != nil {
+			s.log.Warn("adopt: could not remove the item a failed adoption created",
+				"id", item.ID, "err", delErr)
+		}
 		return fmt.Errorf("point %d at %s: %w", item.ID, p.Path, err)
 	}
 	return nil
 }
 
-// itemHolding returns the library item already pointed at path, if any.
+// itemHolding returns the library item already pointed at path, if any,
+// as its own folder or a copy's. Paths are compared cleaned, the same way
+// the rest of the one-folder rule compares them (ADR 0020).
 func (s *Service) itemHolding(ctx context.Context, path string) (domain.MediaItem, bool) {
-	if path == "" {
-		return domain.MediaItem{}, false
-	}
-	items, err := s.db.ListMediaItems(ctx, "")
+	holder, held, err := s.folderHolder(ctx, path, 0)
 	if err != nil {
 		s.log.Warn("adopt: could not check whether the folder is held", "err", err)
 		return domain.MediaItem{}, false
 	}
-	for _, it := range items {
-		if it.Path == path {
-			return it, true
-		}
-		copies, err := s.db.ListMediaCopies(ctx, it.ID)
-		if err != nil {
-			s.log.Warn("adopt: could not check copy folders", "item", it.ID, "err", err)
-			continue
-		}
-		for _, cp := range copies {
-			if cp.Path == path {
-				return it, true
-			}
-		}
+	if !held {
+		return domain.MediaItem{}, false
 	}
-	return domain.MediaItem{}, false
+	return domain.MediaItem{ID: holder.ItemID, Title: holder.Title}, true
 }
 
 // adoptionStateKey records which roots have been adopted at least once.
@@ -1007,4 +1020,20 @@ func (s *Service) relinkExisting(ctx context.Context, p Proposal, win ports.Sear
 	s.log.Info("adopt: existing library item pointed at its folder",
 		"title", existing.Title, "path", p.Path, "was", existing.Path)
 	return nil
+}
+
+// resultHasTag reports whether a provider result is the record a folder's
+// {provider-id} hint names.
+func resultHasTag(r ports.SearchResult, provider, id string) bool {
+	switch provider {
+	case "tmdb":
+		return r.TMDBID != 0 && strconv.FormatInt(r.TMDBID, 10) == id
+	case "tvdb":
+		return r.TVDBID != 0 && strconv.FormatInt(r.TVDBID, 10) == id
+	case "imdb":
+		return r.IMDBID != "" && strings.EqualFold(r.IMDBID, id)
+	case "olid":
+		return r.OLID != "" && strings.EqualFold(r.OLID, id)
+	}
+	return false
 }

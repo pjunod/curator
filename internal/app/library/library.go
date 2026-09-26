@@ -17,7 +17,6 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	identityinput "github.com/pjunod/monarr/internal/domain/identity"
 	"github.com/pjunod/monarr/internal/domain/matcher"
-	"github.com/pjunod/monarr/internal/domain/naming"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -37,10 +36,11 @@ var (
 	// one that is already registered (ADR 0009 §3).
 	ErrNestedRoot = errors.New("root folders may not nest")
 	// ErrFolderConflict is returned when two folders claim one title and
-	// both exist on disk. Distinct from ErrAlreadyExists because it is
-	// resolvable by the user rather than simply wrong: they know which
-	// folder holds the files.
-	ErrFolderConflict = errors.New("another folder already holds this title")
+	// both exist on disk, or when one folder would be claimed by two items
+	// (ADR 0020). Distinct from ErrAlreadyExists because it is resolvable
+	// by the user rather than simply wrong: they know which folder holds
+	// the files.
+	ErrFolderConflict = errors.New("folder conflict")
 	// ErrManualEntry is returned by provider-backed operations asked to act
 	// on a record no provider backs (ADR 0012). Not a failure: the caller
 	// skips rather than reports.
@@ -662,15 +662,27 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, er
 				"%w: root folder %s holds %s", ErrRootKindMismatch, rf.Path, rf.Kind)
 		}
 		item.RootFolderID = rf.ID
-		if item.Kind == domain.KindBook {
-			item.Path = filepath.Join(rf.Path, naming.BookFolder(item.Author, item.Title))
-		} else {
-			item.Path = filepath.Join(rf.Path, naming.FolderName(item.Title, item.Year))
+		if item.Path, err = s.freeFolder(ctx, rf.Path, item); err != nil {
+			return domain.MediaItem{}, err
 		}
 	}
 
 	id, err := s.db.CreateMediaItem(ctx, item)
+	if errors.Is(err, sqlite.ErrFolderTaken) && item.RootFolderID != 0 {
+		// Another add took the folder between freeFolder's read and this
+		// insert — two same-named films arriving together from an import
+		// list and a person. The index refused the collision; choosing
+		// again finds the tagged folder instead of failing a valid add.
+		if rf, rfErr := s.db.GetRootFolder(ctx, item.RootFolderID); rfErr == nil {
+			if item.Path, err = s.freeFolder(ctx, rf.Path, item); err == nil {
+				id, err = s.db.CreateMediaItem(ctx, item)
+			}
+		}
+	}
 	if err != nil {
+		if errors.Is(err, sqlite.ErrFolderTaken) {
+			return domain.MediaItem{}, folderTakenErr(err, item.Path)
+		}
 		if errors.Is(err, sqlite.ErrDuplicate) {
 			return domain.MediaItem{}, ErrAlreadyExists
 		}
@@ -810,11 +822,11 @@ func (s *Service) SuggestPlacement(ctx context.Context, id int64) (PlacementSugg
 		if !rf.Kind.Accepts(item.Kind) {
 			continue
 		}
-		folder := naming.FolderName(item.Title, item.Year)
-		if item.Kind == domain.KindBook {
-			folder = naming.BookFolder(item.Author, item.Title)
+		path, err := s.freeFolder(ctx, rf.Path, item)
+		if err != nil {
+			return PlacementSuggestion{}, err
 		}
-		return PlacementSuggestion{RootFolderID: rf.ID, Path: filepath.Join(rf.Path, folder)}, nil
+		return PlacementSuggestion{RootFolderID: rf.ID, Path: path}, nil
 	}
 	return PlacementSuggestion{}, fmt.Errorf("%w: no library root accepts %s", ErrInvalidInput, item.Kind)
 }
@@ -849,10 +861,8 @@ func (s *Service) UpdateItem(ctx context.Context, id int64, req UpdateRequest) (
 				return domain.MediaItem{}, fmt.Errorf("root folder: %w", err)
 			}
 			item.RootFolderID = rf.ID
-			if item.Kind == domain.KindBook {
-				item.Path = filepath.Join(rf.Path, naming.BookFolder(item.Author, item.Title))
-			} else {
-				item.Path = filepath.Join(rf.Path, naming.FolderName(item.Title, item.Year))
+			if item.Path, err = s.freeFolder(ctx, rf.Path, item); err != nil {
+				return domain.MediaItem{}, err
 			}
 		}
 	}
@@ -865,9 +875,12 @@ func (s *Service) UpdateItem(ctx context.Context, id int64, req UpdateRequest) (
 		if p == "" {
 			item.Path = ""
 		}
+		if err := s.ensureFolderFree(ctx, item.Path, item.ID); err != nil {
+			return domain.MediaItem{}, err
+		}
 	}
 	if err := s.db.UpdateMediaItemPlacement(ctx, item); err != nil {
-		return domain.MediaItem{}, err
+		return domain.MediaItem{}, folderTakenErr(err, item.Path)
 	}
 	s.log.Info("library: item updated", "id", id, "title", item.Title,
 		"monitored", item.Monitored, "profile", item.QualityProfileID, "path", item.Path)
@@ -1022,11 +1035,13 @@ func (s *Service) AddCopy(ctx context.Context, itemID int64, req CopyRequest) (d
 			return domain.MediaItem{}, fmt.Errorf("root folder: %w", err)
 		}
 		cp.RootFolderID = rf.ID
-		folder := naming.FolderName(item.Title, item.Year)
-		if item.Kind == domain.KindBook {
-			folder = naming.BookFolder(item.Author, item.Title)
+		// Same rule as the item's own folder: the plain name unless another
+		// item holds it (ADR 0020). The item's own claims are excluded, so a
+		// copy in the item's root still lands on — and is refused for — the
+		// item's folder below.
+		if cp.Path, err = s.freeFolder(ctx, rf.Path, item); err != nil {
+			return domain.MediaItem{}, err
 		}
-		cp.Path = filepath.Join(rf.Path, folder)
 		if cp.Path == item.Path {
 			return domain.MediaItem{}, fmt.Errorf(
 				"copy folder would collide with the item's own folder — pick a different root, or omit the root to share the folder")
@@ -1035,6 +1050,9 @@ func (s *Service) AddCopy(ctx context.Context, itemID int64, req CopyRequest) (d
 			if other.Path == cp.Path {
 				return domain.MediaItem{}, fmt.Errorf("another copy already uses %s", cp.Path)
 			}
+		}
+		if err := s.ensureFolderFree(ctx, cp.Path, item.ID); err != nil {
+			return domain.MediaItem{}, err
 		}
 	}
 	id, err := s.db.AddMediaCopy(ctx, cp)
@@ -1286,27 +1304,33 @@ func (s *Service) gradeOne(ctx context.Context, item *domain.MediaItem) {
 }
 
 // SharedFolders returns folders more than one library item points at,
-// with the titles sharing each one.
+// with a label ("Title (item N)") for each item sharing one.
 //
 // Two items on one folder is always wrong and never self-corrects: whichever
 // scan runs last decides which of them the files link to, and the other is a
-// card that looks real and holds nothing. Adoption refuses to create the
-// second one now (see adoptOne), but libraries built before that guard still
-// carry the damage, and damage nobody can see does not get repaired.
+// card that looks real and holds nothing. Folder choice now avoids it (see
+// freeFolder) and migration 0032 put a unique index on item folders, so what
+// this can still find is a copy's folder that another item also claims —
+// written before the copy path checked other items.
 func (s *Service) SharedFolders(ctx context.Context) (map[string][]string, error) {
-	items, err := s.db.ListMediaItems(ctx, "")
+	claims, err := s.db.ListFolderClaims(ctx)
 	if err != nil {
 		return nil, err
 	}
+	seen := map[string]map[int64]bool{}
 	byPath := map[string][]string{}
-	for _, it := range items {
-		if it.Path == "" {
-			continue
+	for _, c := range claims {
+		if seen[c.Path] == nil {
+			seen[c.Path] = map[int64]bool{}
 		}
-		byPath[it.Path] = append(byPath[it.Path], it.Title)
+		if seen[c.Path][c.ItemID] {
+			continue // an item and its own copy sharing a folder is by design
+		}
+		seen[c.Path][c.ItemID] = true
+		byPath[c.Path] = append(byPath[c.Path], fmt.Sprintf("%s (item %d)", c.Title, c.ItemID))
 	}
-	for path, titles := range byPath {
-		if len(titles) < 2 {
+	for path, labels := range byPath {
+		if len(labels) < 2 {
 			delete(byPath, path)
 		}
 	}
