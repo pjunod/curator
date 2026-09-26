@@ -26,8 +26,10 @@ import { NotifierSettings } from './SettingsNotifiers'
 import { PathInput } from '../PathInput'
 import { ReviewWindow } from '../ReviewWindow'
 import { MissingFolders } from '../MissingFolders'
+import { RecoveryEnableSettings, RecoveryImports } from './Recovery'
 
 export function SettingsPage() {
+  const [settingsTab, setSettingsTab] = useState<'general' | 'recovery' | 'dev'>('general')
   const qc = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
@@ -141,6 +143,10 @@ export function SettingsPage() {
         <h1>Settings</h1>
       </header>
 
+      <nav aria-label="Settings sections">{(['general', 'recovery', 'dev'] as const).map(tab => <button key={tab} aria-pressed={settingsTab === tab} onClick={() => setSettingsTab(tab)}>{tab === 'dev' ? 'Dev' : tab === 'recovery' ? 'Recovery' : 'General'}</button>)}</nav>
+      {settingsTab === 'dev' && <RecoveryEnableSettings />}
+      {settingsTab === 'recovery' && <RecoveryImports />}
+      <div hidden={settingsTab !== 'general'}>
       <section className="panel" id="metadata">
         <h2>Metadata provider (TMDB)</h2>
         <p className="muted">
@@ -466,6 +472,7 @@ export function SettingsPage() {
       <NotifierSettings />
 
       {reviewOpen && <ReviewWindow onClose={() => setReviewOpen(false)} />}
+      </div>
     </>
   )
 }

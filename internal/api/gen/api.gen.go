@@ -2013,6 +2013,30 @@ type Rating struct {
 	Votes *int    `json:"votes,omitempty"`
 }
 
+// RecoveryImportRequest defines model for RecoveryImportRequest.
+type RecoveryImportRequest struct {
+	AcceptUnverified bool  `json:"accept_unverified"`
+	ClientId         int64 `json:"client_id"`
+	CopyId           int64 `json:"copy_id"`
+	EpisodeTargets   *map[string]struct {
+		Episodes []int `json:"episodes"`
+		Season   int   `json:"season"`
+	} `json:"episode_targets,omitempty"`
+	FileIds          []string `json:"file_ids"`
+	MediaItemId      int64    `json:"media_item_id"`
+	PreviewId        *string  `json:"preview_id,omitempty"`
+	RecoveryId       string   `json:"recovery_id"`
+	TargetGeneration string   `json:"target_generation"`
+}
+
+// RecoverySettings defines model for RecoverySettings.
+type RecoverySettings struct {
+	ConsumerToken *string `json:"consumer_token,omitempty"`
+	Enabled       bool    `json:"enabled"`
+	LocalRoot     string  `json:"local_root"`
+	RemoteRoot    string  `json:"remote_root"`
+}
+
 // Rejection defines model for Rejection.
 type Rejection struct {
 	Code   string `json:"code"`
@@ -2666,6 +2690,15 @@ type GrabReleaseJSONRequestBody = GrabRequest
 // ManualImportJSONRequestBody defines body for ManualImport for application/json ContentType.
 type ManualImportJSONRequestBody = ManualImportRequest
 
+// QueueRecoveryImportJSONRequestBody defines body for QueueRecoveryImport for application/json ContentType.
+type QueueRecoveryImportJSONRequestBody = RecoveryImportRequest
+
+// PreviewRecoveryImportJSONRequestBody defines body for PreviewRecoveryImport for application/json ContentType.
+type PreviewRecoveryImportJSONRequestBody = RecoveryImportRequest
+
+// PutRecoverySettingsJSONRequestBody defines body for PutRecoverySettings for application/json ContentType.
+type PutRecoverySettingsJSONRequestBody = RecoverySettings
+
 // AddImportListJSONRequestBody defines body for AddImportList for application/json ContentType.
 type AddImportListJSONRequestBody = ImportListInput
 
@@ -2815,6 +2848,33 @@ type ServerInterface interface {
 	// ManualImport Import files from a path into a chosen item/copy
 	// (POST /import/manual)
 	ManualImport(w http.ResponseWriter, r *http.Request)
+
+	// (GET /import/recovery)
+	ListRecoveries(w http.ResponseWriter, r *http.Request)
+
+	// (POST /import/recovery)
+	QueueRecoveryImport(w http.ResponseWriter, r *http.Request)
+
+	// (GET /import/recovery/jobs)
+	ListRecoveryImports(w http.ResponseWriter, r *http.Request)
+
+	// (POST /import/recovery/preview)
+	PreviewRecoveryImport(w http.ResponseWriter, r *http.Request)
+	// GetRecoveryPreview Read a persisted recovery preview
+	// (GET /import/recovery/previews/{id})
+	GetRecoveryPreview(w http.ResponseWriter, r *http.Request, id string)
+
+	// (GET /import/recovery/settings)
+	GetRecoverySettings(w http.ResponseWriter, r *http.Request)
+
+	// (PUT /import/recovery/settings)
+	PutRecoverySettings(w http.ResponseWriter, r *http.Request)
+
+	// (GET /import/recovery/{id})
+	GetRecoveryImport(w http.ResponseWriter, r *http.Request, id string)
+
+	// (POST /import/recovery/{id}/cancel)
+	CancelRecoveryImport(w http.ResponseWriter, r *http.Request, id string)
 	// ScanImportPath List the media files Monarr can see under a path
 	// (GET /import/scan)
 	ScanImportPath(w http.ResponseWriter, r *http.Request, params ScanImportPathParams)
@@ -3567,6 +3627,168 @@ func (siw *ServerInterfaceWrapper) ManualImport(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ManualImport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRecoveries operation middleware
+func (siw *ServerInterfaceWrapper) ListRecoveries(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRecoveries(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// QueueRecoveryImport operation middleware
+func (siw *ServerInterfaceWrapper) QueueRecoveryImport(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.QueueRecoveryImport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRecoveryImports operation middleware
+func (siw *ServerInterfaceWrapper) ListRecoveryImports(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRecoveryImports(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewRecoveryImport operation middleware
+func (siw *ServerInterfaceWrapper) PreviewRecoveryImport(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewRecoveryImport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecoveryPreview operation middleware
+func (siw *ServerInterfaceWrapper) GetRecoveryPreview(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecoveryPreview(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecoverySettings operation middleware
+func (siw *ServerInterfaceWrapper) GetRecoverySettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecoverySettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutRecoverySettings operation middleware
+func (siw *ServerInterfaceWrapper) PutRecoverySettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutRecoverySettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecoveryImport operation middleware
+func (siw *ServerInterfaceWrapper) GetRecoveryImport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecoveryImport(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelRecoveryImport operation middleware
+func (siw *ServerInterfaceWrapper) CancelRecoveryImport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelRecoveryImport(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5789,6 +6011,15 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/blocklist", wrapper.BlocklistQueueItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/scan", wrapper.ScanImportPath)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/default-path", wrapper.GetManualImportDefaultPath)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/settings", wrapper.GetRecoverySettings)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/import/recovery/settings", wrapper.PutRecoverySettings)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery", wrapper.ListRecoveries)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/recovery", wrapper.QueueRecoveryImport)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/recovery/preview", wrapper.PreviewRecoveryImport)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/previews/{id}", wrapper.GetRecoveryPreview)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/jobs", wrapper.ListRecoveryImports)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/recovery/{id}/cancel", wrapper.CancelRecoveryImport)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/{id}", wrapper.GetRecoveryImport)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/manual", wrapper.ManualImport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/customformats", wrapper.ListCustomFormats)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/customformats", wrapper.AddCustomFormat)

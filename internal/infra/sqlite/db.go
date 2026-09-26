@@ -53,7 +53,7 @@ func Open(dataDir string) (*DB, error) {
 		"?_pragma=busy_timeout(5000)" +
 		"&_pragma=journal_mode(WAL)" +
 		"&_pragma=foreign_keys(1)" +
-		"&_pragma=synchronous(NORMAL)"
+		"&_pragma=synchronous(FULL)"
 
 	w, err := sql.Open("sqlite", dsn)
 	if err != nil {

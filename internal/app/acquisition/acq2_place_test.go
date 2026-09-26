@@ -440,11 +440,10 @@ func TestAcq2AReplacedFileThatWillNotDeleteDoesNotFailTheImport(t *testing.T) {
 		t.Fatalf("imported = %d", res.Imported)
 	}
 	files, _ := db.ListFilesForItem(ctx, movieID)
-	if len(files) != 1 || !strings.Contains(files[0].Path, "WEB-DL 1080p") {
-		t.Errorf("library after the upgrade = %+v", files)
+	if len(files) != 2 {
+		t.Errorf("new import and pending undeletable record must both remain: %+v", files)
 	}
-	// The row is gone even though the bytes could not be; the next scan is
-	// what re-adopts whatever is actually still there.
+	// Keep the old record until its bytes have actually been removed.
 	if _, err := os.Stat(stubborn); err != nil {
 		t.Errorf("the undeletable path vanished after all: %v", err)
 	}

@@ -184,6 +184,12 @@ func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
 		// covers the disk as much as it covers the client.
 		return
 	}
+	// Runner owns retention, recovery holds and deletion retries. A refused
+	// or unavailable request must never be bypassed through this host's mount.
+	if cfg.Type == "nzbd" {
+		s.log.Warn("cleanup: Runner payload remains pending; retry through Runner", "download", dl.ID, "dir", dir)
+		return
+	}
 	roots, err := s.db.ListRootFolders(ctx)
 	if err != nil {
 		return // cannot prove it is safe, so it is not

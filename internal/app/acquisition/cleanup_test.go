@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -193,3 +194,30 @@ func insertImportable(t *testing.T, db *sqlite.DB, itemID int64, savePath string
 }
 
 var _ = domain.KindMovie
+
+func TestRunnerRefusalNeverDeletesMountedPayload(t *testing.T) {
+	client := &fakeClient{removeErr: errors.New("Runner: recovery hold")}
+	svc, db, itemID := setupWithClientType(t, client, "nzbd")
+	ctx := context.Background()
+	payload := t.TempDir()
+	media := filepath.Join(payload, "keep.mkv")
+	if err := os.WriteFile(media, []byte("original media"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dl := insertImportable(t, db, itemID, payload)
+	if err := db.UpdateDownloadState(ctx, dl.ID, "imported", 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	ref := downloadRef{ID: dl.ID, ClientID: dl.ClientID, Handle: dl.Handle, ImportPath: payload}
+	svc.cleanupAfterImport(ctx, ref)
+	if err := svc.CleanupPayloads(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(media); err != nil {
+		t.Fatalf("Runner refusal bypassed: %v", err)
+	}
+	pending, err := db.ImportedWithPayload(ctx, 10)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("lost cleanup retry: %v, %v", pending, err)
+	}
+}

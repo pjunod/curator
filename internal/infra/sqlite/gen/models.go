@@ -110,6 +110,14 @@ type ImportList struct {
 	Enabled          int64
 }
 
+type ImportPlacement struct {
+	ID        string
+	Target    string
+	State     string
+	Data      string
+	UpdatedAt int64
+}
+
 type Indexer struct {
 	ID         int64
 	Name       string
@@ -139,6 +147,11 @@ type Job struct {
 	CreatedAt          int64
 	UpdatedAt          int64
 	FinishedAt         int64
+}
+
+type LifecycleLibraryRevision struct {
+	ID       int64
+	Revision int64
 }
 
 type MediaAlias struct {
@@ -283,6 +296,36 @@ type QualityProfile struct {
 	Name            string
 	Definition      string
 	UpgradesAllowed int64
+}
+
+type RecoveryFileResult struct {
+	ImportID string
+	FileID   string
+	Result   string
+}
+
+type RecoveryImport struct {
+	ID        string
+	State     string
+	Data      string
+	UpdatedAt int64
+}
+
+type RecoveryPreview struct {
+	ID        string
+	State     string
+	Request   string
+	Result    string
+	Error     string
+	UpdatedAt int64
+}
+
+type RecoveryReceiptOutbox struct {
+	ImportID  string
+	Receipt   string
+	Delivered int64
+	LastError string
+	UpdatedAt int64
 }
 
 type RootFolder struct {

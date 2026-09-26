@@ -22,6 +22,7 @@ package nzbd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -68,6 +69,15 @@ func (c *Client) authorize(req *http.Request) {
 	}
 }
 
+// APIError preserves the HTTP outcome so callers do not turn refusal,
+// pending work or unavailable storage into a different destructive request.
+type APIError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *APIError) Error() string { return fmt.Sprintf("nzbd: %s (%d)", e.Message, e.StatusCode) }
+
 func (c *Client) do(ctx context.Context, method, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, method,
 		strings.TrimRight(c.cfg.URL, "/")+path, nil)
@@ -83,7 +93,7 @@ func (c *Client) do(ctx context.Context, method, path string, out any) error {
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("nzbd: authentication rejected (401)")
+		return &APIError{StatusCode: resp.StatusCode, Message: "authentication rejected"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// nzbd answers errors as {"error": "..."} — surface its words, not
@@ -92,9 +102,13 @@ func (c *Client) do(ctx context.Context, method, path string, out any) error {
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(raw, &e) == nil && e.Error != "" {
-			return fmt.Errorf("nzbd: %s (%d)", e.Error, resp.StatusCode)
+			return &APIError{StatusCode: resp.StatusCode, Message: e.Error}
 		}
-		return fmt.Errorf("nzbd: unexpected status %d", resp.StatusCode)
+		return &APIError{StatusCode: resp.StatusCode, Message: "unexpected response"}
+	}
+	// Accepted is pending, not a receipt that the bytes have gone.
+	if resp.StatusCode == http.StatusAccepted {
+		return &APIError{StatusCode: resp.StatusCode, Message: "operation pending; retry later"}
 	}
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
@@ -366,6 +380,10 @@ func (c *Client) Remove(ctx context.Context, h ports.Handle, deleteData bool) er
 	if queueErr == nil {
 		return nil
 	}
+	var apiErr *APIError
+	if !errors.As(queueErr, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		return queueErr
+	}
 	if err := c.do(ctx, http.MethodPost,
 		fmt.Sprintf("/api/v1/history/%d/actions/%s", id, action), nil); err != nil {
 		// Report the queue error too: "no such job" from both routes and
@@ -429,4 +447,41 @@ func (c *Client) status(ctx context.Context) (statusDto, error) {
 		return st, fmt.Errorf("nzbd: %s answered, but not like nzbd (no version in /api/v1/status)", c.cfg.URL)
 	}
 	return st, nil
+}
+
+// RecoveryRequest uses the configured Runner API credential and a separate
+// claim credential. Caller names and User-Agent strings are never authority.
+func (c *Client) RecoveryRequest(ctx context.Context, method, path, recoveryToken string, payload, out any) error {
+	var body io.Reader
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = strings.NewReader(string(raw))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.cfg.URL, "/")+"/api/v1/"+path, body)
+	if err != nil {
+		return err
+	}
+	c.authorize(req)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Nzbd-Client", clientHeader())
+	req.Header.Set("X-Recovery-Token", recoveryToken)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &APIError{StatusCode: resp.StatusCode, Message: string(raw)}
+	}
+	if out != nil {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -437,3 +438,23 @@ var (
 	_ ports.DownloadClient = (*Client)(nil)
 	_ ports.TaggedAdder    = (*Client)(nil)
 )
+
+func TestRemoveDoesNotBypassQueueRefusal(t *testing.T) {
+	for _, status := range []int{202, 401, 403, 409, 500, 503} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			calls := 0
+			srv := fake(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+				calls++
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"error":"held or pending"}`))
+				return true
+			})
+			if err := client(t, srv, "", "t").Remove(context.Background(), "7", true); err == nil {
+				t.Fatal("nonterminal removal must remain pending")
+			}
+			if calls != 1 {
+				t.Fatalf("refusal triggered %d requests; want one", calls)
+			}
+		})
+	}
+}

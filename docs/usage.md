@@ -970,3 +970,52 @@ admin token. See `docs/settings.md` for setup and failure meanings.
   match (year off by >1, different title).
 - **Wanted list looks stale** — it refreshes on library events; running a
   scan or any grab/import refreshes it, as does restarting.
+
+## Runner payload cleanup
+
+For native Runner clients, cleanup waits for Runner to confirm deletion.
+A pending operation, retention/recovery hold, authentication failure or
+unavailable Runner keeps the payload pending for the next hourly sweep.
+Curator never bypasses Runner by deleting its mounted directory directly.
+Queue removal falls back to History only when the queue returns HTTP 404.
+
+## Recover media retained by Runner
+
+1. In Runner's Files view, inspect the folder. Adopt unknown files explicitly;
+   adoption starts with Keep enabled.
+2. Select regular media files and stage recovery. Runner copies and verifies
+   them and holds the original. Temporary, archive and parity files cannot be
+   selected as media.
+3. In Curator Settings → Recovery, select the handoff, library title, copy and
+   files. Preview verifies each digest and probes its container.
+4. Queue the import from that preview. A changed target requires another
+   preview. Follow the durable import status until Runner receives the receipt.
+
+Library placement now journals intent before publishing files. A same-name
+replacement retains a rollback copy until library metadata, episode links and
+its per-file recovery receipt commit in one transaction. SQLite uses FULL
+synchronization for those receipts. Failed/partial recovery stays on hold;
+ordinary payload cleanup never handles a recovery source or staging tree.
+
+Use the Recovery activity list to cancel or inspect work after closing the page.
+A cancelled import may have committed earlier files; those remain in the library
+with their receipts. Runner releases the claim only after the worker acknowledges
+that it stopped, then keeps the source for review.
+
+Recovery inspection uses only Curator's bounded native parser. The UI reports
+“Media recognized; completeness not proven.” An intact copy can faithfully copy a
+bad source. Review episode mappings and concrete destinations before importing.
+A stale library revision requires a fresh preview, including after a concurrent
+ordinary import or metadata edit.
+
+Back up Curator's database and library in one coordinated maintenance window.
+After restoring either, keep Runner sources held while reviewing recovered
+placement intentions and outbox records. Do not restore old metadata while
+pre-restore workers continue writing to the library.
+
+Recovery selection is sealed in Runner at staging time. Curator imports every
+file in that handoff together; stage separate handoffs for alternate movie
+versions. Overlapping episode assignments or destinations require a new preview.
+Recognized obfuscated video keeps its source filename and receives a native
+container extension at its library destination. Cancellation rolls back any
+published placement that has not yet committed library metadata.
