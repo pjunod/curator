@@ -79,7 +79,7 @@ export function ReleaseSearch(props: {
   )
 
   return (
-    <section className="panel">
+    <section className="panel release-search">
       <h2>
         Interactive search — {label}
         <button style={{ marginLeft: 'auto' }} onClick={props.onClose}>
@@ -141,29 +141,31 @@ export function ReleaseSearch(props: {
                 'No release here passes the profile — switch to "Everything" to see why each was declined.'}
             </p>
           ) : (
-            <table className="release-table">
-              <thead>
-                <tr>
-                  <th>Release</th>
-                  <th>Quality</th>
-                  <th className="num">Size</th>
-                  <th className="num">Age</th>
-                  <th className="num">Seed</th>
-                  <th>Indexer</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((c) => (
-                  <ReleaseRow
-                    key={`${c.indexer}-${c.title}`}
-                    c={c}
-                    busy={grab.isPending}
-                    onGrab={() => grab.mutate(c)}
-                  />
-                ))}
-              </tbody>
-            </table>
+            <div className="release-table-wrap">
+              <table className="release-table" role="table">
+                <thead>
+                  <tr>
+                    <th>Release</th>
+                    <th>Quality</th>
+                    <th className="num">Size</th>
+                    <th className="num">Age</th>
+                    <th className="num">Seed</th>
+                    <th>Indexer</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((c) => (
+                    <ReleaseRow
+                      key={`${c.indexer}-${c.title}`}
+                      c={c}
+                      busy={grab.isPending}
+                      onGrab={() => grab.mutate(c)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <div className="section-toolbar release-toolbar">
@@ -190,7 +192,7 @@ function ReleaseRow({ c, busy, onGrab }: { c: ReleaseCandidate; busy: boolean; o
 
   return (
     <tr className={c.accepted ? '' : 'row-rejected'}>
-      <td>
+      <td className="release-description">
         <div className="release-title mono">
           {c.infoUrl ? (
             <a href={c.infoUrl} target="_blank" rel="noreferrer" title="Open on the indexer (new tab)">
@@ -225,7 +227,7 @@ function ReleaseRow({ c, busy, onGrab }: { c: ReleaseCandidate; busy: boolean; o
             </div>
           ))}
       </td>
-      <td>
+      <td data-label="Quality">
         <span className="pill pill-neutral">{c.quality}</span>
         {c.score !== 0 && (
           <div className="muted" title={(c.formats ?? []).join(', ')}>
@@ -234,11 +236,11 @@ function ReleaseRow({ c, busy, onGrab }: { c: ReleaseCandidate; busy: boolean; o
           </div>
         )}
       </td>
-      <td className="muted num">{fmtBytes(c.size)}</td>
-      <td className="muted num">{c.age || '—'}</td>
-      <td className="muted num">{c.protocol === 'torrent' ? c.seeders : '—'}</td>
-      <td className="muted">{c.indexer}</td>
-      <td>
+      <td className="muted num" data-label="Size">{fmtBytes(c.size)}</td>
+      <td className="muted num" data-label="Age">{c.age || '—'}</td>
+      <td className="muted num" data-label="Seed">{c.protocol === 'torrent' ? c.seeders : '—'}</td>
+      <td className="muted" data-label="Indexer">{c.indexer}</td>
+      <td className="release-actions">
         <button
           className={c.accepted ? 'btn-accent' : ''}
           disabled={busy}

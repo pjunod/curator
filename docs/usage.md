@@ -572,6 +572,11 @@ Because a busy indexer returns hundreds of rows, the list pages (50 at a time
 by default), filters by name, and offers a **Would be grabbed** view. Each
 row's rejections collapse to the first reason with the rest one click away.
 
+In a phone browser or installed PWA, each result stacks its release name,
+labeled metadata, rejection details, and **Grab** action within the screen.
+Pagination wraps to fit. Wider screens keep the column view, with horizontal
+scrolling inside the results when the panel is too narrow for the table.
+
 A release can also carry an amber **⚠ warning**: the profile would take it,
 but its advertised size cannot hold what its name claims — a "2160p Remux"
 listed at 500 MB. That is a caution for you, not a refusal. Unattended
