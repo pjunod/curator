@@ -27,7 +27,7 @@
 
 ## Delivery — Audio language requirement
 
-**Status:** IN PROGRESS · **Updated:** 2026-09-28 · **Version:** 0.31.0 ·
+**Status:** gate green · PR [#46](https://github.com/pjunod/curator/pull/46) ready to merge · **Updated:** 2026-09-28 · **Version:** 0.31.0 ·
 branch `feat/audio-language-requirement` · ADR [0022](docs/adr/0022-audio-language.md)
 
 | Item | State | Evidence |
@@ -39,13 +39,13 @@ branch `feat/audio-language-requirement` · ADR [0022](docs/adr/0022-audio-langu
 | Parser | complete | `Parsed.Languages` read from the tag section after the title; silence = English; `MULTi`/`DUAL`/`DL` = `mul`; `WEB-DL` stripped before tokenizing; subtitle tags ignored. |
 | Decision engine | complete | `Decide(Release{Quality, Languages}, …)`; new code `language_not_wanted`; target-met requires both axes. |
 | Wanted / grab / import | complete | `wants()` uses `Satisfied`; RSS, backlog and auto-search route through `releaseOf(parsed)`; import judges the language by the release name, the post-placement probe records the truth. Wanted row: `upgrade from WEB-DL 1080p (German)`. |
-| Storage | complete | Profile definition JSON gains `languages` (omitted = none, no migration); list-view stats tuple gains `~langs` via `json_each(media_info,'$.audio')`; `DiskStateForItem.Audio`. |
+| Storage | complete | Profile definition JSON gains `languages` (omitted = none). Migration **0034** `media_files.audio_languages` (declared tag per track, `+`-joined, `und` untagged), backfilled in SQL from `media_info`, written at every probe; the list-view stats tuple reads it (`~langs`) instead of `json_each` (~6× cheaper); `DiskStateForItem.Audio`. |
 | API | complete | `audioLanguages` on `QualityProfile`/`ProfileInput` (validated against `GET /languages`), `upgradeReason` + `audioLanguages` on items, `languages` on `ReleaseCandidate`; facts pill names the language. |
 | Web | complete | Profile editor: "Required audio languages" pill picker (Film & TV only) with live sentence; item page: `upgrading · no English audio on disk (German only)`; interactive search shows non-English advertised languages. Mobile: types only. |
 | Tests | complete | `TestJustFriends` (7 scenarios: wanted, grabs the English 1080p over the German remux, lower quality in the right language wins, wrong language only → nothing, untagged → not hunted, English among others → done, disk state), grading on list + get paths, profile round trip, API contract, parser/language/mediainfo/decision unit tests, e2e profile editor. |
 | Docs | complete | ADR 0022, `docs/settings.md` §Quality profiles, `docs/usage.md` (interactive search, item page, loops), VERSION 0.31.0. |
-| Draft PR → adversarial review | pending | |
-| Full gate (once, after fixes) | pending | |
+| Draft PR → adversarial review | addressed | PR #46 opened as draft. Review: 2 must-fix (the grab→import→still-wanted **loop** for untagged wrong-language releases — now bounded: a measured mismatch blocklists the release + `language_mismatch` history; lint misspell), 7 should-fix (subtitle-adjacent tags read as audio · manual import could delete an English file for a German one · "undetermined" claim not rendered · book profiles could require a language · web sentence order · `json_each` cost · wanted "(English)" noise), 8 nits — all fixed with regression tests (`TestLanguageMismatchIsBlocklisted` on a real `ger`-tagged MKV fixture, `TestManualImportNeverDeletes…`, Erai-raws/NL.Subs parser cases, migration 0034 backfill, `weakestRecorded` mixed files, book-profile 400, e2e "audio language undetermined"). |
+| Full gate (once, after fixes) | green | `make lint` 0 issues (golangci v2.12.2) · `make test` all ok · `make test-web` 104 · `make test-e2e` **117/117** · coverage **86.1 %** (floor 86.0) · touched packages ×3 `-shuffle=on` green. Not verified here: nothing outstanding — no native change, no hardware. |
 | Merge | pending | |
 | Deploy — server | pending | |
 | Deploy — clients | n/a | Mobile types only; no native release. |
