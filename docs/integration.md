@@ -367,12 +367,15 @@ on the one event you most want it to survive.
 **Where you see it.** Settings → **Notifications** → per-row **Delivery log**
 (media-server types only — `plex`, `jellyfin`, `plurx`; it is an inline
 expander on `/settings`, not a page of its own). Columns `When` / `Event` /
-`Status` / `Detail`, polled every 5 s.
+`Status` / `Detail`, plus a **Retry** button on failed rows, polled every
+5 s. **Retry all failed** above the table requeues every failed row of the
+notifier — the whole history, not only the 100 rows shown — and reports how
+many it requeued.
 
 | Status pill | Detail reads |
 |---|---|
 | `ok` | the result, e.g. `scanned → plurx item 1201` |
-| `pending` | `attempt N failed: <error>, retrying in Xm`, or `queued` |
+| `pending` | `attempt N failed: <error>, retrying in Xm`, or `queued`, or — after a Retry — `retry queued, retrying in Xs — last failure: <error>` |
 | `failed` | the last error |
 
 `×N` appears beside the pill when attempts exceeded one.
@@ -384,11 +387,19 @@ curl -sS -H "X-Api-Key: $KEY" "$MONARR/api/v1/notifiers/<id>/deliveries" | pytho
 ```
 
 **How to read it.** `pending` with a climbing attempt count is plurx being
-down — it will drain itself. `failed` is terminal and will not retry:
+down — it will drain itself. `failed` does not retry on its own:
 Monarr classifies permanent failures (a rejected key, a 4xx that will never
 become a 2xx) separately from retryable ones, because retrying a wrong API key
-every two minutes forever is not resilience, it is noise. `No deliveries yet —
-this notifier fires after an import.` on a fresh install is correct, not broken.
+every two minutes forever is not resilience, it is noise. A failed row is
+retried when somebody asks — **Retry** on the row, **Retry all failed** for
+the notifier, or `POST /api/v1/notifiers/<id>/deliveries/<deliveryId>/retry`
+and `POST /api/v1/notifiers/<id>/deliveries/retry` — which puts it back to
+`pending`, due now, with the schedule starting over and the last error kept
+until the next attempt replaces it. Permanent failures requeued this way fail
+again on their first attempt; a disabled notifier answers 409 (it does not
+fire on an import, so it does not fire on request). `No deliveries yet —
+this notifier fires after an import.` on a fresh install is correct, not
+broken.
 
 ---
 

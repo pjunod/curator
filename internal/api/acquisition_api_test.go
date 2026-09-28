@@ -11,6 +11,7 @@ import (
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 func TestAcqManualImportIsAcceptedAsAnActivityJob(t *testing.T) {
@@ -1070,6 +1071,97 @@ func TestAcqNotifierRoutesRefuseUnknownIds(t *testing.T) {
 	e.put(t, "/api/v1/notifiers/9999",
 		`{"type":"plurx","name":"nowhere"}`).expect(t, http.StatusNotFound)
 	e.post(t, "/api/v1/notifiers/9999/test", "").expect(t, http.StatusNotFound)
+	e.post(t, "/api/v1/notifiers/9999/deliveries/retry", "").expect(t, http.StatusNotFound)
+	e.post(t, "/api/v1/notifiers/9999/deliveries/1/retry", "").expect(t, http.StatusNotFound)
+}
+
+// A failed delivery can be put back on the queue from the API — one row, or
+// every failed row of the notifier — and comes back pending, due now, with
+// its attempts reset so the whole schedule runs again. Rows that are not
+// failed are left alone: a pending one is already going to be tried, and a
+// delivered one has nothing to retry, so asking for either is a 404 rather
+// than a silent no-op that the page would misreport as "retried".
+func TestAcqFailedDeliveriesCanBeRetried(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	rr := e.post(t, "/api/v1/notifiers",
+		`{"type":"plurx","name":"living room","settings":{"url":"plurxd","apiKey":"plx_x"}}`).
+		expect(t, http.StatusCreated)
+	var created apigen.Notifier
+	rr.into(t, &created)
+	base := "/api/v1/notifiers/" + acqItoa(created.Id) + "/deliveries"
+
+	settle := func(status string) sqlite.Delivery {
+		t.Helper()
+		d, err := e.db.EnqueueDelivery(ctx, created.Id, 0, "import", `{}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.Attempts, d.Status = 4, status
+		// A partial delivery carries both: what landed, and what did not.
+		d.LastError = "plurx: 1 of 2 directories not indexed: plurx returned 503: the durable queue refused this request"
+		d.Result = "scanned → plurx item 1201"
+		if status == "ok" {
+			d.LastError = ""
+		}
+		if err := e.db.SettleDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	failedOne := settle("failed")
+	settle("failed")
+	delivered := settle("ok")
+
+	// One row.
+	var retried apigen.Delivery
+	e.post(t, base+"/"+acqItoa(failedOne.ID)+"/retry", "").expect(t, http.StatusOK).into(t, &retried)
+	if retried.Status != apigen.DeliveryStatusPending || retried.Attempts != 0 || retried.NextAt == nil {
+		t.Errorf("retried = %+v, want pending, attempts 0, due", retried)
+	}
+	if retried.LastError == nil || *retried.LastError == "" {
+		t.Errorf("the last error must stay readable while the retry waits: %+v", retried)
+	}
+	if retried.Result != nil {
+		t.Errorf("result = %q — the failed run's partial answer must not sit on a row that has not been attempted", *retried.Result)
+	}
+	// Not failed any more, so not retryable again; the delivered row never was.
+	e.post(t, base+"/"+acqItoa(failedOne.ID)+"/retry", "").expect(t, http.StatusNotFound)
+	e.post(t, base+"/"+acqItoa(delivered.ID)+"/retry", "").expect(t, http.StatusNotFound)
+
+	// Every failed row: only failedTwo is left.
+	var requeued struct {
+		Requeued int64 `json:"requeued"`
+	}
+	e.post(t, base+"/retry", "").expect(t, http.StatusOK).into(t, &requeued)
+	if requeued.Requeued != 1 {
+		t.Errorf("requeued = %d, want 1 (only the remaining failed row)", requeued.Requeued)
+	}
+	e.post(t, base+"/retry", "").expect(t, http.StatusOK).into(t, &requeued)
+	if requeued.Requeued != 0 {
+		t.Errorf("second sweep requeued = %d, want 0", requeued.Requeued)
+	}
+
+	var rows []apigen.Delivery
+	e.get(t, base).expect(t, http.StatusOK).into(t, &rows)
+	for _, d := range rows {
+		want := apigen.DeliveryStatusPending
+		if d.Id == delivered.ID {
+			want = apigen.DeliveryStatusOk
+		}
+		if d.Status != want {
+			t.Errorf("delivery %d status = %s, want %s", d.Id, d.Status, want)
+		}
+	}
+
+	// A disabled notifier does not fire on an import, so it does not fire on
+	// request either: the worker would deliver whatever is pending.
+	settle("failed")
+	e.put(t, "/api/v1/notifiers/"+acqItoa(created.Id),
+		`{"type":"plurx","name":"living room","enabled":false,"settings":{"url":"plurxd","apiKey":"plx_x"}}`).
+		expect(t, http.StatusOK)
+	e.post(t, base+"/retry", "").expect(t, http.StatusConflict)
+	e.post(t, base+"/"+acqItoa(failedOne.ID)+"/retry", "").expect(t, http.StatusConflict)
 }
 
 // A notifier needs a known type and a name, on create and on edit alike. An

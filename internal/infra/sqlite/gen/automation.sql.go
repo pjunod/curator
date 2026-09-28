@@ -634,6 +634,65 @@ func (q *Queries) ListNotifiers(ctx context.Context) ([]Notifier, error) {
 	return items, nil
 }
 
+const retryDelivery = `-- name: RetryDelivery :one
+UPDATE notifier_deliveries
+   SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?
+ WHERE id = ? AND notifier_id = ? AND status = 'failed'
+RETURNING id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at
+`
+
+type RetryDeliveryParams struct {
+	NextAt     int64
+	UpdatedAt  int64
+	ID         int64
+	NotifierID int64
+}
+
+func (q *Queries) RetryDelivery(ctx context.Context, arg RetryDeliveryParams) (NotifierDelivery, error) {
+	row := q.db.QueryRowContext(ctx, retryDelivery,
+		arg.NextAt,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.NotifierID,
+	)
+	var i NotifierDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.NotifierID,
+		&i.DownloadID,
+		&i.Event,
+		&i.Payload,
+		&i.Attempts,
+		&i.LastError,
+		&i.Result,
+		&i.Status,
+		&i.NextAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const retryFailedDeliveries = `-- name: RetryFailedDeliveries :execrows
+UPDATE notifier_deliveries
+   SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?
+ WHERE notifier_id = ? AND status = 'failed'
+`
+
+type RetryFailedDeliveriesParams struct {
+	NextAt     int64
+	UpdatedAt  int64
+	NotifierID int64
+}
+
+func (q *Queries) RetryFailedDeliveries(ctx context.Context, arg RetryFailedDeliveriesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, retryFailedDeliveries, arg.NextAt, arg.UpdatedAt, arg.NotifierID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const settleDelivery = `-- name: SettleDelivery :exec
 UPDATE notifier_deliveries
    SET attempts = ?, last_error = ?, result = ?, status = ?, next_at = ?,

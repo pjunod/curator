@@ -1207,16 +1207,71 @@ func (s *Server) ListDeliveries(w http.ResponseWriter, r *http.Request, id int64
 	}
 	out := make([]apigen.Delivery, 0, len(rows))
 	for _, d := range rows {
-		out = append(out, apigen.Delivery{
-			Id: d.ID, NotifierId: d.NotifierID, DownloadId: ptrIfSet(d.DownloadID),
-			Event: d.Event, Attempts: d.Attempts,
-			LastError: ptrIfText(d.LastError), Result: ptrIfText(d.Result),
-			Status:    apigen.DeliveryStatus(d.Status),
-			NextAt:    ptrIfSet(d.NextAt),
-			CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
-		})
+		out = append(out, deliveryDTO(d))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// RetryFailedDeliveries implements POST /notifiers/{id}/deliveries/retry.
+//
+// The schedule gives up after two and a half minutes because it is tuned for
+// a restart, and a genuinely dead server should be marked failed while
+// somebody is around to read it. A media server that refuses work for a day
+// (plurx's queue wedged on 2026-09-28) leaves a column of failed rows that
+// are all fine to send again once it is healthy — and nothing here should
+// require a database session to say so.
+func (s *Server) RetryFailedDeliveries(w http.ResponseWriter, r *http.Request, id int64) {
+	if !s.retryableNotifier(w, r, id) {
+		return
+	}
+	n, err := s.deps.Store.RetryFailedDeliveries(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"requeued": n})
+}
+
+// RetryDelivery implements POST /notifiers/{id}/deliveries/{deliveryId}/retry.
+func (s *Server) RetryDelivery(w http.ResponseWriter, r *http.Request, id int64, deliveryID int64) {
+	if !s.retryableNotifier(w, r, id) {
+		return
+	}
+	d, err := s.deps.Store.RetryDelivery(r.Context(), id, deliveryID)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, deliveryDTO(d))
+}
+
+// retryableNotifier answers whether a retry may be queued for this notifier,
+// writing the refusal itself. A disabled notifier does not fire on an import
+// (notify.go gates enqueue on Enabled), so a retry — the one way an operator
+// puts a row back on the queue by hand — must not send on it either: the
+// worker does not check Enabled, it delivers whatever is pending.
+func (s *Server) retryableNotifier(w http.ResponseWriter, r *http.Request, id int64) bool {
+	cfg, err := s.deps.Store.GetNotifier(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return false
+	}
+	if !cfg.Enabled {
+		writeError(w, http.StatusConflict, "notifier is disabled — enable it before retrying its deliveries")
+		return false
+	}
+	return true
+}
+
+func deliveryDTO(d sqlite.Delivery) apigen.Delivery {
+	return apigen.Delivery{
+		Id: d.ID, NotifierId: d.NotifierID, DownloadId: ptrIfSet(d.DownloadID),
+		Event: d.Event, Attempts: d.Attempts,
+		LastError: ptrIfText(d.LastError), Result: ptrIfText(d.Result),
+		Status:    apigen.DeliveryStatus(d.Status),
+		NextAt:    ptrIfSet(d.NextAt),
+		CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+	}
 }
 
 func ptrIfSet(v int64) *int64 {

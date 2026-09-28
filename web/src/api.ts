@@ -1174,6 +1174,17 @@ export interface Delivery {
 
 export const getDeliveries = (id: number) => get<Delivery[]>(`/notifiers/${id}/deliveries`)
 
+// Put one failed delivery back on the queue, due now, with a fresh attempt
+// schedule. 404 for a row that is not failed: pending is already going to be
+// tried, delivered has nothing to retry.
+export const retryDelivery = (id: number, deliveryId: number) =>
+  send<Delivery>('POST', `/notifiers/${id}/deliveries/${deliveryId}/retry`)
+
+// Every failed delivery of the notifier at once — the answer to a media
+// server that refused work for a day and left a column of failed rows.
+export const retryFailedDeliveries = (id: number) =>
+  send<{ requeued: number }>('POST', `/notifiers/${id}/deliveries/retry`)
+
 // One remote application and whether it is talking back.
 export interface Connection {
   name: string
