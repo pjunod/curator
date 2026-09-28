@@ -100,26 +100,26 @@ func TestDecisionEngine(t *testing.T) {
 	web1080 := quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}
 	uhd := quality.Quality{Source: quality.SourceWEBDL, Resolution: 2160}
 
-	if d := decision.Decide(web1080, missing, profile); !d.Accepted || d.IsUpgrade {
+	if d := decision.Decide(decision.Release{Quality: web1080}, missing, profile); !d.Accepted || d.IsUpgrade {
 		t.Errorf("missing + allowed = accept: %+v", d)
 	}
-	if d := decision.Decide(uhd, missing, profile); d.Accepted || d.Rejections[0].Code != decision.CodeAboveTarget {
+	if d := decision.Decide(decision.Release{Quality: uhd}, missing, profile); d.Accepted || d.Rejections[0].Code != decision.CodeAboveTarget {
 		t.Errorf("2160 on a 1080p target = above_target: %+v", d)
 	}
 	sd := quality.Quality{Source: quality.SourceWEBDL, Resolution: 480}
-	if d := decision.Decide(sd, missing, profile); d.Accepted || d.Rejections[0].Code != decision.CodeBelowFloor {
+	if d := decision.Decide(decision.Release{Quality: sd}, missing, profile); d.Accepted || d.Rejections[0].Code != decision.CodeBelowFloor {
 		t.Errorf("480p under a 1080p floor = below_floor: %+v", d)
 	}
-	if d := decision.Decide(web1080, haveHDTV, profile); !d.Accepted || !d.IsUpgrade {
+	if d := decision.Decide(decision.Release{Quality: web1080}, haveHDTV, profile); !d.Accepted || !d.IsUpgrade {
 		t.Errorf("webdl over hdtv = upgrade: %+v", d)
 	}
-	if d := decision.Decide(web1080, haveTarget, profile); d.Accepted || d.Rejections[0].Code != decision.CodeTargetMet {
+	if d := decision.Decide(decision.Release{Quality: web1080}, haveTarget, profile); d.Accepted || d.Rejections[0].Code != decision.CodeTargetMet {
 		t.Errorf("target already met: %+v", d)
 	}
 	// The ADR 0013 state: files on disk, quality unmeasurable. Not missing,
 	// and automation must not replace what it could not read.
 	unverifiable := domain.MovieWantable{Item: 1, Title: "M", Mon: true, Files: true}
-	if d := decision.Decide(web1080, unverifiable, profile); d.Accepted ||
+	if d := decision.Decide(decision.Release{Quality: web1080}, unverifiable, profile); d.Accepted ||
 		d.Rejections[0].Code != decision.CodeUnverified {
 		t.Errorf("on-disk-but-unmeasured must not be treated as missing: %+v", d)
 	}
@@ -128,26 +128,78 @@ func TestDecisionEngine(t *testing.T) {
 	unverifiedSource := domain.MovieWantable{
 		Item: 1, Title: "M", Mon: true, Have: q(quality.SourceHDTV, 1080), Files: true,
 	}
-	if d := decision.Decide(web1080, unverifiedSource, profile); d.Accepted ||
+	if d := decision.Decide(decision.Release{Quality: web1080}, unverifiedSource, profile); d.Accepted ||
 		d.Rejections[0].Code != decision.CodeTargetMet {
 		t.Errorf("unverified source at target resolution must read as met: %+v", d)
 	}
 	hdtv := quality.Quality{Source: quality.SourceHDTV, Resolution: 1080}
-	if d := decision.Decide(hdtv, haveHDTV, profile); d.Accepted || d.Rejections[0].Code != decision.CodeNotAnUpgrade {
+	if d := decision.Decide(decision.Release{Quality: hdtv}, haveHDTV, profile); d.Accepted || d.Rejections[0].Code != decision.CodeNotAnUpgrade {
 		t.Errorf("sidegrade rejected: %+v", d)
 	}
-	if d := decision.Decide(web1080, unmon, profile); d.Accepted || d.Rejections[0].Code != decision.CodeUnmonitored {
+	if d := decision.Decide(decision.Release{Quality: web1080}, unmon, profile); d.Accepted || d.Rejections[0].Code != decision.CodeUnmonitored {
 		t.Errorf("unmonitored rejected: %+v", d)
 	}
-	if d := decision.Decide(quality.Quality{}, missing, profile); d.Accepted || d.Rejections[0].Code != decision.CodeQualityUnknown {
+	if d := decision.Decide(decision.Release{Quality: quality.Quality{}}, missing, profile); d.Accepted || d.Rejections[0].Code != decision.CodeQualityUnknown {
 		t.Errorf("unknown quality rejected: %+v", d)
 	}
 	// Season pack upgrade uses the WORST episode quality.
 	epMissing := domain.EpisodeWantable{Item: 7, Season: 1, Episode: 2, Mon: true}
 	epHave := domain.EpisodeWantable{Item: 7, Season: 1, Episode: 1, Mon: true, Have: q(quality.SourceWEBDL, 1080)}
 	pack := domain.SeasonWantable{Item: 7, Season: 1, Mon: true, Episodes: []domain.EpisodeWantable{epHave, epMissing}}
-	if d := decision.Decide(web1080, pack, profile); !d.Accepted {
+	if d := decision.Decide(decision.Release{Quality: web1080}, pack, profile); !d.Accepted {
 		t.Errorf("pack with a missing episode = accept: %+v", d)
+	}
+}
+
+// TestDecisionEngineLanguage: the axis ADR 0022 added. The German-only
+// WEB-DL 1080p of an English film is at the target by rank and still wanted,
+// because the profile says English and the file was measured not to have it.
+func TestDecisionEngineLanguage(t *testing.T) {
+	profile := quality.DefaultProfiles()[0]
+	profile.Languages = []string{"en"}
+	german := quality.Audio{Languages: []string{"de"}, Known: true}
+	haveGerman := domain.MovieWantable{Item: 1, Title: "M", Mon: true,
+		Have: q(quality.SourceWEBDL, 1080), Verified: true, Audio: german}
+	haveEnglish := domain.MovieWantable{Item: 1, Title: "M", Mon: true,
+		Have: q(quality.SourceWEBDL, 1080), Verified: true,
+		Audio: quality.Audio{Languages: []string{"en"}, Known: true}}
+	missing := domain.MovieWantable{Item: 1, Title: "M", Mon: true}
+
+	web1080 := quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}
+	hdtv720 := quality.Quality{Source: quality.SourceHDTV, Resolution: 720}
+	en := decision.Release{Quality: web1080, Languages: []string{"en"}}
+	de := decision.Release{Quality: web1080, Languages: []string{"de"}}
+	multi := decision.Release{Quality: web1080, Languages: []string{"mul"}}
+
+	if d := decision.Decide(en, haveGerman, profile); !d.Accepted || !d.IsUpgrade {
+		t.Errorf("English release over a German-only file at the target = upgrade: %+v", d)
+	}
+	if d := decision.Decide(decision.Release{Quality: hdtv720, Languages: []string{"en"}}, haveGerman, profile); !d.Accepted || !d.IsUpgrade {
+		t.Errorf("a LOWER quality in the right language beats the wrong language: %+v", d)
+	}
+	if d := decision.Decide(multi, haveGerman, profile); !d.Accepted {
+		t.Errorf("MULTi offers everything: %+v", d)
+	}
+	if d := decision.Decide(de, haveGerman, profile); d.Accepted || d.Rejections[0].Code != decision.CodeLanguageNotWanted {
+		t.Errorf("a German release cannot fix a German problem: %+v", d)
+	}
+	if d := decision.Decide(de, missing, profile); d.Accepted || d.Rejections[0].Code != decision.CodeLanguageNotWanted {
+		t.Errorf("missing + German-only release = language_not_wanted: %+v", d)
+	}
+	if d := decision.Decide(en, haveEnglish, profile); d.Accepted || d.Rejections[0].Code != decision.CodeTargetMet {
+		t.Errorf("English at the target is done: %+v", d)
+	}
+	// Untagged tracks: no proof the language is missing, so no churn.
+	untagged := haveGerman
+	untagged.Audio = quality.Audio{Languages: []string{"de"}, Known: false}
+	if d := decision.Decide(en, untagged, profile); d.Accepted || d.Rejections[0].Code != decision.CodeTargetMet {
+		t.Errorf("an untagged track is not evidence of absence: %+v", d)
+	}
+	// Upgrades off: the language rule does not override the switch.
+	off := profile
+	off.UpgradesAllowed = false
+	if d := decision.Decide(en, haveGerman, off); d.Accepted || d.Rejections[0].Code != decision.CodeUpgradesOff {
+		t.Errorf("upgrades disabled still wins: %+v", d)
 	}
 }
 

@@ -81,6 +81,19 @@ type CopyDiskState struct {
 	// a target that is otherwise met counts as met anyway rather than
 	// triggering a replacement on a guess.
 	SourceVerified bool
+	// Audio is what the file behind Best declares on its audio tracks
+	// (ADR 0022). The zero value when Best is nil or the file was never
+	// probed, which never makes an item wanted.
+	Audio quality.Audio
+}
+
+// AudioOf reads the ADR 0022 language facts out of a file record.
+func (f FileQuality) AudioOf() quality.Audio {
+	if !f.Probed {
+		return quality.Audio{}
+	}
+	langs, known := f.Info.AudioLanguages()
+	return quality.Audio{Languages: langs, Known: known}
 }
 
 // FileQualityRecords returns the quality record for every file of an item.
@@ -185,6 +198,7 @@ func (d *DB) DiskStateForItem(ctx context.Context, itemID, copyID int64) (CopyDi
 		q := bestRecord.Quality
 		state.Best = &q
 		state.SourceVerified = bestRecord.SourceVerified()
+		state.Audio = bestRecord.AudioOf()
 	}
 	return state, nil
 }

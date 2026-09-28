@@ -663,6 +663,16 @@ type importScope struct {
 	Indexer string
 }
 
+// importLanguages reads the languages an import claims: from the release
+// name when there is one, otherwise from the file's own name — a manual
+// import of a loose file has nothing else to go by.
+func importLanguages(releaseTitle, src string) []string {
+	if releaseTitle != "" {
+		return parser.Parse(releaseTitle).Languages
+	}
+	return parser.Parse(filepath.Base(src)).Languages
+}
+
 func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
@@ -670,7 +680,12 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	}
 	upgrade := false
 	if state.Best != nil {
-		upgrade = profile.Upgrade(q, *state.Best, state.SourceVerified)
+		// The import judges the language by the same claim the grab did —
+		// the release name (ADR 0022). The probe that follows placement
+		// records what the file really carries, and a file that turns out
+		// not to have the language leaves the item wanted again.
+		langs := importLanguages(releaseTitle, src)
+		upgrade = profile.Upgrade(q, langs, *state.Best, state.SourceVerified, state.Audio)
 		if !upgrade && !manual {
 			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), state.Best.Display(), profile.Name)
@@ -680,7 +695,6 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 		// somebody imported a worse one is not a thing to do silently.
 		upgrade = upgrade || quality.Better(q, *state.Best)
 	}
-	_ = profile
 
 	dest := movieDestination(scope.Dest, item, src, q)
 	if r, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
@@ -718,7 +732,7 @@ func (s *Service) planBookImport(ctx context.Context, item domain.MediaItem, sco
 	if state.Best == nil {
 		return plan, nil
 	}
-	plan.Upgrade = profile.Upgrade(worst, *state.Best, state.SourceVerified)
+	plan.Upgrade = profile.Upgrade(worst, nil, *state.Best, state.SourceVerified, state.Audio)
 	if !plan.Upgrade && !manual {
 		return nil, fmt.Errorf("%s audiobook does not improve on the %s already here (profile %q)",
 			worst.Display(), state.Best.Display(), profile.Name)
@@ -747,7 +761,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 	}
 	upgrade := false
 	if state.Best != nil {
-		upgrade = profile.Upgrade(q, *state.Best, state.SourceVerified)
+		upgrade = profile.Upgrade(q, nil, *state.Best, state.SourceVerified, state.Audio)
 		if !upgrade && !manual {
 			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), state.Best.Display(), profile.Name)
@@ -786,6 +800,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	var epTitles []string
 	var worst *quality.Quality
 	worstVerified := true
+	worstAudio := quality.Audio{}
 	missing := false
 	for _, epNum := range eps {
 		epID, err := s.db.GetEpisodeID(ctx, item.ID, season, epNum)
@@ -812,6 +827,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		} else if worst == nil || quality.Better(*worst, *st.Have) {
 			worst = st.Have
 			worstVerified = st.Verified
+			worstAudio = st.Audio
 		}
 	}
 	if len(epIDs) == 0 {
@@ -819,7 +835,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	}
 	upgrade := false
 	if !missing && worst != nil {
-		upgrade = profile.Upgrade(q, *worst, worstVerified)
+		upgrade = profile.Upgrade(q, importLanguages(releaseTitle, src), *worst, worstVerified, worstAudio)
 		if !upgrade && !manual {
 			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), worst.Display(), profile.Name)

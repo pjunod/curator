@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/pjunod/monarr/internal/domain/language"
 )
 
 // Source is where the release came from, worst to best (roughly).
@@ -217,6 +219,59 @@ type Profile struct {
 	// DownloadPriority is passed to a capable download client when this
 	// profile supplies the item or copy's effective priority.
 	DownloadPriority int
+	// Languages is the audio-language requirement (ADR 0022): canonical
+	// codes, any one of which a file must carry on an audio track. Empty
+	// means no opinion, which is every profile that existed before the
+	// rule did.
+	//
+	// It is a requirement, not a preference, and it is not a rank. A file
+	// without any of these languages does not satisfy the profile whatever
+	// its resolution says — the German-only WEB-DL 1080p of an English film
+	// is not "at the target", it is the wrong film for this library — and
+	// a release that offers the language is an upgrade over it at any
+	// acceptable quality.
+	Languages []string
+}
+
+// Audio is what is known about the audio languages of what is on disk.
+//
+// Known carries the don't-churn rule (ADR 0013 §5) onto this axis. A track
+// with no language tag is not evidence of anything: it may well be the
+// English track. Only when every audio track declares a language, and none
+// of them is one the profile wants, has the file been shown to lack it.
+// Until then the requirement counts as met, and the item page says the
+// language could not be determined rather than hunting a replacement for a
+// file that might be perfect.
+type Audio struct {
+	// Languages are the canonical codes of the declared audio tracks.
+	Languages []string
+	// Known is true when there is at least one audio track and every one of
+	// them declared a language — the absence of a language is then a fact.
+	Known bool
+}
+
+// LanguageMet reports whether what is on disk satisfies the profile's
+// language requirement. No requirement, or no proof of absence, is met.
+func (p Profile) LanguageMet(a Audio) bool {
+	if len(p.Languages) == 0 || !a.Known {
+		return true
+	}
+	return language.Satisfies(a.Languages, p.Languages)
+}
+
+// LanguageAcceptable reports whether a release, judged by the languages its
+// name advertises, could satisfy the requirement. A release name with no
+// language tag is read as the original language of the work, which the
+// parser records as English — the scene convention, and the one Radarr
+// uses. Multi ("mul") satisfies anything.
+func (p Profile) LanguageAcceptable(offered []string) bool {
+	return language.Satisfies(offered, p.Languages)
+}
+
+// Satisfied is Met on both axes: the quality target is reached AND the
+// language requirement is met. It is the question the wanted index asks.
+func (p Profile) Satisfied(current Quality, sourceVerified bool, a Audio) bool {
+	return p.Met(current, sourceVerified) && p.LanguageMet(a)
 }
 
 // Met reports whether what is on disk satisfies the profile — the point at
@@ -277,10 +332,21 @@ func (p Profile) Acceptable(release Quality) bool {
 }
 
 // Upgrade reports whether a release is worth replacing what is on disk with.
-func (p Profile) Upgrade(release, current Quality, sourceVerified bool) bool {
-	return p.Acceptable(release) &&
-		Rank(release) > Rank(current) &&
-		!p.Met(current, sourceVerified)
+//
+// releaseLangs are the languages the release name advertises, and audio is
+// what the file on disk was measured to carry. When the file on disk fails
+// the language requirement, any acceptable release that offers the language
+// is an upgrade — a lower-ranked release included, because a file in the
+// wrong language ranks below every file in the right one. When the language
+// is fine (or unknowable), it is the quality rule of ADR 0014 unchanged.
+func (p Profile) Upgrade(release Quality, releaseLangs []string, current Quality, sourceVerified bool, audio Audio) bool {
+	if !p.Acceptable(release) || !p.LanguageAcceptable(releaseLangs) {
+		return false
+	}
+	if !p.LanguageMet(audio) {
+		return true
+	}
+	return Rank(release) > Rank(current) && !p.Met(current, sourceVerified)
 }
 
 // Sentence renders the profile as the thing it now is — one true sentence,
@@ -289,6 +355,9 @@ func (p Profile) Sentence() string {
 	s := "hunts the best release up to " + p.Target.Display() + ", then stops"
 	if p.Floor != nil {
 		s += "; never below " + p.Floor.Display()
+	}
+	if len(p.Languages) > 0 {
+		s += "; " + language.DisplayList(p.Languages) + " audio required"
 	}
 	if !p.UpgradesAllowed {
 		s += "; no upgrades once a file is present"

@@ -27,6 +27,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/pjunod/monarr/internal/domain/language"
 )
 
 // Container markers stored in Info.Container.
@@ -341,6 +343,29 @@ func (i Info) BestAudio() string {
 	return best
 }
 
+// AudioLanguages reports the declared audio languages of the file as
+// canonical codes, and whether that list is the whole truth: known is true
+// only when there is at least one audio track and EVERY track declared a
+// language (ADR 0022). One untagged track is one track that might be the
+// language somebody wants, so absence is not a fact until every track has
+// spoken.
+func (i Info) AudioLanguages() (langs []string, known bool) {
+	if len(i.Audio) == 0 {
+		return nil, false
+	}
+	known = true
+	raw := make([]string, 0, len(i.Audio))
+	for _, a := range i.Audio {
+		c := language.Canonical(a.Language)
+		if c == "" {
+			known = false
+			continue
+		}
+		raw = append(raw, c)
+	}
+	return language.Normalize(raw), known
+}
+
 // displayNames render measured facts the way people write them.
 var displayNames = map[string]string{
 	"h264": "H.264", "hevc": "HEVC", "av1": "AV1", "vp9": "VP9", "vp8": "VP8",
@@ -379,6 +404,22 @@ func (i Info) Summary() string {
 	}
 	if a := i.BestAudio(); a != "" {
 		parts = append(parts, Display(a))
+	}
+	// The languages the soundtrack declares, because "which language is
+	// this?" is the question a file in the wrong one gets asked (ADR 0022).
+	// A file that declares nothing says nothing here (most ffmpeg output is
+	// untagged and the pill should not nag about it); once one track is
+	// tagged, an untagged sibling shows as "undeclared" so the answer is
+	// never silently incomplete.
+	if langs, known := i.AudioLanguages(); len(langs) > 0 {
+		names := make([]string, 0, len(langs)+1)
+		for _, l := range langs {
+			names = append(names, language.Display(l))
+		}
+		if !known {
+			names = append(names, "undeclared")
+		}
+		parts = append(parts, strings.Join(names, "/"))
 	}
 	if i.BitrateKbps > 0 {
 		parts = append(parts, formatBitrate(i.BitrateKbps))

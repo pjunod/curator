@@ -183,7 +183,22 @@ func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 		u := apigen.MediaItemSummaryUpgrade(m.Upgrade)
 		out.Upgrade = &u
 	}
+	out.UpgradeReason = optStr(m.UpgradeReason)
+	out.AudioLanguages = audioLanguagesDTO(m.Audio)
 	return out
+}
+
+// audioLanguagesDTO renders the ADR 0022 language facts: the list only when
+// it is a fact (every track declared), nil otherwise.
+func audioLanguagesDTO(a quality.Audio) *[]string {
+	if !a.Known {
+		return nil
+	}
+	langs := a.Languages
+	if langs == nil {
+		langs = []string{}
+	}
+	return &langs
 }
 
 func optStr(s string) *string {
@@ -335,6 +350,8 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		u := apigen.MediaItemDetailUpgrade(m.Upgrade)
 		d.Upgrade = &u
 	}
+	d.UpgradeReason = optStr(m.UpgradeReason)
+	d.AudioLanguages = audioLanguagesDTO(m.Audio)
 	d.Copies = []apigen.MediaCopy{}
 	for _, c := range m.Copies {
 		copyDTO := apigen.MediaCopy{

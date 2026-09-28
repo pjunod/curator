@@ -128,12 +128,18 @@ SELECT
     -- copy must not make the main copy look unfinished.
     -- COALESCE because group_concat over no rows is NULL, and an item with
     -- no files is the common case on a fresh library.
-    -- Each entry is quality~provenance~confidence: they travel together
-    -- because the weakest file's PROVENANCE is what decides whether the
-    -- target counts as met (ADR 0013 don't-churn), and two separate
+    -- Each entry is quality~provenance~confidence~languages: they travel
+    -- together because the weakest file's PROVENANCE is what decides whether
+    -- the target counts as met (ADR 0013 don't-churn), and two separate
     -- group_concats would have no guaranteed row order to align them by.
+    -- The fourth field is the declared language of every audio track,
+    -- '+'-joined, an untagged track as 'und' (ADR 0022); empty when the
+    -- file was never probed or has no audio.
     (SELECT COALESCE(group_concat(
-              f2.quality || '~' || f2.quality_provenance || '~' || f2.quality_confidence
+              f2.quality || '~' || f2.quality_provenance || '~' || f2.quality_confidence || '~' ||
+              CASE WHEN json_valid(f2.media_info) THEN COALESCE(
+                (SELECT group_concat(COALESCE(NULLIF(json_extract(a.value, '$.language'), ''), 'und'), '+')
+                   FROM json_each(f2.media_info, '$.audio') a), '') ELSE '' END
             ), '') FROM media_files f2
       WHERE f2.media_item_id = m.id AND f2.quality != ''
         -- The primary copy stores copy_id NULL, not 0; "= 0" matches nothing

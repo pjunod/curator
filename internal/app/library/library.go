@@ -16,6 +16,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	identityinput "github.com/pjunod/monarr/internal/domain/identity"
+	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/matcher"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
@@ -1204,6 +1205,7 @@ func (s *Service) gradeUpgrades(ctx context.Context, items []domain.MediaItem) {
 		}
 		items[i].QualityTarget = p.Target
 		items[i].Upgrade = upgradeState(items[i], p)
+		items[i].UpgradeReason = upgradeReason(items[i], p)
 	}
 }
 
@@ -1222,13 +1224,27 @@ func upgradeState(m domain.MediaItem, p quality.Profile) domain.UpgradeState {
 		return domain.UpgradeUnknown
 	}
 	switch {
-	case p.Met(m.Quality, m.QualityVerified):
+	case p.Satisfied(m.Quality, m.QualityVerified, m.Audio):
 		return domain.UpgradeMet
 	case p.UpgradesAllowed:
 		return domain.UpgradeSeeking
 	default:
 		return domain.UpgradeCapped
 	}
+}
+
+// upgradeReason says what, beyond the quality target, keeps an item wanted:
+// today that is only the language rule (ADR 0022). Empty when the quality
+// target alone is the explanation, or when nothing is being sought.
+func upgradeReason(m domain.MediaItem, p quality.Profile) string {
+	if !hasFiles(m) || quality.Rank(m.Quality) == 0 || p.LanguageMet(m.Audio) {
+		return ""
+	}
+	have := "no declared audio language"
+	if len(m.Audio.Languages) > 0 {
+		have = language.DisplayList(m.Audio.Languages) + " only"
+	}
+	return fmt.Sprintf("no %s audio on disk (%s)", language.DisplayList(p.Languages), have)
 }
 
 // hasFiles reports whether anything is on disk, counting episodes for series
@@ -1268,6 +1284,8 @@ func (s *Service) gradeOne(ctx context.Context, item *domain.MediaItem) {
 	}
 	var worst quality.Quality
 	var verified, have bool
+	audio := quality.Audio{Known: true}
+	var common map[string]bool
 	for _, f := range item.Files {
 		if f.CopyID != 0 {
 			continue // a deliberate 720p second copy is not the main copy's problem
@@ -1279,8 +1297,35 @@ func (s *Service) gradeOne(ctx context.Context, item *domain.MediaItem) {
 		if !have || quality.Rank(rec.Quality) < quality.Rank(worst) {
 			worst, verified, have = rec.Quality, rec.SourceVerified(), true
 		}
+		// Languages are weakest-link too (ADR 0022): known only when every
+		// file is, carrying only what every file carries.
+		fa := rec.AudioOf()
+		if !fa.Known {
+			audio.Known = false
+			continue
+		}
+		fileHas := map[string]bool{}
+		for _, l := range fa.Languages {
+			fileHas[l] = true
+		}
+		if common == nil {
+			common = fileHas
+			continue
+		}
+		for l := range common {
+			if !fileHas[l] {
+				delete(common, l)
+			}
+		}
 	}
 	item.Quality, item.QualityVerified = worst, verified
+	if have && audio.Known {
+		for l := range common {
+			audio.Languages = append(audio.Languages, l)
+		}
+		sort.Strings(audio.Languages)
+		item.Audio = audio
+	}
 
 	// The list view counts monitored aired episodes; here the loaded
 	// episodes answer the same question directly.
@@ -1301,6 +1346,7 @@ func (s *Service) gradeOne(ctx context.Context, item *domain.MediaItem) {
 	}
 	item.QualityTarget = p.Target
 	item.Upgrade = upgradeState(*item, p)
+	item.UpgradeReason = upgradeReason(*item, p)
 }
 
 // SharedFolders returns folders more than one library item points at,

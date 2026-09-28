@@ -10,6 +10,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/decision"
 	"github.com/pjunod/monarr/internal/domain/format"
+	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
@@ -157,7 +158,7 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 				if err != nil {
 					continue
 				}
-				if d := decision.Decide(p.Quality, w, profile); !d.Accepted {
+				if d := decision.Decide(releaseOf(p), w, profile); !d.Accepted {
 					continue
 				}
 				if why, bad := sizeImplausible(p.Quality, r, runtimes.of(ctx, s, w)); bad {
@@ -174,7 +175,7 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 					continue
 				}
 				freshProfile, err := s.db.GetProfile(ctx, fresh.ProfileID())
-				if err != nil || !wants(freshProfile, fresh) || !decision.Decide(p.Quality, fresh, freshProfile).Accepted {
+				if err != nil || !wants(freshProfile, fresh) || !decision.Decide(releaseOf(p), fresh, freshProfile).Accepted {
 					unlock()
 					continue
 				}
@@ -386,7 +387,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 					if !releaseMatch(release, parsed, w, identityIndex).Matched {
 						continue
 					}
-					if !decision.Decide(parsed.Quality, w, profile).Accepted {
+					if !decision.Decide(releaseOf(parsed), w, profile).Accepted {
 						continue
 					}
 					if _, bad := sizeImplausible(parsed.Quality, release, runtime); bad {
@@ -439,7 +440,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 			continue
 		}
 		tally.Matched++
-		if d := decision.Decide(p.Quality, w, profile); !d.Accepted {
+		if d := decision.Decide(releaseOf(p), w, profile); !d.Accepted {
 			continue
 		}
 		if why, bad := sizeImplausible(p.Quality, r, runtime); bad {
@@ -505,6 +506,12 @@ func (s *Service) WantedList(ctx context.Context) ([]WantedSummary, error) {
 		}
 		if q, ok := w.CurrentQuality(); ok {
 			ws.Missing, ws.Current, ws.Reason = false, q.Display(), "upgrade"
+			// The language rides along with the quality (ADR 0022) so
+			// "upgrade from WEB-DL 1080p" can read "upgrade from WEB-DL 1080p
+			// (German)" when that is the whole reason.
+			if a := w.AudioLanguages(); a.Known && len(a.Languages) > 0 {
+				ws.Current += " (" + language.DisplayList(a.Languages) + ")"
+			}
 		}
 		switch t := w.(type) {
 		case domain.MovieWantable:

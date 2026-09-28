@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
@@ -36,6 +37,11 @@ const (
 	// code here it says nothing about the profile — the release would be
 	// perfectly acceptable if it were real.
 	CodeSizeImplausible = "size_implausible"
+	// CodeLanguageNotWanted is the release-side language rule (ADR 0022):
+	// the name advertises soundtracks, none of which the profile requires.
+	// A German-only release cannot fix a library that wants English, at any
+	// resolution.
+	CodeLanguageNotWanted = "language_not_wanted"
 )
 
 // Rejection is one machine-readable reason a release was declined.
@@ -55,13 +61,22 @@ func rejected(code, format string, args ...any) Decision {
 	return Decision{Rejections: []Rejection{{Code: code, Reason: fmt.Sprintf(format, args...)}}}
 }
 
-// Decide evaluates a release quality against a wantable's profile and what is
+// Release is what the engine knows about a candidate: the quality its name
+// claims and the languages its name advertises (ADR 0022). Both come from
+// the parser; a candidate that has not been downloaded has nothing else.
+type Release struct {
+	Quality   quality.Quality
+	Languages []string
+}
+
+// Decide evaluates a release against a wantable's profile and what is
 // already on disk. Pure: no I/O, no clock.
 //
 // The order of the checks is the order of the questions: is this thing wanted
 // at all, do we know what the release is, would this profile ever take it,
 // and only then — is it better than what is already there.
-func Decide(q quality.Quality, w domain.Wantable, profile quality.Profile) Decision {
+func Decide(r Release, w domain.Wantable, profile quality.Profile) Decision {
+	q := r.Quality
 	if !w.Monitored() {
 		return rejected(CodeUnmonitored, "not monitored")
 	}
@@ -86,6 +101,11 @@ func Decide(q quality.Quality, w domain.Wantable, profile quality.Profile) Decis
 		}
 	}
 
+	if !profile.LanguageAcceptable(r.Languages) {
+		return rejected(CodeLanguageNotWanted, "%s audio; profile %q requires %s",
+			language.DisplayList(r.Languages), profile.Name, language.DisplayList(profile.Languages))
+	}
+
 	current, have := w.CurrentQuality()
 	if !have {
 		// Nothing KNOWN on disk. That is two different situations, and
@@ -101,7 +121,9 @@ func Decide(q quality.Quality, w domain.Wantable, profile quality.Profile) Decis
 	}
 
 	verified := w.SourceVerified()
-	if profile.Met(current, verified) {
+	audio := w.AudioLanguages()
+	languageMet := profile.LanguageMet(audio)
+	if profile.Met(current, verified) && languageMet {
 		if !verified {
 			return rejected(CodeTargetMet,
 				"already at the target resolution with %s (source unverified)", current.Display())
@@ -111,7 +133,7 @@ func Decide(q quality.Quality, w domain.Wantable, profile quality.Profile) Decis
 	if !profile.UpgradesAllowed {
 		return rejected(CodeUpgradesOff, "already have %s and upgrades are disabled", current.Display())
 	}
-	if !profile.Upgrade(q, current, verified) {
+	if !profile.Upgrade(q, r.Languages, current, verified, audio) {
 		return rejected(CodeNotAnUpgrade, "%s does not improve on %s", q.Display(), current.Display())
 	}
 	return Decision{Accepted: true, IsUpgrade: true}

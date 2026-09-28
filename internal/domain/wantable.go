@@ -71,6 +71,11 @@ type Wantable interface {
 	// trustworthy enough to justify replacing the file. False for a
 	// medium/low-confidence inference — the don't-churn rule.
 	SourceVerified() bool
+	// AudioLanguages is what the file behind CurrentQuality was measured to
+	// carry (ADR 0022): the declared languages of its audio tracks, and
+	// whether every track declared one. The zero value — nothing known —
+	// never makes an item wanted.
+	AudioLanguages() quality.Audio
 }
 
 // MovieWantable is the degenerate case: one item, one file.
@@ -83,6 +88,8 @@ type MovieWantable struct {
 	// quality is unknown. Have==nil && Files==true is "on disk, unverified".
 	Files    bool
 	Verified bool
+	// Audio is the measured audio languages of the file behind Have.
+	Audio    quality.Audio
 	Title    string
 	Year     int
 	Identity MediaIdentity
@@ -120,6 +127,9 @@ func (m MovieWantable) OnDisk() bool { return m.Files || m.Have != nil }
 // SourceVerified implements Wantable.
 func (m MovieWantable) SourceVerified() bool { return m.Verified }
 
+// AudioLanguages implements Wantable.
+func (m MovieWantable) AudioLanguages() quality.Audio { return m.Audio }
+
 // EpisodeWantable is one episode of a series.
 type EpisodeWantable struct {
 	Item      int64
@@ -129,6 +139,7 @@ type EpisodeWantable struct {
 	Have      *quality.Quality
 	Files     bool
 	Verified  bool
+	Audio     quality.Audio
 	Title     string // series title
 	Year      int
 	Identity  MediaIdentity
@@ -166,6 +177,9 @@ func (e EpisodeWantable) OnDisk() bool { return e.Files || e.Have != nil }
 
 // SourceVerified implements Wantable.
 func (e EpisodeWantable) SourceVerified() bool { return e.Verified }
+
+// AudioLanguages implements Wantable.
+func (e EpisodeWantable) AudioLanguages() quality.Audio { return e.Audio }
 
 // SeasonWantable is the season-pack search target: one download that
 // satisfies many episode wantables at import time — Sonarr's hardest
@@ -247,6 +261,41 @@ func (s SeasonWantable) SourceVerified() bool {
 	return true
 }
 
+// AudioLanguages implements Wantable with the weakest-link rule again: the
+// season is only as known as its least-known episode, and it only carries a
+// language every episode carries — a pack has to fix the whole season.
+func (s SeasonWantable) AudioLanguages() quality.Audio {
+	if len(s.Episodes) == 0 {
+		return quality.Audio{}
+	}
+	var common map[string]bool
+	for _, e := range s.Episodes {
+		a := e.AudioLanguages()
+		if !a.Known {
+			return quality.Audio{}
+		}
+		have := map[string]bool{}
+		for _, l := range a.Languages {
+			have[l] = true
+		}
+		if common == nil {
+			common = have
+			continue
+		}
+		for l := range common {
+			if !have[l] {
+				delete(common, l)
+			}
+		}
+	}
+	out := quality.Audio{Known: true}
+	for l := range common {
+		out.Languages = append(out.Languages, l)
+	}
+	sort.Strings(out.Languages)
+	return out
+}
+
 // BookWantable is one book (ADR 0006): like a movie, one item and one file,
 // but matched by author+title and graded on format instead of resolution.
 type BookWantable struct {
@@ -256,6 +305,7 @@ type BookWantable struct {
 	Have     *quality.Quality
 	Files    bool
 	Verified bool
+	Audio    quality.Audio
 	Title    string
 	Author   string
 	Year     int
@@ -294,6 +344,9 @@ func (b BookWantable) OnDisk() bool { return b.Files || b.Have != nil }
 
 // SourceVerified implements Wantable.
 func (b BookWantable) SourceVerified() bool { return b.Verified }
+
+// AudioLanguages implements Wantable.
+func (b BookWantable) AudioLanguages() quality.Audio { return b.Audio }
 
 // SearchQuery is what a planner emits for indexers (blueprint §4.1).
 type SearchQuery struct {

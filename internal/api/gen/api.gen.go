@@ -1503,6 +1503,15 @@ type IndexerInput struct {
 // IndexerInputProtocol defines model for IndexerInput.Protocol.
 type IndexerInputProtocol string
 
+// LanguageOption defines model for LanguageOption.
+type LanguageOption struct {
+	// Code Canonical ISO 639-1 code ("en").
+	Code string `json:"code"`
+
+	// Name Display name ("English").
+	Name string `json:"name"`
+}
+
 // ManualImportAccepted defines model for ManualImportAccepted.
 type ManualImportAccepted struct {
 	// DownloadId Activity row that now owns the background import.
@@ -1616,6 +1625,9 @@ type MediaItemDetail struct {
 	AddedAt time.Time    `json:"addedAt"`
 	Aliases []TitleAlias `json:"aliases"`
 
+	// AudioLanguages Declared audio languages every primary-copy file carries (ADR 0022), canonical codes. Absent when any file has an untagged track or was never measured.
+	AudioLanguages *[]string `json:"audioLanguages,omitempty"`
+
 	// Author Books only (ADR 0006); empty for movies/series.
 	Author       string `json:"author"`
 	BackdropPath string `json:"backdropPath"`
@@ -1674,7 +1686,10 @@ type MediaItemDetail struct {
 
 	// Upgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off.
 	Upgrade *MediaItemDetailUpgrade `json:"upgrade,omitempty"`
-	Year    int                     `json:"year"`
+
+	// UpgradeReason When seeking for a reason the quality target does not explain -- today the audio-language rule (ADR 0022) -- the reason, server rendered: "no English audio on disk (German only)". Empty otherwise.
+	UpgradeReason *string `json:"upgradeReason,omitempty"`
+	Year          int     `json:"year"`
 }
 
 // MediaItemDetailUpgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off.
@@ -1684,6 +1699,9 @@ type MediaItemDetailUpgrade string
 type MediaItemSummary struct {
 	// AddedAt When the item was added — drives the "recently added" sort.
 	AddedAt time.Time `json:"addedAt"`
+
+	// AudioLanguages Declared audio languages every primary-copy file carries (ADR 0022), canonical codes. Absent when any file has an untagged track or was never measured -- absence is only a fact once every track has declared itself.
+	AudioLanguages *[]string `json:"audioLanguages,omitempty"`
 
 	// Author Books only (ADR 0006); empty for movies/series.
 	Author string `json:"author"`
@@ -1732,7 +1750,10 @@ type MediaItemSummary struct {
 
 	// Upgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off. Empty when it could not be determined.
 	Upgrade *MediaItemSummaryUpgrade `json:"upgrade,omitempty"`
-	Year    int                      `json:"year"`
+
+	// UpgradeReason When seeking for a reason the quality target does not explain -- today the audio-language rule (ADR 0022) -- the reason, server rendered: "no English audio on disk (German only)". Empty otherwise.
+	UpgradeReason *string `json:"upgradeReason,omitempty"`
+	Year          int     `json:"year"`
 }
 
 // MediaItemSummaryUpgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off. Empty when it could not be determined.
@@ -1867,6 +1888,9 @@ type PlurxWatchedEventKind string
 
 // ProfileInput defines model for ProfileInput.
 type ProfileInput struct {
+	// AudioLanguages Required audio languages, any one of which satisfies (ADR 0022). Codes from GET /languages. Omit or send empty for no requirement.
+	AudioLanguages *[]string `json:"audioLanguages,omitempty"`
+
 	// DownloadPriority One of -100, -50, 0, 50, 100, or 900 (force).
 	DownloadPriority *int          `json:"downloadPriority,omitempty"`
 	Floor            *QualityInput `json:"floor,omitempty"`
@@ -1918,6 +1942,9 @@ type QualityInput struct {
 
 // QualityProfile defines model for QualityProfile.
 type QualityProfile struct {
+	// AudioLanguages Required audio languages (ADR 0022), canonical ISO 639-1 codes. A file must carry at least one of them on an audio track or the item stays wanted at any quality; a release whose name advertises none of them is refused. Empty means no requirement.
+	AudioLanguages *[]string `json:"audioLanguages,omitempty"`
+
 	// DownloadPriority Default scheduler priority for items that inherit from this profile.
 	DownloadPriority int      `json:"downloadPriority"`
 	Floor            *Quality `json:"floor,omitempty"`
@@ -2053,10 +2080,13 @@ type ReleaseCandidate struct {
 	DownloadUrl    string `json:"downloadUrl"`
 
 	// Formats Names of matched custom formats.
-	Formats    *[]string     `json:"formats,omitempty"`
-	Indexer    string        `json:"indexer"`
-	InfoUrl    *string       `json:"infoUrl,omitempty"`
-	IsUpgrade  bool          `json:"isUpgrade"`
+	Formats   *[]string `json:"formats,omitempty"`
+	Indexer   string    `json:"indexer"`
+	InfoUrl   *string   `json:"infoUrl,omitempty"`
+	IsUpgrade bool      `json:"isUpgrade"`
+
+	// Languages Audio languages the release name advertises (ADR 0022), canonical codes; "mul" for a MULTi/DUAL release. A name that says nothing reads as English, the scene convention.
+	Languages  *[]string     `json:"languages,omitempty"`
 	Match      MatchEvidence `json:"match"`
 	Protocol   string        `json:"protocol"`
 	Quality    string        `json:"quality"`
@@ -2902,6 +2932,9 @@ type ServerInterface interface {
 	// TestIndexerById Test a saved indexer with its stored credentials
 	// (POST /indexers/{id}/test)
 	TestIndexerById(w http.ResponseWriter, r *http.Request, id int64)
+	// ListLanguages List the audio languages a profile can require
+	// (GET /languages)
+	ListLanguages(w http.ResponseWriter, r *http.Request)
 	// ListLibrary List library items
 	// (GET /library)
 	ListLibrary(w http.ResponseWriter, r *http.Request, params ListLibraryParams)
@@ -3976,6 +4009,20 @@ func (siw *ServerInterfaceWrapper) TestIndexerById(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.TestIndexerById(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListLanguages operation middleware
+func (siw *ServerInterfaceWrapper) ListLanguages(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListLanguages(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6052,6 +6099,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/settings", wrapper.UpdateSettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/profiles", wrapper.ListProfiles)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/profiles", wrapper.CreateProfile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/languages", wrapper.ListLanguages)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/profiles/{id}", wrapper.DeleteProfile)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/profiles/{id}", wrapper.UpdateProfile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/indexers", wrapper.ListIndexers)
