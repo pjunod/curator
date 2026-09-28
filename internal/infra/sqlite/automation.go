@@ -221,6 +221,8 @@ func (d *DB) SettleDelivery(ctx context.Context, del Delivery) error {
 //
 // The last error is kept on the row until the next attempt overwrites it:
 // the log should still say why it failed while it is waiting to go again.
+// The result is not: a partial delivery's "2 of 3 directories" answer
+// belongs to the run that failed, not to the one that has not happened.
 func (d *DB) RetryDelivery(ctx context.Context, notifierID, id int64) (Delivery, error) {
 	now := time.Now().UnixMilli()
 	r, err := d.Write.RetryDelivery(ctx, sqlitegen.RetryDeliveryParams{
@@ -236,13 +238,9 @@ func (d *DB) RetryDelivery(ctx context.Context, notifierID, id int64) (Delivery,
 // returns how many it requeued. Zero is not an error.
 func (d *DB) RetryFailedDeliveries(ctx context.Context, notifierID int64) (int64, error) {
 	now := time.Now().UnixMilli()
-	rows, err := d.Write.RetryFailedDeliveries(ctx, sqlitegen.RetryFailedDeliveriesParams{
+	return d.Write.RetryFailedDeliveries(ctx, sqlitegen.RetryFailedDeliveriesParams{
 		NextAt: now, UpdatedAt: now, NotifierID: notifierID,
 	})
-	if err != nil {
-		return 0, err
-	}
-	return int64(len(rows)), nil
 }
 
 // ListDeliveries returns a notifier's most recent deliveries, newest first.

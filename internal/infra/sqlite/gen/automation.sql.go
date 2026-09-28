@@ -636,7 +636,7 @@ func (q *Queries) ListNotifiers(ctx context.Context) ([]Notifier, error) {
 
 const retryDelivery = `-- name: RetryDelivery :one
 UPDATE notifier_deliveries
-   SET status = 'pending', attempts = 0, next_at = ?, updated_at = ?
+   SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?
  WHERE id = ? AND notifier_id = ? AND status = 'failed'
 RETURNING id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at
 `
@@ -673,11 +673,10 @@ func (q *Queries) RetryDelivery(ctx context.Context, arg RetryDeliveryParams) (N
 	return i, err
 }
 
-const retryFailedDeliveries = `-- name: RetryFailedDeliveries :many
+const retryFailedDeliveries = `-- name: RetryFailedDeliveries :execrows
 UPDATE notifier_deliveries
-   SET status = 'pending', attempts = 0, next_at = ?, updated_at = ?
+   SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?
  WHERE notifier_id = ? AND status = 'failed'
-RETURNING id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at
 `
 
 type RetryFailedDeliveriesParams struct {
@@ -686,40 +685,12 @@ type RetryFailedDeliveriesParams struct {
 	NotifierID int64
 }
 
-func (q *Queries) RetryFailedDeliveries(ctx context.Context, arg RetryFailedDeliveriesParams) ([]NotifierDelivery, error) {
-	rows, err := q.db.QueryContext(ctx, retryFailedDeliveries, arg.NextAt, arg.UpdatedAt, arg.NotifierID)
+func (q *Queries) RetryFailedDeliveries(ctx context.Context, arg RetryFailedDeliveriesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, retryFailedDeliveries, arg.NextAt, arg.UpdatedAt, arg.NotifierID)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	defer rows.Close()
-	var items []NotifierDelivery
-	for rows.Next() {
-		var i NotifierDelivery
-		if err := rows.Scan(
-			&i.ID,
-			&i.NotifierID,
-			&i.DownloadID,
-			&i.Event,
-			&i.Payload,
-			&i.Attempts,
-			&i.LastError,
-			&i.Result,
-			&i.Status,
-			&i.NextAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return result.RowsAffected()
 }
 
 const settleDelivery = `-- name: SettleDelivery :exec

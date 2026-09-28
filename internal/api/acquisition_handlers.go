@@ -1221,8 +1221,7 @@ func (s *Server) ListDeliveries(w http.ResponseWriter, r *http.Request, id int64
 // are all fine to send again once it is healthy — and nothing here should
 // require a database session to say so.
 func (s *Server) RetryFailedDeliveries(w http.ResponseWriter, r *http.Request, id int64) {
-	if _, err := s.deps.Store.GetNotifier(r.Context(), id); err != nil {
-		s.acqErr(w, err)
+	if !s.retryableNotifier(w, r, id) {
 		return
 	}
 	n, err := s.deps.Store.RetryFailedDeliveries(r.Context(), id)
@@ -1235,8 +1234,7 @@ func (s *Server) RetryFailedDeliveries(w http.ResponseWriter, r *http.Request, i
 
 // RetryDelivery implements POST /notifiers/{id}/deliveries/{deliveryId}/retry.
 func (s *Server) RetryDelivery(w http.ResponseWriter, r *http.Request, id int64, deliveryID int64) {
-	if _, err := s.deps.Store.GetNotifier(r.Context(), id); err != nil {
-		s.acqErr(w, err)
+	if !s.retryableNotifier(w, r, id) {
 		return
 	}
 	d, err := s.deps.Store.RetryDelivery(r.Context(), id, deliveryID)
@@ -1245,6 +1243,24 @@ func (s *Server) RetryDelivery(w http.ResponseWriter, r *http.Request, id int64,
 		return
 	}
 	writeJSON(w, http.StatusOK, deliveryDTO(d))
+}
+
+// retryableNotifier answers whether a retry may be queued for this notifier,
+// writing the refusal itself. A disabled notifier does not fire on an import
+// (notify.go gates enqueue on Enabled), so a retry — the one way an operator
+// puts a row back on the queue by hand — must not send on it either: the
+// worker does not check Enabled, it delivers whatever is pending.
+func (s *Server) retryableNotifier(w http.ResponseWriter, r *http.Request, id int64) bool {
+	cfg, err := s.deps.Store.GetNotifier(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return false
+	}
+	if !cfg.Enabled {
+		writeError(w, http.StatusConflict, "notifier is disabled — enable it before retrying its deliveries")
+		return false
+	}
+	return true
 }
 
 func deliveryDTO(d sqlite.Delivery) apigen.Delivery {

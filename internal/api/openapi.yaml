@@ -2333,7 +2333,11 @@ paths:
         is refusing work for a day. Once the far side is healthy again this
         requeues everything that gave up, due now, with a fresh schedule.
         Only failed rows are touched; pending and delivered ones are left
-        alone. Zero requeued is a normal answer, not an error.
+        alone. Zero requeued is a normal answer, not an error. Rows that
+        failed permanently (a rejected key, a path outside plurx's roots)
+        are requeued too and fail again on their first attempt: the row
+        cannot tell them apart, and the operator pressing this has usually
+        just fixed the thing that made them fail.
       parameters:
         - name: id
           in: path
@@ -2351,6 +2355,13 @@ paths:
                   requeued: { type: integer, format: int64 }
         "404":
           description: Unknown notifier.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: >
+            The notifier is disabled. A disabled notifier does not fire on
+            an import, so it does not fire on request either.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2383,6 +2394,11 @@ paths:
           description: >
             No such notifier, or no failed delivery with that id under it —
             a pending or delivered row has nothing to retry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The notifier is disabled.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

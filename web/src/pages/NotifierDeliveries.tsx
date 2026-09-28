@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getDeliveries, retryDelivery, retryFailedDeliveries } from '../api'
 import type { Delivery } from '../api'
@@ -67,6 +68,7 @@ export function NotifierDeliveries({ id }: { id: number }) {
     mutationFn: () => retryFailedDeliveries(id),
     onSettled: refresh,
   })
+  const [sweep, setSweep] = useState<number | null>(null)
 
   if (deliveries.isPending) return <p className="muted">Loading deliveries…</p>
   if (deliveries.isError) {
@@ -77,20 +79,37 @@ export function NotifierDeliveries({ id }: { id: number }) {
     return <p className="muted">No deliveries yet — this notifier fires after an import.</p>
   }
 
+  // The list is the newest 100 rows; the sweep is the whole history. So the
+  // button is always there — a wedge that outlasted 100 imports has all its
+  // failures below the fold — the count in the label is what is visible,
+  // and what the server actually requeued is reported back after the click.
   const failed = rows.filter((d) => d.status === 'failed').length
   const busy = retryOne.isPending || retryAll.isPending
   const error = (retryAll.error ?? retryOne.error) as Error | null
 
   return (
     <>
-      {failed > 0 && (
-        <div className="add-controls" style={{ marginBottom: 8 }}>
-          <button onClick={() => retryAll.mutate()} disabled={busy}>
-            {retryAll.isPending ? 'Retrying…' : `Retry all failed (${failed})`}
-          </button>
-          {error && <span className="error-text">✗ {error.message}</span>}
-        </div>
-      )}
+      <div className="add-controls" style={{ marginBottom: 8 }}>
+        <button
+          onClick={() => {
+            setSweep(null)
+            retryAll.mutate(undefined, { onSuccess: (r) => setSweep(r.requeued) })
+          }}
+          disabled={busy}
+        >
+          {retryAll.isPending
+            ? 'Retrying…'
+            : failed > 0
+              ? `Retry all failed (${failed} shown)`
+              : 'Retry all failed'}
+        </button>
+        {sweep !== null && !error && (
+          <span className="muted">
+            {sweep === 0 ? 'nothing to retry' : `${sweep} requeued`}
+          </span>
+        )}
+        {error && <span className="error-text">✗ {error.message}</span>}
+      </div>
       <table>
         <thead>
           <tr>

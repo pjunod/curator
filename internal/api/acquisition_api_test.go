@@ -1097,9 +1097,12 @@ func TestAcqFailedDeliveriesCanBeRetried(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		d.Attempts, d.Status, d.LastError = 4, status, "plurx returned 503: the durable queue refused this request"
+		d.Attempts, d.Status = 4, status
+		// A partial delivery carries both: what landed, and what did not.
+		d.LastError = "plurx: 1 of 2 directories not indexed: plurx returned 503: the durable queue refused this request"
+		d.Result = "scanned → plurx item 1201"
 		if status == "ok" {
-			d.LastError, d.Result = "", "scanned"
+			d.LastError = ""
 		}
 		if err := e.db.SettleDelivery(ctx, d); err != nil {
 			t.Fatal(err)
@@ -1107,7 +1110,7 @@ func TestAcqFailedDeliveriesCanBeRetried(t *testing.T) {
 		return d
 	}
 	failedOne := settle("failed")
-	failedTwo := settle("failed")
+	settle("failed")
 	delivered := settle("ok")
 
 	// One row.
@@ -1118,6 +1121,9 @@ func TestAcqFailedDeliveriesCanBeRetried(t *testing.T) {
 	}
 	if retried.LastError == nil || *retried.LastError == "" {
 		t.Errorf("the last error must stay readable while the retry waits: %+v", retried)
+	}
+	if retried.Result != nil {
+		t.Errorf("result = %q — the failed run's partial answer must not sit on a row that has not been attempted", *retried.Result)
 	}
 	// Not failed any more, so not retryable again; the delivered row never was.
 	e.post(t, base+"/"+acqItoa(failedOne.ID)+"/retry", "").expect(t, http.StatusNotFound)
@@ -1147,7 +1153,15 @@ func TestAcqFailedDeliveriesCanBeRetried(t *testing.T) {
 			t.Errorf("delivery %d status = %s, want %s", d.Id, d.Status, want)
 		}
 	}
-	_ = failedTwo
+
+	// A disabled notifier does not fire on an import, so it does not fire on
+	// request either: the worker would deliver whatever is pending.
+	settle("failed")
+	e.put(t, "/api/v1/notifiers/"+acqItoa(created.Id),
+		`{"type":"plurx","name":"living room","enabled":false,"settings":{"url":"plurxd","apiKey":"plx_x"}}`).
+		expect(t, http.StatusOK)
+	e.post(t, base+"/retry", "").expect(t, http.StatusConflict)
+	e.post(t, base+"/"+acqItoa(failedOne.ID)+"/retry", "").expect(t, http.StatusConflict)
 }
 
 // A notifier needs a known type and a name, on create and on edit alike. An

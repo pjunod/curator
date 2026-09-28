@@ -552,9 +552,13 @@ because it is tuned for a restart, not for a media server that refuses work
 for a day (plurx's durable queue did exactly that on 2026-09-28, answering
 `500: internal server error` — now `503: the durable queue refused this
 request` — to every scan), and that is the case the button is for: fix the
-far side, then press it once. The same actions are
-`POST /api/v1/notifiers/{id}/deliveries/{deliveryId}/retry` and
-`POST /api/v1/notifiers/{id}/deliveries/retry`.
+far side, then press it once. **Retry all failed** covers the notifier's whole
+history, not only the 100 rows the log shows, and says how many it requeued;
+rows that failed permanently (a rejected key, a path outside plurx's roots)
+are requeued too and fail again on their first attempt. A disabled notifier
+refuses (409): it does not fire on an import, so it does not fire on request.
+The same actions are `POST /api/v1/notifiers/{id}/deliveries/{deliveryId}/retry`
+and `POST /api/v1/notifiers/{id}/deliveries/retry`.
 
 Notifiers can now be **edited in place** rather than removed and re-added.
 That was worth fixing here: the delivery log hangs off the notifier id, and

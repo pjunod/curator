@@ -241,10 +241,23 @@ func TestAPlurxNotificationIsQueuedAndThenDelivered(t *testing.T) {
 func TestAFailedDeliveryCanBeRequeuedAndThenDelivered(t *testing.T) {
 	target := &sink{err: errors.New("plurx returned 503: the durable queue refused this request")}
 	db, b, d, ctx := queueFixture(t, target)
+	item, err := db.CreateMediaItem(ctx, domain.MediaItem{
+		Kind: domain.KindMovie, Title: "Heat", Year: 1995, Monitored: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dl, err := db.InsertDownload(ctx, sqlite.Download{
+		MediaItemID: item, ReleaseTitle: "Heat.1995.1080p", State: "imported",
+		Transfer: "t-42-a3f9c1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	go d.Run(ctx)
 	time.Sleep(50 * time.Millisecond)
-	b.Publish(importEvent(0))
+	b.Publish(importEvent(dl))
 	waitForQueue(t, db, ctx)
 	rows, _ := db.ListDeliveries(ctx, 1, 10)
 	for i := 0; i <= len(deliveryBackoff); i++ {
@@ -297,6 +310,23 @@ func TestAFailedDeliveryCanBeRequeuedAndThenDelivered(t *testing.T) {
 	// Nothing left to retry.
 	if n, _ := db.RetryFailedDeliveries(ctx, 1); n != 0 {
 		t.Errorf("a second sweep requeued %d rows, want 0", n)
+	}
+
+	// The download's trace tells the whole story in order: it failed, then
+	// it was retried and delivered. Two steps, not one overwritten.
+	trace, err := db.GetDownload(ctx, dl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steps []string
+	for _, h := range trace.Handoff {
+		if h.Step == "notify_plurx" {
+			steps = append(steps, h.Detail)
+		}
+	}
+	if len(steps) != 2 || !strings.Contains(steps[0], "failed after 4 attempt") ||
+		!strings.Contains(steps[1], "scanned → plurx item 1201") {
+		t.Errorf("notify_plurx steps = %q, want the failure and then the delivery", steps)
 	}
 }
 
