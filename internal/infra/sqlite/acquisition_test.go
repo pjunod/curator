@@ -218,3 +218,35 @@ func TestEveryClientTypeInsertable(t *testing.T) {
 		t.Fatalf("clients = %d err %v", len(list), err)
 	}
 }
+
+// TestProfileLanguagesRoundTrip: the ADR 0022 requirement is stored in the
+// definition JSON, canonicalized, and absent means none -- so every profile
+// written before the rule reads back unchanged.
+func TestProfileLanguagesRoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	p := quality.Profile{
+		Name: "English 1080p", Target: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080},
+		UpgradesAllowed: true, Languages: []string{"eng", "FR", "en"},
+	}
+	id, err := db.AddProfile(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetProfile(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Languages) != 2 || got.Languages[0] != "en" || got.Languages[1] != "fr" {
+		t.Fatalf("languages = %v, want [en fr] (canonical, deduped, sorted)", got.Languages)
+	}
+	for _, seeded := range quality.DefaultProfiles() {
+		sp, err := db.GetProfile(ctx, seeded.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(sp.Languages) != 0 {
+			t.Errorf("seeded profile %d has a language requirement it never asked for: %v", seeded.ID, sp.Languages)
+		}
+	}
+}

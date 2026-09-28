@@ -1234,3 +1234,50 @@ func TestAcqNotifierDeliveriesStartEmpty(t *testing.T) {
 		t.Errorf("deliveries = %+v, want none for a notifier that has never fired", deliveries)
 	}
 }
+
+// TestAcqSearchReleasesCarriesLanguages: each candidate says what its name
+// advertises (ADR 0022), and once the profile requires English the German
+// dub is refused with a reason a person can read, while the untagged
+// release -- English by convention -- stays accepted.
+func TestAcqSearchReleasesCarriesLanguages(t *testing.T) {
+	e := newAPIEnv(t)
+	e.post(t, "/api/v1/indexers",
+		`{"name":"german.invalid","url":"idx.invalid","protocol":"torrent","apiKey":"secret"}`).
+		expect(t, http.StatusCreated)
+	item := e.addMovie(t)
+	e.put(t, "/api/v1/profiles/1",
+		`{"name":"1080p","target":{"source":"webdl","resolution":1080},"audioLanguages":["en"]}`).
+		expect(t, http.StatusOK)
+
+	var cands []apigen.ReleaseCandidate
+	e.get(t, "/api/v1/library/"+acqItoa(item)+"/releases").
+		expect(t, http.StatusOK).into(t, &cands)
+	if len(cands) != 2 {
+		t.Fatalf("got %d candidates, want both: %+v", len(cands), cands)
+	}
+	byTitle := map[string]apigen.ReleaseCandidate{}
+	for _, c := range cands {
+		byTitle[c.Title] = c
+	}
+	en := byTitle["Fight.Club.1999.1080p.WEB-DL.x264-TEST"]
+	if en.Languages == nil || len(*en.Languages) != 1 || (*en.Languages)[0] != "en" {
+		t.Errorf("an untagged name reads as English, got %v", en.Languages)
+	}
+	if !en.Accepted {
+		t.Errorf("the English release should be accepted: %+v", en.Rejections)
+	}
+	de := byTitle["Fight.Club.1999.GERMAN.1080p.BluRay.x264-DUB"]
+	if de.Languages == nil || len(*de.Languages) != 1 || (*de.Languages)[0] != "de" {
+		t.Errorf("GERMAN reads as de, got %v", de.Languages)
+	}
+	if de.Accepted || len(de.Rejections) == 0 || de.Rejections[0].Code != "language_not_wanted" {
+		t.Fatalf("the German dub must be refused as language_not_wanted: accepted=%v %+v", de.Accepted, de.Rejections)
+	}
+	if !strings.Contains(de.Rejections[0].Reason, "German") || !strings.Contains(de.Rejections[0].Reason, "English") {
+		t.Errorf("reason = %q, want it to name both languages", de.Rejections[0].Reason)
+	}
+	// Accepted rows sort first, so the person sees what can be grabbed.
+	if cands[0].Title != en.Title {
+		t.Errorf("first row = %q, want the accepted English release", cands[0].Title)
+	}
+}

@@ -74,7 +74,7 @@ func (f fakeIndexer) search(q domain.SearchQuery) ([]ports.Release, error) {
 			Size: 400 << 20, Seeders: 20, PublishDate: time.Now().Add(-time.Hour),
 		}}, nil
 	}
-	return []ports.Release{{
+	out := []ports.Release{{
 		Title:       "Fight.Club.1999.1080p.WEB-DL.x264-TEST",
 		DownloadURL: "http://indexer.invalid/1",
 		Indexer:     f.cfg.Name,
@@ -83,7 +83,17 @@ func (f fakeIndexer) search(q domain.SearchQuery) ([]ports.Release, error) {
 		Size:        8 << 30,
 		Seeders:     40,
 		PublishDate: time.Now().Add(-time.Hour),
-	}}, nil
+	}}
+	// An indexer named for it also answers with a German dub, so the
+	// language rule (ADR 0022) has something to refuse.
+	if f.cfg.Name == "german.invalid" {
+		out = append(out, ports.Release{
+			Title: "Fight.Club.1999.GERMAN.1080p.BluRay.x264-DUB", DownloadURL: "http://indexer.invalid/2",
+			Indexer: f.cfg.Name, IndexerID: f.cfg.ID, Protocol: f.cfg.Protocol,
+			Size: 9 << 30, Seeders: 80, PublishDate: time.Now().Add(-time.Hour),
+		})
+	}
+	return out, nil
 }
 
 func (f fakeIndexer) FetchRSS(ctx context.Context) ([]ports.Release, error) {

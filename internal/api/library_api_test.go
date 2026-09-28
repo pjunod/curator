@@ -1596,3 +1596,51 @@ func TestLibAdoptOne(t *testing.T) {
 		`{"path":"`+second+`","kind":"movie","tmdbId":550,"title":"Fight Club","year":1999,"force":true}`).
 		expect(t, http.StatusNoContent)
 }
+
+// TestLibProfileAudioLanguages is the ADR 0022 contract on the wire: the
+// vocabulary is served, a requirement round-trips canonicalized, the sentence
+// says it, and a code outside the vocabulary is refused with a sentence.
+func TestLibProfileAudioLanguages(t *testing.T) {
+	e := newAPIEnv(t)
+
+	var langs []struct {
+		Code string `json:"code"`
+		Name string `json:"name"`
+	}
+	e.get(t, "/api/v1/languages").expect(t, http.StatusOK).into(t, &langs)
+	if len(langs) == 0 || langs[0].Code != "en" || langs[0].Name != "English" {
+		t.Fatalf("languages = %v, want English first", langs)
+	}
+
+	var created struct {
+		libProfile
+		AudioLanguages []string `json:"audioLanguages"`
+	}
+	e.post(t, "/api/v1/profiles",
+		`{"name":"English 1080p","target":{"source":"webdl","resolution":1080},"audioLanguages":["ENG","fr"]}`).
+		expect(t, http.StatusCreated).into(t, &created)
+	if len(created.AudioLanguages) != 2 || created.AudioLanguages[0] != "en" || created.AudioLanguages[1] != "fr" {
+		t.Errorf("audioLanguages = %v, want [en fr]", created.AudioLanguages)
+	}
+	if created.Sentence != "hunts the best release up to WEB-DL 1080p, then stops; English or French audio required" {
+		t.Errorf("sentence = %q", created.Sentence)
+	}
+
+	path := "/api/v1/profiles/" + strconv.FormatInt(created.ID, 10)
+	var updated struct {
+		libProfile
+		AudioLanguages []string `json:"audioLanguages"`
+	}
+	e.put(t, path, `{"name":"English 1080p","target":{"source":"webdl","resolution":1080},"audioLanguages":[]}`).
+		expect(t, http.StatusOK).into(t, &updated)
+	if len(updated.AudioLanguages) != 0 {
+		t.Errorf("an empty list clears the requirement, got %v", updated.AudioLanguages)
+	}
+
+	e.post(t, "/api/v1/profiles",
+		`{"name":"Bad","target":{"source":"webdl","resolution":1080},"audioLanguages":["mul"]}`).
+		expect(t, http.StatusBadRequest)
+	e.post(t, "/api/v1/profiles",
+		`{"name":"Bad","target":{"source":"webdl","resolution":1080},"audioLanguages":["klingon"]}`).
+		expect(t, http.StatusBadRequest)
+}

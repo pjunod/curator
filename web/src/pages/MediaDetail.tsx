@@ -651,11 +651,22 @@ function QualityFacts({ m }: { m: MediaItemDetail }) {
         ? `The resolution on disk matches ${target || 'the target'}, but Curator could only guess at the source. Rather than replace a file that may already be perfect on a guess, it stops here. Interactive search still lets you grab anything you like.`
         : `What is on disk is at or above ${target || 'the target'}, so nothing better will be sought.`,
     },
-    seeking: {
-      word: `upgrading to ${target || 'better'}`,
-      cls: 'qf-seeking',
-      why: `Below ${target || 'the target'}, and the profile allows upgrades — Curator is still looking for better.`,
-    },
+    // Seeking for a reason the target does not explain — today, the audio
+    // language rule (ADR 0022): a German-only file under a profile that
+    // requires English is not done at ANY quality, and "upgrading to 1080p"
+    // beside a 1080p file would read as nonsense. The server renders the
+    // reason; this row just says it.
+    seeking: m.upgradeReason
+      ? {
+          word: `upgrading · ${m.upgradeReason}`,
+          cls: 'qf-seeking',
+          why: `${m.upgradeReason}. The profile requires it, and Curator is still looking — a release in the right language replaces this file even at the same or a lower quality.`,
+        }
+      : {
+          word: `upgrading to ${target || 'better'}`,
+          cls: 'qf-seeking',
+          why: `Below ${target || 'the target'}, and the profile allows upgrades — Curator is still looking for better.`,
+        },
     capped: {
       word: `below ${target || 'the target'} · upgrades off`,
       cls: 'qf-capped',
