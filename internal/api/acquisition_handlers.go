@@ -101,6 +101,9 @@ func profileFromInput(in apigen.ProfileInput) (quality.Profile, error) {
 			"download priority must be one of -100, -50, 0, 50, 100, or 900",
 		)
 	}
+	if in.AudioLanguages != nil && len(*in.AudioLanguages) > 0 && quality.IsBookFormat(target.Source) {
+		return quality.Profile{}, fmt.Errorf("audio languages apply to film and TV profiles; a %s profile cannot require one", target.Display())
+	}
 	if in.AudioLanguages != nil {
 		for _, code := range *in.AudioLanguages {
 			c := language.Canonical(code)

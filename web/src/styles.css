@@ -1191,6 +1191,14 @@ a.pill-info:hover {
   color: var(--text-muted);
 }
 
+/* The open question (ADR 0022): the profile requires a language and no track
+   on disk says which it carries. Muted, because it is neither done nor
+   failing — it is unjudged, and the tooltip says what to do about it. */
+.qf-undetermined {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
 /* Measured facts read as evidence, not as a claim: monospace-ish, quiet, and
    sitting under the pill it explains (ADR 0013 — the UI can finally say
    something true instead of apologising). */

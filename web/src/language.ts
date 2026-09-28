@@ -73,3 +73,29 @@ export function releaseLanguagesLabel(codes: string[] | undefined, options?: Lan
   if (codes.length === 1 && codes[0] === 'en') return ''
   return codes.map((c) => languageName(c, options)).join(' + ')
 }
+
+/**
+ * audioUndeterminedNote is the item page's answer to "the profile requires
+ * English — is it here?" when nothing on disk can say. Absence of
+ * `audioLanguages` on an item is not "no English": it means at least one
+ * audio track never declared a language, or the file was never measured.
+ * Curator will not replace a file it cannot judge, and the page has to say
+ * so rather than let a met/upgrading word stand as if the question were
+ * settled. Null when there is nothing to say: no requirement, nothing on
+ * disk, or the languages ARE known (then the state word already covers it).
+ */
+export function audioUndeterminedNote(
+  profileLanguages: string[] | undefined,
+  itemLanguages: string[] | undefined,
+  upgrade: string | undefined,
+  options?: LanguageOption[],
+): { word: string; why: string } | null {
+  if (!profileLanguages || profileLanguages.length === 0) return null
+  if (upgrade !== 'met' && upgrade !== 'seeking' && upgrade !== 'capped') return null
+  if (itemLanguages !== undefined) return null
+  const names = displayList(profileLanguages.map((c) => languageName(c, options)))
+  return {
+    word: 'audio language undetermined',
+    why: `The profile requires ${names} audio, but not every audio track on disk declares a language, so Curator cannot tell whether it is here. It will not replace a file it cannot judge; re-measure the files or check them yourself.`,
+  }
+}

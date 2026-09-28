@@ -62,6 +62,10 @@ A release offering none of the required languages is refused outright
 with a new rejection code, `language_not_wanted`, whether the item is
 missing or on disk. A German dub cannot fix a German problem.
 
+The upgrades switch keeps its meaning: with upgrades off, a file in the
+wrong language is *capped*, not hunted — the switch says "never replace
+what is here", and this rule does not override it.
+
 ### 2. One vocabulary, three sources
 
 Three things describe a soundtrack's language and none of them agree on
@@ -105,11 +109,28 @@ nothing about the audio and are ignored. The compound source tags are
 stripped before tokenizing so `WEB-DL` never yields the German scene's
 `DL` (dual-language) tag.
 
-Import judges by the same claim the grab did — the release name — and the
-probe that follows placement records the truth. A file that turns out not
-to carry the language leaves the item wanted again, which is the
-self-correcting direction: a wrong grab costs one more search, never a
-permanently satisfied item.
+Import judges by the same claim the grab did — the release name (and the
+file's own name, which is what a manual import has) — and the probe that
+follows placement records the truth. A file that turns out not to carry
+the language leaves the item wanted again, which is the self-correcting
+direction — provided the loop is bounded. It is: when the placed file is
+measured to carry none of the required languages (every track tagged,
+none wanted — a fact, not an inference), the release is **blocklisted**
+and a `language_mismatch` history entry says why. Without that, a title
+whose releases are all untagged and all in the wrong language would be
+the best candidate again the moment the import landed, and would
+re-download on every scheduled search forever. This is the first
+automatic blocklist monarr has, and it is allowed because it acts on a
+measurement, which is the line ADR 0013 §5 drew.
+
+A manual import proceeds whatever the profile says, but it only
+*replaces* the file on disk when the new one is better, and a file in a
+refused language is worse whatever its rank: it lands beside the old one.
+
+A Matroska track with no Language element is, per the spec, English; the
+probe reports it as undeclared. That is the safe direction (undeclared
+never starts a hunt) and it is why most ffmpeg output reads as "could not
+be determined" rather than as English.
 
 ### 5. Every surface says so
 
@@ -128,10 +149,15 @@ permanently satisfied item.
 ### 6. Storage
 
 The requirement lives in the profile's definition JSON as `languages`,
-omitted when empty, so no migration runs and every definition written
-before this ADR reads back as "no opinion". The list view's stats query
-extracts the per-track languages from `media_info` with `json_each`, so
-the grid grades language without a second query or a derived column.
+omitted when empty, so every definition written before this ADR reads
+back as "no opinion". Migration 0034 adds `media_files.audio_languages`
+— the declared tag of every audio track, `+`-joined, `und` for an
+untagged one — backfilled from `media_info` in SQL and written beside it
+at every probe, so the list view grades language from a column rather
+than walking JSON per file per request (measured at ~6× the stats query's
+cost on a 24k-file library when it was tried the JSON way). Readers
+canonicalize the tags; the column holds them as declared, which is what
+lets a pure-SQL backfill and the Go writer produce the same value.
 
 ## Consequences
 
@@ -146,9 +172,15 @@ the grid grades language without a second query or a derived column.
   no re-probe is needed. A file that was never probed, or one whose
   tracks carry no tags, is not hunted — and the item page says the
   language could not be determined rather than pretending.
+- Books are out of scope: the API refuses a language requirement on an
+  ebook or audiobook profile, and the editor does not offer one.
 - Subtitles are out of scope. The probe does not read subtitle tracks, and
   the requirement is about audio; a subtitle rule would be a separate
   decision with a separate measurement.
+- Subtitle tags are read as subtitles: a language token beside `Subs`,
+  `Subbed`, `Subtitle` (`NL.Subs`, `Multi-Sub`, `[Multiple
+  Subtitle][ENG][GER]…`) describes the subtitles and is ignored, so an
+  Erai-raws anime release reads as untagged, not as MULTi.
 - A language name inside an *episode* title (*"The French Mistake"*) can
   still be read as a tag, which makes an English release look French and
   refuses it. The refusal is visible in interactive search with its

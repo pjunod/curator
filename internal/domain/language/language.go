@@ -45,7 +45,7 @@ var table = []entry{
 	{"fr", "French", []string{"fre", "fra", "french", "francais", "français", "truefrench", "vff", "vfq", "vf", "vfi", "vf2", "vof"}},
 	{"es", "Spanish", []string{"spa", "spanish", "espanol", "español", "castellano", "latino", "esp"}},
 	{"it", "Italian", []string{"ita", "italian", "italiano"}},
-	{"pt", "Portuguese", []string{"por", "portuguese", "portugues", "português", "brazilian", "pt-br", "ptbr"}},
+	{"pt", "Portuguese", []string{"por", "portuguese", "portugues", "português", "brazilian", "pt-br", "ptbr"}}, //nolint:misspell // "portugues" is the accent-less spelling release groups write
 	{"nl", "Dutch", []string{"dut", "nld", "dutch", "nederlands", "flemish", "vlaams"}},
 	{"ja", "Japanese", []string{"jpn", "japanese", "jap"}},
 	{"ko", "Korean", []string{"kor", "korean"}},
@@ -129,6 +129,14 @@ func Canonical(s string) string {
 	return s
 }
 
+// Known reports whether a spelling is in the alias table at all — any ISO
+// code or name. Wider than ReleaseToken; the parser uses it only to decide
+// where a subtitle-language list ends, never to read a language.
+func Known(s string) bool {
+	_, ok := byAlias[strings.TrimSpace(strings.ToLower(s))]
+	return ok
+}
+
 // Display renders a code the way people write it ("de" → "German"). A code
 // outside the table is shown as itself, uppercased, so nothing is hidden.
 func Display(code string) string {
@@ -210,7 +218,7 @@ var releaseTokens = map[string]string{
 	"vfi": "fr", "vf2": "fr", "vof": "fr", "vf": "fr", "fre": "fr", "fra": "fr",
 	"spanish": "es", "castellano": "es", "latino": "es", "spa": "es", "esp": "es",
 	"italian": "it", "italiano": "it", "ita": "it",
-	"portuguese": "pt", "brazilian": "pt", "ptbr": "pt", "pt-br": "pt", "por": "pt",
+	"portuguese": "pt", "brazilian": "pt", "ptbr": "pt", "por": "pt",
 	"dutch": "nl", "nl": "nl", "flemish": "nl",
 	"japanese": "ja", "jpn": "ja", "jap": "ja",
 	"korean": "ko", "kor": "ko",
@@ -245,8 +253,19 @@ var releaseTokens = map[string]string{
 	"croatian":  "hr",
 	"serbian":   "sr",
 	"slovenian": "sl",
-	"multi":     Multi, "multiple": Multi, "dual": Multi, "dual-audio": Multi,
-	"dualaudio": Multi, "dl": Multi,
+	"multi":     Multi, "dual": Multi, "dualaudio": Multi, "dl": Multi,
+}
+
+// SubtitleToken reports whether a release-name token marks subtitles. A
+// language token next to one describes the subtitles, not the audio
+// ("NL.Subs", "Multi-Sub", "[Multiple Subtitle][ENG][GER]"), and is
+// ignored by the parser.
+func SubtitleToken(tok string) bool {
+	switch strings.ToLower(strings.TrimSpace(tok)) {
+	case "sub", "subs", "subbed", "subtitle", "subtitles", "subtitled", "multisub", "multisubs", "msubs", "subpack":
+		return true
+	}
+	return false
 }
 
 // ReleaseToken reads one token of a release name as a language tag. ok is

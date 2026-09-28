@@ -11,7 +11,7 @@ import {
   updateSettings,
 } from '../api'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
-import { requiredAudioClause } from '../language'
+import { buildProfileSentence } from '../profileSentence'
 
 // The quality vocabulary, worst to best on each axis. Kept here rather than
 // fetched because it is a property of the model, not of the deployment — and
@@ -137,13 +137,17 @@ function previewSentence(d: Draft, languages?: LanguageOption[]): string {
     return resolution > 0 ? `${name} ${resolution}p` : name
   }
   const res = d.axis === 'video' ? d.targetResolution : 0
-  let s = `hunts the best release up to ${label(d.targetSource, res)}, then stops`
-  if (d.hasFloor) {
-    s += `; never below ${label(d.floorSource, d.axis === 'video' ? d.floorResolution : 0)}`
-  }
-  if (!d.upgradesAllowed) s += '; no upgrades once a file is present'
-  if (d.axis === 'video') s += requiredAudioClause(d.audioLanguages, languages)
-  return s
+  return buildProfileSentence(
+    {
+      target: label(d.targetSource, res),
+      floor: d.hasFloor
+        ? label(d.floorSource, d.axis === 'video' ? d.floorResolution : 0)
+        : undefined,
+      upgradesAllowed: d.upgradesAllowed,
+      audioLanguages: d.axis === 'video' ? d.audioLanguages : [],
+    },
+    languages,
+  )
 }
 
 // How many languages the picker shows before "more…". English and the usual

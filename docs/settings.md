@@ -285,7 +285,9 @@ Event types: `grabbed`, `failed`, `imported`, `import_failed`,
 `import_blocked` (ran out of disk part-way), `import_retried`,
 `regrab_capped` (a replacement search that was deliberately not made),
 `short_delivery`, `payload_removed`, `quality_mismatch`,
-`implausible_file`, `file_removed`.
+`implausible_file`, `language_mismatch` (a placed file measured to carry
+none of the profile's required audio languages; the release is
+blocklisted), `file_removed`.
 
 ## Quality profiles
 
@@ -343,9 +345,19 @@ language tag is read as English (the scene convention); `MULTi` and
 
 This is a requirement, not a rank, and it is judged only on measured
 facts: a file whose audio tracks carry no language tags, or that Monarr
-could not probe, is never hunted for its language (the item page says the
-language could not be determined). Subtitles are not considered. The
-picker only appears for film and TV profiles.
+could not probe, is never hunted for its language (the item page says
+*audio language undetermined*). With upgrades switched off, a file in
+the wrong language stays — the switch still means "never replace what is
+here". Subtitles are not considered, and tags beside `Subs`/`Subbed`
+describe subtitles, not audio. The picker only appears for film and TV
+profiles; book profiles cannot require a language.
+
+When a grab that claimed the language turns out, once measured, to
+carry none of it, the release is **blocklisted** automatically and the
+item's history shows a `language_mismatch` entry — otherwise the same
+release would be the best candidate again on every search. Files probed
+before this rule existed already carry their track languages; nothing
+needs re-measuring.
 
 Two exclusions apply regardless of target and floor, because they are not
 questions of rank: a **screen capture** (CAM, telesync) is never grabbed

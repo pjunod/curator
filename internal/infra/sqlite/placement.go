@@ -128,7 +128,7 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE media_files SET media_info=?,probed_at=? WHERE id=?`, string(info), time.Now().UnixMilli(), fid); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE media_files SET media_info=?,audio_languages=?,probed_at=? WHERE id=?`, string(info), audioLanguagesColumn(p.Info), time.Now().UnixMilli(), fid); err != nil {
 		return 0, err
 	}
 	p.State = "committed"

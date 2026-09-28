@@ -1237,10 +1237,12 @@ func upgradeState(m domain.MediaItem, p quality.Profile) domain.UpgradeState {
 // today that is only the language rule (ADR 0022). Empty when the quality
 // target alone is the explanation, or when nothing is being sought.
 func upgradeReason(m domain.MediaItem, p quality.Profile) string {
-	if !hasFiles(m) || quality.Rank(m.Quality) == 0 || p.LanguageMet(m.Audio) {
+	if m.Upgrade != domain.UpgradeSeeking || p.LanguageMet(m.Audio) {
 		return ""
 	}
-	have := "no declared audio language"
+	// Known with nothing in common means every file declared its languages
+	// and no single language is on all of them (E01 German, E02 English).
+	have := "not on every file"
 	if len(m.Audio.Languages) > 0 {
 		have = language.DisplayList(m.Audio.Languages) + " only"
 	}

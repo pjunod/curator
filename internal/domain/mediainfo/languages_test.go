@@ -1,6 +1,8 @@
 package mediainfo_test
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -58,5 +60,39 @@ func TestSummaryNamesTheLanguage(t *testing.T) {
 	info.Audio = []mediainfo.AudioInfo{{Codec: "aac", Channels: 2}}
 	if got, want := info.Summary(), "1080p · H.264 · AAC · 5.0 Mbps"; got != want {
 		t.Errorf("fully untagged must stay quiet: Summary = %q, want %q", got, want)
+	}
+}
+
+// TestProbeReadsTheMatroskaLanguageElement is the real path: a Matroska
+// track whose Language element says "ger" reaches AudioInfo.Language and
+// makes the file's language set known. Every other corpus fixture is
+// untagged, so without this the tagged path is only ever exercised through
+// hand-built Info structs.
+func TestProbeReadsTheMatroskaLanguageElement(t *testing.T) {
+	f, err := os.Open(filepath.Join("testdata", "mkv-1080p-h264-ac3-ger-whole.mkv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := mediainfo.Probe(f, st.Size())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if len(info.Audio) != 1 || info.Audio[0].Language != "ger" || info.Audio[0].Codec != "ac3" {
+		t.Fatalf("audio = %+v, want one AC-3 track tagged ger", info.Audio)
+	}
+	langs, known := info.AudioLanguages()
+	if !known || len(langs) != 1 || langs[0] != "de" {
+		t.Errorf("AudioLanguages = %v,%v want [de],true", langs, known)
+	}
+	if got := info.Summary(); got != "1080p · H.264 · AC-3 · German · 1.1 Mbps" {
+		t.Errorf("Summary = %q", got)
+	}
+	if info.Truncated() {
+		t.Error("the whole fixture must not read as truncated")
 	}
 }

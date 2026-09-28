@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { displayList, languageName, releaseLanguagesLabel, requiredAudioClause } from './language'
+import {
+  audioUndeterminedNote,
+  displayList,
+  languageName,
+  releaseLanguagesLabel,
+  requiredAudioClause,
+} from './language'
 
 const options = [
   { code: 'en', name: 'English' },
@@ -54,5 +60,36 @@ describe('releaseLanguagesLabel', () => {
     expect(releaseLanguagesLabel(['de'], options)).toBe('German')
     expect(releaseLanguagesLabel(['en', 'de'], options)).toBe('English + German')
     expect(releaseLanguagesLabel(['mul'])).toBe('MULTi')
+  })
+})
+
+describe('audioUndeterminedNote', () => {
+  it('says nothing when there is no requirement, nothing on disk, or the answer is known', () => {
+    expect(audioUndeterminedNote(undefined, undefined, 'met')).toBeNull()
+    expect(audioUndeterminedNote([], undefined, 'met')).toBeNull()
+    expect(audioUndeterminedNote(['en'], undefined, 'missing')).toBeNull()
+    expect(audioUndeterminedNote(['en'], undefined, '')).toBeNull()
+    expect(audioUndeterminedNote(['en'], undefined, undefined)).toBeNull()
+    // Known languages, met or not: the state word carries it already.
+    expect(audioUndeterminedNote(['en'], ['en'], 'met')).toBeNull()
+    expect(audioUndeterminedNote(['en'], ['de'], 'seeking')).toBeNull()
+    expect(audioUndeterminedNote(['en'], [], 'seeking')).toBeNull()
+  })
+
+  it('flags a file whose tracks never declared a language, in every on-disk state', () => {
+    for (const upgrade of ['met', 'seeking', 'capped']) {
+      const note = audioUndeterminedNote(['en'], undefined, upgrade, options)
+      expect(note?.word).toBe('audio language undetermined')
+      expect(note?.why).toBe(
+        'The profile requires English audio, but not every audio track on disk declares a language, so Curator cannot tell whether it is here. It will not replace a file it cannot judge; re-measure the files or check them yourself.',
+      )
+    }
+  })
+
+  it('names several required languages like the server does', () => {
+    const note = audioUndeterminedNote(['en', 'fr'], undefined, 'met', options)
+    expect(note?.why).toContain('requires English or French audio')
+    // Without the server vocabulary the local map still names the common ones.
+    expect(audioUndeterminedNote(['de'], undefined, 'met')?.why).toContain('requires German audio')
   })
 })

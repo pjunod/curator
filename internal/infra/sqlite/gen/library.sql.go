@@ -1122,7 +1122,7 @@ func (q *Queries) ListAllMediaCopies(ctx context.Context) ([]MediaCopy, error) {
 }
 
 const listAllMediaFiles = `-- name: ListAllMediaFiles :many
-SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer FROM media_files ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer, audio_languages FROM media_files ORDER BY path
 `
 
 func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
@@ -1148,6 +1148,7 @@ func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
 			&i.ProbedAt,
 			&i.SourceRelease,
 			&i.SourceIndexer,
+			&i.AudioLanguages,
 		); err != nil {
 			return nil, err
 		}
@@ -1368,7 +1369,7 @@ func (q *Queries) ListMediaCopies(ctx context.Context, mediaItemID int64) ([]Med
 }
 
 const listMediaFilesForItem = `-- name: ListMediaFilesForItem :many
-SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer FROM media_files WHERE media_item_id = ? ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer, audio_languages FROM media_files WHERE media_item_id = ? ORDER BY path
 `
 
 func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.NullInt64) ([]MediaFile, error) {
@@ -1394,6 +1395,7 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.Nul
 			&i.ProbedAt,
 			&i.SourceRelease,
 			&i.SourceIndexer,
+			&i.AudioLanguages,
 		); err != nil {
 			return nil, err
 		}
@@ -1431,14 +1433,13 @@ SELECT
     -- together because the weakest file's PROVENANCE is what decides whether
     -- the target counts as met (ADR 0013 don't-churn), and two separate
     -- group_concats would have no guaranteed row order to align them by.
-    -- The fourth field is the declared language of every audio track,
-    -- '+'-joined, an untagged track as 'und' (ADR 0022); empty when the
-    -- file was never probed or has no audio.
+    -- The fourth field is media_files.audio_languages (ADR 0022): the
+    -- declared language of every audio track, '+'-joined, an untagged track
+    -- as 'und'; empty when the file was never probed or has no audio. It is
+    -- written beside media_info at every probe (migration 0034 backfilled
+    -- it) so this query never walks JSON.
     (SELECT COALESCE(group_concat(
-              f2.quality || '~' || f2.quality_provenance || '~' || f2.quality_confidence || '~' ||
-              CASE WHEN json_valid(f2.media_info) THEN COALESCE(
-                (SELECT group_concat(COALESCE(NULLIF(json_extract(a.value, '$.language'), ''), 'und'), '+')
-                   FROM json_each(f2.media_info, '$.audio') a), '') ELSE '' END
+              f2.quality || '~' || f2.quality_provenance || '~' || f2.quality_confidence || '~' || f2.audio_languages
             ), '') FROM media_files f2
       WHERE f2.media_item_id = m.id AND f2.quality != ''
         -- The primary copy stores copy_id NULL, not 0; "= 0" matches nothing

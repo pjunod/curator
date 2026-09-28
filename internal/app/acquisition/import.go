@@ -16,6 +16,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/filename"
+	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/naming"
 	"github.com/pjunod/monarr/internal/domain/parser"
@@ -663,14 +664,26 @@ type importScope struct {
 	Indexer string
 }
 
-// importLanguages reads the languages an import claims: from the release
-// name when there is one, otherwise from the file's own name — a manual
-// import of a loose file has nothing else to go by.
+// importLanguages reads the languages an import claims, from the release
+// name and from the file's own name. Either may be the one carrying the
+// tag: a grab's release name usually is, while a manual import's "release"
+// is a folder name that says nothing and the file inside it says GERMAN.
+// A side that is silent (the parser's English default) defers to a side
+// that is not; two explicit sides are combined.
 func importLanguages(releaseTitle, src string) []string {
-	if releaseTitle != "" {
-		return parser.Parse(releaseTitle).Languages
+	silent := func(l []string) bool { return len(l) == 1 && l[0] == language.English }
+	fromFile := parser.Parse(filepath.Base(src)).Languages
+	if releaseTitle == "" {
+		return fromFile
 	}
-	return parser.Parse(filepath.Base(src)).Languages
+	fromRelease := parser.Parse(releaseTitle).Languages
+	switch {
+	case silent(fromRelease):
+		return fromFile
+	case silent(fromFile):
+		return fromRelease
+	}
+	return language.Normalize(append(fromRelease, fromFile...))
 }
 
 func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
@@ -692,8 +705,10 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 		}
 		// A manual import proceeds either way, but only REPLACES when the new
 		// file actually outranks what is there. Deleting a better file because
-		// somebody imported a worse one is not a thing to do silently.
-		upgrade = upgrade || quality.Better(q, *state.Best)
+		// somebody imported a worse one is not a thing to do silently — and a
+		// file in a language the profile refuses is worse whatever its rank
+		// (ADR 0022), so it sits beside the old one rather than replacing it.
+		upgrade = upgrade || (quality.Better(q, *state.Best) && profile.LanguageAcceptable(langs))
 	}
 
 	dest := movieDestination(scope.Dest, item, src, q)
@@ -761,6 +776,8 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 	}
 	upgrade := false
 	if state.Best != nil {
+		// Books carry no language requirement (the API refuses one on a book
+		// profile), so the release side is "no claim" and passes.
 		upgrade = profile.Upgrade(q, nil, *state.Best, state.SourceVerified, state.Audio)
 		if !upgrade && !manual {
 			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
@@ -835,12 +852,13 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	}
 	upgrade := false
 	if !missing && worst != nil {
-		upgrade = profile.Upgrade(q, importLanguages(releaseTitle, src), *worst, worstVerified, worstAudio)
+		langs := importLanguages(releaseTitle, src)
+		upgrade = profile.Upgrade(q, langs, *worst, worstVerified, worstAudio)
 		if !upgrade && !manual {
 			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), worst.Display(), profile.Name)
 		}
-		upgrade = upgrade || quality.Better(q, *worst)
+		upgrade = upgrade || (quality.Better(q, *worst) && profile.LanguageAcceptable(langs))
 	}
 
 	title := ""

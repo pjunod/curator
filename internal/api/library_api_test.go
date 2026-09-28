@@ -1644,3 +1644,18 @@ func TestLibProfileAudioLanguages(t *testing.T) {
 		`{"name":"Bad","target":{"source":"webdl","resolution":1080},"audioLanguages":["klingon"]}`).
 		expect(t, http.StatusBadRequest)
 }
+
+// A book profile cannot require an audio language: the rule is about film
+// and TV soundtracks, and a book import would never be able to satisfy it.
+func TestLibBookProfileRefusesAudioLanguages(t *testing.T) {
+	e := newAPIEnv(t)
+	rr := e.post(t, "/api/v1/profiles",
+		`{"name":"Read in English","target":{"source":"epub"},"audioLanguages":["en"]}`).
+		expect(t, http.StatusBadRequest)
+	if msg := rr.Body.String(); !strings.Contains(msg, "film and TV") {
+		t.Errorf("message = %q, want it to say which profiles the rule is for", msg)
+	}
+	e.post(t, "/api/v1/profiles",
+		`{"name":"Read","target":{"source":"epub"},"audioLanguages":[]}`).
+		expect(t, http.StatusCreated)
+}

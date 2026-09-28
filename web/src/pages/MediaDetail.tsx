@@ -18,6 +18,7 @@ import {
   getQueue,
   getRootFolders,
   getSettings,
+  listLanguages,
   posterUrl,
   RATING_SOURCE_LABELS,
   refreshLibraryItem,
@@ -29,8 +30,9 @@ import {
   updateLibraryItem,
   updateMediaCopy,
 } from '../api'
-import type { BookType, MediaFileInfo, MediaItemDetail, RemoveFileOptions } from '../api'
+import type { BookType, MediaFileInfo, MediaItemDetail, QualityProfile, RemoveFileOptions } from '../api'
 import { describeAutoSearch } from '../autosearch'
+import { audioUndeterminedNote } from '../language'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ReleaseSearch } from './ReleaseSearch'
 
@@ -636,8 +638,21 @@ function EditPanel(props: {
 // ambiguity entirely.
 //
 // The state word never restates a number, for the same reason.
-function QualityFacts({ m }: { m: MediaItemDetail }) {
+function QualityFacts({ m, profile }: { m: MediaItemDetail; profile?: QualityProfile }) {
   const target = m.qualityTarget
+  // The vocabulary for naming what the profile requires (ADR 0022); one
+  // cached GET, and the local fallback map covers the wait.
+  const languages = useQuery({ queryKey: ['languages'], queryFn: listLanguages, staleTime: Infinity })
+  // "Is the required language here?" can have no answer: a track that never
+  // declared a language, or a file never measured. Curator will not replace a
+  // file it cannot judge, so the row has to say the question is open rather
+  // than let "at or above the target" read as settled.
+  const undetermined = audioUndeterminedNote(
+    profile?.audioLanguages,
+    m.audioLanguages,
+    m.upgrade,
+    languages.data,
+  )
   // Whether the SOURCE half of what is on disk was measured or merely guessed
   // changes what "met" means, so it changes what this row says (ADR 0013).
   const unverified = m.quality ? m.qualityVerified === false : false
@@ -723,6 +738,16 @@ function QualityFacts({ m }: { m: MediaItemDetail }) {
       {s && (
         <span className={`qf-state ${s.cls}`} title={s.why}>
           {s.word}
+          {undetermined && (
+            <span className="qf-undetermined" title={undetermined.why}>
+              {' '}· {undetermined.word}
+            </span>
+          )}
+        </span>
+      )}
+      {!s && undetermined && (
+        <span className="qf-state qf-capped qf-undetermined" title={undetermined.why}>
+          {undetermined.word}
         </span>
       )}
     </div>
@@ -1105,7 +1130,7 @@ export function MediaDetailPage() {
             </div>
 
             <div className="fact-label">Quality</div>
-            <QualityFacts m={m} />
+            <QualityFacts m={m} profile={profile} />
 
             <div className="fact-label">Profile</div>
             <div>

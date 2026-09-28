@@ -89,6 +89,14 @@ test('the item page says what its profile does, and where the quality came from'
   await expect(page.getByText('English audio required')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('upgrades until')
 
+  // The imported payload is not a real container, so no track on disk
+  // declares a language. That is not "no English" — it is an open question,
+  // and the Quality row says so instead of letting the state word stand as
+  // settled (ADR 0022).
+  const undetermined = page.locator('.qf-undetermined')
+  await expect(undetermined).toContainText('audio language undetermined')
+  await expect(undetermined).toHaveAttribute('title', /The profile requires English audio/)
+
   // The Files table says what each file is and how monarr knows. The imported
   // file's quality came from the release name (its payload is not a real
   // container), so the badge reads "from release" rather than "measured" —

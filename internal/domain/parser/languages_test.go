@@ -34,6 +34,13 @@ func TestParseLanguages(t *testing.T) {
 		{"Show.S01E02.German.DL.1080p.WEB.h264-GRP", []string{"de", "mul"}},
 		// Anime dual audio.
 		{"[Group] Show - 03 [Dual Audio][1080p][HEVC]", []string{"mul"}},
+		// A language beside a subtitle marker describes the subtitles.
+		{"Fight.Club.1999.1080p.BluRay.x264.NL.Subs-GROUP", []string{"en"}},
+		{"American.Dad.S18E01.Multi-Sub.1080p.WEB-DL-GRP", []string{"en"}},
+		{"Movie.2020.1080p.BluRay.x264.MULTI-SUBS-GRP", []string{"en"}},
+		{"Movie.2020.JAPANESE.ENG.SUBBED.1080p.WEB-DL-GRP", []string{"ja"}},
+		{"[Erai-raws] Frieren - 01 [1080p][Multiple Subtitle][ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][JPN][POL][POR][RUS][TUR]", []string{"en"}},
+		{"Movie.2020.GERMAN.DL.1080p.BluRay.x264.NLSubs-GRP", []string{"de", "mul"}},
 		// Ordinary words that happen to be ISO codes are not tags.
 		{"Show.S01E02.Fin.1080p.WEB-DL.x264-GRP", []string{"en"}},
 		{"Show.S01E02.May.Day.720p.HDTV.x264-GRP", []string{"en"}},

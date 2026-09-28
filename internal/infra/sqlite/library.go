@@ -614,13 +614,8 @@ func weakestRecorded(joined string) (quality.Quality, bool, quality.Audio) {
 			worst, verified, have = q, v, true
 		}
 		fileAudio := quality.Audio{}
-		if len(parts) >= 4 && parts[3] != "" {
-			tracks := strings.Split(parts[3], "+")
-			info := mediainfo.Info{Audio: make([]mediainfo.AudioInfo, 0, len(tracks))}
-			for _, t := range tracks {
-				info.Audio = append(info.Audio, mediainfo.AudioInfo{Language: t})
-			}
-			fileAudio.Languages, fileAudio.Known = info.AudioLanguages()
+		if len(parts) >= 4 {
+			fileAudio = audioFromColumn(parts[3])
 		}
 		if !fileAudio.Known {
 			audio.Known = false

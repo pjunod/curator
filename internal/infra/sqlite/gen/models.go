@@ -194,6 +194,7 @@ type MediaFile struct {
 	ProbedAt          int64
 	SourceRelease     string
 	SourceIndexer     string
+	AudioLanguages    string
 }
 
 type MediaFileEpisode struct {

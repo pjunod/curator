@@ -80,7 +80,7 @@ func TestSatisfies(t *testing.T) {
 func TestReleaseToken(t *testing.T) {
 	yes := map[string]string{
 		"GERMAN": "de", "German": "de", "ITA": "it", "TRUEFRENCH": "fr", "VFF": "fr",
-		"MULTi": Multi, "DL": Multi, "DUAL-AUDIO": Multi, "LATINO": "es", "NL": "nl",
+		"MULTi": Multi, "DL": Multi, "DUAL": Multi, "LATINO": "es", "NL": "nl",
 	}
 	for tok, want := range yes {
 		got, ok := ReleaseToken(tok)
@@ -89,9 +89,22 @@ func TestReleaseToken(t *testing.T) {
 		}
 	}
 	// Ordinary words that happen to be ISO codes are not release tags.
-	for _, tok := range []string{"per", "may", "ice", "fin", "est", "ind", "cat", "lat", "Mistake", "1080p", "WEB-DL", "VOSTFR", "SUBBED"} {
+	for _, tok := range []string{"per", "may", "ice", "fin", "est", "ind", "cat", "lat", "Mistake", "1080p", "WEB-DL", "VOSTFR", "SUBBED", "multiple"} {
 		if _, ok := ReleaseToken(tok); ok {
 			t.Errorf("ReleaseToken(%q) should not be a language", tok)
+		}
+	}
+}
+
+func TestSubtitleToken(t *testing.T) {
+	for _, tok := range []string{"Subs", "SUB", "subbed", "Subtitle", "Subtitles", "MultiSub"} {
+		if !SubtitleToken(tok) {
+			t.Errorf("SubtitleToken(%q) = false", tok)
+		}
+	}
+	for _, tok := range []string{"German", "1080p", "x264", "Substance"} {
+		if SubtitleToken(tok) {
+			t.Errorf("SubtitleToken(%q) = true", tok)
 		}
 	}
 }

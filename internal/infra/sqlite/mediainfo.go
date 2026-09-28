@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
@@ -252,9 +253,46 @@ func (d *DB) SetFileMediaInfo(ctx context.Context, fileID int64, info mediainfo.
 		conf = mediainfo.ConfidenceNone
 	}
 	return d.Write.SetFileMediaInfo(ctx, sqlitegen.SetFileMediaInfoParams{
-		MediaInfo: raw, QualityProvenance: string(prov),
+		MediaInfo: raw, AudioLanguages: audioLanguagesColumn(info), QualityProvenance: string(prov),
 		QualityConfidence: string(conf), ProbedAt: at.UnixMilli(), ID: fileID,
 	})
+}
+
+// audioLanguagesColumn renders media_files.audio_languages (ADR 0022,
+// migration 0034): one entry per audio track, '+'-joined, the tag as the
+// container declared it (lowercased) or "und" for an untagged track; empty
+// for no audio. Readers canonicalize (audioFromColumn), which is what lets
+// the migration's pure-SQL backfill and this writer produce the same
+// column. Every writer of media_info goes through this so the column and
+// the JSON never disagree.
+func audioLanguagesColumn(info mediainfo.Info) string {
+	if len(info.Audio) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(info.Audio))
+	for _, a := range info.Audio {
+		tag := strings.ToLower(strings.TrimSpace(a.Language))
+		if tag == "" {
+			tag = "und"
+		}
+		parts = append(parts, strings.NewReplacer("+", "", "~", "", ",", "").Replace(tag))
+	}
+	return strings.Join(parts, "+")
+}
+
+// audioFromColumn reads audio_languages back into the ADR 0022 facts.
+func audioFromColumn(col string) quality.Audio {
+	if col == "" {
+		return quality.Audio{}
+	}
+	tracks := strings.Split(col, "+")
+	info := mediainfo.Info{Audio: make([]mediainfo.AudioInfo, 0, len(tracks))}
+	for _, t := range tracks {
+		info.Audio = append(info.Audio, mediainfo.AudioInfo{Language: t})
+	}
+	var a quality.Audio
+	a.Languages, a.Known = info.AudioLanguages()
+	return a
 }
 
 // SetFileQualityFrom stores a file's quality together with where it came from.

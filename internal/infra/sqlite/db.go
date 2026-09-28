@@ -106,6 +106,7 @@ var requiredColumns = []struct{ table, column string }{
 	{"downloads", "match_evidence"},
 	{"media_aliases", "normalized_title"},
 	{"media_identity_sources", "countries"},
+	{"media_files", "audio_languages"},
 }
 
 // verifySchema refuses to start on a database that goose considers migrated

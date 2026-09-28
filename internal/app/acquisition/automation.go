@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -498,6 +499,12 @@ func (s *Service) WantedList(ctx context.Context) ([]WantedSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	profiles := map[int64]quality.Profile{}
+	if ps, err := s.db.ListProfiles(ctx); err == nil {
+		for _, p := range ps {
+			profiles[p.ID] = p
+		}
+	}
 	out := make([]WantedSummary, 0, len(wanted))
 	for _, w := range wanted {
 		ws := WantedSummary{
@@ -507,10 +514,12 @@ func (s *Service) WantedList(ctx context.Context) ([]WantedSummary, error) {
 		if q, ok := w.CurrentQuality(); ok {
 			ws.Missing, ws.Current, ws.Reason = false, q.Display(), "upgrade"
 			// The language rides along with the quality (ADR 0022) so
-			// "upgrade from WEB-DL 1080p" can read "upgrade from WEB-DL 1080p
-			// (German)" when that is the whole reason.
+			// "upgrade from WEB-DL 1080p" reads "upgrade from WEB-DL 1080p
+			// (German)" — only when the language is why it is wanted.
 			if a := w.AudioLanguages(); a.Known && len(a.Languages) > 0 {
-				ws.Current += " (" + language.DisplayList(a.Languages) + ")"
+				if p, ok := profiles[w.ProfileID()]; ok && !p.LanguageMet(a) {
+					ws.Current += " (" + strings.Join(displayAll(a.Languages), "/") + ")"
+				}
 			}
 		}
 		switch t := w.(type) {
@@ -535,6 +544,15 @@ func (s *Service) WantedList(ctx context.Context) ([]WantedSummary, error) {
 		return out[i].WantableID < out[j].WantableID
 	})
 	return out, nil
+}
+
+// displayAll renders language codes as names, in order.
+func displayAll(codes []string) []string {
+	out := make([]string, 0, len(codes))
+	for _, c := range codes {
+		out = append(out, language.Display(c))
+	}
+	return out
 }
 
 // isBlocklisted reports whether this (release, indexer) pair failed before.

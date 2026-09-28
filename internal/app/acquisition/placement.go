@@ -245,6 +245,9 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		if q.Resolution != 0 && p.Quality.Resolution != 0 && q.Resolution != p.Quality.Resolution {
 			_ = s.db.AddHistory(ctx, HistoryQualityMismatch, item.ID, scope.Release, map[string]any{"claimed": q.String(), "measured": p.Quality.String(), "file": filepath.Base(dest), "facts": p.Info.Summary()})
 		}
+		if profile, perr := s.db.GetProfile(ctx, scope.ProfileID); perr == nil {
+			s.recordLanguageMismatch(ctx, item.ID, dest, scope.Release, scope.Indexer, profile, p.Info)
+		}
 	}
 	if e := s.cleanupPlacement(ctx, p); e != nil {
 		s.log.Warn("placement cleanup remains pending", "id", p.ID, "err", e)

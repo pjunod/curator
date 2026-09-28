@@ -314,14 +314,38 @@ func parseLanguages(tail string) []string {
 		}
 		tail = sp.re.ReplaceAllString(tail, " ")
 	}
+	toks := reLangSplit.Split(tail, -1)
 	var langs []string
 	multi := false
-	for _, tok := range reLangSplit.Split(tail, -1) {
+	// A language token beside a subtitle marker describes the subtitles:
+	// "NL.Subs" is Dutch subtitles, "[Multiple Subtitle][ENG][GER][JPN]" is
+	// a subtitle list. Once a marker is seen, the run of language tokens
+	// that follows it is subtitle languages until an unrelated token ends
+	// the run; the token right before a marker is dropped too.
+	inSubs := false
+	for i, tok := range toks {
 		if tok == "" {
+			continue
+		}
+		if language.SubtitleToken(tok) {
+			inSubs = true
 			continue
 		}
 		code, ok := language.ReleaseToken(tok)
 		if !ok {
+			// A region suffix ("POR-BR", "SPA-LA"), a channel count, or an
+			// ISO code the release vocabulary is too careful to read
+			// ("ARA", "TUR") is not the end of a subtitle list; a real
+			// word is.
+			if len(tok) > 2 && !language.Known(tok) {
+				inSubs = false
+			}
+			continue
+		}
+		if inSubs {
+			continue
+		}
+		if i+1 < len(toks) && language.SubtitleToken(toks[i+1]) {
 			continue
 		}
 		if code == language.Multi {
