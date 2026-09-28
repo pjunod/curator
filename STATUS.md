@@ -1,11 +1,14 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-09-25 · v0.28.1 · One folder, one item: two different works
-> with the same title and year (two films called Leviticus, 2022) each get
-> their own folder — `Title (Year) {tmdb-N}` for the second — and existing
-> shared folders are repaired on upgrade (ADR 0020).**
+> **Snapshot 2026-09-28 · v0.30.0 · Every import showed `plurx returned 500`
+> for a day. Root cause was in plurx (its durable queue counted a day of
+> settled history against its 10,000-row bound and refused all new work).
+> Curator gained the missing control: failed deliveries can be retried from
+> the delivery log, one row or all of them, once the far side is healthy.
+> Both shipped; the 88-row backlog was re-sent and every delivery is `ok`.**
 >
-> Previously: v0.28.0 · The native app gained the web's Interactive search.
+> Previously: v0.28.1 · One folder, one item (ADR 0020) · v0.28.0 · The
+> native app gained the web's Interactive search.
 >
 > Previously: v0.24.1 · Curator hands Cinema exact book work and edition
 > metadata when an ebook or audiobook import lands (§Phase 2.5 — Books).
@@ -20,7 +23,24 @@
 > working session. Design rationale: [docs/architecture.md](docs/architecture.md) ·
 > decisions: [docs/adr/](docs/adr/) · this file: state only.
 
-## Delivery — One folder, one item
+## Delivery — Import notify wedge (plurx queue) + retryable deliveries
+
+**Status:** done — Curator merged `b71e8c6`, tagged v0.30.0, deployed to nuc3; plurx #608 merged and on all four nodes; backlog re-sent · **Updated:** 2026-09-28 · **Version:** 0.30.0 ·
+PR [#44](https://github.com/pjunod/curator/pull/44) · plurx PR [#608](http://192.168.4.7:3000/noirr/plurx/pulls/608) — which duplicated the earlier open [#605](http://192.168.4.7:3000/noirr/plurx/pulls/605); Paul ruled: leave what's done, the other session landed the remaining pieces. Lesson recorded: list open PRs before building a fix.
+
+| Item | State | Evidence |
+|---|---|---|
+| Diagnosis | complete | Monarr's `notify.plurx` posted `/api/v1/scan`; plurx (nynuc, m6, nuc4 at `g86d516219`) answered 500 `storage task failed: library work was not accepted: QueueFull` from three seconds after startup. Replicated `background_jobs` held exactly 10,000 rows — 6,219 succeeded embeddings, 2,700 succeeded subtitle extractions, 971 queued, 5 running — all since the 2026-09-27 02:32 reset. The table bound counted settled history; history is pruned only after seven days. The imported files themselves had landed (`/20t/movies/Lonesome (2023)/…mkv` present); only the index notify failed. |
+| plurx fix | complete (#608; duplicated #605) | SQLite migration 85 / replicated schema 63 replace the enqueue and upkeep triggers: admission evicts the oldest evictable settled rows at the bound, upkeep drains history from 9,000, and `queue_full` for size is answered only when nothing is evictable. `POST /api/v1/scan` maps a refused admission to 503 naming the refusal. Regressions: SQLite admission-at-bound + upkeep convergence; replicated upgrade from the exact v62 predecessor with 10,000 settled rows; per-library bound still refuses as `TargetError::Refused`; HTTP 503 contract. |
+| Curator: retry failed deliveries | complete | `POST /notifiers/{id}/deliveries/{deliveryId}/retry` and `…/deliveries/retry`; row goes back to pending, due now, attempts reset, last error kept until the next attempt. **Retry** per failed row and **Retry all failed (N)** in the delivery log. Tests: API (`TestAcqFailedDeliveriesCanBeRetried`, unknown ids), worker redelivery (`TestAFailedDeliveryCanBeRequeuedAndThenDelivered`), web (`deliveries.test.ts`). |
+| Adversarial review | addressed | Curator: 6 findings (docs/integration.md §5 stale, sweep scope vs 100-row window, disabled notifier, error span, stale `result`, `:execrows`) all fixed in `61563d6`. plurx: 6 findings (evict-the-named-row, MAINTENANCE_NEEDED predicate, 503 scope, install order, receipts nuance, verification gaps) fixed in `835316801`. |
+| Full gate | green | Curator local: lint 0 · `go test ./...` · notify/api/sqlite `-race -count=2..3 -shuffle=on` · web 92 + build · e2e 117/117. GitHub on `61563d6`: all 7 checks green. plurx on nuc3 (1.97.1): clippy `-D warnings` · core lib 1367 · replicated v62→v63 contract · plurxd http/scan+bounded+library selections; Forgejo fast lane + promotion gate green on `6e0041509`. |
+| Deploy — plurx | complete | ansible `deploy.yml -e sync=false -e only=plurx` (run from nuc3 with `~/.local/bin/ansible-playbook` — a run from the Mac VM dies when the bridge call returns): nynuc, m6, nuc4, nuc3 all on `v0.3.0-5192-g29358ce51`, healthy, replicated schema v63, **0 `QueueFull`** on every node afterwards; the 1,540 queued jobs drained. |
+| Deploy — server | complete | `deploy.yml -e sync=false -e only=monarr --limit nuc3` from the Mac VM (ansible-core venv in `/var/tmp`): `/api/v1/system/status` = 0.30.0 @ `b71e8c6`, schema 33. |
+| Deploy — clients | n/a | No mobile change. |
+| Backlog re-sent | complete | `POST /api/v1/notifiers/1/deliveries/retry` → `{"requeued":88}` (Sept 2–13 503s, Sept 14–16 unreachable, the Aug 22–25 permanent ones, the Sept 27–28 500s). Three minutes later: **593 ok, 0 failed, 0 pending** — every one answered `queued as sr-…` and plurx is indexing them. Side note for later: `Absent (2011)` accounted for 34 of the failures — the same item imported repeatedly. |
+
+## Previous delivery — One folder, one item
 
 **Status:** merged `e97a46f` · tagged v0.28.1 · deployed to nuc3 · **Updated:** 2026-09-25 ·
 **Version:** 0.28.1 · PR [#39](https://github.com/pjunod/curator/pull/39)
