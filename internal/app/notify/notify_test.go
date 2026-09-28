@@ -232,6 +232,74 @@ func TestAPlurxNotificationIsQueuedAndThenDelivered(t *testing.T) {
 	}
 }
 
+// A delivery that ran out its schedule is not gone: putting it back on the
+// queue makes the worker send it again with the schedule starting over, and
+// a plurx that is healthy by then gets the scan it missed. The 2026-09-28
+// wedge — plurx refusing every scan for a day — left a column of failed
+// rows that were all fine to send once it was fixed, and that is the case
+// this exists for.
+func TestAFailedDeliveryCanBeRequeuedAndThenDelivered(t *testing.T) {
+	target := &sink{err: errors.New("plurx returned 503: the durable queue refused this request")}
+	db, b, d, ctx := queueFixture(t, target)
+
+	go d.Run(ctx)
+	time.Sleep(50 * time.Millisecond)
+	b.Publish(importEvent(0))
+	waitForQueue(t, db, ctx)
+	rows, _ := db.ListDeliveries(ctx, 1, 10)
+	for i := 0; i <= len(deliveryBackoff); i++ {
+		forceDue(t, db, ctx, rows[0].ID)
+		d.deliverDue(ctx)
+		rows, _ = db.ListDeliveries(ctx, 1, 10)
+	}
+	if rows[0].Status != "failed" {
+		t.Fatalf("status = %q after exhausting the schedule, want failed", rows[0].Status)
+	}
+	exhausted := target.attempts()
+
+	// plurx is healthy again; the operator presses Retry.
+	target.mu.Lock()
+	target.err, target.result = nil, "scanned → plurx item 1201"
+	target.mu.Unlock()
+	requeued, err := db.RetryFailedDeliveries(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requeued != 1 {
+		t.Fatalf("requeued = %d, want 1", requeued)
+	}
+	rows, _ = db.ListDeliveries(ctx, 1, 10)
+	if rows[0].Status != "pending" || rows[0].Attempts != 0 {
+		t.Fatalf("after retry: status %q attempts %d, want pending with a fresh schedule",
+			rows[0].Status, rows[0].Attempts)
+	}
+	if rows[0].NextAt > time.Now().UnixMilli() {
+		t.Error("a retry the operator asked for should be due now, not after a backoff")
+	}
+	if rows[0].LastError == "" {
+		t.Error("the reason it failed must stay readable until the next attempt replaces it")
+	}
+
+	d.deliverDue(ctx)
+	if target.attempts() != exhausted+1 {
+		t.Fatalf("attempts = %d, want %d — the worker did not pick the requeued row up",
+			target.attempts(), exhausted+1)
+	}
+	rows, _ = db.ListDeliveries(ctx, 1, 10)
+	if rows[0].Status != "ok" || rows[0].Attempts != 1 {
+		t.Errorf("after redelivery: status %q attempts %d (%s), want ok on the first attempt of the new schedule",
+			rows[0].Status, rows[0].Attempts, rows[0].LastError)
+	}
+	if rows[0].Result != "scanned → plurx item 1201" || rows[0].LastError != "" {
+		t.Errorf("result %q lastError %q — a delivered retry reads like any other delivery",
+			rows[0].Result, rows[0].LastError)
+	}
+	// Nothing left to retry.
+	if n, _ := db.RetryFailedDeliveries(ctx, 1); n != 0 {
+		t.Errorf("a second sweep requeued %d rows, want 0", n)
+	}
+}
+
 // A dead plurx is retried on a schedule that outlives the process, and
 // eventually gives up and says so on the download's own trace — which is
 // where §8 sends somebody asking "imported, but not in plurx".

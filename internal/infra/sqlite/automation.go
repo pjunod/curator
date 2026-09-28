@@ -213,6 +213,38 @@ func (d *DB) SettleDelivery(ctx context.Context, del Delivery) error {
 	})
 }
 
+// RetryDelivery puts one failed delivery back on the queue, due now, with a
+// fresh attempt schedule. ErrNotFound when the row does not exist, belongs to
+// another notifier, or is not failed — a delivery that is pending or ok has
+// nothing to retry, and saying "not found" for it keeps the answer to one
+// question: is there a failed delivery here to requeue?
+//
+// The last error is kept on the row until the next attempt overwrites it:
+// the log should still say why it failed while it is waiting to go again.
+func (d *DB) RetryDelivery(ctx context.Context, notifierID, id int64) (Delivery, error) {
+	now := time.Now().UnixMilli()
+	r, err := d.Write.RetryDelivery(ctx, sqlitegen.RetryDeliveryParams{
+		NextAt: now, UpdatedAt: now, ID: id, NotifierID: notifierID,
+	})
+	if err != nil {
+		return Delivery{}, wrapNotFound(err)
+	}
+	return deliveryFrom(r), nil
+}
+
+// RetryFailedDeliveries requeues every failed delivery of one notifier and
+// returns how many it requeued. Zero is not an error.
+func (d *DB) RetryFailedDeliveries(ctx context.Context, notifierID int64) (int64, error) {
+	now := time.Now().UnixMilli()
+	rows, err := d.Write.RetryFailedDeliveries(ctx, sqlitegen.RetryFailedDeliveriesParams{
+		NextAt: now, UpdatedAt: now, NotifierID: notifierID,
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(rows)), nil
+}
+
 // ListDeliveries returns a notifier's most recent deliveries, newest first.
 func (d *DB) ListDeliveries(ctx context.Context, notifierID, limit int64) ([]Delivery, error) {
 	rows, err := d.Read.ListDeliveries(ctx, sqlitegen.ListDeliveriesParams{

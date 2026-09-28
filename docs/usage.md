@@ -961,6 +961,11 @@ Open Library cover URL when available. Exact work ids relate editions; title
 and author do not. The notifier holds a scoped `plx_` key, never a plurx
 admin token. See `docs/settings.md` for setup and failure meanings.
 
+plurx deliveries are queued and retried; the **Delivery log** on the notifier
+row shows each one, and a delivery that ran out its schedule can be sent
+again from there — **Retry** on the row, or **Retry all failed** for the lot
+once plurx is healthy again.
+
 ## Troubleshooting quick hits
 
 - **"payload missing" on import** — Monarr can't open the path the

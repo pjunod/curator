@@ -2323,6 +2323,70 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Delivery" }
 
+  /notifiers/{id}/deliveries/retry:
+    post:
+      operationId: retryFailedDeliveries
+      summary: Put every failed delivery of this notifier back on the queue
+      description: >
+        A delivery is marked failed after its retry schedule (5 s, 30 s, 2 m)
+        runs out, which is tuned for a restart, not for a media server that
+        is refusing work for a day. Once the far side is healthy again this
+        requeues everything that gave up, due now, with a fresh schedule.
+        Only failed rows are touched; pending and delivered ones are left
+        alone. Zero requeued is a normal answer, not an error.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: How many deliveries were requeued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requeued]
+                properties:
+                  requeued: { type: integer, format: int64 }
+        "404":
+          description: Unknown notifier.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /notifiers/{id}/deliveries/{deliveryId}/retry:
+    post:
+      operationId: retryDelivery
+      summary: Put one failed delivery back on the queue
+      description: >
+        The single-row form of `retryFailedDeliveries`. The row goes back to
+        pending, due now, with its attempt count reset so the full schedule
+        runs again; its last error stays visible until the next attempt
+        replaces it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: deliveryId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The requeued delivery.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Delivery" }
+        "404":
+          description: >
+            No such notifier, or no failed delivery with that id under it —
+            a pending or delivered row has nothing to retry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /webhooks/plurx:
     post:
       operationId: plurxWebhook

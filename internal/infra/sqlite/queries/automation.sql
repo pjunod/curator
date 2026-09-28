@@ -105,5 +105,17 @@ SELECT * FROM notifier_deliveries
  ORDER BY id DESC
  LIMIT ?;
 
+-- name: RetryDelivery :one
+UPDATE notifier_deliveries
+   SET status = 'pending', attempts = 0, next_at = ?, updated_at = ?
+ WHERE id = ? AND notifier_id = ? AND status = 'failed'
+RETURNING *;
+
+-- name: RetryFailedDeliveries :many
+UPDATE notifier_deliveries
+   SET status = 'pending', attempts = 0, next_at = ?, updated_at = ?
+ WHERE notifier_id = ? AND status = 'failed'
+RETURNING *;
+
 -- name: DeleteDeliveriesForNotifier :exec
 DELETE FROM notifier_deliveries WHERE notifier_id = ?;

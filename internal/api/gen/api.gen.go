@@ -3022,6 +3022,12 @@ type ServerInterface interface {
 	// ListDeliveries This notifier's recent deliveries, newest first
 	// (GET /notifiers/{id}/deliveries)
 	ListDeliveries(w http.ResponseWriter, r *http.Request, id int64)
+	// RetryFailedDeliveries Put every failed delivery of this notifier back on the queue
+	// (POST /notifiers/{id}/deliveries/retry)
+	RetryFailedDeliveries(w http.ResponseWriter, r *http.Request, id int64)
+	// RetryDelivery Put one failed delivery back on the queue
+	// (POST /notifiers/{id}/deliveries/{deliveryId}/retry)
+	RetryDelivery(w http.ResponseWriter, r *http.Request, id int64, deliveryId int64)
 	// TestNotifierByID Send a test notification using the SAVED config
 	// (POST /notifiers/{id}/test)
 	TestNotifierByID(w http.ResponseWriter, r *http.Request, id int64)
@@ -5134,6 +5140,67 @@ func (siw *ServerInterfaceWrapper) ListDeliveries(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// RetryFailedDeliveries operation middleware
+func (siw *ServerInterfaceWrapper) RetryFailedDeliveries(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetryFailedDeliveries(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetryDelivery operation middleware
+func (siw *ServerInterfaceWrapper) RetryDelivery(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "deliveryId" -------------
+	var deliveryId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deliveryId", r.PathValue("deliveryId"), &deliveryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deliveryId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetryDelivery(w, r, id, deliveryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // TestNotifierByID operation middleware
 func (siw *ServerInterfaceWrapper) TestNotifierByID(w http.ResponseWriter, r *http.Request) {
 
@@ -6046,6 +6113,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/notifiers/{id}", wrapper.UpdateNotifier)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/{id}/test", wrapper.TestNotifierByID)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/notifiers/{id}/deliveries", wrapper.ListDeliveries)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/{id}/deliveries/retry", wrapper.RetryFailedDeliveries)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/{id}/deliveries/{deliveryId}/retry", wrapper.RetryDelivery)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/webhooks/plurx", wrapper.PlurxWebhook)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/transfers", wrapper.ListTransfers)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/connections", wrapper.GetConnections)
