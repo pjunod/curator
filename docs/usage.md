@@ -380,12 +380,15 @@ separate **Search** action on each book edition; on a series, each season has
 same search (see [Native iOS and Android app](#native-ios-and-android-app)). Every release the
 indexers returned is shown — including rejected
 ones, with the reason attached (`above target`, `below floor`,
-`not an upgrade`, `target met`, `does not match …`). **Grab** sends your
-pick to the right client, with no decision gate — interactive search is
-the override, and it always wins.
+`not an upgrade`, `target met`, `language not wanted`, `does not match …`).
+A release advertising audio in anything other than plain English shows
+what it advertises under its quality (`German`, `MULTi`). **Grab** sends
+your pick to the right client, with no decision gate — interactive search
+is the override, and it always wins.
 
 **The loops** — anything monitored and missing (or below its profile
-target) stays on the wanted list, and two loops work it unattended:
+target, or in a language the profile does not accept) stays on the wanted
+list, and two loops work it unattended:
 
 - **RSS sync** (every ~15 min): pulls each indexer's newest releases and
   grabs whatever matches a wanted item and passes the decision engine.
@@ -409,6 +412,11 @@ usual questions at a glance:
   nothing; series count monitored episodes aired to date), and a
   **↓ downloading** pill whenever a grab for this item is in flight.
 - **Profile** — the quality profile driving grabs and upgrades.
+- **Quality** — what is on disk against the profile: `at or above …`,
+  `upgrading to …`, or — when the profile requires an audio language the
+  file was measured not to carry — `upgrading · no English audio on disk
+  (German only)`. The measured-facts pill beside it names each file's
+  languages (ADR 0022).
 - **Download priority** — the effective level nzbd receives, plus whether it
   comes from the profile or is an item override.
 - **Ratings** — labeled chips per source: TMDB (/10) for movies & series
