@@ -97,7 +97,7 @@
   </header>
 
   <section id="audio-language-delivery">
-    <h2>Audio language requirement <span class="chip partial">gate green · merging</span>
+    <h2>Audio language requirement <span class="chip done">✓ merged · v0.31.0 · on nuc3</span>
       <span class="ev">v0.31.0 · 2026-09-28 · feat/audio-language-requirement · ADR 0022</span></h2>
     <p class="blurb">A profile can require English (or any set of languages). A file
       measured to carry none of them keeps the item wanted at any quality, a release
@@ -112,7 +112,8 @@
       <li><span class="m done">written</span><span class="t"><code>TestJustFriends</code> (7 scenarios incl. grabbing the English 1080p over a German remux and a 720p English over a German 1080p), grading on list + get paths, profile round trip, API contract, parser/language/mediainfo/decision units, e2e profile editor. ADR 0022, settings and usage docs, VERSION 0.31.0.</span></li>
       <li><span class="m done">reviewed</span><span class="t">Adversarial review of draft PR #46: the grab→import→still-wanted loop for untagged wrong-language releases (now bounded: a measured mismatch blocklists the release, <code>language_mismatch</code> in history), subtitle-adjacent tags, manual-import replace rule, book profiles, sentence order, <code>json_each</code> cost (→ migration 0034 <code>audio_languages</code> column), "undetermined" note — all fixed with regression tests incl. a real <code>ger</code>-tagged MKV fixture.</span></li>
       <li><span class="m done">gate</span><span class="t">lint 0 · Go all ok · web 104 · e2e 117/117 · coverage 86.1 % (floor 86.0) · touched packages ×3 shuffled.</span></li>
-      <li><span class="m todo">pending</span><span class="t">Merge PR #46 → ansible deploy to nuc3. No native release (mobile types only).</span></li>
+      <li><span class="m done">merged</span><span class="t">PR #46, four checks green, merged as <code>85f66df</code>, tagged v0.31.0. Deployed with <code>media/deploy.yml -e only=monarr --limit nuc3</code>; nuc3 reports 0.31.0, schema 34. No native release (mobile types only).</span></li>
+      <li><span class="m done">live</span><span class="t"><i>Just Friends</i> (2019): measured Dutch/Portuguese audio; on the new profile "Best · English" it reads <i>upgrading · no English audio on disk (Dutch or Portuguese only)</i>, and the scheduled search grabbed the DUAL 1080p release within a minute — the one whose manual import had been refused as "does not improve". Applying English to "Best"/"1080p" library-wide is Paul's call.</span></li>
     </ul>
   </section>
 
