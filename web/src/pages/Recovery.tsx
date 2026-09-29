@@ -4,7 +4,7 @@ import {
   cancelRecoveryImport, fmtBytes, getLibrary, getLibraryItem, getRecoveries, getRecoveryImport, getRecoveryImports,
   getRecoveryPreview, getRecoverySettings, previewRecovery, putRecoverySettings, queueRecovery,
 } from '../api'
-import type { MediaItemSummary, RecoveryPreview, RecoverySettings, RunnerRecovery } from '../api'
+import type { MediaItemSummary, RecoveryPreview, RecoveryRequest, RecoverySettings, RunnerRecovery } from '../api'
 
 // ---- pure helpers (unit-tested in recovery.test.ts) --------------------------
 
@@ -71,14 +71,44 @@ export function handoffStatus(r: RunnerRecovery): HandoffStatus {
 }
 
 /** Why the Preview button is disabled, in words — or '' when it is not. */
-export function previewBlocker(o: { mount: boolean | null; handoff: RunnerRecovery | undefined; itemId: number; pending: boolean }): string {
+export function previewBlocker(o: { mount: boolean | null; handoff: RunnerRecovery | undefined; itemId: number; pending: boolean; badEpisode?: string }): string {
   if (o.pending) return ''
   if (!o.handoff) return 'Choose a handoff first.'
   if (!handoffStatus(o.handoff).selectable) return 'That handoff is not ready to import.'
   if (!o.handoff.files.length) return 'That handoff has no files.'
   if (!o.itemId) return 'Pick the library title these files belong to.'
+  if (o.badEpisode) return 'Fix the episode mapping for ' + o.badEpisode + ' (season:episodes), or clear it.'
   if (o.mount === false) return 'The recovery mount is not available to Curator — set it under Settings → Dev.'
   return ''
+}
+
+/** The body both Preview and Import send; one place, so a test can pin it. */
+export function buildRecoveryRequest(o: { handoff: RunnerRecovery; itemId: number; copyId: number; episodeText: Record<string, string>; unverified: boolean }): RecoveryRequest {
+  const episode_targets: Record<string, { season: number; episodes: number[] }> = {}
+  for (const [id, text] of Object.entries(o.episodeText)) { const t = parseEpisodeTarget(text); if (t) episode_targets[id] = t }
+  return {
+    client_id: o.handoff.client_id, recovery_id: o.handoff.id, media_item_id: o.itemId, copy_id: o.copyId,
+    file_ids: o.handoff.files.map(f => f.id), episode_targets, target_generation: '', accept_unverified: o.unverified,
+  }
+}
+
+/** Which file's episode text is malformed (non-blank and unparseable), if any. */
+export function firstBadEpisode(handoff: RunnerRecovery | undefined, episodeText: Record<string, string>): string {
+  for (const f of handoff?.files ?? []) {
+    const t = episodeText[f.id]
+    if (t && t.trim() && !parseEpisodeTarget(t)) return f.path
+  }
+  return ''
+}
+
+/** The options the title select shows: the search hits, plus whatever is already chosen. */
+export function titleOptions(items: MediaItemSummary[] | undefined, q: string, itemId: number): MediaItemSummary[] {
+  const hits = filterTitles(items, q)
+  if (itemId && !hits.some(i => i.id === itemId)) {
+    const chosen = (items ?? []).find(i => i.id === itemId)
+    if (chosen) return [chosen, ...hits]
+  }
+  return hits
 }
 
 /** "1:2,3" → { season: 1, episodes: [2, 3] }; blank or malformed → null (filename decides). */
@@ -161,17 +191,13 @@ export function RecoveryImports() {
   const advisory = settings.data?.advisory
   const mount: boolean | null = advisory ? advisory.local_mount_available === true : null
   const runnerOk: boolean | null = recoveries.isLoading ? null : !recoveries.error && clientErrors.length === 0
-  const titles = useMemo(() => filterTitles(library.data, titleQuery), [library.data, titleQuery])
-  const episodeTargets = useMemo(() => {
-    const out: Record<string, { season: number; episodes: number[] }> = {}
-    for (const [id, text] of Object.entries(episodeText)) { const t = parseEpisodeTarget(text); if (t) out[id] = t }
-    return out
-  }, [episodeText])
+  const titles = useMemo(() => titleOptions(library.data, titleQuery, itemId), [library.data, titleQuery, itemId])
+  const badEpisode = firstBadEpisode(recovery, episodeText)
 
   const inspect = useMutation({ mutationFn: async (request: Parameters<typeof previewRecovery>[0]) => { const version = selectionVersion.current; const task = await previewRecovery(request); if (version === selectionVersion.current) setPreviewId(task.id); return task } })
   const queue = useMutation({ mutationFn: queueRecovery, onSuccess: job => { setImportId(job.id); void qc.invalidateQueries({ queryKey: ['recovery-imports'] }) } })
   const changed = () => { selectionVersion.current++; setPreview(null); setImportId(''); setPreviewId('') }
-  const blocker = previewBlocker({ mount, handoff: recovery, itemId, pending: inspect.isPending })
+  const blocker = previewBlocker({ mount, handoff: recovery, itemId, pending: inspect.isPending, badEpisode })
   const chooseHandoff = (key: string) => { setRecoveryKey(key); setEpisodeText({}); changed() }
   const chooseTitle = (id: number) => { setItemId(id); setCopyId(0); setEpisodeText({}); changed() }
   const isSeries = item.data?.kind === 'series'
@@ -181,7 +207,7 @@ export function RecoveryImports() {
     <h2>Runner recovery imports</h2>
     <p className="muted">Media that Runner is holding — a failed download it parked, or a folder it adopted — comes into the library in three steps: Runner stages a verified copy (its <b>Files</b> tab: open the folder’s details, tick the files, <i>Preview recovery copy</i>, <i>Stage</i>), you point that handoff at a library title here, and Curator copies it into place and sends Runner the receipt.</p>
 
-    <div className="recovery-readiness" aria-label="Recovery readiness">
+    <div className="recovery-readiness" role="group" aria-label="Recovery readiness">
       <Readiness label="Runner" ok={runnerOk} detail={runnerOk === false ? (recoveries.error?.message ?? clientErrors[0]?.error ?? 'unreachable') : handoffs.length + (handoffs.length === 1 ? ' handoff' : ' handoffs')} />
       <Readiness label="Recovery mount" ok={mount} detail={settings.data?.settings.local_root || 'not set'} />
       <Readiness label="Credential" ok={advisory ? advisory.credential_configured === true : null} detail={advisory?.credential_configured === true ? 'configured' : 'set the shared recovery credential under Settings → Dev'} />
@@ -203,8 +229,8 @@ export function RecoveryImports() {
           <thead><tr><th></th><th>Folder</th><th>Status</th><th>Files</th><th>Size</th><th>Staged</th></tr></thead>
           <tbody>{handoffs.map(r => {
             const key = r.client_id + ':' + r.id, st = handoffStatus(r), on = key === recoveryKey
-            return <tr key={key} className={'recovery-handoff' + (on ? ' is-selected' : '') + (st.selectable ? '' : ' is-unavailable')} onClick={() => st.selectable && chooseHandoff(key)}>
-              <td className="recovery-pick"><input type="radio" name="recovery-handoff" aria-label={'Select ' + handoffName(r)} checked={on} disabled={!st.selectable} onChange={() => chooseHandoff(key)} /></td>
+            return <tr key={key} className={'recovery-handoff' + (on ? ' is-selected' : '') + (st.selectable ? '' : ' is-unavailable')} onClick={() => st.selectable && !on && chooseHandoff(key)}>
+              <td className="recovery-pick"><input type="radio" name="recovery-handoff" aria-label={'Select ' + handoffName(r)} checked={on} disabled={!st.selectable} onClick={e => e.stopPropagation()} onChange={() => chooseHandoff(key)} /></td>
               <td><div className="recovery-name" title={r.source || r.id}>{handoffName(r)}</div><div className="muted recovery-sub">{r.id.slice(0, 8)}… · {st.note}</div></td>
               <td><span className={'pill pill-' + st.pill}>{st.label}</span></td>
               <td className="num">{r.files.length}</td>
@@ -220,10 +246,10 @@ export function RecoveryImports() {
         <div className="form-row">
           <input type="search" placeholder="Search titles…" aria-label="Search library titles" value={titleQuery} onChange={e => setTitleQuery(e.target.value)} disabled={!recovery} />
           <select aria-label="Library title" value={itemId} onChange={e => chooseTitle(Number(e.target.value))} disabled={!recovery}>
-            <option value="0">{titles.length ? 'Select a title' : library.data?.length ? 'No title matches' : 'Loading titles…'}</option>
+            <option value="0">{titles.length ? 'Select a title' : library.isLoading ? 'Loading titles…' : library.data?.length ? 'No title matches' : 'The library is empty — add the title first'}</option>
             {titles.map(i => <option key={i.id} value={i.id}>{i.title}{i.year ? ' (' + i.year + ')' : ''} · {i.kind}</option>)}
           </select>
-          {copies.length > 1 && <select aria-label="Library copy" value={copyId} onChange={e => { setCopyId(Number(e.target.value)); changed() }}>
+          {copies.length > 0 && <select aria-label="Library copy" value={copyId} onChange={e => { setCopyId(Number(e.target.value)); changed() }}>
             <option value="0">Primary copy</option>
             {copies.map(c => <option key={c.id} value={c.id}>{c.name || c.path || 'Additional copy'}</option>)}
           </select>}
@@ -244,7 +270,7 @@ export function RecoveryImports() {
         <div className="recovery-step-head"><span className="recovery-step-no">3</span><h3>Preview, then import</h3></div>
         <label className="inline"><input type="checkbox" checked={unverified} onChange={e => { setUnverified(e.target.checked); changed() }} /> Accept recognized media whose quality is unverified <span className="muted">(container recognized, completeness not proven)</span></label>
         <div className="form-row">
-          <button className="btn-accent" disabled={!!blocker || inspect.isPending} onClick={() => recovery && inspect.mutate({ client_id: recovery.client_id, recovery_id: recovery.id, media_item_id: itemId, copy_id: copyId, file_ids: recovery.files.map(f => f.id), episode_targets: episodeTargets, target_generation: '', accept_unverified: unverified })}>{inspect.isPending ? 'Verifying staged files…' : 'Preview import'}</button>
+          <button className="btn-accent" disabled={!!blocker || inspect.isPending} onClick={() => recovery && inspect.mutate(buildRecoveryRequest({ handoff: recovery, itemId, copyId, episodeText, unverified }))}>{inspect.isPending ? 'Verifying staged files…' : 'Preview import'}</button>
           {blocker && <span className="muted recovery-blocker">{blocker}</span>}
         </div>
         {inspect.error && <div className="banner warning" role="alert">{inspect.error.message}</div>}

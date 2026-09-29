@@ -38,7 +38,7 @@ episode mapping → preview and import) under a readiness strip (Runner ·
 recovery mount · credential); the Preview button names the missing
 precondition; import activity is a table with progress bars. Handoffs carry
 `source`, `consumer`, `created_at`, `updated_at` from Runner (runner PR #243).
-Gate: lint 0 issues · `go test ./...` · vitest 116 (+12, `recovery.test.ts`)
+Gate: lint 0 issues · `go test ./...` · vitest 119 (+15, `recovery.test.ts`)
 · Playwright 117 (recovery spec extended). Verified with mocked handoffs in
 Chromium.
 

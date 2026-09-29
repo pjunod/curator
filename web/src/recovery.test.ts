@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MediaItemSummary, RunnerRecovery } from './api'
-import { baseName, filterTitles, fmtAgo, handoffBytes, handoffName, handoffStatus, parseEpisodeTarget, previewBlocker } from './pages/Recovery'
+import { baseName, buildRecoveryRequest, filterTitles, firstBadEpisode, fmtAgo, handoffBytes, handoffName, handoffStatus, parseEpisodeTarget, previewBlocker, titleOptions } from './pages/Recovery'
 
 const handoff = (extra: Partial<RunnerRecovery> = {}): RunnerRecovery => ({
   id: '70a9015f567db76ce0183b149c371c84', client_id: 1, state: 'published', manifest_digest: 'd', installation: 'i',
@@ -55,6 +55,12 @@ describe('previewBlocker', () => {
     expect(previewBlocker({ mount: true, handoff: ready, itemId: 0, pending: false })).toMatch(/Pick the library title/)
     expect(previewBlocker({ mount: false, handoff: ready, itemId: 7, pending: false })).toMatch(/recovery mount is not available.*Settings → Dev/)
   })
+  it('a malformed episode mapping blocks the preview instead of being dropped from the request', () => {
+    expect(previewBlocker({ mount: true, handoff: ready, itemId: 7, pending: false, badEpisode: 'a.mkv' })).toBe('Fix the episode mapping for a.mkv (season:episodes), or clear it.')
+    expect(firstBadEpisode(handoff({ files: [{ id: 'a', path: 'a.mkv', bytes: 1, sha256: '' }, { id: 'b', path: 'b.mkv', bytes: 1, sha256: '' }] }), { a: '1:2', b: 'S01E02' })).toBe('b.mkv')
+    expect(firstBadEpisode(handoff(), { a: '  ' })).toBe('')
+    expect(firstBadEpisode(undefined, { a: 'junk' })).toBe('')
+  })
   it('is empty when everything is in place, or while a preview is already running', () => {
     expect(previewBlocker({ mount: true, handoff: ready, itemId: 7, pending: false })).toBe('')
     expect(previewBlocker({ mount: null, handoff: ready, itemId: 7, pending: false })).toBe('')
@@ -70,6 +76,29 @@ describe('parseEpisodeTarget', () => {
   })
   it('treats blank or malformed text as "let the filename decide"', () => {
     for (const bad of ['', '1', 'S01E02', '1:', ':2', '1:0', 'a:b']) expect(parseEpisodeTarget(bad), bad).toBeNull()
+  })
+})
+
+describe('buildRecoveryRequest', () => {
+  // The body the backend expects — every field, in the shape the old page sent.
+  it('sends every field, keeps only parseable episode mappings', () => {
+    const h = handoff({ client_id: 3, files: [{ id: 'a', path: 'a.mkv', bytes: 1, sha256: '' }, { id: 'b', path: 'b.mkv', bytes: 1, sha256: '' }] })
+    expect(buildRecoveryRequest({ handoff: h, itemId: 7, copyId: 2, episodeText: { a: '1:2,3', b: '' }, unverified: true })).toEqual({
+      client_id: 3, recovery_id: h.id, media_item_id: 7, copy_id: 2, file_ids: ['a', 'b'],
+      episode_targets: { a: { season: 1, episodes: [2, 3] } }, target_generation: '', accept_unverified: true,
+    })
+  })
+})
+
+describe('titleOptions', () => {
+  // Review finding: a search that no longer matches the chosen title left the
+  // controlled <select> blank while the request still targeted that title.
+  const items = [{ id: 1, kind: 'movie', title: 'Fright Night', year: 1985 }, { id: 2, kind: 'series', title: 'Archer', year: 2009 }] as unknown as MediaItemSummary[]
+  it('always includes the chosen title, first', () => {
+    expect(titleOptions(items, 'arch', 1).map(i => i.id)).toEqual([1, 2])
+    expect(titleOptions(items, 'arch', 2).map(i => i.id)).toEqual([2])
+    expect(titleOptions(items, 'zzz', 0).map(i => i.id)).toEqual([])
+    expect(titleOptions(undefined, '', 5)).toEqual([])
   })
 })
 
