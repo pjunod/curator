@@ -22,7 +22,7 @@ import (
 // and it is invisible from inside monarr. A user found 923 GB of it.
 func TestImportRemovesThePayload(t *testing.T) {
 	client := &fakeClient{}
-	svc, db, itemID := setupUsenet(t, client)
+	svc, db, itemID := setupWithClientType(t, client, "sabnzbd")
 	ctx := context.Background()
 
 	payload := t.TempDir()

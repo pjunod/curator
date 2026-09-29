@@ -1,4 +1,9 @@
 import { expect, test } from '@playwright/test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const completedRoot = mkdtempSync(join(tmpdir(), 'curator-smoke-completed-'))
 
 // Phase 0 walking-skeleton smoke: the compiled binary serves the embedded
 // UI, the API answers, health is green, the scheduler is alive, and events
@@ -7,7 +12,12 @@ import { expect, test } from '@playwright/test'
 // Health includes the metadata-provider check; give it a key so the suite
 // is order-independent with library.spec.ts.
 test.beforeAll(async ({ request }) => {
-  await request.put('/api/v1/settings', { data: { tmdbApiKey: 'e2e-test-key' } })
+  await request.put('/api/v1/settings', { data: { tmdbApiKey: 'e2e-test-key', completedRoots: completedRoot } })
+  await request.post('/api/v1/system/tasks/downloads.inventory/run')
+  await expect.poll(async () => {
+    const inv = await (await request.get('/api/v1/downloads/inventory')).json()
+    return inv.roots.length === 1 && inv.roots[0].error === ''
+  }).toBe(true)
 })
 
 test.describe('API', () => {
@@ -38,6 +48,7 @@ test.describe('API', () => {
     // "anything extra is a client check" guard turned that into a red suite on
     // main. A new static check belongs in this array.
     const STATIC_CHECKS = [
+      'completed-folders',
       'data-directory',
       'database',
       'imports',
@@ -80,6 +91,7 @@ test.describe('UI', () => {
 
     for (const check of [
       'database',
+      'completed-folders',
       'data-directory',
       'web-ui',
       'metadata-provider',
@@ -119,3 +131,5 @@ test.describe('UI', () => {
     await expect(page.locator('.wordmark')).toContainText('noirr_curator')
   })
 })
+
+test.afterAll(() => rmSync(completedRoot, { recursive: true, force: true }))

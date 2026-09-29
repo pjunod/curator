@@ -1,0 +1,54 @@
+# Completed-folder accounting — delivery status
+
+**Status:** implementation and local verification complete · **Updated:** 2026-09-29 · **Target:** v0.33.0
+
+Companion to [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
+and [settings](settings.md#completed-folder-accounting). This page records work
+and verification; the user-facing behavior lives in those documents.
+
+| Work | State | Evidence / next action |
+|---|---|---|
+| Isolated clone | Complete | Based on GitHub main `9f1dff9`; branch `codex/completed-folder-accounting`. Original checkout's source edits restored to their initial state. |
+| Durable path associations | Implemented | Migration 0035 backfills receipts and preserves them independently of Activity deletion. Download generation prevents reused IDs from reviving old ownership. |
+| Disk inventory | Implemented | Startup + five-minute task; every top-level entry measured, nested files included; cached complete scans survive scan errors. |
+| Activity and settings | Implemented | Measured totals, classifications, download associations, manual-import preview, explicit scan and cleanup actions, configurable roots. No feature enable gate. |
+| Cleanup | Implemented | Verify local disappearance; rotate attempts; respect Curator-owned versus Runner-owned storage; protect reused paths and overlapping ownership. |
+| Reviewed deletion | Implemented | Explicit per-entry confirmation; rechecks live work, ownership, metadata and root identity; records intent and result. |
+| Regression tests | Passed | Empty queue, unknown files, stale/replaced mounts, cleared history, ID reuse, false receipts, concurrent admission, protected storage, API, browser flow. |
+| Adversarial review | Addressed | Six findings fixed: missing-parent cleanup receipts, import admission races, changed mount identity, library bind aliases, symlink unlink ownership, and duplicate roots. Regression cases added before final tests. |
+| Final gates | Passed locally | Full Go suite; 86.1% coverage against unchanged 86.0% floor; race-checked regressions; 119 web tests; 118 browser tests plus final storage retest; lint clean; generation and build succeeded. |
+| PR and merge | GitHub delivery | [PR #49](https://github.com/pjunod/curator/pull/49) contains the batched commits; its checks and merge record are the authoritative delivery status. |
+
+## Decisions and limits
+
+- Unknown files and paths whose ownership ended stay visible for review. Age
+  or a matching directory name does not authorize deletion.
+- Ownership clarified by the user: Curator owns `/mnt/qnap/working/monarr`,
+  mounted at `/working/monarr`; `completed` is also mounted at `/downloads`.
+  Curator cleanup applies there regardless of the download client. Runner
+  owns its separate `/processing` and recovery trees. ADR 0021 is amended
+  to state that boundary.
+- Sizes are logical bytes, including hardlink names. They are not promised
+  physical reclamation. Symlink targets are excluded and visibly flagged.
+- Live read-only inspection on nuc3: 842,592,360 KiB (about 804 GiB),
+  74 completed entries, zero downloads in the database; all 74 lack an
+  Activity association. No production deletion or deployment performed.
+- Initial work used the supplied older checkout before the user required
+  isolated clones. Those feature edits were extracted and removed without
+  disturbing the pre-existing source changes. All subsequent work is here.
+
+A changed mount identity preserves the last successful counts and blocks deletion.
+Restore the mount, or explicitly save the storage roots again to accept a replacement;
+the next complete scan establishes its baseline.
+
+The first full race run exposed one legacy assertion expecting an absent payload
+to remain pending. The assertion now matches verified absence with a reachable
+parent; missing-parent and changed-mount cases remain pending. Added API, health,
+and reconfiguration cases raised coverage from 85.9% to 86.1% without lowering
+the gate. The final complete Go run and focused race regressions pass.
+
+CI confirmed the full race/coverage gate, Docker, lint, and compatibility browser
+checks. Its mobile job passed 94 tests but found existing Expo patch-version
+drift. The three direct Expo packages and their core dependency were updated;
+94 mobile tests, all 20 Expo diagnostics, and both platform bundle exports pass
+locally. The final commit is being checked by the same CI gates.

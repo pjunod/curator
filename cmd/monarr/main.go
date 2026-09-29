@@ -326,6 +326,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// client. An import that has been running for hours is a real problem
 	// and a different one from a client that stopped answering; each now has
 	// its own line, and neither can mask the other.
+	reg.Register("completed-folders", acq.CompletedHealth)
 	reg.Register("imports", func(ctx context.Context) health.Result {
 		age, running := acq.StalledImports()
 		switch {
@@ -409,6 +410,14 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Name:     "backlog.search",
 		Interval: 12 * time.Hour,
 		Fn:       acq.BacklogSearch,
+	}); err != nil {
+		return err
+	}
+	if err := sched.Register(scheduler.Task{
+		Name:       acquisition.JobCompletedScan,
+		Interval:   acquisition.CompletedScanInterval,
+		RunOnStart: true,
+		Fn:         acq.ScanCompleted,
 	}); err != nil {
 		return err
 	}

@@ -380,6 +380,8 @@ type Download struct {
 	MatchEvidence domain.MatchEvidence
 	AddedAt       time.Time
 	UpdatedAt     time.Time
+
+	PayloadRemoved bool
 }
 
 func downloadFromRow(r sqlitegen.Download) Download {
@@ -390,7 +392,7 @@ func downloadFromRow(r sqlitegen.Download) Download {
 	var evidence domain.MatchEvidence
 	_ = json.Unmarshal([]byte(r.MatchEvidence), &evidence)
 	dl := Download{
-		ID: r.ID, MediaItemID: r.MediaItemID, WantableIDs: wants, Season: int(r.Season),
+		PayloadRemoved: r.PayloadRemoved != 0, ID: r.ID, MediaItemID: r.MediaItemID, WantableIDs: wants, Season: int(r.Season),
 		ReleaseTitle: r.ReleaseTitle, Indexer: r.Indexer, Protocol: r.Protocol,
 		Quality: quality.FromString(r.Quality), Size: r.Size, ClientID: r.ClientID,
 		Handle: r.Handle, State: r.State, Progress: r.Progress, Error: r.Error,

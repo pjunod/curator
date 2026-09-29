@@ -23,6 +23,7 @@ import {
   scanImportPath,
 } from '../api'
 import { PathInput } from '../PathInput'
+import { CompletedFolders } from '../CompletedFolders'
 
 const STATE_PILL: Record<string, string> = {
   imported: 'pill-ok',
@@ -367,6 +368,8 @@ export function ActivityPage() {
       {manual && <ManualImportPanel prefill={manual} onDone={() => { setManual(null); invalidate() }} />}
 
       {actionErr && <div className="banner warning">{actionErr}</div>}
+
+      <CompletedFolders onImport={(path) => setManual({ path })} />
 
       <div className="activity-toolbar">
         <input

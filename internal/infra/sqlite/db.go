@@ -100,6 +100,8 @@ func (d *DB) Migrate(ctx context.Context) error {
 // specific failure, not a substitute for the migrations.
 var requiredColumns = []struct{ table, column string }{
 	{"downloads", "transfer"},
+	{"completed_receipts", "path"},
+	{"completed_scans", "report"},
 	{"download_clients", "mode"},
 	{"media_items", "book_type"},
 	{"media_copies", "book_type"},

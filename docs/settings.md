@@ -188,6 +188,33 @@ with the checkbox on the client's row (or when adding it) for a client
 whose completed files you want to eyeball first. The toggle round-trips
 without re-entering the password.
 
+### Completed-folder accounting
+
+**Settings → Download storage folders** declares Curator-owned trees, using
+absolute paths as seen by the server, one per line (`completedRoots` in `PUT /api/v1/settings`). When set,
+this list selects the owned inventory roots. Leave it blank to use
+`/working/monarr` when mounted (saved on first discovery so a later missing
+mount remains an error on that same root). This includes `completed` and every sibling
+entry; `/downloads` bind-mounted to the same completed folder is recognized
+by filesystem identity. Without that standard mount, local client mappings
+and saved payload parents are inventoried, falling back to `/pool/downloads`.
+Discovered fallback paths are observed without granting local deletion
+authority; declare the owned root here to resolve files through Curator. Overlapping roots and aliases are
+collapsed to avoid counting a file twice. Roots overlapping a library root
+produce a configuration error rather than a scan of library media.
+
+Changes take effect on the next five-minute `downloads.inventory` run, or
+immediately after queuing **Scan download storage** in Activity. Inventory
+also runs at startup. `GET /api/v1/downloads/inventory` reads the cached result;
+it does not walk the disk. See [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
+for the classifications, size semantics, and recovery actions. Activity
+retention never deletes these file associations or cached inventory.
+
+When a download storage mount is replaced, the inventory keeps its last complete
+counts and reports the changed identity. Restore the original mount or save the
+storage folders again to accept the replacement, then run a scan. Saving does
+not erase the prior counts before a complete scan succeeds.
+
 ### Completed downloads: where files land, and how Monarr finds them
 
 The "download finished" folder is **configured in the client itself**, not
@@ -727,6 +754,7 @@ outside your LAN, because plain HTTP exposes the header in transit.
 | Task | Interval | Does |
 |---|---|---|
 | `health.check` | 1 m | runs the health registry |
+| `downloads.inventory` | startup + 5 min | accounts for the whole download storage tree independently of Activity |
 | `queue.refresh` | 30 s | polls clients, imports completed downloads |
 | `rss.sync` | 15 m | RSS loop → auto-grab wanted matches |
 | `backlog.search` | 12 h | active search for wanted items |
@@ -752,10 +780,12 @@ Off by default.
 
 ## Runner payload cleanup
 
-For native Runner clients, cleanup waits for Runner to confirm deletion.
-A pending operation, retention/recovery hold, authentication failure or
-unavailable Runner keeps the payload pending for the next hourly sweep.
-Curator never bypasses Runner by deleting its mounted directory directly.
+For native Runner clients, cleanup first requests deletion through Runner and
+verifies that the local payload disappeared. Runner-owned source and recovery
+trees stay pending when Runner cannot remove them. Curator may remove a verified
+imported payload directly inside its own declared working trees, including
+`/working/monarr/completed`; it never applies that fallback to Runner-owned
+`/processing` or recovery storage.
 Queue removal falls back to History only when the queue returns HTTP 404.
 
 ## Recovery and Dev settings

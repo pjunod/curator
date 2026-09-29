@@ -75,11 +75,17 @@ func (s *Service) RetryBlockedImports(ctx context.Context) error {
 		started++
 		s.log.Info("import retry: the destination may have room now",
 			"download", dl.ID, "release", dl.ReleaseTitle, "attempt", attempts+1)
-		row := dl
-		s.advance(ctx, &row, "importing", row.Progress, "", stepImportRetry,
+		decisionCtx, releaseStorage := s.lockStorageDecision(ctx)
+		row, err := s.db.GetDownload(decisionCtx, dl.ID)
+		if err != nil || !blockedImport(row) {
+			releaseStorage()
+			continue
+		}
+		s.advance(decisionCtx, &row, "importing", row.Progress, "", stepImportRetry,
 			fmt.Sprintf("retrying the import (attempt %d of %d)", attempts+1, importRetryMax))
 		_ = s.db.AddHistory(ctx, HistoryImportRetried, row.MediaItemID, row.ReleaseTitle,
 			map[string]any{"attempt": attempts + 1})
+		releaseStorage()
 		if err := s.runImport(ctx, row); err != nil {
 			s.log.Debug("import retry: still blocked",
 				"download", row.ID, "release", row.ReleaseTitle, "err", err)

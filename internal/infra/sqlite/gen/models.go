@@ -23,6 +23,27 @@ type Blocklist struct {
 	CreatedAt    int64
 }
 
+type CompletedCleanupAttempt struct {
+	DownloadID int64
+	TriedAt    int64
+}
+
+type CompletedReceipt struct {
+	DownloadID     int64
+	AddedAt        int64
+	Path           string
+	ClientID       int64
+	Title          string
+	State          string
+	Protocol       string
+	PayloadRemoved int64
+}
+
+type CompletedScan struct {
+	Root   string
+	Report string
+}
+
 type CustomFormat struct {
 	ID      int64
 	Name    string

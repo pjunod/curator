@@ -975,6 +975,8 @@ func (s *Server) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	authOn := s.authRequired(r.Context())
 	out.AuthRequired = &authOn
+	completedRoots := s.readSetting(r.Context(), acquisition.CompletedRootsSetting)
+	out.CompletedRoots = &completedRoots
 	if s.deps.Acquisition != nil {
 		// Always the resolved window, never a blank that reads as "off":
 		// this one decides what gets deleted.
@@ -1018,6 +1020,12 @@ func (s *Server) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if body.TraktClientId != nil {
 		if err := s.deps.Settings.SetMeta(r.Context(), TraktClientIDSetting, strings.TrimSpace(*body.TraktClientId)); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if body.CompletedRoots != nil && s.deps.Acquisition != nil {
+		if err := s.deps.Acquisition.SetCompletedRoots(r.Context(), *body.CompletedRoots); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
