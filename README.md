@@ -247,6 +247,9 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
   aliases, optional country qualifiers, direct TVDB/IMDb lookup, and indexer ID fallbacks.
 - **[Release identity status](docs/RELEASE_IDENTITY_STATUS.md)** — live implementation,
   review, validation, and delivery state for that plan.
+- **[Smart media discovery plan](docs/plan-smart-media-discovery.md)** — theme search,
+  related-series suggestions, local-model integration, and build acceptance checks;
+  [adversarial review](docs/plan-smart-media-discovery-review.md) records the challenges.
 
 ## Configuration
 
