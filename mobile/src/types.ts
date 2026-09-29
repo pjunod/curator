@@ -65,6 +65,11 @@ export interface MediaItemSummary {
   qualityTarget?: string
   qualityVerified?: boolean
   upgrade?: '' | 'missing' | 'seeking' | 'met' | 'capped'
+  /** Why `upgrade` is seeking when the target does not explain it — today the
+   *  audio-language rule (ADR 0022), server rendered. Absent otherwise. */
+  upgradeReason?: string
+  /** Declared audio languages every primary-copy file carries; absent when unknown. */
+  audioLanguages?: string[]
   episodeCount: number
   episodeFileCount: number
   fileCount: number
@@ -253,7 +258,15 @@ export interface QualityProfile {
   sentence: string
   upgradesAllowed: boolean
   downloadPriority: number
+  /** Required audio languages (ADR 0022), canonical codes; any one satisfies. */
+  audioLanguages?: string[]
   target: { source: string; resolution: number; display: string }
+}
+
+/** One selectable audio language, from GET /languages (ADR 0022). */
+export interface LanguageOption {
+  code: string
+  name: string
 }
 
 export interface WantedItem {
@@ -359,6 +372,8 @@ export interface ReleaseCandidate {
   seeders: number
   age: string
   quality: string
+  /** Audio languages the release name advertises (ADR 0022); "mul" = MULTi/DUAL. */
+  languages?: string[]
   score: number
   formats?: string[]
   accepted: boolean

@@ -84,6 +84,18 @@ export interface MediaItemSummary {
   qualityVerified?: boolean
   /** missing · seeking · met · capped; '' when undetermined. */
   upgrade?: '' | 'missing' | 'seeking' | 'met' | 'capped'
+  /**
+   * When `upgrade` is seeking for a reason the quality target does not
+   * explain — today the audio-language rule (ADR 0022) — the reason, server
+   * rendered: "no English audio on disk (German only)". Absent otherwise.
+   */
+  upgradeReason?: string
+  /**
+   * Declared audio languages every primary-copy file carries (ADR 0022),
+   * canonical codes. Absent when any track is untagged or unmeasured —
+   * absence is only a fact once every track has declared itself.
+   */
+  audioLanguages?: string[]
   episodeCount: number // monitored episodes aired to date (series)
   episodeFileCount: number // of those, how many have a file
   fileCount: number // files on disk (movies/books completeness)
@@ -628,6 +640,13 @@ export interface QualityProfile {
   floor?: Quality
   upgradesAllowed: boolean
   downloadPriority: number
+  /**
+   * Required audio languages (ADR 0022), canonical ISO 639-1 codes; any one
+   * of them satisfies. A file carrying none of them keeps the item wanted at
+   * any quality, and a release whose name advertises none is refused. Absent
+   * or empty means no requirement.
+   */
+  audioLanguages?: string[]
   sentence: string
   /** How many items/copies/lists use it; non-zero means delete is refused. */
   inUse?: number
@@ -639,6 +658,16 @@ export interface ProfileInput {
   floor?: { source: string; resolution?: number }
   upgradesAllowed?: boolean
   downloadPriority?: number
+  /** Codes from GET /languages. Omit or send empty for no requirement. */
+  audioLanguages?: string[]
+}
+
+/** One selectable audio language, from GET /languages (ADR 0022). */
+export interface LanguageOption {
+  /** Canonical ISO 639-1 code ("en"). */
+  code: string
+  /** Display name ("English"). */
+  name: string
 }
 
 export interface IndexerInput {
@@ -712,6 +741,12 @@ export interface ReleaseCandidate {
   seeders: number
   age: string
   quality: string
+  /**
+   * Audio languages the release name advertises (ADR 0022), canonical codes;
+   * "mul" for a MULTi/DUAL release. A name that says nothing reads as
+   * English, the scene convention.
+   */
+  languages?: string[]
   score: number
   formats?: string[]
   accepted: boolean
@@ -809,6 +844,8 @@ export const createProfile = (body: ProfileInput) =>
 export const updateProfile = (id: number, body: ProfileInput) =>
   send<QualityProfile>('PUT', `/profiles/${id}`, body)
 export const deleteProfile = (id: number) => send('DELETE', `/profiles/${id}`)
+/** The audio languages a profile may require, in display order (ADR 0022). */
+export const listLanguages = () => get<LanguageOption[]>('/languages')
 export const getIndexers = () => get<Indexer[]>('/indexers')
 export const addIndexer = (i: IndexerInput) => send<Indexer>('POST', '/indexers', i)
 export const testIndexer = (i: IndexerInput) => send('POST', '/indexers/test', i)

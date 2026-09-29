@@ -73,6 +73,13 @@ copy fw.mkv mkv-720p-h264-aac-whole.mkv
 SIZE=1920x1080 gen aw.mkv -c:v libx264 -preset ultrafast -crf 51 -pix_fmt yuv420p -c:a ac3 -ac 6 -f matroska
 copy aw.mkv mkv-1080p-h264-ac3-whole.mkv
 
+# A whole file whose audio track DECLARES its language (ADR 0022): the
+# German dub of an English film, the case that made language a criterion.
+# Every other fixture is untagged, which the prober reads as "undeclared".
+SIZE=1920x1080 gen gw.mkv -c:v libx264 -preset ultrafast -crf 51 -pix_fmt yuv420p -c:a ac3 -ac 6 \
+  -metadata:s:a:0 language=ger -f matroska
+copy gw.mkv mkv-1080p-h264-ac3-ger-whole.mkv
+
 SIZE=1920x1080 gen g.mkv -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a flac -ac 6 -f matroska
 trunc g.mkv mkv-1080p-h264-flac.mkv 64
 

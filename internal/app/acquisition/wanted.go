@@ -122,14 +122,17 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 //     failed to measure is how a 17 GB library file got a duplicate grabbed
 //     on top of it and the original left behind with no story.
 //   - Files with a known quality: wanted only while upgrades are on and the
-//     profile's target is not met — where "met" carries the don't-churn rule,
-//     so an unverified SOURCE at the target resolution counts as done.
+//     profile is not satisfied — where "met" carries the don't-churn rule,
+//     so an unverified SOURCE at the target resolution counts as done, and
+//     where satisfied means the language requirement too (ADR 0022): a file
+//     measured to carry none of the required languages keeps the item
+//     wanted at any quality.
 func wants(profile quality.Profile, w domain.Wantable) bool {
 	current, known := w.CurrentQuality()
 	if !known {
 		return !w.OnDisk()
 	}
-	return profile.UpgradesAllowed && !profile.Met(current, w.SourceVerified())
+	return profile.UpgradesAllowed && !profile.Satisfied(current, w.SourceVerified(), w.AudioLanguages())
 }
 
 // wantedEpisodes builds the episode wantables for one copy of a series (cp nil
@@ -157,7 +160,7 @@ func (s *Service) wantedEpisodes(item domain.MediaItem, profile quality.Profile,
 				Mon: true, Title: item.Title, Year: item.Year,
 				Identity: mediaIdentity(item),
 				Season:   e.SeasonNumber, Episode: e.EpisodeNumber,
-				Have: st.Have, Files: st.HasFile, Verified: st.Verified,
+				Have: st.Have, Files: st.HasFile, Verified: st.Verified, Audio: st.Audio,
 				Absolute: e.AbsoluteNum, Copy: copyID, CopyName: copyName,
 			}
 			if wants(profile, ep) {

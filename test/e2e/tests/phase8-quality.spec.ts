@@ -29,16 +29,35 @@ test('quality profiles are editable, and the editor says what a profile will do'
   await panel.getByLabel('Target source').selectOption('bluray')
   await panel.getByLabel('Set a floor — below this, do not grab at all').check()
 
+  // Audio language is a profile criterion (ADR 0022). The picker is fed by
+  // GET /languages, so the pill exists only once the vocabulary has landed —
+  // getByLabel waits for it.
+  const picker = panel.getByLabel('Required audio languages')
+  await expect(picker).toBeVisible()
+  await expect(picker).toContainText('Any one of these satisfies')
+  await picker.getByLabel('Require English audio').check()
+
   // The sentence is the spec, and the editor shows it BEFORE you commit —
   // a picker whose consequence you only learn after saving is a guessing game.
   const preview = panel.getByTestId('profile-preview')
   await expect(preview).toContainText('hunts the best release up to Bluray 1080p, then stops')
   await expect(preview).toContainText('never below')
+  await expect(preview).toContainText('English audio required')
 
   await panel.getByRole('button', { name: 'Create' }).click()
   const row = panel.locator('tr', { hasText: PROFILE }).first()
   await expect(row).toBeVisible()
+  // The saved row carries the server's sentence, which says the same thing
+  // the preview did — including the language clause.
   await expect(row).toContainText('hunts the best release up to Bluray 1080p, then stops')
+  await expect(row).toContainText('English audio required')
+
+  // And the requirement round-trips into the editor.
+  await row.getByRole('button', { name: 'Edit' }).click()
+  const editor = panel.locator('.profile-form').first()
+  await expect(editor.getByLabel('Require English audio')).toBeChecked()
+  await expect(editor.getByLabel('Require German audio')).not.toBeChecked()
+  await editor.getByRole('button', { name: 'Cancel' }).click()
 })
 
 test('the item page says what its profile does, and where the quality came from', async ({
@@ -67,7 +86,16 @@ test('the item page says what its profile does, and where the quality came from'
   const facts = page.locator('.facts, .fact-label').first()
   await expect(facts).toBeVisible()
   await expect(page.getByText('hunts the best release up to Bluray 1080p')).toBeVisible()
+  await expect(page.getByText('English audio required')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('upgrades until')
+
+  // The imported payload is not a real container, so no track on disk
+  // declares a language. That is not "no English" — it is an open question,
+  // and the Quality row says so instead of letting the state word stand as
+  // settled (ADR 0022).
+  const undetermined = page.locator('.qf-undetermined')
+  await expect(undetermined).toContainText('audio language undetermined')
+  await expect(undetermined).toHaveAttribute('title', /The profile requires English audio/)
 
   // The Files table says what each file is and how monarr knows. The imported
   // file's quality came from the release name (its payload is not a real

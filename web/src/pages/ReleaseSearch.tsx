@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import type { ReleaseCandidate } from '../api'
-import { fmtBytes, grabRelease, searchReleases } from '../api'
+import type { LanguageOption, ReleaseCandidate } from '../api'
+import { fmtBytes, grabRelease, listLanguages, searchReleases } from '../api'
+import { releaseLanguagesLabel } from '../language'
 import { PageSizePicker, Pager, clampPage, sliceForPage } from '../Pager'
 
 // ReleaseSearch is the interactive search panel.
@@ -43,6 +44,10 @@ export function ReleaseSearch(props: {
     retry: false,
     staleTime: 60_000,
   })
+
+  // Names for the language codes a release advertises (ADR 0022). One cached
+  // GET; the rows fall back to a local map until it lands.
+  const languages = useQuery({ queryKey: ['languages'], queryFn: listLanguages, staleTime: Infinity })
 
   const grab = useMutation({
     mutationFn: (c: ReleaseCandidate) =>
@@ -159,6 +164,7 @@ export function ReleaseSearch(props: {
                     <ReleaseRow
                       key={`${c.indexer}-${c.title}`}
                       c={c}
+                      languages={languages.data}
                       busy={grab.isPending}
                       onGrab={() => grab.mutate(c)}
                     />
@@ -186,9 +192,22 @@ export function ReleaseSearch(props: {
  * the first reason shows and the rest expand on click — the answer stays one
  * glance away without ever being in the way.
  */
-function ReleaseRow({ c, busy, onGrab }: { c: ReleaseCandidate; busy: boolean; onGrab: () => void }) {
+function ReleaseRow({
+  c,
+  languages,
+  busy,
+  onGrab,
+}: {
+  c: ReleaseCandidate
+  languages?: LanguageOption[]
+  busy: boolean
+  onGrab: () => void
+}) {
   const [expanded, setExpanded] = useState(false)
   const [first, ...rest] = c.rejections
+  // Only a release that advertises something other than plain English earns
+  // a label — that is the ordinary case, and labelling it would be noise.
+  const langs = releaseLanguagesLabel(c.languages, languages)
 
   return (
     <tr className={c.accepted ? '' : 'row-rejected'}>
@@ -229,6 +248,11 @@ function ReleaseRow({ c, busy, onGrab }: { c: ReleaseCandidate; busy: boolean; o
       </td>
       <td data-label="Quality">
         <span className="pill pill-neutral">{c.quality}</span>
+        {langs && (
+          <div className="muted release-langs" title="Audio languages the release name advertises">
+            {langs}
+          </div>
+        )}
         {c.score !== 0 && (
           <div className="muted" title={(c.formats ?? []).join(', ')}>
             score {c.score > 0 ? '+' : ''}

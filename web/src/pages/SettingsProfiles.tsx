@@ -1,15 +1,17 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { DefaultProfiles, ProfileInput, QualityProfile } from '../api'
+import type { DefaultProfiles, LanguageOption, ProfileInput, QualityProfile } from '../api'
 import {
   createProfile,
   deleteProfile,
   getProfiles,
   getSettings,
+  listLanguages,
   updateProfile,
   updateSettings,
 } from '../api'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
+import { buildProfileSentence } from '../profileSentence'
 
 // The quality vocabulary, worst to best on each axis. Kept here rather than
 // fetched because it is a property of the model, not of the deployment — and
@@ -71,6 +73,7 @@ const blankDraft = (): Draft => ({
   floorResolution: 1080,
   upgradesAllowed: true,
   downloadPriority: 0,
+  audioLanguages: [],
 })
 
 interface Draft {
@@ -83,6 +86,8 @@ interface Draft {
   floorResolution: number
   upgradesAllowed: boolean
   downloadPriority: number
+  /** Required audio languages, canonical codes; empty = no requirement (ADR 0022). */
+  audioLanguages: string[]
 }
 
 function draftOf(p: QualityProfile): Draft {
@@ -97,6 +102,7 @@ function draftOf(p: QualityProfile): Draft {
     floorResolution: p.floor?.resolution ?? p.target.resolution,
     upgradesAllowed: p.upgradesAllowed,
     downloadPriority: p.downloadPriority,
+    audioLanguages: p.audioLanguages ?? [],
   }
 }
 
@@ -107,6 +113,9 @@ function toInput(d: Draft): ProfileInput {
     target: { source: d.targetSource, resolution: res },
     upgradesAllowed: d.upgradesAllowed,
     downloadPriority: d.downloadPriority,
+    // Only video has soundtracks to require; a draft that switched kind must
+    // not carry a stale requirement across.
+    audioLanguages: d.axis === 'video' ? d.audioLanguages : [],
   }
   if (d.hasFloor) {
     body.floor = {
@@ -122,18 +131,92 @@ function toInput(d: Draft): ProfileInput {
 // the authority — every saved profile renders the sentence the server sent —
 // but a picker whose consequence you only learn after saving is a guessing
 // game, and guessing games are how "Any" happened.
-function previewSentence(d: Draft): string {
+function previewSentence(d: Draft, languages?: LanguageOption[]): string {
   const label = (source: string, resolution: number) => {
     const name = sourcesFor(d.axis).find((s) => s.value === source)?.label ?? source
     return resolution > 0 ? `${name} ${resolution}p` : name
   }
   const res = d.axis === 'video' ? d.targetResolution : 0
-  let s = `hunts the best release up to ${label(d.targetSource, res)}, then stops`
-  if (d.hasFloor) {
-    s += `; never below ${label(d.floorSource, d.axis === 'video' ? d.floorResolution : 0)}`
+  return buildProfileSentence(
+    {
+      target: label(d.targetSource, res),
+      floor: d.hasFloor
+        ? label(d.floorSource, d.axis === 'video' ? d.floorResolution : 0)
+        : undefined,
+      upgradesAllowed: d.upgradesAllowed,
+      audioLanguages: d.axis === 'video' ? d.audioLanguages : [],
+    },
+    languages,
+  )
+}
+
+// How many languages the picker shows before "more…". English and the usual
+// suspects are enough for nearly everyone; the long tail is one click away
+// rather than forty checkboxes on every profile form.
+const VISIBLE_LANGUAGES = 8
+
+/**
+ * AudioLanguagePicker: which audio languages a profile requires (ADR 0022).
+ *
+ * A row of checkbox pills rather than a multi-select, because "any one of
+ * these satisfies" is a set of independent yes/no answers and a <select
+ * multiple> hides which ones are on. Whatever is already required is always
+ * shown, even if it sits in the long tail, so an edit never hides the thing
+ * it is about to change.
+ */
+function AudioLanguagePicker(props: {
+  value: string[]
+  options: LanguageOption[]
+  onChange: (codes: string[]) => void
+}) {
+  const [showAll, setShowAll] = useState(false)
+  const { value, options, onChange } = props
+  const selected = new Set(value)
+  const shown = showAll
+    ? options
+    : options.filter((o, i) => i < VISIBLE_LANGUAGES || selected.has(o.code))
+  const hidden = options.length - shown.length
+
+  const toggle = (code: string, on: boolean) => {
+    const next = new Set(value)
+    if (on) next.add(code)
+    else next.delete(code)
+    // Keep the vocabulary's order, so the pills never reshuffle as you click.
+    onChange(options.map((o) => o.code).filter((c) => next.has(c)))
   }
-  if (!d.upgradesAllowed) s += '; no upgrades once a file is present'
-  return s
+
+  return (
+    <fieldset className="lang-picker" aria-label="Required audio languages">
+      <legend>Required audio languages</legend>
+      <div className="lang-pills">
+        {shown.map((o) => (
+          <label key={o.code} className={`lang-pill${selected.has(o.code) ? ' on' : ''}`}>
+            <input
+              type="checkbox"
+              aria-label={`Require ${o.name} audio`}
+              checked={selected.has(o.code)}
+              onChange={(e) => toggle(o.code, e.target.checked)}
+            />
+            {o.name}
+          </label>
+        ))}
+        {hidden > 0 && (
+          <button type="button" className="link-button" onClick={() => setShowAll(true)}>
+            {hidden} more…
+          </button>
+        )}
+        {showAll && options.length > VISIBLE_LANGUAGES && (
+          <button type="button" className="link-button" onClick={() => setShowAll(false)}>
+            fewer
+          </button>
+        )}
+      </div>
+      <span className="muted">
+        Any one of these satisfies. A file without them stays wanted at any quality; releases in
+        other languages are skipped.
+      </span>
+    </fieldset>
+  )
 }
 
 // The three kinds a default can be set for, in the order the library lists
@@ -223,6 +306,9 @@ function ProfileForm(props: {
   const { draft: d, onChange } = props
   const set = (patch: Partial<Draft>) => onChange({ ...d, ...patch })
   const sources = sourcesFor(d.axis)
+  // The vocabulary is the server's (ADR 0022), fetched once and kept: it is a
+  // property of the build, not of anything the user can change.
+  const languages = useQuery({ queryKey: ['languages'], queryFn: listLanguages, staleTime: Infinity })
 
   return (
     <div className="profile-form">
@@ -358,8 +444,18 @@ function ProfileForm(props: {
         Keep looking for better until the target is met
       </label>
 
+      {/* Audio language is a video concern: a book has no soundtrack to
+          require, and an audiobook's language is the edition, not a track. */}
+      {d.axis === 'video' && languages.data && (
+        <AudioLanguagePicker
+          value={d.audioLanguages}
+          options={languages.data}
+          onChange={(audioLanguages) => set({ audioLanguages })}
+        />
+      )}
+
       <p className="profile-sentence" data-testid="profile-preview">
-        <strong>{d.name.trim() || 'This profile'}</strong> — {previewSentence(d)}
+        <strong>{d.name.trim() || 'This profile'}</strong> — {previewSentence(d, languages.data)}
       </p>
 
       <div className="form-actions">

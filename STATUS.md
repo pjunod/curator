@@ -1,11 +1,13 @@
 # Monarr — Project Status
 
-> **Snapshot 2026-09-28 · v0.30.0 · Every import showed `plurx returned 500`
-> for a day. Root cause was in plurx (its durable queue counted a day of
-> settled history against its 10,000-row bound and refused all new work).
-> Curator gained the missing control: failed deliveries can be retried from
-> the delivery log, one row or all of them, once the far side is healthy.
-> Both shipped; the 88-row backlog was re-sent and every delivery is `ok`.**
+> **Snapshot 2026-09-28 · v0.31.0 · Audio language is a profile criterion
+> (ADR 0022): a profile can require English (or any set of languages), a
+> file measured to carry none of them keeps the item wanted at any quality,
+> a release offering the language replaces it even at a lower quality, and
+> releases in other languages are refused. The *Just Friends* case.**
+>
+> Previously: v0.30.0 · Failed plurx deliveries can be retried from the
+> delivery log (the import-notify wedge).
 >
 > Previously: v0.28.1 · One folder, one item (ADR 0020) · v0.28.0 · The
 > native app gained the web's Interactive search.
@@ -23,7 +25,31 @@
 > working session. Design rationale: [docs/architecture.md](docs/architecture.md) ·
 > decisions: [docs/adr/](docs/adr/) · this file: state only.
 
-## Delivery — Import notify wedge (plurx queue) + retryable deliveries
+## Delivery — Audio language requirement
+
+**Status:** gate green · PR [#46](https://github.com/pjunod/curator/pull/46) ready to merge · **Updated:** 2026-09-28 · **Version:** 0.31.0 ·
+branch `feat/audio-language-requirement` · ADR [0022](docs/adr/0022-audio-language.md)
+
+| Item | State | Evidence |
+|---|---|---|
+| Independent clone | complete | Cloud clone of GitHub `main` @ `b71e8c6` (v0.30.0); user checkout (at 0.24.4, dirty) untouched. |
+| Vocabulary | complete | `internal/domain/language`: one canonical code for container tags (`eng`/`ger`/`deu`/`en-US`), release tags (`GERMAN`, `ITA`, `VFF`, `MULTi`, `DL`) and profile requirements; a smaller release-tag list so `per`/`may`/`fin` in episode titles are not languages. |
+| Profile model | complete | `Profile.Languages` + `Audio{Languages, Known}`; `LanguageMet` / `LanguageAcceptable` / `Satisfied`; `Upgrade` takes the release's languages and the disk's audio — a file failing the requirement is beaten by any acceptable release that offers it, rank ignored, floor and resolution cap kept. |
+| Don't-churn on the new axis | complete | Absence is a fact only when every audio track declares a language; an untagged track, an unprobed file, or `und` never starts a hunt. Weakest-link across a season / an item's files. |
+| Parser | complete | `Parsed.Languages` read from the tag section after the title; silence = English; `MULTi`/`DUAL`/`DL` = `mul`; `WEB-DL` stripped before tokenizing; subtitle tags ignored. |
+| Decision engine | complete | `Decide(Release{Quality, Languages}, …)`; new code `language_not_wanted`; target-met requires both axes. |
+| Wanted / grab / import | complete | `wants()` uses `Satisfied`; RSS, backlog and auto-search route through `releaseOf(parsed)`; import judges the language by the release name, the post-placement probe records the truth. Wanted row: `upgrade from WEB-DL 1080p (German)`. |
+| Storage | complete | Profile definition JSON gains `languages` (omitted = none). Migration **0034** `media_files.audio_languages` (declared tag per track, `+`-joined, `und` untagged), backfilled in SQL from `media_info`, written at every probe; the list-view stats tuple reads it (`~langs`) instead of `json_each` (~6× cheaper); `DiskStateForItem.Audio`. |
+| API | complete | `audioLanguages` on `QualityProfile`/`ProfileInput` (validated against `GET /languages`), `upgradeReason` + `audioLanguages` on items, `languages` on `ReleaseCandidate`; facts pill names the language. |
+| Web | complete | Profile editor: "Required audio languages" pill picker (Film & TV only) with live sentence; item page: `upgrading · no English audio on disk (German only)`; interactive search shows non-English advertised languages. Mobile: types only. |
+| Tests | complete | `TestJustFriends` (7 scenarios: wanted, grabs the English 1080p over the German remux, lower quality in the right language wins, wrong language only → nothing, untagged → not hunted, English among others → done, disk state), grading on list + get paths, profile round trip, API contract, parser/language/mediainfo/decision unit tests, e2e profile editor. |
+| Docs | complete | ADR 0022, `docs/settings.md` §Quality profiles, `docs/usage.md` (interactive search, item page, loops), VERSION 0.31.0. |
+| Draft PR → adversarial review | addressed | PR #46 opened as draft. Review: 2 must-fix (the grab→import→still-wanted **loop** for untagged wrong-language releases — now bounded: a measured mismatch blocklists the release + `language_mismatch` history; lint misspell), 7 should-fix (subtitle-adjacent tags read as audio · manual import could delete an English file for a German one · "undetermined" claim not rendered · book profiles could require a language · web sentence order · `json_each` cost · wanted "(English)" noise), 8 nits — all fixed with regression tests (`TestLanguageMismatchIsBlocklisted` on a real `ger`-tagged MKV fixture, `TestManualImportNeverDeletes…`, Erai-raws/NL.Subs parser cases, migration 0034 backfill, `weakestRecorded` mixed files, book-profile 400, e2e "audio language undetermined"). |
+| Full gate (once, after fixes) | green | `make lint` 0 issues (golangci v2.12.2) · `make test` all ok · `make test-web` 104 · `make test-e2e` **117/117** · coverage **86.1 %** (floor 86.0) · touched packages ×3 `-shuffle=on` green. Not verified here: nothing outstanding — no native change, no hardware. |
+| Merge | pending | |
+| Deploy — server | pending | |
+| Deploy — clients | n/a | Mobile types only; no native release. |
+## Previous delivery — Import notify wedge (plurx queue) + retryable deliveries
 
 **Status:** done — Curator merged `b71e8c6`, tagged v0.30.0, deployed to nuc3; plurx #608 merged and on all four nodes; backlog re-sent · **Updated:** 2026-09-28 · **Version:** 0.30.0 ·
 PR [#44](https://github.com/pjunod/curator/pull/44) · plurx PR [#608](http://192.168.4.7:3000/noirr/plurx/pulls/608) — which duplicated the earlier open [#605](http://192.168.4.7:3000/noirr/plurx/pulls/605); Paul ruled: leave what's done, the other session landed the remaining pieces. Lesson recorded: list open PRs before building a fix.

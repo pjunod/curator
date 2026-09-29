@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/decision"
 	"github.com/pjunod/monarr/internal/domain/format"
+	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
@@ -157,7 +159,7 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 				if err != nil {
 					continue
 				}
-				if d := decision.Decide(p.Quality, w, profile); !d.Accepted {
+				if d := decision.Decide(releaseOf(p), w, profile); !d.Accepted {
 					continue
 				}
 				if why, bad := sizeImplausible(p.Quality, r, runtimes.of(ctx, s, w)); bad {
@@ -174,7 +176,7 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 					continue
 				}
 				freshProfile, err := s.db.GetProfile(ctx, fresh.ProfileID())
-				if err != nil || !wants(freshProfile, fresh) || !decision.Decide(p.Quality, fresh, freshProfile).Accepted {
+				if err != nil || !wants(freshProfile, fresh) || !decision.Decide(releaseOf(p), fresh, freshProfile).Accepted {
 					unlock()
 					continue
 				}
@@ -386,7 +388,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 					if !releaseMatch(release, parsed, w, identityIndex).Matched {
 						continue
 					}
-					if !decision.Decide(parsed.Quality, w, profile).Accepted {
+					if !decision.Decide(releaseOf(parsed), w, profile).Accepted {
 						continue
 					}
 					if _, bad := sizeImplausible(parsed.Quality, release, runtime); bad {
@@ -439,7 +441,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 			continue
 		}
 		tally.Matched++
-		if d := decision.Decide(p.Quality, w, profile); !d.Accepted {
+		if d := decision.Decide(releaseOf(p), w, profile); !d.Accepted {
 			continue
 		}
 		if why, bad := sizeImplausible(p.Quality, r, runtime); bad {
@@ -497,6 +499,12 @@ func (s *Service) WantedList(ctx context.Context) ([]WantedSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	profiles := map[int64]quality.Profile{}
+	if ps, err := s.db.ListProfiles(ctx); err == nil {
+		for _, p := range ps {
+			profiles[p.ID] = p
+		}
+	}
 	out := make([]WantedSummary, 0, len(wanted))
 	for _, w := range wanted {
 		ws := WantedSummary{
@@ -505,6 +513,14 @@ func (s *Service) WantedList(ctx context.Context) ([]WantedSummary, error) {
 		}
 		if q, ok := w.CurrentQuality(); ok {
 			ws.Missing, ws.Current, ws.Reason = false, q.Display(), "upgrade"
+			// The language rides along with the quality (ADR 0022) so
+			// "upgrade from WEB-DL 1080p" reads "upgrade from WEB-DL 1080p
+			// (German)" — only when the language is why it is wanted.
+			if a := w.AudioLanguages(); a.Known && len(a.Languages) > 0 {
+				if p, ok := profiles[w.ProfileID()]; ok && !p.LanguageMet(a) {
+					ws.Current += " (" + strings.Join(displayAll(a.Languages), "/") + ")"
+				}
+			}
 		}
 		switch t := w.(type) {
 		case domain.MovieWantable:
@@ -528,6 +544,15 @@ func (s *Service) WantedList(ctx context.Context) ([]WantedSummary, error) {
 		return out[i].WantableID < out[j].WantableID
 	})
 	return out, nil
+}
+
+// displayAll renders language codes as names, in order.
+func displayAll(codes []string) []string {
+	out := make([]string, 0, len(codes))
+	for _, c := range codes {
+		out = append(out, language.Display(c))
+	}
+	return out
 }
 
 // isBlocklisted reports whether this (release, indexer) pair failed before.

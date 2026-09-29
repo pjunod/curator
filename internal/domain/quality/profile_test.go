@@ -160,12 +160,115 @@ func TestProfileLattice(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				got := tc.profile.Upgrade(tc.release, tc.current, tc.verified)
+				got := tc.profile.Upgrade(tc.release, nil, tc.current, tc.verified, quality.Audio{})
 				if got != tc.want {
 					t.Errorf("Upgrade(%v over %v, verified=%v) = %v, want %v%s",
 						tc.release, tc.current, tc.verified, got, tc.want, because(tc.why))
 				}
 			})
+		}
+	})
+}
+
+// TestLanguageRequirement: the axis ADR 0022 added. A profile with no
+// languages behaves exactly as before; one with a requirement treats a file
+// shown to lack the language as unsatisfied at any quality, and treats any
+// acceptable release offering the language as an upgrade over it.
+func TestLanguageRequirement(t *testing.T) {
+	english := quality.Profile{Name: "1080p EN", Target: q(quality.SourceWEBDL, 1080),
+		UpgradesAllowed: true, Languages: []string{"en"}}
+	plain := quality.Profile{Name: "1080p", Target: q(quality.SourceWEBDL, 1080), UpgradesAllowed: true}
+	germanOnly := quality.Audio{Languages: []string{"de"}, Known: true}
+	englishToo := quality.Audio{Languages: []string{"de", "en"}, Known: true}
+	untagged := quality.Audio{Languages: []string{"de"}, Known: false}
+
+	t.Run("LanguageMet", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			profile quality.Profile
+			audio   quality.Audio
+			want    bool
+		}{
+			{"no requirement, anything goes", plain, germanOnly, true},
+			{"required and present", english, englishToo, true},
+			{"required and proven absent", english, germanOnly, false},
+			{"required but a track is untagged: no proof, no churn", english, untagged, true},
+			{"required and nothing measured", english, quality.Audio{}, true},
+		}
+		for _, tc := range cases {
+			if got := tc.profile.LanguageMet(tc.audio); got != tc.want {
+				t.Errorf("%s: LanguageMet = %v, want %v", tc.name, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("Satisfied needs both axes", func(t *testing.T) {
+		at := q(quality.SourceWEBDL, 1080)
+		if !english.Satisfied(at, true, englishToo) {
+			t.Error("at target with English should be satisfied")
+		}
+		if english.Satisfied(at, true, germanOnly) {
+			t.Error("at target without English must NOT be satisfied -- this is the whole point")
+		}
+		if !plain.Satisfied(at, true, germanOnly) {
+			t.Error("a profile with no requirement is unchanged")
+		}
+	})
+
+	t.Run("Upgrade", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			profile quality.Profile
+			release quality.Quality
+			langs   []string
+			current quality.Quality
+			audio   quality.Audio
+			want    bool
+			why     string
+		}{
+			{"same quality, English offered, German on disk", english,
+				q(quality.SourceWEBDL, 1080), []string{"en"}, q(quality.SourceWEBDL, 1080), germanOnly, true,
+				"the Just Friends case: at the target but in the wrong language, so keep looking"},
+			{"LOWER quality, English offered, German on disk", english,
+				q(quality.SourceHDTV, 720), []string{"en"}, q(quality.SourceWEBDL, 1080), germanOnly, true,
+				"a file in the right language beats a better file in the wrong one"},
+			{"German release over German file", english,
+				q(quality.SourceRemux, 1080), []string{"de"}, q(quality.SourceWEBDL, 1080), germanOnly, false,
+				"a release that cannot fix the problem is not an upgrade"},
+			{"MULTi release over German file", english,
+				q(quality.SourceWEBDL, 1080), []string{"mul"}, q(quality.SourceWEBDL, 1080), germanOnly, true, ""},
+			{"German release over English 720p file", english,
+				q(quality.SourceWEBDL, 1080), []string{"de"}, q(quality.SourceHDTV, 720), englishToo, false,
+				"never trade the language away for resolution"},
+			{"English release over English 720p file", english,
+				q(quality.SourceWEBDL, 1080), []string{"en"}, q(quality.SourceHDTV, 720), englishToo, true, ""},
+			{"language fine, target met: stop", english,
+				q(quality.SourceRemux, 1080), []string{"en"}, q(quality.SourceWEBDL, 1080), englishToo, false, ""},
+			{"untagged file at target: no churn", english,
+				q(quality.SourceWEBDL, 1080), []string{"en"}, q(quality.SourceWEBDL, 1080), untagged, false, ""},
+			{"no requirement: German release is a normal upgrade", plain,
+				q(quality.SourceWEBDL, 1080), []string{"de"}, q(quality.SourceHDTV, 720), quality.Audio{}, true, ""},
+			{"below the floor is still below the floor", quality.Profile{Name: "f", Target: q(quality.SourceWEBDL, 1080),
+				Floor: ptr(q(quality.SourceHDTV, 1080)), UpgradesAllowed: true, Languages: []string{"en"}},
+				q(quality.SourceHDTV, 720), []string{"en"}, q(quality.SourceWEBDL, 1080), germanOnly, false,
+				"the language rule relaxes rank, never the floor"},
+		}
+		for _, tc := range cases {
+			got := tc.profile.Upgrade(tc.release, tc.langs, tc.current, true, tc.audio)
+			if got != tc.want {
+				t.Errorf("%s: Upgrade = %v, want %v%s", tc.name, got, tc.want, because(tc.why))
+			}
+		}
+	})
+
+	t.Run("Sentence says so", func(t *testing.T) {
+		if got := english.Sentence(); got != "hunts the best release up to WEB-DL 1080p, then stops; English audio required" {
+			t.Errorf("Sentence = %q", got)
+		}
+		both := english
+		both.Languages = []string{"en", "fr"}
+		if got := both.Sentence(); got != "hunts the best release up to WEB-DL 1080p, then stops; English or French audio required" {
+			t.Errorf("Sentence = %q", got)
 		}
 	})
 }

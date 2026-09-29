@@ -1009,6 +1009,23 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /languages:
+    get:
+      operationId: listLanguages
+      summary: List the audio languages a profile can require
+      description: >
+        The vocabulary of ADR 0022, in display order. Profile editors pick
+        from this rather than typing codes.
+      responses:
+        "200":
+          description: Languages.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LanguageOption"
+
   /profiles/{id}:
     parameters:
       - name: id
@@ -2930,6 +2947,21 @@ components:
             missing = nothing on disk · seeking = below the cutoff and being
             hunted · met = cutoff reached · capped = below the cutoff with
             upgrades switched off. Empty when it could not be determined.
+        upgradeReason:
+          type: string
+          description: >
+            When seeking for a reason the quality target does not explain --
+            today the audio-language rule (ADR 0022) -- the reason, server
+            rendered: "no English audio on disk (German only)". Empty
+            otherwise.
+        audioLanguages:
+          type: array
+          items: { type: string }
+          description: >
+            Declared audio languages every primary-copy file carries (ADR
+            0022), canonical codes. Absent when any file has an untagged
+            track or was never measured -- absence is only a fact once every
+            track has declared itself.
         rating:
           type: number
           description: Provider-scale community rating (TMDB /10, Open Library /5).
@@ -3152,6 +3184,20 @@ components:
             missing = nothing on disk · seeking = below the cutoff and being
             hunted · met = cutoff reached · capped = below the cutoff with
             upgrades switched off.
+        upgradeReason:
+          type: string
+          description: >
+            When seeking for a reason the quality target does not explain --
+            today the audio-language rule (ADR 0022) -- the reason, server
+            rendered: "no English audio on disk (German only)". Empty
+            otherwise.
+        audioLanguages:
+          type: array
+          items: { type: string }
+          description: >
+            Declared audio languages every primary-copy file carries (ADR
+            0022), canonical codes. Absent when any file has an untagged
+            track or was never measured.
         overview:
           type: string
         genres:
@@ -3769,6 +3815,14 @@ components:
         downloadPriority:
           type: integer
           description: Default scheduler priority for items that inherit from this profile.
+        audioLanguages:
+          type: array
+          items: { type: string }
+          description: >
+            Required audio languages (ADR 0022), canonical ISO 639-1 codes. A
+            file must carry at least one of them on an audio track or the
+            item stays wanted at any quality; a release whose name advertises
+            none of them is refused. Empty means no requirement.
         sentence:
           type: string
           description: >
@@ -3802,6 +3856,19 @@ components:
           type: integer
           default: 0
           description: One of -100, -50, 0, 50, 100, or 900 (force).
+        audioLanguages:
+          type: array
+          items: { type: string }
+          description: >
+            Required audio languages, any one of which satisfies (ADR 0022).
+            Codes from GET /languages. Omit or send empty for no requirement.
+
+    LanguageOption:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string, description: Canonical ISO 639-1 code ("en"). }
+        name: { type: string, description: Display name ("English"). }
 
     IndexerInput:
       type: object
@@ -3941,6 +4008,13 @@ components:
         seeders: { type: integer }
         age: { type: string }
         quality: { type: string }
+        languages:
+          type: array
+          items: { type: string }
+          description: >
+            Audio languages the release name advertises (ADR 0022), canonical
+            codes; "mul" for a MULTi/DUAL release. A name that says nothing
+            reads as English, the scene convention.
         score:
           type: integer
           description: Custom-format score sum (Phase 5).

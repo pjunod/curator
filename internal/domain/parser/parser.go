@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
@@ -36,10 +37,16 @@ type Parsed struct {
 	// carries one ("Author - Title ... EPUB", "Title by Author ... M4B").
 	Author  string
 	Quality quality.Quality
-	Proper  bool
-	Repack  bool
-	Codec   string
-	Group   string
+	// Languages are the audio languages the name advertises, canonical
+	// (ADR 0022). A name that says nothing is read as English — the scene
+	// convention: tags mark the exceptions, not the rule — and MULTi/DUAL
+	// read as language.Multi. Subtitle tags (VOSTFR, SUBBED) say nothing
+	// about the audio and are ignored.
+	Languages []string
+	Proper    bool
+	Repack    bool
+	Codec     string
+	Group     string
 }
 
 var (
@@ -60,8 +67,12 @@ var (
 	reCodec           = regexp.MustCompile(`(?i)\b(x264|x265|h\.?264|h\.?265|HEVC|XviD|AV1)\b`)
 	reContainer       = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|m4v|ts|wmv)$`)
 	reGroupSuffix     = regexp.MustCompile(`-([A-Za-z0-9][A-Za-z0-9_]{1,24})$`)
-	reCleanJunk       = regexp.MustCompile(`[._]+`)
-	reMultiSpace      = regexp.MustCompile(`\s{2,}`)
+	// reLangSplit breaks the tag section of a name into tokens. Hyphens
+	// split too ("AC3-GERMAN", "-DL"); the compound source tags that
+	// contain one (WEB-DL, Blu-Ray) are removed before this runs.
+	reLangSplit  = regexp.MustCompile(`[ ._\-\[\]()]+`)
+	reCleanJunk  = regexp.MustCompile(`[._]+`)
+	reMultiSpace = regexp.MustCompile(`\s{2,}`)
 )
 
 // sourcePatterns are matched in order; first hit wins. Book formats come
@@ -254,6 +265,7 @@ func Parse(release string) Parsed {
 		}
 	}
 
+	p.Languages = parseLanguages(s[titleEnd:])
 	p.Proper = reProper.MatchString(s)
 	p.Repack = reRepack.MatchString(s)
 	if m := reCodec.FindStringSubmatch(s); m != nil {
@@ -285,6 +297,70 @@ func Parse(release string) Parsed {
 		p.Author, p.Title = splitBookTitle(p.Title)
 	}
 	return p
+}
+
+// parseLanguages reads the audio-language tags out of the part of the name
+// after the title (ADR 0022). Only the tag section is read so a title like
+// "The French Connection" stays a title; an episode title in that section
+// can still fool it ("The.French.Mistake"), which is the same limit the
+// upstream parsers live with and is visible in interactive search as a
+// reason rather than a silent skip.
+func parseLanguages(tail string) []string {
+	// Source tags first, because "WEB-DL" contains "DL" (the German scene's
+	// dual-language tag) and "Blu-Ray" splits on its hyphen.
+	for _, sp := range sourcePatterns {
+		if quality.IsBookFormat(sp.src) {
+			continue
+		}
+		tail = sp.re.ReplaceAllString(tail, " ")
+	}
+	toks := reLangSplit.Split(tail, -1)
+	var langs []string
+	multi := false
+	// A language token beside a subtitle marker describes the subtitles:
+	// "NL.Subs" is Dutch subtitles, "[Multiple Subtitle][ENG][GER][JPN]" is
+	// a subtitle list. Once a marker is seen, the run of language tokens
+	// that follows it is subtitle languages until an unrelated token ends
+	// the run; the token right before a marker is dropped too.
+	inSubs := false
+	for i, tok := range toks {
+		if tok == "" {
+			continue
+		}
+		if language.SubtitleToken(tok) {
+			inSubs = true
+			continue
+		}
+		code, ok := language.ReleaseToken(tok)
+		if !ok {
+			// A region suffix ("POR-BR", "SPA-LA"), a channel count, or an
+			// ISO code the release vocabulary is too careful to read
+			// ("ARA", "TUR") is not the end of a subtitle list; a real
+			// word is.
+			if len(tok) > 2 && !language.Known(tok) {
+				inSubs = false
+			}
+			continue
+		}
+		if inSubs {
+			continue
+		}
+		if i+1 < len(toks) && language.SubtitleToken(toks[i+1]) {
+			continue
+		}
+		if code == language.Multi {
+			multi = true
+			continue
+		}
+		langs = append(langs, code)
+	}
+	if multi {
+		langs = append(langs, language.Multi)
+	}
+	if len(langs) == 0 {
+		return []string{language.English}
+	}
+	return language.Normalize(langs)
 }
 
 func countryBracket(s string) bool {

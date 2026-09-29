@@ -93,8 +93,28 @@
   <header>
     <h1>Monarr — Project Status</h1>
     <div class="sub">Unified Sonarr + Radarr + books rewrite in Go · explicit ledger of planned vs. done ·
-      mirrors <code>STATUS.md</code> snapshot 2026-08-21 · <b>v0.24.1</b> · page generated 2026-08-21</div>
+      mirrors <code>STATUS.md</code> snapshot 2026-09-28 · <b>v0.31.0</b> · page generated 2026-09-28</div>
   </header>
+
+  <section id="audio-language-delivery">
+    <h2>Audio language requirement <span class="chip partial">gate green · merging</span>
+      <span class="ev">v0.31.0 · 2026-09-28 · feat/audio-language-requirement · ADR 0022</span></h2>
+    <p class="blurb">A profile can require English (or any set of languages). A file
+      measured to carry none of them keeps the item wanted at any quality, a release
+      offering the language replaces it even at a lower quality, and releases in other
+      languages are refused. The <i>Just Friends</i> case: a German-only WEB-DL 1080p was
+      "at the target" and nothing was ever tried.</p>
+    <ul class="items">
+      <li><span class="m done">implemented</span><span class="t">One canonical language vocabulary for container tags, release-name tags and profile requirements; <code>Profile.Languages</code>; <code>Satisfied</code> = quality met AND language met; upgrade ignores rank when the language is missing, keeps the floor and the resolution cap; new rejection <code>language_not_wanted</code>.</span></li>
+      <li><span class="m done">implemented</span><span class="t">Don't-churn on the new axis: absence is a fact only when every audio track declares a language; untagged, unprobed and <code>und</code> never start a hunt. Weakest-link across seasons and file sets.</span></li>
+      <li><span class="m done">implemented</span><span class="t">Parser reads tags after the title (silence = English, <code>MULTi</code>/<code>DUAL</code>/<code>DL</code> = multi, <code>WEB-DL</code> never yields <code>DL</code>); wanted / RSS / backlog / auto-search / import all judge by it; profile JSON gains <code>languages</code> with no migration; list-view grading via <code>json_each</code>.</span></li>
+      <li><span class="m done">implemented</span><span class="t">API: <code>audioLanguages</code> on profiles (validated against <code>GET /languages</code>), <code>upgradeReason</code> + <code>audioLanguages</code> on items, <code>languages</code> on release candidates. Web: language pill picker in the profile editor, "upgrading · no English audio on disk (German only)" on the item page, advertised languages in interactive search, wanted row "upgrade from WEB-DL 1080p (German)".</span></li>
+      <li><span class="m done">written</span><span class="t"><code>TestJustFriends</code> (7 scenarios incl. grabbing the English 1080p over a German remux and a 720p English over a German 1080p), grading on list + get paths, profile round trip, API contract, parser/language/mediainfo/decision units, e2e profile editor. ADR 0022, settings and usage docs, VERSION 0.31.0.</span></li>
+      <li><span class="m done">reviewed</span><span class="t">Adversarial review of draft PR #46: the grab→import→still-wanted loop for untagged wrong-language releases (now bounded: a measured mismatch blocklists the release, <code>language_mismatch</code> in history), subtitle-adjacent tags, manual-import replace rule, book profiles, sentence order, <code>json_each</code> cost (→ migration 0034 <code>audio_languages</code> column), "undetermined" note — all fixed with regression tests incl. a real <code>ger</code>-tagged MKV fixture.</span></li>
+      <li><span class="m done">gate</span><span class="t">lint 0 · Go all ok · web 104 · e2e 117/117 · coverage 86.1 % (floor 86.0) · touched packages ×3 shuffled.</span></li>
+      <li><span class="m todo">pending</span><span class="t">Merge PR #46 → ansible deploy to nuc3. No native release (mobile types only).</span></li>
+    </ul>
+  </section>
 
   <section id="mobile-preview-fix">
     <h2>Mobile preview usability <span class="chip partial">adversarial review approved</span>

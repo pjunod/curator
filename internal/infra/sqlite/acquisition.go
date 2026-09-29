@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
 	"github.com/pjunod/monarr/internal/ports"
@@ -25,6 +26,10 @@ type profileDef struct {
 	Target           qualityDef  `json:"target"`
 	Floor            *qualityDef `json:"floor"`
 	DownloadPriority int         `json:"downloadPriority,omitempty"`
+	// Languages is the ADR 0022 audio requirement. Omitted when empty, so
+	// every definition written before the rule existed reads back as
+	// "no opinion" without a migration.
+	Languages []string `json:"languages,omitempty"`
 }
 
 type qualityDef struct {
@@ -44,6 +49,7 @@ func profileFromRow(r sqlitegen.QualityProfile) (quality.Profile, error) {
 	p := quality.Profile{
 		ID: r.ID, Name: r.Name, UpgradesAllowed: r.UpgradesAllowed != 0,
 		Target: def.Target.quality(), DownloadPriority: def.DownloadPriority,
+		Languages: language.Normalize(def.Languages),
 	}
 	if def.Floor != nil {
 		f := def.Floor.quality()
@@ -88,6 +94,7 @@ func profileDefinition(p quality.Profile) (string, error) {
 	def := profileDef{
 		Target:           qualityDef{Source: string(p.Target.Source), Resolution: p.Target.Resolution},
 		DownloadPriority: p.DownloadPriority,
+		Languages:        language.Normalize(p.Languages),
 	}
 	if p.Floor != nil {
 		def.Floor = &qualityDef{Source: string(p.Floor.Source), Resolution: p.Floor.Resolution}

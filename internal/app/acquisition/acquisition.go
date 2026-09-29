@@ -228,6 +228,7 @@ type episodeState struct {
 	HasFile  bool
 	Have     *quality.Quality
 	Verified bool
+	Audio    quality.Audio
 }
 
 func mediaIdentity(item domain.MediaItem) domain.MediaIdentity {
@@ -273,6 +274,7 @@ func (s *Service) episodeStates(ctx context.Context, item domain.MediaItem, copy
 				q := rec.Quality
 				st.Have = &q
 				st.Verified = rec.SourceVerified()
+				st.Audio = rec.AudioOf()
 			}
 			out[epID] = st
 		}
@@ -320,7 +322,7 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 				Item: item.ID, Profile: profileID, Mon: monitored,
 				Title: item.Title, Author: item.Author, Year: item.Year,
 				Have: state.Best, Files: state.HasFiles, Verified: state.SourceVerified,
-				BookType: bookType, Copy: copyID, CopyName: copyName,
+				Audio: state.Audio, BookType: bookType, Copy: copyID, CopyName: copyName,
 			}, nil
 		}
 		mon := item.Monitored
@@ -331,7 +333,7 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 			Item: item.ID, Profile: profileID, Mon: mon,
 			Title: item.Title, Year: item.Year, Identity: mediaIdentity(item),
 			Have: state.Best, Files: state.HasFiles, Verified: state.SourceVerified,
-			Copy: copyID, CopyName: copyName,
+			Audio: state.Audio, Copy: copyID, CopyName: copyName,
 		}, nil
 	}
 
@@ -356,7 +358,7 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 			Mon: item.Monitored && e.Monitored && copyMon, Title: item.Title, Year: item.Year,
 			Identity: mediaIdentity(item),
 			Season:   e.SeasonNumber, Episode: e.EpisodeNumber,
-			Have: st.Have, Files: st.HasFile, Verified: st.Verified,
+			Have: st.Have, Files: st.HasFile, Verified: st.Verified, Audio: st.Audio,
 			Absolute: e.AbsoluteNum, Copy: copyID, CopyName: copyName,
 		}
 	}
@@ -395,9 +397,12 @@ func copyLabel(c domain.MediaCopy) string {
 
 // Candidate is one release with its verdict, for the interactive search UI.
 type Candidate struct {
-	Release    ports.Release        `json:"release"`
-	Quality    quality.Quality      `json:"-"`
-	QualityStr string               `json:"quality"`
+	Release    ports.Release   `json:"release"`
+	Quality    quality.Quality `json:"-"`
+	QualityStr string          `json:"quality"`
+	// Languages are the audio languages the name advertises (ADR 0022),
+	// canonical codes; "mul" for a MULTi/DUAL release.
+	Languages  []string             `json:"languages"`
 	Age        string               `json:"age"`
 	Score      int                  `json:"score"`   // custom-format score sum
 	Formats    []string             `json:"formats"` // matched custom formats
@@ -570,7 +575,8 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 	for _, r := range releases {
 		p := parser.Parse(r.Title)
 		c := Candidate{Release: r, Quality: p.Quality, QualityStr: p.Quality.Display(),
-			Score: format.Score(r.Title, formats), Formats: format.Matches(r.Title, formats)}
+			Languages: p.Languages,
+			Score:     format.Score(r.Title, formats), Formats: format.Matches(r.Title, formats)}
 		if !r.PublishDate.IsZero() {
 			c.Age = age(now.Sub(r.PublishDate))
 		}
@@ -583,7 +589,7 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 				Reason: match.Reason,
 			}}
 		} else {
-			d := decision.Decide(p.Quality, target, profile)
+			d := decision.Decide(releaseOf(p), target, profile)
 			c.Accepted = d.Accepted
 			c.IsUpgrade = d.IsUpgrade
 			c.Rejections = d.Rejections
@@ -613,6 +619,12 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 		return out[i].Release.Seeders > out[j].Release.Seeders
 	})
 	return out, status, nil
+}
+
+// releaseOf is what the decision engine judges a parsed name by: the quality
+// it claims and the languages it advertises (ADR 0022).
+func releaseOf(p parser.Parsed) decision.Release {
+	return decision.Release{Quality: p.Quality, Languages: p.Languages}
 }
 
 func describeTarget(w domain.Wantable) string {

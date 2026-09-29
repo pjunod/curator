@@ -285,17 +285,22 @@ Event types: `grabbed`, `failed`, `imported`, `import_failed`,
 `import_blocked` (ran out of disk part-way), `import_retried`,
 `regrab_capped` (a replacement search that was deliberately not made),
 `short_delivery`, `payload_removed`, `quality_mismatch`,
-`implausible_file`, `file_removed`.
+`implausible_file`, `language_mismatch` (a placed file measured to carry
+none of the profile's required audio languages; the release is
+blocklisted), `file_removed`.
 
 ## Quality profiles
 
 A profile is a **target**, an optional **floor**, an **upgrades** switch,
-and a **download priority** (ADR 0014). The first three decide what Monarr
-wants; priority decides which accepted grab nzbd works on first.
+an optional **audio language** requirement, and a **download priority**
+(ADR 0014, ADR 0022). The first four decide what Monarr wants; priority
+decides which accepted grab nzbd works on first.
 
 > Hunt the best release at or below the target's resolution. While what's
 > on disk is below the target and upgrades are on, keep looking; once the
-> target is met, stop. Never grab below the floor.
+> target is met, stop. Never grab below the floor. If languages are
+> required, a file without one of them is never "met", and a release
+> that offers one replaces it at any acceptable quality.
 
 Five seeded profiles, editable under **Settings → Quality profiles**:
 
@@ -325,6 +330,34 @@ resolution problem.
 **What the floor does:** it says what is not worth having at all. With no
 floor, something beats nothing — a 480p copy of a missing film is
 acceptable until something better turns up. With a floor, monarr waits.
+
+**What the audio language does** (ADR 0022): under **Required audio
+languages**, tick any languages a file must carry on an audio track — any
+one of them satisfies. Leave them all off for no opinion, which is how
+every profile starts. With English required, a WEB-DL 1080p file measured
+to have only a German track is *not* at the target: the item stays on the
+wanted list ("upgrade from WEB-DL 1080p (German)"), releases advertising
+only other languages are refused (`language not wanted`), and a release
+that offers English is an upgrade even at the same or a lower quality —
+the floor and the resolution cap still apply. A release name with no
+language tag is read as English (the scene convention); `MULTi` and
+`DUAL` count as offering everything.
+
+This is a requirement, not a rank, and it is judged only on measured
+facts: a file whose audio tracks carry no language tags, or that Monarr
+could not probe, is never hunted for its language (the item page says
+*audio language undetermined*). With upgrades switched off, a file in
+the wrong language stays — the switch still means "never replace what is
+here". Subtitles are not considered, and tags beside `Subs`/`Subbed`
+describe subtitles, not audio. The picker only appears for film and TV
+profiles; book profiles cannot require a language.
+
+When a grab that claimed the language turns out, once measured, to
+carry none of it, the release is **blocklisted** automatically and the
+item's history shows a `language_mismatch` entry — otherwise the same
+release would be the best candidate again on every search. Files probed
+before this rule existed already carry their track languages; nothing
+needs re-measuring.
 
 Two exclusions apply regardless of target and floor, because they are not
 questions of rank: a **screen capture** (CAM, telesync) is never grabbed

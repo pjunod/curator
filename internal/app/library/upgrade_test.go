@@ -3,8 +3,10 @@ package library
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -198,4 +200,85 @@ func TestAdoptedFileWithNoQualityTagInItsNameIsOnDiskButUnknown(t *testing.T) {
 	if items[0].Upgrade == domain.UpgradeMissing {
 		t.Errorf("list view disagrees with the item page: %q", items[0].Upgrade)
 	}
+}
+
+// TestLanguageKeepsAnItemSeeking is ADR 0022 on the grid and the item page:
+// a file at the target in a language the profile does not want is still
+// "seeking", with a reason the quality target cannot give, on both the bulk
+// list path (the SQL tuple) and the single-item path (the probe records).
+func TestLanguageKeepsAnItemSeeking(t *testing.T) {
+	svc, db, _ := newService(t)
+	svc.meta = adoptProvider{movies: []ports.SearchResult{
+		movie(1, "German Dub", 2020),
+		movie(2, "Has English", 2021),
+		movie(3, "Untagged", 2022),
+	}}
+	ctx := context.Background()
+
+	p, err := db.GetProfile(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Languages = []string{"en"}
+	if err := db.UpdateProfile(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+
+	at := quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}
+	probe := func(item domain.MediaItem, audio ...mediainfo.AudioInfo) {
+		t.Helper()
+		full, err := db.GetMediaItemFull(ctx, item.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info := mediainfo.Info{Container: mediainfo.ContainerMKV,
+			Video: &mediainfo.VideoInfo{Codec: "h264", Width: 1920, Height: 1080, BitDepth: 8},
+			Audio: audio, DurationMS: 5_400_000, BitrateKbps: 8000}
+		if err := db.SetFileMediaInfo(ctx, full.Files[0].ID, info, mediainfo.ProvenanceProbe, mediainfo.ConfidenceHigh, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.SetFileQualityFrom(ctx, full.Files[0].ID, at, mediainfo.ProvenanceProbe, mediainfo.ConfidenceHigh); err != nil {
+			t.Fatal(err)
+		}
+	}
+	probe(seedMovie(t, svc, 1, "German Dub", 1, at), mediainfo.AudioInfo{Codec: "ac3", Language: "ger"})
+	probe(seedMovie(t, svc, 2, "Has English", 1, at),
+		mediainfo.AudioInfo{Codec: "ac3", Language: "ger"}, mediainfo.AudioInfo{Codec: "aac", Language: "eng"})
+	probe(seedMovie(t, svc, 3, "Untagged", 1, at), mediainfo.AudioInfo{Codec: "ac3"})
+
+	check := func(name string, items []domain.MediaItem) {
+		t.Helper()
+		dub := byTitle(items, "German Dub")
+		if dub.Upgrade != domain.UpgradeSeeking {
+			t.Errorf("%s: German-only at the target must be seeking, got %q", name, dub.Upgrade)
+		}
+		if dub.UpgradeReason != "no English audio on disk (German only)" {
+			t.Errorf("%s: reason = %q", name, dub.UpgradeReason)
+		}
+		if !dub.Audio.Known || len(dub.Audio.Languages) != 1 || dub.Audio.Languages[0] != "de" {
+			t.Errorf("%s: audio = %+v", name, dub.Audio)
+		}
+		if got := byTitle(items, "Has English"); got.Upgrade != domain.UpgradeMet || got.UpgradeReason != "" {
+			t.Errorf("%s: a file carrying English is met, got %q %q", name, got.Upgrade, got.UpgradeReason)
+		}
+		if got := byTitle(items, "Untagged"); got.Upgrade != domain.UpgradeMet || got.Audio.Known {
+			t.Errorf("%s: an untagged track is no proof of absence, got %q known=%v", name, got.Upgrade, got.Audio.Known)
+		}
+	}
+
+	items, err := svc.List(ctx, domain.KindMovie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("list", items)
+
+	var singles []domain.MediaItem
+	for _, it := range items {
+		one, err := svc.Get(ctx, it.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		singles = append(singles, one)
+	}
+	check("get", singles)
 }

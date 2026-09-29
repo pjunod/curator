@@ -552,7 +552,7 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 			item.EpisodeCount = int(s.AiredEpisodes)
 			item.EpisodeFileCount = int(s.HaveEpisodes)
 			item.FileCount = int(s.Files)
-			item.Quality, item.QualityVerified = weakestRecorded(textOf(s.Qualities))
+			item.Quality, item.QualityVerified, item.Audio = weakestRecorded(textOf(s.Qualities))
 		}
 		out = append(out, item)
 	}
@@ -585,12 +585,20 @@ func textOf(v any) string {
 // finished at 1080p, and a grid that says otherwise is the reason someone has
 // to open every item to find out.
 //
-// Each entry is "quality~provenance~confidence". Older rows written before
-// ADR 0013 carry no provenance and read as unverified, which is the safe
-// direction: unverified only ever makes monarr stop hunting, never start.
-func weakestRecorded(joined string) (quality.Quality, bool) {
+// Each entry is "quality~provenance~confidence~languages". Older rows written
+// before ADR 0013 carry no provenance and read as unverified, which is the
+// safe direction: unverified only ever makes monarr stop hunting, never start.
+//
+// The languages field (ADR 0022) is the declared language of every audio
+// track, '+'-joined, with an untagged track as "und". The audio result is
+// the weakest link across files, the same rule SeasonWantable uses: known
+// only when every file is known, carrying only the languages every file
+// carries. Unknown never starts a hunt, so the safe direction holds here too.
+func weakestRecorded(joined string) (quality.Quality, bool, quality.Audio) {
 	var worst quality.Quality
 	var verified, have bool
+	audio := quality.Audio{Known: true}
+	var common map[string]bool
 	for _, raw := range strings.Split(joined, ",") {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
@@ -605,8 +613,36 @@ func weakestRecorded(joined string) (quality.Quality, bool) {
 		if !have || quality.Rank(q) < quality.Rank(worst) {
 			worst, verified, have = q, v, true
 		}
+		fileAudio := quality.Audio{}
+		if len(parts) >= 4 {
+			fileAudio = audioFromColumn(parts[3])
+		}
+		if !fileAudio.Known {
+			audio.Known = false
+			continue
+		}
+		fileHas := map[string]bool{}
+		for _, l := range fileAudio.Languages {
+			fileHas[l] = true
+		}
+		if common == nil {
+			common = fileHas
+			continue
+		}
+		for l := range common {
+			if !fileHas[l] {
+				delete(common, l)
+			}
+		}
 	}
-	return worst, verified
+	if !have || !audio.Known {
+		return worst, verified, quality.Audio{}
+	}
+	for l := range common {
+		audio.Languages = append(audio.Languages, l)
+	}
+	sort.Strings(audio.Languages)
+	return worst, verified, audio
 }
 
 // SetSeasonMonitored flips one season's monitored flag and cascades it to

@@ -172,6 +172,16 @@ type MediaItem struct {
 	// counts the target as met rather than replacing a file on a guess
 	// (ADR 0013 §5, the don't-churn rule).
 	QualityVerified bool
+	// Audio is what the primary copy's files declare on their audio tracks
+	// (ADR 0022), weakest-link across files: known only when every measured
+	// file is, and carrying only the languages every file carries. It is
+	// the other half of Upgrade — a file at the target in the wrong
+	// language is still being hunted.
+	Audio quality.Audio
+	// UpgradeReason says, when Upgrade is seeking, what is being sought
+	// beyond the quality target — "no English audio on disk (German only)".
+	// Empty when the quality target alone explains it.
+	UpgradeReason string
 	// QualityTarget is the profile's target — the point at which hunting
 	// stops (ADR 0014).
 	QualityTarget quality.Quality

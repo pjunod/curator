@@ -19,6 +19,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/downloadpriority"
 	"github.com/pjunod/monarr/internal/domain/format"
+	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
@@ -54,6 +55,10 @@ func profileDTO(p quality.Profile, inUse int64) apigen.QualityProfile {
 		Id: p.ID, Name: p.Name, Target: qualityDTO(p.Target),
 		UpgradesAllowed: p.UpgradesAllowed, DownloadPriority: p.DownloadPriority,
 		Sentence: p.Sentence(),
+	}
+	if len(p.Languages) > 0 {
+		langs := append([]string(nil), p.Languages...)
+		qp.AudioLanguages = &langs
 	}
 	if p.Floor != nil {
 		f := qualityDTO(*p.Floor)
@@ -96,6 +101,19 @@ func profileFromInput(in apigen.ProfileInput) (quality.Profile, error) {
 			"download priority must be one of -100, -50, 0, 50, 100, or 900",
 		)
 	}
+	if in.AudioLanguages != nil && len(*in.AudioLanguages) > 0 && quality.IsBookFormat(target.Source) {
+		return quality.Profile{}, fmt.Errorf("audio languages apply to film and TV profiles; a %s profile cannot require one", target.Display())
+	}
+	if in.AudioLanguages != nil {
+		for _, code := range *in.AudioLanguages {
+			c := language.Canonical(code)
+			if !language.Valid(c) {
+				return quality.Profile{}, fmt.Errorf("%q is not a language a profile can require; see GET /languages", code)
+			}
+			p.Languages = append(p.Languages, c)
+		}
+		p.Languages = language.Normalize(p.Languages)
+	}
 	if in.Floor != nil {
 		floor := quality.Quality{Source: quality.Source(strings.TrimSpace(in.Floor.Source))}
 		if in.Floor.Resolution != nil {
@@ -112,6 +130,16 @@ func profileFromInput(in apigen.ProfileInput) (quality.Profile, error) {
 		p.Floor = &floor
 	}
 	return p, nil
+}
+
+// ListLanguages implements GET /languages: the ADR 0022 vocabulary.
+func (s *Server) ListLanguages(w http.ResponseWriter, _ *http.Request) {
+	opts := language.Options()
+	out := make([]apigen.LanguageOption, 0, len(opts))
+	for _, o := range opts {
+		out = append(out, apigen.LanguageOption{Code: o.Code, Name: o.Name})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ListProfiles implements GET /profiles.
@@ -522,6 +550,10 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 		if len(c.Formats) > 0 {
 			fs := c.Formats
 			rc.Formats = &fs
+		}
+		if len(c.Languages) > 0 {
+			ls := c.Languages
+			rc.Languages = &ls
 		}
 		if c.Release.InfoURL != "" {
 			u := c.Release.InfoURL

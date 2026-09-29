@@ -168,7 +168,7 @@ LIMIT ? OFFSET ?;
 -- Written by the probe path only; `quality` is set separately so a probe that
 -- learns nothing new about quality still records that it ran.
 UPDATE media_files
-SET media_info = ?, quality_provenance = ?, quality_confidence = ?, probed_at = ?
+SET media_info = ?, audio_languages = ?, quality_provenance = ?, quality_confidence = ?, probed_at = ?
 WHERE id = ?;
 
 -- name: SetFileQualityWithProvenance :exec

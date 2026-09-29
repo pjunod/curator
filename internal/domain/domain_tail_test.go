@@ -348,5 +348,6 @@ func (stubWantable) Monitored() bool       { return true }
 func (stubWantable) CurrentQuality() (quality.Quality, bool) {
 	return quality.Quality{}, false
 }
-func (stubWantable) OnDisk() bool         { return false }
-func (stubWantable) SourceVerified() bool { return false }
+func (stubWantable) OnDisk() bool                  { return false }
+func (stubWantable) SourceVerified() bool          { return false }
+func (stubWantable) AudioLanguages() quality.Audio { return quality.Audio{} }
