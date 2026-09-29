@@ -17,7 +17,7 @@ and verification; the user-facing behavior lives in those documents.
 | Regression tests | Passed | Empty queue, unknown files, stale/replaced mounts, cleared history, ID reuse, false receipts, concurrent admission, protected storage, API, browser flow. |
 | Adversarial review | Addressed | Six findings fixed: missing-parent cleanup receipts, import admission races, changed mount identity, library bind aliases, symlink unlink ownership, and duplicate roots. Regression cases added before final tests. |
 | Final gates | Passed locally | Full Go suite; 86.1% coverage against unchanged 86.0% floor; race-checked regressions; 119 web tests; 118 browser tests plus final storage retest; lint clean; generation and build succeeded. |
-| PR and merge | GitHub delivery | One batched PR from `codex/completed-folder-accounting`; its GitHub checks and merge record are the authoritative delivery status. |
+| PR and merge | GitHub delivery | [PR #49](https://github.com/pjunod/curator/pull/49) contains the batched commits; its checks and merge record are the authoritative delivery status. |
 
 ## Decisions and limits
 
@@ -46,3 +46,9 @@ to remain pending. The assertion now matches verified absence with a reachable
 parent; missing-parent and changed-mount cases remain pending. Added API, health,
 and reconfiguration cases raised coverage from 85.9% to 86.1% without lowering
 the gate. The final complete Go run and focused race regressions pass.
+
+CI confirmed the full race/coverage gate, Docker, lint, and compatibility browser
+checks. Its mobile job passed 94 tests but found existing Expo patch-version
+drift. The three direct Expo packages and their core dependency were updated;
+94 mobile tests, all 20 Expo diagnostics, and both platform bundle exports pass
+locally. The final commit is being checked by the same CI gates.
