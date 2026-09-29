@@ -27,8 +27,8 @@
 
 ## Delivery — Audio language requirement
 
-**Status:** gate green · PR [#46](https://github.com/pjunod/curator/pull/46) ready to merge · **Updated:** 2026-09-28 · **Version:** 0.31.0 ·
-branch `feat/audio-language-requirement` · ADR [0022](docs/adr/0022-audio-language.md)
+**Status:** merged `85f66df` · tagged v0.31.0 · deployed to nuc3 · **Updated:** 2026-09-28 ·
+**Version:** 0.31.0 · PR [#46](https://github.com/pjunod/curator/pull/46) · ADR [0022](docs/adr/0022-audio-language.md)
 
 | Item | State | Evidence |
 |---|---|---|
@@ -46,9 +46,10 @@ branch `feat/audio-language-requirement` · ADR [0022](docs/adr/0022-audio-langu
 | Docs | complete | ADR 0022, `docs/settings.md` §Quality profiles, `docs/usage.md` (interactive search, item page, loops), VERSION 0.31.0. |
 | Draft PR → adversarial review | addressed | PR #46 opened as draft. Review: 2 must-fix (the grab→import→still-wanted **loop** for untagged wrong-language releases — now bounded: a measured mismatch blocklists the release + `language_mismatch` history; lint misspell), 7 should-fix (subtitle-adjacent tags read as audio · manual import could delete an English file for a German one · "undetermined" claim not rendered · book profiles could require a language · web sentence order · `json_each` cost · wanted "(English)" noise), 8 nits — all fixed with regression tests (`TestLanguageMismatchIsBlocklisted` on a real `ger`-tagged MKV fixture, `TestManualImportNeverDeletes…`, Erai-raws/NL.Subs parser cases, migration 0034 backfill, `weakestRecorded` mixed files, book-profile 400, e2e "audio language undetermined"). |
 | Full gate (once, after fixes) | green | `make lint` 0 issues (golangci v2.12.2) · `make test` all ok · `make test-web` 104 · `make test-e2e` **117/117** · coverage **86.1 %** (floor 86.0) · touched packages ×3 `-shuffle=on` green. Not verified here: nothing outstanding — no native change, no hardware. |
-| Merge | pending | |
-| Deploy — server | pending | |
+| Merge | complete | GitHub PR #46, all four checks green (Lint · Tests · Compat · Docker) on `e755d51`, rebased onto `10d5a96` (#45 landed mid-flight; STATUS.md only). Merged as `85f66df`, tagged `v0.31.0`, branch deleted. Pushed through a scratch clone in the Mac VM's `/var/tmp` (the cloud git proxy refuses pushes to this repo). |
+| Deploy — server | complete | `media/deploy.yml -e sync=false -e only=monarr --limit nuc3` (ansible-core 2.21 on nuc3 itself, `-c local`, under tmux — the Mac VM kills background processes at the end of each call, so the controller cannot host a 5-minute play; Paul's `~/code/monarr` untouched). nuc3 `/api/v1/system/status` = **0.31.0 @ `85f66df`, schema 34**. |
 | Deploy — clients | n/a | Mobile types only; no native release. |
+| Live check — Just Friends (2019) | complete | Item 522: file `WEB-DL 1080p` measured **Dutch/Portuguese** audio (facts pill now says so). Profile "Best" (332 items) left as is; a new profile **7 "Best · English"** (same target, English required) was created and assigned to this one item. Item page: *upgrading · no English audio on disk (Dutch or Portuguese only)*; wanted: *upgrade from WEB-DL 1080p (Dutch/Portuguese)*. The scheduled search grabbed `Just.Friends.2018.1080p.AMZN.WEB-DL.DDP2.0.H.264.DUAL-100REAL` within a minute of the deploy (download 1221) — the same release whose manual import at 23:17 had been refused as "does not improve on the WEB-DL 1080p already here". **Paul's call:** tick English on "Best" / "1080p" to apply the rule library-wide (every file measured without English audio becomes wanted; untagged releases of non-English films will each be downloaded once and then blocklisted). |
 ## Previous delivery — Import notify wedge (plurx queue) + retryable deliveries
 
 **Status:** done — Curator merged `b71e8c6`, tagged v0.30.0, deployed to nuc3; plurx #608 merged and on all four nodes; backlog re-sent · **Updated:** 2026-09-28 · **Version:** 0.30.0 ·
