@@ -1,6 +1,6 @@
 # Series monitoring — delivery status
 
-**Status:** implementation ready for adversarial review · **Updated:** 2026-09-29 · **Target:** v0.34.0
+**Status:** review fixes complete; final checks next · **Updated:** 2026-09-29 · **Target:** v0.34.0
 
 Companion to [usage](usage.md#monitoring-series-seasons-episodes). This page
 tracks delivery of persistent monitoring policies and automatic episode
@@ -12,10 +12,10 @@ search for new seasons, including the reported South Park season 29 case.
 | Monitoring policies | Implemented | All, latest and future seasons, future episodes, new seasons, manual selection; preserve explicit overrides and pause independently. |
 | Automatic search | Implemented | Eligible packs first, then wanted aired episodes; account for copies and active downloads. |
 | Regression coverage | Prepared, not run | Policy persistence, pause/resume, manual overrides, migration, API validation, pack fallback, copies, air dates, and browser controls. |
-| Adversarial agent review | Ready | Complete implementation is now ready for merge review; all findings will be addressed before tests. |
+| Adversarial agent review | Addressed | Fixed the stale season-pack reservation window: revalidate child monitoring, dates, quality and same-copy downloads after acquiring the lock and immediately before grabbing. Regression cases cover both boundaries and independent copies. |
 | Final tests and CI | Pending | Run after review fixes; rerun only for failures or changed code. Earlier tests on the old checkout are not evidence for this branch. |
 | PR and merge | Pending | One PR containing the full batch of proper commits; merge after checks pass. |
-| Cleanup | Pending | Remove task scratch artifacts after durable delivery; preserve unrelated user work. |
+| Cleanup | In progress | Earlier task source edits and eight new files removed from the user checkout after verified extraction; pre-existing edits preserved. Remove clone/scratch artifacts after durable delivery. |
 
 ## Decisions
 

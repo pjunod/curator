@@ -2,6 +2,10 @@ package acquisition
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"github.com/pjunod/monarr/internal/domain"
+	"sync"
 	"testing"
 
 	"github.com/pjunod/monarr/internal/ports"
@@ -100,5 +104,82 @@ func TestWantedExcludesKnownFutureDates(t *testing.T) {
 	wanted, err = svc.Wanted(ctx)
 	if err != nil || len(wanted) != 2 {
 		t.Fatalf("wanted=%v err=%v", wanted, err)
+	}
+}
+
+func TestAutoSearchPackRevalidatesChildrenAtBothReservationBoundaries(t *testing.T) {
+	for _, duringSearch := range []bool{false, true} {
+		for _, change := range []string{"same-copy download", "other-copy download", "unselected", "future", "unknown date"} {
+			t.Run(fmt.Sprintf("during-search=%v/%s", duringSearch, change), func(t *testing.T) {
+				ctx := context.Background()
+				client := &fakeClient{}
+				svc, db, id := setup(t, nil, client)
+				item, err := db.GetMediaItemFull(ctx, id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				w, err := svc.target(ctx, item, 1, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				planned := w.(domain.SeasonWantable)
+				enabled, err := svc.enabledIndexers(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				copyID, err := db.AddMediaCopy(ctx, domain.MediaCopy{MediaItemID: id, QualityProfileID: 1, Path: t.TempDir(), Monitored: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var changeErr error
+				var once sync.Once
+				mutate := func() {
+					once.Do(func() {
+						switch change {
+						case "same-copy download", "other-copy download":
+							var cp int64
+							if change == "other-copy download" {
+								cp = copyID
+							}
+							_, changeErr = svc.Grab(ctx, GrabRequest{MediaItemID: id, CopyID: cp, Season: 1, Episode: 1,
+								Title: "Test.Show.S01E01.1080p.WEB-DL-GRP", DownloadURL: "episode", Protocol: "torrent", Indexer: "idx"})
+						case "unselected":
+							changeErr = db.SetEpisodeMonitored(ctx, id, item.Seasons[0].Episodes[0].ID, false)
+						default:
+							date := "2999-01-01"
+							if change == "unknown date" {
+								date = ""
+							}
+							_, changeErr = db.W.ExecContext(ctx, `UPDATE episodes SET air_date = ? WHERE media_item_id = ? AND episode_number = 1`, date, id)
+						}
+					})
+				}
+				indexer := &gapHookIndexer{releases: []ports.Release{{Title: "Test.Show.S01.1080p.WEB-DL-GRP", DownloadURL: "pack", Protocol: "torrent", Indexer: "idx"}}}
+				if duringSearch {
+					indexer.hook = mutate
+				} else {
+					// The plan was made before a predecessor holding this reservation
+					// changed the children. The stale plan must be rejected once admitted.
+					release, err := svc.reservations.acquire(ctx, planned)
+					if err != nil {
+						t.Fatal(err)
+					}
+					mutate()
+					release()
+				}
+				svc.newIndexer = func(ports.IndexerConfig) ports.Indexer { return indexer }
+				tally, err := svc.searchAndGrabBestScoped(ctx, planned, enabled, nil, func() error { return svc.validateAutoSearchPack(ctx, planned) })
+				if changeErr != nil {
+					t.Fatal(changeErr)
+				}
+				if change == "other-copy download" {
+					if err != nil || tally.Grabbed == "" {
+						t.Fatalf("other copy blocked pack: %+v %v", tally, err)
+					}
+				} else if !errors.Is(err, errAutoSearchPackChanged) || tally.Grabbed != "" {
+					t.Fatalf("stale pack accepted: %+v %v", tally, err)
+				}
+			})
+		}
 	}
 }

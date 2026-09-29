@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -689,7 +690,15 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 			if _, episode := w.(domain.EpisodeWantable); episode {
 				allowed = exactWantedCandidate
 			}
-			tally, err := s.searchAndGrabBestWhere(ctx, w, enabled, allowed)
+			var beforeGrab func() error
+			if pack, ok := w.(domain.SeasonWantable); ok {
+				beforeGrab = func() error { return s.validateAutoSearchPack(ctx, pack) }
+			}
+			tally, err := s.searchAndGrabBestScoped(ctx, w, enabled, allowed, beforeGrab)
+			if errors.Is(err, errAutoSearchPackChanged) {
+				// The pack was speculative; its episode fallbacks remain targets.
+				continue
+			}
 			t.Seen, t.Matched, t.Accepted = tally.Seen, tally.Matched, tally.Accepted
 			t.Grabbed = tally.Grabbed
 			if err != nil {
@@ -706,4 +715,65 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 		"targets", len(out.Targets), "grabbed", out.Grabbed)
 	s.InvalidateWanted()
 	return out, nil
+}
+
+// A season pack is only an optimization for a fully wanted season. The
+// planner's snapshot is not authority after waiting for an acquisition lock
+// or indexer response; inspect the children again at both boundaries.
+var errAutoSearchPackChanged = errors.New("season pack eligibility changed")
+
+func (s *Service) validateAutoSearchPack(ctx context.Context, planned domain.SeasonWantable) error {
+	item, err := s.db.GetMediaItemFull(ctx, planned.Item)
+	if err != nil {
+		return err
+	}
+	var cp *domain.MediaCopy
+	if planned.Copy != 0 {
+		for i := range item.Copies {
+			if item.Copies[i].ID == planned.Copy {
+				cp = &item.Copies[i]
+				break
+			}
+		}
+		if cp == nil {
+			return errAutoSearchPackChanged
+		}
+	}
+	w, err := s.targetCopy(ctx, item, planned.Season, 0, cp)
+	if err != nil {
+		return err
+	}
+	pack := w.(domain.SeasonWantable)
+	if !pack.Monitored() || len(pack.Episodes) == 0 {
+		return errAutoSearchPackChanged
+	}
+	profile, err := s.db.GetProfile(ctx, pack.ProfileID())
+	if err != nil {
+		return err
+	}
+	today := time.Now().UTC().Format(time.DateOnly)
+	for _, season := range item.Seasons {
+		if season.Number != pack.Season {
+			continue
+		}
+		for _, ep := range season.Episodes {
+			if !ep.Monitored || ep.AirDate == "" || ep.AirDate > today {
+				return errAutoSearchPackChanged
+			}
+		}
+	}
+	children := make([]domain.Wantable, 0, len(pack.Episodes))
+	for _, ep := range pack.Episodes {
+		if !wants(profile, ep) {
+			return errAutoSearchPackChanged
+		}
+		children = append(children, ep)
+	}
+	if len(s.notInFlight(ctx, children)) != len(children) {
+		return errAutoSearchPackChanged
+	}
+	if capped, _ := s.regrabCapped(ctx, pack); capped {
+		return errAutoSearchPackChanged
+	}
+	return nil
 }
