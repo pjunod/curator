@@ -122,7 +122,9 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 	}
 	removed, bytes := 0, int64(0)
 	for _, candidate := range rows {
-		unlock := s.lockDownload(candidate.ID)
+		unlockDownload := s.lockDownload(candidate.ID)
+		ctx, releaseStorage := s.lockStorageDecision(ctx)
+		unlock := func() { releaseStorage(); unlockDownload() }
 		dl, err := s.db.GetDownload(ctx, candidate.ID)
 		if err != nil || dl.State != "imported" || dl.PayloadRemoved || !dl.AddedAt.Equal(candidate.AddedAt) {
 			unlock()
@@ -131,6 +133,10 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 		if err := s.db.TouchPayloadCleanup(ctx, dl.ID); err != nil {
 			unlock()
 			return err
+		}
+		if dl.ImportPath != "" && !s.safePayloadPath(ctx, downloadRef{ID: dl.ID, ImportPath: dl.ImportPath}) {
+			unlock()
+			continue
 		}
 		if dl.ImportPath != "" && payloadAbsent(dl.ImportPath) {
 			if !dl.PayloadRemoved {
@@ -152,14 +158,12 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 		}
 		// The backlog gets the same disk fallback the inline path gets:
 		// most of a backlog IS the payloads a client declined to remove.
-		before := dl.ImportPath
 		s.removeImportedDir(ctx, ref)
+		confirmed, err := s.db.GetDownload(ctx, dl.ID)
 		unlock()
-		if before != "" {
-			if _, err := os.Stat(before); os.IsNotExist(err) {
-				removed++
-				bytes += dl.Size
-			}
+		if err == nil && confirmed.PayloadRemoved {
+			removed++
+			bytes += dl.Size
 		}
 	}
 	if removed > 0 {
@@ -175,6 +179,8 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 // immediate: on a library that grabs a dozen 60 GB remuxes overnight, an hourly
 // sweep is several hundred gigabytes late.
 func (s *Service) cleanupAfterImport(ctx context.Context, dl downloadRef) {
+	ctx, releaseStorage := s.lockStorageDecision(ctx)
+	defer releaseStorage()
 	if s.removePayload(ctx, dl) {
 		return
 	}
@@ -222,6 +228,9 @@ func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
 	}
 	if payloadAbsent(dir) {
 		_ = s.db.MarkPayloadRemoved(ctx, dl.ID)
+		return
+	}
+	if _, err := os.Lstat(dir); err != nil {
 		return
 	}
 	if err := os.RemoveAll(dir); err != nil {
@@ -290,10 +299,13 @@ func (s *Service) safePayloadPath(ctx context.Context, dl downloadRef) bool {
 		return false
 	}
 	for _, root := range roots {
-		p := canonicalCompletedPath(root.Path)
+		p := storagePath(root.Path, completed)
 		if within(p, real) || within(real, p) {
 			return false
 		}
+	}
+	if err := s.checkStorageIdentity(ctx, real); err != nil {
+		return false
 	}
 	for _, root := range completed {
 		if within(real, root) || real == filepath.Join(root, "completed") {

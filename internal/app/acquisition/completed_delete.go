@@ -15,6 +15,8 @@ import (
 func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint string) error {
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
+	ctx, releaseStorage := s.lockStorageDecision(ctx)
+	defer releaseStorage()
 	s.importTargetMu.Lock()
 	defer s.importTargetMu.Unlock()
 	if fingerprint == "" || !s.ownsDownloadPath(ctx, path) {
@@ -35,6 +37,9 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 	}
 	if selected == nil || selected.Error != "" {
 		return fmt.Errorf("inventory changed or is incomplete; scan again before deleting")
+	}
+	if err := s.checkStorageIdentity(ctx, path); err != nil {
+		return err
 	}
 	roots := []string{selected.Path}
 	library, err := s.db.ListRootFolders(ctx)
@@ -68,7 +73,7 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 			candidate = dl.SavePath
 		}
 		if candidate == "" {
-			continue
+			return fmt.Errorf("download %d has not reported its storage path yet; wait before deleting", dl.ID)
 		}
 		candidate = storagePath(candidate, roots)
 		if within(path, candidate) || within(candidate, path) {

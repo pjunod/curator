@@ -129,6 +129,8 @@ func (s *Service) ManualImportDefaultPath(ctx context.Context) string {
 // escape hatch when automation can't resolve the payload. When tied to a
 // download row it records the outcome on that row's handoff trace.
 func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (ImportResult, error) {
+	ctx, releaseStorage := s.lockStorageDecision(ctx)
+	defer releaseStorage()
 	dl := sqlite.Download{
 		MediaItemID: req.MediaItemID, CopyID: req.CopyID,
 		ReleaseTitle: filepath.Base(req.Path), ImportPath: req.Path,
@@ -181,6 +183,13 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 	if strings.TrimSpace(req.Path) == "" || req.MediaItemID == 0 {
 		return 0, fmt.Errorf("path and target item are required")
 	}
+	id := req.DownloadID
+	if id != 0 {
+		unlock := s.lockDownload(id)
+		defer unlock()
+	}
+	ctx, releaseStorage := s.lockStorageDecision(ctx)
+	defer releaseStorage()
 	item, err := s.db.GetMediaItemFull(ctx, req.MediaItemID)
 	if err != nil {
 		return 0, err
@@ -206,22 +215,17 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 		}
 	}
 
-	id := req.DownloadID
 	if id == 0 {
 		id, err = s.db.InsertDownload(ctx, sqlite.Download{
-			MediaItemID:  req.MediaItemID,
-			CopyID:       req.CopyID,
+			MediaItemID: req.MediaItemID, CopyID: req.CopyID,
 			ReleaseTitle: filepath.Base(filepath.Clean(req.Path)),
-			Protocol:     "manual",
-			State:        "downloaded",
+			Protocol:     "manual", State: "downloaded", ImportPath: req.Path,
 		})
 		if err != nil {
 			return 0, err
 		}
 	}
 
-	unlock := s.lockDownload(id)
-	defer unlock()
 	dl, err := s.db.GetDownload(ctx, id)
 	if err != nil {
 		return 0, err

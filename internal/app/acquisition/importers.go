@@ -164,6 +164,8 @@ func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg por
 	if parent == nil {
 		parent = ctx
 	}
+	// A worker never inherits the caller's synchronous storage lock lease.
+	parent = context.WithValue(parent, storageDecisionKey{}, nil)
 	jobCtx, cancel := context.WithCancel(parent)
 	ticket := &importTicket{cancel: cancel, queued: true}
 	s.importJobs[dl.ID] = ticket

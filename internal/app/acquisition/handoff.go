@@ -100,8 +100,10 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	if imp == "" {
 		imp = dl.SavePath
 	}
-	s.advance(ctx, &dl, "importing", 1, "", stepImporting,
+	decisionCtx, releaseStorage := s.lockStorageDecision(ctx)
+	s.advance(decisionCtx, &dl, "importing", 1, "", stepImporting,
 		"looking for media files in "+orNone(imp))
+	releaseStorage()
 	// A manual selection is part of the durable handoff trace. Read the newest
 	// one backwards so a retry after a failed copy imports exactly what the
 	// person selected, even after a process restart.
@@ -155,6 +157,10 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 // the underlying problem (a mount, a path mapping) is fixed. It uses the
 // path captured at download time.
 func (s *Service) ImportNow(ctx context.Context, id int64) error {
+	unlock := s.lockDownload(id)
+	defer unlock()
+	ctx, releaseStorage := s.lockStorageDecision(ctx)
+	defer releaseStorage()
 	// Keep the historical inline seam for focused service tests. Production
 	// always starts the bounded workers and takes the asynchronous path below.
 	if s.importCh == nil {
@@ -175,8 +181,6 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	// worker may receive the channel item immediately, but it takes this same
 	// lock before it can import, so Activity cannot observe the old failed row
 	// after the retry has already been accepted.
-	unlock := s.lockDownload(id)
-	defer unlock()
 	dl, err := s.db.GetDownload(ctx, id)
 	if err != nil {
 		return err

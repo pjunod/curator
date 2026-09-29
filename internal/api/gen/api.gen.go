@@ -1189,6 +1189,7 @@ type CompletedRoot struct {
 	Error          string           `json:"error"`
 	LastCompleteAt time.Time        `json:"lastCompleteAt"`
 	Path           string           `json:"path"`
+	RootIdentity   string           `json:"rootIdentity"`
 }
 
 // Connection defines model for Connection.

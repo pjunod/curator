@@ -301,3 +301,137 @@ func TestReviewedStorageDeletionNeverFollowsSymlink(t *testing.T) {
 		t.Fatal("deleted symlink target")
 	}
 }
+
+func TestChangedStorageMountPreservesEvidenceUntilExplicitlyAccepted(t *testing.T) {
+	svc, _, _, root := completedFixture(t)
+	ctx := context.Background()
+	writeCompleted(t, filepath.Join(root, "payload"), 21)
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := inventoryRoot(t, svc, root)
+	offline := root + "-offline"
+	if err := os.Rename(root, offline); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root); _ = os.Rename(offline, root) })
+	if err := os.Mkdir(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err == nil {
+		t.Fatal("replacement mount passed")
+	}
+	after := inventoryRoot(t, svc, root)
+	if after.Bytes != 21 || after.Error == "" || after.RootIdentity != before.RootIdentity || !after.LastCompleteAt.Equal(before.LastCompleteAt) {
+		t.Fatalf("lost mount evidence: %+v", after)
+	}
+	if err := svc.SetCompletedRoots(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	if inventoryRoot(t, svc, root).Bytes != 21 {
+		t.Fatal("saving erased stale bytes")
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := inventoryRoot(t, svc, root); got.Bytes != 0 || got.Error != "" {
+		t.Fatalf("replacement not accepted: %+v", got)
+	}
+}
+
+func TestMissingPayloadParentDoesNotRecordRemoval(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	parent := filepath.Join(root, "completed")
+	path := filepath.Join(parent, "payload")
+	writeCompleted(t, filepath.Join(path, "film.mkv"), 8)
+	dl := insertImportable(t, db, item, path)
+	dl.State = "imported"
+	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(parent, parent+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	svc.removeImportedDir(ctx, downloadRef{ID: dl.ID, ClientID: dl.ClientID, ImportPath: path})
+	got, err := db.GetDownload(ctx, dl.ID)
+	if err != nil || got.PayloadRemoved {
+		t.Fatalf("missing parent claimed removal: %+v %v", got, err)
+	}
+	if err := os.Rename(parent+"-offline", parent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBindAliasRootsCountOnceAndProtectLibrary(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	completed := filepath.Join(root, "completed")
+	alias := t.TempDir()
+	writeCompleted(t, filepath.Join(completed, "film", "keep.mkv"), 8)
+	writeCompleted(t, filepath.Join(alias, "film", "keep.mkv"), 8)
+	left, _ := os.Stat(completed)
+	right, _ := os.Stat(alias)
+	original := storageSameFile
+	storageSameFile = func(a, b os.FileInfo) bool {
+		return os.SameFile(a, b) || (os.SameFile(a, left) && os.SameFile(b, right)) || (os.SameFile(a, right) && os.SameFile(b, left))
+	}
+	t.Cleanup(func() { storageSameFile = original })
+	if err := svc.SetCompletedRoots(ctx, root+"\n"+alias); err != nil {
+		t.Fatal(err)
+	}
+	roots, err := svc.completedRoots(ctx, nil)
+	if err != nil || len(roots) != 1 || roots[0] != canonicalCompletedPath(root) {
+		t.Fatalf("duplicate aliases: %v %v", roots, err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := inventoryRoot(t, svc, root); got.Bytes != 8 {
+		t.Fatalf("double counted: %+v", got)
+	}
+	if _, err := db.AddRootFolder(ctx, alias, domain.RootKind("movie")); err != nil {
+		t.Fatal(err)
+	}
+	dl := insertImportable(t, db, item, filepath.Join(completed, "film"))
+	ref := downloadRef{ID: dl.ID, ClientID: dl.ClientID, ImportPath: dl.ImportPath}
+	if svc.safePayloadPath(ctx, ref) {
+		t.Fatal("library bind alias allowed cleanup")
+	}
+	if err := svc.ScanCompleted(ctx); err == nil {
+		t.Fatal("library alias scan was allowed")
+	}
+}
+
+func TestManualAdmissionAfterDeletionLeavesNoForgottenJob(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	path := filepath.Join(root, "orphan")
+	writeCompleted(t, filepath.Join(path, "film.mkv"), 8)
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entry := inventoryRoot(t, svc, root).Entries[0]
+	// Start an import request while an operator's deletion decision is in flight.
+	decisionCtx, release := svc.lockStorageDecision(ctx)
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.QueueManualImport(ctx, ManualImportRequest{Path: path, MediaItemID: item})
+		done <- err
+	}()
+	err := svc.DeleteCompletedEntry(decisionCtx, entry.Path, entry.Fingerprint)
+	release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("accepted deleted source")
+	}
+	rows, err := db.ListRecentDownloads(ctx)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("invalid admission left a job: %+v %v", rows, err)
+	}
+}

@@ -121,7 +121,8 @@ func (ImportFailed) EventType() string { return "import.failed" }
 
 // Service wires storage, adapters (via factories), and the bus.
 type Service struct {
-	completedMu sync.Mutex
+	completedMu       sync.Mutex
+	storageDecisionMu sync.Mutex
 	// Shared by ordinary and recovery imports, including crash reconciliation.
 	importTargetMu    sync.Mutex
 	recoveryMu        sync.Mutex
@@ -829,12 +830,14 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	// removed again below; the alternative (add first, insert second) is
 	// a download running in a client that Monarr has no record of, which
 	// is the worse of the two failures by a distance.
-	id, err := s.db.InsertDownload(ctx, sqlite.Download{
+	allocationCtx, releaseAllocation := s.lockStorageDecision(ctx)
+	id, err := s.db.InsertDownload(allocationCtx, sqlite.Download{
 		MediaItemID: item.ID, CopyID: req.CopyID, WantableIDs: wants, Season: req.Season,
 		ReleaseTitle: req.Title, Indexer: req.Indexer, Protocol: req.Protocol,
 		Quality: p.Quality, Size: req.Size, ClientID: cfg.ID,
 		State: "grabbed", MatchEvidence: evidence,
 	})
+	releaseAllocation()
 	if err != nil {
 		return 0, err
 	}
@@ -978,6 +981,8 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus, source string) {
 	unlock := s.lockDownload(dl.ID)
 	defer unlock()
+	ctx, releaseStorage := s.lockStorageDecision(ctx)
+	defer releaseStorage()
 
 	// Re-read under the lock: whoever held it before us may have moved
 	// this row on, and acting on the copy we were handed would undo them.

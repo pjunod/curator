@@ -4850,10 +4850,11 @@ components:
             $ref: '#/components/schemas/CompletedRoot'
     CompletedRoot:
       type: object
-      required: [path, checkedAt, lastCompleteAt, error, entries, bytes]
+      required: [path, rootIdentity, checkedAt, lastCompleteAt, error, entries, bytes]
       properties:
         path: { type: string }
         checkedAt: { type: string, format: date-time }
+        rootIdentity: { type: string }
         lastCompleteAt: { type: string, format: date-time }
         error: { type: string }
         bytes: { type: integer, format: int64 }

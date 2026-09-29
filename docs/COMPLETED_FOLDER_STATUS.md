@@ -1,6 +1,6 @@
 # Completed-folder accounting — delivery status
 
-**Status:** implementation ready for adversarial review · **Updated:** 2026-09-29 · **Target:** v0.33.0
+**Status:** review findings addressed; final verification next · **Updated:** 2026-09-29 · **Target:** v0.33.0
 
 Companion to [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
 and [settings](settings.md#completed-folder-accounting). This page records work
@@ -12,10 +12,10 @@ and verification; the user-facing behavior lives in those documents.
 | Durable path associations | Implemented | Migration 0035 backfills receipts and preserves them independently of Activity deletion. Download generation prevents reused IDs from reviving old ownership. |
 | Disk inventory | Implemented | Startup + five-minute task; every top-level entry measured, nested files included; cached complete scans survive scan errors. |
 | Activity and settings | Implemented | Measured totals, classifications, download associations, manual-import preview, explicit scan and cleanup actions, configurable roots. No feature enable gate. |
-| Cleanup | Implemented | Verify local disappearance; rotate attempts; preserve Runner deletion authority; review safety of reused paths and overlapping ownership. |
+| Cleanup | Implemented | Verify local disappearance; rotate attempts; respect Curator-owned versus Runner-owned storage; protect reused paths and overlapping ownership. |
 | Reviewed deletion | Implemented | Explicit per-entry confirmation; rechecks live work, ownership, metadata and root identity; records intent and result. |
 | Regression tests | Written, final run deferred | Empty queue, unknown files, stale scans, cleared history, ID reuse, false removal receipts, API, browser flow. |
-| Adversarial review | Ready to request | Request only when the full PR is ready to merge, per the user's workflow. |
+| Adversarial review | Addressed | Six findings fixed: missing-parent cleanup receipts, import admission races, changed mount identity, library bind aliases, symlink unlink ownership, and duplicate roots. Regression cases added before final tests. |
 | Final gates | Pending | Run after review fixes. Earlier prototype checks are not verification of this rebased implementation. |
 | PR and merge | Pending | Batch implementation commits into one PR; merge after review and green checks. |
 
@@ -36,3 +36,7 @@ and verification; the user-facing behavior lives in those documents.
 - Initial work used the supplied older checkout before the user required
   isolated clones. Those feature edits were extracted and removed without
   disturbing the pre-existing source changes. All subsequent work is here.
+
+A changed mount identity preserves the last successful counts and blocks deletion.
+Restore the mount, or explicitly save the storage roots again to accept a replacement;
+the next complete scan establishes its baseline.

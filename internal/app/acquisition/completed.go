@@ -40,6 +40,7 @@ type CompletedEntry struct {
 }
 
 type CompletedRoot struct {
+	RootIdentity   string           `json:"rootIdentity"`
 	Path           string           `json:"path"`
 	CheckedAt      time.Time        `json:"checkedAt"`
 	LastCompleteAt time.Time        `json:"lastCompleteAt"`
@@ -55,13 +56,36 @@ type CompletedInventory struct {
 }
 
 func (s *Service) SetCompletedRoots(ctx context.Context, value string) error {
+	s.completedMu.Lock()
+	defer s.completedMu.Unlock()
+	ctx, releaseStorage := s.lockStorageDecision(ctx)
+	defer releaseStorage()
 	for _, p := range strings.Split(value, "\n") {
 		p = strings.TrimSpace(p)
 		if p != "" && (!filepath.IsAbs(p) || canonicalCompletedPath(filepath.Clean(p)) == string(filepath.Separator)) {
 			return fmt.Errorf("completed folders must be absolute paths below the filesystem root: %q", p)
 		}
 	}
-	return s.db.SetMeta(ctx, CompletedRootsSetting, value)
+	if err := s.db.SetMeta(ctx, CompletedRootsSetting, value); err != nil {
+		return err
+	}
+	// Explicitly saving roots approves their current mount identities. Keep
+	// prior counts until a complete scan succeeds; never erase stale evidence.
+	inventory, err := s.CompletedInventory(ctx)
+	if err != nil {
+		return err
+	}
+	for _, root := range inventory.Roots {
+		root.RootIdentity = ""
+		raw, err := json.Marshal(root)
+		if err != nil {
+			return err
+		}
+		if err := s.db.SaveCompletedScan(ctx, root.Path, string(raw)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // completedRoots uses explicit roots when configured, otherwise local mappings
@@ -118,9 +142,25 @@ func (s *Service) completedRoots(ctx context.Context, receipts []sqlite.Complete
 			roots = append(roots, p)
 		}
 	}
-	sort.Slice(roots, func(i, j int) bool { return len(roots[i]) < len(roots[j]) })
+	// Prefer roots that cover other roots through filesystem aliases, then
+	// collapse the aliases before applying ordinary ancestor deduplication.
+	scores := map[string]int{}
+	for _, root := range roots {
+		for _, other := range roots {
+			if within(root, storagePath(other, []string{root})) {
+				scores[root]++
+			}
+		}
+	}
+	sort.Slice(roots, func(i, j int) bool {
+		if scores[roots[i]] != scores[roots[j]] {
+			return scores[roots[i]] > scores[roots[j]]
+		}
+		return roots[i] < roots[j]
+	})
 	out := []string{}
 	for _, p := range roots {
+		p = storagePath(p, out)
 		covered := false
 		for _, root := range out {
 			if within(root, p) {
@@ -206,11 +246,16 @@ func (s *Service) ScanCompleted(ctx context.Context) error {
 			return ctx.Err()
 		}
 		root := CompletedRoot{Path: path, CheckedAt: time.Now().UTC(), Entries: []CompletedEntry{}}
-		for _, lib := range library {
-			p := filepath.Clean(lib.Path)
-			if real, err := filepath.EvalSymlinks(p); err == nil {
-				p = real
+		if info, err := os.Stat(path); err != nil {
+			root.Error = err.Error()
+		} else {
+			root.RootIdentity = fmt.Sprint(recoveryDirectoryIdentity(info))
+			if old, ok := previous[path]; ok && old.RootIdentity != "" && old.RootIdentity != root.RootIdentity {
+				root.Error = "storage mount identity changed; restore the mount, or explicitly re-save the storage roots to accept its replacement"
 			}
+		}
+		for _, lib := range library {
+			p := storagePath(lib.Path, roots)
 			if within(p, path) || within(path, p) {
 				root.Error = "completed folder overlaps a library root; correct the path configuration"
 				break
@@ -222,11 +267,14 @@ func (s *Service) ScanCompleted(ctx context.Context) error {
 			cancel()
 			if err != nil {
 				root.Error = err.Error()
+			} else if info, err := os.Stat(path); err != nil || fmt.Sprint(recoveryDirectoryIdentity(info)) != root.RootIdentity {
+				root.Error = "storage mount changed during the scan"
 			}
 		}
 		if root.Error != "" {
 			if old, ok := previous[path]; ok {
 				root.Entries, root.Bytes, root.LastCompleteAt = old.Entries, old.Bytes, old.LastCompleteAt
+				root.RootIdentity = old.RootIdentity
 			}
 			failures = append(failures, fmt.Errorf("%s: %s", path, root.Error))
 		} else {
@@ -416,7 +464,7 @@ func storagePath(path string, roots []string) string {
 			for _, root := range roots {
 				for _, candidate := range []string{root, filepath.Join(root, "completed")} {
 					other, err := os.Stat(candidate)
-					if err == nil && os.SameFile(info, other) {
+					if err == nil && storageSameFile(info, other) {
 						rel, err := filepath.Rel(parent, path)
 						if err == nil {
 							return filepath.Join(candidate, rel)
@@ -448,11 +496,43 @@ func (s *Service) ownsDownloadPath(ctx context.Context, path string) bool {
 			roots = append(roots, canonicalCompletedPath(root))
 		}
 	}
-	path = storagePath(path, roots)
+	// Ownership of a directory entry follows its parent, not the target of
+	// a final symlink. Rooted removal unlinks that link without following it.
+	path = filepath.Join(storagePath(filepath.Dir(path), roots), filepath.Base(path))
 	for _, root := range roots {
 		if path != root && within(root, path) {
 			return true
 		}
 	}
 	return false
+}
+
+// Injectable identity comparison permits bind-alias regression cases on hosts
+// that cannot create bind mounts; production always uses os.SameFile.
+var storageSameFile = os.SameFile
+
+func (s *Service) checkStorageIdentity(ctx context.Context, path string) error {
+	inventory, err := s.CompletedInventory(ctx)
+	if err != nil {
+		return err
+	}
+	for _, root := range inventory.Roots {
+		if !within(root.Path, path) {
+			continue
+		}
+		if root.Error != "" {
+			return fmt.Errorf("storage scan is incomplete: %s", root.Error)
+		}
+		if root.RootIdentity == "" {
+			continue
+		}
+		info, err := os.Stat(root.Path)
+		if err != nil {
+			return err
+		}
+		if fmt.Sprint(recoveryDirectoryIdentity(info)) != root.RootIdentity {
+			return fmt.Errorf("storage mount changed; scan again before deleting")
+		}
+	}
+	return nil
 }
