@@ -10,6 +10,41 @@ info:
     name: GPL-3.0
 
 paths:
+  /downloads/inventory/entry:
+    delete:
+      operationId: deleteCompletedEntry
+      summary: Explicitly delete an unchanged entry from Curator-owned download storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, fingerprint]
+              properties:
+                path: { type: string }
+                fingerprint: { type: string }
+      responses:
+        "204":
+          description: Files removed and accounting updated.
+        "409":
+          description: Files changed, live work overlaps, or storage is not owned by Curator.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /downloads/inventory:
+    get:
+      operationId: getCompletedInventory
+      summary: Cached disk accounting for completed download folders
+      responses:
+        "200":
+          description: Latest inventory; errors preserve the last complete scan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompletedInventory'
+
   /system/status:
     get:
       operationId: getSystemStatus
@@ -4803,6 +4838,56 @@ components:
         at: { type: integer, format: int64, description: Unix milliseconds. }
         detail: { type: string }
 
+    CompletedInventory:
+      type: object
+      required: [roots, bytes, attention]
+      properties:
+        bytes: { type: integer, format: int64, description: Logical bytes; stale or partial when a root has an error. }
+        attention: { type: integer }
+        roots:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompletedRoot'
+    CompletedRoot:
+      type: object
+      required: [path, checkedAt, lastCompleteAt, error, entries, bytes]
+      properties:
+        path: { type: string }
+        checkedAt: { type: string, format: date-time }
+        lastCompleteAt: { type: string, format: date-time }
+        error: { type: string }
+        bytes: { type: integer, format: int64 }
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompletedEntry'
+    CompletedEntry:
+      type: object
+      required: [path, bytes, files, status, reason, receipts, fingerprint]
+      properties:
+        fingerprint: { type: string, description: Recursive metadata and filesystem identity token for reviewed deletion. }
+        path: { type: string }
+        bytes: { type: integer, format: int64 }
+        files: { type: integer }
+        status: { type: string }
+        reason: { type: string }
+        receipts:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompletedReceipt'
+    CompletedReceipt:
+      type: object
+      required: [downloadId, path, clientId, title, state, protocol, payloadRemoved, live]
+      properties:
+        downloadId: { type: integer, format: int64 }
+        path: { type: string }
+        clientId: { type: integer, format: int64 }
+        title: { type: string }
+        state: { type: string }
+        protocol: { type: string }
+        payloadRemoved: { type: boolean }
+        live: { type: boolean }
+
     Settings:
       type: object
       required: [tmdbApiKeyConfigured, tmdbApiKeyHint]
@@ -4838,6 +4923,9 @@ components:
             User skip patterns, one per line, applied on top of the built-in
             defaults during the root-folder sweep. Blank lines and # comments
             are ignored.
+        completedRoots:
+          type: string
+          description: Curator-owned download storage roots, one absolute path per line. When empty, use /working/monarr if mounted, otherwise discover completed folders without claiming them.
         activityRetentionDays:
           type: integer
           description: >
@@ -4871,6 +4959,9 @@ components:
     SettingsUpdate:
       type: object
       properties:
+        completedRoots:
+          type: string
+          description: Curator-owned download storage roots, one absolute path per line. When empty, use /working/monarr if mounted, otherwise discover completed folders without claiming them.
         activityRetentionDays:
           type: integer
           minimum: 0

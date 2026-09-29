@@ -121,6 +121,7 @@ func (ImportFailed) EventType() string { return "import.failed" }
 
 // Service wires storage, adapters (via factories), and the bus.
 type Service struct {
+	completedMu sync.Mutex
 	// Shared by ordinary and recovery imports, including crash reconciliation.
 	importTargetMu    sync.Mutex
 	recoveryMu        sync.Mutex

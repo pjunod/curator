@@ -1147,6 +1147,50 @@ type ClearedCount struct {
 	Cleared int `json:"cleared"`
 }
 
+// CompletedEntry defines model for CompletedEntry.
+type CompletedEntry struct {
+	Bytes int64 `json:"bytes"`
+	Files int   `json:"files"`
+
+	// Fingerprint Recursive metadata and filesystem identity token for reviewed deletion.
+	Fingerprint string             `json:"fingerprint"`
+	Path        string             `json:"path"`
+	Reason      string             `json:"reason"`
+	Receipts    []CompletedReceipt `json:"receipts"`
+	Status      string             `json:"status"`
+}
+
+// CompletedInventory defines model for CompletedInventory.
+type CompletedInventory struct {
+	Attention int `json:"attention"`
+
+	// Bytes Logical bytes; stale or partial when a root has an error.
+	Bytes int64           `json:"bytes"`
+	Roots []CompletedRoot `json:"roots"`
+}
+
+// CompletedReceipt defines model for CompletedReceipt.
+type CompletedReceipt struct {
+	ClientId       int64  `json:"clientId"`
+	DownloadId     int64  `json:"downloadId"`
+	Live           bool   `json:"live"`
+	Path           string `json:"path"`
+	PayloadRemoved bool   `json:"payloadRemoved"`
+	Protocol       string `json:"protocol"`
+	State          string `json:"state"`
+	Title          string `json:"title"`
+}
+
+// CompletedRoot defines model for CompletedRoot.
+type CompletedRoot struct {
+	Bytes          int64            `json:"bytes"`
+	CheckedAt      time.Time        `json:"checkedAt"`
+	Entries        []CompletedEntry `json:"entries"`
+	Error          string           `json:"error"`
+	LastCompleteAt time.Time        `json:"lastCompleteAt"`
+	Path           string           `json:"path"`
+}
+
 // Connection defines model for Connection.
 type Connection struct {
 	Detail *string `json:"detail,omitempty"`
@@ -2239,6 +2283,9 @@ type Settings struct {
 	// AuthRequired Whether /api/v1 requires authentication.
 	AuthRequired *bool `json:"authRequired,omitempty"`
 
+	// CompletedRoots Curator-owned download storage roots, one absolute path per line. When empty, use /working/monarr if mounted, otherwise discover completed folders without claiming them.
+	CompletedRoots *string `json:"completedRoots,omitempty"`
+
 	// DefaultProfiles The quality profile a newly added item gets when the add form does not name one, per media kind. Always fully populated on read: an unset or dangling setting resolves to the built-in, so this is the effective answer rather than only what has been saved.
 	DefaultProfiles *DefaultProfiles `json:"defaultProfiles,omitempty"`
 
@@ -2267,6 +2314,9 @@ type SettingsUpdate struct {
 	// AuthRequired Require API key or session for /api/v1 (Phase 5).
 	AuthRequired *bool   `json:"authRequired,omitempty"`
 	AuthUsername *string `json:"authUsername,omitempty"`
+
+	// CompletedRoots Curator-owned download storage roots, one absolute path per line. When empty, use /working/monarr if mounted, otherwise discover completed folders without claiming them.
+	CompletedRoots *string `json:"completedRoots,omitempty"`
 
 	// DefaultProfiles Partial: only the kinds present are changed. A profile that does not exist, or that lives on the wrong format axis for the kind, is refused with 400 rather than saved and discovered later.
 	DefaultProfiles *DefaultProfilesUpdate `json:"defaultProfiles,omitempty"`
@@ -2524,6 +2574,12 @@ type DiscoverItemsParams struct {
 	Page *int `form:"page,omitempty" json:"page,omitempty"`
 }
 
+// DeleteCompletedEntryJSONBody defines parameters for DeleteCompletedEntry.
+type DeleteCompletedEntryJSONBody struct {
+	Fingerprint string `json:"fingerprint"`
+	Path        string `json:"path"`
+}
+
 // BrowseFilesystemParams defines parameters for BrowseFilesystem.
 type BrowseFilesystemParams struct {
 	// Path Absolute path to list. A trailing separator lists the directory; a partial final component filters that directory's children by prefix, which is what drives typeahead. Defaults to "/".
@@ -2714,6 +2770,9 @@ type TestDownloadClientJSONRequestBody = DownloadClientInput
 // UpdateDownloadClientJSONRequestBody defines body for UpdateDownloadClient for application/json ContentType.
 type UpdateDownloadClientJSONRequestBody = DownloadClientInput
 
+// DeleteCompletedEntryJSONRequestBody defines body for DeleteCompletedEntry for application/json ContentType.
+type DeleteCompletedEntryJSONRequestBody DeleteCompletedEntryJSONBody
+
 // GrabReleaseJSONRequestBody defines body for GrabRelease for application/json ContentType.
 type GrabReleaseJSONRequestBody = GrabRequest
 
@@ -2857,6 +2916,12 @@ type ServerInterface interface {
 	// TestDownloadClientById Test a saved download client with its stored credentials
 	// (POST /downloadclients/{id}/test)
 	TestDownloadClientById(w http.ResponseWriter, r *http.Request, id int64)
+	// GetCompletedInventory Cached disk accounting for completed download folders
+	// (GET /downloads/inventory)
+	GetCompletedInventory(w http.ResponseWriter, r *http.Request)
+	// DeleteCompletedEntry Explicitly delete an unchanged entry from Curator-owned download storage
+	// (DELETE /downloads/inventory/entry)
+	DeleteCompletedEntry(w http.ResponseWriter, r *http.Request)
 	// StreamEvents Server-sent events
 	// (GET /events)
 	StreamEvents(w http.ResponseWriter, r *http.Request)
@@ -3504,6 +3569,34 @@ func (siw *ServerInterfaceWrapper) TestDownloadClientById(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.TestDownloadClientById(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCompletedInventory operation middleware
+func (siw *ServerInterfaceWrapper) GetCompletedInventory(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCompletedInventory(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteCompletedEntry operation middleware
+func (siw *ServerInterfaceWrapper) DeleteCompletedEntry(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteCompletedEntry(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6061,6 +6154,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloads/inventory/entry", wrapper.DeleteCompletedEntry)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloads/inventory", wrapper.GetCompletedInventory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/status", wrapper.GetSystemStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/tasks", wrapper.ListTasks)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/tasks/{name}/run", wrapper.RunTask)

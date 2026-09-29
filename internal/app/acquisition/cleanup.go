@@ -63,9 +63,17 @@ func (s *Service) removePayload(ctx context.Context, dl downloadRef) bool {
 	if !cfg.RemoveCompleted {
 		return false
 	}
+	if dl.ImportPath != "" && !s.safePayloadPath(ctx, dl) {
+		return false
+	}
 	if err := s.newClient(cfg).Remove(ctx, ports.Handle(dl.Handle), true); err != nil {
 		s.log.Debug("cleanup: client would not remove the payload",
 			"release", dl.ReleaseTitle, "client", clientLabel(cfg), "err", err)
+		return false
+	}
+	// A successful client response may only mean its history row is gone.
+	// When Monarr knows the local path, disk disappearance is the receipt.
+	if dl.ImportPath != "" && !payloadAbsent(dl.ImportPath) {
 		return false
 	}
 	if err := s.db.MarkPayloadRemoved(ctx, dl.ID); err != nil {
@@ -102,10 +110,10 @@ type downloadRef struct {
 // wants the year of grabs gone too — the setting means "monarr should not be
 // leaving these around", not "monarr should stop leaving NEW ones around".
 //
-// Ordered oldest first so the backlog goes in the order it accumulated, and
-// capped per pass so a client is never handed hundreds of deletions at once.
+// Attempts rotate so a blocked row cannot starve later payloads. The batch
+// is capped so a client is never handed hundreds of deletions at once.
 func (s *Service) CleanupPayloads(ctx context.Context) error {
-	rows, err := s.db.ImportedWithPayload(ctx, cleanupPerSweep)
+	rows, err := s.db.ImportedCleanupCandidates(ctx, cleanupPerSweep)
 	if err != nil {
 		return err
 	}
@@ -113,13 +121,31 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 		return nil
 	}
 	removed, bytes := 0, int64(0)
-	for _, dl := range rows {
+	for _, candidate := range rows {
+		unlock := s.lockDownload(candidate.ID)
+		dl, err := s.db.GetDownload(ctx, candidate.ID)
+		if err != nil || dl.State != "imported" || dl.PayloadRemoved || !dl.AddedAt.Equal(candidate.AddedAt) {
+			unlock()
+			continue
+		}
+		if err := s.db.TouchPayloadCleanup(ctx, dl.ID); err != nil {
+			unlock()
+			return err
+		}
+		if dl.ImportPath != "" && payloadAbsent(dl.ImportPath) {
+			if !dl.PayloadRemoved {
+				_ = s.db.MarkPayloadRemoved(ctx, dl.ID)
+			}
+			unlock()
+			continue
+		}
 		ref := downloadRef{
 			ID: dl.ID, MediaItemID: dl.MediaItemID, ClientID: dl.ClientID,
 			Handle: dl.Handle, ImportPath: dl.ImportPath,
 			ReleaseTitle: dl.ReleaseTitle, Size: dl.Size,
 		}
 		if s.removePayload(ctx, ref) {
+			unlock()
 			removed++
 			bytes += dl.Size
 			continue
@@ -128,6 +154,7 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 		// most of a backlog IS the payloads a client declined to remove.
 		before := dl.ImportPath
 		s.removeImportedDir(ctx, ref)
+		unlock()
 		if before != "" {
 			if _, err := os.Stat(before); os.IsNotExist(err) {
 				removed++
@@ -184,29 +211,17 @@ func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
 		// covers the disk as much as it covers the client.
 		return
 	}
-	// Runner owns retention, recovery holds and deletion retries. A refused
-	// or unavailable request must never be bypassed through this host's mount.
-	if cfg.Type == "nzbd" {
+	// Runner owns its processing and recovery trees. Curator owns its configured
+	// working tree, including completed, and may clean imported payloads there.
+	if cfg.Type == "nzbd" && !s.ownsDownloadPath(ctx, dir) {
 		s.log.Warn("cleanup: Runner payload remains pending; retry through Runner", "download", dl.ID, "dir", dir)
 		return
 	}
-	roots, err := s.db.ListRootFolders(ctx)
-	if err != nil {
-		return // cannot prove it is safe, so it is not
+	if !s.safePayloadPath(ctx, dl) {
+		return
 	}
-	for _, r := range roots {
-		root := filepath.Clean(r.Path)
-		if root == "" || root == "/" {
-			continue
-		}
-		if dir == root || within(root, dir) || within(dir, root) {
-			s.log.Warn("cleanup: refusing to remove a payload dir inside a root folder",
-				"dir", dir, "root", root)
-			return
-		}
-	}
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
+	if payloadAbsent(dir) {
+		_ = s.db.MarkPayloadRemoved(ctx, dl.ID)
 		return
 	}
 	if err := os.RemoveAll(dir); err != nil {
@@ -237,3 +252,62 @@ func within(parent, child string) bool {
 // cleaned up is not urgent by the time the sweep is the thing finding it, and
 // the inline path already handles everything that just imported.
 const CleanupInterval = time.Hour
+
+// Missing is meaningful only while the containing directory is reachable.
+func payloadAbsent(path string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	_, err := os.Lstat(path)
+	if !os.IsNotExist(err) {
+		return false
+	}
+	parent, err := os.Stat(filepath.Dir(path))
+	return err == nil && parent.IsDir()
+}
+
+// Apply path guards before either client or local deletion. A queue handle
+// cannot authorize deleting a shared directory or a path reused by another job.
+func (s *Service) safePayloadPath(ctx context.Context, dl downloadRef) bool {
+	dir := strings.TrimSpace(dl.ImportPath)
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) == string(filepath.Separator) {
+		return false
+	}
+	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	receipts, err := s.db.CompletedReceipts(ctx)
+	if err != nil {
+		return false
+	}
+	completed, err := s.completedRoots(ctx, receipts)
+	if err != nil {
+		return false
+	}
+	real := storagePath(dir, completed)
+	roots, err := s.db.ListRootFolders(ctx)
+	if err != nil {
+		return false
+	}
+	for _, root := range roots {
+		p := canonicalCompletedPath(root.Path)
+		if within(p, real) || within(real, p) {
+			return false
+		}
+	}
+	for _, root := range completed {
+		if within(real, root) || real == filepath.Join(root, "completed") {
+			return false
+		}
+	}
+	for _, receipt := range receipts {
+		if receipt.DownloadID == dl.ID && receipt.Live {
+			continue
+		}
+		p := storagePath(receipt.Path, completed)
+		if within(real, p) || within(p, real) {
+			return false
+		}
+	}
+	return true
+}
