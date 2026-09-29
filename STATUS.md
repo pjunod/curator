@@ -1,5 +1,11 @@
 # Monarr — Project Status
 
+## Completed-folder accounting — 2026-09-29
+
+**Building:** durable accounting for the reported 804 GB of forgotten completed
+downloads. [Live delivery status](docs/COMPLETED_FOLDER_STATUS.md) tracks the
+implementation, adversarial review, final gates, and merge.
+
 > **Snapshot 2026-09-28 · v0.31.0 · Audio language is a profile criterion
 > (ADR 0022): a profile can require English (or any set of languages), a
 > file measured to carry none of them keeps the item wanted at any quality,

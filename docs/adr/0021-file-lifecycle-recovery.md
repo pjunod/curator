@@ -14,8 +14,11 @@ The approved scope includes both this fix and robust ordinary/recovery placement
 
 ## Decision
 
-Runner owns its source and staging lifecycle. Curator never removes a native
-Runner client's mounted payload as a fallback. Only queue HTTP 404 permits a
+Runner owns its source and recovery staging lifecycle. Curator owns its
+configured working trees, including `/working/monarr/completed`, even when
+Runner downloads into them. As clarified by the operator on 2026-09-29, Curator
+may clean successfully imported payloads within that ownership boundary.
+Runner-owned processing and recovery storage remain outside local fallback. Only queue HTTP 404 permits a
 History fallback; pending, hold, authentication and transport failures retry.
 
 Recovery reads only an explicitly configured published directory mounted read-only,

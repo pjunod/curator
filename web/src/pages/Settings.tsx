@@ -1,3 +1,4 @@
+import { CompletedFolderSettings } from '../CompletedFolders'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
@@ -436,6 +437,8 @@ export function SettingsPage() {
           </button>
           {saveSkips.isSuccess && <span className="ok-text">Saved — applies on the next scan.</span>}
         </div>
+
+        <CompletedFolderSettings />
 
         <h3 style={{ marginTop: 18 }}>Activity retention</h3>
         <p className="muted">

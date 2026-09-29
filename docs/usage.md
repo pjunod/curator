@@ -539,7 +539,8 @@ The default differs by client type, because the right answer does:
 
 Turning it on also collects what has already piled up. An hourly
 `downloads.cleanup` task sweeps imported downloads whose payload is still on
-the client, oldest first, so enabling the setting after a year of grabbing
+the client, rotating cleanup attempts so a blocked entry cannot starve later
+ones. Enabling the setting after a year of grabbing
 clears the year of grabs too — a few dozen at a time, so the client is never
 handed hundreds of deletions at once. Run it on demand from System → Tasks.
 
@@ -551,6 +552,62 @@ finished importing from — and records that it did. This only ever touches the
 directory the client reported, and never a path at, above, or inside a root
 folder: a path mapping pointing into the library is not permission to delete
 the library.
+
+### Completed folders — accounting survives an empty queue
+
+Activity → **Download storage** inventories the whole Curator-owned working
+tree independently of the queue. The deployed `/working/monarr` root contains
+`completed`, also mounted at `/downloads`; both names refer to the same
+files. Each completed payload is shown individually alongside files elsewhere
+in the working tree.
+`downloads.inventory` runs on startup and every five minutes. It includes
+hidden entries, loose files, archives, and nested files, grouped by payload below `completed` or by the first
+path component elsewhere in each configured root. Symbolic links are listed but their
+targets are not followed. Sizes are **logical bytes**, not allocated space or
+a promise of how many bytes deletion would reclaim.
+
+| Explanation | What to do |
+|---|---|
+| Active | A download or import still owns this path; let it finish |
+| Awaiting import | Check Activity for approval, cancellation, or a stalled handoff |
+| Failed | Review the failure and use **Review import** to recover media |
+| Cleanup pending | An imported payload remains; **Retry imported cleanup** queues the existing cleanup task |
+| Retained | Cleanup is disabled or its client was removed; files remain accounted for |
+| Untracked / ambiguous | No current record, or multiple associations; review the files and historical receipts |
+| Symlink | Target bytes are excluded; check the link separately |
+
+**Scan download storage** queues another scan. **Review import** opens the
+existing manual-import preview at that entry. It does not import or delete
+anything merely by opening the panel. Unknown entries and historical-only
+associations are never automatically deleted. Clearing Activity preserves
+path, release, and state receipts independently, including through restarts.
+Files whose records were already erased before this upgrade appear as
+untracked; the upgrade cannot reconstruct that lost history.
+
+**Delete files…** shows a confirmation on the selected entry. Confirming
+permanently removes its files from Curator-owned storage, then updates the
+inventory and history. Curator rechecks ownership, active work, and the
+recursive metadata fingerprint before deleting through a directory handle.
+Changed files require a new scan. Library and recovery paths, storage roots,
+and active download/import paths cannot be deleted through this action.
+Removing a symlink removes the link, never its target.
+
+A scan error retains the last complete inventory and shows the error and its
+last successful timestamp. The health check warns on entries needing review,
+failed scans, or a snapshot older than 15 minutes. Each root scan is limited
+to 30 seconds and 100,000 entries; hitting a limit is reported as incomplete,
+not an empty folder. Filesystem calls on an unresponsive mount may exceed the
+timeout; scans are serialized so they cannot accumulate workers.
+
+A successful client delete response no longer proves local files disappeared.
+When the local path is known, cleanup verifies absence, retries the guarded
+local fallback inside Curator-owned storage, and leaves unsuccessful cleanup
+pending. This authority includes Runner downloads completed into that tree;
+Runner-owned processing and recovery paths remain outside it. Paths previously marked
+removed are surfaced for review, because the path may have been reused; they
+are not deleted automatically. Disabled cleanup clients do not consume the
+25-attempt batch. Library roots, completed roots, symlinks, and paths overlapping another
+record are protected from local deletion.
 
 ## The same release, twice
 

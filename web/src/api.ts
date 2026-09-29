@@ -453,6 +453,7 @@ export interface Settings {
   apiKey?: string
   authRequired?: boolean
   scanSkipPatterns?: string
+  completedRoots?: string
   activityRetentionDays?: number
   defaultProfiles?: DefaultProfiles
 }
@@ -608,6 +609,7 @@ export const updateSettings = (patch: {
   authUsername?: string
   authPassword?: string
   scanSkipPatterns?: string
+  completedRoots?: string
   activityRetentionDays?: number
   defaultProfiles?: Partial<DefaultProfiles>
 }) => send('PUT', '/settings', patch)
@@ -1431,3 +1433,37 @@ export const cancelRecoveryImport = (id: string) => send('POST', '/import/recove
 
 export interface RecoveryPreviewTask { id: string; state: string; preview?: RecoveryPreview; error?: string }
 export const getRecoveryPreview = (id: string) => get<RecoveryPreviewTask>('/import/recovery/previews/' + encodeURIComponent(id))
+
+export interface CompletedReceipt {
+  downloadId: number
+  path: string
+  title: string
+  state: string
+  live: boolean
+}
+export interface CompletedEntry {
+  fingerprint: string
+  path: string
+  bytes: number
+  files: number
+  status: string
+  reason: string
+  receipts: CompletedReceipt[]
+}
+export interface CompletedRoot {
+  path: string
+  checkedAt: string
+  lastCompleteAt: string
+  error: string
+  entries: CompletedEntry[]
+  bytes: number
+}
+export interface CompletedInventory {
+  roots: CompletedRoot[]
+  bytes: number
+  attention: number
+}
+export const getCompletedInventory = () => get<CompletedInventory>('/downloads/inventory')
+
+export const deleteCompletedEntry = (path: string, fingerprint: string) =>
+  send('DELETE', '/downloads/inventory/entry', { path, fingerprint })
