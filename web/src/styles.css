@@ -3805,3 +3805,51 @@ a.pill-info:hover {
   position: static;
   margin-top: 4px;
 }
+
+/* ---- Settings → Recovery: the Runner handoff import flow ---- */
+.recovery-enable .recovery-fields { display: grid; gap: 10px; margin: 12px 0; max-width: 720px; }
+.recovery-enable .recovery-fields label { display: grid; gap: 4px; color: var(--text-muted); font-size: 13px; }
+.recovery-enable .recovery-fields input { min-width: 0; width: 100%; }
+.recovery-advisory { list-style: none; margin: 14px 0 6px; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.recovery-readiness { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 14px 0; padding: 10px 14px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
+.recovery-ready { display: inline-flex; align-items: baseline; gap: 8px; font-size: 13px; min-width: 0; }
+.recovery-ready-label { font-weight: 600; }
+.recovery-ready-detail { max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recovery-steps { list-style: none; margin: 0; padding: 0; counter-reset: none; }
+.recovery-step { position: relative; padding: 14px 0 18px 44px; border-top: 1px solid var(--border); }
+.recovery-step:first-child { border-top: 0; }
+.recovery-step-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.recovery-step-head h3 { margin: 0; font-size: 15px; }
+.recovery-step-no { position: absolute; left: 4px; top: 12px; width: 26px; height: 26px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
+  color: var(--text-muted); border: 1px solid var(--border); background: var(--bg); }
+.recovery-step[data-done="true"] > .recovery-step-no { color: var(--ok); border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.recovery-step .muted { font-size: 13px; }
+.recovery-empty { padding: 10px 0; }
+.recovery-handoffs td, .recovery-files td { vertical-align: middle; }
+.recovery-handoffs .num, .recovery-files .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.recovery-handoff { cursor: pointer; }
+.recovery-handoff:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.recovery-handoff.is-selected { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.recovery-handoff.is-unavailable { cursor: default; }
+.recovery-handoff.is-unavailable .recovery-name { color: var(--text-muted); }
+.recovery-pick { width: 28px; padding-right: 0; }
+.recovery-name { font-weight: 600; overflow-wrap: anywhere; }
+.recovery-sub { font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.recovery-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; overflow-wrap: anywhere; }
+.recovery-filelist { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; }
+.recovery-filelist li { display: flex; gap: 10px; align-items: baseline; }
+.recovery-episodes { margin-top: 10px; }
+.recovery-episode { min-width: 160px; width: 160px; }
+.recovery-blocker { font-size: 13px; }
+.recovery-preview { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.recovery-preview h4 { margin: 0 0 4px; font-size: 14px; }
+.recovery-jobs .progress-track { margin: 4px 0; max-width: 360px; }
+.recovery .form-row select { max-width: 100%; }
+@media (max-width: 640px) {
+  .recovery-step { padding-left: 36px; }
+  .recovery-handoffs th:nth-child(6), .recovery-handoffs td:nth-child(6) { display: none; }
+  .recovery-ready-detail { white-space: normal; }
+}

@@ -763,8 +763,16 @@ Queue removal falls back to History only when the queue returns HTTP 404.
 Settings → Dev configures automatic recovery status refresh, the exact Runner
 published prefix, Curator's read-only mount and a separate recovery credential.
 Prerequisite status is advisory: it never disables enablement. Settings →
-Recovery lets you choose a staged handoff, title, library copy and selected
-files, verify the bytes and container, then queue the import.
+Recovery is a three-step flow: choose a handoff (a table of what Runner has
+staged, named by the folder it came from, with its state — only a *ready*
+or *claimed* copy can be chosen; a failed staging shows Runner's reason and
+says to cancel it in Runner's Files tab), pick the library title (searchable;
+the copy selector appears only when the title has more than one copy; series
+files take a `season:episodes` mapping, blank lets the filename decide), then
+preview and import. A readiness strip at the top reports whether Runner is
+reachable, whether the recovery mount is present, and whether the credential
+is set; the Preview button says which of those, or which step, is missing
+instead of failing on the click.
 
 Runner's full processing tree must not be mounted as recovery input. Mount only
 `/processing/recovery/published` at `/recovery:ro` and keep it outside all library

@@ -25,6 +25,23 @@
 > working session. Design rationale: [docs/architecture.md](docs/architecture.md) ·
 > decisions: [docs/adr/](docs/adr/) · this file: state only.
 
+
+## Recovery import page rework — 2026-09-28
+
+**Status:** shipped (0.32.0). Field report: Settings → Recovery was a stack
+of unlabeled selects; a handoff whose staging had *failed* in Runner was
+offered in the dropdown with its error printed as an anonymous alert, and
+Preview died on `lstat /recovery: no such file or directory` because the
+mount was never checked before the click. The page is now a three-step flow
+(handoff table → searchable title, copy only when there is a choice, series
+episode mapping → preview and import) under a readiness strip (Runner ·
+recovery mount · credential); the Preview button names the missing
+precondition; import activity is a table with progress bars. Handoffs carry
+`source`, `consumer`, `created_at`, `updated_at` from Runner (runner PR #243).
+Gate: lint 0 issues · `go test ./...` · vitest 119 (+15, `recovery.test.ts`)
+· Playwright 117 (recovery spec extended). Verified with mocked handoffs in
+Chromium.
+
 ## Delivery — Audio language requirement
 
 **Status:** merged `85f66df` · tagged v0.31.0 · deployed to nuc3 · **Updated:** 2026-09-28 ·

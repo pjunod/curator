@@ -47,6 +47,12 @@ type RunnerRecovery struct {
 	Files          []RecoveryFile `json:"files"`
 	ClientID       int64          `json:"client_id"`
 	Error          string         `json:"error,omitempty"`
+	// Display facts Runner attaches to a handoff: the folder it was staged
+	// from, who claimed it, and when. Older Runners omit them.
+	Source    string `json:"source,omitempty"`
+	Consumer  string `json:"consumer,omitempty"`
+	CreatedAt int64  `json:"created_at,omitempty"`
+	UpdatedAt int64  `json:"updated_at,omitempty"`
 }
 type RecoveryEpisodeTarget struct {
 	Season   int   `json:"season"`
