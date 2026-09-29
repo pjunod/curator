@@ -817,3 +817,13 @@ A library, profile, episode or copy edit during copying can invalidate the
 preview. The initial database revision is intentionally global: an unrelated
 library edit can also require another preview. See
 [ADR 0020](adr/0021-file-lifecycle-recovery.md) for the placement and receipt contract.
+
+## Series monitoring policy
+
+On a series detail page, **Edit → Episode monitoring** offers All episodes,
+Latest and future seasons, Future episodes, New seasons, and Manual selection.
+Saving a selected mode resets existing season/episode checkboxes; keeping the
+current selection preserves them. The policy then governs new metadata rows,
+independently of the series pause switch. See [Monitoring](usage.md#monitoring-series-seasons-episodes)
+for the date boundaries and refresh behavior. These choices also appear when
+adding a series.

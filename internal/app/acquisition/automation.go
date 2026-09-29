@@ -600,8 +600,8 @@ type AutoSearchOutcome struct {
 // AutoSearchItem searches for everything one item still wants and grabs
 // the best accepted release per wantable — Sonarr's "search on add" /
 // "automatic search" semantics: no candidate list, the decision engine
-// picks. Series search season packs (missing episodes fall to the RSS and
-// backlog loops if no pack exists).
+// picks. Completed, fully wanted seasons try packs first; individual aired
+// episodes follow when no pack was grabbed.
 func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchOutcome, error) {
 	var out AutoSearchOutcome
 	item, err := s.db.GetMediaItemFull(ctx, itemID)
@@ -618,45 +618,57 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 	}
 
 	var targets []domain.Wantable
-	switch item.Kind {
-	case domain.KindMovie, domain.KindBook:
-		w, err := s.target(ctx, item, 0, 0)
-		if err != nil {
-			return out, err
-		}
-		targets = append(targets, w)
-	case domain.KindSeries:
-		for _, season := range item.Seasons {
-			if season.Number == 0 || !season.Monitored || len(season.Episodes) == 0 {
-				continue
-			}
-			w, err := s.target(ctx, item, season.Number, 0)
+	addTargets := func(cp *domain.MediaCopy) error {
+		if item.Kind != domain.KindSeries {
+			w, err := s.targetCopy(ctx, item, 0, 0, cp)
 			if err != nil {
-				continue
+				return err
 			}
 			targets = append(targets, w)
+			return nil
 		}
-	}
-	// Each monitored copy is its own automation target, including the other
-	// first-class edition of a book.
-	for i := range item.Copies {
-		cp := item.Copies[i]
-		if !cp.Monitored {
-			continue
+		profileID := item.QualityProfileID
+		if cp != nil {
+			profileID = cp.QualityProfileID
 		}
-		switch item.Kind {
-		case domain.KindMovie, domain.KindBook:
-			if w, err := s.targetCopy(ctx, item, 0, 0, &cp); err == nil {
-				targets = append(targets, w)
+		profile, err := s.db.GetProfile(ctx, profileID)
+		if err != nil {
+			return err
+		}
+		today := time.Now().UTC().Format(time.DateOnly)
+		for _, season := range item.Seasons {
+			if !season.Monitored || len(season.Episodes) == 0 {
+				continue
 			}
-		case domain.KindSeries:
-			for _, season := range item.Seasons {
-				if season.Number == 0 || !season.Monitored || len(season.Episodes) == 0 {
+			w, err := s.targetCopy(ctx, item, season.Number, 0, cp)
+			if err != nil {
+				return err
+			}
+			pack := w.(domain.SeasonWantable)
+			var episodes []domain.Wantable
+			for i, ep := range pack.Episodes {
+				meta := season.Episodes[i]
+				if !meta.Monitored || meta.AirDate == "" || meta.AirDate > today || !wants(profile, ep) {
 					continue
 				}
-				if w, err := s.targetCopy(ctx, item, season.Number, 0, &cp); err == nil {
-					targets = append(targets, w)
-				}
+				episodes = append(episodes, ep)
+			}
+			// A partial selection, future episode or satisfied file rules out a
+			// whole-season replacement. Episodes already downloading do too.
+			if season.Number != 0 && len(episodes) == len(pack.Episodes) && len(s.notInFlight(ctx, episodes)) == len(episodes) {
+				targets = append(targets, pack)
+			}
+			targets = append(targets, episodes...)
+		}
+		return nil
+	}
+	if err := addTargets(nil); err != nil {
+		return out, err
+	}
+	for i := range item.Copies {
+		if item.Copies[i].Monitored {
+			if err := addTargets(&item.Copies[i]); err != nil {
+				return out, err
 			}
 		}
 	}
@@ -664,20 +676,20 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 	// Report on every target, including the ones that are not going to be
 	// searched. A skipped target is the single most useful thing this can
 	// say, and it is the one thing the old fire-and-forget version could not.
-	searchable := map[string]bool{}
-	for _, w := range s.notInFlight(ctx, targets) {
-		searchable[string(w.ID())] = true
-	}
 	out.Targets = make([]AutoSearchTarget, 0, len(targets))
 	for _, w := range targets {
 		t := AutoSearchTarget{WantableID: string(w.ID()), Label: describeTarget(w)}
 		switch {
 		case !w.Monitored():
 			t.Skipped = SkipUnmonitored
-		case !searchable[string(w.ID())]:
+		case len(s.notInFlight(ctx, []domain.Wantable{w})) == 0:
 			t.Skipped = SkipInFlight
 		default:
-			tally, err := s.searchAndGrabBest(ctx, w, enabled)
+			var allowed candidatePredicate
+			if _, episode := w.(domain.EpisodeWantable); episode {
+				allowed = exactWantedCandidate
+			}
+			tally, err := s.searchAndGrabBestWhere(ctx, w, enabled, allowed)
 			t.Seen, t.Matched, t.Accepted = tally.Seen, tally.Matched, tally.Accepted
 			t.Grabbed = tally.Grabbed
 			if err != nil {

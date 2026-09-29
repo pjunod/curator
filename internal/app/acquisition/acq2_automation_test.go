@@ -396,6 +396,9 @@ func TestAcq2AutoSearchItemCoversEverySeasonAndCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := db.W.ExecContext(ctx, `UPDATE episodes SET air_date = '2020-01-01' WHERE media_item_id = ? AND season_number > 0`, itemID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.AutoSearchItem(ctx, itemID); err != nil {
 		t.Fatal(err)
 	}
