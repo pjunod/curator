@@ -210,6 +210,11 @@ it does not walk the disk. See [usage](usage.md#completed-folders--accounting-su
 for the classifications, size semantics, and recovery actions. Activity
 retention never deletes these file associations or cached inventory.
 
+When a download storage mount is replaced, the inventory keeps its last complete
+counts and reports the changed identity. Restore the original mount or save the
+storage folders again to accept the replacement, then run a scan. Saving does
+not erase the prior counts before a complete scan succeeds.
+
 ### Completed downloads: where files land, and how Monarr finds them
 
 The "download finished" folder is **configured in the client itself**, not
@@ -775,10 +780,12 @@ Off by default.
 
 ## Runner payload cleanup
 
-For native Runner clients, cleanup waits for Runner to confirm deletion.
-A pending operation, retention/recovery hold, authentication failure or
-unavailable Runner keeps the payload pending for the next hourly sweep.
-Curator never bypasses Runner by deleting its mounted directory directly.
+For native Runner clients, cleanup first requests deletion through Runner and
+verifies that the local payload disappeared. Runner-owned source and recovery
+trees stay pending when Runner cannot remove them. Curator may remove a verified
+imported payload directly inside its own declared working trees, including
+`/working/monarr/completed`; it never applies that fallback to Runner-owned
+`/processing` or recovery storage.
 Queue removal falls back to History only when the queue returns HTTP 404.
 
 ## Recovery and Dev settings

@@ -2,8 +2,9 @@ package api
 
 import (
 	"encoding/json"
-	apigen "github.com/pjunod/monarr/internal/api/gen"
 	"net/http"
+
+	apigen "github.com/pjunod/monarr/internal/api/gen"
 
 	"github.com/pjunod/monarr/internal/app/acquisition"
 )

@@ -1,6 +1,6 @@
 # Completed-folder accounting — delivery status
 
-**Status:** review findings addressed; final verification next · **Updated:** 2026-09-29 · **Target:** v0.33.0
+**Status:** implementation and local verification complete · **Updated:** 2026-09-29 · **Target:** v0.33.0
 
 Companion to [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
 and [settings](settings.md#completed-folder-accounting). This page records work
@@ -14,10 +14,10 @@ and verification; the user-facing behavior lives in those documents.
 | Activity and settings | Implemented | Measured totals, classifications, download associations, manual-import preview, explicit scan and cleanup actions, configurable roots. No feature enable gate. |
 | Cleanup | Implemented | Verify local disappearance; rotate attempts; respect Curator-owned versus Runner-owned storage; protect reused paths and overlapping ownership. |
 | Reviewed deletion | Implemented | Explicit per-entry confirmation; rechecks live work, ownership, metadata and root identity; records intent and result. |
-| Regression tests | Written, final run deferred | Empty queue, unknown files, stale scans, cleared history, ID reuse, false removal receipts, API, browser flow. |
+| Regression tests | Passed | Empty queue, unknown files, stale/replaced mounts, cleared history, ID reuse, false receipts, concurrent admission, protected storage, API, browser flow. |
 | Adversarial review | Addressed | Six findings fixed: missing-parent cleanup receipts, import admission races, changed mount identity, library bind aliases, symlink unlink ownership, and duplicate roots. Regression cases added before final tests. |
-| Final gates | Pending | Run after review fixes. Earlier prototype checks are not verification of this rebased implementation. |
-| PR and merge | Pending | Batch implementation commits into one PR; merge after review and green checks. |
+| Final gates | Passed locally | Full Go suite; 86.1% coverage against unchanged 86.0% floor; race-checked regressions; 119 web tests; 118 browser tests plus final storage retest; lint clean; generation and build succeeded. |
+| PR and merge | GitHub delivery | One batched PR from `codex/completed-folder-accounting`; its GitHub checks and merge record are the authoritative delivery status. |
 
 ## Decisions and limits
 
@@ -40,3 +40,9 @@ and verification; the user-facing behavior lives in those documents.
 A changed mount identity preserves the last successful counts and blocks deletion.
 Restore the mount, or explicitly save the storage roots again to accept a replacement;
 the next complete scan establishes its baseline.
+
+The first full race run exposed one legacy assertion expecting an absent payload
+to remain pending. The assertion now matches verified absence with a reachable
+parent; missing-parent and changed-mount cases remain pending. Added API, health,
+and reconfiguration cases raised coverage from 85.9% to 86.1% without lowering
+the gate. The final complete Go run and focused race regressions pass.

@@ -63,18 +63,18 @@ export function CompletedFolderSettings() {
   const qc = useQueryClient()
   const [value, setValue] = useState<string | null>(null)
   const save = useMutation({
-    mutationFn: () => updateSettings({ completedRoots: value ?? '' }),
+    mutationFn: () => updateSettings({ completedRoots: value ?? settings.data?.completedRoots ?? '' }),
     onSuccess: () => { setValue(null); void qc.invalidateQueries({ queryKey: ['settings'] }) },
   })
   return <>
     <h3 style={{ marginTop: 18 }}>Download storage folders</h3>
     <p className="muted">Curator-owned working folders, one absolute path per line as seen by the server.
       Every file beneath these roots is accounted for, including completed downloads.
-      Leave blank to use /working/monarr when mounted, otherwise discover download folders. Unknown files remain visible for review.</p>
+      Leave blank to use /working/monarr when mounted, otherwise discover download folders. Unknown files remain visible for review. Saving these folders also accepts their current mount identities after a mount replacement.</p>
     <textarea rows={3} className="mono" aria-label="Download storage folders"
       value={value ?? settings.data?.completedRoots ?? ''} onChange={(e) => setValue(e.target.value)}
       placeholder="/working/monarr" />
-    <button disabled={value === null || save.isPending} onClick={() => save.mutate()}>Save download storage</button>
+    <button disabled={settings.isPending || save.isPending} onClick={() => save.mutate()}>Save download storage</button>
     {save.isSuccess && <p className="muted">Saved — applies on the next inventory scan.</p>}
     {save.error && <p className="error-text">{save.error.message}</p>}
   </>

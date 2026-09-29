@@ -1048,10 +1048,12 @@ once plurx is healthy again.
 
 ## Runner payload cleanup
 
-For native Runner clients, cleanup waits for Runner to confirm deletion.
-A pending operation, retention/recovery hold, authentication failure or
-unavailable Runner keeps the payload pending for the next hourly sweep.
-Curator never bypasses Runner by deleting its mounted directory directly.
+For native Runner clients, cleanup first requests deletion through Runner and
+verifies that the local payload disappeared. Runner-owned source and recovery
+trees stay pending when Runner cannot remove them. Curator may remove a verified
+imported payload directly inside its own declared working trees, including
+`/working/monarr/completed`; it never applies that fallback to Runner-owned
+`/processing` or recovery storage.
 Queue removal falls back to History only when the queue returns HTTP 404.
 
 ## Recover media retained by Runner

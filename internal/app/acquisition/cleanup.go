@@ -304,6 +304,16 @@ func (s *Service) safePayloadPath(ctx context.Context, dl downloadRef) bool {
 			return false
 		}
 	}
+	recovery, err := s.RecoverySettings(ctx)
+	if err != nil {
+		return false
+	}
+	if recovery.LocalRoot != "" {
+		p := storagePath(recovery.LocalRoot, completed)
+		if within(p, real) || within(real, p) {
+			return false
+		}
+	}
 	if err := s.checkStorageIdentity(ctx, real); err != nil {
 		return false
 	}

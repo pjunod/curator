@@ -752,10 +752,10 @@ func TestGapAcqRemoveImportedDirOnlyRemovesAPayloadOutsideEveryRoot(t *testing.T
 		t.Fatal("a root folder or its parent was removed")
 	}
 	// A sibling with a shared prefix is not inside the root, but if it does
-	// not exist there is nothing to do and nothing to record.
+	// is absent with a reachable parent, record that its bytes are gone.
 	svc.removeImportedDir(ctx, downloadRef{ID: newRow("h-missing"), ClientID: client.ID, ImportPath: root + "-old"})
-	if pending() != before+4 {
-		t.Fatalf("refused removals marked a payload as removed: pending %d, want %d", pending(), before+4)
+	if pending() != before+3 {
+		t.Fatalf("refused removals marked a payload as removed: pending %d, want %d", pending(), before+3)
 	}
 
 	// The real payload, outside every root: removed and recorded.
@@ -768,8 +768,8 @@ func TestGapAcqRemoveImportedDirOnlyRemovesAPayloadOutsideEveryRoot(t *testing.T
 	if exists(outside) {
 		t.Fatal("the completed payload directory survived")
 	}
-	if pending() != before+4 {
-		t.Fatalf("the removal was not recorded on the row: pending %d, want %d", pending(), before+4)
+	if pending() != before+3 {
+		t.Fatalf("the removal was not recorded on the row: pending %d, want %d", pending(), before+3)
 	}
 	history, err := db.ListHistory(ctx)
 	if err != nil {

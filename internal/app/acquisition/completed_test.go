@@ -2,9 +2,11 @@ package acquisition
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/domain"
@@ -433,5 +435,133 @@ func TestManualAdmissionAfterDeletionLeavesNoForgottenJob(t *testing.T) {
 	rows, err := db.ListRecentDownloads(ctx)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("invalid admission left a job: %+v %v", rows, err)
+	}
+}
+
+func TestStorageHealthAndRootReconfiguration(t *testing.T) {
+	svc, db, _, root := completedFixture(t)
+	ctx := context.Background()
+	if svc.CompletedHealth(ctx).Status != health.StatusWarning {
+		t.Fatal("unscanned storage healthy")
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if svc.CompletedHealth(ctx).Status != health.StatusOK {
+		t.Fatal("empty scanned storage unhealthy")
+	}
+	report := inventoryRoot(t, svc, root)
+	report.LastCompleteAt = time.Now().Add(-time.Hour)
+	raw, _ := json.Marshal(report)
+	if err := db.SaveCompletedScan(ctx, report.Path, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if svc.CompletedHealth(ctx).Status != health.StatusWarning {
+		t.Fatal("stale storage healthy")
+	}
+	next := t.TempDir()
+	if err := svc.SetCompletedRoots(ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := svc.CompletedInventory(ctx)
+	if err != nil || len(inventory.Roots) != 1 || inventory.Roots[0].Path != canonicalCompletedPath(next) {
+		t.Fatalf("old scope retained: %+v %v", inventory, err)
+	}
+	if err := db.SaveCompletedScan(ctx, canonicalCompletedPath(next), "broken JSON"); err != nil {
+		t.Fatal(err)
+	}
+	if svc.CompletedHealth(ctx).Status != health.StatusWarning {
+		t.Fatal("corrupt inventory healthy")
+	}
+}
+
+func TestStorageDeletionProtectsRecoveryAndUnlocatedDownloads(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	path := filepath.Join(root, "payload")
+	writeCompleted(t, filepath.Join(path, "film.mkv"), 8)
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entry := inventoryRoot(t, svc, root).Entries[0]
+	if err := svc.SetRecoverySettings(ctx, RecoverySettings{LocalRoot: path}); err != nil {
+		t.Fatal(err)
+	}
+	if svc.safePayloadPath(ctx, downloadRef{ImportPath: path}) {
+		t.Fatal("recovery payload allowed automatic cleanup")
+	}
+	if err := svc.DeleteCompletedEntry(ctx, entry.Path, entry.Fingerprint); err == nil {
+		t.Fatal("recovery source deleted")
+	}
+	if err := svc.SetRecoverySettings(ctx, RecoverySettings{LocalRoot: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.InsertDownload(ctx, sqlite.Download{MediaItemID: item, State: "grabbed", Protocol: "usenet"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteCompletedEntry(ctx, entry.Path, entry.Fingerprint); err == nil {
+		t.Fatal("unlocated active work ignored")
+	}
+	if err := svc.DeleteCompletedEntry(ctx, entry.Path, ""); err == nil {
+		t.Fatal("missing review token accepted")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStorageReportsRetentionCleanupAndConflictingClaims(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	for _, state := range []string{"imported", "downloading", "downloaded"} {
+		path := filepath.Join(root, state)
+		writeCompleted(t, filepath.Join(path, "film.mkv"), 8)
+		dl := insertImportable(t, db, item, path)
+		dl.State = state
+		if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	statuses := map[string]string{}
+	for _, entry := range inventoryRoot(t, svc, root).Entries {
+		statuses[filepath.Base(entry.Path)] = entry.Status
+	}
+	if statuses["imported"] != "cleanup_pending" || statuses["downloading"] != "active" || statuses["downloaded"] != "awaiting_import" {
+		t.Fatal(statuses)
+	}
+	clients, err := db.ListDownloadClients(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := clients[0]
+	client.RemoveCompleted = false
+	if err := db.UpdateDownloadClient(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range inventoryRoot(t, svc, root).Entries {
+		if filepath.Base(entry.Path) == "imported" && entry.Status != "retained" {
+			t.Fatalf("retention not explained: %+v", entry)
+		}
+	}
+	dl := insertImportable(t, db, item, filepath.Join(root, "imported"))
+	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range inventoryRoot(t, svc, root).Entries {
+		if filepath.Base(entry.Path) == "imported" && entry.Status != "ambiguous" {
+			t.Fatalf("conflicting claims hidden: %+v", entry)
+		}
 	}
 }

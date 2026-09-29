@@ -43,3 +43,48 @@ func TestCompletedInventorySettingsAndCachedAPI(t *testing.T) {
 		t.Fatal("API performed unrequested disk traversal")
 	}
 }
+
+func TestStorageDeletionAPIRequiresCurrentReview(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	if err := e.acq.SetCompletedRoots(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "orphan.rar")
+	if err := os.WriteFile(path, []byte("payload"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.acq.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := e.acq.CompletedInventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := inv.Roots[0].Entries[0]
+	endpoint := "/api/v1/downloads/inventory/entry"
+	for _, body := range []string{"{", `{"path":"/","fingerprint":"x"}`} {
+		rr := do(t, e.h, http.MethodDelete, endpoint, body)
+		if rr.Code < 400 {
+			t.Fatalf("invalid request accepted: %s", rr.Body.String())
+		}
+	}
+	body, _ := json.Marshal(map[string]string{"path": entry.Path, "fingerprint": entry.Fingerprint})
+	rr := do(t, e.h, http.MethodDelete, endpoint, string(body))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("payload survived: %v", err)
+	}
+	rr = do(t, e.h, http.MethodDelete, endpoint, string(body))
+	if rr.Code != http.StatusConflict {
+		t.Fatal("stale token accepted")
+	}
+	e.srv.deps.Acquisition = nil
+	e.get(t, "/api/v1/downloads/inventory").expect(t, http.StatusOK)
+	if rr := do(t, e.h, http.MethodDelete, endpoint, string(body)); rr.Code != http.StatusServiceUnavailable {
+		t.Fatal("missing service accepted deletion")
+	}
+}
