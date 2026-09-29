@@ -1004,8 +1004,13 @@ Queue removal falls back to History only when the queue returns HTTP 404.
 2. Select regular media files and stage recovery. Runner copies and verifies
    them and holds the original. Temporary, archive and parity files cannot be
    selected as media.
-3. In Curator Settings → Recovery, select the handoff, library title, copy and
-   files. Preview verifies each digest and probes its container.
+3. In Curator Settings → Recovery, choose the handoff from the table (it is
+   named by its source folder; a copy Runner is still making or failed to
+   make cannot be chosen, and says why), search for the library title, map
+   series files to `season:episodes` if the filenames do not say, then
+   preview. Preview verifies each digest and probes its container. If the
+   readiness strip says the recovery mount is missing, fix the mount first —
+   nothing on this page can work without it.
 4. Queue the import from that preview. A changed target requires another
    preview. Follow the durable import status until Runner receives the receipt.
 

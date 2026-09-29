@@ -1415,7 +1415,7 @@ export const getMetadataPreview = (query: string) => get<MetadataPreview>(`/meta
 
 export interface RecoverySettings { enabled: boolean; local_root: string; remote_root: string; consumer_token?: string; credential_configured?: boolean }
 export interface RecoveryFile { id: string; path: string; bytes: number; sha256: string }
-export interface RunnerRecovery { id: string; client_id: number; state: string; files: RecoveryFile[]; error?: string; manifest_digest: string; installation: string }
+export interface RunnerRecovery { id: string; client_id: number; state: string; files: RecoveryFile[]; error?: string; manifest_digest: string; installation: string; source?: string; consumer?: string; created_at?: number; updated_at?: number }
 export interface RecoveryRequest { preview_id?: string; episode_targets?: Record<string, { season: number; episodes: number[] }>;  client_id: number; recovery_id: string; media_item_id: number; copy_id: number; file_ids: string[]; target_generation: string; accept_unverified: boolean }
 export interface RecoveryPreview { request: RecoveryRequest; recovery: RunnerRecovery; target: string; copy_bytes: number; files: (RecoveryFile & { usable: boolean; reason: string; destination: string; existing: string[]; season: number; episodes: number[] })[] }
 export interface RecoveryImport { id: string; state: string; error?: string; current_file?: string; copied_bytes?: number; total_bytes?: number }
