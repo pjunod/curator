@@ -73,3 +73,17 @@ operator preference; explicit recovery and committed receipt delivery remain liv
 The implementation adds rollback/receipt atomicity, restart reconciliation,
 changed-target/digest, native recovery and cancellation regression cases.
 Final adversarial review and the repository gates must pass before merge.
+
+## 2026-09-30: durable Runner holds and retained observations
+
+An active acquisition stores Runner control/revision facts independently of
+transfer progress. Held episode/season overlap is checked under the final
+acquisition admission lock. Resume addresses the existing client handle and
+waits for a newer same-instance fact before clearing suppression. Migration
+0037 rollback refuses any stored control facts to avoid silently losing custody.
+
+Retained-file dry-run plans are provisional during overlapping active work.
+They bind source identity and SHA-256 and observe the library revision and
+pending placement receipts. Revalidation still grants no mutation lease.
+Placement, receipt acknowledgement and identity checks remain the only path
+to separately authorized import and cleanup.

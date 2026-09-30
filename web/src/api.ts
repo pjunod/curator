@@ -825,6 +825,8 @@ export interface HandoffEntry {
 }
 
 export interface QueueItem {
+  control?: { version: number; revision: string; lifecycle: string; cause: string; stage: string; retry_policy: string; message: string; instance: string }
+
   id: number
   mediaItemId: number
   copyId?: number
@@ -953,6 +955,7 @@ export const getHistory = (mediaItemId?: number, limit = 100, offset = 0) => {
 }
 export const removeQueueItem = (id: number, fromClient: boolean) =>
   send('DELETE', `/queue/${id}?fromClient=${fromClient}`)
+export const resumeQueueItem = (id: number) => send('POST', `/queue/${id}/resume`)
 export const importQueueItem = (id: number) => send('POST', `/queue/${id}/import`)
 export const cancelQueueImport = (id: number) => send('POST', `/queue/${id}/cancel-import`)
 export const blocklistQueueItem = (id: number) => send('POST', `/queue/${id}/blocklist`)

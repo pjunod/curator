@@ -205,7 +205,7 @@ func TestWholeWorkingTreeSplitsCompletedAndCountsSiblings(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := inventoryRoot(t, svc, root)
-	if got.Bytes != 35 || len(got.Entries) != 4 {
+	if got.Bytes != 35 || len(got.Entries) != 3 {
 		t.Fatalf("working tree not fully accounted: %+v", got)
 	}
 	count := 0
@@ -216,6 +216,60 @@ func TestWholeWorkingTreeSplitsCompletedAndCountsSiblings(t *testing.T) {
 	}
 	if count != 3 {
 		t.Fatalf("completed contents were collapsed: %+v", got)
+	}
+}
+
+func TestCompletedInventoryHidesCachedStorageContainer(t *testing.T) {
+	svc, db, _, root := completedFixture(t)
+	ctx := context.Background()
+	report := CompletedRoot{Path: root, Bytes: 42, Error: "mount unavailable", Entries: []CompletedEntry{
+		{Path: filepath.Join(root, "completed"), Status: "storage"},
+		{Path: filepath.Join(root, "completed", "release"), Status: "untracked", Bytes: 42, Files: 1},
+	}}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveCompletedScan(ctx, root, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := svc.CompletedInventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inv.Roots) != 1 || len(inv.Roots[0].Entries) != 1 || inv.Bytes != 42 || inv.Attention != 1 || inv.Roots[0].Error != report.Error {
+		t.Fatalf("cached container affected inventory: %+v", inv)
+	}
+}
+
+func TestCompletedContainerDoesNotHideFilesOrSymlinksNamedCompleted(t *testing.T) {
+	for _, kind := range []string{"empty directory", "file", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			svc, _, _, root := completedFixture(t)
+			path := filepath.Join(root, "completed")
+			wantEntries, wantBytes := 1, int64(0)
+			switch kind {
+			case "empty directory":
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				wantEntries = 0
+			case "file":
+				writeCompleted(t, path, 7)
+				wantBytes = 7
+			case "symlink":
+				if err := os.Symlink(t.TempDir(), path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := svc.ScanCompleted(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			got := inventoryRoot(t, svc, root)
+			if len(got.Entries) != wantEntries || got.Bytes != wantBytes {
+				t.Fatalf("incorrect container handling: %+v", got)
+			}
+		})
 	}
 }
 

@@ -2241,6 +2241,9 @@ type QueueItem struct {
 	BytesPerSecond *float32 `json:"bytesPerSecond,omitempty"`
 	ClientId       *int64   `json:"clientId,omitempty"`
 
+	// Control Runner persisted control; revision is a decimal string.
+	Control *map[string]interface{} `json:"control,omitempty"`
+
 	// CopyId The media copy this grab targets; 0 = the primary copy.
 	CopyId *int64  `json:"copyId,omitempty"`
 	Error  *string `json:"error,omitempty"`
@@ -2951,6 +2954,9 @@ type ListHistoryParams struct {
 	Offset      *int   `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// PlanRetainedRecoveryJSONBody defines parameters for PlanRetainedRecovery.
+type PlanRetainedRecoveryJSONBody = []map[string]interface{}
+
 // ScanImportPathParams defines parameters for ScanImportPath.
 type ScanImportPathParams struct {
 	Path string `form:"path" json:"path"`
@@ -3142,6 +3148,9 @@ type QueueRecoveryImportJSONRequestBody = RecoveryImportRequest
 // PreviewRecoveryImportJSONRequestBody defines body for PreviewRecoveryImport for application/json ContentType.
 type PreviewRecoveryImportJSONRequestBody = RecoveryImportRequest
 
+// PlanRetainedRecoveryJSONRequestBody defines body for PlanRetainedRecovery for application/json ContentType.
+type PlanRetainedRecoveryJSONRequestBody = PlanRetainedRecoveryJSONBody
+
 // PutRecoverySettingsJSONRequestBody defines body for PutRecoverySettings for application/json ContentType.
 type PutRecoverySettingsJSONRequestBody = RecoverySettings
 
@@ -3318,6 +3327,9 @@ type ServerInterface interface {
 	// GetRecoveryPreview Read a persisted recovery preview
 	// (GET /import/recovery/previews/{id})
 	GetRecoveryPreview(w http.ResponseWriter, r *http.Request, id string)
+
+	// (POST /import/recovery/retained/plan)
+	PlanRetainedRecovery(w http.ResponseWriter, r *http.Request)
 
 	// (GET /import/recovery/settings)
 	GetRecoverySettings(w http.ResponseWriter, r *http.Request)
@@ -3537,6 +3549,9 @@ type ServerInterface interface {
 	// ImportQueueItem Import a download now — approve a held one, or retry a failed one
 	// (POST /queue/{id}/import)
 	ImportQueueItem(w http.ResponseWriter, r *http.Request, id int64)
+	// ResumeQueueItem Resume the retained Runner job after resource admission
+	// (POST /queue/{id}/resume)
+	ResumeQueueItem(w http.ResponseWriter, r *http.Request, id int64)
 	// ListRootFolders List library root folders
 	// (GET /rootfolders)
 	ListRootFolders(w http.ResponseWriter, r *http.Request)
@@ -4213,6 +4228,20 @@ func (siw *ServerInterfaceWrapper) GetRecoveryPreview(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetRecoveryPreview(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PlanRetainedRecovery operation middleware
+func (siw *ServerInterfaceWrapper) PlanRetainedRecovery(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlanRetainedRecovery(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6109,6 +6138,32 @@ func (siw *ServerInterfaceWrapper) ImportQueueItem(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// ResumeQueueItem operation middleware
+func (siw *ServerInterfaceWrapper) ResumeQueueItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResumeQueueItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRootFolders operation middleware
 func (siw *ServerInterfaceWrapper) ListRootFolders(w http.ResponseWriter, r *http.Request) {
 
@@ -6648,6 +6703,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/failed", wrapper.ClearFailedQueue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resume", wrapper.ResumeQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/cancel-import", wrapper.CancelQueueImport)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/blocklist", wrapper.BlocklistQueueItem)
@@ -6657,6 +6713,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/import/recovery/settings", wrapper.PutRecoverySettings)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery", wrapper.ListRecoveries)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/recovery", wrapper.QueueRecoveryImport)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/recovery/retained/plan", wrapper.PlanRetainedRecovery)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/recovery/preview", wrapper.PreviewRecoveryImport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/previews/{id}", wrapper.GetRecoveryPreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/jobs", wrapper.ListRecoveryImports)

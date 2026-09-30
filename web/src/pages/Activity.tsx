@@ -18,6 +18,7 @@ import {
   getQueuePage,
   getQueueSummary,
   importQueueItem,
+  resumeQueueItem,
   manualImport,
   removeQueueItem,
   scanImportPath,
@@ -169,6 +170,9 @@ function sections(rows: QueueItem[]): Section[] {
 // is a different and usually false statement about a job that is midway
 // through repairing a 60 GB archive.
 function StageProgress({ d }: { d: QueueItem }) {
+  if (d.control && (d.control.lifecycle === 'held' || d.control.version !== 1)) {
+    return <div><span className="pill pill-neutral">Held</span><div className="muted">{d.control.message}</div><div className="muted">Transfer {Math.round(d.progress * 100)}% · import pending</div></div>
+  }
   if (d.importState === 'queued') {
     return <span className="muted">Waiting for an import worker</span>
   }
@@ -266,7 +270,10 @@ export function ActivityPage() {
   }
   const remove = useMutation({ mutationFn: (id: number) => removeQueueItem(id, false), onSettled: invalidate })
   const doImport = useMutation({
-    mutationFn: (id: number) => importQueueItem(id),
+    mutationFn: (id: number) => {
+      const row = active.data?.find((d) => d.id === id)
+      return row?.control?.lifecycle === 'held' ? resumeQueueItem(id) : importQueueItem(id)
+    },
     onMutate: () => setActionErr(''),
     onError: (e: Error) => setActionErr(e.message),
     onSettled: invalidate,
@@ -530,7 +537,8 @@ function RowGroup(props: {
   const interruptedImport = d.state === 'importing' && !d.stage && !d.importState
   const activeImport = d.stage === 'importing'
   const importerOwned = queuedImport || startingImport || activeImport
-  const canBlocklist = d.state !== 'imported' && !importerOwned
+  const held = !!d.control && (d.control.lifecycle === 'held' || d.control.version !== 1)
+  const canBlocklist = d.state !== 'imported' && !importerOwned && !held
 
   return (
     <>
@@ -589,12 +597,13 @@ function RowGroup(props: {
         </td>
         <td>
           <div className="row-actions">
-            {canImport && (
+            {held && d.control?.retry_policy === 'resume_same_job' && <button onClick={props.onImport} disabled={busy}>Resume same job</button>}
+            {canImport && !held && (
               <button onClick={props.onImport} disabled={busy}>
                 Import now
               </button>
             )}
-            {canRetry && (
+            {canRetry && !held && (
               <>
                 <button onClick={props.onImport} disabled={busy}>
                   Retry

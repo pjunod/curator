@@ -2,9 +2,11 @@ package nzbd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,21 @@ type sseServer struct {
 	frames    []string
 	holdOpen  bool
 	connCount int
+}
+
+func TestFailureFileDetailsAgreeBetweenPollAndPush(t *testing.T) {
+	note := "checked move pending: Invalid argument"
+	polled := statusOfHistory(historyEntry{Job: 1682, Name: "Season", Status: "UNPACK_FAILURE",
+		FinalDir: "/completed/Season", Params: [][2]string{{"Failure:Files", note}}})
+	events := translate("job_pp_finished", `{"job":1682,"name":"Season","pp_status":"UNPACK_FAILURE","final_dir":"/completed/Season","params":[["Failure:Files","checked move pending: Invalid argument"]]}`, "boot-42")
+	if len(events) != 1 {
+		t.Fatalf("events = %+v", events)
+	}
+	pushed := events[0]
+	if polled.State != ports.StateFailed || polled.SavePath != "/completed/Season" ||
+		polled.Message != "UNPACK_FAILURE; files: "+note || pushed.Kind != ports.EventFailed || pushed.Status != polled {
+		t.Fatalf("failure detail lost: poll=%+v push=%+v", polled, pushed)
+	}
 }
 
 func newSSE(t *testing.T, frames []string, holdOpen bool) *sseServer {
@@ -328,3 +345,17 @@ func TestWrappedDataLinesAreOnePayload(t *testing.T) {
 }
 
 var _ ports.Subscriber = (*Client)(nil)
+
+func TestControlGoldenDecimalRevisionAndUnknownFields(t *testing.T) {
+	raw, err := os.ReadFile("testdata/job-control-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var control ports.DownloadControl
+	if err := json.Unmarshal(raw, &control); err != nil {
+		t.Fatal(err)
+	}
+	if control.Revision != "9007199254740993" || !control.Held() || control.Instance != "synthetic-runner-instance" {
+		t.Fatalf("contract mismatch %+v", control)
+	}
+}

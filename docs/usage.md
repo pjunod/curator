@@ -593,7 +593,9 @@ Activity → **Download storage** inventories the whole Curator-owned working
 tree independently of the queue. The deployed `/working/monarr` root contains
 `completed`, also mounted at `/downloads`; both names refer to the same
 files. Each completed payload is shown individually alongside files elsewhere
-in the working tree.
+in the working tree. The `completed` container itself is omitted from the list
+and entry count; its contents still contribute to the measured bytes. Older
+cached scans also hide that container without waiting for another scan.
 `downloads.inventory` runs on startup and every five minutes. It includes
 hidden entries, loose files, archives, and nested files, grouped by payload below `completed` or by the first
 path component elsewhere in each configured root. Symbolic links are listed but their
@@ -617,6 +619,16 @@ associations are never automatically deleted. Clearing Activity preserves
 path, release, and state receipts independently, including through restarts.
 Files whose records were already erased before this upgrade appear as
 untracked; the upgrade cannot reconstruct that lost history.
+
+A full download progress bar does not prove a complete payload. PAR repair,
+archive extraction, or a disk write can fail after most bytes arrive. A failed
+season may contain usable episodes alongside missing or unfinished ones.
+Monarr preserves any payload path reported with the failure so these files
+remain associated with the failed download and available for manual review.
+Native Runner failure details also include its `Failure:Files` explanation
+when available, such as a failed move into failed-download storage. These
+failures still use the existing blocklist and bounded replacement search;
+retained media is not automatically declared complete or imported.
 
 The **Storage entries** list starts collapsed; click its heading to expand or
 collapse it. The heading shows the total entry count. Storage totals, scan
@@ -1188,3 +1200,21 @@ versions. Overlapping episode assignments or destinations require a new preview.
 Recognized obfuscated video keeps its source filename and receives a native
 container extension at its library destination. Cancellation rolls back any
 published placement that has not yet committed library metadata.
+
+## Runner holds and retained recovery plans
+
+Activity shows a Runner storage or review hold separately from transferred
+bytes. A 100% transfer still needs verified post-processing and import.
+**Resume same job** calls the existing Runner job's resume action. The active
+acquisition remains in the database until a newer authoritative control fact
+resolves the corresponding hold; late completion/failure events cannot erase it.
+Season and episode grabs check held overlap at final admission.
+
+`POST /api/v1/import/recovery/retained/plan` accepts up to 1,000 candidate
+files and returns per-file identity, digest, intended episode/copy destination,
+existing library digests, duplicates, capacity forecast and blocked reason.
+Candidate evidence includes an expected SHA-256 and complete-coverage claim.
+Known partials, active parent paths and pending placement acknowledgements
+remain blocked. This endpoint only observes files; its result grants no lease,
+import permission or cleanup authority. Use the existing recovery preview and
+placement/receipt workflow for separately authorized recovery.

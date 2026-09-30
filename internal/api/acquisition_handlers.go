@@ -629,6 +629,12 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			Protocol: d.Protocol, Quality: d.Quality.Display(),
 			SavePath: &save, ImportPath: &imp, AddedAt: d.AddedAt,
 		}
+		if d.RunnerControl != "" {
+			var control map[string]interface{}
+			if json.Unmarshal([]byte(d.RunnerControl), &control) == nil {
+				item.Control = &control
+			}
+		}
 		if d.MatchEvidence.Version > 0 {
 			match := apiMatchEvidence(d.MatchEvidence)
 			item.Match = &match
@@ -1859,4 +1865,12 @@ func (s *Server) ListHistory(w http.ResponseWriter, r *http.Request, params apig
 		out = append(out, ev)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) ResumeQueueItem(w http.ResponseWriter, r *http.Request, id int64) {
+	if err := s.deps.Acquisition.ResumeHeldDownload(r.Context(), id); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

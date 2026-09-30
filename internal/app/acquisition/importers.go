@@ -214,7 +214,7 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 		if err != nil {
 			return
 		}
-		if fresh.State == "imported" || ctx.Err() != nil {
+		if fresh.State == "imported" || ctx.Err() != nil || persistedDownloadHeld(fresh.RunnerControl) {
 			return
 		}
 		// The normal path persisted these before enqueue. Keeping a non-empty

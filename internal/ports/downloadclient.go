@@ -110,7 +110,27 @@ const (
 )
 
 // DownloadStatus is one item's live state in a client.
+// DownloadControl is Runner's additive persisted control contract. Its
+// revision is scoped to this client, handle, instance and transfer association.
+type DownloadControl struct {
+	Version     int    `json:"version"`
+	Revision    string `json:"revision"`
+	Lifecycle   string `json:"lifecycle"`
+	Cause       string `json:"cause"`
+	Stage       string `json:"stage"`
+	RetryPolicy string `json:"retry_policy"`
+	Message     string `json:"message"`
+	Instance    string `json:"instance"`
+}
+
+func (c *DownloadControl) Held() bool {
+	return c != nil && (c.Version != 1 || c.Lifecycle == "held" ||
+		(c.Lifecycle != "running" && c.Lifecycle != "succeeded" && c.Lifecycle != "failed"))
+}
+
 type DownloadStatus struct {
+	Control *DownloadControl
+
 	Handle   Handle
 	Name     string
 	State    DownloadState
@@ -301,4 +321,9 @@ func (c Capacity) Problems() []string {
 // same shape as TaggedAdder and Subscriber.
 type CapacityReporter interface {
 	Capacity(ctx context.Context) (Capacity, error)
+}
+
+// SameJobResumer resumes the existing handle after resource admission.
+type SameJobResumer interface {
+	Resume(context.Context, Handle) error
 }

@@ -75,6 +75,7 @@ type Download struct {
 	Transfer       string
 	PayloadRemoved int64
 	MatchEvidence  string
+	RunnerControl  string
 }
 
 type DownloadClient struct {

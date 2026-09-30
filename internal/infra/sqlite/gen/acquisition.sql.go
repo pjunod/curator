@@ -171,7 +171,7 @@ func (q *Queries) DeleteTerminalDownloadsBefore(ctx context.Context, updatedAt i
 }
 
 const getDownload = `-- name: GetDownload :one
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed, match_evidence FROM downloads WHERE id = ?
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed, match_evidence, runner_control FROM downloads WHERE id = ?
 `
 
 func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
@@ -201,6 +201,7 @@ func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
 		&i.Transfer,
 		&i.PayloadRemoved,
 		&i.MatchEvidence,
+		&i.RunnerControl,
 	)
 	return i, err
 }
@@ -471,7 +472,7 @@ func (q *Queries) InsertProfile(ctx context.Context, arg InsertProfileParams) (i
 }
 
 const listActiveDownloads = `-- name: ListActiveDownloads :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed, match_evidence FROM downloads
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed, match_evidence, runner_control FROM downloads
 WHERE state IN ('grabbed', 'downloading', 'downloaded', 'awaiting_import', 'importing')
 ORDER BY added_at DESC
 `
@@ -511,6 +512,7 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 			&i.Transfer,
 			&i.PayloadRemoved,
 			&i.MatchEvidence,
+			&i.RunnerControl,
 		); err != nil {
 			return nil, err
 		}
@@ -802,7 +804,7 @@ func (q *Queries) ListHistoryPageForItem(ctx context.Context, arg ListHistoryPag
 }
 
 const listImportedWithPayload = `-- name: ListImportedWithPayload :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed, match_evidence FROM downloads
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed, match_evidence, runner_control FROM downloads
 WHERE state = 'imported' AND payload_removed = 0 AND handle != ''
 ORDER BY added_at LIMIT ?
 `
@@ -844,6 +846,7 @@ func (q *Queries) ListImportedWithPayload(ctx context.Context, limit int64) ([]D
 			&i.Transfer,
 			&i.PayloadRemoved,
 			&i.MatchEvidence,
+			&i.RunnerControl,
 		); err != nil {
 			return nil, err
 		}
@@ -927,7 +930,7 @@ func (q *Queries) ListProfiles(ctx context.Context) ([]QualityProfile, error) {
 }
 
 const listQueuePage = `-- name: ListQueuePage :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed, match_evidence FROM downloads
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed, match_evidence, runner_control FROM downloads
 WHERE (? = ''
     OR (? = 'active' AND state NOT IN ('imported', 'failed'))
     OR state = ?)
@@ -992,6 +995,7 @@ func (q *Queries) ListQueuePage(ctx context.Context, arg ListQueuePageParams) ([
 			&i.Transfer,
 			&i.PayloadRemoved,
 			&i.MatchEvidence,
+			&i.RunnerControl,
 		); err != nil {
 			return nil, err
 		}
@@ -1007,7 +1011,7 @@ func (q *Queries) ListQueuePage(ctx context.Context, arg ListQueuePageParams) ([
 }
 
 const listRecentDownloads = `-- name: ListRecentDownloads :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed, match_evidence FROM downloads ORDER BY added_at DESC LIMIT 100
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, updated_at, transfer, payload_removed, match_evidence, runner_control FROM downloads ORDER BY added_at DESC LIMIT 100
 `
 
 func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
@@ -1043,6 +1047,7 @@ func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 			&i.Transfer,
 			&i.PayloadRemoved,
 			&i.MatchEvidence,
+			&i.RunnerControl,
 		); err != nil {
 			return nil, err
 		}
@@ -1195,6 +1200,32 @@ func (q *Queries) UpdateDownloadClient(ctx context.Context, arg UpdateDownloadCl
 		arg.ManualApproval,
 		arg.Mode,
 		arg.RemoveCompleted,
+		arg.ID,
+	)
+	return err
+}
+
+const updateDownloadControl = `-- name: UpdateDownloadControl :exec
+UPDATE downloads SET runner_control = ?, state = ?, progress = ?, error = ?,
+    updated_at = ? WHERE id = ?
+`
+
+type UpdateDownloadControlParams struct {
+	RunnerControl string
+	State         string
+	Progress      float64
+	Error         string
+	UpdatedAt     int64
+	ID            int64
+}
+
+func (q *Queries) UpdateDownloadControl(ctx context.Context, arg UpdateDownloadControlParams) error {
+	_, err := q.db.ExecContext(ctx, updateDownloadControl,
+		arg.RunnerControl,
+		arg.State,
+		arg.Progress,
+		arg.Error,
+		arg.UpdatedAt,
 		arg.ID,
 	)
 	return err

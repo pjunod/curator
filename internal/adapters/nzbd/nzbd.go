@@ -175,14 +175,15 @@ const TransferParam = "monarr-transfer"
 
 // job is one row of `GET /api/v1/jobs`.
 type job struct {
-	ID              int64           `json:"id"`
-	Name            string          `json:"name"`
-	Status          json.RawMessage `json:"status"`
-	SizeBytes       int64           `json:"size_bytes"`
-	DownloadedBytes int64           `json:"downloaded_bytes"`
-	PPDone          bool            `json:"pp_done"`
-	Ready           bool            `json:"ready"`
-	Stages          []stageSpan     `json:"stages"`
+	ID              int64                  `json:"id"`
+	Name            string                 `json:"name"`
+	Status          json.RawMessage        `json:"status"`
+	SizeBytes       int64                  `json:"size_bytes"`
+	DownloadedBytes int64                  `json:"downloaded_bytes"`
+	PPDone          bool                   `json:"pp_done"`
+	Ready           bool                   `json:"ready"`
+	Stages          []stageSpan            `json:"stages"`
+	Control         *ports.DownloadControl `json:"control"`
 }
 
 type stageSpan struct {
@@ -202,6 +203,10 @@ func (j job) downloadComplete() bool {
 // `{"post":{"stage":"unpack"}}` while post-processing runs, so this
 // decodes both shapes rather than assuming either.
 func (j job) state() (ports.DownloadState, string, string) {
+	if j.Control.Held() {
+		return ports.StateQueued, j.Control.Message, j.Control.Stage
+	}
+
 	// The timeline is the durable activity fact during delayed-PAR recovery.
 	// nzbd temporarily switches the top-level status back into its download
 	// lifecycle while fetching recovery volumes, but deliberately leaves the
@@ -238,8 +243,12 @@ func (j job) state() (ports.DownloadState, string, string) {
 				return ports.StateDownloading, "post-processing complete; waiting for final path", ""
 			}
 			return ports.StateDownloading, "download complete; waiting for post-processing", ""
-		case "failed", "deleted":
-			return ports.StateFailed, simple, ""
+		case "failed":
+			// A coarse queue failure precedes authoritative terminal history.
+			// Never replace while its cause/retained custody is unresolved.
+			return ports.StateQueued, "waiting for authoritative failure outcome", ""
+		case "deleted":
+			return ports.StateRemoved, "removed in nzbd", ""
 		default:
 			return ports.StateDownloading, "", ""
 		}
@@ -259,11 +268,12 @@ func (j job) state() (ports.DownloadState, string, string) {
 
 // historyEntry is one row of `GET /api/v1/history`.
 type historyEntry struct {
-	Job      int64  `json:"job"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	FinalDir string `json:"final_dir"`
-	Seq      int64  `json:"seq"`
+	Job      int64       `json:"job"`
+	Name     string      `json:"name"`
+	Status   string      `json:"status"`
+	FinalDir string      `json:"final_dir"`
+	Seq      int64       `json:"seq"`
+	Params   [][2]string `json:"params"`
 }
 
 // Statuses implements ports.DownloadClient: the live queue plus recent
@@ -292,7 +302,7 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 		// During that overlap the history row is the only observation carrying
 		// final_dir, so do not let the pathless queue copy win matchStatus's
 		// first-match rule.
-		if _, ok := historical[j.ID]; ok {
+		if _, ok := historical[j.ID]; ok && !j.Control.Held() {
 			continue
 		}
 		st, msg, stage := j.state()
@@ -301,6 +311,7 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 			progress = float64(j.DownloadedBytes) / float64(j.SizeBytes)
 		}
 		out = append(out, ports.DownloadStatus{
+			Control:  j.Control,
 			Handle:   ports.Handle(strconv.FormatInt(j.ID, 10)),
 			Name:     j.Name,
 			State:    st,
@@ -357,6 +368,12 @@ func statusOfHistory(h historyEntry) ports.DownloadStatus {
 	default:
 		st.State = ports.StateFailed
 		st.Message = h.Status
+		for _, param := range h.Params {
+			if param[0] == "Failure:Files" && strings.TrimSpace(param[1]) != "" {
+				st.Message += "; files: " + param[1]
+				break
+			}
+		}
 	}
 	return st
 }
@@ -482,6 +499,20 @@ func (c *Client) RecoveryRequest(ctx context.Context, method, path, recoveryToke
 	}
 	if out != nil {
 		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+// Resume always targets the retained Runner job; it never submits an NZB.
+func (c *Client) Resume(ctx context.Context, h ports.Handle) error {
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/jobs/"+url.PathEscape(string(h))+"/actions/resume", &result); err != nil {
+		return err
+	}
+	if !result.OK {
+		return fmt.Errorf("runner resource or custody hold is unresolved")
 	}
 	return nil
 }

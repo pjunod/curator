@@ -218,8 +218,10 @@ without re-entering the password.
 absolute paths as seen by the server, one per line (`completedRoots` in `PUT /api/v1/settings`). When set,
 this list selects the owned inventory roots. Leave it blank to use
 `/working/monarr` when mounted (saved on first discovery so a later missing
-mount remains an error on that same root). This includes `completed` and every sibling
-entry; `/downloads` bind-mounted to the same completed folder is recognized
+mount remains an error on that same root). This includes the contents of
+`completed` and every sibling entry; the `completed` container is not a media
+entry and is omitted from the list and count. `/downloads` bind-mounted to
+the same completed folder is recognized
 by filesystem identity. Without that standard mount, local client mappings
 and saved payload parents are inventoried, falling back to `/pool/downloads`.
 Discovered fallback paths are observed without granting local deletion
@@ -857,3 +859,17 @@ current selection preserves them. The policy then governs new metadata rows,
 independently of the series pause switch. See [Monitoring](usage.md#monitoring-series-seasons-episodes)
 for the date boundaries and refresh behavior. These choices also appear when
 adding a series.
+
+## Runner resource recovery
+
+Runner v1 control facts use decimal-string revisions and a stable instance
+identity. Monarr persists them with active acquisition state in migration 0037.
+Missing facts cannot clear a previous hold. Unknown versions remain reviewable.
+Instance changes require explicit reconciliation; revisions are never compared
+across lost continuity. The resume action requires Runner capacity admission and
+a bounded write/flush health probe. Quota recovery requires explicit operator
+release when authoritative quota telemetry is unavailable.
+
+Registry-generation relocation remains disabled in ordinary Runner calls.
+Enablement needs verified consumer isolation, actual-path mappings and deployment
+mount durability evidence. No new production enablement setting is exposed.

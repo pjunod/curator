@@ -48,6 +48,50 @@ func completed(save string) []ports.DownloadStatus {
 	return []ports.DownloadStatus{{Handle: "h1", Name: epRelease, State: ports.StateCompleted, Progress: 1, SavePath: save}}
 }
 
+func TestFailedClientPayloadRemainsAssociatedForRecovery(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, item := setup(t, nil, client)
+	ctx := context.Background()
+	local := t.TempDir()
+	path := filepath.Join(local, "release")
+	writeCompleted(t, filepath.Join(path, "partial.mkv"), 12)
+	cfg, err := db.GetDownloadClient(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.PathMappings = []ports.PathMapping{{Remote: "/remote/completed", Local: local}}
+	if err := db.UpdateDownloadClient(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetCompletedRoots(ctx, local); err != nil {
+		t.Fatal(err)
+	}
+	id := grabEpisode(t, svc)
+	client.statuses = []ports.DownloadStatus{{Handle: "h1", Name: epRelease,
+		State: ports.StateFailed, Progress: 1, Message: "UNPACK_FAILURE", SavePath: "/remote/completed/release"}}
+	if err := svc.RefreshQueue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dl, err := db.GetDownload(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dl.State != "failed" || dl.SavePath != "/remote/completed/release" || dl.ImportPath != path {
+		t.Fatalf("failed payload path lost: %+v", dl)
+	}
+	full, err := db.GetMediaItemFull(ctx, item)
+	if err != nil || len(full.Files) != 0 {
+		t.Fatalf("failed payload auto-imported: %+v, %v", full.Files, err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	root := inventoryRoot(t, svc, local)
+	if len(root.Entries) != 1 || root.Entries[0].Status != "failed" || len(root.Entries[0].Receipts) != 1 || root.Entries[0].Receipts[0].DownloadID != id {
+		t.Fatalf("failed files incorrectly untracked: %+v", root)
+	}
+}
+
 func grabEpisode(t *testing.T, svc *Service) int64 {
 	t.Helper()
 	id, err := svc.Grab(context.Background(), GrabRequest{

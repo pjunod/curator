@@ -1597,6 +1597,15 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /queue/{id}/resume:
+    post:
+      operationId: resumeQueueItem
+      summary: Resume the retained Runner job after resource admission
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "204": { description: Resume requested; hold clears on authoritative state }
+        "409": { description: Hold remains unresolved }
   /queue/{id}/import:
     post:
       operationId: importQueueItem
@@ -1735,6 +1744,24 @@ paths:
             application/json:
               schema: { type: object, additionalProperties: true }
         '409': { description: Preview changed or recovery held }
+  /import/recovery/retained/plan:
+    post:
+      operationId: planRetainedRecovery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              maxItems: 1000
+              items: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Provisional per-file dry-run observations without mutation authority
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '409': { description: Inventory changed while planning }
   /import/recovery/preview:
     post:
       operationId: previewRecoveryImport
@@ -4821,6 +4848,10 @@ components:
           description: >
             grabbed | downloading | downloaded | awaiting_import | importing
             | imported | failed.
+        control:
+          type: object
+          additionalProperties: true
+          description: Runner persisted control; revision is a decimal string.
         progress: { type: number }
         protocol: { type: string }
         quality: { type: string }
