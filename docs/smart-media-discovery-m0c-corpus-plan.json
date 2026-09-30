@@ -1,0 +1,47 @@
+{
+  "version": "m0c-corpus-plan-v1",
+  "frozen_local_date": "2026-09-29",
+  "ranking_seen_before_freeze": ["T01", "T02"],
+  "roles": {
+    "tuning": "T01-T12; may guide route, text and score calibration",
+    "held_out": "H01-H12; no model order may be inspected until identities, labels and scoring version are frozen"
+  },
+  "candidate_capture": {
+    "gay_male": "six exact lookups; R3 gay-theme, BL and lgbt page 1; §5 fixed merge and 30/28 enrichment",
+    "seed": "seed detail; recommendations page 1, similar page 1, recommendations page 2; §5 fixed merge",
+    "other_themes": "exploratory exact-alias TMDB discovery snapshot plus independent editorial identity targets; report route as unverified and do not count it as shipping retrieval",
+    "identity": "preserve exact TMDB IDs and year for same-name remakes; no title-substitution after capture",
+    "synthetic": "separate parser/filter/failure fixtures; never substitute for real-provider quality rows"
+  },
+  "queries": [
+    {"id":"T01","split":"tuning","mode":"theme","theme":"gay_male","prose":"gay-themed TV series","filters":{},"strata":["motivating","broad"]},
+    {"id":"T02","split":"tuning","mode":"seed","seed_tmdb_id":57774,"prose":"shows like Looking","filters":{},"strata":["seed","adult_friendship"]},
+    {"id":"T03","split":"tuning","mode":"combined","theme":"gay_male","seed_tmdb_id":57774,"prose":"gay-themed shows like Looking","filters":{},"strata":["combined","motivating"]},
+    {"id":"T04","split":"tuning","mode":"theme","theme":"gay_male","prose":"gay-themed TV series, no teen dramas","filters":{"excludeTeenFocus":true},"strata":["teen_exclusion"]},
+    {"id":"T05","split":"tuning","mode":"seed","seed_tmdb_id":122009,"prose":"shows like Bad Buddy","filters":{},"strata":["seed","regional"]},
+    {"id":"T06","split":"tuning","mode":"combined","theme":"gay_male","seed_tmdb_id":122009,"prose":"gay-themed shows like Bad Buddy","filters":{},"strata":["combined","regional"]},
+    {"id":"T07","split":"tuning","mode":"theme","theme":"lgbtq","prose":"LGBTQ+ stories","filters":{},"strata":["broad_lgbtq"]},
+    {"id":"T08","split":"tuning","mode":"theme","theme":"lesbian","prose":"lesbian stories","filters":{},"strata":["gay_vs_lesbian"]},
+    {"id":"T09","split":"tuning","mode":"theme","theme":"coming_of_age","prose":"coming-of-age TV series","filters":{},"strata":["non_lgbtq_theme"]},
+    {"id":"T10","split":"tuning","mode":"theme","theme":"found_family","prose":"found family TV series","filters":{},"strata":["non_lgbtq_theme"]},
+    {"id":"T11","split":"tuning","mode":"theme","theme":"political_drama","prose":"political drama TV series","filters":{},"strata":["non_lgbtq_theme"]},
+    {"id":"T12","split":"tuning","mode":"theme","theme":"space_exploration","prose":"space exploration TV series","filters":{},"strata":["non_lgbtq_theme"]},
+    {"id":"H01","split":"held_out","mode":"theme","theme":"gay_male","prose":"gay-themed Asian series","filters":{},"strata":["regional","motivating"]},
+    {"id":"H02","split":"held_out","mode":"theme","theme":"gay_male","prose":"gay-themed TV series","filters":{"original_language":"ko"},"strata":["regional","hard_filter"]},
+    {"id":"H03","split":"held_out","mode":"combined","theme":"gay_male","seed_tmdb_id":57774,"prose":"adult gay friendships like Looking","filters":{"excludeTeenFocus":true},"strata":["combined","teen_exclusion"]},
+    {"id":"H04","split":"held_out","mode":"seed","seed_tmdb_id":18745,"prose":"shows like Tales of the City","filters":{},"strata":["seed","remake_identity"]},
+    {"id":"H05","split":"held_out","mode":"seed","seed_tmdb_id":87731,"prose":"shows like Tales of the City","filters":{},"strata":["seed","remake_identity"]},
+    {"id":"H06","split":"held_out","mode":"theme","theme":"lgbtq","prose":"queer stories, no teen dramas","filters":{"excludeTeenFocus":true},"strata":["broad_lgbtq","teen_exclusion"]},
+    {"id":"H07","split":"held_out","mode":"theme","theme":"lesbian","prose":"lesbian romance","filters":{},"strata":["gay_vs_lesbian"]},
+    {"id":"H08","split":"held_out","mode":"theme","theme":"coming_of_age","prose":"coming-of-age stories about adults","filters":{"excludeTeenFocus":true},"strata":["non_lgbtq_theme","teen_exclusion"]},
+    {"id":"H09","split":"held_out","mode":"theme","theme":"found_family","prose":"chosen family stories","filters":{},"strata":["non_lgbtq_theme","missing_evidence"]},
+    {"id":"H10","split":"held_out","mode":"theme","theme":"political_drama","prose":"political intrigue dramas","filters":{},"strata":["non_lgbtq_theme"]},
+    {"id":"H11","split":"held_out","mode":"theme","theme":"space_exploration","prose":"exploring space","filters":{},"strata":["non_lgbtq_theme"]},
+    {"id":"H12","split":"held_out","mode":"refinement","prose":"gay stories without romance","filters":{},"expected":"needs_refinement","strata":["unsupported_negation"]}
+  ],
+  "synthetic_cases": [
+    {"id":"S01","split":"tuning","mode":"seed","seed_overview":"","seed_keywords":[],"expected":"seed_similarity_unavailable","strata":["thin_seed"]},
+    {"id":"S02","split":"held_out","mode":"theme","theme":"gay_male","candidate_keywords":["lgbt"],"candidate_overview":"","expected":"insufficient_theme_evidence","strata":["missing_evidence"]},
+    {"id":"S03","split":"held_out","mode":"theme","theme":"gay_male","candidate_keywords":["gay relationship"],"candidate_overview":"A teen boy navigates high school romance.","filters":{"excludeTeenFocus":true},"expected":"exclude_known_teen_focus","strata":["teen_exclusion"]}
+  ]
+}

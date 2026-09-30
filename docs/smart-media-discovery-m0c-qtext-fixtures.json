@@ -1,0 +1,149 @@
+{
+  "version": "m0c-qtext-input-fixtures-v1",
+  "status": "expected normalized input text for offline ranking; not evidence of a runtime parser",
+  "rows": [
+    {
+      "query_id": "T01",
+      "source_prose": "gay-themed TV series",
+      "filters": {},
+      "theme": "gay_male",
+      "normalized_qtext": "Stories about gay men and relationships between men"
+    },
+    {
+      "query_id": "T03",
+      "source_prose": "gay-themed shows like Looking",
+      "filters": {},
+      "theme": "gay_male",
+      "normalized_qtext": "Stories about gay men and relationships between men"
+    },
+    {
+      "query_id": "T04",
+      "source_prose": "gay-themed TV series, no teen dramas",
+      "filters": {
+        "excludeTeenFocus": true
+      },
+      "theme": "gay_male",
+      "normalized_qtext": "Stories about gay men and relationships between men"
+    },
+    {
+      "query_id": "T06",
+      "source_prose": "gay-themed shows like Bad Buddy",
+      "filters": {},
+      "theme": "gay_male",
+      "normalized_qtext": "Stories about gay men and relationships between men"
+    },
+    {
+      "query_id": "T07",
+      "source_prose": "LGBTQ+ stories",
+      "filters": {},
+      "theme": "lgbtq",
+      "normalized_qtext": "LGBTQ people, queer communities and their relationships"
+    },
+    {
+      "query_id": "T08",
+      "source_prose": "lesbian stories",
+      "filters": {},
+      "theme": "lesbian",
+      "normalized_qtext": "Lesbian women, their romance and relationships"
+    },
+    {
+      "query_id": "T09",
+      "source_prose": "coming-of-age TV series",
+      "filters": {},
+      "theme": "coming_of_age",
+      "normalized_qtext": "Coming of age and growing up"
+    },
+    {
+      "query_id": "T10",
+      "source_prose": "found family TV series",
+      "filters": {},
+      "theme": "found_family",
+      "normalized_qtext": "Found family, chosen family and belonging"
+    },
+    {
+      "query_id": "T11",
+      "source_prose": "political drama TV series",
+      "filters": {},
+      "theme": "political_drama",
+      "normalized_qtext": "Political dramas about government, power and intrigue"
+    },
+    {
+      "query_id": "T12",
+      "source_prose": "space exploration TV series",
+      "filters": {},
+      "theme": "space_exploration",
+      "normalized_qtext": "Space exploration, space travel and starships"
+    },
+    {
+      "query_id": "H01",
+      "source_prose": "gay-themed Asian series",
+      "filters": {},
+      "theme": "gay_male",
+      "normalized_qtext": "Stories about gay men and relationships between men. Asian series"
+    },
+    {
+      "query_id": "H02",
+      "source_prose": "gay-themed TV series",
+      "filters": {
+        "original_language": "ko"
+      },
+      "theme": "gay_male",
+      "normalized_qtext": "Stories about gay men and relationships between men"
+    },
+    {
+      "query_id": "H03",
+      "source_prose": "adult gay friendships like Looking",
+      "filters": {
+        "excludeTeenFocus": true
+      },
+      "theme": "gay_male",
+      "normalized_qtext": "Stories about gay men and relationships between men. adult gay friendships"
+    },
+    {
+      "query_id": "H06",
+      "source_prose": "queer stories, no teen dramas",
+      "filters": {
+        "excludeTeenFocus": true
+      },
+      "theme": "lgbtq",
+      "normalized_qtext": "LGBTQ people, queer communities and their relationships"
+    },
+    {
+      "query_id": "H07",
+      "source_prose": "lesbian romance",
+      "filters": {},
+      "theme": "lesbian",
+      "normalized_qtext": "Lesbian women, their romance and relationships. lesbian romance"
+    },
+    {
+      "query_id": "H08",
+      "source_prose": "coming-of-age stories about adults",
+      "filters": {
+        "excludeTeenFocus": true
+      },
+      "theme": "coming_of_age",
+      "normalized_qtext": "Coming of age and growing up. stories about adults"
+    },
+    {
+      "query_id": "H09",
+      "source_prose": "chosen family stories",
+      "filters": {},
+      "theme": "found_family",
+      "normalized_qtext": "Found family, chosen family and belonging. chosen family"
+    },
+    {
+      "query_id": "H10",
+      "source_prose": "political intrigue dramas",
+      "filters": {},
+      "theme": "political_drama",
+      "normalized_qtext": "Political dramas about government, power and intrigue. political intrigue"
+    },
+    {
+      "query_id": "H11",
+      "source_prose": "exploring space",
+      "filters": {},
+      "theme": "space_exploration",
+      "normalized_qtext": "Space exploration, space travel and starships. exploring space"
+    }
+  ]
+}

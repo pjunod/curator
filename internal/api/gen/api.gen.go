@@ -442,19 +442,19 @@ func (e MediaKind) Valid() bool {
 
 // Defines values for MetadataPreviewAddability.
 const (
-	Conflict    MetadataPreviewAddability = "conflict"
-	Supported   MetadataPreviewAddability = "supported"
-	Unsupported MetadataPreviewAddability = "unsupported"
+	MetadataPreviewAddabilityConflict    MetadataPreviewAddability = "conflict"
+	MetadataPreviewAddabilitySupported   MetadataPreviewAddability = "supported"
+	MetadataPreviewAddabilityUnsupported MetadataPreviewAddability = "unsupported"
 )
 
 // Valid indicates whether the value is a known member of the MetadataPreviewAddability enum.
 func (e MetadataPreviewAddability) Valid() bool {
 	switch e {
-	case Conflict:
+	case MetadataPreviewAddabilityConflict:
 		return true
-	case Supported:
+	case MetadataPreviewAddabilitySupported:
 		return true
-	case Unsupported:
+	case MetadataPreviewAddabilityUnsupported:
 		return true
 	default:
 		return false
@@ -611,6 +611,225 @@ func (e QueueItemImportState) Valid() bool {
 	case QueueItemImportStateQueued:
 		return true
 	case QueueItemImportStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecommendationFiltersTheme.
+const (
+	ComingOfAge      RecommendationFiltersTheme = "coming_of_age"
+	FoundFamily      RecommendationFiltersTheme = "found_family"
+	GayMale          RecommendationFiltersTheme = "gay_male"
+	Lesbian          RecommendationFiltersTheme = "lesbian"
+	Lgbtq            RecommendationFiltersTheme = "lgbtq"
+	PoliticalDrama   RecommendationFiltersTheme = "political_drama"
+	SpaceExploration RecommendationFiltersTheme = "space_exploration"
+)
+
+// Valid indicates whether the value is a known member of the RecommendationFiltersTheme enum.
+func (e RecommendationFiltersTheme) Valid() bool {
+	switch e {
+	case ComingOfAge:
+		return true
+	case FoundFamily:
+		return true
+	case GayMale:
+		return true
+	case Lesbian:
+		return true
+	case Lgbtq:
+		return true
+	case PoliticalDrama:
+		return true
+	case SpaceExploration:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecommendationRequestKind.
+const (
+	RecommendationRequestKindSeries RecommendationRequestKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the RecommendationRequestKind enum.
+func (e RecommendationRequestKind) Valid() bool {
+	switch e {
+	case RecommendationRequestKindSeries:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecommendationResponseCoverage.
+const (
+	Bounded RecommendationResponseCoverage = "bounded"
+	Partial RecommendationResponseCoverage = "partial"
+)
+
+// Valid indicates whether the value is a known member of the RecommendationResponseCoverage enum.
+func (e RecommendationResponseCoverage) Valid() bool {
+	switch e {
+	case Bounded:
+		return true
+	case Partial:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecommendationResponseRanking.
+const (
+	MetadataOnly RecommendationResponseRanking = "metadata_only"
+	Semantic     RecommendationResponseRanking = "semantic"
+)
+
+// Valid indicates whether the value is a known member of the RecommendationResponseRanking enum.
+func (e RecommendationResponseRanking) Valid() bool {
+	switch e {
+	case MetadataOnly:
+		return true
+	case Semantic:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecommendationResponseState.
+const (
+	RecommendationResponseStateNeedsRefinement RecommendationResponseState = "needs_refinement"
+	RecommendationResponseStateReady           RecommendationResponseState = "ready"
+)
+
+// Valid indicates whether the value is a known member of the RecommendationResponseState enum.
+func (e RecommendationResponseState) Valid() bool {
+	switch e {
+	case RecommendationResponseStateNeedsRefinement:
+		return true
+	case RecommendationResponseStateReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecommendationResultAddability.
+const (
+	RecommendationResultAddabilityConflict    RecommendationResultAddability = "conflict"
+	RecommendationResultAddabilitySupported   RecommendationResultAddability = "supported"
+	RecommendationResultAddabilityUnsupported RecommendationResultAddability = "unsupported"
+)
+
+// Valid indicates whether the value is a known member of the RecommendationResultAddability enum.
+func (e RecommendationResultAddability) Valid() bool {
+	switch e {
+	case RecommendationResultAddabilityConflict:
+		return true
+	case RecommendationResultAddabilitySupported:
+		return true
+	case RecommendationResultAddabilityUnsupported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecommendationResultOwnership.
+const (
+	RecommendationResultOwnershipAbsent    RecommendationResultOwnership = "absent"
+	RecommendationResultOwnershipAmbiguous RecommendationResultOwnership = "ambiguous"
+	RecommendationResultOwnershipPresent   RecommendationResultOwnership = "present"
+	RecommendationResultOwnershipUnknown   RecommendationResultOwnership = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the RecommendationResultOwnership enum.
+func (e RecommendationResultOwnership) Valid() bool {
+	switch e {
+	case RecommendationResultOwnershipAbsent:
+		return true
+	case RecommendationResultOwnershipAmbiguous:
+		return true
+	case RecommendationResultOwnershipPresent:
+		return true
+	case RecommendationResultOwnershipUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecommendationResultThemeEvidence.
+const (
+	RecommendationResultThemeEvidenceCentral      RecommendationResultThemeEvidence = "central"
+	RecommendationResultThemeEvidenceContradicted RecommendationResultThemeEvidence = "contradicted"
+	RecommendationResultThemeEvidencePresent      RecommendationResultThemeEvidence = "present"
+	RecommendationResultThemeEvidenceUnknown      RecommendationResultThemeEvidence = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the RecommendationResultThemeEvidence enum.
+func (e RecommendationResultThemeEvidence) Valid() bool {
+	switch e {
+	case RecommendationResultThemeEvidenceCentral:
+		return true
+	case RecommendationResultThemeEvidenceContradicted:
+		return true
+	case RecommendationResultThemeEvidencePresent:
+		return true
+	case RecommendationResultThemeEvidenceUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecommendationSeedProvider.
+const (
+	Tmdb RecommendationSeedProvider = "tmdb"
+	Tvdb RecommendationSeedProvider = "tvdb"
+)
+
+// Valid indicates whether the value is a known member of the RecommendationSeedProvider enum.
+func (e RecommendationSeedProvider) Valid() bool {
+	switch e {
+	case Tmdb:
+		return true
+	case Tvdb:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecommendationStatusModelState.
+const (
+	RecommendationStatusModelStateDisabled     RecommendationStatusModelState = "disabled"
+	RecommendationStatusModelStateDownloading  RecommendationStatusModelState = "downloading"
+	RecommendationStatusModelStateFailed       RecommendationStatusModelState = "failed"
+	RecommendationStatusModelStateLoading      RecommendationStatusModelState = "loading"
+	RecommendationStatusModelStateNotInstalled RecommendationStatusModelState = "not_installed"
+	RecommendationStatusModelStateReady        RecommendationStatusModelState = "ready"
+)
+
+// Valid indicates whether the value is a known member of the RecommendationStatusModelState enum.
+func (e RecommendationStatusModelState) Valid() bool {
+	switch e {
+	case RecommendationStatusModelStateDisabled:
+		return true
+	case RecommendationStatusModelStateDownloading:
+		return true
+	case RecommendationStatusModelStateFailed:
+		return true
+	case RecommendationStatusModelStateLoading:
+		return true
+	case RecommendationStatusModelStateNotInstalled:
+		return true
+	case RecommendationStatusModelStateReady:
 		return true
 	default:
 		return false
@@ -2091,6 +2310,127 @@ type Rating struct {
 	Votes *int    `json:"votes,omitempty"`
 }
 
+// RecommendationApplied defines model for RecommendationApplied.
+type RecommendationApplied struct {
+	Filters               RecommendationFilters `json:"filters"`
+	InterpretationVersion string                `json:"interpretationVersion"`
+	Limit                 int                   `json:"limit"`
+	Query                 string                `json:"query"`
+	RankingText           string                `json:"rankingText"`
+	Seed                  *RecommendationSeed   `json:"seed,omitempty"`
+}
+
+// RecommendationFilters defines model for RecommendationFilters.
+type RecommendationFilters struct {
+	CentralThemeOnly *bool                       `json:"centralThemeOnly,omitempty"`
+	ExcludeTeenFocus *bool                       `json:"excludeTeenFocus,omitempty"`
+	Genres           *[]int                      `json:"genres,omitempty"`
+	HideInLibrary    *bool                       `json:"hideInLibrary,omitempty"`
+	OriginalLanguage *string                     `json:"originalLanguage,omitempty"`
+	Theme            *RecommendationFiltersTheme `json:"theme,omitempty"`
+	YearFrom         *int                        `json:"yearFrom,omitempty"`
+	YearTo           *int                        `json:"yearTo,omitempty"`
+}
+
+// RecommendationFiltersTheme defines model for RecommendationFilters.Theme.
+type RecommendationFiltersTheme string
+
+// RecommendationReason defines model for RecommendationReason.
+type RecommendationReason struct {
+	Code      string    `json:"code"`
+	FetchedAt time.Time `json:"fetchedAt"`
+	Field     string    `json:"field"`
+	Source    string    `json:"source"`
+	Value     string    `json:"value"`
+}
+
+// RecommendationRequest defines model for RecommendationRequest.
+type RecommendationRequest struct {
+	Filters *RecommendationFilters    `json:"filters,omitempty"`
+	Kind    RecommendationRequestKind `json:"kind"`
+	Limit   *int                      `json:"limit,omitempty"`
+	Query   *string                   `json:"query,omitempty"`
+	Seed    *RecommendationSeed       `json:"seed,omitempty"`
+}
+
+// RecommendationRequestKind defines model for RecommendationRequest.Kind.
+type RecommendationRequestKind string
+
+// RecommendationResponse defines model for RecommendationResponse.
+type RecommendationResponse struct {
+	Applied          RecommendationApplied          `json:"applied"`
+	CheckedCount     int                            `json:"checkedCount"`
+	Coverage         RecommendationResponseCoverage `json:"coverage"`
+	EligibleCount    int                            `json:"eligibleCount"`
+	HiddenOwnedCount int                            `json:"hiddenOwnedCount"`
+	ModelState       string                         `json:"modelState"`
+	Ranking          RecommendationResponseRanking  `json:"ranking"`
+	Results          []RecommendationResult         `json:"results"`
+	RetrievedCount   int                            `json:"retrievedCount"`
+	ReturnedCount    int                            `json:"returnedCount"`
+	State            RecommendationResponseState    `json:"state"`
+	Warnings         []RecommendationWarning        `json:"warnings"`
+}
+
+// RecommendationResponseCoverage defines model for RecommendationResponse.Coverage.
+type RecommendationResponseCoverage string
+
+// RecommendationResponseRanking defines model for RecommendationResponse.Ranking.
+type RecommendationResponseRanking string
+
+// RecommendationResponseState defines model for RecommendationResponse.State.
+type RecommendationResponseState string
+
+// RecommendationResult defines model for RecommendationResult.
+type RecommendationResult struct {
+	Addability    RecommendationResultAddability    `json:"addability"`
+	FetchedAt     time.Time                         `json:"fetchedAt"`
+	Item          SearchResult                      `json:"item"`
+	Key           string                            `json:"key"`
+	LibraryItemId *int64                            `json:"libraryItemId,omitempty"`
+	Ownership     RecommendationResultOwnership     `json:"ownership"`
+	Reasons       []RecommendationReason            `json:"reasons"`
+	ThemeEvidence RecommendationResultThemeEvidence `json:"themeEvidence"`
+}
+
+// RecommendationResultAddability defines model for RecommendationResult.Addability.
+type RecommendationResultAddability string
+
+// RecommendationResultOwnership defines model for RecommendationResult.Ownership.
+type RecommendationResultOwnership string
+
+// RecommendationResultThemeEvidence defines model for RecommendationResult.ThemeEvidence.
+type RecommendationResultThemeEvidence string
+
+// RecommendationSeed defines model for RecommendationSeed.
+type RecommendationSeed struct {
+	Id       string                     `json:"id"`
+	Provider RecommendationSeedProvider `json:"provider"`
+}
+
+// RecommendationSeedProvider defines model for RecommendationSeed.Provider.
+type RecommendationSeedProvider string
+
+// RecommendationStatus defines model for RecommendationStatus.
+type RecommendationStatus struct {
+	Message            string                         `json:"message"`
+	ModelState         RecommendationStatusModelState `json:"modelState"`
+	ProviderConfigured bool                           `json:"providerConfigured"`
+	Themes             []struct {
+		Key   string `json:"key"`
+		Label string `json:"label"`
+	} `json:"themes"`
+}
+
+// RecommendationStatusModelState defines model for RecommendationStatus.ModelState.
+type RecommendationStatusModelState string
+
+// RecommendationWarning defines model for RecommendationWarning.
+type RecommendationWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 // RecoveryImportRequest defines model for RecoveryImportRequest.
 type RecoveryImportRequest struct {
 	AcceptUnverified bool  `json:"accept_unverified"`
@@ -2304,9 +2644,12 @@ type Settings struct {
 	OmdbApiKeyHint       *string `json:"omdbApiKeyHint,omitempty"`
 
 	// ScanSkipPatterns User skip patterns, one per line, applied on top of the built-in defaults during the root-folder sweep. Blank lines and # comments are ignored.
-	ScanSkipPatterns     *string `json:"scanSkipPatterns,omitempty"`
-	TmdbApiKeyConfigured bool    `json:"tmdbApiKeyConfigured"`
-	TmdbApiKeyHint       string  `json:"tmdbApiKeyHint"`
+	ScanSkipPatterns *string `json:"scanSkipPatterns,omitempty"`
+
+	// SemanticRankingEnabled Opt in to standalone local semantic ranking; model download is explicit.
+	SemanticRankingEnabled *bool  `json:"semanticRankingEnabled,omitempty"`
+	TmdbApiKeyConfigured   bool   `json:"tmdbApiKeyConfigured"`
+	TmdbApiKeyHint         string `json:"tmdbApiKeyHint"`
 
 	// TraktClientIdConfigured Trakt client id present - adds the Trakt rows to Discover (ADR 0015). Optional: without it TMDB still serves nine rows.
 	TraktClientIdConfigured *bool   `json:"traktClientIdConfigured,omitempty"`
@@ -2335,8 +2678,9 @@ type SettingsUpdate struct {
 	OmdbApiKey *string `json:"omdbApiKey,omitempty"`
 
 	// ScanSkipPatterns Directory-name patterns to never offer as adoption candidates, one per line.
-	ScanSkipPatterns *string `json:"scanSkipPatterns,omitempty"`
-	TmdbApiKey       *string `json:"tmdbApiKey,omitempty"`
+	ScanSkipPatterns       *string `json:"scanSkipPatterns,omitempty"`
+	SemanticRankingEnabled *bool   `json:"semanticRankingEnabled,omitempty"`
+	TmdbApiKey             *string `json:"tmdbApiKey,omitempty"`
 
 	// TraktClientId Optional — a free Trakt app client id, which adds five rows to Discover (ADR 0015). "" clears it. Import lists keep their own per-list id and are unaffected either way.
 	TraktClientId *string `json:"traktClientId,omitempty"`
@@ -2849,6 +3193,9 @@ type RepairLibraryFolderJSONRequestBody RepairLibraryFolderJSONBody
 // SetSeasonMonitoredJSONRequestBody defines body for SetSeasonMonitored for application/json ContentType.
 type SetSeasonMonitoredJSONRequestBody = MonitorRequest
 
+// RecommendSeriesJSONRequestBody defines body for RecommendSeries for application/json ContentType.
+type RecommendSeriesJSONRequestBody = RecommendationRequest
+
 // AddNotifierJSONRequestBody defines body for AddNotifier for application/json ContentType.
 type AddNotifierJSONRequestBody = NotifierInput
 
@@ -3112,6 +3459,18 @@ type ServerInterface interface {
 	// PreviewMetadata Read a title before adding, without loading episodes or writing library state
 	// (GET /metadata/preview)
 	PreviewMetadata(w http.ResponseWriter, r *http.Request, params PreviewMetadataParams)
+	// RecommendSeries Find series by theme or verified seed without adding them
+	// (POST /metadata/recommendations)
+	RecommendSeries(w http.ResponseWriter, r *http.Request)
+	// RemoveRecommendationModel Remove verified local model while ranking is disabled
+	// (DELETE /metadata/recommendations/model)
+	RemoveRecommendationModel(w http.ResponseWriter, r *http.Request)
+	// InstallRecommendationModel Explicitly install the pinned local model
+	// (POST /metadata/recommendations/model/install)
+	InstallRecommendationModel(w http.ResponseWriter, r *http.Request)
+	// RecommendationStatus Local recommendation readiness without external work
+	// (GET /metadata/recommendations/status)
+	RecommendationStatus(w http.ResponseWriter, r *http.Request)
 	// SearchMetadata Search the metadata provider
 	// (GET /metadata/search)
 	SearchMetadata(w http.ResponseWriter, r *http.Request, params SearchMetadataParams)
@@ -5127,6 +5486,62 @@ func (siw *ServerInterfaceWrapper) PreviewMetadata(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// RecommendSeries operation middleware
+func (siw *ServerInterfaceWrapper) RecommendSeries(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RecommendSeries(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveRecommendationModel operation middleware
+func (siw *ServerInterfaceWrapper) RemoveRecommendationModel(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveRecommendationModel(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// InstallRecommendationModel operation middleware
+func (siw *ServerInterfaceWrapper) InstallRecommendationModel(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.InstallRecommendationModel(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RecommendationStatus operation middleware
+func (siw *ServerInterfaceWrapper) RecommendationStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RecommendationStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SearchMetadata operation middleware
 func (siw *ServerInterfaceWrapper) SearchMetadata(w http.ResponseWriter, r *http.Request) {
 
@@ -6197,6 +6612,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/filesystem", wrapper.BrowseFilesystem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/preview", wrapper.PreviewMetadata)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/search", wrapper.SearchMetadata)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/metadata/recommendations", wrapper.RecommendSeries)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/recommendations/status", wrapper.RecommendationStatus)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/metadata/recommendations/model/install", wrapper.InstallRecommendationModel)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/metadata/recommendations/model", wrapper.RemoveRecommendationModel)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/lists", wrapper.ListDiscoverLists)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/items", wrapper.DiscoverItems)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders", wrapper.ListRootFolders)

@@ -8,9 +8,10 @@ import type { BookType, SearchResult } from './api'
 import { externalLinks, previewKey, previewQuery, previewState, previewIdentityConflict } from './metadataPreview'
 import './PreviewDrawer.css'
 
-export function MetadataPreviewDrawer({ item, bookType, options, onClose, onAdd, busy, canAdd, addedId, addError }: {
+export function MetadataPreviewDrawer({ item, bookType, options, onClose, onAdd, busy, canAdd, addedId, addError, onMoreLike }: {
   item: SearchResult; bookType: BookType; options: ReactNode; onClose: () => void; onAdd: () => void
   busy: boolean; canAdd: boolean; addedId?: number; addError?: string
+  onMoreLike?: () => void
 }) {
   const key = previewKey(item)
   const preview = useQuery({ queryKey: ['metadata-preview', key], queryFn: () => getMetadataPreview(previewQuery(key!)), enabled: !!key, retry: false, staleTime: 0, refetchOnMount: 'always' })
@@ -79,6 +80,7 @@ export function MetadataPreviewDrawer({ item, bookType, options, onClose, onAdd,
           {!state.owned && !addedId && <details><summary>Add options</summary><div className="preview-options">{options}</div></details>}
           {addError && <div className="banner warning" role="alert">{addError}</div>}
           <div className="preview-actions">
+            {onMoreLike && <button onClick={onMoreLike}>More like this</button>}
             {addedId || state.owned ? <span className="pill pill-ok">{addedId ? 'Added' : item.kind === 'book' ? `${bookType} in library` : 'In library'}</span> : <button className="btn-accent" disabled={busy || !canAdd || state.blocked} onClick={onAdd}>{busy ? 'Adding…' : item.kind === 'book' ? `Add ${bookType}` : 'Add to library'}</button>}
             {openId && <Link to="/library/$id" params={{ id: String(openId) }}>Open in library</Link>}
           </div>

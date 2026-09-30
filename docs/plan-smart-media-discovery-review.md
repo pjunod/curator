@@ -381,3 +381,75 @@ request counts alone do not establish useful recommendations. The original
 independent review's findings remain addressed in their subject areas, but
 its verdict must not be cited as approval of the newly changed runtime and
 traffic contracts.
+
+## 7. M0a follow-up — list recall becomes a diagnostic, candidate quality is the gate
+
+**Reviewer decision:** 2026-09-29 local time, after inspecting the committed
+[first M0a report](smart-media-discovery-m0a.md) at `0ced7c9` and the
+[revised route comparison](smart-media-discovery-m0a-revision.md) at
+`3f80a0b`. The reviewer independently reconstructed the ordered page merges,
+quota/fill behavior, shallow-score selection, and selected detail identities
+from the credential-free fixtures. This accepts the reported catalog-coverage
+losses as measurements, not a claim that all returned works are irrelevant.
+The initial 38/41 keyword/reference proxy was corrected after review; no
+row-level incidental-theme rate was established by that proxy.
+
+The original §6.2 proposed at least 80% recall of a frozen known-relevant
+catalog list as a release gate for broad theme queries. M0a showed how a
+30-enrichment budget misses many members of such a list, including titles
+whose keywords are present. The reviewer withdrew that as a *necessary*
+broad-query gate: a search can miss titles in a large catalog and still
+offer ten useful suggestions. Keep independent-list recall and its language/
+visibility splits as coverage/bias diagnostics, and keep finite expected-set
+coverage for predeclared narrow requests. The updated §6.2 instead gates
+broad discovery on independently adjudicated candidate relevance, at least
+ten evidence-supported eligible results for broad queries with abundant
+matches, existing precision@10 ≥ 0.8, no known wrong-theme top-ten result,
+and no hard-filter violation. It retains the semantic nDCG lift of ≥ 0.03,
+resource budgets, standalone runtime, and multi-query held-out evaluation.
+The change neither narrows the owner's generic-theme feature nor declares
+any measured route ready to build.
+
+The next evidence step is the preregistered
+[selected-candidate annotation](smart-media-discovery-m0a-annotations.md)
+for R3 theme search and Looking seed suggestions. Its agent labels are
+provisional and require reviewer adjudication before release decisions.
+At that stage, M0b and M1–M5 remained on hold until candidate-quality
+evidence and any resulting retrieval design could be reviewed. The subsequent
+M0b disposition is recorded below.
+
+### 7.1 Selected-candidate adjudication and M0b disposition
+
+**Reviewer decision after `9661967`: PROCEED TO M0b feasibility; M1–M5
+remain gated on M0c.** The reviewer independently checked all 60 annotated
+route positions, arithmetic, and 59 distinct detail identities. R3's fixed
+selected pool has 12 strongly supported central candidates under TMDB
+metadata, with a thirteenth plausible suitable candidate whose centrality
+remains uncertain. That is enough to test whether a standalone semantic
+ranker improves the actual ordering. The current unmodeled R3 top ten is
+7/10 suitable, below the proposed precision target; this is a reason to
+test the model, not a reason to refuse the feasibility experiment.
+
+The initial agent annotation had Looking seed fit ≥2 on 9/30 selected
+titles. The reviewer adjudicated *The L Word* and *Generation Q* as grade-2
+seed matches because adult queer friendship in Los Angeles is a meaningful
+connection to Looking even without a gay-male lead. The revised seed pool
+therefore has 11/30 plausible supported matches; its fixed top ten remains
+7/10. No mandatory gay-male filter is implied for a seed-only request.
+All four initial `contradicted` theme labels in this set became
+`insufficient`: another central focus does not prove absence of gay-male
+material. The candidate table keeps separate theme-evidence and seed-fit
+columns, flagged uncertainty, and the original versus adjudicated counts.
+
+External editorial evidence may change **real-world relevance** without
+changing what TMDB metadata can support at runtime. Netflix's account of
+Eric's major gay-identity and faith arc in *Sex Education* supports a
+provisional real-world grade 2; its frozen TMDB-only row remains grade 1.
+Likewise, ABC describes the male lead's sexuality storyline in *The
+Newsreader*; bisexuality is not contrary gay-male or queer evidence. These
+sources are cited in [the annotation](smart-media-discovery-m0a-annotations.md).
+Remaining flagged cases require resolution for M0c quality evaluation. M0b
+may measure packaging and vector parity before that adjudication. The R3
+six-alias/three-lane retrieval and its 41-call combined-request arithmetic
+must be reconciled with §5 before M0c or M1; neither is a shipping contract
+approval yet.

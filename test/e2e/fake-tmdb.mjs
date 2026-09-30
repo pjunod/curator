@@ -159,7 +159,27 @@ const traktRoutes = {
 
 // ---- Open Library (books, ADR 0006) — same fake server, distinct paths ----
 
+const recommendationShows = [
+  [7201, 'Adult Gay Story', 'Three friends navigate life as gay men in a city.', 'gay theme', 'en'],
+  [7202, 'Broad Queer Mystery', 'A detective investigates a theft.', 'lgbt', 'en'],
+  [7203, 'Teen Gay Story', 'Gay teenagers navigate high school romance.', 'gay theme', 'en'],
+  [7204, 'Korean Gay Story', 'Two gay men build a life together.', 'gay theme', 'ko'],
+  [7205, 'Lesbian Love Story', 'A lesbian romance between two women.', 'lesbian', 'en'],
+].map(([id, name, overview, keyword, language]) => ({ ...tv700, id, name, overview,
+  original_language: language, genres: [{ id: 18, name: 'Drama' }], seasons: [],
+  external_ids: { tvdb_id: id * 100, imdb_id: `tt${id}0001` },
+  keywords: { results: [{ id: id === 7205 ? 3 : 1, name: keyword }] },
+}))
+const recommendationPage = { total_pages: 1, results: recommendationShows }
+const recommendationRoutes = Object.fromEntries(recommendationShows.flatMap((show) => [
+  [`/tv/${show.id}`, show], [`/tv/${show.id}/recommendations`, recommendationPage],
+  [`/tv/${show.id}/similar`, recommendationPage],
+]))
 const routes = {
+  ...recommendationRoutes,
+  '/discover/tv': recommendationPage,
+  '/tv/700/recommendations': recommendationPage,
+  '/tv/700/similar': recommendationPage,
   ...discoverRoutes,
   ...discoverDetail,
   ...crowdedMovies,
@@ -259,6 +279,13 @@ const tvmazeEpisodes = {
 
 createServer((req, res) => {
   const { pathname, searchParams } = new URL(req.url, 'http://x')
+
+  if (pathname === '/search/keyword') {
+    const name = searchParams.get('query') ?? ''
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ results: [{ id: name === 'lesbian' ? 3 : 1, name }] }))
+    return
+  }
 
   if (pathname === '/search.json' && /audio/i.test(searchParams.get('q') ?? '')) {
     res.writeHead(200, { 'content-type': 'application/json' })

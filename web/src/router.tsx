@@ -266,6 +266,7 @@ const mediaDetailRoute = createRoute({
 })
 
 interface AddSearch {
+  mode?: 'describe'
   preview?: string
   bookType?: 'ebook' | 'audiobook'
   q?: string
@@ -277,6 +278,7 @@ const addRoute = createRoute({
   path: '/add',
   component: AddMediaPage,
   validateSearch: (search: Record<string, unknown>): AddSearch => ({
+    mode: search.mode === 'describe' ? 'describe' : undefined,
     preview: parsePreviewKey(search.preview) ? String(search.preview) : undefined,
     bookType: search.bookType === 'ebook' || search.bookType === 'audiobook' ? search.bookType : undefined,
     q: typeof search.q === 'string' ? search.q : undefined,

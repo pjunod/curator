@@ -26,6 +26,7 @@ accepted; a change of course gets a new ADR that supersedes the old one.
 | [0019](0019-release-identity-evidence.md) | Release identity is evidence, not a normalized title | Accepted |
 | [0020](0020-one-folder-one-item.md) | One folder, one library item: same-named works get `{tmdb-N}` folders | Accepted |
 | [0022](0022-audio-language.md) | Audio language is a profile criterion: a requirement, not a rank | Accepted |
+| [0023](0023-smart-media-discovery.md) | Bounded series recommendations with optional local ranking | Accepted |
 
 Context for all of these lives in [../architecture.md](../architecture.md).
 

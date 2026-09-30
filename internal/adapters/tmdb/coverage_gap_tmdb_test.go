@@ -221,6 +221,7 @@ func TestGapAdRateLimitRetryAtFollowsTheHeader(t *testing.T) {
 	}
 
 	header.Store("45")
+	c = New(srv.URL, staticKey("v3key"))
 	_, err = c.GetMovie(ctx, 2)
 	remote = gapRemote(t, err)
 	if until := time.Until(remote.RetryAt); remote.Category != ports.RemoteRateLimit || until < 43*time.Second || until > 46*time.Second {
@@ -229,6 +230,7 @@ func TestGapAdRateLimitRetryAtFollowsTheHeader(t *testing.T) {
 
 	deadline := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	header.Store(deadline.Format(http.TimeFormat))
+	c = New(srv.URL, staticKey("v3key"))
 	_, err = c.GetMovie(ctx, 3)
 	remote = gapRemote(t, err)
 	if !remote.RetryAt.Equal(deadline) {
@@ -236,6 +238,7 @@ func TestGapAdRateLimitRetryAtFollowsTheHeader(t *testing.T) {
 	}
 
 	header.Store("later")
+	c = New(srv.URL, staticKey("v3key"))
 	_, err = c.GetMovie(ctx, 4)
 	if remote = gapRemote(t, err); !remote.RetryAt.IsZero() {
 		t.Errorf("unparseable Retry-After should leave RetryAt zero: %v", remote.RetryAt)

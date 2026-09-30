@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useSearch } from '@tanstack/react-router'
 import { ApiError } from '../api'
 import { MetadataPreviewDrawer } from '../PreviewDrawer'
+import { RecommendationSearch } from '../RecommendationSearch'
 import { matchesPreviewKey, parsePreviewKey, previewKey } from '../metadataPreview'
 import type { BookType, MediaKind, SearchResult } from '../api'
 import {
@@ -61,6 +62,10 @@ export function AddMediaPage() {
   )
   const [bookType, setBookType] = useState<BookType>(search.bookType ?? 'ebook')
   const [query, setQuery] = useState(search.q ?? '')
+  const [describeMode, setDescribeMode] = useState(search.mode === 'describe')
+  const [discoverySeed, setDiscoverySeed] = useState<SearchResult | null>(null)
+  const [discoveryReset, setDiscoveryReset] = useState(0)
+  const moreLike = (item: SearchResult, preserve = false) => { if (!preserve) setDiscoveryReset((value) => value + 1); setDiscoverySeed(item); setDescribeMode(true); setKind('series') }
   useEffect(() => {
     const routeKind = parsePreviewKey(search.preview)?.kind ?? search.kind
     if (routeKind) setKind(routeKind)
@@ -127,7 +132,7 @@ export function AddMediaPage() {
   const results = useQuery({
     queryKey: ['metadata-search', kind, debouncedQuery],
     queryFn: () => searchMetadata(kind, debouncedQuery),
-    enabled: debouncedQuery.trim().length > 1,
+    enabled: !describeMode && debouncedQuery.trim().length > 1,
     retry: false,
   })
 
@@ -200,16 +205,16 @@ export function AddMediaPage() {
     const key = previewKey(item)
     if (!key) return
     // Save the search context in the history entry Back will return to.
-    await navigate({ to: '/add', search: { kind, q: query, bookType }, replace: true, resetScroll: false })
+    await navigate({ to: '/add', search: { kind, q: query, bookType, mode: describeMode ? 'describe' : undefined }, replace: true, resetScroll: false })
     pushedPreview.current = key
-    await navigate({ to: '/add', search: { kind, q: query, bookType, preview: key }, resetScroll: false })
+    await navigate({ to: '/add', search: { kind, q: query, bookType, preview: key, mode: describeMode ? 'describe' : undefined }, resetScroll: false })
   }
   const closePreview = () => {
     if (search.preview && pushedPreview.current === search.preview) {
       pushedPreview.current = undefined
       router.history.back()
     } else {
-      void navigate({ to: '/add', search: { kind, q: query, bookType }, replace: true, resetScroll: false })
+      void navigate({ to: '/add', search: { kind, q: query, bookType, mode: describeMode ? 'describe' : undefined }, replace: true, resetScroll: false })
     }
     setSelection(null)
   }
@@ -295,6 +300,7 @@ export function AddMediaPage() {
               className={kind === tab.kind && (tab.kind !== 'book' || bookType === tab.bookType) ? 'tab active' : 'tab'}
               onClick={() => {
                 setKind(tab.kind)
+                if (tab.kind !== 'series') setDescribeMode(false)
                 if (tab.bookType) setBookType(tab.bookType)
                 setProfileId('')
               }}
@@ -305,8 +311,11 @@ export function AddMediaPage() {
         </div>
       </header>
 
+      {kind === 'series' && <div className="tabs" aria-label="Series search mode"><button className={describeMode ? 'tab' : 'tab active'} aria-pressed={!describeMode} onClick={() => setDescribeMode(false)}>Title search</button><button className={describeMode ? 'tab active' : 'tab'} aria-pressed={describeMode} onClick={() => setDescribeMode(true)}>Describe what you want</button></div>}
+
       <div className="add-controls">
         <input
+          hidden={describeMode && kind === 'series'}
           autoFocus
           type="search"
           placeholder={
@@ -321,6 +330,8 @@ export function AddMediaPage() {
         />
         {addOptions}
       </div>
+
+      {kind === 'series' && <RecommendationSearch visible={describeMode} seed={discoverySeed} resetContext={discoveryReset} onSeed={setDiscoverySeed} onPreview={(item) => void openPreview(item)} onAdd={(item) => add.mutate(item)} busy={add.isPending} canAdd={!!selectedRootId} addedId={(item) => addedByKey.get(resultKey(item))?.id} />}
 
       {results.isError && <div className="banner warning">{searchError(results.error)}</div>}
       {add.isError && <div className="banner warning">{searchError(add.error)}</div>}
@@ -351,8 +362,9 @@ export function AddMediaPage() {
         onClose={closePreview} onAdd={() => add.mutate(selected)} busy={add.isPending}
         canAdd={!!selectedRootId} addedId={addedByKey.get(resultKey(selected, bookType))?.id}
         addError={add.isError ? searchError(add.error) : undefined}
+        onMoreLike={selected.kind === 'series' ? () => { closePreview(); moreLike(selected, describeMode) } : undefined}
       />}
-      <ul className="result-list">
+      <ul className="result-list" hidden={describeMode && kind === 'series'}>
         {results.data?.map((r) => (
           <li key={resultKey(r)} className="result">
             {r.posterPath ? (
@@ -369,6 +381,7 @@ export function AddMediaPage() {
               <button className="result-preview-trigger" aria-label={`View details for ${r.title}`} onClick={() => void openPreview(r)}>View details</button>
             </div>
             <div className="result-action">
+              {r.kind === 'series' && <button onClick={() => moreLike(r)}>More like this</button>}
               {(() => {
                 const just = addedByKey.get(resultKey(r, bookType))
                 if (just) {

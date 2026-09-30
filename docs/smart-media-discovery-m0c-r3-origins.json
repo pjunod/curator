@@ -1,0 +1,246 @@
+{
+  "version": "m0c-r3-origin-facts-v1",
+  "source": "30 read-only TMDB TV detail responses on nuc3, 2026-09-29",
+  "rows": [
+    {
+      "tmdb_id": 81318,
+      "name": "Love By Chance",
+      "origin_country": [
+        "TH"
+      ],
+      "original_language": "th"
+    },
+    {
+      "tmdb_id": 214609,
+      "name": "Smiley",
+      "origin_country": [
+        "ES"
+      ],
+      "original_language": "es"
+    },
+    {
+      "tmdb_id": 93975,
+      "name": "TharnType",
+      "origin_country": [
+        "TH"
+      ],
+      "original_language": "th"
+    },
+    {
+      "tmdb_id": 127549,
+      "name": "Sasaki and Miyano",
+      "origin_country": [
+        "JP"
+      ],
+      "original_language": "ja"
+    },
+    {
+      "tmdb_id": 99631,
+      "name": "2gether: The Series",
+      "origin_country": [
+        "TH"
+      ],
+      "original_language": "th"
+    },
+    {
+      "tmdb_id": 67429,
+      "name": "Eyewitness",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 76669,
+      "name": "Elite",
+      "origin_country": [
+        "ES"
+      ],
+      "original_language": "es"
+    },
+    {
+      "tmdb_id": 124834,
+      "name": "Heartstopper",
+      "origin_country": [
+        "GB"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 69050,
+      "name": "Riverdale",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 81356,
+      "name": "Sex Education",
+      "origin_country": [
+        "GB"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 88040,
+      "name": "given",
+      "origin_country": [
+        "JP"
+      ],
+      "original_language": "ja"
+    },
+    {
+      "tmdb_id": 117581,
+      "name": "Ginny & Georgia",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 68129,
+      "name": "Yuri!!! on Ice",
+      "origin_country": [
+        "JP"
+      ],
+      "original_language": "ja"
+    },
+    {
+      "tmdb_id": 301507,
+      "name": "Heated Rivalry",
+      "origin_country": [
+        "CA"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 1413,
+      "name": "American Horror Story",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 97186,
+      "name": "Love, Victor",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 90462,
+      "name": "Chucky",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 125910,
+      "name": "Young Royals",
+      "origin_country": [
+        "SE"
+      ],
+      "original_language": "sv"
+    },
+    {
+      "tmdb_id": 117067,
+      "name": "KinnPorsche: The Series",
+      "origin_country": [
+        "TH"
+      ],
+      "original_language": "th"
+    },
+    {
+      "tmdb_id": 91239,
+      "name": "Bridgerton",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 62914,
+      "name": "Merlí",
+      "origin_country": [
+        "ES"
+      ],
+      "original_language": "ca"
+    },
+    {
+      "tmdb_id": 40008,
+      "name": "Hannibal",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 75208,
+      "name": "Devilman Crybaby",
+      "origin_country": [
+        "JP"
+      ],
+      "original_language": "ja"
+    },
+    {
+      "tmdb_id": 278196,
+      "name": "The Summer Hikaru Died",
+      "origin_country": [
+        "JP"
+      ],
+      "original_language": "ja"
+    },
+    {
+      "tmdb_id": 113988,
+      "name": "DAHMER - Monster: The Jeffrey Dahmer Story",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 195670,
+      "name": "XO, Kitty",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 71915,
+      "name": "Good Omens",
+      "origin_country": [
+        "GB"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 102903,
+      "name": "Control Z",
+      "origin_country": [
+        "MX"
+      ],
+      "original_language": "es"
+    },
+    {
+      "tmdb_id": 100698,
+      "name": "Tiger King",
+      "origin_country": [
+        "US"
+      ],
+      "original_language": "en"
+    },
+    {
+      "tmdb_id": 157208,
+      "name": "Semantic Error",
+      "origin_country": [
+        "KR"
+      ],
+      "original_language": "ko"
+    }
+  ]
+}

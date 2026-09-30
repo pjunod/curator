@@ -5,6 +5,7 @@ bin
 data
 web/node_modules
 web/dist
+tools/curator-embed/target/
 mobile
 docs
 test

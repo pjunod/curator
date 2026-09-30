@@ -1,0 +1,239 @@
+{
+  "hardware": "nuc3 Linux x64",
+  "limits": {
+    "cpus": 2,
+    "memoryMiB": 512
+  },
+  "provider": "sanitized fresh capture replay; no live provider latency",
+  "samples": {
+    "theme": [
+      {
+        "seconds": 5.2411,
+        "providerReads": 39,
+        "ranking": "semantic",
+        "retrieved": 60,
+        "checked": 29,
+        "eligible": 21,
+        "results": 20
+      },
+      {
+        "seconds": 5.084,
+        "providerReads": 39,
+        "ranking": "semantic",
+        "retrieved": 60,
+        "checked": 29,
+        "eligible": 21,
+        "results": 20
+      },
+      {
+        "seconds": 4.9972,
+        "providerReads": 39,
+        "ranking": "semantic",
+        "retrieved": 60,
+        "checked": 29,
+        "eligible": 21,
+        "results": 20
+      },
+      {
+        "seconds": 5.0301,
+        "providerReads": 39,
+        "ranking": "semantic",
+        "retrieved": 60,
+        "checked": 29,
+        "eligible": 21,
+        "results": 20
+      },
+      {
+        "seconds": 4.9935,
+        "providerReads": 39,
+        "ranking": "semantic",
+        "retrieved": 60,
+        "checked": 29,
+        "eligible": 21,
+        "results": 20
+      }
+    ],
+    "seed": [
+      {
+        "seconds": 4.8552,
+        "providerReads": 34,
+        "ranking": "semantic",
+        "retrieved": 40,
+        "checked": 30,
+        "eligible": 24,
+        "results": 20
+      },
+      {
+        "seconds": 4.836,
+        "providerReads": 34,
+        "ranking": "semantic",
+        "retrieved": 40,
+        "checked": 30,
+        "eligible": 24,
+        "results": 20
+      },
+      {
+        "seconds": 4.874,
+        "providerReads": 34,
+        "ranking": "semantic",
+        "retrieved": 40,
+        "checked": 30,
+        "eligible": 24,
+        "results": 20
+      },
+      {
+        "seconds": 4.8614,
+        "providerReads": 34,
+        "ranking": "semantic",
+        "retrieved": 40,
+        "checked": 30,
+        "eligible": 24,
+        "results": 20
+      },
+      {
+        "seconds": 4.9318,
+        "providerReads": 34,
+        "ranking": "semantic",
+        "retrieved": 40,
+        "checked": 30,
+        "eligible": 24,
+        "results": 20
+      }
+    ],
+    "combined": [
+      {
+        "seconds": 5.1665,
+        "providerReads": 41,
+        "ranking": "semantic",
+        "retrieved": 60,
+        "checked": 28,
+        "eligible": 19,
+        "results": 19
+      },
+      {
+        "seconds": 5.1748,
+        "providerReads": 41,
+        "ranking": "semantic",
+        "retrieved": 60,
+        "checked": 28,
+        "eligible": 19,
+        "results": 19
+      },
+      {
+        "seconds": 5.1899,
+        "providerReads": 41,
+        "ranking": "semantic",
+        "retrieved": 60,
+        "checked": 28,
+        "eligible": 19,
+        "results": 19
+      },
+      {
+        "seconds": 5.1929,
+        "providerReads": 41,
+        "ranking": "semantic",
+        "retrieved": 60,
+        "checked": 28,
+        "eligible": 19,
+        "results": 19
+      },
+      {
+        "seconds": 5.1954,
+        "providerReads": 41,
+        "ranking": "semantic",
+        "retrieved": 60,
+        "checked": 28,
+        "eligible": 19,
+        "results": 19
+      }
+    ]
+  },
+  "modelBefore": {
+    "message": "",
+    "modelState": "ready",
+    "providerConfigured": true,
+    "themes": [
+      {
+        "key": "gay_male",
+        "label": "Gay male stories"
+      },
+      {
+        "key": "lesbian",
+        "label": "Lesbian stories"
+      },
+      {
+        "key": "lgbtq",
+        "label": "LGBTQ+ stories"
+      },
+      {
+        "key": "coming_of_age",
+        "label": "Coming of age"
+      },
+      {
+        "key": "found_family",
+        "label": "Found family"
+      },
+      {
+        "key": "political_drama",
+        "label": "Political drama"
+      },
+      {
+        "key": "space_exploration",
+        "label": "Space exploration"
+      }
+    ]
+  },
+  "memoryPeakBytes": 208551936,
+  "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n",
+  "processesEnabled": [
+    "PID                 COMMAND",
+    "1738236             monarr",
+    "1738368             curator-embed"
+  ],
+  "processesDisabled": [
+    "PID                 COMMAND",
+    "1738236             monarr"
+  ],
+  "memoryAfterDisableBytes": 21700608,
+  "modelAfter": {
+    "message": "",
+    "modelState": "disabled",
+    "providerConfigured": true,
+    "themes": [
+      {
+        "key": "gay_male",
+        "label": "Gay male stories"
+      },
+      {
+        "key": "lesbian",
+        "label": "Lesbian stories"
+      },
+      {
+        "key": "lgbtq",
+        "label": "LGBTQ+ stories"
+      },
+      {
+        "key": "coming_of_age",
+        "label": "Coming of age"
+      },
+      {
+        "key": "found_family",
+        "label": "Found family"
+      },
+      {
+        "key": "political_drama",
+        "label": "Political drama"
+      },
+      {
+        "key": "space_exploration",
+        "label": "Space exploration"
+      }
+    ]
+  },
+  "date": "2026-09-30",
+  "version": "0.35.0",
+  "mainBase": "2cd269e",
+  "featureCommit": "36b8886",
+  "image": "sha256:c627c467506854c0c42f24d814722a5f4f107a017f099afd55b0a0dfacce269d",
+  "captureSHA256": "07fad75e8892093c689fe9262f30aea846615f698ee1273cf8169532d8f6ee27"
+}

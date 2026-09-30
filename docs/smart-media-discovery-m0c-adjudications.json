@@ -1,0 +1,11 @@
+{
+  "version": "m0c-tuning-adjudications-v1",
+  "scope": "Tuning relevance truth only; never provider evidence, admission, centrality, or model input",
+  "reviewer_date": "2026-09-29",
+  "rows": [
+    {"route":"R3","id":81356,"title":"Sex Education","original_grade":1,"adjudicated_grade":2,"reason":"Eric has a sustained gay-identity and faith arc within a broader ensemble","sources":["https://www.netflix.com/tudum/articles/sex-education-season-4-ending-explained","https://www.netflix.com/tudum/articles/sex-education-season-4-cast-guide?inapp=true"],"source_access":"Reviewer verified indexed Netflix text; direct opening unavailable"},
+    {"route":"R3","id":76669,"title":"Elite","original_grade":1,"adjudicated_grade":2,"reason":"Omar and Ander form a prominent recurring male couple in the ensemble","sources":["https://www.netflix.com/tudum/articles/elite-netflix-couples-kisses-video"],"source_access":"Reviewer opened Netflix editorial discussion"},
+    {"route":"R3","id":62914,"title":"Merlí","original_grade":1,"adjudicated_grade":2,"reason":"Original series has Bruno's coming out and sustained attraction and relationship with Pol","sources":["https://www.3cat.cat/3catinfo/merli-11-peripatetics-i-un-adult-en-evolucio/noticia/2826434/","https://www.3cat.cat/3catinfo/lorgull-es-normal-la-diversitat-sexual-a-traves-de-larxiu-de-tv3/noticia-amp/3171986/"],"source_access":"Reviewer retrieved indexed broadcaster text; first direct URL returned 403"},
+    {"route":"R4_57774","id":130842,"title":"The Newsreader","original_grade":1,"adjudicated_grade":2,"reason":"Leading adult queer man's sexuality, intimacy, and public and private life meaningfully connect to Looking","sources":["https://www.abc.net.au/news/2023-09-09/which-real-tv-journalists-inspired-the-newsreader/102407038","https://www.abc.net.au/listen/programs/darwin-afternoons/sam-reid-the-newsreader-dale-bisexualty/102928512"],"source_access":"Reviewer checked first-party ABC sources"}
+  ]
+}

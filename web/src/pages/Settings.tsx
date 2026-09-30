@@ -1,4 +1,5 @@
 import { CompletedFolderSettings } from '../CompletedFolders'
+import { DiscoverySettings } from '../DiscoverySettings'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
@@ -148,6 +149,7 @@ export function SettingsPage() {
       {settingsTab === 'dev' && <RecoveryEnableSettings />}
       {settingsTab === 'recovery' && <RecoveryImports />}
       <div hidden={settingsTab !== 'general'}>
+      <DiscoverySettings />
       <section className="panel" id="metadata">
         <h2>Metadata provider (TMDB)</h2>
         <p className="muted">

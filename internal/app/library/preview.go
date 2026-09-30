@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/quality"
@@ -192,5 +191,5 @@ func (s *Service) previewOwnership(ctx context.Context, ref domain.ExternalRef, 
 }
 
 func previewIDsConflict(a, b domain.ExternalIDs) bool {
-	return a.TMDB > 0 && b.TMDB > 0 && a.TMDB != b.TMDB || a.TVDB > 0 && b.TVDB > 0 && a.TVDB != b.TVDB || a.IMDB != "" && b.IMDB != "" && !strings.EqualFold(a.IMDB, b.IMDB)
+	return domain.ExternalIDsConflict(a, b)
 }

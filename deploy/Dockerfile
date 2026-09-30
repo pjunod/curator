@@ -1,3 +1,10 @@
+# ---- standalone local encoder ----
+FROM rust:1.97.1-bookworm AS embed
+WORKDIR /src/tools/curator-embed
+COPY tools/curator-embed/Cargo.toml tools/curator-embed/Cargo.lock ./
+COPY tools/curator-embed/src ./src
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git cargo build --locked --release
+
 # ---- web UI ----
 FROM node:22-alpine AS web
 WORKDIR /src/web
@@ -34,7 +41,8 @@ RUN V="${VERSION:-$(sh scripts/version.sh)}" && \
 RUN mkdir -p /data-skel/backups && chown -R 1000:1000 /data-skel
 
 # ---- runtime ----
-FROM gcr.io/distroless/static-debian12
+FROM gcr.io/distroless/cc-debian12
+COPY --from=embed /src/tools/curator-embed/target/release/curator-embed /curator-embed
 COPY --from=build /monarr /monarr
 COPY --from=build --chown=1000:1000 /data-skel /data
 ENV MONARR_DATA_DIR=/data \

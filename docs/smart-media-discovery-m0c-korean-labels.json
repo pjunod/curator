@@ -1,0 +1,10 @@
+{
+  "version":"m0c-korean-filtered-labels-v1",
+  "status":"provisional agent-assigned full-query grades before any H02 embedding order",
+  "query_id":"H02",
+  "query":"gay-themed TV series with original_language=ko",
+  "source":"TMDB with_original_language=ko R3 result pages and 30 successful TV detail responses captured 2026-09-29",
+  "grade_rule":"0 unrelated, 1 incidental/uncertain, 2 substantial gay-male story, 3 central gay-male story; 2+ suitable",
+  "grades":{"313293":3,"236956":3,"259288":0,"117878":3,"221102":3,"316352":3,"114195":3,"96571":1,"157208":3,"124426":0,"115663":3,"103752":3,"157214":3,"115538":3,"232510":3,"128002":3,"76376":3,"249838":3,"153169":3,"240591":3,"303693":3,"195840":3,"282578":1,"107692":3,"238588":3,"282389":3,"223440":3,"74500":1,"286222":3,"156854":3},
+  "uncertain_ids":[313293,316352,115663,115538,249838,282389,223440,74500]
+}

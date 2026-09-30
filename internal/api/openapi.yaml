@@ -823,6 +823,51 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /metadata/recommendations:
+    post:
+      operationId: recommendSeries
+      summary: Find series by theme or verified seed without adding them
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecommendationRequest' }
+      responses:
+        '200':
+          description: Bounded suggestions or actionable refinement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecommendationResponse' }
+        '400': { description: invalid_recommendation_request }
+        '404': { description: seed_not_found }
+        '409': { description: identity_conflict }
+        '422': { description: unsupported_seed }
+        '429': { description: recommendations_busy; Retry-After 2 }
+        '503': { description: provider_unavailable or recommendation_state_changed }
+  /metadata/recommendations/status:
+    get:
+      operationId: recommendationStatus
+      summary: Local recommendation readiness without external work
+      responses:
+        '200':
+          description: Feature and local model state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecommendationStatus' }
+  /metadata/recommendations/model/install:
+    post:
+      operationId: installRecommendationModel
+      summary: Explicitly install the pinned local model
+      responses:
+        '202': { description: Installation started or already running }
+        '503': { description: Standalone helper unavailable }
+  /metadata/recommendations/model:
+    delete:
+      operationId: removeRecommendationModel
+      summary: Remove verified local model while ranking is disabled
+      responses:
+        '204': { description: Removed }
+        '409': { description: Disable semantic ranking first }
   /discover/lists:
     get:
       operationId: listDiscoverLists
@@ -4897,12 +4942,112 @@ components:
         payloadRemoved: { type: boolean }
         live: { type: boolean }
 
+    RecommendationFilters:
+      type: object
+      additionalProperties: false
+      properties:
+        theme: { type: string, nullable: true, enum: [gay_male, lesbian, lgbtq, coming_of_age, found_family, political_drama, space_exploration] }
+        centralThemeOnly: { type: boolean }
+        genres: { type: array, maxItems: 3, items: { type: integer } }
+        originalLanguage: { type: string, nullable: true }
+        yearFrom: { type: integer, nullable: true }
+        yearTo: { type: integer, nullable: true }
+        excludeTeenFocus: { type: boolean }
+        hideInLibrary: { type: boolean }
+    RecommendationSeed:
+      type: object
+      additionalProperties: false
+      required: [provider, id]
+      properties:
+        provider: { type: string, enum: [tmdb, tvdb] }
+        id: { type: string, pattern: '^[1-9][0-9]*$' }
+    RecommendationRequest:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [series] }
+        query: { type: string, maxLength: 500 }
+        seed: { $ref: '#/components/schemas/RecommendationSeed' }
+        filters: { $ref: '#/components/schemas/RecommendationFilters' }
+        limit: { type: integer, minimum: 1, maximum: 20 }
+    RecommendationWarning:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    RecommendationReason:
+      type: object
+      required: [code, source, field, value, fetchedAt]
+      properties:
+        code: { type: string }
+        source: { type: string }
+        field: { type: string }
+        value: { type: string }
+        fetchedAt: { type: string, format: date-time }
+    RecommendationResult:
+      type: object
+      required: [key, item, ownership, addability, themeEvidence, reasons, fetchedAt]
+      properties:
+        key: { type: string }
+        item: { $ref: '#/components/schemas/SearchResult' }
+        ownership: { type: string, enum: [absent, present, ambiguous, unknown] }
+        libraryItemId: { type: integer, format: int64 }
+        addability: { type: string, enum: [supported, unsupported, conflict] }
+        themeEvidence: { type: string, enum: [central, present, unknown, contradicted] }
+        reasons: { type: array, items: { $ref: '#/components/schemas/RecommendationReason' } }
+        fetchedAt: { type: string, format: date-time }
+    RecommendationApplied:
+      type: object
+      required: [query, rankingText, filters, interpretationVersion, limit]
+      properties:
+        query: { type: string }
+        rankingText: { type: string }
+        seed: { $ref: '#/components/schemas/RecommendationSeed' }
+        filters: { $ref: '#/components/schemas/RecommendationFilters' }
+        interpretationVersion: { type: string }
+        limit: { type: integer }
+    RecommendationResponse:
+      type: object
+      required: [state, applied, ranking, modelState, coverage, retrievedCount, checkedCount, eligibleCount, hiddenOwnedCount, returnedCount, warnings, results]
+      properties:
+        state: { type: string, enum: [ready, needs_refinement] }
+        applied: { $ref: '#/components/schemas/RecommendationApplied' }
+        ranking: { type: string, enum: [semantic, metadata_only] }
+        modelState: { type: string }
+        coverage: { type: string, enum: [bounded, partial] }
+        retrievedCount: { type: integer }
+        checkedCount: { type: integer }
+        eligibleCount: { type: integer }
+        hiddenOwnedCount: { type: integer }
+        returnedCount: { type: integer }
+        warnings: { type: array, items: { $ref: '#/components/schemas/RecommendationWarning' } }
+        results: { type: array, items: { $ref: '#/components/schemas/RecommendationResult' } }
+    RecommendationStatus:
+      type: object
+      required: [modelState, providerConfigured, message, themes]
+      properties:
+        modelState: { type: string, enum: [disabled, not_installed, downloading, loading, ready, failed] }
+        providerConfigured: { type: boolean }
+        message: { type: string }
+        themes:
+          type: array
+          items:
+            type: object
+            required: [key, label]
+            properties:
+              key: { type: string }
+              label: { type: string }
     Settings:
       type: object
       required: [tmdbApiKeyConfigured, tmdbApiKeyHint]
       properties:
         tmdbApiKeyConfigured:
           type: boolean
+        semanticRankingEnabled:
+          type: boolean
+          description: Opt in to standalone local semantic ranking; model download is explicit.
         tmdbApiKeyHint:
           type: string
         omdbApiKeyConfigured:
@@ -4979,6 +5124,8 @@ components:
             0 keeps everything.
         tmdbApiKey:
           type: string
+        semanticRankingEnabled:
+          type: boolean
         omdbApiKey:
           type: string
           description: Optional — adds Rotten Tomatoes / IMDb / Metacritic ratings. "" clears it.
