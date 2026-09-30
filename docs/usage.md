@@ -71,6 +71,37 @@ they were.
 
 ## Adding media
 
+### Describing a series or finding similar shows
+
+On **Add media → Series**, choose **Describe what you want**, enter a
+description such as `gay-themed series, no teen dramas`, and click **Find
+series**. Applied theme, genre, original language, years, central-theme
+requirement, teen exclusion, and library visibility remain visible and
+editable. Supported themes are gay male, lesbian, LGBTQ+, coming of age,
+found family, political drama, and space exploration. Multiple themes or
+unsupported exclusions ask for refinement.
+
+**More like this** on a title starts a fresh seed search. On a recommendation
+it keeps the active description and filters. **Remove seed** keeps those
+filters. **Title search** returns to ordinary title lookup. A description is
+sent in a POST body and never added to the browser URL or persistent storage.
+
+**Why this matches** identifies the provider field and fetch date supporting
+each result. Required themes need explicit metadata evidence; local similarity
+cannot establish a theme. **Central theme only** requires main-story synopsis
+evidence. **Exclude known teen-focused stories** removes known teen/Kids
+focus; unclassified shows may remain. Sparse metadata can yield few results.
+
+The catalog search checks a bounded candidate set. Metadata ordering works
+without a model. Enable optional local ranking in
+[settings](settings.md#local-semantic-ranking-optional) for description and
+seed similarity. Provider suggestions and unavailable similarity are labeled.
+Preview and Add use the normal library workflow. Known owned titles can be
+hidden; unknown ownership remains visible, and conflicting identities cannot
+be added from these suggestions.
+
+### Adding a named title
+
 **+ Add media** (Library page) → pick Movie / Series / Ebook / Audiobook →
 type a title. Movies and series search TMDB; books search Open Library and
 show the author next to each result. Pick a root folder, a quality profile

@@ -14,6 +14,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/discover"
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/app/library"
+	"github.com/pjunod/monarr/internal/app/recommendation"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/scheduler"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -53,7 +54,14 @@ type Deps struct {
 	Acquisition *acquisition.Service
 	// Discover serves the browse rows (ADR 0015); nil returns an empty
 	// catalogue rather than failing, so a test server needs no provider.
-	Discover *discover.Service
+	Discover            *discover.Service
+	Recommendations     *recommendation.Service
+	RecommendationModel interface {
+		Enable(bool)
+		Detail() (string, string)
+		Install() error
+		Uninstall() error
+	}
 	// Store is the config storage for profiles/indexers/clients.
 	Store *sqlite.DB
 	// Factories used by the /test endpoints to probe unsaved configs.

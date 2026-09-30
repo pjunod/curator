@@ -5,6 +5,7 @@ package tmdb
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,10 +32,14 @@ type KeyFunc func(ctx context.Context) (string, error)
 
 // Client is a MetadataProvider backed by TMDB.
 type Client struct {
-	baseURL string
-	keyFn   KeyFunc
-	http    *http.Client
-	limiter *rate.Limiter
+	baseURL               string
+	keyFn                 KeyFunc
+	http                  *http.Client
+	limiter               *rate.Limiter
+	recommendationLimiter *rate.Limiter
+	dispatchMu            sync.Mutex
+	ordinaryPending       int
+	cooldown              time.Time
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
@@ -63,14 +68,25 @@ func New(baseURL string, keyFn KeyFunc) *Client {
 		keyFn:   keyFn,
 		http:    httpx.NewClient(15 * time.Second),
 		// TMDB tolerates ~50 req/s; stay well under it.
-		limiter: rate.NewLimiter(rate.Limit(10), 10),
-		cache:   map[string]cacheEntry{},
-		ttl:     5 * time.Minute,
+		limiter:               rate.NewLimiter(rate.Limit(10), 10),
+		recommendationLimiter: rate.NewLimiter(rate.Limit(8), 4),
+		cache:                 map[string]cacheEntry{},
+		ttl:                   5 * time.Minute,
 	}
 }
 
 func (c *Client) get(ctx context.Context, path string, params url.Values, out any) error {
-	key, err := c.keyFn(ctx)
+	return c.read(ctx, path, params, out, false)
+}
+
+func (c *Client) read(ctx context.Context, path string, params url.Values, out any, recommendation bool) error {
+	var key string
+	var err error
+	if snapshot, ok := ctx.Value(recommendationSnapshotKey{}).(*recommendationSnapshot); recommendation && ok {
+		key, err = snapshot.key, nil
+	} else {
+		key, err = c.keyFn(ctx)
+	}
 	if err != nil {
 		return fmt.Errorf("tmdb: reading api key: %w", err)
 	}
@@ -78,9 +94,7 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 		return ports.ErrProviderNotConfigured
 	}
 
-	if params == nil {
-		params = url.Values{}
-	}
+	params = cloneValues(params)
 	bearer := strings.HasPrefix(key, "eyJ") // v4 read access tokens are JWTs
 	if !bearer {
 		params.Set("api_key", key)
@@ -90,16 +104,21 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 		full += "?" + params.Encode()
 	}
 
-	cacheKey := full
+	cacheKey := fmt.Sprintf("%x:%s", sha256.Sum256([]byte(key)), full)
 	c.mu.Lock()
-	if e, ok := c.cache[cacheKey]; ok && time.Now().Before(e.expires) {
+	if e, ok := c.cache[cacheKey]; !recommendation && ok && time.Now().Before(e.expires) {
 		c.mu.Unlock()
 		return json.Unmarshal(e.body, out)
 	}
 	c.mu.Unlock()
 
-	if err := c.limiter.Wait(ctx); err != nil {
+	if err := c.dispatch(ctx, recommendation); err != nil {
 		return err
+	}
+	if recommendation {
+		if snapshot, ok := ctx.Value(recommendationSnapshotKey{}).(*recommendationSnapshot); ok && snapshot.calls.Add(1) > 41 {
+			return fmt.Errorf("tmdb: recommendation request budget exhausted")
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
@@ -128,7 +147,17 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 	case resp.StatusCode == http.StatusUnauthorized:
 		return &ports.RemoteError{Category: ports.RemoteAuth, HTTPStatus: resp.StatusCode}
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return &ports.RemoteError{Category: ports.RemoteRateLimit, HTTPStatus: resp.StatusCode, RetryAt: tmdbRetryAt(resp.Header.Get("Retry-After"))}
+		retryAt := tmdbRetryAt(resp.Header.Get("Retry-After"))
+		cooldown := retryAt
+		if cooldown.IsZero() {
+			cooldown = time.Now().Add(2 * time.Second)
+		}
+		c.dispatchMu.Lock()
+		if cooldown.After(c.cooldown) {
+			c.cooldown = cooldown
+		}
+		c.dispatchMu.Unlock()
+		return &ports.RemoteError{Category: ports.RemoteRateLimit, HTTPStatus: resp.StatusCode, RetryAt: retryAt}
 	case resp.StatusCode == http.StatusNotFound:
 		return &ports.RemoteError{Category: ports.RemoteNotFound, HTTPStatus: resp.StatusCode}
 	case resp.StatusCode != http.StatusOK:
@@ -136,13 +165,63 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 	}
 
 	c.mu.Lock()
-	c.cache[cacheKey] = cacheEntry{body: body, expires: time.Now().Add(c.ttl)}
+	if !recommendation {
+		c.cache[cacheKey] = cacheEntry{body: body, expires: time.Now().Add(c.ttl)}
+	}
 	c.mu.Unlock()
 
 	if err := json.Unmarshal(body, out); err != nil {
 		return &ports.RemoteError{Category: ports.RemoteInvalidResponse, HTTPStatus: resp.StatusCode, Cause: err}
 	}
 	return nil
+}
+
+func cloneValues(in url.Values) url.Values {
+	out := url.Values{}
+	for k, v := range in {
+		out[k] = append([]string(nil), v...)
+	}
+	return out
+}
+
+// Acquire only immediately available tokens; ordinary reads have priority
+// over recommendation reads waiting for the shared provider bucket.
+func (c *Client) dispatch(ctx context.Context, rec bool) error {
+	if !rec {
+		c.dispatchMu.Lock()
+		c.ordinaryPending++
+		c.dispatchMu.Unlock()
+		defer func() { c.dispatchMu.Lock(); c.ordinaryPending--; c.dispatchMu.Unlock() }()
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		c.dispatchMu.Lock()
+		if time.Now().Before(c.cooldown) {
+			retry := c.cooldown
+			c.dispatchMu.Unlock()
+			return &ports.RemoteError{Category: ports.RemoteRateLimit, HTTPStatus: 429, RetryAt: retry}
+		}
+		ready := (!rec || c.ordinaryPending == 0) && c.limiter.Tokens() >= 1 && (!rec || c.recommendationLimiter.Tokens() >= 1)
+		if ready {
+			ready = c.limiter.Allow()
+			if ready && rec {
+				ready = c.recommendationLimiter.Allow()
+			}
+		}
+		c.dispatchMu.Unlock()
+		if ready {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func tmdbRetryAt(value string) time.Time {

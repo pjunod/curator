@@ -1,0 +1,12 @@
+.recommendation-search { margin-block: 1rem; }
+.recommendation-query { display: flex; gap: .6rem; margin-block: .5rem; }
+.recommendation-query input { flex: 1; min-width: 0; }
+.recommendation-filters { display: flex; flex-wrap: wrap; gap: .8rem; align-items: end; margin-block: 1rem; }
+.recommendation-filters label:not(.inline) { display: grid; gap: .25rem; }
+.recommendation-filters input[type=number] { width: 7rem; }
+.recommendation-search button, .recommendation-search select, .recommendation-search input:not([type=checkbox]) { min-height: 44px; }
+.recommendation-search .result-action { display: flex; flex-direction: column; gap: .5rem; }
+.recommendation-search details { margin-top: .6rem; }
+.recommendation-search details p { overflow-wrap: anywhere; }
+.recommendation-seed { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+@media (max-width: 500px) { .recommendation-query { flex-wrap: wrap; }.recommendation-query input { flex-basis: 100%; }.recommendation-filters label:not(.inline) { flex: 1 1 40%; }.recommendation-filters select { max-width: 100%; }.recommendation-search .result-action { flex-direction: row; flex-wrap: wrap; } }

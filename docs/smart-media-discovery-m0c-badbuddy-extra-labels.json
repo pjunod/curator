@@ -1,0 +1,8 @@
+{
+  "version":"m0c-badbuddy-pool-extra-v1",
+  "status":"provisional agent-assigned relevance before shallow model order was inspected",
+  "source":"Bad Buddy related-list pool positions 31-60 and TMDB detail descriptions captured 2026-09-29",
+  "grade_rule":"0 unrelated; 1 weak; 2 substantial; 3 close match to Bad Buddy's male-male romance, friendship/rivalry and young adult context",
+  "grades":{"32829":1,"28672":0,"4345":0,"115":1,"65353":1,"137":0,"237339":3,"152":0,"71702":3,"155":0,"60888":0,"93972":3,"18156":0,"3151":0,"237411":2,"124834":2,"195670":0,"306630":2,"14733":0,"89672":3,"217735":2,"171":0,"94686":0,"3696":0,"4454":1,"4586":0,"2327":1,"39859":0,"1054":0,"211698":0},
+  "uncertain_ids":[65353,237411,306630,217735,4454]
+}

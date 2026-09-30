@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -975,6 +976,8 @@ func (s *Server) GetSettings(w http.ResponseWriter, r *http.Request) {
 		TmdbApiKeyConfigured: key != "",
 		TmdbApiKeyHint:       keyHint(key),
 	}
+	enabled := s.readSetting(r.Context(), "discovery_semantic_enabled") == "true"
+	out.SemanticRankingEnabled = &enabled
 	omdbConfigured, omdbHint := omdbKey != "", keyHint(omdbKey)
 	out.OmdbApiKeyConfigured = &omdbConfigured
 	out.OmdbApiKeyHint = &omdbHint
@@ -1024,6 +1027,15 @@ func (s *Server) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if err := s.deps.Settings.SetMeta(r.Context(), TMDBKeySetting, strings.TrimSpace(*body.TmdbApiKey)); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+	}
+	if body.SemanticRankingEnabled != nil {
+		if err := s.deps.Settings.SetMeta(r.Context(), "discovery_semantic_enabled", strconv.FormatBool(*body.SemanticRankingEnabled)); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not save discovery setting")
+			return
+		}
+		if s.deps.RecommendationModel != nil {
+			s.deps.RecommendationModel.Enable(*body.SemanticRankingEnabled)
 		}
 	}
 	if body.OmdbApiKey != nil {

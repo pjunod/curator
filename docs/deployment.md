@@ -1,5 +1,22 @@
 # Deployment: storage, floating nodes, and HA
 
+## Optional local recommendation model
+
+The production image includes `/curator-embed`, a standalone CPU encoder
+built from the locked Rust dependencies. The runtime uses distroless Debian
+with C/C++ libraries. No model is bundled or downloaded at startup. Use
+Settings → Discovery to download verified model files
+into the writable data volume and enable ranking explicitly. Preserve
+`<data>/models/` across container replacement if retaining the download.
+
+Native installs build `tools/curator-embed` with its pinned Rust toolchain and
+set `MONARR_EMBED_BINARY` to the resulting executable. The model is pinned to
+the revision and SHA-256 values in `tools/curator-embed/model-manifest.json`.
+Inference uses two CPU threads and at most eight texts per batch. Disabling
+ranking stops and reaps the helper while retaining its verified model files.
+
+## Storage and failover
+
 Monarr is deliberately one process with one SQLite file (ADR
 [0004](adr/0004-sqlite-only.md)): a single writer in WAL mode plus
 in-process state (scheduler, sessions, wanted cache). That buys the

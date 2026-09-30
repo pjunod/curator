@@ -694,6 +694,16 @@ button:disabled {
   margin-bottom: 18px;
 }
 
+.add-controls > label {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.add-controls select {
+  min-width: 0;
+  max-width: 100%;
+}
+
 input[type='search'],
 input[type='text'],
 input[type='password'],
@@ -3900,3 +3910,5 @@ a.pill-info:hover {
   .recovery-handoffs th:nth-child(6), .recovery-handoffs td:nth-child(6) { display: none; }
   .recovery-ready-detail { white-space: normal; }
 }
+
+[hidden] { display: none !important; }

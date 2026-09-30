@@ -12,8 +12,9 @@ LDFLAGS := -s -w -X github.com/pjunod/monarr/internal/buildinfo.Version=$(VERSIO
 SQLC         := github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 OAPI_CODEGEN := github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 GOLANGCI     := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+CARGO        ?= cargo
 
-.PHONY: all build go-build web test test-web test-mobile mobile-export test-e2e coverage coverage-gate coverage-html lint vet fmt gen gen-sqlc gen-api release release-check tidy clean dev-api dev-web dev-mobile docker bootstrap hooks
+.PHONY: all build go-build web test test-web test-mobile mobile-export test-e2e coverage coverage-gate coverage-html lint vet fmt gen gen-sqlc gen-api release release-check tidy clean dev-api dev-web dev-mobile docker bootstrap hooks embed-check embed-build embed-image embed-image-smoke
 
 all: build
 
@@ -137,6 +138,26 @@ dev-mobile: mobile/node_modules
 
 docker:
 	docker build -t monarr:dev .
+
+# Standalone embedding helper feasibility gate. This crate has its own lockfile
+# and toolchain so routine Go builds remain independent of Rust.
+embed-check:
+	cd tools/curator-embed && $(CARGO) fmt --check
+	cd tools/curator-embed && $(CARGO) test --locked
+	cd tools/curator-embed && $(CARGO) clippy --locked --all-targets -- -D warnings
+
+embed-build:
+	cd tools/curator-embed && $(CARGO) build --locked --release
+
+# Experimental final image. Mount a verified model and run /curator-embed as
+# uid 1000 for the separate M0b smoke; the model is not part of the image.
+embed-image:
+	docker build --platform linux/amd64 -f deploy/Dockerfile.discovery-m0b -t monarr:discovery-m0b .
+
+# MODEL_DIR is an absolute path on the Docker daemon host. Set DOCKER_HOST for
+# the Linux lab daemon; this runs and removes a non-root, networkless container.
+embed-image-smoke:
+	python3 tools/curator-embed/smoke-image.py --model-dir '$(MODEL_DIR)'
 
 # Create the host directories a compose deployment bind-mounts, owned by
 # PUID:PGID, before the first `up`. Reads deploy/.env if present.

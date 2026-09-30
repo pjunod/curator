@@ -28,6 +28,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/pjunod/monarr/internal/adapters/deluge"
+	"github.com/pjunod/monarr/internal/adapters/embedding"
 	"github.com/pjunod/monarr/internal/adapters/notify"
 	"github.com/pjunod/monarr/internal/adapters/nzbd"
 	"github.com/pjunod/monarr/internal/adapters/nzbget"
@@ -47,6 +48,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/importlist"
 	"github.com/pjunod/monarr/internal/app/library"
 	appnotify "github.com/pjunod/monarr/internal/app/notify"
+	"github.com/pjunod/monarr/internal/app/recommendation"
 	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/buildinfo"
 	"github.com/pjunod/monarr/internal/compat"
@@ -182,6 +184,11 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// meta.Summary, not meta.GetSeries: hydrating artwork for a row of shows
 	// through GetSeries would fetch every season of every one of them.
 	browse := discover.New(log, meta.Summary, meta, traktDiscover)
+	encoder := embedding.New(cfg.DataDir, os.Getenv("MONARR_EMBED_BINARY"))
+	enabled, _ := db.GetMeta(context.Background(), "discovery_semantic_enabled")
+	encoder.Enable(enabled == "true")
+	defer func() { _ = encoder.Close() }()
+	recommendations := recommendation.New(meta, db, encoder)
 
 	// Acquisition: real adapters injected as factories.
 	indexerFactory := func(cfg ports.IndexerConfig) ports.Indexer { return torznab.New(cfg) }
@@ -561,27 +568,29 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 
 	// HTTP.
 	srv := api.New(api.Deps{
-		Log:             log,
-		Bus:             b,
-		Health:          reg,
-		Connections:     connections,
-		Callers:         api.NewCallerRegistry(),
-		Scheduler:       sched,
-		DB:              db,
-		Library:         lib,
-		Acquisition:     acq,
-		Discover:        browse,
-		Store:           db,
-		IndexerFactory:  indexerFactory,
-		ClientFactory:   clientFactory,
-		NotifierFactory: notifierFactory,
-		CompatSonarr:    sonarrShim.Handler(),
-		CompatRadarr:    radarrShim.Handler(),
-		Settings:        db,
-		Version:         buildinfo.Version,
-		Commit:          buildinfo.Commit,
-		DataDir:         cfg.DataDir,
-		StartedAt:       startedAt,
+		Log:                 log,
+		Bus:                 b,
+		Health:              reg,
+		Connections:         connections,
+		Callers:             api.NewCallerRegistry(),
+		Scheduler:           sched,
+		DB:                  db,
+		Library:             lib,
+		Acquisition:         acq,
+		Discover:            browse,
+		Recommendations:     recommendations,
+		RecommendationModel: encoder,
+		Store:               db,
+		IndexerFactory:      indexerFactory,
+		ClientFactory:       clientFactory,
+		NotifierFactory:     notifierFactory,
+		CompatSonarr:        sonarrShim.Handler(),
+		CompatRadarr:        radarrShim.Handler(),
+		Settings:            db,
+		Version:             buildinfo.Version,
+		Commit:              buildinfo.Commit,
+		DataDir:             cfg.DataDir,
+		StartedAt:           startedAt,
 	})
 	httpServer := &http.Server{
 		Addr:              cfg.Addr(),

@@ -447,6 +447,7 @@ export interface DefaultProfiles {
 }
 
 export interface Settings {
+  semanticRankingEnabled?: boolean
   tmdbApiKeyConfigured: boolean
   tmdbApiKeyHint: string
   omdbApiKeyConfigured?: boolean
@@ -605,6 +606,7 @@ export const unignoreDir = (path: string) =>
   send('DELETE', `/library/scan/ignored?path=${encodeURIComponent(path)}`)
 export const getSettings = () => get<Settings>('/settings')
 export const updateSettings = (patch: {
+  semanticRankingEnabled?: boolean
   tmdbApiKey?: string
   omdbApiKey?: string
   traktClientId?: string
@@ -616,6 +618,40 @@ export const updateSettings = (patch: {
   activityRetentionDays?: number
   defaultProfiles?: Partial<DefaultProfiles>
 }) => send('PUT', '/settings', patch)
+
+export type RecommendationTheme = 'gay_male' | 'lesbian' | 'lgbtq' | 'coming_of_age' | 'found_family' | 'political_drama' | 'space_exploration'
+export interface RecommendationFilters {
+  theme?: RecommendationTheme | null
+  centralThemeOnly?: boolean
+  genres?: number[]
+  originalLanguage?: string | null
+  yearFrom?: number | null
+  yearTo?: number | null
+  excludeTeenFocus?: boolean
+  hideInLibrary?: boolean
+}
+export interface RecommendationRequest { kind: 'series'; query?: string; seed?: { provider: 'tmdb' | 'tvdb'; id: string } | null; filters?: RecommendationFilters; limit?: number }
+export interface RecommendationResult {
+  key: string; item: SearchResult; ownership: 'absent' | 'present' | 'ambiguous' | 'unknown'
+  libraryItemId?: number; addability: 'supported' | 'unsupported' | 'conflict'
+  themeEvidence: 'central' | 'present' | 'unknown' | 'contradicted'
+  reasons: { code: string; source: string; field: string; value: string; fetchedAt: string }[]; fetchedAt: string
+}
+export interface RecommendationResponse {
+  state: 'ready' | 'needs_refinement'; applied: { query: string; rankingText: string; filters: RecommendationFilters; seed?: { provider: 'tmdb' | 'tvdb'; id: string }; interpretationVersion: string }
+  ranking: 'semantic' | 'metadata_only'; modelState: string; coverage: 'bounded' | 'partial'
+  retrievedCount: number; checkedCount: number; eligibleCount: number; hiddenOwnedCount: number; returnedCount: number
+  warnings: { code: string; message: string }[]; results: RecommendationResult[]
+}
+export interface RecommendationStatus { modelState: string; providerConfigured: boolean; message: string; themes: { key: RecommendationTheme; label: string }[] }
+export async function recommendSeries(body: RecommendationRequest, signal?: AbortSignal): Promise<RecommendationResponse> {
+  const response = await fetch('/api/v1/metadata/recommendations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })
+  if (!response.ok) await parseError(response, 'Discovery is unavailable.')
+  return response.json() as Promise<RecommendationResponse>
+}
+export const getRecommendationStatus = () => get<RecommendationStatus>('/metadata/recommendations/status')
+export const installRecommendationModel = () => send('POST', '/metadata/recommendations/model/install')
+export const removeRecommendationModel = () => send('DELETE', '/metadata/recommendations/model')
 export const triggerScan = () => send('POST', '/library/scan')
 export const getScanReport = async (): Promise<ScanReport | null> => {
   const res = await fetch('/api/v1/library/scan/report')

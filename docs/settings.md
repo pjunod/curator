@@ -32,6 +32,30 @@ in the database, takes effect immediately (no restart), and is never
 returned by the API in full — only a last-4 hint. Books don't use TMDB;
 Open Library needs no key.
 
+### Local semantic ranking (optional)
+
+Settings → **Discovery** controls similarity ranking for
+Add media → Series → Describe what you want. It defaults off. Theme and
+catalog filters work with the TMDB key alone.
+
+**Download verified model** explicitly downloads about 92 MB of pinned
+all-MiniLM-L6-v2 files into `<data>/models/`. Each file's size and SHA-256 must
+match before it becomes usable. The Docker image includes the standalone
+encoder; native builds set `MONARR_EMBED_BINARY` to the compiled
+`curator-embed` executable. Cinema is not required.
+
+Enabling ranking starts the helper on the first search. Disabling it cancels
+inference, kills and reaps the helper, and releases its memory; model files
+remain for later use. Disable ranking before **Remove model**. Download,
+verification, startup, or inference failures appear in this panel. A helper
+failure uses metadata ordering and a 30-second retry cooldown.
+
+The setting is `semanticRankingEnabled` in `PUT /api/v1/settings` and
+`discovery_semantic_enabled` in SQLite `app_meta`. Changes take effect without
+a server restart. Only model files and this setting persist; descriptions,
+vectors, and recommendation caches stay in memory. Raw descriptions are not
+retained in ranked cache entries.
+
 ### Extra ratings (OMDb — optional)
 
 A free OMDb key (omdbapi.com, 1000 req/day) adds Rotten Tomatoes, IMDb,

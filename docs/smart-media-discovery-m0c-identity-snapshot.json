@@ -1,0 +1,895 @@
+{
+  "version": "m0c-real-identity-snapshot-v1",
+  "captured_local_date": "2026-09-29",
+  "scope": "R3 and Looking tuning pools plus Looking seed; identity-only freeze, not the full 24-query labeled corpus",
+  "provider": "TMDB TV",
+  "all_details_success": true,
+  "distinct_series_count": 110,
+  "route_pool_counts": {
+    "r3": 54,
+    "looking": 59,
+    "overlap": 4
+  },
+  "rows": [
+    {
+      "tmdb_id": 24,
+      "name": "Presidio Med",
+      "first_air_date": "2002-09-24",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 47,
+      "name": "El Chavo del Ocho",
+      "first_air_date": "1973-02-26",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 52,
+      "name": "That '70s Show",
+      "first_air_date": "1998-08-23",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 71,
+      "name": "Malcolm & Eddie",
+      "first_air_date": "1996-08-26",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 105,
+      "name": "Sex and the City",
+      "first_air_date": "1998-06-06",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 137,
+      "name": "W.I.T.C.H.",
+      "first_air_date": "2004-12-18",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 150,
+      "name": "This Life",
+      "first_air_date": "1996-03-18",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 152,
+      "name": "Maging Sino Ka Man",
+      "first_air_date": "2006-10-09",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 155,
+      "name": "3rd Rock from the Sun",
+      "first_air_date": "1996-01-09",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 211,
+      "name": "The Game",
+      "first_air_date": "2006-10-01",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 1365,
+      "name": "Eli Stone",
+      "first_air_date": "2008-01-31",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 1413,
+      "name": "American Horror Story",
+      "first_air_date": "2011-10-05",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 2388,
+      "name": "Queer as Folk",
+      "first_air_date": "1999-02-23",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 3475,
+      "name": "The L Word",
+      "first_air_date": "2004-01-18",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 4598,
+      "name": "Boston Legal",
+      "first_air_date": "2004-10-03",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 18745,
+      "name": "Tales of the City",
+      "first_air_date": "1993-09-28",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 32023,
+      "name": "How to Make It in America",
+      "first_air_date": "2010-02-14",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 33301,
+      "name": "Franklin & Bash",
+      "first_air_date": "2011-06-01",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 40008,
+      "name": "Hannibal",
+      "first_air_date": "2013-04-04",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 51345,
+      "name": "Undateable",
+      "first_air_date": "2014-05-29",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 57774,
+      "name": "Looking",
+      "first_air_date": "2014-01-19",
+      "in_r3_pool": false,
+      "in_looking_pool": false,
+      "is_looking_seed": true
+    },
+    {
+      "tmdb_id": 58960,
+      "name": "Binoy Henyo",
+      "first_air_date": "2013-07-22",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 61637,
+      "name": "Togetherness",
+      "first_air_date": "2015-01-11",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 61664,
+      "name": "Sense8",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 61931,
+      "name": "Banana",
+      "first_air_date": "2015-01-22",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 61932,
+      "name": "Cucumber",
+      "first_air_date": "2015-01-22",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 62117,
+      "name": "Younger",
+      "first_air_date": "2015-03-31",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 62320,
+      "name": "Grace and Frankie",
+      "first_air_date": "2015-05-08",
+      "in_r3_pool": true,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 62914,
+      "name": "Merlí",
+      "first_air_date": "2015-09-14",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 63161,
+      "name": "Crazy Ex-Girlfriend",
+      "first_air_date": "2015-10-12",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 64254,
+      "name": "Master of None",
+      "first_air_date": "2015-11-06",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 65315,
+      "name": "Flaked",
+      "first_air_date": "2016-03-11",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 65495,
+      "name": "Atlanta",
+      "first_air_date": "2016-09-06",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 67202,
+      "name": "EastSiders",
+      "first_air_date": "2012-12-14",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 67429,
+      "name": "Eyewitness",
+      "first_air_date": "2016-10-16",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 68129,
+      "name": "Yuri!!! on Ice",
+      "first_air_date": "2016-10-06",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 68188,
+      "name": "Kiss Him, Not Me",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 69050,
+      "name": "Riverdale",
+      "first_air_date": "2017-01-26",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 71915,
+      "name": "Good Omens",
+      "first_air_date": "2019-05-31",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 72750,
+      "name": "Killing Eve",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 74321,
+      "name": "Will & Grace",
+      "first_air_date": "2017-09-28",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 75208,
+      "name": "Devilman Crybaby",
+      "first_air_date": "2018-01-05",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 76669,
+      "name": "Elite",
+      "first_air_date": "2018-10-05",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 79130,
+      "name": "Another Life",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 81317,
+      "name": "Forever",
+      "first_air_date": "2018-09-14",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 81318,
+      "name": "Love By Chance",
+      "first_air_date": "2018-08-03",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 81356,
+      "name": "Sex Education",
+      "first_air_date": "2019-01-11",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 82424,
+      "name": "SKAM España",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 87731,
+      "name": "Tales of the City",
+      "first_air_date": "2019-06-07",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 88040,
+      "name": "given",
+      "first_air_date": "2019-07-12",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 88713,
+      "name": "We Are Who We Are",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 89630,
+      "name": "The L Word: Generation Q",
+      "first_air_date": "2019-12-08",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 90239,
+      "name": "The Game of Keys",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 90462,
+      "name": "Chucky",
+      "first_air_date": "2021-10-12",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 91239,
+      "name": "Bridgerton",
+      "first_air_date": "2020-12-25",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 92298,
+      "name": "The Summer That I Loved My Teacher",
+      "first_air_date": "2016-09-06",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 92417,
+      "name": "Sexo Frágil",
+      "first_air_date": "2003-10-17",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 92685,
+      "name": "The Owl House",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 93741,
+      "name": "Jurassic World Camp Cretaceous",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 93975,
+      "name": "TharnType",
+      "first_air_date": "2019-10-07",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 94954,
+      "name": "Hazbin Hotel",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 96571,
+      "name": "Move to Heaven",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 96734,
+      "name": "High Fidelity",
+      "first_air_date": "2020-02-14",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 97186,
+      "name": "Love, Victor",
+      "first_air_date": "2020-06-17",
+      "in_r3_pool": true,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 99617,
+      "name": "Halston",
+      "first_air_date": "2021-05-14",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 99631,
+      "name": "2gether: The Series",
+      "first_air_date": "2020-02-21",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 100698,
+      "name": "Tiger King",
+      "first_air_date": "2020-03-20",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 100883,
+      "name": "Never Have I Ever",
+      "first_air_date": "2020-04-27",
+      "in_r3_pool": true,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 102903,
+      "name": "Control Z",
+      "first_air_date": "2020-05-22",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 107113,
+      "name": "Only Murders in the Building",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 111204,
+      "name": "Cherry Magic! Thirty Years of Virginity Can Make You a Wizard?!",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 112398,
+      "name": "Heaven Official's Blessing",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 113988,
+      "name": "DAHMER - Monster: The Jeffrey Dahmer Story",
+      "first_air_date": "2022-09-21",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 116450,
+      "name": "And Just Like That…",
+      "first_air_date": "2021-12-09",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 117067,
+      "name": "KinnPorsche: The Series",
+      "first_air_date": "2022-04-02",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 117581,
+      "name": "Ginny & Georgia",
+      "first_air_date": "2021-02-24",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 122009,
+      "name": "Bad Buddy",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 123192,
+      "name": "The Crowded Room",
+      "first_air_date": "2023-06-08",
+      "in_r3_pool": true,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 124834,
+      "name": "Heartstopper",
+      "first_air_date": "2022-04-22",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 125305,
+      "name": "Love Crossed",
+      "first_air_date": "2021-05-10",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 125312,
+      "name": "Crescendo",
+      "first_air_date": "2015-10-23",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 125910,
+      "name": "Young Royals",
+      "first_air_date": "2021-07-01",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 127549,
+      "name": "Sasaki and Miyano",
+      "first_air_date": "2022-01-10",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 130842,
+      "name": "The Newsreader",
+      "first_air_date": "2021-08-15",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 133342,
+      "name": "Sort Of",
+      "first_air_date": "2021-11-09",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 157208,
+      "name": "Semantic Error",
+      "first_air_date": "2022-02-16",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 158053,
+      "name": "Prisma",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 195670,
+      "name": "XO, Kitty",
+      "first_air_date": "2023-05-18",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 196214,
+      "name": "The Full Monty",
+      "first_air_date": "2023-06-14",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 201380,
+      "name": "Uncoupled",
+      "first_air_date": "2022-07-29",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 207371,
+      "name": "Love in the Air",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 207658,
+      "name": "21 Days Theory",
+      "first_air_date": "2022-08-07",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 207704,
+      "name": "The Girls at the Back",
+      "first_air_date": "2022-09-23",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 207759,
+      "name": "Archie: The Man Who Became Cary Grant",
+      "first_air_date": "2023-11-23",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 207773,
+      "name": "Demon Doctor",
+      "first_air_date": "2019-10-31",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 212462,
+      "name": "Mary & George",
+      "first_air_date": "2024-03-05",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 214609,
+      "name": "Smiley",
+      "first_air_date": "2022-12-07",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 216795,
+      "name": "Rain Dogs",
+      "first_air_date": "2023-03-06",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 233629,
+      "name": "Bodies",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 239711,
+      "name": "To Be Continued",
+      "first_air_date": "2024-02-19",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 243316,
+      "name": "The Four Seasons",
+      "first_air_date": "2025-05-01",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 243861,
+      "name": "The Vince Staples Show",
+      "first_air_date": "2024-02-15",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 248982,
+      "name": "Cassandra",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 250988,
+      "name": "House of Guinness",
+      "first_air_date": "2025-09-25",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 261363,
+      "name": "Mid-Century Modern",
+      "first_air_date": "2025-03-28",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 274622,
+      "name": "Go for It, Nakamura-kun!!",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 276349,
+      "name": "Yano-kun's Ordinary Days",
+      "first_air_date": "2025-10-01",
+      "in_r3_pool": false,
+      "in_looking_pool": true,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 278196,
+      "name": "The Summer Hikaru Died",
+      "first_air_date": "2025-07-06",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 292035,
+      "name": "Revenged Love",
+      "first_air_date": null,
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    },
+    {
+      "tmdb_id": 301507,
+      "name": "Heated Rivalry",
+      "first_air_date": "2025-11-28",
+      "in_r3_pool": true,
+      "in_looking_pool": false,
+      "is_looking_seed": false
+    }
+  ]
+}

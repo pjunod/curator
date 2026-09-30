@@ -1,0 +1,40 @@
+{
+  "version": "m0c-historical-detail-export-omissions-v1",
+  "source": "historical 110-detail transformed capture; raw TMDB response bodies not retained",
+  "status": "capture/export omitted original_language and first_air_date on 21 rows; provider field presence cannot be inferred",
+  "affected_tmdb_ids": [
+    61664,
+    68188,
+    72750,
+    79130,
+    82424,
+    88713,
+    90239,
+    92685,
+    93741,
+    94954,
+    96571,
+    107113,
+    111204,
+    112398,
+    122009,
+    158053,
+    207371,
+    233629,
+    248982,
+    274622,
+    292035
+  ],
+  "evaluated_hard_filter_impact": [
+    {
+      "query_id": "H02",
+      "filter": "original_language=ko",
+      "selected_missing_detail_ids": [
+        96571
+      ],
+      "policy": "exclude missing or mismatched enriched detail language; list summary is insufficient"
+    }
+  ],
+  "other_evaluated_hard_filters": "No other query in this 24-query corpus requires original_language or first_air_date; teen exclusions use separate evidence.",
+  "credential_access": "Auto-review rejected locating an existing credential through nuc3 container mounts; no alternate credential path was attempted."
+}

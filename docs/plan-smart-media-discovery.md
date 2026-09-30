@@ -1,9 +1,12 @@
 # Smart media discovery — build theme search and related-series suggestions
 
-**Status:** Fable approved M0 only, with changes; M1–M5 are conditional and
-not approved to build. This revision addresses that review. Retrieval has
-not been measured. **Owner decision:** standalone ranking; Curator must
-function without Cinema. No feature code implemented. **Updated:** 2026-09-29.
+**Status:** M1–M5 implementation authorized directly by the owner on
+2026-09-30; earlier review holds are superseded. Retrieval, standalone model,
+API, web UI, settings and production packaging are implemented. Required
+regression checks and integrated resource qualification passed; see
+[delivered results](smart-media-discovery-qualification.md).
+**Owner decision:** standalone ranking; Curator functions
+without Cinema. **Updated:** 2026-09-30.
 **Scope:** TV series on web, including
 mobile web; additive server API for later native adoption.
 
@@ -12,8 +15,8 @@ Companion to [the preview plan](plan-search-result-preview.md),
 [the architecture](architecture.md). This document specifies what to build,
 in what order, and what must be demonstrated before release. The companion
 [adversarial review](plan-smart-media-discovery-review.md) records challenges
-and their disposition, including Fable's M0-only verdict in §6. Start with
-the coverage experiment in §10.1 before any runtime or feature build.
+and their disposition, including the historical M0-only verdict in §6.
+The owner subsequently directed completion without milestone approval pauses.
 Re-verify the code seams in §2 against the actual build branch before editing.
 
 ## 1. Outcome — find a theme, then explore without losing it
@@ -198,15 +201,16 @@ rules. Treat this as `theme-rules-v1`, committed as code or embedded data.
 It is a reviewed product vocabulary, not an automatically generated tag set.
 
 M0 must produce the versioned vocabulary artifact and its provider-resolution
-fixtures before M1 exposes any theme. Initial retrieval aliases to verify are
-listed below; these are proposed search strings, not claims that those exact
-keywords currently exist in TMDB. Each theme has exactly one OR group in v1,
-with at most four ordered aliases. A keyword is admitted only when its returned
-name exactly matches an allowlisted normalized name in that theme's artifact.
+fixtures before M1 exposes any theme. The six `gay_male` aliases below were
+observed in M0a; the other themes' strings remain proposals requiring their
+own route evidence. A keyword is admitted only when its returned name exactly
+matches an allowlisted normalized name in that theme's artifact. The
+`gay_male` route uses three separate discovery lanes under §5, not one OR
+group.
 
 | Theme key | Ordered keyword aliases to verify | Evidence distinction |
 |---|---|---|
-| `gay_male` | gay romance · gay relationship · gay · lgbt | Broad LGBT retrieval alone cannot prove the narrower theme |
+| `gay_male` | gay romance · gay relationship · gay · lgbt · gay theme · boys' love (bl) | Three R3 retrieval lanes use gay theme, BL, and lgbt; broad LGBT retrieval alone cannot prove the narrower theme |
 | `lesbian` | lesbian romance · lesbian relationship · lesbian · lgbt | Broad LGBT retrieval alone cannot prove the narrower theme |
 | `lgbtq` | lgbt · gay · lesbian · transgender | Umbrella theme; may admit any explicitly evidenced constituent |
 | `coming_of_age` | coming of age · adolescence · growing up | Adolescent setting alone does not prove a coming-of-age story |
@@ -222,7 +226,8 @@ Adjust aliases only with recorded retrieval evidence and a rules-version bump.
 If a theme has no verified retrieval route, keep its chip unavailable with an
 explanation; the motivating `gay_male` route must pass before release. A broad
 retrieval alias and a narrow admission alias are different fields in the
-artifact. Do not accidentally promote all four retrieval aliases into evidence.
+artifact. Do not accidentally promote a broad retrieval alias into narrow
+evidence.
 
 For `gay-themed TV series`, map exact aliases to `gay_male`; do not resolve
 `gay` to a title, cast member, adult flag, or the broad `lgbtq` theme. Distinct
@@ -295,6 +300,13 @@ of which part of a description matched.
 
 ## 5. Retrieval — build a relevant, bounded candidate pool first
 
+The selected **M0c experimental contract** for `gay_male` is the measured R3
+split-lane route from [M0a revision](smart-media-discovery-m0a-revision.md).
+It replaces the four-alias, single-OR proposal as the source of truth for the
+evaluation harness and any later M1 implementation. M0c must still prove
+quality and latency before this route can ship. Other themes need their own
+verified aliases and lanes; they do not inherit the gay-male keywords.
+
 ### 5.1 TMDB capabilities
 
 Extend the adapter with these upstream operations. Extract a shared transport
@@ -307,28 +319,36 @@ would create another unbounded cache and limiter and does not meet this plan.
 
 | Need | Upstream operation | Bound |
 |---|---|---|
-| Resolve theme vocabulary | `/search/keyword?query=…` | At most four alias lookups on a cold query; accept only exact normalized allowlisted keyword names |
-| Theme candidates | `/discover/tv?with_keywords=…` | Up to three pages total across approved keyword groups |
+| Resolve `gay_male` vocabulary | `/search/keyword?query=…` | At most six alias lookups on a cold query; accept only exact normalized allowlisted keyword names |
+| Theme candidates | `/discover/tv?with_keywords=…` | One page each for three fixed R3 keyword lanes, no substitute page |
 | Seed candidates | `/tv/{id}/recommendations`, then `/tv/{id}/similar` | Up to three pages total across both paths |
-| Facts and evidence | `/tv/{id}` with supported appended `keywords,external_ids` | At most 30 candidate enrichments plus seed lookup, within §5.3's 41-call cap; no seasons or episodes |
+| Facts and evidence | `/tv/{id}` with supported appended `keywords,external_ids` | At most 30 candidate enrichments for single-path searches, 28 for combined searches, reduced by any extra mapping call; one seed detail when present; no seasons or episodes |
 
 Resolve keyword IDs from approved names rather than hardcoding unverified
 numbers. Cache resolutions with their provider names. A failed keyword
 lookup does not mean “no titles match.” Broad keyword retrieval may feed a
 narrow theme, but the local evidence gate still applies.
 
-Resolve aliases in artifact order. Successful lookups with no exact allowed
-name are legitimate misses. If all lookups succeed but no keyword resolves,
-return `needs_refinement` with `theme_unavailable`, not an empty successful
-search. If some lookups fail but others resolve, use the resolved union and
-mark coverage partial. If failures leave no keyword resolved, return 503
-`provider_unavailable`. Never drop the required theme and use only the seed.
-Join resolved IDs with `|` for OR; local admission implements the narrower
-theme rule. A combined query uses the same theme group as theme-only search.
+Resolve the six exact aliases in this order: `gay romance`, `gay relationship`,
+`gay`, `lgbt`, `gay theme`, `boys' love (bl)`. The IDs observed in M0a are
+240305, 265777, 363345, 158718, 258533, and 289844 respectively; resolve
+by exact normalized name at runtime rather than hardcoding those IDs. The
+three discovery lanes use only `gay theme`, `boys' love (bl)`, and `lgbt`,
+in that order. The other resolved aliases may inform evidence checks but add
+no discovery page. Broad `lgbt` retrieval never establishes gay-male
+admission by itself.
 
-Use `sort_by=popularity.desc` explicitly for theme retrieval. M0 compares
-`vote_count.desc` as a diagnostic alternative and records both; a different
-shipping sort needs the measured report and a plan revision. Send explicit
+Successful lookups with no exact allowed name are legitimate misses. If all
+lookups succeed but no lane resolves, return `needs_refinement` with
+`theme_unavailable`, not an empty successful search. If some lookups fail but
+at least one lane resolves, use the resolved lanes and mark coverage partial.
+If failures leave no lane resolved, return 503 `provider_unavailable`. Never
+drop the required theme and use only the seed. A combined query uses the same
+three lanes as theme-only search.
+
+Use `sort_by=vote_count.desc` and `language=en-US` explicitly in all three
+theme lanes. The M0a `popularity.desc` and single-OR routes remain diagnostics,
+not silent fallbacks. Send explicit
 original-language/year/genre filters upstream as `with_original_language`,
 `first_air_date.gte=YYYY-01-01`, `first_air_date.lte=YYYY-12-31`, and
 `with_genres=<IDs joined by |>`, then verify them again locally. Use a fixed,
@@ -355,35 +375,57 @@ do not assume movie and TV keyword envelopes are identical.
    ambiguous, unavailable, or unmappable seeds receive distinct responses.
    Do not silently title-search for a replacement seed.
 3. Retrieve candidate pages using the schedule below, then deduplicate by
-   TMDB identity. Retain up to 60 shallow candidates, reserving 30 per path
-   for theme plus seed before filling unused capacity. Select at most 30 for
-   enrichment by alternating eligible theme/seed rows in provider-rank order
-   (15 per path, then fill unused slots). Theme-only or seed-only can use all
-   30 enrichment places. Never fill with unrelated trending TV.
-4. Enrich at most 30 candidates with a pool of four concurrent reads. Existing
+   TMDB identity. Retain at most 60 shallow candidates. For a combined search,
+   reserve up to 30 distinct IDs from each path, assigning shared IDs to the
+   theme quota first, then fill unused capacity from remaining rows in page
+   schedule order. Keep rank contributions from both paths for shared IDs.
+   Never fill with unrelated trending TV.
+4. Select at most 30 identities for enrichment in theme-only or seed-only
+   searches and at most 28 for combined searches, using the fixed preselection
+   below. Enrich through a pool of four concurrent reads. Existing
    summary records may be shown only after the required filters can be
    evaluated. Failed enrichment cannot establish a required theme.
 5. Apply hard filters, remove the seed, rank, and mark ownership from current
    library identities. Return up to 20 suggestions. Do not hydrate seasons
    to generate a recommendation card.
 
-**Page schedule:** theme pages are 1, 2, 3 of its single OR-group discovery
-query. Seed pages are recommendations 1, similar 1, recommendations 2; skip
-pages beyond a provider-reported last page, without inventing another source.
-For a combined request interleave theme 1, recommendations 1, theme 2, similar
-1, theme 3, recommendations 2. Response arrival order cannot change the pool.
-Assign identities found in both paths to the theme quota first, retaining
-their rank contributions from both paths; fill the seed quota with remaining
-seed identities, then fill unused slots from remaining theme and seed rows in
-scheduled order. If either path fails, fill from the usable path while still
-enforcing every selected filter and reporting partial coverage.
+**Page schedule:** theme pages are `gay theme` 1, BL 1, `lgbt` 1. Each page
+is a separate keyword-list identity. Within the theme path, merge row 1 from
+each lane, then row 2 from each lane, and so on, using that lane order on ties.
+Seed pages are recommendations 1, similar 1, recommendations 2. Within the
+seed path, merge by absolute within-list rank, recommendations before similar
+on a tie, then deduplicate. Skip a page beyond the provider-reported last page
+without substituting another source. A combined request dispatches the six
+pages in this order: gay-theme 1, recommendations 1, BL 1, similar 1, lgbt 1,
+recommendations 2. Pool merge remains the two path orders and 30/30 quotas
+above, regardless of response arrival order. If either path fails, fill from
+the usable path within the same 60-pool and enrichment limits, enforce every
+selected filter, and report partial coverage.
+
+**Frozen shallow preselection for M0c:** Score only the English summary
+`overview`, with case-folded whole phrases and at most one hit per group:
+4 for `gay`, `homosexual`, `same-sex`, `boys' love`, `two men`, `two boys`,
+`male couple`, or `men in love`; 2 for `queer`, `lgbt`, or `lgbtq`; 1 for
+`romance`, `relationship`, or `fall in love`. Theme-path candidates sort by
+this score descending, then theme merge position, then TMDB ID. Theme-only
+enriches the first 30. Seed-only uses the seed merge order without the
+gay-specific phrase score; the historical Looking R4 scored order remains a
+tuning diagnostic. Combined search takes 14 from each sorted path, assigning
+shared IDs to theme first; fill remaining places to 28 by alternating the
+next unselected theme and seed rows, theme first, then whichever path still
+has rows. No label, title, cast, vote count, detail keyword, or popularity may
+enter shallow preselection. A semantic preselector is a separate M0c
+experiment with its own version and measured encoding cost, not a silent
+replacement for this baseline. Required-theme admission still needs detail
+evidence after enrichment.
 Requests for known pages may overlap through the same four-read pool as
 enrichment; scheduling may be concurrent, quota/rank decisions remain in
 the written order. All network operations obey the same admission policy.
 
-**Rank identity:** a retrieval list is the provider endpoint plus canonical
-keyword group or seed ID and filters, excluding page. Recommendations and
-similar are separate lists; different pages of either are one list. Compute
+**Rank identity:** a retrieval list is the provider endpoint plus its exact
+lane keyword ID or seed ID and filters, excluding page. The three theme lanes
+are separate lists. Recommendations and similar are separate lists; different
+pages of either are one list. Compute
 absolute rank using the v3 page-size contract, to verify as 20 in M1:
 `(page - 1) * 20 + rowIndex + 1`, before deduplication or filtering.
 Store each candidate's best absolute rank once per list. Repeated pages or
@@ -413,11 +455,16 @@ budget; cap attached callers at four total, including the original caller.
 These numbers replace the former two
 active/four queued request contract.
 
-The cold maximum is **41 upstream calls**: four keyword lookups, six candidate
-pages, one seed lookup, and 30 candidate enrichments. A TVDB mapping requiring
-an additional detail call reduces enrichment to 29; all actual calls count.
+The cold maximum is **41 upstream calls**. Theme-only R3 spends at most six
+keyword lookups + three discovery pages + 30 enrichments = **39**. Seed-only
+spends one seed detail + three related pages + 30 enrichments = **34**.
+Combined spends six lookups + three discovery pages + three related pages +
+one seed detail + 28 enrichments = **41**. One additional TVDB mapping call
+reduces the combined enrichment ceiling to 27 (seed-only to 29); any other
+actual upstream call reduces it further. No retry allowance is hidden.
 Retaining 60 cheap summary candidates does not authorize enriching all 60.
-M0 must measure the loss between the 60-row pool and the 30 enriched rows.
+M0c must measure the loss between the 60-row pool and the 30 enriched rows
+(28 for combined requests).
 
 Keep the shared provider ceiling at 10 requests/second, burst 10, and the
 shared 429 cooldown. Recommendation dispatch additionally has an 8 requests/
@@ -553,12 +600,31 @@ the same rules or model being evaluated. Record disagreements and have the
 owner or reviewer adjudicate thematic/centrality labels before release.
 
 Measure retrieval recall separately from ranking: of known relevant titles
-for each query, how many reached the candidate pool? A reranker cannot repair
-low recall. Compare keyword/provider ordering against semantic ordering on
-the identical pool. Release targets, subject to explicit review if unmet:
+for each query, how many reached the candidate pool and the enrichment set?
+A reranker cannot repair missing candidates. Retain independently assembled
+catalog lists as coverage and bias diagnostics, with exact misses and
+language/visibility splits. The former release gate of 80% recall against
+an arbitrary known-relevant list for broad theme queries was withdrawn after
+M0a: a bounded 30-enrichment search can still offer ten useful choices while
+missing much of a large catalog. The 30-title experiment in
+[the M0a report](smart-media-discovery-m0a.md) and its
+[revised routes](smart-media-discovery-m0a-revision.md) remains recorded as a
+failure of list coverage, not proof of candidate precision or sufficiency.
+For narrowly constrained requests with a genuinely finite expected set,
+freeze that set before retrieval and report pool and post-enrichment coverage;
+the acceptance threshold for those cases requires reviewer approval before
+tuning. Compare keyword/provider ordering against semantic ordering on the
+identical adjudicated candidate pool.
 
-- At least 80% recall against the annotated relevant set across held-out theme
-  queries, with per-query counts reported; this is not global catalog recall.
+Revised broad-discovery release targets, subject to explicit review if unmet:
+
+- On held-out broad theme queries whose catalog has many suitable works,
+  return at least ten independently adjudicated, evidence-supported eligible
+  suggestions after the 30-enrichment selection. Report the exact candidate
+  pool, selected, eligible, and returned counts; an empty or one-item result
+  does not pass because its precision is high. For genuinely sparse or
+  constrained queries, report the available count and omissions separately
+  rather than inflating it to ten or silently relaxing filters.
 - Mean precision@10 at least 0.8 on held-out queries with at least ten labeled
   relevant works. Smaller sets report precision at available results and
   omissions separately; returning one good item does not score as ten.
@@ -572,7 +638,9 @@ the identical pool. Release targets, subject to explicit review if unmet:
 
 M0 records exact grading, tie handling, cutoff selection, dataset version,
 hardware, and results. These criteria are proposed acceptance targets, not
-measurements already performed.
+measurements already performed. This evaluation-contract revision was
+requested by the originating reviewer after the measured M0a retrieval
+failure; candidate annotations and reviewer adjudication remain pending.
 
 ## 7. Model runtime — local, optional, and separately proven
 
@@ -979,24 +1047,32 @@ missing model, corrupt model, and unavailable provider.
 
 ## 10. Milestones — measure keyword coverage before building the runtime
 
-Fable's verdict approves **M0 only, with changes**. The later rows specify a
-conditional build, not permission to skip the experiment. No M1–M5 feature
-work begins until M0 evidence and any necessary contract revisions have been
-reviewed. This documentation revision does not perform M0.
+The owner's 2026-09-30 instruction authorizes completion of every milestone.
+Reviews are advisory and defects are repaired as part of implementation. The
+[measured M0a evidence](smart-media-discovery-m0a.md) and
+[selected-candidate review](smart-media-discovery-m0a-annotations.md) led the
+originating reviewer initially to permit M0b packaging feasibility. That
+historical hold is superseded. M0 quality results remain provisional: the
+labels were not independently human-annotated and the held-out set has been
+consumed. A working feature and green regression tests do not establish a
+catalog-wide relevance guarantee. See [ADR 0023](adr/0023-smart-media-discovery.md)
+for the implemented contract and its limitations.
 
 | Milestone | Work and primary files | Acceptance |
 |---|---|---|
-| M0a — keyword coverage first | Record baseline SHA; independently assemble about 30 gay-themed series; inspect keywords and discovery pools as specified below | Keyword coverage, hit@60/100/200, selected-30 hit rate, incidental-theme rate, filters and sort recorded; apply stop conditions before runtime/domain work |
-| M0b — standalone packaging | Only after M0a passes review: `tools/curator-embed/` with its own locked crate/toolchain, Debian 12 Rust stage, proposed distroless cc final image | Real vectors inside final Linux x64 image as non-root; tokenizer/vector parity, dependency closure, build duration and cache needs documented |
-| M0c — quality and budget | Corpus/evaluator from §6.2; simulate real candidate selection and run the small encoder; one-cold-search contention experiment | Retrieval/ranking comparison, model cutoffs, 41-call/30-enrichment budget, complete/partial latency and total memory documented; review before M1 |
+| M0a — keyword coverage first | Record baseline SHA; independently assemble about 30 gay-themed series; inspect keywords and discovery pools as specified below | Keyword coverage, hit@60/100/200, selected-30 hit rate, filters and sort recorded; candidate evidence/quality annotated separately; review the actual pool before runtime work |
+| M0b — standalone packaging | Following the reviewer's M0a feasibility disposition: `tools/curator-embed/` with its own locked crate/toolchain, Debian 12 Rust stage, proposed distroless cc final image | Real vectors inside final Linux x64 image as non-root; tokenizer/vector parity, dependency closure, build duration and cache needs documented |
+| M0c — quality and budget | Corpus/evaluator from §6.2; simulate real candidate selection and run the small encoder; one-cold-search contention experiment | Candidate sufficiency and actual ranking quality, model cutoffs, 41-call ceiling (30 theme-only or 28 combined enrichments for the R3 experimental route), complete/partial latency and total memory documented; review before M1 |
 | M1 — retrieval and evidence | `internal/ports/recommendation.go`, `internal/domain/recommendation/`, TMDB adapter methods/fixtures, shared bounded budgets | Theme query retrieves titles without title-term overlap; strict evidence excludes adversarial wrong-theme cases; no season requests; bounded calls and 429 handling proven |
 | M2 — service, identity and API | `internal/app/recommendation/`, SQLite batched ownership, API handler/OpenAPI, wiring in `cmd/monarr/main.go` | Metadata-only API passes contract, identity, cancellation, cache and partial-failure tests; no library writes from discovery |
 | M3 — local ranking and settings | `internal/adapters/embedding/`, helper protocol/build, model manifest/install, Settings API, runtime diagnostics | Real encoder improves held-out ranking; disabled/corrupt/crashed/timeout states preserve metadata-only results; process cleanup and bounded memory verified |
 | M4 — web experience | AddMedia, existing preview drawer, API types, route state, Settings UI, styles | Describe → refine → More like this → preview → Add works on desktop and 390 px; filters survive seed changes; original Add identity and defaults preserved |
 | M5 — qualification and handoff | E2E fixtures, container packaging, VERSION bump, usage/settings/deployment docs | Quality and resource targets met; current-main gates green; planned 0.34.0 if the base remains 0.33.0, otherwise the next unallocated minor release |
 
-M0 is a decision gate, not a feature release. If retrieval fails, stop before
-building the helper or domain rules. If runtime or ranking fails later, retain
+M0 is a decision gate, not a feature release. Poor catalog-list recall alone
+does not prohibit a bounded helper feasibility spike once the reviewer finds
+enough actual suitable candidates to test ranking; this is the disposition
+after M0a. If runtime or ranking fails later, retain
 the evaluation and return a revised design. Metadata-only discovery does not
 satisfy the accepted full feature on its own. The release must update VERSION,
 [settings](settings.md), [usage](usage.md), and [deployment](deployment.md)
@@ -1009,7 +1085,7 @@ No encoder, Docker build, or `internal/domain/recommendation` implementation
 is needed for this step. A one-off read-only provider script or manual API
 requests are sufficient; never put the key in a committed command or report.
 
-1. Have a person/reviewer assemble approximately 30 series they consider
+1. Independently assemble approximately 30 series considered
    gay-themed, independently of TMDB search output. Mix well-known and obscure
    works, US and non-US productions, older and newer titles. Record verified
    TMDB identities and distinguish central stories from incidental characters.
@@ -1034,13 +1110,17 @@ requests are sufficient; never put the key in a committed command or report.
    the unfiltered seed-path limitation. Keep these results separate from the
    broad theme baseline. No model is needed to expose these coverage losses.
 
-**Early stop:** keyword coverage below 60% of the independent reference set,
-or more than half of the top-60 candidates having only incidental/insufficient
-theme evidence, rejects the current retrieval bet immediately. These are
-cheap failure cutoffs, not successful-release thresholds. A result above
-them still must satisfy §6.2's 80% held-out recall target after candidate
-selection; the reference-list result is only an early diagnostic. Report all
-small-set counts so a percentage does not hide one or two titles.
+**Early screen:** keyword coverage below 60% of the independent reference
+set, or more than half of the top-60 candidates having only incidental or
+insufficient theme evidence, requires review of the current retrieval bet.
+The top-60 rate needs actual row-level evidence annotation; absence from a
+reference list and lack of a narrow keyword do not establish incidental
+content. These are cheap warning screens, not successful-release thresholds.
+Independent-list hit rates remain coverage/bias diagnostics under §6.2, not
+an 80% broad-query release gate. Report all small-set counts so a percentage
+does not hide one or two titles. Candidate sufficiency is assessed from
+independently adjudicated selected titles, while precision and nDCG require
+the actual output ordering and model experiment in M0c.
 
 If hit@100/200 is much better than hit@60, or the selected 30 lose relevant
 works, compare a revised source/sort/selection strategy with its network cost.
@@ -1048,7 +1128,10 @@ Do not simply raise the cap and preserve the old latency promise. If keyword
 coverage itself is poor, widening pages cannot repair missing membership;
 propose an additional evidence-backed retrieval route before writing feature
 code. Preserve the failed result and obtain review of the revised retrieval
-contract. No approved route means no M0b or M1.
+contract. The reviewer's post-M0a decision permits R3 as a **feasibility
+pool for M0b**. The owner subsequently authorized M1–M5 implementation;
+quality and budget findings remain part of qualification, without approval
+pauses between milestones.
 
 M0a's deliverable is a short attributed evidence table and a proceed/revise
 recommendation, committed with the experimental method/fixtures if retained.
@@ -1125,9 +1208,10 @@ change, failure, or unresolved risk.
    discovery, revisit a query-planning model separately with its own tests.
 
 Fable's M0-only verdict is recorded with a finding-by-finding disposition in
-[the review, §6](plan-smart-media-discovery-review.md). Return M0 evidence for
-review before M1: retrieval first, then standalone packaging, then quality and
-workload measurements. Do not spend time selecting a larger model before
+[the review, §6](plan-smart-media-discovery-review.md). Its historical hold was
+superseded by the owner's explicit completion instruction. Continue advisory
+review through retrieval, packaging, quality, and workload measurements.
+Do not spend time selecting a larger model before
 proving whether candidate retrieval includes the needed titles.
 
 Release evidence must include: exact code/model/data versions; provider
