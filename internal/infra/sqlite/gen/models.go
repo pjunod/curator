@@ -274,6 +274,9 @@ type MediaItem struct {
 	AirsTimezone     string
 	Network          string
 	BookType         string
+	Monitor          string
+	MonitorSince     string
+	MonitorSeason    int64
 }
 
 type Notifier struct {

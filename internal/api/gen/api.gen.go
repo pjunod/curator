@@ -14,27 +14,6 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
-// Defines values for AddMediaRequestMonitor.
-const (
-	AddMediaRequestMonitorAll    AddMediaRequestMonitor = "all"
-	AddMediaRequestMonitorLatest AddMediaRequestMonitor = "latest"
-	AddMediaRequestMonitorNone   AddMediaRequestMonitor = "none"
-)
-
-// Valid indicates whether the value is a known member of the AddMediaRequestMonitor enum.
-func (e AddMediaRequestMonitor) Valid() bool {
-	switch e {
-	case AddMediaRequestMonitorAll:
-		return true
-	case AddMediaRequestMonitorLatest:
-		return true
-	case AddMediaRequestMonitorNone:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for AutoSearchTargetSkipped.
 const (
 	AutoSearchTargetSkippedCancelled      AutoSearchTargetSkipped = "cancelled"
@@ -662,6 +641,33 @@ func (e RootKind) Valid() bool {
 	}
 }
 
+// Defines values for SeriesMonitorMode.
+const (
+	SeriesMonitorModeAll        SeriesMonitorMode = "all"
+	SeriesMonitorModeFuture     SeriesMonitorMode = "future"
+	SeriesMonitorModeLatest     SeriesMonitorMode = "latest"
+	SeriesMonitorModeNewSeasons SeriesMonitorMode = "new_seasons"
+	SeriesMonitorModeNone       SeriesMonitorMode = "none"
+)
+
+// Valid indicates whether the value is a known member of the SeriesMonitorMode enum.
+func (e SeriesMonitorMode) Valid() bool {
+	switch e {
+	case SeriesMonitorModeAll:
+		return true
+	case SeriesMonitorModeFuture:
+		return true
+	case SeriesMonitorModeLatest:
+		return true
+	case SeriesMonitorModeNewSeasons:
+		return true
+	case SeriesMonitorModeNone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TitleAliasRole.
 const (
 	TitleAliasRoleAlternate  TitleAliasRole = "alternate"
@@ -974,9 +980,9 @@ type AddMediaRequest struct {
 	ImdbId *string   `json:"imdbId,omitempty"`
 	Kind   MediaKind `json:"kind"`
 
-	// Monitor Series only — which seasons start monitored: every season, only the latest, or none (add a 20-season show and hunt just the newest). Specials always start unmonitored.
-	Monitor   *AddMediaRequestMonitor `json:"monitor,omitempty"`
-	Monitored *bool                   `json:"monitored,omitempty"`
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
+	Monitored *bool              `json:"monitored,omitempty"`
 
 	// Olid Open Library work id — identifies books (ADR 0006).
 	Olid *string `json:"olid,omitempty"`
@@ -994,9 +1000,6 @@ type AddMediaRequest struct {
 	// TvdbId Identifies a series that came from the provider chain rather than TMDB (ADR 0011). Exactly one of tmdbId / tvdbId / olid identifies the item.
 	TvdbId *int64 `json:"tvdbId,omitempty"`
 }
-
-// AddMediaRequestMonitor Series only — which seasons start monitored: every season, only the latest, or none (add a 20-season show and hunt just the newest). Specials always start unmonitored.
-type AddMediaRequestMonitor string
 
 // AdoptResult defines model for AdoptResult.
 type AdoptResult struct {
@@ -1699,10 +1702,13 @@ type MediaItemDetail struct {
 	IdentitySources          []IdentitySourceStatus `json:"identitySources"`
 	Ids                      ExternalIds            `json:"ids"`
 	Kind                     MediaKind              `json:"kind"`
-	Monitored                bool                   `json:"monitored"`
-	Overview                 string                 `json:"overview"`
-	Path                     string                 `json:"path"`
-	PosterPath               string                 `json:"posterPath"`
+
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	Monitor    *SeriesMonitorMode `json:"monitor,omitempty"`
+	Monitored  bool               `json:"monitored"`
+	Overview   string             `json:"overview"`
+	Path       string             `json:"path"`
+	PosterPath string             `json:"posterPath"`
 
 	// Quality The weakest quality among the primary copy's files ("1080p WEB-DL"); empty when nothing is on disk or no quality was recorded. Weakest because that is what decides whether the item is still being hunted.
 	Quality          *string `json:"quality,omitempty"`
@@ -2273,6 +2279,9 @@ type SeasonInfo struct {
 	Number    int           `json:"number"`
 }
 
+// SeriesMonitorMode Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+type SeriesMonitorMode string
+
 // Settings defines model for Settings.
 type Settings struct {
 	// ActivityRetentionDays How long finished and failed downloads, and history events, are kept before the daily sweep ages them out. 0 keeps everything.
@@ -2423,7 +2432,10 @@ type UpdateMediaItemRequest struct {
 
 	// InheritDownloadPriority Clear the per-item override and inherit from the quality profile.
 	InheritDownloadPriority *bool `json:"inheritDownloadPriority,omitempty"`
-	Monitored               *bool `json:"monitored,omitempty"`
+
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
+	Monitored *bool              `json:"monitored,omitempty"`
 
 	// Path Explicit absolute folder; wins over rootFolderId. "" clears it.
 	Path             *string `json:"path,omitempty"`

@@ -209,6 +209,14 @@ func optStr(s string) *string {
 }
 
 func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
+	var monitor *apigen.SeriesMonitorMode
+	if m.Kind == domain.KindSeries {
+		mode := apigen.SeriesMonitorMode(m.Monitor)
+		if mode == "" {
+			mode = apigen.SeriesMonitorModeAll
+		}
+		monitor = &mode
+	}
 	d := apigen.MediaItemDetail{
 		Id:                       m.ID,
 		Kind:                     apigen.MediaKind(m.Kind),
@@ -224,6 +232,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		Rating:                   float32(m.Rating),
 		RatingVotes:              m.RatingVotes,
 		Ratings:                  ratingsDTO(m.Ratings),
+		Monitor:                  monitor,
 		Monitored:                m.Monitored,
 		QualityProfileId:         m.QualityProfileID,
 		DownloadPriority:         m.DownloadPriority,
@@ -527,10 +536,16 @@ func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id in
 		writeError(w, http.StatusBadRequest, "choose a download priority or inherit from the profile, not both")
 		return
 	}
+	var monitor *string
+	if body.Monitor != nil {
+		value := string(*body.Monitor)
+		monitor = &value
+	}
 	setDownloadPriority := body.DownloadPriority != nil ||
 		(body.InheritDownloadPriority != nil && *body.InheritDownloadPriority)
 	item, err := s.deps.Library.UpdateItem(r.Context(), id, library.UpdateRequest{
 		Monitored:           body.Monitored,
+		Monitor:             monitor,
 		QualityProfileID:    body.QualityProfileId,
 		RootFolderID:        body.RootFolderId,
 		Path:                body.Path,

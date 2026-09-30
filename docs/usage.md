@@ -366,7 +366,10 @@ download priority or the item's override travels with the grab to nzbd:
   different target is a request, not a note — without this the item joined
   the wanted list and waited up to twelve hours for the backlog loop.
 - **Auto search** (button on every detail page) does the same on demand —
-  for series it searches per-season packs.
+  for series it tries a pack when every episode is aired, selected, and
+  still wanted, then searches individual episodes if no pack was grabbed.
+  Ongoing or partially selected seasons search wanted aired episodes directly.
+  Active downloads suppress overlapping searches for that copy.
 - The **Wanted** page groups every title once, with its missing episodes,
   copies, or editions underneath. **Search all now** snapshots every eligible
   target across every title and page. Counted Missing and Upgrade actions do
@@ -661,15 +664,34 @@ tooltip.
 
 ## Monitoring: series, seasons, episodes
 
-Monitoring decides what the automation hunts, at three levels that all
-AND together: the series toggle (Edit / mass editor), a checkbox on
-every **season** header (cascades to its episodes), and a checkbox on
-every **episode** row (mixed states inside a season are fine — keep just
-the finale). Unmonitored rows dim. At add time, the Series tab offers
-**Seasons: all / latest only / none** — add a 20-season show with
-"latest only" and untick or tick the rest afterwards. Metadata refresh
-respects all of it: a newly announced episode in an unmonitored season
-arrives unmonitored.
+The series **Monitored** switch pauses or resumes acquisition. Season
+checkboxes select or clear every episode in that season; episode checkboxes
+refine the selection within a monitored season. Unmonitored rows dim.
+
+**Episode monitoring** on Add and Edit stores how future metadata additions
+are selected. Choosing a mode in Edit and saving reapplies it to existing
+checkboxes; **Keep selections** leaves them alone. Specials start unselected.
+
+| Mode | What it selects |
+|---|---|
+| All episodes | Every regular season and episode, including future additions. |
+| Latest and future seasons | The latest known season when applied, plus later seasons. Older selected seasons are not cleared by subsequent refreshes. |
+| Future episodes | Episodes airing today or later, using the UTC date when the mode is applied. Newly discovered older episodes remain unselected. |
+| New seasons | Seasons after the last season that began before today, plus later seasons. |
+| Manual selection | Clears existing selections; new seasons remain unselected. Use season and episode checkboxes to choose what to acquire. |
+
+Refresh preserves existing checkboxes. New episodes inherit the season's
+selection, constrained by the Future episodes date when applicable. Episodes
+with unknown air dates may be selected, but automatic searches wait for a
+known date on or before today. Pausing a series does not change its policy:
+seasons discovered while paused are ready when you resume.
+
+Existing libraries keep their current checkboxes after upgrading and default
+to All episodes for newly discovered seasons. To repair an already unchecked
+season, select it or apply All episodes / Latest and future seasons in Edit,
+then use **Auto search**. Metadata refresh runs every 12 hours; **Refresh
+metadata** fetches newly announced seasons immediately. RSS checks releases
+on its configured schedule and backlog search catches up older releases.
 
 ## When an import doesn't import
 

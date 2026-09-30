@@ -35,8 +35,8 @@ describe('describeAutoSearch', () => {
     expect(msg).toContain('2 releases')
   })
 
-  it('says the item wants nothing when there are no targets', () => {
-    expect(describeAutoSearch({ grabbed: 0, targets: [] })).toContain('already has')
+  it('explains eligibility when there are no targets', () => {
+    expect(describeAutoSearch({ grabbed: 0, targets: [] })).toContain('Check monitoring selections and air dates')
   })
 
   // The three no-grab outcomes have to read differently. They were all one
