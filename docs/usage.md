@@ -593,7 +593,11 @@ filter clears selection. Changing pages preserves it.
 
 **Delete selected…** reviews the selected paths, file count, and logical size
 before permanent deletion. Each entry is checked independently; the result
-reports successful deletions and individual failures. Entries that change after
+reports successful deletions and individual failures. Progress and results survive
+navigation within the app and changes between desktop and mobile layouts; keep
+the browser tab open until the batch finishes. Confirmation opens in a focused
+dialog, including when you select an entry near the bottom of the list.
+Entries that change after
 selection must be selected again. Active downloads, awaiting imports, storage
 containers, and entries from incomplete scans cannot be selected for deletion.
 **Review import** remains an individual action because each payload needs a

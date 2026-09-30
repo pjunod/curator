@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { QueryClient } from '@tanstack/react-query'
 import { deleteCompletedEntry, fmtBytes, getCompletedInventory, getSettings, getTasks, runTask, updateSettings } from './api'
 import type { CompletedEntry, CompletedRoot } from './api'
 import { clampPage, Pager, PageSizePicker, sliceForPage } from './Pager'
@@ -10,6 +11,32 @@ const rowKey = ({ root, entry }: StorageRow) => JSON.stringify([root.path, entry
 const canDelete = ({ root, entry }: StorageRow) => !root.error && !['active', 'awaiting_import', 'storage'].includes(entry.status)
 const canImport = ({ root, entry }: StorageRow) => !root.error && !['active', 'symlink', 'retained', 'storage'].includes(entry.status)
 const statusLabel = (status: string) => status.replace(/_/g, ' ')
+
+const deletionKey = ['completed-deletion'] as const
+type DeletionState = { running: boolean; total: number; progress: number; deletedKeys: string[]; errors: string[] }
+
+// QueryClient outlives route and responsive-shell remounts. Keep both the
+// operation lock and its outcome there, so returning to Activity cannot start
+// another batch while an earlier one is still removing files.
+async function deleteStorageRows(qc: QueryClient, rows: StorageRow[]) {
+  if (qc.getQueryData<DeletionState | null>(deletionKey)?.running) return
+  const state: DeletionState = { running: true, total: rows.length, progress: 0, deletedKeys: [], errors: [] }
+  const publish = () => qc.setQueryData(deletionKey, { ...state, deletedKeys: [...state.deletedKeys], errors: [...state.errors] })
+  publish()
+  for (const row of rows) {
+    try {
+      await deleteCompletedEntry(row.entry.path, row.entry.fingerprint)
+      state.deletedKeys.push(rowKey(row))
+    } catch (error) {
+      state.errors.push(`${row.entry.path}: ${error instanceof Error ? error.message : 'Deletion failed'}`)
+    }
+    state.progress++
+    publish()
+  }
+  state.running = false
+  publish()
+  void qc.invalidateQueries({ queryKey: ['completed-inventory'] })
+}
 
 export function CompletedFolders({ onImport }: { onImport: (path: string) => void }) {
   const qc = useQueryClient()
@@ -36,42 +63,40 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
   // Remember the reviewed fingerprint, so refreshes cannot silently select changed files.
   const [selected, setSelected] = useState<Record<string, string>>({})
   const [confirm, setConfirm] = useState<StorageRow[] | null>(null)
-  const [result, setResult] = useState<{ deleted: number; errors: string[] } | null>(null)
-  const [progress, setProgress] = useState(0)
+  const deletionQuery = useQuery<DeletionState | null>({
+    queryKey: deletionKey, queryFn: () => null, initialData: null, enabled: false, gcTime: Infinity,
+  })
+  const deletion = deletionQuery.data
+  const busy = deletion?.running ?? false
+  const result = deletion && !deletion.running ? { deleted: deletion.deletedKeys.length, errors: deletion.errors } : null
+  const dialog = useRef<HTMLDialogElement>(null)
+  const confirmTrigger = useRef<HTMLButtonElement | null>(null)
+  const openConfirmation = (rows: StorageRow[], trigger: HTMLButtonElement) => {
+    confirmTrigger.current = trigger
+    setConfirm(rows)
+  }
+  useEffect(() => {
+    if (confirm) dialog.current?.showModal()
+    else {
+      dialog.current?.close()
+      if (confirmTrigger.current?.isConnected) confirmTrigger.current.focus({ preventScroll: true })
+    }
+  }, [confirm])
+  useEffect(() => {
+    if (!deletion) return
+    if (!deletion.running) setConfirm(null)
+    setSelected((previous) => {
+      if (!deletion.deletedKeys.some((key) => key in previous)) return previous
+      const next = { ...previous }
+      for (const key of deletion.deletedKeys) delete next[key]
+      return next
+    })
+  }, [deletion])
   const data = inventory.data
   const entries = data?.roots.flatMap((root) => root.entries.map((entry) => ({ root, entry }))) ?? []
   const selectedRows = entries.filter((row) => canDelete(row) && selected[rowKey(row)] === row.entry.fingerprint)
   const isSelected = (row: StorageRow) => canDelete(row) && selected[rowKey(row)] === row.entry.fingerprint
-  const remove = useMutation({
-    mutationFn: async (rows: StorageRow[]) => {
-      const errors: string[] = []
-      let deleted = 0
-      setResult(null)
-      setProgress(0)
-      // Reuse the server's per-entry ownership and fingerprint checks. Serial
-      // requests avoid flooding storage and give every entry its own outcome.
-      for (const [index, row] of rows.entries()) {
-        try {
-          await deleteCompletedEntry(row.entry.path, row.entry.fingerprint)
-          deleted++
-          setSelected((previous) => {
-            const next = { ...previous }
-            delete next[rowKey(row)]
-            return next
-          })
-        } catch (error) {
-          errors.push(`${row.entry.path}: ${error instanceof Error ? error.message : 'Deletion failed'}`)
-        }
-        setProgress(index + 1)
-      }
-      return { deleted, errors }
-    },
-    onSuccess: (outcome) => {
-      setResult(outcome)
-      setConfirm(null)
-      void qc.invalidateQueries({ queryKey: ['completed-inventory'] })
-    },
-  })
+  const remove = useMutation({ mutationFn: (rows: StorageRow[]) => deleteStorageRows(qc, rows) })
   const needle = search.trim().toLowerCase()
   const filtered = entries.filter(({ entry }) =>
     (status === 'all' || (status === 'attention' ? !['active', 'retained', 'storage'].includes(entry.status) : entry.status === status)) &&
@@ -100,8 +125,8 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
     <div className="storage-heading">
       <div><h2>Download storage</h2><p className="muted">Review leftover downloads and manage files on disk.</p></div>
       <div className="storage-actions">
-        <button disabled={scan.isPending || !!scanning || remove.isPending} onClick={() => scan.mutate()}>{scanning ? 'Scanning storage…' : 'Scan download storage'}</button>
-        <button disabled={cleanup.isPending || remove.isPending} onClick={() => cleanup.mutate()}>Retry imported cleanup</button>
+        <button disabled={scan.isPending || !!scanning || busy} onClick={() => scan.mutate()}>{scanning ? 'Scanning storage…' : 'Scan download storage'}</button>
+        <button disabled={cleanup.isPending || busy} onClick={() => cleanup.mutate()}>Retry imported cleanup</button>
       </div>
     </div>
     <div className="storage-stats">
@@ -123,23 +148,29 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
       </span></div>
       {root.error && <p className="error-text" role="alert">Scan incomplete: {root.error}. Showing stale or partial results. Scan again before managing these files.</p>}
     </div>)}</div>
+    {busy && <p role="status">Deleting {deletion?.progress} of {deletion?.total} entries… You can navigate within the app. Keep this tab open until deletion finishes.</p>}
     {result && <div role="status" className={result.errors.length ? 'error-text' : 'muted'}>
       {result.deleted} {result.deleted === 1 ? 'entry' : 'entries'} deleted.{result.errors.length > 0 && <> {result.errors.length} failed; those files were not confirmed deleted.
         <ul>{result.errors.map((error) => <li key={error}>{error}</li>)}</ul></>}
     </div>}
-    {confirm && <div className="storage-confirm" role="region" aria-label="Confirm storage deletion">
-      <h3>Delete {confirm.length} {confirm.length === 1 ? 'entry' : 'entries'} permanently?</h3>
+    <dialog ref={dialog} className="storage-confirm" aria-labelledby="storage-confirm-title" onCancel={(event) => {
+      event.preventDefault()
+      setConfirm(null)
+    }}>
+    {confirm && <>
+      <h3 id="storage-confirm-title">Delete {confirm.length} {confirm.length === 1 ? 'entry' : 'entries'} permanently?</h3>
       <p>{confirmFiles} files · {fmtBytes(confirmBytes)} logical size. This cannot be undone.</p>
       <ul>{confirm.map(({ root, entry }) => <li key={`${root.path}:${entry.path}`} className="mono">{entry.path}</li>)}</ul>
       {confirmationChanged && <p className="error-text">The inventory changed. Cancel and select the entries again.</p>}
-      <div className="storage-actions"><button className="btn-danger" disabled={remove.isPending || confirmationChanged} onClick={() => remove.mutate(confirm)}>
-        {remove.isPending ? `Deleting ${progress} of ${confirm.length}…` : 'Confirm delete'}
-      </button><button disabled={remove.isPending} onClick={() => setConfirm(null)}>Keep files</button></div>
-    </div>}
+      <div className="storage-actions"><button className="btn-danger" disabled={busy || confirmationChanged} onClick={() => remove.mutate(confirm)}>
+        {busy ? `Deleting ${deletion?.progress ?? 0} of ${confirm.length}…` : 'Confirm delete'}
+      </button><button autoFocus onClick={() => setConfirm(null)}>{busy ? 'Close' : 'Keep files'}</button></div>
+    </>}
+    </dialog>
     {entries.length > 0 && <>
       <div className="storage-toolbar">
-        <input type="search" aria-label="Search storage" placeholder="Search paths or downloads…" value={search} disabled={remove.isPending} onChange={(e) => { setSearch(e.target.value); resetView() }} />
-        <label>Status <select aria-label="Storage status" value={status} disabled={remove.isPending} onChange={(e) => { setStatus(e.target.value); resetView() }}>
+        <input type="search" aria-label="Search storage" placeholder="Search paths or downloads…" value={search} disabled={busy} onChange={(e) => { setSearch(e.target.value); resetView() }} />
+        <label>Status <select aria-label="Storage status" value={status} disabled={busy} onChange={(e) => { setStatus(e.target.value); resetView() }}>
           <option value="all">All statuses</option><option value="attention">Needs attention</option>
           {[...new Set(entries.map(({ entry }) => entry.status))].sort().map((value) => <option key={value} value={value}>{statusLabel(value)}</option>)}
         </select></label>
@@ -147,12 +178,12 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
         <PageSizePicker size={size} onChange={(value) => { setSize(value); setPage(0) }} />
       </div>
       <div className="storage-selection">
-        <label><input type="checkbox" aria-label="Select page" disabled={!pageEligible.length || remove.isPending} checked={allPageSelected}
+        <label><input type="checkbox" aria-label="Select page" disabled={!pageEligible.length || busy} checked={allPageSelected}
           ref={(node) => { if (node) node.indeterminate = !allPageSelected && pageEligible.some(isSelected) }} onChange={togglePage} /> Select page</label>
         <span className="muted">{selectedRows.length} selected · {fmtBytes(selectedBytes)}</span>
-        <button disabled={!eligible.length || remove.isPending} onClick={() => setSelected(Object.fromEntries(eligible.map((row) => [rowKey(row), row.entry.fingerprint])))}>Select all {eligible.length} eligible</button>
-        <button disabled={!selectedRows.length || remove.isPending} onClick={() => { setSelected({}); setConfirm(null) }}>Clear selection</button>
-        <button className="btn-danger" disabled={!selectedRows.length || remove.isPending} onClick={() => setConfirm(selectedRows)}>Delete selected…</button>
+        <button disabled={!eligible.length || busy} onClick={() => setSelected(Object.fromEntries(eligible.map((row) => [rowKey(row), row.entry.fingerprint])))}>Select all {eligible.length} eligible</button>
+        <button disabled={!selectedRows.length || busy} onClick={() => { setSelected({}); setConfirm(null) }}>Clear selection</button>
+        <button className="btn-danger" disabled={!selectedRows.length || busy} onClick={(event) => openConfirmation(selectedRows, event.currentTarget)}>Delete selected…</button>
       </div>
       <p className="muted storage-note">Select all includes matching entries on every page. Active downloads, awaiting imports, storage folders, and incomplete scans cannot be selected.</p>
       <div className="storage-pagination storage-pagination-top"><Pager page={currentPage} size={size} total={filtered.length} onPage={setPage} /></div>
@@ -161,7 +192,7 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
           const { root, entry } = row
           const name = entry.path.split('/').filter(Boolean).pop() ?? entry.path
           return <article className={`storage-entry${isSelected(row) ? ' is-selected' : ''}`} role="listitem" key={rowKey(row)}>
-            <input type="checkbox" aria-label={`Select ${name}`} disabled={!canDelete(row) || remove.isPending} checked={isSelected(row)} onChange={() => setSelected((previous) => {
+            <input type="checkbox" aria-label={`Select ${name}`} disabled={!canDelete(row) || busy} checked={isSelected(row)} onChange={() => setSelected((previous) => {
               const next = { ...previous }
               if (isSelected(row)) delete next[rowKey(row)]
               else next[rowKey(row)] = entry.fingerprint
@@ -175,8 +206,8 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
             <div className="storage-entry-size"><strong>{fmtBytes(entry.bytes)}</strong><span className="muted">{entry.files} {entry.files === 1 ? 'file' : 'files'}</span></div>
             <div className="storage-entry-status"><span className={`pill ${entry.status === 'failed' ? 'pill-error' : ''}`}>{statusLabel(entry.status)}</span><p className="muted">{entry.reason}</p></div>
             <div className="storage-entry-actions">
-              <button disabled={!canImport(row) || remove.isPending} onClick={() => onImport(entry.path)}>Review import</button>
-              <button disabled={!canDelete(row) || remove.isPending} title={root.error ? 'A complete scan is required' : undefined} onClick={() => setConfirm([row])}>Delete files…</button>
+              <button disabled={!canImport(row) || busy} onClick={() => onImport(entry.path)}>Review import</button>
+              <button disabled={!canDelete(row) || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => openConfirmation([row], event.currentTarget)}>Delete files…</button>
             </div>
           </article>
         })}

@@ -27,7 +27,8 @@
 .storage-entry-actions { display: flex; flex-direction: column; gap: 8px; }
 .storage-entry-actions button { font-size: 12px; padding: 7px 8px; }
 .storage-pagination { justify-content: space-between; padding-top: 16px; border-top: 1px solid var(--border); }
-.storage-confirm { padding: 16px; margin: 16px 0; border: 1px solid var(--error); border-radius: 8px; }
+.storage-confirm { padding: 20px; margin: auto; width: min(620px, calc(100vw - 40px)); max-height: 85dvh; overflow: auto; color: var(--text); background: var(--bg-raised); border: 1px solid var(--error); border-radius: 8px; }
+.storage-confirm::backdrop { background: rgb(0 0 0 / 65%); }
 .storage-confirm h3 { margin: 0; }
 .storage-confirm ul { max-height: 180px; overflow: auto; padding-left: 20px; font-size: 12px; overflow-wrap: anywhere; }
 .download-storage [role='status'] { overflow-wrap: anywhere; }

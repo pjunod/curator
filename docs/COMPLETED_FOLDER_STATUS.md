@@ -1,6 +1,6 @@
 # Completed-folder accounting — delivery status
 
-**Status:** storage management ready for adversarial review · **Updated:** 2026-09-29 · **Target:** v0.33.1
+**Status:** storage management review approved; final CI and merge tracked in GitHub · **Updated:** 2026-09-29 · **Target:** v0.33.1
 
 Companion to [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
 and [settings](settings.md#completed-folder-accounting). This page records work
@@ -18,14 +18,15 @@ review comes before the final test gate and merge.
 | Bulk management | Implemented | Select page or all matching eligible entries; confirm paths and logical size; per-entry deletion outcomes and stale-fingerprint protection. |
 | Scan timeout | Implemented | Removed the background scan's fixed 30-second cutoff; cancellation and the entry limit remain. Delete verification visits only the selected payload. |
 | Import review | Fixed | Selecting another payload resets the manual-import form to its path. |
-| Adversarial review | Pending | Review the complete implementation before running the final gates. |
-| Final verification | Pending | Earlier development checks passed; rerun only after addressing review findings. |
-| PR and merge | Pending | Batch implementation, review fixes, and verification evidence into one PR. |
-| Cleanup | In progress | Retire the superseded managed worktree; remove temporary clone and task artifacts after verified merge. |
+| Adversarial review | Approved after fixes | Shared deletion state now survives route/responsive remounts; confirmation uses a focused dialog with Escape and focus restoration. Reviewer approved both fixes before the final test gate. |
+| Final verification | PR checks are authoritative | The final Go/web unit, race/coverage, mobile, browser, compatibility, Docker, and lint gates run in CI after review. No duplicate local unit-test run. |
+| PR and merge | Tracked by GitHub | One PR from `codex/download-storage-management`; merge only after all checks pass. The PR body carries the live delivery checklist. |
+| Cleanup | Protected worktree retained | Codex refused archival because the prior worktree is protected by a pinned chat/workspace. Remove the independent temporary clone and task artifacts after verified merge. |
 
 **Decisions:** bulk import remains an individual review because payloads need
 library destinations. Bulk deletion reuses the existing server ownership and
-fingerprint checks. No feature toggle or enablement gate was introduced.
+fingerprint checks. Progress remains visible after navigating within the app;
+the browser tab must stay open until deletion finishes. No feature toggle or enablement gate was introduced.
 Production storage has not been modified; deployment is outside this PR.
 
 ## Original accounting delivery — v0.33.0

@@ -83,11 +83,23 @@ test('storage pagination, responsive rows and bulk outcomes', async ({ page }) =
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
     await page.screenshot({ path: `/tmp/monarr-storage-${width}.png`, fullPage: false })
   }
+  const lastDelete = panel.getByRole('list', { name: 'Storage entries' }).getByRole('button', { name: 'Delete files…' }).last()
+  await lastDelete.click()
+  const rowDialog = panel.getByRole('dialog', { name: 'Delete 1 entry permanently?' })
+  await expect(rowDialog).toBeVisible()
+  await expect(rowDialog.getByRole('button', { name: 'Keep files' })).toBeFocused()
+  const bounds = await rowDialog.boundingBox()
+  expect(bounds!.y).toBeGreaterThanOrEqual(0)
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(1000)
+  await page.keyboard.press('Escape')
+  await expect(rowDialog).not.toBeVisible()
+  await expect(lastDelete).toBeFocused()
+
   // Switching the app's desktop/mobile shell remounts the page. Select again
   // in the mobile shell before verifying the destructive action.
   await panel.getByRole('button', { name: 'Select all 77 eligible', exact: true }).click()
   await panel.getByRole('button', { name: 'Delete selected…', exact: true }).click()
-  const confirmation = panel.getByRole('region', { name: 'Confirm storage deletion' })
+  const confirmation = panel.getByRole('dialog', { name: 'Delete 77 entries permanently?' })
   await expect(confirmation).toContainText('Delete 77 entries permanently?')
   await expect(confirmation.getByRole('listitem')).toHaveCount(77)
   expect(deleted).toHaveLength(0)
@@ -127,4 +139,52 @@ test('incomplete scans preserve results and disable file actions', async ({ page
   lastRunAt = '2026-09-29T12:05:00Z'
   await expect(panel).toContainText('Scan failed: context deadline exceeded')
   await expect(panel.getByRole('button', { name: 'Scan download storage', exact: true })).toBeEnabled()
+})
+
+test('bulk deletion survives responsive and route remounts without duplicate batches', async ({ page }) => {
+  let entries = ['first', 'second', 'third'].map((name) => ({
+    path: `/working/monarr/${name}.mkv`, fingerprint: name, bytes: 10, files: 1,
+    status: 'untracked', reason: 'No download record', receipts: [],
+  }))
+  let releaseFirst!: () => void
+  const held = new Promise<void>((resolve) => { releaseFirst = resolve })
+  const requests: string[] = []
+  await page.route('**/api/v1/downloads/inventory', (route) => route.fulfill({ json: {
+    bytes: entries.length * 10, attention: entries.length,
+    roots: [{ path: '/working/monarr', bytes: entries.length * 10, checkedAt: new Date().toISOString(), lastCompleteAt: new Date().toISOString(), error: '', entries }],
+  } }))
+  await page.route('**/api/v1/downloads/inventory/entry', async (route) => {
+    const { path } = route.request().postDataJSON()
+    requests.push(path)
+    if (path.endsWith('first.mkv')) await held
+    if (path.endsWith('second.mkv')) {
+      await route.fulfill({ status: 409, json: { message: 'Files changed since the scan' } })
+    } else {
+      entries = entries.filter((entry) => entry.path !== path)
+      await route.fulfill({ status: 204 })
+    }
+  })
+  await page.goto('/activity')
+  const panel = page.getByRole('region', { name: 'Download storage', exact: true })
+  await panel.getByRole('button', { name: 'Select all 3 eligible' }).click()
+  await panel.getByRole('button', { name: 'Delete selected…' }).click()
+  await panel.getByRole('dialog').getByRole('button', { name: 'Confirm delete' }).click()
+  await expect.poll(() => requests.length).toBe(1)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(panel).toContainText('Deleting 0 of 3 entries')
+  await expect(panel.getByRole('button', { name: 'Select all 3 eligible' })).toBeDisabled()
+  await expect(panel.getByRole('button', { name: 'Delete files…' }).first()).toBeDisabled()
+  await page.locator('.mobile-tab', { hasText: 'Library' }).click()
+  await page.locator('.mobile-tab', { hasText: 'Activity' }).click()
+  await expect(panel).toContainText('Deleting 0 of 3 entries')
+  await expect(panel.getByRole('button', { name: 'Select all 3 eligible' })).toBeDisabled()
+  expect(requests).toHaveLength(1)
+  releaseFirst()
+  await expect(panel).toContainText('2 entries deleted.')
+  await expect(panel).toContainText('1 failed; those files were not confirmed deleted.')
+  expect(requests).toHaveLength(3)
+  await page.locator('.mobile-tab', { hasText: 'Library' }).click()
+  await page.locator('.mobile-tab', { hasText: 'Activity' }).click()
+  await expect(panel).toContainText('2 entries deleted.')
+  await expect(panel).toContainText('Files changed since the scan')
 })
