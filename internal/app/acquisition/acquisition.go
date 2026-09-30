@@ -831,6 +831,17 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	// a download running in a client that Monarr has no record of, which
 	// is the worse of the two failures by a distance.
 	allocationCtx, releaseAllocation := s.lockStorageDecision(ctx)
+	active, activeErr := s.db.ListActiveDownloads(allocationCtx)
+	if activeErr != nil {
+		releaseAllocation()
+		return 0, activeErr
+	}
+	for _, row := range active {
+		if normalizeRelease(row.ReleaseTitle) == normalizeRelease(req.Title) || heldWantOverlap(row, item.ID, req.CopyID, wants) {
+			releaseAllocation()
+			return row.ID, nil
+		}
+	}
 	id, err := s.db.InsertDownload(allocationCtx, sqlite.Download{
 		MediaItemID: item.ID, CopyID: req.CopyID, WantableIDs: wants, Season: req.Season,
 		ReleaseTitle: req.Title, Indexer: req.Indexer, Protocol: req.Protocol,
@@ -990,6 +1001,10 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		dl = fresh
 	}
 
+	if !s.acceptDownloadControl(ctx, &dl, &st) {
+		return
+	}
+
 	// A completion is not actionable without the location of its payload.
 	// A download-client adapter can misclassify a download-phase completion as
 	// payload readiness, or receive a terminal response before its path. Never
@@ -1041,6 +1056,13 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 	case ports.StateFailed:
 		if dl.State == "imported" || dl.State == "failed" {
 			return
+		}
+		// Failed post-processing can leave a partial, recoverable payload.
+		// Preserve its association for inventory and manual import without
+		// treating the client's failure as permission to auto-import it.
+		if strings.TrimSpace(st.SavePath) != "" {
+			dl.SavePath = st.SavePath
+			dl.ImportPath = ports.MapRemotePath(cfg.PathMappings, st.SavePath)
 		}
 		// A client-reported failure is normally a bad release: blocklist it
 		// and search a replacement. Unless the client says the release is

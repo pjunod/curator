@@ -381,6 +381,7 @@ type Download struct {
 	AddedAt       time.Time
 	UpdatedAt     time.Time
 
+	RunnerControl  string
 	PayloadRemoved bool
 }
 
@@ -397,7 +398,7 @@ func downloadFromRow(r sqlitegen.Download) Download {
 		Quality: quality.FromString(r.Quality), Size: r.Size, ClientID: r.ClientID,
 		Handle: r.Handle, State: r.State, Progress: r.Progress, Error: r.Error,
 		SavePath: r.SavePath, ImportPath: r.ImportPath, Transfer: r.Transfer,
-		Handoff: handoff, MatchEvidence: evidence,
+		Handoff: handoff, MatchEvidence: evidence, RunnerControl: r.RunnerControl,
 		AddedAt: time.UnixMilli(r.AddedAt), UpdatedAt: time.UnixMilli(r.UpdatedAt),
 	}
 	if r.CopyID.Valid {
@@ -465,6 +466,14 @@ func (d *DB) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 // that became actionable when an item's missing destination was repaired.
 func (d *DB) ListFolderlessFailedDownloadIDsForItem(ctx context.Context, itemID int64) ([]int64, error) {
 	return d.Read.ListFolderlessFailedDownloadIDsForItem(ctx, itemID)
+}
+
+// UpdateDownloadControl commits suppression and control facts atomically.
+func (d *DB) UpdateDownloadControl(ctx context.Context, dl Download) error {
+	return d.Write.UpdateDownloadControl(ctx, sqlitegen.UpdateDownloadControlParams{
+		RunnerControl: dl.RunnerControl, State: dl.State, Progress: dl.Progress,
+		Error: dl.Error, UpdatedAt: time.Now().UnixMilli(), ID: dl.ID,
+	})
 }
 
 // UpdateDownloadState transitions a queue row.

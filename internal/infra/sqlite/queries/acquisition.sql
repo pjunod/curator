@@ -205,3 +205,7 @@ SELECT
   (SELECT COUNT(*) FROM media_items  mi WHERE mi.quality_profile_id = ?1) +
   (SELECT COUNT(*) FROM media_copies mc WHERE mc.quality_profile_id = ?1) +
   (SELECT COUNT(*) FROM import_lists il WHERE il.quality_profile_id = ?1) AS refs;
+
+-- name: UpdateDownloadControl :exec
+UPDATE downloads SET runner_control = ?, state = ?, progress = ?, error = ?,
+    updated_at = ? WHERE id = ?;

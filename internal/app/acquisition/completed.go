@@ -192,6 +192,15 @@ func (s *Service) CompletedInventory(ctx context.Context) (CompletedInventory, e
 		if err := json.Unmarshal([]byte(raw), &root); err != nil {
 			return out, err
 		}
+		// Older scans included the completed container as an empty row.
+		// Hide it immediately, including when a failed scan retains the cache.
+		visible := root.Entries[:0]
+		for _, e := range root.Entries {
+			if e.Status != "storage" {
+				visible = append(visible, e)
+			}
+		}
+		root.Entries = visible
 		out.Roots = append(out.Roots, root)
 		out.Bytes += root.Bytes
 		for _, e := range root.Entries {
@@ -351,6 +360,9 @@ func scanCompletedSelection(ctx context.Context, root, selected string, receipts
 		if err != nil {
 			return err
 		}
+		if rel == "completed" && d.IsDir() {
+			return nil // Walk its children, but do not list the storage container.
+		}
 		parts := strings.Split(rel, string(filepath.Separator))
 		top := filepath.Join(root, parts[0])
 		// completed is storage infrastructure when the working tree is the
@@ -369,10 +381,6 @@ func scanCompletedSelection(ctx context.Context, root, selected string, receipts
 				}
 			}
 			classifyCompleted(&e, remove)
-			if rel == "completed" && d.IsDir() {
-				e.Receipts = []sqlite.CompletedReceipt{}
-				e.Status, e.Reason = "storage", "Completed-download storage; contents accounted for individually"
-			}
 			entries = append(entries, e)
 			h := sha256.New()
 			_, _ = fmt.Fprintf(h, "%v\n", rootIdentity)

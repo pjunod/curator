@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -7,7 +7,8 @@ test('an empty queue cannot hide unknown completed files', async ({ page, reques
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'curator-completed-')))
   const previous = await (await request.get('/api/v1/settings')).json()
   try {
-    writeFileSync(join(root, 'forgotten.rar'), Buffer.alloc(1024))
+    mkdirSync(join(root, 'completed'))
+    writeFileSync(join(root, 'completed', 'forgotten.rar'), Buffer.alloc(1024))
     expect((await request.put('/api/v1/settings', { data: { completedRoots: root } })).ok()).toBeTruthy()
     expect((await request.post('/api/v1/system/tasks/downloads.inventory/run')).ok()).toBeTruthy()
     await expect.poll(async () => (await (await request.get('/api/v1/downloads/inventory')).json()).bytes).toBe(1024)
@@ -17,10 +18,12 @@ test('an empty queue cannot hide unknown completed files', async ({ page, reques
     await expect(panel.locator('.storage-items')).not.toHaveAttribute('open')
     await expect(panel.getByRole('list', { name: 'Storage entries' })).toBeHidden()
     await panel.locator('.storage-items > summary').click()
+    await expect(panel.locator('.storage-items > summary')).toHaveText('Storage entries (1)')
+    await expect(panel.getByRole('listitem')).toHaveCount(1)
     await expect(panel).toContainText('forgotten.rar')
     await expect(panel).toContainText('No download record')
     await panel.getByRole('button', { name: 'Review import' }).click()
-    await expect(page.getByLabel('Path', { exact: true })).toHaveValue(join(root, 'forgotten.rar'))
+    await expect(page.getByLabel('Path', { exact: true })).toHaveValue(join(root, 'completed', 'forgotten.rar'))
     await panel.getByRole('button', { name: 'Delete files…' }).click()
     await expect(panel.getByText('Delete 1 entry permanently?')).toBeVisible()
     await panel.getByRole('button', { name: 'Confirm delete' }).click()
@@ -217,4 +220,22 @@ test('bulk deletion survives responsive and route remounts without duplicate bat
   await expect(panel).toContainText('Files changed since the scan')
   await expect(panel.locator('.storage-items')).not.toHaveAttribute('open')
   await expect(panel.getByRole('status')).toBeVisible()
+})
+
+test('held transfers survive reload and resume the same job without import or replacement', async ({ page }) => {
+  let resumes = 0
+  let imports = 0
+  const control = { version: 1, revision: '9007199254740993', lifecycle: 'held', cause: 'capacity', stage: 'download_write', retry_policy: 'resume_same_job', message: 'Waiting for storage capacity', instance: 'fixture' }
+  await page.route(/\/api\/v1\/queue(?:\?.*)?$/, route => route.fulfill({ json: [{ id: 991, mediaItemId: 1, releaseTitle: 'Held.Show.S01E01', state: 'downloading', progress: 1, size: 9000, protocol: 'usenet', client: 'Runner', control }] }))
+  await page.route('**/api/v1/queue/991/resume', route => { resumes++; return route.fulfill({ status: 204 }) })
+  await page.route('**/api/v1/queue/991/import', route => { imports++; return route.fulfill({ status: 409 }) })
+  await page.goto('/activity')
+  await expect(page.getByText('Waiting for storage capacity', { exact: true })).toBeVisible()
+  await expect(page.getByText('Transfer 100% · import pending', { exact: true })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Resume same job', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Resume same job', exact: true }).click()
+  await expect.poll(() => resumes).toBe(1)
+  expect(imports).toBe(0)
+  await expect(page.getByText('Waiting for storage capacity', { exact: true })).toBeVisible()
 })

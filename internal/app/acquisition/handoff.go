@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -163,6 +164,16 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	defer releaseStorage()
 	// Keep the historical inline seam for focused service tests. Production
 	// always starts the bounded workers and takes the asynchronous path below.
+	held, holdErr := s.db.GetDownload(ctx, id)
+	if holdErr != nil {
+		return holdErr
+	}
+	if held.RunnerControl != "" {
+		var control *ports.DownloadControl
+		if json.Unmarshal([]byte(held.RunnerControl), &control) != nil || control.Held() {
+			return fmt.Errorf("runner transfer is held; resolve it before importing")
+		}
+	}
 	if s.importCh == nil {
 		dl, err := s.db.GetDownload(ctx, id)
 		if err != nil {

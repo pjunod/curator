@@ -2,9 +2,11 @@ package nzbd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,21 @@ type sseServer struct {
 	frames    []string
 	holdOpen  bool
 	connCount int
+}
+
+func TestFailureFileDetailsAgreeBetweenPollAndPush(t *testing.T) {
+	note := "checked move pending: Invalid argument"
+	polled := statusOfHistory(historyEntry{Job: 1682, Name: "Season", Status: "UNPACK_FAILURE",
+		FinalDir: "/completed/Season", Params: [][2]string{{"Failure:Files", note}}})
+	events := translate("job_pp_finished", `{"job":1682,"name":"Season","pp_status":"UNPACK_FAILURE","final_dir":"/completed/Season","params":[["Failure:Files","checked move pending: Invalid argument"]]}`, "boot-42")
+	if len(events) != 1 {
+		t.Fatalf("events = %+v", events)
+	}
+	pushed := events[0]
+	if polled.State != ports.StateFailed || polled.SavePath != "/completed/Season" ||
+		polled.Message != "UNPACK_FAILURE; files: "+note || pushed.Kind != ports.EventFailed || pushed.Status != polled {
+		t.Fatalf("failure detail lost: poll=%+v push=%+v", polled, pushed)
+	}
 }
 
 func newSSE(t *testing.T, frames []string, holdOpen bool) *sseServer {
@@ -328,3 +345,34 @@ func TestWrappedDataLinesAreOnePayload(t *testing.T) {
 }
 
 var _ ports.Subscriber = (*Client)(nil)
+
+func TestControlGoldenDecimalRevisionAndUnknownFields(t *testing.T) {
+	raw, err := os.ReadFile("testdata/job-control-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var control ports.DownloadControl
+	if err := json.Unmarshal(raw, &control); err != nil {
+		t.Fatal(err)
+	}
+	if control.Revision != "9007199254740993" || !control.Held() || control.Instance != "synthetic-runner-instance" {
+		t.Fatalf("contract mismatch %+v", control)
+	}
+}
+
+func TestReviewCompletionControlSurvivesPollAndPush(t *testing.T) {
+	control := ports.DownloadControl{Version: 1, Revision: "43", Lifecycle: "running", Cause: "capacity", Stage: "extract", Instance: "same"}
+	raw, err := json.Marshal(control)
+	if err != nil {
+		t.Fatal(err)
+	}
+	polled := statusOfHistory(historyEntry{Job: 1, Status: "SUCCESS", FinalDir: "/completed/payload", Params: [][2]string{{"*Control:v1", string(raw)}}})
+	data, err := json.Marshal(map[string]any{"job": 1, "pp_status": "SUCCESS", "final_dir": "/completed/payload", "params": [][2]string{{"*Control:v1", string(raw)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := translate("job_pp_finished", string(data), "event-44")
+	if len(events) != 1 || events[0].Kind != ports.EventCompleted || events[0].Status.Control == nil || polled.Control == nil || *events[0].Status.Control != *polled.Control || *polled.Control != control {
+		t.Fatalf("terminal control lost: poll=%+v events=%+v", polled, events)
+	}
+}

@@ -23,9 +23,9 @@ import (
 )
 
 // FFprobeEnv names an external ffprobe binary. Opportunistic enrichment only:
-// monarr's stock image is distroless with nothing on PATH, so this is normally
-// unset and nothing degrades — AVI/TS/WMV files simply keep the quality their
-// filename claims, exactly as they do today (ADR 0013 §2).
+// The stock distroless image bundles ffprobe on PATH. Standalone installations
+// without it keep the filename-derived quality for unsupported containers
+// (ADR 0013 §2).
 const FFprobeEnv = "MONARR_FFPROBE"
 
 // ffprobeTimeout bounds the external call. A hung ffprobe must not hold a job

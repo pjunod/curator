@@ -178,6 +178,21 @@ func translate(name, data, id string) []ports.ClientEvent {
 		// is identical either way: reconcile by polling.
 		return []ports.ClientEvent{{Kind: ports.EventReset, Seq: seq}}
 
+	case "job_control_changed":
+		var f struct {
+			Job     int64                  `json:"job"`
+			Control *ports.DownloadControl `json:"control"`
+		}
+		if json.Unmarshal([]byte(data), &f) != nil || f.Control == nil {
+			return nil
+		}
+		state := ports.StateDownloading
+		if f.Control.Held() {
+			state = ports.StateQueued
+		}
+		return []ports.ClientEvent{{Handle: handleOf(f.Job), Kind: ports.EventProgress, Seq: seq,
+			Status: ports.DownloadStatus{Handle: handleOf(f.Job), State: state, Control: f.Control, Message: f.Control.Message, Stage: f.Control.Stage}}}
+
 	case "job_pp_stage":
 		var f struct {
 			Job   int64  `json:"job"`
@@ -200,10 +215,12 @@ func translate(name, data, id string) []ports.ClientEvent {
 
 	case "job_pp_finished":
 		var f struct {
-			Job      int64  `json:"job"`
-			Name     string `json:"name"`
-			PpStatus string `json:"pp_status"`
-			FinalDir string `json:"final_dir"`
+			Control  *ports.DownloadControl `json:"control"`
+			Job      int64                  `json:"job"`
+			Name     string                 `json:"name"`
+			PpStatus string                 `json:"pp_status"`
+			FinalDir string                 `json:"final_dir"`
+			Params   [][2]string            `json:"params"`
 		}
 		if json.Unmarshal([]byte(data), &f) != nil {
 			return nil
@@ -213,7 +230,7 @@ func translate(name, data, id string) []ports.ClientEvent {
 		// attached. It is the difference between importing now and
 		// importing up to 30 seconds from now.
 		st := statusOfHistory(historyEntry{
-			Job: f.Job, Name: f.Name, Status: f.PpStatus, FinalDir: f.FinalDir,
+			Job: f.Job, Name: f.Name, Status: f.PpStatus, FinalDir: f.FinalDir, Params: f.Params, Control: f.Control,
 		})
 		kind := ports.EventCompleted
 		switch st.State {
@@ -278,7 +295,8 @@ func translate(name, data, id string) []ports.ClientEvent {
 			evs = append(evs, ports.ClientEvent{
 				Handle: handleOf(j.ID), Kind: ports.EventProgress, Seq: seq,
 				Status: ports.DownloadStatus{
-					Handle: handleOf(j.ID), Name: j.Name, State: state,
+					Control: j.Control,
+					Handle:  handleOf(j.ID), Name: j.Name, State: state,
 					Progress: progress, Message: msg, Stage: stage,
 				},
 			})

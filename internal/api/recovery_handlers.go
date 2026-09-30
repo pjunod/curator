@@ -126,3 +126,17 @@ func (s *Server) GetRecoveryPreview(w http.ResponseWriter, r *http.Request, id s
 	}
 	writeJSON(w, http.StatusOK, task)
 }
+
+func (s *Server) PlanRetainedRecovery(w http.ResponseWriter, r *http.Request) {
+	var candidates []acquisition.RetainedCandidate
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024*1024)).Decode(&candidates); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	plan, err := s.deps.Acquisition.PlanRetainedRecovery(r.Context(), candidates)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}

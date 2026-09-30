@@ -40,14 +40,49 @@ RUN V="${VERSION:-$(sh scripts/version.sh)}" && \
 # is the answer there.
 RUN mkdir -p /data-skel/backups && chown -R 1000:1000 /data-skel
 
+# ---- Cinema's Jellyfin FFmpeg 8 and its complete runtime dependencies ----
+# Match Cinema/plurx: the signed Jellyfin Bookworm repository and package major.
+FROM debian:bookworm-slim AS media-tools
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ && install -d /etc/apt/keyrings \
+ && curl -fsSL https://repo.jellyfin.org/jellyfin_team.gpg.key \
+    | gpg --dearmor -o /etc/apt/keyrings/jellyfin.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/jellyfin.gpg] https://repo.jellyfin.org/debian bookworm main" \
+    > /etc/apt/sources.list.d/jellyfin.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends jellyfin-ffmpeg8 \
+ && /usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -decoders 2>&1 \
+    | grep -Eq '^[[:space:]]*A[^[:space:]]*[[:space:]]+ac4[[:space:]]' \
+ && /usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -bsfs 2>&1 | grep -qx dovi_rpu \
+ && /usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -h filter=tonemapx 2>&1 \
+    | grep -q '^[[:space:]]*apply_dovi[[:space:]]' \
+ && mkdir -p /runtime/usr/lib /runtime/usr/bin /runtime/usr/share/doc \
+ && cp -a /usr/lib/jellyfin-ffmpeg /runtime/usr/lib/ \
+ && ldd /usr/lib/jellyfin-ffmpeg/ffprobe /usr/lib/jellyfin-ffmpeg/ffmpeg \
+    | awk '$2 == "=>" && $3 ~ /^\// { print $3 } $1 ~ /^\// && $1 !~ /:$/ { print $1 }' \
+    | sort -u \
+    | xargs -r cp --parents -L -t /runtime \
+ && ln -s /usr/lib/jellyfin-ffmpeg/ffmpeg /runtime/usr/bin/ffmpeg \
+ && ln -s /usr/lib/jellyfin-ffmpeg/ffprobe /runtime/usr/bin/ffprobe \
+ && cp -a /usr/share/doc/. /runtime/usr/share/doc/ \
+ && rm -rf /var/lib/apt/lists/*
+
+# Prove the bundled binaries and libraries work in the actual distroless base.
+FROM gcr.io/distroless/cc-debian12 AS media-runtime
+COPY --from=media-tools /runtime/ /
+RUN ["/usr/lib/jellyfin-ffmpeg/ffprobe", "-version"]
+RUN ["/usr/lib/jellyfin-ffmpeg/ffmpeg", "-version"]
+
 # ---- runtime ----
-FROM gcr.io/distroless/cc-debian12
+FROM media-runtime AS runtime
 COPY --from=embed /src/tools/curator-embed/target/release/curator-embed /curator-embed
 COPY --from=build /monarr /monarr
 COPY --from=build --chown=1000:1000 /data-skel /data
 ENV MONARR_DATA_DIR=/data \
     MONARR_PORT=7676 \
-    MONARR_LOG_FORMAT=json
+    MONARR_LOG_FORMAT=json \
+    MONARR_FFPROBE=/usr/lib/jellyfin-ffmpeg/ffprobe
 VOLUME /data
 EXPOSE 7676
 # Never root by default. Compose overrides this with ${PUID}:${PGID}; if you

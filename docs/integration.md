@@ -654,3 +654,38 @@ notifier not configured at all.
 Every literal in this document — state names, pill text, error strings, wire
 fields, column names — was read out of the code on the branch that ships it.
 When a seam changes, this file changes in the same commit.
+
+## Durable job control contract (v1)
+
+Runner queue snapshots and `job_control_changed` events carry an additive
+`control` object: integer `version`; decimal-string `revision`; `instance`;
+`lifecycle`; `cause`; `stage`; `retry_policy`; bounded `message`. Optional
+`previous_status` and `manual_pause` preserve Runner resume intent. Version 1
+resource holds use `lifecycle=held`, `cause=capacity|quota` and
+`retry_policy=resume_same_job`. Review holds use `retry_policy=review`. Stage
+names identify the failed operation, including `download_write`, `finalize`,
+`extract`, `par_repair` and existing post-stage strings.
+
+Compatibility projection is `status=paused`, `pp_done=false`, `ready=false`.
+The authoritative control is stored in the Runner queue snapshot under
+`*Control:v1`; it is persisted before events. Monarr stores it atomically with
+active acquisition state. Missing facts cannot clear a held row; unknown
+versions remain nonterminal, stale or conflicting control revisions are rejected,
+and instance changes require explicit reconciliation. Identical running control
+revisions still accept fresh transfer progress and stage observations. The SSE cursor is independent
+of the durable revision. Polling held facts take precedence over older history.
+Terminal history and `job_pp_finished` params retain `*Control:v1`, so a newer
+same-instance resource resolution remains available after queue retirement and
+when the resume event was missed. A queue resolution can fill an older history
+shape while both are visible; bare legacy SUCCESS never clears a stored hold.
+
+`POST /api/v1/queue/{id}/resume` in Monarr calls Runner's existing
+`POST /api/v1/jobs/{id}/actions/resume`; it does not add an NZB. Runner requires
+writer quiescence, capacity reservation and a bounded 64 KiB write/flush probe.
+Attempts and exponential backoff survive restart (eight attempts; initial
+30-second backoff). Quota release is explicitly operator-triggered because
+`statvfs` supplies no authoritative quota headroom. Manual pause and review
+holds survive resource release.
+
+The identical `job-control-v1.json` fixtures preserve a revision larger than
+JavaScript's exact integer range and include an unknown future field.
