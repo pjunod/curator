@@ -107,3 +107,42 @@ for (const width of [390, 1280]) {
     await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeInViewport({ ratio: 1 })
   })
 }
+
+for (const width of [390, 820, 1280]) {
+  for (const layout of ['classic', 'theater']) {
+    test(`repeated inline feedback clears ${layout} navigation at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 700 })
+      await page.addInitScript(value => localStorage.setItem('monarr-layout', value), layout)
+      await page.route('**/api/v1/library/9873', route => route.fulfill({ json: {
+        id: 9873, kind: 'series', title: 'Monitoring feedback', monitored: true,
+        path: '', genres: [], ratings: [], ids: {}, files: [], copies: [],
+        seasons: [{ number: 1, monitored: true, episodes: Array.from({ length: 80 }, (_, i) => ({
+          id: i + 1, seasonNumber: 1, episodeNumber: i + 1, title: `Episode ${i + 1}`, monitored: true,
+        })) }],
+      } }))
+      await page.route('**/api/v1/library/9873/episodes/*', route => route.fulfill({
+        status: 500, json: { message: 'Monitoring unavailable' },
+      }))
+      await page.goto('/library/9873')
+      const checkbox = page.getByRole('checkbox', { name: 'Monitor episode 1x80', exact: true })
+      const notice = page.getByRole('status').filter({ hasText: 'could not change episode monitoring' })
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await checkbox.click()
+        await expect(notice).toContainText('Monitoring unavailable')
+        await expect(notice).toBeInViewport({ ratio: 1 })
+        // IntersectionObserver visibility alone misses opaque navigation that
+        // covers a banner. Assert its geometry against the actual shell bars.
+        await expect.poll(() => notice.evaluate(node => {
+          const box = node.getBoundingClientRect()
+          return Array.from(document.querySelectorAll('.mobile-top, .mobile-tabs, [data-layout="theater"] .sidebar')).every(bar => {
+            const style = getComputedStyle(bar)
+            if (style.position !== 'fixed' && style.position !== 'sticky') return true
+            const nav = bar.getBoundingClientRect()
+            return box.bottom <= nav.top || box.top >= nav.bottom || box.right <= nav.left || box.left >= nav.right
+          })
+        })).toBe(true)
+        await expect(checkbox).toBeChecked()
+      }
+    })
+  }
+}

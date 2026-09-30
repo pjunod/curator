@@ -47,14 +47,33 @@ export function ActionDialog({ title, className = '', onClose, children }: {
 }
 
 /** Reveal new action feedback even when its initiating row was far below it. */
-export function ActionNotice({ children, warning = false }: { children: ReactNode; warning?: boolean }) {
+export function ActionNotice({ children, warning = false, revision = 0 }: {
+  children: ReactNode
+  warning?: boolean
+  revision?: number
+}) {
   const notice = useRef<HTMLDivElement>(null)
-  const previous = useRef<string | null>(null)
+  const previous = useRef<{ text: string | null; revision: number } | null>(null)
   useLayoutEffect(() => {
     const node = notice.current
-    // Parent rerenders and background refetches must not steal the viewport.
-    if (node && node.textContent !== previous.current) {
-      previous.current = node.textContent
+    // A new result can repeat the same text. Ordinary rerenders cannot.
+    if (node && (node.textContent !== previous.current?.text || revision !== previous.current?.revision)) {
+      previous.current = { text: node.textContent, revision }
+      if (!node.closest('dialog')) {
+        // Page feedback shares the viewport with navigation; native dialogs
+        // sit above it. Measure the actual bars, including safe-area padding
+        // and Theater's wrapped tablet navigation, rather than guessing heights.
+        let top = 16
+        let bottom = 16
+        document.querySelectorAll<HTMLElement>('.mobile-top, .mobile-tabs, [data-layout="theater"] .sidebar').forEach((bar) => {
+          const style = getComputedStyle(bar)
+          if (style.position !== 'fixed' && style.position !== 'sticky') return
+          if (style.top !== 'auto') top = Math.max(top, bar.offsetHeight + (parseFloat(style.top) || 0) + 16)
+          else if (style.bottom !== 'auto') bottom = Math.max(bottom, bar.offsetHeight + (parseFloat(style.bottom) || 0) + 16)
+        })
+        node.style.scrollMarginTop = `${top}px`
+        node.style.scrollMarginBottom = `${bottom}px`
+      }
       node.scrollIntoView({ block: 'nearest', behavior: 'instant' })
     }
   })

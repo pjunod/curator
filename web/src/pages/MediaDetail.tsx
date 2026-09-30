@@ -931,7 +931,8 @@ export function MediaDetailPage() {
     mutationFn: () => deleteLibraryItem(Number(id)),
     onSuccess: () => navigate({ to: '/' }),
   })
-  const [autoMsg, setAutoMsg] = useState('')
+  const [autoNotice, setAutoNotice] = useState({ message: '', revision: 0 })
+  const setAutoMsg = (message: string) => setAutoNotice((previous) => ({ message, revision: previous.revision + 1 }))
   const auto = useMutation({
     mutationFn: () => autoSearchItem(Number(id)),
     onSuccess: (res) => {
@@ -1269,7 +1270,7 @@ export function MediaDetailPage() {
         </div>
       </div>
 
-      {autoMsg && <ActionNotice>{autoMsg}</ActionNotice>}
+      {autoNotice.message && <ActionNotice revision={autoNotice.revision}>{autoNotice.message}</ActionNotice>}
 
       {editing && (
         <EditPanel
