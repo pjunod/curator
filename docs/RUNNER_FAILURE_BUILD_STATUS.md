@@ -75,7 +75,8 @@ Monarr's shared HEAD advanced concurrently to
 `1be5b9a1398c9ebb5afce58612d1de979cb8c047` (merge of origin/main). Existing
 work was retained. VERSION was reread as `0.35.0` and advanced to `0.35.1`.
 Runner remains based on `ab25d0cbecfdb5adf299072813a2948383192d9f`.
-All evidence concerns these dirty working trees, not committed release images.
+Initial evidence concerns the working trees used for the first PR commits.
+Release-image qualification remains pending.
 
 Cargo.lock deliberately adds dependency edges only: existing locked
 `serde_json` for types, `crc32fast` for engine, and `md-5` for PAR parsing
@@ -153,11 +154,12 @@ Implemented/local test evidence is distinct from mount-verified, deployable
 and deployed. Nothing was deployed. No real downloads, import, staging delete,
 blocklist clearing or Monster recovery occurred.
 
-## Tested source fingerprints
+## Initial build source fingerprints
 
 SHA-256 covers sorted changed source/fixture paths and bytes (including VERSION
 and Cargo.lock), excluding prose docs. This identifies the dirty source more
-precisely than the base commit alone. No code changed after final gates.
+precisely than the base commit alone. These identify the initial PR commits;
+review follow-up evidence and fingerprints are recorded below.
 
 - nzbd: `47d86bada5b92bee3050a51455a945f0d9533fabda28718604007b39d7a7650c`
 - monarr: `abcc9aa708ce140f6766e745d6e78a72e45bdc330fec09c9513fdee8016b09cf`
@@ -168,13 +170,17 @@ Runner branch: `codex/runner-resource-holds`. Monarr branch:
 `codex/runner-held-acquisitions`. Before committing, both fetched `origin/main`
 refs matched the local HEADs. Monarr advanced to
 `ebae5d3ed178fc184f5d8fe1d47a84abac5b4b28`; the intervening changes add
-unrelated test coverage. Both tested source fingerprints below still match.
+unrelated test coverage. Both initial tested source fingerprints matched at
+first delivery.
 
-## Explicit commit commands
+Runner PR: [#244](https://github.com/pjunod/runner/pull/244).
+Curator/Monarr PR: [#56](https://github.com/pjunod/curator/pull/56).
+
+## Initial explicit commit commands
 
 Review shared changes before staging. These include the authorized earlier
 failure/inventory patch in touched files and exclude unrelated untracked Runner
-notes, preserved backups and other projects. The build is being delivered in
+notes, preserved backups and other projects. The build was delivered in
 separate Runner and Monarr PRs using these explicit staging scopes.
 
 ```bash
@@ -259,3 +265,68 @@ git add \
   web/src/pages/Activity.tsx
 git commit -m "Preserve held transfers and journal safe payload recovery"
 ```
+
+## Astra review follow-up — 2026-09-30
+
+The first PR commits reproduced all six reported regressions before changes.
+The permanent probes retain the review test names and extend their coverage.
+Curator VERSION is `0.35.2` for these visible resume/completion fixes.
+
+| Review finding | Change and regression evidence |
+|---|---|
+| Runner extraction hold overwritten | `PostError::Held` preserves the already-persisted stage control; `review_manager_preserves_extractor_capacity_hold` |
+| Runner fallback blocked after ENOSPC | Journaled extraction generations verify prior identities and retain bytes; `review_diskfull_fallback_can_be_retried_in_same_workspace` also restores capacity and checks successful output and retained partials |
+| Runner delayed parity never fetched | Isolated repair returns missing-block counts, unpauses volumes, waits and reloads the same set; `review_missing_parity_requests_available_paused_volume` |
+| Runner nested set restored at job root | Candidate and target paths stay under the set root; `review_nested_par_set_keeps_its_catalog_root` |
+| Curator missed resume strands completion | Terminal Runner params preserve `*Control:v1`; polling and SSE retain it, including queue retirement; `TestReviewCompletionAfterMissedResume`, `TestReviewCompletionControlSurvivesPollAndPush`, `review_terminal_history_and_event_keep_resolved_control` |
+| Curator equal running revision freezes progress | Identical control accepts progress/stage updates; older, changed-content and instance conflicts remain fenced; `TestReviewRunningProgressWithSameControlRevision` |
+
+`extraction_retry_generations_survive_restart_and_reject_changed_identity`
+checks journal recovery, retained partial bytes and directory identity changes.
+These tests use temporary engines, synthetic archives, native PAR2, simulated
+extractor failures, temporary HTTP services and SQLite databases.
+
+All final source gates passed: Runner `make check` (including Rust 1.95 MSRV),
+`make test-strict` and `make ui-test`; Curator `make lint`, `make test`,
+`make test-web` (119 tests) and `make test-e2e` (128 tests on 0.35.2).
+Curator acquisition and Runner adapter packages passed three shuffled runs.
+The runtime additions afterward change container recipes, documentation and one
+stale Go comment; lint was rerun. Functional Go/Rust source remains the gated
+source.
+
+Logs: `/private/tmp/runner244-review-{check,strict,ui}.log`,
+`/private/tmp/curator56-review-{lint,test,web,e2e,repeat}.log`.
+
+### Container tool audit and verification
+
+Runner installs `par2`, real `unrar`, `7z`, `7zz`, `ca-certificates` and `tini`.
+The named `runtime-tools` stage fails the build if a configured default tool is
+missing. Native non-root container fixtures verified PAR2 repair, ZIP creation
+and extraction, plus RAR3 and RAR5 multipart test/extraction. The public
+[rarfile multipart fixtures](https://github.com/markokr/rarfile/tree/master/test/files)
+were mounted read-only; all outputs stayed in the disposable container.
+
+Curator uses Cinema/plurx's signed Jellyfin Bookworm repository and
+`jellyfin-ffmpeg8` package. Both binaries, the bundled library tree, transitive
+system libraries and package license metadata are copied into distroless.
+Build checks require Cinema's AC-4, `dovi_rpu` and `tonemapx apply_dovi`
+capabilities and execute both binaries in the actual runtime base.
+`MONARR_FFPROBE=/usr/lib/jellyfin-ffmpeg/ffprobe` selects the same tool path.
+The local build produced `8.1.3-Jellyfin`; the shared major tracks repository
+updates as Cinema's current Dockerfile does. A synthetic 160×90 NUT stream
+was generated and measured successfully as UID 1000 in that runtime base.
+The existing embedding executable remains included in the final image.
+
+Tool-layer build and smoke logs: `/private/tmp/runner244-runtime-build.log`,
+`/private/tmp/runner244-runtime-smoke.log`,
+`/private/tmp/runner244-unrar-multipart.log`,
+`/private/tmp/curator56-runtime-build.log`,
+`/private/tmp/curator56-jellyfin-version.log` and
+`/private/tmp/curator56-runtime-smoke.json`. Full release daemon images, native
+mount/power-loss qualification and deployment remain pending.
+
+Follow-up fingerprints include both container recipes and the permanent
+review test file, exclude prose docs, and cover the full PR source scopes:
+
+- Runner: `ebaa46b90d8aceb31d6dafb524900e086d321f2c7c84b266806bc7aa4e9b3003`
+- Curator: `19d6d477c315fec928747ebcfc4234c243c51b5adf831dfdef61433c9b721c50`

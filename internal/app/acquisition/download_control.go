@@ -36,8 +36,15 @@ func (s *Service) acceptDownloadControl(ctx context.Context, dl *sqlite.Download
 			return false
 		}
 		previous, valid := new(big.Int).SetString(prior.Revision, 10)
-		if !valid || revision.Cmp(previous) <= 0 {
+		if !valid || revision.Cmp(previous) < 0 {
 			return false
+		}
+		if revision.Cmp(previous) == 0 {
+			// Revisions order control transitions, not transfer/stage snapshots.
+			// Equal revisions must describe precisely the same running control.
+			if prior.Held() || *prior != *next {
+				return false
+			}
 		}
 		if prior.Held() && !next.Held() {
 			if next.Version != 1 || next.Lifecycle != "running" ||

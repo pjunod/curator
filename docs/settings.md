@@ -518,19 +518,20 @@ existed, and never upward toward the root folder.
 
 Monarr reads resolution, codec, bit depth, HDR format, interlacing, audio
 tracks and duration out of MKV and MP4 files itself, with no external
-dependency — the stock image is distroless and has nothing on PATH
-(ADR 0013). There is nothing to configure for the formats that matter.
+dependency (ADR 0013). The stock distroless image bundles Cinema's `jellyfin-ffmpeg8`, including
+`ffprobe`, `ffmpeg`, bundled libraries and transitive system dependencies. There is nothing to configure
+for ordinary container deployments.
 
-For the long tail it does not deep-parse (AVI, TS, WMV), set
-`MONARR_FFPROBE` to the absolute path of an `ffprobe` binary and monarr
-will use it opportunistically. An `ffprobe` on `PATH` is picked up without
+For the long tail it does not deep-parse (AVI, TS, WMV), the bundled `ffprobe`
+enriches measurements automatically. On standalone installations or when
+overriding the bundled tool, set `MONARR_FFPROBE` to its absolute path. An `ffprobe` on `PATH` is picked up without
 configuration. Absent both, those files keep the quality their filename
 claims — exactly as every file did before 0.6.0 — and their provenance
 says so.
 
 ```bash
-# Only useful if you actually have these containers AND a custom image.
-MONARR_FFPROBE=/usr/bin/ffprobe
+# Optional override; the stock container already includes this binary.
+MONARR_FFPROBE=/usr/lib/jellyfin-ffmpeg/ffprobe
 ```
 
 Probing never reads a whole file: MKV is capped at 8 MiB of header reads
@@ -873,3 +874,7 @@ release when authoritative quota telemetry is unavailable.
 Registry-generation relocation remains disabled in ordinary Runner calls.
 Enablement needs verified consumer isolation, actual-path mappings and deployment
 mount durability evidence. No new production enablement setting is exposed.
+
+A resumed Runner transfer continues updating progress at the same control
+revision. Completed history preserves the resolving revision after the queue
+row retires, so a missed SSE resume event does not strand the acquisition.

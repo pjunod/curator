@@ -268,12 +268,13 @@ func (j job) state() (ports.DownloadState, string, string) {
 
 // historyEntry is one row of `GET /api/v1/history`.
 type historyEntry struct {
-	Job      int64       `json:"job"`
-	Name     string      `json:"name"`
-	Status   string      `json:"status"`
-	FinalDir string      `json:"final_dir"`
-	Seq      int64       `json:"seq"`
-	Params   [][2]string `json:"params"`
+	Control  *ports.DownloadControl `json:"control"`
+	Job      int64                  `json:"job"`
+	Name     string                 `json:"name"`
+	Status   string                 `json:"status"`
+	FinalDir string                 `json:"final_dir"`
+	Seq      int64                  `json:"seq"`
+	Params   [][2]string            `json:"params"`
 }
 
 // Statuses implements ports.DownloadClient: the live queue plus recent
@@ -293,16 +294,21 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 		return nil, err
 	}
 	out := make([]ports.DownloadStatus, 0, len(queue.Jobs)+len(hist.Entries))
-	historical := make(map[int64]struct{}, len(hist.Entries))
-	for _, h := range hist.Entries {
-		historical[h.Job] = struct{}{}
+	historical := make(map[int64]int, len(hist.Entries))
+	for i, h := range hist.Entries {
+		historical[h.Job] = i
 	}
 	for _, j := range queue.Jobs {
 		// PP finalization writes history before setting ready on the live job.
 		// During that overlap the history row is the only observation carrying
 		// final_dir, so do not let the pathless queue copy win matchStatus's
 		// first-match rule.
-		if _, ok := historical[j.ID]; ok && !j.Control.Held() {
+		if i, ok := historical[j.ID]; ok && !j.Control.Held() {
+			// Preserve an observed queue resolution when an older history
+			// shape has no control. A bare legacy SUCCESS never clears a hold.
+			if historyControl(hist.Entries[i]) == nil {
+				hist.Entries[i].Control = j.Control
+			}
 			continue
 		}
 		st, msg, stage := j.state()
@@ -340,6 +346,7 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 // would not be.
 func statusOfHistory(h historyEntry) ports.DownloadStatus {
 	st := ports.DownloadStatus{
+		Control:  historyControl(h),
 		Handle:   ports.Handle(strconv.FormatInt(h.Job, 10)),
 		Name:     h.Name,
 		Progress: 1,
@@ -376,6 +383,21 @@ func statusOfHistory(h historyEntry) ports.DownloadStatus {
 		}
 	}
 	return st
+}
+
+func historyControl(h historyEntry) *ports.DownloadControl {
+	if h.Control != nil {
+		return h.Control
+	}
+	for _, param := range h.Params {
+		if param[0] == "*Control:v1" {
+			var control ports.DownloadControl
+			if json.Unmarshal([]byte(param[1]), &control) == nil {
+				return &control
+			}
+		}
+	}
+	return nil
 }
 
 // Remove implements ports.DownloadClient.

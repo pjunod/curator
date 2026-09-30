@@ -27,6 +27,11 @@ docker run -d --name monarr-discovery --restart unless-stopped \
   --network host monarr advertise --name monarr --port 7676
 ```
 
+The standard image bundles the embedding executable and Cinema's Jellyfin
+FFmpeg 8 package, including `ffprobe`, `ffmpeg` and their shared libraries. Build checks execute both media tools in the
+actual distroless base. Native MKV/MP4 inspection remains in-process; other
+formats can use the bundled probe without a custom image.
+
 `/data` holds the database and backups; `/pool` holds your media library
 *and* your download client's completed folder — the mount rules and a
 worked pool layout are in the README's Docker section. After code updates:
@@ -1208,7 +1213,10 @@ bytes. A 100% transfer still needs verified post-processing and import.
 **Resume same job** calls the existing Runner job's resume action. The active
 acquisition remains in the database until a newer authoritative control fact
 resolves the corresponding hold; late completion/failure events cannot erase it.
-Season and episode grabs check held overlap at final admission.
+Season and episode grabs check held overlap at final admission. Progress keeps
+updating between control transitions. If the resume event is missed, terminal
+history carries the resolving revision and permits the normal completion path;
+a legacy completion without that evidence still retains the hold.
 
 `POST /api/v1/import/recovery/retained/plan` accepts up to 1,000 candidate
 files and returns per-file identity, digest, intended episode/copy destination,

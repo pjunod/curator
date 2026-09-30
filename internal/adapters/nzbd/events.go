@@ -215,11 +215,12 @@ func translate(name, data, id string) []ports.ClientEvent {
 
 	case "job_pp_finished":
 		var f struct {
-			Job      int64       `json:"job"`
-			Name     string      `json:"name"`
-			PpStatus string      `json:"pp_status"`
-			FinalDir string      `json:"final_dir"`
-			Params   [][2]string `json:"params"`
+			Control  *ports.DownloadControl `json:"control"`
+			Job      int64                  `json:"job"`
+			Name     string                 `json:"name"`
+			PpStatus string                 `json:"pp_status"`
+			FinalDir string                 `json:"final_dir"`
+			Params   [][2]string            `json:"params"`
 		}
 		if json.Unmarshal([]byte(data), &f) != nil {
 			return nil
@@ -229,7 +230,7 @@ func translate(name, data, id string) []ports.ClientEvent {
 		// attached. It is the difference between importing now and
 		// importing up to 30 seconds from now.
 		st := statusOfHistory(historyEntry{
-			Job: f.Job, Name: f.Name, Status: f.PpStatus, FinalDir: f.FinalDir, Params: f.Params,
+			Job: f.Job, Name: f.Name, Status: f.PpStatus, FinalDir: f.FinalDir, Params: f.Params, Control: f.Control,
 		})
 		kind := ports.EventCompleted
 		switch st.State {

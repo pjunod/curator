@@ -87,3 +87,9 @@ They bind source identity and SHA-256 and observe the library revision and
 pending placement receipts. Revalidation still grants no mutation lease.
 Placement, receipt acknowledgement and identity checks remain the only path
 to separately authorized import and cleanup.
+
+Control revisions order custody transitions independently of progress. An
+identical running revision accepts fresh transfer and stage facts; stale or
+conflicting facts retain the fence. Terminal history and completion events
+carry the last authoritative `*Control:v1` param to survive missed resume events
+and queue retirement without interpreting legacy SUCCESS as hold resolution.

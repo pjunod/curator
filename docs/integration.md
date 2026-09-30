@@ -670,9 +670,14 @@ Compatibility projection is `status=paused`, `pp_done=false`, `ready=false`.
 The authoritative control is stored in the Runner queue snapshot under
 `*Control:v1`; it is persisted before events. Monarr stores it atomically with
 active acquisition state. Missing facts cannot clear a held row; unknown
-versions remain nonterminal, duplicate/stale revisions have no effects, and
-instance changes require explicit reconciliation. The SSE cursor is independent
+versions remain nonterminal, stale or conflicting control revisions are rejected,
+and instance changes require explicit reconciliation. Identical running control
+revisions still accept fresh transfer progress and stage observations. The SSE cursor is independent
 of the durable revision. Polling held facts take precedence over older history.
+Terminal history and `job_pp_finished` params retain `*Control:v1`, so a newer
+same-instance resource resolution remains available after queue retirement and
+when the resume event was missed. A queue resolution can fill an older history
+shape while both are visible; bare legacy SUCCESS never clears a stored hold.
 
 `POST /api/v1/queue/{id}/resume` in Monarr calls Runner's existing
 `POST /api/v1/jobs/{id}/actions/resume`; it does not add an NZB. Runner requires
