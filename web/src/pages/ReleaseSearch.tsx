@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import type { LanguageOption, ReleaseCandidate } from '../api'
 import { fmtBytes, grabRelease, listLanguages, searchReleases } from '../api'
 import { releaseLanguagesLabel } from '../language'
+import { ActionDialog, ActionNotice } from '../ActionDialog'
 import { PageSizePicker, Pager, clampPage, sliceForPage } from '../Pager'
 
 // ReleaseSearch is the interactive search panel.
@@ -56,6 +57,7 @@ export function ReleaseSearch(props: {
         title: c.title, downloadUrl: c.downloadUrl, indexer: c.indexer,
         protocol: c.protocol, size: c.size, candidateToken: c.candidateToken,
       }),
+    onMutate: () => setGrabbed(null),
     onSuccess: (_res, c) => setGrabbed(c.title),
   })
 
@@ -74,6 +76,11 @@ export function ReleaseSearch(props: {
   // A filter that shrinks the list under you should not strand you on page 9.
   const current = clampPage(page, filtered.length, size)
   const visible = sliceForPage(filtered, current, size)
+  const toolbar = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    // Paging from the bottom must reveal the new rows at the top.
+    toolbar.current?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+  }, [current, size])
 
   const label = props.label ?? (
     season !== undefined && episode !== undefined
@@ -84,27 +91,20 @@ export function ReleaseSearch(props: {
   )
 
   return (
-    <section className="panel release-search">
-      <h2>
-        Interactive search — {label}
-        <button style={{ marginLeft: 'auto' }} onClick={props.onClose}>
-          Close
-        </button>
-      </h2>
-
+    <ActionDialog title={`Interactive search — ${label}`} className="release-search" onClose={props.onClose}>
       {search.isFetching && <p className="muted">Searching indexers…</p>}
       {search.data?.partial && (
-        <div className="banner warning">
+        <ActionNotice warning>
           Results are incomplete{search.data.reason ? `: ${search.data.reason}` : '.'}
-        </div>
+        </ActionNotice>
       )}
-      {search.isError && <div className="banner warning">{String((search.error as Error).message)}</div>}
-      {grab.isError && <div className="banner warning">{String((grab.error as Error).message)}</div>}
+      {search.isError && <ActionNotice warning>{String((search.error as Error).message)}</ActionNotice>}
+      {grab.isError && <ActionNotice warning>{String((grab.error as Error).message)}</ActionNotice>}
       {grabbed && (
-        <div className="banner">
+        <ActionNotice>
           Grabbed <span className="mono">{grabbed}</span> — follow it on the{' '}
           <Link to="/activity">Activity page</Link>.
-        </div>
+        </ActionNotice>
       )}
 
       {search.data && all.length === 0 && (
@@ -113,7 +113,7 @@ export function ReleaseSearch(props: {
 
       {all.length > 0 && (
         <>
-          <div className="section-toolbar release-toolbar">
+          <div ref={toolbar} className="section-toolbar release-toolbar">
             <input
               type="search"
               placeholder="Filter by name…"
@@ -179,7 +179,7 @@ export function ReleaseSearch(props: {
           </div>
         </>
       )}
-    </section>
+    </ActionDialog>
   )
 }
 

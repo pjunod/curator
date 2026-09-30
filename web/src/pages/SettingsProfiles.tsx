@@ -1,3 +1,4 @@
+import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DefaultProfiles, LanguageOption, ProfileInput, QualityProfile } from '../api'
@@ -463,7 +464,7 @@ function ProfileForm(props: {
           {props.submitLabel}
         </button>
         {props.onCancel && <button onClick={props.onCancel}>Cancel</button>}
-        {props.error && <span className="error-text"> ✕ {props.error}</span>}
+        {props.error && <ActionNotice warning>{props.error}</ActionNotice>}
       </div>
     </div>
   )
@@ -575,6 +576,7 @@ export function QualityProfileSettings() {
                   <td className="muted">{p.inUse ? `${p.inUse}` : '—'}</td>
                   <td>
                     <button
+                      onClickCapture={focusActionTrigger}
                       onClick={() => {
                         setEditingId(p.id)
                         setEditDraft(draftOf(p))
@@ -609,8 +611,7 @@ export function QualityProfileSettings() {
       )}
 
       {editingId !== null && (
-        <>
-          <h3>Edit profile</h3>
+        <ActionDialog title="Edit profile" onClose={() => { setEditingId(null); setError('') }}>
           <ProfileForm
             draft={editDraft}
             onChange={setEditDraft}
@@ -623,12 +624,11 @@ export function QualityProfileSettings() {
             submitLabel="Save"
             error={error}
           />
-        </>
+        </ActionDialog>
       )}
 
-      {creating ? (
-        <>
-          <h3>New profile</h3>
+      {creating && (
+        <ActionDialog title="New profile" onClose={() => { setCreating(false); setError('') }}>
           <ProfileForm
             draft={draft}
             onChange={setDraft}
@@ -641,21 +641,21 @@ export function QualityProfileSettings() {
             submitLabel="Create"
             error={error}
           />
-        </>
-      ) : (
-        <p>
-          <button
-            onClick={() => {
-              setCreating(true)
-              setEditingId(null)
-              setError('')
-            }}
-          >
-            New profile
-          </button>
-          {error && !editingId && <span className="error-text"> ✕ {error}</span>}
-        </p>
+        </ActionDialog>
       )}
+      <p>
+        <button
+          onClickCapture={focusActionTrigger}
+          onClick={() => {
+            setCreating(true)
+            setEditingId(null)
+            setError('')
+          }}
+        >
+          New profile
+        </button>
+        {error && !editingId && !creating && <span className="error-text"> ✕ {error}</span>}
+      </p>
     </section>
   )
 }

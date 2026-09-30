@@ -30,6 +30,7 @@ for (const width of [320, 390, 430, 820, 1280]) {
       id: 9876, kind: 'movie', title: 'Oceans: Our Blue Planet', year: 2018,
       monitored: true, path: '', genres: [], ratings: [], ids: {},
       seasons: [], files: [], copies: [], downloadPriority: 0,
+      aliases: Array.from({ length: 30 }, (_, i) => ({ id: i, title: `Alias ${i}`, role: 'provider', source: 'tmdb' })),
     } }))
     await page.route('**/api/v1/library/9876/releases', route => route.fulfill({ json: releases }))
     let grabbed: unknown
@@ -41,6 +42,10 @@ for (const width of [320, 390, 430, 820, 1280]) {
     await page.goto('/library/9876')
     await page.getByRole('button', { name: 'Interactive search', exact: true }).click()
     const panel = page.locator('.release-search')
+    const heading = panel.getByRole('heading', { name: 'Interactive search — item' })
+    await expect(heading).toBeInViewport({ ratio: 1 })
+    await expect(heading).toBeFocused()
+    await expect(panel.getByRole('button', { name: 'Close', exact: true })).toBeInViewport({ ratio: 1 })
     const rows = panel.locator('tbody tr')
     await expect(rows).toHaveCount(50)
     const title = rows.first().locator('.release-title')
@@ -66,21 +71,22 @@ for (const width of [320, 390, 430, 820, 1280]) {
 
     await rows.first().getByRole('button', { name: '+1 more' }).click()
     await expect(rows.first()).toContainText('Custom format score is below the minimum.')
-    await panel.evaluate(el => el.scrollIntoView({ block: 'start' }))
-    await page.evaluate(() => window.scrollBy(0, -70))
     await page.screenshot({ path: testInfo.outputPath('interactive-search.png') })
 
-    await panel.getByRole('button', { name: 'Next ›' }).first().click()
+    await panel.getByRole('button', { name: 'Next ›' }).last().click()
     await expect(rows).toHaveCount(1)
     await expect(rows.first()).toContainText('Group50')
+    await expect(panel.getByRole('searchbox')).toBeInViewport({ ratio: 1 })
     await panel.getByRole('searchbox').fill('Group0')
     await expect(rows).toHaveCount(1)
     await rows.first().getByRole('button', { name: 'Grab', exact: true }).click()
     await expect(panel.locator('.banner')).toContainText('Grabbed')
+    await expect(panel.locator('.banner')).toBeInViewport({ ratio: 1 })
     expect(grabbed).toMatchObject({
       mediaItemId: 9876, title: releases[0].title, candidateToken: 'candidate-0',
     })
     await panel.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(panel).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Interactive search', exact: true })).toBeFocused()
   })
 }

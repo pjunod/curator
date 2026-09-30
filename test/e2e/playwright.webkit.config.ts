@@ -7,7 +7,7 @@ export default {
   ...config,
   projects: [{
     name: 'webkit',
-    testMatch: /release-layout\.spec\.ts/,
+    testMatch: /(?:release-layout|action-visibility)\.spec\.ts/,
     use: { browserName: 'webkit' as const, launchOptions: {} },
   }],
 }

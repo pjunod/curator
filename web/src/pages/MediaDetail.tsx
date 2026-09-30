@@ -35,6 +35,7 @@ import type { BookType, MediaFileInfo, MediaItemDetail, QualityProfile, RemoveFi
 import { describeAutoSearch } from '../autosearch'
 import { audioUndeterminedNote } from '../language'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
+import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { ReleaseSearch } from './ReleaseSearch'
 
 function IdentityPanel({ item }: { item: MediaItemDetail }) {
@@ -398,7 +399,7 @@ function BookEditionsPanel(props: {
               <td>{fileCount(edition.copyId)}</td>
               <td><code className="path-chip">{edition.path || 'no folder assigned'}</code></td>
               <td>
-                <button onClick={() => props.onSearch(edition.copyId, edition.bookType)}>Search</button>{' '}
+                <button onClickCapture={focusActionTrigger} onClick={() => props.onSearch(edition.copyId, edition.bookType)}>Search</button>{' '}
                 {edition.copyId !== 0 && (
                   <button disabled={del.isPending} onClick={() => del.mutate(edition.copyId)}>Remove</button>
                 )}
@@ -525,16 +526,10 @@ function EditPanel(props: {
   })
 
   return (
-    <section className="panel">
-      <h2>
-        Edit
-        <button style={{ marginLeft: 'auto' }} onClick={props.onClose}>
-          Close
-        </button>
-      </h2>
-      {save.isError && <div className="banner warning">{String((save.error as Error).message)}</div>}
+    <ActionDialog title="Edit" onClose={props.onClose}>
+      {save.isError && <ActionNotice warning>{String((save.error as Error).message)}</ActionNotice>}
       {suggestion.isError && props.repairLocation && (
-        <div className="banner warning">{String((suggestion.error as Error).message)}</div>
+        <ActionNotice warning>{String((suggestion.error as Error).message)}</ActionNotice>
       )}
       <div className="form-grid">
         <label>
@@ -630,7 +625,7 @@ function EditPanel(props: {
         </button>
         <button onClick={props.onClose}>Cancel</button>
       </div>
-    </section>
+    </ActionDialog>
   )
 }
 
@@ -1225,9 +1220,9 @@ export function MediaDetailPage() {
               {auto.isPending ? 'Searching…' : 'Auto search'}
             </button>
             {m.kind === 'movie' && (
-              <button onClick={() => setSearching({})}>Interactive search</button>
+              <button onClickCapture={focusActionTrigger} onClick={() => setSearching({})}>Interactive search</button>
             )}
-            <button onClick={() => setEditing(true)}>Edit</button>
+            <button onClickCapture={focusActionTrigger} onClick={() => setEditing(true)}>Edit</button>
             {m.kind !== 'book' && (
               <button
                 title="Read the files again and record what is actually in them — resolution, codec, HDR, audio. Use this after fixing a permission or a mount that made a probe fail."
@@ -1274,7 +1269,7 @@ export function MediaDetailPage() {
         </div>
       </div>
 
-      {autoMsg && <div className="banner">{autoMsg}</div>}
+      {autoMsg && <ActionNotice>{autoMsg}</ActionNotice>}
 
       {editing && (
         <EditPanel
@@ -1355,7 +1350,7 @@ export function MediaDetailPage() {
                       {have}/{s.episodes.length} on disk{s.monitored ? '' : ' · unmonitored'}
                     </span>
                   </button>
-                  <button onClick={() => setSearching({ season: s.number })}>Search pack</button>
+                  <button onClickCapture={focusActionTrigger} onClick={() => setSearching({ season: s.number })}>Search pack</button>
                 </div>
                 {open && (
                   <table>
@@ -1401,6 +1396,7 @@ export function MediaDetailPage() {
                           </td>
                           <td>
                             <button
+                              onClickCapture={focusActionTrigger}
                               onClick={() =>
                                 setSearching({ season: e.seasonNumber, episode: e.episodeNumber })
                               }
