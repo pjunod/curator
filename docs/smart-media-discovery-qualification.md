@@ -44,9 +44,17 @@ model work; it does **not** measure live provider network latency or relevance.
 
 | Mode | Maximum observed duration | Maximum provider reads |
 |---|---:|---:|
-| Theme | 5.2411 s | 39 |
+| Theme (partial: 29 of 30 details available) | 5.2411 s | 39 |
 | Seed | 4.9318 s | 34 |
 | Combined | 5.1954 s | 41 |
+
+Every theme sample attempted 30 details and successfully checked 29; one
+replay detail was unavailable. These are partial-search timings, not a
+complete-search latency claim. Seed and combined samples checked their full
+30- and 28-detail envelopes. The original runner omitted the response coverage
+field; the saved report explicitly marks this audit as inferred from the
+attempted-read envelope and successful checked count. The earlier exact-mode
+feasibility results remain separate from this integrated partial measurement.
 
 Container cgroup peak was **208,551,936 bytes (198.89 MiB)**, with zero OOM
 events. Disabling ranking removed `curator-embed` from the container's process

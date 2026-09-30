@@ -14,7 +14,10 @@
         "retrieved": 60,
         "checked": 29,
         "eligible": 21,
-        "results": 20
+        "results": 20,
+        "detailReads": 30,
+        "detailFailures": 1,
+        "coverage": "partial"
       },
       {
         "seconds": 5.084,
@@ -23,7 +26,10 @@
         "retrieved": 60,
         "checked": 29,
         "eligible": 21,
-        "results": 20
+        "results": 20,
+        "detailReads": 30,
+        "detailFailures": 1,
+        "coverage": "partial"
       },
       {
         "seconds": 4.9972,
@@ -32,7 +38,10 @@
         "retrieved": 60,
         "checked": 29,
         "eligible": 21,
-        "results": 20
+        "results": 20,
+        "detailReads": 30,
+        "detailFailures": 1,
+        "coverage": "partial"
       },
       {
         "seconds": 5.0301,
@@ -41,7 +50,10 @@
         "retrieved": 60,
         "checked": 29,
         "eligible": 21,
-        "results": 20
+        "results": 20,
+        "detailReads": 30,
+        "detailFailures": 1,
+        "coverage": "partial"
       },
       {
         "seconds": 4.9935,
@@ -50,7 +62,10 @@
         "retrieved": 60,
         "checked": 29,
         "eligible": 21,
-        "results": 20
+        "results": 20,
+        "detailReads": 30,
+        "detailFailures": 1,
+        "coverage": "partial"
       }
     ],
     "seed": [
@@ -61,7 +76,10 @@
         "retrieved": 40,
         "checked": 30,
         "eligible": 24,
-        "results": 20
+        "results": 20,
+        "detailReads": 30,
+        "detailFailures": 0,
+        "coverage": "bounded"
       },
       {
         "seconds": 4.836,
@@ -70,7 +88,10 @@
         "retrieved": 40,
         "checked": 30,
         "eligible": 24,
-        "results": 20
+        "results": 20,
+        "detailReads": 30,
+        "detailFailures": 0,
+        "coverage": "bounded"
       },
       {
         "seconds": 4.874,
@@ -79,7 +100,10 @@
         "retrieved": 40,
         "checked": 30,
         "eligible": 24,
-        "results": 20
+        "results": 20,
+        "detailReads": 30,
+        "detailFailures": 0,
+        "coverage": "bounded"
       },
       {
         "seconds": 4.8614,
@@ -88,7 +112,10 @@
         "retrieved": 40,
         "checked": 30,
         "eligible": 24,
-        "results": 20
+        "results": 20,
+        "detailReads": 30,
+        "detailFailures": 0,
+        "coverage": "bounded"
       },
       {
         "seconds": 4.9318,
@@ -97,7 +124,10 @@
         "retrieved": 40,
         "checked": 30,
         "eligible": 24,
-        "results": 20
+        "results": 20,
+        "detailReads": 30,
+        "detailFailures": 0,
+        "coverage": "bounded"
       }
     ],
     "combined": [
@@ -108,7 +138,10 @@
         "retrieved": 60,
         "checked": 28,
         "eligible": 19,
-        "results": 19
+        "results": 19,
+        "detailReads": 28,
+        "detailFailures": 0,
+        "coverage": "bounded"
       },
       {
         "seconds": 5.1748,
@@ -117,7 +150,10 @@
         "retrieved": 60,
         "checked": 28,
         "eligible": 19,
-        "results": 19
+        "results": 19,
+        "detailReads": 28,
+        "detailFailures": 0,
+        "coverage": "bounded"
       },
       {
         "seconds": 5.1899,
@@ -126,7 +162,10 @@
         "retrieved": 60,
         "checked": 28,
         "eligible": 19,
-        "results": 19
+        "results": 19,
+        "detailReads": 28,
+        "detailFailures": 0,
+        "coverage": "bounded"
       },
       {
         "seconds": 5.1929,
@@ -135,7 +174,10 @@
         "retrieved": 60,
         "checked": 28,
         "eligible": 19,
-        "results": 19
+        "results": 19,
+        "detailReads": 28,
+        "detailFailures": 0,
+        "coverage": "bounded"
       },
       {
         "seconds": 5.1954,
@@ -144,7 +186,10 @@
         "retrieved": 60,
         "checked": 28,
         "eligible": 19,
-        "results": 19
+        "results": 19,
+        "detailReads": 28,
+        "detailFailures": 0,
+        "coverage": "bounded"
       }
     ]
   },
@@ -235,5 +280,6 @@
   "mainBase": "2cd269e",
   "featureCommit": "36b8886",
   "image": "sha256:c627c467506854c0c42f24d814722a5f4f107a017f099afd55b0a0dfacce269d",
-  "captureSHA256": "07fad75e8892093c689fe9262f30aea846615f698ee1273cf8169532d8f6ee27"
+  "captureSHA256": "07fad75e8892093c689fe9262f30aea846615f698ee1273cf8169532d8f6ee27",
+  "coverageAudit": "Theme: 30 detail reads attempted, 29 successful; one unavailable replay detail per sample. Seed and combined complete detail envelopes. Coverage inferred from read envelope and checked count; original benchmark did not serialize coverage."
 }
