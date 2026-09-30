@@ -10,6 +10,7 @@
 .storage-roots { margin: 16px 0; font-size: 13px; }
 .storage-roots p { margin: 6px 0 12px; }
 .storage-root-line .mono { overflow-wrap: anywhere; }
+.download-storage > .storage-items > summary { cursor: pointer; padding: 10px 0; }
 .storage-toolbar { padding: 14px 0; border-top: 1px solid var(--border); }
 .download-storage .storage-toolbar > input { flex: 1 1 220px; min-width: 0; }
 .storage-toolbar label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
