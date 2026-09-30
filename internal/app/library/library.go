@@ -448,8 +448,7 @@ type AddRequest struct {
 	// DownloadPriority overrides the selected profile when non-nil.
 	DownloadPriority *int
 	Monitored        bool
-	// Monitor picks which seasons start monitored (series only):
-	// "all" (default), "latest" (newest season only), or "none".
+	// Monitor selects the persistent series policy and initial child flags.
 	Monitor string
 }
 
@@ -533,31 +532,14 @@ func (s *Service) hydrateAdd(ctx context.Context, req AddRequest) (domain.MediaI
 	}
 }
 
-// applyMonitorPreset flips season/episode flags per the add-time choice.
-func applyMonitorPreset(item *domain.MediaItem, preset string) {
-	if item.Kind != domain.KindSeries || preset == "" || preset == "all" {
-		return
-	}
-	latest := 0
-	for _, s := range item.Seasons {
-		if s.Number > latest {
-			latest = s.Number
-		}
-	}
-	for i := range item.Seasons {
-		mon := preset == "latest" && item.Seasons[i].Number == latest && latest != 0
-		item.Seasons[i].Monitored = mon
-		for j := range item.Seasons[i].Episodes {
-			item.Seasons[i].Episodes[j].Monitored = mon
-		}
-	}
-}
-
 // Add hydrates the item from the provider and stores it. The on-disk folder
 // is derived as <root>/<Title (Year)> — or the Calibre-friendly
 // <root>/<Author>/<Title> for books — when a root folder is given; nothing
 // is created on disk until import.
 func (s *Service) Add(ctx context.Context, req AddRequest) (domain.MediaItem, error) {
+	if err := validateMonitor(req.Monitor); err != nil {
+		return domain.MediaItem{}, err
+	}
 	var item domain.MediaItem
 	var err error
 	switch req.Kind {
@@ -789,6 +771,7 @@ func (s *Service) validateItemProfile(ctx context.Context, kind domain.MediaKind
 
 // UpdateRequest is a per-item edit; nil fields are left as they are.
 type UpdateRequest struct {
+	Monitor          *string
 	Monitored        *bool
 	QualityProfileID *int64
 	// SetDownloadPriority distinguishes "leave unchanged" from clearing the
@@ -840,6 +823,15 @@ func (s *Service) UpdateItem(ctx context.Context, id int64, req UpdateRequest) (
 	if err != nil {
 		return domain.MediaItem{}, err
 	}
+	if req.Monitor != nil {
+		if item.Kind != domain.KindSeries {
+			return domain.MediaItem{}, fmt.Errorf("%w: monitoring modes apply only to series", ErrInvalidInput)
+		}
+		if err := validateMonitor(*req.Monitor); err != nil {
+			return domain.MediaItem{}, err
+		}
+		applyMonitorPreset(&item, *req.Monitor)
+	}
 	if req.Monitored != nil {
 		item.Monitored = *req.Monitored
 	}
@@ -880,7 +872,7 @@ func (s *Service) UpdateItem(ctx context.Context, id int64, req UpdateRequest) (
 			return domain.MediaItem{}, err
 		}
 	}
-	if err := s.db.UpdateMediaItemPlacement(ctx, item); err != nil {
+	if err := s.db.UpdateMediaItemSettings(ctx, item, req.Monitor != nil); err != nil {
 		return domain.MediaItem{}, folderTakenErr(err, item.Path)
 	}
 	s.log.Info("library: item updated", "id", id, "title", item.Title,
@@ -969,11 +961,11 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	for i := range fresh.Seasons {
 		mon, known := storedSeason[fresh.Seasons[i].Number]
 		if !known {
-			mon = fresh.Seasons[i].Monitored && stored.Monitored
+			mon = monitorNewSeason(stored, fresh.Seasons[i].Number)
 		}
 		fresh.Seasons[i].Monitored = mon
 		for j := range fresh.Seasons[i].Episodes {
-			fresh.Seasons[i].Episodes[j].Monitored = mon
+			fresh.Seasons[i].Episodes[j].Monitored = mon && monitorNewEpisode(stored, fresh.Seasons[i].Episodes[j])
 		}
 	}
 

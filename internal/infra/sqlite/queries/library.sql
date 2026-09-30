@@ -6,8 +6,8 @@ INSERT INTO media_items (
     overview, poster_path, backdrop_path, genres, status, release_date, runtime,
     rating, rating_votes, ratings,
     airs_time, airs_timezone, network,
-    monitored, quality_profile_id, download_priority, root_folder_id, path, ended, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    monitored, quality_profile_id, download_priority, root_folder_id, path, ended, added_at, updated_at, monitor, monitor_since, monitor_season
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: UpdateMediaItemMetadata :exec
@@ -157,6 +157,7 @@ UPDATE media_items SET updated_at = ? WHERE id = ?;
 -- disk are never moved by this.
 UPDATE media_items SET
     monitored = ?, quality_profile_id = ?, download_priority = ?, root_folder_id = ?, path = ?,
+    monitor = ?, monitor_since = ?, monitor_season = ?,
     updated_at = ?
 WHERE id = ?;
 

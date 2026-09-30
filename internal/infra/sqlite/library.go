@@ -73,6 +73,9 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		Network:          r.Network,
 		Source:           r.Source,
 		Monitored:        r.Monitored != 0,
+		Monitor:          r.Monitor,
+		MonitorSince:     r.MonitorSince,
+		MonitorSeason:    int(r.MonitorSeason),
 		QualityProfileID: r.QualityProfileID,
 		Path:             r.Path,
 		Ended:            r.Ended != 0,
@@ -130,6 +133,9 @@ func insertParams(m domain.MediaItem, now time.Time) sqlitegen.InsertMediaItemPa
 		AirsTimezone:     m.AirsTimezone,
 		Network:          m.Network,
 		Monitored:        boolInt(m.Monitored),
+		Monitor:          monitorDefault(m.Monitor),
+		MonitorSince:     m.MonitorSince,
+		MonitorSeason:    int64(m.MonitorSeason),
 		Path:             m.Path,
 		Ended:            boolInt(m.Ended),
 		AddedAt:          now.UnixMilli(),
@@ -139,6 +145,13 @@ func insertParams(m domain.MediaItem, now time.Time) sqlitegen.InsertMediaItemPa
 		p.RootFolderID = sql.NullInt64{Int64: m.RootFolderID, Valid: true}
 	}
 	return p
+}
+
+func monitorDefault(v string) string {
+	if v == "" {
+		return "all"
+	}
+	return v
 }
 
 func boolInt(b bool) int64 {
@@ -690,8 +703,17 @@ func (d *DB) SetEpisodeMonitored(ctx context.Context, itemID, episodeID int64, m
 // UpdateMediaItemPlacement stores a per-item edit: monitoring, quality
 // profile, root folder, and folder path. Disk is never touched.
 func (d *DB) UpdateMediaItemPlacement(ctx context.Context, m domain.MediaItem) error {
+	return d.UpdateMediaItemSettings(ctx, m, false)
+}
+
+// UpdateMediaItemSettings saves placement and, when explicitly requested,
+// monitoring policy and child flags in the same transaction.
+func (d *DB) UpdateMediaItemSettings(ctx context.Context, m domain.MediaItem, applyMonitoring bool) error {
 	p := sqlitegen.UpdateMediaItemPlacementParams{
 		Monitored:        boolInt(m.Monitored),
+		Monitor:          monitorDefault(m.Monitor),
+		MonitorSince:     m.MonitorSince,
+		MonitorSeason:    int64(m.MonitorSeason),
 		QualityProfileID: m.QualityProfileID,
 		DownloadPriority: nullableInt(m.DownloadPriorityOverride),
 		Path:             m.Path,
@@ -701,13 +723,31 @@ func (d *DB) UpdateMediaItemPlacement(ctx context.Context, m domain.MediaItem) e
 	if m.RootFolderID != 0 {
 		p.RootFolderID = sql.NullInt64{Int64: m.RootFolderID, Valid: true}
 	}
-	if err := d.Write.UpdateMediaItemPlacement(ctx, p); err != nil {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+	if err := q.UpdateMediaItemPlacement(ctx, p); err != nil {
 		if isPathConstraint(err) {
 			return ErrFolderTaken
 		}
 		return err
 	}
-	return nil
+	if applyMonitoring {
+		for _, season := range m.Seasons {
+			if _, err := q.SetSeasonMonitored(ctx, sqlitegen.SetSeasonMonitoredParams{MediaItemID: m.ID, Number: int64(season.Number), Monitored: boolInt(season.Monitored)}); err != nil {
+				return err
+			}
+			for _, e := range season.Episodes {
+				if _, err := q.SetEpisodeMonitored(ctx, sqlitegen.SetEpisodeMonitoredParams{MediaItemID: m.ID, ID: e.ID, Monitored: boolInt(e.Monitored)}); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 // UpdateMediaItemMetadata rewrites the provider-hydrated fields of an item

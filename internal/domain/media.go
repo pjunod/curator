@@ -135,6 +135,10 @@ type MediaItem struct {
 	// "openlibrary") or SourceManual when none did (ADR 0012).
 	Source string
 
+	// Monitor is the persistent series policy; child flags remain user overrides.
+	Monitor          string
+	MonitorSince     string
+	MonitorSeason    int
 	Monitored        bool
 	QualityProfileID int64
 	// DownloadPriority is the effective value after profile inheritance.

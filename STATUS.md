@@ -1,5 +1,11 @@
 # Monarr — Project Status
 
+## Series monitoring — 2026-09-29
+
+**Building:** persistent future monitoring and automatic episode search.
+[Delivery status](docs/SERIES_MONITORING_STATUS.md) tracks the isolated clone,
+pre-merge review, final checks, and PR.
+
 ## Completed-folder accounting — 2026-09-29
 
 **Building:** durable accounting for the reported 804 GB of forgotten completed

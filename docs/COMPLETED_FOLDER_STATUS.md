@@ -1,12 +1,12 @@
 # Completed-folder accounting — delivery status
 
-**Status:** storage management review approved; final CI and merge tracked in GitHub · **Updated:** 2026-09-29 · **Target:** v0.33.1
+**Status:** storage management review approved; final CI and merge tracked in GitHub · **Updated:** 2026-09-29 · **Target:** v0.34.1
 
 Companion to [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
 and [settings](settings.md#completed-folder-accounting). This page records work
 and verification; the user-facing behavior lives in those documents.
 
-## Storage management follow-up — v0.33.1
+## Storage management follow-up — v0.34.1
 
 Work continues in an independent clone. The user's existing checkouts are not
 used for development. All changes will be delivered in one PR; adversarial
@@ -27,6 +27,8 @@ review comes before the final test gate and merge.
 library destinations. Bulk deletion reuses the existing server ownership and
 fingerprint checks. Progress remains visible after navigating within the app;
 the browser tab must stay open until deletion finishes. No feature toggle or enablement gate was introduced.
+Main advanced to v0.34.0 during verification. Its series-monitoring changes
+were merged into this branch and the storage patch version is v0.34.1.
 Production storage has not been modified; deployment is outside this PR.
 
 ## Original accounting delivery — v0.33.0

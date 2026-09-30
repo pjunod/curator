@@ -1,3 +1,4 @@
+import { SERIES_MONITOR_MODES, monitorLabel, type SeriesMonitorMode } from '../monitoring'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
@@ -474,6 +475,7 @@ function EditPanel(props: {
   })
 
   const [monitored, setMonitored] = useState(item.monitored)
+  const [monitor, setMonitor] = useState<SeriesMonitorMode | ''>('')
   const [profileId, setProfileId] = useState(item.qualityProfileId)
   const [downloadPriority, setDownloadPriority] = useState(
     item.downloadPriorityOverride === null ? 'inherit' : String(item.downloadPriorityOverride),
@@ -495,6 +497,7 @@ function EditPanel(props: {
         monitored,
         qualityProfileId: profileId,
       }
+      if (monitor) req.monitor = monitor
       if (rootId !== item.rootFolderId) req.rootFolderId = rootId
       const originalPriority =
         item.downloadPriorityOverride === null ? 'inherit' : String(item.downloadPriorityOverride)
@@ -542,6 +545,16 @@ function EditPanel(props: {
             onChange={(e) => setMonitored(e.target.checked)}
           />
         </label>
+        {item.kind === 'series' && (
+          <label>
+            Episode monitoring
+            <select aria-label="Episode monitoring" value={monitor} onChange={(e) => setMonitor(e.target.value as SeriesMonitorMode | '')}>
+              <option value="">Keep selections — {monitorLabel(item.monitor)}</option>
+              {SERIES_MONITOR_MODES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            <small>{monitor ? SERIES_MONITOR_MODES.find((option) => option.value === monitor)?.description : 'Keep your season and episode checkboxes.'} {monitor && 'Saving reapplies this choice to existing selections. Specials start unselected.'}</small>
+          </label>
+        )}
         <label>
           Quality profile
           <select
@@ -1112,6 +1125,7 @@ export function MediaDetailPage() {
               <span className={`pill ${m.monitored ? 'pill-ok' : 'pill-neutral'}`}>
                 {m.monitored ? 'monitored' : 'unmonitored'}
               </span>
+              {m.kind === 'series' && <span className="muted">{monitorLabel(m.monitor)}</span>}
               <span
                 className={`pill ${comp.cls}`}
                 title={

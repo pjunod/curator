@@ -27,7 +27,7 @@ export function describeAutoSearch(res: AutoSearchResult): string {
   }
 
   if (res.targets.length === 0) {
-    return 'Nothing to search for — everything this item wants, it already has.'
+    return 'No eligible targets to search. Check monitoring selections and air dates; selected episodes may already meet the quality target.'
   }
 
   const searched = res.targets.filter((t) => !t.skipped)

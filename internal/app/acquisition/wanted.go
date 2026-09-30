@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/quality"
@@ -16,6 +17,7 @@ type wantedIndex struct {
 	mu    sync.Mutex
 	items []domain.Wantable
 	fresh bool
+	day   string
 }
 
 // InvalidateWanted marks the index stale; the next Wanted() rebuilds it.
@@ -30,14 +32,15 @@ func (s *Service) InvalidateWanted() {
 func (s *Service) Wanted(ctx context.Context) ([]domain.Wantable, error) {
 	s.wanted.mu.Lock()
 	defer s.wanted.mu.Unlock()
-	if s.wanted.fresh {
+	today := time.Now().UTC().Format(time.DateOnly)
+	if s.wanted.fresh && s.wanted.day == today {
 		return s.wanted.items, nil
 	}
 	items, err := s.buildWanted(ctx)
 	if err != nil {
 		return nil, err
 	}
-	s.wanted.items, s.wanted.fresh = items, true
+	s.wanted.items, s.wanted.fresh, s.wanted.day = items, true, today
 	return items, nil
 }
 
@@ -145,13 +148,14 @@ func (s *Service) wantedEpisodes(item domain.MediaItem, profile quality.Profile,
 	if cp != nil {
 		profileID, copyID, copyName = cp.QualityProfileID, cp.ID, copyLabel(*cp)
 	}
+	today := time.Now().UTC().Format(time.DateOnly)
 	var out []domain.Wantable
 	for _, season := range item.Seasons {
 		if !season.Monitored {
 			continue
 		}
 		for _, e := range season.Episodes {
-			if !e.Monitored || e.AirDate == "" {
+			if !e.Monitored || e.AirDate == "" || e.AirDate > today {
 				continue
 			}
 			st := states[e.ID]

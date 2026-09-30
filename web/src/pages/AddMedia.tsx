@@ -1,3 +1,4 @@
+import { SERIES_MONITOR_MODES, type SeriesMonitorMode } from '../monitoring'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useSearch } from '@tanstack/react-router'
@@ -95,7 +96,7 @@ export function AddMediaPage() {
     return bookType === 'ebook' ? ebookSources.has(p.target.source) : audiobookSources.has(p.target.source)
   })
   const [monitored, setMonitored] = useState(true)
-  const [monitor, setMonitor] = useState<'all' | 'latest' | 'none'>('all')
+  const [monitor, setMonitor] = useState<SeriesMonitorMode>('all')
   const [searchNow, setSearchNow] = useState(true)
 
   // Root folders declare which kind they hold (ADR 0009), so only some of
@@ -259,12 +260,10 @@ export function AddMediaPage() {
           Monitored
         </label>
         {kind === 'series' && (
-          <label className="inline" title="Which seasons start monitored — untick more later per season/episode">
-            Seasons:{' '}
-            <select value={monitor} onChange={(e) => setMonitor(e.target.value as typeof monitor)}>
-              <option value="all">all</option>
-              <option value="latest">latest only</option>
-              <option value="none">none</option>
+          <label className="inline" title={SERIES_MONITOR_MODES.find((option) => option.value === monitor)?.description}>
+            Episode monitoring:{' '}
+            <select aria-label="Episode monitoring" value={monitor} onChange={(e) => setMonitor(e.target.value as SeriesMonitorMode)}>
+              {SERIES_MONITOR_MODES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
         )}

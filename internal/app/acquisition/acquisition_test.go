@@ -108,8 +108,8 @@ func setup(t *testing.T, releases []ports.Release, client *fakeClient) (*Service
 		Kind: domain.KindSeries, Title: "Test Show", SortTitle: "test show", Year: 2020,
 		IDs: domain.ExternalIDs{TMDB: 100}, Monitored: true, Path: itemDir,
 		Seasons: []domain.Season{{Number: 1, Monitored: true, Episodes: []domain.Episode{
-			{SeasonNumber: 1, EpisodeNumber: 1, Title: "Pilot", Monitored: true},
-			{SeasonNumber: 1, EpisodeNumber: 2, Title: "Finale", Monitored: true},
+			{SeasonNumber: 1, EpisodeNumber: 1, Title: "Pilot", Monitored: true, AirDate: "2020-01-01"},
+			{SeasonNumber: 1, EpisodeNumber: 2, Title: "Finale", Monitored: true, AirDate: "2020-01-08"},
 		}}},
 	}
 	itemID, err := db.CreateMediaItem(ctx, item)

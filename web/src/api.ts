@@ -1,3 +1,4 @@
+import type { SeriesMonitorMode } from './monitoring'
 // Hand-written client for the Phase 0 API surface. The OpenAPI spec
 // (internal/api/openapi.yaml) is the source of truth; client codegen from the
 // spec is planned once the surface grows (blueprint §7).
@@ -198,6 +199,7 @@ export interface MediaCopyInput {
 export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' | 'episodeFileCount' | 'fileCount'> {
   // quality / qualityTarget / upgrade are inherited from MediaItemSummary —
   // the detail response carries the same three fields.
+  monitor?: SeriesMonitorMode
   backdropPath: string
   overview: string
   genres: string[]
@@ -243,6 +245,7 @@ export interface IdentitySourceStatus {
 }
 
 export interface UpdateMediaItemRequest {
+  monitor?: SeriesMonitorMode
   monitored?: boolean
   qualityProfileId?: number
   downloadPriority?: number
@@ -303,7 +306,7 @@ export interface AddMediaRequest {
   qualityProfileId?: number
   downloadPriority?: number
   monitored?: boolean
-  monitor?: 'all' | 'latest' | 'none' // series: which seasons start monitored
+  monitor?: SeriesMonitorMode
   searchNow?: boolean
 }
 
