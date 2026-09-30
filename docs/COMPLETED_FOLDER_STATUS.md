@@ -1,16 +1,28 @@
 # Completed-folder accounting — delivery status
 
-**Status:** storage management review approved; final CI and merge tracked in GitHub · **Updated:** 2026-09-29 · **Target:** v0.34.1
+**Status:** collapsible list review approved; final CI and merge tracked in GitHub · **Updated:** 2026-09-29 · **Target:** v0.34.3
 
 Companion to [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
 and [settings](settings.md#completed-folder-accounting). This page records work
 and verification; the user-facing behavior lives in those documents.
 
+## Collapsible list follow-up — v0.34.3
+
+| Work | State | Evidence / next action |
+|---|---|---|
+| Disclosure | Implemented | Storage entries, filters, pagination, and bulk controls start collapsed. Native keyboard interaction; reopening preserves selection. |
+| Persistent status | Implemented | Totals, scans, and deletion progress/results stay outside the disclosure. |
+| Browser regressions | Updated; not yet run | Default collapsed state, keyboard expansion, selection preservation, and desktop/mobile remounts. |
+| Adversarial review | Approved | No actionable findings; native disclosure, keyboard support, preserved selection, and visible operation status reviewed. |
+| Delivery | Final CI next | Independent clone; the follow-up PR checklist records verification, merge, and cleanup. |
+
+Main advanced to v0.34.2 before final CI; this follow-up uses v0.34.3.
+
 ## Storage management follow-up — v0.34.1
 
-Work continues in an independent clone. The user's existing checkouts are not
-used for development. All changes will be delivered in one PR; adversarial
-review comes before the final test gate and merge.
+Delivered in [PR #51](https://github.com/pjunod/curator/pull/51): merged after
+adversarial review and all seven CI checks passed. The temporary clone was
+removed; the protected worktree remains as noted below.
 
 | Work | State | Evidence / next action |
 |---|---|---|

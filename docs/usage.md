@@ -587,7 +587,12 @@ path, release, and state receipts independently, including through restarts.
 Files whose records were already erased before this upgrade appear as
 untracked; the upgrade cannot reconstruct that lost history.
 
-The list defaults to **25 entries per page**. Search paths or download titles,
+The **Storage entries** list starts collapsed; click its heading to expand or
+collapse it. The heading shows the total entry count. Storage totals, scan
+status, and deletion progress remain visible while the list is closed. Closing
+and reopening the list preserves its filters, page, and selection.
+
+The expanded list defaults to **25 entries per page**. Search paths or download titles,
 filter by status, and sort by name or largest first. Names and parent paths wrap
 within each row so size, explanation, and actions remain visible on narrow screens.
 **Select page** selects eligible entries on the current page; **Select all**

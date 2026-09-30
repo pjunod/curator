@@ -171,7 +171,8 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
       </button><button ref={keepFiles} onClick={() => setConfirm(null)}>{busy ? 'Close' : 'Keep files'}</button></div>
     </>}
     </dialog>
-    {entries.length > 0 && <>
+    {entries.length > 0 && <details className="storage-items">
+      <summary>Storage entries ({entries.length})</summary>
       <div className="storage-toolbar">
         <input type="search" aria-label="Search storage" placeholder="Search paths or downloads…" value={search} disabled={busy} onChange={(e) => { setSearch(e.target.value); resetView() }} />
         <label>Status <select aria-label="Storage status" value={status} disabled={busy} onChange={(e) => { setStatus(e.target.value); resetView() }}>
@@ -218,7 +219,7 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
       </div>
       {filtered.length === 0 && <p className="muted">No entries match your search or status filter.</p>}
       <div className="storage-pagination"><Pager page={currentPage} size={size} total={filtered.length} onPage={setPage} /></div>
-    </>}
+    </details>}
   </section>
 }
 
