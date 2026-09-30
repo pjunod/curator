@@ -2,7 +2,7 @@
 
 ## Compact TV quality details — 2026-09-29
 
-**Implementation complete; pre-merge review pending.** TV file measurements
+**Implementation and adversarial review complete.** TV file measurements
 collapse into a counted, scrollable disclosure. The quality badge and
 upgrade status stay visible. [Delivery status](docs/TV_QUALITY_STATUS.md)
 tracks review, final validation, and merge.

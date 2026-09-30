@@ -14,8 +14,8 @@ the quality display. This page tracks the compact TV quality change.
 | Single-file and movie display | Preserved | Measurements remain inline. |
 | Feature availability | Complete | Enabled directly, without a feature flag or settings gate. |
 | Usage documentation | Complete | Quality-row guide updated. |
-| Adversarial review | Pending | Requested only after implementation is complete. |
-| Final validation and merge | Pending review | Will use final PR CI after review fixes, without duplicate local unit runs. |
+| Adversarial review | Approved | Independent review of `1256bd3`: no actionable findings. Checked filtering, counts, grouping, scrolling, keyboard access, responsive styles, and quality semantics; no tests run during review. |
+| Final validation and merge | Tracked in delivery PR | The linked PR's checks and merge state are the live result; final CI runs after review, without duplicate local unit runs. |
 
 ## Decisions
 
