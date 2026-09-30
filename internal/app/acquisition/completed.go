@@ -262,9 +262,10 @@ func (s *Service) ScanCompleted(ctx context.Context) error {
 			}
 		}
 		if root.Error == "" {
-			scanCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			root.Entries, root.Bytes, err = scanCompletedRoot(scanCtx, path, receipts, remove)
-			cancel()
+			// Inventory runs in the scheduler, not an HTTP request. Slow network
+			// storage must be allowed to finish; shutdown cancellation and the
+			// entry limit still bound work without discarding progress after 30s.
+			root.Entries, root.Bytes, err = scanCompletedRoot(ctx, path, receipts, remove)
 			if err != nil {
 				root.Error = err.Error()
 			} else if info, err := os.Stat(path); err != nil || fmt.Sprint(recoveryDirectoryIdentity(info)) != root.RootIdentity {
@@ -306,6 +307,12 @@ func (s *Service) ScanCompleted(ctx context.Context) error {
 }
 
 func scanCompletedRoot(ctx context.Context, root string, receipts []sqlite.CompletedReceipt, remove map[int64]bool) ([]CompletedEntry, int64, error) {
+	return scanCompletedSelection(ctx, root, "", receipts, remove)
+}
+
+// A selected scan uses the same root identity and fingerprint format as the
+// inventory, but never descends into unrelated payloads during deletion.
+func scanCompletedSelection(ctx context.Context, root, selected string, receipts []sqlite.CompletedReceipt, remove map[int64]bool) ([]CompletedEntry, int64, error) {
 	entries := []CompletedEntry{}
 	byPath := map[string]int{}
 	fingerprints := map[string]hash.Hash{}
@@ -318,6 +325,12 @@ func scanCompletedRoot(ctx context.Context, root string, receipts []sqlite.Compl
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if selected != "" && path != root && !within(selected, path) && !within(path, selected) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		count++
 		if count > 100000 {

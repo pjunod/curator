@@ -93,7 +93,7 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 		return err
 	}
 	scanCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	fresh, _, err := scanCompletedRoot(scanCtx, selected.Path, nil, nil)
+	fresh, _, err := scanCompletedSelection(scanCtx, selected.Path, path, nil, nil)
 	cancel()
 	if err != nil {
 		return err

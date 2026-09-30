@@ -565,3 +565,49 @@ func TestStorageReportsRetentionCleanupAndConflictingClaims(t *testing.T) {
 		}
 	}
 }
+
+func TestCompletedSelectedScanMatchesInventory(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"completed/first/video.mkv", "completed/second/video.mkv", "loose.rar", "other/video.mkv"} {
+		writeCompleted(t, filepath.Join(root, name), 12)
+	}
+	all, _, err := scanCompletedRoot(context.Background(), root, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, original := range all {
+		if original.Status == "storage" {
+			continue
+		}
+		t.Run(filepath.Base(original.Path), func(t *testing.T) {
+			selected, total, err := scanCompletedSelection(context.Background(), root, original.Path, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, entry := range selected {
+				if entry.Status == "storage" {
+					continue
+				}
+				if entry.Path != original.Path || entry.Fingerprint != original.Fingerprint || entry.Bytes != original.Bytes || entry.Files != original.Files {
+					t.Fatalf("targeted scan changed fingerprint or visited a sibling: %+v, want %+v", entry, original)
+				}
+				found = true
+			}
+			if !found || total != original.Bytes {
+				t.Fatalf("selected payload not fully accounted for: found=%v, bytes=%d", found, total)
+			}
+		})
+	}
+}
+
+func TestCompletedSelectedScanHonorsCancellation(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "payload", "video.mkv")
+	writeCompleted(t, path, 12)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := scanCompletedSelection(ctx, root, filepath.Dir(path), nil, nil); err != context.Canceled {
+		t.Fatalf("canceled scan returned %v", err)
+	}
+}
