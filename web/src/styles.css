@@ -1144,6 +1144,7 @@ a.pill-info:hover {
    1080p)" came to read as a contradiction. */
 .quality-facts {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
@@ -1206,6 +1207,52 @@ a.pill-info:hover {
   color: var(--text-muted);
   font-size: 12px;
   cursor: help;
+}
+
+.qf-details {
+  flex-basis: 100%;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.qf-details > summary {
+  width: fit-content;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.qf-details > summary:hover {
+  color: var(--text);
+}
+
+.qf-measurements {
+  max-height: 14rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 8px 0 0;
+  padding: 0 10px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+}
+
+.qf-measurements > li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+.qf-measurements > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.qf-file-count {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .file-facts {

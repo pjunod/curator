@@ -801,6 +801,13 @@ facts monarr measured, and whether it is still hunting.
 | `below … · upgrades off` | Below target and staying there: this profile has upgrades switched off. |
 | `on disk — monarr could not read this file` | The file exists and could not be parsed. Unknown is **not** missing: monarr will not hunt a replacement for a file it simply failed to read. |
 
+For TV shows with multiple measured files, **Measured details** starts
+collapsed so long-running shows keep a compact quality row. Open it to see
+the measurements, grouped by identical facts with a file count beside each
+group. The list scrolls when long; the quality badge and upgrade status stay
+visible above it. Counts cover measured files in the primary copy, not
+episodes or additional quality copies. A single measured file stays inline.
+
 The **Files** table names the same thing per file, with a **How we know**
 badge:
 
