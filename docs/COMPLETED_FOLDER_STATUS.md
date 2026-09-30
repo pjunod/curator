@@ -19,7 +19,7 @@ review comes before the final test gate and merge.
 | Scan timeout | Implemented | Removed the background scan's fixed 30-second cutoff; cancellation and the entry limit remain. Delete verification visits only the selected payload. |
 | Import review | Fixed | Selecting another payload resets the manual-import form to its path. |
 | Adversarial review | Approved after fixes | Shared deletion state now survives route/responsive remounts; confirmation uses a focused dialog with Escape and focus restoration. Reviewer approved both fixes before the final test gate. |
-| Final verification | PR checks are authoritative | The final Go/web unit, race/coverage, mobile, browser, compatibility, Docker, and lint gates run in CI after review. No duplicate local unit-test run. |
+| Final verification | PR checks are authoritative | CI caught dialog autofocus running before `showModal`; explicit post-open focus fixes it. All four focused storage browser regressions pass. Final Go/web unit, race/coverage, mobile, browser, compatibility, Docker, and lint gates run in CI after review. No duplicate local unit-test run. |
 | PR and merge | Tracked by GitHub | One PR from `codex/download-storage-management`; merge only after all checks pass. The PR body carries the live delivery checklist. |
 | Cleanup | Protected worktree retained | Codex refused archival because the prior worktree is protected by a pinned chat/workspace. Remove the independent temporary clone and task artifacts after verified merge. |
 

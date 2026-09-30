@@ -70,13 +70,17 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
   const busy = deletion?.running ?? false
   const result = deletion && !deletion.running ? { deleted: deletion.deletedKeys.length, errors: deletion.errors } : null
   const dialog = useRef<HTMLDialogElement>(null)
+  const keepFiles = useRef<HTMLButtonElement>(null)
   const confirmTrigger = useRef<HTMLButtonElement | null>(null)
   const openConfirmation = (rows: StorageRow[], trigger: HTMLButtonElement) => {
     confirmTrigger.current = trigger
     setConfirm(rows)
   }
   useEffect(() => {
-    if (confirm) dialog.current?.showModal()
+    if (confirm) {
+      dialog.current?.showModal()
+      keepFiles.current?.focus()
+    }
     else {
       dialog.current?.close()
       if (confirmTrigger.current?.isConnected) confirmTrigger.current.focus({ preventScroll: true })
@@ -119,7 +123,7 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
   const selectedBytes = selectedRows.reduce((sum, { entry }) => sum + entry.bytes, 0)
   const confirmBytes = confirm?.reduce((sum, { entry }) => sum + entry.bytes, 0) ?? 0
   const confirmFiles = confirm?.reduce((sum, { entry }) => sum + entry.files, 0) ?? 0
-  const confirmationChanged = confirm?.some((row) => !entries.some((current) => rowKey(current) === rowKey(row) && canDelete(current) && current.entry.fingerprint === row.entry.fingerprint))
+  const confirmationChanged = !busy && confirm?.some((row) => !entries.some((current) => rowKey(current) === rowKey(row) && canDelete(current) && current.entry.fingerprint === row.entry.fingerprint))
 
   return <section className="panel download-storage" aria-label="Download storage">
     <div className="storage-heading">
@@ -164,7 +168,7 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
       {confirmationChanged && <p className="error-text">The inventory changed. Cancel and select the entries again.</p>}
       <div className="storage-actions"><button className="btn-danger" disabled={busy || confirmationChanged} onClick={() => remove.mutate(confirm)}>
         {busy ? `Deleting ${deletion?.progress ?? 0} of ${confirm.length}…` : 'Confirm delete'}
-      </button><button autoFocus onClick={() => setConfirm(null)}>{busy ? 'Close' : 'Keep files'}</button></div>
+      </button><button ref={keepFiles} onClick={() => setConfirm(null)}>{busy ? 'Close' : 'Keep files'}</button></div>
     </>}
     </dialog>
     {entries.length > 0 && <>
