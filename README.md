@@ -247,6 +247,12 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
   aliases, optional country qualifiers, direct TVDB/IMDb lookup, and indexer ID fallbacks.
 - **[Release identity status](docs/RELEASE_IDENTITY_STATUS.md)** — live implementation,
   review, validation, and delivery state for that plan.
+- **[Download failure fix plan](docs/RUNNER_FAILURE_FIX_PLAN.md)** — Monster root
+  causes, Runner/Curator fixes, and retained-media recovery gates;
+  [incident evidence](docs/RUNNER_FAILURE_DIAGNOSIS.md) and
+  [adversarial review](docs/RUNNER_FAILURE_REVIEW.md) separate observations from
+  the proposed implementation. The [build handoff](docs/RUNNER_FAILURE_BUILD.md)
+  gives the cross-repository sequence, interface contract, and acceptance tests.
 - **[Wanted groups plan](docs/plan-wanted-groups.md)** — retained design for expandable
   titles, individual target searches, and bulk searches across every page.
 - **[Smart media discovery plan](docs/plan-smart-media-discovery.md)** — theme search,
