@@ -1,12 +1,12 @@
 # Completed-folder accounting — delivery status
 
-**Status:** collapsible list review approved; final CI and merge tracked in GitHub · **Updated:** 2026-09-29 · **Target:** v0.34.2
+**Status:** collapsible list review approved; final CI and merge tracked in GitHub · **Updated:** 2026-09-29 · **Target:** v0.34.3
 
 Companion to [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
 and [settings](settings.md#completed-folder-accounting). This page records work
 and verification; the user-facing behavior lives in those documents.
 
-## Collapsible list follow-up — v0.34.2
+## Collapsible list follow-up — v0.34.3
 
 | Work | State | Evidence / next action |
 |---|---|---|
@@ -15,6 +15,8 @@ and verification; the user-facing behavior lives in those documents.
 | Browser regressions | Updated; not yet run | Default collapsed state, keyboard expansion, selection preservation, and desktop/mobile remounts. |
 | Adversarial review | Approved | No actionable findings; native disclosure, keyboard support, preserved selection, and visible operation status reviewed. |
 | Delivery | Final CI next | Independent clone; the follow-up PR checklist records verification, merge, and cleanup. |
+
+Main advanced to v0.34.2 before final CI; this follow-up uses v0.34.3.
 
 ## Storage management follow-up — v0.34.1
 
