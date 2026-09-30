@@ -715,11 +715,11 @@ function QualityFacts({ m, profile }: { m: MediaItemDetail; profile?: QualityPro
     )
   }
 
-  // The measured facts for the primary copy's files, deduped: this is what
-  // replaced "quality not recorded — the filename does not say".
-  const facts = Array.from(
-    new Set(m.files.filter((f) => !f.copyId && f.facts).map((f) => f.facts as string)),
-  )
+  // Count files, not episodes: a single file can contain several episodes.
+  const measuredFiles = m.files.filter((f) => !f.copyId && f.facts)
+  const facts = new Map<string, number>()
+  for (const f of measuredFiles) facts.set(f.facts!, (facts.get(f.facts!) ?? 0) + 1)
+  const foldMeasurements = m.kind === 'series' && measuredFiles.length > 1
 
   return (
     <div className="quality-facts">
@@ -742,9 +742,9 @@ function QualityFacts({ m, profile }: { m: MediaItemDetail; profile?: QualityPro
         )}
       </span>
 
-      {facts.length > 0 && (
+      {!foldMeasurements && facts.size > 0 && (
         <span className="qf-facts" title="Measured from the file itself, not from its name">
-          {facts.join('  ·  ')}
+          {Array.from(facts.keys()).join('  ·  ')}
         </span>
       )}
 
@@ -762,6 +762,19 @@ function QualityFacts({ m, profile }: { m: MediaItemDetail; profile?: QualityPro
         <span className="qf-state qf-capped qf-undetermined" title={undetermined.why}>
           {undetermined.word}
         </span>
+      )}
+      {foldMeasurements && (
+        <details className="qf-details">
+          <summary>Measured details <span className="muted">· {measuredFiles.length} files</span></summary>
+          <ul className="qf-measurements" tabIndex={0} aria-label="Measured file details">
+            {Array.from(facts, ([fact, count]) => (
+              <li key={fact}>
+                <span>{fact}</span>
+                <span className="qf-file-count">{count} {count === 1 ? 'file' : 'files'}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
     </div>
   )
