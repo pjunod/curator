@@ -205,7 +205,13 @@ produce a configuration error rather than a scan of library media.
 
 Changes take effect on the next five-minute `downloads.inventory` run, or
 immediately after queuing **Scan download storage** in Activity. Inventory
-also runs at startup. `GET /api/v1/downloads/inventory` reads the cached result;
+also runs at startup. Inventory scans no longer stop after 30 seconds on slow
+network storage; they respect server shutdown and retain the 100,000-entry
+limit per root. Activity shows queued, running, and completed or failed scan
+status. A failed scan preserves the last complete inventory and disables file
+actions for that root until a complete scan succeeds. Deletion checks scan only
+the selected payload, rather than walking every sibling again.
+`GET /api/v1/downloads/inventory` reads the cached result;
 it does not walk the disk. See [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
 for the classifications, size semantics, and recovery actions. Activity
 retention never deletes these file associations or cached inventory.
