@@ -350,6 +350,10 @@ blocklisted), `file_removed`.
 
 ## Quality profiles
 
+**New profile** and each row's **Edit** open a dialog inside the viewport.
+The form scrolls while its title and **Close** stay visible. **Escape** or
+**Cancel** dismisses it and returns focus to the button you used.
+
 A profile is a **target**, an optional **floor**, an **upgrades** switch,
 an optional **audio language** requirement, and a **download priority**
 (ADR 0014, ADR 0022). The first four decide what Monarr wants; priority

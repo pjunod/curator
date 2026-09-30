@@ -415,8 +415,14 @@ download priority or the item's override travels with the grab to nzbd:
 
 **Interactive search** — **Interactive search** on movie detail pages and a
 separate **Search** action on each book edition; on a series, each season has
-**Search pack** and each episode a **Search** button. The native app has the
-same search (see [Native iOS and Android app](#native-ios-and-android-app)). Every release the
+**Search pack** and each episode a **Search** button. In the web UI,
+search opens in a dialog inside the current viewport, including when launched
+from an episode far down the page. The title and **Close** stay visible while
+results scroll; **Escape** closes it and focus returns to the button you used.
+Paging reveals the new results, and grab confirmations or errors are brought
+into view. The detail page's **Edit** form and the settings' **New profile** and
+**Edit profile** forms use the same dialog behavior.
+The native app has the same search (see [Native iOS and Android app](#native-ios-and-android-app)). Every release the
 indexers returned is shown — including rejected
 ones, with the reason attached (`above target`, `below floor`,
 `not an upgrade`, `target met`, `language not wanted`, `does not match …`).
