@@ -584,7 +584,22 @@ path, release, and state receipts independently, including through restarts.
 Files whose records were already erased before this upgrade appear as
 untracked; the upgrade cannot reconstruct that lost history.
 
-**Delete files…** shows a confirmation on the selected entry. Confirming
+The list defaults to **25 entries per page**. Search paths or download titles,
+filter by status, and sort by name or largest first. Names and parent paths wrap
+within each row so size, explanation, and actions remain visible on narrow screens.
+**Select page** selects eligible entries on the current page; **Select all**
+selects all matching eligible entries across pages. Changing the search or status
+filter clears selection. Changing pages preserves it.
+
+**Delete selected…** reviews the selected paths, file count, and logical size
+before permanent deletion. Each entry is checked independently; the result
+reports successful deletions and individual failures. Entries that change after
+selection must be selected again. Active downloads, awaiting imports, storage
+containers, and entries from incomplete scans cannot be selected for deletion.
+**Review import** remains an individual action because each payload needs a
+library destination.
+
+**Delete files…** shows a confirmation for the selected entry. Confirming
 permanently removes its files from Curator-owned storage, then updates the
 inventory and history. Curator rechecks ownership, active work, and the
 recursive metadata fingerprint before deleting through a directory handle.
@@ -595,9 +610,12 @@ Removing a symlink removes the link, never its target.
 A scan error retains the last complete inventory and shows the error and its
 last successful timestamp. The health check warns on entries needing review,
 failed scans, or a snapshot older than 15 minutes. Each root scan is limited
-to 30 seconds and 100,000 entries; hitting a limit is reported as incomplete,
-not an empty folder. Filesystem calls on an unresponsive mount may exceed the
-timeout; scans are serialized so they cannot accumulate workers.
+to 100,000 entries; hitting that limit is reported as incomplete, not an empty
+folder. Background scans have no fixed 30-second timeout, allowing slow network
+storage to finish. They respect shutdown cancellation between filesystem calls;
+an unresponsive mount can still delay a call. Scans are serialized so they cannot
+accumulate workers. Deletion rechecks only the selected payload under its own
+30-second deadline.
 
 A successful client delete response no longer proves local files disappeared.
 When the local path is known, cleanup verifies absence, retries the guarded

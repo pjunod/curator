@@ -365,7 +365,7 @@ export function ActivityPage() {
         </button>
       </header>
 
-      {manual && <ManualImportPanel prefill={manual} onDone={() => { setManual(null); invalidate() }} />}
+      {manual && <ManualImportPanel key={manual.path ?? 'manual'} prefill={manual} onDone={() => { setManual(null); invalidate() }} />}
 
       {actionErr && <div className="banner warning">{actionErr}</div>}
 

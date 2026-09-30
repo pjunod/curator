@@ -1,10 +1,34 @@
 # Completed-folder accounting — delivery status
 
-**Status:** implementation and local verification complete · **Updated:** 2026-09-29 · **Target:** v0.33.0
+**Status:** storage management ready for adversarial review · **Updated:** 2026-09-29 · **Target:** v0.33.1
 
 Companion to [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
 and [settings](settings.md#completed-folder-accounting). This page records work
 and verification; the user-facing behavior lives in those documents.
+
+## Storage management follow-up — v0.33.1
+
+Work continues in an independent clone. The user's existing checkouts are not
+used for development. All changes will be delivered in one PR; adversarial
+review comes before the final test gate and merge.
+
+| Work | State | Evidence / next action |
+|---|---|---|
+| Layout and navigation | Implemented | Responsive rows; 25 entries per page; search, status filtering, name/size sorting; pagination above and below the list. |
+| Bulk management | Implemented | Select page or all matching eligible entries; confirm paths and logical size; per-entry deletion outcomes and stale-fingerprint protection. |
+| Scan timeout | Implemented | Removed the background scan's fixed 30-second cutoff; cancellation and the entry limit remain. Delete verification visits only the selected payload. |
+| Import review | Fixed | Selecting another payload resets the manual-import form to its path. |
+| Adversarial review | Pending | Review the complete implementation before running the final gates. |
+| Final verification | Pending | Earlier development checks passed; rerun only after addressing review findings. |
+| PR and merge | Pending | Batch implementation, review fixes, and verification evidence into one PR. |
+| Cleanup | In progress | Retire the superseded managed worktree; remove temporary clone and task artifacts after verified merge. |
+
+**Decisions:** bulk import remains an individual review because payloads need
+library destinations. Bulk deletion reuses the existing server ownership and
+fingerprint checks. No feature toggle or enablement gate was introduced.
+Production storage has not been modified; deployment is outside this PR.
+
+## Original accounting delivery — v0.33.0
 
 | Work | State | Evidence / next action |
 |---|---|---|
