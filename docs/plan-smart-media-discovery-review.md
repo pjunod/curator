@@ -4,9 +4,10 @@
 contract; proceed with the bounded M0 feasibility work after those changes.
 This is a documentation review, not approval of an implemented feature.
 
-**Current disposition:** all five findings are resolved in the amended
-specification and independently rechecked; see §5.2 for the final verdict.
-Ready for Fable's design review. Empirical M0 and release gates remain pending.
+**Current disposition:** Fable subsequently approved **M0 only, with changes**;
+M1–M5 are not approved to build. The author addressed that review in the plan;
+see §6. The earlier independent review and its verification remain historical
+evidence in §§1–5, not approval of the later build. No M0 experiment has run.
 
 Companion to [the build plan](plan-smart-media-discovery.md). This independent
 adversarial pass preserves the original findings so the author and Fable can
@@ -319,3 +320,64 @@ implementation or release approval is implied.
 
 After final verification, the author updated only the plan's status header
 to reflect this verdict; the verified build contract did not change.
+
+## 6. Fable review — approve M0 only, with changes
+
+**Received and incorporated:** 2026-09-29. **Fable's verdict:** “APPROVE M0
+ONLY, WITH CHANGES. Do not approve M1–M5 on this text.” The owner supplied
+the review in this chat. This section summarizes it and records the author's
+disposition; it is not a claim that Fable has approved these amendments.
+
+Fable read GitHub main at `da73227` (v0.33.0, PR #49), 17 commits beyond the
+original plan's source baseline, and read Cinema at `b5fa758`. Fable reported
+source/API-documentation inspection only: no live TMDB query, model execution,
+container build, or verification of a Cinema HTTP embedding endpoint.
+The original review described the plan as untracked in an older checkout;
+that observation is historical. Before this revision the documents were
+committed, local HEAD was `22d37e6`, and `origin/main` was `da73227`.
+
+The author's revision rechecked local source for the current limiter/cache,
+preview paths, ownership query, error writer, container workflow, VERSION,
+and repository delivery/version rules. No implementation or experiment was
+performed as part of these documentation amendments.
+
+### 6.1 Must-fix findings and author disposition
+
+| Fable finding | Concrete concern | Revised contract / state |
+|---|---|---|
+| M1 — request arithmetic | 71 upstream calls consume at least 6.1 s at 10 rps/burst 10 before network cost; two calls need at least 13.2 s, incompatible with optimistic latency | §5.3 now admits one cold search, no waiting queue, 30 enrichments/41 total calls, cached-only readers separately, prompt 429 for a second cold caller. Shared 10 rps ceiling/cooldown plus an 8 rps/burst 4 recommendation sub-limit and ordinary-metadata dispatch priority; arithmetic and partial outcomes are explicit. M0 measures it; not yet proven. |
+| M2 — helper packaging | The static distroless image cannot host an unspecified dynamically linked Candle/tokenizer helper, and no archive workflow exists | §7.1 chooses a standalone glibc helper built in a Debian 12 Rust stage and a proposed distroless cc final image. `tools/curator-embed/` owns its crate/lockfile/toolchain. M0b must prove actual non-root final-image execution, dependency closure, parity, build time, and cache needs on Linux x64. No image change or build has happened. |
+| M3 — independent runtime versus Cinema | Standalone complexity was justified by an asserted non-goal; Cinema might supply the same vectors but its API was unverified | Owner explicitly chose standalone: the apps must function on their own even while integrated. §7.1 records that reason, rejects a mandatory Cinema adapter, and retains the shared port. This is an owner decision; availability of a Cinema embedding endpoint is irrelevant to the chosen v1. |
+| M4 — order M0 around coverage | The most consequential unknown is cheap keyword coverage and top-pool membership, not inference | §10.1 makes approximately 30 independently chosen gay-themed series the first experiment; record keyword coverage, hit@60/100/200, selected-30 hit, incidental-theme rate, and exact sort/filters. Below 60% keyword coverage or over half incidental/insufficient top-60 rows stops the current strategy before helper/domain work. Passing these screens is not the 80% release recall gate. No coverage measurement yet. |
+
+### 6.2 Should-fix findings and smaller corrections
+
+| Finding | Author amendment |
+|---|---|
+| S1 — teen filter empties the list | §4.2 excludes affirmative teen-focus evidence and retains unknown focus, with truthful label/help. Language/year remain strict. Coming-of-age alone is not treated as proof of teen focus. |
+| S2 — filter upstream | §5.1 names original-language, first-air-date and OR-genre parameters; local validation remains. Seed endpoints are unfiltered and have a specific sparse-results explanation. |
+| S3 — ownership cost/rule duplication | §8.3 names the KnownTMDBIDs narrow-query precedent, at most one batched read per namespace (three total), and extraction of the existing conflict predicate into one shared pure domain helper. |
+| S4 — sparse centrality | §4.2/§6.2 set zero false-central claims as the subset-specific gate, report empty/coverage counts, and add help text. There is no minimum central-result count or broad recall target for this optional strict subset. |
+| S5 — paths/build ownership | §2.2 names `web/src/PreviewDrawer.tsx`, its CSS, and `metadataPreview.test.ts`; §7.1 selects a separate crate under `tools/curator-embed/` with a local lockfile and explicit Rust CI checks. |
+| S6 — cache precision | §9 distinguishes five-minute freshness/8 MiB response reads from unbounded retained entries, and explains v3 URL-key rotation versus v4 header-only bearer rotation. |
+| S7 — release version/docs | M5 proposes 0.34.0 if 0.33.0 remains the base, otherwise the next unallocated minor; VERSION, settings, usage, and deployment changes ship with behavior. This docs-only revision does not bump VERSION. |
+| S8 — prose aliases | §4.1 adds a distinct interpretation table: `gay TV series` → Gay male stories; `queer`/LGBT/LGBTQ+ → LGBTQ+ stories; all initial themes have testable prose aliases. |
+| Error helper/genre list | §8.1 uses existing `writeCodedError`, documents free-string codes and a fixed versioned TV genre allowlist, with no extra per-query genre request. |
+| Paging/concurrency fixture | §5.2 permits bounded concurrent reads while retaining deterministic schedule order; §10.2 adds the same-show similar-page-1 rank-1/recommendations-page-2 rank-23 regression. |
+
+### 6.3 What remains unapproved and unmeasured
+
+M0 proceeds in order: coverage, standalone final-image packaging, then ranking
+and workload qualification. A failed retrieval screen stops runtime work.
+M1–M5 remain conditional until the M0 evidence and any resulting contract
+changes receive review. In particular, no document inspection can establish
+keyword recall, centrality precision, model ranking lift, final-container
+compatibility, CPU/RAM cost, or latency under provider contention.
+
+The owner decision settles independence from Cinema. The chosen cc image is a
+concrete packaging proposal requiring a real build/run, not an observed fix.
+The reduced enrichment budget must be evaluated against recall; smaller
+request counts alone do not establish useful recommendations. The original
+independent review's findings remain addressed in their subject areas, but
+its verdict must not be cited as approval of the newly changed runtime and
+traffic contracts.
