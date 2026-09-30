@@ -392,3 +392,59 @@ func TestMergeRanksAreAbsoluteAndCountEachListOnce(t *testing.T) {
 		t.Fatalf("ranks %+v", out)
 	}
 }
+
+func TestSemanticRankingUsesThemeSeedAndFocusedCandidateSources(t *testing.T) {
+	for _, mode := range []string{"theme", "seed", "combined", "thin_seed", "thin_combined"} {
+		t.Run(mode, func(t *testing.T) {
+			source := &fakeSource{}
+			r := query()
+			if mode != "theme" {
+				r.Seed = &domain.ExternalRef{Provider: "tmdb", Value: "1"}
+			}
+			if mode == "seed" || mode == "thin_seed" {
+				r.Query = ""
+			}
+			if mode == "thin_seed" || mode == "thin_combined" {
+				source.facts = map[int64]rules.Facts{1: {IDs: domain.ExternalIDs{TMDB: 1}}}
+			}
+			s := New(source, &fakeOwner{}, &fakeEncoder{state: "ready", generation: 1})
+			got, err := s.Search(context.Background(), r)
+			if err != nil || len(got.Results) == 0 {
+				t.Fatalf("ranking unavailable: %+v %v", got, err)
+			}
+			wantRanking := "semantic"
+			if mode == "thin_seed" {
+				wantRanking = "metadata_only"
+			}
+			wantSeed := mode == "seed" || mode == "combined"
+			if got.Ranking != wantRanking || got.SeedCompared != wantSeed {
+				t.Fatalf("wrong ranking mode: %+v", got)
+			}
+			for _, result := range got.Results {
+				if wantRanking == "semantic" && result.Score < .99 {
+					t.Fatalf("semantic score lost: %+v", result)
+				}
+				if r.Seed != nil && result.Item.TMDBID == 1 {
+					t.Fatal("seed recommended itself")
+				}
+			}
+		})
+	}
+	for _, failTopic := range []bool{false, true} {
+		topics := 0
+		source := &fakeSource{facts: map[int64]rules.Facts{1: {IDs: domain.ExternalIDs{TMDB: 1}, Overview: "Friends travel through space and discover strange new worlds.", KeywordIDs: map[string]int64{"boys' love (bl)": 10, "space travel": 11}}}}
+		source.pageFn = func(r ports.CandidateRequest) (ports.CandidatePage, error) {
+			if r.Path == "theme" {
+				topics++
+				if failTopic {
+					return ports.CandidatePage{}, errors.New("topic unavailable")
+				}
+			}
+			return ports.CandidatePage{TotalPages: 1, Items: []ports.SearchResult{{TMDBID: 2, Overview: "Friends explore distant worlds."}, {TMDBID: 3}}}, nil
+		}
+		got, err := New(source, &fakeOwner{}, &fakeEncoder{state: "ready", generation: 1}).Search(context.Background(), rules.Request{Kind: domain.KindSeries, Seed: &domain.ExternalRef{Provider: "tmdb", Value: "1"}})
+		if err != nil || got.Ranking != "semantic" || topics != 2 {
+			t.Fatalf("focused retrieval failed: %+v %v topics=%d", got, err, topics)
+		}
+	}
+}

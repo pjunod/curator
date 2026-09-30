@@ -92,3 +92,28 @@ func TestMissingFactsFailRequiredFilters(t *testing.T) {
 		}
 	}
 }
+
+func TestInvalidExplicitFiltersAndTeenEvidence(t *testing.T) {
+	badTheme, badLanguage := "unsupported", "unsupported"
+	old, future, from, to := 1899, 2100, 2024, 2020
+	for _, filter := range []Filters{
+		{Genres: []int{18, 35, 80, 99}}, {Genres: []int{-1}},
+		{Theme: &badTheme}, {CentralThemeOnly: true}, {OriginalLanguage: &badLanguage},
+		{YearFrom: &old}, {YearTo: &future}, {YearFrom: &from, YearTo: &to},
+	} {
+		if _, _, err := Normalize(Request{Kind: domain.KindSeries, Filters: filter}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err == nil {
+			t.Fatalf("invalid filter accepted: %+v", filter)
+		}
+	}
+	for _, facts := range []Facts{{GenreIDs: []int{10762}}, {Keywords: []string{"high school"}}, {Overview: "Teenagers navigate their first romance."}} {
+		if !TeenFocus(facts) {
+			t.Fatalf("teen evidence missed: %+v", facts)
+		}
+		if _, ok := Eligible(facts, Filters{ExcludeTeenFocus: true}); ok {
+			t.Fatal("excluded teen focus admitted")
+		}
+	}
+	if TeenFocus(Facts{Overview: "Adults revisit memories of their childhood."}) {
+		t.Fatal("adult story excluded without teen evidence")
+	}
+}

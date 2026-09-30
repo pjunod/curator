@@ -3,6 +3,8 @@ package tmdb
 import (
 	"context"
 	"errors"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/recommendation"
 	"github.com/pjunod/monarr/internal/ports"
 	"golang.org/x/time/rate"
 	"net/http"
@@ -94,5 +96,69 @@ func TestRecommendation41CallCeilingAndShared429Cooldown(t *testing.T) {
 	var remote *ports.RemoteError
 	if !errors.As(err, &remote) || remote.Category != ports.RemoteRateLimit || hits.Load() != 42 || time.Since(started) > time.Second {
 		t.Fatalf("shared cooldown bypassed: %v hits %d", err, hits.Load())
+	}
+}
+
+func TestCandidateFiltersAndSeedMapping(t *testing.T) {
+	var find string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/discover/tv":
+			q := r.URL.Query()
+			if q.Get("with_original_language") != "ko" || q.Get("with_genres") != "18|35" || q.Get("first_air_date.gte") != "2020-01-01" || q.Get("first_air_date.lte") != "2024-12-31" || q.Get("page") != "1" || q.Get("sort_by") != "vote_count.desc" {
+				t.Errorf("incorrect filters %v", q)
+			}
+			_, _ = w.Write([]byte(`{"total_pages":2,"results":[{"id":1,"name":"Example","first_air_date":"2022-01-01"},{"id":0}]}`))
+		case "/find/2":
+			_, _ = w.Write([]byte(find))
+		case "/tv/1":
+			_, _ = w.Write([]byte(`{"id":1,"name":"Example","keywords":{"results":[]},"external_ids":{"tvdb_id":2}}`))
+		case "/tv/1/recommendations":
+			_, _ = w.Write([]byte(`{"total_pages":1,"results":[]}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	client := New(server.URL, staticKey("test"))
+	client.limiter = rate.NewLimiter(rate.Inf, 100)
+	client.recommendationLimiter = rate.NewLimiter(rate.Inf, 100)
+	ctx, _, _ := client.Snapshot(context.Background())
+	language := "ko"
+	from, to := 2020, 2024
+	page, err := client.Candidates(ctx, ports.CandidateRequest{Path: "theme", Page: 1, KeywordID: 3, Filters: recommendation.Filters{OriginalLanguage: &language, YearFrom: &from, YearTo: &to, Genres: []int{18, 35}}})
+	if err != nil || len(page.Items) != 1 || page.TotalPages != 2 || page.Items[0].Year != 2022 {
+		t.Fatalf("page %+v %v", page, err)
+	}
+	if _, err = client.Candidates(ctx, ports.CandidateRequest{Path: "recommendations", SeedID: 1, Page: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.Candidates(ctx, ports.CandidateRequest{Path: "seasons"}); err == nil {
+		t.Fatal("season retrieval accepted")
+	}
+	for _, tc := range []struct {
+		body     string
+		category string
+	}{{`{"tv_results":[]}`, ports.RemoteUnsupportedHydration}, {`{"tv_results":[{"id":1},{"id":3}]}`, ports.RemoteIdentityConflict}, {`{"tv_results":[{"id":1}]}`, ""}} {
+		find = tc.body
+		f, err := client.ResolveSeed(ctx, domain.ExternalRef{Provider: "tvdb", Value: "2"})
+		if tc.category == "" {
+			if err != nil || f.IDs.TMDB != 1 {
+				t.Fatalf("mapped %+v %v", f, err)
+			}
+		} else {
+			var remote *ports.RemoteError
+			if !errors.As(err, &remote) || remote.Category != tc.category {
+				t.Fatalf("mapping error %v", err)
+			}
+		}
+	}
+	for _, ref := range []domain.ExternalRef{{Provider: "tmdb", Value: "bad"}, {Provider: "other", Value: "1"}} {
+		if _, err = client.ResolveSeed(ctx, ref); err == nil {
+			t.Fatal("invalid seed accepted")
+		}
+	}
+	if _, err = client.ResolveSeed(ctx, domain.ExternalRef{Provider: "tmdb", Value: "1"}); err != nil {
+		t.Fatal(err)
 	}
 }
