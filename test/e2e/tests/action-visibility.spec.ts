@@ -129,7 +129,11 @@ for (const width of [390, 820, 1280]) {
       for (let attempt = 0; attempt < 2; attempt++) {
         await checkbox.click()
         await expect(notice).toContainText('Monitoring unavailable')
-        await expect(notice).toBeInViewport({ ratio: 1 })
+        // Allow one CSS pixel of browser rounding, not partial visibility.
+        await expect.poll(() => notice.evaluate(node => {
+          const box = node.getBoundingClientRect()
+          return box.top >= -1 && box.left >= -1 && box.bottom <= innerHeight + 1 && box.right <= innerWidth + 1
+        })).toBe(true)
         // IntersectionObserver visibility alone misses opaque navigation that
         // covers a banner. Assert its geometry against the actual shell bars.
         await expect.poll(() => notice.evaluate(node => {

@@ -68,8 +68,13 @@ export function ActionNotice({ children, warning = false, revision = 0 }: {
         document.querySelectorAll<HTMLElement>('.mobile-top, .mobile-tabs, [data-layout="theater"] .sidebar').forEach((bar) => {
           const style = getComputedStyle(bar)
           if (style.position !== 'fixed' && style.position !== 'sticky') return
-          if (style.top !== 'auto') top = Math.max(top, bar.offsetHeight + (parseFloat(style.top) || 0) + 16)
-          else if (style.bottom !== 'auto') bottom = Math.max(bottom, bar.offsetHeight + (parseFloat(style.bottom) || 0) + 16)
+          // Computed 'top' on fixed bottom tabs is a resolved pixel value,
+          // even though the stylesheet specifies only bottom: 0.
+          if (bar.matches('.mobile-tabs') && style.position === 'fixed') {
+            bottom = Math.max(bottom, bar.offsetHeight + (parseFloat(style.bottom) || 0) + 16)
+          } else {
+            top = Math.max(top, bar.offsetHeight + (parseFloat(style.top) || 0) + 16)
+          }
         })
         node.style.scrollMarginTop = `${top}px`
         node.style.scrollMarginBottom = `${bottom}px`
