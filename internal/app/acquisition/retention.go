@@ -86,9 +86,8 @@ func (s *Service) PruneActivity(ctx context.Context) error {
 
 // ClearFinished drops the imported rows from the queue view on demand.
 //
-// The rows only. An imported download's row is a receipt: the files are in
-// the library, tracked by the library's own records, and the download
-// client's copy was dealt with at import time. Nothing here reads a path.
+// No files change. Rows with an outstanding payload are hidden from Activity
+// but retain cleanup ownership until removal succeeds, even across restarts.
 func (s *Service) ClearFinished(ctx context.Context) (int64, error) {
 	n, err := s.db.ClearImportedDownloads(ctx)
 	if err != nil {

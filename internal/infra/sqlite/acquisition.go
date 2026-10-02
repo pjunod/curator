@@ -244,9 +244,23 @@ func (d *DB) ImportedWithPayload(ctx context.Context, limit int64) ([]Download, 
 // MarkPayloadRemoved records that a download's bytes are no longer on the
 // client, so the sweep does not ask again.
 func (d *DB) MarkPayloadRemoved(ctx context.Context, id int64) error {
-	return d.Write.MarkPayloadRemoved(ctx, sqlitegen.MarkPayloadRemovedParams{
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+	if err := q.MarkPayloadRemoved(ctx, sqlitegen.MarkPayloadRemovedParams{
 		UpdatedAt: time.Now().UnixMilli(), ID: id,
-	})
+	}); err != nil {
+		return err
+	}
+	// The update first writes the durable removal receipt. Only then may a
+	// dismissed Activity row lose its remaining cleanup ownership.
+	if _, err := q.DeleteDismissedImportedDownload(ctx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ---- download clients ----
@@ -571,6 +585,9 @@ func (d *DB) DeleteDownload(ctx context.Context, id int64) error {
 	if dl.SubmissionPhase == "pending" || dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "uncertain" || dl.ParkedAt.UnixMilli() > 0 || dl.CleanupPending {
 		return fmt.Errorf("download retains unresolved execution or payload custody")
 	}
+	if n, err := d.Write.DismissImportedDownload(ctx, id); err != nil || n > 0 {
+		return err
+	}
 	n, err := d.Write.DeleteDownload(ctx, id)
 	if err == nil && n == 0 {
 		return fmt.Errorf("download retains unresolved placement custody")
@@ -702,11 +719,10 @@ func (d *DB) QueueCounts(ctx context.Context) (map[string]int64, error) {
 	return out, nil
 }
 
-// ClearImportedDownloads drops every imported row. The ROWS: an imported
-// download's row is a receipt, and the files it describes are in the
-// library under the library's own records.
+// ClearImportedDownloads dismisses finished Activity. Imported rows with
+// remaining payloads stay internal until cleanup confirms their removal.
 func (d *DB) ClearImportedDownloads(ctx context.Context) (int64, error) {
-	return d.Write.DeleteImportedDownloads(ctx)
+	return d.dismissTerminalDownloads(ctx, nil)
 }
 
 // ClearFailedDownloads drops every failed row from Activity. It deliberately
@@ -715,10 +731,40 @@ func (d *DB) ClearFailedDownloads(ctx context.Context) (int64, error) {
 	return d.Write.DeleteFailedDownloads(ctx)
 }
 
-// PruneTerminalDownloads deletes imported/failed rows last touched before
-// `before`. Never touches a row that is still moving, however old.
+// PruneTerminalDownloads ages terminal Activity out without discarding pending
+// imported cleanup. Never touches a row that is still moving, however old.
 func (d *DB) PruneTerminalDownloads(ctx context.Context, before time.Time) (int64, error) {
-	return d.Write.DeleteTerminalDownloadsBefore(ctx, before.UnixMilli())
+	return d.dismissTerminalDownloads(ctx, &before)
+}
+
+func (d *DB) dismissTerminalDownloads(ctx context.Context, before *time.Time) (int64, error) {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+	var hidden, deleted int64
+	if before == nil {
+		hidden, err = q.DismissImportedDownloads(ctx)
+	} else {
+		hidden, err = q.DismissImportedDownloadsBefore(ctx, before.UnixMilli())
+	}
+	if err != nil {
+		return 0, err
+	}
+	if before == nil {
+		deleted, err = q.DeleteImportedDownloads(ctx)
+	} else {
+		deleted, err = q.DeleteTerminalDownloadsBefore(ctx, before.UnixMilli())
+	}
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return hidden + deleted, nil
 }
 
 // PruneHistory deletes history events older than `before`.

@@ -642,6 +642,13 @@ existing manual-import preview at that entry. It does not import or delete
 anything merely by opening the panel. Unknown entries and historical-only
 associations are never automatically deleted. Clearing Activity preserves
 path, release, and state receipts independently, including through restarts.
+Imported downloads whose payload has not been removed also retain their live
+cleanup record internally. Clearing finished Activity, removing an individual
+finished row, or aging it out hides the row from Activity without cancelling
+cleanup. Its storage entry stays **Cleanup pending** (or **Retained** when
+cleanup is disabled). The internal row is retired only after removal is
+confirmed and its removal receipt is saved. Cleanup path guards log the
+specific blocking path or download when they refuse removal.
 A receipt identifies its payload folder or files beneath that folder. A receipt
 for a shared storage root or the `completed` container does not identify every
 child payload. Cleared history at those containers does not block cleanup of
@@ -934,10 +941,11 @@ Everything terminal is history, and history is collapsed:
 - **Finished** and **Failed** are headings with a count. Open one and it
   loads 25 rows at a time — "Show 25 more" goes further back.
 - **Filter by release title** narrows every group at once.
-- **Clear finished** removes the finished rows. The *rows*: an imported
-  download's row is a receipt, and the files are in your library under the
-  library's own records. Nothing is deleted from disk, from the library, or
-  from the download client. It asks once before it does it.
+- **Clear finished** clears finished rows from Activity. Nothing is deleted
+  from disk, from the library, or from the download client by this action.
+  Pending payload cleanup survives internally and continues on the existing
+  cleanup schedule, subject to the client's cleanup setting. It asks once
+  before clearing Activity.
 - **Clear failed** sits on the Failed grouping and removes every failed row
   after the same inline confirmation. It dismisses Activity records only:
   payloads, library files, blocklists, and download-client jobs stay as they
@@ -952,7 +960,9 @@ and failed rows, and the events behind them, after a number of days —
 30 by default, `0` to keep everything. A daily task does the sweep. It only
 ever touches terminal rows: a download stuck in "grabbed" for six weeks is
 something to look at, not something to hide, so it stays no matter how old
-it is. Before this, nothing was ever deleted: every grab monarr had ever
+it is. Pending imported-payload cleanup remains internal until removal is
+confirmed, even after its Activity row ages out. Before this, nothing was ever
+deleted: every grab monarr had ever
 made was still in the table, and the page rendered the most recent hundred
 of them forever.
 
