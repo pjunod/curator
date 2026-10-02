@@ -15,7 +15,8 @@ const PORT = Number(process.env.E2E_PORT ?? 7677)
 const TMDB_PORT = Number(process.env.FAKE_TMDB_PORT ?? 7788)
 const ARR_PORT = Number(process.env.FAKE_ARR_PORT ?? 7799)
 process.env.FAKE_ARR_PORT = String(ARR_PORT)
-const dataDir = mkdtempSync(join(tmpdir(), 'monarr-e2e-'))
+const dataDir = process.env.E2E_DATA_DIR ?? mkdtempSync(join(tmpdir(), 'monarr-e2e-'))
+process.env.E2E_DATA_DIR = dataDir
 
 // Shared with specs via env: a scratch root folder for library tests.
 const mediaRoot = mkdtempSync(join(tmpdir(), 'monarr-e2e-media-'))

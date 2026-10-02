@@ -10,7 +10,8 @@ actual implementation, review, checks, and delivery. Deployment is excluded.
 
 - Independent clone: `/private/tmp/monarr-season-acquisition-build-20261001`.
 - Branch: `codex/season-acquisition-planner`.
-- PR: not created yet. Merge: pending. Cleanup: retained while building.
+- PR: [#59](https://github.com/pjunod/curator/pull/59). Merge: pending final gates.
+- Cleanup: independent clone retained until merge and evidence export.
 - Authoritative round-3 documents copied unchanged from the documentation clone.
 - Fresh main matches the inspected baseline; next migration/ADR: 0038/0024.
 - Direct implementation/PR/merge authorization supersedes the documents' earlier
@@ -34,17 +35,19 @@ while application checks remain pinned to Go 1.25.7. Final checks follow adversa
 
 | Check | Result | Validated revision |
 |---|---|---|
-| make lint (Go 1.25.7) | pending | — |
-| make test (Go 1.25.7) | pending | — |
-| make test-web | pending | — |
-| make test-e2e (Go 1.25.7) | pending | — |
+| make lint (pinned v2.12.2 toolchain) | pass; final affected rerun pending | final gate fixes |
+| make test / race (Go 1.25.7) | initial regressions fixed; final race/coverage running | final gate fixes |
+| make test-web | pass: 120 tests / 13 files | e48309e |
+| make test-e2e (Go 1.25.7 / Node 22.13) | pass: 144 tests; six season actions at phone/desktop widths | final gate fixes |
+| Mobile check / doctor / export | pass: 94 tests / 16 files, typecheck, iOS + Android bundles | e48309e |
+| go vet / generation | pass; final affected rerun pending | final gate fixes |
 | Required CI / generated consumers | pending | — |
 
 ## Adversarial review
 
 Two independent adversarial reviews inspected `fd8c63a`, then verified fixes
 through `66358dc`. Both report all merge blockers resolved and no further
-blockers in the fixes. No tests ran during their review. Final gates start now.
+blockers in the fixes. No tests ran during their review. Final gates exposed and resolved generated SQL, polling, and import compatibility regressions. Follow-up reviewers cleared the terminal custody trigger, measured replacement checks, path aliases and complete unresolved reference guards.
 
 | Finding | Resolution |
 |---|---|
@@ -61,6 +64,20 @@ blockers in the fixes. No tests ran during their review. Final gates start now.
 | Pagination used filtered candidate count | Cursor advances by raw wire item count. |
 | Cap field rendered on clients | Correct Add indexer form and saved cap dialog. |
 | Unsafe partial cleanup starved later rows | Rotate failed attempts without releasing custody. |
+
+## Final-gate corrections
+
+- Terminal custody clears atomically in a SQLite trigger; uncertainty and operator
+  cancellation remain fenced. Repeated named SQL expressions are avoided because
+  the pinned generator emitted invalid runtime SQL.
+- Fresh fills retain measured facts; destruction requires measured policy approval.
+  Same-quality manual imports choose a stable digest suffix beside existing bytes.
+- Polling skips active imports and locks only possibly sent submissions for
+  uncertainty observation.
+- Cleanup normalizes parent aliases, protects every library file association, and
+  checks all unresolved placements; the recovery batch limit is never absence proof.
+- Browser fixtures exercise an eligible persisted RSS due time and stable torrent
+  hashes. New custody dialogs are checked after scrolling at phone and desktop widths.
 
 ## Recorded implementation decisions
 

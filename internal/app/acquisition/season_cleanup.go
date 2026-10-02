@@ -31,7 +31,7 @@ func (s *Service) cleanupPartialPayloads(ctx context.Context) {
 		// Rotate even unsafe/unavailable candidates so they cannot starve safe
 		// later payloads; failed attempts never release custody.
 		_, _ = s.db.W.ExecContext(ctx, `UPDATE downloads SET updated_at=? WHERE id=?`, time.Now().UnixMilli(), id)
-		path := filepath.Clean(dl.ImportPath)
+		path := filepath.Join(canonicalCompletedPath(filepath.Dir(dl.ImportPath)), filepath.Base(dl.ImportPath))
 		if dl.ImportPath == "" || !s.ownsDownloadPath(ctx, path) {
 			continue
 		}

@@ -226,7 +226,7 @@ func (s *Service) notInFlight(ctx context.Context, wanted []domain.Wantable) []d
 			}
 			reserved := false
 			for _, dl := range active {
-				if dl.MediaItemID == ep.Item && dl.CopyID == ep.Copy && !(dl.State == "failed" && dl.CleanupPending) && slices.Contains(dl.ReservedEpisodes, ep.EpisodeID) {
+				if dl.MediaItemID == ep.Item && dl.CopyID == ep.Copy && (dl.State != "failed" || !dl.CleanupPending) && slices.Contains(dl.ReservedEpisodes, ep.EpisodeID) {
 					reserved = true
 				}
 			}

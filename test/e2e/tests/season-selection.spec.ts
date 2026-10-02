@@ -37,3 +37,21 @@ for (const width of [390, 1280]) {
   await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
  })
 }
+
+for (const width of [390, 1280]) {
+ test(`reservation review requires acknowledgment and stays visible at ${width}px`, async ({page})=>{
+  await page.setViewportSize({width,height:844})
+  const rows=Array.from({length:40},(_,i)=>({id:i+1,mediaItemId:9876,title:`Show.S01.Pending${i}`,state:'grabbed',progress:0,protocol:'torrent',quality:'WEB-DL 1080p',addedAt:'2026-10-01T00:00:00Z',planId:1,planState:'active',submissionPhase:'uncertain',parkedReason:'Submission uncertain; custody retained'}))
+  await page.route('**/api/v1/queue?**',r=>r.fulfill({json:rows}))
+  await page.route('**/api/v1/queue/summary',r=>r.fulfill({json:{counts:{grabbed:40},active:40,total:40,retentionDays:30}}))
+  await page.goto('/activity')
+  const trigger=page.getByRole('button',{name:'Review reservation',exact:true}).last()
+  await trigger.scrollIntoViewIfNeeded();await trigger.click()
+  const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('heading')).toBeFocused();await expect(dialog.getByRole('heading')).toBeInViewport({ratio:1})
+  const release=dialog.getByRole('button',{name:'Release reservation',exact:true})
+  await expect(release).toBeDisabled();await expect(release).toBeInViewport({ratio:1})
+  const acknowledgment=dialog.getByRole('checkbox');await expect(acknowledgment).toBeInViewport({ratio:1});await acknowledgment.check();await expect(release).toBeEnabled()
+  await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
+ })
+}

@@ -299,7 +299,7 @@ func TestAcq2EpisodeImportSaysWhenItCannotPlaceAFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("placed files it could not map to any episode")
 	}
-	if !strings.Contains(err.Error(), "no known episodes") {
+	if !strings.Contains(err.Error(), "unknown episode S05E01") {
 		t.Errorf("err = %v, want the unknown season named", err)
 	}
 	if !strings.Contains(err.Error(), "cannot determine episodes") {

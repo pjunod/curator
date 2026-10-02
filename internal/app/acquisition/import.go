@@ -742,6 +742,10 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	if r, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
 		dest = r.Destinations[src]
 	}
+	dest, err = manualPlacementDestination(ctx, src, dest, manual, upgrade)
+	if err != nil {
+		return placement{}, err
+	}
 	_, err = s.commitPlacement(ctx, item, scope, src, dest, q, nil, upgrade)
 	if err != nil {
 		return placement{}, err
@@ -795,7 +799,11 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 			base += fmt.Sprintf(" - %03d", part+1)
 		}
 		dest := filepath.Join(scope.Dest, base+strings.ToLower(filepath.Ext(src)))
-		_, err := s.commitPlacement(ctx, item, scope, src, dest, q, nil, plan.Upgrade)
+		dest, err := manualPlacementDestination(ctx, src, dest, manual, plan.Upgrade)
+		if err != nil {
+			return placement{}, err
+		}
+		_, err = s.commitPlacement(ctx, item, scope, src, dest, q, nil, plan.Upgrade)
 		if err != nil {
 			return placement{}, err
 		}
@@ -825,6 +833,10 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 
 	dest := filepath.Join(scope.Dest,
 		naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
+	dest, err = manualPlacementDestination(ctx, src, dest, manual, upgrade)
+	if err != nil {
+		return placement{}, err
+	}
 	_, err = s.commitPlacement(ctx, item, scope, src, dest, q, nil, upgrade)
 	if err != nil {
 		return placement{}, err
@@ -915,7 +927,11 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	if r, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
 		dest = r.Destinations[src]
 	}
-	_, err := s.commitPlacement(ctx, item, scope, src, dest, q, epIDs, upgrade)
+	dest, err := manualPlacementDestination(ctx, src, dest, manual, upgrade)
+	if err != nil {
+		return placement{}, err
+	}
+	_, err = s.commitPlacement(ctx, item, scope, src, dest, q, epIDs, upgrade)
 	if err != nil {
 		return placement{}, err
 	}

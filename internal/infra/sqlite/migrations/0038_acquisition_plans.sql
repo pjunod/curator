@@ -79,6 +79,17 @@ END;
 
 
 
+
+-- Confirmed terminal publication/failure releases display parking atomically.
+-- Operator cancellation and ambiguous submission retain their custody fences.
+-- +goose StatementBegin
+CREATE TRIGGER acquisition_download_terminal_custody AFTER UPDATE OF state ON downloads
+WHEN NEW.state IN ('imported','failed') AND NEW.submission_phase NOT IN ('submitting','uncertain') AND NEW.parked_reason NOT LIKE 'operator cancellation%'
+BEGIN
+ UPDATE downloads SET parked_at=0,parked_reason=CASE WHEN cleanup_pending=0 THEN '' ELSE parked_reason END WHERE id=NEW.id;
+END;
+-- +goose StatementEnd
+
 CREATE INDEX idx_downloads_state ON downloads(state);
 CREATE UNIQUE INDEX download_plan_candidate ON downloads(plan_id,candidate_key) WHERE plan_id IS NOT NULL;
 CREATE INDEX import_placement_download ON import_placements(json_extract(data,'$.download_id')) WHERE state IN ('prepared','committed');
@@ -150,6 +161,7 @@ DROP TRIGGER acquisition_download_clients_delete;
 DROP TRIGGER acquisition_custom_formats_insert;
 DROP TRIGGER acquisition_custom_formats_update;
 DROP TRIGGER acquisition_custom_formats_delete;
+DROP TRIGGER acquisition_download_terminal_custody;
 DROP INDEX download_plan_candidate;
 DROP INDEX download_failure_window;
 DROP INDEX import_placement_download;

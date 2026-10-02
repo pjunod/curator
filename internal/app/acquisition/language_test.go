@@ -247,8 +247,8 @@ func TestLanguageMismatchIsBlocklisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	dls, err := db.ListRecentDownloads(ctx)
-	if err != nil || len(dls) != 1 || dls[0].State != "imported" {
-		t.Fatalf("downloads = %+v err=%v, want the grab imported", dls, err)
+	if err != nil || len(dls) != 1 || dls[0].State != "failed" {
+		t.Fatalf("downloads = %+v err=%v, want the measured mismatch refused before replacement", dls, err)
 	}
 
 	// Measured, not inferred: every track declared a language and none is

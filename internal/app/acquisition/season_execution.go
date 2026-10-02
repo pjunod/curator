@@ -236,6 +236,9 @@ func (s *Service) settleSeasonPlan(ctx context.Context, p sqlite.AcquisitionPlan
 	return tx.Commit()
 }
 func (s *Service) observeUncertain(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, statuses []ports.DownloadStatus, complete bool) {
+	if dl.SubmissionPhase != "uncertain" && dl.SubmissionPhase != "submitting" {
+		return
+	}
 	unlock := s.lockDownload(dl.ID)
 	defer unlock()
 	fresh, err := s.db.GetDownload(ctx, dl.ID)

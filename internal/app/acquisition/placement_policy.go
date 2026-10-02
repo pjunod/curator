@@ -25,7 +25,10 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 	if measured, known := p.Info.AudioLanguages(); known {
 		langs = measured
 	}
-	if !scope.Manual && (p.Provenance == mediainfo.ProvenanceImplausible || !profile.Acceptable(p.Quality) || !profile.LanguageAcceptable(langs)) {
+	// Fresh fills retain measured facts even when they need a later upgrade.
+	// Destructive replacements must satisfy policy before publication.
+	if replace && (p.Provenance == mediainfo.ProvenanceImplausible || (!scope.Manual && (!profile.Acceptable(p.Quality) || !profile.LanguageAcceptable(langs)))) {
+		s.recordLanguageMismatch(ctx, item.ID, p.Target, scope.Release, scope.Indexer, profile, p.Info)
 		return fmt.Errorf("measured payload does not satisfy current floor, resolution or language policy")
 	}
 	files, err := s.db.ListFilesForItem(ctx, item.ID)

@@ -179,11 +179,9 @@ func TestGrabFallsBackToAPlainAddForUntaggableClients(t *testing.T) {
 	}
 }
 
-// Inserting the row before the add is what makes the id possible, and it
-// creates one failure the old order did not have: a client that refuses
-// the download would leave a row describing something nobody has. It must
-// be cleaned up, or the queue fills with ghosts after an outage.
-func TestGrabLeavesNoRowWhenTheClientRefuses(t *testing.T) {
+// An ordinary transport error cannot prove the client rejected Add. Retain
+// durable custody so a retry cannot create a duplicate transfer.
+func TestGrabRetainsCustodyAfterAmbiguousClientError(t *testing.T) {
 	client := &taggingClient{addErr: errors.New("client says no")}
 	svc, db, itemID := setup(t, nil, &client.fakeClient)
 	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
@@ -204,8 +202,8 @@ func TestGrabLeavesNoRowWhenTheClientRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != len(before) {
-		t.Fatalf("a rejected grab left %d row(s) behind", len(after)-len(before))
+	if len(after) != len(before)+1 || after[0].SubmissionPhase != "uncertain" {
+		t.Fatalf("ambiguous grab lost its durable reservation: %+v", after)
 	}
 }
 

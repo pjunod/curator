@@ -207,6 +207,8 @@ test('quality copies: wanted independently, managed from the item page', async (
   await expect(page.getByRole('heading', { name: 'Quality copies' })).toBeVisible()
   await expect(page.getByText('second copy')).toBeVisible()
   await page.goto('/wanted')
+  const expand = page.getByRole('button', { name: `Expand ${movie.title}`, exact: true })
+  if (await expand.count()) await expand.click()
   await expect(page.locator('.pill-info', { hasText: 'second copy' })).toBeVisible()
 
   // Books have no copies.

@@ -79,6 +79,17 @@ func TestQbitFlow(t *testing.T) {
 	}
 
 	sts, err := c.Statuses(ctx)
+	inventory, complete, inventoryErr := c.Inventory(context.Background())
+	if inventoryErr != nil || !complete || len(inventory) != len(sts) {
+		t.Fatalf("complete inventory = %+v %v %v", inventory, complete, inventoryErr)
+	}
+	cancelled, cancelInventory := context.WithCancel(context.Background())
+	cancelInventory()
+	_, complete, inventoryErr = c.Inventory(cancelled)
+	if inventoryErr == nil || complete {
+		t.Fatal("outage asserted complete absence evidence")
+	}
+
 	if err != nil || len(sts) != 3 {
 		t.Fatalf("statuses = %v err %v", sts, err)
 	}

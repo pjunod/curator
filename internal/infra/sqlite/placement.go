@@ -61,7 +61,20 @@ func (d *DB) GetPlacement(ctx context.Context, id string) (Placement, error) {
 	return p, err
 }
 func (d *DB) PendingPlacements(ctx context.Context) ([]Placement, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT data FROM import_placements WHERE state IN ('prepared','committed') ORDER BY updated_at LIMIT 100`)
+	return d.unresolvedPlacements(ctx, true)
+}
+
+// UnresolvedPlacementReferences is complete: destructive checks cannot use
+// the bounded recovery-work batch as absence evidence.
+func (d *DB) UnresolvedPlacementReferences(ctx context.Context) ([]Placement, error) {
+	return d.unresolvedPlacements(ctx, false)
+}
+func (d *DB) unresolvedPlacements(ctx context.Context, batch bool) ([]Placement, error) {
+	query := `SELECT data FROM import_placements WHERE state IN ('prepared','committed') ORDER BY updated_at`
+	if batch {
+		query += ` LIMIT 100`
+	}
+	rows, err := d.R.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

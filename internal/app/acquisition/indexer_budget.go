@@ -117,6 +117,6 @@ func (b *strictAcquisitionIndexer) SearchPage(ctx context.Context, q domain.Sear
 	if p, ok := b.Indexer.(ports.PagedIndexer); ok {
 		return p.SearchPage(ctx, q, offset)
 	}
-	rows, err := b.Indexer.Search(ctx, q)
+	rows, err := b.Search(ctx, q)
 	return ports.IndexerPage{Releases: rows, Complete: true}, err
 }

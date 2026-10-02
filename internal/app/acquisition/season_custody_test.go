@@ -96,6 +96,7 @@ func TestUncertainEvidenceResetsForOutageConfigurationAndBoundedInventory(t *tes
 	dl := rows[0]
 	_, _ = db.ClaimPlannedSubmission(ctx, dl.ID)
 	_ = db.SetSubmissionPhase(ctx, dl.ID, "uncertain")
+	dl, _ = db.GetDownload(ctx, dl.ID)
 	cfg, _ := db.GetDownloadClient(ctx, dl.ClientID)
 	for _, tt := range []struct {
 		name     string

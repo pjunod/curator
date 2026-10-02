@@ -962,6 +962,9 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 		}
 		s.noteContact(cfg.ID, err)
 		for _, dl := range byClient[cfg.ID] {
+			if s.ImportRunning(dl.ID) {
+				continue
+			}
 			s.observeUncertain(ctx, dl, cfg, statuses, err == nil && complete)
 			if err != nil {
 				s.resetStallObservation(ctx, dl)

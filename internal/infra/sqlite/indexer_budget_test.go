@@ -46,3 +46,25 @@ func TestRollingBudgetAndInteractiveBorrowing(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestProviderRetryAtIsMonotoneAndDefersAllBuckets(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	id, err := db.AddIndexer(ctx, ports.IndexerConfig{Name: "retry", URL: "http://example.invalid", Protocol: "torrent", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	at := now.Add(time.Hour)
+	if err = db.SetIndexerRetryAt(ctx, id, at); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.SetIndexerRetryAt(ctx, id, now.Add(time.Minute))
+	for _, bucket := range []string{"rss", "interactive", "search"} {
+		err = db.ReserveIndexerRequest(ctx, id, bucket, false, now)
+		var deferred *BudgetDeferred
+		if !errors.As(err, &deferred) || deferred.DeferredUntil().Before(at.Add(-time.Millisecond)) || deferred.Error() == "" {
+			t.Fatalf("%s did not retain RetryAt: %v", bucket, err)
+		}
+	}
+}

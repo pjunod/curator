@@ -146,7 +146,7 @@ func (c *Client) InvalidateSearchCapability(mode string) {
 func (c *Client) capabilities(ctx context.Context, force, strict bool) (ports.IndexerCapabilities, error) {
 	key := cacheKey(c.cfg)
 	capabilityCache.Lock()
-	if entry := capabilityCache.entries[key]; entry != nil && !force && !(strict && entry.caps.Degraded) {
+	if entry := capabilityCache.entries[key]; entry != nil && !force && (!strict || !entry.caps.Degraded) {
 		if entry.ready != nil {
 			ready := entry.ready
 			capabilityCache.Unlock()

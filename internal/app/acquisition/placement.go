@@ -111,6 +111,31 @@ func syncPath(path string) error {
 	return f.Sync()
 }
 
+// manualPlacementDestination keeps a same-quality manual import beside existing
+// bytes. The digest suffix is stable across retries and never authorizes overwrite.
+func manualPlacementDestination(ctx context.Context, src, dest string, manual, replace bool) (string, error) {
+	if !manual || replace {
+		return dest, nil
+	}
+	incoming, _, err := fileDigest(ctx, src)
+	if err != nil {
+		return "", err
+	}
+	ext := filepath.Ext(dest)
+	base := strings.TrimSuffix(dest, ext)
+	for n := 0; n < 1000; n++ {
+		current, _, err := fileDigest(ctx, dest)
+		if errors.Is(err, os.ErrNotExist) || (err == nil && current == incoming) {
+			return dest, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		dest = fmt.Sprintf("%s [manual-%s-%d]%s", base, incoming[:12], n, ext)
+	}
+	return "", fmt.Errorf("manual destination collision limit reached")
+}
+
 func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, scope importScope, src, dest string, q quality.Quality, eps []int64, replace bool) (int64, error) {
 	hash, size, err := fileDigest(ctx, src)
 	if err != nil {

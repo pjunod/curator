@@ -22,7 +22,7 @@ func TestAcquisitionMigrationPreservesLegacyQueueAndRefusesCustodyDowngrade(t *t
 	if err = goose.UpToContext(ctx, db.W, "migrations", 37); err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.W.ExecContext(ctx, `INSERT INTO media_items(id,kind,title,sort_title,added_at) VALUES(1,'series','Legacy','legacy',0)`)
+	_, err = db.W.ExecContext(ctx, `INSERT INTO media_items(id,kind,title,sort_title,added_at,updated_at) VALUES(1,'series','Legacy','legacy',0,0)`)
 	if err != nil {
 		t.Fatal(err)
 	}
