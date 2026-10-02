@@ -1,6 +1,6 @@
 # Storage associations — shared-folder receipts must not claim every payload
 
-**Status:** locally verified; CI pending · **Updated:** 2026-10-02 · **Version:** 0.36.2
+**Status:** implementation verified · **Updated:** 2026-10-02 · **Version:** 0.36.2
 
 Companion to [usage](usage.md) (storage explanations) and
 [ADR 0021](adr/0021-file-lifecycle-recovery.md) (durable custody). This page
@@ -29,10 +29,11 @@ successful scan after installing the fix corrects cached associations.
 - [x] Regression fixtures for shared roots, sibling payloads and true ambiguity.
 - [x] Adversarial review: no actionable findings at `449ff4b`.
 - [x] Final local repository gates; Go race coverage 86.2% (floor 86.0%).
-- [ ] Required final-head CI.
-- [ ] PR, merge and temporary-asset cleanup.
+- Delivery: [PR #61](https://github.com/pjunod/curator/pull/61) is the live record
+  of final-head CI and merge state. Merge follows passing checks; the final
+  delivery record captures merge and temporary-asset cleanup.
 
-PR: pending. Deployment is excluded unless separately authorized.
+Deployment is excluded unless separately authorized.
 
 ## Validation
 
