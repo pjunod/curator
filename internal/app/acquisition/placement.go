@@ -223,6 +223,9 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 			return 0, err
 		}
 	}
+	if err = s.validateMeasuredPlacement(ctx, item, scope, p, replace); err != nil {
+		return 0, err
+	}
 	if err = s.publishPlacement(ctx, p); err != nil {
 		return 0, err
 	}

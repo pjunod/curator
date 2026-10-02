@@ -650,6 +650,7 @@ func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) 
 // primary), its destination folder, its quality profile, and what produced
 // the payload.
 type importScope struct {
+	Manual       bool
 	Attempt      string
 	DeferCleanup bool
 	CopyID       int64
@@ -687,11 +688,15 @@ func importLanguages(releaseTitle, src string) []string {
 }
 
 func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
+	scope.Manual = manual
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return placement{}, err
 	}
 	upgrade := false
+	if !manual && state.HasFiles && state.Best == nil {
+		return placement{}, fmt.Errorf("existing file has unverified quality")
+	}
 	if state.Best != nil {
 		// The import judges the language by the same claim the grab did —
 		// the release name (ADR 0022). The probe that follows placement
@@ -699,7 +704,7 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 		// not to have the language leaves the item wanted again.
 		langs := importLanguages(releaseTitle, src)
 		upgrade = profile.Upgrade(q, langs, *state.Best, state.SourceVerified, state.Audio)
-		if !upgrade && !manual {
+		if (!profile.UpgradesAllowed || !upgrade) && !manual {
 			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), state.Best.Display(), profile.Name)
 		}
@@ -745,10 +750,13 @@ func (s *Service) planBookImport(ctx context.Context, item domain.MediaItem, sco
 	}
 	plan := &bookImportPlan{}
 	if state.Best == nil {
+		if !manual && state.HasFiles {
+			return nil, fmt.Errorf("existing audiobook has unverified quality")
+		}
 		return plan, nil
 	}
 	plan.Upgrade = profile.Upgrade(worst, nil, *state.Best, state.SourceVerified, state.Audio)
-	if !plan.Upgrade && !manual {
+	if (!profile.UpgradesAllowed || !plan.Upgrade) && !manual {
 		return nil, fmt.Errorf("%s audiobook does not improve on the %s already here (profile %q)",
 			worst.Display(), state.Best.Display(), profile.Name)
 	}
@@ -757,6 +765,7 @@ func (s *Service) planBookImport(ctx context.Context, item domain.MediaItem, sco
 }
 
 func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, manual bool, part, total int, plan *bookImportPlan) (placement, error) {
+	scope.Manual = manual
 	if plan != nil {
 		scope.DeferCleanup = true
 		base := naming.BookFileName(item.Author, item.Title)
@@ -775,11 +784,14 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 		return placement{}, err
 	}
 	upgrade := false
+	if !manual && state.HasFiles && state.Best == nil {
+		return placement{}, fmt.Errorf("existing file has unverified quality")
+	}
 	if state.Best != nil {
 		// Books carry no language requirement (the API refuses one on a book
 		// profile), so the release side is "no claim" and passes.
 		upgrade = profile.Upgrade(q, nil, *state.Best, state.SourceVerified, state.Audio)
-		if !upgrade && !manual {
+		if (!profile.UpgradesAllowed || !upgrade) && !manual {
 			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), state.Best.Display(), profile.Name)
 		}
@@ -801,6 +813,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 }
 
 func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
+	scope.Manual = manual
 	season, eps := p.Season, p.Episodes
 	if len(eps) == 0 {
 		if fx, ok := filename.Extract(filepath.Base(src)); ok {
@@ -822,7 +835,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	for _, epNum := range eps {
 		epID, err := s.db.GetEpisodeID(ctx, item.ID, season, epNum)
 		if err != nil {
-			continue // unknown episode; still import the known ones
+			return placement{}, fmt.Errorf("indivisible file includes unknown episode S%02dE%02d", season, epNum)
 		}
 		epIDs = append(epIDs, epID)
 		for _, se := range item.Seasons {
@@ -836,6 +849,14 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 			}
 		}
 		st := epStates[epID]
+		if !manual {
+			if st.HasFile && st.Have == nil {
+				return placement{}, fmt.Errorf("episode %d has unverified existing file", epNum)
+			}
+			if st.Have != nil && (!profile.UpgradesAllowed || !profile.Upgrade(q, importLanguages(releaseTitle, src), *st.Have, st.Verified, st.Audio)) {
+				return placement{}, fmt.Errorf("episode %d is protected by current policy", epNum)
+			}
+		}
 		if st.Have == nil {
 			// Nothing known here. If a file exists it is unverified rather
 			// than missing, and either way this import is not an upgrade
@@ -850,11 +871,11 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	if len(epIDs) == 0 {
 		return placement{}, fmt.Errorf("no known episodes for S%02d %v", season, eps)
 	}
-	upgrade := false
+	upgrade := !manual && worst != nil
 	if !missing && worst != nil {
 		langs := importLanguages(releaseTitle, src)
 		upgrade = profile.Upgrade(q, langs, *worst, worstVerified, worstAudio)
-		if !upgrade && !manual {
+		if (!profile.UpgradesAllowed || !upgrade) && !manual {
 			return placement{}, fmt.Errorf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), worst.Display(), profile.Name)
 		}
