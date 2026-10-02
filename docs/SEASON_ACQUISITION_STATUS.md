@@ -21,9 +21,9 @@ actual implementation, review, checks, and delivery. Deployment is excluded.
 - [x] Read repository instructions; independent clone and authoritative documents.
 - [x] A: pure policy optimizer and independent oracle/property fixtures.
 - [x] B: measured import protection and immutable provider allowlists.
-- [ ] C: bounded discovery, request ledger, pacing, feasible scheduler admission.
-- [ ] D: atomic execution, reservation settlement, uncertainty and stall recovery.
-- [ ] E: automatic callers, API/mobile/Activity explanations and visible actions.
+- [x] C: bounded discovery, request ledger, pacing, feasible scheduler admission.
+- [x] D: atomic execution, reservation settlement, uncertainty and stall recovery.
+- [x] E: automatic callers, API/mobile/Activity explanations and visible actions.
 - [ ] F: final documentation, adversarial review, checks, merge and cleanup.
 
 ## Final check ledger
@@ -43,3 +43,17 @@ while application checks remain pinned to Go 1.25.7. Final checks follow adversa
 ## Adversarial review
 
 Pending the complete reviewable PR; no implementation review requested yet.
+
+## Recorded implementation decisions
+
+- A single admitted discovery comparison conservatively protects evidence freshness;
+  unopened jobs have no clock. Genuinely oversized scopes allow completed singles.
+- Complete absence evidence is an adapter capability. Bounded SABnzbd/nzbd history
+  remains uncertainty, requiring explicit custody review rather than assumed absence.
+- Operator cancellation is a persisted reservation fence; explicit risk acknowledgment
+  retains the original identity, warning, and late-publication prohibition.
+- No live provider/client credentials or configuration were used. Throughput evidence
+  uses hermetic rolling-budget/capability/pagination fixtures; live transport coverage
+  remains outside this implementation's verification.
+- Application Go 1.25.7 and CI Node 22.13.0 are preserved; sqlc's own Go 1.26
+  requirement is isolated to generation.

@@ -295,6 +295,11 @@ export interface MatchEvidence {
 }
 
 export interface QueueItem {
+ planId?: number
+ planState?: string
+ submissionPhase?: string
+ parkedReason?: string
+ selection?: {reason:string;target:string;partial:boolean;trigger:string}
   id: number
   mediaItemId: number
   title: string

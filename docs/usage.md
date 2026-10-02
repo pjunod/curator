@@ -1232,3 +1232,46 @@ Known partials, active parent paths and pending placement acknowledgements
 remain blocked. This endpoint only observes files; its result grants no lease,
 import permission or cleanup authority. Use the existing recovery preview and
 placement/receipt workflow for separately authorized recovery.
+
+## Automatic season acquisition
+
+Series automatic search queues a season/copy comparison. It collects season
+results and target-quality single alternatives for missing episodes before
+submitting an ordinary plan. Missing work precedes upgrade-only work; existing
+upgrade queries use season results and a seven-day deep-search cadence.
+
+The planner maximizes attainable eligible outcomes up to your profile target.
+An adequate pack does not add better-source or custom-format singles on top.
+A below-target pack may pair with higher-class singles. Full pack bytes count,
+including protected payload. Reported zero torrent seeders affect equivalent
+choices before advertised size; unknown seeders break ties after bytes.
+
+Activity → **Why chosen** opens the recorded target, providers, full transfer
+cost, gaps and import permissions inside the viewport. Identity match is shown
+separately. Legacy and manual rows say their selection was not recorded. Planned
+rows reserve episodes without claiming that a client job already exists.
+
+Uncertain submissions keep episode reservations while client inventory is
+reconciled. After thirty minutes the broad season claim can settle so other
+holes proceed. Seven days of complete successful unchanged-client inventories,
+with no gap over six hours, permits a retry with a persistent **Possible
+duplicate** warning. Absence is not proof that the original was never accepted.
+A late original cannot publish automatically after its authority is superseded.
+Holds and user cancellation do not expire under this policy.
+
+Torrent retirement uses observed bytes, connected seeds and availability:
+48 observed hours without progress and poor availability, or seven observed
+days regardless of seeds. Pauses/outages accrue no time. Confirmed retirement
+allows replacement while unsafe partial bytes retain explicit cleanup custody.
+A healthy or paused transfer is preserved when its broad plan settles at 48 hours.
+
+Explicit removal cancels the plan's remaining unsubmitted intents. Submitted or
+uncertain rows retain a visible operator cancellation reservation; deliberate
+review is required to release custody. Automatic replacement and pack fallback
+cannot override that fence. A client with bounded history cannot supply complete
+absence evidence; its uncertainty remains reserved instead of silently retrying.
+
+**Review reservation** opens the unresolved row's custody review in Activity.
+After checking the client, explicitly acknowledge possible duplicates to release
+that reservation. The original identity remains superseded and cannot publish
+later. This action does not add a replacement; use a deliberate Search afterward.

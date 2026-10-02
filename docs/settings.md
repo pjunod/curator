@@ -882,3 +882,28 @@ mount durability evidence. No new production enablement setting is exposed.
 A resumed Runner transfer continues updating progress at the same control
 revision. Completed history preserves the resolving revision after the queue
 row retires, so a missed SSE resume event does not strand the acquisition.
+
+## Indexer daily request cap
+
+Settings → Acquisition → Indexers accepts a daily API request cap. Zero means
+Curator uses a local rolling budget of 250 calls; it does not assert your
+provider's entitlement. Requests from other applications are outside this ledger.
+Provider NZB/grab allowances are separate.
+
+| Effective budget | Interactive | RSS calls / cadence | Automatic search |
+|---|---|---|---|
+| 250 (cap unknown) | 20 | 96 / 15 minutes | 100 |
+| 200 | 20 | 90 / 16 minutes | 90 |
+| 100 | 10 | 45 / 32 minutes | 45 |
+| 50 | 5 | 22 / 66 minutes | 23 |
+
+Every actual wire call, including capability probes, pages and fallback, is
+reserved before sending. Manual searches use their reserve, then headroom,
+then unspent search capacity; RSS is never borrowed. Automatic requests also
+obey a rolling twelve-hour share. RSS due times persist across restart and
+advance from actual dispatch; missed ticks do not produce catch-up bursts.
+A provider Retry-After delays the next request even when local tokens remain.
+
+Use **Request cap** beside a saved indexer to change its allowance without
+re-entering credentials. Changes retain the rolling usage ledger. The dialog
+shows saving errors in place and returns focus to the initiating button.

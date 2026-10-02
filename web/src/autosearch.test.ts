@@ -84,3 +84,7 @@ describe('describeAutoSearch', () => {
     expect(msg).toContain('indexer refused the query')
   })
 })
+
+it('explains deferred season comparison without claiming a grab', () => {
+ expect(describeAutoSearch({grabbed:0,targets:[target({skipped:'queued'})]})).toContain('Queued 1 season comparison')
+})

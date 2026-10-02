@@ -68,7 +68,7 @@ export function ActivityScreen({ client, onOpen }: { client: MonarrClient; onOpe
         {resource.loading && !resource.data ? <LoadingState label="Loading activity…" /> : null}
         {!resource.loading && !resource.error && resource.data?.items.length === 0 ? <MessageState title={`No ${filter} activity`} message={filter === 'active' ? 'Downloads and imports in progress will appear here.' : `No retained ${filter} rows.`} /> : null}
         <View style={styles.items}>
-          {(resource.data?.items ?? []).map((item) => <ActivityRow key={item.id} item={item} onOpen={() => onOpen(item.mediaItemId)} />)}
+          {(resource.data?.items ?? []).map((item) => <ActivityRow key={item.id} item={item} onOpen={() => onOpen(item.mediaItemId)} onResolve={async()=>{await client.resolveQueueReservation(item.id);await resource.refresh()}} />)}
         </View>
       </ScrollView>
     </AppScreen>
@@ -85,7 +85,10 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   )
 }
 
-function ActivityRow({ item, onOpen }: { item: QueueItem; onOpen: () => void }) {
+function ActivityRow({ item, onOpen, onResolve }: { item: QueueItem; onOpen: () => void; onResolve: () => Promise<void> }) {
+  const [resolving,setResolving]=useState(false)
+  const [resolveError,setResolveError]=useState('')
+  const resolve=()=>Alert.alert('Release episode reservation?', 'The original submission may still complete. Releasing custody permits a deliberate Search to acquire another copy. The original and a possible-duplicate warning remain.', [{text:'Cancel',style:'cancel'},{text:'Acknowledge possible duplicate',style:'destructive',onPress:()=>{setResolving(true);setResolveError('');void onResolve().catch(e=>{setResolveError(String(e));Alert.alert('Reservation remains',String(e))}).finally(()=>setResolving(false))}}])
   const theme = useTheme()
   const fraction = item.total ? (item.bytes ?? 0) / item.total : item.progress || 0
   const progress = Math.max(0, Math.min(100, fraction * 100))
@@ -97,6 +100,10 @@ function ActivityRow({ item, onOpen }: { item: QueueItem; onOpen: () => void }) 
         <Badge label={item.stage || item.state} tone={tone} />
       </View>
       <Text style={[styles.itemMeta, { color: theme.muted }]}>{[item.quality, item.protocol, formatRelative(item.addedAt)].filter(Boolean).join(' · ')}</Text>
+      <Button compact secondary label="Why chosen" onPress={()=>Alert.alert('Why chosen', item.selection ? `${item.selection.reason}\nTarget: ${item.selection.target}\nPlan ${item.planId}: ${item.planState}; submission ${item.submissionPhase}${item.parkedReason ? `\nReserved: ${item.parkedReason}` : ''}` : 'Selection reason was not recorded for this legacy or explicit manual grab.')} />
+      {item.planId && (item.parkedReason || item.submissionPhase==='uncertain') ? <Button compact secondary disabled={resolving} label={resolving ? 'Resolving…' : 'Review reservation'} onPress={resolve}/> : null}
+      {item.parkedReason ? <Text style={[styles.itemMeta,{color:theme.muted}]}>Reserved: {item.parkedReason}</Text> : null}
+      <InlineError message={resolveError}/>
       {item.match?.reason ? <Text style={[styles.itemMeta, { color: theme.muted }]}>Match: {item.match.reason}</Text> : null}
       {item.stageDetail ? <Text style={[styles.itemMeta, { color: theme.muted }]}>{item.stageDetail}</Text> : null}
       {item.total ? <Text style={[styles.itemMeta, { color: theme.muted }]}>{formatBytes(item.bytes ?? 0)} / {formatBytes(item.total)}{item.bytesPerSecond ? ` · ${formatBytes(item.bytesPerSecond)}/s` : ''}</Text> : null}
