@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/pjunod/monarr/internal/adapters/torznab"
 	"net/http"
@@ -306,5 +307,158 @@ func TestCleanupSeesPlacementReferenceBeyondRecoveryBatch(t *testing.T) {
 	}
 	if _, err = os.Stat(path); err != nil {
 		t.Fatal("referenced bytes deleted", err)
+	}
+}
+
+type interruptedIndexer struct {
+	fakeIndexer
+	capabilityErr error
+	searchErr     error
+}
+
+func (i *interruptedIndexer) Capabilities(context.Context) (ports.IndexerCapabilities, error) {
+	return ports.IndexerCapabilities{}, i.capabilityErr
+}
+func (i *interruptedIndexer) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Release, error) {
+	if i.searchErr != nil {
+		return nil, i.searchErr
+	}
+	return i.fakeIndexer.Search(ctx, q)
+}
+func TestDiscoveryRetriesRetainScopeAndRecoverWithoutIncompleteDispatch(t *testing.T) {
+	for _, mode := range []string{"capability", "search", "provider_retry"} {
+		t.Run(mode, func(t *testing.T) {
+			client := &fakeClient{}
+			s, db, item := setup(t, nil, client)
+			ctx := context.Background()
+			indexer := &interruptedIndexer{fakeIndexer: fakeIndexer{releases: []ports.Release{
+				{Title: "Test.Show.S01E01.1080p.WEB-DL-ONE", DownloadURL: "one", Indexer: "idx", Protocol: "torrent", Size: 1000},
+				{Title: "Test.Show.S01E02.1080p.WEB-DL-TWO", DownloadURL: "two", Indexer: "idx", Protocol: "torrent", Size: 1000},
+			}}}
+			if mode == "capability" {
+				indexer.capabilityErr = errors.New("temporary capability outage")
+			} else {
+				indexer.searchErr = errors.New("temporary search outage")
+			}
+			if mode == "provider_retry" {
+				indexer.searchErr = &ports.RemoteError{Category: ports.RemoteRateLimit, RetryAt: time.Now().Add(time.Hour)}
+			}
+			s.newIndexer = func(ports.IndexerConfig) ports.Indexer { return indexer }
+			if err := s.enqueueSeason(ctx, item, 0, 1, "test", true); err != nil {
+				t.Fatal(err)
+			}
+			j, err := db.ClaimJob(ctx, "retry", nil, time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.handleSeasonSearch(ctx, j); err == nil || len(client.added) != 0 {
+				t.Fatal("incomplete scope dispatched", err)
+			}
+			fresh, _ := db.GetJob(ctx, j.ID)
+			var p seasonCheckpoint
+			_ = json.Unmarshal([]byte(fresh.Payload), &p)
+			if p.Started.IsZero() || len(p.Scopes) != 1 || p.Scopes[0].Complete {
+				t.Fatalf("retry lost scope: %+v", p)
+			}
+			// Move the disposable fixture to the provider's retry epoch, without sleeping.
+			p.Scopes[0].RetryAt = time.Time{}
+			raw, _ := json.Marshal(p)
+			j.Payload = string(raw)
+			_, _ = db.W.ExecContext(ctx, `UPDATE indexers SET retry_at=0`)
+			indexer.capabilityErr = nil
+			indexer.searchErr = nil
+			if err = s.handleSeasonSearch(ctx, j); err != nil {
+				t.Fatal("recovered scope failed", err)
+			}
+			if len(client.added) != 2 {
+				t.Fatalf("recovered scope did not serve targets: %v", client.added)
+			}
+		})
+	}
+}
+
+type resumableClient struct {
+	fakeClient
+	resumed ports.Handle
+}
+
+func (c *resumableClient) Resume(_ context.Context, h ports.Handle) error { c.resumed = h; return nil }
+func TestSameJobResumeRetainsHoldUntilAuthoritativeSnapshot(t *testing.T) {
+	c := &resumableClient{}
+	s, db, item := setup(t, nil, &c.fakeClient)
+	ctx := context.Background()
+	s.newClient = func(ports.ClientConfig) ports.DownloadClient { return c }
+	id, err := s.Grab(ctx, GrabRequest{MediaItemID: item, Season: 1, Episode: 1, Title: "Test.Show.S01E01.1080p.WEB-DL", DownloadURL: "one", Protocol: "torrent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := `{"version":1,"lifecycle":"held","retry_policy":"resume_same_job","revision":"one"}`
+	if _, err = db.W.ExecContext(ctx, `UPDATE downloads SET runner_control=? WHERE id=?`, control, id); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ResumeHeldDownload(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	dl, _ := db.GetDownload(ctx, id)
+	if c.resumed != "h1" || dl.RunnerControl != control || len(c.added) != 1 {
+		t.Fatalf("resume lost original custody: %+v", dl)
+	}
+}
+
+func TestFailedSingleFallbackCannotStealAnotherReservation(t *testing.T) {
+	for _, scope := range []string{"season", "episode"} {
+		t.Run(scope, func(t *testing.T) {
+			s, db, item := setup(t, nil, &fakeClient{})
+			ctx := context.Background()
+			_, rows := admittedFixture(t, s, db, item, "pack", "single")
+			pack, single := rows[0], rows[1]
+			_, _ = db.ClaimPlannedSubmission(ctx, single.ID)
+			_ = db.SetSubmissionPhase(ctx, single.ID, "submitted")
+			_ = db.UpdateDownloadState(ctx, single.ID, "failed", 0, "client failure")
+			want := fmt.Sprintf("season:%d:1", item)
+			if scope == "episode" {
+				want = fmt.Sprintf("episode:%d:1:2", item)
+			}
+			_, err := db.InsertDownload(ctx, sqlite.Download{MediaItemID: item, Season: 1, State: "grabbed", Protocol: "torrent", ReleaseTitle: "manual replacement", WantableIDs: []string{want}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			allowed, err := s.effectiveImportAllowlist(ctx, pack)
+			if err != nil || len(allowed) != 1 {
+				t.Fatalf("pack stole %s reservation: %v %v", scope, allowed, err)
+			}
+		})
+	}
+}
+
+func TestThreeProviderFailuresEndEpochWithoutClaimingAbsence(t *testing.T) {
+	s, db, item := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	indexer := &interruptedIndexer{searchErr: errors.New("provider unavailable")}
+	s.newIndexer = func(ports.IndexerConfig) ports.Indexer { return indexer }
+	if err := s.enqueueSeason(ctx, item, 0, 1, "test", true); err != nil {
+		t.Fatal(err)
+	}
+	j, err := db.ClaimJob(ctx, "retry", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		if err = s.handleSeasonSearch(ctx, j); err == nil {
+			t.Fatal("failed provider asserted completion")
+		}
+		fresh, _ := db.GetJob(ctx, j.ID)
+		var p seasonCheckpoint
+		_ = json.Unmarshal([]byte(fresh.Payload), &p)
+		if attempt < 2 {
+			if len(p.Scopes) != 1 || p.Scopes[0].Failures != attempt+1 {
+				t.Fatalf("failure evidence lost %+v", p)
+			}
+			p.Scopes[0].RetryAt = time.Time{}
+			raw, _ := json.Marshal(p)
+			j.Payload = string(raw)
+		} else if !p.Started.IsZero() || !p.CooldownUntil.IsZero() {
+			t.Fatalf("incomplete evidence became absence cooldown: %+v", p)
+		}
 	}
 }
