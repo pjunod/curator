@@ -272,3 +272,9 @@ func scanJob(row *sql.Row) (domain.Job, error) {
 	}
 	return jobFromRow(r), nil
 }
+
+// DeferJob preserves the actual failure budget while waiting for eligibility.
+func (d *DB) DeferJob(ctx context.Context, id int64, cause string, at time.Time) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE jobs SET state='queued',attempts=max(0,attempts-1),run_after=?,last_error=?,lease_owner='',lease_expires_at=0,updated_at=? WHERE id=? AND state='leased'`, at.UnixMilli(), cause, time.Now().UnixMilli(), id)
+	return err
+}

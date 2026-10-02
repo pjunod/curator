@@ -19,8 +19,8 @@ actual implementation, review, checks, and delivery. Deployment is excluded.
 ## Milestones
 
 - [x] Read repository instructions; independent clone and authoritative documents.
-- [ ] A: pure policy optimizer and independent oracle/property fixtures.
-- [ ] B: measured import protection and immutable provider allowlists.
+- [x] A: pure policy optimizer and independent oracle/property fixtures.
+- [x] B: measured import protection and immutable provider allowlists.
 - [ ] C: bounded discovery, request ledger, pacing, feasible scheduler admission.
 - [ ] D: atomic execution, reservation settlement, uncertainty and stall recovery.
 - [ ] E: automatic callers, API/mobile/Activity explanations and visible actions.
@@ -28,7 +28,9 @@ actual implementation, review, checks, and delivery. Deployment is excluded.
 
 ## Final check ledger
 
-No runtime checks run during construction. Final checks follow adversarial review.
+No runtime test suites run during construction. Changed backend packages compile.
+The pinned sqlc v1.31.1 requires Go 1.26; generation uses its required toolchain,
+while application checks remain pinned to Go 1.25.7. Final checks follow adversarial review.
 
 | Check | Result | Validated revision |
 |---|---|---|

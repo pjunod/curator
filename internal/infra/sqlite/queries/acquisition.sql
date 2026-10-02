@@ -74,18 +74,18 @@ SELECT state, COUNT(*) AS n FROM downloads GROUP BY state;
 -- name: DeleteImportedDownloads :execrows
 -- "Clear finished": the ROWS only. Nothing here touches a file, a library
 -- record, or the download client - an imported row is a receipt.
-DELETE FROM downloads WHERE state = 'imported';
+DELETE FROM downloads WHERE state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0;
 
 -- name: DeleteFailedDownloads :execrows
 -- "Clear failed" has the same boundary: dismiss the Activity rows without
 -- touching payloads, library records, blocklists, or download clients.
-DELETE FROM downloads WHERE state = 'failed';
+DELETE FROM downloads WHERE state = 'failed' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0;
 
 -- name: DeleteTerminalDownloadsBefore :execrows
 -- Retention. Terminal rows only: whatever is still moving is never swept out
 -- from under itself, however old it looks.
 DELETE FROM downloads
-WHERE state IN ('imported', 'failed') AND updated_at < ?;
+WHERE state IN ('imported', 'failed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND updated_at < ?;
 
 -- name: DeleteHistoryBefore :execrows
 DELETE FROM history_events WHERE ts < ?;
@@ -122,7 +122,7 @@ ORDER BY added_at;
 UPDATE downloads SET handle = ?, transfer = ?, updated_at = ? WHERE id = ?;
 
 -- name: DeleteDownload :exec
-DELETE FROM downloads WHERE id = ?;
+DELETE FROM downloads WHERE id = ? AND submission_phase NOT IN ('pending','submitting','uncertain') AND parked_at=0 AND cleanup_pending=0;
 
 -- name: ListImportedWithPayload :many
 -- Imported downloads whose payload has not been cleaned up yet, oldest first
@@ -209,3 +209,15 @@ SELECT
 -- name: UpdateDownloadControl :exec
 UPDATE downloads SET runner_control = ?, state = ?, progress = ?, error = ?,
     updated_at = ? WHERE id = ?;
+
+-- name: ListPlanDownloads :many
+SELECT * FROM downloads WHERE plan_id=? ORDER BY id;
+
+-- name: ListDownloadReservations :many
+SELECT * FROM downloads WHERE superseded=0 AND
+(state IN ('planned','grabbed','downloading','downloaded','awaiting_import','importing')
+ OR submission_phase IN ('submitting','uncertain') OR parked_at>0 OR cleanup_pending=1)
+ORDER BY id;
+
+-- name: ListFailedDownloadsSince :many
+SELECT * FROM downloads WHERE state='failed' AND superseded=0 AND added_at>=? ORDER BY id;
