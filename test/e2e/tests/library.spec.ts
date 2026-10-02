@@ -119,6 +119,7 @@ test('disk scan links episode files and reports unmatched folders', async ({ pag
   await page.goto('/')
   await page.getByText('The Test Show').click()
   await expect(page.getByText('1/2 on disk').first()).toBeVisible()
+  await page.locator('.item-files > details > summary').click()
   await expect(page.getByRole('cell', { name: /S01E01/ })).toBeVisible()
 
   // And the library page surfaces the unmatched folder.

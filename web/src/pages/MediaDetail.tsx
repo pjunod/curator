@@ -1533,7 +1533,7 @@ export function MediaDetailPage() {
         </section>
       )}
 
-      <FilesPanel key={m.id} item={m} onChanged={() => {
+      <FilesPanel key={`files-${m.id}`} item={m} onChanged={() => {
         void qc.invalidateQueries({ queryKey: ['library-item', id] })
         void qc.invalidateQueries({ queryKey: ['queue'] })
       }} />
