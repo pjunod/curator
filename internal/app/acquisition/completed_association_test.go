@@ -56,7 +56,7 @@ func TestStorageContainerReceiptsDoNotAssociateSiblingPayloads(t *testing.T) {
 }
 
 func TestHistoricalStorageContainerCannotPoisonImportedPayloadCleanup(t *testing.T) {
-	for _, location := range []string{"root", "completed", "ancestor", "specific-payload", "live-root"} {
+	for _, location := range []string{"root", "completed", "ancestor", "specific-payload", "live-root", "dismissed-root", "dismissed-specific-payload"} {
 		t.Run(location, func(t *testing.T) {
 			svc, db, item, root := completedFixture(t)
 			ctx := context.Background()
@@ -74,7 +74,7 @@ func TestHistoricalStorageContainerCannotPoisonImportedPayloadCleanup(t *testing
 				historicalPath = filepath.Join(root, "completed")
 			case "ancestor":
 				historicalPath = filepath.Dir(root)
-			case "specific-payload":
+			case "specific-payload", "dismissed-specific-payload":
 				historicalPath = payload
 			}
 			history := insertImportable(t, db, item, historicalPath)
@@ -83,10 +83,17 @@ func TestHistoricalStorageContainerCannotPoisonImportedPayloadCleanup(t *testing
 			if location == "live-root" {
 				history.State = "downloading"
 			}
+			if location == "dismissed-root" || location == "dismissed-specific-payload" {
+				history.State = "imported"
+			}
 			if err := db.UpdateDownloadHandoff(ctx, history); err != nil {
 				t.Fatal(err)
 			}
-			if location != "live-root" {
+			if history.State == "imported" {
+				if err := db.DeleteDownload(ctx, history.ID); err != nil {
+					t.Fatal(err)
+				}
+			} else if location != "live-root" {
 				if _, err := db.ClearFailedDownloads(ctx); err != nil {
 					t.Fatal(err)
 				}
@@ -98,7 +105,7 @@ func TestHistoricalStorageContainerCannotPoisonImportedPayloadCleanup(t *testing
 			if len(entries) != 1 {
 				t.Fatalf("entries %+v", entries)
 			}
-			if location == "specific-payload" {
+			if location == "specific-payload" || location == "dismissed-specific-payload" {
 				if entries[0].Status != "ambiguous" || len(entries[0].Receipts) != 2 {
 					t.Fatalf("specific history lost %+v", entries)
 				}
@@ -106,7 +113,7 @@ func TestHistoricalStorageContainerCannotPoisonImportedPayloadCleanup(t *testing
 				t.Fatalf("container matched unrelated payload %+v", entries)
 			}
 			safe := svc.safePayloadPath(ctx, downloadRef{ID: own.ID, ImportPath: own.ImportPath})
-			protected := location == "specific-payload" || location == "live-root"
+			protected := location == "specific-payload" || location == "dismissed-specific-payload" || location == "live-root"
 			if safe == protected {
 				t.Fatalf("cleanup authority location=%s safe=%v", location, safe)
 			}

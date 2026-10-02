@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,7 +163,7 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 		s.removeImportedDir(ctx, ref)
 		confirmed, err := s.db.GetDownload(ctx, dl.ID)
 		unlock()
-		if err == nil && confirmed.PayloadRemoved {
+		if (err == nil && confirmed.PayloadRemoved) || (err != nil && payloadAbsent(dl.ImportPath)) {
 			removed++
 			bytes += dl.Size
 		}
@@ -279,48 +280,56 @@ func payloadAbsent(path string) bool {
 // Apply path guards before either client or local deletion. A queue handle
 // cannot authorize deleting a shared directory or a path reused by another job.
 func (s *Service) safePayloadPath(ctx context.Context, dl downloadRef) bool {
-	dir := strings.TrimSpace(dl.ImportPath)
-	if !filepath.IsAbs(dir) || filepath.Clean(dir) == string(filepath.Separator) {
+	if err := s.payloadPathError(ctx, dl); err != nil {
+		s.log.Warn("cleanup: imported payload retained", "download", dl.ID, "path", dl.ImportPath, "reason", err)
 		return false
 	}
+	return true
+}
+
+func (s *Service) payloadPathError(ctx context.Context, dl downloadRef) error {
+	dir := strings.TrimSpace(dl.ImportPath)
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) == string(filepath.Separator) {
+		return fmt.Errorf("payload path must be absolute and below the filesystem root")
+	}
 	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return false
+		return fmt.Errorf("payload path is a symbolic link")
 	}
 	receipts, err := s.db.CompletedReceipts(ctx)
 	if err != nil {
-		return false
+		return fmt.Errorf("read download ownership: %w", err)
 	}
 	completed, err := s.completedRoots(ctx, receipts)
 	if err != nil {
-		return false
+		return fmt.Errorf("read download storage roots: %w", err)
 	}
 	real := storagePath(dir, completed)
 	roots, err := s.db.ListRootFolders(ctx)
 	if err != nil {
-		return false
+		return fmt.Errorf("read library roots: %w", err)
 	}
 	for _, root := range roots {
 		p := storagePath(root.Path, completed)
 		if within(p, real) || within(real, p) {
-			return false
+			return fmt.Errorf("payload overlaps library root %s", root.Path)
 		}
 	}
 	recovery, err := s.RecoverySettings(ctx)
 	if err != nil {
-		return false
+		return fmt.Errorf("read recovery settings: %w", err)
 	}
 	if recovery.LocalRoot != "" {
 		p := storagePath(recovery.LocalRoot, completed)
 		if within(p, real) || within(real, p) {
-			return false
+			return fmt.Errorf("payload overlaps recovery root %s", recovery.LocalRoot)
 		}
 	}
 	if err := s.checkStorageIdentity(ctx, real); err != nil {
-		return false
+		return err
 	}
 	for _, root := range completed {
 		if within(real, root) || real == filepath.Join(root, "completed") {
-			return false
+			return fmt.Errorf("payload is a shared storage container")
 		}
 	}
 	for _, receipt := range receipts {
@@ -330,14 +339,14 @@ func (s *Service) safePayloadPath(ctx context.Context, dl downloadRef) bool {
 		p := storagePath(receipt.Path, completed)
 		// Cleared history at a shared storage container identifies no
 		// particular payload. Live broad paths still retain custody.
-		if !receipt.Live && isCompletedStorageContainer(p, completed) {
+		if (!receipt.Live || (receipt.Dismissed && receipt.State == "imported")) && isCompletedStorageContainer(p, completed) {
 			continue
 		}
 		if within(real, p) || within(p, real) {
-			return false
+			return fmt.Errorf("payload overlaps download %d (%s) at %s", receipt.DownloadID, receipt.Title, receipt.Path)
 		}
 	}
-	return true
+	return nil
 }
 
 // Shared storage containers are never payload deletion targets. Historical

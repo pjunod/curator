@@ -16,12 +16,15 @@ type CompletedReceipt struct {
 	Protocol       string `json:"protocol"`
 	PayloadRemoved bool   `json:"payloadRemoved"`
 	Live           bool   `json:"live"`
+	// Internal custody can outlive the visible Activity row.
+	Dismissed bool `json:"-"`
 }
 
 func (d *DB) CompletedReceipts(ctx context.Context) ([]CompletedReceipt, error) {
 	rows, err := d.R.QueryContext(ctx, `SELECT r.download_id, r.path, r.client_id,
 		r.title, r.state, r.protocol, r.payload_removed,
-		EXISTS(SELECT 1 FROM downloads d WHERE d.id = r.download_id AND d.added_at = r.added_at AND d.import_path = r.path)
+		EXISTS(SELECT 1 FROM downloads d WHERE d.id = r.download_id AND d.added_at = r.added_at AND d.import_path = r.path),
+		EXISTS(SELECT 1 FROM downloads d WHERE d.id = r.download_id AND d.added_at = r.added_at AND d.import_path = r.path AND d.activity_dismissed = 1)
 		FROM completed_receipts r ORDER BY r.download_id`)
 	if err != nil {
 		return nil, err
@@ -31,7 +34,7 @@ func (d *DB) CompletedReceipts(ctx context.Context) ([]CompletedReceipt, error) 
 	for rows.Next() {
 		var r CompletedReceipt
 		if err := rows.Scan(&r.DownloadID, &r.Path, &r.ClientID, &r.Title, &r.State,
-			&r.Protocol, &r.PayloadRemoved, &r.Live); err != nil {
+			&r.Protocol, &r.PayloadRemoved, &r.Live, &r.Dismissed); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

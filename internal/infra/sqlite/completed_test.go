@@ -39,6 +39,11 @@ func TestCompletedMigrationPreservesPreexistingPathsAndDeletedHistory(t *testing
 	if err != nil || len(rows) != 1 || rows[0].Path != "/completed/old" || !rows[0].Live {
 		t.Fatalf("backfill: %+v, %v", rows, err)
 	}
+	// A row with pending cleanup now survives dismissal. Confirm removal to
+	// exercise ID reuse after the row can actually be retired.
+	if err := db.MarkPayloadRemoved(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ClearImportedDownloads(ctx); err != nil {
 		t.Fatal(err)
 	}
