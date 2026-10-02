@@ -42,6 +42,7 @@ test('search TMDB and add a movie', async ({ page }) => {
   // The detail page, fully hydrated.
   await expect(page.getByRole('heading', { name: /The Test Movie/ })).toBeVisible()
   await expect(page.getByText('101 min')).toBeVisible()
+  await page.locator('.item-files > details > summary').click()
   await expect(page.getByText('No files on disk yet', { exact: false })).toBeVisible()
 })
 
@@ -57,6 +58,7 @@ test('add a series with hydrated seasons and episodes', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /The Test Show/ })).toBeVisible()
   // Appears twice now: the season summary and the Status completeness pill.
   await expect(page.getByText('0/2 on disk').first()).toBeVisible()
+  await page.locator('.item-seasons > details > summary').click()
   await expect(page.getByRole('cell', { name: 'Pilot' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'Finale' })).toBeVisible()
 })
