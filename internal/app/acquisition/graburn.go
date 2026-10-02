@@ -42,7 +42,7 @@ const HistoryRegrabCapped = "regrab_capped"
 // release, or 0. Titles are normalized the same way matchStatus normalizes
 // them, so punctuation from an indexer cannot smuggle a duplicate past it.
 func (s *Service) alreadyInFlight(ctx context.Context, req GrabRequest) int64 {
-	rows, err := s.db.ListActiveDownloads(ctx)
+	rows, err := s.db.ListDownloadReservations(ctx)
 	if err != nil {
 		return 0
 	}
@@ -70,7 +70,7 @@ func normalizeRelease(s string) string {
 // counter column: the rows ARE the record, and a count derived from them
 // cannot drift from what actually happened.
 func (s *Service) regrabCapped(ctx context.Context, w domain.Wantable) (bool, int) {
-	rows, err := s.db.ListRecentDownloads(ctx)
+	rows, err := s.db.RecentFailedDownloads(ctx, time.Now().Add(-reGrabWindow))
 	if err != nil {
 		return false, 0
 	}

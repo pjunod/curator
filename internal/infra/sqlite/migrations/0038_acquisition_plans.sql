@@ -114,6 +114,33 @@ BEGIN UPDATE lifecycle_library_revision SET revision=revision+1 WHERE id=1; END;
 -- Refuse destructive downgrade while acquisition evidence exists.
 -- +goose StatementBegin
 CREATE TEMP TABLE acquisition_downgrade_guard(n INTEGER CHECK(n=0));
-INSERT INTO acquisition_downgrade_guard SELECT count(*) FROM acquisition_plans;
+INSERT INTO acquisition_downgrade_guard SELECT (SELECT count(*) FROM acquisition_plans)+(SELECT count(*) FROM downloads WHERE submission_phase!='submitted' OR parked_at>0 OR cleanup_pending=1 OR superseded=1);
 DROP TABLE acquisition_downgrade_guard;
 -- +goose StatementEnd
+
+DROP TRIGGER acquisition_indexers_insert;
+DROP TRIGGER acquisition_indexers_update;
+DROP TRIGGER acquisition_indexers_delete;
+DROP TRIGGER acquisition_download_clients_insert;
+DROP TRIGGER acquisition_download_clients_update;
+DROP TRIGGER acquisition_download_clients_delete;
+DROP TRIGGER acquisition_custom_formats_insert;
+DROP TRIGGER acquisition_custom_formats_update;
+DROP TRIGGER acquisition_custom_formats_delete;
+DROP INDEX download_plan_candidate;
+DROP INDEX download_failure_window;
+ALTER TABLE downloads DROP COLUMN plan_id;
+ALTER TABLE downloads DROP COLUMN candidate_key;
+ALTER TABLE downloads DROP COLUMN submission_phase;
+ALTER TABLE downloads DROP COLUMN execution_payload;
+ALTER TABLE downloads DROP COLUMN reserved_episodes;
+ALTER TABLE downloads DROP COLUMN parked_reason;
+ALTER TABLE downloads DROP COLUMN parked_at;
+ALTER TABLE downloads DROP COLUMN superseded;
+ALTER TABLE downloads DROP COLUMN observation;
+ALTER TABLE downloads DROP COLUMN cleanup_pending;
+DROP TABLE acquisition_plans;
+DROP TABLE indexer_request_usage;
+ALTER TABLE indexers DROP COLUMN daily_request_cap;
+ALTER TABLE indexers DROP COLUMN next_rss_at;
+ALTER TABLE indexers DROP COLUMN retry_at;

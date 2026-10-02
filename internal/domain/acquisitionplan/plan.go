@@ -130,16 +130,20 @@ func Build(in Input) (Plan, error) {
 			singles[e] = c
 		}
 	}
-	for _, a := range packs {
-		for _, b := range packs {
-			// Outcome-saturated packs must be interchangeable; below target nesting
-			// follows raw quality rank, which is also their outcome class.
-			if a.Pref.Class >= b.Pref.Class {
-				for _, e := range b.Eligible {
-					if !slices.Contains(a.Eligible, e) {
-						return Plan{}, fmt.Errorf("non-nested pack eligibility %q / %q", a.Key, b.Key)
-					}
-				}
+	sort.Slice(packs, func(i, j int) bool {
+		if packs[i].Pref.Class != packs[j].Pref.Class {
+			return packs[i].Pref.Class < packs[j].Pref.Class
+		}
+		return packs[i].Key < packs[j].Key
+	})
+	for i := 1; i < len(packs); i++ {
+		a, b := packs[i], packs[i-1]
+		if a.Pref.Class == b.Pref.Class && !slices.Equal(a.Eligible, b.Eligible) {
+			return Plan{}, fmt.Errorf("noninterchangeable equal-class packs %q / %q", a.Key, b.Key)
+		}
+		for _, e := range b.Eligible {
+			if _, ok := slices.BinarySearch(a.Eligible, e); !ok {
+				return Plan{}, fmt.Errorf("non-nested pack eligibility %q / %q", a.Key, b.Key)
 			}
 		}
 	}

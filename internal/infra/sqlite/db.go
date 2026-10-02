@@ -99,6 +99,11 @@ func (d *DB) Migrate(ctx context.Context) error {
 // have added. Deliberately not the whole schema — this is a tripwire for one
 // specific failure, not a substitute for the migrations.
 var requiredColumns = []struct{ table, column string }{
+	{"acquisition_plans", "decision"},
+	{"downloads", "plan_id"}, {"downloads", "submission_phase"}, {"downloads", "reserved_episodes"},
+	{"downloads", "observation"}, {"downloads", "cleanup_pending"},
+	{"indexers", "daily_request_cap"}, {"indexers", "next_rss_at"},
+	{"indexer_request_usage", "requested_at"},
 	{"media_items", "monitor"}, {"media_items", "monitor_since"}, {"media_items", "monitor_season"},
 	{"downloads", "transfer"},
 	{"completed_receipts", "path"},

@@ -2,7 +2,6 @@ package acquisition
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/acquisitionplan"
 	"github.com/pjunod/monarr/internal/domain/decision"
 	"github.com/pjunod/monarr/internal/domain/format"
 	"github.com/pjunod/monarr/internal/domain/language"
@@ -103,6 +103,8 @@ func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Relea
 // recent releases, match them against the wanted index, and grab everything
 // the decision engine accepts (blueprint §5.1 "RSS sync loop").
 func (s *Service) SyncRSS(ctx context.Context) error {
+	s.rssSweepMu.Lock()
+	defer s.rssSweepMu.Unlock()
 	wanted, err := s.Wanted(ctx)
 	if err != nil {
 		return err
@@ -124,7 +126,11 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 	grabbed := map[string]bool{} // wantable id → grabbed this run
 	runtimes := runtimeMemo{}
 	for _, cfg := range enabled {
-		indexer := s.newIndexer(cfg)
+		due, interval, err := s.db.RSSDue(ctx, cfg.ID, time.Now())
+		if err != nil || !due {
+			continue
+		}
+		indexer := s.budgetIndexer(cfg, "rss", false)
 		if provider, ok := indexer.(ports.IndexerCapabilitiesProvider); ok {
 			caps, capsErr := provider.Capabilities(ctx)
 			if capsErr != nil {
@@ -138,6 +144,8 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 		}
 		cctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
 		releases, err := indexer.FetchRSS(cctx)
+		_ = s.db.MarkRSSDispatched(ctx, cfg.ID, time.Now(), interval)
+		s.rememberIndexerDelay(ctx, cfg.ID, err)
 		cancel()
 		if err != nil {
 			s.log.Warn("rss: fetch failed", "indexer", cfg.Name, "err", err)
@@ -166,6 +174,23 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 				if why, bad := sizeImplausible(p.Quality, r, runtimes.of(ctx, s, w)); bad {
 					s.log.Info("rss: declined on size", "release", r.Title, "why", why.Reason)
 					continue
+				}
+				if ep, ok := w.(domain.EpisodeWantable); ok {
+					checkpoint := seasonCheckpoint{ItemID: ep.Item, CopyID: ep.Copy, Season: ep.Season}
+					_, _, _, targets, packEligible, e := s.seasonSnapshot(ctx, checkpoint)
+					if e != nil {
+						continue
+					}
+					if p.SeasonPack || (packEligible && len(targets) >= 2) {
+						if e = s.enqueueRSSSeason(ctx, ep, r, profile); e != nil {
+							return e
+						}
+						grabbed[string(w.ID())] = true
+						continue
+					}
+					if !exactWantedCandidate(p) {
+						continue
+					}
 				}
 				unlock, err := s.reservations.acquire(ctx, w)
 				if err != nil {
@@ -216,11 +241,24 @@ func (s *Service) BacklogSearch(ctx context.Context) error {
 		return err
 	}
 
+	wanted = missingFirst(wanted)
+	queued := map[string]bool{}
 	searched := 0
 	for _, w := range wanted {
 		if searched >= backlogPerRun {
 			s.log.Info("backlog: per-run cap reached", "cap", backlogPerRun)
 			break
+		}
+		if ep, ok := w.(domain.EpisodeWantable); ok {
+			key := seasonJobKey(ep.Item, ep.Copy, ep.Season)
+			if !queued[key] {
+				if err := s.enqueueSeason(ctx, ep.Item, ep.Copy, ep.Season, "backlog", !ep.OnDisk()); err != nil {
+					return err
+				}
+				queued[key] = true
+				searched++
+			}
+			continue
 		}
 		searched++
 		if _, err := s.searchAndGrabBest(ctx, w, enabled); err != nil {
@@ -317,6 +355,9 @@ func (s *Service) searchAndGrabBestWhere(ctx context.Context, w domain.Wantable,
 
 func (s *Service) searchAndGrabBestScoped(ctx context.Context, w domain.Wantable,
 	enabled []ports.IndexerConfig, allowed candidatePredicate, beforeGrab func() error) (searchTally, error) {
+	if pack, ok := w.(domain.SeasonWantable); ok {
+		return searchTally{}, s.enqueueSeason(ctx, pack.Item, pack.Copy, pack.Season, "automatic", true)
+	}
 	// Refuse an invalid caller snapshot explicitly. Re-resolving below is for
 	// freshness after reservation wait, not permission to silently substitute a
 	// different profile for a malformed or stale request.
@@ -353,6 +394,9 @@ func (s *Service) searchAndGrabBestScoped(ctx context.Context, w domain.Wantable
 
 func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantable,
 	enabled []ports.IndexerConfig, allowed candidatePredicate, beforeGrab func() error) (searchTally, error) {
+	if pack, ok := w.(domain.SeasonWantable); ok {
+		return searchTally{}, s.enqueueSeason(ctx, pack.Item, pack.Copy, pack.Season, "automatic", true)
+	}
 	var tally searchTally
 	profile, err := s.db.GetProfile(ctx, w.ProfileID())
 	if err != nil {
@@ -375,7 +419,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 		wg.Add(1)
 		go func(cfg ports.IndexerConfig) {
 			defer wg.Done()
-			indexer := s.newIndexer(cfg)
+			indexer := s.budgetIndexer(cfg, "search", true)
 			eligible := func(rs []ports.Release) bool {
 				eligible := false
 				for _, release := range rs {
@@ -393,6 +437,9 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 						continue
 					}
 					if _, bad := sizeImplausible(parsed.Quality, release, runtime); bad {
+						continue
+					}
+					if _, episode := w.(domain.EpisodeWantable); episode && !profile.Met(parsed.Quality, true) {
 						continue
 					}
 					eligible = true
@@ -418,6 +465,26 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 		evidence domain.MatchEvidence
 	}
 	better := func(a, b *scored) bool { // is a strictly better than b
+		if ep, ok := w.(domain.EpisodeWantable); ok {
+			key := acquisitionplan.EpisodeKey(ep.EpisodeID)
+			candidate := func(c *scored, k string) acquisitionplan.Candidate {
+				class := quality.Rank(c.q)
+				if profile.Met(c.q, true) {
+					class = acquisitionplan.TargetMet
+				}
+				return acquisitionplan.Candidate{Key: acquisitionplan.CandidateKey(k), Pref: acquisitionplan.Preference{Class: class, QualityRank: quality.Rank(c.q), FormatScore: c.score}, Eligible: []acquisitionplan.EpisodeKey{key}, Payload: []acquisitionplan.EpisodeKey{key}, SizeBytes: c.r.Size, SizeKnown: c.r.Size > 0, Protocol: c.r.Protocol, Seeders: c.r.Seeders, SeedersKnown: c.r.SeedersKnown}
+			}
+			ka, kb := a.r.Title+"|"+a.r.GUID, b.r.Title+"|"+b.r.GUID
+			if ka == kb {
+				ka += "|" + a.r.DownloadURL
+				kb += "|" + b.r.DownloadURL
+			}
+			if ka == kb {
+				return false
+			}
+			p, e := acquisitionplan.Build(acquisitionplan.Input{Episodes: []acquisitionplan.EpisodeKey{key}, Candidates: []acquisitionplan.Candidate{candidate(a, ka), candidate(b, kb)}})
+			return e == nil && len(p.Releases) > 0 && string(p.Releases[0]) == ka
+		}
 		if quality.Rank(a.q) != quality.Rank(b.q) {
 			return quality.Rank(a.q) > quality.Rank(b.q)
 		}
@@ -609,6 +676,10 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 	if err != nil {
 		return out, err
 	}
+	if item.Kind == domain.KindSeries {
+		return s.enqueueItemSeasons(ctx, item)
+	}
+
 	enabled, err := s.enabledIndexers(ctx)
 	if err != nil {
 		return out, err
@@ -627,39 +698,6 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 			}
 			targets = append(targets, w)
 			return nil
-		}
-		profileID := item.QualityProfileID
-		if cp != nil {
-			profileID = cp.QualityProfileID
-		}
-		profile, err := s.db.GetProfile(ctx, profileID)
-		if err != nil {
-			return err
-		}
-		today := time.Now().UTC().Format(time.DateOnly)
-		for _, season := range item.Seasons {
-			if !season.Monitored || len(season.Episodes) == 0 {
-				continue
-			}
-			w, err := s.targetCopy(ctx, item, season.Number, 0, cp)
-			if err != nil {
-				return err
-			}
-			pack := w.(domain.SeasonWantable)
-			var episodes []domain.Wantable
-			for i, ep := range pack.Episodes {
-				meta := season.Episodes[i]
-				if !meta.Monitored || meta.AirDate == "" || meta.AirDate > today || !wants(profile, ep) {
-					continue
-				}
-				episodes = append(episodes, ep)
-			}
-			// A partial selection, future episode or satisfied file rules out a
-			// whole-season replacement. Episodes already downloading do too.
-			if season.Number != 0 && len(episodes) == len(pack.Episodes) && len(s.notInFlight(ctx, episodes)) == len(episodes) {
-				targets = append(targets, pack)
-			}
-			targets = append(targets, episodes...)
 		}
 		return nil
 	}
@@ -690,15 +728,7 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 			if _, episode := w.(domain.EpisodeWantable); episode {
 				allowed = exactWantedCandidate
 			}
-			var beforeGrab func() error
-			if pack, ok := w.(domain.SeasonWantable); ok {
-				beforeGrab = func() error { return s.validateAutoSearchPack(ctx, pack) }
-			}
-			tally, err := s.searchAndGrabBestScoped(ctx, w, enabled, allowed, beforeGrab)
-			if errors.Is(err, errAutoSearchPackChanged) {
-				// The pack was speculative; its episode fallbacks remain targets.
-				continue
-			}
+			tally, err := s.searchAndGrabBestScoped(ctx, w, enabled, allowed, nil)
 			t.Seen, t.Matched, t.Accepted = tally.Seen, tally.Matched, tally.Accepted
 			t.Grabbed = tally.Grabbed
 			if err != nil {
@@ -715,65 +745,4 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 		"targets", len(out.Targets), "grabbed", out.Grabbed)
 	s.InvalidateWanted()
 	return out, nil
-}
-
-// A season pack is only an optimization for a fully wanted season. The
-// planner's snapshot is not authority after waiting for an acquisition lock
-// or indexer response; inspect the children again at both boundaries.
-var errAutoSearchPackChanged = errors.New("season pack eligibility changed")
-
-func (s *Service) validateAutoSearchPack(ctx context.Context, planned domain.SeasonWantable) error {
-	item, err := s.db.GetMediaItemFull(ctx, planned.Item)
-	if err != nil {
-		return err
-	}
-	var cp *domain.MediaCopy
-	if planned.Copy != 0 {
-		for i := range item.Copies {
-			if item.Copies[i].ID == planned.Copy {
-				cp = &item.Copies[i]
-				break
-			}
-		}
-		if cp == nil {
-			return errAutoSearchPackChanged
-		}
-	}
-	w, err := s.targetCopy(ctx, item, planned.Season, 0, cp)
-	if err != nil {
-		return err
-	}
-	pack := w.(domain.SeasonWantable)
-	if !pack.Monitored() || len(pack.Episodes) == 0 {
-		return errAutoSearchPackChanged
-	}
-	profile, err := s.db.GetProfile(ctx, pack.ProfileID())
-	if err != nil {
-		return err
-	}
-	today := time.Now().UTC().Format(time.DateOnly)
-	for _, season := range item.Seasons {
-		if season.Number != pack.Season {
-			continue
-		}
-		for _, ep := range season.Episodes {
-			if !ep.Monitored || ep.AirDate == "" || ep.AirDate > today {
-				return errAutoSearchPackChanged
-			}
-		}
-	}
-	children := make([]domain.Wantable, 0, len(pack.Episodes))
-	for _, ep := range pack.Episodes {
-		if !wants(profile, ep) {
-			return errAutoSearchPackChanged
-		}
-		children = append(children, ep)
-	}
-	if len(s.notInFlight(ctx, children)) != len(children) {
-		return errAutoSearchPackChanged
-	}
-	if capped, _ := s.regrabCapped(ctx, pack); capped {
-		return errAutoSearchPackChanged
-	}
-	return nil
 }

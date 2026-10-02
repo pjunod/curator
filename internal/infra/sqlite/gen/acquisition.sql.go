@@ -1478,7 +1478,7 @@ func (q *Queries) UpdateDownloadControl(ctx context.Context, arg UpdateDownloadC
 
 const updateDownloadHandoff = `-- name: UpdateDownloadHandoff :exec
 UPDATE downloads
-SET state = ?, progress = ?, error = ?, save_path = ?, import_path = ?,
+SET parked_at=CASE WHEN sqlc.arg(state) IN ('imported','failed') AND parked_reason NOT LIKE 'operator cancellation%' AND submission_phase NOT IN ('submitting','uncertain') THEN 0 ELSE parked_at END, parked_reason=CASE WHEN sqlc.arg(state) IN ('imported','failed') AND parked_reason NOT LIKE 'operator cancellation%' AND submission_phase NOT IN ('submitting','uncertain') AND cleanup_pending=0 THEN '' ELSE parked_reason END, state = ?8, progress = ?, error = ?, save_path = ?, import_path = ?,
     handoff_log = ?, updated_at = ?
 WHERE id = ?
 `
@@ -1509,7 +1509,7 @@ func (q *Queries) UpdateDownloadHandoff(ctx context.Context, arg UpdateDownloadH
 }
 
 const updateDownloadState = `-- name: UpdateDownloadState :exec
-UPDATE downloads SET state = ?, progress = ?, error = ?, updated_at = ?
+UPDATE downloads SET parked_at=CASE WHEN sqlc.arg(state) IN ('imported','failed') AND parked_reason NOT LIKE 'operator cancellation%' AND submission_phase NOT IN ('submitting','uncertain') THEN 0 ELSE parked_at END, parked_reason=CASE WHEN sqlc.arg(state) IN ('imported','failed') AND parked_reason NOT LIKE 'operator cancellation%' AND submission_phase NOT IN ('submitting','uncertain') AND cleanup_pending=0 THEN '' ELSE parked_reason END, state = ?5, progress = ?, error = ?, updated_at = ?
 WHERE id = ?
 `
 

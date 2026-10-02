@@ -131,6 +131,8 @@ type Service struct {
 	db                *sqlite.DB
 	bus               *bus.Bus
 	log               *slog.Logger
+	rssSweepMu        sync.Mutex
+	planDispatchMu    sync.Mutex
 	newIndexer        IndexerFactory
 	newClient         ClientFactory
 
@@ -552,7 +554,7 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 		wg.Add(1)
 		go func(cfg ports.IndexerConfig) {
 			defer wg.Done()
-			indexer := s.newIndexer(cfg)
+			indexer := s.budgetIndexer(cfg, "interactive", false)
 			rs, reasons := s.executeIndexerSearch(ctx, indexer, target, true, nil)
 			mu.Lock()
 			releases = append(releases, rs...)
@@ -831,7 +833,7 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	// a download running in a client that Monarr has no record of, which
 	// is the worse of the two failures by a distance.
 	allocationCtx, releaseAllocation := s.lockStorageDecision(ctx)
-	active, activeErr := s.db.ListActiveDownloads(allocationCtx)
+	active, activeErr := s.db.ListDownloadReservations(allocationCtx)
 	if activeErr != nil {
 		releaseAllocation()
 		return 0, activeErr
@@ -853,6 +855,12 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		return 0, err
 	}
 	transfer := newTransferID(id)
+	if err := s.db.SetDownloadHandle(ctx, id, "", transfer); err != nil {
+		return id, err
+	}
+	if err := s.db.SetSubmissionPhase(ctx, id, "submitting"); err != nil {
+		return id, err
+	}
 	// Open the handoff trace BEFORE the client is asked, so every step from
 	// here is laid out. A client that finishes instantly (a cached torrent, a
 	// test double) can push its completion before this goroutine gets back
@@ -867,15 +875,11 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		ctx, s.newClient(*cfg), req.DownloadURL, cfg.Category, req.Title, transfer, priority,
 	)
 	if err != nil {
-		// Nothing downstream ever saw this row: no event, no history, and
-		// the only trace entry is the one above. Dropping it is the honest
-		// undo.
-		if delErr := s.db.DeleteDownload(ctx, id); delErr != nil {
-			s.log.Warn("grab: could not remove the row for a rejected add",
-				"download", id, "err", delErr)
-		}
-		return 0, err
+		_ = s.db.SetSubmissionPhase(context.WithoutCancel(ctx), id, "uncertain")
+		_ = s.db.UpdateDownloadState(context.WithoutCancel(ctx), id, "grabbed", 0, "submission uncertain; reconciling before retry")
+		return id, err
 	}
+	_ = s.db.SetSubmissionPhase(ctx, id, "submitted")
 	if err := s.db.SetDownloadHandle(ctx, id, string(handle), transfer); err != nil {
 		// The download IS running; losing the handle would orphan it, so
 		// this is loud rather than fatal — the title-match fallback in
@@ -933,8 +937,23 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 		if !cfg.Enabled {
 			continue
 		}
-		statuses, err := s.newClient(cfg).Statuses(ctx)
+		client := s.newClient(cfg)
+		var statuses []ports.DownloadStatus
+		var err error
+		complete := false
+		if inventory, ok := client.(ports.CompleteInventory); ok {
+			// Use one fresh inventory, rather than counting a second poll.
+			statuses, complete, err = inventory.Inventory(ctx)
+		} else {
+			statuses, err = client.Statuses(ctx)
+		}
 		s.noteContact(cfg.ID, err)
+		for _, dl := range byClient[cfg.ID] {
+			s.observeUncertain(ctx, dl, cfg, statuses, err == nil && complete)
+			if err != nil {
+				s.resetStallObservation(ctx, dl)
+			}
+		}
 		if err != nil {
 			s.log.Warn("queue: client poll failed", "client", cfg.Name, "err", err)
 			continue
@@ -1001,7 +1020,24 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		dl = fresh
 	}
 
+	if dl.Superseded {
+		_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "Possible duplicate: late original submission cannot import automatically")
+		return
+	}
+	if dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" {
+		_ = s.db.SetSubmissionPhase(ctx, dl.ID, "submitted")
+		if dl.Handle == "" {
+			_ = s.db.SetDownloadHandle(ctx, dl.ID, string(st.Handle), dl.Transfer)
+			dl.Handle = string(st.Handle)
+		}
+	}
+
 	if !s.acceptDownloadControl(ctx, &dl, &st) {
+		return
+	}
+
+	s.observeTorrentStall(ctx, dl, cfg, st)
+	if fresh, e := s.db.GetDownload(ctx, dl.ID); e == nil && fresh.State == "failed" {
 		return
 	}
 
@@ -1128,6 +1164,12 @@ func (s *Service) handleRemoved(ctx context.Context, dl sqlite.Download, progres
 	if reason == "" {
 		reason = "removed in the download client"
 	}
+	if dl.PlanID != 0 {
+		// Persist the operator fence; failure fallback and automatic retry must
+		// never reinterpret a deliberate removal as a failed release.
+		_ = s.db.ParkDownload(ctx, dl.ID, "operator cancellation; deliberate Search required")
+		_, _ = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET state='cancel_requested' WHERE id=? AND state IN ('admitted','dispatching','active')`, dl.PlanID)
+	}
 	s.advance(ctx, &dl, "failed", progress, reason, stepFailed, traced(reason, source))
 	_ = s.db.AddHistory(ctx, "failed", dl.MediaItemID, dl.ReleaseTitle,
 		map[string]any{"reason": reason, "removed": true})
@@ -1190,6 +1232,13 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 	}
 	s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: reason})
 
+	if item, e := s.db.GetMediaItemFull(ctx, dl.MediaItemID); e == nil && item.Kind == domain.KindSeries {
+		if dl.PlanID != 0 {
+			_, _ = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET replan_pending=1 WHERE id=?`, dl.PlanID)
+		}
+		_ = s.enqueueSeason(ctx, dl.MediaItemID, dl.CopyID, dl.Season, "failed_acquisition", true)
+		return
+	}
 	// Automatic re-search: try to replace the failed grab right away.
 	enabled, err := s.enabledIndexers(ctx)
 	if err != nil || len(enabled) == 0 {
@@ -1283,10 +1332,16 @@ func matchStatus(dl sqlite.Download, statuses []ports.DownloadStatus) (ports.Dow
 		return strings.ToLower(strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(s))
 	}
 	want := norm(dl.ReleaseTitle)
+	var matched ports.DownloadStatus
+	count := 0
 	for _, st := range statuses {
 		if norm(st.Name) == want {
-			return st, true
+			matched = st
+			count++
 		}
+	}
+	if count == 1 {
+		return matched, true
 	}
 	return ports.DownloadStatus{}, false
 }
@@ -1309,6 +1364,39 @@ func (s *Service) Queue(ctx context.Context) ([]sqlite.Download, error) {
 func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool) error {
 	dl, err := s.db.GetDownload(ctx, id)
 	if err != nil {
+		return err
+	}
+	if dl.PlanID != 0 || dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" {
+		unlock := s.lockDownload(id)
+		defer unlock()
+		if dl.SubmissionPhase == "pending" {
+			_, err = s.db.W.ExecContext(ctx, `UPDATE downloads SET state='failed',submission_phase='rejected',superseded=1,wantables='[]',reserved_episodes='[]',error='operator cancelled unsubmitted intent' WHERE id=? AND submission_phase='pending'`, id)
+		} else {
+			if fromClient && dl.Handle != "" {
+				cfg, e := s.db.GetDownloadClient(ctx, dl.ClientID)
+				if e != nil {
+					return e
+				}
+				client := s.newClient(cfg)
+				if e = client.Remove(ctx, ports.Handle(dl.Handle), false); e != nil {
+					return e
+				}
+				statuses, e := client.Statuses(ctx)
+				if e != nil {
+					return e
+				}
+				if _, present := matchStatus(dl, statuses); present {
+					return fmt.Errorf("client removal awaiting confirmation")
+				}
+			}
+			err = s.db.ParkDownload(ctx, id, "operator cancellation; custody retained for review")
+		}
+		if err != nil {
+			return err
+		}
+		if dl.PlanID != 0 {
+			_, err = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET state='cancel_requested' WHERE id=? AND state IN ('admitted','dispatching','active')`, dl.PlanID)
+		}
 		return err
 	}
 	if fromClient && dl.Handle != "" {

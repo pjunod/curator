@@ -60,6 +60,16 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 				return 0, fmt.Errorf("episode custody changed")
 			}
 		}
+		for _, ep := range dl.ReservedEpisodes {
+			var n int
+			err = tx.QueryRowContext(ctx, `SELECT count(*) FROM downloads WHERE media_item_id=? AND COALESCE(copy_id,0)=? AND superseded=0 AND (state IN ('planned','grabbed','downloading','downloaded','awaiting_import','importing') OR submission_phase IN ('submitting','uncertain') OR parked_at>0) AND EXISTS(SELECT 1 FROM json_each(reserved_episodes) WHERE value=?)`, dl.MediaItemID, dl.CopyID, ep).Scan(&n)
+			if err != nil {
+				return 0, err
+			}
+			if n > 0 {
+				return 0, fmt.Errorf("episode custody changed")
+			}
+		}
 		wants, _ := json.Marshal(dl.WantableIDs)
 		eps, _ := json.Marshal(dl.ReservedEpisodes)
 		evidence, _ := json.Marshal(dl.MatchEvidence)

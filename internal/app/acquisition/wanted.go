@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -198,12 +199,15 @@ func (s *Service) wantedEpisodes(item domain.MediaItem, profile quality.Profile,
 // copy. Suppressing the whole wantable stopped us grabbing a DIFFERENT one,
 // which is exactly what should happen next.
 func (s *Service) notInFlight(ctx context.Context, wanted []domain.Wantable) []domain.Wantable {
-	active, err := s.db.ListActiveDownloads(ctx)
+	active, err := s.db.ListDownloadReservations(ctx)
 	if err != nil {
 		return wanted
 	}
 	inFlight := map[string]bool{}
 	for _, dl := range active {
+		if dl.State == "failed" && dl.CleanupPending {
+			continue
+		}
 		for _, id := range dl.WantableIDs {
 			inFlight[id] = true
 		}
@@ -220,7 +224,13 @@ func (s *Service) notInFlight(ctx context.Context, wanted []domain.Wantable) []d
 			if ep.Copy != 0 {
 				packID = fmt.Sprintf("%s:c%d", packID, ep.Copy)
 			}
-			if inFlight[packID] {
+			reserved := false
+			for _, dl := range active {
+				if dl.MediaItemID == ep.Item && dl.CopyID == ep.Copy && !(dl.State == "failed" && dl.CleanupPending) && slices.Contains(dl.ReservedEpisodes, ep.EpisodeID) {
+					reserved = true
+				}
+			}
+			if inFlight[packID] || reserved {
 				continue
 			}
 		}

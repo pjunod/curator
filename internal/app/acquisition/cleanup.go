@@ -113,6 +113,7 @@ type downloadRef struct {
 // Attempts rotate so a blocked row cannot starve later payloads. The batch
 // is capped so a client is never handed hundreds of deletions at once.
 func (s *Service) CleanupPayloads(ctx context.Context) error {
+	s.cleanupPartialPayloads(ctx)
 	rows, err := s.db.ImportedCleanupCandidates(ctx, cleanupPerSweep)
 	if err != nil {
 		return err

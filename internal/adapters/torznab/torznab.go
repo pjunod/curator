@@ -25,8 +25,10 @@ import (
 
 // Client speaks the Newznab/Torznab API for one configured indexer.
 type Client struct {
-	cfg  ports.IndexerConfig
-	http *http.Client
+	cfg    ports.IndexerConfig
+	http   *http.Client
+	gate   func(context.Context) (func(), error)
+	result func(context.Context, error)
 }
 
 var _ ports.Indexer = (*Client)(nil)
@@ -55,6 +57,10 @@ func New(cfg ports.IndexerConfig) *Client {
 // rss is the subset of the feed we consume.
 type rss struct {
 	Channel struct {
+		Response *struct {
+			Offset int `xml:"offset,attr"`
+			Total  int `xml:"total,attr"`
+		} `xml:"response"`
 		Items []item `xml:"item"`
 	} `xml:"channel"`
 }
@@ -218,16 +224,34 @@ func capabilityRetryAfter(err error) time.Time {
 }
 
 func capabilityFatal(err error) bool {
+	var deferred interface{ DeferredUntil() time.Time }
+	if errors.As(err, &deferred) {
+		return true
+	}
 	var remote *ports.RemoteError
 	return errors.As(err, &remote) && (remote.Category == ports.RemoteAuth || remote.Category == ports.RemoteRateLimit)
 }
 
 func (c *Client) call(ctx context.Context, params url.Values) ([]byte, error) {
+	body, err := c.wireCall(ctx, params)
+	if c.result != nil {
+		c.result(ctx, err)
+	}
+	return body, err
+}
+func (c *Client) wireCall(ctx context.Context, params url.Values) ([]byte, error) {
 	params.Set("apikey", c.cfg.APIKey)
 	full := strings.TrimRight(c.cfg.URL, "/") + "/api?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
 	if err != nil {
 		return nil, err
+	}
+	if c.gate != nil {
+		release, e := c.gate(ctx)
+		if e != nil {
+			return nil, e
+		}
+		defer release()
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -295,7 +319,24 @@ func (c *Client) FetchRSS(ctx context.Context) ([]ports.Release, error) {
 // (ADR 0006) pin the Newznab book categories — 7000s for ebooks plus 3030
 // for audiobooks — unless the indexer config narrows them.
 func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Release, error) {
+	p, e := c.SearchPage(ctx, q, 0)
+	return p.Releases, e
+}
+func (c *Client) SearchPage(ctx context.Context, q domain.SearchQuery, offset int) (ports.IndexerPage, error) {
+	rows, metadata, e := c.searchPage(ctx, q, offset)
+	return ports.IndexerPage{Releases: rows, Offset: offset, Total: metadata.total, MetadataKnown: metadata.known, Complete: !metadata.known || offset+len(rows) >= metadata.total, NextOffset: offset + len(rows)}, e
+}
+
+type pageMetadata struct {
+	total int
+	known bool
+}
+
+func (c *Client) searchPage(ctx context.Context, q domain.SearchQuery, offset int) ([]ports.Release, pageMetadata, error) {
 	params := url.Values{}
+	if offset > 0 {
+		params.Set("offset", strconv.Itoa(offset))
+	}
 	mode := q.Mode
 	if mode == "" {
 		if q.Season > 0 {
@@ -349,11 +390,11 @@ func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Rele
 
 	body, err := c.call(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, pageMetadata{}, err
 	}
 	var feed rss
 	if err := xml.Unmarshal(body, &feed); err != nil {
-		return nil, fmt.Errorf("indexer %s: bad XML: %w", c.cfg.Name, err)
+		return nil, pageMetadata{}, fmt.Errorf("indexer %s: bad XML: %w", c.cfg.Name, err)
 	}
 
 	out := make([]ports.Release, 0, len(feed.Channel.Items))
@@ -382,7 +423,9 @@ func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Rele
 			v, _ := strconv.Atoi(a.Value)
 			switch a.Name {
 			case "seeders":
-				r.Seeders = v
+				seeders, parseErr := strconv.Atoi(a.Value)
+				r.Seeders = max(0, seeders)
+				r.SeedersKnown = parseErr == nil && seeders >= 0
 			case "peers", "leechers":
 				r.Peers = v
 			case "size":
@@ -396,7 +439,15 @@ func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Rele
 			out = append(out, r)
 		}
 	}
-	return out, nil
+	m := pageMetadata{}
+	if feed.Channel.Response != nil {
+		if feed.Channel.Response.Total < 0 || feed.Channel.Response.Offset != offset {
+			return nil, pageMetadata{}, &ports.RemoteError{Category: ports.RemoteInvalidResponse, Cause: errors.New("malformed pagination metadata")}
+		}
+		m.known = true
+		m.total = feed.Channel.Response.Total
+	}
+	return out, m, nil
 }
 
 func releaseIdentities(attrs []struct {
@@ -493,3 +544,7 @@ func (c *Client) Test(ctx context.Context) error {
 	_, err := c.capabilities(ctx, true)
 	return err
 }
+
+func (c *Client) SetRequestGate(gate func(context.Context) (func(), error)) { c.gate = gate }
+
+func (c *Client) SetRequestResult(result func(context.Context, error)) { c.result = result }

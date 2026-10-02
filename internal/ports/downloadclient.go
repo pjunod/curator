@@ -129,7 +129,11 @@ func (c *DownloadControl) Held() bool {
 }
 
 type DownloadStatus struct {
-	Control *DownloadControl
+	BytesCompleted   *int64
+	ConnectedSeeds   *int
+	Availability     *float64
+	OperationalState string
+	Control          *DownloadControl
 
 	Handle   Handle
 	Name     string
@@ -326,4 +330,10 @@ type CapacityReporter interface {
 // SameJobResumer resumes the existing handle after resource admission.
 type SameJobResumer interface {
 	Resume(context.Context, Handle) error
+}
+
+// CompleteInventory is optional evidence that includes all live and retained
+// historical jobs. A bounded history response cannot prove submission absence.
+type CompleteInventory interface {
+	Inventory(context.Context) ([]DownloadStatus, bool, error)
 }

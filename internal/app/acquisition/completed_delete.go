@@ -63,11 +63,17 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 			return fmt.Errorf("path overlaps protected library or recovery storage")
 		}
 	}
-	active, err := s.db.ListActiveDownloads(ctx)
+	active, err := s.db.ListDownloadReservations(ctx)
 	if err != nil {
 		return err
 	}
 	for _, dl := range active {
+		if own, ok := ctx.Value(partialCleanupIDKey{}).(int64); ok && dl.ID == own && dl.State == "failed" && dl.CleanupPending && filepath.Clean(dl.ImportPath) == filepath.Clean(path) {
+			continue
+		}
+		if dl.State == "planned" {
+			continue
+		}
 		candidate := dl.ImportPath
 		if candidate == "" {
 			candidate = dl.SavePath
@@ -78,6 +84,17 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 		candidate = storagePath(candidate, roots)
 		if within(path, candidate) || within(candidate, path) {
 			return fmt.Errorf("download %d still owns this path; finish or cancel it first", dl.ID)
+		}
+	}
+	placements, err := s.db.PendingPlacements(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range placements {
+		for _, ref := range []string{p.Source, p.Target, p.Temporary, p.Backup} {
+			if ref != "" && (within(path, ref) || within(ref, path)) {
+				return fmt.Errorf("pending placement retains this path")
+			}
 		}
 	}
 	if err := rejectSymlinks(selected.Path, false); err != nil {

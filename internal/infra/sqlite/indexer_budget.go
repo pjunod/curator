@@ -55,6 +55,7 @@ func (d *DB) ReserveIndexerRequest(ctx context.Context, id int64, bucket string,
 	b := RequestBudget(cap)
 	used := map[string]int{}
 	short := 0
+	shortRelease := now.Add(12 * time.Hour)
 	next := now.Add(24 * time.Hour)
 	rows, err := tx.QueryContext(ctx, `SELECT bucket,units,requested_at,automatic FROM indexer_request_usage WHERE indexer_id=? AND requested_at>? ORDER BY requested_at`, id, now.Add(-24*time.Hour).UnixMilli())
 	if err != nil {
@@ -70,6 +71,10 @@ func (d *DB) ReserveIndexerRequest(ctx context.Context, id int64, bucket string,
 		used[k] += n
 		if a != 0 && ts > now.Add(-12*time.Hour).UnixMilli() {
 			short += n
+			release := time.UnixMilli(ts).Add(12 * time.Hour)
+			if release.Before(shortRelease) {
+				shortRelease = release
+			}
 		}
 		release := time.UnixMilli(ts).Add(24 * time.Hour)
 		if release.Before(next) {
@@ -109,8 +114,8 @@ func (d *DB) ReserveIndexerRequest(ctx context.Context, id int64, bucket string,
 		}
 	}
 	if !available {
-		if automatic && short > 0 && now.Add(12*time.Hour).Before(next) {
-			next = now.Add(12 * time.Hour)
+		if automatic && short > 0 && shortRelease.Before(next) {
+			next = shortRelease
 		}
 		return &BudgetDeferred{next, "indexer " + bucket + " request allowance exhausted"}
 	}

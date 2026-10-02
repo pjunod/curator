@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -271,6 +272,15 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	}
 	if scope.Dest == "" {
 		return ImportResult{}, ErrNoLibraryFolder
+	}
+
+	if dl.PlanID != 0 {
+		allowed, e := s.effectiveImportAllowlist(ctx, dl)
+		if e != nil {
+			return ImportResult{}, e
+		}
+		scope.Planned = true
+		scope.AllowedEpisodeIDs = allowed
 	}
 
 	isMedia := filename.IsVideo
@@ -650,12 +660,14 @@ func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) 
 // primary), its destination folder, its quality profile, and what produced
 // the payload.
 type importScope struct {
-	Manual       bool
-	Attempt      string
-	DeferCleanup bool
-	CopyID       int64
-	Dest         string
-	ProfileID    int64
+	AllowedEpisodeIDs []int64
+	Planned           bool
+	Manual            bool
+	Attempt           string
+	DeferCleanup      bool
+	CopyID            int64
+	Dest              string
+	ProfileID         int64
 	// Release and Indexer name the thing being imported. They ride along here
 	// rather than as two more parameters on three near-identical signatures,
 	// and they exist so each placed file can remember its own origin —
@@ -836,6 +848,9 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		epID, err := s.db.GetEpisodeID(ctx, item.ID, season, epNum)
 		if err != nil {
 			return placement{}, fmt.Errorf("indivisible file includes unknown episode S%02dE%02d", season, epNum)
+		}
+		if scope.Planned && !slices.Contains(scope.AllowedEpisodeIDs, epID) {
+			return placement{}, fmt.Errorf("episode %d outside planned import allowlist", epNum)
 		}
 		epIDs = append(epIDs, epID)
 		for _, se := range item.Seasons {

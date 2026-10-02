@@ -9,31 +9,33 @@ import (
 
 // IndexerConfig is a stored Newznab/Torznab endpoint.
 type IndexerConfig struct {
-	ID         int64
-	Name       string
-	URL        string
-	APIKey     string
-	Protocol   string // torrent | usenet
-	Categories []int
-	Enabled    bool
+	ID              int64
+	Name            string
+	URL             string
+	APIKey          string
+	Protocol        string // torrent | usenet
+	Categories      []int
+	DailyRequestCap int
+	Enabled         bool
 }
 
 // Release is one indexer result (transient; persisted only in history and
 // on grab — blueprint §4.2).
 type Release struct {
-	GUID        string                 `json:"guid,omitempty"`
-	Title       string                 `json:"title"`
-	DownloadURL string                 `json:"downloadUrl"`
-	InfoURL     string                 `json:"infoUrl,omitempty"`
-	Size        int64                  `json:"size"`
-	PublishDate time.Time              `json:"publishDate"`
-	Seeders     int                    `json:"seeders"`
-	Peers       int                    `json:"peers"`
-	Indexer     string                 `json:"indexer"`
-	IndexerID   int64                  `json:"indexerId"`
-	Protocol    string                 `json:"protocol"`
-	IDs         domain.ExternalIDs     `json:"ids,omitempty"`
-	IDIssues    []domain.IdentityIssue `json:"idIssues,omitempty"`
+	GUID         string                 `json:"guid,omitempty"`
+	Title        string                 `json:"title"`
+	DownloadURL  string                 `json:"downloadUrl"`
+	InfoURL      string                 `json:"infoUrl,omitempty"`
+	Size         int64                  `json:"size"`
+	PublishDate  time.Time              `json:"publishDate"`
+	SeedersKnown bool                   `json:"seedersKnown"`
+	Seeders      int                    `json:"seeders"`
+	Peers        int                    `json:"peers"`
+	Indexer      string                 `json:"indexer"`
+	IndexerID    int64                  `json:"indexerId"`
+	Protocol     string                 `json:"protocol"`
+	IDs          domain.ExternalIDs     `json:"ids,omitempty"`
+	IDIssues     []domain.IdentityIssue `json:"idIssues,omitempty"`
 }
 
 // IndexerSearchCapability describes one advertised search mode. Known=false
@@ -73,4 +75,25 @@ type Indexer interface {
 	// the standard Torznab RSS mode), for the Phase 3 sync loop.
 	FetchRSS(ctx context.Context) ([]Release, error)
 	Test(ctx context.Context) error
+}
+
+// IndexerPage distinguishes bounded responses from advertised omitted pages.
+type IndexerPage struct {
+	Releases      []Release
+	Offset, Total int
+	MetadataKnown bool
+	Complete      bool
+	NextOffset    int
+}
+type PagedIndexer interface {
+	SearchPage(context.Context, domain.SearchQuery, int) (IndexerPage, error)
+}
+
+// RequestGateInstaller applies accounting/serialization to every actual wire call.
+type RequestGateInstaller interface {
+	SetRequestGate(func(context.Context) (func(), error))
+}
+
+type RequestResultInstaller interface {
+	SetRequestResult(func(context.Context, error))
 }
