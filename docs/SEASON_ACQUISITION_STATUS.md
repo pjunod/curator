@@ -1,6 +1,6 @@
 # Season acquisition — implementation and verification status
 
-**Status:** adversarial review · **Updated:** 2026-10-01 · **Baseline:** `08af106`
+**Status:** final validation · **Updated:** 2026-10-01 · **Baseline:** `08af106`
 
 Companion to [the implementation contract](plan-season-acquisition.md) and
 [the specification review](plan-season-acquisition-review.md). This page records
@@ -42,11 +42,25 @@ while application checks remain pinned to Go 1.25.7. Final checks follow adversa
 
 ## Adversarial review
 
-Two independent review passes are running against the complete implementation
-at `fd8c63a`: execution/discovery/API and optimizer/importer/migration safety.
-Runtime tests remain unrun until findings are addressed. Backend compile,
-production web build, and mobile TypeScript compile pass at this revision.
-The single PR opens after review so its automatic CI starts after the review gate.
+Two independent adversarial reviews inspected `fd8c63a`, then verified fixes
+through `66358dc`. Both report all merge blockers resolved and no further
+blockers in the fixes. No tests ran during their review. Final gates start now.
+
+| Finding | Resolution |
+|---|---|
+| Lost receipt triggers on table rebuild | Restore triggers; prior-schema migration/receipt regression. |
+| Multipart and unassigned/untracked target protection | Same-attempt digest exclusions; affirmative destination replacement authority. |
+| Fallback/manual reservation races | Common import/admission mutex; symmetric overlap and conditional pending supersession. |
+| Manual selection cancelled submitted siblings | Narrow supersession preserves unaffected submitted import authority. |
+| Cancellation fence erased by polling | Preserve operator fence and reject late automatic publication. |
+| Uncertain/terminal row erased while placement unresolved | Persist placement download association; atomic deletion guards. |
+| Deterministic refusal orphaned placement journal | Validate before journal; identity-checked rollback on resumed refusal. |
+| Successful empty-handle qBittorrent submission never learned hash | Persist unique matched handle and retire exact current handle. |
+| Caps outages vetoed healthy providers | Durable initialization retries and strict automatic capability evidence. |
+| Checkpoint overflow repeated failed request | Explicit partial scope with bounded retained evidence. |
+| Pagination used filtered candidate count | Cursor advances by raw wire item count. |
+| Cap field rendered on clients | Correct Add indexer form and saved cap dialog. |
+| Unsafe partial cleanup starved later rows | Rotate failed attempts without releasing custody. |
 
 ## Recorded implementation decisions
 
