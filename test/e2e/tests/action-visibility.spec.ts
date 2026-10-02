@@ -20,6 +20,7 @@ for (const width of [390, 1280]) {
       await route.fulfill({ json: [] })
     })
     await page.goto('/library/9875')
+    await page.locator('.item-seasons > details > summary').click()
     const trigger = page.getByRole('row').filter({ hasText: 'Episode 80' }).getByRole('button', { name: 'Search', exact: true })
     await trigger.click()
     const dialog = page.getByRole('dialog', { name: 'Interactive search — S01E80' })
@@ -124,6 +125,7 @@ for (const width of [390, 820, 1280]) {
         status: 500, json: { message: 'Monitoring unavailable' },
       }))
       await page.goto('/library/9873')
+      await page.locator('.item-seasons > details > summary').click()
       const checkbox = page.getByRole('checkbox', { name: 'Monitor episode 1x80', exact: true })
       const notice = page.getByRole('status').filter({ hasText: 'could not change episode monitoring' })
       for (let attempt = 0; attempt < 2; attempt++) {

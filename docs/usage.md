@@ -474,6 +474,11 @@ usual questions at a glance:
 - **Links** — IMDb / TMDB / TVDB / Open Library pages, opening in a new
   tab.
 
+**Seasons** and **Files** start collapsed and show their totals in the section
+header. Expand Seasons to use the existing season/episode monitoring and search
+controls. Each section keeps your choice while the item refreshes; visiting
+another item starts its sections collapsed again.
+
 Actions up top:
 
 - **Auto search** — grab the best accepted release automatically.
@@ -508,6 +513,12 @@ card, so the grid shows at a glance what's complete, what's partial, and
 what's moving right now.
 
 ## The Files table, and getting rid of a bad file
+
+Expand **Files** to see 25 files per page. **Files per page** offers 25, 50,
+100, 200, 500, or All; the controls above and below the table move between
+pages. Changing pages brings the top controls back into view. Removing the
+last file on a page returns to the last remaining page. A new item starts on
+page one with 25 files per page.
 
 Every file lists what it measures as and **how we know** — measured from the
 bytes, taken from the filename, taken from the release name, set by hand, or

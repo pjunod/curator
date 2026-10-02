@@ -6,6 +6,7 @@ test('series monitoring modes persist and keep manual selections on ordinary edi
   const item = items.find((entry: { title: string }) => entry.title === 'The Test Show')
   expect(item).toBeTruthy()
   await page.goto(`/library/${item.id}`)
+  await page.locator('.item-seasons > details > summary').click()
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   const picker = page.getByRole('combobox', { name: 'Episode monitoring' })
   await expect(picker.getByRole('option')).toHaveCount(6)
@@ -13,6 +14,7 @@ test('series monitoring modes persist and keep manual selections on ordinary edi
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByRole('checkbox', { name: 'Monitor Season 1', exact: true })).not.toBeChecked()
   await page.reload()
+  await page.locator('.item-seasons > details > summary').click()
   await expect(page.getByText('Manual selection', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   await picker.selectOption('all')
@@ -28,6 +30,7 @@ test('series monitoring modes persist and keep manual selections on ordinary edi
   await expect(picker).toHaveValue('')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await page.reload()
+  await page.locator('.item-seasons > details > summary').click()
   await expect(episode).not.toBeChecked()
   // Leave the shared fixture as it was for later specs.
   await episode.click()

@@ -834,6 +834,7 @@ label.inline {
 .detail-actions {
   margin-top: 12px;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -1315,6 +1316,26 @@ a.pill-info:hover {
   color: var(--accent);
   text-decoration: underline;
   cursor: pointer;
+}
+
+/* Item-level folds keep long series pages compact without changing the
+   independent episode disclosures and their monitor/search controls. */
+.item-section-summary {
+  cursor: pointer;
+}
+
+.item-section-summary h2 {
+  display: inline;
+}
+
+.item-files-table {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+
+.item-files-table td:first-child {
+  overflow-wrap: anywhere;
+  min-width: 180px;
 }
 
 /* ---- seasons ---- */
