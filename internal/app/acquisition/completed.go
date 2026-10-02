@@ -376,7 +376,9 @@ func scanCompletedSelection(ctx context.Context, root, selected string, receipts
 			byPath[top] = i
 			e := CompletedEntry{Path: top, Status: "untracked", Reason: "No download record; review or manually import these files", Receipts: []sqlite.CompletedReceipt{}}
 			for _, r := range receipts {
-				if within(top, r.Path) || within(r.Path, top) {
+				// Only a receipt at this payload or beneath it identifies the
+				// payload. A shared storage parent cannot identify every child.
+				if within(top, r.Path) {
 					e.Receipts = append(e.Receipts, r)
 				}
 			}

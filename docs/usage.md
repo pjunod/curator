@@ -642,6 +642,11 @@ existing manual-import preview at that entry. It does not import or delete
 anything merely by opening the panel. Unknown entries and historical-only
 associations are never automatically deleted. Clearing Activity preserves
 path, release, and state receipts independently, including through restarts.
+A receipt identifies its payload folder or files beneath that folder. A receipt
+for a shared storage root or the `completed` container does not identify every
+child payload. Cleared history at those containers does not block cleanup of
+unrelated imported payloads; live overlapping work still retains custody.
+Existing cached associations are corrected by the next successful storage scan.
 Files whose records were already erased before this upgrade appear as
 untracked; the upgrade cannot reconstruct that lost history.
 

@@ -232,6 +232,7 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
 
 ## Documentation
 
+- **[Storage association fix](docs/STORAGE_ASSOCIATION_STATUS.md)** — shared-folder receipt diagnosis, review, validation and delivery.
 - **[Season acquisition status](docs/SEASON_ACQUISITION_STATUS.md)** — build progress, review, checks, and merge.
 - **[Season acquisition contract](docs/plan-season-acquisition.md)** and **[review record](docs/plan-season-acquisition-review.md)** — authoritative round-3 policy and execution requirements.
 

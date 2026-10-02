@@ -328,9 +328,25 @@ func (s *Service) safePayloadPath(ctx context.Context, dl downloadRef) bool {
 			continue
 		}
 		p := storagePath(receipt.Path, completed)
+		// Cleared history at a shared storage container identifies no
+		// particular payload. Live broad paths still retain custody.
+		if !receipt.Live && isCompletedStorageContainer(p, completed) {
+			continue
+		}
 		if within(real, p) || within(p, real) {
 			return false
 		}
 	}
 	return true
+}
+
+// Shared storage containers are never payload deletion targets. Historical
+// receipts at these paths cannot attribute all sibling payloads to one release.
+func isCompletedStorageContainer(path string, roots []string) bool {
+	for _, root := range roots {
+		if within(path, root) || path == filepath.Join(root, "completed") {
+			return true
+		}
+	}
+	return false
 }
