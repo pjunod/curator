@@ -1,6 +1,6 @@
 # Season acquisition — implementation and verification status
 
-**Status:** implementation verified · **Updated:** 2026-10-02 · **Baseline:** `08af106`
+**Status:** implementation verified · **Updated:** 2026-10-01 (ET) · **Baseline:** `08af106`
 
 Companion to [the implementation contract](plan-season-acquisition.md) and
 [the specification review](plan-season-acquisition-review.md). This page records
@@ -40,8 +40,8 @@ while application checks remain pinned to Go 1.25.7. Final checks follow adversa
 
 | Check | Result | Validated revision |
 |---|---|---|
-| make lint (v2.12.2; isolated cache) | pass: zero issues | 00fcdb3 |
-| make test / full race (Go 1.25.7) | pass; coverage 86.0%, unchanged floor 86.0% | 00fcdb3 |
+| make lint (v2.12.2; isolated cache) | pass: zero issues | final boundary fixture commit |
+| make test / full race (Go 1.25.7) | pass; local coverage 86.2%, unchanged floor 86.0% | final boundary fixture commit |
 | make test-web | pass: 120 tests / 13 files | d3d29f6; subsequent changes are Go fixtures |
 | make test-e2e (Go 1.25.7 / Node 22.13) | pass: 154 tests; six season actions at phone/desktop widths | d3d29f6; subsequent changes are Go fixtures |
 | Mobile check / doctor / export | pass: 94 tests / 16 files, typecheck, iOS + Android bundles | d3d29f6; subsequent changes are Go fixtures |
@@ -73,6 +73,11 @@ commits add boundary fixtures without changing production behavior.
 | Unsafe partial cleanup starved later rows | Rotate failed attempts without releasing custody. |
 
 ## Final-gate corrections
+
+- Linux CI initially measured 85.9% against the unchanged 86.0% floor after
+  passing all Go tests. Additional cancellation and retained-source validation
+  fixtures raise the fresh local race profile to 86.2%; final-head Linux CI is
+  recorded in the linked PR. No production behavior or coverage floor changed.
 
 - Terminal custody clears atomically in a SQLite trigger; uncertainty and operator
   cancellation remain fenced. Repeated named SQL expressions are avoided because
