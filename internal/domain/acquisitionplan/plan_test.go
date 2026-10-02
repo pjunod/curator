@@ -192,3 +192,27 @@ func TestUnsupportedCoverage(t *testing.T) {
 		}
 	}
 }
+
+func TestInvalidEvidenceCannotEnterOptimizer(t *testing.T) {
+	base := cand("single", false, 1, 10, 1)
+	for _, bad := range []Candidate{
+		{Key: "", Eligible: []EpisodeKey{1}, Payload: []EpisodeKey{1}},
+		{Key: "negative", SizeBytes: -1, Eligible: []EpisodeKey{1}, Payload: []EpisodeKey{1}},
+		{Key: "duplicate", Eligible: []EpisodeKey{1, 1}, Payload: []EpisodeKey{1}},
+		{Key: "outside", Eligible: []EpisodeKey{3}, Payload: []EpisodeKey{3}},
+		{Key: "absent", Eligible: []EpisodeKey{1}, Payload: []EpisodeKey{2}},
+		{Key: "shortpack", Pack: true, Eligible: []EpisodeKey{1}, Payload: []EpisodeKey{1}},
+	} {
+		if _, err := Build(Input{Episodes: []EpisodeKey{1, 2}, Candidates: []Candidate{bad}, AllowPacks: true}); err == nil {
+			t.Fatalf("invalid evidence accepted: %+v", bad)
+		}
+	}
+	if _, err := Build(Input{Episodes: []EpisodeKey{1, 1}, Candidates: []Candidate{base}}); err == nil {
+		t.Fatal("duplicate target accepted")
+	}
+	conflict := base
+	conflict.SizeBytes++
+	if _, err := Build(Input{Episodes: []EpisodeKey{1}, Candidates: []Candidate{base, conflict}}); err == nil {
+		t.Fatal("conflicting duplicate accepted")
+	}
+}

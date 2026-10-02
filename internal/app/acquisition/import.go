@@ -250,6 +250,18 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		ctx = context.WithValue(ctx, targetHeldKey{}, true)
 	}
 
+	// A queued job may carry older custody than an operator acknowledgment.
+	// Re-read every persisted row under the publication/admission lock.
+	if dl.ID != 0 {
+		fresh, err := s.db.GetDownload(ctx, dl.ID)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		if fresh.Superseded || strings.HasPrefix(fresh.ParkedReason, "operator cancellation") {
+			return ImportResult{}, fmt.Errorf("original custody was cancelled or superseded; automatic publication prohibited")
+		}
+		dl = fresh
+	}
 	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
 	if err != nil {
 		return ImportResult{}, err

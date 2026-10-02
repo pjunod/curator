@@ -101,7 +101,7 @@ function ActivityRow({ item, onOpen, onResolve }: { item: QueueItem; onOpen: () 
       </View>
       <Text style={[styles.itemMeta, { color: theme.muted }]}>{[item.quality, item.protocol, formatRelative(item.addedAt)].filter(Boolean).join(' · ')}</Text>
       <Button compact secondary label="Why chosen" onPress={()=>Alert.alert('Why chosen', item.selection ? `${item.selection.reason}\nTarget: ${item.selection.target}\nPlan ${item.planId}: ${item.planState}; submission ${item.submissionPhase}${item.parkedReason ? `\nReserved: ${item.parkedReason}` : ''}` : 'Selection reason was not recorded for this legacy or explicit manual grab.')} />
-      {item.planId && (item.parkedReason || item.submissionPhase==='uncertain') ? <Button compact secondary disabled={resolving} label={resolving ? 'Resolving…' : 'Review reservation'} onPress={resolve}/> : null}
+      {(item.parkedReason || item.submissionPhase==='uncertain') ? <Button compact secondary disabled={resolving} label={resolving ? 'Resolving…' : 'Review reservation'} onPress={resolve}/> : null}
       {item.parkedReason ? <Text style={[styles.itemMeta,{color:theme.muted}]}>Reserved: {item.parkedReason}</Text> : null}
       <InlineError message={resolveError}/>
       {item.match?.reason ? <Text style={[styles.itemMeta, { color: theme.muted }]}>Match: {item.match.reason}</Text> : null}

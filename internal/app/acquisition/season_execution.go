@@ -447,7 +447,7 @@ func (s *Service) ResolveReservation(ctx context.Context, id int64) error {
 	if dl.Superseded {
 		return nil
 	}
-	if dl.PlanID == 0 || dl.CleanupPending || dl.State == "imported" || dl.State == "importing" || (dl.SubmissionPhase != "uncertain" && dl.ParkedAt.UnixMilli() <= 0) {
+	if dl.CleanupPending || dl.State == "imported" || dl.State == "importing" || (dl.SubmissionPhase != "uncertain" && dl.ParkedAt.UnixMilli() <= 0) {
 		return fmt.Errorf("row has no resolvable uncertain or cancelled reservation")
 	}
 	tx, err := s.db.W.BeginTx(ctx, nil)

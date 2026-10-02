@@ -462,3 +462,135 @@ func TestThreeProviderFailuresEndEpochWithoutClaimingAbsence(t *testing.T) {
 		}
 	}
 }
+
+func TestUnplannedAcknowledgmentFencesStaleQueuedImportAndKeepsStandaloneManualInputs(t *testing.T) {
+	s, db, item := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	id, err := s.Grab(ctx, GrabRequest{MediaItemID: item, Season: 1, Episode: 1, Title: "Test.Show.S01E01.1080p.WEB-DL", DownloadURL: "one", Protocol: "torrent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := db.GetDownload(ctx, id)
+	_ = db.SetSubmissionPhase(ctx, id, "uncertain")
+	if err = s.ResolveReservation(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	payload := t.TempDir()
+	if err = os.WriteFile(filepath.Join(payload, "Test.Show.S01E01.1080p.WEB-DL.mkv"), []byte("incoming"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.importDownload(ctx, stale, payload, false); err == nil {
+		t.Fatal("stale queued original published after acknowledgment")
+	}
+	rows, _ := db.ListFilesForItem(ctx, item)
+	if len(rows) != 0 {
+		t.Fatal("late original reached library")
+	}
+	var jobs int
+	_ = db.R.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE kind=?`, SeasonSearchJobKind).Scan(&jobs)
+	if jobs != 0 {
+		t.Fatal("operator acknowledgment automatically acquired a replacement")
+	}
+	if _, err = s.importDownload(ctx, sqlite.Download{MediaItemID: item, ReleaseTitle: "standalone manual"}, payload, true); err != nil {
+		t.Fatal("standalone manual import was gated", err)
+	}
+}
+
+func TestAdvertisedPagesBeyondBoundCannotAuthorizePack(t *testing.T) {
+	var pages atomic.Int32
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("t") == "caps" {
+			_, _ = w.Write([]byte(`<caps><searching><search available="yes" supportedParams="q"/><tv-search available="yes" supportedParams="q,season,ep"/></searching></caps>`))
+			return
+		}
+		pages.Add(1)
+		offset := r.URL.Query().Get("offset")
+		if offset == "" {
+			offset = "0"
+		}
+		_, _ = fmt.Fprintf(w, `<rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response offset="%s" total="200"/><item><title>Test.Show.S01.1080p.WEB-DL-PACK</title><link>pack</link><size>1000</size></item></channel></rss>`, offset)
+	}))
+	defer remote.Close()
+	client := &fakeClient{}
+	s, db, item := setup(t, nil, client)
+	ctx := context.Background()
+	s.newIndexer = func(in ports.IndexerConfig) ports.Indexer {
+		in.URL = remote.URL
+		in.APIKey = "fixture"
+		return torznab.New(in)
+	}
+	if err := s.enqueueSeason(ctx, item, 0, 1, "test", true); err != nil {
+		t.Fatal(err)
+	}
+	j, err := db.ClaimJob(ctx, "bounded", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.handleSeasonSearch(ctx, j); err == nil {
+		t.Fatal("incomplete pages became complete absence")
+	}
+	if pages.Load() < 2 || pages.Load() > 18 || len(client.added) != 0 {
+		t.Fatalf("pagination/pack bound: calls=%d adds=%v", pages.Load(), client.added)
+	}
+}
+
+func TestDiscoveryUnavailableCopyAndNonSeasonScopesDoNotEnqueue(t *testing.T) {
+	s, db, item := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	for _, p := range []seasonCheckpoint{{Version: 1, ItemID: item, CopyID: 999, Season: 1}, {Version: 1, ItemID: 99999, Season: 1}, {Version: 1, ItemID: item, Season: 999}} {
+		if _, _, _, _, _, err := s.seasonSnapshot(ctx, p); err == nil {
+			t.Fatalf("unavailable scope accepted: %+v", p)
+		}
+	}
+	copyID, err := db.AddMediaCopy(ctx, domain.MediaCopy{MediaItemID: item, Name: "unmonitored", QualityProfileID: 1, Path: t.TempDir(), Monitored: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.enqueueSeason(ctx, item, copyID, 1, "test", true); err == nil {
+		t.Fatal("unmonitored copy queued")
+	}
+	movieS, _, movie := autoSetup(t, nil, &fakeClient{})
+	if _, _, _, _, _, err = movieS.seasonSnapshot(ctx, seasonCheckpoint{Version: 1, ItemID: movie, Season: 1}); err == nil {
+		t.Fatal("movie entered season discovery")
+	}
+}
+
+func TestUnpublishedPlacementRestartKeepsNewerDestinationAndCommittedCleanup(t *testing.T) {
+	s, db, item := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.mkv")
+	if err := os.WriteFile(target, []byte("newer"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prior := sqlite.Placement{ID: "older-intent", ItemID: item, Source: "unavailable", Target: target, SHA256: "different", State: "prepared"}
+	if err := db.PreparePlacement(ctx, prior); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(dir, "backup")
+	if err := os.WriteFile(backup, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	digest, _, err := fileDigest(ctx, backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := sqlite.Placement{ID: "cleanup-intent", ItemID: item, Target: filepath.Join(dir, "other.mkv"), Backup: backup, PreviousSHA256: digest, State: "committed"}
+	if err = db.PreparePlacement(ctx, committed); err != nil {
+		t.Fatal(err)
+	}
+	s.reconcilePlacements(ctx)
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "newer" {
+		t.Fatal("restart overwrote newer destination", err)
+	}
+	pending, _ := db.GetPlacement(ctx, prior.ID)
+	var cleanedState string
+	_ = db.R.QueryRowContext(ctx, `SELECT state FROM import_placements WHERE id=?`, committed.ID).Scan(&cleanedState)
+	if pending.State != "prepared" || cleanedState != "cleaned" {
+		t.Fatalf("restart custody states: %s / %s", pending.State, cleanedState)
+	}
+	if _, err = os.Stat(backup); !os.IsNotExist(err) {
+		t.Fatal("committed rollback bytes not cleaned", err)
+	}
+}

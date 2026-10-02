@@ -41,7 +41,7 @@ for (const width of [390, 1280]) {
 for (const width of [390, 1280]) {
  test(`reservation review requires acknowledgment and stays visible at ${width}px`, async ({page})=>{
   await page.setViewportSize({width,height:844})
-  const rows=Array.from({length:40},(_,i)=>({id:i+1,mediaItemId:9876,title:`Show.S01.Pending${i}`,state:'grabbed',progress:0,protocol:'torrent',quality:'WEB-DL 1080p',addedAt:'2026-10-01T00:00:00Z',planId:1,planState:'active',submissionPhase:'uncertain',parkedReason:'Submission uncertain; custody retained'}))
+  const rows=Array.from({length:40},(_,i)=>({id:i+1,mediaItemId:9876,title:`Show.S01.Pending${i}`,state:'grabbed',progress:0,protocol:'torrent',quality:'WEB-DL 1080p',addedAt:'2026-10-01T00:00:00Z',submissionPhase:'uncertain',parkedReason:'Submission uncertain; custody retained'}))
   await page.route('**/api/v1/queue?**',r=>r.fulfill({json:rows}))
   await page.route('**/api/v1/queue/summary',r=>r.fulfill({json:{counts:{grabbed:40},active:40,total:40,retentionDays:30}}))
   await page.goto('/activity')

@@ -570,7 +570,7 @@ function RowGroup(props: {
           {d.error && <div className="error-text">{d.error}</div>}
           {d.parkedReason && <div className="muted">Reserved: {d.parkedReason}</div>}
           <button onClick={(event)=>{focusActionTrigger(event);setWhyOpen(true)}}>Why chosen</button>
-          {d.planId && (d.parkedReason || d.submissionPhase==='uncertain') && <button onClick={(event)=>{focusActionTrigger(event);setAcknowledged(false);resolve.reset();setReviewOpen(true)}}>Review reservation</button>}
+          {(d.parkedReason || d.submissionPhase==='uncertain') && <button onClick={(event)=>{focusActionTrigger(event);setAcknowledged(false);resolve.reset();setReviewOpen(true)}}>Review reservation</button>}
           {reviewOpen && <ActionDialog title="Review episode reservation" onClose={()=>setReviewOpen(false)}>
             <p>The original submission may still exist or complete later. Releasing custody permits a deliberate Search to acquire another copy. The original row and a persistent possible-duplicate warning remain.</p>
             <p>{d.parkedReason || 'Submission acceptance is uncertain.'}</p>

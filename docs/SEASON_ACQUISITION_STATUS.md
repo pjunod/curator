@@ -13,7 +13,8 @@ actual implementation, review, checks, and delivery. Deployment is excluded.
 - PR: [#59](https://github.com/pjunod/curator/pull/59). Merge: pending final gates.
 - Cleanup: independent clone retained until merge and evidence export.
 - Authoritative round-3 documents copied unchanged from the documentation clone.
-- Fresh main matches the inspected baseline; next migration/ADR: 0038/0024.
+- Fresh main changed to `0fa405e` during final gates; its alternate-name UI was
+  integrated. Migration/ADR numbers remain 0038/0024; VERSION is 0.36.0.
 - Direct implementation/PR/merge authorization supersedes the documents' earlier
   document-only authorization statements; no live acquisition or deployment.
 
@@ -87,6 +88,9 @@ blockers in the fixes. No tests ran during their review. Final gates exposed and
   remains uncertainty, requiring explicit custody review rather than assumed absence.
 - Operator cancellation is a persisted reservation fence; explicit risk acknowledgment
   retains the original identity, warning, and late-publication prohibition.
+- Deliberate custody acknowledgment also covers unplanned uncertain rows; it
+  never queues an automatic replacement. Every persisted import re-reads the
+  supersession/cancellation fence under the publication lock.
 - No live provider/client credentials or configuration were used. Throughput evidence
   uses hermetic rolling-budget/capability/pagination fixtures; live transport coverage
   remains outside this implementation's verification.
