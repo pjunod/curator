@@ -105,7 +105,7 @@ func TestHistoricalStorageContainerCannotPoisonImportedPayloadCleanup(t *testing
 			} else if len(entries[0].Receipts) != 1 || entries[0].Receipts[0].DownloadID != own.ID {
 				t.Fatalf("container matched unrelated payload %+v", entries)
 			}
-			safe := svc.safePayloadPath(ctx, own)
+			safe := svc.safePayloadPath(ctx, downloadRef{ID: own.ID, ImportPath: own.ImportPath})
 			protected := location == "specific-payload" || location == "live-root"
 			if safe == protected {
 				t.Fatalf("cleanup authority location=%s safe=%v", location, safe)
