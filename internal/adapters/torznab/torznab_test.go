@@ -205,3 +205,20 @@ func TestPaginationCountsUnusableWireItems(t *testing.T) {
 		t.Fatalf("%+v %v", page, err)
 	}
 }
+
+func TestAutomaticCapabilitiesExposeTransientFailureInsteadOfAdvisoryFallback(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusServiceUnavailable) }))
+	defer srv.Close()
+	c := New(ports.IndexerConfig{URL: srv.URL, Protocol: "torrent"})
+	advisory, err := c.Capabilities(context.Background())
+	if err != nil || !advisory.Degraded {
+		t.Fatalf("interactive fallback changed: %+v %v", advisory, err)
+	}
+	if _, err = c.AcquisitionCapabilities(context.Background()); err == nil {
+		t.Fatal("automatic discovery hid actual capability failure")
+	}
+	if calls != 2 {
+		t.Fatalf("failure attempts lack actual requests: %d", calls)
+	}
+}

@@ -122,7 +122,7 @@ func capability(rawAvailable, rawParams string) ports.IndexerSearchCapability {
 
 // Capabilities returns a process-shared, configuration-keyed snapshot.
 func (c *Client) Capabilities(ctx context.Context) (ports.IndexerCapabilities, error) {
-	return c.capabilities(ctx, false)
+	return c.capabilities(ctx, false, false)
 }
 
 func (c *Client) InvalidateSearchCapability(mode string) {
@@ -143,16 +143,16 @@ func (c *Client) InvalidateSearchCapability(mode string) {
 	}
 }
 
-func (c *Client) capabilities(ctx context.Context, force bool) (ports.IndexerCapabilities, error) {
+func (c *Client) capabilities(ctx context.Context, force, strict bool) (ports.IndexerCapabilities, error) {
 	key := cacheKey(c.cfg)
 	capabilityCache.Lock()
-	if entry := capabilityCache.entries[key]; entry != nil && !force {
+	if entry := capabilityCache.entries[key]; entry != nil && !force && !(strict && entry.caps.Degraded) {
 		if entry.ready != nil {
 			ready := entry.ready
 			capabilityCache.Unlock()
 			select {
 			case <-ready:
-				return c.capabilities(ctx, false)
+				return c.capabilities(ctx, false, strict)
 			case <-ctx.Done():
 				return ports.IndexerCapabilities{}, ctx.Err()
 			}
@@ -190,7 +190,7 @@ func (c *Client) capabilities(ctx context.Context, force bool) (ports.IndexerCap
 			}
 		}
 	}
-	if err != nil && previous != nil && previous.ready == nil && previous.err == nil && !previous.caps.FetchedAt.IsZero() && !capabilityFatal(err) {
+	if !strict && err != nil && previous != nil && previous.ready == nil && previous.err == nil && !previous.caps.FetchedAt.IsZero() && !capabilityFatal(err) {
 		caps = previous.caps
 		caps.Degraded = true
 		err = nil
@@ -206,7 +206,7 @@ func (c *Client) capabilities(ctx context.Context, force bool) (ports.IndexerCap
 	}
 	capabilityCache.Unlock()
 	close(ready)
-	if err != nil && !capabilityFatal(err) {
+	if !strict && err != nil && !capabilityFatal(err) {
 		return ports.IndexerCapabilities{Degraded: true}, nil
 	}
 	return caps, err
@@ -542,10 +542,14 @@ func infoURL(comments, guid string) string {
 // Test implements ports.Indexer via t=caps, which every implementation
 // answers without burning API hits.
 func (c *Client) Test(ctx context.Context) error {
-	_, err := c.capabilities(ctx, true)
+	_, err := c.capabilities(ctx, true, false)
 	return err
 }
 
 func (c *Client) SetRequestGate(gate func(context.Context) (func(), error)) { c.gate = gate }
 
 func (c *Client) SetRequestResult(result func(context.Context, error)) { c.result = result }
+
+func (c *Client) AcquisitionCapabilities(ctx context.Context) (ports.IndexerCapabilities, error) {
+	return c.capabilities(ctx, false, true)
+}

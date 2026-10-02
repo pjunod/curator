@@ -378,3 +378,37 @@ func TestCheckpointOverflowIsExplicitPartialRatherThanFailedJob(t *testing.T) {
 		t.Fatal("truncated evidence authorized transfer")
 	}
 }
+
+func TestManualEpisodeKeepsSubmittedSiblingAuthority(t *testing.T) {
+	s, db, item := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	_, rows := admittedFixture(t, s, db, item, "a", "b")
+	_, _ = db.ClaimPlannedSubmission(ctx, rows[1].ID)
+	_ = db.SetSubmissionPhase(ctx, rows[1].ID, "submitted")
+	if _, err := s.Grab(ctx, GrabRequest{MediaItemID: item, Season: 1, Episode: 1, Protocol: "torrent", Title: "Test.Show.S01E01.1080p.BluRay-MANUAL", DownloadURL: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+	allowed, err := s.effectiveImportAllowlist(ctx, rows[1])
+	if err != nil || len(allowed) != 1 {
+		t.Fatalf("submitted sibling lost authority: %v %v", allowed, err)
+	}
+}
+func TestManualPackReconcilesExactEpisodeIntents(t *testing.T) {
+	client := &fakeClient{}
+	s, db, item := setup(t, nil, client)
+	ctx := context.Background()
+	_, rows := admittedFixture(t, s, db, item, "a", "b")
+	if _, err := s.Grab(ctx, GrabRequest{MediaItemID: item, Season: 1, Protocol: "torrent", Title: "Test.Show.S01.1080p.BluRay-MANUAL", DownloadURL: "manual-pack"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		fresh, _ := db.GetDownload(ctx, row.ID)
+		if !fresh.Superseded {
+			t.Fatal("manual pack missed exact intent overlap")
+		}
+	}
+	s.reconcileSeasonPlans(ctx)
+	if len(client.added) != 1 {
+		t.Fatal("automatic intents also dispatched")
+	}
+}

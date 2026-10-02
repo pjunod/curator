@@ -97,3 +97,9 @@ type RequestGateInstaller interface {
 type RequestResultInstaller interface {
 	SetRequestResult(func(context.Context, error))
 }
+
+// AcquisitionCapabilities keeps automatic completeness evidence distinct from
+// the interactive adapter's advisory stale-capability/generic fallback.
+type AcquisitionCapabilities interface {
+	AcquisitionCapabilities(context.Context) (IndexerCapabilities, error)
+}

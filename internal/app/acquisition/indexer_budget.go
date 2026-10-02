@@ -32,6 +32,9 @@ func (s *Service) budgetIndexer(cfg ports.IndexerConfig, bucket string, automati
 	}
 	if installer, ok := raw.(ports.RequestGateInstaller); ok {
 		installer.SetRequestGate(gate)
+		if strict, ok := raw.(ports.AcquisitionCapabilities); automatic && ok {
+			return &strictAcquisitionIndexer{Indexer: raw, strict: strict}
+		}
 		return raw
 	}
 	return &budgetedIndexer{Indexer: raw, gate: gate}
@@ -100,4 +103,20 @@ func (s *Service) RunRSSPacing(ctx context.Context) {
 			s.log.Warn("rss due sweep failed", "err", err)
 		}
 	}
+}
+
+type strictAcquisitionIndexer struct {
+	ports.Indexer
+	strict ports.AcquisitionCapabilities
+}
+
+func (b *strictAcquisitionIndexer) Capabilities(ctx context.Context) (ports.IndexerCapabilities, error) {
+	return b.strict.AcquisitionCapabilities(ctx)
+}
+func (b *strictAcquisitionIndexer) SearchPage(ctx context.Context, q domain.SearchQuery, offset int) (ports.IndexerPage, error) {
+	if p, ok := b.Indexer.(ports.PagedIndexer); ok {
+		return p.SearchPage(ctx, q, offset)
+	}
+	rows, err := b.Indexer.Search(ctx, q)
+	return ports.IndexerPage{Releases: rows, Complete: true}, err
 }

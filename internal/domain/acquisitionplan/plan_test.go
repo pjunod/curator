@@ -141,12 +141,27 @@ func TestSmallPoolsAgainstSubsetOracle(t *testing.T) {
 		in := Input{Episodes: []EpisodeKey{1, 2, 3}, AllowPacks: true}
 		for p := 0; p < 2; p++ {
 			c := cand(string(rune('a'+p)), true, p+1, int64(rng.Intn(50)+1), 1, 2, 3)
+			if p == 0 && rng.Intn(2) == 0 {
+				c.Eligible = []EpisodeKey{1}
+			}
 			in.Candidates = append(in.Candidates, c)
 		}
 		for e := EpisodeKey(1); e <= 3; e++ {
 			for j := 0; j < 2; j++ {
 				c := cand(string(rune('c'+int(e)*2+j)), false, rng.Intn(3)+1, int64(rng.Intn(30)+1), e)
 				in.Candidates = append(in.Candidates, c)
+			}
+		}
+		for i := range in.Candidates {
+			c := &in.Candidates[i]
+			if rng.Intn(2) == 0 {
+				c.Protocol = "torrent"
+				c.SeedersKnown = rng.Intn(2) == 0
+				c.Seeders = rng.Intn(3)
+			}
+			c.SizeKnown = rng.Intn(4) != 0
+			if c.Pref.Class == 3 {
+				c.Pref.Class = TargetMet
 			}
 		}
 		original := slices.Clone(in.Candidates)

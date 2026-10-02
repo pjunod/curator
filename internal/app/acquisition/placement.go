@@ -214,6 +214,11 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 				return 0, fmt.Errorf("file is outside the recovery selection")
 			}
 		}
+		// A deterministic policy refusal has no publication custody. Measure
+		// and validate before creating the journal; persist before any rename.
+		if err = s.validateMeasuredPlacement(ctx, item, scope, p, replace); err != nil {
+			return 0, err
+		}
 		if err = s.db.PreparePlacement(ctx, p); err != nil {
 			return 0, err
 		}
@@ -224,6 +229,13 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		}
 	}
 	if err = s.validateMeasuredPlacement(ctx, item, scope, p, replace); err != nil {
+		// A resumed intent may have met policy before an intervening edit.
+		// Close it only when identity checks prove rollback is safe.
+		if p.State == "prepared" {
+			if e := s.rollbackPlacement(ctx, p); e != nil {
+				s.log.Warn("policy-refused placement retains custody", "placement", p.ID, "err", e)
+			}
+		}
 		return 0, err
 	}
 	if err = s.publishPlacement(ctx, p); err != nil {

@@ -51,6 +51,10 @@ func TestMeasuredDowngradeCannotPublishOrRemove(t *testing.T) {
 	if err == nil {
 		t.Fatal("measured downgrade accepted")
 	}
+	pending, e := db.PendingPlacements(ctx)
+	if e != nil || len(pending) != 0 {
+		t.Fatal("deterministic refusal retained unpublished journal", e)
+	}
 	got, err := os.ReadFile(old)
 	if err != nil || string(got) != "protected bytes" {
 		t.Fatalf("old bytes changed: %q %v", got, err)

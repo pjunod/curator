@@ -480,13 +480,24 @@ func (s *Service) closePendingForManual(ctx context.Context, dl sqlite.Download)
 	if err != nil || n == 0 {
 		return false, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE downloads SET state='failed',submission_phase='rejected',superseded=1,wantables='[]',reserved_episodes='[]',error='remaining intent cancelled by explicit manual choice' WHERE plan_id=? AND submission_phase='pending' AND state='planned'`, dl.PlanID)
-	if err != nil {
-		return false, err
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE acquisition_plans SET state='cancel_requested' WHERE id=? AND state IN ('admitted','dispatching','active')`, dl.PlanID)
+	_, err = tx.ExecContext(ctx, `UPDATE acquisition_plans SET replan_pending=1 WHERE id=?`, dl.PlanID)
 	if err != nil {
 		return false, err
 	}
 	return true, tx.Commit()
+}
+
+func wantablesOverlap(row sqlite.Download, wants []string) bool {
+	for _, want := range wants {
+		if wantableOnRow(row, want) {
+			return true
+		}
+		candidate := sqlite.Download{WantableIDs: []string{want}}
+		for _, existing := range row.WantableIDs {
+			if wantableOnRow(candidate, existing) {
+				return true
+			}
+		}
+	}
+	return false
 }

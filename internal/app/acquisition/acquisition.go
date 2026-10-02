@@ -841,7 +841,7 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		return 0, activeErr
 	}
 	for _, row := range active {
-		overlap := row.MediaItemID == item.ID && row.CopyID == req.CopyID && wantableOnRow(row, base)
+		overlap := row.MediaItemID == item.ID && row.CopyID == req.CopyID && wantablesOverlap(row, wants)
 		if overlap && row.PlanID != 0 && row.SubmissionPhase == "pending" && req.MatchEvidence == nil {
 			cancelled, e := s.closePendingForManual(allocationCtx, row)
 			if e != nil {
