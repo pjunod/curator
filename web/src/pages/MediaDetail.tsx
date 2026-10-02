@@ -44,6 +44,7 @@ function IdentityPanel({ item }: { item: MediaItemDetail }) {
   const [searchable, setSearchable] = useState(false)
   const [message, setMessage] = useState('')
   const aliases = item.aliases ?? []
+  const [aliasesOpen, setAliasesOpen] = useState(() => aliases.length <= 3)
   const sources = item.identitySources ?? []
   const add = useMutation({
     mutationFn: () => addLibraryAlias(item.id, title.trim(), searchable),
@@ -84,15 +85,20 @@ function IdentityPanel({ item }: { item: MediaItemDetail }) {
         <div className="fact-label">Refresh</div>
         <div>{sources.length > 0 ? sources.map((s) => `${s.source}: ${s.fetchedAt ? new Date(s.fetchedAt).toLocaleString() : s.lastError ? `failed — ${s.lastError}` : 'pending'}`).join(' · ') : <span className="muted">identity enrichment pending</span>}</div>
       </div>
-      <ul className="result-list">
-        {aliases.map((alias) => (
-          <li key={alias.id} className="result-note">
-            <strong>{alias.title}</strong>{' '}
-            <span className="muted">{alias.role} · {alias.source}{alias.marketCountry ? ` · ${alias.marketCountry}` : ''}{alias.searchable ? ' · searchable' : ''}</span>{' '}
-            {alias.role === 'manual' && <button disabled={remove.isPending} onClick={() => remove.mutate(alias.id)}>Remove</button>}
-          </li>
-        ))}
-      </ul>
+      {aliases.length > 0 && (
+        <details open={aliasesOpen} onToggle={(event) => setAliasesOpen(event.currentTarget.open)}>
+          <summary>Alternate names ({aliases.length})</summary>
+          <ul className="result-list">
+            {aliases.map((alias) => (
+              <li key={alias.id} className="result-note">
+                <strong>{alias.title}</strong>{' '}
+                <span className="muted">{alias.role} · {alias.source}{alias.marketCountry ? ` · ${alias.marketCountry}` : ''}{alias.searchable ? ' · searchable' : ''}</span>{' '}
+                {alias.role === 'manual' && <button disabled={remove.isPending} onClick={() => remove.mutate(alias.id)}>Remove</button>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       <div className="form-row">
         <input aria-label="Manual title alias" value={title} maxLength={256} placeholder="Alternate release title" onChange={(event) => setTitle(event.target.value)} />
         <label className="inline"><input type="checkbox" checked={searchable} onChange={(event) => setSearchable(event.target.checked)} /> Include in indexer searches</label>
@@ -1281,7 +1287,7 @@ export function MediaDetailPage() {
         />
       )}
 
-      {m.kind !== 'book' && <IdentityPanel item={m} />}
+      {m.kind !== 'book' && <IdentityPanel key={m.id} item={m} />}
 
       {m.kind === 'book' ? (
         <BookEditionsPanel
