@@ -1,6 +1,6 @@
 # Season acquisition — implementation and verification status
 
-**Status:** final validation · **Updated:** 2026-10-01 · **Baseline:** `08af106`
+**Status:** implementation verified · **Updated:** 2026-10-02 · **Baseline:** `08af106`
 
 Companion to [the implementation contract](plan-season-acquisition.md) and
 [the specification review](plan-season-acquisition-review.md). This page records
@@ -10,8 +10,10 @@ actual implementation, review, checks, and delivery. Deployment is excluded.
 
 - Independent clone: `/private/tmp/monarr-season-acquisition-build-20261001`.
 - Branch: `codex/season-acquisition-planner`.
-- PR: [#59](https://github.com/pjunod/curator/pull/59). Merge: pending final gates.
-- Cleanup: independent clone retained until merge and evidence export.
+- PR: [#59](https://github.com/pjunod/curator/pull/59) is the live record of required
+  CI and merge state. All local gates are complete; merge waits for final-head CI.
+- The independent clone is temporary and removed after merge and evidence export.
+  The final delivery record records the actual merge and cleanup outcome.
 - Authoritative round-3 documents copied unchanged from the documentation clone.
 - Fresh main changed to `0fa405e` during final gates; its alternate-name UI was
   integrated. Migration/ADR numbers remain 0038/0024; VERSION is 0.36.0.
@@ -26,7 +28,9 @@ actual implementation, review, checks, and delivery. Deployment is excluded.
 - [x] C: bounded discovery, request ledger, pacing, feasible scheduler admission.
 - [x] D: atomic execution, reservation settlement, uncertainty and stall recovery.
 - [x] E: automatic callers, API/mobile/Activity explanations and visible actions.
-- [ ] F: final documentation, adversarial review, checks, merge and cleanup.
+- [x] F: final documentation, adversarial review and local validation.
+- Delivery: required final-head CI, merge and cleanup are recorded by the linked PR
+  and final delivery record.
 
 ## Final check ledger
 
@@ -36,19 +40,21 @@ while application checks remain pinned to Go 1.25.7. Final checks follow adversa
 
 | Check | Result | Validated revision |
 |---|---|---|
-| make lint (pinned v2.12.2 toolchain) | pass; final affected rerun pending | final gate fixes |
-| make test / race (Go 1.25.7) | initial regressions fixed; final race/coverage running | final gate fixes |
-| make test-web | pass: 120 tests / 13 files | e48309e |
-| make test-e2e (Go 1.25.7 / Node 22.13) | pass: 144 tests; six season actions at phone/desktop widths | final gate fixes |
-| Mobile check / doctor / export | pass: 94 tests / 16 files, typecheck, iOS + Android bundles | e48309e |
-| go vet / generation | pass; final affected rerun pending | final gate fixes |
-| Required CI / generated consumers | pending | — |
+| make lint (v2.12.2; isolated cache) | pass: zero issues | 00fcdb3 |
+| make test / full race (Go 1.25.7) | pass; coverage 86.0%, unchanged floor 86.0% | 00fcdb3 |
+| make test-web | pass: 120 tests / 13 files | d3d29f6; subsequent changes are Go fixtures |
+| make test-e2e (Go 1.25.7 / Node 22.13) | pass: 154 tests; six season actions at phone/desktop widths | d3d29f6; subsequent changes are Go fixtures |
+| Mobile check / doctor / export | pass: 94 tests / 16 files, typecheck, iOS + Android bundles | d3d29f6; subsequent changes are Go fixtures |
+| go vet / generation | pass; generated consumers unchanged | 00fcdb3 |
+| Required CI | see linked PR for final-head results | final documentation commit |
 
 ## Adversarial review
 
 Two independent adversarial reviews inspected `fd8c63a`, then verified fixes
 through `66358dc`. Both report all merge blockers resolved and no further
-blockers in the fixes. No tests ran during their review. Final gates exposed and resolved generated SQL, polling, and import compatibility regressions. Follow-up reviewers cleared the terminal custody trigger, measured replacement checks, path aliases and complete unresolved reference guards.
+blockers in the fixes. No tests ran during their review. Final gates exposed and resolved generated SQL, polling, and import compatibility regressions. Follow-up reviewers cleared the terminal custody trigger, measured replacement checks, path aliases and complete unresolved reference guards. They also cleared unplanned
+uncertain custody acknowledgment and the shared import publication fence; later
+commits add boundary fixtures without changing production behavior.
 
 | Finding | Resolution |
 |---|---|
