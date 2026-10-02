@@ -66,6 +66,7 @@ test('the files table offers Delete and Delete & blocklist', async ({ page, requ
 
   await page.goto(`/library/${withFile.id}`)
   const files = page.locator('section.panel').filter({ hasText: 'Files' }).last()
+  await files.locator('summary').click()
   await expect(files.getByRole('button', { name: 'Delete', exact: true }).first()).toBeVisible()
 
   // Blocklisting needs a source release. An imported file has one; an adopted

@@ -102,6 +102,7 @@ test('the item page says what its profile does, and where the quality came from'
   // container), so the badge reads "from release" rather than "measured" —
   // which is exactly the distinction ADR 0013 exists to make visible.
   const filesPanel = page.locator('section.panel', { hasText: 'Files' }).last()
+  await filesPanel.locator('summary').click()
   await expect(filesPanel.getByRole('columnheader', { name: 'Quality' })).toBeVisible()
   await expect(filesPanel.getByRole('columnheader', { name: 'How we know' })).toBeVisible()
   await expect(filesPanel.locator('.prov-badge').first()).toBeVisible()
@@ -159,6 +160,7 @@ test('a season can be monitored and unmonitored from the item page', async ({ pa
   await request.patch(`/api/v1/library/${seriesId}/seasons/1`, { data: { monitored: true } })
 
   await page.goto(`/library/${seriesId}`)
+  await page.locator('.item-seasons > details > summary').click()
   const box = page.getByLabel('Monitor Season 1')
   await expect(box).toBeVisible()
   await expect(box).toBeChecked()
@@ -186,6 +188,7 @@ test('the season disclosure and its controls do not fight each other', async ({
 }) => {
   const series = await (await request.get('/api/v1/library?kind=series')).json()
   await page.goto(`/library/${series[0].id}`)
+  await page.locator('.item-seasons > details > summary').click()
 
   const toggle = page.getByRole('button', { name: /Season 1/ })
   await expect(toggle).toHaveAttribute('aria-expanded', 'true')

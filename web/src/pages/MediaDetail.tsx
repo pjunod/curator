@@ -1,5 +1,5 @@
 import { SERIES_MONITOR_MODES, monitorLabel, type SeriesMonitorMode } from '../monitoring'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import {
@@ -37,6 +37,7 @@ import { audioUndeterminedNote } from '../language'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { ReleaseSearch } from './ReleaseSearch'
+import { Pager, PageSizePicker, clampPage, sliceForPage } from '../Pager'
 
 function IdentityPanel({ item }: { item: MediaItemDetail }) {
   const qc = useQueryClient()
@@ -907,6 +908,114 @@ function FileActions({
   )
 }
 
+// Keep pagination local to the item. Refreshes preserve the viewer's page;
+// shrinking the list clamps it, and switching items remounts this panel.
+function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: () => void }) {
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(25)
+  const [navigation, setNavigation] = useState(0)
+  const pageControls = useRef<HTMLDivElement>(null)
+  const currentPage = clampPage(page, m.files.length, pageSize)
+  const visibleFiles = sliceForPage(m.files, currentPage, pageSize)
+  useEffect(() => { setPage(currentPage) }, [currentPage])
+  // Only explicit pagination moves the viewport; query refreshes never do.
+  useLayoutEffect(() => {
+    if (navigation === 0) return
+    pageControls.current?.focus({ preventScroll: true })
+    pageControls.current?.scrollIntoView({ block: 'center', behavior: 'instant' })
+  }, [navigation])
+  const changePage = (next: number) => {
+    setPage(next)
+    setNavigation((revision) => revision + 1)
+  }
+
+  return (
+    <section className="panel item-files">
+      <details>
+        <summary className="item-section-summary"><h2>Files <span className="muted">({m.files.length})</span></h2></summary>
+        {m.files.length === 0 ? (
+          <p className="muted">
+            No files on disk yet. Run a disk scan from the Library page once the folder has
+            content.
+          </p>
+        ) : (
+          <>
+            <div className="lib-pager-bar" ref={pageControls} tabIndex={-1} role="group" aria-label="File pagination">
+              <PageSizePicker size={pageSize} label="Files per page" onChange={(size) => {
+                setPageSize(size)
+                changePage(0)
+              }} />
+              <Pager page={currentPage} size={pageSize} total={m.files.length} onPage={changePage} />
+            </div>
+            <div className="item-files-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Path</th>
+                    <th>Quality</th>
+                    <th>How we know</th>
+                    <th>Size</th>
+                    <th>Episodes</th>
+                    {m.copies.length > 0 && <th>Copy</th>}
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleFiles.map((f) => (
+                    <tr key={f.id} className={f.implausible ? 'row-implausible' : ''}>
+                      <td className="mono">
+                        {f.path}
+                        {f.facts ? <div className="file-facts">{f.facts}</div> : null}
+                        {/* The reason goes next to the file, not in a tooltip. A
+                            badge saying "does not add up" without the arithmetic
+                            is just a shrug with better typography. */}
+                        {f.implausible ? (
+                          <div className="error-text">✕ {f.implausible}</div>
+                        ) : null}
+                      </td>
+                      <td>
+                        {f.quality ? (
+                          <span className="pill pill-neutral">{f.quality}</span>
+                        ) : (
+                          <span className="muted">unknown</span>
+                        )}
+                      </td>
+                      <td>
+                        <ProvenanceBadge f={f} />
+                      </td>
+                      <td className="muted">{fmtBytes(f.size)}</td>
+                      <td className="muted">{f.episodeIds.length || '—'}</td>
+                      {m.copies.length > 0 && (
+                        <td className="muted">
+                          {f.copyId
+                            ? (m.copies.find((c) => c.id === f.copyId)?.name || `copy ${f.copyId}`)
+                            : 'main'}
+                        </td>
+                      )}
+                      <td>
+                        <FileActions
+                          itemId={m.id}
+                          file={f}
+                          onDone={onChanged}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {pageSize > 0 && m.files.length > pageSize && (
+              <div className="lib-pager-bar">
+                <Pager page={currentPage} size={pageSize} total={m.files.length} onPage={changePage} />
+              </div>
+            )}
+          </>
+        )}
+      </details>
+    </section>
+  )
+}
+
 export function MediaDetailPage() {
   const { id } = useParams({ from: '/library/$id' })
   const search = useSearch({ from: '/library/$id' })
@@ -1313,183 +1422,121 @@ export function MediaDetailPage() {
       )}
 
       {m.kind === 'series' && (
-        <section className="panel">
-          <h2>Seasons</h2>
-          {/* Deliberately NOT <details>/<summary>. The season row carries two
-              controls — the monitor checkbox and Search pack — and interactive
-              content inside a <summary> is invalid HTML (a <summary> is
-              exposed as a button, and you cannot nest a checkbox in a button).
-              Chromium tolerated it; WebKit does not, so on Safari the season
-              monitor toggle simply could not be clicked. A disclosure we own
-              behaves the same everywhere. */}
-          {m.seasons.map((s) => {
-            const have = s.episodes.filter((e) => e.hasFile).length
-            const open = openSeasons[s.number] ?? s.number === 1
-            const label = s.number === 0 ? 'Specials' : `Season ${s.number}`
-            return (
-              <div key={s.number} className="season">
-                <div className="season-head">
-                  <input
-                    type="checkbox"
-                    className="monitor-box"
-                    title={
-                      s.monitored
-                        ? 'Monitored — untick to stop wanting this season'
-                        : 'Unmonitored — tick to want this season'
-                    }
-                    aria-label={`Monitor ${label}`}
-                    checked={s.monitored}
-                    onChange={(e) =>
-                      monitorSeason.mutate({ season: s.number, monitored: e.target.checked })
-                    }
-                  />
-                  <button
-                    type="button"
-                    className="season-toggle"
-                    aria-expanded={open}
-                    onClick={() => setOpenSeasons((prev) => ({ ...prev, [s.number]: !open }))}
-                  >
-                    <span className="season-caret" aria-hidden="true">
-                      {open ? '▾' : '▸'}
-                    </span>{' '}
-                    {label}{' '}
-                    <span className="muted">
-                      {have}/{s.episodes.length} on disk{s.monitored ? '' : ' · unmonitored'}
-                    </span>
-                  </button>
-                  <button onClickCapture={focusActionTrigger} onClick={() => setSearching({ season: s.number })}>Search pack</button>
-                </div>
-                {open && (
-                  <table>
-                    <thead>
-                      <tr>
-                        <th></th>
-                        <th>#</th>
-                        <th>Title</th>
-                        <th>Air date</th>
-                        <th>File</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {s.episodes.map((e) => (
-                        <tr key={e.id} className={e.monitored ? '' : 'row-unmonitored'}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              className="monitor-box"
-                              title={e.monitored ? 'Monitored' : 'Unmonitored'}
-                              aria-label={`Monitor episode ${e.seasonNumber}x${e.episodeNumber}`}
-                              checked={e.monitored}
-                              onChange={(ev) =>
-                                monitorEpisode.mutate({
-                                  episodeId: e.id,
-                                  monitored: ev.target.checked,
-                                })
-                              }
-                            />
-                          </td>
-                          <td className="mono">
-                            {e.seasonNumber}x{String(e.episodeNumber).padStart(2, '0')}
-                          </td>
-                          <td>{e.title || <span className="muted">TBA</span>}</td>
-                          <td className="muted">{e.airDate || '—'}</td>
-                          <td>
-                            {e.hasFile ? (
-                              <span className="pill pill-ok">✓</span>
-                            ) : (
-                              <span className="muted">—</span>
-                            )}
-                          </td>
-                          <td>
-                            <button
-                              onClickCapture={focusActionTrigger}
-                              onClick={() =>
-                                setSearching({ season: e.seasonNumber, episode: e.episodeNumber })
-                              }
-                            >
-                              Search
-                            </button>
-                          </td>
+        <section className="panel item-seasons">
+          <details key={m.id}>
+            <summary className="item-section-summary"><h2>Seasons <span className="muted">({m.seasons.length})</span></h2></summary>
+            {/* Deliberately NOT <details>/<summary>. The season row carries two
+                controls — the monitor checkbox and Search pack — and interactive
+                content inside a <summary> is invalid HTML (a <summary> is
+                exposed as a button, and you cannot nest a checkbox in a button).
+                Chromium tolerated it; WebKit does not, so on Safari the season
+                monitor toggle simply could not be clicked. A disclosure we own
+                behaves the same everywhere. */}
+            {m.seasons.map((s) => {
+              const have = s.episodes.filter((e) => e.hasFile).length
+              const open = openSeasons[s.number] ?? s.number === 1
+              const label = s.number === 0 ? 'Specials' : `Season ${s.number}`
+              return (
+                <div key={s.number} className="season">
+                  <div className="season-head">
+                    <input
+                      type="checkbox"
+                      className="monitor-box"
+                      title={
+                        s.monitored
+                          ? 'Monitored — untick to stop wanting this season'
+                          : 'Unmonitored — tick to want this season'
+                      }
+                      aria-label={`Monitor ${label}`}
+                      checked={s.monitored}
+                      onChange={(e) =>
+                        monitorSeason.mutate({ season: s.number, monitored: e.target.checked })
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="season-toggle"
+                      aria-expanded={open}
+                      onClick={() => setOpenSeasons((prev) => ({ ...prev, [s.number]: !open }))}
+                    >
+                      <span className="season-caret" aria-hidden="true">
+                        {open ? '▾' : '▸'}
+                      </span>{' '}
+                      {label}{' '}
+                      <span className="muted">
+                        {have}/{s.episodes.length} on disk{s.monitored ? '' : ' · unmonitored'}
+                      </span>
+                    </button>
+                    <button onClickCapture={focusActionTrigger} onClick={() => setSearching({ season: s.number })}>Search pack</button>
+                  </div>
+                  {open && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th></th>
+                          <th>#</th>
+                          <th>Title</th>
+                          <th>Air date</th>
+                          <th>File</th>
+                          <th></th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            )
-          })}
+                      </thead>
+                      <tbody>
+                        {s.episodes.map((e) => (
+                          <tr key={e.id} className={e.monitored ? '' : 'row-unmonitored'}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                className="monitor-box"
+                                title={e.monitored ? 'Monitored' : 'Unmonitored'}
+                                aria-label={`Monitor episode ${e.seasonNumber}x${e.episodeNumber}`}
+                                checked={e.monitored}
+                                onChange={(ev) =>
+                                  monitorEpisode.mutate({
+                                    episodeId: e.id,
+                                    monitored: ev.target.checked,
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="mono">
+                              {e.seasonNumber}x{String(e.episodeNumber).padStart(2, '0')}
+                            </td>
+                            <td>{e.title || <span className="muted">TBA</span>}</td>
+                            <td className="muted">{e.airDate || '—'}</td>
+                            <td>
+                              {e.hasFile ? (
+                                <span className="pill pill-ok">✓</span>
+                              ) : (
+                                <span className="muted">—</span>
+                              )}
+                            </td>
+                            <td>
+                              <button
+                                onClickCapture={focusActionTrigger}
+                                onClick={() =>
+                                  setSearching({ season: e.seasonNumber, episode: e.episodeNumber })
+                                }
+                              >
+                                Search
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )
+            })}
+          </details>
         </section>
       )}
 
-      <section className="panel">
-        <h2>Files</h2>
-        {m.files.length === 0 ? (
-          <p className="muted">
-            No files on disk yet. Run a disk scan from the Library page once the folder has
-            content.
-          </p>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Path</th>
-                <th>Quality</th>
-                <th>How we know</th>
-                <th>Size</th>
-                <th>Episodes</th>
-                {m.copies.length > 0 && <th>Copy</th>}
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {m.files.map((f) => (
-                <tr key={f.id} className={f.implausible ? 'row-implausible' : ''}>
-                  <td className="mono">
-                    {f.path}
-                    {f.facts ? <div className="file-facts">{f.facts}</div> : null}
-                    {/* The reason goes next to the file, not in a tooltip. A
-                        badge saying "does not add up" without the arithmetic
-                        is just a shrug with better typography. */}
-                    {f.implausible ? (
-                      <div className="error-text">✕ {f.implausible}</div>
-                    ) : null}
-                  </td>
-                  <td>
-                    {f.quality ? (
-                      <span className="pill pill-neutral">{f.quality}</span>
-                    ) : (
-                      <span className="muted">unknown</span>
-                    )}
-                  </td>
-                  <td>
-                    <ProvenanceBadge f={f} />
-                  </td>
-                  <td className="muted">{fmtBytes(f.size)}</td>
-                  <td className="muted">{f.episodeIds.length || '—'}</td>
-                  {m.copies.length > 0 && (
-                    <td className="muted">
-                      {f.copyId
-                        ? (m.copies.find((c) => c.id === f.copyId)?.name || `copy ${f.copyId}`)
-                        : 'main'}
-                    </td>
-                  )}
-                  <td>
-                    <FileActions
-                      itemId={m.id}
-                      file={f}
-                      onDone={() => {
-                        void qc.invalidateQueries({ queryKey: ['library-item', id] })
-                        void qc.invalidateQueries({ queryKey: ['queue'] })
-                      }}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+      <FilesPanel key={m.id} item={m} onChanged={() => {
+        void qc.invalidateQueries({ queryKey: ['library-item', id] })
+        void qc.invalidateQueries({ queryKey: ['queue'] })
+      }} />
     </>
   )
 }

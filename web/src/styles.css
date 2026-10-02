@@ -1317,6 +1317,26 @@ a.pill-info:hover {
   cursor: pointer;
 }
 
+/* Item-level folds keep long series pages compact without changing the
+   independent episode disclosures and their monitor/search controls. */
+.item-section-summary {
+  cursor: pointer;
+}
+
+.item-section-summary h2 {
+  display: inline;
+}
+
+.item-files-table {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+
+.item-files-table td:first-child {
+  overflow-wrap: anywhere;
+  min-width: 180px;
+}
+
 /* ---- seasons ---- */
 /* A disclosure we own rather than <details>/<summary>: the row carries two
    real controls, and interactive content inside a <summary> is invalid HTML

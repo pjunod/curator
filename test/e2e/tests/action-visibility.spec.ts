@@ -20,6 +20,7 @@ for (const width of [390, 1280]) {
       await route.fulfill({ json: [] })
     })
     await page.goto('/library/9875')
+    await page.locator('.item-seasons > details > summary').click()
     const trigger = page.getByRole('row').filter({ hasText: 'Episode 80' }).getByRole('button', { name: 'Search', exact: true })
     await trigger.click()
     const dialog = page.getByRole('dialog', { name: 'Interactive search — S01E80' })
