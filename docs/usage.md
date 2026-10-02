@@ -386,7 +386,10 @@ On a movie or series detail page, **Identity** lists the canonical title,
 external IDs, aliases, country evidence, and provider snapshot health. Use
 **Refresh identity** after correcting provider data, or add a manual alias for
 a real release spelling. Manual aliases are evidence; they do not change
-episode numbering.
+episode numbering. **Alternate names** is collapsible and shows the name count;
+lists with more than three names start collapsed. Lists of one to three names
+start expanded. Expand the list to inspect provider details or remove a manual
+alias. The add-alias form stays visible when the list is collapsed.
 
 Automatic is the default posture — the interactive search is the override
 for when you want to pick a specific release yourself.
