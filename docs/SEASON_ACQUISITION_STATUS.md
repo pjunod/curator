@@ -1,6 +1,6 @@
 # Season acquisition — implementation and verification status
 
-**Status:** building · **Updated:** 2026-10-01 · **Baseline:** `08af106`
+**Status:** adversarial review · **Updated:** 2026-10-01 · **Baseline:** `08af106`
 
 Companion to [the implementation contract](plan-season-acquisition.md) and
 [the specification review](plan-season-acquisition-review.md). This page records
@@ -42,7 +42,11 @@ while application checks remain pinned to Go 1.25.7. Final checks follow adversa
 
 ## Adversarial review
 
-Pending the complete reviewable PR; no implementation review requested yet.
+Two independent review passes are running against the complete implementation
+at `fd8c63a`: execution/discovery/API and optimizer/importer/migration safety.
+Runtime tests remain unrun until findings are addressed. Backend compile,
+production web build, and mobile TypeScript compile pass at this revision.
+The single PR opens after review so its automatic CI starts after the review gate.
 
 ## Recorded implementation decisions
 
