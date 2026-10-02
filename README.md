@@ -232,6 +232,9 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
 
 ## Documentation
 
+- **[Season acquisition status](docs/SEASON_ACQUISITION_STATUS.md)** — build progress, review, checks, and merge.
+- **[Season acquisition contract](docs/plan-season-acquisition.md)** and **[review record](docs/plan-season-acquisition-review.md)** — authoritative round-3 policy and execution requirements.
+
 - **[Usage guide](docs/usage.md)** — first run, adding movies/series/books, browsing
   Discover, adopting an existing library, interactive search, automation, connecting
   Jellyseerr/Prowlarr/Bazarr.
