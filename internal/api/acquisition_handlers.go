@@ -235,6 +235,9 @@ func indexerInputToConfig(in apigen.IndexerInput) ports.IndexerConfig {
 	cfg := ports.IndexerConfig{
 		Name: in.Name, URL: ports.NormalizeURL(in.Url), Protocol: string(in.Protocol), Enabled: true,
 	}
+	if in.DailyRequestCap != nil {
+		cfg.DailyRequestCap = *in.DailyRequestCap
+	}
 	if in.ApiKey != nil {
 		cfg.APIKey = *in.ApiKey
 	}
@@ -254,8 +257,10 @@ func indexerDTO(c ports.IndexerConfig) apigen.Indexer {
 		cats = []int{}
 	}
 	enabled := c.Enabled
+	cap := c.DailyRequestCap
 	return apigen.Indexer{
-		Id: c.ID, Name: c.Name, Url: c.URL, ApiKey: &key,
+		DailyRequestCap: &cap,
+		Id:              c.ID, Name: c.Name, Url: c.URL, ApiKey: &key,
 		Protocol: apigen.IndexerProtocol(c.Protocol), Categories: &cats, Enabled: &enabled,
 	}
 }
@@ -283,6 +288,10 @@ func (s *Server) AddIndexer(w http.ResponseWriter, r *http.Request) {
 	}
 	if !in.Protocol.Valid() {
 		writeError(w, http.StatusBadRequest, "protocol must be torrent or usenet")
+		return
+	}
+	if in.DailyRequestCap != nil && *in.DailyRequestCap < 0 {
+		writeError(w, http.StatusBadRequest, "daily request cap must be zero or positive")
 		return
 	}
 	cfg := indexerInputToConfig(in)
@@ -628,6 +637,19 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			Title: d.ReleaseTitle, State: d.State, Progress: float32(d.Progress),
 			Protocol: d.Protocol, Quality: d.Quality.Display(),
 			SavePath: &save, ImportPath: &imp, AddedAt: d.AddedAt,
+		}
+		phase, parked := apigen.QueueItemSubmissionPhase(d.SubmissionPhase), d.ParkedReason
+		item.SubmissionPhase = &phase
+		item.ParkedReason = &parked
+		if d.PlanID != 0 {
+			item.PlanId = &d.PlanID
+			if plan, e := s.deps.Store.GetAcquisitionPlan(r.Context(), d.PlanID); e == nil {
+				item.PlanState = &plan.State
+				var facts map[string]interface{}
+				if json.Unmarshal(plan.Decision, &facts) == nil {
+					item.Selection = &facts
+				}
+			}
 		}
 		if d.RunnerControl != "" {
 			var control map[string]interface{}
@@ -1870,6 +1892,43 @@ func (s *Server) ListHistory(w http.ResponseWriter, r *http.Request, params apig
 func (s *Server) ResumeQueueItem(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := s.deps.Acquisition.ResumeHeldDownload(r.Context(), id); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// UpdateIndexerBudget changes a saved request cap without replacing credentials.
+func (s *Server) UpdateIndexerBudget(w http.ResponseWriter, r *http.Request, id int64) {
+	var in struct {
+		DailyRequestCap *int `json:"dailyRequestCap"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.DailyRequestCap == nil || *in.DailyRequestCap < 0 {
+		writeError(w, http.StatusBadRequest, "daily request cap must be zero or positive")
+		return
+	}
+	cfg, err := s.deps.Store.GetIndexer(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "indexer not found")
+		return
+	}
+	if err = s.deps.Store.SetDailyRequestCap(r.Context(), id, *in.DailyRequestCap); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	cfg.DailyRequestCap = *in.DailyRequestCap
+	writeJSON(w, http.StatusOK, indexerDTO(cfg))
+}
+
+func (s *Server) ResolveQueueReservation(w http.ResponseWriter, r *http.Request, id int64) {
+	var in struct {
+		AcknowledgeDuplicateRisk bool `json:"acknowledgeDuplicateRisk"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || !in.AcknowledgeDuplicateRisk {
+		writeError(w, http.StatusBadRequest, "acknowledge possible duplicate before releasing custody")
+		return
+	}
+	if err := s.deps.Acquisition.ResolveReservation(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

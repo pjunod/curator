@@ -63,11 +63,17 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 			return fmt.Errorf("path overlaps protected library or recovery storage")
 		}
 	}
-	active, err := s.db.ListActiveDownloads(ctx)
+	active, err := s.db.ListDownloadReservations(ctx)
 	if err != nil {
 		return err
 	}
 	for _, dl := range active {
+		if own, ok := ctx.Value(partialCleanupIDKey{}).(int64); ok && dl.ID == own && dl.State == "failed" && dl.CleanupPending && filepath.Join(canonicalCompletedPath(filepath.Dir(dl.ImportPath)), filepath.Base(dl.ImportPath)) == filepath.Clean(path) {
+			continue
+		}
+		if dl.State == "planned" {
+			continue
+		}
 		candidate := dl.ImportPath
 		if candidate == "" {
 			candidate = dl.SavePath
@@ -78,6 +84,23 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 		candidate = storagePath(candidate, roots)
 		if within(path, candidate) || within(candidate, path) {
 			return fmt.Errorf("download %d still owns this path; finish or cancel it first", dl.ID)
+		}
+	}
+	if err := s.rejectReferencedPayload(ctx, path, roots); err != nil {
+		return err
+	}
+	placements, err := s.db.UnresolvedPlacementReferences(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range placements {
+		for _, ref := range []string{p.Source, p.Target, p.Temporary, p.Backup} {
+			if ref != "" {
+				ref = storagePath(ref, roots)
+			}
+			if ref != "" && (within(path, ref) || within(ref, path)) {
+				return fmt.Errorf("pending placement retains this path")
+			}
 		}
 	}
 	if err := rejectSymlinks(selected.Path, false); err != nil {
@@ -142,4 +165,25 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 		return err
 	}
 	return s.db.AddHistory(ctx, "download_files_deleted", 0, filepath.Base(path), map[string]any{"path": path, "bytes": match.Bytes})
+}
+
+// File associations protect payload bytes even when a legacy file was recorded
+// outside a registered library root. Compare filesystem aliases consistently.
+func (s *Service) rejectReferencedPayload(ctx context.Context, path string, roots []string) error {
+	rows, err := s.db.R.QueryContext(ctx, `SELECT path FROM media_files`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var ref string
+		if err = rows.Scan(&ref); err != nil {
+			return err
+		}
+		ref = storagePath(ref, roots)
+		if within(path, ref) || within(ref, path) {
+			return fmt.Errorf("library file retains this payload")
+		}
+	}
+	return rows.Err()
 }

@@ -111,6 +111,31 @@ func syncPath(path string) error {
 	return f.Sync()
 }
 
+// manualPlacementDestination keeps a same-quality manual import beside existing
+// bytes. The digest suffix is stable across retries and never authorizes overwrite.
+func manualPlacementDestination(ctx context.Context, src, dest string, manual, replace bool) (string, error) {
+	if !manual || replace {
+		return dest, nil
+	}
+	incoming, _, err := fileDigest(ctx, src)
+	if err != nil {
+		return "", err
+	}
+	ext := filepath.Ext(dest)
+	base := strings.TrimSuffix(dest, ext)
+	for n := 0; n < 1000; n++ {
+		current, _, err := fileDigest(ctx, dest)
+		if errors.Is(err, os.ErrNotExist) || (err == nil && current == incoming) {
+			return dest, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		dest = fmt.Sprintf("%s [manual-%s-%d]%s", base, incoming[:12], n, ext)
+	}
+	return "", fmt.Errorf("manual destination collision limit reached")
+}
+
 func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, scope importScope, src, dest string, q quality.Quality, eps []int64, replace bool) (int64, error) {
 	hash, size, err := fileDigest(ctx, src)
 	if err != nil {
@@ -175,7 +200,7 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 				conf = mediainfo.ConfidenceNone
 			}
 		}
-		p = sqlite.Placement{ID: id, Source: src, Target: dest, Temporary: filepath.Join(filepath.Dir(dest), ".monarr-stage-"+id), Backup: filepath.Join(filepath.Dir(dest), ".monarr-prior-"+id), SHA256: hash, PreviousSHA256: previous, Size: size, ItemID: item.ID, CopyID: scope.CopyID, EpisodeIDs: eps, Quality: measured, Info: info, Provenance: prov, Confidence: conf, Release: scope.Release, Indexer: scope.Indexer, State: "prepared"}
+		p = sqlite.Placement{DownloadID: scope.DownloadID, ID: id, Source: src, Target: dest, Temporary: filepath.Join(filepath.Dir(dest), ".monarr-stage-"+id), Backup: filepath.Join(filepath.Dir(dest), ".monarr-prior-"+id), SHA256: hash, PreviousSHA256: previous, Size: size, ItemID: item.ID, CopyID: scope.CopyID, EpisodeIDs: eps, Quality: measured, Info: info, Provenance: prov, Confidence: conf, Release: scope.Release, Indexer: scope.Indexer, State: "prepared"}
 		p.CleanupSuperseded = replace && item.Kind == domain.KindBook && !scope.DeferCleanup
 		p.SupersededDigests = map[string]string{}
 		if replace {
@@ -214,6 +239,11 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 				return 0, fmt.Errorf("file is outside the recovery selection")
 			}
 		}
+		// A deterministic policy refusal has no publication custody. Measure
+		// and validate before creating the journal; persist before any rename.
+		if err = s.validateMeasuredPlacement(ctx, item, scope, p, replace); err != nil {
+			return 0, err
+		}
 		if err = s.db.PreparePlacement(ctx, p); err != nil {
 			return 0, err
 		}
@@ -222,6 +252,16 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		if err = recovery.Validate(); err != nil {
 			return 0, err
 		}
+	}
+	if err = s.validateMeasuredPlacement(ctx, item, scope, p, replace); err != nil {
+		// A resumed intent may have met policy before an intervening edit.
+		// Close it only when identity checks prove rollback is safe.
+		if p.State == "prepared" {
+			if e := s.rollbackPlacement(ctx, p); e != nil {
+				s.log.Warn("policy-refused placement retains custody", "placement", p.ID, "err", e)
+			}
+		}
+		return 0, err
 	}
 	if err = s.publishPlacement(ctx, p); err != nil {
 		return 0, err

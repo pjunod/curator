@@ -162,7 +162,10 @@ createServer((req, res) => {
       const dir = join(dlRoot, spec.name)
       mkdirSync(dir, { recursive: true })
       for (const f of spec.files) writeFileSync(join(dir, f), `fake video ${f}`)
-      torrents.push({ hash: `hash-${slug}-${torrents.length}`, name: spec.name, content_path: dir })
+      // Re-adding the same torrent retains one hash, as qBittorrent does.
+      if (!torrents.some((t) => t.name === spec.name)) {
+        torrents.push({ hash: `hash-${slug}`, name: spec.name, content_path: dir })
+      }
       res.end('Ok.')
     })
     return

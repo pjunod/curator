@@ -169,7 +169,7 @@ func indexerFromRow(r sqlitegen.Indexer) ports.IndexerConfig {
 	var cats []int
 	_ = json.Unmarshal([]byte(r.Categories), &cats)
 	return ports.IndexerConfig{
-		ID: r.ID, Name: r.Name, URL: r.Url, APIKey: r.ApiKey,
+		ID: r.ID, Name: r.Name, URL: r.Url, APIKey: r.ApiKey, DailyRequestCap: int(r.DailyRequestCap),
 		Protocol: r.Protocol, Categories: cats, Enabled: r.Enabled != 0,
 	}
 }
@@ -180,10 +180,17 @@ func (d *DB) AddIndexer(ctx context.Context, c ports.IndexerConfig) (int64, erro
 	if c.Categories == nil {
 		cats = []byte("[]")
 	}
-	return d.Write.InsertIndexer(ctx, sqlitegen.InsertIndexerParams{
+	id, err := d.Write.InsertIndexer(ctx, sqlitegen.InsertIndexerParams{
 		Name: c.Name, Url: c.URL, ApiKey: c.APIKey, Protocol: c.Protocol,
 		Categories: string(cats), Enabled: boolInt(c.Enabled), AddedAt: time.Now().UnixMilli(),
 	})
+	if err != nil {
+		return 0, err
+	}
+	if err = d.SetDailyRequestCap(ctx, id, c.DailyRequestCap); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // ListIndexers returns all stored indexers.
@@ -354,23 +361,33 @@ type HandoffEntry struct {
 
 // Download is a queue row (persisted Download state machine, blueprint §4.2).
 type Download struct {
-	ID           int64
-	MediaItemID  int64
-	CopyID       int64 // 0 = the primary copy
-	WantableIDs  []string
-	Season       int
-	ReleaseTitle string
-	Indexer      string
-	Protocol     string
-	Quality      quality.Quality
-	Size         int64
-	ClientID     int64
-	Handle       string
-	State        string
-	Progress     float64
-	Error        string
-	SavePath     string // what the download client reported
-	ImportPath   string // where Monarr looks after remote path mapping
+	PlanID           int64
+	CandidateKey     string
+	SubmissionPhase  string
+	ExecutionPayload string
+	ReservedEpisodes []int64
+	ParkedReason     string
+	ParkedAt         time.Time
+	Superseded       bool
+	Observation      string
+	CleanupPending   bool
+	ID               int64
+	MediaItemID      int64
+	CopyID           int64 // 0 = the primary copy
+	WantableIDs      []string
+	Season           int
+	ReleaseTitle     string
+	Indexer          string
+	Protocol         string
+	Quality          quality.Quality
+	Size             int64
+	ClientID         int64
+	Handle           string
+	State            string
+	Progress         float64
+	Error            string
+	SavePath         string // what the download client reported
+	ImportPath       string // where Monarr looks after remote path mapping
 	// Transfer names this one transfer end to end (nzbd contract §3.1:
 	// t-<id>-<6 hex>). It goes onto the download in the client and will
 	// travel on to the media server, so grepping any app's log for it
@@ -392,7 +409,10 @@ func downloadFromRow(r sqlitegen.Download) Download {
 	_ = json.Unmarshal([]byte(r.HandoffLog), &handoff)
 	var evidence domain.MatchEvidence
 	_ = json.Unmarshal([]byte(r.MatchEvidence), &evidence)
+	var reserved []int64
+	_ = json.Unmarshal([]byte(r.ReservedEpisodes), &reserved)
 	dl := Download{
+		PlanID: r.PlanID.Int64, CandidateKey: r.CandidateKey, SubmissionPhase: r.SubmissionPhase, ExecutionPayload: r.ExecutionPayload, ReservedEpisodes: reserved, ParkedReason: r.ParkedReason, ParkedAt: time.UnixMilli(r.ParkedAt), Superseded: r.Superseded != 0, Observation: r.Observation, CleanupPending: r.CleanupPending != 0,
 		PayloadRemoved: r.PayloadRemoved != 0, ID: r.ID, MediaItemID: r.MediaItemID, WantableIDs: wants, Season: int(r.Season),
 		ReleaseTitle: r.ReleaseTitle, Indexer: r.Indexer, Protocol: r.Protocol,
 		Quality: quality.FromString(r.Quality), Size: r.Size, ClientID: r.ClientID,
@@ -544,7 +564,18 @@ func (d *DB) AppendHandoffStep(ctx context.Context, downloadID int64, step, deta
 
 // DeleteDownload removes a queue row.
 func (d *DB) DeleteDownload(ctx context.Context, id int64) error {
-	return d.Write.DeleteDownload(ctx, id)
+	dl, err := d.GetDownload(ctx, id)
+	if err != nil {
+		return err
+	}
+	if dl.SubmissionPhase == "pending" || dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "uncertain" || dl.ParkedAt.UnixMilli() > 0 || dl.CleanupPending {
+		return fmt.Errorf("download retains unresolved execution or payload custody")
+	}
+	n, err := d.Write.DeleteDownload(ctx, id)
+	if err == nil && n == 0 {
+		return fmt.Errorf("download retains unresolved placement custody")
+	}
+	return err
 }
 
 // GetDownload returns one queue row or ErrNotFound.

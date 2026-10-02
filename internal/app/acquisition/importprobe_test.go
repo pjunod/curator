@@ -248,7 +248,7 @@ func TestImportSaysWhyItSkippedEveryFile(t *testing.T) {
 	if !strings.Contains(err.Error(), name) {
 		t.Errorf("error does not name the file: %v", err)
 	}
-	if !strings.Contains(err.Error(), "does not improve on") {
+	if !strings.Contains(err.Error(), "protected by current policy") {
 		t.Errorf("error does not say why: %v", err)
 	}
 	skipped := result.Skipped()
@@ -300,7 +300,7 @@ func TestManualImportIsNotGatedByTheProfile(t *testing.T) {
 	if result.Upgraded {
 		t.Error("a same-quality manual import reported itself as an upgrade")
 	}
-	if _, statErr := os.Stat(existing); statErr != nil {
+	if data, statErr := os.ReadFile(existing); statErr != nil || string(data) != "already here" {
 		t.Error("the existing file was deleted by a manual import that did not outrank it")
 	}
 }

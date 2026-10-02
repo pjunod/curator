@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/ports"
@@ -81,6 +82,10 @@ func unsupportedSearchError(err error) bool {
 }
 
 func searchFailureReason(err error) string {
+	var deferred interface{ DeferredUntil() time.Time }
+	if errors.As(err, &deferred) {
+		return err.Error()
+	}
 	var remote *ports.RemoteError
 	if errors.As(err, &remote) {
 		return remote.Category

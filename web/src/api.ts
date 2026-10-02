@@ -712,6 +712,7 @@ export interface LanguageOption {
 }
 
 export interface IndexerInput {
+ dailyRequestCap?: number
   name: string
   url: string
   apiKey?: string
@@ -825,6 +826,11 @@ export interface HandoffEntry {
 }
 
 export interface QueueItem {
+ planId?: number
+ planState?: string
+ submissionPhase?: string
+ parkedReason?: string
+ selection?: SeasonSelection
   control?: { version: number; revision: string; lifecycle: string; cause: string; stage: string; retry_policy: string; message: string; instance: string }
 
   id: number
@@ -890,6 +896,7 @@ export const deleteProfile = (id: number) => send('DELETE', `/profiles/${id}`)
 /** The audio languages a profile may require, in display order (ADR 0022). */
 export const listLanguages = () => get<LanguageOption[]>('/languages')
 export const getIndexers = () => get<Indexer[]>('/indexers')
+export const updateIndexerBudget = (id: number, dailyRequestCap: number) => send<Indexer>('PATCH', `/indexers/${id}`, { dailyRequestCap })
 export const addIndexer = (i: IndexerInput) => send<Indexer>('POST', '/indexers', i)
 export const testIndexer = (i: IndexerInput) => send('POST', '/indexers/test', i)
 export const testIndexerById = (id: number) => send('POST', `/indexers/${id}/test`)
@@ -1166,7 +1173,7 @@ export interface WantedSearchResult {
   wantableId: string
   label: string
   state: 'searched' | 'skipped' | 'failed'
-  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled'
+  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled' | 'queued'
   seen: number
   matched: number
   accepted: number
@@ -1389,7 +1396,7 @@ export function composeHostPort(host: string, port: string): string {
 export interface AutoSearchTarget {
   wantableId: string
   label: string
-  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled'
+  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled' | 'queued'
   seen: number
   matched: number
   accepted: number
@@ -1509,3 +1516,17 @@ export const getCompletedInventory = () => get<CompletedInventory>('/downloads/i
 
 export const deleteCompletedEntry = (path: string, fingerprint: string) =>
   send('DELETE', '/downloads/inventory/entry', { path, fingerprint })
+
+export interface SeasonSelection {
+ version: number
+ trigger: string
+ target: string
+ partial: boolean
+ reason: string
+ titles: Record<string,string>
+ importAllowlists: Record<string,number[]>
+ plan: { Releases: string[]; Unserved: number[]; Cost: { ZeroSeedTorrents:number; UnknownSizes:number; KnownBytes:number; UnknownSeedTorrents:number; RedundantEpisodes:number; Transfers:number } }
+ scopes: { IndexerID:number; EpisodeID:number; Complete:boolean; Reasons:string[]; Degraded:boolean }[]
+}
+
+export const resolveQueueReservation = (id: number) => send<void>('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})

@@ -19,6 +19,7 @@ const (
 	AutoSearchTargetSkippedCancelled      AutoSearchTargetSkipped = "cancelled"
 	AutoSearchTargetSkippedDownloading    AutoSearchTargetSkipped = "downloading"
 	AutoSearchTargetSkippedNoLongerWanted AutoSearchTargetSkipped = "no_longer_wanted"
+	AutoSearchTargetSkippedQueued         AutoSearchTargetSkipped = "queued"
 	AutoSearchTargetSkippedReasonChanged  AutoSearchTargetSkipped = "reason_changed"
 	AutoSearchTargetSkippedRegrabCapped   AutoSearchTargetSkipped = "regrab_capped"
 	AutoSearchTargetSkippedUnmonitored    AutoSearchTargetSkipped = "unmonitored"
@@ -32,6 +33,8 @@ func (e AutoSearchTargetSkipped) Valid() bool {
 	case AutoSearchTargetSkippedDownloading:
 		return true
 	case AutoSearchTargetSkippedNoLongerWanted:
+		return true
+	case AutoSearchTargetSkippedQueued:
 		return true
 	case AutoSearchTargetSkippedReasonChanged:
 		return true
@@ -617,6 +620,33 @@ func (e QueueItemImportState) Valid() bool {
 	}
 }
 
+// Defines values for QueueItemSubmissionPhase.
+const (
+	QueueItemSubmissionPhasePending    QueueItemSubmissionPhase = "pending"
+	QueueItemSubmissionPhaseRejected   QueueItemSubmissionPhase = "rejected"
+	QueueItemSubmissionPhaseSubmitted  QueueItemSubmissionPhase = "submitted"
+	QueueItemSubmissionPhaseSubmitting QueueItemSubmissionPhase = "submitting"
+	QueueItemSubmissionPhaseUncertain  QueueItemSubmissionPhase = "uncertain"
+)
+
+// Valid indicates whether the value is a known member of the QueueItemSubmissionPhase enum.
+func (e QueueItemSubmissionPhase) Valid() bool {
+	switch e {
+	case QueueItemSubmissionPhasePending:
+		return true
+	case QueueItemSubmissionPhaseRejected:
+		return true
+	case QueueItemSubmissionPhaseSubmitted:
+		return true
+	case QueueItemSubmissionPhaseSubmitting:
+		return true
+	case QueueItemSubmissionPhaseUncertain:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RecommendationFiltersTheme.
 const (
 	ComingOfAge      RecommendationFiltersTheme = "coming_of_age"
@@ -1039,6 +1069,7 @@ const (
 	WantedSearchResultSkippedCancelled      WantedSearchResultSkipped = "cancelled"
 	WantedSearchResultSkippedDownloading    WantedSearchResultSkipped = "downloading"
 	WantedSearchResultSkippedNoLongerWanted WantedSearchResultSkipped = "no_longer_wanted"
+	WantedSearchResultSkippedQueued         WantedSearchResultSkipped = "queued"
 	WantedSearchResultSkippedReasonChanged  WantedSearchResultSkipped = "reason_changed"
 	WantedSearchResultSkippedRegrabCapped   WantedSearchResultSkipped = "regrab_capped"
 	WantedSearchResultSkippedUnmonitored    WantedSearchResultSkipped = "unmonitored"
@@ -1052,6 +1083,8 @@ func (e WantedSearchResultSkipped) Valid() bool {
 	case WantedSearchResultSkippedDownloading:
 		return true
 	case WantedSearchResultSkippedNoLongerWanted:
+		return true
+	case WantedSearchResultSkippedQueued:
 		return true
 	case WantedSearchResultSkippedReasonChanged:
 		return true
@@ -1745,13 +1778,16 @@ type ImportPathDefault struct {
 
 // Indexer defines model for Indexer.
 type Indexer struct {
-	ApiKey     *string         `json:"apiKey,omitempty"`
-	Categories *[]int          `json:"categories,omitempty"`
-	Enabled    *bool           `json:"enabled,omitempty"`
-	Id         int64           `json:"id"`
-	Name       string          `json:"name"`
-	Protocol   IndexerProtocol `json:"protocol"`
-	Url        string          `json:"url"`
+	ApiKey     *string `json:"apiKey,omitempty"`
+	Categories *[]int  `json:"categories,omitempty"`
+
+	// DailyRequestCap Provider API-call allowance per rolling day; zero uses Curator's local 250-request budget.
+	DailyRequestCap *int            `json:"dailyRequestCap,omitempty"`
+	Enabled         *bool           `json:"enabled,omitempty"`
+	Id              int64           `json:"id"`
+	Name            string          `json:"name"`
+	Protocol        IndexerProtocol `json:"protocol"`
+	Url             string          `json:"url"`
 }
 
 // IndexerProtocol defines model for Indexer.Protocol.
@@ -1759,12 +1795,15 @@ type IndexerProtocol string
 
 // IndexerInput defines model for IndexerInput.
 type IndexerInput struct {
-	ApiKey     *string              `json:"apiKey,omitempty"`
-	Categories *[]int               `json:"categories,omitempty"`
-	Enabled    *bool                `json:"enabled,omitempty"`
-	Name       string               `json:"name"`
-	Protocol   IndexerInputProtocol `json:"protocol"`
-	Url        string               `json:"url"`
+	ApiKey     *string `json:"apiKey,omitempty"`
+	Categories *[]int  `json:"categories,omitempty"`
+
+	// DailyRequestCap Provider API-call allowance per rolling day; zero uses Curator's local 250-request budget.
+	DailyRequestCap *int                 `json:"dailyRequestCap,omitempty"`
+	Enabled         *bool                `json:"enabled,omitempty"`
+	Name            string               `json:"name"`
+	Protocol        IndexerInputProtocol `json:"protocol"`
+	Url             string               `json:"url"`
 }
 
 // IndexerInputProtocol defines model for IndexerInput.Protocol.
@@ -2256,15 +2295,21 @@ type QueueItem struct {
 	ImportPath *string `json:"importPath,omitempty"`
 
 	// ImportState The in-memory importer state. `queued` means the job was accepted and is waiting for one of the bounded import workers; `running` means a worker owns it. Absent means no importer owns this row.
-	ImportState *QueueItemImportState `json:"importState,omitempty"`
-	Match       *MatchEvidence        `json:"match,omitempty"`
-	MediaItemId int64                 `json:"mediaItemId"`
-	Progress    float32               `json:"progress"`
-	Protocol    string                `json:"protocol"`
-	Quality     string                `json:"quality"`
+	ImportState  *QueueItemImportState `json:"importState,omitempty"`
+	Match        *MatchEvidence        `json:"match,omitempty"`
+	MediaItemId  int64                 `json:"mediaItemId"`
+	ParkedReason *string               `json:"parkedReason,omitempty"`
+	PlanId       *int64                `json:"planId,omitempty"`
+	PlanState    *string               `json:"planState,omitempty"`
+	Progress     float32               `json:"progress"`
+	Protocol     string                `json:"protocol"`
+	Quality      string                `json:"quality"`
 
 	// SavePath The completed-download path the client reported.
 	SavePath *string `json:"savePath,omitempty"`
+
+	// Selection Recorded public selection facts; absent for legacy or manual rows. Contains no transport URLs.
+	Selection *map[string]interface{} `json:"selection,omitempty"`
 
 	// Stage What is happening to this job RIGHT NOW, finer-grained than `state` and present only while something is moving: downloading | par_rename | par_verify | par_repair | rar_rename | unpack | cleanup | move | post_unpack_rename | script | importing | notifying. The post-processing names are the download client's own spellings. Absent means nothing is in flight for this row.
 	Stage *string `json:"stage,omitempty"`
@@ -2276,9 +2321,10 @@ type QueueItem struct {
 	StagePeer  *string    `json:"stagePeer,omitempty"`
 	StageSince *time.Time `json:"stageSince,omitempty"`
 
-	// State grabbed | downloading | downloaded | awaiting_import | importing | imported | failed.
-	State string `json:"state"`
-	Title string `json:"title"`
+	// State planned | grabbed | downloading | downloaded | awaiting_import | importing | imported | failed.
+	State           string                    `json:"state"`
+	SubmissionPhase *QueueItemSubmissionPhase `json:"submissionPhase,omitempty"`
+	Title           string                    `json:"title"`
 
 	// Total Bytes expected at the current stage. Absent when unknown — which is NOT the same as zero.
 	Total *int64 `json:"total,omitempty"`
@@ -2286,6 +2332,9 @@ type QueueItem struct {
 
 // QueueItemImportState The in-memory importer state. `queued` means the job was accepted and is waiting for one of the bounded import workers; `running` means a worker owns it. Absent means no importer owns this row.
 type QueueItemImportState string
+
+// QueueItemSubmissionPhase defines model for QueueItem.SubmissionPhase.
+type QueueItemSubmissionPhase string
 
 // QueueSummary defines model for QueueSummary.
 type QueueSummary struct {
@@ -2962,6 +3011,11 @@ type ScanImportPathParams struct {
 	Path string `form:"path" json:"path"`
 }
 
+// UpdateIndexerBudgetJSONBody defines parameters for UpdateIndexerBudget.
+type UpdateIndexerBudgetJSONBody struct {
+	DailyRequestCap int `json:"dailyRequestCap"`
+}
+
 // ListLibraryParams defines parameters for ListLibrary.
 type ListLibraryParams struct {
 	Kind *MediaKind `form:"kind,omitempty" json:"kind,omitempty"`
@@ -3099,6 +3153,11 @@ type RemoveQueueItemParams struct {
 	FromClient *bool `form:"fromClient,omitempty" json:"fromClient,omitempty"`
 }
 
+// ResolveQueueReservationJSONBody defines parameters for ResolveQueueReservation.
+type ResolveQueueReservationJSONBody struct {
+	AcknowledgeDuplicateRisk bool `json:"acknowledgeDuplicateRisk"`
+}
+
 // AddRootFolderJSONBody defines parameters for AddRootFolder.
 type AddRootFolderJSONBody struct {
 	// Kind What a root folder holds (ADR 0009). "mixed" means the kind is not known, so adoption asks instead of assuming — the behaviour every root had before kinds existed.
@@ -3163,6 +3222,9 @@ type AddIndexerJSONRequestBody = IndexerInput
 // TestIndexerJSONRequestBody defines body for TestIndexer for application/json ContentType.
 type TestIndexerJSONRequestBody = IndexerInput
 
+// UpdateIndexerBudgetJSONRequestBody defines body for UpdateIndexerBudget for application/json ContentType.
+type UpdateIndexerBudgetJSONRequestBody UpdateIndexerBudgetJSONBody
+
 // AddLibraryItemJSONRequestBody defines body for AddLibraryItem for application/json ContentType.
 type AddLibraryItemJSONRequestBody = AddMediaRequest
 
@@ -3219,6 +3281,9 @@ type CreateProfileJSONRequestBody = ProfileInput
 
 // UpdateProfileJSONRequestBody defines body for UpdateProfile for application/json ContentType.
 type UpdateProfileJSONRequestBody = ProfileInput
+
+// ResolveQueueReservationJSONRequestBody defines body for ResolveQueueReservation for application/json ContentType.
+type ResolveQueueReservationJSONRequestBody ResolveQueueReservationJSONBody
 
 // AddRootFolderJSONRequestBody defines body for AddRootFolder for application/json ContentType.
 type AddRootFolderJSONRequestBody AddRootFolderJSONBody
@@ -3366,6 +3431,9 @@ type ServerInterface interface {
 	// DeleteIndexer Remove an indexer
 	// (DELETE /indexers/{id})
 	DeleteIndexer(w http.ResponseWriter, r *http.Request, id int64)
+	// UpdateIndexerBudget Set the saved indexer's rolling daily request cap
+	// (PATCH /indexers/{id})
+	UpdateIndexerBudget(w http.ResponseWriter, r *http.Request, id int64)
 	// TestIndexerById Test a saved indexer with its stored credentials
 	// (POST /indexers/{id}/test)
 	TestIndexerById(w http.ResponseWriter, r *http.Request, id int64)
@@ -3549,6 +3617,9 @@ type ServerInterface interface {
 	// ImportQueueItem Import a download now — approve a held one, or retry a failed one
 	// (POST /queue/{id}/import)
 	ImportQueueItem(w http.ResponseWriter, r *http.Request, id int64)
+	// ResolveQueueReservation Acknowledge duplicate risk and release uncertain or cancelled episode custody
+	// (POST /queue/{id}/resolve-reservation)
+	ResolveQueueReservation(w http.ResponseWriter, r *http.Request, id int64)
 	// ResumeQueueItem Resume the retained Runner job after resource admission
 	// (POST /queue/{id}/resume)
 	ResumeQueueItem(w http.ResponseWriter, r *http.Request, id int64)
@@ -4477,6 +4548,32 @@ func (siw *ServerInterfaceWrapper) DeleteIndexer(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteIndexer(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateIndexerBudget operation middleware
+func (siw *ServerInterfaceWrapper) UpdateIndexerBudget(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateIndexerBudget(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6138,6 +6235,32 @@ func (siw *ServerInterfaceWrapper) ImportQueueItem(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// ResolveQueueReservation operation middleware
+func (siw *ServerInterfaceWrapper) ResolveQueueReservation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveQueueReservation(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ResumeQueueItem operation middleware
 func (siw *ServerInterfaceWrapper) ResumeQueueItem(w http.ResponseWriter, r *http.Request) {
 
@@ -6688,6 +6811,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/indexers", wrapper.AddIndexer)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/indexers/test", wrapper.TestIndexer)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/indexers/{id}", wrapper.DeleteIndexer)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/indexers/{id}", wrapper.UpdateIndexerBudget)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/indexers/{id}/test", wrapper.TestIndexerById)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloadclients", wrapper.ListDownloadClients)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloadclients", wrapper.AddDownloadClient)
@@ -6703,6 +6827,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/failed", wrapper.ClearFailedQueue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resolve-reservation", wrapper.ResolveQueueReservation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resume", wrapper.ResumeQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/cancel-import", wrapper.CancelQueueImport)
