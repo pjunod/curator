@@ -594,3 +594,209 @@ func TestUnpublishedPlacementRestartKeepsNewerDestinationAndCommittedCleanup(t *
 		t.Fatal("committed rollback bytes not cleaned", err)
 	}
 }
+
+func TestDiscoveryRejectsInvalidAndUnavailableInputsBeforeTransport(t *testing.T) {
+	for _, mode := range []string{"json", "version", "missing_item", "missing_path", "no_indexers"} {
+		t.Run(mode, func(t *testing.T) {
+			client := &fakeClient{}
+			s, db, item := setup(t, nil, client)
+			ctx := context.Background()
+			p := seasonCheckpoint{Version: 1, ItemID: item, Season: 1}
+			raw, _ := json.Marshal(p)
+			switch mode {
+			case "json":
+				raw = []byte("bad json")
+			case "version":
+				p.Version = 2
+				raw, _ = json.Marshal(p)
+			case "missing_item":
+				p.ItemID = 99999
+				raw, _ = json.Marshal(p)
+			case "missing_path":
+				_, _ = db.W.ExecContext(ctx, `UPDATE media_items SET path='' WHERE id=?`, item)
+			case "no_indexers":
+				_, _ = db.W.ExecContext(ctx, `UPDATE indexers SET enabled=0`)
+			}
+			if err := s.handleSeasonSearch(ctx, domain.Job{Payload: string(raw)}); err == nil {
+				t.Fatal("unavailable discovery accepted")
+			}
+			if len(client.added) != 0 {
+				t.Fatal("invalid input reached client")
+			}
+		})
+	}
+}
+
+func TestDiscoveryDefersActiveComparisonAndProviderWakeWithoutStartingEvidenceClock(t *testing.T) {
+	for _, mode := range []string{"active_plan", "open_comparison", "provider_wake", "rolling_capacity"} {
+		t.Run(mode, func(t *testing.T) {
+			client := &fakeClient{}
+			s, db, item := setup(t, nil, client)
+			ctx := context.Background()
+			if err := s.enqueueSeason(ctx, item, 0, 1, "test", true); err != nil {
+				t.Fatal(err)
+			}
+			j, err := db.ClaimJob(ctx, "waiting", nil, time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var p seasonCheckpoint
+			_ = json.Unmarshal([]byte(j.Payload), &p)
+			configs, _ := db.ListIndexers(ctx)
+			switch mode {
+			case "active_plan":
+				admittedFixture(t, s, db, item, "single")
+			case "open_comparison":
+				_, err = db.EnqueueJob(ctx, domain.Job{Kind: SeasonSearchJobKind, DedupeKey: "other-season", Payload: `{"started":"2026-10-01T00:00:00Z"}`})
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "provider_wake":
+				p.Started = time.Now()
+				p.Deadline = p.Started.Add(24 * time.Hour)
+				p.Revision, _ = db.AcquisitionRevision(ctx)
+				p.Scopes = []discoveryScope{{IndexerID: configs[0].ID, RetryAt: time.Now().Add(time.Hour)}}
+				raw, _ := json.Marshal(p)
+				j.Payload = string(raw)
+			case "rolling_capacity":
+				if err = db.SetDailyRequestCap(ctx, configs[0].ID, 50); err != nil {
+					t.Fatal(err)
+				}
+				for range sqlite.RequestBudget(50).Search {
+					if err = db.ReserveIndexerRequest(ctx, configs[0].ID, "search", false, time.Now()); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			err = s.handleSeasonSearch(ctx, j)
+			var deferred *sqlite.BudgetDeferred
+			if !errors.As(err, &deferred) || len(client.added) != 0 {
+				t.Fatalf("unsafe wake %s: %v %v", mode, err, client.added)
+			}
+			if mode != "provider_wake" {
+				fresh, _ := db.GetJob(ctx, j.ID)
+				_ = json.Unmarshal([]byte(fresh.Payload), &p)
+				if !p.Started.IsZero() {
+					t.Fatal("waiting work started evidence clock")
+				}
+			}
+		})
+	}
+}
+
+func TestPolicyRevisionRefreshDiscardsPreviouslyDiscoveredSupply(t *testing.T) {
+	client := &fakeClient{}
+	s, db, item := setup(t, nil, client)
+	ctx := context.Background()
+	if err := s.enqueueSeason(ctx, item, 0, 1, "test", true); err != nil {
+		t.Fatal(err)
+	}
+	j, err := db.ClaimJob(ctx, "refresh", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p seasonCheckpoint
+	_ = json.Unmarshal([]byte(j.Payload), &p)
+	p.Revision, _ = db.AcquisitionRevision(ctx)
+	p.Started = time.Now().Add(-48 * time.Hour)
+	p.Deadline = p.Started.Add(24 * time.Hour)
+	p.Releases = []ports.Release{{Title: "Test.Show.S01.1080p.WEB-DL-STALE", DownloadURL: "stale", Indexer: "idx", Protocol: "torrent", Size: 1000}}
+	p.Scopes = []discoveryScope{{IndexerID: 1, Complete: true}}
+	p.Stage = "episodes"
+	raw, _ := json.Marshal(p)
+	j.Payload = string(raw)
+	if _, err = db.W.ExecContext(ctx, `UPDATE indexers SET api_key='changed'`); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.handleSeasonSearch(ctx, j); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := db.GetJob(ctx, j.ID)
+	_ = json.Unmarshal([]byte(fresh.Payload), &p)
+	if len(p.Releases) != 0 || time.Since(p.Started) > time.Minute || len(client.added) != 0 {
+		t.Fatal("policy refresh retained stale supply")
+	}
+}
+
+func TestIntrinsicallyOversizedScopeServesOnlyCompletedSingles(t *testing.T) {
+	client := &fakeClient{}
+	s, db, item := setup(t, nil, client)
+	ctx := context.Background()
+	for episode := 3; episode <= 20; episode++ {
+		if _, err := db.W.ExecContext(ctx, `INSERT INTO episodes(media_item_id,season_number,episode_number,title,air_date,monitored) VALUES(?,1,?,'Episode','2020-01-01',1)`, item, episode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	indexers, _ := db.ListIndexers(ctx)
+	cfg := indexers[0]
+	if err := db.SetDailyRequestCap(ctx, cfg.ID, 50); err != nil {
+		t.Fatal(err)
+	}
+	supply := []ports.Release{
+		{Title: "Test.Show.S01E01.1080p.WEB-DL-ONE", DownloadURL: "one", Indexer: "idx", IndexerID: cfg.ID, Protocol: "torrent", Size: 1000},
+		{Title: "Test.Show.S01E02.1080p.WEB-DL-TWO", DownloadURL: "two", Indexer: "idx", IndexerID: cfg.ID, Protocol: "torrent", Size: 1000},
+		{Title: "Test.Show.S01.1080p.WEB-DL-PACK", DownloadURL: "pack", Indexer: "idx", IndexerID: cfg.ID, Protocol: "torrent", Size: 1000},
+	}
+	s.newIndexer = func(ports.IndexerConfig) ports.Indexer { return fakeIndexer{releases: supply} }
+	if err := s.enqueueSeason(ctx, item, 0, 1, "test", true); err != nil {
+		t.Fatal(err)
+	}
+	j, err := db.ClaimJob(ctx, "oversized", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.handleSeasonSearch(ctx, j)
+	var deferred *sqlite.BudgetDeferred
+	if !errors.As(err, &deferred) {
+		t.Fatalf("oversized discovery did not defer: %v", err)
+	}
+	fresh, _ := db.GetJob(ctx, j.ID)
+	var p seasonCheckpoint
+	_ = json.Unmarshal([]byte(fresh.Payload), &p)
+	if !p.IntrinsicPartial || len(client.added) != 2 {
+		t.Fatalf("completed singles not served: partial=%v adds=%v", p.IntrinsicPartial, client.added)
+	}
+	for _, url := range client.added {
+		if url == "pack" {
+			t.Fatal("incomplete epoch authorized pack")
+		}
+	}
+}
+
+type rssWakeClient struct {
+	fakeClient
+	called chan struct{}
+}
+
+func (c *rssWakeClient) Add(ctx context.Context, url, category string) (ports.Handle, error) {
+	h, err := c.fakeClient.Add(ctx, url, category)
+	close(c.called)
+	return h, err
+}
+func TestPersistedRSSWakeDispatchesBeforeMaximumIdleSweep(t *testing.T) {
+	client := &rssWakeClient{called: make(chan struct{})}
+	s, db, _ := autoSetup(t, []ports.Release{rel("Test.Movie.2024.1080p.WEB-DL-WAKE", 10)}, &client.fakeClient)
+	s.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := db.W.ExecContext(ctx, `UPDATE indexers SET next_rss_at=?`, time.Now().Add(20*time.Millisecond).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan struct{})
+	go func() { s.RunRSSPacing(ctx); close(finished) }()
+	select {
+	case <-client.called:
+		cancel()
+	case <-time.After(5 * time.Second):
+		t.Fatal("persisted due time did not wake RSS")
+	}
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RSS pacing did not stop on cancellation")
+	}
+	var calls int
+	if err := db.R.QueryRowContext(context.Background(), `SELECT count(*) FROM indexer_request_usage WHERE bucket='rss'`).Scan(&calls); err != nil || calls != 1 {
+		t.Fatalf("due sweep debit = %d %v", calls, err)
+	}
+}
