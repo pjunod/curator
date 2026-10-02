@@ -207,6 +207,10 @@ export function AcquisitionSettings() {
           <input placeholder="Name" value={idx.name} onChange={(e) => setIdx({ ...idx, name: e.target.value })} />
           <input placeholder="URL (http://prowlarr:9696/1)" value={idx.url} onChange={(e) => setIdx({ ...idx, url: e.target.value })} />
           <input placeholder="API key" value={idx.apiKey} onChange={(e) => setIdx({ ...idx, apiKey: e.target.value })} />
+          <label>Daily API request cap
+            <input type="number" min="0" value={idx.dailyRequestCap ?? 0} onChange={e=>setIdx({...idx,dailyRequestCap:Number(e.target.value)})}/>
+            <small>0 uses a local budget of 250 calls per rolling day. RSS, automatic search and manual search share it; provider grab caps are separate.</small>
+          </label>
           <select value={idx.protocol} onChange={(e) => setIdx({ ...idx, protocol: e.target.value as 'torrent' | 'usenet' })}>
             <option value="torrent">torrent</option>
             <option value="usenet">usenet</option>
@@ -272,10 +276,7 @@ export function AcquisitionSettings() {
                     />{' '}
                     Approve imports
                   </label>
-          <label>Daily API request cap
-            <input type="number" min="0" value={idx.dailyRequestCap ?? 0} onChange={e=>setIdx({...idx,dailyRequestCap:Number(e.target.value)})}/>
-            <small>0 uses a local budget of 250 calls per rolling day. RSS, automatic search and manual search share it; provider grab caps are separate.</small>
-          </label>
+
 
                   <label
                     className="approval-toggle"

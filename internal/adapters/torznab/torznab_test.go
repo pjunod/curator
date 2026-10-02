@@ -189,3 +189,19 @@ func contains(s, sub string) bool {
 		return false
 	})()
 }
+
+func TestPaginationCountsUnusableWireItems(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("t") == "caps" {
+			_, _ = w.Write([]byte(caps))
+			return
+		}
+		_, _ = w.Write([]byte(`<rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response offset="0" total="3"/><item><title>usable</title><link>http://example.invalid/dl</link></item><item><title>missing link</title></item></channel></rss>`))
+	}))
+	defer srv.Close()
+	c := New(ports.IndexerConfig{URL: srv.URL, Protocol: "torrent"})
+	page, err := c.SearchPage(context.Background(), domain.SearchQuery{Q: "show"}, 0)
+	if err != nil || len(page.Releases) != 1 || page.NextOffset != 2 || page.Complete {
+		t.Fatalf("%+v %v", page, err)
+	}
+}

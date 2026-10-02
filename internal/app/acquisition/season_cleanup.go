@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"path/filepath"
+	"time"
 )
 
 type partialCleanupIDKey struct{}
@@ -27,6 +28,9 @@ func (s *Service) cleanupPartialPayloads(ctx context.Context) {
 		if err != nil || !dl.CleanupPending {
 			continue
 		}
+		// Rotate even unsafe/unavailable candidates so they cannot starve safe
+		// later payloads; failed attempts never release custody.
+		_, _ = s.db.W.ExecContext(ctx, `UPDATE downloads SET updated_at=? WHERE id=?`, time.Now().UnixMilli(), id)
 		path := filepath.Clean(dl.ImportPath)
 		if dl.ImportPath == "" || !s.ownsDownloadPath(ctx, path) {
 			continue

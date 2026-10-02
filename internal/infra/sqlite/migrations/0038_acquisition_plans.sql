@@ -57,8 +57,31 @@ INSERT INTO downloads_new (id,media_item_id,copy_id,wantables,season,release_tit
 DROP TABLE downloads;
 ALTER TABLE downloads_new RENAME TO downloads;
 
+-- Rebuilding downloads drops its table-owned receipt triggers.
+-- +goose StatementBegin
+CREATE TRIGGER completed_receipt_insert AFTER INSERT ON downloads
+WHEN NEW.import_path != ''
+BEGIN
+    INSERT OR REPLACE INTO completed_receipts
+    VALUES (NEW.id, NEW.added_at, NEW.import_path, NEW.client_id, NEW.release_title,
+            NEW.state, NEW.protocol, NEW.payload_removed);
+END;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE TRIGGER completed_receipt_update AFTER UPDATE ON downloads
+WHEN NEW.import_path != ''
+BEGIN
+    INSERT OR REPLACE INTO completed_receipts
+    VALUES (NEW.id, NEW.added_at, NEW.import_path, NEW.client_id, NEW.release_title,
+            NEW.state, NEW.protocol, NEW.payload_removed);
+END;
+-- +goose StatementEnd
+
+
+
 CREATE INDEX idx_downloads_state ON downloads(state);
 CREATE UNIQUE INDEX download_plan_candidate ON downloads(plan_id,candidate_key) WHERE plan_id IS NOT NULL;
+CREATE INDEX import_placement_download ON import_placements(json_extract(data,'$.download_id')) WHERE state IN ('prepared','committed');
 CREATE INDEX download_failure_window ON downloads(state,added_at);
 ALTER TABLE indexers ADD COLUMN daily_request_cap INTEGER NOT NULL DEFAULT 0 CHECK(daily_request_cap>=0);
 ALTER TABLE indexers ADD COLUMN next_rss_at INTEGER NOT NULL DEFAULT 0;
@@ -114,7 +137,7 @@ BEGIN UPDATE lifecycle_library_revision SET revision=revision+1 WHERE id=1; END;
 -- Refuse destructive downgrade while acquisition evidence exists.
 -- +goose StatementBegin
 CREATE TEMP TABLE acquisition_downgrade_guard(n INTEGER CHECK(n=0));
-INSERT INTO acquisition_downgrade_guard SELECT (SELECT count(*) FROM acquisition_plans)+(SELECT count(*) FROM downloads WHERE submission_phase!='submitted' OR parked_at>0 OR cleanup_pending=1 OR superseded=1);
+INSERT INTO acquisition_downgrade_guard SELECT (SELECT count(*) FROM acquisition_plans)+(SELECT count(*) FROM downloads WHERE submission_phase!='submitted' OR parked_at>0 OR cleanup_pending=1 OR superseded=1 OR state='planned');
 DROP TABLE acquisition_downgrade_guard;
 -- +goose StatementEnd
 
@@ -129,6 +152,7 @@ DROP TRIGGER acquisition_custom_formats_update;
 DROP TRIGGER acquisition_custom_formats_delete;
 DROP INDEX download_plan_candidate;
 DROP INDEX download_failure_window;
+DROP INDEX import_placement_download;
 ALTER TABLE downloads DROP COLUMN plan_id;
 ALTER TABLE downloads DROP COLUMN candidate_key;
 ALTER TABLE downloads DROP COLUMN submission_phase;

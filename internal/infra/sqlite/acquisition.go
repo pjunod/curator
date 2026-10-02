@@ -571,7 +571,11 @@ func (d *DB) DeleteDownload(ctx context.Context, id int64) error {
 	if dl.SubmissionPhase == "pending" || dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "uncertain" || dl.ParkedAt.UnixMilli() > 0 || dl.CleanupPending {
 		return fmt.Errorf("download retains unresolved execution or payload custody")
 	}
-	return d.Write.DeleteDownload(ctx, id)
+	n, err := d.Write.DeleteDownload(ctx, id)
+	if err == nil && n == 0 {
+		return fmt.Errorf("download retains unresolved placement custody")
+	}
+	return err
 }
 
 // GetDownload returns one queue row or ErrNotFound.

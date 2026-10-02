@@ -54,10 +54,10 @@ func (s *Service) observeTorrentStall(ctx context.Context, dl sqlite.Download, c
 		return
 	}
 	current, ok := matchStatus(dl, fresh)
-	if !ok || current.BytesCompleted == nil || *current.BytesCompleted != bytes || current.State != ports.StateDownloading || (current.OperationalState != "downloading" && current.OperationalState != "stalledDL" && current.OperationalState != "forcedDL") || current.Control.Held() || (ob.LongStall < 7*24*time.Hour && !((current.ConnectedSeeds != nil && *current.ConnectedSeeds == 0) || (current.Availability != nil && *current.Availability < 1))) {
+	if !ok || current.Handle == "" || (dl.Handle != "" && current.Handle != ports.Handle(dl.Handle)) || current.BytesCompleted == nil || *current.BytesCompleted != bytes || current.State != ports.StateDownloading || (current.OperationalState != "downloading" && current.OperationalState != "stalledDL" && current.OperationalState != "forcedDL") || current.Control.Held() || (ob.LongStall < 7*24*time.Hour && !((current.ConnectedSeeds != nil && *current.ConnectedSeeds == 0) || (current.Availability != nil && *current.Availability < 1))) {
 		return
 	}
-	if err = client.Remove(ctx, ports.Handle(dl.Handle), false); err != nil {
+	if err = client.Remove(ctx, current.Handle, false); err != nil {
 		_ = s.db.ParkDownload(ctx, dl.ID, "stalled torrent removal uncertain; episode remains reserved")
 		return
 	}

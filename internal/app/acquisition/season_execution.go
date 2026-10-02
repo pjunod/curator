@@ -323,12 +323,18 @@ func (s *Service) releaseUncertainRisk(ctx context.Context, dl sqlite.Download, 
 	return tx.Commit()
 }
 func (s *Service) effectiveImportAllowlist(ctx context.Context, dl sqlite.Download) ([]int64, error) {
+	if strings.HasPrefix(dl.ParkedReason, "operator cancellation") {
+		return nil, fmt.Errorf("operator cancellation prohibits automatic publication")
+	}
 	if dl.Superseded {
 		return nil, fmt.Errorf("superseded submission cannot publish; possible duplicate requires review")
 	}
 	p, err := s.db.GetAcquisitionPlan(ctx, dl.PlanID)
 	if err != nil {
 		return nil, err
+	}
+	if p.State == "cancel_requested" || p.State == "cancelled" {
+		return nil, fmt.Errorf("cancelled plan cannot publish automatically")
 	}
 	var facts seasonDecision
 	if err = json.Unmarshal(p.Decision, &facts); err != nil {
@@ -456,4 +462,31 @@ func (s *Service) ResolveReservation(ctx context.Context, id int64) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// Called under the common admission/import mutex. Only a conditional pending
+// claim can yield to an explicit manual choice; possibly sent rows keep custody.
+func (s *Service) closePendingForManual(ctx context.Context, dl sqlite.Download) (bool, error) {
+	tx, err := s.db.W.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE downloads SET state='failed',submission_phase='rejected',superseded=1,wantables='[]',reserved_episodes='[]',error='unsubmitted intent superseded by explicit manual choice' WHERE id=? AND submission_phase='pending' AND state='planned'`, dl.ID)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil || n == 0 {
+		return false, err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE downloads SET state='failed',submission_phase='rejected',superseded=1,wantables='[]',reserved_episodes='[]',error='remaining intent cancelled by explicit manual choice' WHERE plan_id=? AND submission_phase='pending' AND state='planned'`, dl.PlanID)
+	if err != nil {
+		return false, err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE acquisition_plans SET state='cancel_requested' WHERE id=? AND state IN ('admitted','dispatching','active')`, dl.PlanID)
+	if err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }

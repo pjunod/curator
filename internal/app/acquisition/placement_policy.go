@@ -40,11 +40,17 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 	for _, r := range records {
 		byID[r.FileID] = r
 	}
+	targetAuthorized := p.PreviousSHA256 == "" || p.PreviousSHA256 == p.SHA256
 	for _, f := range files {
 		if f.CopyID != scope.CopyID {
 			continue
 		}
-		overlap := len(p.EpisodeIDs) == 0
+		if f.Path != p.Target && scope.DeferCleanup && scope.PublishedDigests[f.Path] != "" {
+			if digest, _, e := fileDigest(ctx, f.Path); e == nil && digest == scope.PublishedDigests[f.Path] {
+				continue
+			}
+		}
+		overlap := len(p.EpisodeIDs) == 0 || f.Path == p.Target
 		for _, e := range f.EpisodeIDs {
 			if slices.Contains(p.EpisodeIDs, e) {
 				overlap = true
@@ -85,6 +91,12 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 		if !replace {
 			return fmt.Errorf("replacement requires measured authorization")
 		}
+		if f.Path == p.Target {
+			targetAuthorized = true
+		}
+	}
+	if !targetAuthorized {
+		return fmt.Errorf("existing destination bytes have no measured replacement authorization")
 	}
 	return nil
 }

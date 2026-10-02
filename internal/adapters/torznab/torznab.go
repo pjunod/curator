@@ -324,10 +324,11 @@ func (c *Client) Search(ctx context.Context, q domain.SearchQuery) ([]ports.Rele
 }
 func (c *Client) SearchPage(ctx context.Context, q domain.SearchQuery, offset int) (ports.IndexerPage, error) {
 	rows, metadata, e := c.searchPage(ctx, q, offset)
-	return ports.IndexerPage{Releases: rows, Offset: offset, Total: metadata.total, MetadataKnown: metadata.known, Complete: !metadata.known || offset+len(rows) >= metadata.total, NextOffset: offset + len(rows)}, e
+	return ports.IndexerPage{Releases: rows, Offset: offset, Total: metadata.total, MetadataKnown: metadata.known, Complete: !metadata.known || offset+metadata.count >= metadata.total, NextOffset: offset + metadata.count}, e
 }
 
 type pageMetadata struct {
+	count int
 	total int
 	known bool
 }
@@ -439,7 +440,7 @@ func (c *Client) searchPage(ctx context.Context, q domain.SearchQuery, offset in
 			out = append(out, r)
 		}
 	}
-	m := pageMetadata{}
+	m := pageMetadata{count: len(feed.Channel.Items)}
 	if feed.Channel.Response != nil {
 		if feed.Channel.Response.Total < 0 || feed.Channel.Response.Offset != offset {
 			return nil, pageMetadata{}, &ports.RemoteError{Category: ports.RemoteInvalidResponse, Cause: errors.New("malformed pagination metadata")}

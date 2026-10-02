@@ -16,6 +16,7 @@ import (
 // Placement is an intent persisted before a library rename. Its metadata is
 // sufficient to reconcile a published file after a crash without recopying it.
 type Placement struct {
+	DownloadID        int64                `json:"download_id,omitempty"`
 	CleanupSuperseded bool                 `json:"cleanup_superseded,omitempty"`
 	SupersededDigests map[string]string    `json:"superseded_digests,omitempty"`
 	Superseded        []domain.MediaFile   `json:"superseded,omitempty"`

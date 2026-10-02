@@ -91,3 +91,31 @@ func TestMeasuredPolicyProtectsUpgradesOffAndUnverified(t *testing.T) {
 		})
 	}
 }
+
+func TestAutomaticPlacementProtectsUnlinkedAndUntrackedDestination(t *testing.T) {
+	for _, tracked := range []bool{false, true} {
+		t.Run(map[bool]string{false: "untracked", true: "unlinked"}[tracked], func(t *testing.T) {
+			s, db, id := setup(t, nil, &fakeClient{})
+			ctx := context.Background()
+			item, _ := db.GetMediaItemFull(ctx, id)
+			ep, _ := db.GetEpisodeID(ctx, id, 1, 1)
+			dest := filepath.Join(item.Path, "existing.mkv")
+			_ = os.WriteFile(dest, []byte("protected destination"), 0644)
+			if tracked {
+				if _, err := db.UpsertFile(ctx, id, 0, dest, 21); err != nil {
+					t.Fatal(err)
+				}
+			}
+			src := filepath.Join(t.TempDir(), "incoming.mkv")
+			_ = os.WriteFile(src, corpusFile(t, wholeCorpus720), 0644)
+			_, err := s.commitPlacement(ctx, item, importScope{ProfileID: item.QualityProfileID}, src, dest, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, []int64{ep}, false)
+			if err == nil {
+				t.Fatal("destination overwritten")
+			}
+			bytes, _ := os.ReadFile(dest)
+			if string(bytes) != "protected destination" {
+				t.Fatal("bytes changed")
+			}
+		})
+	}
+}

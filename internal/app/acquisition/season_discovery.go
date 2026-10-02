@@ -297,17 +297,7 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 	}
 	if len(p.Scopes) == 0 {
 		for _, cfg := range enabled {
-			indexer := s.budgetIndexer(cfg, "search", true)
-			queries, reasons, e := queriesForIndexer(ctx, indexer, pack, false)
-			if e != nil {
-				s.rememberIndexerDelay(ctx, cfg.ID, e)
-				var deferred interface{ DeferredUntil() time.Time }
-				if errors.As(e, &deferred) {
-					return e
-				}
-				reasons = append(reasons, searchFailureReason(e))
-			}
-			p.Scopes = append(p.Scopes, discoveryScope{IndexerID: cfg.ID, Queries: queries, Reasons: reasons, Complete: len(queries) == 0})
+			p.Scopes = append(p.Scopes, discoveryScope{IndexerID: cfg.ID})
 		}
 		if err = s.saveSeasonCheckpoint(ctx, j, p); err != nil {
 			return err
@@ -329,6 +319,61 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 				}
 			}
 			indexer := s.budgetIndexer(cfg, "search", true)
+			if len(sc.Queries) == 0 {
+				var scopeWantable domain.Wantable = pack
+				if sc.EpisodeID != 0 {
+					for _, ep := range targets {
+						if ep.EpisodeID == sc.EpisodeID {
+							scopeWantable = ep
+						}
+					}
+				}
+				callCtx, cancel := context.WithTimeout(ctx, s.searchTimeout)
+				queries, reasons, e := queriesForIndexer(callCtx, indexer, scopeWantable, false)
+				cancel()
+				if e != nil {
+					s.rememberIndexerDelay(ctx, cfg.ID, e)
+					var deferred interface{ DeferredUntil() time.Time }
+					var remote *ports.RemoteError
+					if errors.As(e, &deferred) {
+						if er := s.saveSeasonCheckpoint(ctx, j, p); er != nil {
+							return er
+						}
+						return e
+					}
+					sc.Failures++
+					if sc.Failures >= 3 || terminalSearchError(e) {
+						sc.Degraded = true
+						sc.Complete = true
+						sc.Reasons = append(sc.Reasons, searchFailureReason(e))
+					} else {
+						sc.RetryAt = time.Now().Add(time.Minute)
+						if errors.As(e, &remote) && !remote.RetryAt.IsZero() {
+							sc.RetryAt = remote.RetryAt
+						}
+					}
+					if er := s.saveSeasonCheckpoint(ctx, j, p); er != nil {
+						return er
+					}
+					if !sc.Complete {
+						return &sqlite.BudgetDeferred{At: sc.RetryAt, Reason: "retrying capability scope"}
+					}
+					continue
+				}
+				sc.Queries = queries
+				sc.Reasons = append(sc.Reasons, reasons...)
+				sc.RetryAt = time.Time{}
+				if len(queries) == 0 {
+					sc.Complete = true
+					sc.Degraded = true
+				}
+				if e = s.saveSeasonCheckpoint(ctx, j, p); e != nil {
+					return e
+				}
+				if sc.Complete {
+					continue
+				}
+			}
 			for sc.Query < len(sc.Queries) {
 				q := sc.Queries[sc.Query]
 				callCtx, cancel := context.WithTimeout(ctx, s.searchTimeout)
@@ -372,10 +417,10 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 						return &sqlite.BudgetDeferred{At: remote.RetryAt, Reason: "provider RetryAt"}
 					}
 					sc.Failures++
-					sc.Reasons = append(sc.Reasons, searchFailureReason(err))
 					if sc.Failures >= 3 || terminalSearchError(err) {
 						sc.Degraded = true
 						sc.Complete = true
+						sc.Reasons = append(sc.Reasons, searchFailureReason(err))
 					} else {
 						sc.RetryAt = time.Now().Add(time.Minute)
 					}
@@ -392,7 +437,22 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 						return strings.HasPrefix(reason, "search failed") || strings.HasPrefix(reason, "timeout") || strings.HasPrefix(reason, "remote") || reason == "indexer error" || reason == "network" || reason == "server_error"
 					})
 				}
+				previousReleases := slices.Clone(p.Releases)
 				p.Releases = deduplicateReleases(append(p.Releases, rows...))
+				raw, _ := json.Marshal(p)
+				if len(raw) > 2<<20 {
+					// The wire query ran, but its evidence cannot fit. Retain
+					// earlier complete scopes, explicitly refuse this scope's
+					// absence/optimality claims, and never repeat the same page.
+					p.Releases = previousReleases
+					sc.Reasons = append(sc.Reasons, "discovery checkpoint exceeded 2 MiB; query evidence incomplete")
+					sc.Query = len(sc.Queries)
+					sc.Complete = true
+					if e := s.saveSeasonCheckpoint(ctx, j, p); e != nil {
+						return e
+					}
+					break
+				}
 				sc.Pages++
 				stop := false
 				if sc.EpisodeID != 0 {
@@ -442,20 +502,7 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 				if excluded {
 					continue
 				}
-				indexer := s.budgetIndexer(cfg, "search", true)
-				queries, reasons, e := queriesForIndexer(ctx, indexer, ep, false)
-				if e != nil {
-					var deferred interface{ DeferredUntil() time.Time }
-					if errors.As(e, &deferred) {
-						p.Stage = "season"
-						if er := s.saveSeasonCheckpoint(ctx, j, p); er != nil {
-							return er
-						}
-						return e
-					}
-					reasons = append(reasons, searchFailureReason(e))
-				}
-				p.Scopes = append(p.Scopes, discoveryScope{IndexerID: cfg.ID, EpisodeID: ep.EpisodeID, Queries: queries, Reasons: reasons, Complete: len(queries) == 0})
+				p.Scopes = append(p.Scopes, discoveryScope{IndexerID: cfg.ID, EpisodeID: ep.EpisodeID})
 			}
 		}
 		if err = s.saveSeasonCheckpoint(ctx, j, p); err != nil {
@@ -558,6 +605,15 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	evidence := map[acquisitionplan.CandidateKey]domain.MatchEvidence{}
 	titles := map[acquisitionplan.CandidateKey]string{}
 	for _, r := range p.Releases {
+		excluded := false
+		for _, sc := range p.Scopes {
+			if sc.IndexerID == r.IndexerID && sc.Degraded {
+				excluded = true
+			}
+		}
+		if excluded {
+			continue
+		}
 		parsed := parser.Parse(r.Title)
 		isPack := parsed.SeasonPack
 		if s.isBlocklisted(ctx, r.Title, r.Indexer) || isPack && (!allowPacks || packIncomplete) || !isPack && len(parsed.Episodes) != 1 {

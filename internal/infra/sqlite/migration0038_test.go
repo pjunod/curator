@@ -35,6 +35,16 @@ func TestAcquisitionMigrationPreservesLegacyQueueAndRefusesCustodyDowngrade(t *t
 	if err = db.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = db.W.ExecContext(ctx, `UPDATE downloads SET import_path='/local/new-receipt',state='imported' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	var receiptState string
+	if err = db.R.QueryRowContext(ctx, `SELECT state FROM completed_receipts WHERE download_id=1 AND path='/local/new-receipt'`).Scan(&receiptState); err != nil || receiptState != "imported" {
+		t.Fatal("receipt update trigger lost", err)
+	}
+	if _, err = db.W.ExecContext(ctx, `UPDATE downloads SET import_path='/local/partial' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
 	for i := 1; i <= 7; i++ {
 		dl, e := db.GetDownload(ctx, int64(i))
 		if e != nil {

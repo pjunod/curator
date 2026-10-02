@@ -233,3 +233,148 @@ func TestDeliberateReservationResolutionRetainsWarningAndCannotPublish(t *testin
 		t.Fatal(err)
 	}
 }
+
+func TestCancellationSurvivesAbsenceAndFencesLateCompletion(t *testing.T) {
+	s, db, item := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	_, rows := admittedFixture(t, s, db, item, "single")
+	_, _ = db.ClaimPlannedSubmission(ctx, rows[0].ID)
+	_ = db.SetSubmissionPhase(ctx, rows[0].ID, "uncertain")
+	_, _ = db.W.ExecContext(ctx, `UPDATE downloads SET added_at=? WHERE id=?`, time.Now().Add(-8*24*time.Hour).UnixMilli(), rows[0].ID)
+	if err := s.RemoveDownload(ctx, rows[0].ID, false); err != nil {
+		t.Fatal(err)
+	}
+	dl, _ := db.GetDownload(ctx, rows[0].ID)
+	cfg, _ := db.GetDownloadClient(ctx, dl.ClientID)
+	ob := executionObservation{Config: clientFingerprint(cfg), LastInventory: time.Now(), AbsenceSince: time.Now().Add(-8 * 24 * time.Hour), Inventories: 100}
+	_ = db.UpdateDownloadObservation(ctx, dl.ID, ob)
+	for n := 0; n < 2; n++ {
+		s.observeUncertain(ctx, dl, cfg, nil, true)
+		dl, _ = db.GetDownload(ctx, dl.ID)
+	}
+	if dl.Superseded || !strings.HasPrefix(dl.ParkedReason, "operator cancellation") {
+		t.Fatal("cancellation erased or retried")
+	}
+	s.reconcileDownload(ctx, dl, cfg, ports.DownloadStatus{Handle: "late", Name: dl.ReleaseTitle, State: ports.StateCompleted, SavePath: "/late"}, "poll")
+	fresh, _ := db.GetDownload(ctx, dl.ID)
+	if fresh.State == "downloaded" || fresh.State == "importing" {
+		t.Fatal("cancelled late submission imported")
+	}
+}
+func TestSubmittedEmptyHandleLearnsUniqueClientIdentity(t *testing.T) {
+	client := &fakeClient{}
+	s, db, item := setup(t, nil, client)
+	ctx := context.Background()
+	_, rows := admittedFixture(t, s, db, item, "single")
+	_, _ = db.ClaimPlannedSubmission(ctx, rows[0].ID)
+	_ = db.SetSubmissionPhase(ctx, rows[0].ID, "submitted")
+	client.statuses = []ports.DownloadStatus{{Handle: "torrent-hash", Name: rows[0].ReleaseTitle, State: ports.StateDownloading, OperationalState: "downloading"}}
+	if err := s.RefreshQueue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dl, _ := db.GetDownload(ctx, rows[0].ID)
+	if dl.Handle != "torrent-hash" {
+		t.Fatal("successful empty-handle submission never reconciled")
+	}
+}
+func TestManualChoiceSupersedesPendingIntentBeforeAdd(t *testing.T) {
+	client := &fakeClient{}
+	s, db, item := setup(t, nil, client)
+	ctx := context.Background()
+	plan, rows := admittedFixture(t, s, db, item, "single")
+	id, err := s.Grab(ctx, GrabRequest{MediaItemID: item, Season: 1, Episode: 1, Protocol: "torrent", Title: "Test.Show.S01E01.1080p.BluRay-MANUAL", DownloadURL: "manual"})
+	if err != nil || id == rows[0].ID {
+		t.Fatal("manual selection not admitted", err)
+	}
+	s.reconcileSeasonPlans(ctx)
+	original, _ := db.GetDownload(ctx, rows[0].ID)
+	if !original.Superseded {
+		t.Fatal("pending intent still authorized")
+	}
+	if err = s.dispatchPlan(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.added) != 1 || client.added[0] != "manual" {
+		t.Fatalf("duplicate dispatch: %v", client.added)
+	}
+}
+func TestTerminalRowCannotDismissUnresolvedPlacement(t *testing.T) {
+	s, db, item := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	_, rows := admittedFixture(t, s, db, item, "single")
+	_, _ = db.ClaimPlannedSubmission(ctx, rows[0].ID)
+	_ = db.SetSubmissionPhase(ctx, rows[0].ID, "submitted")
+	_ = db.UpdateDownloadState(ctx, rows[0].ID, "failed", 0, "publication interrupted")
+	if err := db.PreparePlacement(ctx, sqlite.Placement{ID: "unresolved", DownloadID: rows[0].ID, ItemID: item, Release: rows[0].ReleaseTitle, Target: "/pending", State: "prepared"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteDownload(ctx, rows[0].ID); err == nil {
+		t.Fatal("dismiss erased placement association")
+	}
+	if n, err := db.ClearFailedDownloads(ctx); err != nil || n != 0 {
+		t.Fatalf("clear erased custody: %d %v", n, err)
+	}
+}
+
+type capabilityAuthFailure struct{ fakeIndexer }
+
+func (capabilityAuthFailure) Capabilities(context.Context) (ports.IndexerCapabilities, error) {
+	return ports.IndexerCapabilities{}, &ports.RemoteError{Category: ports.RemoteAuth}
+}
+func TestCapabilityOutageDoesNotVetoHealthySupply(t *testing.T) {
+	client := &fakeClient{}
+	s, db, item := setup(t, nil, client)
+	ctx := context.Background()
+	bad, err := db.AddIndexer(ctx, ports.IndexerConfig{Name: "bad", URL: "http://bad.invalid", Protocol: "torrent", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.newIndexer = func(cfg ports.IndexerConfig) ports.Indexer {
+		if cfg.ID == bad {
+			return capabilityAuthFailure{}
+		}
+		return fakeIndexer{releases: []ports.Release{{IndexerID: cfg.ID, Indexer: cfg.Name, Title: "Test.Show.S01E01.1080p.WEB-DL", Protocol: "torrent", DownloadURL: "one"}, {IndexerID: cfg.ID, Indexer: cfg.Name, Title: "Test.Show.S01E02.1080p.WEB-DL", Protocol: "torrent", DownloadURL: "two"}}}
+	}
+	if _, err = s.AutoSearchItem(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	j, err := db.ClaimJob(ctx, "caps-fixture", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.handleSeasonSearch(ctx, j)
+	var deferred interface{ DeferredUntil() time.Time }
+	if !errors.As(err, &deferred) {
+		t.Fatalf("expected persisted partial epoch, got %v", err)
+	}
+	if len(client.added) != 2 {
+		t.Fatalf("healthy supply vetoed: %v", client.added)
+	}
+}
+
+func TestCheckpointOverflowIsExplicitPartialRatherThanFailedJob(t *testing.T) {
+	client := &fakeClient{}
+	s, db, item := setup(t, nil, client)
+	ctx := context.Background()
+	oversized := ports.Release{Title: "Test.Show.S01E01.1080p.WEB-DL", Protocol: "torrent", DownloadURL: strings.Repeat("x", (2<<20)+1)}
+	s.newIndexer = func(ports.IndexerConfig) ports.Indexer { return fakeIndexer{releases: []ports.Release{oversized}} }
+	if _, err := s.AutoSearchItem(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	j, err := db.ClaimJob(ctx, "overflow-fixture", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.handleSeasonSearch(ctx, j)
+	var deferred interface{ DeferredUntil() time.Time }
+	if !errors.As(err, &deferred) {
+		t.Fatalf("overflow spent failure attempt: %v", err)
+	}
+	var payload string
+	if err = db.R.QueryRowContext(ctx, `SELECT payload FROM jobs WHERE id=?`, j.ID).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) > 2<<20 || len(client.added) > 0 {
+		t.Fatal("truncated evidence authorized transfer")
+	}
+}

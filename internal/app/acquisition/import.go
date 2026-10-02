@@ -257,7 +257,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 
 	// The import scope: which copy this grab was for decides the profile,
 	// the destination folder, and which existing files count as "current".
-	scope := importScope{Dest: item.Path, ProfileID: item.QualityProfileID,
+	scope := importScope{DownloadID: dl.ID, Dest: item.Path, ProfileID: item.QualityProfileID,
 		Release: dl.ReleaseTitle, Indexer: dl.Indexer, Attempt: fmt.Sprintf("%d:%d:%s", dl.ID, dl.AddedAt.UnixNano(), dl.Handle)}
 	if dl.CopyID != 0 {
 		cp, err := s.db.GetMediaCopy(ctx, dl.MediaItemID, dl.CopyID)
@@ -400,6 +400,9 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		}
 	}
 
+	if audioPlan != nil {
+		scope.PublishedDigests = map[string]string{}
+	}
 	result := ImportResult{Files: make([]FileOutcome, 0, len(videos))}
 	for fileIndex, src := range videos {
 		p := parser.Parse(filepath.Base(src))
@@ -479,6 +482,11 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		} else {
 			outcome.Imported, outcome.Upgrade = true, put.Upgrade
 			outcome.Path = put.Path
+			if scope.PublishedDigests != nil {
+				if digest, _, e := fileDigest(ctx, put.Path); e == nil {
+					scope.PublishedDigests[put.Path] = digest
+				}
+			}
 			result.Imported++
 			result.Upgraded = result.Upgraded || put.Upgrade
 		}
@@ -660,7 +668,9 @@ func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) 
 // primary), its destination folder, its quality profile, and what produced
 // the payload.
 type importScope struct {
+	DownloadID        int64
 	AllowedEpisodeIDs []int64
+	PublishedDigests  map[string]string
 	Planned           bool
 	Manual            bool
 	Attempt           string

@@ -175,7 +175,7 @@ func (d *DB) UpdateDownloadObservation(ctx context.Context, id int64, observatio
 	return err
 }
 func (d *DB) ParkDownload(ctx context.Context, id int64, reason string) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET parked_at=CASE WHEN parked_at=0 THEN ? ELSE parked_at END,parked_reason=? WHERE id=? AND superseded=0`, time.Now().UnixMilli(), reason, id)
+	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET parked_at=CASE WHEN parked_at=0 THEN ? ELSE parked_at END,parked_reason=CASE WHEN parked_reason LIKE 'operator cancellation%' THEN parked_reason ELSE ? END WHERE id=? AND superseded=0`, time.Now().UnixMilli(), reason, id)
 	return err
 }
 func (d *DB) UpdateJobCheckpoint(ctx context.Context, id int64, owner, payload string) error {

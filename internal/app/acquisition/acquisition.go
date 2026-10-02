@@ -832,14 +832,27 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	// removed again below; the alternative (add first, insert second) is
 	// a download running in a client that Monarr has no record of, which
 	// is the worse of the two failures by a distance.
-	allocationCtx, releaseAllocation := s.lockStorageDecision(ctx)
+	allocationCtx, releaseStorageAllocation := s.lockStorageDecision(ctx)
+	s.importTargetMu.Lock()
+	releaseAllocation := func() { s.importTargetMu.Unlock(); releaseStorageAllocation() }
 	active, activeErr := s.db.ListDownloadReservations(allocationCtx)
 	if activeErr != nil {
 		releaseAllocation()
 		return 0, activeErr
 	}
 	for _, row := range active {
-		if normalizeRelease(row.ReleaseTitle) == normalizeRelease(req.Title) || heldWantOverlap(row, item.ID, req.CopyID, wants) {
+		overlap := row.MediaItemID == item.ID && row.CopyID == req.CopyID && wantableOnRow(row, base)
+		if overlap && row.PlanID != 0 && row.SubmissionPhase == "pending" && req.MatchEvidence == nil {
+			cancelled, e := s.closePendingForManual(allocationCtx, row)
+			if e != nil {
+				releaseAllocation()
+				return 0, e
+			}
+			if cancelled {
+				continue
+			}
+		}
+		if normalizeRelease(row.ReleaseTitle) == normalizeRelease(req.Title) || overlap || heldWantOverlap(row, item.ID, req.CopyID, wants) {
 			releaseAllocation()
 			return row.ID, nil
 		}
@@ -1020,16 +1033,21 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		dl = fresh
 	}
 
+	if strings.HasPrefix(dl.ParkedReason, "operator cancellation") {
+		return
+	}
 	if dl.Superseded {
 		_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "Possible duplicate: late original submission cannot import automatically")
 		return
 	}
 	if dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" {
 		_ = s.db.SetSubmissionPhase(ctx, dl.ID, "submitted")
-		if dl.Handle == "" {
-			_ = s.db.SetDownloadHandle(ctx, dl.ID, string(st.Handle), dl.Transfer)
-			dl.Handle = string(st.Handle)
+	}
+	if dl.Handle == "" && st.Handle != "" {
+		if err := s.db.SetDownloadHandle(ctx, dl.ID, string(st.Handle), dl.Transfer); err != nil {
+			return
 		}
+		dl.Handle = string(st.Handle)
 	}
 
 	if !s.acceptDownloadControl(ctx, &dl, &st) {
