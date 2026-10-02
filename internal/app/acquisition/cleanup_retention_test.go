@@ -157,3 +157,67 @@ func TestDismissedCleanupStillRespectsOwnershipAndClientSetting(t *testing.T) {
 		})
 	}
 }
+
+func TestDismissedLegacyImportsKeepCleanupHandleAndSavePath(t *testing.T) {
+	for _, source := range []string{"handle_only", "save_path"} {
+		for _, dismissal := range []string{"clear_finished", "retention", "individual"} {
+			t.Run(source+"/"+dismissal, func(t *testing.T) {
+				client := &fakeClient{}
+				svc, db, item := setupWithClientType(t, client, "sabnzbd")
+				ctx := context.Background()
+				payload := ""
+				if source == "save_path" {
+					root := t.TempDir()
+					payload = filepath.Join(root, "legacy")
+					writeCompleted(t, filepath.Join(payload, "video.mkv"), 15)
+					if err := svc.SetCompletedRoots(ctx, root); err != nil {
+						t.Fatal(err)
+					}
+				}
+				dl := insertImportable(t, db, item, payload)
+				dl.State, dl.ImportPath = "imported", ""
+				if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+					t.Fatal(err)
+				}
+				if source == "save_path" {
+					if _, err := db.W.ExecContext(ctx, "UPDATE downloads SET handle='' WHERE id=?", dl.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				var err error
+				switch dismissal {
+				case "clear_finished":
+					_, err = svc.ClearFinished(ctx)
+				case "retention":
+					_, err = db.PruneTerminalDownloads(ctx, time.Now().Add(time.Hour))
+				case "individual":
+					err = db.DeleteDownload(ctx, dl.ID)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.GetDownload(ctx, dl.ID); err != nil {
+					t.Fatalf("legacy cleanup ownership lost: %v", err)
+				}
+				counts, err := svc.QueueCounts(ctx)
+				if err != nil || counts["imported"] != 0 {
+					t.Fatalf("dismissed row visible: %v %v", counts, err)
+				}
+				if err := svc.CleanupPayloads(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if source == "handle_only" && (len(client.removed) != 1 || !client.removed[0].DeleteData) {
+					t.Fatalf("client payload cleanup not requested: %+v", client.removed)
+				}
+				if payload != "" {
+					if _, err := os.Stat(payload); !os.IsNotExist(err) {
+						t.Fatalf("save_path fallback left files behind: %v", err)
+					}
+				}
+				if _, err := db.GetDownload(ctx, dl.ID); err == nil {
+					t.Fatal("cleaned legacy row was not retired")
+				}
+			})
+		}
+	}
+}

@@ -133,7 +133,7 @@ func (q *Queries) DeleteHistoryBefore(ctx context.Context, ts int64) (int64, err
 }
 
 const deleteImportedDownloads = `-- name: DeleteImportedDownloads :execrows
-DELETE FROM downloads WHERE (payload_removed = 1 OR import_path = '') AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)))
+DELETE FROM downloads WHERE (payload_removed = 1 OR (import_path = '' AND save_path = '' AND handle = '')) AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)))
 `
 
 // "Clear finished": the ROWS only. Nothing here touches a file, a library
@@ -172,7 +172,7 @@ func (q *Queries) DeleteProfile(ctx context.Context, id int64) (int64, error) {
 
 const deleteTerminalDownloadsBefore = `-- name: DeleteTerminalDownloadsBefore :execrows
 DELETE FROM downloads
-WHERE (state != 'imported' OR payload_removed = 1 OR import_path = '') AND state IN ('imported', 'failed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)))
+WHERE (state != 'imported' OR payload_removed = 1 OR (import_path = '' AND save_path = '' AND handle = '')) AND state IN ('imported', 'failed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)))
 `
 
 // Retention. Terminal rows only: whatever is still moving is never swept out
@@ -187,7 +187,7 @@ func (q *Queries) DeleteTerminalDownloadsBefore(ctx context.Context, updatedAt i
 
 const dismissImportedDownload = `-- name: DismissImportedDownload :execrows
 UPDATE downloads SET activity_dismissed = 1
-WHERE payload_removed = 0 AND import_path != '' AND state = 'imported' AND submission_phase NOT IN ('pending','submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.id = ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)))
+WHERE payload_removed = 0 AND (import_path != '' OR save_path != '' OR handle != '') AND state = 'imported' AND submission_phase NOT IN ('pending','submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.id = ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)))
 `
 
 func (q *Queries) DismissImportedDownload(ctx context.Context, id int64) (int64, error) {
@@ -199,7 +199,7 @@ func (q *Queries) DismissImportedDownload(ctx context.Context, id int64) (int64,
 }
 
 const dismissImportedDownloads = `-- name: DismissImportedDownloads :execrows
-UPDATE downloads SET activity_dismissed = 1 WHERE activity_dismissed = 0 AND payload_removed = 0 AND import_path != '' AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)))
+UPDATE downloads SET activity_dismissed = 1 WHERE activity_dismissed = 0 AND payload_removed = 0 AND (import_path != '' OR save_path != '' OR handle != '') AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)))
 `
 
 // Keep cleanup ownership while hiding the completed activity. No files change.
@@ -213,7 +213,7 @@ func (q *Queries) DismissImportedDownloads(ctx context.Context) (int64, error) {
 
 const dismissImportedDownloadsBefore = `-- name: DismissImportedDownloadsBefore :execrows
 UPDATE downloads SET activity_dismissed = 1
-WHERE activity_dismissed = 0 AND payload_removed = 0 AND import_path != '' AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)))
+WHERE activity_dismissed = 0 AND payload_removed = 0 AND (import_path != '' OR save_path != '' OR handle != '') AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)))
 `
 
 func (q *Queries) DismissImportedDownloadsBefore(ctx context.Context, updatedAt int64) (int64, error) {

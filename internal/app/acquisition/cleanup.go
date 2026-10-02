@@ -136,6 +136,11 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 			unlock()
 			return err
 		}
+		// Match runImport's fallback for older handoffs. A known source must
+		// still pass local path guards and disappearance checks.
+		if dl.ImportPath == "" {
+			dl.ImportPath = dl.SavePath
+		}
 		if dl.ImportPath != "" && !s.safePayloadPath(ctx, downloadRef{ID: dl.ID, ImportPath: dl.ImportPath}) {
 			unlock()
 			continue
