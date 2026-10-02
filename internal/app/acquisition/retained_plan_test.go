@@ -110,3 +110,111 @@ func TestRetainedPlanActiveParentIsProvisionalAndFreshOverlapBlocksValidation(t 
 		t.Fatalf("active parent not protected %+v", observed)
 	}
 }
+
+func TestRetainedRecoveryValidationRechecksSourceAndReceiptWithoutMutation(t *testing.T) {
+	for _, mode := range []string{"unchanged", "changed-bytes", "missing", "symlink", "receipt", "provisional", "held"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			svc, db, item := setup(t, nil, &fakeClient{})
+			path := filepath.Join(t.TempDir(), "Test.Show.S01E01.1080p.WEB-DL.mkv")
+			data := []byte("verified retained episode")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			candidate := RetainedCandidate{Path: path, MediaItemID: item, Season: 1, Episodes: []int{1}, ExpectedSHA256: fmt.Sprintf("%x", sha256.Sum256(data)), CompleteCoverage: true}
+			plan, err := svc.PlanRetainedRecovery(ctx, []RetainedCandidate{candidate})
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "changed-bytes":
+				if err = os.WriteFile(path, []byte("different retained bytes"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "missing":
+				if err = os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				other := path + ".original"
+				if err = os.Rename(path, other); err != nil {
+					t.Fatal(err)
+				}
+				if err = os.Symlink(other, path); err != nil {
+					t.Fatal(err)
+				}
+			case "receipt":
+				if err = db.PreparePlacement(ctx, sqlite.Placement{ID: "late-receipt", Source: path, Target: plan.Files[0].Destination, State: "committed"}); err != nil {
+					t.Fatal(err)
+				}
+			case "provisional":
+				plan.Provisional = true
+			case "held":
+				plan.Files[0].BlockedReason = "custody remains unresolved"
+			}
+			err = svc.ValidateRetainedPlan(ctx, plan)
+			if (err == nil) != (mode == "unchanged") {
+				t.Fatalf("validation %s: %v", mode, err)
+			}
+			if plan.MutationAuthorized {
+				t.Fatal("validation granted mutation authority")
+			}
+			files, err := db.ListFilesForItem(ctx, item)
+			if err != nil || len(files) != 0 {
+				t.Fatalf("validation published bytes %+v %v", files, err)
+			}
+		})
+	}
+}
+
+func TestRetainedRecoveryHoldsUnverifiedMappingsAndDetectsExistingBytes(t *testing.T) {
+	for _, mode := range []string{"relative", "directory", "symlink", "unverified", "unmapped", "unknown-episode", "already-imported"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			svc, db, item := setup(t, nil, &fakeClient{})
+			path := filepath.Join(t.TempDir(), "Test.Show.S01E01.1080p.WEB-DL.mkv")
+			data := []byte("retained exact bytes")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			c := RetainedCandidate{Path: path, MediaItemID: item, Season: 1, Episodes: []int{1}, ExpectedSHA256: fmt.Sprintf("%x", sha256.Sum256(data)), CompleteCoverage: true}
+			switch mode {
+			case "relative":
+				c.Path = "relative.mkv"
+			case "directory":
+				c.Path = filepath.Dir(path)
+			case "symlink":
+				c.Path = path + ".link"
+				if err := os.Symlink(path, c.Path); err != nil {
+					t.Fatal(err)
+				}
+			case "unverified":
+				c.ExpectedSHA256 = ""
+			case "unmapped":
+				c.Episodes = nil
+			case "unknown-episode":
+				c.Episodes = []int{999}
+			case "already-imported":
+				if _, err := db.UpsertFile(ctx, item, 0, path, int64(len(data))); err != nil {
+					t.Fatal(err)
+				}
+			}
+			plan, err := svc.PlanRetainedRecovery(ctx, []RetainedCandidate{c})
+			if err != nil {
+				t.Fatal(err)
+			}
+			row := plan.Files[0]
+			if mode == "already-imported" {
+				if row.Action != "already_imported" || len(row.ExistingLibrary) != 1 {
+					t.Fatalf("existing bytes not recognized %+v", row)
+				}
+			} else if row.Action != "hold" || row.BlockedReason == "" {
+				t.Fatalf("unsafe candidate authorized %+v", row)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != string(data) {
+				t.Fatal("inventory mutated source", err)
+			}
+		})
+	}
+}

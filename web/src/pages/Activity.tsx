@@ -1,3 +1,4 @@
+import { ActionDialog, focusActionTrigger } from '../ActionDialog'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
@@ -21,6 +22,7 @@ import {
   resumeQueueItem,
   manualImport,
   removeQueueItem,
+  resolveQueueReservation,
   scanImportPath,
 } from '../api'
 import { PathInput } from '../PathInput'
@@ -34,6 +36,7 @@ const STATE_PILL: Record<string, string> = {
   downloading: 'pill-neutral',
   importing: 'pill-neutral',
   grabbed: 'pill-neutral',
+  planned: 'pill-neutral',
 }
 
 // Friendlier labels for the state pill and the trace steps.
@@ -121,7 +124,7 @@ const STAGES: Stage[] = [
 // person would do about them: one needs a decision, one is finished, one went
 // wrong.
 const RESTING = [
-  { key: 'waiting', label: 'Waiting', states: ['grabbed', 'downloaded', 'awaiting_import'] },
+  { key: 'waiting', label: 'Waiting', states: ['planned', 'grabbed', 'downloaded', 'awaiting_import'] },
   { key: 'done', label: 'Finished', states: ['imported'] },
   { key: 'failed', label: 'Failed', states: ['failed'] },
 ] as const
@@ -530,10 +533,15 @@ function RowGroup(props: {
   onManual: () => void
 }) {
   const { d, open, busy } = props
+ const [whyOpen,setWhyOpen]=useState(false)
+  const [reviewOpen,setReviewOpen]=useState(false)
+  const [acknowledged,setAcknowledged]=useState(false)
+  const qc=useQueryClient()
+  const resolve=useMutation({mutationFn:()=>resolveQueueReservation(d.id),onSuccess:()=>{setReviewOpen(false);void qc.invalidateQueries({queryKey:['queue']});void qc.invalidateQueries({queryKey:['queue-summary']})}})
   const queuedImport = d.importState === 'queued'
   const startingImport = d.importState === 'running' && !d.stage
   const canImport = (d.state === 'awaiting_import' || d.state === 'downloaded') && !d.importState
-  const canRetry = d.state === 'failed'
+  const canRetry = d.state === 'failed' && d.submissionPhase !== 'uncertain'
   const interruptedImport = d.state === 'importing' && !d.stage && !d.importState
   const activeImport = d.stage === 'importing'
   const importerOwned = queuedImport || startingImport || activeImport
@@ -560,6 +568,29 @@ function RowGroup(props: {
               turned each row into a paragraph. The full reason is the title. */}
           {d.match?.reason && <div className="muted queue-match" title={d.match.reason}>Match: {d.match.reason}</div>}
           {d.error && <div className="error-text">{d.error}</div>}
+          {d.parkedReason && <div className="muted">Reserved: {d.parkedReason}</div>}
+          <button onClick={(event)=>{focusActionTrigger(event);setWhyOpen(true)}}>Why chosen</button>
+          {(d.parkedReason || d.submissionPhase==='uncertain') && <button onClick={(event)=>{focusActionTrigger(event);setAcknowledged(false);resolve.reset();setReviewOpen(true)}}>Review reservation</button>}
+          {reviewOpen && <ActionDialog title="Review episode reservation" onClose={()=>setReviewOpen(false)}>
+            <p>The original submission may still exist or complete later. Releasing custody permits a deliberate Search to acquire another copy. The original row and a persistent possible-duplicate warning remain.</p>
+            <p>{d.parkedReason || 'Submission acceptance is uncertain.'}</p>
+            <label><input type="checkbox" checked={acknowledged} onChange={(e)=>setAcknowledged(e.target.checked)}/>I acknowledge the possible duplicate and have reviewed the client.</label>
+            {resolve.error && <p role="alert">{resolve.error.message}</p>}
+            <button disabled={!acknowledged || resolve.isPending} onClick={()=>resolve.mutate()}>Release reservation</button>
+          </ActionDialog>}
+          {whyOpen && <ActionDialog title="Why chosen" onClose={()=>setWhyOpen(false)}>
+            {d.selection ? <>
+              <p>{d.selection.reason}</p>
+              <p>Target: {d.selection.target}. {d.selection.partial ? 'Partial discovery; pack comparison remains deferred.' : 'Completed bounded discovery.'}</p>
+              <p>Plan {d.planId}: {d.planState}. Submission: {d.submissionPhase}.</p>
+              <p>{d.selection.plan.Cost.UnknownSizes>0 ? `${d.selection.plan.Cost.UnknownSizes} transfers have unknown size; known subtotal ${fmtBytes(d.selection.plan.Cost.KnownBytes)}.` : `Full advertised transfer cost: ${fmtBytes(d.selection.plan.Cost.KnownBytes)}.`}</p>
+              {d.selection.plan.Cost.ZeroSeedTorrents>0 && <p className="warning-text">Selected torrents include reported zero-seeder supply; higher attainable outcome takes priority over health.</p>}
+              <ul>{d.selection.plan.Releases.map(key=><li key={key}>{d.selection!.titles[key]} — permitted episode IDs: {d.selection!.importAllowlists[key]?.join(', ') || 'none'}</li>)}</ul>
+              {d.selection.plan.Unserved.length>0 && <p>Unserved episode IDs: {d.selection.plan.Unserved.join(', ')}. No admissible supply in this pool.</p>}
+            </> : <p>Selection reason was not recorded for this legacy or explicit manual grab.</p>}
+            {d.match?.reason && <p>Identity match: {d.match.reason}</p>}
+          </ActionDialog>}
+
         </td>
         <td className="muted">{d.quality}</td>
         <td>

@@ -255,8 +255,9 @@ func TestAcq2RemoveFileFallsBackToTheItemSweepForASeries(t *testing.T) {
 	if !res.Searched {
 		t.Errorf("a series deletion did not start a search: %+v", res)
 	}
+	runQueuedSeason(t, svc, db)
 	if len(client.added) == 0 {
-		t.Error("the fallback sweep never reached the indexer")
+		t.Error("the deferred fallback sweep never reached the indexer")
 	}
 }
 

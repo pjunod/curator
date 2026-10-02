@@ -52,7 +52,7 @@ func (s *Service) PlanRetainedRecovery(ctx context.Context, candidates []Retaine
 		return plan, err
 	}
 	plan.LibraryRevision = revision
-	active, err := s.db.ListActiveDownloads(ctx)
+	active, err := s.db.ListDownloadReservations(ctx)
 	if err != nil {
 		return plan, err
 	}
@@ -204,7 +204,7 @@ func (s *Service) ValidateRetainedPlan(ctx context.Context, plan RetainedPlan) e
 	if plan.Provisional {
 		return fmt.Errorf("provisional recovery inventory requires quiescence and a fresh plan")
 	}
-	active, err := s.db.ListActiveDownloads(ctx)
+	active, err := s.db.ListDownloadReservations(ctx)
 	if err != nil {
 		return err
 	}

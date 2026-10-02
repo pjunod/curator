@@ -171,3 +171,9 @@ func (c *Client) Test(ctx context.Context) error {
 	var version string
 	return c.rpc(ctx, "version", nil, &version)
 }
+
+// Inventory includes the adapter's unbounded live and historical listing.
+func (c *Client) Inventory(ctx context.Context) ([]ports.DownloadStatus, bool, error) {
+	rows, err := c.Statuses(ctx)
+	return rows, err == nil, err
+}

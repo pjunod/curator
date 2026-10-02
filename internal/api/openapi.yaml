@@ -1219,6 +1219,31 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   /indexers/{id}:
+    patch:
+      operationId: updateIndexerBudget
+      summary: Set the saved indexer's rolling daily request cap
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dailyRequestCap]
+              properties:
+                dailyRequestCap: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Updated configuration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Indexer" }
+        "400": { description: Invalid cap. }
+        "404": { description: No such indexer. }
     delete:
       operationId: deleteIndexer
       summary: Remove an indexer
@@ -1597,6 +1622,27 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /queue/{id}/resolve-reservation:
+    post:
+      operationId: resolveQueueReservation
+      summary: Acknowledge duplicate risk and release uncertain or cancelled episode custody
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acknowledgeDuplicateRisk]
+              properties:
+                acknowledgeDuplicateRisk: { type: boolean }
+      responses:
+        "204": { description: Custody released; original retained as superseded evidence. }
+        "400": { description: Acknowledgment missing or row not resolvable. }
   /queue/{id}/resume:
     post:
       operationId: resumeQueueItem
@@ -3996,6 +4042,11 @@ components:
         categories:
           type: array
           items: { type: integer }
+        dailyRequestCap:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Provider API-call allowance per rolling day; zero uses Curator's local 250-request budget.
         enabled: { type: boolean, default: true }
 
     Indexer:
@@ -4242,7 +4293,7 @@ components:
             download in progress. Exact Wanted runs can additionally report a
             target that disappeared, changed reason, reached its re-grab cap,
             or was left by cancellation.
-          enum: [unmonitored, downloading, no_longer_wanted, reason_changed, regrab_capped, cancelled]
+          enum: [unmonitored, downloading, no_longer_wanted, reason_changed, regrab_capped, cancelled, queued]
         seen:
           type: integer
           description: Distinct releases the indexers returned for this target.
@@ -4742,7 +4793,7 @@ components:
         state: { type: string, enum: [searched, skipped, failed] }
         skipped:
           type: string
-          enum: [unmonitored, downloading, no_longer_wanted, reason_changed, regrab_capped, cancelled]
+          enum: [unmonitored, downloading, no_longer_wanted, reason_changed, regrab_capped, cancelled, queued]
         seen: { type: integer }
         matched: { type: integer }
         accepted: { type: integer }
@@ -4846,8 +4897,16 @@ components:
         state:
           type: string
           description: >
-            grabbed | downloading | downloaded | awaiting_import | importing
+            planned | grabbed | downloading | downloaded | awaiting_import | importing
             | imported | failed.
+        planId: { type: integer, format: int64 }
+        planState: { type: string }
+        submissionPhase: { type: string, enum: [pending, submitting, submitted, uncertain, rejected] }
+        parkedReason: { type: string }
+        selection:
+          type: object
+          additionalProperties: true
+          description: Recorded public selection facts; absent for legacy or manual rows. Contains no transport URLs.
         control:
           type: object
           additionalProperties: true

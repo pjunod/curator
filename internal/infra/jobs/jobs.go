@@ -296,7 +296,18 @@ func (q *Queue) finish(ctx context.Context, job domain.Job, runErr error) {
 	recCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 
+	var deferred interface{ DeferredUntil() time.Time }
 	switch {
+	case errors.As(runErr, &deferred):
+		if store, ok := q.store.(interface {
+			DeferJob(context.Context, int64, string, time.Time) error
+		}); ok {
+			if err := store.DeferJob(recCtx, job.ID, runErr.Error(), deferred.DeferredUntil()); err != nil {
+				q.log.Error("jobs: defer failed", "err", err)
+			}
+		} else {
+			q.log.Error("jobs: store lacks deferred scheduling")
+		}
 	case runErr == nil:
 		if err := q.store.CompleteJob(recCtx, job.ID); err != nil {
 			q.log.Error("jobs: could not mark done", "id", job.ID, "err", err)

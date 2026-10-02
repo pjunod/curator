@@ -132,11 +132,14 @@ func (c *Client) Add(ctx context.Context, downloadURL, category string) (ports.H
 }
 
 type torrentInfo struct {
-	Hash     string  `json:"hash"`
-	Name     string  `json:"name"`
-	Progress float64 `json:"progress"`
-	State    string  `json:"state"`
-	SavePath string  `json:"save_path"`
+	BytesCompleted *int64   `json:"completed"`
+	ConnectedSeeds *int     `json:"num_seeds"`
+	Availability   *float64 `json:"availability"`
+	Hash           string   `json:"hash"`
+	Name           string   `json:"name"`
+	Progress       float64  `json:"progress"`
+	State          string   `json:"state"`
+	SavePath       string   `json:"save_path"`
 	// content_path: file for single-file torrents, folder otherwise.
 	ContentPath string `json:"content_path"`
 }
@@ -154,6 +157,7 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 	out := make([]ports.DownloadStatus, 0, len(infos))
 	for _, t := range infos {
 		s := ports.DownloadStatus{
+			BytesCompleted: t.BytesCompleted, ConnectedSeeds: t.ConnectedSeeds, Availability: t.Availability, OperationalState: t.State,
 			Handle:   ports.Handle(t.Hash),
 			Name:     t.Name,
 			Progress: t.Progress,
@@ -195,4 +199,10 @@ func (c *Client) Test(ctx context.Context) error {
 	}
 	_, err := c.get(ctx, "/api/v2/app/version", nil)
 	return err
+}
+
+// Inventory includes the adapter's unbounded live and historical listing.
+func (c *Client) Inventory(ctx context.Context) ([]ports.DownloadStatus, bool, error) {
+	rows, err := c.Statuses(ctx)
+	return rows, err == nil, err
 }

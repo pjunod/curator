@@ -103,7 +103,10 @@ func TestAcq2RSSDeclinesBlocklistedOversizedAndImplausibleReleases(t *testing.T)
 		t.Errorf("download rows created: %+v", rows)
 	}
 
-	// And the same pass still grabs a release that clears all three.
+	// A later due pass still grabs a release that clears all three.
+	if _, err := db.W.ExecContext(ctx, `UPDATE indexers SET next_rss_at=0`); err != nil {
+		t.Fatal(err)
+	}
 	good := rel("Test.Movie.2024.1080p.WEB-DL.x264-GOOD", 10)
 	good.Size = 8 << 30
 	svc.newIndexer = func(ports.IndexerConfig) ports.Indexer {
@@ -190,11 +193,9 @@ func TestAcq2LoopsAreQuietWithNoIndexersConfigured(t *testing.T) {
 	}
 }
 
-// A client that refuses the add must leave nothing behind. The row is inserted
-// before the add (the transfer id is built from it), so a refusal that did not
-// undo it would leave a queue row describing a download nobody has — and the
-// in-flight filter would then suppress the want forever.
-func TestAcq2AGrabTheClientRefusesLeavesNoQueueRow(t *testing.T) {
+// A transport error preserves the wanted target and its reservation until
+// complete client evidence or explicit operator resolution settles custody.
+func TestAcq2AmbiguousAddRetainsReservation(t *testing.T) {
 	client := &refusingClient{}
 	svc, db, _ := autoSetup(t,
 		[]ports.Release{rel("Test.Movie.2024.1080p.WEB-DL.x264-GRP", 5)}, &client.fakeClient)
@@ -208,14 +209,14 @@ func TestAcq2AGrabTheClientRefusesLeavesNoQueueRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 0 {
-		t.Errorf("a refused add left %d row(s) behind: %+v", len(rows), rows)
+	if len(rows) != 1 || rows[0].SubmissionPhase != "uncertain" {
+		t.Fatalf("ambiguous add must retain custody: %+v", rows)
 	}
-	// The want survives, so the next pass can try a different release.
+	// The want survives, but the next pass cannot duplicate an uncertain Add.
 	svc.InvalidateWanted()
 	wanted, _ := svc.Wanted(ctx)
-	if len(svc.notInFlight(ctx, wanted)) != 1 {
-		t.Error("the wantable was consumed by a grab that never happened")
+	if len(wanted) != 1 || len(svc.notInFlight(ctx, wanted)) != 0 {
+		t.Error("ambiguous add lost its want or reservation")
 	}
 }
 
@@ -401,6 +402,9 @@ func TestAcq2AutoSearchItemCoversEverySeasonAndCopy(t *testing.T) {
 	}
 	if _, err := svc.AutoSearchItem(ctx, itemID); err != nil {
 		t.Fatal(err)
+	}
+	for range 4 {
+		runQueuedSeason(t, svc, db)
 	}
 	counts := map[string]int{}
 	for _, q := range idx.asked() {

@@ -1281,3 +1281,52 @@ func TestAcqSearchReleasesCarriesLanguages(t *testing.T) {
 		t.Errorf("first row = %q, want the accepted English release", cands[0].Title)
 	}
 }
+
+func TestAcqSavedBudgetValidatesInputAndPreservesCredentials(t *testing.T) {
+	e := newAPIEnv(t)
+	id := acqAddIndexer(t, e)
+	path := fmt.Sprintf("/api/v1/indexers/%d", id)
+	for _, body := range []string{`{}`, `{"dailyRequestCap":-1}`, `not json`} {
+		e.patch(t, path, body).expect(t, http.StatusBadRequest)
+	}
+	e.patch(t, "/api/v1/indexers/999999", `{"dailyRequestCap":50}`).expect(t, http.StatusNotFound)
+	e.patch(t, path, `{"dailyRequestCap":50}`).expect(t, http.StatusOK)
+	cfg, err := e.db.GetIndexer(context.Background(), id)
+	if err != nil || cfg.DailyRequestCap != 50 || cfg.APIKey != "secret" {
+		t.Fatalf("budget edit lost credentials: %+v %v", cfg, err)
+	}
+}
+
+func TestAcqReservationReleaseRequiresExplicitAcknowledgmentAndCustody(t *testing.T) {
+	e := newAPIEnv(t)
+	for _, body := range []string{`{}`, `{"acknowledgeDuplicateRisk":false}`, `bad`} {
+		e.post(t, "/api/v1/queue/999999/resolve-reservation", body).expect(t, http.StatusBadRequest)
+	}
+	e.post(t, "/api/v1/queue/999999/resolve-reservation", `{"acknowledgeDuplicateRisk":true}`).expect(t, http.StatusBadRequest)
+	e.post(t, "/api/v1/queue/999999/resume", `{}`).expect(t, http.StatusConflict)
+}
+
+func TestAcqReservationReviewRetainsOriginalAndExposesSelection(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	item := e.addMovie(t)
+	client := acqAddClient(t, e, "qbittorrent")
+	revision, _ := e.db.AcquisitionRevision(ctx)
+	id, err := e.db.AdmitAcquisitionPlan(ctx, sqlite.AcquisitionPlan{MediaItemID: item, Season: 1, SnapshotFingerprint: "fixture", Decision: []byte(`{"version":1,"reason":"retained decision"}`)}, revision, []sqlite.Download{{MediaItemID: item, Season: 1, ClientID: client, CandidateKey: "one", Protocol: "torrent", ReleaseTitle: "Fight.Club.1999.1080p.WEB-DL", WantableIDs: []string{fmt.Sprintf("movie:%d", item)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := e.db.PlanDownloads(ctx, id)
+	dl := rows[0]
+	_, _ = e.db.ClaimPlannedSubmission(ctx, dl.ID)
+	_ = e.db.SetSubmissionPhase(ctx, dl.ID, "uncertain")
+	rr := e.get(t, "/api/v1/queue").expect(t, http.StatusOK)
+	if !strings.Contains(rr.Body.String(), "retained decision") {
+		t.Fatal("selection evidence missing")
+	}
+	e.post(t, fmt.Sprintf("/api/v1/queue/%d/resolve-reservation", dl.ID), `{"acknowledgeDuplicateRisk":true}`).expect(t, http.StatusNoContent)
+	original, _ := e.db.GetDownload(ctx, dl.ID)
+	if !original.Superseded || !strings.Contains(original.Error, "Possible duplicate") {
+		t.Fatalf("review erased custody identity: %+v", original)
+	}
+}

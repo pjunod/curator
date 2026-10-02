@@ -497,3 +497,24 @@ func TestSqlite2ListBackupsMissingDir(t *testing.T) {
 		t.Errorf("got %d entries, want none", len(list))
 	}
 }
+
+func TestBudgetDeferralPreservesFailureAttemptsAndReleasesLease(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	id, err := db.EnqueueJob(ctx, domain.Job{Kind: "budget", MaxAttempts: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ClaimJob(ctx, "worker", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(time.Hour)
+	if err = db.DeferJob(ctx, id, "rolling budget", at); err != nil {
+		t.Fatal(err)
+	}
+	j, err := db.GetJob(ctx, id)
+	if err != nil || j.Attempts != 0 || j.State != domain.JobQueued || j.LeaseOwner != "" {
+		t.Fatalf("deferred job %+v %v", j, err)
+	}
+}

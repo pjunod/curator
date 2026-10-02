@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ActionDialog, focusActionTrigger } from '../ActionDialog'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DownloadClientConfig, DownloadClientInput, IndexerInput } from '../api'
 
@@ -24,6 +25,7 @@ import {
   testIndexer,
   testIndexerById,
   updateDownloadClient,
+  updateIndexerBudget,
 } from '../api'
 
 // RowTest is the per-row Test button for saved indexers/clients: runs the
@@ -75,6 +77,11 @@ function isUsenetClient(type: string): boolean {
 export function AcquisitionSettings() {
   const qc = useQueryClient()
   const indexers = useQuery({ queryKey: ['indexers'], queryFn: getIndexers })
+  const [budgetEdit, setBudgetEdit] = useState<{id:number; name:string; cap:number} | null>(null)
+  const saveBudget = useMutation({
+    mutationFn: () => updateIndexerBudget(budgetEdit!.id, budgetEdit!.cap),
+    onSuccess: () => { setBudgetEdit(null); void qc.invalidateQueries({queryKey:['indexers']}) },
+  })
   const clients = useQuery({ queryKey: ['downloadclients'], queryFn: getDownloadClients })
 
   const [idx, setIdx] = useState<IndexerInput>({ name: '', url: '', apiKey: '', protocol: 'torrent' })
@@ -159,6 +166,12 @@ export function AcquisitionSettings() {
 
   return (
     <>
+      {budgetEdit && <ActionDialog title={`Request cap · ${budgetEdit.name}`} onClose={()=>setBudgetEdit(null)}>
+        <label>Daily request cap <input type="number" min="0" step="1" value={budgetEdit.cap} onChange={(e)=>setBudgetEdit({...budgetEdit,cap:Math.max(0,Number(e.target.value))})}/></label>
+        <p className="muted">0 uses 250 requests per rolling day. RSS keeps a separate allowance; manual searches can borrow spare search capacity. Existing usage is retained when the cap changes.</p>
+        {saveBudget.error && <p role="alert">{saveBudget.error.message}</p>}
+        <button disabled={saveBudget.isPending || !Number.isInteger(budgetEdit.cap)} onClick={()=>saveBudget.mutate()}>Save request cap</button>
+      </ActionDialog>}
       <section className="panel" id="indexers">
         <h2>Indexers</h2>
         <p className="muted">
@@ -176,6 +189,7 @@ export function AcquisitionSettings() {
                 </td>
                 <td>
                   <RowTest run={() => testIndexerById(i.id)} />
+                  <button onClick={(event)=>{focusActionTrigger(event);saveBudget.reset();setBudgetEdit({id:i.id,name:i.name,cap:i.dailyRequestCap ?? 0})}}>Request cap</button>
                 </td>
                 <td>
                   <button onClick={() => delIdx.mutate(i.id)}>Remove</button>
@@ -193,6 +207,10 @@ export function AcquisitionSettings() {
           <input placeholder="Name" value={idx.name} onChange={(e) => setIdx({ ...idx, name: e.target.value })} />
           <input placeholder="URL (http://prowlarr:9696/1)" value={idx.url} onChange={(e) => setIdx({ ...idx, url: e.target.value })} />
           <input placeholder="API key" value={idx.apiKey} onChange={(e) => setIdx({ ...idx, apiKey: e.target.value })} />
+          <label>Daily API request cap
+            <input type="number" min="0" value={idx.dailyRequestCap ?? 0} onChange={e=>setIdx({...idx,dailyRequestCap:Number(e.target.value)})}/>
+            <small>0 uses a local budget of 250 calls per rolling day. RSS, automatic search and manual search share it; provider grab caps are separate.</small>
+          </label>
           <select value={idx.protocol} onChange={(e) => setIdx({ ...idx, protocol: e.target.value as 'torrent' | 'usenet' })}>
             <option value="torrent">torrent</option>
             <option value="usenet">usenet</option>
@@ -258,6 +276,8 @@ export function AcquisitionSettings() {
                     />{' '}
                     Approve imports
                   </label>
+
+
                   <label
                     className="approval-toggle"
                     title={

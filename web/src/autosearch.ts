@@ -15,6 +15,8 @@ import type { AutoSearchResult, AutoSearchTarget } from './api'
 // releases that matched this target → releases the profile would accept.
 // Whichever step went to zero first is the answer.
 export function describeAutoSearch(res: AutoSearchResult): string {
+  const queued = res.targets.filter(t => t.skipped === 'queued')
+  if (queued.length) return `Queued ${queued.length} season comparison${queued.length === 1 ? '' : 's'} — search progress appears in System Jobs; selected releases appear in Activity after bounded comparison.`
   if (res.grabbed > 0) {
     const got = res.targets.filter((t) => t.grabbed)
     if (got.length === 1) return `Grabbed ${got[0].grabbed} — it's in Activity now.`

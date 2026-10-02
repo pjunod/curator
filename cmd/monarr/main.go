@@ -518,11 +518,19 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err := acquisition.RegisterWantedSearchJobs(acq, queue.Register); err != nil {
 		return err
 	}
+	if err := acquisition.RegisterSeasonSearchJobs(acq, queue.Register); err != nil {
+		return err
+	}
 	lib.WithQueue(queue)
 	acq.WithWantedSearchQueue(queue)
+	if err := acq.RecoverSeasonSubmissions(ctx); err != nil {
+		return err
+	}
 	queue.Start(ctx)
 	defer queue.Wait()
 	go acq.RunWantedSearchCoordinator(ctx)
+	go acq.RunSeasonCoordinator(ctx)
+	go acq.RunRSSPacing(ctx)
 	go func() {
 		finished, cancel := bus.Subscribe[jobs.JobFinished](b, 32)
 		defer cancel()
