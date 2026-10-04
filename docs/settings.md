@@ -900,7 +900,9 @@ Provider NZB/grab allowances are separate.
 Every actual wire call, including capability probes, pages and fallback, is
 reserved before sending. Manual searches use their reserve, then headroom,
 then unspent search capacity; RSS is never borrowed. Automatic requests also
-obey a rolling twelve-hour share. RSS due times persist across restart and
+obey a rolling twelve-hour share. A manual search is interactive search or
+the **Auto search** button on a movie or book; search-on-add, the backlog,
+Wanted runs and season comparisons are automatic. RSS due times persist across restart and
 advance from actual dispatch; missed ticks do not produce catch-up bursts.
 A provider Retry-After delays the next request even when local tokens remain.
 

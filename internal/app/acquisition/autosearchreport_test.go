@@ -2,8 +2,12 @@ package acquisition
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -168,5 +172,85 @@ func TestAutoSearchNamesAnUnmonitoredTarget(t *testing.T) {
 	}
 	if len(client.added) != 0 {
 		t.Errorf("grabbed for an unmonitored item: %v", client.added)
+	}
+}
+
+// spendAutomaticSearchAllowance debits every enabled indexer until the local
+// request budget refuses another automatic search, the state a busy backlog
+// leaves behind.
+func spendAutomaticSearchAllowance(t *testing.T, db *sqlite.DB) {
+	t.Helper()
+	ctx := context.Background()
+	indexers, err := db.ListIndexers(ctx)
+	if err != nil || len(indexers) == 0 {
+		t.Fatalf("indexers = %v, err = %v", indexers, err)
+	}
+	for _, cfg := range indexers {
+		var deferred *sqlite.BudgetDeferred
+		for i := 0; ; i++ {
+			err := db.ReserveIndexerRequest(ctx, cfg.ID, "search", true, time.Now())
+			if errors.As(err, &deferred) {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if i > 1000 {
+				t.Fatal("the automatic search allowance never ran out")
+			}
+		}
+	}
+}
+
+// A search the request budget refused is not a search that found nothing.
+// Both leave Seen at 0, and the banner said "No releases came back from any
+// indexer" for an item interactive search listed 138 releases for seconds
+// later: no indexer had been asked. The refusal has to travel with the tally.
+func TestAutoSearchSaysWhenTheIndexersWereNotAsked(t *testing.T) {
+	svc, db, movieID := autoSetup(t, []ports.Release{
+		rel("Test.Movie.2024.1080p.BluRay.x264-GOOD", 50),
+	}, &fakeClient{})
+	spendAutomaticSearchAllowance(t, db)
+
+	out, err := svc.AutoSearchItem(context.Background(), movieID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.Targets[0]
+	if got.Seen != 0 || got.Grabbed != "" {
+		t.Fatalf("target = %+v, want nothing seen while the allowance is spent", got)
+	}
+	if len(got.Incomplete) != 1 || !strings.Contains(got.Incomplete[0], "request allowance exhausted") {
+		t.Fatalf("incomplete = %q, want one line naming the spent allowance", got.Incomplete)
+	}
+	if strings.Contains(got.Incomplete[0], "tier ") {
+		t.Fatalf("incomplete = %q, want the reason once, not once per query tier", got.Incomplete)
+	}
+}
+
+// The button a person presses is not unattended work. With the automatic
+// allowance spent, a manual Auto Search still searches — charged to the
+// interactive allowance, exactly as interactive search is.
+func TestManualAutoSearchIsChargedAsInteractive(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, movieID := autoSetup(t, []ports.Release{
+		rel("Test.Movie.2024.1080p.BluRay.x264-GOOD", 50),
+	}, client)
+	spendAutomaticSearchAllowance(t, db)
+	ctx := context.Background()
+
+	out, err := svc.AutoSearchItem(WithManualSearch(ctx), movieID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Grabbed != 1 || len(out.Targets[0].Incomplete) != 0 {
+		t.Fatalf("outcome = %+v, want a grab with nothing left unsearched", out)
+	}
+	var interactive, automatic int
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*), COALESCE(sum(automatic),0) FROM indexer_request_usage WHERE bucket='interactive'`).Scan(&interactive, &automatic); err != nil {
+		t.Fatal(err)
+	}
+	if interactive == 0 || automatic != 0 {
+		t.Fatalf("interactive rows = %d (automatic %d), want the search charged as manual", interactive, automatic)
 	}
 }

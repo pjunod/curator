@@ -1709,7 +1709,9 @@ func (s *Server) AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, i
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	out, err := s.deps.Acquisition.AutoSearchItem(ctx, id)
+	// Somebody pressed the button and is waiting on the answer: charge the
+	// interactive allowance, not the rationed automatic one.
+	out, err := s.deps.Acquisition.AutoSearchItem(acquisition.WithManualSearch(ctx), id)
 	if err != nil {
 		s.acqErr(w, err)
 		return
@@ -1724,6 +1726,10 @@ func (s *Server) AutoSearchLibraryItem(w http.ResponseWriter, r *http.Request, i
 		if t.Skipped != "" {
 			skipped := apigen.AutoSearchTargetSkipped(t.Skipped)
 			dto.Skipped = &skipped
+		}
+		if len(t.Incomplete) > 0 {
+			incomplete := t.Incomplete
+			dto.Incomplete = &incomplete
 		}
 		targets = append(targets, dto)
 	}

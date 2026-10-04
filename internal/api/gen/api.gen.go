@@ -1300,6 +1300,9 @@ type AutoSearchTarget struct {
 	// Grabbed Title of the release grabbed, absent if none was.
 	Grabbed *string `json:"grabbed,omitempty"`
 
+	// Incomplete Indexers that could not be fully searched, as "name: reason" — a spent request allowance, a provider retry delay, a timeout. With seen 0 this means the indexers were not asked, not that they had nothing.
+	Incomplete *[]string `json:"incomplete,omitempty"`
+
 	// Label Human name for the target, e.g. "Blade Runner (1982)".
 	Label string `json:"label"`
 

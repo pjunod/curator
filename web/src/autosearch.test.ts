@@ -88,3 +88,25 @@ describe('describeAutoSearch', () => {
 it('explains deferred season comparison without claiming a grab', () => {
  expect(describeAutoSearch({grabbed:0,targets:[target({skipped:'queued'})]})).toContain('Queued 1 season comparison')
 })
+
+describe('describeAutoSearch with unsearched indexers', () => {
+  // A refused search and an empty one both see zero releases. Only one of
+  // them means there is nothing to grab.
+  it('says the indexers were not asked instead of claiming nothing exists', () => {
+    const line = 'nzb.life: indexer search request allowance exhausted; retry at 2026-10-04T18:42:05Z'
+    const msg = describeAutoSearch(result([target({ seen: 0, incomplete: [line] })]))
+    expect(msg).not.toContain('No releases came back')
+    expect(msg).toContain('were not asked')
+    expect(msg).toContain('nzb.life: indexer search request allowance exhausted')
+    expect(msg).toContain('retry after')
+    expect(msg).not.toContain('2026-10-04T18:42:05Z')
+  })
+
+  it('mentions an indexer that was not searched alongside a real result', () => {
+    const msg = describeAutoSearch(
+      result([target({ seen: 6, matched: 0, incomplete: ['drunkenslug: timeout'] })]),
+    )
+    expect(msg).toContain('none of them were')
+    expect(msg).toContain('Not every indexer was searched — drunkenslug: timeout')
+  })
+})

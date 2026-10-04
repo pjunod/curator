@@ -53,9 +53,17 @@ export function describeAutoSearch(res: AutoSearchResult): string {
   const matched = sum(searched, (t) => t.matched)
   const accepted = sum(searched, (t) => t.accepted)
   const skipped = res.targets.length - searched.length
-  const tail = skipped > 0 ? ` (${skipped} other target(s) skipped.)` : ''
+  const unasked = incomplete(searched)
+  const partial = unasked.length > 0 ? ` Not every indexer was searched — ${unasked.join('; ')}.` : ''
+  const tail = partial + (skipped > 0 ? ` (${skipped} other target(s) skipped.)` : '')
 
   if (seen === 0) {
+    // Nothing seen AND an indexer that was not asked is not "there are no
+    // releases". Saying so sent someone to interactive search, which listed
+    // 138 of them: the request allowance had refused every automatic query.
+    if (unasked.length > 0) {
+      return `Not searched — ${label(searched)} was not ruled out, the indexers were not asked: ${unasked.join('; ')}.${skipped > 0 ? ` (${skipped} other target(s) skipped.)` : ''}`
+    }
     return `No releases came back from any indexer for ${label(searched)}.${tail}`
   }
   if (matched === 0) {
@@ -67,6 +75,20 @@ export function describeAutoSearch(res: AutoSearchResult): string {
   // Accepted something and still grabbed nothing: the grab itself failed and
   // did not surface as an error. Rare, but silence here is what we're fixing.
   return `Accepted ${accepted} release(s) but grabbed none — check the logs.${tail}`
+}
+
+// incomplete gathers the distinct "indexer: reason" lines across targets and
+// renders any "retry at <UTC timestamp>" in the reader's own clock.
+function incomplete(ts: AutoSearchTarget[]): string[] {
+  const lines = new Set<string>()
+  for (const t of ts) for (const line of t.incomplete ?? []) lines.add(line)
+  return [...lines].map((line) =>
+    line.replace(/retry at (\d{4}-\d{2}-\d{2}T[\d:.]+Z)/, (whole, at: string) => {
+      const when = new Date(at)
+      if (Number.isNaN(when.getTime())) return whole
+      return `retry after ${when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+    }),
+  )
 }
 
 function sum(ts: AutoSearchTarget[], f: (t: AutoSearchTarget) => number): number {

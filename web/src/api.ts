@@ -1402,6 +1402,8 @@ export interface AutoSearchTarget {
   accepted: number
   grabbed?: string
   error?: string
+  // Indexers that could not be fully searched, as "name: reason".
+  incomplete?: string[]
 }
 
 export interface AutoSearchResult {

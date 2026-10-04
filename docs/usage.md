@@ -409,6 +409,11 @@ download priority or the item's override travels with the grab to nzbd:
   still wanted, then searches individual episodes if no pack was grabbed.
   Ongoing or partially selected seasons search wanted aired episodes directly.
   Active downloads suppress overlapping searches for that copy.
+  Pressing the button on a movie or book is a manual search: it is charged to
+  the indexer's interactive request allowance, not the rationed automatic one,
+  so a busy backlog cannot make it a no-op. If an indexer still could not be
+  searched — allowance spent, provider retry delay, timeout — the result says
+  which indexer, why, and when to retry, instead of "No releases came back".
 - The **Wanted** page groups every title once, with its missing episodes,
   copies, or editions underneath. **Search all now** snapshots every eligible
   target across every title and page. Counted Missing and Upgrade actions do
