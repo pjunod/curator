@@ -10,7 +10,8 @@ the log. The outcome now carries each unsearched indexer and its reason
 and the button is charged to the interactive allowance as docs/settings.md
 already described. Not done: the Curator mobile app still answers "Search
 started." for every outcome; series Auto search (queued season comparison)
-still uses the automatic allowance.
+and Wanted runs still use the automatic allowance, and a Wanted target the
+allowance refused is still recorded as searched with nothing seen.
 
 ## Compact TV quality details — 2026-09-29
 

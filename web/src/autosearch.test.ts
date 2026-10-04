@@ -94,12 +94,22 @@ describe('describeAutoSearch with unsearched indexers', () => {
   // them means there is nothing to grab.
   it('says the indexers were not asked instead of claiming nothing exists', () => {
     const line = 'nzb.life: indexer search request allowance exhausted; retry at 2026-10-04T18:42:05Z'
-    const msg = describeAutoSearch(result([target({ seen: 0, incomplete: [line] })]))
+    const sameDay = new Date('2026-10-04T18:36:00Z')
+    const msg = describeAutoSearch(result([target({ seen: 0, incomplete: [line] })]), sameDay)
     expect(msg).not.toContain('No releases came back')
-    expect(msg).toContain('were not asked')
+    expect(msg).toContain('not every indexer could be searched')
     expect(msg).toContain('nzb.life: indexer search request allowance exhausted')
     expect(msg).toContain('retry after')
     expect(msg).not.toContain('2026-10-04T18:42:05Z')
+
+    // Six minutes away needs no date; three days away does.
+    const weekday = new Date('2026-10-04T18:42:05Z').toLocaleDateString([], { weekday: 'short' })
+    expect(msg).not.toContain(`retry after ${weekday}`)
+    const earlier = describeAutoSearch(
+      result([target({ seen: 0, incomplete: [line] })]),
+      new Date('2026-10-01T18:36:00Z'),
+    )
+    expect(earlier).toContain(`retry after ${weekday}`)
   })
 
   it('mentions an indexer that was not searched alongside a real result', () => {

@@ -468,10 +468,11 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 			// Either way the release is grabbed without a person reviewing
 			// it, so the strict acquisition capabilities always apply; only
 			// the allowance it is charged to differs.
-			indexer := s.budgetIndexerStrict(cfg, "search", true, true)
+			bucket, automatic := "search", true
 			if manual {
-				indexer = s.budgetIndexerStrict(cfg, "interactive", false, true)
+				bucket, automatic = "interactive", false
 			}
+			indexer := s.budgetIndexerStrict(cfg, bucket, automatic, true)
 			eligible := func(rs []ports.Release) bool {
 				eligible := false
 				for _, release := range rs {
