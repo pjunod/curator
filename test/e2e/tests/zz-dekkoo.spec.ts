@@ -13,15 +13,25 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
   test(`Dekkoo uses Discover posters and Add controls at ${viewport.width}px`, async ({ page, request }) => {
     await page.setViewportSize(viewport)
     await request.put('/api/v1/settings', { data: { tmdbApiKey: 'e2e-test-key' } })
-    const roots = await (await request.get('/api/v1/rootfolders')).json()
+    let roots = await (await request.get('/api/v1/rootfolders')).json()
     if (!roots.some((r: {kind: string}) => r.kind === 'mixed' || r.kind === 'movie')) {
       const root = await request.post('/api/v1/rootfolders', { data: { path: process.env.E2E_MEDIA_ROOT!, kind: 'mixed' } })
       expect(root.ok()).toBeTruthy()
+      roots = await (await request.get('/api/v1/rootfolders')).json()
     }
-    // Each viewport performs an actual add, independently of prior library state.
+    // Exercise cleanup even in a focused retry, with an already-added movie.
+    const seed = await request.post('/api/v1/library', { data: {
+      kind: 'movie', tmdbId: 860,
+      rootFolderId: roots.find((r: { kind: string }) => r.kind === 'mixed' || r.kind === 'movie').id,
+      monitored: false, searchNow: false,
+    } })
+    expect([201, 409]).toContain(seed.status())
+    // Library summaries expose title/kind, not TMDB IDs. Each viewport must
+    // remove the fixture before testing the actual UI add.
+
     const library = await (await request.get('/api/v1/library')).json()
     for (const item of library) {
-      if (item.tmdbId === 860) expect((await request.delete(`/api/v1/library/${item.id}`)).ok()).toBeTruthy()
+      if (item.title === 'Dekkoo Fixture Film' && item.kind === 'movie') expect((await request.delete(`/api/v1/library/${item.id}`)).ok()).toBeTruthy()
     }
     await page.goto('/discover')
     await expect(page.getByRole('tab', { name: 'Dekkoo', exact: true })).toHaveCount(0)
