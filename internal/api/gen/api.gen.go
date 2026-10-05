@@ -1066,13 +1066,14 @@ func (e WantedSearchRequestScope) Valid() bool {
 
 // Defines values for WantedSearchResultSkipped.
 const (
-	WantedSearchResultSkippedCancelled      WantedSearchResultSkipped = "cancelled"
-	WantedSearchResultSkippedDownloading    WantedSearchResultSkipped = "downloading"
-	WantedSearchResultSkippedNoLongerWanted WantedSearchResultSkipped = "no_longer_wanted"
-	WantedSearchResultSkippedQueued         WantedSearchResultSkipped = "queued"
-	WantedSearchResultSkippedReasonChanged  WantedSearchResultSkipped = "reason_changed"
-	WantedSearchResultSkippedRegrabCapped   WantedSearchResultSkipped = "regrab_capped"
-	WantedSearchResultSkippedUnmonitored    WantedSearchResultSkipped = "unmonitored"
+	WantedSearchResultSkippedCancelled           WantedSearchResultSkipped = "cancelled"
+	WantedSearchResultSkippedDownloading         WantedSearchResultSkipped = "downloading"
+	WantedSearchResultSkippedIndexersUnavailable WantedSearchResultSkipped = "indexers_unavailable"
+	WantedSearchResultSkippedNoLongerWanted      WantedSearchResultSkipped = "no_longer_wanted"
+	WantedSearchResultSkippedQueued              WantedSearchResultSkipped = "queued"
+	WantedSearchResultSkippedReasonChanged       WantedSearchResultSkipped = "reason_changed"
+	WantedSearchResultSkippedRegrabCapped        WantedSearchResultSkipped = "regrab_capped"
+	WantedSearchResultSkippedUnmonitored         WantedSearchResultSkipped = "unmonitored"
 )
 
 // Valid indicates whether the value is a known member of the WantedSearchResultSkipped enum.
@@ -1081,6 +1082,8 @@ func (e WantedSearchResultSkipped) Valid() bool {
 	case WantedSearchResultSkippedCancelled:
 		return true
 	case WantedSearchResultSkippedDownloading:
+		return true
+	case WantedSearchResultSkippedIndexersUnavailable:
 		return true
 	case WantedSearchResultSkippedNoLongerWanted:
 		return true
@@ -2899,20 +2902,22 @@ type WantedSearchRequestScope string
 
 // WantedSearchResult defines model for WantedSearchResult.
 type WantedSearchResult struct {
-	Accepted   int                        `json:"accepted"`
-	Error      *string                    `json:"error,omitempty"`
-	FinishedAt time.Time                  `json:"finishedAt"`
-	Grabbed    *string                    `json:"grabbed,omitempty"`
-	Label      string                     `json:"label"`
-	Matched    int                        `json:"matched"`
-	Ordinal    int                        `json:"ordinal"`
-	Seen       int                        `json:"seen"`
+	Accepted   int       `json:"accepted"`
+	Error      *string   `json:"error,omitempty"`
+	FinishedAt time.Time `json:"finishedAt"`
+	Grabbed    *string   `json:"grabbed,omitempty"`
+	Label      string    `json:"label"`
+	Matched    int       `json:"matched"`
+	Ordinal    int       `json:"ordinal"`
+	Seen       int       `json:"seen"`
+
+	// Skipped "indexers_unavailable" means no release was seen and at least one indexer could not be searched; error names each one and why.
 	Skipped    *WantedSearchResultSkipped `json:"skipped,omitempty"`
 	State      WantedSearchResultState    `json:"state"`
 	WantableId string                     `json:"wantableId"`
 }
 
-// WantedSearchResultSkipped defines model for WantedSearchResult.Skipped.
+// WantedSearchResultSkipped "indexers_unavailable" means no release was seen and at least one indexer could not be searched; error names each one and why.
 type WantedSearchResultSkipped string
 
 // WantedSearchResultState defines model for WantedSearchResult.State.

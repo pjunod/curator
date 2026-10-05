@@ -451,7 +451,10 @@ func (s *Service) executeWantedTarget(ctx context.Context, run sqlite.WantedSear
 		}
 		return nil
 	}
-	searchCtx, stopSearch := context.WithCancel(ctx)
+	// A Wanted run only ever starts from a person's request (the API has no
+	// other caller), so its searches are manual: charged to the interactive
+	// allowance, not the share rationed for unattended passes.
+	searchCtx, stopSearch := context.WithCancel(WithManualSearch(ctx))
 	done := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
@@ -473,6 +476,9 @@ func (s *Service) executeWantedTarget(ctx context.Context, run sqlite.WantedSear
 	}()
 	tally, err := s.searchAndGrabBestScoped(searchCtx, w, enabled, allowed, beforeGrab)
 	close(done)
+	// Read before stopSearch cancels it unconditionally: only a cancellation
+	// that arrived during the search means the search was cut short.
+	interrupted := searchCtx.Err() != nil && ctx.Err() == nil
 	stopSearch()
 	result.Seen, result.Matched, result.Accepted, result.Grabbed = tally.Seen, tally.Matched, tally.Accepted, tally.Grabbed
 	if errors.Is(err, errWantedCancelled) || (errors.Is(err, context.Canceled) && ctx.Err() == nil) {
@@ -492,6 +498,23 @@ func (s *Service) executeWantedTarget(ctx context.Context, run sqlite.WantedSear
 	}
 	if err != nil {
 		return fail(err)
+	}
+	if interrupted && tally.Grabbed == "" {
+		// The indexers' "errors" here are the cancellation itself; reporting
+		// them as unavailable indexers would blame the wrong thing.
+		return skip("cancelled", "run cancellation interrupted the search")
+	}
+	if len(tally.Incomplete) > 0 {
+		unasked := strings.Join(tally.Incomplete, "; ")
+		if tally.Seen == 0 {
+			// No release was seen and at least one indexer could not be
+			// searched: that is not a search that found nothing, and
+			// recording it as one hides a spent allowance behind "0 seen".
+			return skip(SkipIndexersUnavailable, unasked)
+		}
+		if result.Grabbed == "" {
+			result.Error = "not every indexer was searched: " + unasked
+		}
 	}
 	result.State = "searched"
 	return result

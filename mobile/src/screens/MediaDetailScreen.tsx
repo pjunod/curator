@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
+import { describeAutoSearch } from '../autosearch'
 import { bookTypeForSource, formatBytes } from '../format'
 import {
   DOWNLOAD_PRIORITIES,
@@ -136,8 +137,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
     setActionError('')
     setActionMessage('')
     try {
-      await client.autoSearchItem(id)
-      setActionMessage('Search started.')
+      setActionMessage(describeAutoSearch(await client.autoSearchItem(id)))
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : 'Could not start a search.')
     } finally {

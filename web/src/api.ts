@@ -1173,7 +1173,7 @@ export interface WantedSearchResult {
   wantableId: string
   label: string
   state: 'searched' | 'skipped' | 'failed'
-  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled' | 'queued'
+  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled' | 'queued' | 'indexers_unavailable'
   seen: number
   matched: number
   accepted: number

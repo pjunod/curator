@@ -415,3 +415,21 @@ export interface GrabRequest {
   size?: number
   candidateToken?: string
 }
+
+export interface AutoSearchTarget {
+  wantableId: string
+  label: string
+  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled' | 'queued'
+  seen: number
+  matched: number
+  accepted: number
+  grabbed?: string
+  error?: string
+  // Indexers that could not be fully searched, as "name: reason".
+  incomplete?: string[]
+}
+
+export interface AutoSearchResult {
+  grabbed: number
+  targets: AutoSearchTarget[]
+}

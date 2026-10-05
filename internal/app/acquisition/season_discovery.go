@@ -36,13 +36,18 @@ type discoveryScope struct {
 	Degraded  bool
 }
 type seasonCheckpoint struct {
-	Fingerprint        string           `json:"fingerprint"`
-	Deep               bool             `json:"deep"`
-	Version            int              `json:"version"`
-	ItemID             int64            `json:"itemId"`
-	CopyID             int64            `json:"copyId"`
-	Season             int              `json:"season"`
-	Trigger            string           `json:"trigger"`
+	Fingerprint string `json:"fingerprint"`
+	Deep        bool   `json:"deep"`
+	Version     int    `json:"version"`
+	ItemID      int64  `json:"itemId"`
+	CopyID      int64  `json:"copyId"`
+	Season      int    `json:"season"`
+	Trigger     string `json:"trigger"`
+	// Manual records that a person asked for this comparison and is waiting
+	// on it. It travels in the job payload because the search runs later, on
+	// a worker, long after the request context that knew who asked is gone;
+	// it decides which request allowance the comparison is charged to.
+	Manual             bool             `json:"manual,omitempty"`
 	OriginalDownloadID int64            `json:"originalDownloadId,omitempty"`
 	Revision           int64            `json:"revision"`
 	Started            time.Time        `json:"started"`
@@ -59,7 +64,8 @@ func seasonJobKey(item, copy int64, season int) string {
 	return fmt.Sprintf("season:%d:%d:%d", item, copy, season)
 }
 func (s *Service) enqueueSeason(ctx context.Context, item, copy int64, season int, trigger string, missing bool) error {
-	p := seasonCheckpoint{Version: 1, ItemID: item, CopyID: copy, Season: season, Trigger: trigger}
+	manual := manualSearch(ctx)
+	p := seasonCheckpoint{Version: 1, ItemID: item, CopyID: copy, Season: season, Trigger: trigger, Manual: manual}
 	_, pack, profile, targets, _, e := s.seasonSnapshot(ctx, p)
 	if e != nil {
 		return e
@@ -72,7 +78,11 @@ func (s *Service) enqueueSeason(ctx context.Context, item, copy int64, season in
 	if e = s.db.R.QueryRowContext(ctx, `SELECT payload FROM jobs WHERE kind=? AND dedupe_key=? AND state='done' ORDER BY id DESC LIMIT 1`, SeasonSearchJobKind, seasonJobKey(item, copy, season)).Scan(&previous); e == nil {
 		var old seasonCheckpoint
 		if json.Unmarshal([]byte(previous), &old) == nil && old.Fingerprint == p.Fingerprint {
-			if time.Now().Before(old.CooldownUntil) && trigger != "rss_improvement" {
+			// The cooldown stops unattended passes repeating a comparison
+			// that just ran. A person pressing the button is asking for it
+			// again on purpose; answering "queued" and enqueueing nothing
+			// would be the same silent no-op this flag exists to end.
+			if time.Now().Before(old.CooldownUntil) && trigger != "rss_improvement" && !manual {
 				return nil
 			}
 			p.Deep = !old.Started.IsZero() && time.Since(old.Started) >= 7*24*time.Hour
@@ -85,6 +95,16 @@ func (s *Service) enqueueSeason(ctx context.Context, item, copy int64, season in
 	}
 	_, err := s.db.EnqueueJob(ctx, domain.Job{Kind: SeasonSearchJobKind, Payload: string(raw), DedupeKey: seasonJobKey(item, copy, season), Priority: priority, MaxAttempts: 3})
 	if errors.Is(err, sqlite.ErrDuplicateJob) {
+		if manual {
+			// The season is already queued, typically parked until the
+			// automatic allowance frees up. Promote that job instead of
+			// dropping the request: mark it manual and make it due now. A
+			// job a worker already holds is left alone; its checkpoint is
+			// the worker's to write.
+			now := time.Now().UnixMilli()
+			_, err = s.db.W.ExecContext(ctx, `UPDATE jobs SET payload=json_set(payload,'$.manual',json('true')), run_after=min(run_after,?), updated_at=? WHERE kind=? AND dedupe_key=? AND state='queued'`, now, now, SeasonSearchJobKind, seasonJobKey(item, copy, season))
+			return err
+		}
 		return nil
 	}
 	return err
@@ -271,6 +291,12 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 				p.IntrinsicPartial = true
 				continue
 			}
+			if p.Manual {
+				// The twelve-hour share rations unattended work only; a
+				// manual comparison is not held to it at dispatch, so the
+				// admission forecast must not hold it to it either.
+				h = nil
+			}
 			if finish := feasibleFinish(now, b, d, h, requests, s.searchTimeout); finish.After(deadline) {
 				return &sqlite.BudgetDeferred{At: now.Add(time.Hour), Reason: "waiting for capacity to finish a complete season comparison"}
 			}
@@ -318,7 +344,13 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 					cfg = c
 				}
 			}
-			indexer := s.budgetIndexer(cfg, "search", true)
+			// Unreviewed grabs follow either way, so the strict acquisition
+			// capabilities always apply; who asked decides only the allowance.
+			bucket, automatic := "search", true
+			if p.Manual {
+				bucket, automatic = "interactive", false
+			}
+			indexer := s.budgetIndexerStrict(cfg, bucket, automatic, true)
 			if len(sc.Queries) == 0 {
 				var scopeWantable domain.Wantable = pack
 				if sc.EpisodeID != 0 {

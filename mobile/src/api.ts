@@ -1,5 +1,6 @@
 import type {
   AddMediaCopyRequest,
+  AutoSearchResult,
   AddMediaRequest,
   CalendarEntry,
   Connection,
@@ -138,7 +139,14 @@ export class MonarrClient {
   addLibraryItem = (input: AddMediaRequest): Promise<MediaItemDetail> =>
     this.send('POST', '/library', input)
   getWanted = (): Promise<WantedItem[]> => this.get('/wanted')
-  autoSearchItem = (id: number): Promise<void> => this.send('POST', `/library/${id}/autosearch`)
+  // Synchronous on the server: the answer says what the search actually did.
+  // It waits on the same live indexer fan-out as an interactive search, so it
+  // gets the same long timeout.
+  autoSearchItem = async (id: number): Promise<AutoSearchResult> => {
+    const { body } = await this.requestWithHeaders<AutoSearchResult | undefined>(
+      `/library/${id}/autosearch`, { method: 'POST' }, RELEASE_SEARCH_TIMEOUT_MS)
+    return body ?? { grabbed: 0, targets: [] }
+  }
   // Indexers are queried live, so this waits well past the default timeout:
   // a slow tracker is a partial result, not a dead server.
   searchReleases = async (id: number, scope: ReleaseSearchScope = {}): Promise<ReleaseSearchResponse> => {
