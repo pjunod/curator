@@ -211,24 +211,25 @@ anticipated (movies and shows), and last weekend's box office. The **All /
 Movies / Shows** tabs filter which rows are on screen. Books have no row:
 Open Library has no popularity data worth showing.
 
-**Dekkoo (web).** Open the **Dekkoo** tab for one combined feed of Gay Movies,
-Gay Series, Gay Romance, Gay Comedy and Gay Short Films. Only posts belonging
-to at least one of those five categories appear; broader LGBTQ+, general news,
-horror and drama categories are not independent sources. Articles can still
-carry those additional labels when they also belong to a selected category.
-The feed shows recent articles, not the full streaming catalog. Open **Read on
-Dekkoo** for a collection's individual titles, then enter a title and choose
-Movie or Series under **Find in Curator** to use the normal search and Add flow.
-Articles never become library items automatically, and no title identity is
-guessed from a headline. The **Combined RSS feed** link is the same category
-union, usable in any RSS reader. No Dekkoo login or metadata API key is needed
-to read articles; normal metadata configuration is needed for title search.
+**Dekkoo.** Two more poster rows, **Gay movies on Dekkoo** and **Gay shows on
+Dekkoo**, appear alongside TMDB and Trakt. They use the same **All / Movies /
+Shows** filters, poster-size control, preview, library badges, and **Add to
+library** dialog. There is no separate Dekkoo tab or manual title-search step.
 
-The server fetches only when this tab is opened, caches for 30 minutes, and
-labels a cached snapshot as stale if refresh fails. After 24 hours without a
-successful refresh it shows an error with **Try again**. Restarting clears the
-in-memory snapshot. Duplicate article links appear once, newest first. Native
-mobile clients continue to show the existing TMDB/Trakt lists.
+Both rows draw from one combined feed of Gay Movies, Gay Series, Gay Romance,
+Gay Comedy and Gay Short Films. Only articles belonging to at least one of
+those categories contribute titles; broader LGBTQ+, news, horror and drama
+categories are not independent sources. Catalog links and collection headings
+supply individual titles; TMDB supplies verified identities, posters and
+summaries. Duplicate media appear once, in recent-article order. Unmatched or
+ambiguous titles are omitted, so the rows are a recent editorial selection,
+not Dekkoo's complete streaming catalog. RSS publication dates are never used
+as film release years.
+
+No Dekkoo account or additional API key is needed: the existing TMDB key
+resolves both rows. Nothing is added automatically. Rows load on demand and
+use Discover's 30-minute cache and up-to-24-hour fallback on upstream failure.
+The same lists are available to clients using the standard Discover API.
 
 **Poster size** is the labelled **S / M / L** control in the page head, on
 both Discover and the Library page. It is one preference — set it in either place

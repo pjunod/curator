@@ -11,7 +11,7 @@ import {
   getSettings,
   posterUrl,
 } from '../api'
-import { DekkooFeed } from '../DekkooFeed'
+import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { CardSizePicker } from '../CardSizePicker'
 import type { DiscoverFilter } from '../discover'
 import { DISCOVER_FILTERS, cardKey, rowCounts, sourceLabel, visibleLists } from '../discover'
@@ -26,16 +26,12 @@ interface AddedItem {
 
 export function DiscoverPage() {
   const qc = useQueryClient()
-  const [filter, setFilter] = useState<DiscoverFilter | 'dekkoo'>('all')
+  const [filter, setFilter] = useState<DiscoverFilter>('all')
   const [open, setOpen] = useState<SearchResult | null>(null)
   const [added, setAdded] = useState<Record<string, AddedItem>>({})
 
-  const lists = useQuery({
-    queryKey: ['discover-lists'],
-    queryFn: getDiscoverLists,
-    enabled: filter !== 'dekkoo',
-  })
-  const rows = visibleLists(lists.data ?? [], filter === 'dekkoo' ? 'all' : filter)
+  const lists = useQuery({ queryKey: ['discover-lists'], queryFn: getDiscoverLists })
+  const rows = visibleLists(lists.data ?? [], filter)
   const counts = rowCounts(lists.data ?? [])
 
   return (
@@ -54,55 +50,41 @@ export function DiscoverPage() {
               {f.label} <span className="tab-count">{counts[f.key]}</span>
             </button>
           ))}
-          <button
-            role="tab"
-            aria-selected={filter === 'dekkoo'}
-            className={filter === 'dekkoo' ? 'tab active' : 'tab'}
-            onClick={() => setFilter('dekkoo')}
-          >
-            Dekkoo
-          </button>
         </div>
-        {filter !== 'dekkoo' && <CardSizePicker />}
+        <CardSizePicker />
       </header>
 
-      {filter === 'dekkoo' ? (
-        <DekkooFeed />
-      ) : (
-        <>
-          {lists.isError && (
-            <div className="banner warning">{String((lists.error as Error).message)}</div>
-          )}
-
-          {/* An empty catalogue is not an error — it is an install with no
-              provider configured, which is a setup step and not a failure. */}
-          {lists.isSuccess && lists.data.length === 0 && (
-            <div className="empty-state">
-              <p>Nothing to browse yet.</p>
-              <p className="muted">
-                Discover reads from your metadata providers. Add a TMDB API key under{' '}
-                <Link to="/settings">Settings</Link> for nine rows of trending, popular and
-                upcoming titles — and an optional free Trakt client id for five more.
-              </p>
-            </div>
-          )}
-
-          {rows.map((list) => (
-            <DiscoverRow
-              key={list.id}
-              list={list}
-              // Four row titles exist twice, once per kind — "Trending this
-              // week", "Popular", "Top rated", "Most anticipated". Side by side
-              // under All they are indistinguishable, so the kind goes in the
-              // heading there. On a filtered tab every row is that kind already
-              // and repeating it is noise.
-              showKind={filter === 'all'}
-              added={added}
-              onPick={(r) => setOpen(r)}
-            />
-          ))}
-        </>
+      {lists.isError && (
+        <div className="banner warning">{String((lists.error as Error).message)}</div>
       )}
+
+      {/* An empty catalogue is not an error — it is an install with no
+          provider configured, which is a setup step and not a failure. */}
+      {lists.isSuccess && lists.data.length === 0 && (
+        <div className="empty-state">
+          <p>Nothing to browse yet.</p>
+          <p className="muted">
+            Discover reads from your metadata providers. Add a TMDB API key under{' '}
+            <Link to="/settings">Settings</Link> for trending, popular, upcoming and
+            Dekkoo titles — and an optional free Trakt client id for five more.
+          </p>
+        </div>
+      )}
+
+      {rows.map((list) => (
+        <DiscoverRow
+          key={list.id}
+          list={list}
+          // Four row titles exist twice, once per kind — "Trending this
+          // week", "Popular", "Top rated", "Most anticipated". Side by side
+          // under All they are indistinguishable, so the kind goes in the
+          // heading there. On a filtered tab every row is that kind already
+          // and repeating it is noise.
+          showKind={filter === 'all'}
+          added={added}
+          onPick={(r) => setOpen(r)}
+        />
+      ))}
 
       {open && (
         <AddDialog
@@ -256,7 +238,7 @@ function Card(props: { result: SearchResult; added?: AddedItem; onPick: (r: Sear
   return (
     <button
       className="poster-card discover-card"
-      onClick={() => props.onPick(r)}
+      onClick={(event) => { focusActionTrigger(event); props.onPick(r) }}
       title={r.title}
     >
       {r.posterPath ? (
@@ -313,15 +295,6 @@ function AddDialog(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleIds, rootId])
 
-  const { onClose } = props
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   const defaultProfileId = settings.data?.defaultProfiles?.[r.kind]
   const defaultProfileName = profiles.data?.find((p) => p.id === defaultProfileId)?.name
 
@@ -341,27 +314,8 @@ function AddDialog(props: {
   })
 
   return (
-    // The backdrop is the flex container and the modal is its child — the
-    // house pattern (ReviewWindow). As siblings the backdrop's z-index puts
-    // it over the dialog and swallows every click.
-    <div className="modal-backdrop" onMouseDown={props.onClose}>
-      <div
-        className="modal discover-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Add ${r.title}`}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="modal-head">
-          <h2>
-            {r.title} <span className="muted">({r.year || '—'})</span>
-          </h2>
-          <button className="link-button" onClick={props.onClose}>
-            Close
-          </button>
-        </div>
-
-        <div className="modal-body discover-modal-body">
+    <ActionDialog title={`Add ${r.title}`} className="discover-dialog" onClose={props.onClose}>
+        <div className="discover-modal-body">
           {r.posterPath ? (
             <img className="discover-modal-poster" src={posterUrl(r.posterPath, 'w342')} alt="" />
           ) : (
@@ -369,18 +323,18 @@ function AddDialog(props: {
           )}
           <div className="discover-modal-detail">
             <p className="muted">
-              {r.kind === 'series' ? 'Series' : 'Movie'}
+              {r.kind === 'series' ? 'Series' : 'Movie'} · {r.year || '—'}
               {r.source ? ` · from ${sourceLabel(r.source)}` : ''}
             </p>
             <p>{r.overview || <span className="muted">No description available.</span>}</p>
 
             {props.added ? (
-              <p>
+              <ActionNotice>
                 <span className="pill pill-ok">added</span>{' '}
                 <Link to="/library/$id" params={{ id: String(props.added.id) }}>
                   Open in library
                 </Link>
-              </p>
+              </ActionNotice>
             ) : r.inLibrary ? (
               <p>
                 <span className="pill pill-ok">in library</span>{' '}
@@ -459,7 +413,7 @@ function AddDialog(props: {
             )}
 
             {add.isError && (
-              <div className="banner warning">{String((add.error as Error).message)}</div>
+              <ActionNotice warning>{String((add.error as Error).message)}</ActionNotice>
             )}
           </div>
         </div>
@@ -476,7 +430,6 @@ function AddDialog(props: {
             </button>
           )}
         </div>
-      </div>
-    </div>
+    </ActionDialog>
   )
 }

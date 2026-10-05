@@ -118,23 +118,37 @@ Cold start costs one upstream call per row actually looked at, because the UI
 loads rows lazily as they approach the viewport rather than fetching fourteen
 at once.
 
-### 5. Dekkoo editorial feed (2026-10-05)
+### 5. Dekkoo uses the same Discover provider contract (2026-10-05)
 
-Web Discover also has a **Dekkoo** tab for the union of its five explicitly gay
-RSS categories: movies, series, romance, comedy and short films. Publisher
-articles can describe several works and carry no verified media IDs, so they
-have a separate `/discover/dekkoo` contract and never enter `SearchResult` or
-an import list. A reader follows an article, then searches by title through
-the existing Add flow. This preserves identity verification and keeps automatic
-acquisition out of discovery.
+Dekkoo contributes `dekkoo-movies` and `dekkoo-series` through the existing
+`DiscoverProvider` port. Both draw from the union of its five explicitly gay
+RSS categories: movies, series, romance, comedy and short films. This corrects
+the separate article-reader tab introduced in v0.37.0: browsing films belongs
+in the existing poster rows, with the same preview, library badges and Add
+controls. The unused editorial endpoint and UI are removed.
 
-The adapter fetches on demand with a 15-second timeout and a 2 MiB response
-limit, validates RSS, filters the selected category labels, permits only HTTPS
-Dekkoo blog article links, deduplicates links, and returns at most 50 articles
-newest first. Publisher HTML is converted to bounded plain text. One in-memory
-snapshot lasts 30 minutes; upstream failure may serve it for 24 hours with an
-explicit stale flag and a one-minute retry backoff. The feed needs no key.
-Existing TMDB/Trakt contracts and native clients are unchanged.
+RSS contains articles rather than media IDs. The adapter extracts titles from
+HTTPS catalog links and collection headings, strips known Watch/Stream and
+season suffixes, and searches TMDB by kind. It accepts only a unique exact
+primary/original title match, using an explicit title year when available.
+Ambiguous namesakes and missing matches are omitted; a feed date is never a
+release year. Results deduplicate by kind and TMDB ID, retain article order,
+and carry source `dekkoo`. No raw publisher HTML reaches a client, and no
+publisher-supplied link is fetched by the adapter.
+
+The feed has a 15-second timeout and a 2 MiB response limit. Parsing retains
+at most 50 selected articles, newest first; each row resolves at most 50
+unique titles, four searches at a time, within 30 seconds. A fresh RSS snapshot
+is shared between the two rows for 30 minutes. The standard Discover service
+owns media-row caching and its 24-hour outage fallback. A lookup failure fails
+the refresh instead of caching a partly empty row. An unmatched title simply
+contributes no card.
+
+The existing TMDB key supplies metadata, so no new setting or feature switch
+is necessary. This remains read-only discovery: library additions still
+require the ordinary user action. Native clients receive the same standard
+list/item contracts as the web app. The feed is a recent editorial selection,
+not an exhaustive catalog or a guarantee of regional streaming availability.
 
 ## Consequences
 

@@ -868,31 +868,6 @@ paths:
       responses:
         '204': { description: Removed }
         '409': { description: Disable semantic ranking first }
-  /discover/dekkoo:
-    get:
-      operationId: getDekkooFeed
-      summary: Recent articles from Dekkoo's five gay-themed categories
-      description: >
-        Read-only editorial RSS, separate from identified movie and series results.
-        Fetched on demand, cached for 30 minutes, explicitly stale for up to 24 hours
-        on upstream failure. No library additions. Requires no provider API key.
-      responses:
-        "200":
-          description: Selected category articles, deduplicated and newest first.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/EditorialFeed" }
-        "502":
-          description: Upstream unavailable and no usable cached snapshot.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "503":
-          description: Feed adapter not installed.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
   /discover/lists:
     get:
       operationId: listDiscoverLists
@@ -3653,32 +3628,6 @@ components:
           type: array
           items: { $ref: "#/components/schemas/BookType" }
           description: Which editions of this Open Library work are already curated.
-
-    EditorialArticle:
-      type: object
-      required: [title, url, summary, categories]
-      properties:
-        title: { type: string }
-        url: { type: string, format: uri }
-        summary: { type: string, description: Plain text; never render as HTML. }
-        categories:
-          type: array
-          items: { type: string }
-        publishedAt: { type: string, format: date-time }
-
-    EditorialFeed:
-      type: object
-      required: [url, categories, items, fetchedAt, stale]
-      properties:
-        url: { type: string, format: uri }
-        categories:
-          type: array
-          items: { type: string }
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/EditorialArticle" }
-        fetchedAt: { type: string, format: date-time }
-        stale: { type: boolean }
 
     DiscoverList:
       type: object

@@ -14,13 +14,14 @@ test.describe.configure({ mode: 'serial' })
 
 const TMDB_ROWS = 9
 const TRAKT_ROWS = 5
+const DEKKOO_ROWS = 2
 
 test.beforeAll(async ({ request }) => {
   await request.put('/api/v1/settings', { data: { tmdbApiKey: 'e2e-test-key' } })
 })
 
 test.describe('the catalogue', () => {
-  test('TMDB alone serves the nine rows, and Trakt is absent until it is keyed', async ({
+  test('TMDB and Dekkoo serve standard rows, and Trakt is absent until it is keyed', async ({
     request,
   }) => {
     // Clear the Trakt id first: the "Trakt rows appear" test below sets it,
@@ -33,8 +34,9 @@ test.describe('the catalogue', () => {
     const lists: { id: string; title: string; blurb: string; kind: string; source: string }[] =
       await res.json()
 
-    expect(lists).toHaveLength(TMDB_ROWS)
-    expect(lists.every((l) => l.source === 'tmdb')).toBeTruthy()
+    expect(lists).toHaveLength(TMDB_ROWS + DEKKOO_ROWS)
+    expect(lists.filter((l) => l.source === 'tmdb')).toHaveLength(TMDB_ROWS)
+    expect(lists.filter((l) => l.source === 'dekkoo')).toHaveLength(DEKKOO_ROWS)
     // Every row says what it measures — a heading alone is not readable,
     // because "trending" is a different number at each provider.
     expect(lists.every((l) => l.title.length > 0 && l.blurb.length > 0)).toBeTruthy()
@@ -73,7 +75,7 @@ test.describe('the page', () => {
     // Rows below the fold load as they are scrolled to, so the count on
     // arrival is only what fits — assert the sections exist, not that every
     // one has already fetched.
-    await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS)
+    await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS + DEKKOO_ROWS)
     await expect(page.locator('.discover-card').first()).toBeVisible()
     await expect(page.getByText('Trending Test Movie')).toBeVisible()
   })
@@ -102,19 +104,19 @@ test.describe('the page', () => {
 
   test('the kind tabs filter which rows are shown', async ({ page }) => {
     await page.goto('/discover')
-    await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS)
+    await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS + DEKKOO_ROWS)
 
     await page.getByRole('tab', { name: /Movies/ }).click()
-    await expect(page.locator('.discover-section')).toHaveCount(5)
+    await expect(page.locator('.discover-section')).toHaveCount(6)
     await expect(page.locator('[data-list="tmdb-trending-movies"]')).toBeVisible()
     await expect(page.locator('[data-list="tmdb-popular-series"]')).toHaveCount(0)
 
     await page.getByRole('tab', { name: /Shows/ }).click()
-    await expect(page.locator('.discover-section')).toHaveCount(4)
+    await expect(page.locator('.discover-section')).toHaveCount(5)
     await expect(page.locator('[data-list="tmdb-trending-series"]')).toBeVisible()
 
     await page.getByRole('tab', { name: /All/ }).click()
-    await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS)
+    await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS + DEKKOO_ROWS)
   })
 
   test('a poster opens the dialog and adds to the library', async ({ page }) => {
@@ -151,7 +153,7 @@ test.describe('Trakt', () => {
     const lists: { id: string; source: string }[] = await (
       await request.get('/api/v1/discover/lists')
     ).json()
-    expect(lists).toHaveLength(TMDB_ROWS + TRAKT_ROWS)
+    expect(lists).toHaveLength(TMDB_ROWS + DEKKOO_ROWS + TRAKT_ROWS)
     expect(lists.filter((l) => l.source === 'trakt')).toHaveLength(TRAKT_ROWS)
 
     // Trakt hands out ids without pictures, so the service fills the artwork
@@ -171,7 +173,7 @@ test.describe('Trakt', () => {
     expect(boxOffice[0].posterPath).toBe('')
 
     await page.goto('/discover')
-    await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS + TRAKT_ROWS)
+    await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS + DEKKOO_ROWS + TRAKT_ROWS)
     await expect(page.locator('[data-list="trakt-boxoffice"]')).toHaveCount(1)
   })
 })

@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/pjunod/monarr/internal/ports"
 )
 
 // FeedURL deliberately excludes the unfiltered blog feed and broader categories.
@@ -25,27 +23,38 @@ const maxBytes = 2 << 20
 var categories = []string{"Gay Movies", "Gay Series", "Gay Romance", "Gay Comedy", "Gay Short Films"}
 var tags = regexp.MustCompile(`<[^>]*>`)
 
-// Client keeps one bounded snapshot; it fetches only when the feed is opened.
+type feedArticle struct {
+	Title, URL, Content string
+	Categories          []string
+	PublishedAt         *time.Time
+}
+type feedSnapshot struct {
+	Items     []feedArticle
+	FetchedAt time.Time
+}
+
+// Client keeps one bounded RSS snapshot, fetched only when a row is opened.
 type Client struct {
-	endpoint   string
-	http       *http.Client
-	mu         sync.Mutex
-	cached     ports.EditorialFeed
-	now        func() time.Time
-	retryAfter time.Time
+	endpoint string
+	http     *http.Client
+	mu       sync.Mutex
+	cached   feedSnapshot
+	now      func() time.Time
+	metadata Metadata
 }
 
 // New accepts an operator-supplied endpoint override for integration fixtures.
 // Browsers cannot choose the upstream URL.
-func New(endpoint string) *Client {
+func New(endpoint string, metadata Metadata) *Client {
 	if endpoint == "" {
 		endpoint = FeedURL
 	}
-	return &Client{endpoint: endpoint, http: &http.Client{Timeout: 15 * time.Second}, now: time.Now}
+	return &Client{endpoint: endpoint, http: &http.Client{Timeout: 15 * time.Second}, now: time.Now, metadata: metadata}
 }
 
-// Feed caches successes for 30 minutes and reports stale data for at most a day.
-func (c *Client) Feed(ctx context.Context) (ports.EditorialFeed, error) {
+// feed shares one fresh RSS snapshot across both rows. The Discover service
+// owns stale media rows, so an RSS outage cannot reset their expiry.
+func (c *Client) feed(ctx context.Context) (feedSnapshot, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
@@ -53,28 +62,15 @@ func (c *Client) Feed(ctx context.Context) (ports.EditorialFeed, error) {
 	if !c.cached.FetchedAt.IsZero() && age < 30*time.Minute {
 		return clone(c.cached), nil
 	}
-	if !c.cached.FetchedAt.IsZero() && age < 24*time.Hour && now.Before(c.retryAfter) {
-		stale := clone(c.cached)
-		stale.Stale = true
-		return stale, nil
-	}
 	items, err := c.fetch(ctx)
 	if err != nil {
-		if !c.cached.FetchedAt.IsZero() && age < 24*time.Hour && ctx.Err() == nil {
-			c.retryAfter = now.Add(time.Minute)
-			stale := clone(c.cached)
-			stale.Stale = true
-			return stale, nil
-		}
-		return ports.EditorialFeed{}, err
+		return feedSnapshot{}, err
 	}
-	c.cached = ports.EditorialFeed{URL: FeedURL, Categories: slices.Clone(categories), Items: items, FetchedAt: c.now()}
-	c.retryAfter = time.Time{}
+	c.cached = feedSnapshot{Items: items, FetchedAt: c.now()}
 	return clone(c.cached), nil
 }
 
-func clone(in ports.EditorialFeed) ports.EditorialFeed {
-	in.Categories = slices.Clone(in.Categories)
+func clone(in feedSnapshot) feedSnapshot {
 	in.Items = slices.Clone(in.Items)
 	for i := range in.Items {
 		in.Items[i].Categories = slices.Clone(in.Items[i].Categories)
@@ -86,7 +82,7 @@ func clone(in ports.EditorialFeed) ports.EditorialFeed {
 	return in
 }
 
-func (c *Client) fetch(ctx context.Context) ([]ports.EditorialArticle, error) {
+func (c *Client) fetch(ctx context.Context) ([]feedArticle, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -111,16 +107,16 @@ func (c *Client) fetch(ctx context.Context) ([]ports.EditorialArticle, error) {
 	return parse(body)
 }
 
-func parse(body []byte) ([]ports.EditorialArticle, error) {
+func parse(body []byte) ([]feedArticle, error) {
 	var rss struct {
 		XMLName xml.Name `xml:"rss"`
 		Channel *struct {
 			Items []struct {
-				Title       string   `xml:"title"`
-				Link        string   `xml:"link"`
-				Description string   `xml:"description"`
-				Date        string   `xml:"pubDate"`
-				Categories  []string `xml:"category"`
+				Title      string   `xml:"title"`
+				Link       string   `xml:"link"`
+				Content    string   `xml:"http://purl.org/rss/1.0/modules/content/ encoded"`
+				Date       string   `xml:"pubDate"`
+				Categories []string `xml:"category"`
 			} `xml:"item"`
 		} `xml:"channel"`
 	}
@@ -130,7 +126,7 @@ func parse(body []byte) ([]ports.EditorialArticle, error) {
 	if rss.Channel == nil {
 		return nil, fmt.Errorf("dekkoo RSS has no channel")
 	}
-	out := []ports.EditorialArticle{}
+	out := []feedArticle{}
 	seen := map[string]bool{}
 	for _, item := range rss.Channel.Items {
 		matched := []string{}
@@ -156,7 +152,7 @@ func parse(body []byte) ([]ports.EditorialArticle, error) {
 			continue
 		}
 		seen[link] = true
-		article := ports.EditorialArticle{Title: title, URL: link, Summary: plain(item.Description, 450), Categories: matched}
+		article := feedArticle{Title: title, URL: link, Content: item.Content, Categories: matched}
 		for _, layout := range []string{time.RFC1123Z, time.RFC1123, time.RFC822Z, time.RFC822} {
 			if date, err := time.Parse(layout, strings.TrimSpace(item.Date)); err == nil {
 				article.PublishedAt = &date
@@ -165,7 +161,7 @@ func parse(body []byte) ([]ports.EditorialArticle, error) {
 		}
 		out = append(out, article)
 	}
-	slices.SortStableFunc(out, func(a, b ports.EditorialArticle) int {
+	slices.SortStableFunc(out, func(a, b feedArticle) int {
 		if a.PublishedAt == nil {
 			if b.PublishedAt == nil {
 				return 0
