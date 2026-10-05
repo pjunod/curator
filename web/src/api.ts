@@ -549,6 +549,22 @@ export interface DiscoverList {
   source: string
 }
 
+export interface EditorialArticle {
+  title: string
+  url: string
+  summary: string
+  categories: string[]
+  publishedAt?: string
+}
+export interface EditorialFeed {
+  url: string
+  categories: string[]
+  items: EditorialArticle[]
+  fetchedAt: string
+  stale: boolean
+}
+export const getDekkooFeed = () => get<EditorialFeed>('/discover/dekkoo')
+
 export const getDiscoverLists = () => get<DiscoverList[]>('/discover/lists')
 export const getDiscoverItems = (list: string, page = 1) =>
   get<SearchResult[]>(`/discover/items?list=${encodeURIComponent(list)}&page=${page}`)

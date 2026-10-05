@@ -11,6 +11,7 @@ import {
   getSettings,
   posterUrl,
 } from '../api'
+import { DekkooFeed } from '../DekkooFeed'
 import { CardSizePicker } from '../CardSizePicker'
 import type { DiscoverFilter } from '../discover'
 import { DISCOVER_FILTERS, cardKey, rowCounts, sourceLabel, visibleLists } from '../discover'
@@ -25,12 +26,16 @@ interface AddedItem {
 
 export function DiscoverPage() {
   const qc = useQueryClient()
-  const [filter, setFilter] = useState<DiscoverFilter>('all')
+  const [filter, setFilter] = useState<DiscoverFilter | 'dekkoo'>('all')
   const [open, setOpen] = useState<SearchResult | null>(null)
   const [added, setAdded] = useState<Record<string, AddedItem>>({})
 
-  const lists = useQuery({ queryKey: ['discover-lists'], queryFn: getDiscoverLists })
-  const rows = visibleLists(lists.data ?? [], filter)
+  const lists = useQuery({
+    queryKey: ['discover-lists'],
+    queryFn: getDiscoverLists,
+    enabled: filter !== 'dekkoo',
+  })
+  const rows = visibleLists(lists.data ?? [], filter === 'dekkoo' ? 'all' : filter)
   const counts = rowCounts(lists.data ?? [])
 
   return (
@@ -49,41 +54,55 @@ export function DiscoverPage() {
               {f.label} <span className="tab-count">{counts[f.key]}</span>
             </button>
           ))}
+          <button
+            role="tab"
+            aria-selected={filter === 'dekkoo'}
+            className={filter === 'dekkoo' ? 'tab active' : 'tab'}
+            onClick={() => setFilter('dekkoo')}
+          >
+            Dekkoo
+          </button>
         </div>
-        <CardSizePicker />
+        {filter !== 'dekkoo' && <CardSizePicker />}
       </header>
 
-      {lists.isError && (
-        <div className="banner warning">{String((lists.error as Error).message)}</div>
-      )}
+      {filter === 'dekkoo' ? (
+        <DekkooFeed />
+      ) : (
+        <>
+          {lists.isError && (
+            <div className="banner warning">{String((lists.error as Error).message)}</div>
+          )}
 
-      {/* An empty catalogue is not an error — it is an install with no
-          provider configured, which is a setup step and not a failure. */}
-      {lists.isSuccess && lists.data.length === 0 && (
-        <div className="empty-state">
-          <p>Nothing to browse yet.</p>
-          <p className="muted">
-            Discover reads from your metadata providers. Add a TMDB API key under{' '}
-            <Link to="/settings">Settings</Link> for nine rows of trending, popular and
-            upcoming titles — and an optional free Trakt client id for five more.
-          </p>
-        </div>
-      )}
+          {/* An empty catalogue is not an error — it is an install with no
+              provider configured, which is a setup step and not a failure. */}
+          {lists.isSuccess && lists.data.length === 0 && (
+            <div className="empty-state">
+              <p>Nothing to browse yet.</p>
+              <p className="muted">
+                Discover reads from your metadata providers. Add a TMDB API key under{' '}
+                <Link to="/settings">Settings</Link> for nine rows of trending, popular and
+                upcoming titles — and an optional free Trakt client id for five more.
+              </p>
+            </div>
+          )}
 
-      {rows.map((list) => (
-        <DiscoverRow
-          key={list.id}
-          list={list}
-          // Four row titles exist twice, once per kind — "Trending this
-          // week", "Popular", "Top rated", "Most anticipated". Side by side
-          // under All they are indistinguishable, so the kind goes in the
-          // heading there. On a filtered tab every row is that kind already
-          // and repeating it is noise.
-          showKind={filter === 'all'}
-          added={added}
-          onPick={(r) => setOpen(r)}
-        />
-      ))}
+          {rows.map((list) => (
+            <DiscoverRow
+              key={list.id}
+              list={list}
+              // Four row titles exist twice, once per kind — "Trending this
+              // week", "Popular", "Top rated", "Most anticipated". Side by side
+              // under All they are indistinguishable, so the kind goes in the
+              // heading there. On a filtered tab every row is that kind already
+              // and repeating it is noise.
+              showKind={filter === 'all'}
+              added={added}
+              onPick={(r) => setOpen(r)}
+            />
+          ))}
+        </>
+      )}
 
       {open && (
         <AddDialog

@@ -211,6 +211,25 @@ anticipated (movies and shows), and last weekend's box office. The **All /
 Movies / Shows** tabs filter which rows are on screen. Books have no row:
 Open Library has no popularity data worth showing.
 
+**Dekkoo (web).** Open the **Dekkoo** tab for one combined feed of Gay Movies,
+Gay Series, Gay Romance, Gay Comedy and Gay Short Films. Only posts belonging
+to at least one of those five categories appear; broader LGBTQ+, general news,
+horror and drama categories are not independent sources. Articles can still
+carry those additional labels when they also belong to a selected category.
+The feed shows recent articles, not the full streaming catalog. Open **Read on
+Dekkoo** for a collection's individual titles, then enter a title and choose
+Movie or Series under **Find in Curator** to use the normal search and Add flow.
+Articles never become library items automatically, and no title identity is
+guessed from a headline. The **Combined RSS feed** link is the same category
+union, usable in any RSS reader. No Dekkoo login or metadata API key is needed
+to read articles; normal metadata configuration is needed for title search.
+
+The server fetches only when this tab is opened, caches for 30 minutes, and
+labels a cached snapshot as stale if refresh fails. After 24 hours without a
+successful refresh it shows an error with **Try again**. Restarting clears the
+in-memory snapshot. Duplicate article links appear once, newest first. Native
+mobile clients continue to show the existing TMDB/Trakt lists.
+
 **Poster size** is the labelled **S / M / L** control in the page head, on
 both Discover and the Library page. It is one preference — set it in either place
 and the other follows — remembered in the browser, so it is per-device rather

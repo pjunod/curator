@@ -118,6 +118,24 @@ Cold start costs one upstream call per row actually looked at, because the UI
 loads rows lazily as they approach the viewport rather than fetching fourteen
 at once.
 
+### 5. Dekkoo editorial feed (2026-10-05)
+
+Web Discover also has a **Dekkoo** tab for the union of its five explicitly gay
+RSS categories: movies, series, romance, comedy and short films. Publisher
+articles can describe several works and carry no verified media IDs, so they
+have a separate `/discover/dekkoo` contract and never enter `SearchResult` or
+an import list. A reader follows an article, then searches by title through
+the existing Add flow. This preserves identity verification and keeps automatic
+acquisition out of discovery.
+
+The adapter fetches on demand with a 15-second timeout and a 2 MiB response
+limit, validates RSS, filters the selected category labels, permits only HTTPS
+Dekkoo blog article links, deduplicates links, and returns at most 50 articles
+newest first. Publisher HTML is converted to bounded plain text. One in-memory
+snapshot lasts 30 minutes; upstream failure may serve it for 24 hours with an
+explicit stale flag and a one-minute retry backoff. The feed needs no key.
+Existing TMDB/Trakt contracts and native clients are unchanged.
+
 ## Consequences
 
 - Discovery is **additive and reversible**: no schema change, no new job, no

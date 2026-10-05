@@ -63,6 +63,18 @@ and Metacritic scores to items with an IMDb id, on add and on every
 metadata refresh. Responses are cached for 12 h to respect the quota.
 Without a key, TMDB/Open Library ratings still work.
 
+### Dekkoo feed
+
+The web **Discover → Dekkoo** tab is available without a key or account.
+It combines only Gay Movies, Gay Series, Gay Romance, Gay Comedy and Gay Short
+Films. It is a read-only article feed, not an import list; use title search to
+choose what to add. See [Discover](usage.md#discover) for cache and failure behavior.
+`MONARR_DEKKOO_FEED_URL` is an optional server environment override for integration
+fixtures or an operator-managed mirror; it requires a restart. The default is
+`https://dekkoo.blog/feed/?category_name=gay-movies,gay-series,gay-romance,gay-comedy,gay-short-films`.
+The reader still filters articles to those five category labels and accepts
+only HTTPS article links on `dekkoo.blog` when an override is used.
+
 ### Trakt client id (optional)
 
 A free Trakt app client id (trakt.tv/oauth/applications — no account link,
