@@ -184,7 +184,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	})
 	// meta.Summary, not meta.GetSeries: hydrating artwork for a row of shows
 	// through GetSeries would fetch every season of every one of them.
-	browse := discover.New(log, meta.Summary, meta, traktDiscover)
+	browse := discover.New(log, meta.Summary, meta, traktDiscover, dekkoo.New(os.Getenv("MONARR_DEKKOO_FEED_URL"), meta))
 	encoder := embedding.New(cfg.DataDir, os.Getenv("MONARR_EMBED_BINARY"))
 	enabled, _ := db.GetMeta(context.Background(), "discovery_semantic_enabled")
 	encoder.Enable(enabled == "true")
@@ -587,7 +587,6 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Library:             lib,
 		Acquisition:         acq,
 		Discover:            browse,
-		Dekkoo:              dekkoo.New(os.Getenv("MONARR_DEKKOO_FEED_URL")),
 		Recommendations:     recommendations,
 		RecommendationModel: encoder,
 		Store:               db,

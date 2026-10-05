@@ -1,85 +1,82 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 
-for (const viewport of [
-  { width: 1280, height: 900 },
-  { width: 390, height: 844 },
-]) {
-  test(`Dekkoo combines selected categories and searches within the ${viewport.width}px viewport`, async ({
-    page,
-    request,
-  }) => {
-    await page.setViewportSize(viewport)
-    await request.put('/api/v1/settings', { data: { tmdbApiKey: 'e2e-test-key' } })
-    let feedRequests = 0
-    page.on('request', (req) => {
-      if (req.url().includes('/discover/dekkoo')) feedRequests++
-    })
-    await page.goto('/discover')
-    await expect(page.getByRole('heading', { name: 'Discover', exact: true })).toBeVisible()
-    expect(feedRequests).toBe(0)
-    await page.getByRole('tab', { name: 'Dekkoo', exact: true }).click()
-    await expect(
-      page.getByRole('heading', { name: 'Gay films and series from Dekkoo' }),
-    ).toBeVisible()
-    await expect(page.locator('.dekkoo-article')).toHaveCount(1)
-    await expect(page.getByText('A Dekkoo series announcement')).toBeVisible()
-    await expect(page.getByText('Unrelated company news')).toHaveCount(0)
-    await expect(page.getByRole('link', { name: 'Read on Dekkoo' })).toHaveAttribute(
-      'href',
-      'https://dekkoo.blog/test-series/',
-    )
-    await expect(page.getByRole('link', { name: 'Combined RSS feed' })).toHaveAttribute(
-      'href',
-      /category_name=gay-movies,gay-series,gay-romance,gay-comedy,gay-short-films/,
-    )
-    await expect(page.getByRole('button', { name: 'Find in Curator' })).toBeDisabled()
-    await page.getByLabel('Title to find').fill('The Test Show')
-    await page.getByLabel('Media type').selectOption('series')
-    const find = page.getByRole('link', { name: 'Find in Curator' })
-    const actionColors = await find.evaluate((el) => {
-      const style = getComputedStyle(el)
-      return { text: style.color, background: style.backgroundColor }
-    })
-    expect(actionColors.text).not.toBe(actionColors.background)
-    const actionBox = await find.boundingBox()
-    expect(actionBox).not.toBeNull()
-    expect(actionBox!.y).toBeGreaterThanOrEqual(0)
-    expect(actionBox!.y + actionBox!.height).toBeLessThan(viewport.height - 64)
-    await find.click()
-    await expect(page).toHaveURL(/kind=series/)
-    await expect(page.getByRole('heading', { name: 'Add media', exact: true })).toBeVisible()
-    const result = page.getByRole('button', { name: 'View details for The Test Show' })
-    await expect(result).toBeVisible()
-    const resultBox = await result.boundingBox()
-    expect(resultBox).not.toBeNull()
-    expect(resultBox!.y).toBeGreaterThanOrEqual(0)
-    expect(resultBox!.y + resultBox!.height).toBeLessThan(viewport.height - 64)
-  })
+async function inViewport(element: Locator, viewport: { width: number; height: number }) {
+  const box = await element.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.y).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width)
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height)
 }
 
-test('Dekkoo failures are retryable and stale snapshots are labelled', async ({ page }) => {
-  let failed = true
-  await page.route('**/api/v1/discover/dekkoo', (route) =>
-    failed
-      ? route.fulfill({
-          status: 502,
-          json: { error: 'Could not refresh the Dekkoo feed. Try again shortly.' },
-        })
-      : route.fulfill({
-          json: {
-            url: 'https://dekkoo.blog/feed/',
-            categories: ['Gay Movies'],
-            items: [],
-            stale: true,
-            fetchedAt: '2026-10-05T12:00:00Z',
-          },
-        }),
-  )
-  await page.goto('/discover')
-  await page.getByRole('tab', { name: 'Dekkoo', exact: true }).click()
-  await expect(page.getByRole('alert')).toContainText('Could not refresh')
-  failed = false
-  await page.getByRole('button', { name: 'Try again' }).click()
-  await expect(page.getByText(/Dekkoo is temporarily unavailable/)).toBeVisible()
-  await expect(page.getByText('No articles in these categories right now.')).toBeVisible()
-})
+for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+  test(`Dekkoo uses Discover posters and Add controls at ${viewport.width}px`, async ({ page, request }) => {
+    await page.setViewportSize(viewport)
+    await request.put('/api/v1/settings', { data: { tmdbApiKey: 'e2e-test-key' } })
+    let roots = await (await request.get('/api/v1/rootfolders')).json()
+    if (!roots.some((r: {kind: string}) => r.kind === 'mixed' || r.kind === 'movie')) {
+      const root = await request.post('/api/v1/rootfolders', { data: { path: process.env.E2E_MEDIA_ROOT!, kind: 'mixed' } })
+      expect(root.ok()).toBeTruthy()
+      roots = await (await request.get('/api/v1/rootfolders')).json()
+    }
+    // Exercise cleanup even in a focused retry, with an already-added movie.
+    const seed = await request.post('/api/v1/library', { data: {
+      kind: 'movie', tmdbId: 860,
+      rootFolderId: roots.find((r: { kind: string }) => r.kind === 'mixed' || r.kind === 'movie').id,
+      monitored: false, searchNow: false,
+    } })
+    expect([201, 409]).toContain(seed.status())
+    // Library summaries expose title/kind, not TMDB IDs. Each viewport must
+    // remove the fixture before testing the actual UI add.
+
+    const library = await (await request.get('/api/v1/library')).json()
+    for (const item of library) {
+      if (item.title === 'Dekkoo Fixture Film' && item.kind === 'movie') expect((await request.delete(`/api/v1/library/${item.id}`)).ok()).toBeTruthy()
+    }
+    await page.goto('/discover')
+    await expect(page.getByRole('tab', { name: 'Dekkoo', exact: true })).toHaveCount(0)
+    await expect(page.getByLabel('Title to find')).toHaveCount(0)
+    await page.getByRole('tab', { name: /Movies/ }).click()
+    await expect(page.locator('[data-list="dekkoo-series"]')).toHaveCount(0)
+    const row = page.locator('[data-list="dekkoo-movies"]')
+    await row.scrollIntoViewIfNeeded()
+    const card = row.getByRole('button', { name: /Dekkoo Fixture Film/ })
+    await expect(card).toHaveCount(1)
+    await expect(card.locator('img')).toHaveAttribute('src', /dekkoo.jpg/)
+    await expect(row).not.toContainText('The Test Movie')
+    await card.click()
+    const dialog = page.getByRole('dialog', { name: 'Add Dekkoo Fixture Film' })
+    await expect(dialog).toBeVisible()
+    await inViewport(dialog, viewport)
+    await expect(dialog.getByRole('heading')).toBeFocused()
+    await expect(dialog.getByText('A movie that exists only inside the e2e suite.')).toBeVisible()
+    await expect(dialog.getByLabel('Quality profile')).toBeVisible()
+    await dialog.getByLabel('Search on add').uncheck()
+    const add = dialog.getByRole('button', { name: 'Add to library' })
+    await add.scrollIntoViewIfNeeded()
+    await inViewport(add, viewport)
+    await add.click()
+    const receipt = dialog.getByRole('status')
+    await expect(receipt).toContainText('added')
+    await inViewport(receipt, viewport)
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(card).toBeFocused()
+    await expect(card).toContainText('in library')
+    const movies = await (await request.get('/api/v1/discover/items?list=dekkoo-movies')).json()
+    expect(movies).toHaveLength(1)
+    expect(movies[0]).toMatchObject({ tmdbId: 860, kind: 'movie', source: 'dekkoo', inLibrary: true })
+
+    await page.getByRole('tab', { name: /Shows/ }).click()
+    await expect(page.locator('[data-list="dekkoo-movies"]')).toHaveCount(0)
+    const shows = page.locator('[data-list="dekkoo-series"]')
+    await shows.scrollIntoViewIfNeeded()
+    const show = shows.getByRole('button', { name: /Dekkoo Fixture Show/ })
+    await expect(show).toHaveCount(1)
+    await show.click()
+    const showDialog = page.getByRole('dialog', { name: 'Add Dekkoo Fixture Show' })
+    await inViewport(showDialog, viewport)
+    await expect(showDialog.getByLabel('Seasons:')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(show).toBeFocused()
+  })
+}

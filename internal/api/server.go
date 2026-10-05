@@ -54,7 +54,6 @@ type Deps struct {
 	Acquisition *acquisition.Service
 	// Discover serves the browse rows (ADR 0015); nil returns an empty
 	// catalogue rather than failing, so a test server needs no provider.
-	Dekkoo              ports.EditorialSource
 	Discover            *discover.Service
 	Recommendations     *recommendation.Service
 	RecommendationModel interface {

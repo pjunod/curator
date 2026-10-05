@@ -12,9 +12,11 @@ import (
 )
 
 func article(title, link, category, date string) string {
-	return fmt.Sprintf(`<item><title>%s</title><link>%s</link><category>%s</category><pubDate>%s</pubDate><description><![CDATA[<p>A gay &amp; romantic story.</p>]]></description></item>`, title, link, category, date)
+	return fmt.Sprintf(`<item><title>%s</title><link>%s</link><category>%s</category><pubDate>%s</pubDate><content:encoded><![CDATA[<p>A gay &amp; romantic story.</p>]]></content:encoded></item>`, title, link, category, date)
 }
-func rss(items string) string { return `<rss version="2.0"><channel>` + items + `</channel></rss>` }
+func rss(items string) string {
+	return `<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel>` + items + `</channel></rss>`
+}
 
 func TestSelectedCategoriesOnlyDeduplicatedNewestFirst(t *testing.T) {
 	old := "Mon, 28 Sep 2026 12:00:00 GMT"
@@ -44,15 +46,15 @@ func TestSelectedCategoriesOnlyDeduplicatedNewestFirst(t *testing.T) {
 	if got[0].Title != "Latest" || got[0].URL != "https://dekkoo.blog/latest/" {
 		t.Fatalf("latest = %+v", got[0])
 	}
-	if got[0].Summary != "A gay & romantic story." {
-		t.Fatalf("summary = %q", got[0].Summary)
+	if got[0].Content != "<p>A gay &amp; romantic story.</p>" {
+		t.Fatalf("summary = %q", got[0].Content)
 	}
 	if got[0].Categories[0] != "Gay Series" {
 		t.Fatalf("categories = %v", got[0].Categories)
 	}
 }
 
-func TestFeedCacheStaleExpiryAndIsolation(t *testing.T) {
+func TestFeedCacheExpiryAndIsolation(t *testing.T) {
 	var calls, status atomic.Int32
 	status.Store(200)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,41 +66,29 @@ func TestFeedCacheStaleExpiryAndIsolation(t *testing.T) {
 		_, _ = w.Write([]byte(rss(article("One", "https://dekkoo.blog/one/", "Gay Movies", "Mon, 05 Oct 2026 12:00:00 GMT"))))
 	}))
 	defer server.Close()
-	c := New(server.URL)
+	c := New(server.URL, nil)
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	c.now = func() time.Time { return now }
-	first, err := c.Feed(context.Background())
+	first, err := c.feed(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	first.Items[0].Title = "mutated"
 	first.Items[0].Categories[0] = "mutated"
 	*first.Items[0].PublishedAt = time.Time{}
-	first.Categories[0] = "mutated"
-	second, err := c.Feed(context.Background())
-	if err != nil || calls.Load() != 1 || second.Items[0].Title != "One" || second.Items[0].Categories[0] != "Gay Movies" || second.Categories[0] != "Gay Movies" || second.Items[0].PublishedAt.IsZero() {
+	second, err := c.feed(context.Background())
+	if err != nil || calls.Load() != 1 || second.Items[0].Title != "One" || second.Items[0].Categories[0] != "Gay Movies" || second.Items[0].PublishedAt.IsZero() {
 		t.Fatalf("cache: %+v %v calls=%d", second, err, calls.Load())
 	}
 	status.Store(503)
 	now = now.Add(31 * time.Minute)
-	stale, err := c.Feed(context.Background())
-	if err != nil || !stale.Stale || !stale.FetchedAt.Equal(second.FetchedAt) {
-		t.Fatalf("stale: %+v %v", stale, err)
+	if _, err := c.feed(context.Background()); err == nil {
+		t.Fatal("expired RSS must fail so the Discover service owns stale row expiry")
 	}
-	_, _ = c.Feed(context.Background())
-	if calls.Load() != 2 {
-		t.Fatal("failure backoff ignored")
-	}
-	now = now.Add(time.Minute)
 	status.Store(200)
-	fresh, err := c.Feed(context.Background())
-	if err != nil || fresh.Stale || !fresh.FetchedAt.Equal(now) {
-		t.Fatalf("refresh: %+v %v", fresh, err)
-	}
-	status.Store(503)
-	now = now.Add(24 * time.Hour)
-	if _, err = c.Feed(context.Background()); err == nil {
-		t.Fatal("expired snapshot served")
+	fresh, err := c.feed(context.Background())
+	if err != nil || !fresh.FetchedAt.Equal(now) || calls.Load() != 3 {
+		t.Fatalf("refresh: %+v %v calls=%d", fresh, err, calls.Load())
 	}
 }
 
@@ -107,7 +97,7 @@ func TestInvalidAndBoundedFeed(t *testing.T) {
 		t.Run(fmt.Sprint(len(body)), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
 			defer server.Close()
-			if _, err := New(server.URL).Feed(context.Background()); err == nil {
+			if _, err := New(server.URL, nil).feed(context.Background()); err == nil {
 				t.Fatal("invalid response accepted")
 			}
 		})
@@ -129,7 +119,7 @@ func TestInvalidAndBoundedFeed(t *testing.T) {
 func TestCancelledFetch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := New("http://127.0.0.1:1").Feed(ctx); err == nil {
+	if _, err := New("http://127.0.0.1:1", nil).feed(ctx); err == nil {
 		t.Fatal("cancelled request succeeded")
 	}
 }

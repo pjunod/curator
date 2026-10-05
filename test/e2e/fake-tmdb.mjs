@@ -175,7 +175,12 @@ const recommendationRoutes = Object.fromEntries(recommendationShows.flatMap((sho
   [`/tv/${show.id}`, show], [`/tv/${show.id}/recommendations`, recommendationPage],
   [`/tv/${show.id}/similar`, recommendationPage],
 ]))
+const dekkooFilm = { ...movie601, id: 860, title: 'Dekkoo Fixture Film', imdb_id: 'tt8600001', poster_path: '/dekkoo.jpg' }
+const dekkooShow = { ...tv700, id: 861, name: 'Dekkoo Fixture Show', poster_path: '/dekkoo-show.jpg', external_ids: { imdb_id: 'tt8610001', tvdb_id: 861861 } }
 const routes = {
+  '/movie/860': dekkooFilm,
+  '/tv/861': dekkooShow,
+  '/tv/861/season/1': tv700season1,
   ...recommendationRoutes,
   '/discover/tv': recommendationPage,
   '/tv/700/recommendations': recommendationPage,
@@ -282,11 +287,22 @@ createServer((req, res) => {
 
   if (pathname === '/dekkoo') {
     res.writeHead(200, { 'Content-Type': 'application/rss+xml' })
-    res.end(`<rss version="2.0"><channel>
-      <item><title>A Dekkoo series announcement</title><link>https://dekkoo.blog/test-series/</link><category>Gay Series</category><pubDate>Mon, 05 Oct 2026 12:00:00 GMT</pubDate><description><![CDATA[<p>Meet the characters in The Test Show.</p>]]></description></item>
-      <item><title>A duplicate announcement</title><link>https://dekkoo.blog/test-series/</link><category>Gay Romance</category></item>
-      <item><title>Unrelated company news</title><link>https://dekkoo.blog/company/</link><category>News</category></item>
+    res.end(`<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel>
+      <item><title>Dekkoo Fixture Film Is Now Streaming</title><link>https://dekkoo.blog/test-film/</link><category>Gay Movies</category><category>Gay Short Films</category><content:encoded><![CDATA[<a href="https://watch.dekkoo.com/dekkoo-fixture-film">Watch Dekkoo Fixture Film on Dekkoo →</a>]]></content:encoded></item>
+      <item><title>A second mention</title><link>https://dekkoo.blog/romance/</link><category>Gay Romance</category><category>Gay Comedy</category><content:encoded><![CDATA[<a href="https://watch.dekkoo.com/dekkoo-fixture-film">Dekkoo Fixture Film</a>]]></content:encoded></item>
+      <item><title>Dekkoo Fixture Show Season 2 Is Now Streaming</title><link>https://dekkoo.blog/test-series/</link><category>Gay Series</category><content:encoded><![CDATA[<a href="https://watch.dekkoo.com/dekkoo-fixture-show/season:2">Watch Dekkoo Fixture Show Season 2 on Dekkoo</a>]]></content:encoded></item>
+      <item><title>Unrelated company news</title><link>https://dekkoo.blog/company/</link><category>News</category><content:encoded><![CDATA[<a href="https://watch.dekkoo.com/the-test-movie">The Test Movie</a>]]></content:encoded></item>
     </channel></rss>`)
+    return
+  }
+  if (pathname === '/search/movie' && searchParams.get('query') === 'Dekkoo Fixture Film') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ results: [dekkooFilm] }))
+    return
+  }
+  if (pathname === '/search/tv' && searchParams.get('query') === 'Dekkoo Fixture Show') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ results: [dekkooShow] }))
     return
   }
   if (pathname === '/search/keyword') {

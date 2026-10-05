@@ -65,10 +65,11 @@ Without a key, TMDB/Open Library ratings still work.
 
 ### Dekkoo feed
 
-The web **Discover → Dekkoo** tab is available without a key or account.
-It combines only Gay Movies, Gay Series, Gay Romance, Gay Comedy and Gay Short
-Films. It is a read-only article feed, not an import list; use title search to
-choose what to add. See [Discover](usage.md#discover) for cache and failure behavior.
+Discover includes Dekkoo movie and show rows using your existing TMDB key.
+No Dekkoo login, extra key, or enable switch is needed. The rows combine only
+Gay Movies, Gay Series, Gay Romance, Gay Comedy and Gay Short Films, resolve
+unique TMDB matches, and use the same preview and Add controls as other rows.
+See [Discover](usage.md#discover) for coverage, cache and failure behavior.
 `MONARR_DEKKOO_FEED_URL` is an optional server environment override for integration
 fixtures or an operator-managed mirror; it requires a restart. The default is
 `https://dekkoo.blog/feed/?category_name=gay-movies,gay-series,gay-romance,gay-comedy,gay-short-films`.

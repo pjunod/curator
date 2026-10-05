@@ -3765,13 +3765,8 @@ a.pill-info:hover {
   pointer-events: none;
 }
 
-/* The shared .modal is a fixed 720px tall so a pager can sit still between
-   pages. This one has no pager and one title's worth of content, so it takes
-   the height it needs and caps rather than padding itself out. */
-.discover-modal {
-  width: min(720px, 100%);
-  height: auto;
-  max-height: min(720px, 100%);
+.action-dialog:has(.discover-dialog) {
+  width: min(720px, calc(100vw - 16px));
 }
 
 .discover-modal-body {
