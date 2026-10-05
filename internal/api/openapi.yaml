@@ -4290,10 +4290,11 @@ components:
           description: >
             Set when the target was not searched, and why. "unmonitored" means
             monitoring is off for it; "downloading" means it already has a
-            download in progress. Exact Wanted runs can additionally report a
+            download in progress; "compared_recently" means this season's
+            comparison completed too recently to repeat, so nothing was queued. Exact Wanted runs can additionally report a
             target that disappeared, changed reason, reached its re-grab cap,
             or was left by cancellation.
-          enum: [unmonitored, downloading, no_longer_wanted, reason_changed, regrab_capped, cancelled, queued]
+          enum: [unmonitored, downloading, no_longer_wanted, reason_changed, regrab_capped, cancelled, queued, compared_recently]
         seen:
           type: integer
           description: Distinct releases the indexers returned for this target.

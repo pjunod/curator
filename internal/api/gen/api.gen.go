@@ -16,19 +16,22 @@ import (
 
 // Defines values for AutoSearchTargetSkipped.
 const (
-	AutoSearchTargetSkippedCancelled      AutoSearchTargetSkipped = "cancelled"
-	AutoSearchTargetSkippedDownloading    AutoSearchTargetSkipped = "downloading"
-	AutoSearchTargetSkippedNoLongerWanted AutoSearchTargetSkipped = "no_longer_wanted"
-	AutoSearchTargetSkippedQueued         AutoSearchTargetSkipped = "queued"
-	AutoSearchTargetSkippedReasonChanged  AutoSearchTargetSkipped = "reason_changed"
-	AutoSearchTargetSkippedRegrabCapped   AutoSearchTargetSkipped = "regrab_capped"
-	AutoSearchTargetSkippedUnmonitored    AutoSearchTargetSkipped = "unmonitored"
+	AutoSearchTargetSkippedCancelled        AutoSearchTargetSkipped = "cancelled"
+	AutoSearchTargetSkippedComparedRecently AutoSearchTargetSkipped = "compared_recently"
+	AutoSearchTargetSkippedDownloading      AutoSearchTargetSkipped = "downloading"
+	AutoSearchTargetSkippedNoLongerWanted   AutoSearchTargetSkipped = "no_longer_wanted"
+	AutoSearchTargetSkippedQueued           AutoSearchTargetSkipped = "queued"
+	AutoSearchTargetSkippedReasonChanged    AutoSearchTargetSkipped = "reason_changed"
+	AutoSearchTargetSkippedRegrabCapped     AutoSearchTargetSkipped = "regrab_capped"
+	AutoSearchTargetSkippedUnmonitored      AutoSearchTargetSkipped = "unmonitored"
 )
 
 // Valid indicates whether the value is a known member of the AutoSearchTargetSkipped enum.
 func (e AutoSearchTargetSkipped) Valid() bool {
 	switch e {
 	case AutoSearchTargetSkippedCancelled:
+		return true
+	case AutoSearchTargetSkippedComparedRecently:
 		return true
 	case AutoSearchTargetSkippedDownloading:
 		return true
@@ -1315,12 +1318,12 @@ type AutoSearchTarget struct {
 	// Seen Distinct releases the indexers returned for this target.
 	Seen int `json:"seen"`
 
-	// Skipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress. Exact Wanted runs can additionally report a target that disappeared, changed reason, reached its re-grab cap, or was left by cancellation.
+	// Skipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress; "compared_recently" means this season's comparison completed too recently to repeat, so nothing was queued. Exact Wanted runs can additionally report a target that disappeared, changed reason, reached its re-grab cap, or was left by cancellation.
 	Skipped    *AutoSearchTargetSkipped `json:"skipped,omitempty"`
 	WantableId string                   `json:"wantableId"`
 }
 
-// AutoSearchTargetSkipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress. Exact Wanted runs can additionally report a target that disappeared, changed reason, reached its re-grab cap, or was left by cancellation.
+// AutoSearchTargetSkipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress; "compared_recently" means this season's comparison completed too recently to repeat, so nothing was queued. Exact Wanted runs can additionally report a target that disappeared, changed reason, reached its re-grab cap, or was left by cancellation.
 type AutoSearchTargetSkipped string
 
 // BackupInfo defines model for BackupInfo.

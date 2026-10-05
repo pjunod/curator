@@ -451,10 +451,17 @@ func (s *Service) executeWantedTarget(ctx context.Context, run sqlite.WantedSear
 		}
 		return nil
 	}
-	// A Wanted run only ever starts from a person's request (the API has no
-	// other caller), so its searches are manual: charged to the interactive
-	// allowance, not the share rationed for unattended passes.
-	searchCtx, stopSearch := context.WithCancel(WithManualSearch(ctx))
+	// A run aimed at one title or one target is a person waiting on that
+	// answer: it is charged to the interactive allowance. "Search everything"
+	// is the backlog pass on demand — hundreds of targets nobody watches one
+	// by one, as is a whole-reason run — and stays on the automatic share, so it cannot spend the
+	// reserve the next deliberate search needs. Either way a target the
+	// allowance refused is reported as such below.
+	searchParent := ctx
+	if run.Scope == "group" || run.Scope == "target" {
+		searchParent = WithManualSearch(ctx)
+	}
+	searchCtx, stopSearch := context.WithCancel(searchParent)
 	done := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
@@ -498,6 +505,10 @@ func (s *Service) executeWantedTarget(ctx context.Context, run sqlite.WantedSear
 	}
 	if err != nil {
 		return fail(err)
+	}
+	if ctx.Err() != nil && tally.Grabbed == "" {
+		// Shutdown, not the indexers: fail so the run can resume the target.
+		return fail(ctx.Err())
 	}
 	if interrupted && tally.Grabbed == "" {
 		// The indexers' "errors" here are the cancellation itself; reporting

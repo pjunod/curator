@@ -47,7 +47,11 @@ type seasonCheckpoint struct {
 	// on it. It travels in the job payload because the search runs later, on
 	// a worker, long after the request context that knew who asked is gone;
 	// it decides which request allowance the comparison is charged to.
-	Manual             bool             `json:"manual,omitempty"`
+	Manual bool `json:"manual,omitempty"`
+	// manualSpent is set in memory when this run has ended the manual epoch
+	// (see endManualEpoch), so the save that follows does not re-adopt a
+	// promotion it has just consumed.
+	manualSpent        bool
 	OriginalDownloadID int64            `json:"originalDownloadId,omitempty"`
 	Revision           int64            `json:"revision"`
 	Started            time.Time        `json:"started"`
@@ -63,27 +67,61 @@ type seasonCheckpoint struct {
 func seasonJobKey(item, copy int64, season int) string {
 	return fmt.Sprintf("season:%d:%d:%d", item, copy, season)
 }
+
+// seasonCooldown spaces out unattended repeats of a comparison that completed
+// with an unchanged want set. manualSeasonCooldown is the much shorter spacing
+// for a person repeating their own request: long enough that a second press
+// does not re-spend the allowance on the comparison that just finished, short
+// enough that the button is never a no-op for days.
+const (
+	seasonCooldown       = 7 * 24 * time.Hour
+	manualSeasonCooldown = 10 * time.Minute
+)
+
+// What enqueueSeasonStatus did with a request.
+const (
+	seasonQueued      = "queued"
+	seasonNothingToDo = ""
+	seasonCompared    = SkipComparedRecently
+)
+
 func (s *Service) enqueueSeason(ctx context.Context, item, copy int64, season int, trigger string, missing bool) error {
+	_, err := s.enqueueSeasonStatus(ctx, item, copy, season, trigger, missing)
+	return err
+}
+
+// enqueueSeasonStatus queues a season comparison and says whether it did, so
+// a caller answering a person never reports "queued" for a request it dropped.
+func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, season int, trigger string, missing bool) (string, error) {
 	manual := manualSearch(ctx)
 	p := seasonCheckpoint{Version: 1, ItemID: item, CopyID: copy, Season: season, Trigger: trigger, Manual: manual}
 	_, pack, profile, targets, _, e := s.seasonSnapshot(ctx, p)
 	if e != nil {
-		return e
+		return seasonNothingToDo, e
 	}
 	if len(targets) == 0 {
-		return nil
+		return seasonNothingToDo, nil
 	}
 	p.Fingerprint = discoveryFingerprint(pack, profile, targets)
 	var previous string
 	if e = s.db.R.QueryRowContext(ctx, `SELECT payload FROM jobs WHERE kind=? AND dedupe_key=? AND state='done' ORDER BY id DESC LIMIT 1`, SeasonSearchJobKind, seasonJobKey(item, copy, season)).Scan(&previous); e == nil {
 		var old seasonCheckpoint
 		if json.Unmarshal([]byte(previous), &old) == nil && old.Fingerprint == p.Fingerprint {
-			// The cooldown stops unattended passes repeating a comparison
-			// that just ran. A person pressing the button is asking for it
-			// again on purpose; answering "queued" and enqueueing nothing
-			// would be the same silent no-op this flag exists to end.
-			if time.Now().Before(old.CooldownUntil) && trigger != "rss_improvement" && !manual {
-				return nil
+			// The week-long cooldown stops unattended passes repeating a
+			// comparison that just completed. A person pressing the button is
+			// asking for it again on purpose, so that cooldown does not apply
+			// to them; only their own request, completed minutes ago, does.
+			if trigger != "rss_improvement" && !old.CooldownUntil.IsZero() {
+				until := old.CooldownUntil
+				if manual {
+					until = time.Time{}
+					if old.Manual {
+						until = old.CooldownUntil.Add(manualSeasonCooldown - seasonCooldown)
+					}
+				}
+				if time.Now().Before(until) {
+					return seasonCompared, nil
+				}
 			}
 			p.Deep = !old.Started.IsZero() && time.Since(old.Started) >= 7*24*time.Hour
 		}
@@ -99,15 +137,16 @@ func (s *Service) enqueueSeason(ctx context.Context, item, copy int64, season in
 			// The season is already queued, typically parked until the
 			// automatic allowance frees up. Promote that job instead of
 			// dropping the request: mark it manual and make it due now. A
-			// job a worker already holds is left alone; its checkpoint is
-			// the worker's to write.
+			// job a worker holds right now is marked too; the worker adopts
+			// the mark at its next checkpoint and reruns at once instead of
+			// parking on the automatic allowance (see handleSeasonSearch).
 			now := time.Now().UnixMilli()
-			_, err = s.db.W.ExecContext(ctx, `UPDATE jobs SET payload=json_set(payload,'$.manual',json('true')), run_after=min(run_after,?), updated_at=? WHERE kind=? AND dedupe_key=? AND state='queued'`, now, now, SeasonSearchJobKind, seasonJobKey(item, copy, season))
-			return err
+			_, err = s.db.W.ExecContext(ctx, `UPDATE jobs SET payload=json_set(payload,'$.manual',json('true')), run_after=min(run_after,?), updated_at=? WHERE kind=? AND dedupe_key=? AND state IN ('queued','leased')`, now, now, SeasonSearchJobKind, seasonJobKey(item, copy, season))
+			return seasonQueued, err
 		}
-		return nil
+		return seasonQueued, nil
 	}
-	return err
+	return seasonQueued, err
 }
 func RegisterSeasonSearchJobs[H ~func(context.Context, domain.Job) error](s *Service, register func(string, H) error) error {
 	return register(SeasonSearchJobKind, H(s.handleSeasonSearch))
@@ -177,6 +216,12 @@ func (s *Service) seasonSnapshot(ctx context.Context, p seasonCheckpoint) (domai
 	return item, pack, profile, targets, eligiblePack, nil
 }
 func (s *Service) saveSeasonCheckpoint(ctx context.Context, j domain.Job, p seasonCheckpoint) error {
+	// A person may have promoted this job while the worker held it. The
+	// worker's copy predates that, and writing it back verbatim would erase
+	// the promotion.
+	if !p.Manual && !p.manualSpent && s.seasonJobPromoted(ctx, j.ID) {
+		p.Manual = true
+	}
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -184,9 +229,42 @@ func (s *Service) saveSeasonCheckpoint(ctx context.Context, j domain.Job, p seas
 	return s.db.UpdateJobCheckpoint(ctx, j.ID, j.LeaseOwner, string(raw))
 }
 
+func (s *Service) seasonJobPromoted(ctx context.Context, jobID int64) bool {
+	var manual bool
+	err := s.db.R.QueryRowContext(ctx, `SELECT COALESCE(json_extract(payload,'$.manual'),0) FROM jobs WHERE id=?`, jobID).Scan(&manual)
+	return err == nil && manual
+}
+
+// endManualEpoch returns the checkpoint to unattended work. Manual covers the
+// comparison a person asked for; the reruns the job schedules for itself
+// afterwards (a new epoch after an incomplete comparison, a refresh after the
+// evidence expired) are nobody waiting, and must not keep spending the
+// allowance reserved for people.
+func (p *seasonCheckpoint) endManualEpoch() {
+	p.Manual, p.manualSpent = false, true
+}
+
+// feasibleFinishManual forecasts a manual comparison. Manual requests draw on
+// one pool — the interactive reserve, then headroom, then unspent search
+// capacity — with no twelve-hour share, so that pool and its own usage are
+// what the forecast must simulate; forecasting it against the automatic
+// share admits comparisons that cannot finish and defers ones that can.
+func feasibleFinishManual(now time.Time, b sqlite.IndexerBudget, day []time.Time, requests int, duration time.Duration) time.Time {
+	pool := sqlite.IndexerBudget{Search: b.Interactive + b.Headroom + b.Search}
+	return forecastFinish(now, pool, false, day, nil, requests, duration)
+}
+
 // feasibleFinish simulates rolling token releases and serial request durations.
 // Conservative two-page query bounds reserve one hour before evidence expiry.
 func feasibleFinish(now time.Time, b sqlite.IndexerBudget, day, half []time.Time, requests int, duration time.Duration) time.Time {
+	return forecastFinish(now, b, true, day, half, requests, duration)
+}
+
+func forecastFinish(now time.Time, b sqlite.IndexerBudget, halfShare bool, day, half []time.Time, requests int, duration time.Duration) time.Time {
+	halfCap := (b.Search + 1) / 2
+	if !halfShare {
+		halfCap = b.Search + 1 // never binding
+	}
 	at := now
 	d := slices.Clone(day)
 	h := slices.Clone(half)
@@ -194,14 +272,14 @@ func feasibleFinish(now time.Time, b sqlite.IndexerBudget, day, half []time.Time
 		for {
 			d = slices.DeleteFunc(d, func(t time.Time) bool { return !t.After(at) })
 			h = slices.DeleteFunc(h, func(t time.Time) bool { return !t.After(at) })
-			if len(d) < b.Search && len(h) < (b.Search+1)/2 {
+			if len(d) < b.Search && len(h) < halfCap {
 				break
 			}
 			next := at.Add(25 * time.Hour)
 			if len(d) >= b.Search && len(d) > 0 && d[0].Before(next) {
 				next = d[0]
 			}
-			if len(h) >= (b.Search+1)/2 && len(h) > 0 && h[0].Before(next) {
+			if len(h) >= halfCap && len(h) > 0 && h[0].Before(next) {
 				next = h[0]
 			}
 			if b.Search == 0 {
@@ -217,7 +295,23 @@ func feasibleFinish(now time.Time, b sqlite.IndexerBudget, day, half []time.Time
 	}
 	return at
 }
+
+// handleSeasonSearch runs one step of a season comparison. If a person
+// promoted the job while this step was running as unattended work and the
+// step ended parked, the park is replaced by an immediate rerun: the next
+// step reads the promoted payload and spends the manual allowance.
 func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
+	var started seasonCheckpoint
+	_ = json.Unmarshal([]byte(j.Payload), &started)
+	err := s.runSeasonSearch(ctx, j)
+	var deferred *sqlite.BudgetDeferred
+	if errors.As(err, &deferred) && !started.Manual && time.Until(deferred.At) > time.Minute && s.seasonJobPromoted(ctx, j.ID) {
+		return &sqlite.BudgetDeferred{At: time.Now(), Reason: "promoted to a manual comparison"}
+	}
+	return err
+}
+
+func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 	var p seasonCheckpoint
 	if err := json.Unmarshal([]byte(j.Payload), &p); err != nil {
 		return err
@@ -267,7 +361,16 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 		// Completion-first admission: unopened work has no evidence clock. A single
 		// open comparison is conservative and never creates partial via rotation.
 		var open int
-		err = s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE kind=? AND id!=? AND state IN ('queued','leased') AND COALESCE(json_extract(payload,'$.started'),'0001-01-01T00:00:00Z')!='0001-01-01T00:00:00Z'`, SeasonSearchJobKind, j.ID).Scan(&open)
+		//
+		// "Open" is per allowance. An unattended comparison parked on the
+		// spent automatic share holds its slot for hours; a manual one draws
+		// on a different pool and waiting behind it would make the button a
+		// no-op in exactly the state it is pressed in.
+		class := ""
+		if p.Manual {
+			class = ` AND COALESCE(json_extract(payload,'$.manual'),0)=1`
+		}
+		err = s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE kind=? AND id!=? AND state IN ('queued','leased') AND COALESCE(json_extract(payload,'$.started'),'0001-01-01T00:00:00Z')!='0001-01-01T00:00:00Z'`+class, SeasonSearchJobKind, j.ID).Scan(&open)
 		if err != nil {
 			return err
 		}
@@ -281,21 +384,29 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 					requests += 6
 				}
 			}
+			deadline := now.Add(23 * time.Hour)
+			if p.Manual {
+				b, d, e := s.db.ManualRequestCapacity(ctx, cfg.ID, now)
+				if e != nil {
+					return e
+				}
+				if feasibleFinishManual(now, b, nil, requests, s.searchTimeout).After(deadline) {
+					p.IntrinsicPartial = true
+					continue
+				}
+				if feasibleFinishManual(now, b, d, requests, s.searchTimeout).After(deadline) {
+					return &sqlite.BudgetDeferred{At: now.Add(time.Hour), Reason: "waiting for manual request capacity to finish a complete season comparison"}
+				}
+				continue
+			}
 			b, d, h, e := s.db.RequestCapacity(ctx, cfg.ID, now)
 			if e != nil {
 				return e
 			}
-			deadline := now.Add(23 * time.Hour)
 			empty := feasibleFinish(now, b, nil, nil, requests, s.searchTimeout)
 			if empty.After(deadline) {
 				p.IntrinsicPartial = true
 				continue
-			}
-			if p.Manual {
-				// The twelve-hour share rations unattended work only; a
-				// manual comparison is not held to it at dispatch, so the
-				// admission forecast must not hold it to it either.
-				h = nil
 			}
 			if finish := feasibleFinish(now, b, d, h, requests, s.searchTimeout); finish.After(deadline) {
 				return &sqlite.BudgetDeferred{At: now.Add(time.Hour), Reason: "waiting for capacity to finish a complete season comparison"}
@@ -316,6 +427,7 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 		p.Releases = nil
 		p.Stage = ""
 		p.SchedulingDeferred = true
+		p.endManualEpoch()
 		if err = s.saveSeasonCheckpoint(ctx, j, p); err != nil {
 			return err
 		}
@@ -556,12 +668,13 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 			p.Stage = ""
 			p.Revision = 0
 			p.Releases = nil
+			p.endManualEpoch()
 			if e := s.saveSeasonCheckpoint(ctx, j, p); e != nil {
 				return e
 			}
 			return &sqlite.BudgetDeferred{At: time.Now().Add(24 * time.Hour), Reason: "new discovery epoch after genuine incomplete comparison"}
 		}
-		p.CooldownUntil = time.Now().Add(7 * 24 * time.Hour)
+		p.CooldownUntil = time.Now().Add(seasonCooldown)
 		if e := s.saveSeasonCheckpoint(ctx, j, p); e != nil {
 			return e
 		}
@@ -860,10 +973,14 @@ func (s *Service) enqueueItemSeasons(ctx context.Context, item domain.MediaItem)
 			for _, ep := range targets {
 				missing = missing || !ep.OnDisk()
 			}
-			if err = s.enqueueSeason(ctx, item.ID, copyID, season.Number, "item_search", missing); err != nil {
+			status, err := s.enqueueSeasonStatus(ctx, item.ID, copyID, season.Number, "item_search", missing)
+			if err != nil {
 				return out, err
 			}
-			out.Targets = append(out.Targets, AutoSearchTarget{WantableID: string(pack.ID()), Label: describeTarget(pack), Skipped: "queued"})
+			if status == seasonNothingToDo {
+				continue
+			}
+			out.Targets = append(out.Targets, AutoSearchTarget{WantableID: string(pack.ID()), Label: describeTarget(pack), Skipped: status})
 		}
 	}
 	return out, nil

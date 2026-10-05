@@ -412,12 +412,16 @@ download priority or the item's override travels with the grab to nzbd:
   Pressing the button is a manual search: it is charged to the indexer's
   interactive request allowance, not the rationed automatic one, so a busy
   backlog cannot make it a no-op. For a series the queued season comparison
-  is marked manual too; pressing again promotes a comparison that was parked
-  waiting for the automatic allowance, and is not silenced by the cooldown
-  that spaces out unattended comparisons. Wanted search runs are manual in
-  the same way, and a target no indexer could be searched for is reported as
-  skipped (indexers unavailable) with the reason, not as searched with
-  nothing seen. If an indexer still could not be
+  is marked manual too. It does not wait behind an unattended comparison
+  parked on the automatic allowance, pressing again promotes one that was
+  parked, and the week-long cooldown that spaces out unattended comparisons
+  does not apply; only a repeat within ten minutes of your own completed
+  comparison is declined, and the result says so. A Wanted search for one
+  title or one target is manual in the same way. **Search all** and
+  whole-reason runs are the backlog on demand and stay on the automatic
+  allowance. In every Wanted run, a target no indexer could be searched for
+  is reported as skipped (indexers unavailable) with the reason, not as
+  searched with nothing seen. If an indexer still could not be
   searched — allowance spent, provider retry delay, timeout — the result says
   which indexer, why, and when to retry, instead of "No releases came back".
 - The **Wanted** page groups every title once, with its missing episodes,

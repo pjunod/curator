@@ -13,17 +13,23 @@ so every button was a no-op for hours after each pass.
 | Path | Before | Now |
 |---|---|---|
 | Auto search, movie or book (0.36.4) | automatic share | manual allowance |
-| Auto search, series | automatic share; silently dropped inside the cooldown or when already queued | manual flag in the job payload; promotes a parked job; ignores the cooldown |
-| Wanted search run | automatic share | manual allowance |
+| Auto search, series | automatic share; silently dropped inside the week-long cooldown or when already queued; queued behind any parked comparison | manual flag in the job payload; promotes a parked or running job; admitted past unattended comparisons; forecast against the manual pool; only a repeat within ten minutes is declined, and says so |
+| Wanted run, one title or target | automatic share | manual allowance |
+| Wanted run, everything or a whole reason | automatic share | unchanged on purpose: it is the backlog on demand |
 | Wanted target no indexer could be searched for | "searched, 0 seen" | skipped as `indexers_unavailable`, reason attached |
 | Curator mobile Auto search | "Search started." always | the same sentence the web shows |
 
 Auto search results name each indexer that could not be searched and why
 (`incomplete`, 0.36.4).
 
-**Not done:** the mobile build has to be installed on the physical devices;
-mobile "Search all now" still runs the backlog task, which is unattended
-work by design and stays on the automatic share.
+**Decisions taken without Paul, for review:** bulk Wanted runs stay on the
+automatic share so one press cannot spend the reserve every other deliberate
+search depends on; a manual comparison's self-scheduled reruns go back to
+unattended; the manual repeat cooldown is ten minutes.
+
+**Not done:** the mobile build has to be installed on the physical devices.
+Mobile "Search all now" still runs the backlog task and now says it is
+unattended work; it does not show per-target results as the web does.
 
 ## Compact TV quality details — 2026-09-29
 

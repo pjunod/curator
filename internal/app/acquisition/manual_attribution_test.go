@@ -2,11 +2,13 @@ package acquisition
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -47,12 +49,13 @@ func usageRows(t *testing.T, db *sqlite.DB) (automatic, manual int) {
 	return automatic, manual
 }
 
-func wantedFixtureTarget(t *testing.T, svc *Service, db *sqlite.DB) (sqlite.WantedSearchRun, sqlite.WantedSearchTarget) {
+func wantedFixtureTarget(t *testing.T, svc *Service, db *sqlite.DB, req WantedSearchRequest) (sqlite.WantedSearchRun, sqlite.WantedSearchTarget) {
 	t.Helper()
 	ctx := context.Background()
 	svc.WithWantedSearchQueue(wantedDBQueue{db: db})
 	delay := 0
-	started, err := svc.StartWantedSearch(ctx, WantedSearchRequest{Scope: "all", TargetDelay: &delay})
+	req.TargetDelay = &delay
+	started, err := svc.StartWantedSearch(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,12 +70,13 @@ func wantedFixtureTarget(t *testing.T, svc *Service, db *sqlite.DB) (sqlite.Want
 	return run, target
 }
 
-// A Wanted run is started by a person. With the automatic share spent it must
-// still search, and nothing it sends may be booked as automatic.
-func TestWantedRunIsChargedAsManual(t *testing.T) {
+// A Wanted run aimed at one title is a person waiting on it. With the
+// automatic share spent it must still search, and nothing it sends may be
+// booked as automatic.
+func TestWantedRunForOneTitleIsChargedAsManual(t *testing.T) {
 	client := &fakeClient{}
-	svc, db, _ := autoSetup(t, []ports.Release{rel("Test.Movie.2024.1080p.BluRay.x264-GOOD", 50)}, client)
-	run, target := wantedFixtureTarget(t, svc, db)
+	svc, db, movieID := autoSetup(t, []ports.Release{rel("Test.Movie.2024.1080p.BluRay.x264-GOOD", 50)}, client)
+	run, target := wantedFixtureTarget(t, svc, db, WantedSearchRequest{Scope: "group", MediaItemID: movieID})
 	spendAllowance(t, db, "search", true)
 	before, _ := usageRows(t, db)
 
@@ -86,14 +90,16 @@ func TestWantedRunIsChargedAsManual(t *testing.T) {
 	}
 }
 
-// When no allowance is left at all, the target was not searched. Recording it
-// as "searched, 0 seen" is the lie that made a spent allowance look like an
-// empty indexer.
-func TestWantedTargetSaysWhenNoIndexerCouldBeSearched(t *testing.T) {
+// "Search everything" is the backlog on demand. It stays unattended work, so
+// it cannot spend the reserve kept for deliberate searches — and when the
+// automatic share is gone its targets say so instead of "searched, 0 seen",
+// the lie that made a spent allowance look like an empty indexer.
+func TestWantedRunForEverythingStaysAutomaticAndSaysWhenRefused(t *testing.T) {
 	client := &fakeClient{}
 	svc, db, _ := autoSetup(t, []ports.Release{rel("Test.Movie.2024.1080p.BluRay.x264-GOOD", 50)}, client)
-	run, target := wantedFixtureTarget(t, svc, db)
-	spendAllowance(t, db, "interactive", false)
+	run, target := wantedFixtureTarget(t, svc, db, WantedSearchRequest{Scope: "all"})
+	spendAllowance(t, db, "search", true)
+	_, manualBefore := usageRows(t, db)
 
 	got := svc.executeWantedTarget(context.Background(), run, target)
 	if got.State != "skipped" || got.Skipped != SkipIndexersUnavailable {
@@ -101,6 +107,9 @@ func TestWantedTargetSaysWhenNoIndexerCouldBeSearched(t *testing.T) {
 	}
 	if !strings.Contains(got.Error, "request allowance exhausted") || got.Seen != 0 || len(client.added) != 0 {
 		t.Fatalf("result = %+v grabs=%v, want the refusal named and nothing grabbed", got, client.added)
+	}
+	if _, manual := usageRows(t, db); manual != manualBefore {
+		t.Fatalf("manual rows %d -> %d; a bulk run must not spend the manual allowance", manualBefore, manual)
 	}
 }
 
@@ -209,7 +218,7 @@ func TestSeriesAutoSearchCarriesManualAttributionIntoTheJob(t *testing.T) {
 		}
 	})
 
-	t.Run("the button is not silenced by the cooldown", func(t *testing.T) {
+	t.Run("the week-long cooldown does not silence the button", func(t *testing.T) {
 		svc, db, itemID, _ := seriesFixture(t)
 		if _, err := svc.AutoSearchItem(ctx, itemID); err != nil {
 			t.Fatal(err)
@@ -218,20 +227,125 @@ func TestSeriesAutoSearchCarriesManualAttributionIntoTheJob(t *testing.T) {
 		for range first {
 			runQueuedSeason(t, svc, db)
 		}
-		if _, err := db.W.ExecContext(ctx, `UPDATE jobs SET payload=json_set(payload,'$.cooldownUntil',?) WHERE kind=? AND state='done'`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339), SeasonSearchJobKind); err != nil {
+		// Unattended, inside the cooldown: nothing is queued, and the answer
+		// says so rather than "queued".
+		out, err := svc.AutoSearchItem(ctx, itemID)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := svc.AutoSearchItem(ctx, itemID); err != nil {
+		if n, _ := seasonJobManual(t, db); n != 0 || len(out.Targets) != first || out.Targets[0].Skipped != SkipComparedRecently {
+			t.Fatalf("unattended request inside the cooldown: queued %d, outcome %+v", n, out)
+		}
+		// A person asking is not bound by the unattended cooldown.
+		out, err = svc.AutoSearchItem(WithManualSearch(ctx), itemID)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if n, _ := seasonJobManual(t, db); n != 0 {
-			t.Fatalf("an unattended request queued %d jobs inside the cooldown", n)
+		if n, manual := seasonJobManual(t, db); n != first || !manual || out.Targets[0].Skipped != "queued" {
+			t.Fatalf("manual request queued %d jobs (manual=%v), outcome %+v, want %d queued", n, manual, out, first)
 		}
+		for range first {
+			runQueuedSeason(t, svc, db)
+		}
+		// Their own comparison finished seconds ago: a second press does not
+		// spend the allowance again, and is told why.
+		out, err = svc.AutoSearchItem(WithManualSearch(ctx), itemID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n, _ := seasonJobManual(t, db); n != 0 || out.Targets[0].Skipped != SkipComparedRecently {
+			t.Fatalf("repeat press right after a manual comparison: queued %d, outcome %+v", n, out)
+		}
+		// Ten minutes on, the button works again.
+		if _, err := db.W.ExecContext(ctx, `UPDATE jobs SET payload=json_set(payload,'$.cooldownUntil',?) WHERE kind=? AND state='done'`, time.Now().Add(seasonCooldown-manualSeasonCooldown-time.Minute).UTC().Format(time.RFC3339Nano), SeasonSearchJobKind); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = svc.AutoSearchItem(WithManualSearch(ctx), itemID); err != nil {
+			t.Fatal(err)
+		}
+		if n, _ := seasonJobManual(t, db); n != first {
+			t.Fatalf("after the manual cooldown: queued %d, want %d", n, first)
+		}
+	})
+
+	t.Run("a manual comparison does not wait behind one parked on the automatic share", func(t *testing.T) {
+		svc, db, itemID, idx := seriesFixture(t)
+		// Another season's unattended comparison was admitted and then
+		// parked for hours on the spent automatic share.
+		parked, _ := json.Marshal(seasonCheckpoint{Version: 1, ItemID: 424242, Season: 1, Trigger: "backlog", Started: time.Now()})
+		if _, err := db.EnqueueJob(ctx, domain.Job{Kind: SeasonSearchJobKind, Payload: string(parked), DedupeKey: seasonJobKey(424242, 0, 1), Priority: 110, MaxAttempts: 3, RunAfter: time.Now().Add(6 * time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		spendAllowance(t, db, "search", true)
 		if _, err := svc.AutoSearchItem(WithManualSearch(ctx), itemID); err != nil {
 			t.Fatal(err)
 		}
-		if n, manual := seasonJobManual(t, db); n != first || !manual {
-			t.Fatalf("manual request queued %d jobs (manual=%v), want %d", n, manual, first)
+		runQueuedSeason(t, svc, db)
+		if asked := idx.asked(); len(asked) == 0 {
+			t.Fatal("the manual comparison sent nothing; it waited behind the parked unattended one")
 		}
 	})
+
+	t.Run("a job promoted while a worker holds it reruns at once as manual", func(t *testing.T) {
+		svc, db, itemID, idx := seriesFixture(t)
+		if _, err := svc.AutoSearchItem(ctx, itemID); err != nil {
+			t.Fatal(err)
+		}
+		spendAllowance(t, db, "search", true)
+		job, err := db.ClaimJob(ctx, "season-fixture", nil, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The press lands while the worker holds the job with its old payload.
+		if _, err := svc.AutoSearchItem(WithManualSearch(ctx), itemID); err != nil {
+			t.Fatal(err)
+		}
+		var deferred *sqlite.BudgetDeferred
+		err = svc.handleSeasonSearch(ctx, job)
+		if !errors.As(err, &deferred) || time.Until(deferred.At) > time.Second {
+			t.Fatalf("err = %v, want an immediate rerun instead of a park on the automatic share", err)
+		}
+		var manual bool
+		if err := db.R.QueryRowContext(ctx, `SELECT COALESCE(json_extract(payload,'$.manual'),0) FROM jobs WHERE id=?`, job.ID).Scan(&manual); err != nil || !manual {
+			t.Fatalf("stored manual = %v err = %v, want the promotion kept through the worker's checkpoint", manual, err)
+		}
+		if asked := idx.asked(); len(asked) != 0 {
+			t.Fatalf("asked = %v, want nothing sent by the unattended step", asked)
+		}
+	})
+
+	t.Run("the reruns a manual comparison schedules for itself are unattended", func(t *testing.T) {
+		p := seasonCheckpoint{Manual: true}
+		p.endManualEpoch()
+		raw, _ := json.Marshal(p)
+		if p.Manual || strings.Contains(string(raw), "manual") {
+			t.Fatalf("checkpoint after the epoch ended = %s, want manual cleared", raw)
+		}
+	})
+}
+
+// The admission forecast has to simulate the pool the comparison will really
+// spend. Forecast against the automatic share, a manual comparison is held
+// back while the manual pool is free, and waved through when it is empty.
+func TestManualSeasonForecastUsesTheManualPool(t *testing.T) {
+	now := time.Now()
+	b := sqlite.RequestBudget(250) // 20 interactive, 34 headroom, 100 search
+	deadline := now.Add(23 * time.Hour)
+
+	// The automatic share is fully spent for the next eleven hours...
+	var day, half []time.Time
+	for i := 0; i < b.Search; i++ {
+		day = append(day, now.Add(23*time.Hour+30*time.Minute))
+		half = append(half, now.Add(11*time.Hour))
+	}
+	if !feasibleFinish(now, b, day, half, 51, time.Second).After(deadline) {
+		t.Fatal("fixture: the automatic forecast should not fit 51 requests")
+	}
+	// ...but the manual pool still has the reserve and headroom: 54 requests.
+	if feasibleFinishManual(now, b, day, 54, time.Second).After(deadline) {
+		t.Fatal("a manual comparison that fits the reserve and headroom was forecast as infeasible")
+	}
+	if !feasibleFinishManual(now, b, day, 55, time.Second).After(deadline) {
+		t.Fatal("a manual comparison larger than the free manual pool was forecast as feasible")
+	}
 }

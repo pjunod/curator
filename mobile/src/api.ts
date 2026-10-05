@@ -27,6 +27,9 @@ import type {
 } from './types'
 
 export const RELEASE_SEARCH_TIMEOUT_MS = 120_000
+// The server gives an auto search five minutes. Giving up sooner would show a
+// timeout for a search that then grabs anyway.
+export const AUTO_SEARCH_TIMEOUT_MS = 310_000
 
 export function releasesPath(id: number, scope: ReleaseSearchScope): string {
   const params = new URLSearchParams()
@@ -140,11 +143,9 @@ export class MonarrClient {
     this.send('POST', '/library', input)
   getWanted = (): Promise<WantedItem[]> => this.get('/wanted')
   // Synchronous on the server: the answer says what the search actually did.
-  // It waits on the same live indexer fan-out as an interactive search, so it
-  // gets the same long timeout.
   autoSearchItem = async (id: number): Promise<AutoSearchResult> => {
     const { body } = await this.requestWithHeaders<AutoSearchResult | undefined>(
-      `/library/${id}/autosearch`, { method: 'POST' }, RELEASE_SEARCH_TIMEOUT_MS)
+      `/library/${id}/autosearch`, { method: 'POST' }, AUTO_SEARCH_TIMEOUT_MS)
     return body ?? { grabbed: 0, targets: [] }
   }
   // Indexers are queried live, so this waits well past the default timeout:

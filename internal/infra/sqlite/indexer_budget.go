@@ -170,6 +170,31 @@ func (d *DB) RequestCapacity(ctx context.Context, id int64, now time.Time) (Inde
 	}
 	return RequestBudget(cap), day, half, rows.Err()
 }
+
+// ManualRequestCapacity is RequestCapacity for a manual request, which draws
+// on the interactive reserve, then headroom, then unspent search capacity and
+// is not held to the twelve-hour share. The times are when each request made
+// from that combined pool in the last day returns its token.
+func (d *DB) ManualRequestCapacity(ctx context.Context, id int64, now time.Time) (IndexerBudget, []time.Time, error) {
+	var cap int
+	if err := d.R.QueryRowContext(ctx, `SELECT daily_request_cap FROM indexers WHERE id=?`, id).Scan(&cap); err != nil {
+		return IndexerBudget{}, nil, err
+	}
+	rows, err := d.R.QueryContext(ctx, `SELECT requested_at FROM indexer_request_usage WHERE indexer_id=? AND bucket IN ('interactive','headroom','search') AND requested_at>? ORDER BY requested_at`, id, now.Add(-24*time.Hour).UnixMilli())
+	if err != nil {
+		return IndexerBudget{}, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var day []time.Time
+	for rows.Next() {
+		var ts int64
+		if err = rows.Scan(&ts); err != nil {
+			return IndexerBudget{}, nil, err
+		}
+		day = append(day, time.UnixMilli(ts).Add(24*time.Hour))
+	}
+	return RequestBudget(cap), day, rows.Err()
+}
 func (d *DB) SetDailyRequestCap(ctx context.Context, id int64, cap int) error {
 	if cap < 0 {
 		return fmt.Errorf("daily request cap cannot be negative")

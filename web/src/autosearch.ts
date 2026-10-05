@@ -16,7 +16,14 @@ import type { AutoSearchResult, AutoSearchTarget } from './api'
 // Whichever step went to zero first is the answer.
 export function describeAutoSearch(res: AutoSearchResult, now: Date = new Date()): string {
   const queued = res.targets.filter(t => t.skipped === 'queued')
-  if (queued.length) return `Queued ${queued.length} season comparison${queued.length === 1 ? '' : 's'} — search progress appears in System Jobs; selected releases appear in Activity after bounded comparison.`
+  // A season whose comparison just completed with nothing new to want is not
+  // compared again; saying "queued" for it would be a button that lies.
+  const compared = res.targets.filter(t => t.skipped === 'compared_recently')
+  const repeat = compared.length ? ` ${compared.length} other season comparison${compared.length === 1 ? ' was' : 's were'} completed too recently to repeat.` : ''
+  if (queued.length) return `Queued ${queued.length} season comparison${queued.length === 1 ? '' : 's'} — search progress appears in System Jobs; selected releases appear in Activity after bounded comparison.${repeat}`
+  if (compared.length && compared.length === res.targets.length) {
+    return 'Not searched — this was compared moments ago and what is wanted has not changed. The result is in Activity and System Jobs; try again in ten minutes, or use Interactive search now.'
+  }
   if (res.grabbed > 0) {
     const got = res.targets.filter((t) => t.grabbed)
     if (got.length === 1) return `Grabbed ${got[0].grabbed} — it's in Activity now.`

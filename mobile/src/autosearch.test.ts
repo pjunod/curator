@@ -119,4 +119,15 @@ describe('describeAutoSearch with unsearched indexers', () => {
     expect(msg).toContain('none of them were')
     expect(msg).toContain('Not every indexer was searched — drunkenslug: timeout')
   })
+
+  it('does not call a season queued when its comparison was not repeated', () => {
+    const all = describeAutoSearch(result([target({ skipped: 'compared_recently' })]))
+    expect(all).toContain('Not searched')
+    expect(all).not.toContain('Queued')
+    const mixed = describeAutoSearch(
+      result([target({ skipped: 'queued' }), target({ skipped: 'compared_recently' })]),
+    )
+    expect(mixed).toContain('Queued 1 season comparison')
+    expect(mixed).toContain('1 other season comparison was completed too recently')
+  })
 })

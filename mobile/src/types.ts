@@ -419,7 +419,7 @@ export interface GrabRequest {
 export interface AutoSearchTarget {
   wantableId: string
   label: string
-  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled' | 'queued'
+  skipped?: 'unmonitored' | 'downloading' | 'no_longer_wanted' | 'reason_changed' | 'regrab_capped' | 'cancelled' | 'queued' | 'compared_recently'
   seen: number
   matched: number
   accepted: number

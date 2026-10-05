@@ -900,12 +900,15 @@ Provider NZB/grab allowances are separate.
 Every actual wire call, including capability probes, pages and fallback, is
 reserved before sending. Manual searches use their reserve, then headroom,
 then unspent search capacity; RSS is never borrowed. Automatic requests also
-obey a rolling twelve-hour share. A manual search is one a person asked for:
-interactive search, the **Auto search** button on any item (for a series, the
-season comparison it queues carries that with it to the worker), and a Wanted
-search run. Search-on-add, the backlog, RSS-driven and retry comparisons are
-automatic. A manual search spends the same reserve interactive search uses,
-up to three requests per indexer for a movie and more for a season. RSS due times persist across restart and
+obey a rolling twelve-hour share. A manual search is one a person is waiting
+on: interactive search, the **Auto search** button on any item (for a
+series, the season comparison it queues carries that with it to the worker),
+and a Wanted search run for one title or one target. Search-on-add, the
+backlog, RSS-driven comparisons, the reruns a comparison schedules for
+itself, and Wanted runs over everything or a whole reason are automatic.
+A manual search spends the interactive reserve, then headroom, then unspent
+search capacity — up to three requests per indexer for a movie, more for a
+season — so heavy manual use can leave less for the next automatic pass. RSS due times persist across restart and
 advance from actual dispatch; missed ticks do not produce catch-up bursts.
 A provider Retry-After delays the next request even when local tokens remain.
 

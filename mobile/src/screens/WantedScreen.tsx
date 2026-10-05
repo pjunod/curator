@@ -18,8 +18,10 @@ export function WantedScreen({ client, onOpen }: { client: MonarrClient; onOpen:
   const searchAll = async () => {
     setSearchingAll(true)
     setError('')
+    setMessage('')
     try {
       await client.runTask('backlog.search')
+      setMessage('Backlog search started. It runs as unattended work on the automatic request allowance, so it may wait for capacity; grabs appear in Activity.')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not start the backlog search.')
     } finally {
