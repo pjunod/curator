@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { FlatList, StyleSheet, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
+import { describeAutoSearch } from '../autosearch'
 import { AppScreen, Badge, Button, Header, InlineError, LoadingState, MessageState, Panel, Wordmark } from '../components/UI'
 import { useTheme } from '../theme'
 import type { WantedItem } from '../types'
@@ -12,12 +13,15 @@ export function WantedScreen({ client, onOpen }: { client: MonarrClient; onOpen:
   const [searchingAll, setSearchingAll] = useState(false)
   const [searching, setSearching] = useState<Set<number>>(new Set())
   const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
 
   const searchAll = async () => {
     setSearchingAll(true)
     setError('')
+    setMessage('')
     try {
       await client.runTask('backlog.search')
+      setMessage('Backlog search started. It runs as unattended work on the automatic request allowance, so it may wait for capacity; grabs appear in Activity.')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not start the backlog search.')
     } finally {
@@ -28,8 +32,10 @@ export function WantedScreen({ client, onOpen }: { client: MonarrClient; onOpen:
   const searchOne = async (id: number) => {
     setSearching((current) => new Set(current).add(id))
     setError('')
+    setMessage('')
     try {
-      await client.autoSearchItem(id)
+      setMessage(describeAutoSearch(await client.autoSearchItem(id)))
+      void resource.refresh()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not start the search.')
     } finally {
@@ -55,6 +61,7 @@ export function WantedScreen({ client, onOpen }: { client: MonarrClient; onOpen:
             <Text style={[styles.explainer, { color: theme.muted }]}>Everything monitored that is missing or below its quality cutoff.</Text>
             <Button label={searchingAll ? 'Starting…' : 'Search all now'} disabled={searchingAll} onPress={() => void searchAll()} />
             <InlineError message={error || resource.error} />
+            {message ? <Text style={[styles.explainer, { color: theme.text }]}>{message}</Text> : null}
           </View>
         }
         ListEmptyComponent={

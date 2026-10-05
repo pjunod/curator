@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { AutoSearchResult, AutoSearchTarget } from './api'
+import type { AutoSearchResult, AutoSearchTarget } from './types'
 import { describeAutoSearch } from './autosearch'
 
 function target(over: Partial<AutoSearchTarget> = {}): AutoSearchTarget {

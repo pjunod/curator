@@ -1,17 +1,35 @@
 # Monarr — Project Status
 
-## Auto search reports a refused search — 2026-10-04 · v0.36.4
+## Manual searches are charged as manual everywhere — 2026-10-04 · v0.36.5
 
-**Fixed.** Auto search on *Close (2022)* answered "No releases came back from
-any indexer" while interactive search listed 138: both indexers' automatic
-request allowance was spent, so no query was sent, and the refusal only reached
-the log. The outcome now carries each unsearched indexer and its reason
-(`incomplete`), the banner says the indexers were not asked and when to retry,
-and the button is charged to the interactive allowance as docs/settings.md
-already described. Not done: the Curator mobile app still answers "Search
-started." for every outcome; series Auto search (queued season comparison)
-and Wanted runs still use the automatic allowance, and a Wanted target the
-allowance refused is still recorded as searched with nothing seen.
+**Cause, measured on nuc3:** each twelve-hourly backlog pass plus the season
+comparisons spend the whole automatic share (50 requests per indexer per
+twelve hours). That rationing is working as designed. The defect was
+attribution: searches a person asked for were booked against the same share,
+so every button was a no-op for hours after each pass.
+
+**Fix:** who asked is a property of the request and travels with it.
+
+| Path | Before | Now |
+|---|---|---|
+| Auto search, movie or book (0.36.4) | automatic share | manual allowance |
+| Auto search, series | automatic share; silently dropped inside the week-long cooldown or when already queued; queued behind any parked comparison | manual flag in the job payload; promotes a parked or running job; admitted past unattended comparisons; forecast against the manual pool; only a repeat within ten minutes is declined, and says so |
+| Wanted run, one title or target | automatic share | manual allowance |
+| Wanted run, everything or a whole reason | automatic share | unchanged on purpose: it is the backlog on demand |
+| Wanted target no indexer could be searched for | "searched, 0 seen" | skipped as `indexers_unavailable`, reason attached |
+| Curator mobile Auto search | "Search started." always | the same sentence the web shows |
+
+Auto search results name each indexer that could not be searched and why
+(`incomplete`, 0.36.4).
+
+**Decisions taken without Paul, for review:** bulk Wanted runs stay on the
+automatic share so one press cannot spend the reserve every other deliberate
+search depends on; a manual comparison's self-scheduled reruns go back to
+unattended; the manual repeat cooldown is ten minutes.
+
+**Not done:** the mobile build has to be installed on the physical devices.
+Mobile "Search all now" still runs the backlog task and now says it is
+unattended work; it does not show per-target results as the web does.
 
 ## Compact TV quality details — 2026-09-29
 

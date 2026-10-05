@@ -1,5 +1,6 @@
 import type {
   AddMediaCopyRequest,
+  AutoSearchResult,
   AddMediaRequest,
   CalendarEntry,
   Connection,
@@ -26,6 +27,9 @@ import type {
 } from './types'
 
 export const RELEASE_SEARCH_TIMEOUT_MS = 120_000
+// The server gives an auto search five minutes. Giving up sooner would show a
+// timeout for a search that then grabs anyway.
+export const AUTO_SEARCH_TIMEOUT_MS = 310_000
 
 export function releasesPath(id: number, scope: ReleaseSearchScope): string {
   const params = new URLSearchParams()
@@ -138,7 +142,12 @@ export class MonarrClient {
   addLibraryItem = (input: AddMediaRequest): Promise<MediaItemDetail> =>
     this.send('POST', '/library', input)
   getWanted = (): Promise<WantedItem[]> => this.get('/wanted')
-  autoSearchItem = (id: number): Promise<void> => this.send('POST', `/library/${id}/autosearch`)
+  // Synchronous on the server: the answer says what the search actually did.
+  autoSearchItem = async (id: number): Promise<AutoSearchResult> => {
+    const { body } = await this.requestWithHeaders<AutoSearchResult | undefined>(
+      `/library/${id}/autosearch`, { method: 'POST' }, AUTO_SEARCH_TIMEOUT_MS)
+    return body ?? { grabbed: 0, targets: [] }
+  }
   // Indexers are queried live, so this waits well past the default timeout:
   // a slow tracker is a partial result, not a dead server.
   searchReleases = async (id: number, scope: ReleaseSearchScope = {}): Promise<ReleaseSearchResponse> => {

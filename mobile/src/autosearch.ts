@@ -1,5 +1,8 @@
-import type { AutoSearchResult, AutoSearchTarget } from './api'
+import type { AutoSearchResult, AutoSearchTarget } from './types'
 
+// Kept in step with web/src/autosearch.ts: the same result must read the
+// same way on the phone as in the browser.
+//
 // describeAutoSearch turns an auto-search result into the one sentence the
 // person who pressed the button actually wants.
 //
@@ -26,13 +29,15 @@ export function describeAutoSearch(res: AutoSearchResult, now: Date = new Date()
   }
   if (res.grabbed > 0) {
     const got = res.targets.filter((t) => t.grabbed)
-    if (got.length === 1) return `Grabbed ${got[0].grabbed} — it's in Activity now.`
+    const only = got.length === 1 ? got[0] : undefined
+    if (only) return `Grabbed ${only.grabbed} — it's in Activity now.`
     return `Grabbed ${res.grabbed} releases — they're in Activity now.`
   }
 
   const errored = res.targets.filter((t) => t.error)
-  if (errored.length > 0) {
-    return `✕ ${errored[0].label}: ${errored[0].error}`
+  const firstError = errored[0]
+  if (firstError) {
+    return `✕ ${firstError.label}: ${firstError.error}`
   }
 
   if (res.targets.length === 0) {
@@ -110,5 +115,6 @@ function sum(ts: AutoSearchTarget[], f: (t: AutoSearchTarget) => number): number
 // label names what was searched: the target itself when there is one, a count
 // when there are several.
 function label(ts: AutoSearchTarget[]): string {
-  return ts.length === 1 ? ts[0].label : `any of the ${ts.length} targets searched`
+  const only = ts.length === 1 ? ts[0] : undefined
+  return only ? only.label : `any of the ${ts.length} targets searched`
 }

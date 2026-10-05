@@ -692,6 +692,12 @@ func (s *Service) isBlocklisted(ctx context.Context, title, indexer string) bool
 const (
 	SkipUnmonitored = "unmonitored"
 	SkipInFlight    = "downloading"
+	// SkipIndexersUnavailable: nothing was seen and at least one indexer
+	// could not be searched (allowance spent, retry delay, timeout).
+	SkipIndexersUnavailable = "indexers_unavailable"
+	// SkipComparedRecently: this season's comparison completed with the
+	// same want set too recently to repeat, so nothing was queued.
+	SkipComparedRecently = "compared_recently"
 )
 
 // AutoSearchTarget is what happened to one wantable in an auto search.
