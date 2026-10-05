@@ -92,6 +92,7 @@ export default defineConfig({
         // in settings, so this costs nothing until a spec opts in — and left
         // at its default the discover spec would hit the real api.trakt.tv.
         MONARR_TRAKT_BASE_URL: `http://127.0.0.1:${TMDB_PORT}`,
+        MONARR_DEKKOO_FEED_URL: `http://127.0.0.1:${TMDB_PORT}/dekkoo`,
       },
     },
   ],

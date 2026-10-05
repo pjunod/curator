@@ -27,6 +27,7 @@ import (
 	// in containers and be right on a developer's laptop.
 	_ "time/tzdata"
 
+	"github.com/pjunod/monarr/internal/adapters/dekkoo"
 	"github.com/pjunod/monarr/internal/adapters/deluge"
 	"github.com/pjunod/monarr/internal/adapters/embedding"
 	"github.com/pjunod/monarr/internal/adapters/notify"
@@ -586,6 +587,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Library:             lib,
 		Acquisition:         acq,
 		Discover:            browse,
+		Dekkoo:              dekkoo.New(os.Getenv("MONARR_DEKKOO_FEED_URL")),
 		Recommendations:     recommendations,
 		RecommendationModel: encoder,
 		Store:               db,

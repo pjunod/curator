@@ -280,6 +280,15 @@ const tvmazeEpisodes = {
 createServer((req, res) => {
   const { pathname, searchParams } = new URL(req.url, 'http://x')
 
+  if (pathname === '/dekkoo') {
+    res.writeHead(200, { 'Content-Type': 'application/rss+xml' })
+    res.end(`<rss version="2.0"><channel>
+      <item><title>A Dekkoo series announcement</title><link>https://dekkoo.blog/test-series/</link><category>Gay Series</category><pubDate>Mon, 05 Oct 2026 12:00:00 GMT</pubDate><description><![CDATA[<p>Meet the characters in The Test Show.</p>]]></description></item>
+      <item><title>A duplicate announcement</title><link>https://dekkoo.blog/test-series/</link><category>Gay Romance</category></item>
+      <item><title>Unrelated company news</title><link>https://dekkoo.blog/company/</link><category>News</category></item>
+    </channel></rss>`)
+    return
+  }
   if (pathname === '/search/keyword') {
     const name = searchParams.get('query') ?? ''
     res.writeHead(200, { 'content-type': 'application/json' })

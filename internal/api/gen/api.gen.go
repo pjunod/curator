@@ -1644,6 +1644,26 @@ type DownloadClientInputMode string
 // DownloadClientInputType defines model for DownloadClientInput.Type.
 type DownloadClientInputType string
 
+// EditorialArticle defines model for EditorialArticle.
+type EditorialArticle struct {
+	Categories  []string   `json:"categories"`
+	PublishedAt *time.Time `json:"publishedAt,omitempty"`
+
+	// Summary Plain text; never render as HTML.
+	Summary string `json:"summary"`
+	Title   string `json:"title"`
+	Url     string `json:"url"`
+}
+
+// EditorialFeed defines model for EditorialFeed.
+type EditorialFeed struct {
+	Categories []string           `json:"categories"`
+	FetchedAt  time.Time          `json:"fetchedAt"`
+	Items      []EditorialArticle `json:"items"`
+	Stale      bool               `json:"stale"`
+	Url        string             `json:"url"`
+}
+
 // EpisodeInfo defines model for EpisodeInfo.
 type EpisodeInfo struct {
 	AirDate       string `json:"airDate"`
@@ -3337,6 +3357,9 @@ type ServerInterface interface {
 	// DeleteCustomFormat Remove a scoring rule
 	// (DELETE /customformats/{id})
 	DeleteCustomFormat(w http.ResponseWriter, r *http.Request, id int64)
+	// GetDekkooFeed Recent articles from Dekkoo's five gay-themed categories
+	// (GET /discover/dekkoo)
+	GetDekkooFeed(w http.ResponseWriter, r *http.Request)
 	// DiscoverItems One page of one Discover row
 	// (GET /discover/items)
 	DiscoverItems(w http.ResponseWriter, r *http.Request, params DiscoverItemsParams)
@@ -3858,6 +3881,20 @@ func (siw *ServerInterfaceWrapper) DeleteCustomFormat(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteCustomFormat(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDekkooFeed operation middleware
+func (siw *ServerInterfaceWrapper) GetDekkooFeed(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDekkooFeed(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6805,6 +6842,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/recommendations/status", wrapper.RecommendationStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/metadata/recommendations/model/install", wrapper.InstallRecommendationModel)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/metadata/recommendations/model", wrapper.RemoveRecommendationModel)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/dekkoo", wrapper.GetDekkooFeed)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/lists", wrapper.ListDiscoverLists)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/items", wrapper.DiscoverItems)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders", wrapper.ListRootFolders)
