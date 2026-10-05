@@ -36,6 +36,11 @@ for (const viewport of [
     await page.getByLabel('Title to find').fill('The Test Show')
     await page.getByLabel('Media type').selectOption('series')
     const find = page.getByRole('link', { name: 'Find in Curator' })
+    const actionColors = await find.evaluate((el) => {
+      const style = getComputedStyle(el)
+      return { text: style.color, background: style.backgroundColor }
+    })
+    expect(actionColors.text).not.toBe(actionColors.background)
     const actionBox = await find.boundingBox()
     expect(actionBox).not.toBeNull()
     expect(actionBox!.y).toBeGreaterThanOrEqual(0)

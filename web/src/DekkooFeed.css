@@ -50,7 +50,7 @@
 .dekkoo-article {
   background: var(--bg-raised);
 }
-.dekkoo-feed a {
+.dekkoo-feed a:not(.btn-accent) {
   color: var(--accent);
 }
 .dekkoo-article h3 a {
