@@ -4309,6 +4309,14 @@ components:
         error:
           type: string
           description: Why the search or the grab failed.
+        incomplete:
+          type: array
+          items: { type: string }
+          description: >
+            Indexers that could not be fully searched, as "name: reason" — a
+            spent request allowance, a provider retry delay, a timeout. With
+            seen 0 this means the indexers were not asked, not that they had
+            nothing.
 
     RecoverySettings:
       type: object

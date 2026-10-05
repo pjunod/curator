@@ -329,6 +329,51 @@ type searchTally struct {
 	Matched  int    // releases the matcher tied to this wantable
 	Accepted int    // of those, ones the profile would take
 	Grabbed  string // release title, "" if nothing was grabbed
+	// Incomplete names every indexer that could not be fully searched, and
+	// why ("nzb.life: indexer search request allowance exhausted; retry at
+	// …"). Without it a search the request budget refused before any wire
+	// call is indistinguishable from an indexer that answered with nothing —
+	// Seen is 0 either way — and the person is told there are no releases
+	// when nobody was asked.
+	Incomplete []string
+}
+
+type manualSearchKey struct{}
+
+// WithManualSearch marks a search as one a person is waiting on. It is charged
+// to the indexer's interactive allowance (reserve, then headroom, then unspent
+// search capacity) instead of the automatic one, which is rationed over twelve
+// hours so unattended passes cannot starve each other. A pressed button is not
+// unattended work, and docs/settings.md already promises manual searches the
+// interactive allowance.
+func WithManualSearch(ctx context.Context) context.Context {
+	return context.WithValue(ctx, manualSearchKey{}, true)
+}
+
+func manualSearch(ctx context.Context) bool {
+	manual, _ := ctx.Value(manualSearchKey{}).(bool)
+	return manual
+}
+
+// incompleteReasons folds one indexer's per-tier failures into distinct
+// "indexer: reason" lines. Every tier of a budget refusal carries the same
+// reason; repeating it per tier is noise.
+func incompleteReasons(indexer string, reasons []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, reason := range reasons {
+		if rest, ok := strings.CutPrefix(reason, "tier "); ok {
+			if _, after, found := strings.Cut(rest, ": "); found {
+				reason = after
+			}
+		}
+		if seen[reason] {
+			continue
+		}
+		seen[reason] = true
+		out = append(out, indexer+": "+reason)
+	}
+	return out
 }
 
 // searchAndGrabBest runs the wantable's planned queries against the given
@@ -415,11 +460,19 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 		releases []ports.Release
 		wg       sync.WaitGroup
 	)
+	manual := manualSearch(ctx)
 	for _, cfg := range enabled {
 		wg.Add(1)
 		go func(cfg ports.IndexerConfig) {
 			defer wg.Done()
-			indexer := s.budgetIndexer(cfg, "search", true)
+			// Either way the release is grabbed without a person reviewing
+			// it, so the strict acquisition capabilities always apply; only
+			// the allowance it is charged to differs.
+			bucket, automatic := "search", true
+			if manual {
+				bucket, automatic = "interactive", false
+			}
+			indexer := s.budgetIndexerStrict(cfg, bucket, automatic, true)
 			eligible := func(rs []ports.Release) bool {
 				eligible := false
 				for _, release := range rs {
@@ -453,10 +506,12 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 			}
 			mu.Lock()
 			releases = append(releases, rs...)
+			tally.Incomplete = append(tally.Incomplete, incompleteReasons(cfg.Name, reasons)...)
 			mu.Unlock()
 		}(cfg)
 	}
 	wg.Wait()
+	sort.Strings(tally.Incomplete)
 
 	type scored struct {
 		r        ports.Release
@@ -649,6 +704,9 @@ type AutoSearchTarget struct {
 	Accepted   int    `json:"accepted"`          // of those, ones the profile takes
 	Grabbed    string `json:"grabbed,omitempty"` // release title, if one was grabbed
 	Error      string `json:"error,omitempty"`
+	// Incomplete lists indexers that could not be fully searched, and why.
+	// Seen 0 with this set means "nobody was asked", not "nothing exists".
+	Incomplete []string `json:"incomplete,omitempty"`
 }
 
 // AutoSearchOutcome is what an auto search actually did.
@@ -731,6 +789,7 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 			tally, err := s.searchAndGrabBestScoped(ctx, w, enabled, allowed, nil)
 			t.Seen, t.Matched, t.Accepted = tally.Seen, tally.Matched, tally.Accepted
 			t.Grabbed = tally.Grabbed
+			t.Incomplete = tally.Incomplete
 			if err != nil {
 				t.Error = err.Error()
 				s.log.Warn("auto search: failed", "wantable", w.ID(), "err", err)

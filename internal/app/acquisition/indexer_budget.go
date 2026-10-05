@@ -17,6 +17,14 @@ func requestLock(id int64) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 func (s *Service) budgetIndexer(cfg ports.IndexerConfig, bucket string, automatic bool) ports.Indexer {
+	return s.budgetIndexerStrict(cfg, bucket, automatic, automatic)
+}
+
+// budgetIndexerStrict separates the two things "automatic" used to mean: which
+// allowance a request is charged to, and whether the indexer must meet the
+// strict capabilities required when no person reviews the grab. A manual Auto
+// Search is charged as interactive work but still grabs unreviewed.
+func (s *Service) budgetIndexerStrict(cfg ports.IndexerConfig, bucket string, automatic, strictCaps bool) ports.Indexer {
 	raw := s.newIndexer(cfg)
 	if observer, ok := raw.(ports.RequestResultInstaller); ok {
 		observer.SetRequestResult(func(ctx context.Context, err error) { s.rememberIndexerDelay(ctx, cfg.ID, err) })
@@ -32,7 +40,7 @@ func (s *Service) budgetIndexer(cfg ports.IndexerConfig, bucket string, automati
 	}
 	if installer, ok := raw.(ports.RequestGateInstaller); ok {
 		installer.SetRequestGate(gate)
-		if strict, ok := raw.(ports.AcquisitionCapabilities); automatic && ok {
+		if strict, ok := raw.(ports.AcquisitionCapabilities); strictCaps && ok {
 			return &strictAcquisitionIndexer{Indexer: raw, strict: strict}
 		}
 		return raw

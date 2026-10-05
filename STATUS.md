@@ -1,5 +1,18 @@
 # Monarr — Project Status
 
+## Auto search reports a refused search — 2026-10-04 · v0.36.4
+
+**Fixed.** Auto search on *Close (2022)* answered "No releases came back from
+any indexer" while interactive search listed 138: both indexers' automatic
+request allowance was spent, so no query was sent, and the refusal only reached
+the log. The outcome now carries each unsearched indexer and its reason
+(`incomplete`), the banner says the indexers were not asked and when to retry,
+and the button is charged to the interactive allowance as docs/settings.md
+already described. Not done: the Curator mobile app still answers "Search
+started." for every outcome; series Auto search (queued season comparison)
+and Wanted runs still use the automatic allowance, and a Wanted target the
+allowance refused is still recorded as searched with nothing seen.
+
 ## Compact TV quality details — 2026-09-29
 
 **Implementation and adversarial review complete.** TV file measurements
