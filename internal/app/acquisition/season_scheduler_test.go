@@ -38,3 +38,18 @@ func TestFeasibleRollingRequests(t *testing.T) {
 		t.Fatalf("four seasons finish too late: %v", at)
 	}
 }
+
+func TestUnlimitedSeasonForecastRetainsRequestDuration(t *testing.T) {
+	now := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+	budget := sqlite.RequestBudget(0)
+	releases := []time.Time{now.Add(24 * time.Hour)}
+	for _, requests := range []int{0, 300, 1000} {
+		want := now.Add(time.Duration(requests) * time.Minute)
+		if got := feasibleFinish(now, budget, releases, releases, requests, time.Minute); !got.Equal(want) {
+			t.Errorf("automatic %d requests: got %v, want %v", requests, got, want)
+		}
+		if got := feasibleFinishManual(now, budget, releases, requests, time.Minute); !got.Equal(want) {
+			t.Errorf("manual %d requests: got %v, want %v", requests, got, want)
+		}
+	}
+}

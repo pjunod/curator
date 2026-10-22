@@ -28,6 +28,9 @@ func spendAllowance(t *testing.T, db *sqlite.DB, bucket string, automatic bool) 
 		t.Fatalf("indexers = %v, err = %v", indexers, err)
 	}
 	for _, cfg := range indexers {
+		if err := db.SetDailyRequestCap(ctx, cfg.ID, 250); err != nil {
+			t.Fatal(err)
+		}
 		var deferred *sqlite.BudgetDeferred
 		for i := 0; ; i++ {
 			err := db.ReserveIndexerRequest(ctx, cfg.ID, bucket, automatic, time.Now())

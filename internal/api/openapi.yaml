@@ -4046,7 +4046,7 @@ components:
           type: integer
           minimum: 0
           default: 0
-          description: Provider API-call allowance per rolling day; zero uses Curator's local 250-request budget.
+          description: Local API-call allowance per rolling day; zero means unlimited. Provider retry delays still apply.
         enabled: { type: boolean, default: true }
 
     Indexer:

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
 	"github.com/pjunod/monarr/internal/domain"
@@ -1294,6 +1295,16 @@ func TestAcqSavedBudgetValidatesInputAndPreservesCredentials(t *testing.T) {
 	cfg, err := e.db.GetIndexer(context.Background(), id)
 	if err != nil || cfg.DailyRequestCap != 50 || cfg.APIKey != "secret" {
 		t.Fatalf("budget edit lost credentials: %+v %v", cfg, err)
+	}
+	e.patch(t, path, `{"dailyRequestCap":0}`).expect(t, http.StatusOK)
+	cfg, err = e.db.GetIndexer(context.Background(), id)
+	if err != nil || cfg.DailyRequestCap != 0 || cfg.APIKey != "secret" {
+		t.Fatalf("unlimited edit lost credentials: %+v %v", cfg, err)
+	}
+	for n := 0; n < 300; n++ {
+		if err := e.db.ReserveIndexerRequest(context.Background(), id, "interactive", false, time.Now()); err != nil {
+			t.Fatalf("zero cap request %d: %v", n, err)
+		}
 	}
 }
 

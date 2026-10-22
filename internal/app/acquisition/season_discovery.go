@@ -250,7 +250,7 @@ func (p *seasonCheckpoint) endManualEpoch() {
 // what the forecast must simulate; forecasting it against the automatic
 // share admits comparisons that cannot finish and defers ones that can.
 func feasibleFinishManual(now time.Time, b sqlite.IndexerBudget, day []time.Time, requests int, duration time.Duration) time.Time {
-	pool := sqlite.IndexerBudget{Search: b.Interactive + b.Headroom + b.Search}
+	pool := sqlite.IndexerBudget{Unlimited: b.Unlimited, Search: b.Interactive + b.Headroom + b.Search}
 	return forecastFinish(now, pool, false, day, nil, requests, duration)
 }
 
@@ -261,6 +261,9 @@ func feasibleFinish(now time.Time, b sqlite.IndexerBudget, day, half []time.Time
 }
 
 func forecastFinish(now time.Time, b sqlite.IndexerBudget, halfShare bool, day, half []time.Time, requests int, duration time.Duration) time.Time {
+	if b.Unlimited {
+		return now.Add(time.Duration(max(0, requests)) * duration)
+	}
 	halfCap := (b.Search + 1) / 2
 	if !halfShare {
 		halfCap = b.Search + 1 // never binding

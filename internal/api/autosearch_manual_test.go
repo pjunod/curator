@@ -27,6 +27,9 @@ func TestAutoSearchEndpointIsChargedAsManual(t *testing.T) {
 	if err != nil || len(indexers) != 1 {
 		t.Fatalf("indexers = %v, err = %v", indexers, err)
 	}
+	if err := e.db.SetDailyRequestCap(ctx, indexers[0].ID, 250); err != nil {
+		t.Fatal(err)
+	}
 	var deferred *sqlite.BudgetDeferred
 	for i := 0; !errors.As(err, &deferred); i++ {
 		if err != nil || i > 1000 {
