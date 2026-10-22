@@ -430,8 +430,10 @@ download priority or the item's override travels with the grab to nzbd:
   Ongoing or partially selected seasons search wanted aired episodes directly.
   Active downloads suppress overlapping searches for that copy.
   Pressing the button is a manual search: it is charged to the indexer's
-  interactive request allowance, not the rationed automatic one, so a busy
-  backlog cannot make it a no-op. For a series the queued season comparison
+  interactive request allowance when a positive cap is configured. A cap of
+  **0 means unlimited** for manual and automatic searches; provider retry
+  delays still apply. With a positive cap, manual searches avoid the rationed
+  automatic allowance, so a busy backlog cannot make it a no-op. For a series the queued season comparison
   is marked manual too. It does not wait behind an unattended comparison
   parked on the automatic allowance, pressing again promotes one that was
   parked, and the week-long cooldown that spaces out unattended comparisons

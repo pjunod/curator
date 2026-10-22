@@ -1,5 +1,30 @@
 # Monarr — Project Status
 
+## Zero request cap means unlimited — 2026-10-22 · v0.37.2
+
+**Status:** implementation, adversarial review and local validation complete.
+PR and merge pending.
+
+A zero indexer cap now disables Curator's local request allowance for manual,
+automatic and RSS requests. Positive caps retain their existing allocation.
+Season forecasts preserve request duration without adding quota waits for an
+unlimited indexer. Provider retry delays, 15-minute RSS pacing and usage
+accounting remain active, including across cap changes.
+
+Regression coverage includes requests beyond the former defaults, switching
+between zero and positive caps, provider delays, RSS pacing, season forecasts,
+and saving zero through the API and the desktop/phone settings dialog.
+The settings reference and original acquisition plan record the new meaning.
+
+**Validation:** `make lint` and `make test` passed with Go 1.25.7;
+`make test-web` passed 123 tests and `make test-e2e` passed 162 tests with
+Node 22.13.0. GitHub checks pending.
+**Review:** one cap-transition finding resolved. Prior unlimited manual usage
+now reduces the combined search pool and its forecast when a positive cap is
+restored, preserving RSS capacity. Independent re-review found no remaining
+actionable issues. **Cleanup:** isolated clone retained until merge.
+
+
 ## Manual searches are charged as manual everywhere — 2026-10-04 · v0.36.5
 
 **Cause, measured on nuc3:** each twelve-hourly backlog pass plus the season

@@ -898,33 +898,36 @@ row retires, so a missed SSE resume event does not strand the acquisition.
 
 ## Indexer daily request cap
 
-Settings → Acquisition → Indexers accepts a daily API request cap. Zero means
-Curator uses a local rolling budget of 250 calls; it does not assert your
-provider's entitlement. Requests from other applications are outside this ledger.
-Provider NZB/grab allowances are separate.
+Settings → Acquisition → Indexers accepts a daily API request cap. **Zero means
+unlimited:** Curator imposes no daily or twelve-hour request allowance. Existing
+indexers configured with zero become unlimited when this version is installed;
+set an explicit positive cap to keep a local allowance. Requests from other
+applications are outside this ledger. Provider retry delays and NZB/grab
+allowances still apply.
 
 | Effective budget | Interactive | RSS calls / cadence | Automatic search |
 |---|---|---|---|
-| 250 (cap unknown) | 20 | 96 / 15 minutes | 100 |
+| 0 (unlimited) | Unlimited | Unlimited / 15 minutes | Unlimited |
+| 250 | 20 | 96 / 15 minutes | 100 |
 | 200 | 20 | 90 / 16 minutes | 90 |
 | 100 | 10 | 45 / 32 minutes | 45 |
 | 50 | 5 | 22 / 66 minutes | 23 |
 
 Every actual wire call, including capability probes, pages and fallback, is
-reserved before sending. Manual searches use their reserve, then headroom,
-then unspent search capacity; RSS is never borrowed. Automatic requests also
-obey a rolling twelve-hour share. A manual search is one a person is waiting
+recorded before sending, including when unlimited. With a positive cap, manual
+searches use their reserve, then headroom, then unspent search capacity; RSS is
+never borrowed. Capped automatic requests also obey a rolling twelve-hour share. A manual search is one a person is waiting
 on: interactive search, the **Auto search** button on any item (for a
 series, the season comparison it queues carries that with it to the worker),
 and a Wanted search run for one title or one target. Search-on-add, the
 backlog, RSS-driven comparisons, the reruns a comparison schedules for
 itself, and Wanted runs over everything or a whole reason are automatic.
-A manual search spends the interactive reserve, then headroom, then unspent
-search capacity — up to three requests per indexer for a movie, more for a
-season — so heavy manual use can leave less for the next automatic pass. RSS due times persist across restart and
-advance from actual dispatch; missed ticks do not produce catch-up bursts.
+A movie search can make up to three requests per indexer, and a season search
+can make more. With a positive cap, heavy manual use can therefore leave less
+for the next automatic pass. RSS due times persist across restart and advance
+from actual dispatch; missed ticks do not produce catch-up bursts.
 A provider Retry-After delays the next request even when local tokens remain.
 
 Use **Request cap** beside a saved indexer to change its allowance without
-re-entering credentials. Changes retain the rolling usage ledger. The dialog
-shows saving errors in place and returns focus to the initiating button.
+re-entering credentials. Changes retain the rolling usage ledger, so restoring
+a positive cap counts calls made while unlimited. The dialog shows saving errors in place and returns focus to the initiating button.

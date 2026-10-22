@@ -168,7 +168,7 @@ export function AcquisitionSettings() {
     <>
       {budgetEdit && <ActionDialog title={`Request cap · ${budgetEdit.name}`} onClose={()=>setBudgetEdit(null)}>
         <label>Daily request cap <input type="number" min="0" step="1" value={budgetEdit.cap} onChange={(e)=>setBudgetEdit({...budgetEdit,cap:Math.max(0,Number(e.target.value))})}/></label>
-        <p className="muted">0 uses 250 requests per rolling day. RSS keeps a separate allowance; manual searches can borrow spare search capacity. Existing usage is retained when the cap changes.</p>
+        <p className="muted">0 means unlimited requests. Positive caps apply per rolling day. Provider retry delays still apply, and existing usage is retained when the cap changes.</p>
         {saveBudget.error && <p role="alert">{saveBudget.error.message}</p>}
         <button disabled={saveBudget.isPending || !Number.isInteger(budgetEdit.cap)} onClick={()=>saveBudget.mutate()}>Save request cap</button>
       </ActionDialog>}
@@ -209,7 +209,7 @@ export function AcquisitionSettings() {
           <input placeholder="API key" value={idx.apiKey} onChange={(e) => setIdx({ ...idx, apiKey: e.target.value })} />
           <label>Daily API request cap
             <input type="number" min="0" value={idx.dailyRequestCap ?? 0} onChange={e=>setIdx({...idx,dailyRequestCap:Number(e.target.value)})}/>
-            <small>0 uses a local budget of 250 calls per rolling day. RSS, automatic search and manual search share it; provider grab caps are separate.</small>
+            <small>0 means unlimited requests. Positive caps cover RSS, automatic search and manual search per rolling day; provider retry delays and grab caps still apply.</small>
           </label>
           <select value={idx.protocol} onChange={(e) => setIdx({ ...idx, protocol: e.target.value as 'torrent' | 'usenet' })}>
             <option value="torrent">torrent</option>

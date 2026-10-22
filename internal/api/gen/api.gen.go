@@ -1790,7 +1790,7 @@ type Indexer struct {
 	ApiKey     *string `json:"apiKey,omitempty"`
 	Categories *[]int  `json:"categories,omitempty"`
 
-	// DailyRequestCap Provider API-call allowance per rolling day; zero uses Curator's local 250-request budget.
+	// DailyRequestCap Local API-call allowance per rolling day; zero means unlimited. Provider retry delays still apply.
 	DailyRequestCap *int            `json:"dailyRequestCap,omitempty"`
 	Enabled         *bool           `json:"enabled,omitempty"`
 	Id              int64           `json:"id"`
@@ -1807,7 +1807,7 @@ type IndexerInput struct {
 	ApiKey     *string `json:"apiKey,omitempty"`
 	Categories *[]int  `json:"categories,omitempty"`
 
-	// DailyRequestCap Provider API-call allowance per rolling day; zero uses Curator's local 250-request budget.
+	// DailyRequestCap Local API-call allowance per rolling day; zero means unlimited. Provider retry delays still apply.
 	DailyRequestCap *int                 `json:"dailyRequestCap,omitempty"`
 	Enabled         *bool                `json:"enabled,omitempty"`
 	Name            string               `json:"name"`

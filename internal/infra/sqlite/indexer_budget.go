@@ -3,17 +3,19 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 )
 
 type IndexerBudget struct {
+	Unlimited                                 bool
 	Total, Interactive, RSS, Search, Headroom int
 	RSSInterval                               time.Duration
 }
 
 func RequestBudget(cap int) IndexerBudget {
-	if cap <= 0 {
-		cap = 250
+	if cap == 0 {
+		return IndexerBudget{Unlimited: true, RSSInterval: 15 * time.Minute}
 	}
 	i := min(20, cap/10)
 	r := min(96, (cap-i)/2)
@@ -53,71 +55,77 @@ func (d *DB) ReserveIndexerRequest(ctx context.Context, id int64, bucket string,
 		return &BudgetDeferred{time.UnixMilli(retry), "provider retry delay"}
 	}
 	b := RequestBudget(cap)
-	used := map[string]int{}
-	short := 0
-	shortRelease := now.Add(12 * time.Hour)
-	next := now.Add(24 * time.Hour)
-	rows, err := tx.QueryContext(ctx, `SELECT bucket,units,requested_at,automatic FROM indexer_request_usage WHERE indexer_id=? AND requested_at>? ORDER BY requested_at`, id, now.Add(-24*time.Hour).UnixMilli())
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var k string
-		var n, a int
-		var ts int64
-		if err = rows.Scan(&k, &n, &ts, &a); err != nil {
-			break
-		}
-		used[k] += n
-		if a != 0 && ts > now.Add(-12*time.Hour).UnixMilli() {
-			short += n
-			release := time.UnixMilli(ts).Add(12 * time.Hour)
-			if release.Before(shortRelease) {
-				shortRelease = release
-			}
-		}
-		release := time.UnixMilli(ts).Add(24 * time.Hour)
-		if release.Before(next) {
-			next = release
-		}
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	total := 0
-	for _, n := range used {
-		total += n
-	}
 	actual := bucket
-	available := false
-	if total < b.Total {
-		switch bucket {
-		case "rss":
-			available = used[bucket] < b.RSS
-		case "search":
-			available = used[bucket] < b.Search && (!automatic || short < (b.Search+1)/2)
-		case "interactive":
-			switch {
-			case used["interactive"] < b.Interactive:
-				available = true
-			case used["headroom"] < b.Headroom:
-				actual = "headroom"
-				available = true
-			case used["search"] < b.Search:
-				actual = "search"
-				available = true
+	if !b.Unlimited {
+		used := map[string]int{}
+		short := 0
+		shortRelease := now.Add(12 * time.Hour)
+		next := now.Add(24 * time.Hour)
+		rows, err := tx.QueryContext(ctx, `SELECT bucket,units,requested_at,automatic FROM indexer_request_usage WHERE indexer_id=? AND requested_at>? ORDER BY requested_at`, id, now.Add(-24*time.Hour).UnixMilli())
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var k string
+			var n, a int
+			var ts int64
+			if err = rows.Scan(&k, &n, &ts, &a); err != nil {
+				break
+			}
+			used[k] += n
+			if a != 0 && ts > now.Add(-12*time.Hour).UnixMilli() {
+				short += n
+				release := time.UnixMilli(ts).Add(12 * time.Hour)
+				if release.Before(shortRelease) {
+					shortRelease = release
+				}
+			}
+			release := time.UnixMilli(ts).Add(24 * time.Hour)
+			if release.Before(next) {
+				next = release
 			}
 		}
-	}
-	if !available {
-		if automatic && short > 0 && shortRelease.Before(next) {
-			next = shortRelease
+		if err == nil {
+			err = rows.Err()
 		}
-		return &BudgetDeferred{next, "indexer " + bucket + " request allowance exhausted"}
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+		total := 0
+		for _, n := range used {
+			total += n
+		}
+		available := false
+		// Calls made while unlimited (or under a different cap) may exceed
+		// a single bucket's new allocation. Count the combined search pool
+		// before borrowing so those calls cannot consume the RSS reserve.
+		searchPoolAvailable := total-used["rss"] < b.Total-b.RSS
+		if total < b.Total && (bucket == "rss" || searchPoolAvailable) {
+			switch bucket {
+			case "rss":
+				available = used[bucket] < b.RSS
+			case "search":
+				available = used[bucket] < b.Search && (!automatic || short < (b.Search+1)/2)
+			case "interactive":
+				switch {
+				case used["interactive"] < b.Interactive:
+					available = true
+				case used["headroom"] < b.Headroom:
+					actual = "headroom"
+					available = true
+				case used["search"] < b.Search:
+					actual = "search"
+					available = true
+				}
+			}
+		}
+		if !available {
+			if automatic && short > 0 && shortRelease.Before(next) {
+				next = shortRelease
+			}
+			return &BudgetDeferred{next, "indexer " + bucket + " request allowance exhausted"}
+		}
 	}
 	auto := 0
 	if automatic {
@@ -137,7 +145,7 @@ func (d *DB) RSSDue(ctx context.Context, id int64, now time.Time) (bool, time.Du
 	var due, retry int64
 	err := d.R.QueryRowContext(ctx, `SELECT daily_request_cap,next_rss_at,retry_at FROM indexers WHERE id=?`, id).Scan(&cap, &due, &retry)
 	b := RequestBudget(cap)
-	return now.UnixMilli() >= max(due, retry) && b.RSS > 0, b.RSSInterval, err
+	return now.UnixMilli() >= max(due, retry) && (b.Unlimited || b.RSS > 0), b.RSSInterval, err
 }
 func (d *DB) MarkRSSDispatched(ctx context.Context, id int64, now time.Time, interval time.Duration) error {
 	_, err := d.W.ExecContext(ctx, `UPDATE indexers SET next_rss_at=? WHERE id=?`, now.Add(interval).UnixMilli(), id)
@@ -150,25 +158,40 @@ func (d *DB) RequestCapacity(ctx context.Context, id int64, now time.Time) (Inde
 	if err := d.R.QueryRowContext(ctx, `SELECT daily_request_cap FROM indexers WHERE id=?`, id).Scan(&cap); err != nil {
 		return IndexerBudget{}, nil, nil, err
 	}
-	rows, err := d.R.QueryContext(ctx, `SELECT requested_at,automatic FROM indexer_request_usage WHERE indexer_id=? AND bucket='search' AND requested_at>? ORDER BY requested_at`, id, now.Add(-24*time.Hour).UnixMilli())
+	rows, err := d.R.QueryContext(ctx, `SELECT requested_at,automatic,bucket FROM indexer_request_usage WHERE indexer_id=? AND bucket IN ('search','interactive','headroom') AND requested_at>? ORDER BY requested_at`, id, now.Add(-24*time.Hour).UnixMilli())
 	if err != nil {
 		return IndexerBudget{}, nil, nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	var day, half []time.Time
+	var day, half, manual []time.Time
 	for rows.Next() {
 		var ts int64
 		var a int
-		if err = rows.Scan(&ts, &a); err != nil {
+		var bucket string
+		if err = rows.Scan(&ts, &a, &bucket); err != nil {
 			return IndexerBudget{}, nil, nil, err
 		}
 		at := time.UnixMilli(ts)
-		day = append(day, at.Add(24*time.Hour))
+		if bucket == "search" {
+			day = append(day, at.Add(24*time.Hour))
+		} else {
+			manual = append(manual, at.Add(24*time.Hour))
+		}
 		if a != 0 && at.After(now.Add(-12*time.Hour)) {
 			half = append(half, at.Add(12*time.Hour))
 		}
 	}
-	return RequestBudget(cap), day, half, rows.Err()
+	b := RequestBudget(cap)
+	if !b.Unlimited {
+		// After lowering a cap or leaving unlimited mode, prior manual
+		// calls may overflow the current reserve and headroom. Their oldest
+		// releases free the shared search capacity first; keep the ledger
+		// unchanged and include those release times in the forecast.
+		overflow := max(0, len(manual)-b.Interactive-b.Headroom)
+		day = append(day, manual[:overflow]...)
+		slices.SortFunc(day, func(a, b time.Time) int { return a.Compare(b) })
+	}
+	return b, day, half, rows.Err()
 }
 
 // ManualRequestCapacity is RequestCapacity for a manual request, which draws

@@ -367,9 +367,13 @@ per-indexer RSS due times, and checkpointed discovery evidence are **new work**;
 limiter to reuse. Keep the current call timeout and introduce the limiter.
 
 RSS currently runs every 15 minutes: 96 first-page requests per indexer per
-24 hours. Allocate it explicitly. Let B be the configured daily cap C, or a
-local budget of 250 requests when C is unknown. The latter is a Curator policy,
-not a claim about the provider's account allowance. Compute:
+24 hours. Allocate it explicitly for positive caps. **Amended 2026-10-22:**
+a configured cap of zero means unlimited, replacing the original local
+250-request default. Unlimited mode keeps the request ledger, normal 15-minute
+RSS pacing and provider RetryAt, but does not impose bucket or twelve-hour
+limits. Its discovery forecast includes request durations without local quota
+waits. The following allocation applies only when B is a positive configured
+cap, not a claim about the provider's account allowance. Compute:
 
 ```text
 interactive reserve I = min(20, floor(0.10 × B))
@@ -380,7 +384,7 @@ RSS interval minutes  = ceil(1440 / R), when R > 0
 
 | Budget B | Interactive reserve I | RSS R / cadence | Search S per 24 h | Unallocated headroom |
 |---|---|---|---|---|
-| 250 (unknown-cap default) | 20 | 96 / 15 minutes | 100 | 34 |
+| 250 | 20 | 96 / 15 minutes | 100 | 34 |
 | 200 | 20 | 90 / 16 minutes | 90 | 0 |
 | 100 | 10 | 45 / 32 minutes | 45 | 0 |
 | 50 | 5 | 22 / 66 minutes | 23 | 0 |
