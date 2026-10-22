@@ -19,7 +19,12 @@ The settings reference and original acquisition plan record the new meaning.
 
 **Validation:** `make lint` and `make test` passed with Go 1.25.7;
 `make test-web` passed 123 tests and `make test-e2e` passed 162 tests with
-Node 22.13.0. GitHub checks pending.
+Node 22.13.0. The first GitHub run passed Go race/coverage, web, browser,
+lint and Docker checks, but Expo doctor rejected four pre-existing outdated
+SDK patch versions. Updated those four Expo ranges and their lockfile; the
+additional diff passed independent review. Mobile typechecks, all 107 tests,
+all 20 doctor checks and both iOS/Android exports passed locally. GitHub checks
+on the final dependency correction are pending.
 **Review:** one cap-transition finding resolved. Prior unlimited manual usage
 now reduces the combined search pool and its forecast when a positive cap is
 restored, preserving RSS capacity. Independent re-review found no remaining
