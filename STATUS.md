@@ -3,7 +3,8 @@
 ## Zero request cap means unlimited — 2026-10-22 · v0.37.2
 
 **Status:** implementation, adversarial review and local validation complete.
-PR and merge pending.
+[PR #69](https://github.com/pjunod/curator/pull/69) is open against `main`;
+GitHub checks and merge pending.
 
 A zero indexer cap now disables Curator's local request allowance for manual,
 automatic and RSS requests. Positive caps retain their existing allocation.
