@@ -72,3 +72,16 @@ func TestAudiobookExtensions(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeBookContainerExtensions(t *testing.T) {
+	for name, source := range map[string]string{
+		"comics.cbz": "cbz", "comics.cbr": "cbr", "scan.DJVU": "djvu",
+	} {
+		if !IsBook(name) {
+			t.Errorf("%s was not recognized as a book file", name)
+		}
+		if got := BookQualitySource(name); got != source {
+			t.Errorf("BookQualitySource(%q) = %q, want %q", name, got, source)
+		}
+	}
+}

@@ -682,7 +682,17 @@ func TestGapAcqRemoveImportedDirOnlyRemovesAPayloadOutsideEveryRoot(t *testing.T
 	client := clients[0]
 	base := t.TempDir()
 	root := filepath.Join(base, "library")
+	completed := filepath.Join(base, "completed")
 	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(completed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetCompletedRoots(ctx, completed); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.AddRootFolder(ctx, root, domain.KindMixed); err != nil {
@@ -699,6 +709,7 @@ func TestGapAcqRemoveImportedDirOnlyRemovesAPayloadOutsideEveryRoot(t *testing.T
 		_, err := os.Stat(p)
 		return err == nil
 	}
+	rowsByID := map[int64]sqlite.Download{}
 	newRow := func(handle string) int64 {
 		t.Helper()
 		id, err := db.InsertDownload(ctx, sqlite.Download{
@@ -708,7 +719,18 @@ func TestGapAcqRemoveImportedDirOnlyRemovesAPayloadOutsideEveryRoot(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
+		row, err := db.GetDownload(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rowsByID[id] = row
 		return id
+	}
+	refFor := func(id int64, path string) downloadRef {
+		row := rowsByID[id]
+		return downloadRef{ID: id, MediaItemID: row.MediaItemID, ClientID: row.ClientID,
+			Handle: row.Handle, GenerationKey: row.GenerationKey, ImportPath: path,
+			ReleaseTitle: row.ReleaseTitle, Size: row.Size}
 	}
 	pending := func() int {
 		rows, err := db.ImportedWithPayload(ctx, 50)
@@ -719,8 +741,8 @@ func TestGapAcqRemoveImportedDirOnlyRemovesAPayloadOutsideEveryRoot(t *testing.T
 	}
 
 	// The operator has not asked for payload removal: nothing is touched.
-	outside := mkdir(filepath.Join(base, "completed", "Some.Release"))
-	svc.removeImportedDir(ctx, downloadRef{ID: newRow("h-off"), MediaItemID: itemID, ClientID: client.ID, ImportPath: outside})
+	outside := mkdir(filepath.Join(completed, "Some.Release"))
+	svc.removeImportedDir(ctx, refFor(newRow("h-off"), outside))
 	if !exists(outside) {
 		t.Fatal("a payload was removed while RemoveCompleted was off")
 	}
@@ -730,46 +752,48 @@ func TestGapAcqRemoveImportedDirOnlyRemovesAPayloadOutsideEveryRoot(t *testing.T
 		t.Fatal(err)
 	}
 	before := pending()
-	// Malformed or dangerous targets are ignored without consulting anything.
+	// Malformed or dangerous targets remain ignored after resolving a valid generation.
+	malformedID := newRow("h-malformed")
 	for _, bad := range []string{"", "   ", "relative/dir", "/"} {
-		svc.removeImportedDir(ctx, downloadRef{ID: 1, ClientID: client.ID, ImportPath: bad})
+		svc.removeImportedDir(ctx, refFor(malformedID, bad))
 	}
 	// An unknown client is treated as "leave it alone".
-	svc.removeImportedDir(ctx, downloadRef{ID: 1, ClientID: 999, ImportPath: outside})
+	unknownClient := refFor(malformedID, outside)
+	unknownClient.ClientID = 999
+	svc.removeImportedDir(ctx, unknownClient)
 	if !exists(outside) {
 		t.Fatal("an unknown client's payload was removed")
 	}
 	// Inside a root folder: refused.
 	inside := mkdir(filepath.Join(root, "Show", "Payload"))
-	svc.removeImportedDir(ctx, downloadRef{ID: newRow("h-in"), ClientID: client.ID, ImportPath: inside})
+	svc.removeImportedDir(ctx, refFor(newRow("h-in"), inside))
 	if !exists(inside) {
 		t.Fatal("a directory inside a root folder was removed")
 	}
 	// A root folder itself, or a parent of one: refused.
-	svc.removeImportedDir(ctx, downloadRef{ID: newRow("h-root"), ClientID: client.ID, ImportPath: root})
-	svc.removeImportedDir(ctx, downloadRef{ID: newRow("h-parent"), ClientID: client.ID, ImportPath: base})
+	svc.removeImportedDir(ctx, refFor(newRow("h-root"), root))
+	svc.removeImportedDir(ctx, refFor(newRow("h-parent"), base))
 	if !exists(root) || !exists(base) {
 		t.Fatal("a root folder or its parent was removed")
 	}
-	// A sibling with a shared prefix is not inside the root, but if it does
-	// is absent with a reachable parent, record that its bytes are gone.
-	svc.removeImportedDir(ctx, downloadRef{ID: newRow("h-missing"), ClientID: client.ID, ImportPath: root + "-old"})
-	if pending() != before+3 {
-		t.Fatalf("refused removals marked a payload as removed: pending %d, want %d", pending(), before+3)
+	// A sibling with a shared prefix is not within the configured completed
+	// root. Its absence cannot stand in for proof of which storage was checked.
+	svc.removeImportedDir(ctx, refFor(newRow("h-missing"), root+"-old"))
+	if pending() != before+5 {
+		t.Fatalf("refused removals marked a payload as removed: pending %d, want %d", pending(), before+5)
 	}
 
-	// The real payload, outside every root: removed and recorded.
+	// The real payload, outside every library/recovery root: removed and recorded.
 	id := newRow("h-yes")
 	if err := os.WriteFile(filepath.Join(outside, "file.mkv"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	svc.removeImportedDir(ctx, downloadRef{ID: id, MediaItemID: itemID, ClientID: client.ID,
-		ImportPath: outside, ReleaseTitle: "Payload.h-yes", Size: 12})
+	svc.removeImportedDir(ctx, refFor(id, outside))
 	if exists(outside) {
 		t.Fatal("the completed payload directory survived")
 	}
-	if pending() != before+3 {
-		t.Fatalf("the removal was not recorded on the row: pending %d, want %d", pending(), before+3)
+	if pending() != before+5 {
+		t.Fatalf("the removal was not recorded on the row: pending %d, want %d", pending(), before+5)
 	}
 	history, err := db.ListHistory(ctx)
 	if err != nil {

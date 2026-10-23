@@ -154,11 +154,11 @@ describe('MonarrClient', () => {
     vi.stubGlobal('fetch', fetch)
     const client = new MonarrClient({ baseUrl: 'http://monarr.local:7676', apiKey: '' })
 
-    await expect(client.grabRelease({ mediaItemId: 42, season: 1, episode: 2, title: 'X', downloadUrl: 'magnet:?x', protocol: 'torrent', candidateToken: 'tok' })).resolves.toEqual({ id: 12 })
+    await expect(client.grabRelease({ mediaItemId: 42, season: 1, episode: 2, title: 'X', downloadUrl: 'magnet:?x', protocol: 'torrent', candidateToken: 'tok', intent: 'additional_copy', requestId: 'manual-action-1', downloadAnyway: false })).resolves.toEqual({ id: 12 })
 
     const [url, init] = fetch.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('http://monarr.local:7676/api/v1/grab')
     expect(init.method).toBe('POST')
-    expect(JSON.parse(String(init.body))).toMatchObject({ mediaItemId: 42, season: 1, episode: 2, candidateToken: 'tok' })
+    expect(JSON.parse(String(init.body))).toMatchObject({ mediaItemId: 42, season: 1, episode: 2, candidateToken: 'tok', intent: 'additional_copy', requestId: 'manual-action-1', downloadAnyway: false })
   })
 })

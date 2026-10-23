@@ -529,7 +529,7 @@ button:disabled {
   cursor: pointer;
 }
 
-.btn-accent:hover {
+.btn-accent:hover:not(:disabled) {
   filter: brightness(1.1);
   text-decoration: none;
   color: var(--on-accent);
@@ -1879,7 +1879,7 @@ a.pill-info:hover {
   box-shadow: var(--cockpit-shadow, 0 12px 34px rgba(0,0,0,.58)), inset 0 1px rgba(255,255,255,.035);
 }
 
-:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) button:not(.btn-danger) {
+:root:is([data-palette='panoptic'],[data-palette='redline'],[data-palette='panovic'],[data-palette='copper']) button:not(.btn-danger):not(.btn-accent) {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
@@ -2949,6 +2949,23 @@ a.pill-info:hover {
   text-overflow: ellipsis;
 }
 
+.queue-table .queue-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Reservation and retry diagnostics can contain several sentences. Keep the
+   queue scan compact and leave the full diagnostic available on hover and in
+   the row's review/trace surfaces. */
+.queue-table .queue-row-detail {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---- stage sections ---- */
 /* A heading row inside the table rather than a table per stage, so every
    section keeps one column grid. Separate tables would each size their own
@@ -3964,3 +3981,42 @@ a.pill-info:hover {
 .action-dialog-head h2 { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .action-dialog-head button { flex-shrink: 0; }
 .action-dialog-body { min-height: 0; padding: 16px; overflow: auto; overscroll-behavior: contain; }
+.blacklist-confirmation { max-width: 760px; margin: 0 auto; }
+.blacklist-confirmation .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+@media (max-width: 480px) {
+  .blacklist-confirmation .dialog-actions { flex-direction: column-reverse; }
+  .blacklist-confirmation .dialog-actions button { width: 100%; min-height: 44px; }
+}
+.delivery-lifecycle { margin-top: .75rem; border-top: 1px solid var(--border, #333); padding-top: .5rem; }
+.delivery-lifecycle > summary { cursor: pointer; font-weight: 600; }
+.delivery-lifecycle-body { padding: .5rem 0; overflow-wrap: anywhere; }
+.delivery-lifecycle-body dl { display: grid; grid-template-columns: minmax(9rem, auto) 1fr; gap: .25rem .75rem; }
+.delivery-lifecycle-body dt { color: var(--muted, #999); }
+.delivery-lifecycle-body dd { margin: 0; }
+.delivery-lifecycle-body li { margin: .5rem 0; }
+.action-dialog-body .replacement-reason-field {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.action-dialog-body .replacement-reason-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 88px;
+  padding: 8px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 14px;
+}

@@ -8,10 +8,20 @@ import (
 
 type partialCleanupIDKey struct{}
 
+type partialCleanupOwner struct {
+	DownloadID    int64
+	GenerationKey string
+}
+
 // Partial payloads retain explicit custody until rooted identity/ownership and
 // reference checks permit deletion. Unsafe paths remain visible for review.
 func (s *Service) cleanupPartialPayloads(ctx context.Context) {
-	rows, err := s.db.R.QueryContext(ctx, `SELECT id FROM downloads WHERE cleanup_pending=1 AND state='failed' ORDER BY updated_at LIMIT 25`)
+	rows, err := s.db.R.QueryContext(ctx, `SELECT d.id FROM downloads d
+		WHERE d.cleanup_pending=1 AND d.state='failed' AND d.delivery_expected=0
+		AND NOT EXISTS (SELECT 1 FROM legacy_cleanup_review l
+			WHERE l.generation_key=d.generation_key
+			OR (d.import_path != '' AND l.path=d.import_path))
+		ORDER BY d.updated_at LIMIT 25`)
 	if err != nil {
 		return
 	}
@@ -57,7 +67,9 @@ func (s *Service) cleanupPartialPayloads(ctx context.Context) {
 		if fingerprint == "" {
 			continue
 		}
-		own := context.WithValue(ctx, partialCleanupIDKey{}, id)
+		own := context.WithValue(ctx, partialCleanupIDKey{}, partialCleanupOwner{
+			DownloadID: id, GenerationKey: dl.GenerationKey,
+		})
 		if err = s.DeleteCompletedEntry(own, path, fingerprint); err != nil {
 			s.log.Debug("partial payload remains in custody", "download", id, "reason", err)
 			continue

@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 // Phase 2 full loop against fake torznab + fake qBittorrent:
 // configure → interactive search (with rejection reasons) → grab →
@@ -60,7 +62,7 @@ test('movie: search shows ranked candidates with rejection reasons', async ({ re
   expect(cam.rejections[0].reason).toContain('not allowed')
 })
 
-test('movie: grab → auto-import → correctly named file', async ({ request }) => {
+test('movie: explicit add imports a separately identified copy', async ({ request }) => {
   const movieId = await itemIdByKind(request, 'movie')
   const cands = await (await request.get(`/api/v1/library/${movieId}/releases`)).json()
   const pick = cands[0]
@@ -69,6 +71,7 @@ test('movie: grab → auto-import → correctly named file', async ({ request })
     data: {
       mediaItemId: movieId, title: pick.title, downloadUrl: pick.downloadUrl,
       indexer: pick.indexer, protocol: pick.protocol, size: pick.size,
+      candidateToken: pick.candidateToken, intent: 'additional_copy', requestId: 'phase2-movie-grab', downloadAnyway: false,
     },
   })
   expect(grab.status()).toBe(201)
@@ -80,6 +83,8 @@ test('movie: grab → auto-import → correctly named file', async ({ request })
   const detail = await (await request.get(`/api/v1/library/${movieId}`)).json()
   expect(detail.files.length).toBe(1)
   expect(detail.files[0].path).toContain('The Test Movie (2024) [WEB-DL 1080p].mkv')
+  expect(detail.files[0].copyId).toBeGreaterThan(0)
+  expect(detail.files[0].path).toContain('(Manual copy ')
 })
 
 test('series: season pack grab fans out to every episode', async ({ request }) => {
@@ -87,13 +92,14 @@ test('series: season pack grab fans out to every episode', async ({ request }) =
   const cands = await (
     await request.get(`/api/v1/library/${seriesId}/releases?season=1`)
   ).json()
-  const pack = cands.find((c: any) => c.title.includes('S01.1080p'))
+  const pack = cands.find((c: any) => c.title.includes('S01.1080p') && c.title.includes('-E2E'))
   expect(pack).toBeTruthy()
 
   const grab = await request.post('/api/v1/grab', {
     data: {
       mediaItemId: seriesId, season: 1, title: pack.title,
       downloadUrl: pack.downloadUrl, indexer: pack.indexer, protocol: pack.protocol,
+      candidateToken: pack.candidateToken, intent: 'additional_copy', requestId: 'phase2-series-pack', downloadAnyway: false,
     },
   })
   expect(grab.status()).toBe(201)
@@ -109,6 +115,44 @@ test('series: season pack grab fans out to every episode', async ({ request }) =
   }
   const renamed = detail.files.filter((f: any) => f.path.includes('[WEB-DL 1080p]'))
   expect(renamed.length).toBeGreaterThanOrEqual(2)
+})
+
+test('automatic RSS fills monitored primary copies beside explicit additions', async ({ request }) => {
+  const db = new DatabaseSync(join(process.env.E2E_DATA_DIR!, 'monarr.db'))
+  db.prepare('UPDATE indexers SET next_rss_at=0').run()
+  db.close()
+  const response = await request.post('/api/v1/system/tasks/rss.sync/run')
+  expect(response.ok()).toBe(true)
+
+  const movieId = await itemIdByKind(request, 'movie')
+  const seriesId = await itemIdByKind(request, 'series')
+  await expect.poll(async () => {
+    await request.post('/api/v1/system/tasks/queue.refresh/run')
+    const movie = await (await request.get(`/api/v1/library/${movieId}`)).json()
+    const series = await (await request.get(`/api/v1/library/${seriesId}`)).json()
+    const season = series.seasons.find((row: any) => row.number === 1)
+    const db = new DatabaseSync(join(process.env.E2E_DATA_DIR!, 'monarr.db'))
+    const primaryEpisodes = db.prepare(`
+      SELECT DISTINCT mfe.episode_id
+      FROM media_files mf
+      JOIN media_file_episodes mfe ON mfe.media_file_id = mf.id
+      WHERE mf.media_item_id = ? AND mf.copy_id IS NULL
+    `).all(seriesId)
+    const autoPackFiles = db.prepare(`
+      SELECT COUNT(*) AS count FROM media_files
+      WHERE media_item_id = ? AND copy_id IS NULL AND source_release LIKE '%-AUTO'
+    `).get(seriesId).count
+    db.close()
+    return [
+      movie.files.some((file: any) => !file.path.includes('(Manual copy ')),
+      primaryEpisodes.length === season.episodes.length && autoPackFiles >= season.episodes.length,
+    ]
+  }, { timeout: 15_000, intervals: [500] }).toEqual([true, true])
+
+  await expect.poll(async () => {
+    const wanted = await (await request.get('/api/v1/wanted')).json()
+    return wanted.filter((row: any) => [movieId, seriesId].includes(row.mediaItemId) && row.missing)
+  }, { timeout: 5_000, intervals: [250] }).toEqual([])
 })
 
 test('activity page shows the imported downloads', async ({ page }) => {

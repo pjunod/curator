@@ -386,6 +386,7 @@ export interface ReleaseCandidate {
   rejections: Rejection[]
   match: MatchEvidence
   candidateToken: string
+  blacklistReason?: string
   /** A caution that does not decline the release — today, an implausible size. */
   warning?: string
 }
@@ -414,6 +415,9 @@ export interface GrabRequest {
   protocol: string
   size?: number
   candidateToken?: string
+  intent: 'additional_copy'
+  requestId: string
+  downloadAnyway: boolean
 }
 
 export interface AutoSearchTarget {

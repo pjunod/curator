@@ -47,6 +47,9 @@ const (
 	SourceMOBI Source = "mobi"
 	SourceAZW3 Source = "azw3"
 	SourceEPUB Source = "epub"
+	SourceCBZ  Source = "cbz"
+	SourceCBR  Source = "cbr"
+	SourceDJVU Source = "djvu"
 	SourceMP3  Source = "mp3"
 	SourceWMA  Source = "wma"
 	SourceAAC  Source = "aac"
@@ -66,7 +69,8 @@ func IsBookFormat(s Source) bool {
 // IsEbookFormat reports whether s is a written-book format.
 func IsEbookFormat(s Source) bool {
 	switch s {
-	case SourcePDF, SourceMOBI, SourceAZW3, SourceEPUB:
+	case SourcePDF, SourceMOBI, SourceAZW3, SourceEPUB,
+		SourceCBZ, SourceCBR, SourceDJVU:
 		return true
 	}
 	return false
@@ -145,6 +149,7 @@ func (q Quality) Display() string {
 		SourceWEBDL: "WEB-DL", SourceBluray: "Bluray", SourceRemux: "Remux",
 		SourcePDF: "PDF", SourceMOBI: "MOBI", SourceAZW3: "AZW3",
 		SourceEPUB: "EPUB", SourceMP3: "MP3", SourceWMA: "WMA",
+		SourceCBZ: "CBZ", SourceCBR: "CBR", SourceDJVU: "DjVu",
 		SourceAAC: "AAC", SourceOGG: "OGG", SourceOPUS: "Opus",
 		SourceM4A: "M4A", SourceM4B: "M4B", SourceFLAC: "FLAC",
 		SourceWAV: "WAV",
@@ -174,6 +179,9 @@ var sourceRank = map[Source]int{
 	// Book formats rank at resolution 0; ordering within each family is what
 	// matters (profiles keep ebooks and audiobooks apart).
 	SourcePDF: 1, SourceMOBI: 2, SourceAZW3: 3, SourceEPUB: 4,
+	// Newly supported native containers tie the top existing ebook rank so
+	// enabling them does not reorder any established format preference.
+	SourceCBZ: 4, SourceCBR: 4, SourceDJVU: 4,
 	SourceMP3: 1, SourceWMA: 2, SourceAAC: 3, SourceOGG: 4,
 	SourceOPUS: 5, SourceM4A: 6, SourceM4B: 7, SourceFLAC: 8, SourceWAV: 9,
 }
@@ -403,6 +411,7 @@ var videoVocabulary = []Quality{
 
 var bookVocabulary = []Quality{
 	{SourcePDF, 0}, {SourceMOBI, 0}, {SourceAZW3, 0}, {SourceEPUB, 0},
+	{SourceCBZ, 0}, {SourceCBR, 0}, {SourceDJVU, 0},
 	{SourceMP3, 0}, {SourceWMA, 0}, {SourceAAC, 0}, {SourceOGG, 0},
 	{SourceOPUS, 0}, {SourceM4A, 0}, {SourceM4B, 0}, {SourceFLAC, 0},
 	{SourceWAV, 0},

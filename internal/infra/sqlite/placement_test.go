@@ -65,4 +65,17 @@ func TestPlacementReceiptAndMetadataAreAtomic(t *testing.T) {
 	if release != "corrected" {
 		t.Fatalf("replay overwrote correction: %s", release)
 	}
+	newer := p
+	newer.ID = "placement-new-generation"
+	newer.RecoveryImport, newer.RecoveryFile = "", ""
+	newer.SHA256 = "new-digest"
+	if err := db.PreparePlacement(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CommitPlacement(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CommitPlacement(ctx, p); err != ErrPlacementGenerationChanged {
+		t.Fatalf("replay of old placement returned err=%v, want stale generation", err)
+	}
 }

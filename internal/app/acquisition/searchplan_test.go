@@ -83,7 +83,7 @@ func TestCandidateTokenBindsServerEvidenceToExactGrab(t *testing.T) {
 	if token == "" {
 		t.Fatal("empty candidate token")
 	}
-	if _, ok := service.consumeCandidateToken(GrabRequest{
+	if _, _, _, ok := service.consumeCandidateToken(GrabRequest{
 		MediaItemID: 7, Season: 1, Episode: 1, Title: release.Title,
 		DownloadURL: release.DownloadURL, Indexer: "forged", CandidateToken: token,
 	}); ok {
@@ -98,7 +98,7 @@ func TestCandidateTokenAcceptsWholeItemGrabWithoutSeason(t *testing.T) {
 	// A movie search has no season, so the token is issued with 0 …
 	token := service.issueCandidateToken(9, 0, 0, 0, release, evidence)
 	// … and the grab handler spells an omitted season as -1.
-	got, ok := service.consumeCandidateToken(GrabRequest{
+	got, _, _, ok := service.consumeCandidateToken(GrabRequest{
 		MediaItemID: 9, Season: -1, Title: release.Title,
 		DownloadURL: release.DownloadURL, Indexer: release.Indexer, CandidateToken: token,
 	})
@@ -106,7 +106,7 @@ func TestCandidateTokenAcceptsWholeItemGrabWithoutSeason(t *testing.T) {
 		t.Fatalf("whole-item grab lost its search evidence: ok=%v evidence=%+v", ok, got)
 	}
 	token = service.issueCandidateToken(9, 0, 2, 0, release, evidence)
-	if _, ok := service.consumeCandidateToken(GrabRequest{
+	if _, _, _, ok := service.consumeCandidateToken(GrabRequest{
 		MediaItemID: 9, Season: -1, Title: release.Title,
 		DownloadURL: release.DownloadURL, Indexer: release.Indexer, CandidateToken: token,
 	}); ok {

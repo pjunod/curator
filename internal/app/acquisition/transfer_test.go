@@ -40,7 +40,7 @@ func (c *taggingClient) AddWithOptions(ctx context.Context, url, cat string, opt
 	return "h-tagged", nil
 }
 
-var transferShape = regexp.MustCompile(`^t-\d+-[0-9a-f]{6}$`)
+var transferShape = regexp.MustCompile(`^t-\d+-[0-9a-f]{32}$`)
 
 // The transfer id has to reach the client ON the add — a client cannot be
 // told afterwards what to have called the download — and the same id has
@@ -71,9 +71,6 @@ func TestGrabSendsTheTransferIDToATaggingClient(t *testing.T) {
 	if !transferShape.MatchString(client.gotTransfer) {
 		t.Fatalf("client got transfer %q, want t-<id>-<6 hex>", client.gotTransfer)
 	}
-	if !strings.HasPrefix(client.gotTransfer, "t-"+itoa(id)+"-") {
-		t.Errorf("transfer %q does not name download %d", client.gotTransfer, id)
-	}
 	if client.gotURL != "https://idx/x.nzb" {
 		t.Errorf("url = %q", client.gotURL)
 	}
@@ -98,8 +95,10 @@ func TestGrabSendsTheTransferIDToATaggingClient(t *testing.T) {
 	if dl.Handle != "h-tagged" {
 		t.Errorf("handle = %q, want the tagged add's handle", dl.Handle)
 	}
-	// The id belongs in the first line of the trace, because that is where
-	// someone starts reading when a transfer goes wrong.
+	// The stable transfer token belongs in the first line of the trace, because
+	// that is where someone starts reading when a transfer goes wrong. Tokens
+	// are allocated before the row insert so they survive a crash before Add;
+	// they intentionally do not encode the database row ID.
 	if len(dl.Handoff) == 0 || !strings.Contains(dl.Handoff[0].Detail, client.gotTransfer) {
 		t.Errorf("handoff trace opens with %v, want it to name the transfer id", dl.Handoff)
 	}
@@ -137,7 +136,10 @@ func TestGrabItemPriorityOverridesTheProfile(t *testing.T) {
 func TestTransferIDsAreDistinct(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {
-		id := newTransferID(int64(i%5) + 1) // ids repeat; the suffix must not
+		id, err := newTransferID(int64(i%5) + 1) // ids repeat; the suffix must not
+		if err != nil {
+			t.Fatal(err)
+		}
 		if seen[id] {
 			t.Fatalf("duplicate transfer id %q", id)
 		}

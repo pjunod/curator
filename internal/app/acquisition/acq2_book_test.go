@@ -126,6 +126,36 @@ func TestAcq2BookIsWantedSearchedAndImported(t *testing.T) {
 	}
 }
 
+func TestAcq2NativeComicContainerImportsAsBook(t *testing.T) {
+	svc, db, bookID := bookSetup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	payload := t.TempDir()
+	if err := os.WriteFile(filepath.Join(payload, "Project Hail Mary.cbz"), []byte("zip container bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := svc.importDownload(ctx, sqlite.Download{
+		MediaItemID: bookID, ReleaseTitle: "Andy Weir - Project Hail Mary CBZ", Indexer: "idx",
+	}, payload, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 1 {
+		t.Fatalf("imported = %d: %+v", result.Imported, result.Files)
+	}
+	files, err := db.ListFilesForItem(ctx, bookID)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("files = %+v, err = %v", files, err)
+	}
+	if filepath.Ext(files[0].Path) != ".cbz" {
+		t.Fatalf("native comic container was rewritten or dropped: %q", files[0].Path)
+	}
+	qualities, err := db.FileQualityRecords(ctx, bookID)
+	if err != nil || len(qualities) != 1 || qualities[0].Quality.Source != quality.SourceCBZ {
+		t.Fatalf("quality records = %+v, err = %v; want cbz ebook format", qualities, err)
+	}
+}
+
 // A better format replaces the worse one; a worse format is refused outright.
 // This is the profile doing its job on the book axis, where "better" is a
 // format ladder rather than a resolution.

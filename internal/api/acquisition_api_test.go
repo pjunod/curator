@@ -31,6 +31,99 @@ func TestAcqManualImportIsAcceptedAsAnActivityJob(t *testing.T) {
 	}
 }
 
+func TestManualGrabReplayErrorsAreTypedConflicts(t *testing.T) {
+	e := newAPIEnv(t)
+	itemID := e.addMovie(t)
+	acqAddClient(t, e, "qbittorrent")
+	body := fmt.Sprintf(`{"mediaItemId":%d,"title":"Fight.Club.1999.1080p.WEB-DL.MANUAL","downloadUrl":"http://indexer.invalid/manual","protocol":"torrent","indexer":"manual","intent":"additional_copy","requestId":"typed-manual-replay"}`, itemID)
+	created := e.post(t, "/api/v1/grab", body).expect(t, http.StatusCreated)
+	var result struct {
+		ID int64 `json:"id"`
+	}
+	created.into(t, &result)
+	if result.ID == 0 {
+		t.Fatalf("manual grab returned no Activity id: %s", created.Body.String())
+	}
+	changed := strings.Replace(body, "http://indexer.invalid/manual", "http://indexer.invalid/changed", 1)
+	var conflict apigen.Error
+	e.post(t, "/api/v1/grab", changed).expect(t, http.StatusConflict).into(t, &conflict)
+	if conflict.Code == nil || *conflict.Code != "request_conflict" {
+		t.Fatalf("changed replay code = %v, want request_conflict", conflict.Code)
+	}
+	if err := e.db.UpdateDownloadState(context.Background(), result.ID, "imported", 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.MarkPayloadRemoved(context.Background(), result.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.ClearImportedDownloads(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	e.post(t, "/api/v1/grab", body).expect(t, http.StatusConflict).into(t, &conflict)
+	if conflict.Code == nil || *conflict.Code != "request_retained" {
+		t.Fatalf("dismissed Activity replay code = %v, want request_retained", conflict.Code)
+	}
+}
+
+func TestReplacementRequiresBooleanBlacklistChoice(t *testing.T) {
+	e := newAPIEnv(t)
+	itemID := e.addMovie(t)
+	for name, body := range map[string]string{
+		"omitted": `{"requestId":"choice-omitted","scope":"download","copyId":0,"intent":"replace_bad","reasonCode":"bad","reason":"bad","observedFiles":[]}`,
+		"null":    `{"requestId":"choice-null","scope":"download","copyId":0,"intent":"replace_bad","blacklistSourceRelease":null,"reasonCode":"bad","reason":"bad","observedFiles":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := strings.Replace(body, `"requestId":`, fmt.Sprintf(`"mediaItemId":%d,"requestId":`, itemID), 1)
+			rr := e.post(t, fmt.Sprintf("/api/v1/library/%d/replacement-operations", itemID), body).expect(t, http.StatusBadRequest)
+			if !strings.Contains(rr.Body.String(), "blacklistSourceRelease") {
+				t.Fatalf("refusal did not explain the required boolean choice: %s", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestLibraryLifecycleReviewSurvivesFileRemovalAndResolvesByGeneration(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	itemID := e.addMovie(t)
+	item, err := e.db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileID, err := e.db.UpsertFile(ctx, itemID, 0, filepath.Join(item.Path, "reported.mkv"), 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := e.db.ListFilesForItem(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generation string
+	for _, file := range files {
+		if file.ID == fileID {
+			generation = file.FileGeneration
+		}
+	}
+	if generation == "" {
+		t.Fatal("upserted media file has no generation")
+	}
+	report := fmt.Sprintf(`{"fileGeneration":%q,"reasonCode":"corrupt_media","reason":"audio is cut off"}`, generation)
+	e.post(t, fmt.Sprintf("/api/v1/library/%d/files/%d/report", itemID, fileID), report).expect(t, http.StatusNoContent)
+	var review apigen.LibraryLifecycleReview
+	e.get(t, fmt.Sprintf("/api/v1/library/%d/replacement-operations", itemID)).expect(t, http.StatusOK).into(t, &review)
+	if len(review.OpenReports) != 1 || review.OpenReports[0].MediaFileId != fileID || review.OpenReports[0].FileGeneration != generation {
+		t.Fatalf("lifecycle review reports = %+v", review.OpenReports)
+	}
+	if _, err := e.db.W.ExecContext(ctx, `DELETE FROM media_files WHERE id=?`, fileID); err != nil {
+		t.Fatal(err)
+	}
+	e.post(t, fmt.Sprintf("/api/v1/library/%d/review-flags/%d/resolve", itemID, review.OpenReports[0].Id), fmt.Sprintf(`{"fileGeneration":%q}`, generation)).expect(t, http.StatusNoContent)
+	e.get(t, fmt.Sprintf("/api/v1/library/%d/replacement-operations", itemID)).expect(t, http.StatusOK).into(t, &review)
+	if len(review.OpenReports) != 0 {
+		t.Fatalf("resolved report remains open: %+v", review.OpenReports)
+	}
+}
+
 // The acquisition half of /api/v1 — indexers, clients, the queue, search and
 // grab, custom formats, import lists, the blocklist, the calendar, wanted,
 // and notifiers.
@@ -92,7 +185,8 @@ func acqGrab(t *testing.T, e *apiEnv, itemID int64) int64 {
 		"mediaItemId":`+acqItoa(itemID)+`,
 		"title":"Fight.Club.1999.1080p.WEB-DL.x264-TEST",
 		"downloadUrl":"http://indexer.invalid/1",
-		"protocol":"torrent","indexer":"nzb.invalid","size":8589934592}`).
+		"protocol":"torrent","indexer":"nzb.invalid","size":8589934592,
+		"intent":"additional_copy","requestId":"test-acq-grab-`+acqItoa(itemID)+`-`+fmt.Sprint(time.Now().UnixNano())+`"}`).
 		expect(t, http.StatusCreated)
 	var out struct {
 		ID int64 `json:"id"`
@@ -496,11 +590,12 @@ func TestAcqBookReleaseSearchAndGrabTargetOneEdition(t *testing.T) {
 	e.post(t, "/api/v1/grab", `{
 		"mediaItemId":`+acqItoa(book.ID)+`,"copyId":`+acqItoa(copyID)+`,
 		"title":"Andy Weir - Project Hail Mary M4B",
-		"downloadUrl":"http://indexer.invalid/book","protocol":"torrent"}`).
+		"downloadUrl":"http://indexer.invalid/book","protocol":"torrent",
+		"intent":"additional_copy","requestId":"book-additional-copy"}`).
 		expect(t, http.StatusCreated)
 	var queue []apigen.QueueItem
 	e.get(t, "/api/v1/queue").expect(t, http.StatusOK).into(t, &queue)
-	if len(queue) != 1 || queue[0].CopyId == nil || *queue[0].CopyId != copyID {
+	if len(queue) != 1 || queue[0].CopyId == nil || *queue[0].CopyId == copyID {
 		t.Fatalf("audiobook queue row = %+v", queue)
 	}
 }
@@ -554,7 +649,8 @@ func TestAcqGrabWithoutAClientForTheProtocol(t *testing.T) {
 	rr := e.post(t, "/api/v1/grab", `{
 		"mediaItemId":`+acqItoa(item)+`,
 		"title":"Fight.Club.1999.1080p.WEB-DL.x264-TEST",
-		"downloadUrl":"http://indexer.invalid/1","protocol":"torrent"}`).
+		"downloadUrl":"http://indexer.invalid/1","protocol":"torrent",
+		"intent":"additional_copy","requestId":"no-client"}`).
 		expect(t, http.StatusBadRequest)
 	if msg := acqMessage(t, rr); !strings.Contains(msg, "torrent") {
 		t.Errorf("message = %q, want it to name the protocol with no client", msg)
@@ -588,7 +684,8 @@ func TestAcqGrabRefusals(t *testing.T) {
 	}
 
 	e.post(t, "/api/v1/grab", `{"mediaItemId":9999,"title":"Some.Release",
-		"downloadUrl":"http://indexer.invalid/1","protocol":"torrent"}`).
+		"downloadUrl":"http://indexer.invalid/1","protocol":"torrent",
+		"intent":"additional_copy","requestId":"not-found"}`).
 		expect(t, http.StatusNotFound)
 
 	// A monitored/searchable item may predate root-folder enforcement. It is
@@ -603,7 +700,7 @@ func TestAcqGrabRefusals(t *testing.T) {
 	}
 	rr := e.post(t, "/api/v1/grab", `{"mediaItemId":`+acqItoa(homeless)+`,
 		"title":"Homeless.2026.1080p","downloadUrl":"http://indexer.invalid/h",
-		"protocol":"torrent"}`).expect(t, http.StatusBadRequest)
+		"protocol":"torrent","intent":"additional_copy","requestId":"homeless"}`).expect(t, http.StatusBadRequest)
 	if msg := acqMessage(t, rr); !strings.Contains(msg, "library folder") {
 		t.Errorf("message = %q, want the missing destination named", msg)
 	}
@@ -670,27 +767,21 @@ func TestAcqCancelOrphanedImportMakesItRestartable(t *testing.T) {
 // Blocklisting from the queue does both halves of what the button promises:
 // the row leaves the queue and the release is on the blocklist by name, so a
 // later search cannot pick the same bad copy again.
-func TestAcqBlocklistQueueItemBansTheRelease(t *testing.T) {
+func TestAcqBlocklistQueueItemRequiresReviewedReplacement(t *testing.T) {
 	e := newAPIEnv(t)
 	acqAddClient(t, e, "qbittorrent")
 	item := e.addMovie(t)
 	id := acqGrab(t, e, item)
 
-	e.post(t, "/api/v1/queue/"+acqItoa(id)+"/blocklist", "").expect(t, http.StatusNoContent)
+	response := e.post(t, "/api/v1/queue/"+acqItoa(id)+"/blocklist", "").expect(t, http.StatusConflict)
+	if !strings.Contains(response.Body.String(), "replacement_review_required") {
+		t.Fatalf("legacy blocklist bypass did not request reviewed replacement: %s", response.Body.String())
+	}
 
 	var entries []apigen.BlocklistEntry
 	e.get(t, "/api/v1/blocklist").expect(t, http.StatusOK).into(t, &entries)
-	if len(entries) != 1 {
-		t.Fatalf("blocklist has %d entries, want the release just banned: %+v", len(entries), entries)
-	}
-	if entries[0].ReleaseTitle != "Fight.Club.1999.1080p.WEB-DL.x264-TEST" {
-		t.Errorf("releaseTitle = %q, want the banned release", entries[0].ReleaseTitle)
-	}
-	if entries[0].MediaItemId != item {
-		t.Errorf("mediaItemId = %d, want the item it was grabbed for (%d)", entries[0].MediaItemId, item)
-	}
-	if entries[0].Reason == "" {
-		t.Error("reason is empty; the blocklist page cannot say why this was banned")
+	if len(entries) != 0 {
+		t.Fatalf("unreviewed legacy endpoint mutated the blocklist: %+v", entries)
 	}
 
 	// The queue row stays, failed, carrying the reason. A row that vanished
@@ -701,22 +792,8 @@ func TestAcqBlocklistQueueItemBansTheRelease(t *testing.T) {
 	if len(queue) != 1 {
 		t.Fatalf("queue = %+v, want the blocklisted row still visible", queue)
 	}
-	if queue[0].State != "failed" {
-		t.Errorf("state = %q, want failed after a blocklist", queue[0].State)
-	}
-	if queue[0].Error == nil || *queue[0].Error == "" {
-		t.Errorf("error = %v, want the row to say why it failed", queue[0].Error)
-	}
-	if queue[0].Handoff == nil || len(*queue[0].Handoff) == 0 {
-		t.Error("handoff is empty; the trace is what explains where a download stopped")
-	}
-
-	// Un-banning it makes the release grabbable again.
-	e.del(t, "/api/v1/blocklist/"+acqItoa(entries[0].Id)).expect(t, http.StatusNoContent)
-	entries = nil
-	e.get(t, "/api/v1/blocklist").expect(t, http.StatusOK).into(t, &entries)
-	if len(entries) != 0 {
-		t.Errorf("entry survived its delete: %+v", entries)
+	if queue[0].State != "grabbed" {
+		t.Errorf("state = %q, want the unreviewed legacy request to remain untouched", queue[0].State)
 	}
 }
 
@@ -728,8 +805,12 @@ func TestAcqClearFailedQueueLeavesTheBlocklistAlone(t *testing.T) {
 	acqAddClient(t, e, "qbittorrent")
 	item := e.addMovie(t)
 	id := acqGrab(t, e, item)
-
-	e.post(t, "/api/v1/queue/"+acqItoa(id)+"/blocklist", "").expect(t, http.StatusNoContent)
+	if err := e.db.UpdateDownloadState(context.Background(), id, "failed", 0, "fixture failure"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.AddBlocklist(context.Background(), item, "fixture-release", "fixture-indexer", "explicit test fixture"); err != nil {
+		t.Fatal(err)
+	}
 
 	rr := e.del(t, "/api/v1/queue/failed").expect(t, http.StatusOK)
 	var cleared apigen.ClearedCount

@@ -12,7 +12,9 @@ const MOVIE_RELEASE = 'The.Test.Movie.2024.1080p.WEB-DL.x264-E2E'
 test('an imported download lays out its handoff step by step', async ({ page }) => {
   await page.goto('/activity')
   await page.getByTestId('toggle-imported').click() // finished rows start collapsed
-  const row = page.locator('tr', { hasText: MOVIE_RELEASE }).first()
+  const row = page.locator('tr', { hasText: MOVIE_RELEASE }).filter({
+    has: page.locator('.pill-ok', { hasText: 'imported' }),
+  }).first()
   await expect(row).toBeVisible()
 
   await row.getByRole('button', { name: 'Show handoff' }).click()
@@ -62,7 +64,7 @@ test('manual import scans a folder and skips samples', async ({ page, request })
     submitted = route.request().postDataJSON()
     await route.fulfill({ status: 202, contentType: 'application/json', body: '{"downloadId":991}' })
   })
-  await page.getByRole('button', { name: 'Manual import' }).click()
+  await page.getByRole('button', { name: 'Resolve', exact: true }).click()
 
   const panel = page.locator('.manual-import')
   await expect(panel).toBeVisible()

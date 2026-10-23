@@ -1021,6 +1021,10 @@ func (d *DB) ListFilesForItem(ctx context.Context, itemID int64) ([]domain.Media
 		f := domain.MediaFile{
 			ID: r.ID, Path: r.Path, Size: r.Size,
 			EpisodeIDs: byFile[r.ID], AddedAt: time.UnixMilli(r.AddedAt),
+			FileGeneration: r.FileGeneration, SourceGeneration: r.SourceGeneration,
+			SourceTransfer: r.SourceTransfer, SourcePayloadGeneration: r.SourcePayloadGeneration,
+			SourceFileGeneration: r.SourceFileGeneration,
+			SourceGUID:           r.SourceGuid, SourceIndexerID: r.SourceIndexerID,
 			Provenance:    mediainfo.Provenance(r.QualityProvenance),
 			Confidence:    mediainfo.Confidence(r.QualityConfidence),
 			SourceRelease: r.SourceRelease, SourceIndexer: r.SourceIndexer,
@@ -1050,7 +1054,11 @@ func (d *DB) ListAllFiles(ctx context.Context) ([]domain.MediaFile, error) {
 	}
 	out := make([]domain.MediaFile, 0, len(rows))
 	for _, r := range rows {
-		f := domain.MediaFile{ID: r.ID, Path: r.Path, Size: r.Size, AddedAt: time.UnixMilli(r.AddedAt)}
+		f := domain.MediaFile{ID: r.ID, Path: r.Path, Size: r.Size, AddedAt: time.UnixMilli(r.AddedAt),
+			FileGeneration: r.FileGeneration, SourceGeneration: r.SourceGeneration,
+			SourceTransfer: r.SourceTransfer, SourcePayloadGeneration: r.SourcePayloadGeneration,
+			SourceFileGeneration: r.SourceFileGeneration,
+			SourceGUID:           r.SourceGuid, SourceIndexerID: r.SourceIndexerID}
 		if r.MediaItemID.Valid {
 			f.MediaItemID = r.MediaItemID.Int64
 		}

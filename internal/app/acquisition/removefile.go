@@ -61,6 +61,9 @@ type RemoveFileResult struct {
 // The reverse order can leave a row pointing at nothing, which reads as "you
 // have this file" forever.
 func (s *Service) RemoveFile(ctx context.Context, itemID, fileID int64, req RemoveFileRequest) (RemoveFileResult, error) {
+	if req.Search || req.Blocklist {
+		return RemoveFileResult{}, ErrReplacementReviewRequired
+	}
 	rec, err := s.db.GetFileQuality(ctx, fileID)
 	if err != nil {
 		return RemoveFileResult{}, err

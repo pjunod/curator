@@ -382,6 +382,40 @@ func (s *Service) validateRecoveryTarget(ctx context.Context, r RecoveryImport) 
 	return nil
 }
 
+// recoveryFinalObservation captures the inexpensive library metadata/file
+// observations used by the recovery preview. Byte hashing remains in
+// validateRecoveryTarget outside storage authority; this snapshot is repeated
+// after acquiring the short publication lock to close the unlocked gap.
+func (s *Service) recoveryFinalObservation(ctx context.Context, r RecoveryImport) (string, error) {
+	snapshot, _, err := s.targetSnapshot(ctx, r.Request.MediaItemID, r.Request.CopyID)
+	if err != nil {
+		return "", err
+	}
+	files, err := s.db.ListFilesForItem(ctx, r.Request.MediaItemID)
+	if err != nil {
+		return "", err
+	}
+	var generations []any
+	for _, file := range files {
+		if file.CopyID != r.Request.CopyID {
+			continue
+		}
+		identity := "missing"
+		info, statErr := os.Lstat(file.Path)
+		if statErr == nil {
+			identity = deliveryFileGeneration(info)
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return "", statErr
+		}
+		generations = append(generations, []any{file.Path, identity})
+	}
+	raw, err := json.Marshal([]any{snapshot, generations})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(raw)), nil
+}
+
 func (s *Service) PreviewRecovery(ctx context.Context, req RecoveryRequest) (RecoveryPreview, error) {
 	client, err := s.recoveryClient(ctx, req.ClientID)
 	if err != nil {
@@ -708,7 +742,11 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 		lastProgress = time.Now()
 		_, _ = s.db.W.ExecContext(ctx, `UPDATE recovery_imports SET data=json_set(data,'$.current_file',?,'$.copied_bytes',?,'$.total_bytes',?),updated_at=? WHERE id=?`, filepath.Base(path), done, total, time.Now().UnixMilli(), r.ID)
 	}
-	ctx = context.WithValue(ctx, recoveryPlacementKey{}, &recoveryPlacementContext{Destinations: destinations, Progress: progress, ImportID: r.ID, Files: ids, EpisodeTargets: targets, Validate: func() error { return s.validateRecoveryTarget(ctx, r) }})
+	ctx = context.WithValue(ctx, recoveryPlacementKey{}, &recoveryPlacementContext{
+		Destinations: destinations, Progress: progress, ImportID: r.ID, Files: ids, EpisodeTargets: targets,
+		Validate:     func() error { return s.validateRecoveryTarget(ctx, r) },
+		ObserveFinal: func() (string, error) { return s.recoveryFinalObservation(ctx, r) },
+	})
 	result, importErr := s.importDownloadFiles(ctx, sqlite.Download{MediaItemID: r.Request.MediaItemID, CopyID: r.Request.CopyID, ReleaseTitle: "recovery " + r.Recovery.ID}, root, paths, true)
 	if result.Imported != len(paths) || importErr != nil {
 		return fmt.Errorf("partial recovery remains held: %d/%d imported: %v", result.Imported, len(paths), importErr)

@@ -60,6 +60,8 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 			"TMDB API key not configured — set it under Settings")
 	case errors.Is(err, library.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
+	case errors.Is(err, acquisition.ErrReplacementReviewRequired):
+		writeCodedError(w, http.StatusConflict, "replacement_review_required", err.Error())
 	default:
 		s.deps.Log.Error("library api error", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -291,6 +293,14 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		}
 		fi := apigen.MediaFileInfo{
 			Id: f.ID, Path: f.Path, Size: f.Size, EpisodeIds: ids,
+			FileGeneration: optStr(f.FileGeneration), SourceGeneration: optStr(f.SourceGeneration),
+			SourceTransfer: optStr(f.SourceTransfer), SourcePayloadGeneration: optStr(f.SourcePayloadGeneration),
+			SourceFileGeneration: optStr(f.SourceFileGeneration), SourceGuid: optStr(f.SourceGUID),
+			SourceIndexer: optStr(f.SourceIndexer),
+		}
+		if f.SourceIndexerID != 0 {
+			id := f.SourceIndexerID
+			fi.SourceIndexerId = &id
 		}
 		// What this file is, and how we know (ADR 0013). The label and the
 		// facts line are rendered here rather than in the client so the API,

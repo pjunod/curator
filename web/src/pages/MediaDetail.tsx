@@ -1,6 +1,7 @@
 import { SERIES_MONITOR_MODES, monitorLabel, type SeriesMonitorMode } from '../monitoring'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { MouseEvent } from 'react'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import {
   ACTIVE_DOWNLOAD_STATES,
@@ -13,6 +14,7 @@ import {
   deleteMediaCopy,
   fmtBytes,
   fmtRatingValue,
+  getLibraryLifecycleReview,
   getLibraryItem,
   getLibraryPlacementSuggestion,
   getProfiles,
@@ -24,6 +26,13 @@ import {
   RATING_SOURCE_LABELS,
   refreshLibraryItem,
   removeLibraryFile,
+  resolveLibraryReviewFlag,
+  ApiError,
+  createReplacementOperation,
+  getReplacementOperation,
+  getReplacementFileObservation,
+  reportLibraryFile,
+  startReplacementFileObservation,
   reprobeLibraryItem,
   rescanManualEntry,
   setEpisodeMonitored,
@@ -31,13 +40,56 @@ import {
   updateLibraryItem,
   updateMediaCopy,
 } from '../api'
-import type { BookType, MediaFileInfo, MediaItemDetail, QualityProfile, RemoveFileOptions } from '../api'
+import type { BookType, MediaFileInfo, MediaItemDetail, QualityProfile } from '../api'
 import { describeAutoSearch } from '../autosearch'
 import { audioUndeterminedNote } from '../language'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { ReleaseSearch } from './ReleaseSearch'
 import { Pager, PageSizePicker, clampPage, sliceForPage } from '../Pager'
+import { mapReplacementObservationsByFileID } from '../replacementObservations'
+
+const lifecycleRequestIds = new Map<string, string>()
+const lifecycleRevisions = new Map<string, number>()
+
+function lifecycleRevisionKey(body: unknown): string {
+  return `monarr.lifecycle.observe.revision.${JSON.stringify(body)}`
+}
+
+function currentLifecycleRevision(body: unknown): number {
+  const key = lifecycleRevisionKey(body)
+  const cached = lifecycleRevisions.get(key)
+  if (cached !== undefined) return cached
+  try {
+    const stored = Number(localStorage.getItem(key))
+    if (Number.isSafeInteger(stored) && stored >= 0) {
+      lifecycleRevisions.set(key, stored)
+      return stored
+    }
+  } catch { /* private browsing or storage policy */ }
+  return 0
+}
+
+function advanceLifecycleRevision(body: unknown): void {
+  const key = lifecycleRevisionKey(body)
+  const revision = currentLifecycleRevision(body) + 1
+  lifecycleRevisions.set(key, revision)
+  try { localStorage.setItem(key, String(revision)) } catch { /* retain in-memory refresh for this page lifetime */ }
+}
+
+function stableLifecycleRequestId(kind: string, body: unknown, revision = 0): string {
+  const fingerprint = JSON.stringify(body)
+  const key = `monarr.lifecycle.${kind}.${revision}.${fingerprint}`
+  const memoryValue = lifecycleRequestIds.get(key)
+  if (memoryValue) return memoryValue
+  let existing: string | null = null
+  try { existing = localStorage.getItem(key) } catch { /* private browsing or storage policy */ }
+  if (existing) return existing
+  const requestId = crypto.randomUUID()
+  lifecycleRequestIds.set(key, requestId)
+  try { localStorage.setItem(key, requestId) } catch { /* keep retries stable for this page lifetime */ }
+  return requestId
+}
 
 function IdentityPanel({ item }: { item: MediaItemDetail }) {
   const qc = useQueryClient()
@@ -811,101 +863,220 @@ function ProvenanceBadge({ f }: { f: MediaFileInfo }) {
   )
 }
 
-/**
- * FileActions is the row control for one file: remove it, or remove it and
- * declare its release bad.
- *
- * Two buttons rather than one with a checkbox, because they are two different
- * statements and the difference matters. "Delete" is for a copy you do not
- * want — a duplicate, something taking up space. "Delete & blocklist" is for a
- * copy that should never have existed: it removes the file, tells automation
- * never to grab that release again, and starts looking for a real one.
- *
- * Both confirm first, and the confirmation names the file, because the button
- * is three pixels from the row above it.
- */
-function FileActions({
-  itemId,
-  file,
-  onDone,
-}: {
-  itemId: number
-  file: MediaFileInfo
-  onDone: () => void
-}) {
-  const [pending, setPending] = useState<'delete' | 'reject' | null>(null)
-  const [note, setNote] = useState<string | null>(null)
-
-  const remove = useMutation({
-    mutationFn: (opts: RemoveFileOptions) => removeLibraryFile(itemId, file.id, opts),
-    onSuccess: (res) => {
-      setPending(null)
-      setNote(res.note ?? null)
-      onDone()
-    },
-    onError: () => setPending(null),
+function FileActions({ item, file, onDone }: { item: MediaItemDetail; file: MediaFileInfo; onDone: () => void }) {
+  const qc = useQueryClient()
+  const [dialog, setDialog] = useState<'delete' | 'report' | 'replace_bad' | 'replace_quality' | null>(null)
+  const [reason, setReason] = useState('Reported by user')
+  const [reasonCode, setReasonCode] = useState('user_reported_bad')
+  const [blacklist, setBlacklist] = useState<boolean | null>(null)
+  const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([])
+  const [observationIds, setObservationIds] = useState<Record<number, string>>({})
+  const [operation, setOperation] = useState<{ operationId: string; state: string } | null>(null)
+  const [feedback, setFeedback] = useState('')
+  const [focusRevision, setFocusRevision] = useState(0)
+  const generation = file.fileGeneration ?? ''
+  const scopeFiles = item.files.filter((candidate) => {
+    if ((candidate.copyId ?? 0) !== (file.copyId ?? 0)) return false
+    if (item.kind === 'series') return selectedEpisodes.length > 0 && candidate.episodeIds.some((id) => selectedEpisodes.includes(id))
+    if (!file.sourceGeneration && !file.sourceTransfer) return candidate.id === file.id
+    return candidate.sourceGeneration === file.sourceGeneration && candidate.sourceTransfer === file.sourceTransfer
   })
-
-  const name = file.path.split('/').pop() || file.path
-  // Nothing to blocklist for a file Curator did not grab, and a button that
-  // silently does half of what it says is worse than one that is not there.
-  const canBlocklist = Boolean(file.sourceRelease)
-
-  if (pending) {
-    const rejecting = pending === 'reject'
-    return (
-      <div className="file-confirm">
-        <div className="mono">{name}</div>
-        <p className="muted">
-          {rejecting ? (
-            <>
-              Delete this file, never grab <span className="mono">{file.sourceRelease}</span>{' '}
-              again, and search for a replacement?
-            </>
-          ) : (
-            'Delete this file from disk and from the library?'
-          )}
-        </p>
-        <div className="row-actions">
-          <button
-            className="btn-danger"
-            disabled={remove.isPending}
-            onClick={() =>
-              remove.mutate({ fromDisk: true, blocklist: rejecting, search: rejecting })
-            }
-          >
-            {remove.isPending ? 'Working…' : rejecting ? 'Delete & blocklist' : 'Delete'}
-          </button>
-          <button disabled={remove.isPending} onClick={() => setPending(null)}>
-            Cancel
-          </button>
-        </div>
-        {remove.isError && (
-          <div className="error-text">{String((remove.error as Error).message)}</div>
-        )}
-      </div>
-    )
+  const observationEntries = Object.entries(observationIds)
+  const observationQueries = useQueries({ queries: observationEntries.map(([, observationId]) => ({
+    queryKey: ['replacement-observation', observationId],
+    queryFn: () => getReplacementFileObservation(observationId),
+    refetchInterval: (query: { state: { data?: { state?: string } } }) => query.state.data?.state === 'pending' ? 1000 : false,
+  })) })
+  const observationQueriesByFileID = mapReplacementObservationsByFileID(observationEntries, observationQueries)
+  const observationsReady = scopeFiles.length > 0 && scopeFiles.every((candidate) => {
+    const observationId = observationIds[candidate.id]
+    if (!observationId) return false
+    const state = observationQueriesByFileID.get(candidate.id)?.data?.state
+    return state === 'ready' || (dialog === 'replace_bad' && state === 'absent')
+  })
+  const operationStatus = useQuery({
+    queryKey: ['replacement-operation', operation?.operationId],
+    queryFn: () => getReplacementOperation(operation!.operationId),
+    enabled: Boolean(operation?.operationId),
+    refetchInterval: (query) => ['complete', 'cancelled', 'failed'].includes(query.state.data?.state ?? '') ? false : 3000,
+  })
+  const markedStaleObservations = useRef(new Set<string>())
+  useEffect(() => {
+    for (const candidate of scopeFiles) {
+      const observation = observationQueriesByFileID.get(candidate.id)?.data
+      if (!observation || (observation.state !== 'stale' && observation.state !== 'failed') || markedStaleObservations.current.has(observation.observationId)) continue
+      markedStaleObservations.current.add(observation.observationId)
+      advanceLifecycleRevision({ item: item.id, file: candidate.id, generation: candidate.fileGeneration })
+    }
+  }, [scopeFiles, observationQueriesByFileID, item.id])
+  const remove = useMutation({
+    mutationFn: () => removeLibraryFile(item.id, file.id, { fromDisk: true }),
+    onSuccess: (result) => { setDialog(null); setFeedback(result.note ?? 'File removed.'); onDone() },
+  })
+  const observe = useMutation({
+    mutationFn: async () => Promise.all(scopeFiles.map((candidate) => {
+      const reviewIdentity = { item: item.id, file: candidate.id, generation: candidate.fileGeneration }
+      return startReplacementFileObservation(item.id, candidate.id, {
+        requestId: stableLifecycleRequestId('observe', reviewIdentity, currentLifecycleRevision(reviewIdentity)),
+        fileGeneration: candidate.fileGeneration ?? '',
+      })
+    })),
+    onSuccess: (results) => setObservationIds(Object.fromEntries(scopeFiles.map((candidate, index) => [candidate.id, results[index].observationId]))),
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        for (const candidate of scopeFiles) advanceLifecycleRevision({ item: item.id, file: candidate.id, generation: candidate.fileGeneration })
+      }
+    },
+  })
+  const report = useMutation({
+    mutationFn: () => reportLibraryFile(item.id, file.id, { fileGeneration: generation, reasonCode, reason: reason.trim() }),
+    onSuccess: () => { setDialog(null); setFeedback('Report saved for review. No file or acquisition state changed.'); onDone(); void qc.invalidateQueries({ queryKey: ['library-lifecycle-review', item.id] }) },
+  })
+  const replace = useMutation({
+    mutationFn: () => createReplacementOperation(item.id, {
+      requestId: stableLifecycleRequestId('replace', { item: item.id, file: file.id, copy: file.copyId ?? 0, scope: item.kind === 'series' ? 'episodes' : 'download', episodes: [...selectedEpisodes].sort(), intent: dialog, blacklist, reasonCode, reason: reason.trim(), observations: scopeFiles.map((candidate) => [candidate.id, candidate.fileGeneration, observationIds[candidate.id]]) }),
+      sourceGeneration: file.sourceGeneration || undefined, sourceTransfer: file.sourceTransfer,
+      scope: item.kind === 'series' ? 'episodes' : 'download', copyId: file.copyId ?? 0,
+      sourceFileId: file.id,
+      episodeIds: item.kind === 'series' ? selectedEpisodes : undefined,
+      intent: dialog === 'replace_quality' ? 'replace_quality' : 'replace_bad', blacklistSourceRelease: blacklist ?? false,
+      reasonCode: dialog === 'replace_quality' ? 'quality_preference' : reasonCode, reason: reason.trim(),
+      observedFiles: scopeFiles.map((candidate) => ({ id: candidate.id, fileGeneration: candidate.fileGeneration ?? '', observationId: observationIds[candidate.id] ?? '' })),
+    }),
+    onSuccess: (result) => {
+      setOperation(result)
+      setFocusRevision((revision) => revision + 1)
+      void qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+      void qc.invalidateQueries({ queryKey: ['library-lifecycle-review', item.id] })
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        for (const candidate of scopeFiles) advanceLifecycleRevision({ item: item.id, file: candidate.id, generation: candidate.fileGeneration })
+      }
+    },
+  })
+  const needsFreshObservation = observationQueries.some((query) => query.data?.state === 'stale' || query.data?.state === 'failed') ||
+    (observe.isError && observe.error instanceof ApiError && observe.error.status === 409) ||
+    (replace.isError && replace.error instanceof ApiError && replace.error.status === 409)
+  useLayoutEffect(() => {
+    if (focusRevision) document.querySelector<HTMLHeadingElement>('.action-dialog h2')?.focus({ preventScroll: true })
+  }, [focusRevision])
+  const begin = (kind: 'report' | 'replace_bad' | 'replace_quality', event: MouseEvent<HTMLButtonElement>) => {
+    focusActionTrigger(event)
+    setDialog(kind); setReason(kind === 'replace_quality' ? 'Upgrade quality' : 'Reported by user')
+    setReasonCode(kind === 'replace_quality' ? 'quality_preference' : 'user_reported_bad')
+    setBlacklist(null); setSelectedEpisodes([]); setObservationIds({}); setOperation(null); setFeedback('')
+    observe.reset(); replace.reset(); report.reset()
   }
+  const refreshObservation = () => {
+    for (const candidate of scopeFiles) advanceLifecycleRevision({ item: item.id, file: candidate.id, generation: candidate.fileGeneration })
+    setObservationIds({})
+    observe.reset(); replace.reset()
+  }
+  const episodeLabel = (id: number) => {
+    for (const season of item.seasons) {
+      const episode = season.episodes.find((candidate) => candidate.id === id)
+      if (episode) return `S${String(season.number).padStart(2, '0')}E${String(episode.episodeNumber).padStart(2, '0')} · ${episode.title}`
+    }
+    return `Episode ${id}`
+  }
+  const stableSource = Boolean(file.sourceGuid && file.sourceIndexerId)
+  const name = file.path.split('/').pop() || file.path
 
-  return (
+  return <>
     <div className="row-actions">
-      <button onClick={() => setPending('delete')} title="Remove this file from disk and the library">
-        Delete
-      </button>
-      <button
-        onClick={() => setPending('reject')}
-        disabled={!canBlocklist}
-        title={
-          canBlocklist
-            ? 'Delete it, never grab that release again, and search for a replacement'
-            : 'Curator did not grab this file, so there is no release to blocklist'
-        }
-      >
-        Delete &amp; blocklist
-      </button>
-      {note && <div className="muted">{note}</div>}
+      <button onClick={(event) => begin('report', event)}>Report</button>
+      <button onClick={(event) => begin('replace_bad', event)}>Mark bad &amp; replace</button>
+      <button onClick={(event) => begin('replace_quality', event)}>Replace quality</button>
+      <button onClick={(event) => { focusActionTrigger(event); setDialog('delete') }}>Delete…</button>
     </div>
-  )
+    {feedback && <div className="muted">{feedback}</div>}
+    {dialog && <ActionDialog title={dialog === 'report' ? 'Report library file' : dialog === 'delete' ? 'Delete library file' : operation ? 'Replacement started' : 'Review replacement'} onClose={() => setDialog(null)}>
+      <p className="mono">{name}</p>
+      {dialog === 'delete' ? <>
+        <p>Delete this file from disk and from the library?</p>
+        <div className="row-actions"><button className="btn-danger" disabled={remove.isPending} onClick={() => remove.mutate()}>{remove.isPending ? 'Deleting…' : 'Delete file'}</button><button onClick={() => setDialog(null)}>Cancel</button></div>
+        {remove.isError && <p className="error-text">{(remove.error as Error).message}</p>}
+      </> : dialog === 'report' ? <>
+        <p className="muted">A report creates a review flag only. It does not change quality, remove this file, or start a download.</p>
+        <label>Reason code<select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}><option value="user_reported_bad">User reported a problem</option><option value="corrupt_media">Corrupt media</option><option value="wrong_content">Wrong content</option><option value="incomplete_media">Incomplete media</option></select></label>
+        <label className="replacement-reason-field">What did you notice?<textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        <div className="row-actions"><button disabled={!reason.trim() || report.isPending} onClick={() => report.mutate()}>{report.isPending ? 'Saving…' : 'Save report'}</button><button onClick={() => setDialog(null)}>Cancel</button></div>
+        {report.isError && <ActionNotice warning>{(report.error as Error).message}</ActionNotice>}
+      </> : operation ? <>
+        <p>Operation <code>{operation.operationId}</code> is {operationStatus.data?.state ?? operation.state}. It continues after this dialog closes.</p>
+        {operationStatus.data?.retryAttempts !== undefined && <p className="muted">Retry attempts: {operationStatus.data.retryAttempts}{operationStatus.data.nextAttemptAt ? ` · next retry ${new Date(operationStatus.data.nextAttemptAt).toLocaleString()}` : ''}</p>}
+        {operationStatus.data?.blockedWarning && <ActionNotice warning>This operation has been blocked for more than 30 minutes.</ActionNotice>}
+        {(operationStatus.data?.lastError || operationStatus.isError) && <ActionNotice warning>{operationStatus.data?.lastError || (operationStatus.error as Error).message}</ActionNotice>}
+        <button onClick={() => setDialog(null)}>Done</button>
+      </> : <>
+        <p className="muted">Curator hashes the current file in the background. Confirm only after the exact file observation is ready.</p>
+        {!observationsReady ? <>
+          {item.kind === 'series' && <fieldset><legend>Episodes to replace</legend>{file.episodeIds.map((id) => <label key={id} className="inline"><input type="checkbox" checked={selectedEpisodes.includes(id)} onChange={(event) => { setSelectedEpisodes((current) => event.target.checked ? [...current, id] : current.filter((value) => value !== id)); setObservationIds({}) }} />{episodeLabel(id)}</label>)}</fieldset>}
+          <p className="muted">This review covers {scopeFiles.length} current source file{scopeFiles.length === 1 ? '' : 's'} in the selected scope.</p>
+          <button disabled={observe.isPending || scopeFiles.length === 0 || (item.kind === 'series' && selectedEpisodes.length === 0)} onClick={() => observe.mutate()}>{observe.isPending ? 'Preparing review…' : scopeFiles.length === 0 ? 'Choose episodes first' : `Prepare ${scopeFiles.length} file review${scopeFiles.length === 1 ? '' : 's'}`}</button>
+          {needsFreshObservation && <button onClick={refreshObservation}>Prepare a fresh file review</button>}
+          {observe.isError && <p className="error-text">{(observe.error as Error).message}</p>}
+          {observationQueries.map((query, index) => query.data && query.data.state !== 'pending' && query.data.state !== 'ready' ? <p className="error-text" key={index}>{query.data.error || 'A reviewed file changed; refresh and prepare the source scope again.'}</p> : null)}
+        </> : <>
+          <p>Reviewed all {scopeFiles.length} files in the selected source scope.</p>
+          {observationQueries.some((query) => query.data?.state === 'absent') && <ActionNotice warning>One selected library file is absent on storage whose identity was verified by an earlier present-file observation. Marking it bad will remove only its stale library record and continue within the selected scope.</ActionNotice>}
+          <fieldset><legend>Also blacklist this whole source release?</legend>
+            <label className="inline"><input type="radio" name={`blacklist-${file.id}`} checked={blacklist === false} onChange={() => setBlacklist(false)} />No, exclude it only from this request</label>
+            <label className="inline"><input type="radio" name={`blacklist-${file.id}`} checked={blacklist === true} disabled={!stableSource} onChange={() => setBlacklist(true)} />Yes, blacklist the exact source release</label>
+          </fieldset>
+          {!stableSource && <p className="muted">No stable indexer release ID is recorded, so global blacklisting is unavailable.</p>}
+          <label className="replacement-reason-field">Reason<textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+          <div className="row-actions"><button disabled={replace.isPending || !reason.trim() || blacklist === null || (item.kind === 'series' && selectedEpisodes.length === 0)} onClick={() => replace.mutate()}>{replace.isPending ? 'Starting…' : dialog === 'replace_quality' ? 'Start quality replacement' : 'Confirm bad & replace'}</button><button onClick={() => setDialog(null)}>Cancel</button></div>
+          {replace.isError && <ActionNotice warning>{(replace.error as Error).message}</ActionNotice>}
+        </>}
+      </>}
+    </ActionDialog>}
+  </>
+}
+
+function LifecycleReviewPanel({ item }: { item: MediaItemDetail }) {
+  const qc = useQueryClient()
+  const review = useQuery({
+    queryKey: ['library-lifecycle-review', item.id],
+    queryFn: () => getLibraryLifecycleReview(item.id),
+    refetchInterval: (query) => query.state.data?.operations.some((op) => !['complete', 'cancelled', 'failed'].includes(op.state)) ? 5000 : false,
+  })
+  const resolve = useMutation({
+    mutationFn: ({ flagId, generation }: { flagId: number; generation: string }) => resolveLibraryReviewFlag(item.id, flagId, generation),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['library-lifecycle-review', item.id] }) },
+  })
+  const operations = review.data?.operations ?? []
+  const reports = review.data?.openReports ?? []
+  if (review.isLoading || (!operations.length && !reports.length && !review.isError)) return null
+  return <section className="panel item-lifecycle-review" aria-labelledby="lifecycle-review-title">
+    <h2 id="lifecycle-review-title">Replacement activity and reports</h2>
+    {review.isError && <p className="error-text">Could not load lifecycle review: {(review.error as Error).message}</p>}
+    {operations.length > 0 && <div>
+      <h3>Replacement operations</h3>
+      <ul className="result-list">{operations.map((op) => <li className="result-note" key={op.operationId}>
+        <strong>{op.intent === 'replace_bad' ? 'Bad-source replacement' : 'Quality replacement'} · {op.state.replaceAll('_', ' ')}</strong>
+        <div className="muted">Operation {op.operationId} · {op.scope}{op.copyId ? ` · copy ${op.copyId}` : ''}{op.episodeIds?.length ? ` · episodes ${op.episodeIds.join(', ')}` : ''}</div>
+        {op.retryAttempts ? <div className="muted">Retry attempts: {op.retryAttempts}{op.nextAttemptAt ? ` · next attempt ${new Date(op.nextAttemptAt).toLocaleString()}` : ''}</div> : null}
+        {op.blockedWarning ? <div className="error-text">This operation has been blocked for more than 30 minutes.</div> : null}
+        {op.lastError ? <div className="error-text">{op.lastError}</div> : null}
+      </li>)}</ul>
+    </div>}
+    {reports.length > 0 && <div>
+      <h3>Open file reports</h3>
+      <ul className="result-list">{reports.map((flag) => {
+        const file = item.files.find((candidate) => candidate.id === flag.mediaFileId && candidate.fileGeneration === flag.fileGeneration)
+        return <li className="result-note" key={flag.id}>
+          <strong>{file?.path ?? `Removed or changed file ${flag.mediaFileId}`} · {flag.reasonCode.replaceAll('_', ' ')}</strong>
+          <div>{flag.reason}</div>
+          <div className="muted">Reported {new Date(flag.createdAt).toLocaleString()}{!file ? ' · the original file generation is no longer current' : ''}</div>
+          <button disabled={resolve.isPending}
+            onClick={() => resolve.mutate({ flagId: flag.id, generation: flag.fileGeneration })}>Resolve report</button>
+        </li>
+      })}</ul>
+      {resolve.isError && <p className="error-text">{(resolve.error as Error).message}</p>}
+    </div>}
+  </section>
 }
 
 // Keep pagination local to the item. Refreshes preserve the viewer's page;
@@ -931,6 +1102,7 @@ function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: 
 
   return (
     <section className="panel item-files">
+      <LifecycleReviewPanel item={m} />
       <details>
         <summary className="item-section-summary"><h2>Files <span className="muted">({m.files.length})</span></h2></summary>
         {m.files.length === 0 ? (
@@ -994,7 +1166,7 @@ function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: 
                       )}
                       <td>
                         <FileActions
-                          itemId={m.id}
+                          item={m}
                           file={f}
                           onDone={onChanged}
                         />

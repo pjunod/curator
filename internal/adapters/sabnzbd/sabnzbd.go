@@ -72,8 +72,11 @@ func (c *Client) Add(ctx context.Context, downloadURL, category string) (ports.H
 	if err := c.call(ctx, params, &resp); err != nil {
 		return "", err
 	}
-	if !resp.Status || len(resp.IDs) == 0 {
-		return "", fmt.Errorf("sabnzbd: addurl rejected")
+	if !resp.Status {
+		return "", fmt.Errorf("sabnzbd: addurl rejected: %w", ports.ErrAdmissionRejected)
+	}
+	if len(resp.IDs) == 0 {
+		return "", fmt.Errorf("sabnzbd: addurl accepted without returning a request ID")
 	}
 	return ports.Handle(resp.IDs[0]), nil
 }

@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -33,12 +35,215 @@ func (s *Server) acqErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, acquisition.ErrNoLibraryFolder):
 		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, acquisition.ErrNotFound):
+	case errors.Is(err, acquisition.ErrReplacementInvalid):
+		writeCodedError(w, http.StatusBadRequest, "invalid_replacement_request", err.Error())
+	case errors.Is(err, acquisition.ErrRequestConflict):
+		writeCodedError(w, http.StatusConflict, "request_conflict", err.Error())
+	case errors.Is(err, acquisition.ErrReplacementStale), errors.Is(err, sqlite.ErrReplacementRequestConflict):
+		writeCodedError(w, http.StatusConflict, "replacement_conflict", err.Error())
+	case errors.Is(err, sqlite.ErrReplacementScopeConflict), errors.Is(err, acquisition.ErrReplacementReviewRequired):
+		writeCodedError(w, http.StatusConflict, "replacement_review_required", err.Error())
+	case errors.Is(err, acquisition.ErrBlacklistConfirmationRequired):
+		writeCodedError(w, http.StatusConflict, "blacklist_confirmation_required", err.Error())
+	case errors.Is(err, sqlite.ErrManualGrabRequestRetained):
+		writeCodedError(w, http.StatusConflict, "request_retained", "this manual request has already completed and its Activity row was dismissed; use a new requestId for a new action")
+	case errors.Is(err, acquisition.ErrNotFound), errors.Is(err, sqlite.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
 	default:
 		s.deps.Log.Error("acquisition api error", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 	}
+}
+
+func replacementOperationDTO(op sqlite.ReplacementOperation, files []sqlite.ReplacementFile) apigen.ReplacementOperation {
+	copyID, itemID := op.CopyID, op.MediaItemID
+	lastError, sourceGeneration := op.LastError, op.SourceGeneration
+	retries := op.RetryAttempts
+	blockedWarning := !op.BlockedSince.IsZero() && time.Since(op.BlockedSince) >= 30*time.Minute
+	sourceTransfer, sourceRelease, sourceGUID := op.SourceTransfer, op.SourceRelease, op.SourceGUID
+	sourceIndexerID := op.SourceIndexerID
+	episodes := append([]int64(nil), op.EpisodeIDs...)
+	fileRows := make([]map[string]interface{}, 0, len(files))
+	for _, f := range files {
+		fileRows = append(fileRows, map[string]interface{}{"id": f.MediaFileID, "fileGeneration": f.FileGeneration,
+			"path": f.Path, "sha256": f.SHA256, "episodeIds": f.EpisodeIDs, "disposition": f.Disposition, "removalState": f.RemovalState})
+	}
+	out := apigen.ReplacementOperation{OperationId: op.ID, RequestId: op.RequestID, State: op.State,
+		Intent: op.Intent, Scope: op.Scope, CopyId: &copyID, MediaItemId: &itemID,
+		SourceGeneration: &sourceGeneration, SourceTransfer: &sourceTransfer, SourceRelease: &sourceRelease,
+		SourceGuid: &sourceGUID, SourceIndexerId: &sourceIndexerID, EpisodeIds: &episodes,
+		LastError: &lastError, Files: &fileRows, RetryAttempts: &retries, BlockedWarning: &blockedWarning}
+	if !op.BlockedSince.IsZero() {
+		value := op.BlockedSince
+		out.BlockedSince = &value
+	}
+	if !op.NextAttemptAt.IsZero() {
+		value := op.NextAttemptAt
+		out.NextAttemptAt = &value
+	}
+	return out
+}
+
+func (s *Server) CreateReplacementOperation(w http.ResponseWriter, r *http.Request, itemID int64) {
+	var raw map[string]json.RawMessage
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil || json.Unmarshal(body, &raw) != nil {
+		writeError(w, http.StatusBadRequest, "invalid replacement request")
+		return
+	}
+	blacklistRaw, exists := raw["blacklistSourceRelease"]
+	if !exists || (string(bytes.TrimSpace(blacklistRaw)) != "true" && string(bytes.TrimSpace(blacklistRaw)) != "false") {
+		writeError(w, http.StatusBadRequest, "blacklistSourceRelease must be explicitly true or false")
+		return
+	}
+	var in apigen.ReplacementRequest
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid replacement request")
+		return
+	}
+	var sourceTransfer string
+	if in.SourceTransfer != nil {
+		sourceTransfer = *in.SourceTransfer
+	}
+	var sourceGeneration string
+	if in.SourceGeneration != nil {
+		sourceGeneration = *in.SourceGeneration
+	}
+	var episodes []int64
+	if in.EpisodeIds != nil {
+		episodes = *in.EpisodeIds
+	}
+	observed := make([]acquisition.ReplacementObservedFile, 0, len(in.ObservedFiles))
+	for _, f := range in.ObservedFiles {
+		observed = append(observed, acquisition.ReplacementObservedFile{ID: f.Id, FileGeneration: f.FileGeneration, ObservationID: f.ObservationId})
+	}
+	blacklist := in.BlacklistSourceRelease
+	op, replayed, err := s.deps.Acquisition.CreateReplacement(r.Context(), acquisition.ReplacementRequest{
+		RequestID: in.RequestId, SourceGeneration: sourceGeneration, SourceTransfer: sourceTransfer,
+		Scope: string(in.Scope), MediaItemID: itemID, SourceFileID: in.SourceFileId, CopyID: in.CopyId, EpisodeIDs: episodes,
+		Intent: string(in.Intent), BlacklistSourceRelease: &blacklist, ReasonCode: in.ReasonCode,
+		Reason: in.Reason, ObservedFiles: observed})
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	files, err := s.deps.Acquisition.ReplacementFiles(r.Context(), op.ID)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	status := http.StatusAccepted
+	if replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, replacementOperationDTO(op, files))
+}
+
+func (s *Server) GetReplacementOperation(w http.ResponseWriter, r *http.Request, operationID string) {
+	op, files, err := s.deps.Acquisition.GetReplacement(r.Context(), operationID)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, replacementOperationDTO(op, files))
+}
+
+func (s *Server) GetLibraryLifecycleReview(w http.ResponseWriter, r *http.Request, itemID int64) {
+	ops, flags, err := s.deps.Acquisition.ListLibraryLifecycleReview(r.Context(), itemID)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	operations := make([]apigen.ReplacementOperation, 0, len(ops))
+	for _, op := range ops {
+		operations = append(operations, replacementOperationDTO(op, nil))
+	}
+	reports := make([]apigen.LibraryReviewFlag, 0, len(flags))
+	for _, flag := range flags {
+		reports = append(reports, apigen.LibraryReviewFlag{Id: flag.ID, MediaItemId: flag.MediaItemID,
+			MediaFileId: flag.MediaFileID, FileGeneration: flag.FileGeneration, ReasonCode: flag.ReasonCode,
+			Reason: flag.Reason, State: apigen.Open, CreatedAt: flag.CreatedAt, UpdatedAt: flag.UpdatedAt})
+	}
+	writeJSON(w, http.StatusOK, apigen.LibraryLifecycleReview{Operations: operations, OpenReports: reports})
+}
+
+func (s *Server) ResolveLibraryReviewFlag(w http.ResponseWriter, r *http.Request, itemID, flagID int64) {
+	var in apigen.ResolveLibraryReviewFlagJSONBody
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || strings.TrimSpace(in.FileGeneration) == "" {
+		writeError(w, http.StatusBadRequest, "fileGeneration is required")
+		return
+	}
+	if err := s.deps.Acquisition.ResolveLibraryReviewFlag(r.Context(), itemID, flagID, in.FileGeneration); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func replacementObservationDTO(o sqlite.ReplacementFileObservation) apigen.ReplacementObservation {
+	out := apigen.ReplacementObservation{ObservationId: o.ID, RequestId: o.RequestID, State: o.State, FileGeneration: o.FileGeneration}
+	if o.SourceGeneration != "" {
+		value := o.SourceGeneration
+		out.SourceGeneration = &value
+	}
+	if o.SHA256 != "" {
+		value := o.SHA256
+		out.Sha256 = &value
+	}
+	if o.Size != 0 {
+		value := o.Size
+		out.Size = &value
+	}
+	if o.Error != "" {
+		value := o.Error
+		out.Error = &value
+	}
+	return out
+}
+
+func (s *Server) StartReplacementFileObservation(w http.ResponseWriter, r *http.Request, itemID, fileID int64) {
+	var in apigen.ReplacementObservationRequest
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid replacement observation request")
+		return
+	}
+	o, replayed, err := s.deps.Acquisition.StartReplacementFileObservation(r.Context(), itemID, fileID, in.FileGeneration, in.RequestId)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	status := http.StatusAccepted
+	if replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, replacementObservationDTO(o))
+}
+
+func (s *Server) GetReplacementFileObservation(w http.ResponseWriter, r *http.Request, observationID string) {
+	o, err := s.deps.Acquisition.GetReplacementFileObservation(r.Context(), observationID)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, replacementObservationDTO(o))
+}
+
+func (s *Server) ReportLibraryFile(w http.ResponseWriter, r *http.Request, itemID, fileID int64) {
+	var in apigen.LibraryFileReportRequest
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid library file report")
+		return
+	}
+	evidence, err := json.Marshal(in.Evidence)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid report evidence")
+		return
+	}
+	if err = s.deps.Acquisition.ReportLibraryFile(r.Context(), itemID, fileID, in.FileGeneration, in.ReasonCode, in.Reason, evidence); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---- profiles ----
@@ -556,6 +761,10 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 			Quality: c.QualityStr, Score: c.Score, Accepted: c.Accepted, IsUpgrade: c.IsUpgrade,
 			Rejections: []apigen.Rejection{}, Match: match, CandidateToken: c.Token,
 		}
+		if c.BlacklistReason != "" {
+			reason := c.BlacklistReason
+			rc.BlacklistReason = &reason
+		}
 		if len(c.Formats) > 0 {
 			fs := c.Formats
 			rc.Formats = &fs
@@ -583,13 +792,17 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 // GrabRelease implements POST /grab.
 func (s *Server) GrabRelease(w http.ResponseWriter, r *http.Request) {
 	var in apigen.GrabRequest
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Title == "" || in.DownloadUrl == "" {
-		writeError(w, http.StatusBadRequest, "mediaItemId, title, downloadUrl, protocol required")
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Title == "" || in.DownloadUrl == "" || in.RequestId == "" || in.Intent != apigen.AdditionalCopy {
+		writeError(w, http.StatusBadRequest, "mediaItemId, title, downloadUrl, protocol, intent=additional_copy, requestId required")
 		return
 	}
 	req := acquisition.GrabRequest{
 		MediaItemID: in.MediaItemId, Season: -1,
 		Title: in.Title, DownloadURL: in.DownloadUrl, Protocol: in.Protocol,
+		RequestID: in.RequestId,
+	}
+	if in.DownloadAnyway != nil {
+		req.AllowBlacklisted = *in.DownloadAnyway
 	}
 	if in.Season != nil {
 		req.Season = *in.Season
@@ -609,7 +822,7 @@ func (s *Server) GrabRelease(w http.ResponseWriter, r *http.Request) {
 	if in.CandidateToken != nil {
 		req.CandidateToken = *in.CandidateToken
 	}
-	id, err := s.deps.Acquisition.Grab(r.Context(), req)
+	id, err := s.deps.Acquisition.GrabManual(r.Context(), req)
 	if err != nil {
 		s.acqErr(w, err)
 		return
@@ -637,6 +850,15 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			Title: d.ReleaseTitle, State: d.State, Progress: float32(d.Progress),
 			Protocol: d.Protocol, Quality: d.Quality.Display(),
 			SavePath: &save, ImportPath: &imp, AddedAt: d.AddedAt,
+		}
+		if attempts, blockedSince, retryAt, retryable := s.deps.Acquisition.ImportRetryStatus(d); retryable {
+			item.ImportRetryAttempts = &attempts
+			if !blockedSince.IsZero() {
+				item.ImportBlockedSince = &blockedSince
+			}
+			if !retryAt.IsZero() {
+				item.ImportRetryAt = &retryAt
+			}
 		}
 		phase, parked := apigen.QueueItemSubmissionPhase(d.SubmissionPhase), d.ParkedReason
 		item.SubmissionPhase = &phase
@@ -786,9 +1008,10 @@ func (s *Server) ScanImportPath(w http.ResponseWriter, r *http.Request, params a
 		if eps == nil {
 			eps = []int{}
 		}
+		snapshotIdentity := f.SnapshotIdentity
 		out = append(out, apigen.ScannedFile{
 			Path: f.Path, Name: f.Name, Size: f.Size, Kind: f.Kind,
-			Quality: f.Quality, Season: f.Season, Episodes: eps,
+			Quality: f.Quality, Season: f.Season, Episodes: eps, SnapshotIdentity: &snapshotIdentity,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -811,6 +1034,20 @@ func (s *Server) ManualImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := acquisition.ManualImportRequest{Path: in.Path, MediaItemID: in.MediaItemId}
+	if in.ReviewLegacy != nil {
+		req.ReviewLegacy = *in.ReviewLegacy
+	}
+	if in.ReviewLegacyFingerprint != nil {
+		req.ReviewLegacyFingerprint = *in.ReviewLegacyFingerprint
+	}
+	if in.ReviewLegacyFiles != nil {
+		req.ReviewLegacyFiles = make([]acquisition.CompletedFileSelection, 0, len(*in.ReviewLegacyFiles))
+		for _, file := range *in.ReviewLegacyFiles {
+			req.ReviewLegacyFiles = append(req.ReviewLegacyFiles, acquisition.CompletedFileSelection{
+				Path: file.Path, SnapshotIdentity: file.SnapshotIdentity,
+			})
+		}
+	}
 	if in.Paths != nil {
 		req.Paths = *in.Paths
 	}

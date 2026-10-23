@@ -613,86 +613,55 @@ half-working.
 
 ## Cleaning up after a download
 
-Once a payload has been imported, the copy in the download client's completed
-folder is doing nothing but occupying a disk. **Clean up after import**, on
-each download client in Settings → Acquisition, deletes it.
+Cleanup follows the owner of each delivery. For ordinary download clients,
+**Clean up after import** controls their normal post-import cleanup. Usenet
+clients default on; torrent clients default off because they may still be
+seeding. Curator verifies guarded local removal when a client no longer has
+the job. This setting never grants deletion authority inside a library root.
 
-Deleting is safe whichever way the file was imported. When Monarr can hardlink
-— the library and the download folder on one filesystem — the client's copy is
-just a second name for the same bytes, and removing that name leaves the
-library's. When it cannot, and it copied, the client's copy is a genuine
-duplicate and removing it frees real space. That second case is the one that
-gets expensive: a fast local disk for downloads and a big array for the library
-is the normal arrangement, and it means every grab is stored twice.
+Native Runner deliveries use a durable receipt and per-file cleanup ledger.
+Curator validates the accepted manifest, imports the selected files, and
+removes only files whose import, same-copy redundancy, or completed replacement
+scope has been recorded and rechecked. It does not treat the completed payload
+as one disposable directory: unresolved or recoverable siblings remain
+available in **Resolve**. Runner acceptance and Curator file cleanup retry
+independently. The legacy cleanup switch does not disable verified cleanup for
+new Runner deliveries.
 
-The default differs by client type, because the right answer does:
-
-- **Usenet** (nzbd, SABnzbd, NZBGet) defaults **on**. There is no obligation
-  once the download finishes; the payload is scratch space.
-- **Torrents** default **off**. The client is still seeding, and Monarr cannot
-  yet tell "finished seeding" from "seeding happily", so throwing that data
-  away stays your decision.
-
-Turning it on also collects what has already piled up. An hourly
-`downloads.cleanup` task sweeps imported downloads whose payload is still on
-the client, rotating cleanup attempts so a blocked entry cannot starve later
-ones. Enabling the setting after a year of grabbing
-clears the year of grabs too — a few dozen at a time, so the client is never
-handed hundreds of deletions at once. Run it on demand from System → Tasks.
-
-**If the client will not delete it, Monarr does.** A download client that has
-lost the job, or whose delete quietly does not take, used to end the story
-there: Monarr asked once, was told no, and left the payload where it was
-forever. It now removes the completed folder itself — the same folder it just
-finished importing from — and records that it did. This only ever touches the
-directory the client reported, and never a path at, above, or inside a root
-folder: a path mapping pointing into the library is not permission to delete
-the library.
+Older Runner history rows are not adopted or cleaned merely because Runner now
+supports delivery receipts. They remain in the legacy review cohort until
+explicitly resolved, so a newly observed history row cannot silently authorize
+import or deletion for a current library copy.
 
 ### Completed folders — accounting survives an empty queue
 
-Activity → **Download storage** inventories the whole Curator-owned working
-tree independently of the queue. The deployed `/working/monarr` root contains
-`completed`, also mounted at `/downloads`; both names refer to the same
-files. Each completed payload is shown individually alongside files elsewhere
-in the working tree. The `completed` container itself is omitted from the list
-and entry count; its contents still contribute to the measured bytes. Older
-cached scans also hide that container without waiting for another scan.
-`downloads.inventory` runs on startup and every five minutes. It includes
-hidden entries, loose files, archives, and nested files, grouped by payload below `completed` or by the first
-path component elsewhere in each configured root. Symbolic links are listed but their
-targets are not followed. Sizes are **logical bytes**, not allocated space or
-a promise of how many bytes deletion would reclaim.
+Activity → **Download storage** inventories configured Curator-owned working
+trees independently of the queue. The deployed `/working/monarr` root contains
+`completed`, also mounted at `/downloads`; both names refer to the same files.
+The `completed` container is omitted as a row, while its payloads are listed
+individually. Hidden entries, loose files, archives, and nested files count;
+symbolic-link targets are not followed. Sizes are **logical bytes**, not
+allocated space or a promise of how many bytes deletion would reclaim.
 
 | Explanation | What to do |
 |---|---|
 | Active | A download or import still owns this path; let it finish |
 | Awaiting import | Check Activity for approval, cancellation, or a stalled handoff |
-| Failed | Review the failure and use **Review import** to recover media |
-| Cleanup pending | An imported payload remains; **Retry imported cleanup** queues the existing cleanup task |
-| Retained | Cleanup is disabled or its client was removed; files remain accounted for |
+| Failed | Review the failure and use **Resolve files** to choose a destination |
+| Cleanup pending | A cleanup obligation remains; its owning worker retries it |
+| Retained | Files remain accounted for and are not eligible for automatic cleanup |
 | Untracked / ambiguous | No current record, or multiple associations; review the files and historical receipts |
 | Symlink | Target bytes are excluded; check the link separately |
 
-**Scan download storage** queues another scan. **Review import** opens the
-existing manual-import preview at that entry. It does not import or delete
-anything merely by opening the panel. Unknown entries and historical-only
-associations are never automatically deleted. Clearing Activity preserves
-path, release, and state receipts independently, including through restarts.
-Imported downloads whose payload has not been removed also retain their live
-cleanup record internally. Clearing finished Activity, removing an individual
-finished row, or aging it out hides the row from Activity without cancelling
-cleanup. Its storage entry stays **Cleanup pending** (or **Retained** when
-cleanup is disabled). The internal row is retired only after removal is
-confirmed and its removal receipt is saved. Cleanup path guards log the
-specific blocking path or download when they refuse removal.
-A receipt identifies its payload folder or files beneath that folder. A receipt
-for a shared storage root or the `completed` container does not identify every
-child payload. Cleared history at those containers does not block cleanup of
-unrelated imported payloads; live overlapping work still retains custody.
-Existing cached associations are corrected by the next successful storage scan.
-Files whose records were already erased before this upgrade appear as
-untracked; the upgrade cannot reconstruct that lost history.
+**Scan download storage** queues another scan. **Resolve files** opens the
+shared Resolve panel with that location prefilled; opening it does not import
+or delete anything. Untracked entries and legacy history-only associations
+are not automatically adopted. Clearing or aging out an Activity row does not
+cancel durable receipt, acknowledgement, or cleanup work. The inventory keeps
+showing files until a later complete scan confirms their state. Cleanup uses
+recorded file identities and current ownership checks; unknown siblings remain
+protected. A configured storage root alone does not identify every child as
+belonging to one download.
 
 A full download progress bar does not prove a complete payload. PAR repair,
 archive extraction, or a disk write can fail after most bytes arrive. A failed
@@ -725,16 +694,15 @@ dialog, including when you select an entry near the bottom of the list.
 Entries that change after
 selection must be selected again. Active downloads, awaiting imports, storage
 containers, and entries from incomplete scans cannot be selected for deletion.
-**Review import** remains an individual action because each payload needs a
+**Resolve files** remains an individual action because each payload needs a
 library destination.
 
-**Delete files…** shows a confirmation for the selected entry. Confirming
-permanently removes its files from Curator-owned storage, then updates the
-inventory and history. Curator rechecks ownership, active work, and the
-recursive metadata fingerprint before deleting through a directory handle.
-Changed files require a new scan. Library and recovery paths, storage roots,
-and active download/import paths cannot be deleted through this action.
-Removing a symlink removes the link, never its target.
+**Delete files…** shows a confirmation for the selected entry. This is an
+explicit operator action. Curator rechecks ownership, active work, and the
+selected file identities before unlinking through a directory handle. Library
+and recovery paths, storage roots, and active download/import paths cannot be
+deleted through this action. Removing a symlink removes the link, never its
+target.
 
 A scan error retains the last complete inventory and shows the error and its
 last successful timestamp. The health check warns on entries needing review,
@@ -746,15 +714,12 @@ an unresponsive mount can still delay a call. Scans are serialized so they canno
 accumulate workers. Deletion rechecks only the selected payload under its own
 30-second deadline.
 
-A successful client delete response no longer proves local files disappeared.
-When the local path is known, cleanup verifies absence, retries the guarded
-local fallback inside Curator-owned storage, and leaves unsuccessful cleanup
-pending. This authority includes Runner downloads completed into that tree;
-Runner-owned processing and recovery paths remain outside it. Paths previously marked
-removed are surfaced for review, because the path may have been reused; they
-are not deleted automatically. Disabled cleanup clients do not consume the
-25-attempt batch. Library roots, completed roots, symlinks, and paths overlapping another
-record are protected from local deletion.
+A successful client delete response alone does not prove local files
+disappeared. Curator checks the recorded path and keeps retry/error state when
+the result is uncertain. Runner-owned processing and recovery trees remain
+outside Curator's cleanup authority. A reused path is not treated as the old
+payload merely because its name matches; accepted generation and file identity
+must still match before cleanup.
 
 ## The same release, twice
 
@@ -895,13 +860,15 @@ What happens now:
 - the download is marked failed, with `import stopped: N of M files placed`,
   and the files that did land stay in the library
 - the payload is **not** cleaned up — the half that is missing still needs it
-- a `downloads.import-retry` task retries every 15 minutes, up to six times,
-  and finishes the job the moment there is room. Nobody has to notice.
+- a `downloads.import-retry` task retries after 30 seconds, then 1 minute,
+  2 minutes, and every 5 minutes after that. There is no permanent attempt
+  cutoff; the Activity row shows elapsed blocked time and the next retry.
 
 The retry is deliberately narrow. Only environmental failures repeat — a full
 disk, a read-only mount, a mount that vanished. An import that failed because
-monarr could not parse the payload fails the same way forever, so it is left
-for a person.
+Monarr could not parse the payload stays failed for a person to resolve.
+Migration-era Runner rows are checked against the durable legacy review cohort
+before an automatic retry can change their state.
 
 ## Reading the quality row
 
@@ -1224,13 +1191,21 @@ once plurx is healthy again.
 
 ## Runner payload cleanup
 
-For native Runner clients, cleanup first requests deletion through Runner and
-verifies that the local payload disappeared. Runner-owned source and recovery
-trees stay pending when Runner cannot remove them. Curator may remove a verified
-imported payload directly inside its own declared working trees, including
-`/working/monarr/completed`; it never applies that fallback to Runner-owned
-`/processing` or recovery storage.
-Queue removal falls back to History only when the queue returns HTTP 404.
+Native Runner downloads have separate publication and processing-source
+ownership. Curator accepts the immutable publication manifest, then records
+per-file import and cleanup outcomes. It removes only files with committed
+placement, same-copy redundancy evidence, or an approved replacement scope;
+unknown and recoverable siblings stay in Resolve. Runner handles its own
+processing source and reports that cleanup separately.
+
+Activity and each completed-folder entry expose the durable lifecycle trace.
+Retry handoff, Runner source cleanup, and Curator publication cleanup
+independently; these actions do not redownload the release. The trace shows
+attempts, last and next attempt times, the blocking reason, and a warning after
+30 minutes. **Delete files…** is an explicit per-file discard for a verified
+accepted publication and leaves unselected siblings in place. Older Runner
+history rows remain in review until explicitly resolved; title or path matches
+do not establish ownership.
 
 ## Recover media retained by Runner
 

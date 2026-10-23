@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -111,6 +112,159 @@ func TestCompletedReceiptsSurviveClearingActivity(t *testing.T) {
 	}
 }
 
+func TestLegacyReviewInventoryShowsReadOnlyPerFileProposal(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	payload := filepath.Join(root, "old-runner", "delivery")
+	file := filepath.Join(payload, "Season 01", "Episode 01.mkv")
+	writeCompleted(t, file, 17)
+	dl := insertImportable(t, db, item, payload)
+	dl.State = "failed"
+	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entries := inventoryRoot(t, svc, root).Entries
+	if len(entries) != 1 {
+		t.Fatalf("legacy report entries=%+v", entries)
+	}
+	entry := entries[0]
+	if entry.Status != "legacy_review" || !entry.LegacyReview || len(entry.ReviewFiles) != 1 {
+		t.Fatalf("legacy batch was not classified with per-file evidence: %+v", entry)
+	}
+	reviewFile := entry.ReviewFiles[0]
+	if reviewFile.Path != canonicalCompletedPath(file) || reviewFile.SizeBytes != 17 || reviewFile.SnapshotIdentity == "" || reviewFile.Mode == "" {
+		t.Fatalf("read-only review identity incomplete: %+v", reviewFile)
+	}
+	if err := svc.DeleteCompletedEntry(ctx, payload, entry.Fingerprint); err == nil {
+		t.Fatal("legacy fence was bypassed by inventory report")
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("report or rejected delete modified legacy payload: %v", err)
+	}
+}
+
+func TestLegacyReviewCanDeleteOnlyExplicitlySelectedCurrentFiles(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	payload := filepath.Join(root, "old-runner", "legacy")
+	selectedPath := filepath.Join(payload, "one.mkv")
+	keepPath := filepath.Join(payload, "two.mkv")
+	writeCompleted(t, selectedPath, 17)
+	writeCompleted(t, keepPath, 23)
+	dl := insertImportable(t, db, item, payload)
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entry := inventoryRoot(t, svc, root).Entries[0]
+	var chosen CompletedFileSelection
+	for _, file := range entry.ReviewFiles {
+		if file.Path == canonicalCompletedPath(selectedPath) {
+			chosen = CompletedFileSelection{Path: file.Path, SnapshotIdentity: file.SnapshotIdentity}
+		}
+	}
+	if chosen.Path == "" {
+		t.Fatalf("selected file missing from legacy review: %+v", entry.ReviewFiles)
+	}
+	if err := svc.DeleteSelectedLegacyFiles(ctx, entry.Path, entry.Fingerprint, []CompletedFileSelection{chosen}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(selectedPath); !os.IsNotExist(err) {
+		t.Fatalf("selected legacy file remains: %v", err)
+	}
+	if _, err := os.Stat(keepPath); err != nil {
+		t.Fatalf("unselected legacy sibling was removed: %v", err)
+	}
+	if _, err := os.Stat(payload); err != nil {
+		t.Fatalf("legacy payload directory was removed: %v", err)
+	}
+}
+
+func TestLegacyReviewDeleteProtectsLibraryPathButAllowsSeparateDuplicate(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	payload := filepath.Join(root, "old-runner", "legacy")
+	protectedPath := filepath.Join(payload, "protected.mkv")
+	duplicatePath := filepath.Join(payload, "duplicate.mkv")
+	writeCompleted(t, protectedPath, 17)
+	writeCompleted(t, duplicatePath, 17)
+	dl := insertImportable(t, db, item, payload)
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entry := inventoryRoot(t, svc, root).Entries[0]
+	selection := func(path string) CompletedFileSelection {
+		t.Helper()
+		for _, file := range entry.ReviewFiles {
+			if canonicalCompletedPath(file.Path) == canonicalCompletedPath(path) {
+				return CompletedFileSelection{Path: file.Path, SnapshotIdentity: file.SnapshotIdentity}
+			}
+		}
+		t.Fatalf("review file %q missing: %+v", path, entry.ReviewFiles)
+		return CompletedFileSelection{}
+	}
+	// The library already references one exact pathname. An equal-content file
+	// at another pathname is a separate completed file and remains explicitly
+	// selectable; content equality does not transfer the library association.
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO media_files (media_item_id,path,size,added_at) VALUES (?, ?, 17, 0)`, item, protectedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteSelectedLegacyFiles(ctx, entry.Path, entry.Fingerprint, []CompletedFileSelection{selection(protectedPath)}); err == nil {
+		t.Fatal("delete removed a completed file referenced by the library")
+	}
+	if _, err := os.Stat(protectedPath); err != nil {
+		t.Fatalf("referenced library file was removed: %v", err)
+	}
+	if err := svc.DeleteSelectedLegacyFiles(ctx, entry.Path, entry.Fingerprint, []CompletedFileSelection{selection(duplicatePath)}); err != nil {
+		t.Fatalf("delete of separate duplicate path was refused: %v", err)
+	}
+	if _, err := os.Stat(duplicatePath); !os.IsNotExist(err) {
+		t.Fatalf("separately selected duplicate remains: %v", err)
+	}
+}
+
+func TestLegacyReviewDeleteRejectsStaleSnapshotAfterPathSubstitution(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	payload := filepath.Join(root, "old-runner", "legacy")
+	path := filepath.Join(payload, "episode.mkv")
+	writeCompleted(t, path, 17)
+	dl := insertImportable(t, db, item, payload)
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entry := inventoryRoot(t, svc, root).Entries[0]
+	if len(entry.ReviewFiles) != 1 {
+		t.Fatalf("review inventory = %+v", entry.ReviewFiles)
+	}
+	stale := CompletedFileSelection{Path: entry.ReviewFiles[0].Path, SnapshotIdentity: entry.ReviewFiles[0].SnapshotIdentity}
+	replacement := filepath.Join(payload, "replacement")
+	writeCompleted(t, replacement, 17)
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteSelectedLegacyFiles(ctx, entry.Path, entry.Fingerprint, []CompletedFileSelection{stale}); err == nil {
+		t.Fatal("stale review identity authorized deleting a replacement file")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("replacement file was removed: %v", err)
+	}
+}
+
 func TestIncompleteCompletedScanKeepsLastKnownBytes(t *testing.T) {
 	svc, _, _, root := completedFixture(t)
 	ctx := context.Background()
@@ -189,7 +343,13 @@ func TestCompletedRootsAndLibraryAliasesAreProtected(t *testing.T) {
 	writeCompleted(t, filepath.Join(roots[0].Path, "film", "keep.mkv"), 4)
 	clients, _ := db.ListDownloadClients(ctx)
 	for _, path := range []string{root, filepath.Join(alias, "film")} {
-		svc.removeImportedDir(ctx, downloadRef{ID: 999, ClientID: clients[0].ID, MediaItemID: item, ImportPath: path})
+		dl := insertImportable(t, db, item, path)
+		dl.State = "imported"
+		if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+			t.Fatal(err)
+		}
+		svc.removeImportedDir(ctx, downloadRef{ID: dl.ID, GenerationKey: dl.GenerationKey,
+			ClientID: clients[0].ID, MediaItemID: item, ImportPath: path})
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("deleted protected path %s: %v", path, err)
 		}
@@ -284,7 +444,8 @@ func TestRunnerSuccessMustRemoveBytesOrRemainPending(t *testing.T) {
 	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
 		t.Fatal(err)
 	}
-	ref := downloadRef{ID: dl.ID, ClientID: dl.ClientID, Handle: dl.Handle, ImportPath: path}
+	ref := downloadRef{ID: dl.ID, ClientID: dl.ClientID, Handle: dl.Handle,
+		GenerationKey: dl.GenerationKey, ImportPath: path}
 	if svc.removePayload(ctx, ref) {
 		t.Fatal("client acknowledgement claimed files gone")
 	}
@@ -293,6 +454,9 @@ func TestRunnerSuccessMustRemoveBytesOrRemainPending(t *testing.T) {
 		t.Fatal("deleted Runner-owned storage outside Curator's root")
 	}
 	if err := svc.SetCompletedRoots(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
 		t.Fatal(err)
 	}
 	svc.removeImportedDir(ctx, ref)
@@ -339,6 +503,30 @@ func TestReviewedStorageDeletionRejectsChangedFilesAndLiveWork(t *testing.T) {
 	}
 }
 
+func TestReviewedStorageDeletionRechecksNewLegacyCohortAgainstCachedEntry(t *testing.T) {
+	svc, db, _, root := completedFixture(t)
+	ctx := context.Background()
+	path := filepath.Join(root, "legacy-payload")
+	media := filepath.Join(path, "video.mkv")
+	writeCompleted(t, media, 12)
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entry := inventoryRoot(t, svc, root).Entries[0]
+	if entry.LegacyReview {
+		t.Fatal("fixture unexpectedly started in the legacy review cohort")
+	}
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, entry.Path); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteCompletedEntry(ctx, entry.Path, entry.Fingerprint); err == nil {
+		t.Fatal("deleted a cached payload that became part of the legacy review cohort")
+	}
+	if _, err := os.Stat(media); err != nil {
+		t.Fatalf("legacy payload bytes changed after refused deletion: %v", err)
+	}
+}
+
 func TestReviewedStorageDeletionNeverFollowsSymlink(t *testing.T) {
 	svc, _, _, root := completedFixture(t)
 	outside := filepath.Join(t.TempDir(), "keep.mkv")
@@ -350,15 +538,18 @@ func TestReviewedStorageDeletionNeverFollowsSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := inventoryRoot(t, svc, root).Entries[0]
-	if err := svc.DeleteCompletedEntry(context.Background(), entry.Path, entry.Fingerprint); err != nil {
-		t.Fatal(err)
+	if err := svc.DeleteCompletedEntry(context.Background(), entry.Path, entry.Fingerprint); err == nil {
+		t.Fatal("deleted a symlink entry without an explicit safe unlink path")
 	}
 	if _, err := os.Stat(outside); err != nil {
 		t.Fatal("deleted symlink target")
 	}
+	if _, err := os.Lstat(filepath.Join(root, "alias")); err != nil {
+		t.Fatalf("refused symlink entry was unexpectedly modified: %v", err)
+	}
 }
 
-func TestChangedStorageMountPreservesEvidenceUntilExplicitlyAccepted(t *testing.T) {
+func TestResavingCompletedRootsDoesNotClearStorageEvidence(t *testing.T) {
 	svc, _, _, root := completedFixture(t)
 	ctx := context.Background()
 	writeCompleted(t, filepath.Join(root, "payload"), 21)
@@ -366,32 +557,125 @@ func TestChangedStorageMountPreservesEvidenceUntilExplicitlyAccepted(t *testing.
 		t.Fatal(err)
 	}
 	before := inventoryRoot(t, svc, root)
+	if err := svc.SetCompletedRoots(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	after := inventoryRoot(t, svc, root)
+	if after.Bytes != before.Bytes || after.StorageIdentity != before.StorageIdentity || !after.LastCompleteAt.Equal(before.LastCompleteAt) {
+		t.Fatalf("saving roots changed storage evidence: before=%+v after=%+v", before, after)
+	}
+	if err := svc.checkStorageIdentity(ctx, filepath.Join(root, "payload")); err != nil {
+		t.Fatalf("resaving roots invalidated expected storage: %v", err)
+	}
+	if err := svc.checkStorageIdentity(ctx, filepath.Join(t.TempDir(), "outside")); err == nil {
+		t.Fatal("storage verification authorized a path outside configured roots")
+	}
+}
+
+func TestStorageMustBeObservedByASuccessfulScanBeforeCleanup(t *testing.T) {
+	svc, _, _, root := completedFixture(t)
+	if err := svc.checkStorageIdentity(context.Background(), filepath.Join(root, "payload")); err == nil {
+		t.Fatal("cleanup accepted storage that has no persisted observation")
+	}
+	if err := svc.ScanCompleted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.checkStorageIdentity(context.Background(), filepath.Join(root, "payload")); err != nil {
+		t.Fatalf("successful read-only scan did not establish storage identity: %v", err)
+	}
+}
+
+func TestStorageVerificationRecoversAutomaticallyAcrossMountChanges(t *testing.T) {
+	svc, _, _, root := completedFixture(t)
+	ctx := context.Background()
+	writeCompleted(t, filepath.Join(root, "payload", "video.mkv"), 21)
+	type simulatedMount struct {
+		fsType, source, mountRoot string
+		device, mountID           string
+		unavailable               bool
+	}
+	current := simulatedMount{fsType: "nfs4", source: "nas:/exports", mountRoot: "/library", device: "0:42", mountID: "36"}
+	originalObserver := observeStorageIdentity
+	observeStorageIdentity = func(string) (string, error) {
+		if current.unavailable {
+			return "", errors.New("mount unavailable")
+		}
+		// Device and mount IDs are observations for selecting the live mount;
+		// they are intentionally excluded from persisted identity.
+		return current.fsType + "\x00" + current.source + "\x00" + current.mountRoot, nil
+	}
+	t.Cleanup(func() { observeStorageIdentity = originalObserver })
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := inventoryRoot(t, svc, root)
+
+	current.device, current.mountID = "0:77", "901"
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatalf("ordinary remount was not accepted: %v", err)
+	}
+	if err := svc.checkStorageIdentity(ctx, filepath.Join(root, "payload")); err != nil {
+		t.Fatalf("ordinary remount blocked cleanup: %v", err)
+	}
+	before = inventoryRoot(t, svc, root)
+
+	current.source = "nas:/replacement"
+	if err := svc.ScanCompleted(ctx); err == nil {
+		t.Fatal("different storage source was accepted")
+	}
+	afterWrongSource := inventoryRoot(t, svc, root)
+	if afterWrongSource.Bytes != before.Bytes || afterWrongSource.StorageIdentity != before.StorageIdentity || !afterWrongSource.LastCompleteAt.Equal(before.LastCompleteAt) {
+		t.Fatalf("changed source replaced trusted inventory: before=%+v after=%+v", before, afterWrongSource)
+	}
+	if err := svc.checkStorageIdentity(ctx, filepath.Join(root, "payload")); err == nil {
+		t.Fatal("cleanup accepted a different storage source")
+	}
+
+	current.unavailable = true
+	if err := svc.ScanCompleted(ctx); err == nil {
+		t.Fatal("unavailable storage passed inventory")
+	}
+	afterOutage := inventoryRoot(t, svc, root)
+	if afterOutage.Bytes != before.Bytes || afterOutage.StorageIdentity != before.StorageIdentity || !afterOutage.LastCompleteAt.Equal(before.LastCompleteAt) {
+		t.Fatalf("outage erased trusted inventory: before=%+v after=%+v", before, afterOutage)
+	}
+	if err := svc.checkStorageIdentity(ctx, filepath.Join(root, "payload")); err == nil {
+		t.Fatal("cleanup passed while storage was unavailable")
+	}
+
+	current.source = "nas:/exports"
+	current.device, current.mountID, current.unavailable = "0:99", "1200", false
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatalf("restored expected storage did not recover automatically: %v", err)
+	}
+	if err := svc.checkStorageIdentity(ctx, filepath.Join(root, "payload")); err != nil {
+		t.Fatalf("cleanup remained blocked after storage recovery: %v", err)
+	}
+}
+
+func TestReplacedStorageDirectoryCannotPassPayloadFingerprint(t *testing.T) {
+	svc, _, _, root := completedFixture(t)
+	ctx := context.Background()
+	path := filepath.Join(root, "payload")
+	writeCompleted(t, filepath.Join(path, "video.mkv"), 21)
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entry := inventoryRoot(t, svc, root).Entries[0]
 	offline := root + "-offline"
 	if err := os.Rename(root, offline); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root); _ = os.Rename(offline, root) })
-	if err := os.Mkdir(root, 0755); err != nil {
+	if err := os.Mkdir(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ScanCompleted(ctx); err == nil {
-		t.Fatal("replacement mount passed")
+	writeCompleted(t, filepath.Join(path, "video.mkv"), 21)
+	if err := svc.DeleteCompletedEntry(ctx, entry.Path, entry.Fingerprint); err == nil {
+		t.Fatal("replacement payload passed the old payload fingerprint")
 	}
-	after := inventoryRoot(t, svc, root)
-	if after.Bytes != 21 || after.Error == "" || after.RootIdentity != before.RootIdentity || !after.LastCompleteAt.Equal(before.LastCompleteAt) {
-		t.Fatalf("lost mount evidence: %+v", after)
-	}
-	if err := svc.SetCompletedRoots(ctx, root); err != nil {
-		t.Fatal(err)
-	}
-	if inventoryRoot(t, svc, root).Bytes != 21 {
-		t.Fatal("saving erased stale bytes")
-	}
-	if err := svc.ScanCompleted(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := inventoryRoot(t, svc, root); got.Bytes != 0 || got.Error != "" {
-		t.Fatalf("replacement not accepted: %+v", got)
+	if _, err := os.Stat(filepath.Join(path, "video.mkv")); err != nil {
+		t.Fatalf("replacement payload was modified: %v", err)
 	}
 }
 
@@ -409,7 +693,8 @@ func TestMissingPayloadParentDoesNotRecordRemoval(t *testing.T) {
 	if err := os.Rename(parent, parent+"-offline"); err != nil {
 		t.Fatal(err)
 	}
-	svc.removeImportedDir(ctx, downloadRef{ID: dl.ID, ClientID: dl.ClientID, ImportPath: path})
+	svc.removeImportedDir(ctx, downloadRef{ID: dl.ID, GenerationKey: dl.GenerationKey,
+		ClientID: dl.ClientID, ImportPath: path})
 	got, err := db.GetDownload(ctx, dl.ID)
 	if err != nil || got.PayloadRemoved {
 		t.Fatalf("missing parent claimed removal: %+v %v", got, err)

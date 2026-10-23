@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // AcquisitionPlan has public bounded decision facts, never transport URLs.
@@ -73,15 +75,16 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 		wants, _ := json.Marshal(dl.WantableIDs)
 		eps, _ := json.Marshal(dl.ReservedEpisodes)
 		evidence, _ := json.Marshal(dl.MatchEvidence)
-		result, e := tx.ExecContext(ctx, `INSERT INTO downloads(media_item_id,copy_id,wantables,season,release_title,indexer,protocol,quality,size,client_id,state,match_evidence,plan_id,candidate_key,submission_phase,execution_payload,reserved_episodes,added_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'planned',?,?,?,'pending',?,?,?,?)`, dl.MediaItemID, nullableCopy(dl.CopyID), string(wants), dl.Season, dl.ReleaseTitle, dl.Indexer, dl.Protocol, dl.Quality.String(), dl.Size, dl.ClientID, string(evidence), id, dl.CandidateKey, dl.ExecutionPayload, string(eps), now, now)
-		if e != nil {
-			return 0, e
+		transfer := dl.Transfer
+		if transfer == "" {
+			var tokenErr error
+			transfer, tokenErr = ports.NewTransferToken(0)
+			if tokenErr != nil {
+				return 0, tokenErr
+			}
 		}
-		did, e := result.LastInsertId()
+		_, e := tx.ExecContext(ctx, `INSERT INTO downloads(media_item_id,copy_id,wantables,season,release_title,indexer,protocol,quality,size,client_id,state,match_evidence,plan_id,candidate_key,submission_phase,execution_payload,reserved_episodes,transfer,source_guid,source_indexer_id,added_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'planned',?,?,?,'pending',?,?,?,?,?,?,?)`, dl.MediaItemID, nullableCopy(dl.CopyID), string(wants), dl.Season, dl.ReleaseTitle, dl.Indexer, dl.Protocol, dl.Quality.String(), dl.Size, dl.ClientID, string(evidence), id, dl.CandidateKey, dl.ExecutionPayload, string(eps), transfer, dl.SourceGUID, dl.SourceIndexerID, now, now)
 		if e != nil {
-			return 0, e
-		}
-		if _, e = tx.ExecContext(ctx, `UPDATE downloads SET transfer=? WHERE id=?`, fmt.Sprintf("t-%d-plan-%d", did, id), did); e != nil {
 			return 0, e
 		}
 	}
@@ -158,9 +161,119 @@ func (d *DB) ClaimPlannedSubmission(ctx context.Context, id int64) (bool, error)
 	n, err := res.RowsAffected()
 	return n == 1, err
 }
+
+// SetPlannedSubmissionCapabilities pins the negotiated correlation semantics
+// before a planned row can be claimed and dispatched. These fields are an
+// admission snapshot; later client configuration changes cannot weaken them.
+func (d *DB) SetPlannedSubmissionCapabilities(ctx context.Context, id int64, deliveryExpected, requestTokenIdempotent, exactTransferCorrelation bool) (bool, error) {
+	res, err := d.W.ExecContext(ctx, `UPDATE downloads SET delivery_expected=?,request_token_idempotent=?,exact_transfer_correlation=?,updated_at=?
+		WHERE id=? AND state='planned' AND submission_phase='pending' AND superseded=0`, boolInt(deliveryExpected), boolInt(requestTokenIdempotent), boolInt(exactTransferCorrelation), time.Now().UnixMilli(), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
 func (d *DB) SetSubmissionPhase(ctx context.Context, id int64, phase string) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET submission_phase=?,updated_at=? WHERE id=?`, phase, time.Now().UnixMilli(), id)
+	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET submission_phase=?,manual_retry_at=CASE WHEN ?='pending' OR ?='submitted' THEN 0 ELSE manual_retry_at END,manual_retry_attempts=CASE WHEN ?='submitted' THEN 0 ELSE manual_retry_attempts END,manual_blocked_at=CASE WHEN ?='submitted' THEN 0 ELSE manual_blocked_at END,updated_at=? WHERE id=?`, phase, phase, phase, phase, phase, time.Now().UnixMilli(), id)
 	return err
+}
+func (d *DB) SetDownloadDeliveryExpected(ctx context.Context, id int64, expected bool) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET delivery_expected=?,updated_at=? WHERE id=?`, boolInt(expected), time.Now().UnixMilli(), id)
+	return err
+}
+func (d *DB) SetDownloadRequestTokenIdempotent(ctx context.Context, id int64, idempotent bool) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET request_token_idempotent=?,updated_at=? WHERE id=?`, boolInt(idempotent), time.Now().UnixMilli(), id)
+	return err
+}
+
+func (d *DB) DownloadProviderRetryAfter(ctx context.Context, id int64) (time.Time, error) {
+	var due int64
+	err := d.R.QueryRowContext(ctx, `SELECT provider_retry_after FROM downloads WHERE id=?`, id).Scan(&due)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if due == 0 {
+		return time.Time{}, nil
+	}
+	return time.UnixMilli(due), nil
+}
+
+// ListManualAdmissionRetries returns durable one-shot manual admissions that
+// are safe to submit or replay with their persisted token.
+type ManualAdmissionRetry struct {
+	DownloadID int64
+	BlockedAt  time.Time
+}
+
+func (d *DB) ListManualAdmissionRetries(ctx context.Context, now time.Time, limit int) ([]ManualAdmissionRetry, error) {
+	if limit <= 0 || limit > 128 {
+		limit = 32
+	}
+	rows, err := d.W.QueryContext(ctx, `SELECT id,manual_blocked_at FROM downloads
+		WHERE intent='manual_additional' AND state='grabbed' AND MAX(manual_retry_at,provider_retry_after)<=?
+		AND (submission_phase IN ('pending','submitting','uncertain') OR (submission_phase='submitted' AND exact_transfer_correlation=1 AND handle='')) AND parked_at=0 AND superseded=0
+		ORDER BY manual_retry_at,id LIMIT ?`, now.UnixMilli(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var retries []ManualAdmissionRetry
+	for rows.Next() {
+		var retry ManualAdmissionRetry
+		var blockedAt int64
+		if err := rows.Scan(&retry.DownloadID, &blockedAt); err != nil {
+			return nil, err
+		}
+		if blockedAt != 0 {
+			retry.BlockedAt = time.UnixMilli(blockedAt)
+		}
+		retries = append(retries, retry)
+	}
+	return retries, rows.Err()
+}
+
+func (d *DB) ScheduleManualAdmissionRetry(ctx context.Context, id int64, now time.Time, reason string, providerDeadline ...time.Time) error {
+	var attempts int
+	if err := d.R.QueryRowContext(ctx, `SELECT manual_retry_attempts FROM downloads WHERE id=? AND intent='manual_additional'`, id).Scan(&attempts); err != nil {
+		return err
+	}
+	backoff := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
+	delay := backoff[min(attempts, len(backoff)-1)]
+	next := now.Add(delay)
+	providerAt := int64(0)
+	if len(providerDeadline) > 0 && providerDeadline[0].After(now) {
+		providerAt = providerDeadline[0].UnixMilli()
+		if providerDeadline[0].After(next) {
+			next = providerDeadline[0]
+		}
+	}
+	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET
+		manual_retry_at=?,provider_retry_after=MAX(provider_retry_after,?),
+		manual_retry_attempts=manual_retry_attempts+1,
+		manual_blocked_at=CASE WHEN manual_blocked_at=0 THEN ? ELSE manual_blocked_at END,
+		error=?,updated_at=? WHERE id=? AND intent='manual_additional' AND manual_retry_at<=?
+		AND state='grabbed' AND (submission_phase IN ('pending','submitting','uncertain') OR (submission_phase='submitted' AND exact_transfer_correlation=1 AND handle='')) AND parked_at=0 AND superseded=0`, next.UnixMilli(), providerAt, now.UnixMilli(), reason, now.UnixMilli(), id, now.UnixMilli())
+	return err
+}
+
+func (d *DB) SetManualAdmissionWarning(ctx context.Context, id int64, reason string) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET error=?,updated_at=? WHERE id=? AND intent='manual_additional' AND state='grabbed' AND (submission_phase IN ('pending','submitting','uncertain') OR (submission_phase='submitted' AND exact_transfer_correlation=1 AND handle='')) AND parked_at=0 AND superseded=0`, reason, time.Now().UnixMilli(), id)
+	return err
+}
+
+func (d *DB) SetExactTransferCorrelationWarning(ctx context.Context, id int64, generation, transfer, warning string) error {
+	res, err := d.W.ExecContext(ctx, `UPDATE downloads SET error=?,updated_at=? WHERE id=? AND generation_key=? AND transfer=? AND exact_transfer_correlation=1 AND submission_phase='submitted' AND handle='' AND state='grabbed' AND parked_at=0 AND superseded=0`, warning, time.Now().UnixMilli(), id, generation, transfer)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		if err != nil {
+			return err
+		}
+		return ErrNotFound
+	}
+	return nil
 }
 func (d *DB) UpdatePlanState(ctx context.Context, id int64, state string) error {
 	_, err := d.W.ExecContext(ctx, `UPDATE acquisition_plans SET state=?,revision=revision+1,updated_at=? WHERE id=?`, state, time.Now().UnixMilli(), id)

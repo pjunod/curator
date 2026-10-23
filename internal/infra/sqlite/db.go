@@ -113,6 +113,8 @@ var requiredColumns = []struct{ table, column string }{
 	{"media_items", "book_type"},
 	{"media_copies", "book_type"},
 	{"downloads", "match_evidence"},
+	{"downloads", "generation_key"}, {"downloads", "intent"}, {"downloads", "request_id"},
+	{"downloads", "request_fingerprint"}, {"downloads", "blacklist_override"}, {"downloads", "delivery_expected"}, {"downloads", "request_token_idempotent"}, {"downloads", "manual_retry_at"}, {"downloads", "manual_retry_attempts"}, {"downloads", "manual_blocked_at"},
 	{"media_aliases", "normalized_title"},
 	{"media_identity_sources", "countries"},
 	{"media_files", "audio_languages"},

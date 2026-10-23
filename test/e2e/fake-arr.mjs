@@ -29,6 +29,8 @@ const item = (title, slug, size, seeders) => `<item>
   <torznab:attr name="seeders" value="${seeders}"/>
 </item>`
 
+const automaticSeasonPack = item('The.Test.Show.S01.1080p.WEB-DL-AUTO', 'pack700auto', 2_200_000_000, 100)
+
 // slug → payload spec
 const payloads = {
   movie601: {
@@ -43,16 +45,44 @@ const payloads = {
     name: 'The.Test.Show.S01.1080p.WEB-DL-E2E',
     files: ['The.Test.Show.S01E01.1080p.WEB-DL.mkv', 'The.Test.Show.S01E02.1080p.WEB-DL.mkv'],
   },
+  // RSS uses different native torrent hashes from the explicit manual-copy
+  // fixtures below. qBittorrent correctly retains the tag of an already
+  // present hash, so reusing one release here cannot prove a distinct
+  // automatic primary acquisition.
+  movie601auto: {
+    name: 'The.Test.Movie.2024.1080p.WEB-DL.x264-AUTO',
+    files: ['The.Test.Movie.2024.1080p.WEB-DL.x264-AUTO.mkv'],
+  },
+  movie601autoregrab: {
+    name: 'The.Test.Movie.2024.1080p.WEB-DL.x264-AUTO-REGRAB',
+    files: ['The.Test.Movie.2024.1080p.WEB-DL.x264-AUTO-REGRAB.mkv'],
+  },
+  pack700auto: {
+    name: 'The.Test.Show.S01.1080p.WEB-DL-AUTO',
+    files: ['The.Test.Show.S01E01.1080p.WEB-DL-AUTO.mkv', 'The.Test.Show.S01E02.1080p.WEB-DL-AUTO.mkv'],
+  },
   book900: {
     name: 'Test Author - The Test Book (2024) EPUB',
+    files: ['Test Author - The Test Book.epub'],
+  },
+  book900auto: {
+    name: 'Test Author - The Test Book (2024) EPUB AUTO',
     files: ['Test Author - The Test Book.epub'],
   },
   book900m4b: {
     name: 'The Test Book by Test Author M4B',
     files: ['The Test Book.m4b'],
   },
+  book900m4bauto: {
+    name: 'The Test Book by Test Author M4B AUTO',
+    files: ['The Test Book.m4b'],
+  },
   book901m4b: {
     name: 'Audio Author - The Test Audiobook M4B',
+    files: ['01 - Opening.m4b', '02 - Middle.m4b', '03 - Ending.m4b'],
+  },
+  book901m4bauto: {
+    name: 'Audio Author - The Test Audiobook M4B AUTO',
     files: ['01 - Opening.m4b', '02 - Middle.m4b', '03 - Ending.m4b'],
   },
 }
@@ -84,13 +114,17 @@ createServer((req, res) => {
     }
     if (q.get('t') === 'tvsearch' && !q.get('ep')) {
       res.end(releasesXML([
+        // Break the otherwise exact planner tie in favor of the distinct RSS
+        // payload. Equal quality/coverage/size leaves selection dependent on
+        // candidate-key ordering and can make the auto job reuse pack700.
+        automaticSeasonPack,
         item('The.Test.Show.S01.1080p.WEB-DL-E2E', 'pack700', 2_400_000_000, 33),
       ]))
       return
     }
     if (q.get('t') === 'tvsearch') {
       res.end(releasesXML([
-        item('The.Test.Show.S01E01.1080p.WEB-DL-E2E', 'pack700', 1_200_000_000, 12),
+        automaticSeasonPack,
       ]))
       return
     }
@@ -110,6 +144,24 @@ createServer((req, res) => {
       }
       res.end(releasesXML([
         item('Audio Author - The Test Audiobook M4B', 'book901m4b', 300000000, 9),
+      ]))
+      return
+    }
+    // RSS is the automatic acquisition path. Include each fixture kind so
+    // manual additional-copy tests can leave the monitored primary untouched,
+    // then exercise the normal wanted → RSS → automatic import flow.
+    if (q.get('t') === 'search' && !q.get('q')) {
+      const movieRelease = torrents.some((torrent) => torrent.hash === 'hash-movie601auto')
+        ? item('The.Test.Movie.2024.1080p.WEB-DL.x264-AUTO-REGRAB', 'movie601autoregrab', 4_000_000_000, 50)
+        : item('The.Test.Movie.2024.1080p.WEB-DL.x264-AUTO', 'movie601auto', 4_000_000_000, 50)
+      console.log(`[fake-arr] RSS fixture requested; book/audio candidates included`)
+      res.end(releasesXML([
+        movieRelease,
+        item('The.Test.Movie.2024.HDCAM.x264-JUNK', 'movie601cam', 900_000_000, 2),
+        automaticSeasonPack,
+        item('Test Author - The Test Book (2024) EPUB AUTO', 'book900auto', 800_000, 21),
+        item('The Test Book by Test Author M4B AUTO', 'book900m4bauto', 180_000_000, 12),
+        item('Audio Author - The Test Audiobook M4B AUTO', 'book901m4bauto', 300_000_000, 9),
       ]))
       return
     }
@@ -153,8 +205,10 @@ createServer((req, res) => {
     req.on('end', () => {
       const params = new URLSearchParams(body)
       const dlURL = params.get('urls') ?? ''
+      const tags = params.get('tags') ?? ''
       const slug = dlURL.split('/').pop()
       const spec = payloads[slug]
+      console.log(`[fake-arr] add slug=${slug} tags=${tags}`)
       if (!spec) {
         res.end('Fails.')
         return
@@ -164,7 +218,7 @@ createServer((req, res) => {
       for (const f of spec.files) writeFileSync(join(dir, f), `fake video ${f}`)
       // Re-adding the same torrent retains one hash, as qBittorrent does.
       if (!torrents.some((t) => t.name === spec.name)) {
-        torrents.push({ hash: `hash-${slug}`, name: spec.name, content_path: dir })
+        torrents.push({ hash: `hash-${slug}`, name: spec.name, content_path: dir, tags })
       }
       res.end('Ok.')
     })
@@ -174,7 +228,7 @@ createServer((req, res) => {
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify(torrents.map((t) => ({
       hash: t.hash, name: t.name, progress: 1, state: 'stalledUP',
-      save_path: dlRoot, content_path: t.content_path,
+      save_path: dlRoot, content_path: t.content_path, tags: t.tags ?? '',
     }))))
     return
   }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain/format"
@@ -34,12 +36,46 @@ func (d *DB) AddBlocklist(ctx context.Context, mediaItemID int64, title, indexer
 	return err
 }
 
+// AddReleaseIdentityBlocklist persists an exact indexer-scoped release
+// identity. It never broadens to title matching, because similarly named
+// packs can carry different episodes.
+func (d *DB) AddReleaseIdentityBlocklist(ctx context.Context, mediaItemID, indexerID int64, guid, reason string) error {
+	if mediaItemID <= 0 || indexerID <= 0 || strings.TrimSpace(guid) == "" {
+		return fmt.Errorf("stable release GUID and indexer ID are required")
+	}
+	_, err := d.W.ExecContext(ctx, `INSERT INTO release_blacklist_identity(media_item_id,guid,indexer_id,reason,added_at) VALUES(?,?,?,?,?) ON CONFLICT(media_item_id,indexer_id,guid) DO UPDATE SET reason=excluded.reason`, mediaItemID, guid, indexerID, reason, time.Now().UnixMilli())
+	return err
+}
+
+func (d *DB) ReleaseIdentityBlocklistReason(ctx context.Context, mediaItemID, indexerID int64, guid string) (string, bool, error) {
+	var reason string
+	err := d.R.QueryRowContext(ctx, `SELECT reason FROM release_blacklist_identity WHERE media_item_id=? AND indexer_id=? AND guid=?`, mediaItemID, indexerID, guid).Scan(&reason)
+	if errors.Is(err, sql.ErrNoRows) { return "", false, nil }
+	return reason, err == nil, err
+}
+
 // IsBlocklisted reports whether (title, indexer) is blocked.
 func (d *DB) IsBlocklisted(ctx context.Context, title, indexer string) (bool, error) {
 	n, err := d.Read.CountBlocklisted(ctx, sqlitegen.CountBlocklistedParams{
 		ReleaseTitle: title, Indexer: indexer,
 	})
 	return n > 0, err
+}
+
+// BlocklistReason returns the current reason for an exact release/indexer
+// match. Manual search uses it to request a visible, one-request confirmation.
+func (d *DB) BlocklistReason(ctx context.Context, title, indexer string) (string, bool, error) {
+	var reason string
+	err := d.R.QueryRowContext(ctx,
+		`SELECT reason FROM blocklist WHERE release_title=? AND indexer=?`, title, indexer,
+	).Scan(&reason)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return reason, true, nil
 }
 
 // ListBlocklist returns recent blocklist entries.

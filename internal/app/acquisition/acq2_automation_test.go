@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/format"
@@ -217,6 +218,32 @@ func TestAcq2AmbiguousAddRetainsReservation(t *testing.T) {
 	wanted, _ := svc.Wanted(ctx)
 	if len(wanted) != 1 || len(svc.notInFlight(ctx, wanted)) != 0 {
 		t.Error("ambiguous add lost its want or reservation")
+	}
+}
+
+type permanentAddRefusalClient struct{ fakeClient }
+
+func (c *permanentAddRefusalClient) Add(ctx context.Context, url, cat string) (ports.Handle, error) {
+	return "", ports.ErrAdmissionRejected
+}
+
+func TestAutomaticPermanentAddRefusalDoesNotRemainUncertain(t *testing.T) {
+	client := &permanentAddRefusalClient{}
+	svc, db, _ := autoSetup(t, []ports.Release{rel("Test.Movie.2024.1080p.WEB-DL.x264-GRP", 5)}, &client.fakeClient)
+	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	if err := svc.SyncRSS(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.ListRecentDownloads(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].SubmissionPhase != "rejected" || rows[0].State != "failed" {
+		t.Fatalf("permanent Add refusal remained retryable: %+v", rows)
+	}
+	retries, err := db.ListRunnerSubmissionRetries(context.Background(), time.Now().Add(time.Hour), 32)
+	if err != nil || len(retries) != 0 {
+		t.Fatalf("permanent refusal entered retry worker: %+v err=%v", retries, err)
 	}
 }
 

@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"slices"
 
 	"github.com/pjunod/monarr/internal/domain"
@@ -70,6 +71,14 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 		}
 		for _, e := range f.EpisodeIDs {
 			if len(p.EpisodeIDs) > 0 && !slices.Contains(p.EpisodeIDs, e) {
+				// A reviewed replacement operation publishes beside the old
+				// target and later detaches only the selected episode links. The
+				// shared source remains in place for its unselected episodes, so
+				// it is safe for this placement to overlap that source record.
+				// Ordinary imports still cannot replace a shared file implicitly.
+				if scope.ReplacementOperationID != "" && filepath.Clean(f.Path) != filepath.Clean(p.Target) {
+					continue
+				}
 				return fmt.Errorf("replacement overlaps protected sibling episode %d", e)
 			}
 		}

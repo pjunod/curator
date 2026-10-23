@@ -42,10 +42,9 @@ func acq2AddFile(t *testing.T, svc *Service, itemID, copyID int64, dir, name, re
 	return id, path
 }
 
-// The whole point of the feature: one call removes the row, removes the bytes,
-// bans the release that produced them, and starts hunting a replacement. If any
-// one of those silently does not happen the user is left believing it did.
-func TestAcq2RemoveFileDeletesBlocklistsAndSearches(t *testing.T) {
+// The old delete+blocklist+search endpoint cannot express episode/copy scope
+// or bind to an observed file generation, so it must not mutate anything.
+func TestLegacyDeleteBlocklistSearchRequiresReviewedReplacement(t *testing.T) {
 	client := &fakeClient{}
 	svc, db, movieID := autoSetup(t,
 		[]ports.Release{rel("Test.Movie.2024.1080p.BluRay.x264-GOOD", 20)}, client)
@@ -55,51 +54,24 @@ func TestAcq2RemoveFileDeletesBlocklistsAndSearches(t *testing.T) {
 	const bad = "Test.Movie.2024.1080p.WEB-DL.x264-BAD"
 	fileID, path := acq2AddFile(t, svc, movieID, 0, item.Path, "Test Movie (2024).mkv", bad)
 
-	res, err := svc.RemoveFile(ctx, movieID, fileID, RemoveFileRequest{
+	_, err := svc.RemoveFile(ctx, movieID, fileID, RemoveFileRequest{
 		FromDisk: true, Blocklist: true, Search: true, Reason: "audio is out of sync",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, ErrReplacementReviewRequired) {
+		t.Fatalf("legacy mutation error = %v", err)
 	}
-	if !res.DeletedFromDisk {
-		t.Errorf("result says the bytes survived: %+v", res)
-	}
-	if res.Blocklisted != bad {
-		t.Errorf("blocklisted = %q, want %q", res.Blocklisted, bad)
-	}
-	if !res.Searched {
-		t.Errorf("no replacement search was started: %+v", res)
-	}
-	if res.Note != "" {
-		t.Errorf("nothing went wrong, so there should be no note: %q", res.Note)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Error("the file is still on disk")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("file was removed before review: %v", err)
 	}
 	files, _ := db.ListFilesForItem(ctx, movieID)
-	if len(files) != 0 {
-		t.Errorf("the row survived the removal: %+v", files)
+	if len(files) != 1 {
+		t.Fatalf("file row changed before review: %+v", files)
 	}
-	// The ban has to outlive the call, or automation grabs the same bad rip
-	// back within the hour.
-	if blocked, err := db.IsBlocklisted(ctx, bad, "idx"); err != nil || !blocked {
-		t.Errorf("blocklisted = %v err %v", blocked, err)
+	if blocked, err := db.IsBlocklisted(ctx, bad, "idx"); err != nil || blocked {
+		t.Errorf("legacy action should not add a blocklist: blocked=%v err=%v", blocked, err)
 	}
-	// "Where did my file go" is asked days later, by which time the log has
-	// rotated — so it has to be in history.
-	events, _ := db.ListHistory(ctx)
-	var sawRemoval bool
-	for _, e := range events {
-		if e.Type == HistoryFileRemoved && e.ReleaseTitle == bad {
-			sawRemoval = true
-		}
-	}
-	if !sawRemoval {
-		t.Errorf("no %s history entry: %+v", HistoryFileRemoved, events)
-	}
-	// The search is a real search: it went to the indexer and grabbed.
-	if len(client.added) != 1 {
-		t.Errorf("replacement grabs = %v, want exactly one", client.added)
+	if len(client.added) != 0 {
+		t.Errorf("legacy action started a search: %v", client.added)
 	}
 }
 
@@ -113,23 +85,17 @@ func TestAcq2RemoveFileWithoutASourceCannotBlocklist(t *testing.T) {
 	item, _ := db.GetMediaItemFull(ctx, movieID)
 	fileID, path := acq2AddFile(t, svc, movieID, 0, item.Path, "adopted.mkv", "")
 
-	res, err := svc.RemoveFile(ctx, movieID, fileID, RemoveFileRequest{
+	_, err := svc.RemoveFile(ctx, movieID, fileID, RemoveFileRequest{
 		FromDisk: true, Blocklist: true,
 	})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, ErrReplacementReviewRequired) {
+		t.Fatalf("legacy mutation error = %v", err)
 	}
-	if res.Blocklisted != "" {
-		t.Errorf("blocklisted %q for a file monarr never grabbed", res.Blocklisted)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("file was removed before review: %v", err)
 	}
-	if !strings.Contains(res.Note, "no release to blocklist") {
-		t.Errorf("note does not explain why: %q", res.Note)
-	}
-	if !res.DeletedFromDisk {
-		t.Error("the deletion itself should still have happened")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Error("file still on disk")
+	if _, err := db.GetFileQuality(ctx, fileID); err != nil {
+		t.Fatalf("file row was removed before review: %v", err)
 	}
 }
 
@@ -207,37 +173,31 @@ func TestAcq2RemoveFileTreatsAnAlreadyMissingFileAsDone(t *testing.T) {
 	}
 }
 
-// Search is best-effort and reports itself. With no indexers configured there
-// is nothing to search, and saying "searched" would leave the user waiting for
-// a replacement that is never coming.
-func TestAcq2RemoveFileSaysWhenTheSearchCouldNotStart(t *testing.T) {
+// Search/removal bypasses require the generation-bound replacement workflow.
+func TestLegacyRemoveSearchRequiresReviewedReplacement(t *testing.T) {
 	svc, db, movieID := autoSetup(t, nil, &fakeClient{})
 	ctx := context.Background()
-	indexers, _ := db.ListIndexers(ctx)
-	for _, ix := range indexers {
-		if err := db.DeleteIndexer(ctx, ix.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
 	item, _ := db.GetMediaItemFull(ctx, movieID)
-	fileID, _ := acq2AddFile(t, svc, movieID, 0, item.Path, "lonely.mkv", "")
+	fileID, path := acq2AddFile(t, svc, movieID, 0, item.Path, "lonely.mkv", "")
 
-	res, err := svc.RemoveFile(ctx, movieID, fileID, RemoveFileRequest{FromDisk: true, Search: true})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := svc.RemoveFile(ctx, movieID, fileID, RemoveFileRequest{FromDisk: true, Search: true}); !errors.Is(err, ErrReplacementReviewRequired) {
+		t.Fatalf("legacy search bypass error = %v", err)
 	}
-	if res.Searched {
-		t.Error("claimed to have searched with no indexers configured")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("file was removed before review: %v", err)
 	}
-	if !strings.Contains(res.Note, "could not start a search") {
-		t.Errorf("note = %q", res.Note)
+	if _, err := db.GetFileQuality(ctx, fileID); err != nil {
+		t.Fatalf("file row was removed before review: %v", err)
+	}
+	if active, _ := db.ListActiveDownloads(ctx); len(active) != 0 {
+		t.Fatalf("legacy action admitted downloads: %+v", active)
 	}
 }
 
 // A series has no item-wide wantable — "which season" is not a question a file
 // deletion answers — so the replacement hunt falls back to the item sweep
 // rather than giving up.
-func TestAcq2RemoveFileFallsBackToTheItemSweepForASeries(t *testing.T) {
+func TestLegacySeriesRemoveSearchCannotBypassReplacementScope(t *testing.T) {
 	client := &fakeClient{}
 	svc, db, itemID := setup(t, []ports.Release{
 		{Title: "Test.Show.S01.1080p.WEB-DL-PACK", DownloadURL: "u", Indexer: "idx",
@@ -248,23 +208,24 @@ func TestAcq2RemoveFileFallsBackToTheItemSweepForASeries(t *testing.T) {
 	fileID, _ := acq2AddFile(t, svc, itemID, 0,
 		filepath.Join(item.Path, "Season 1"), "Test Show - S01E01 - Pilot [HDTV 720p].mkv", "")
 
-	res, err := svc.RemoveFile(ctx, itemID, fileID, RemoveFileRequest{FromDisk: true, Search: true})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := svc.RemoveFile(ctx, itemID, fileID, RemoveFileRequest{FromDisk: true, Search: true}); !errors.Is(err, ErrReplacementReviewRequired) {
+		t.Fatalf("legacy search bypass error = %v", err)
 	}
-	if !res.Searched {
-		t.Errorf("a series deletion did not start a search: %+v", res)
+	if len(client.added) != 0 {
+		t.Fatalf("legacy action searched automatically: %v", client.added)
 	}
-	runQueuedSeason(t, svc, db)
-	if len(client.added) == 0 {
-		t.Error("the deferred fallback sweep never reached the indexer")
+	if _, err := db.GetFileQuality(ctx, fileID); err != nil {
+		t.Fatalf("file row was removed before review: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(item.Path, "Season 1", "Test Show - S01E01 - Pilot [HDTV 720p].mkv")); err != nil {
+		t.Fatalf("file was removed before review: %v", err)
 	}
 }
 
 // Deleting a copy's file must search for a replacement for THAT copy — the
 // copy carries its own profile and its own folder, and the primary's state
 // says nothing about what the copy is missing.
-func TestAcq2RemoveFileSearchesForTheCopyItBelongedTo(t *testing.T) {
+func TestLegacyCopyRemoveSearchCannotBypassReplacementScope(t *testing.T) {
 	client := &fakeClient{}
 	svc, db, movieID := autoSetup(t,
 		[]ports.Release{rel("Test.Movie.2024.1080p.WEB-DL.x264-NEW", 9)}, client)
@@ -280,19 +241,14 @@ func TestAcq2RemoveFileSearchesForTheCopyItBelongedTo(t *testing.T) {
 	}
 	fileID, _ := acq2AddFile(t, svc, movieID, copyID, copyDir, "copy.mkv", "")
 
-	res, err := svc.RemoveFile(ctx, movieID, fileID, RemoveFileRequest{FromDisk: true, Search: true})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := svc.RemoveFile(ctx, movieID, fileID, RemoveFileRequest{FromDisk: true, Search: true}); !errors.Is(err, ErrReplacementReviewRequired) {
+		t.Fatalf("legacy search bypass error = %v", err)
 	}
-	if !res.Searched {
-		t.Fatalf("no search for the copy: %+v", res)
+	if active, _ := db.ListActiveDownloads(ctx); len(active) != 0 {
+		t.Fatalf("legacy action admitted downloads: %+v", active)
 	}
-	active, _ := db.ListActiveDownloads(ctx)
-	if len(active) != 1 {
-		t.Fatalf("downloads = %+v", active)
-	}
-	if active[0].CopyID != copyID {
-		t.Errorf("the replacement was grabbed for copy %d, want %d", active[0].CopyID, copyID)
+	if _, err := db.GetFileQuality(ctx, fileID); err != nil {
+		t.Fatalf("copy row was removed before review: %v", err)
 	}
 }
 

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,7 +39,7 @@ func admittedFixture(t *testing.T, s *Service, db *sqlite.DB, item int64, candid
 		if key == "pack" {
 			title = "Test.Show.S01.1080p.WEB-DL"
 		}
-		intents = append(intents, sqlite.Download{MediaItemID: item, Season: 1, ClientID: clients[0].ID, Protocol: "torrent", ReleaseTitle: title, CandidateKey: key, WantableIDs: []string{fmt.Sprintf("episode:%d:1:%d", item, i+1)}, ReservedEpisodes: []int64{ep}, ExecutionPayload: string(payload)})
+		intents = append(intents, sqlite.Download{MediaItemID: item, Season: 1, ClientID: clients[0].ID, Protocol: "torrent", ReleaseTitle: title, CandidateKey: key, WantableIDs: []string{fmt.Sprintf("episode:%d:1:%d", item, i+1)}, ReservedEpisodes: []int64{ep}, ExecutionPayload: string(payload), SourceGUID: "guid-" + key, SourceIndexerID: 42})
 	}
 	raw, _ := json.Marshal(facts)
 	rev, _ := db.AcquisitionRevision(ctx)
@@ -87,6 +89,226 @@ func TestPendingRestartDispatchIsOnceAndCancelledPlanDoesNotReopen(t *testing.T)
 	_ = db.R.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE kind=?`, SeasonSearchJobKind).Scan(&n)
 	if n != 0 {
 		t.Fatal("cancellation enqueued automatic replacement")
+	}
+}
+
+type planCorrelationClient struct {
+	*fakeClient
+	handle ports.Handle
+	err    error
+	added  []ports.AddOptions
+}
+
+func (c *planCorrelationClient) AddWithOptions(_ context.Context, _, _ string, opts ports.AddOptions) (ports.Handle, error) {
+	c.added = append(c.added, opts)
+	return c.handle, c.err
+}
+
+func (*planCorrelationClient) SupportsExactTransferCorrelation() bool { return true }
+
+type plannedRetryClient struct {
+	*fakeClient
+	started  chan struct{}
+	release  chan struct{}
+	mu       sync.Mutex
+	calls    int
+	deadline time.Time
+}
+
+func (c *plannedRetryClient) AddWithOptions(context.Context, string, string, ports.AddOptions) (ports.Handle, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	c.started <- struct{}{}
+	<-c.release
+	return "", manualProviderRetryError{deadline: c.deadline}
+}
+
+func (*plannedRetryClient) SupportsExactTransferCorrelation() bool { return true }
+func (c *plannedRetryClient) ListDeliveries(context.Context, uint64, int) (ports.RunnerDeliveryPage, error) {
+	return ports.RunnerDeliveryPage{ProtocolVersion: 1}, nil
+}
+func (*plannedRetryClient) AcceptDelivery(context.Context, string, ports.RunnerDeliveryAcceptance) error {
+	return nil
+}
+func (*plannedRetryClient) SupportsRequestTokenIdempotency(context.Context) (bool, error) {
+	return true, nil
+}
+func (c *plannedRetryClient) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+func TestPlannedDispatchPinsExactCorrelationAndNeverUsesTitleFallback(t *testing.T) {
+	client := &planCorrelationClient{fakeClient: &fakeClient{}}
+	s, db, item := setup(t, nil, client.fakeClient)
+	s.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	ctx := context.Background()
+	planID, rows := admittedFixture(t, s, db, item, "single")
+	before := rows[0].Transfer
+	if len(before) != 36 || !strings.HasPrefix(before, "t-0-") {
+		t.Fatalf("planned transfer token is not a random opaque token: %q", before)
+	}
+	if err := s.dispatchPlan(ctx, planID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetDownload(ctx, rows[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.ExactTransferCorrelation || got.Transfer != before || got.SubmissionPhase != "submitted" || got.Handle != "" || got.SourceGUID != "guid-single" || got.SourceIndexerID != 42 {
+		t.Fatalf("planned admission did not persist exact identity: %+v", got)
+	}
+	if len(client.added) != 1 || client.added[0].Transfer != got.Transfer {
+		t.Fatalf("Add did not receive persisted transfer token: %+v", client.added)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = sqlite.Open(filepath.Dir(db.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.db = db
+	t.Cleanup(func() { _ = db.Close() })
+	got, err = db.GetDownload(ctx, got.ID)
+	if err != nil || !got.ExactTransferCorrelation || got.Transfer != before || got.SourceGUID != "guid-single" {
+		t.Fatalf("exact planned admission did not survive restart: %+v %v", got, err)
+	}
+	// Even after restart changes the phase to uncertain, an untagged same-title
+	// client row is not evidence for this exact-correlated admission.
+	if err = db.SetSubmissionPhase(ctx, got.ID, "uncertain"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = db.GetDownload(ctx, got.ID)
+	s.observeUncertain(ctx, got, ports.ClientConfig{ID: got.ClientID}, []ports.DownloadStatus{{Name: got.ReleaseTitle, Handle: "unrelated"}}, true)
+	got, _ = db.GetDownload(ctx, got.ID)
+	if got.Handle != "" || got.SubmissionPhase != "uncertain" {
+		t.Fatalf("title-only status changed exact admission: %+v", got)
+	}
+	if status, ok := matchStatus(got, []ports.DownloadStatus{{Name: got.ReleaseTitle, Handle: "native", Transfer: got.Transfer}}); !ok || status.Transfer != got.Transfer {
+		t.Fatal("exact transfer token did not correlate after restart")
+	}
+}
+
+func TestPlannedPermanentRefusalIsTerminal(t *testing.T) {
+	client := &planCorrelationClient{fakeClient: &fakeClient{}, err: ports.ErrAdmissionRejected}
+	s, db, item := setup(t, nil, client.fakeClient)
+	s.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	ctx := context.Background()
+	planID, rows := admittedFixture(t, s, db, item, "single")
+	if err := s.dispatchPlan(ctx, planID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetDownload(ctx, rows[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "failed" || got.SubmissionPhase != "rejected" {
+		t.Fatalf("definite planned refusal was not terminal: %+v", got)
+	}
+	retries, err := db.ListRunnerSubmissionRetries(ctx, time.Now().Add(24*time.Hour), 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, retry := range retries {
+		if retry.DownloadID == got.ID {
+			t.Fatal("permanently refused planned admission was retryable")
+		}
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = sqlite.Open(filepath.Dir(db.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	got, err = db.GetDownload(ctx, got.ID)
+	if err != nil || got.State != "failed" || got.SubmissionPhase != "rejected" {
+		t.Fatalf("atomic refusal did not survive restart: %+v %v", got, err)
+	}
+}
+
+func TestPlannedDispatchHonorsPersistedSourceReleaseBlacklist(t *testing.T) {
+	client := &planCorrelationClient{fakeClient: &fakeClient{}}
+	s, db, item := setup(t, nil, client.fakeClient)
+	s.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	ctx := context.Background()
+	planID, rows := admittedFixture(t, s, db, item, "single")
+	if err := db.AddReleaseIdentityBlocklist(ctx, item, rows[0].SourceIndexerID, rows[0].SourceGUID, "user marked source bad"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.dispatchPlan(ctx, planID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetDownload(ctx, rows[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := db.GetAcquisitionPlan(ctx, planID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.added) != 0 || got.SubmissionPhase != "rejected" || plan.State != "needs_replan" {
+		t.Fatalf("blacklisted planned source was dispatched: added=%+v row=%+v plan=%+v", client.added, got, plan)
+	}
+}
+
+func TestPlannedAddAndAutomaticRetryShareDownloadLockAndProviderDeadline(t *testing.T) {
+	client := &plannedRetryClient{fakeClient: &fakeClient{}, started: make(chan struct{}, 2), release: make(chan struct{}), deadline: time.Now().Add(10 * time.Minute)}
+	s, db, item := setup(t, nil, client.fakeClient)
+	s.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	ctx := context.Background()
+	planID, rows := admittedFixture(t, s, db, item, "single")
+	dispatchDone := make(chan error, 1)
+	go func() { dispatchDone <- s.dispatchPlan(ctx, planID) }()
+	select {
+	case <-client.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("planned Add did not start")
+	}
+	retryDone := make(chan struct{})
+	go func() {
+		s.processRunnerSubmissionRetries(ctx)
+		close(retryDone)
+	}()
+	// The retry scan can select a submitting row but must wait on the same
+	// per-download lock rather than issuing a concurrent Add.
+	time.Sleep(50 * time.Millisecond)
+	if calls := client.callCount(); calls != 1 {
+		t.Fatalf("planned Add raced an automatic retry: %d calls", calls)
+	}
+	close(client.release)
+	if err := <-dispatchDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-retryDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("retry worker did not resume after planned Add released its lock")
+	}
+	row, err := db.GetDownload(ctx, rows[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline, err := db.DownloadProviderRetryAfter(ctx, row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attempts int
+	if err := db.R.QueryRowContext(ctx, `SELECT runner_submission_retry_attempts FROM downloads WHERE id=?`, row.ID).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if row.SubmissionPhase != "uncertain" || attempts != 1 || deadline.UnixMilli() != client.deadline.UnixMilli() || client.callCount() != 1 {
+		t.Fatalf("planned retry ignored durable deadline: row=%+v deadline=%s calls=%d", row, deadline, client.callCount())
 	}
 }
 func TestUncertainEvidenceResetsForOutageConfigurationAndBoundedInventory(t *testing.T) {

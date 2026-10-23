@@ -18,17 +18,15 @@ import (
 // notice — and the item stayed "missing", so automation grabbed the same
 // release again instead. That is the re-grab loop with monarr's name on it.
 //
-// Bounded, because a retry that never gives up is just a slower loop:
-// importRetryMax attempts, importRetryBackoff apart, and then it stays
-// failed for a person to look at.
+// Environmental import failures stay retryable until the underlying issue is
+// fixed. A bounded sweep and increasing delay protect the worker pool while
+// avoiding a permanent stop after an arbitrary number of attempts.
 
 const (
 	// JobImportRetry is the scheduled sweep's task name.
 	JobImportRetry = "downloads.import-retry"
 	// ImportRetryInterval is how often the sweep runs.
-	ImportRetryInterval = 15 * time.Minute
-	// importRetryMax bounds the attempts for one download.
-	importRetryMax = 6
+	ImportRetryInterval = 30 * time.Second
 	// importRetryPerSweep bounds one pass, like the cleanup sweep: a dozen
 	// 60 GB season packs is not something to start all at once.
 	importRetryPerSweep = 5
@@ -41,7 +39,7 @@ const (
 // download — long enough that a volume someone is clearing has time to be
 // cleared. A var so a test can retry without sleeping through it; nothing
 // in the daemon writes to it.
-var importRetryBackoff = 15 * time.Minute
+var importRetryBackoff = 30 * time.Second
 
 // HistoryImportRetried records a retry, so a download that eventually
 // imported after three attempts says so rather than looking like it just
@@ -52,7 +50,7 @@ const HistoryImportRetried = "import_retried"
 // and are worth trying again. Returns nothing on an empty backlog; a
 // failure to retry one download never stops the others.
 func (s *Service) RetryBlockedImports(ctx context.Context) error {
-	rows, err := s.db.ListRecentDownloads(ctx)
+	rows, err := s.db.ListImportRetryCandidates(ctx)
 	if err != nil {
 		return err
 	}
@@ -65,11 +63,18 @@ func (s *Service) RetryBlockedImports(ctx context.Context) error {
 		if !blockedImport(dl) {
 			continue
 		}
-		attempts := importAttempts(dl)
-		if attempts >= importRetryMax {
+		path := dl.ImportPath
+		if path == "" {
+			path = dl.SavePath
+		}
+		legacy, reviewErr := s.db.LegacyCleanupReview(ctx, dl.GenerationKey, path)
+		if reviewErr != nil || legacy {
+			// Keep the migration-era cohort out of even automatic state
+			// transitions until its path and copy have been reviewed.
 			continue
 		}
-		if last, ok := lastImportAttempt(dl); ok && now.Sub(last) < importRetryBackoff {
+		attempts := importAttempts(dl)
+		if last, ok := lastImportAttempt(dl); ok && now.Sub(last) < importRetryDelay(attempts) {
 			continue
 		}
 		started++
@@ -81,8 +86,17 @@ func (s *Service) RetryBlockedImports(ctx context.Context) error {
 			releaseStorage()
 			continue
 		}
+		path = row.ImportPath
+		if path == "" {
+			path = row.SavePath
+		}
+		legacy, reviewErr = s.db.LegacyCleanupReview(decisionCtx, row.GenerationKey, path)
+		if reviewErr != nil || legacy {
+			releaseStorage()
+			continue
+		}
 		s.advance(decisionCtx, &row, "importing", row.Progress, "", stepImportRetry,
-			fmt.Sprintf("retrying the import (attempt %d of %d)", attempts+1, importRetryMax))
+			fmt.Sprintf("retrying the import (attempt %d)", attempts+1))
 		_ = s.db.AddHistory(ctx, HistoryImportRetried, row.MediaItemID, row.ReleaseTitle,
 			map[string]any{"attempt": attempts + 1})
 		releaseStorage()
@@ -102,8 +116,45 @@ func (s *Service) RetryBlockedImports(ctx context.Context) error {
 // asserted in a test so it cannot drift silently.
 func blockedImport(dl sqlite.Download) bool {
 	return dl.State == "failed" &&
+		!dl.DeliveryExpected &&
 		strings.Contains(dl.Error, ErrImportBlocked.Error()) &&
 		(dl.ImportPath != "" || dl.SavePath != "")
+}
+
+func importRetryDelay(attempts int) time.Duration {
+	if importRetryBackoff == 0 { // test seam; production leaves the default intact.
+		return 0
+	}
+	delays := [...]time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
+	if attempts < 0 {
+		attempts = 0
+	}
+	if attempts >= len(delays) {
+		return delays[len(delays)-1]
+	}
+	return delays[attempts]
+}
+
+// ImportRetryStatus is the durable Activity-facing retry view. The trace
+// stores attempts and their timestamps, so dismissal of the queue row does
+// not reset the schedule.
+func (s *Service) ImportRetryStatus(dl sqlite.Download) (attempts int, blockedSince, retryAt time.Time, retryable bool) {
+	if !blockedImport(dl) {
+		return 0, time.Time{}, time.Time{}, false
+	}
+	attempts = importAttempts(dl)
+	for _, event := range dl.Handoff {
+		if event.Step == stepFailed && strings.Contains(event.Detail, ErrImportBlocked.Error()) {
+			at := time.UnixMilli(event.At)
+			if blockedSince.IsZero() || at.Before(blockedSince) {
+				blockedSince = at
+			}
+		}
+	}
+	if last, ok := lastImportAttempt(dl); ok {
+		retryAt = last.Add(importRetryDelay(attempts))
+	}
+	return attempts, blockedSince, retryAt, true
 }
 
 // importAttempts counts the retries already spent on a row.

@@ -6,9 +6,14 @@ package acquisition
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -37,10 +42,13 @@ type (
 
 // Errors surfaced to the API layer.
 var (
-	ErrNoIndexers      = errors.New("no enabled indexers configured")
-	ErrNoClient        = errors.New("no enabled download client for this protocol")
-	ErrNoLibraryFolder = errors.New("item has no library folder assigned")
-	ErrNotFound        = sqlite.ErrNotFound
+	ErrNoIndexers                    = errors.New("no enabled indexers configured")
+	ErrNoClient                      = errors.New("no enabled download client for this protocol")
+	ErrNoLibraryFolder               = errors.New("item has no library folder assigned")
+	ErrNotFound                      = sqlite.ErrNotFound
+	ErrRequestConflict               = errors.New("request ID was already used for a different manual grab")
+	ErrBlacklistConfirmationRequired = errors.New("release is blacklisted; explicit one-time manual override required")
+	ErrReplacementReviewRequired     = errors.New("use the reviewed replacement workflow for bad or quality decisions")
 )
 
 // Events.
@@ -155,6 +163,14 @@ type Service struct {
 	// is bounded by the queue, so it is not swept.
 	reconcileMu sync.Mutex
 	reconciling map[int64]*sync.Mutex
+	// Acceptance attempts may be reached from the queue scheduler and from
+	// import workers that already own a download lock. Serialize by receipt in
+	// a separate lock domain so either path rechecks the persisted deadline
+	// immediately before dispatch without recursive download locking.
+	deliveryAckMu       sync.Mutex
+	deliveryAckLocks    map[int64]*sync.Mutex
+	deliverySourceMu    sync.Mutex
+	deliverySourceLocks map[int64]*sync.Mutex
 
 	// Live state of each push subscription, for the UI.
 	linksMu sync.Mutex
@@ -167,10 +183,15 @@ type Service struct {
 	contactMu sync.Mutex
 	contacts  map[int64]health.Contact
 
+	deliveryCapabilityMu sync.RWMutex
+	deliveryCapabilities map[int64]bool
+
 	// The data plane: import workers and the in-flight registry. See
 	// importers.go for why they are not on the poll goroutine.
 	importerFields
 }
+
+type runnerAdmissionPollPermitKey struct{}
 
 // New returns a Service.
 func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, ni IndexerFactory, nc ClientFactory) *Service {
@@ -418,15 +439,17 @@ type Candidate struct {
 	// Warning is a caution that does not decline the release: the profile
 	// would take it, but something about it does not add up. Today that is
 	// only an advertised size too small to hold what the name claims.
-	Warning string `json:"warning,omitempty"`
+	Warning         string `json:"warning,omitempty"`
+	BlacklistReason string `json:"blacklistReason,omitempty"`
 }
 
 type candidateRecord struct {
-	expiresAt                   time.Time
-	itemID, copyID              int64
-	season, episode             int
-	title, downloadURL, indexer string
-	evidence                    domain.MatchEvidence
+	expiresAt                         time.Time
+	itemID, copyID                    int64
+	indexerID                         int64
+	season, episode                   int
+	title, downloadURL, indexer, guid string
+	evidence                          domain.MatchEvidence
 }
 
 func (s *Service) issueCandidateToken(itemID, copyID int64, season, episode int, release ports.Release, evidence domain.MatchEvidence) string {
@@ -446,31 +469,28 @@ func (s *Service) issueCandidateToken(itemID, copyID int64, season, episode int,
 			delete(s.candidateTokens, key)
 		}
 	}
-	// Bound memory even if clients continually search and never grab. Tokens
-	// are advisory provenance, so evicting the oldest-ish arbitrary entry only
-	// turns a late click into an explicitly recorded manual override.
+	// Bound memory without evicting unexpired provenance tokens. A failed
+	// admission (for example, a newly blocklisted release) must be retryable
+	// with the same token and identity.
 	if len(s.candidateTokens) >= 2048 {
-		for key := range s.candidateTokens {
-			delete(s.candidateTokens, key)
-			break
-		}
+		return ""
 	}
 	s.candidateTokens[token] = candidateRecord{
 		expiresAt: now.Add(10 * time.Minute), itemID: itemID, copyID: copyID,
 		season: season, episode: episode, title: release.Title,
-		downloadURL: release.DownloadURL, indexer: release.Indexer, evidence: evidence,
+		downloadURL: release.DownloadURL, indexer: release.Indexer, guid: release.GUID,
+		indexerID: release.IndexerID, evidence: evidence,
 	}
 	return token
 }
 
-func (s *Service) consumeCandidateToken(req GrabRequest) (domain.MatchEvidence, bool) {
+func (s *Service) consumeCandidateToken(req GrabRequest) (domain.MatchEvidence, string, int64, bool) {
 	if req.CandidateToken == "" {
-		return domain.MatchEvidence{}, false
+		return domain.MatchEvidence{}, "", 0, false
 	}
 	s.candidateMu.Lock()
 	defer s.candidateMu.Unlock()
 	record, ok := s.candidateTokens[req.CandidateToken]
-	delete(s.candidateTokens, req.CandidateToken)
 	// A movie or book search issues its token with season 0 (the query has no
 	// season), while the grab handler defaults an omitted season to -1. Both
 	// mean "no season"; comparing them raw rejected every whole-item grab and
@@ -478,9 +498,9 @@ func (s *Service) consumeCandidateToken(req GrabRequest) (domain.MatchEvidence, 
 	if !ok || time.Now().After(record.expiresAt) || record.itemID != req.MediaItemID ||
 		record.copyID != req.CopyID || noSeason(record.season) != noSeason(req.Season) || record.episode != req.Episode ||
 		record.title != req.Title || record.downloadURL != req.DownloadURL || record.indexer != req.Indexer {
-		return domain.MatchEvidence{}, false
+		return domain.MatchEvidence{}, "", 0, false
 	}
-	return record.evidence, true
+	return record.evidence, record.guid, record.indexerID, true
 }
 
 // noSeason folds the two "no season" spellings (0 from a query without one,
@@ -581,6 +601,17 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 		c := Candidate{Release: r, Quality: p.Quality, QualityStr: p.Quality.Display(),
 			Languages: p.Languages,
 			Score:     format.Score(r.Title, formats), Formats: format.Matches(r.Title, formats)}
+		c.BlacklistReason, _, err = s.db.BlocklistReason(ctx, r.Title, r.Indexer)
+		if err != nil {
+			return nil, status, err
+		}
+		if r.GUID != "" && r.IndexerID != 0 {
+			if reason, blocked, e := s.db.ReleaseIdentityBlocklistReason(ctx, itemID, r.IndexerID, r.GUID); e != nil {
+				return nil, status, e
+			} else if blocked {
+				c.BlacklistReason = reason
+			}
+		}
 		if !r.PublishDate.IsZero() {
 			c.Age = age(now.Sub(r.PublishDate))
 		}
@@ -670,54 +701,185 @@ func age(d time.Duration) string {
 
 // GrabRequest is what the UI sends back from a chosen candidate.
 type GrabRequest struct {
-	MediaItemID    int64
-	CopyID         int64 // 0 = the primary copy
-	Season         int   // -1 for movies
-	Episode        int   // 0 = whole season / movie
-	Title          string
-	DownloadURL    string
-	Indexer        string
-	Protocol       string
-	Size           int64
-	CandidateToken string
-	MatchEvidence  *domain.MatchEvidence
+	Intent                 string
+	MediaItemID            int64
+	CopyID                 int64 // 0 = the primary copy
+	Season                 int   // -1 for movies
+	Episode                int   // 0 = whole season / movie
+	Title                  string
+	DownloadURL            string
+	Indexer                string
+	SourceGUID             string
+	IndexerID              int64
+	Protocol               string
+	Size                   int64
+	CandidateToken         string
+	MatchEvidence          *domain.MatchEvidence
+	RequestID              string
+	AllowBlacklisted       bool
+	ReplacementOperationID string
+}
+
+const (
+	GrabIntentAutomatic        = "automatic"
+	GrabIntentManualAdditional = "manual_additional"
+)
+
+type manualSubmissionPayload struct {
+	URL      string `json:"url"`
+	Category string `json:"category"`
+	Priority int    `json:"priority"`
+}
+
+func manualRequestFingerprint(req GrabRequest, sourceCopyID int64) (string, error) {
+	identity := struct {
+		MediaItemID int64  `json:"mediaItemId"`
+		CopyID      int64  `json:"copyId"`
+		Season      int    `json:"season"`
+		Episode     int    `json:"episode"`
+		Title       string `json:"title"`
+		DownloadURL string `json:"downloadUrl"`
+		Indexer     string `json:"indexer"`
+		Protocol    string `json:"protocol"`
+		Size        int64  `json:"size"`
+		Override    bool   `json:"downloadAnyway"`
+	}{req.MediaItemID, sourceCopyID, req.Season, req.Episode, req.Title, req.DownloadURL,
+		req.Indexer, req.Protocol, req.Size, req.AllowBlacklisted}
+	raw, err := json.Marshal(identity)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func manualCopyPath(targetPath, requestID string, claims []sqlite.FolderClaim) (string, string) {
+	sum := sha256.Sum256([]byte(requestID))
+	suffix := hex.EncodeToString(sum[:5])
+	base := filepath.Join(filepath.Dir(targetPath), filepath.Base(targetPath)+" (Manual copy "+suffix+")")
+	taken := make(map[string]bool, len(claims))
+	for _, claim := range claims {
+		taken[filepath.Clean(claim.Path)] = true
+	}
+	path := base
+	for n := 2; taken[filepath.Clean(path)]; n++ {
+		path = fmt.Sprintf("%s (%d)", base, n)
+	}
+	return "Manual copy " + suffix, path
 }
 
 func protocolOfClient(clientType string) string { return ports.ProtocolOfClient(clientType) }
 
-// newTransferID mints the id that names one transfer end to end
-// (nzbd/docs/INTEGRATION_PLAN.md §3.1): `t-<downloads.id>-<6 lowercase
-// hex>`.
+// newTransferID mints the id that names one transfer end to end. The
+// 128-bit random suffix makes pre-insert tokens safe too: those use row id 0
+// because the token and full submission payload must be committed atomically
+// before contacting the client.
 //
 // The row id alone would be enough to be unique here, but not to be
 // unambiguous THERE: ids restart when a database is rebuilt from a backup,
 // and a stale "t-42" in a media server's log would then point at a
 // different download entirely. The random half makes a collision across
 // rebuilds something you would have to be unlucky twice to see.
-func newTransferID(downloadID int64) string {
-	var b [3]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// A transfer id that is merely unique-per-database is worth far
-		// more than no id at all: without one the trace has no thread.
-		return fmt.Sprintf("t-%d-%06x", downloadID, downloadID&0xffffff)
-	}
-	return fmt.Sprintf("t-%d-%x", downloadID, b)
+func newTransferID(downloadID int64) (string, error) {
+	return ports.NewTransferToken(downloadID)
 }
 
 // addToClient sends the release, carrying its human name and transfer id when
 // the client can hold them. The type assertion is the whole mechanism: clients
 // that cannot tag a download are added exactly as before, and Monarr keeps the
 // id on its own row so its trace is still threaded.
-func addToClient(ctx context.Context, c ports.DownloadClient, downloadURL, category, name, transfer string, priority int) (ports.Handle, error) {
+func addToClient(ctx context.Context, c ports.DownloadClient, downloadURL, category, name, transfer string, priority int, deliveryExpected, manualAdditional bool) (ports.Handle, error) {
 	if configured, ok := c.(ports.ConfiguredAdder); ok {
 		return configured.AddWithOptions(ctx, downloadURL, category, ports.AddOptions{
-			Name: name, Transfer: transfer, Priority: priority,
+			Name: name, Transfer: transfer, Priority: priority, DeliveryExpected: deliveryExpected, ManualAdditional: manualAdditional,
 		})
 	}
 	if tagger, ok := c.(ports.TaggedAdder); ok && transfer != "" {
 		return tagger.AddTagged(ctx, downloadURL, category, name, transfer)
 	}
 	return c.Add(ctx, downloadURL, category)
+}
+
+// retryAutomaticSubmission replays only an exact persisted submission with a
+// negotiated durable Runner token. The token makes this safe when the prior
+// Add response was lost; clients without that contract remain visibly
+// uncertain instead of receiving a possible duplicate.
+func (s *Service) retryAutomaticSubmission(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig) error {
+	if !automaticSubmissionRetryable(dl) || dl.Transfer == "" || dl.GenerationKey == "" {
+		return fmt.Errorf("automatic submission cannot be safely replayed")
+	}
+	var payload manualSubmissionPayload
+	if dl.ExecutionPayload == "" || json.Unmarshal([]byte(dl.ExecutionPayload), &payload) != nil || payload.URL == "" {
+		return fmt.Errorf("persisted automatic submission payload is unavailable")
+	}
+	blocked, err := s.db.IsBlocklisted(ctx, dl.ReleaseTitle, dl.Indexer)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		_ = s.db.RejectDownloadSubmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer, "release became blocklisted before automatic retry")
+		return fmt.Errorf("release is blocklisted; automatic submission was stopped")
+	}
+	if dl.SourceGUID != "" && dl.SourceIndexerID > 0 {
+		_, blocked, err = s.db.ReleaseIdentityBlocklistReason(ctx, dl.MediaItemID, dl.SourceIndexerID, dl.SourceGUID)
+		if err != nil {
+			return err
+		}
+		if blocked {
+			_ = s.db.RejectDownloadSubmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer, "source release became blocklisted before automatic retry")
+			return fmt.Errorf("source release is blocklisted; automatic submission was stopped")
+		}
+	}
+	client := s.newClient(cfg)
+	if client == nil {
+		return fmt.Errorf("download client is unavailable")
+	}
+	due, err := s.db.RunnerSubmissionRetryDue(ctx, dl.ID, dl.GenerationKey, time.Now())
+	if err != nil {
+		return err
+	}
+	if !due {
+		return errSubmissionRetryNotDue
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	handle, err := addToClient(callCtx, client, payload.URL, payload.Category, dl.ReleaseTitle, dl.Transfer, payload.Priority, dl.DeliveryExpected, false)
+	if err != nil {
+		return err
+	}
+	if handle == "" {
+		if correlator, ok := client.(ports.ExactTransferCorrelator); ok && correlator.SupportsExactTransferCorrelation() {
+			return s.db.RecordHandlelessSubmission(context.WithoutCancel(ctx), dl.ID, dl.GenerationKey, dl.Transfer)
+		}
+		return fmt.Errorf("client accepted the request without a native handle or exact transfer correlation")
+	}
+	return s.db.RecordDownloadSubmission(context.WithoutCancel(ctx), dl.ID, dl.GenerationKey, dl.Transfer, string(handle))
+}
+
+func negotiateRunnerDelivery(ctx context.Context, c ports.DownloadClient) (bool, bool, error) {
+	protocol, ok := c.(ports.DeliveryProtocol)
+	if !ok {
+		return false, false, nil
+	}
+	page, err := protocol.ListDeliveries(ctx, 0, 1)
+	if err != nil {
+		var status ports.HTTPStatusCoder
+		if errors.As(err, &status) && status.HTTPStatusCode() == http.StatusNotFound {
+			return false, false, nil
+		}
+		return false, false, fmt.Errorf("negotiate Runner delivery protocol: %w", err)
+	}
+	if page.ProtocolVersion != 1 {
+		return false, false, fmt.Errorf("unsupported Runner delivery protocol version %d", page.ProtocolVersion)
+	}
+	idempotent := false
+	if tokenProtocol, ok := c.(ports.RequestTokenIdempotency); ok {
+		idempotent, err = tokenProtocol.SupportsRequestTokenIdempotency(ctx)
+		if err != nil {
+			return false, false, fmt.Errorf("negotiate Runner request-token idempotency: %w", err)
+		}
+	}
+	return true, idempotent, nil
 }
 
 func (s *Service) downloadPriority(ctx context.Context, item domain.MediaItem, copyID int64) (int, error) {
@@ -743,11 +905,247 @@ func (s *Service) downloadPriority(ctx context.Context, item domain.MediaItem, c
 // Grab sends the release to the right client by protocol and records the
 // queue row + history (blueprint §5.1 grab → import).
 func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
+	req.Intent = GrabIntentAutomatic
+	return s.grab(ctx, req, false)
+}
+
+// GrabManual admits an independent, unmonitored additional copy. The API
+// entry point is the only production caller; automatic planners use Grab.
+func (s *Service) GrabManual(ctx context.Context, req GrabRequest) (int64, error) {
+	if strings.TrimSpace(req.RequestID) == "" {
+		return 0, fmt.Errorf("requestId is required for a manual additional copy")
+	}
+	req.Intent = GrabIntentManualAdditional
+	return s.grab(ctx, req, true)
+}
+
+func (s *Service) existingManualRequest(ctx context.Context, requestID, fingerprint string) (int64, bool, error) {
+	record, err := s.db.GetManualGrabRequest(ctx, requestID)
+	if errors.Is(err, ErrNotFound) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if record.RequestFingerprint != fingerprint {
+		return 0, true, ErrRequestConflict
+	}
+	dl, err := s.db.GetDownload(ctx, record.DownloadID)
+	if errors.Is(err, ErrNotFound) {
+		return 0, true, sqlite.ErrManualGrabRequestRetained
+	}
+	if err != nil {
+		return 0, true, err
+	}
+	if dl.GenerationKey != record.GenerationKey || dl.CopyID != record.CopyID || dl.RequestID != requestID || dl.RequestFingerprint != fingerprint {
+		return 0, true, fmt.Errorf("manual request download generation no longer matches its durable request record")
+	}
+	return record.DownloadID, true, nil
+}
+
+func (s *Service) resumeManualRequest(ctx context.Context, id int64) (int64, error) {
+	unlock := s.lockDownload(id)
+	defer unlock()
+	dl, err := s.db.GetDownload(ctx, id)
+	if err != nil {
+		return id, err
+	}
+	if dl.Intent != GrabIntentManualAdditional || dl.RequestID == "" || dl.Transfer == "" {
+		return id, fmt.Errorf("manual request is missing its durable intent or transfer token")
+	}
+	if dl.SubmissionPhase == "rejected" || dl.State == "failed" {
+		return id, fmt.Errorf("manual request was not submitted: %s", dl.Error)
+	}
+	if dl.ParkedAt.UnixMilli() != 0 || dl.ParkedReason != "" || dl.Superseded {
+		return id, fmt.Errorf("manual request was cancelled or superseded; it will not be replayed")
+	}
+	if (dl.SubmissionPhase == "submitted" && dl.Handle != "") || dl.State == "downloaded" || dl.State == "imported" || dl.State == "awaiting_import" || dl.State == "importing" {
+		return id, nil
+	}
+	if dl.SubmissionPhase == "submitted" && dl.Handle == "" {
+		if !dl.ExactTransferCorrelation {
+			return id, fmt.Errorf("submitted manual request is missing its native handle and was not admitted with exact transfer correlation")
+		}
+		// qBittorrent acknowledges Add before its hash becomes visible. The
+		// accepted token is already durable, so this path only adopts an exact
+		// token match and otherwise keeps the successful request pending.
+		cfg, cfgErr := s.db.GetDownloadClient(ctx, dl.ClientID)
+		if cfgErr != nil {
+			return id, cfgErr
+		}
+		statuses, statusErr := s.newClient(cfg).Statuses(ctx)
+		if statusErr != nil {
+			_ = s.db.ScheduleManualAdmissionRetry(context.WithoutCancel(ctx), id, time.Now(), "accepted request is waiting for exact transfer-token correlation: "+statusErr.Error())
+			return id, nil
+		}
+		for _, st := range statuses {
+			if dl.Transfer == "" || st.Transfer != dl.Transfer || st.Handle == "" {
+				continue
+			}
+			if err := s.db.CommitManualSubmission(ctx, id, dl.GenerationKey, string(st.Handle), dl.Transfer); err != nil {
+				return id, fmt.Errorf("persist reconciled manual submission: %w", err)
+			}
+			return id, nil
+		}
+		_ = s.db.ScheduleManualAdmissionRetry(context.WithoutCancel(ctx), id, time.Now(), "client accepted the request; waiting for exact transfer-token correlation")
+		return id, nil
+	}
+	providerDeadline, deadlineErr := s.db.DownloadProviderRetryAfter(ctx, id)
+	if deadlineErr != nil {
+		return id, deadlineErr
+	}
+	if providerDeadline.After(time.Now()) {
+		return id, fmt.Errorf("download client requested that this same manual submission wait until %s", providerDeadline.UTC().Format(time.RFC3339))
+	}
+	if dl.SubmissionPhase == "pending" && !dl.BlacklistOverride {
+		blocked, blockErr := s.db.IsBlocklisted(ctx, dl.ReleaseTitle, dl.Indexer)
+		if blockErr != nil {
+			return id, blockErr
+		}
+		if dl.SourceGUID != "" && dl.SourceIndexerID != 0 {
+			_, exactBlocked, exactErr := s.db.ReleaseIdentityBlocklistReason(ctx, dl.MediaItemID, dl.SourceIndexerID, dl.SourceGUID)
+			if exactErr != nil {
+				return id, exactErr
+			}
+			blocked = blocked || exactBlocked
+		}
+		if blocked {
+			reason, _, _ := s.db.BlocklistReason(ctx, dl.ReleaseTitle, dl.Indexer)
+			if reason == "" {
+				reason = "release was blacklisted before submission"
+			}
+			if err := s.db.RejectDownloadSubmission(ctx, id, dl.GenerationKey, dl.Transfer, "manual request was blocked before submission: "+reason); err != nil {
+				return id, err
+			}
+			s.advance(ctx, &dl, "failed", 0, reason, stepFailed, "manual request was blocked before submission")
+			return id, fmt.Errorf("manual request was blocked before submission: %s", reason)
+		}
+	}
+	var payload manualSubmissionPayload
+	if err := json.Unmarshal([]byte(dl.ExecutionPayload), &payload); err != nil || payload.URL == "" {
+		return id, fmt.Errorf("manual request has no durable client submission payload")
+	}
+	cfg, err := s.db.GetDownloadClient(ctx, dl.ClientID)
+	if err != nil {
+		return id, err
+	}
+	client := s.newClient(cfg)
+	if dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitted" {
+		if !dl.RequestTokenIdempotent {
+			statuses, statusErr := client.Statuses(ctx)
+			if statusErr != nil {
+				return id, statusErr
+			}
+			for _, st := range statuses {
+				matches := st.Transfer == dl.Transfer && dl.Transfer != ""
+				if st.Transfer == "" && dl.Handle != "" && string(st.Handle) == dl.Handle {
+					matches = true
+				}
+				if matches {
+					if st.Handle == "" {
+						return id, fmt.Errorf("manual request matched by transfer token but the client omitted its handle")
+					}
+					if err := s.db.CommitManualSubmission(ctx, id, dl.GenerationKey, string(st.Handle), dl.Transfer); err != nil {
+						return id, fmt.Errorf("persist reconciled manual submission: %w", err)
+					}
+					return id, nil
+				}
+			}
+			return id, fmt.Errorf("manual submission is uncertain; refusing to create a possible duplicate without request-token idempotency")
+		}
+	}
+	return s.dispatchManualRequest(ctx, dl, cfg, client, payload)
+}
+
+func (s *Service) dispatchManualRequest(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, client ports.DownloadClient, payload manualSubmissionPayload) (int64, error) {
+	if err := s.db.SetSubmissionPhase(ctx, dl.ID, "submitting"); err != nil {
+		return dl.ID, err
+	}
+	manualStepPresent := false
+	for _, entry := range dl.Handoff {
+		if entry.Step == stepManualGrabQueued {
+			manualStepPresent = true
+			break
+		}
+	}
+	if !manualStepPresent {
+		dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualGrabQueued, At: time.Now().UnixMilli(), Detail: "independent manual copy reserved"})
+		s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, "sent to "+clientLabel(cfg)+" as "+dl.Transfer)
+	}
+	handle, err := addToClient(ctx, client, payload.URL, payload.Category, dl.ReleaseTitle, dl.Transfer, payload.Priority, dl.DeliveryExpected, true)
+	if err != nil {
+		if permanentSubmissionRefusal(err) {
+			if rejectErr := s.db.RejectDownloadSubmission(context.WithoutCancel(ctx), dl.ID, dl.GenerationKey, dl.Transfer, "client permanently rejected the manual request: "+err.Error()); rejectErr != nil {
+				return dl.ID, fmt.Errorf("persist manual admission refusal: %w", rejectErr)
+			}
+			return dl.ID, err
+		}
+		_ = s.db.SetSubmissionPhase(context.WithoutCancel(ctx), dl.ID, "uncertain")
+		_ = s.db.UpdateDownloadState(context.WithoutCancel(ctx), dl.ID, "grabbed", 0, "submission uncertain; reconciling before retry")
+		_ = s.db.ScheduleManualAdmissionRetry(context.WithoutCancel(ctx), dl.ID, time.Now(), err.Error(), submissionRetryDeadline(err))
+		return dl.ID, err
+	}
+	var commitErr error
+	if handle != "" {
+		commitErr = s.db.CommitManualSubmission(ctx, dl.ID, dl.GenerationKey, string(handle), dl.Transfer)
+	} else if correlator, ok := client.(ports.ExactTransferCorrelator); ok && correlator.SupportsExactTransferCorrelation() {
+		commitErr = s.db.RecordHandlelessSubmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer)
+	} else {
+		commitErr = fmt.Errorf("client accepted the request without a native handle or exact transfer correlation")
+	}
+	if commitErr != nil {
+		_ = s.db.SetSubmissionPhase(context.WithoutCancel(ctx), dl.ID, "uncertain")
+		_ = s.db.ScheduleManualAdmissionRetry(context.WithoutCancel(ctx), dl.ID, time.Now(), "accepted by client but Curator could not persist its acknowledgement: "+commitErr.Error())
+		return dl.ID, fmt.Errorf("client accepted manual request but its acknowledgement could not be persisted: %w", commitErr)
+	}
+	if handle == "" {
+		s.advance(ctx, &dl, "grabbed", 0, "client accepted the request; waiting for exact transfer-token correlation", stepAcceptedAwaitingCorrelation,
+			"Add was accepted; Curator will bind only a client status carrying this exact transfer token")
+	}
+	_ = s.db.AddHistory(ctx, "grabbed", dl.MediaItemID, dl.ReleaseTitle,
+		map[string]any{"indexer": dl.Indexer, "protocol": dl.Protocol, "manualAdditional": true})
+	s.publish(ReleaseGrabbed{MediaItemID: dl.MediaItemID, Title: dl.ReleaseTitle, Indexer: dl.Indexer, Protocol: dl.Protocol})
+	s.log.Info("manual additional copy grabbed", "release", dl.ReleaseTitle, "client", cfg.Name, "transfer", dl.Transfer)
+	return dl.ID, nil
+}
+
+func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64, error) {
+	var fingerprint string
+	if manual {
+		var err error
+		fingerprint, err = manualRequestFingerprint(req, req.CopyID)
+		if err != nil {
+			return 0, err
+		}
+		id, found, err := s.existingManualRequest(ctx, req.RequestID, fingerprint)
+		if err != nil {
+			return 0, err
+		}
+		if found {
+			return s.resumeManualRequest(ctx, id)
+		}
+	}
 	item, err := s.db.GetMediaItemFull(ctx, req.MediaItemID)
 	if err != nil {
 		return 0, err
 	}
+	p := parser.Parse(req.Title)
+	evidence := domain.MatchEvidence{Version: 1, Method: "manual_override", Code: "identity_unresolved", Reason: "Manually grabbed without retained search evidence", OriginalTitle: req.Title, ParsedTitle: p.Title}
+	if req.MatchEvidence != nil {
+		evidence = *req.MatchEvidence
+	} else if verified, guid, indexerID, ok := s.consumeCandidateToken(req); ok {
+		req.SourceGUID, req.IndexerID = guid, indexerID
+		if verified.Matched {
+			evidence = verified
+		} else {
+			evidence = domain.MatchEvidence{Version: 1, Method: "manual_override", Code: "manual_override",
+				Reason: "Manually grabbed after rejection: " + verified.Reason, OriginalTitle: req.Title, ParsedTitle: p.Title}
+		}
+	}
 	dest := item.Path
+	rootFolderID := item.RootFolderID
+	profileID := item.QualityProfileID
+	bookType := item.BookType
 	if req.CopyID != 0 {
 		cp, err := s.db.GetMediaCopy(ctx, item.ID, req.CopyID)
 		if err != nil {
@@ -756,6 +1154,9 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 		if cp.Path != "" {
 			dest = cp.Path
 		}
+		rootFolderID = cp.RootFolderID
+		profileID = cp.QualityProfileID
+		bookType = cp.BookType
 	}
 	if dest == "" {
 		// Refuse before talking to the download client. Discovering there is
@@ -781,33 +1182,58 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	blocked, err := s.db.IsBlocklisted(ctx, req.Title, req.Indexer)
+	if err != nil {
+		return 0, err
+	}
+	identityReason, identityBlocked := "", false
+	if req.SourceGUID != "" && req.IndexerID != 0 {
+		identityReason, identityBlocked, err = s.db.ReleaseIdentityBlocklistReason(ctx, item.ID, req.IndexerID, req.SourceGUID)
+		if err != nil {
+			return 0, err
+		}
+	}
+	blocked = blocked || identityBlocked
+	blacklistOverride := false
+	if blocked {
+		reason, _, _ := s.db.BlocklistReason(ctx, req.Title, req.Indexer)
+		if identityBlocked {
+			reason = identityReason
+		}
+		if reason == "" {
+			reason = "previously failed"
+		}
+		if !manual || !req.AllowBlacklisted {
+			return 0, fmt.Errorf("%w: %s", ErrBlacklistConfirmationRequired, reason)
+		}
+		blacklistOverride = true
+	}
+	client := s.newClient(*cfg)
+	deliveryExpected, requestTokenIdempotent, err := negotiateRunnerDelivery(ctx, client)
+	if err != nil {
+		return 0, err
+	}
+	exactTransferCorrelation := requestTokenIdempotent
+	if correlator, ok := client.(ports.ExactTransferCorrelator); ok && correlator.SupportsExactTransferCorrelation() {
+		exactTransferCorrelation = true
+	}
+	if deliveryExpected {
+		s.rememberRunnerDelivery(cfg.ID)
+	}
 
 	// Already grabbed and still moving? Two automation passes that overlap,
 	// a failure that re-searched instantly, and a person pressing the
 	// button all arrive here, and only the first of them should spend
 	// 90 GB of wire. Jobs 238/239 on nuc3 were the same NZB six minutes
 	// apart, and neither client nor monarr said a word about it.
-	if existing := s.alreadyInFlight(ctx, req); existing != 0 {
-		s.log.Info("grab: already in flight; not grabbing it again",
-			"release", req.Title, "download", existing)
-		return existing, nil
-	}
-
-	p := parser.Parse(req.Title)
-	evidence := domain.MatchEvidence{Version: 1, Method: "manual_override", Code: "identity_unresolved", Reason: "Manually grabbed without retained search evidence", OriginalTitle: req.Title, ParsedTitle: p.Title}
-	if req.MatchEvidence != nil {
-		evidence = *req.MatchEvidence
-	} else if verified, ok := s.consumeCandidateToken(req); ok {
-		if verified.Matched {
-			evidence = verified
-		} else {
-			evidence = domain.MatchEvidence{
-				Version: 1, Method: "manual_override", Code: "manual_override",
-				Reason:        "Manually grabbed after rejection: " + verified.Reason,
-				OriginalTitle: req.Title, ParsedTitle: p.Title,
-			}
+	if !manual {
+		if existing := s.alreadyInFlight(ctx, req); existing != 0 {
+			s.log.Info("grab: already in flight; not grabbing it again",
+				"release", req.Title, "download", existing)
+			return existing, nil
 		}
 	}
+
 	var base string
 	switch {
 	case item.Kind == domain.KindMovie:
@@ -819,28 +1245,36 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	default:
 		base = fmt.Sprintf("season:%d:%d", item.ID, req.Season)
 	}
-	if req.CopyID != 0 {
+	if req.CopyID != 0 && !manual {
 		base = fmt.Sprintf("%s:c%d", base, req.CopyID)
 	}
 	wants := []string{base}
+	// Persist the exact wire payload for every admission, not only manual
+	// additional copies. Automatic Runner submissions can lose their response
+	// or the process can exit after the row commits but before Add; recovery
+	// must replay this URL/category/priority with the same transfer token.
+	submissionPayload := manualSubmissionPayload{URL: req.DownloadURL, Category: cfg.Category, Priority: priority}
 
 	// The row goes in BEFORE the client is asked to take the download,
-	// because the transfer id is built from the row id and has to be on
-	// the request that creates the download — a client cannot be told
+	// because its stable transfer token and exact submission payload have to
+	// be on the request that creates the download — a client cannot be told
 	// afterwards what to have called it. A client that then refuses the
 	// add leaves a row that describes a download nobody has, so it is
 	// removed again below; the alternative (add first, insert second) is
 	// a download running in a client that Monarr has no record of, which
 	// is the worse of the two failures by a distance.
-	allocationCtx, releaseStorageAllocation := s.lockStorageDecision(ctx)
 	s.importTargetMu.Lock()
-	releaseAllocation := func() { s.importTargetMu.Unlock(); releaseStorageAllocation() }
+	allocationCtx, releaseStorageAllocation := s.lockStorageDecision(ctx)
+	releaseAllocation := func() { releaseStorageAllocation(); s.importTargetMu.Unlock() }
 	active, activeErr := s.db.ListDownloadReservations(allocationCtx)
 	if activeErr != nil {
 		releaseAllocation()
 		return 0, activeErr
 	}
 	for _, row := range active {
+		if manual {
+			continue
+		}
 		overlap := row.MediaItemID == item.ID && row.CopyID == req.CopyID && wantablesOverlap(row, wants)
 		if overlap && row.PlanID != 0 && row.SubmissionPhase == "pending" && req.MatchEvidence == nil {
 			cancelled, e := s.closePendingForManual(allocationCtx, row)
@@ -857,22 +1291,60 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 			return row.ID, nil
 		}
 	}
-	id, err := s.db.InsertDownload(allocationCtx, sqlite.Download{
+	download := sqlite.Download{
 		MediaItemID: item.ID, CopyID: req.CopyID, WantableIDs: wants, Season: req.Season,
 		ReleaseTitle: req.Title, Indexer: req.Indexer, Protocol: req.Protocol,
 		Quality: p.Quality, Size: req.Size, ClientID: cfg.ID,
-		State: "grabbed", MatchEvidence: evidence,
-	})
+		State: "grabbed", MatchEvidence: evidence, Intent: req.Intent,
+		RequestID: req.RequestID, RequestFingerprint: fingerprint,
+		BlacklistOverride: blacklistOverride, DeliveryExpected: deliveryExpected,
+		RequestTokenIdempotent: requestTokenIdempotent, ExactTransferCorrelation: exactTransferCorrelation,
+		ReplacementOperationID: req.ReplacementOperationID, SourceGUID: req.SourceGUID, SourceIndexerID: req.IndexerID,
+	}
+	encodedSubmission, _ := json.Marshal(submissionPayload)
+	download.ExecutionPayload = string(encodedSubmission)
+	if !manual {
+		// Persist the exact token and payload in the same INSERT as the
+		// submitting phase, before Add can reach Runner. A crash at any point
+		// after this commit is recoverable as the same idempotent request.
+		download.Transfer, err = newTransferID(0)
+		if err != nil {
+			releaseAllocation()
+			return 0, err
+		}
+		download.SubmissionPhase = "submitting"
+	}
+	var inserted sqlite.Download
+	if manual {
+		claims, e := s.db.ListFolderClaims(allocationCtx)
+		if e != nil {
+			releaseAllocation()
+			return 0, e
+		}
+		copyName, copyPath := manualCopyPath(dest, req.RequestID, claims)
+		copy := domain.MediaCopy{
+			MediaItemID: item.ID, Name: copyName, BookType: bookType,
+			QualityProfileID: profileID, RootFolderID: rootFolderID,
+			Path: copyPath, Monitored: false,
+		}
+		inserted, err = s.db.InsertManualAdditionalDownload(allocationCtx, copy, download, newTransferID)
+	} else {
+		inserted, err = s.db.InsertDownloadRecord(allocationCtx, download)
+	}
 	releaseAllocation()
 	if err != nil {
+		if manual {
+			if id, found, lookupErr := s.existingManualRequest(context.WithoutCancel(ctx), req.RequestID, fingerprint); found || lookupErr != nil {
+				return id, lookupErr
+			}
+		}
 		return 0, err
 	}
-	transfer := newTransferID(id)
-	if err := s.db.SetDownloadHandle(ctx, id, "", transfer); err != nil {
-		return id, err
-	}
-	if err := s.db.SetSubmissionPhase(ctx, id, "submitting"); err != nil {
-		return id, err
+	id := inserted.ID
+	req.CopyID = inserted.CopyID
+	transfer := inserted.Transfer
+	if !manual && (transfer == "" || inserted.SubmissionPhase != "submitting" || inserted.ExecutionPayload == "") {
+		return id, fmt.Errorf("automatic submission intent was not durably committed")
 	}
 	// Open the handoff trace BEFORE the client is asked, so every step from
 	// here is laid out. A client that finishes instantly (a cached torrent, a
@@ -881,24 +1353,57 @@ func (s *Service) Grab(ctx context.Context, req GrabRequest) (int64, error) {
 	// "downloaded" to it, and its write erased the "grabbed" step written a
 	// moment later. The id is in the trace's first line because that is
 	// where someone starts reading when a transfer goes wrong.
-	dl := sqlite.Download{ID: id, MediaItemID: item.ID, ReleaseTitle: req.Title,
-		State: "grabbed", Transfer: transfer}
+	dl := sqlite.Download{ID: id, GenerationKey: inserted.GenerationKey, MediaItemID: item.ID, ReleaseTitle: req.Title,
+		State: "grabbed", Transfer: transfer, Indexer: req.Indexer, Protocol: req.Protocol, ClientID: cfg.ID}
+	if manual {
+		dl.Intent = GrabIntentManualAdditional
+		dl.RequestID = req.RequestID
+		dl.RequestFingerprint = fingerprint
+		dl.CopyID = inserted.CopyID
+		dl.WantableIDs = inserted.WantableIDs
+		dl.Season = req.Season
+		dl.DeliveryExpected = inserted.DeliveryExpected
+		return s.resumeManualRequest(ctx, id)
+	}
+	unlockDownload := s.lockDownload(id)
+	defer unlockDownload()
+	fresh, freshErr := s.db.GetDownload(ctx, id)
+	if freshErr != nil || fresh.GenerationKey != inserted.GenerationKey || fresh.Transfer != transfer || !automaticSubmissionPending(fresh) {
+		return id, fmt.Errorf("automatic submission was cancelled before client admission")
+	}
+	inserted = fresh
 	s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, "sent to "+clientLabel(*cfg)+" as "+transfer)
 	handle, err := addToClient(
-		ctx, s.newClient(*cfg), req.DownloadURL, cfg.Category, req.Title, transfer, priority,
+		ctx, client, req.DownloadURL, cfg.Category, req.Title, transfer, priority, inserted.DeliveryExpected, false,
 	)
 	if err != nil {
+		if permanentSubmissionRefusal(err) {
+			if rejectErr := s.db.RejectDownloadSubmission(context.WithoutCancel(ctx), id, inserted.GenerationKey, transfer, "client permanently rejected the exact submission: "+err.Error()); rejectErr != nil {
+				return id, fmt.Errorf("persist automatic admission refusal: %w", rejectErr)
+			}
+			return id, err
+		}
 		_ = s.db.SetSubmissionPhase(context.WithoutCancel(ctx), id, "uncertain")
 		_ = s.db.UpdateDownloadState(context.WithoutCancel(ctx), id, "grabbed", 0, "submission uncertain; reconciling before retry")
+		_, _ = s.db.ScheduleRunnerSubmissionRetry(context.WithoutCancel(ctx), id, inserted.GenerationKey, time.Now(), err.Error(), submissionRetryDeadline(err))
 		return id, err
 	}
-	_ = s.db.SetSubmissionPhase(ctx, id, "submitted")
-	if err := s.db.SetDownloadHandle(ctx, id, string(handle), transfer); err != nil {
-		// The download IS running; losing the handle would orphan it, so
-		// this is loud rather than fatal — the title-match fallback in
-		// matchStatus still reconciles it.
-		s.log.Error("grab: download accepted but its handle could not be stored",
-			"download", id, "handle", handle, "err", err)
+	var commitErr error
+	if handle != "" {
+		commitErr = s.db.RecordDownloadSubmission(ctx, id, inserted.GenerationKey, transfer, string(handle))
+	} else if correlator, ok := client.(ports.ExactTransferCorrelator); ok && correlator.SupportsExactTransferCorrelation() {
+		commitErr = s.db.RecordHandlelessSubmission(ctx, id, inserted.GenerationKey, transfer)
+	} else {
+		commitErr = fmt.Errorf("client accepted the request without a native handle or exact transfer correlation")
+	}
+	if commitErr != nil {
+		_ = s.db.SetSubmissionPhase(context.WithoutCancel(ctx), id, "uncertain")
+		_ = s.db.UpdateDownloadState(context.WithoutCancel(ctx), id, "grabbed", 0, "client accepted the request but its exact handle could not be committed; reconciling by transfer token")
+		return id, fmt.Errorf("client accepted the request but submission receipt could not be saved: %w", commitErr)
+	}
+	if handle == "" {
+		s.advance(ctx, &dl, "grabbed", 0, "client accepted the request; waiting for exact transfer-token correlation", stepAcceptedAwaitingCorrelation,
+			"Add was accepted; Curator will bind only a client status carrying this exact transfer token")
 	}
 	_ = s.db.AddHistory(ctx, "grabbed", item.ID, req.Title,
 		map[string]any{"indexer": req.Indexer, "protocol": req.Protocol, "downloadPriority": priority, "match": evidence})
@@ -951,6 +1456,11 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			continue
 		}
 		client := s.newClient(cfg)
+		// Durable Runner publications are discovered independently of the
+		// client's ordinary history/status response. The optional capability
+		// prevents legacy completion history from importing a native Runner job
+		// before its exact immutable manifest is durably accepted.
+		s.discoverRunnerDeliveries(ctx, cfg, client)
 		var statuses []ports.DownloadStatus
 		var err error
 		complete := false
@@ -972,15 +1482,73 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 		}
 		if err != nil {
 			s.log.Warn("queue: client poll failed", "client", cfg.Name, "err", err)
-			continue
+		}
+		// Receipt reads can outlive queue/history removal, but a large backlog
+		// of missing rows must not serialize one HTTP timeout per download on
+		// this control loop. Persist each row's next due time and admit at most
+		// two exact-token lookups per client refresh. Due rows beyond the cap
+		// remain eligible next sweep after earlier claims move forward.
+		admissionPollAllowed := make(map[int64]bool)
+		admissionPollCount := 0
+		pollOrder, orderErr := s.db.RunnerAdmissionPollOrder(ctx, cfg.ID)
+		if orderErr != nil {
+			s.log.Warn("queue: could not order Runner receipt lookups", "client", cfg.Name, "err", orderErr)
+		}
+		pollRank := make(map[int64]int, len(pollOrder))
+		for rank, id := range pollOrder {
+			pollRank[id] = rank
+		}
+		pollRows := append([]sqlite.Download(nil), byClient[cfg.ID]...)
+		sort.SliceStable(pollRows, func(i, j int) bool {
+			ri, iok := pollRank[pollRows[i].ID]
+			rj, jok := pollRank[pollRows[j].ID]
+			if iok != jok {
+				return iok
+			}
+			if !iok {
+				return false
+			}
+			return ri < rj
+		})
+		for _, dl := range pollRows {
+			if admissionPollCount >= 2 {
+				break
+			}
+			if !dl.RequestTokenIdempotent || dl.GenerationKey == "" || s.ImportRunning(dl.ID) {
+				continue
+			}
+			_, visible := matchStatus(dl, statuses)
+			st, _ := matchStatus(dl, statuses)
+			if visible && st.State != ports.StateFailed && st.State != ports.StateRemoved && st.State != ports.StateCompleted {
+				continue
+			}
+			claimed, claimErr := s.db.ClaimRunnerAdmissionPoll(ctx, dl.ID, dl.GenerationKey, time.Now())
+			if claimErr != nil {
+				s.log.Warn("queue: could not claim Runner receipt lookup", "download", dl.ID, "err", claimErr)
+				continue
+			}
+			if claimed {
+				admissionPollAllowed[dl.ID] = true
+				admissionPollCount++
+			}
 		}
 		seen := make(map[int64]bool, len(byClient[cfg.ID]))
 		for _, dl := range byClient[cfg.ID] {
+			if err != nil {
+				break
+			}
 			st, ok := matchStatus(dl, statuses)
 			if !ok {
+				if dl.ExactTransferCorrelation && dl.SubmissionPhase == "submitted" && dl.Handle == "" && dl.State == "grabbed" && time.Since(dl.UpdatedAt) >= manualAdmissionBlockedWarning {
+					warning := "Accepted download has not appeared with its exact transfer token for at least 30 minutes; review the client before retrying."
+					_ = s.db.SetExactTransferCorrelationWarning(ctx, dl.ID, dl.GenerationKey, dl.Transfer, warning)
+				}
 				continue // not visible yet (magnet resolving, etc.)
 			}
 			seen[dl.ID] = true
+			if dl.RequestTokenIdempotent && (st.State == ports.StateFailed || st.State == ports.StateRemoved || st.State == ports.StateCompleted) && !admissionPollAllowed[dl.ID] {
+				continue
+			}
 			// An importer owns this row's per-download lock for the whole
 			// placement. Waiting for that lock here would put a multi-gigabyte
 			// file copy back onto the queue-refresh goroutine, freezing every
@@ -990,7 +1558,24 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			if s.ImportRunning(dl.ID) {
 				continue
 			}
-			s.reconcileDownload(ctx, dl, cfg, st, "poll")
+			pollCtx := ctx
+			if admissionPollAllowed[dl.ID] {
+				pollCtx = context.WithValue(ctx, runnerAdmissionPollPermitKey{}, dl.ID)
+			}
+			s.reconcileDownload(pollCtx, dl, cfg, st, "poll")
+		}
+		// Runner request receipts survive queue/history removal. Poll only
+		// those exact-token admissions that vanished from ordinary inventory;
+		// legacy clients retain their established reconciliation path.
+		for _, dl := range byClient[cfg.ID] {
+			if seen[dl.ID] || !dl.RequestTokenIdempotent || !admissionPollAllowed[dl.ID] || s.ImportRunning(dl.ID) {
+				continue
+			}
+			pollCtx := context.WithValue(ctx, runnerAdmissionPollPermitKey{}, dl.ID)
+			s.reconcileDownload(pollCtx, dl, cfg, ports.DownloadStatus{}, "admission")
+		}
+		if err != nil {
+			continue
 		}
 		// Anything this client no longer mentions is not moving, whatever the
 		// in-flight view still believes.
@@ -1027,12 +1612,51 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus, source string) {
 	unlock := s.lockDownload(dl.ID)
 	defer unlock()
+	// Resolve Runner's network receipt before entering the global storage
+	// decision lock. Per-download serialization prevents duplicate lookups;
+	// generation/transfer are rechecked after the HTTP call below.
+	observed := dl
+	if fresh, err := s.db.GetDownload(ctx, dl.ID); err != nil {
+		return
+	} else {
+		if fresh.GenerationKey != observed.GenerationKey || fresh.Transfer != observed.Transfer || fresh.ClientID != observed.ClientID {
+			return
+		}
+		dl = fresh
+	}
+	if dl.RequestTokenIdempotent && (source == "admission" || st.State == ports.StateFailed || st.State == ports.StateRemoved || st.State == ports.StateCompleted) {
+		if authoritative, hold := s.authoritativeRunnerObservation(ctx, dl, cfg, st); hold {
+			return
+		} else {
+			st = authoritative
+		}
+	}
+	if source == "admission" && st.State == "" {
+		// The exact Runner receipt still describes a nonterminal request. It
+		// settles no state until the job reappears or its durable outcome ends.
+		return
+	}
+	dispatchCtx := ctx
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
-	defer releaseStorage()
+	storageReleased := false
+	releaseStorageBeforeDispatch := func() {
+		if !storageReleased {
+			releaseStorage()
+			storageReleased = true
+		}
+		// Never pass an inactive storage lease into queued or inline work.
+		ctx = dispatchCtx
+	}
+	defer releaseStorageBeforeDispatch()
 
-	// Re-read under the lock: whoever held it before us may have moved
-	// this row on, and acting on the copy we were handed would undo them.
-	if fresh, err := s.db.GetDownload(ctx, dl.ID); err == nil {
+	// Re-read under the storage lock. The download identity must still be the
+	// exact generation whose receipt was just checked.
+	if fresh, err := s.db.GetDownload(ctx, dl.ID); err != nil {
+		return
+	} else {
+		if fresh.GenerationKey != dl.GenerationKey || fresh.Transfer != dl.Transfer || fresh.ClientID != dl.ClientID {
+			return
+		}
 		dl = fresh
 	}
 
@@ -1047,7 +1671,17 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		_ = s.db.SetSubmissionPhase(ctx, dl.ID, "submitted")
 	}
 	if dl.Handle == "" && st.Handle != "" {
-		if err := s.db.SetDownloadHandle(ctx, dl.ID, string(st.Handle), dl.Transfer); err != nil {
+		var bindErr error
+		if dl.Transfer != "" && st.Transfer == dl.Transfer {
+			if dl.Intent == GrabIntentManualAdditional {
+				bindErr = s.db.CommitManualSubmission(ctx, dl.ID, dl.GenerationKey, string(st.Handle), dl.Transfer)
+			} else {
+				bindErr = s.db.RecordDownloadSubmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer, string(st.Handle))
+			}
+		} else {
+			bindErr = s.db.SetDownloadHandle(ctx, dl.ID, string(st.Handle), dl.Transfer)
+		}
+		if bindErr != nil {
 			return
 		}
 		dl.Handle = string(st.Handle)
@@ -1125,13 +1759,35 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		// and search a replacement. Unless the client says the release is
 		// not to blame — an operator deleting the job is not a reason to
 		// ban the release forever.
+		releaseStorageBeforeDispatch()
 		s.handleFailure(ctx, dl, st.Progress, st.Message, st.Blameless)
 	case ports.StateRemoved:
 		if dl.State == "imported" || dl.State == "failed" {
 			return
 		}
+		releaseStorageBeforeDispatch()
 		s.handleRemoved(ctx, dl, st.Progress, st.Message, source)
 	case ports.StateCompleted:
+		mappedPath := ports.MapRemotePath(cfg.PathMappings, st.SavePath)
+		legacyReview, reviewErr := s.db.LegacyCleanupReview(ctx, dl.GenerationKey, mappedPath)
+		if reviewErr != nil || legacyReview {
+			if reviewErr != nil {
+				s.log.Warn("legacy completion review lookup failed; holding import", "download", dl.ID, "err", reviewErr)
+			}
+			if dl.State == "grabbed" || dl.State == "downloading" {
+				s.recordDownloaded(ctx, &dl, cfg, st, source)
+			} else {
+				dl.SavePath, dl.ImportPath = st.SavePath, mappedPath
+			}
+			if dl.State != "awaiting_import" {
+				s.advance(ctx, &dl, "awaiting_import", 1, "", stepAwaiting,
+					"held for explicit review of pre-existing download custody")
+			}
+			return
+		}
+		if dl.DeliveryExpected && s.runnerDeliveryEnabled(ctx, cfg) {
+			return
+		}
 		// 'downloaded' and 'importing' are NOT terminal, but they mean
 		// someone is already on it; only 'grabbed'/'downloading' should
 		// start an import from here.
@@ -1148,11 +1804,169 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 			// worker still existed. Record the recovery and hand it to a worker.
 			s.advance(ctx, &dl, "downloaded", dl.Progress, "", stepImportRecovered,
 				"previous import was interrupted; restarting from the payload")
+			releaseStorageBeforeDispatch()
 			s.enqueueImport(ctx, dl, cfg)
 			return
 		}
+		releaseStorageBeforeDispatch()
 		s.onDownloaded(ctx, dl, cfg, st, source)
 	}
+}
+
+// authoritativeRunnerObservation consults Runner's durable request receipt for
+// jobs admitted with request-token idempotency. Native queue/history status can
+// disappear or collapse a fetch failure into a generic failed state; only the
+// exact transfer token can settle that observation.
+func (s *Service) authoritativeRunnerObservation(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus) (ports.DownloadStatus, bool) {
+	client, ok := s.newClient(cfg).(ports.RequestAdmissionProtocol)
+	if !ok {
+		return st, false
+	}
+	if dl.Transfer == "" {
+		_ = s.db.ParkDownload(ctx, dl.ID, "Runner outcome requires the persisted transfer token; automatic handling held")
+		return st, true
+	}
+	if permit, ok := ctx.Value(runnerAdmissionPollPermitKey{}).(int64); !ok || permit != dl.ID {
+		claimed, claimErr := s.db.ClaimRunnerAdmissionPoll(ctx, dl.ID, dl.GenerationKey, time.Now())
+		if claimErr != nil {
+			s.log.Warn("could not claim Runner admission receipt lookup", "download", dl.ID, "err", claimErr)
+			return st, true
+		}
+		if !claimed {
+			return st, true
+		}
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	admission, found, err := client.GetRequestAdmission(lookupCtx, dl.Transfer)
+	cancel()
+	if recordErr := s.db.RecordRunnerAdmissionPollResult(ctx, dl.ID, dl.GenerationKey, found, err, time.Now()); recordErr != nil {
+		s.log.Warn("could not record Runner admission receipt lookup", "download", dl.ID, "err", recordErr)
+	}
+	if err != nil {
+		if dl.Intent != GrabIntentManualAdditional && dl.RequestTokenIdempotent &&
+			(dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "uncertain") {
+			_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "Runner admission lookup failed; exact automatic submission replay is queued")
+			return st, true
+		}
+		if dl.Intent == GrabIntentManualAdditional || st.State == ports.StateFailed || st.State == ports.StateRemoved {
+			_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "waiting for authoritative Runner outcome: "+err.Error())
+			return st, true
+		}
+		return st, false
+	}
+	if !found {
+		if dl.Intent != GrabIntentManualAdditional && dl.RequestTokenIdempotent &&
+			(dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "uncertain") {
+			_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "Runner has no admission receipt yet; exact automatic submission replay is queued")
+			return st, true
+		}
+		if dl.Intent == GrabIntentManualAdditional || st.State == ports.StateFailed || st.State == ports.StateRemoved {
+			_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "waiting for authoritative Runner request admission receipt")
+			return st, true
+		}
+		return st, false
+	}
+	// The user may have removed the Activity row or replaced its request
+	// generation while the network lookup was in flight. A receipt never
+	// authorizes state changes against a stale row.
+	fresh, freshErr := s.db.GetDownload(ctx, dl.ID)
+	if freshErr != nil || fresh.GenerationKey != dl.GenerationKey || fresh.Transfer != dl.Transfer || fresh.ClientID != dl.ClientID {
+		return st, true
+	}
+	dl = fresh
+	if admission.ProtocolVersion != 1 || admission.RequestToken != dl.Transfer {
+		_ = s.db.ParkDownload(ctx, dl.ID, "Runner admission identity mismatch; automatic handling held for review")
+		return st, true
+	}
+	if err := s.db.BindRunnerAdmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer,
+		admission.RunnerInstanceID, admission.Generation); err != nil {
+		_ = s.db.ParkDownload(ctx, dl.ID, "Runner installation or admission generation changed; automatic handling held for review")
+		return st, true
+	}
+	if admission.JobID != "" && dl.Handle != "" && admission.JobID != dl.Handle {
+		_ = s.db.ParkDownload(ctx, dl.ID, "Runner admission job handle conflicts with the persisted download; review required")
+		return st, true
+	}
+	if admission.JobID == "" {
+		_ = s.db.ParkDownload(ctx, dl.ID, "Runner admission has no exact job handle; review required")
+		return st, true
+	}
+	if dl.Handle == "" {
+		if err := s.db.RecordDownloadSubmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer, admission.JobID); err != nil {
+			_ = s.db.ParkDownload(ctx, dl.ID, "Runner job handle could not be committed to the exact download generation; review required")
+			return st, true
+		}
+		dl.Handle = admission.JobID
+	}
+	if admission.Outcome == "failed" || admission.Outcome == "deleted" {
+		if admission.CustodyState == "curator" && admission.PublicationPath != "" && dl.DeliveryExpected {
+			// Delivery discovery/import owns the retained verified publication.
+			// Do not fail the whole pack or trigger a fresh acquisition here.
+			return st, true
+		}
+		if admission.CustodyState == "curator" {
+			_ = s.db.ParkDownload(ctx, dl.ID, "Runner transferred payload custody without an expected delivery protocol; explicit review required")
+			return st, true
+		}
+		if admission.Outcome == "failed" && dl.Intent != GrabIntentManualAdditional &&
+			runnerFailureNeedsCleanupBeforeReplacement(admission) {
+			reason := "Runner retains source files or Keep was selected; automatic replacement is held"
+			if admission.FailureStage != "" {
+				reason += " at " + admission.FailureStage
+			}
+			if admission.FailureCause != "" {
+				reason += ": " + admission.FailureCause
+			}
+			_ = s.db.UpdateDownloadState(ctx, dl.ID, "awaiting_import", st.Progress, reason+"; replacement held until cleanup is settled")
+			return st, true
+		}
+		if runnerDeletedNeedsCustodyReview(admission) {
+			_ = s.db.ParkDownload(ctx, dl.ID, "Runner queue entry is gone but source custody is unresolved; explicit review required")
+			return st, true
+		}
+		st.State = ports.StateFailed
+		if admission.Outcome == "deleted" && admission.CustodyState == "deleted_by_runner" {
+			st.State = ports.StateRemoved
+		}
+		st.Message = strings.TrimSpace(strings.Join([]string{admission.TerminalOutcome, admission.FailureStage, admission.FailureCause,
+			"custody=" + admission.CustodyState, "sourceCleanup=" + admission.SourceCleanupStatus}, ": "))
+		if st.Message == "" {
+			st.Message = "Runner request ended: " + admission.Outcome
+		}
+		return st, false
+	}
+	if admission.Outcome == "completed" && admission.PublicationPath != "" {
+		if dl.DeliveryExpected {
+			return st, true
+		}
+		st.State = ports.StateCompleted
+		st.Handle = ports.Handle(admission.JobID)
+		st.Transfer = admission.RequestToken
+		st.SavePath = admission.PublicationPath
+		return st, false
+	}
+	if st.State == ports.StateFailed || st.State == ports.StateRemoved {
+		_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "waiting for Runner terminal outcome; reported state is "+admission.Outcome)
+		return st, true
+	}
+	return st, false
+}
+
+// runnerFailureNeedsCleanupBeforeReplacement only blocks an automatic retry
+// while Runner still owns unresolved bytes. An explicit Keep is a settled
+// custody decision: preserve those bytes and continue with the selected
+// replacement, rather than requiring the user to delete something they chose
+// to keep. A manual additional-copy attempt has its own terminal policy.
+func runnerFailureNeedsCleanupBeforeReplacement(admission ports.RequestAdmission) bool {
+	if admission.KeepSourceOnFailure || admission.CustodyState == "kept_by_user" {
+		return false
+	}
+	return admission.CustodyState == "runner_owned" && admission.SourceCleanupStatus != "removed"
+}
+
+func runnerDeletedNeedsCustodyReview(admission ports.RequestAdmission) bool {
+	return admission.Outcome == "deleted" && admission.CustodyState != "deleted_by_runner" &&
+		!admission.KeepSourceOnFailure && admission.CustodyState != "kept_by_user"
 }
 
 // traced names the channel that delivered an observation. "completed
@@ -1234,6 +2048,53 @@ func (s *Service) lockDownload(id int64) func() {
 	return m.Unlock
 }
 
+func (s *Service) lockDeliveryAcknowledgement(receiptID int64) func() {
+	s.deliveryAckMu.Lock()
+	if s.deliveryAckLocks == nil {
+		s.deliveryAckLocks = map[int64]*sync.Mutex{}
+	}
+	m, ok := s.deliveryAckLocks[receiptID]
+	if !ok {
+		m = &sync.Mutex{}
+		s.deliveryAckLocks[receiptID] = m
+	}
+	s.deliveryAckMu.Unlock()
+	m.Lock()
+	return m.Unlock
+}
+
+func (s *Service) lockDeliverySourceControl(receiptID int64) func() {
+	s.deliverySourceMu.Lock()
+	if s.deliverySourceLocks == nil {
+		s.deliverySourceLocks = map[int64]*sync.Mutex{}
+	}
+	m, ok := s.deliverySourceLocks[receiptID]
+	if !ok {
+		m = &sync.Mutex{}
+		s.deliverySourceLocks[receiptID] = m
+	}
+	s.deliverySourceMu.Unlock()
+	m.Lock()
+	return m.Unlock
+}
+
+func (s *Service) tryLockDeliverySourceControl(receiptID int64) (func(), bool) {
+	s.deliverySourceMu.Lock()
+	if s.deliverySourceLocks == nil {
+		s.deliverySourceLocks = map[int64]*sync.Mutex{}
+	}
+	m, ok := s.deliverySourceLocks[receiptID]
+	if !ok {
+		m = &sync.Mutex{}
+		s.deliverySourceLocks[receiptID] = m
+	}
+	s.deliverySourceMu.Unlock()
+	if !m.TryLock() {
+		return nil, false
+	}
+	return m.Unlock, true
+}
+
 // handleFailure marks a download failed, blocklists the release so it is
 // never re-grabbed, and immediately re-searches for the affected wantables
 // (blueprint §5.1 "failed-download handling").
@@ -1241,17 +2102,50 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 	s.advance(ctx, &dl, "failed", progress, reason, stepFailed, "download failed: "+reason)
 	_ = s.db.AddHistory(ctx, "failed", dl.MediaItemID, dl.ReleaseTitle,
 		map[string]any{"reason": reason})
+	if dl.SubmissionPhase == "rejected" {
+		// A definite client refusal (including an immutable-token conflict) did
+		// not admit this request. Do not turn the refusal into a release
+		// blacklist or launch a replacement behind the user's back.
+		s.log.Warn("client permanently rejected the submission; no replacement was started", "release", dl.ReleaseTitle, "reason", reason)
+		s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: reason})
+		return
+	}
 	if blameless {
 		// The download stopped, but not because the release is bad. Banning
 		// it would burn a good copy and send the re-search after a worse one.
 		s.log.Warn("download failed; NOT blocklisted (the release is not at fault)",
 			"release", dl.ReleaseTitle, "reason", reason)
-	} else if err := s.db.AddBlocklist(ctx, dl.MediaItemID, dl.ReleaseTitle, dl.Indexer, reason); err != nil {
-		s.log.Warn("blocklist: insert failed", "release", dl.ReleaseTitle, "err", err)
 	} else {
-		s.log.Warn("download failed; blocklisted", "release", dl.ReleaseTitle, "reason", reason)
+		var err error
+		if dl.SourceGUID != "" && dl.SourceIndexerID != 0 {
+			err = s.db.AddReleaseIdentityBlocklist(ctx, dl.MediaItemID, dl.SourceIndexerID, dl.SourceGUID, reason)
+		} else {
+			// Legacy clients may not expose stable release identity. Keep their
+			// existing title/indexer blocklist semantics explicit at this edge.
+			err = s.db.AddBlocklist(ctx, dl.MediaItemID, dl.ReleaseTitle, dl.Indexer, reason)
+		}
+		if err != nil {
+			s.log.Warn("blocklist: insert failed", "release", dl.ReleaseTitle, "err", err)
+		} else {
+			s.log.Warn("download failed; blocklisted", "release", dl.ReleaseTitle, "reason", reason)
+		}
 	}
 	s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: reason})
+	if dl.Intent == GrabIntentManualAdditional {
+		// A manual additional copy is a deliberate one-shot acquisition. A
+		// permanent failure stays visible and blocklisted, but never starts an
+		// automatic replacement behind the user's back.
+		return
+	}
+	if dl.ReplacementOperationID != "" {
+		// The reviewed operation owns the selected copy/episode scope. Its
+		// worker waits for durable payload cleanup before choosing another
+		// release; a global planner search here would lose that scope.
+		if err := s.db.TransitionReplacementOperation(ctx, dl.ReplacementOperationID, "replacing", "replacement attempt failed; waiting for payload cleanup before retry"); err != nil {
+			s.log.Warn("replacement operation retry scheduling failed", "operation", dl.ReplacementOperationID, "err", err)
+		}
+		return
+	}
 
 	if item, e := s.db.GetMediaItemFull(ctx, dl.MediaItemID); e == nil && item.Kind == domain.KindSeries {
 		if dl.PlanID != 0 {
@@ -1342,6 +2236,34 @@ func (s *Service) wantableFromID(ctx context.Context, id string) (domain.Wantabl
 }
 
 func matchStatus(dl sqlite.Download, statuses []ports.DownloadStatus) (ports.DownloadStatus, bool) {
+	if dl.ExactTransferCorrelation || dl.RequestTokenIdempotent || dl.DeliveryExpected {
+		var match ports.DownloadStatus
+		count := 0
+		for _, st := range statuses {
+			if dl.Transfer != "" && st.Transfer == dl.Transfer {
+				if dl.Handle != "" && st.Handle != "" && string(st.Handle) != dl.Handle {
+					return ports.DownloadStatus{}, false
+				}
+				match = st
+				count++
+			}
+		}
+		return match, count == 1
+	}
+	if dl.Intent == GrabIntentManualAdditional {
+		for _, st := range statuses {
+			if st.Transfer != "" {
+				if st.Transfer == dl.Transfer && dl.Transfer != "" {
+					return st, true
+				}
+				continue
+			}
+			if dl.Handle != "" && string(st.Handle) == dl.Handle {
+				return st, true
+			}
+		}
+		return ports.DownloadStatus{}, false
+	}
 	if dl.Handle != "" {
 		for _, st := range statuses {
 			if string(st.Handle) == dl.Handle {
@@ -1387,9 +2309,13 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 	if err != nil {
 		return err
 	}
-	if dl.PlanID != 0 || dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" {
+	if dl.PlanID != 0 || dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "submitted" {
 		unlock := s.lockDownload(id)
 		defer unlock()
+		dl, err = s.db.GetDownload(ctx, id)
+		if err != nil {
+			return err
+		}
 		if dl.SubmissionPhase == "pending" {
 			_, err = s.db.W.ExecContext(ctx, `UPDATE downloads SET state='failed',submission_phase='rejected',superseded=1,wantables='[]',reserved_episodes='[]',error='operator cancelled unsubmitted intent' WHERE id=? AND submission_phase='pending'`, id)
 		} else {
@@ -1414,6 +2340,16 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 		}
 		if err != nil {
 			return err
+		}
+		// Removal from Activity is a view dismissal. Accepted/uncertain work
+		// keeps its durable row for transfer reconciliation and cleanup, but it
+		// should no longer appear in the recent queue.
+		result, err := s.db.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1, updated_at=? WHERE id=? AND generation_key=?`, time.Now().UnixMilli(), id, dl.GenerationKey)
+		if err != nil {
+			return err
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return fmt.Errorf("download generation changed while dismissing Activity")
 		}
 		if dl.PlanID != 0 {
 			_, err = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET state='cancel_requested' WHERE id=? AND state IN ('admitted','dispatching','active')`, dl.PlanID)

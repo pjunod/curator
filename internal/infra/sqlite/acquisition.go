@@ -370,7 +370,18 @@ type HandoffEntry struct {
 	// Paths is populated only for a queued manual import. Keeping the exact
 	// selection in the durable trace means a process restart or later retry
 	// cannot silently widen "these files" back to "everything in the folder".
-	Paths []string `json:"paths,omitempty"`
+	Paths             []string              `json:"paths,omitempty"`
+	ReviewFingerprint string                `json:"reviewFingerprint,omitempty"`
+	ReviewPath        string                `json:"reviewPath,omitempty"`
+	ReviewFiles       []HandoffFileSnapshot `json:"reviewFiles,omitempty"`
+	TargetMediaItemID int64                 `json:"targetMediaItemId,omitempty"`
+	TargetCopyID      int64                 `json:"targetCopyId,omitempty"`
+	TargetIdentity    string                `json:"targetIdentity,omitempty"`
+}
+
+type HandoffFileSnapshot struct {
+	Path             string `json:"path"`
+	SnapshotIdentity string `json:"snapshotIdentity"`
 }
 
 // Download is a queue row (persisted Download state machine, blueprint §4.2).
@@ -402,19 +413,44 @@ type Download struct {
 	Error            string
 	SavePath         string // what the download client reported
 	ImportPath       string // where Monarr looks after remote path mapping
-	// Transfer names this one transfer end to end (nzbd contract §3.1:
-	// t-<id>-<6 hex>). It goes onto the download in the client and will
-	// travel on to the media server, so grepping any app's log for it
-	// reconstructs the whole story. Empty when the client cannot carry it.
+	// Transfer is an opaque end-to-end request token carried by compatible
+	// download clients and the media server. New admissions use at least 128
+	// bits of randomness; persisted legacy tokens remain valid. Empty when the
+	// client cannot carry a request token.
 	Transfer      string
 	Handoff       []HandoffEntry
 	MatchEvidence domain.MatchEvidence
 	AddedAt       time.Time
 	UpdatedAt     time.Time
 
-	RunnerControl  string
-	PayloadRemoved bool
+	RunnerControl             string
+	GenerationKey             string
+	PayloadRemoved            bool
+	Intent                    string
+	RequestID                 string
+	RequestFingerprint        string
+	BlacklistOverride         bool
+	DeliveryExpected          bool
+	RequestTokenIdempotent    bool
+	ExactTransferCorrelation  bool
+	ReplacementOperationID    string
+	SourceGUID                string
+	SourceIndexerID           int64
+	RunnerInstanceID          string
+	RunnerAdmissionGeneration string
 }
+
+type ManualGrabRequest struct {
+	RequestID          string
+	RequestFingerprint string
+	DownloadID         int64
+	GenerationKey      string
+	CopyID             int64
+	CreatedAt          time.Time
+}
+
+var ErrManualGrabRequestRetained = errors.New("manual request is retained but its download row has been removed")
+var ErrManualSubmissionChanged = errors.New("manual submission generation changed before acknowledgement")
 
 func downloadFromRow(r sqlitegen.Download) Download {
 	var wants []string
@@ -427,7 +463,14 @@ func downloadFromRow(r sqlitegen.Download) Download {
 	_ = json.Unmarshal([]byte(r.ReservedEpisodes), &reserved)
 	dl := Download{
 		PlanID: r.PlanID.Int64, CandidateKey: r.CandidateKey, SubmissionPhase: r.SubmissionPhase, ExecutionPayload: r.ExecutionPayload, ReservedEpisodes: reserved, ParkedReason: r.ParkedReason, ParkedAt: time.UnixMilli(r.ParkedAt), Superseded: r.Superseded != 0, Observation: r.Observation, CleanupPending: r.CleanupPending != 0,
-		PayloadRemoved: r.PayloadRemoved != 0, ID: r.ID, MediaItemID: r.MediaItemID, WantableIDs: wants, Season: int(r.Season),
+		PayloadRemoved: r.PayloadRemoved != 0, GenerationKey: r.GenerationKey, ID: r.ID, MediaItemID: r.MediaItemID, WantableIDs: wants, Season: int(r.Season),
+		Intent: r.Intent, RequestID: r.RequestID, RequestFingerprint: r.RequestFingerprint,
+		BlacklistOverride: r.BlacklistOverride != 0, DeliveryExpected: r.DeliveryExpected != 0,
+		RequestTokenIdempotent:   r.RequestTokenIdempotent != 0,
+		ExactTransferCorrelation: r.ExactTransferCorrelation != 0,
+		ReplacementOperationID:   r.ReplacementOperationID,
+		SourceGUID:               r.SourceGuid, SourceIndexerID: r.SourceIndexerID,
+		RunnerInstanceID: r.RunnerInstanceID, RunnerAdmissionGeneration: r.RunnerAdmissionGeneration,
 		ReleaseTitle: r.ReleaseTitle, Indexer: r.Indexer, Protocol: r.Protocol,
 		Quality: quality.FromString(r.Quality), Size: r.Size, ClientID: r.ClientID,
 		Handle: r.Handle, State: r.State, Progress: r.Progress, Error: r.Error,
@@ -443,23 +486,170 @@ func downloadFromRow(r sqlitegen.Download) Download {
 
 // InsertDownload records a grab.
 func (d *DB) InsertDownload(ctx context.Context, dl Download) (int64, error) {
+	inserted, err := d.InsertDownloadRecord(ctx, dl)
+	if err != nil {
+		return 0, err
+	}
+	return inserted.ID, nil
+}
+
+// InsertDownloadRecord returns the persisted row, including its immutable
+// generation key. Callers that keep a download reference across asynchronous
+// work must carry that key so a reused integer ID cannot retarget the work.
+func (d *DB) InsertDownloadRecord(ctx context.Context, dl Download) (Download, error) {
+	p, err := downloadInsertParams(dl)
+	if err != nil {
+		return Download{}, err
+	}
+	id, err := d.Write.InsertDownload(ctx, p)
+	if err != nil {
+		return Download{}, err
+	}
+	if dl.ReplacementOperationID != "" {
+		result, e := d.W.ExecContext(ctx, `UPDATE downloads SET replacement_operation_id=? WHERE id=? AND generation_key=?`, dl.ReplacementOperationID, id, p.GenerationKey)
+		if e != nil {
+			return Download{}, e
+		}
+		if n, e := result.RowsAffected(); e != nil || n != 1 {
+			if e != nil {
+				return Download{}, e
+			}
+			return Download{}, ErrNotFound
+		}
+	}
+	return d.GetDownload(ctx, id)
+}
+
+func downloadInsertParams(dl Download) (sqlitegen.InsertDownloadParams, error) {
 	wants, _ := json.Marshal(dl.WantableIDs)
 	if dl.WantableIDs == nil {
 		wants = []byte("[]")
 	}
 	now := time.Now().UnixMilli()
+	generation, err := newDownloadGenerationKey()
+	if err != nil {
+		return sqlitegen.InsertDownloadParams{}, fmt.Errorf("create download generation identity: %w", err)
+	}
 	evidence, _ := json.Marshal(dl.MatchEvidence)
+	submissionPhase := dl.SubmissionPhase
+	if submissionPhase == "" {
+		// Legacy callers and raw fixture-style inserts represent a request that
+		// already exists in the client. Keep the migration's historical default
+		// semantics instead of explicitly overriding the CHECKed column with ''.
+		submissionPhase = "submitted"
+	}
 	p := sqlitegen.InsertDownloadParams{
 		MediaItemID: dl.MediaItemID, Wantables: string(wants), Season: int64(dl.Season),
 		ReleaseTitle: dl.ReleaseTitle, Indexer: dl.Indexer, Protocol: dl.Protocol,
 		Quality: dl.Quality.String(), Size: dl.Size, ClientID: dl.ClientID,
 		Handle: dl.Handle, State: dl.State, AddedAt: now, UpdatedAt: now,
-		MatchEvidence: string(evidence),
+		MatchEvidence: string(evidence), GenerationKey: generation,
+		Intent: defaultDownloadIntent(dl.Intent), RequestID: dl.RequestID,
+		RequestFingerprint: dl.RequestFingerprint, BlacklistOverride: boolInt(dl.BlacklistOverride),
+		DeliveryExpected:         boolInt(dl.DeliveryExpected),
+		RequestTokenIdempotent:   boolInt(dl.RequestTokenIdempotent),
+		ExactTransferCorrelation: boolInt(dl.ExactTransferCorrelation),
+		ReplacementOperationID:   dl.ReplacementOperationID, SourceGuid: dl.SourceGUID, SourceIndexerID: dl.SourceIndexerID,
+		Transfer: dl.Transfer, SubmissionPhase: submissionPhase, ExecutionPayload: dl.ExecutionPayload,
 	}
 	if dl.CopyID != 0 {
 		p.CopyID = sql.NullInt64{Int64: dl.CopyID, Valid: true}
 	}
-	return d.Write.InsertDownload(ctx, p)
+	return p, nil
+}
+
+func defaultDownloadIntent(intent string) string {
+	if intent == "" {
+		return "automatic"
+	}
+	return intent
+}
+
+// GetDownloadByRequestID resolves a persisted manual request before any
+// external client call. Repeating the same request therefore returns the
+// original generation and transfer token instead of creating another copy.
+func (d *DB) GetManualGrabRequest(ctx context.Context, requestID string) (ManualGrabRequest, error) {
+	var row ManualGrabRequest
+	var createdAt int64
+	err := d.R.QueryRowContext(ctx, `SELECT request_id, request_fingerprint, download_id, generation_key, copy_id, created_at
+		FROM manual_grab_requests WHERE request_id=?`, requestID).Scan(&row.RequestID, &row.RequestFingerprint,
+		&row.DownloadID, &row.GenerationKey, &row.CopyID, &createdAt)
+	if err != nil {
+		return ManualGrabRequest{}, wrapNotFound(err)
+	}
+	row.CreatedAt = time.UnixMilli(createdAt)
+	return row, nil
+}
+
+// InsertManualAdditionalDownload atomically reserves the independent copy and
+// its download request before any external Add call. A lost Add response can
+// be reconciled by the persisted transfer token without allocating a second
+// destination.
+func (d *DB) InsertManualAdditionalDownload(ctx context.Context, cp domain.MediaCopy, dl Download, transferForID func(int64) (string, error)) (Download, error) {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return Download{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+	copyParams := sqlitegen.InsertMediaCopyParams{
+		MediaItemID: cp.MediaItemID, Name: cp.Name, BookType: string(cp.BookType),
+		QualityProfileID: cp.QualityProfileID, Path: cp.Path,
+		Monitored: 0, AddedAt: time.Now().UnixMilli(),
+	}
+	if cp.RootFolderID != 0 {
+		copyParams.RootFolderID = sql.NullInt64{Int64: cp.RootFolderID, Valid: true}
+	}
+	var taken int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM media_items WHERE path=?
+		UNION ALL SELECT 1 FROM media_copies WHERE path=?
+	)`, cp.Path, cp.Path).Scan(&taken); err != nil {
+		return Download{}, err
+	}
+	if taken != 0 {
+		return Download{}, ErrFolderTaken
+	}
+	copyID, err := q.InsertMediaCopy(ctx, copyParams)
+	if err != nil {
+		return Download{}, err
+	}
+	dl.CopyID = copyID
+	for i := range dl.WantableIDs {
+		dl.WantableIDs[i] = fmt.Sprintf("%s:c%d", dl.WantableIDs[i], copyID)
+	}
+	dl.Intent = "manual_additional"
+	params, err := downloadInsertParams(dl)
+	if err != nil {
+		return Download{}, err
+	}
+	id, err := q.InsertDownload(ctx, params)
+	if err != nil {
+		return Download{}, err
+	}
+	transfer, err := transferForID(id)
+	if err != nil {
+		return Download{}, err
+	}
+	if err := q.SetDownloadHandle(ctx, sqlitegen.SetDownloadHandleParams{Transfer: transfer, UpdatedAt: time.Now().UnixMilli(), ID: id}); err != nil {
+		return Download{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE downloads SET execution_payload=?,submission_phase='pending' WHERE id=?`, dl.ExecutionPayload, id); err != nil {
+		return Download{}, err
+	}
+	r, err := q.GetDownload(ctx, id)
+	if err != nil {
+		return Download{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO manual_grab_requests
+		(request_id, request_fingerprint, download_id, generation_key, copy_id, created_at)
+		VALUES(?,?,?,?,?,?)`, dl.RequestID, dl.RequestFingerprint, id, r.GenerationKey, copyID, time.Now().UnixMilli()); err != nil {
+		return Download{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Download{}, err
+	}
+	return downloadFromRow(r), nil
 }
 
 // SetDownloadHandle records the client-side id and the transfer id, both
@@ -468,6 +658,35 @@ func (d *DB) SetDownloadHandle(ctx context.Context, id int64, handle, transfer s
 	return d.Write.SetDownloadHandle(ctx, sqlitegen.SetDownloadHandleParams{
 		Handle: handle, Transfer: transfer, UpdatedAt: time.Now().UnixMilli(), ID: id,
 	})
+}
+
+// CommitManualSubmission records the client handle and submitted phase as one
+// durable fact. A row must never appear submitted without the exact handle
+// needed to reconcile later client observations.
+func (d *DB) CommitManualSubmission(ctx context.Context, id int64, generation, handle, transfer string) error {
+	if generation == "" || handle == "" || transfer == "" {
+		return fmt.Errorf("manual submission acknowledgement is missing its generation, handle, or transfer token")
+	}
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `UPDATE downloads SET handle=?,transfer=?,submission_phase='submitted',manual_retry_at=0,
+		manual_retry_attempts=0,manual_blocked_at=0,error='',updated_at=?
+		WHERE id=? AND generation_key=? AND intent='manual_additional' AND transfer=?`,
+		handle, transfer, time.Now().UnixMilli(), id, generation, transfer)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrManualSubmissionChanged
+	}
+	return tx.Commit()
 }
 
 // ListActiveDownloads returns rows still moving through the state machine.
@@ -492,6 +711,44 @@ func (d *DB) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 	out := make([]Download, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, downloadFromRow(r))
+	}
+	return out, nil
+}
+
+// ListImportRetryCandidates returns every environmental import failure still
+// requiring attention. Unlike Activity's recent page, this query is not
+// capped and is independent of Activity dismissal.
+func (d *DB) ListImportRetryCandidates(ctx context.Context) ([]Download, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT id FROM downloads
+		WHERE state='failed' AND delivery_expected=0
+		AND error LIKE '%' || ? || '%'
+		AND (import_path != '' OR save_path != '')
+		ORDER BY updated_at ASC, id ASC`, "import stopped:")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]Download, 0, len(ids))
+	for _, id := range ids {
+		dl, err := d.GetDownload(ctx, id)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		out = append(out, dl)
 	}
 	return out, nil
 }
@@ -728,7 +985,24 @@ func (d *DB) ClearImportedDownloads(ctx context.Context) (int64, error) {
 // ClearFailedDownloads drops every failed row from Activity. It deliberately
 // leaves files, blocklists, library records, and download clients alone.
 func (d *DB) ClearFailedDownloads(ctx context.Context) (int64, error) {
-	return d.Write.DeleteFailedDownloads(ctx)
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+	dismissed, err := q.DismissFailedDownloadsWithPendingRunnerReceipt(ctx)
+	if err != nil {
+		return 0, err
+	}
+	deleted, err := q.DeleteFailedDownloads(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return dismissed + deleted, nil
 }
 
 // PruneTerminalDownloads ages terminal Activity out without discarding pending

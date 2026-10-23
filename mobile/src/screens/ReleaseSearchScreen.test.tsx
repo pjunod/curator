@@ -1,6 +1,7 @@
 import { act, create } from 'react-test-renderer'
 import type { ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../api'
 import type { MonarrClient } from '../api'
 import type { MediaItemDetail, ReleaseCandidate } from '../types'
 import { ReleaseSearchScreen } from './ReleaseSearchScreen'
@@ -70,7 +71,7 @@ describe('ReleaseSearchScreen', () => {
     expect(text()).not.toContain('second reason')
 
     await press('Grab')
-    expect(client.grabRelease).toHaveBeenCalledWith(expect.objectContaining({ mediaItemId: 42, season: 1, episode: 1, title: 'Show.S01E01.2160p', candidateToken: 'a' }))
+    expect(client.grabRelease).toHaveBeenCalledWith(expect.objectContaining({ mediaItemId: 42, season: 1, episode: 1, title: 'Show.S01E01.2160p', candidateToken: 'a', intent: 'additional_copy', requestId: expect.any(String), downloadAnyway: false }))
     expect(text()).toContain('Grabbed Show.S01E01.2160p')
   })
 
@@ -83,7 +84,38 @@ describe('ReleaseSearchScreen', () => {
     expect(alert).toHaveBeenCalledOnce()
     const buttons = alert.mock.calls[0]![2] as { text: string; onPress?: () => void }[]
     await act(async () => { buttons.find((button) => button.text === 'Grab anyway')!.onPress!() })
-    expect(client.grabRelease).toHaveBeenCalledWith(expect.objectContaining({ season: 1, episode: undefined, title: 'Show.S01E01.480p' }))
+    expect(client.grabRelease).toHaveBeenCalledWith(expect.objectContaining({ season: 1, episode: undefined, title: 'Show.S01E01.480p', intent: 'additional_copy', requestId: expect.any(String), downloadAnyway: false }))
+  })
+
+  it('requires a one-time confirmation for a blacklisted release', async () => {
+    const client = makeClient([candidate({ title: 'Blocked release', candidateToken: 'blocked', blacklistReason: 'previously failed' })])
+    await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{ season: 1 }} onBack={vi.fn()} />) })
+
+    await press('Grab')
+    expect(client.grabRelease).not.toHaveBeenCalled()
+    const buttons = alert.mock.calls.at(-1)![2] as { text: string; onPress?: () => void }[]
+    await act(async () => { buttons.find((button) => button.text === 'Download once')!.onPress!() })
+    expect(client.grabRelease).toHaveBeenCalledWith(expect.objectContaining({ title: 'Blocked release', intent: 'additional_copy', downloadAnyway: true, requestId: expect.any(String) }))
+  })
+
+  it('reuses the request id on retries and uses a fresh id for a blacklist override', async () => {
+    const client = makeClient([candidate({ candidateToken: 'retry' })])
+    client.grabRelease.mockRejectedValueOnce(new ApiError('now blacklisted', 409, 'blacklist_confirmation_required'))
+    await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{ season: 1 }} onBack={vi.fn()} />) })
+
+    await press('Grab')
+    const first = client.grabRelease.mock.calls[0]![0]
+    const buttons = alert.mock.calls.at(-1)![2] as { text: string; onPress?: () => void }[]
+    await act(async () => { buttons.find((button) => button.text === 'Download once')!.onPress!() })
+    const override = client.grabRelease.mock.calls[1]![0]
+    expect(first.requestId).not.toBe(override.requestId)
+    expect(override.downloadAnyway).toBe(true)
+
+    client.grabRelease.mockRejectedValueOnce(new Error('temporary network error'))
+    await press('Grab')
+    const retryable = client.grabRelease.mock.calls[2]![0]
+    await press('Grab')
+    expect(client.grabRelease.mock.calls[3]![0].requestId).toBe(retryable.requestId)
   })
 
   it('narrows to accepted releases as a view and re-searches when the scope changes', async () => {

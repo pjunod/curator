@@ -40,8 +40,14 @@ DELETE FROM download_clients WHERE id = ?;
 -- name: InsertDownload :one
 INSERT INTO downloads (
     media_item_id, copy_id, wantables, season, release_title, indexer, protocol,
-    quality, size, client_id, handle, state, match_evidence, added_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
+    quality, size, client_id, handle, state, match_evidence, added_at, updated_at,
+    generation_key, intent, request_id, request_fingerprint, blacklist_override,
+    delivery_expected, request_token_idempotent, replacement_operation_id, source_guid, source_indexer_id,
+    transfer, submission_phase, execution_payload, exact_transfer_correlation
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
+
+-- name: GetDownloadByRequestID :one
+SELECT * FROM downloads WHERE request_id = ?;
 
 -- name: ListActiveDownloads :many
 -- Work that is still moving. Deliberately excludes 'imported' and 'failed':
@@ -74,26 +80,29 @@ SELECT state, COUNT(*) AS n FROM downloads WHERE activity_dismissed = 0 GROUP BY
 -- name: DeleteImportedDownloads :execrows
 -- "Clear finished": the ROWS only. Nothing here touches a file, a library
 -- record, or the download client - an imported row is a receipt.
-DELETE FROM downloads WHERE (payload_removed = 1 OR (import_path = '' AND save_path = '' AND handle = '')) AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
+DELETE FROM downloads WHERE (payload_removed = 1 OR (import_path = '' AND save_path = '' AND handle = '')) AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM runner_delivery_receipts r WHERE r.download_id=downloads.id AND (r.state!='imported' OR r.ack_state!='accepted')) AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
 
 -- name: DismissImportedDownloads :execrows
 -- Keep cleanup ownership while hiding the completed activity. No files change.
-UPDATE downloads SET activity_dismissed = 1 WHERE activity_dismissed = 0 AND payload_removed = 0 AND (import_path != '' OR save_path != '' OR handle != '') AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
+UPDATE downloads SET activity_dismissed = 1 WHERE activity_dismissed = 0 AND ((payload_removed = 0 AND (import_path != '' OR save_path != '' OR handle != '')) OR EXISTS(SELECT 1 FROM runner_delivery_receipts r WHERE r.download_id=downloads.id AND (r.state!='imported' OR r.ack_state!='accepted'))) AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
 
 -- name: DeleteFailedDownloads :execrows
 -- "Clear failed" has the same boundary: dismiss the Activity rows without
 -- touching payloads, library records, blocklists, or download clients.
-DELETE FROM downloads WHERE state = 'failed' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
+DELETE FROM downloads WHERE state = 'failed' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM runner_delivery_receipts r WHERE r.download_id=downloads.id AND (r.state!='imported' OR r.ack_state!='accepted')) AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
+
+-- name: DismissFailedDownloadsWithPendingRunnerReceipt :execrows
+UPDATE downloads SET activity_dismissed=1 WHERE activity_dismissed=0 AND state='failed' AND EXISTS(SELECT 1 FROM runner_delivery_receipts r WHERE r.download_id=downloads.id AND (r.state!='imported' OR r.ack_state!='accepted')) AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0;
 
 -- name: DeleteTerminalDownloadsBefore :execrows
 -- Retention. Terminal rows only: whatever is still moving is never swept out
 -- from under itself, however old it looks.
 DELETE FROM downloads
-WHERE (state != 'imported' OR payload_removed = 1 OR (import_path = '' AND save_path = '' AND handle = '')) AND state IN ('imported', 'failed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
+WHERE (state != 'imported' OR payload_removed = 1 OR (import_path = '' AND save_path = '' AND handle = '')) AND state IN ('imported', 'failed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT EXISTS(SELECT 1 FROM runner_delivery_receipts r WHERE r.download_id=downloads.id AND (r.state!='imported' OR r.ack_state!='accepted')) AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
 
 -- name: DismissImportedDownloadsBefore :execrows
 UPDATE downloads SET activity_dismissed = 1
-WHERE activity_dismissed = 0 AND payload_removed = 0 AND (import_path != '' OR save_path != '' OR handle != '') AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
+WHERE activity_dismissed = 0 AND ((payload_removed = 0 AND (import_path != '' OR save_path != '' OR handle != '')) OR EXISTS(SELECT 1 FROM runner_delivery_receipts r WHERE r.download_id=downloads.id AND (r.state!='imported' OR r.ack_state!='accepted'))) AND state = 'imported' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
 
 -- name: DeleteHistoryBefore :execrows
 DELETE FROM history_events WHERE ts < ?;
@@ -231,8 +240,8 @@ ORDER BY id;
 SELECT * FROM downloads WHERE state='failed' AND superseded=0 AND added_at>=? ORDER BY id;
 
 -- name: DeleteDismissedImportedDownload :execrows
-DELETE FROM downloads WHERE downloads.id = ? AND activity_dismissed = 1 AND state = 'imported' AND payload_removed = 1 AND submission_phase NOT IN ('pending','submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
+DELETE FROM downloads WHERE downloads.id = ? AND activity_dismissed = 1 AND state = 'imported' AND payload_removed = 1 AND submission_phase NOT IN ('pending','submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM runner_delivery_receipts r WHERE r.download_id=downloads.id AND (r.state!='imported' OR r.ack_state!='accepted')) AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
 
 -- name: DismissImportedDownload :execrows
 UPDATE downloads SET activity_dismissed = 1
-WHERE payload_removed = 0 AND (import_path != '' OR save_path != '' OR handle != '') AND state = 'imported' AND submission_phase NOT IN ('pending','submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.id = ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));
+WHERE ((payload_removed = 0 AND (import_path != '' OR save_path != '' OR handle != '')) OR EXISTS(SELECT 1 FROM runner_delivery_receipts r WHERE r.download_id=downloads.id AND (r.state!='imported' OR r.ack_state!='accepted'))) AND state = 'imported' AND submission_phase NOT IN ('pending','submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.id = ? AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));

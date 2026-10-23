@@ -26,27 +26,54 @@ const (
 	CompletedScanInterval = 5 * time.Minute
 )
 
+// Tests replace the observer to simulate mount changes without privileged
+// remounts. Production observers verify the currently visible mounted storage.
+var observeStorageIdentity = expectedStorageIdentity
+
 // CompletedEntry accounts for every kind of directory entry, including loose
 // archives, hidden files and symlinks. Bytes are logical file sizes, not a
 // promise of reclaimable disk space (hardlinks and sparse files differ).
 type CompletedEntry struct {
-	Fingerprint string                    `json:"fingerprint"`
-	Path        string                    `json:"path"`
-	Bytes       int64                     `json:"bytes"`
-	Files       int                       `json:"files"`
-	Status      string                    `json:"status"`
-	Reason      string                    `json:"reason"`
-	Receipts    []sqlite.CompletedReceipt `json:"receipts"`
+	Fingerprint     string                    `json:"fingerprint"`
+	Path            string                    `json:"path"`
+	Bytes           int64                     `json:"bytes"`
+	Files           int                       `json:"files"`
+	Status          string                    `json:"status"`
+	Reason          string                    `json:"reason"`
+	LegacyReview    bool                      `json:"legacyReview,omitempty"`
+	DeliveryManaged bool                      `json:"deliveryManaged,omitempty"`
+	ReviewFiles     []CompletedReviewFile     `json:"reviewFiles,omitempty"`
+	Receipts        []sqlite.CompletedReceipt `json:"receipts"`
+}
+
+// CompletedReviewFile is read-only inventory evidence for a legacy review
+// batch. SnapshotIdentity binds the listed path and observed metadata for the
+// report; it is not storage proof or deletion authority.
+type CompletedReviewFile struct {
+	Path             string    `json:"path"`
+	SizeBytes        int64     `json:"sizeBytes"`
+	ModifiedAt       time.Time `json:"modifiedAt"`
+	Mode             string    `json:"mode"`
+	SnapshotIdentity string    `json:"snapshotIdentity"`
+}
+
+// CompletedFileSelection carries the exact file snapshot the operator chose
+// from a completed-storage inventory. Delivery deletion rechecks it against
+// the immutable accepted manifest before unlinking one file.
+type CompletedFileSelection struct {
+	Path             string `json:"path"`
+	SnapshotIdentity string `json:"snapshotIdentity"`
 }
 
 type CompletedRoot struct {
-	RootIdentity   string           `json:"rootIdentity"`
-	Path           string           `json:"path"`
-	CheckedAt      time.Time        `json:"checkedAt"`
-	LastCompleteAt time.Time        `json:"lastCompleteAt"`
-	Error          string           `json:"error"`
-	Entries        []CompletedEntry `json:"entries"`
-	Bytes          int64            `json:"bytes"`
+	RootIdentity    string           `json:"rootIdentity"`
+	StorageIdentity string           `json:"storageIdentity,omitempty"`
+	Path            string           `json:"path"`
+	CheckedAt       time.Time        `json:"checkedAt"`
+	LastCompleteAt  time.Time        `json:"lastCompleteAt"`
+	Error           string           `json:"error"`
+	Entries         []CompletedEntry `json:"entries"`
+	Bytes           int64            `json:"bytes"`
 }
 
 type CompletedInventory struct {
@@ -66,26 +93,7 @@ func (s *Service) SetCompletedRoots(ctx context.Context, value string) error {
 			return fmt.Errorf("completed folders must be absolute paths below the filesystem root: %q", p)
 		}
 	}
-	if err := s.db.SetMeta(ctx, CompletedRootsSetting, value); err != nil {
-		return err
-	}
-	// Explicitly saving roots approves their current mount identities. Keep
-	// prior counts until a complete scan succeeds; never erase stale evidence.
-	inventory, err := s.CompletedInventory(ctx)
-	if err != nil {
-		return err
-	}
-	for _, root := range inventory.Roots {
-		root.RootIdentity = ""
-		raw, err := json.Marshal(root)
-		if err != nil {
-			return err
-		}
-		if err := s.db.SaveCompletedScan(ctx, root.Path, string(raw)); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.db.SetMeta(ctx, CompletedRootsSetting, value)
 }
 
 // completedRoots uses explicit roots when configured, otherwise local mappings
@@ -221,6 +229,10 @@ func (s *Service) ScanCompleted(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	legacyPaths, err := s.db.LegacyCleanupReviewPaths(ctx)
+	if err != nil {
+		return err
+	}
 	roots, err := s.completedRoots(ctx, receipts)
 	if err != nil {
 		return err
@@ -249,18 +261,28 @@ func (s *Service) ScanCompleted(ctx context.Context) error {
 	for i := range receipts {
 		receipts[i].Path = storagePath(receipts[i].Path, roots)
 	}
+	for i := range legacyPaths {
+		legacyPaths[i] = storagePath(legacyPaths[i], roots)
+	}
 	var failures []error
 	for _, path := range roots {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		root := CompletedRoot{Path: path, CheckedAt: time.Now().UTC(), Entries: []CompletedEntry{}}
+		var operationIdentity os.FileInfo
 		if info, err := os.Stat(path); err != nil {
 			root.Error = err.Error()
 		} else {
-			root.RootIdentity = fmt.Sprint(recoveryDirectoryIdentity(info))
-			if old, ok := previous[path]; ok && old.RootIdentity != "" && old.RootIdentity != root.RootIdentity {
-				root.Error = "storage mount identity changed; restore the mount, or explicitly re-save the storage roots to accept its replacement"
+			operationIdentity = info
+			observed, identityErr := observeStorageIdentity(path)
+			if identityErr != nil {
+				root.Error = identityErr.Error()
+			} else {
+				root.StorageIdentity = observed
+				if old, ok := previous[path]; ok && old.StorageIdentity != "" && old.StorageIdentity != observed {
+					root.Error = "expected storage changed; restore the configured storage before scanning or cleaning files"
+				}
 			}
 		}
 		for _, lib := range library {
@@ -274,17 +296,20 @@ func (s *Service) ScanCompleted(ctx context.Context) error {
 			// Inventory runs in the scheduler, not an HTTP request. Slow network
 			// storage must be allowed to finish; shutdown cancellation and the
 			// entry limit still bound work without discarding progress after 30s.
-			root.Entries, root.Bytes, err = scanCompletedRoot(ctx, path, receipts, remove)
+			root.Entries, root.Bytes, err = scanCompletedRoot(ctx, path, receipts, remove, legacyPaths)
 			if err != nil {
 				root.Error = err.Error()
-			} else if info, err := os.Stat(path); err != nil || fmt.Sprint(recoveryDirectoryIdentity(info)) != root.RootIdentity {
-				root.Error = "storage mount changed during the scan"
+			} else if info, err := os.Stat(path); err != nil || operationIdentity == nil || !os.SameFile(operationIdentity, info) {
+				root.Error = "storage root changed during the scan"
+			} else if observed, err := observeStorageIdentity(path); err != nil || observed != root.StorageIdentity {
+				root.Error = "expected storage changed during the scan"
 			}
 		}
 		if root.Error != "" {
 			if old, ok := previous[path]; ok {
 				root.Entries, root.Bytes, root.LastCompleteAt = old.Entries, old.Bytes, old.LastCompleteAt
 				root.RootIdentity = old.RootIdentity
+				root.StorageIdentity = old.StorageIdentity
 			}
 			failures = append(failures, fmt.Errorf("%s: %s", path, root.Error))
 		} else {
@@ -315,14 +340,18 @@ func (s *Service) ScanCompleted(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-func scanCompletedRoot(ctx context.Context, root string, receipts []sqlite.CompletedReceipt, remove map[int64]bool) ([]CompletedEntry, int64, error) {
-	return scanCompletedSelection(ctx, root, "", receipts, remove)
+func scanCompletedRoot(ctx context.Context, root string, receipts []sqlite.CompletedReceipt, remove map[int64]bool, legacyPaths ...[]string) ([]CompletedEntry, int64, error) {
+	return scanCompletedSelection(ctx, root, "", receipts, remove, legacyPaths...)
 }
 
 // A selected scan uses the same root identity and fingerprint format as the
 // inventory, but never descends into unrelated payloads during deletion.
-func scanCompletedSelection(ctx context.Context, root, selected string, receipts []sqlite.CompletedReceipt, remove map[int64]bool) ([]CompletedEntry, int64, error) {
+func scanCompletedSelection(ctx context.Context, root, selected string, receipts []sqlite.CompletedReceipt, remove map[int64]bool, legacyPathSets ...[]string) ([]CompletedEntry, int64, error) {
 	entries := []CompletedEntry{}
+	var legacyPaths []string
+	if len(legacyPathSets) > 0 {
+		legacyPaths = legacyPathSets[0]
+	}
 	byPath := map[string]int{}
 	fingerprints := map[string]hash.Hash{}
 	var rootIdentity any
@@ -375,11 +404,22 @@ func scanCompletedSelection(ctx context.Context, root, selected string, receipts
 			i = len(entries)
 			byPath[top] = i
 			e := CompletedEntry{Path: top, Status: "untracked", Reason: "No download record; review or manually import these files", Receipts: []sqlite.CompletedReceipt{}}
+			for _, legacyPath := range legacyPaths {
+				if within(top, legacyPath) || within(legacyPath, top) {
+					e.LegacyReview = true
+					e.Status = "legacy_review"
+					e.Reason = "Pre-delivery completion requires file-by-file review; no manifest-based import or cleanup authority"
+					break
+				}
+			}
 			for _, r := range receipts {
 				// Only a receipt at this payload or beneath it identifies the
 				// payload. A shared storage parent cannot identify every child.
 				if within(top, r.Path) {
 					e.Receipts = append(e.Receipts, r)
+					if r.LegacyReview {
+						e.LegacyReview = true
+					}
 				}
 			}
 			classifyCompleted(&e, remove)
@@ -399,6 +439,12 @@ func scanCompletedSelection(ctx context.Context, root, selected string, receipts
 			entries[i].Bytes += info.Size()
 			entries[i].Files++
 			total += info.Size()
+			if entries[i].LegacyReview || entries[i].DeliveryManaged {
+				entries[i].ReviewFiles = append(entries[i].ReviewFiles, CompletedReviewFile{
+					Path: path, SizeBytes: info.Size(), ModifiedAt: info.ModTime().UTC(), Mode: info.Mode().String(),
+					SnapshotIdentity: completedReviewFileIdentity(path, info),
+				})
+			}
 		} else if !d.IsDir() {
 			entries[i].Status, entries[i].Reason = "untracked", "Contains a special file; review required"
 		}
@@ -414,11 +460,23 @@ func classifyCompleted(e *CompletedEntry, remove map[int64]bool) {
 	if len(e.Receipts) == 0 {
 		return
 	}
+	for _, receipt := range e.Receipts {
+		if receipt.LegacyReview {
+			e.LegacyReview = true
+			e.Status, e.Reason = "legacy_review", "Pre-delivery completion requires file-by-file review; no manifest-based import or cleanup authority"
+			return
+		}
+	}
 	if len(e.Receipts) > 1 {
 		e.Status, e.Reason = "ambiguous", "Multiple download associations; review before cleanup"
 		return
 	}
 	r := e.Receipts[0]
+	if r.DeliveryManaged {
+		e.DeliveryManaged = true
+		e.Status, e.Reason = "cleanup_pending", "Runner delivery cleanup is file-scoped; unresolved or recoverable files remain available in Resolve"
+		return
+	}
 	if !r.Live {
 		e.Status, e.Reason = "untracked", "Activity record was cleared; historical association retained for review"
 		return
@@ -439,6 +497,12 @@ func classifyCompleted(e *CompletedEntry, remove map[int64]bool) {
 	default:
 		e.Status, e.Reason = "active", "Associated with an active download or import"
 	}
+}
+
+func completedReviewFileIdentity(path string, info os.FileInfo) string {
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%s\n%v\n%d\n%d\n%s\n", path, recoveryDirectoryIdentity(info), info.Size(), info.ModTime().UnixNano(), info.Mode())
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (s *Service) CompletedHealth(ctx context.Context) health.Result {
@@ -535,27 +599,49 @@ func (s *Service) ownsDownloadPath(ctx context.Context, path string) bool {
 var storageSameFile = os.SameFile
 
 func (s *Service) checkStorageIdentity(ctx context.Context, path string) error {
+	receipts, err := s.db.CompletedReceipts(ctx)
+	if err != nil {
+		return err
+	}
+	configured, err := s.completedRoots(ctx, receipts)
+	if err != nil {
+		return err
+	}
 	inventory, err := s.CompletedInventory(ctx)
 	if err != nil {
 		return err
 	}
+	byPath := make(map[string]CompletedRoot, len(inventory.Roots))
 	for _, root := range inventory.Roots {
-		if !within(root.Path, path) {
+		byPath[root.Path] = root
+	}
+	path = storagePath(path, configured)
+	matched := false
+	for _, configuredRoot := range configured {
+		if !within(configuredRoot, path) {
 			continue
+		}
+		matched = true
+		root, ok := byPath[configuredRoot]
+		if !ok {
+			return fmt.Errorf("automatic storage verification is pending for %s; cleanup will resume after a successful inventory scan", configuredRoot)
 		}
 		if root.Error != "" {
-			return fmt.Errorf("storage scan is incomplete: %s", root.Error)
+			return fmt.Errorf("storage verification is incomplete for %s: %s; cleanup will resume after storage is available", configuredRoot, root.Error)
 		}
-		if root.RootIdentity == "" {
-			continue
+		if root.StorageIdentity == "" {
+			return fmt.Errorf("automatic storage verification is pending for %s; cleanup will resume after a successful inventory scan", configuredRoot)
 		}
-		info, err := os.Stat(root.Path)
+		observed, err := observeStorageIdentity(root.Path)
 		if err != nil {
-			return err
+			return fmt.Errorf("storage verification is unavailable for %s: %w; cleanup will retry automatically", configuredRoot, err)
 		}
-		if fmt.Sprint(recoveryDirectoryIdentity(info)) != root.RootIdentity {
-			return fmt.Errorf("storage mount changed; scan again before deleting")
+		if observed != root.StorageIdentity {
+			return fmt.Errorf("expected storage changed at %s; restore the configured storage and automatic verification will resume", configuredRoot)
 		}
+	}
+	if !matched {
+		return fmt.Errorf("path %s is outside configured completed storage; storage verification cannot authorize this operation", path)
 	}
 	return nil
 }

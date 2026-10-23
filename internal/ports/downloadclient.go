@@ -2,9 +2,20 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
+
+// ErrAdmissionRejected marks an explicit client response that confirms a
+// download request was refused. Transport errors and ambiguous acknowledgments
+// must not use this sentinel because callers may need to reconcile/retry them.
+var ErrAdmissionRejected = errors.New("download client rejected admission")
+
+// RetryDeadline exposes a provider-requested retry boundary without coupling
+// orchestration code to an adapter's concrete error type.
+type RetryDeadline interface{ RetryDeadline() time.Time }
 
 // PathMapping rewrites a completed-download path prefix the client reports
 // into the path Monarr sees the same files at (client on another host or
@@ -137,6 +148,7 @@ type DownloadStatus struct {
 
 	Handle   Handle
 	Name     string
+	Transfer string // stable Monarr request token when the client exposes it
 	State    DownloadState
 	Progress float64 // 0..1
 	SavePath string  // where the payload lands when completed
@@ -193,9 +205,11 @@ type TaggedAdder interface {
 // when it creates a download. Priority is nzbd-compatible: higher values are
 // scheduled first and 900 is force.
 type AddOptions struct {
-	Name     string
-	Transfer string
-	Priority int
+	Name             string
+	Transfer         string
+	Priority         int
+	DeliveryExpected bool
+	ManualAdditional bool
 }
 
 // ConfiguredAdder is the most capable optional add path. Callers prefer it to
@@ -203,6 +217,15 @@ type AddOptions struct {
 // the one request that creates the client job.
 type ConfiguredAdder interface {
 	AddWithOptions(ctx context.Context, downloadURL, category string, options AddOptions) (Handle, error)
+}
+
+// ExactTransferCorrelator marks clients that can attach the supplied transfer
+// token to a newly admitted job and return it verbatim in DownloadStatus. Such
+// clients may acknowledge Add before their native handle is discoverable; the
+// caller must persist the accepted token and wait for exact-token correlation,
+// never fall back to title matching or replay Add.
+type ExactTransferCorrelator interface {
+	SupportsExactTransferCorrelation() bool
 }
 
 // ClientEventKind is what a pushed event says happened.

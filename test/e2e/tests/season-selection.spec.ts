@@ -22,18 +22,26 @@ for (const width of [390, 1280]) {
 }
 
 for (const width of [390, 1280]) {
- test(`saved request cap action stays in viewport at ${width}px`, async ({page})=>{
+ test(`per-indexer request limit stays explicit and in viewport at ${width}px`, async ({page})=>{
   await page.setViewportSize({width,height:844})
   const indexers=Array.from({length:30},(_,i)=>({id:i+1,name:`Provider ${i}`,url:'http://example.invalid',protocol:'torrent',dailyRequestCap:50,enabled:true}))
   await page.route('**/api/v1/indexers',r=>r.fulfill({json:indexers}))
-  await page.route('**/api/v1/indexers/30',r=>{expect(r.request().postDataJSON()).toEqual({dailyRequestCap:0});return r.fulfill({json:{...indexers[29],dailyRequestCap:0}})})
-  await page.goto('/settings?tab=acquisition')
-  const trigger=page.getByRole('button',{name:'Request cap',exact:true}).last()
+  let saved: Record<string, unknown> | undefined
+  await page.route('**/api/v1/indexers/30',r=>{saved=r.request().postDataJSON();return r.fulfill({json:{...indexers[29],dailyRequestCap:0}})})
+  await page.goto('/settings')
+  const panel = page.locator('#indexers')
+  const trigger=panel.getByRole('button',{name:'Request limit',exact:true}).last()
   await trigger.scrollIntoViewIfNeeded();await trigger.click()
   const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible()
   await expect(dialog.getByRole('heading')).toBeInViewport({ratio:1});await expect(dialog.getByRole('heading')).toBeFocused()
-  const input=dialog.getByRole('spinbutton');await expect(input).toBeInViewport({ratio:1});await expect(dialog.getByText('0 means unlimited requests.',{exact:false})).toBeInViewport({ratio:1});await input.fill('0')
-  const save=dialog.getByRole('button',{name:'Save request cap'});await expect(save).toBeInViewport({ratio:1});await save.click()
+  await expect(dialog.getByText(/applies to RSS, automatic search and manual search for this indexer/)).toBeVisible()
+  const limit = dialog.getByLabel('Limit API requests')
+  await expect(limit).toBeChecked()
+  const input=dialog.getByRole('spinbutton');await expect(input).toHaveValue('50');await expect(input).toBeInViewport({ratio:1})
+  await page.screenshot({ path: test.info().outputPath(`indexer-limit-${width}.png`) })
+  await limit.uncheck()
+  const save=dialog.getByRole('button',{name:'Save request limit'});await expect(save).toBeInViewport({ratio:1});await save.click()
+  await expect.poll(() => saved).toEqual({dailyRequestCap:0})
   await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
  })
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -21,17 +22,20 @@ import (
 // Steps recorded in the log (a superset of the persisted states — the log
 // is finer-grained than the state column):
 const (
-	stepGrabbed         = "grabbed"
-	stepDownloading     = "downloading"
-	stepDownloaded      = "downloaded"
-	stepAwaiting        = "awaiting_import"
-	stepImportQueued    = "import_queued"
-	stepManualQueued    = "manual_import_queued"
-	stepImporting       = "importing"
-	stepImportCancelled = "import_cancelled"
-	stepImportRecovered = "import_recovered"
-	stepImported        = "imported"
-	stepFailed          = "failed"
+	stepGrabbed                     = "grabbed"
+	stepDownloading                 = "downloading"
+	stepDownloaded                  = "downloaded"
+	stepAwaiting                    = "awaiting_import"
+	stepImportQueued                = "import_queued"
+	stepManualGrabQueued            = "manual_grab_queued"
+	stepAcceptedAwaitingCorrelation = "accepted_awaiting_transfer_correlation"
+	stepManualQueued                = "manual_import_queued"
+	stepLegacyReviewImportQueued    = "legacy_review_import_queued"
+	stepImporting                   = "importing"
+	stepImportCancelled             = "import_cancelled"
+	stepImportRecovered             = "import_recovered"
+	stepImported                    = "imported"
+	stepFailed                      = "failed"
 )
 
 // advance records one handoff step: it appends a log entry, sets the new
@@ -101,6 +105,54 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	if imp == "" {
 		imp = dl.SavePath
 	}
+	legacyReview, reviewErr := s.db.LegacyCleanupReview(ctx, dl.GenerationKey, imp)
+	legacyReviewApproved := false
+	var legacyApproval *sqlite.HandoffEntry
+	var reviewedSnapshots map[string]string
+	if legacyReview && reviewErr == nil && dl.Protocol == "manual" {
+		for i := len(dl.Handoff) - 1; i >= 0; i-- {
+			entry := dl.Handoff[i]
+			if entry.Step == stepLegacyReviewImportQueued || entry.Step == stepManualQueued {
+				if entry.Step == stepLegacyReviewImportQueued {
+					legacyApproval = &entry
+				}
+				break
+			}
+		}
+		if legacyApproval != nil && legacyApproval.ReviewFingerprint != "" && len(legacyApproval.Paths) > 0 && len(legacyApproval.Paths) == len(legacyApproval.ReviewFiles) &&
+			legacyApproval.TargetMediaItemID == dl.MediaItemID && legacyApproval.TargetCopyID == dl.CopyID {
+			targetIdentity, targetErr := legacyReviewTargetIdentity(ctx, s.db, dl.MediaItemID, dl.CopyID)
+			if targetErr == nil && targetIdentity == legacyApproval.TargetIdentity && canonicalCompletedPath(imp) == canonicalCompletedPath(legacyApproval.ReviewPath) {
+				files := make([]CompletedFileSelection, 0, len(legacyApproval.ReviewFiles))
+				reviewedSnapshots = make(map[string]string, len(legacyApproval.ReviewFiles))
+				for index, file := range legacyApproval.ReviewFiles {
+					if index >= len(legacyApproval.Paths) || legacyApproval.Paths[index] != file.Path {
+						files = nil
+						break
+					}
+					files = append(files, CompletedFileSelection{Path: file.Path, SnapshotIdentity: file.SnapshotIdentity})
+					reviewedSnapshots[filepath.Clean(file.Path)] = file.SnapshotIdentity
+				}
+				if len(files) == len(legacyApproval.ReviewFiles) {
+					if scanErr := s.ScanCompleted(ctx); scanErr != nil {
+						reviewErr = scanErr
+					} else if snapshotErr := s.validateLegacyReviewSnapshot(ctx, imp, legacyApproval.ReviewFingerprint, files); snapshotErr != nil {
+						reviewErr = snapshotErr
+					} else {
+						legacyReviewApproved = true
+					}
+				}
+			}
+		}
+	}
+	if reviewErr != nil || (legacyReview && !legacyReviewApproved) {
+		reason := "automatic import is held for legacy payload review; select exact files in Resolve"
+		if reviewErr != nil {
+			reason += ": " + reviewErr.Error()
+		}
+		s.failImport(ctx, &dl, reason)
+		return fmt.Errorf("%s", reason)
+	}
 	decisionCtx, releaseStorage := s.lockStorageDecision(ctx)
 	s.advance(decisionCtx, &dl, "importing", 1, "", stepImporting,
 		"looking for media files in "+orNone(imp))
@@ -109,13 +161,16 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	// one backwards so a retry after a failed copy imports exactly what the
 	// person selected, even after a process restart.
 	var selected []string
-	manual := false
+	manual := dl.Intent == GrabIntentManualAdditional
 	for i := len(dl.Handoff) - 1; i >= 0; i-- {
-		if dl.Handoff[i].Step == stepManualQueued {
+		if dl.Handoff[i].Step == stepManualQueued || (dl.Handoff[i].Step == stepLegacyReviewImportQueued && legacyReviewApproved) {
 			selected = dl.Handoff[i].Paths
 			manual = true
 			break
 		}
+	}
+	if legacyReviewApproved {
+		ctx = withReviewedSourceSnapshots(ctx, reviewedSnapshots)
 	}
 	// Automatic import is gated by the profile. A manual import is the
 	// explicit override and passes manual=true.
@@ -147,7 +202,8 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	// remuxes is several hundred gigabytes of "we will get to it".
 	s.cleanupAfterImport(ctx, downloadRef{
 		ID: dl.ID, MediaItemID: dl.MediaItemID, ClientID: dl.ClientID,
-		Handle: dl.Handle, ImportPath: imp, ReleaseTitle: dl.ReleaseTitle, Size: dl.Size,
+		Handle: dl.Handle, GenerationKey: dl.GenerationKey, ImportPath: imp,
+		ReleaseTitle: dl.ReleaseTitle, Size: dl.Size,
 	})
 	s.InvalidateWanted()
 	return nil
@@ -160,8 +216,6 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	unlock := s.lockDownload(id)
 	defer unlock()
-	ctx, releaseStorage := s.lockStorageDecision(ctx)
-	defer releaseStorage()
 	// Keep the historical inline seam for focused service tests. Production
 	// always starts the bounded workers and takes the asynchronous path below.
 	held, holdErr := s.db.GetDownload(ctx, id)
@@ -244,19 +298,10 @@ func (s *Service) RetryFolderlessImports(ctx context.Context, itemID int64) (int
 // searches for a replacement — the explicit escalation for a download that
 // keeps failing to import or is simply wrong.
 func (s *Service) BlocklistReplace(ctx context.Context, id int64) error {
-	dl, err := s.db.GetDownload(ctx, id)
-	if err != nil {
+	if _, err := s.db.GetDownload(ctx, id); err != nil {
 		return err
 	}
-	if dl.Handle != "" {
-		if cfg, err := s.db.GetDownloadClient(ctx, dl.ClientID); err == nil {
-			_ = s.newClient(cfg).Remove(ctx, ports.Handle(dl.Handle), true)
-		}
-	}
-	// Never blameless: the user pressed Blocklist, and a blocklist that does
-	// not blocklist is the one outcome this button must not have.
-	s.handleFailure(ctx, dl, dl.Progress, "blocklisted by user", false)
-	return nil
+	return ErrReplacementReviewRequired
 }
 
 // failImport marks an import as failed and surfaces the reason, but does NOT

@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 // Phase 2.5 (ADR 0006): the full book loop — search Open Library, add,
 // interactive release search (format-graded), grab an EPUB, auto-import
@@ -22,6 +24,18 @@ async function refreshQueueUntil(request: any, pred: (rows: any[]) => boolean) {
       { timeout: 15_000, intervals: [500] },
     )
     .toBe(true)
+}
+
+async function runRSSUntil(request: any, pred: () => Promise<boolean>) {
+  const db = new DatabaseSync(join(process.env.E2E_DATA_DIR!, 'monarr.db'))
+  db.prepare('UPDATE indexers SET next_rss_at=0').run()
+  db.close()
+  const response = await request.post('/api/v1/system/tasks/rss.sync/run')
+  expect(response.ok()).toBe(true)
+  await expect.poll(async () => {
+    await request.post('/api/v1/system/tasks/queue.refresh/run')
+    return pred()
+  }, { timeout: 15_000, intervals: [500] }).toBe(true)
 }
 
 test('search Open Library and add the book', async ({ request }) => {
@@ -54,13 +68,14 @@ test('ebook release search stays in ebook categories', async ({ request }) => {
   expect(cands[0].quality).toBe('EPUB')
 })
 
-test('grab EPUB → auto-import → Calibre-friendly file name', async ({ request }) => {
+test('manual EPUB addition → import into its own copy with Calibre-friendly file name', async ({ request }) => {
   const cands = await (await request.get(`/api/v1/library/${bookId}/releases`)).json()
   const pick = cands[0]
   const grab = await request.post('/api/v1/grab', {
     data: {
       mediaItemId: bookId, title: pick.title, downloadUrl: pick.downloadUrl,
       indexer: pick.indexer, protocol: pick.protocol, size: pick.size,
+      candidateToken: pick.candidateToken, intent: 'additional_copy', requestId: 'phase25-ebook', downloadAnyway: false,
     },
   })
   expect(grab.status()).toBe(201)
@@ -71,9 +86,19 @@ test('grab EPUB → auto-import → Calibre-friendly file name', async ({ reques
 
   const detail = await (await request.get(`/api/v1/library/${bookId}`)).json()
   expect(detail.files.length).toBe(1)
-  expect(detail.files[0].path).toContain(
-    'Test Author/The Test Book/The Test Book - Test Author.epub',
+  expect(detail.files[0].copyId).toBeGreaterThan(0)
+  expect(detail.files[0].path).toMatch(
+    /Test Author\/The Test Book \(Manual copy [^/]+\)\/The Test Book - Test Author\.epub$/,
   )
+})
+
+test('automatic RSS fills the monitored ebook primary independently', async ({ request }) => {
+  await runRSSUntil(request, async () => {
+    const detail = await (await request.get(`/api/v1/library/${bookId}`)).json()
+    return detail.files.some((file: any) => !file.path.includes('(Manual copy ') && file.path.endsWith('The Test Book - Test Author.epub'))
+  })
+  const detail = await (await request.get(`/api/v1/library/${bookId}`)).json()
+  expect(detail.files.some((file: any) => file.copyId > 0 && file.path.includes('(Manual copy '))).toBe(true)
 })
 
 test('add the audiobook beside the ebook and curate it independently', async ({ request }) => {
@@ -90,10 +115,11 @@ test('add the audiobook beside the ebook and curate it independently', async ({ 
   expect(item.bookType).toBe('ebook')
   expect(item.bookTypes).toEqual(['ebook', 'audiobook'])
   expect(item.qualityProfileId).toBe(4)
-  expect(item.copies).toHaveLength(1)
-  expect(item.copies[0].bookType).toBe('audiobook')
-  expect(item.copies[0].qualityProfileId).toBe(5)
-  audiobookCopyId = item.copies[0].id
+  expect(item.copies).toHaveLength(2) // the earlier manual ebook copy remains separate
+  const audiobookCopy = item.copies.find((copy: any) => copy.bookType === 'audiobook')
+  expect(audiobookCopy).toBeTruthy()
+  expect(audiobookCopy.qualityProfileId).toBe(5)
+  audiobookCopyId = audiobookCopy.id
 
   const cands = await (
     await request.get(`/api/v1/library/${bookId}/releases?copyId=${audiobookCopyId}`)
@@ -102,22 +128,40 @@ test('add the audiobook beside the ebook and curate it independently', async ({ 
   expect(cands[0].quality).toBe('M4B')
   expect(cands[0].accepted).toBe(true)
   const pick = cands[0]
-  expect((await request.post('/api/v1/grab', {
+  const manualGrab = await request.post('/api/v1/grab', {
     data: {
       mediaItemId: bookId, copyId: audiobookCopyId,
       title: pick.title, downloadUrl: pick.downloadUrl,
       indexer: pick.indexer, protocol: pick.protocol, size: pick.size,
+      candidateToken: pick.candidateToken, intent: 'additional_copy', requestId: 'phase25-audiobook-copy', downloadAnyway: false,
     },
-  })).status()).toBe(201)
+  })
+  expect(manualGrab.status()).toBe(201)
+  const manualDownloadID = (await manualGrab.json()).id
   await refreshQueueUntil(request, (rows) =>
-    rows.some((r) => r.title === pick.title && r.copyId === audiobookCopyId && r.state === 'imported'),
+    rows.some((r) => r.id === manualDownloadID && r.state === 'imported'),
   )
+  const queue = await (await request.get('/api/v1/queue')).json()
+  const importedManual = queue.find((row: any) => row.id === manualDownloadID)
+  expect(importedManual.copyId).toBeGreaterThan(audiobookCopyId)
+
+  // The explicit action above creates another manual copy. The monitored
+  // audiobook copy is filled separately through its exact automatic RSS path.
+  await runRSSUntil(request, async () => {
+    const detail = await (await request.get(`/api/v1/library/${bookId}`)).json()
+    return detail.files.some((file: any) => file.copyId === audiobookCopyId && file.path.endsWith('The Test Book - Test Author.m4b'))
+  })
   const detail = await (await request.get(`/api/v1/library/${bookId}`)).json()
-  expect(detail.files).toHaveLength(2)
-  expect(detail.files).toEqual(expect.arrayContaining([
-    expect.objectContaining({ copyId: audiobookCopyId, path: expect.stringContaining('The Test Book - Test Author.m4b') }),
-    expect.objectContaining({ path: expect.stringContaining('The Test Book - Test Author.epub') }),
-  ]))
+  expect(detail.files).toHaveLength(4)
+  expect(detail.files.some((file: any) =>
+    !file.path.includes('(Manual copy ') && file.path.endsWith('The Test Book - Test Author.epub'),
+  )).toBe(true)
+  expect(detail.files.some((file: any) =>
+    file.copyId === audiobookCopyId && file.path.endsWith('The Test Book - Test Author.m4b'),
+  )).toBe(true)
+  expect(detail.files.some((file: any) =>
+    file.copyId === importedManual.copyId && file.path.endsWith('The Test Book - Test Author.m4b'),
+  )).toBe(true)
 })
 
 test('a standalone audiobook still imports every multipart track', async ({ request }) => {
@@ -147,13 +191,22 @@ test('a standalone audiobook still imports every multipart track', async ({ requ
     data: {
       mediaItemId: standaloneAudiobookId, title: pick.title, downloadUrl: pick.downloadUrl,
       indexer: pick.indexer, protocol: pick.protocol, size: pick.size,
+      candidateToken: pick.candidateToken, intent: 'additional_copy', requestId: 'phase25-audiobook', downloadAnyway: false,
     },
   })).status()).toBe(201)
   await refreshQueueUntil(request, (rows) =>
     rows.some((r) => r.title === pick.title && r.state === 'imported'),
   )
+  await runRSSUntil(request, async () => {
+    const current = await (await request.get(`/api/v1/library/${standaloneAudiobookId}`)).json()
+    return current.files.filter((file: any) =>
+      !file.path.includes('(Manual copy ') && file.path.endsWith('.m4b'),
+    ).length === 3
+  })
   const detail = await (await request.get(`/api/v1/library/${standaloneAudiobookId}`)).json()
-  expect(detail.files).toHaveLength(3)
+  expect(detail.files).toHaveLength(6)
+  expect(detail.files.filter((file: any) => file.path.includes('(Manual copy '))).toHaveLength(3)
+  expect(detail.files.filter((file: any) => !file.path.includes('(Manual copy '))).toHaveLength(3)
   expect(detail.files.map((f: any) => f.path)).toEqual(expect.arrayContaining([
     expect.stringContaining('The Test Audiobook - Audio Author - 001.m4b'),
     expect.stringContaining('The Test Audiobook - Audio Author - 002.m4b'),
@@ -174,6 +227,6 @@ test('library shows one work in both edition sections', async ({ page }) => {
 
   await page.goto(`/library/${bookId}`)
   await expect(page.getByRole('heading', { name: 'Editions' })).toBeVisible()
-  await expect(page.getByRole('row', { name: /Ebook/ })).toBeVisible()
-  await expect(page.getByRole('row', { name: /Audiobook/ })).toBeVisible()
+  await expect(page.getByRole('row', { name: /Ebook/ })).toHaveCount(2)
+  await expect(page.getByRole('row', { name: /Audiobook/ })).toHaveCount(2)
 })

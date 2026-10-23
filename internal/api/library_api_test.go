@@ -511,11 +511,10 @@ func TestLibReprobeItemReportsFileCount(t *testing.T) {
 
 // ---- files ----
 
-// Removing a file is three independent decisions, and the response has to
-// report what actually happened to each. A blocklist request against an
-// adopted file cannot be honoured — there is no release to condemn — and that
-// has to arrive as a note, not as silence or as a failure.
-func TestLibRemoveFileReportsEachDecision(t *testing.T) {
+// A legacy blocklist query must not bypass the reviewed replacement flow.
+// Adopted files have no source release identity, and their bytes must remain
+// intact until the user reviews an explicit replacement operation.
+func TestLibRemoveFileRequiresReviewedReplacement(t *testing.T) {
 	e := newAPIEnv(t)
 	id := e.addMovie(t)
 	dir := libDir(t, e.root, "Fight Club (1999)")
@@ -539,27 +538,21 @@ func TestLibRemoveFileReportsEachDecision(t *testing.T) {
 	e.del(t, "/api/v1/library/"+strconv.FormatInt(other.ID, 10)+"/files/"+strconv.FormatInt(fileID, 10)).
 		expect(t, http.StatusNotFound)
 
-	var res struct {
-		Path            string `json:"path"`
-		DeletedFromDisk bool   `json:"deletedFromDisk"`
-		Blocklisted     string `json:"blocklisted"`
-		Note            string `json:"note"`
+	var problem struct {
+		Code string `json:"code"`
 	}
-	e.del(t, base+"?fromDisk=true&blocklist=true").expect(t, http.StatusOK).into(t, &res)
-	if res.Path != onDisk || !res.DeletedFromDisk {
-		t.Errorf("result = %+v, want the deleted path reported", res)
+	e.del(t, base+"?fromDisk=true&blocklist=true").
+		expect(t, http.StatusConflict).into(t, &problem)
+	if problem.Code != "replacement_review_required" {
+		t.Fatalf("conflict code = %q, want replacement_review_required", problem.Code)
 	}
-	if res.Blocklisted != "" {
-		t.Errorf("an adopted file has no source release to blocklist, got %q", res.Blocklisted)
+	if _, err := os.Stat(onDisk); err != nil {
+		t.Fatalf("legacy blocklist request changed or removed the file: %v", err)
 	}
-	if !strings.Contains(res.Note, "blocklist") {
-		t.Errorf("the unhonoured blocklist request must be explained: %q", res.Note)
+	e.get(t, "/api/v1/library/"+strconv.FormatInt(id, 10)).expect(t, http.StatusOK).into(t, &item)
+	if len(item.Files) != 1 || item.Files[0].ID != fileID {
+		t.Fatalf("legacy blocklist request changed library file records: %+v", item.Files)
 	}
-	if _, err := os.Stat(onDisk); !os.IsNotExist(err) {
-		t.Errorf("fromDisk=true left the file on disk: %v", err)
-	}
-	// Gone means gone: the record is not there to remove twice.
-	e.del(t, base).expect(t, http.StatusNotFound)
 }
 
 // ---- copies ----

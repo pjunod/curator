@@ -28,7 +28,8 @@ import { NotifierSettings } from './SettingsNotifiers'
 import { PathInput } from '../PathInput'
 import { ReviewWindow } from '../ReviewWindow'
 import { MissingFolders } from '../MissingFolders'
-import { RecoveryEnableSettings, RecoveryImports } from './Recovery'
+import { RecoveryEnableSettings } from './Recovery'
+import { ResolvePanel } from './Activity'
 
 export function SettingsPage() {
   const [settingsTab, setSettingsTab] = useState<'general' | 'recovery' | 'dev'>('general')
@@ -145,9 +146,9 @@ export function SettingsPage() {
         <h1>Settings</h1>
       </header>
 
-      <nav aria-label="Settings sections">{(['general', 'recovery', 'dev'] as const).map(tab => <button key={tab} aria-pressed={settingsTab === tab} onClick={() => setSettingsTab(tab)}>{tab === 'dev' ? 'Dev' : tab === 'recovery' ? 'Recovery' : 'General'}</button>)}</nav>
+      <nav aria-label="Settings sections">{(['general', 'recovery', 'dev'] as const).map(tab => <button key={tab} aria-pressed={settingsTab === tab} onClick={() => setSettingsTab(tab)}>{tab === 'dev' ? 'Dev' : tab === 'recovery' ? 'Resolve' : 'General'}</button>)}</nav>
       {settingsTab === 'dev' && <RecoveryEnableSettings />}
-      {settingsTab === 'recovery' && <RecoveryImports />}
+      {settingsTab === 'recovery' && <ResolvePanel initialMode="delivery" />}
       <div hidden={settingsTab !== 'general'}>
       <DiscoverySettings />
       <section className="panel" id="metadata">

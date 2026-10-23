@@ -2,10 +2,13 @@ package acquisition
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/quality"
@@ -25,9 +28,19 @@ func TestImportRemovesThePayload(t *testing.T) {
 	svc, db, itemID := setupWithClientType(t, client, "sabnzbd")
 	ctx := context.Background()
 
-	payload := t.TempDir()
+	completedRoot := t.TempDir()
+	payload := filepath.Join(completedRoot, "release")
 	src := filepath.Join(payload, "Test.Show.S01E01.1080p.WEB-DL.mkv")
+	if err := os.MkdirAll(payload, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(src, corpusFile(t, wholeCorpus720), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetCompletedRoots(ctx, completedRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
 		t.Fatal(err)
 	}
 	dl := insertImportable(t, db, itemID, payload)
@@ -208,7 +221,8 @@ func TestRunnerRefusalNeverDeletesMountedPayload(t *testing.T) {
 	if err := db.UpdateDownloadState(ctx, dl.ID, "imported", 1, ""); err != nil {
 		t.Fatal(err)
 	}
-	ref := downloadRef{ID: dl.ID, ClientID: dl.ClientID, Handle: dl.Handle, ImportPath: payload}
+	ref := downloadRef{ID: dl.ID, ClientID: dl.ClientID, Handle: dl.Handle,
+		GenerationKey: dl.GenerationKey, ImportPath: payload}
 	svc.cleanupAfterImport(ctx, ref)
 	if err := svc.CleanupPayloads(ctx); err != nil {
 		t.Fatal(err)
@@ -219,5 +233,62 @@ func TestRunnerRefusalNeverDeletesMountedPayload(t *testing.T) {
 	pending, err := db.ImportedWithPayload(ctx, 10)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("lost cleanup retry: %v, %v", pending, err)
+	}
+}
+
+func TestOrdinaryCleanupSweepLeavesMixedRunnerDeliveryManifestAlone(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setupWithClientType(t, client, "nzbd")
+	ctx := context.Background()
+	root := t.TempDir()
+	payload := filepath.Join(root, "runner-publication")
+	if err := os.MkdirAll(filepath.Join(payload, "Season 01"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	media := filepath.Join(payload, "Season 01", "Test.Show.S01E01.mkv")
+	sibling := filepath.Join(payload, "Season 01", "notes.nfo")
+	if err := os.WriteFile(media, []byte("media"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sibling, []byte("unresolved sibling"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dl := insertImportable(t, db, itemID, payload)
+	if _, err := db.W.ExecContext(ctx, `UPDATE downloads SET delivery_expected=1 WHERE id=?`, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateDownloadState(ctx, dl.ID, "imported", 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	h1 := sha256.Sum256([]byte("media"))
+	h2 := sha256.Sum256([]byte("unresolved sibling"))
+	v := ports.RunnerDelivery{Sequence: 1, DeliveryID: "mixed", PublicationGeneration: "g", ArtifactID: "a", JobID: dl.Handle, RequestToken: dl.Transfer, RunnerInstanceID: "runner", PublicationPath: "/completed/runner-publication", ManifestDigest: "digest", ReadyAt: time.Now(), Files: []ports.RunnerFile{{Path: "Season 01/Test.Show.S01E01.mkv", SizeBytes: 5, SHA256: hex.EncodeToString(h1[:])}, {Path: "Season 01/notes.nfo", SizeBytes: int64(len("unresolved sibling")), SHA256: hex.EncodeToString(h2[:])}}}
+	r, err := db.SaveDiscoveredDelivery(ctx, dl.ClientID, v, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := []sqlite.DeliveryManifestFile{{Path: v.Files[0].Path, SizeBytes: v.Files[0].SizeBytes, SHA256: v.Files[0].SHA256}, {Path: v.Files[1].Path, SizeBytes: v.Files[1].SizeBytes, SHA256: v.Files[1].SHA256}}
+	if err := db.EnsureDeliveryFileOutcomes(ctx, r.ID, manifest, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateDeliveryFileDisposition(ctx, r.ID, manifest[0].Path, "placed", "imported", filepath.Join(t.TempDir(), "library.mkv")); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetDeliveryFileCleanup(ctx, r.ID, manifest[0].Path, "pending", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateDeliveryFileDisposition(ctx, r.ID, manifest[1].Path, "unknown_recoverable", "unresolved sidecar", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CleanupPayloads(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{media, sibling} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("generic cleanup removed Runner manifest file %s: %v", path, err)
+		}
+	}
+	if len(client.removed) != 0 {
+		t.Fatalf("generic cleanup called Runner Remove: %+v", client.removed)
 	}
 }

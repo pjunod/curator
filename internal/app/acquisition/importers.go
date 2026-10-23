@@ -45,10 +45,13 @@ const (
 
 // importJob is one download ready to be moved into the library.
 type importJob struct {
-	dl     sqlite.Download
-	cfg    ports.ClientConfig
-	ctx    context.Context
-	ticket *importTicket
+	dl                  sqlite.Download
+	cfg                 ports.ClientConfig
+	ctx                 context.Context
+	ticket              *importTicket
+	deliveryReceiptID   int64
+	deliveryCleanupOnly bool
+	cleanupCancel       context.CancelFunc
 }
 
 // importTicket is the durable row's in-memory place in the worker queue.
@@ -87,7 +90,14 @@ func (s *Service) StartImporters(ctx context.Context) {
 		}()
 	}
 	s.log.Info("import workers started", "workers", importWorkers)
-	s.importRecoverOnce.Do(func() { s.reconcilePlacements(ctx); s.startRecoveryWorker(ctx); s.recoverManualImports(ctx) })
+	s.importRecoverOnce.Do(func() {
+		s.reconcilePlacements(ctx)
+		s.startRecoveryWorker(ctx)
+		s.recoverManualImports(ctx)
+		s.startManualAdmissionWorker(ctx)
+		s.startAutomaticAdmissionWorker(ctx)
+		s.startReplacementWorker(ctx)
+	})
 }
 
 // recoverManualImports restores standalone manual jobs after a process
@@ -143,7 +153,49 @@ func (s *Service) SetRegistry(r *transfers.Registry) { s.registry = r }
 // RefreshQueue and then asserts the row is `imported` is asserting something
 // true and should not have to learn about workers to keep doing so.
 func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig) bool {
+	return s.enqueueImportJob(ctx, dl, cfg, 0, true)
+}
+
+// enqueueDeliveryImport uses the ordinary bounded workers, but never falls
+// back to doing manifest hashing or import work on the queue-refresh goroutine.
+func (s *Service) enqueueDeliveryImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, receiptID int64) bool {
+	return s.enqueueImportJob(ctx, dl, cfg, receiptID, false)
+}
+
+func (s *Service) queueDeliveryCleanup(ctx context.Context, cfg ports.ClientConfig, receipt sqlite.DeliveryReceipt) bool {
+	s.importMu.Lock()
+	if s.importCh == nil || s.importCtx == nil {
+		s.importMu.Unlock()
+		return false
+	}
+	if s.deliveryCleanupJobs == nil {
+		s.deliveryCleanupJobs = map[int64]bool{}
+	}
+	if s.deliveryCleanupJobs[receipt.ID] {
+		s.importMu.Unlock()
+		return true
+	}
+	parent := context.WithValue(s.importCtx, storageDecisionKey{}, nil)
+	jobCtx, cancel := context.WithCancel(parent)
+	s.deliveryCleanupJobs[receipt.ID] = true
+	job := importJob{cfg: cfg, ctx: jobCtx, deliveryReceiptID: receipt.ID, deliveryCleanupOnly: true, cleanupCancel: cancel}
+	select {
+	case s.importCh <- job:
+		s.importMu.Unlock()
+		return true
+	default:
+		delete(s.deliveryCleanupJobs, receipt.ID)
+		s.importMu.Unlock()
+		cancel()
+		return false
+	}
+}
+
+func (s *Service) enqueueImportJob(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, receiptID int64, inline bool) bool {
 	if s.importCh == nil {
+		if !inline {
+			return false
+		}
 		s.runImportTracked(ctx, importJob{dl: dl, cfg: cfg})
 		return true
 	}
@@ -170,7 +222,7 @@ func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg por
 	ticket := &importTicket{cancel: cancel, queued: true}
 	s.importJobs[dl.ID] = ticket
 	select {
-	case s.importCh <- importJob{dl: dl, cfg: cfg, ctx: jobCtx, ticket: ticket}:
+	case s.importCh <- importJob{dl: dl, cfg: cfg, ctx: jobCtx, ticket: ticket, deliveryReceiptID: receiptID}:
 		s.importMu.Unlock()
 		return true
 	default:
@@ -189,6 +241,27 @@ func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg por
 // whole of it — which is the entire point: before this, a running import was
 // visible nowhere at all.
 func (s *Service) runImportTracked(ctx context.Context, job importJob) {
+	if job.deliveryCleanupOnly {
+		defer func() {
+			if job.cleanupCancel != nil {
+				job.cleanupCancel()
+			}
+			s.importMu.Lock()
+			delete(s.deliveryCleanupJobs, job.deliveryReceiptID)
+			s.importMu.Unlock()
+		}()
+		if ctx.Err() != nil {
+			return
+		}
+		r, err := s.db.DeliveryReceiptByID(ctx, job.deliveryReceiptID)
+		if err == nil {
+			err = s.cleanupDeliveryFiles(ctx, r)
+		}
+		if err != nil {
+			s.log.Warn("completed Runner payload cleanup remains pending", "receipt", job.deliveryReceiptID, "err", err)
+		}
+		return
+	}
 	if job.ticket != nil {
 		defer func() {
 			job.ticket.cancel()
@@ -214,7 +287,15 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 		if err != nil {
 			return
 		}
-		if fresh.State == "imported" || ctx.Err() != nil || persistedDownloadHeld(fresh.RunnerControl) {
+		if fresh.State == "imported" {
+			if job.deliveryReceiptID != 0 {
+				if s.completeDeliveryAcceptance(ctx, job.cfg, job.deliveryReceiptID) == nil {
+					s.markDeliveryImported(ctx, job.deliveryReceiptID)
+				}
+			}
+			return
+		}
+		if ctx.Err() != nil || persistedDownloadHeld(fresh.RunnerControl) {
 			return
 		}
 		// The normal path persisted these before enqueue. Keeping a non-empty
@@ -242,6 +323,10 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 		Detail:     "placing files in the library",
 	})
 	defer h.End()
+	if job.deliveryReceiptID != 0 {
+		_ = s.runDeliveryImport(transfers.WithHandle(ctx, h), job.dl, job.cfg, job.deliveryReceiptID)
+		return
+	}
 	_ = s.runImport(transfers.WithHandle(ctx, h), job.dl)
 }
 
@@ -311,14 +396,15 @@ func (s *Service) CancelImport(ctx context.Context, id int64) error {
 // importerFields is the state StartImporters needs. Kept beside the workers
 // rather than in the Service literal so the two are read together.
 type importerFields struct {
-	importOnce        sync.Once
-	importRecoverOnce sync.Once
-	importCh          chan importJob
-	importWG          sync.WaitGroup
-	registry          *transfers.Registry
-	importCtx         context.Context
-	importMu          sync.Mutex
-	importJobs        map[int64]*importTicket
+	importOnce          sync.Once
+	importRecoverOnce   sync.Once
+	importCh            chan importJob
+	importWG            sync.WaitGroup
+	registry            *transfers.Registry
+	importCtx           context.Context
+	importMu            sync.Mutex
+	importJobs          map[int64]*importTicket
+	deliveryCleanupJobs map[int64]bool
 }
 
 // watchDownloading keeps the in-flight view honest about the stages Monarr

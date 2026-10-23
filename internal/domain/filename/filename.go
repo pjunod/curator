@@ -29,6 +29,7 @@ func IsVideo(path string) bool {
 // ebooks plus audiobook containers.
 var BookExtensions = map[string]bool{
 	".epub": true, ".azw3": true, ".azw": true, ".mobi": true, ".pdf": true,
+	".cbz": true, ".cbr": true, ".djvu": true,
 	".m4b": true, ".m4a": true, ".mp3": true, ".aac": true, ".flac": true,
 	".ogg": true, ".opus": true, ".wav": true, ".wma": true,
 }
@@ -51,6 +52,12 @@ func BookQualitySource(path string) string {
 		return "mobi"
 	case ".pdf":
 		return "pdf"
+	case ".cbz":
+		return "cbz"
+	case ".cbr":
+		return "cbr"
+	case ".djvu":
+		return "djvu"
 	case ".m4b":
 		return "m4b"
 	case ".mp3":

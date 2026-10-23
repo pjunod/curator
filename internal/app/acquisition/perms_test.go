@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,5 +198,39 @@ func TestPlaceIsIdempotentForTheSameFile(t *testing.T) {
 	}
 	if !os.SameFile(before, after) {
 		t.Error("re-placing the same file replaced it; a retried import should not re-copy")
+	}
+}
+
+func TestDeliveryPlacementCopiesWithoutChangingAcceptedSourceGeneration(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "accepted.mkv")
+	if err := os.WriteFile(src, bytes.Repeat([]byte{0x5A}, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := deliveryFileGeneration(before)
+	if generation == "" {
+		t.Skip("platform does not expose a stable delivery file generation")
+	}
+	dest := filepath.Join(dir, "library", "accepted.mkv")
+	if err := placeContext(withIndependentPlacementCopy(context.Background()), src, dest, nil); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := deliveryFileGeneration(after); got != generation {
+		t.Fatalf("accepted publication generation changed during placement: before=%q after=%q", generation, got)
+	}
+	placed, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(after, placed) {
+		t.Fatal("delivery placement hard-linked the source and can mutate its accepted generation")
 	}
 }

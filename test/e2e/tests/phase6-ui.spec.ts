@@ -56,9 +56,9 @@ test('detail page shows labeled facts: location chip, profile, rating, links', a
   const movie = movies[0]
   await page.goto(`/library/${movie.id}`)
 
-  await expect(page.getByText('Location', { exact: true })).toBeVisible()
-  await expect(page.locator('.path-chip')).toContainText('The Test Movie')
-  await expect(page.getByText('Profile', { exact: true })).toBeVisible()
+  await expect(page.locator('.fact-label').filter({ hasText: /^Location$/ })).toBeVisible()
+  await expect(page.locator('.path-chip').first()).toContainText('The Test Movie')
+  await expect(page.locator('.fact-label').filter({ hasText: /^Profile$/ })).toBeVisible()
 
   // Rating came from the provider at add time (fake TMDB: 7.6, 4321 votes),
   // labeled with its source.
@@ -190,9 +190,11 @@ test('quality copies: wanted independently, managed from the item page', async (
   })
   expect(res.status()).toBe(200)
   const detail = await res.json()
-  expect(detail.copies.length).toBe(1)
-  const copyId = detail.copies[0].id
-  expect(detail.copies[0].monitored).toBe(true)
+  expect(detail.copies.length).toBe(2) // the explicitly added manual copy remains independent
+  const addedCopy = detail.copies.find((copy: any) => copy.name === 'second copy')
+  expect(addedCopy).toBeTruthy()
+  const copyId = addedCopy.id
+  expect(addedCopy.monitored).toBe(true)
 
   // The copy is wanted under its own suffixed identity with its label,
   // even though the primary is satisfied.
@@ -223,7 +225,7 @@ test('quality copies: wanted independently, managed from the item page', async (
   // Remove it (files kept) so later specs see the original state.
   res = await request.delete(`/api/v1/library/${movie.id}/copies/${copyId}`)
   expect(res.status()).toBe(200)
-  expect((await res.json()).copies.length).toBe(0)
+  expect((await res.json()).copies).toHaveLength(1)
   const drained = await (await request.get('/api/v1/wanted')).json()
   expect(drained.find((w: any) => w.wantableId.endsWith(`:c${copyId}`))).toBeFalsy()
 })
