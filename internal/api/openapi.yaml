@@ -4640,13 +4640,16 @@ components:
 
     ReplacementOperation:
       type: object
-      required: [operationId, requestId, state, intent, scope]
+      required: [operationId, requestId, state, intent, scope, blacklistSourceRelease]
       properties:
         operationId: { type: string }
         requestId: { type: string }
         state: { type: string }
         intent: { type: string }
         scope: { type: string }
+        blacklistSourceRelease:
+          type: boolean
+          description: The exact blacklist choice saved with this operation; never inferred from current blacklist state.
         mediaItemId: { type: integer, format: int64 }
         copyId: { type: integer, format: int64 }
         sourceGeneration: { type: string }

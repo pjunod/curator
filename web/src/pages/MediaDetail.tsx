@@ -1005,6 +1005,7 @@ function FileActions({ item, file, onDone }: { item: MediaItemDetail; file: Medi
         {report.isError && <ActionNotice warning>{(report.error as Error).message}</ActionNotice>}
       </> : operation ? <>
         <p>Operation <code>{operation.operationId}</code> is {operationStatus.data?.state ?? operation.state}. It continues after this dialog closes.</p>
+        {operationStatus.data && <p className="muted">Saved source blacklist choice: {operationStatus.data.blacklistSourceRelease ? 'yes' : 'no'}</p>}
         {operationStatus.data?.retryAttempts !== undefined && <p className="muted">Retry attempts: {operationStatus.data.retryAttempts}{operationStatus.data.nextAttemptAt ? ` · next retry ${new Date(operationStatus.data.nextAttemptAt).toLocaleString()}` : ''}</p>}
         {operationStatus.data?.blockedWarning && <ActionNotice warning>This operation has been blocked for more than 30 minutes.</ActionNotice>}
         {(operationStatus.data?.lastError || operationStatus.isError) && <ActionNotice warning>{operationStatus.data?.lastError || (operationStatus.error as Error).message}</ActionNotice>}
@@ -1057,6 +1058,7 @@ function LifecycleReviewPanel({ item }: { item: MediaItemDetail }) {
       <ul className="result-list">{operations.map((op) => <li className="result-note" key={op.operationId}>
         <strong>{op.intent === 'replace_bad' ? 'Bad-source replacement' : 'Quality replacement'} · {op.state.replaceAll('_', ' ')}</strong>
         <div className="muted">Operation {op.operationId} · {op.scope}{op.copyId ? ` · copy ${op.copyId}` : ''}{op.episodeIds?.length ? ` · episodes ${op.episodeIds.join(', ')}` : ''}</div>
+        <div className="muted">Saved source blacklist choice: {op.blacklistSourceRelease ? 'yes' : 'no'}</div>
         {op.retryAttempts ? <div className="muted">Retry attempts: {op.retryAttempts}{op.nextAttemptAt ? ` · next attempt ${new Date(op.nextAttemptAt).toLocaleString()}` : ''}</div> : null}
         {op.blockedWarning ? <div className="error-text">This operation has been blocked for more than 30 minutes.</div> : null}
         {op.lastError ? <div className="error-text">{op.lastError}</div> : null}

@@ -220,6 +220,7 @@ export interface ReplacementOperation {
   state: string
   intent: string
   scope: string
+  blacklistSourceRelease: boolean
   copyId?: number
   episodeIds?: number[]
   retryAttempts?: number

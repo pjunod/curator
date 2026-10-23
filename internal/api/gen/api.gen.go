@@ -2810,25 +2810,27 @@ type ReplacementObservationRequest struct {
 
 // ReplacementOperation defines model for ReplacementOperation.
 type ReplacementOperation struct {
-	BlockedSince     *time.Time                `json:"blockedSince,omitempty"`
-	BlockedWarning   *bool                     `json:"blockedWarning,omitempty"`
-	CopyId           *int64                    `json:"copyId,omitempty"`
-	EpisodeIds       *[]int64                  `json:"episodeIds,omitempty"`
-	Files            *[]map[string]interface{} `json:"files,omitempty"`
-	Intent           string                    `json:"intent"`
-	LastError        *string                   `json:"lastError,omitempty"`
-	MediaItemId      *int64                    `json:"mediaItemId,omitempty"`
-	NextAttemptAt    *time.Time                `json:"nextAttemptAt,omitempty"`
-	OperationId      string                    `json:"operationId"`
-	RequestId        string                    `json:"requestId"`
-	RetryAttempts    *int                      `json:"retryAttempts,omitempty"`
-	Scope            string                    `json:"scope"`
-	SourceGeneration *string                   `json:"sourceGeneration,omitempty"`
-	SourceGuid       *string                   `json:"sourceGuid,omitempty"`
-	SourceIndexerId  *int64                    `json:"sourceIndexerId,omitempty"`
-	SourceRelease    *string                   `json:"sourceRelease,omitempty"`
-	SourceTransfer   *string                   `json:"sourceTransfer,omitempty"`
-	State            string                    `json:"state"`
+	// BlacklistSourceRelease The exact blacklist choice saved with this operation; never inferred from current blacklist state.
+	BlacklistSourceRelease bool                      `json:"blacklistSourceRelease"`
+	BlockedSince           *time.Time                `json:"blockedSince,omitempty"`
+	BlockedWarning         *bool                     `json:"blockedWarning,omitempty"`
+	CopyId                 *int64                    `json:"copyId,omitempty"`
+	EpisodeIds             *[]int64                  `json:"episodeIds,omitempty"`
+	Files                  *[]map[string]interface{} `json:"files,omitempty"`
+	Intent                 string                    `json:"intent"`
+	LastError              *string                   `json:"lastError,omitempty"`
+	MediaItemId            *int64                    `json:"mediaItemId,omitempty"`
+	NextAttemptAt          *time.Time                `json:"nextAttemptAt,omitempty"`
+	OperationId            string                    `json:"operationId"`
+	RequestId              string                    `json:"requestId"`
+	RetryAttempts          *int                      `json:"retryAttempts,omitempty"`
+	Scope                  string                    `json:"scope"`
+	SourceGeneration       *string                   `json:"sourceGeneration,omitempty"`
+	SourceGuid             *string                   `json:"sourceGuid,omitempty"`
+	SourceIndexerId        *int64                    `json:"sourceIndexerId,omitempty"`
+	SourceRelease          *string                   `json:"sourceRelease,omitempty"`
+	SourceTransfer         *string                   `json:"sourceTransfer,omitempty"`
+	State                  string                    `json:"state"`
 }
 
 // ReplacementRequest defines model for ReplacementRequest.

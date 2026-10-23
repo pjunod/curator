@@ -155,3 +155,200 @@ func TestReplacementLifecycleHTTPRejectsInvalidStaleAndMissingRecords(t *testing
 		t.Fatalf("invalid/stale observation created durable replacement operations: %+v", review.Operations)
 	}
 }
+
+func TestReplacementLifecycleHTTPSavesBlacklistChoiceAcrossCreateReplayDetailAndHistory(t *testing.T) {
+	for _, blacklist := range []bool{false, true} {
+		t.Run(fmt.Sprintf("blacklist_%t", blacklist), func(t *testing.T) {
+			e := newAPIEnv(t)
+			ctx := context.Background()
+			itemID := e.addMovie(t)
+			item, err := e.db.GetMediaItemFull(ctx, itemID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(item.Path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			contents := []byte("source bytes remain unchanged after queuing")
+			path := filepath.Join(item.Path, "review-source.mkv")
+			if err := os.WriteFile(path, contents, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			fileID, err := e.db.UpsertFile(ctx, itemID, 0, path, int64(len(contents)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e.db.W.ExecContext(ctx, `UPDATE media_files SET source_guid=?,source_indexer_id=? WHERE id=?`, "guid-api-blacklist", 73, fileID); err != nil {
+				t.Fatal(err)
+			}
+			files, err := e.db.ListFilesForItem(ctx, itemID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var generation string
+			for _, file := range files {
+				if file.ID == fileID {
+					generation = file.FileGeneration
+				}
+			}
+			if generation == "" {
+				t.Fatal("fixture media file has no durable generation")
+			}
+
+			postObservation := fmt.Sprintf("/api/v1/library/%d/files/%d/replacement-observations", itemID, fileID)
+			var queued apigen.ReplacementObservation
+			e.post(t, postObservation, fmt.Sprintf(`{"requestId":%q,"fileGeneration":%q}`, "observe-blacklist-choice", generation)).
+				expect(t, http.StatusAccepted).into(t, &queued)
+			workerCtx, cancel := context.WithCancel(ctx)
+			e.acq.StartImporters(workerCtx)
+			t.Cleanup(func() { cancel(); e.acq.WaitImporters() })
+			var observed apigen.ReplacementObservation
+			deadline := time.Now().Add(4 * time.Second)
+			for time.Now().Before(deadline) {
+				e.get(t, "/api/v1/replacement-observations/"+queued.ObservationId).
+					expect(t, http.StatusOK).into(t, &observed)
+				if observed.State == "ready" || observed.State == "stale" || observed.State == "failed" {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			cancel()
+			e.acq.WaitImporters()
+			if observed.State != "ready" || observed.Sha256 == nil {
+				t.Fatalf("observation was not ready for explicit decision: %+v", observed)
+			}
+
+			request := map[string]any{
+				"requestId": "operation-blacklist-choice", "scope": "download", "copyId": 0,
+				"sourceFileId": fileID, "intent": "replace_bad", "blacklistSourceRelease": blacklist,
+				"reasonCode": "corrupt_media", "reason": "persist the explicit blacklist choice",
+				"observedFiles": []map[string]any{{"id": fileID, "fileGeneration": generation, "observationId": queued.ObservationId}},
+			}
+			body, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			url := fmt.Sprintf("/api/v1/library/%d/replacement-operations", itemID)
+			var created apigen.ReplacementOperation
+			e.post(t, url, string(body)).expect(t, http.StatusAccepted).into(t, &created)
+			if created.BlacklistSourceRelease != blacklist {
+				t.Fatalf("create response reported blacklist=%t, want saved choice %t", created.BlacklistSourceRelease, blacklist)
+			}
+			var replay apigen.ReplacementOperation
+			e.post(t, url, string(body)).expect(t, http.StatusOK).into(t, &replay)
+			if replay.OperationId != created.OperationId || replay.BlacklistSourceRelease != blacklist {
+				t.Fatalf("exact replay lost saved choice: created=%+v replay=%+v", created, replay)
+			}
+			changed := map[string]any{}
+			for k, v := range request {
+				changed[k] = v
+			}
+			changed["blacklistSourceRelease"] = !blacklist
+			changedBody, err := json.Marshal(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.post(t, url, string(changedBody)).expect(t, http.StatusConflict)
+
+			var detail apigen.ReplacementOperation
+			e.get(t, "/api/v1/replacement-operations/"+created.OperationId).expect(t, http.StatusOK).into(t, &detail)
+			if detail.BlacklistSourceRelease != blacklist {
+				t.Fatalf("detail response reported blacklist=%t, want saved choice %t", detail.BlacklistSourceRelease, blacklist)
+			}
+			var history apigen.LibraryLifecycleReview
+			e.get(t, fmt.Sprintf("/api/v1/library/%d/replacement-operations", itemID)).expect(t, http.StatusOK).into(t, &history)
+			if len(history.Operations) != 1 || history.Operations[0].BlacklistSourceRelease != blacklist {
+				t.Fatalf("history did not expose the saved blacklist choice: %+v", history.Operations)
+			}
+			persisted, err := e.db.GetReplacementOperation(ctx, created.OperationId)
+			if err != nil || persisted.BlacklistSourceRelease != blacklist {
+				t.Fatalf("SQLite operation choice = %t, err=%v; want %t", persisted.BlacklistSourceRelease, err, blacklist)
+			}
+			_, identityBlocked, err := e.db.ReleaseIdentityBlocklistReason(ctx, itemID, 73, "guid-api-blacklist")
+			if err != nil || identityBlocked != blacklist {
+				t.Fatalf("global blacklist state=%t err=%v; explicit operation choice=%t", identityBlocked, err, blacklist)
+			}
+			stillThere, err := os.ReadFile(path)
+			if err != nil || string(stillThere) != string(contents) {
+				t.Fatalf("queueing/replaying operation changed source bytes: got=%q err=%v", stillThere, err)
+			}
+		})
+	}
+}
+
+func TestReplacementLifecycleHTTPRejectsBytesChangedAfterReadyObservationWithoutTouchingFile(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	itemID := e.addMovie(t)
+	item, err := e.db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(item.Path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(item.Path, "changed-after-observation.mkv")
+	if err := os.WriteFile(path, []byte("observed bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fileID, err := e.db.UpsertFile(ctx, itemID, 0, path, int64(len("observed bytes")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := e.db.ListFilesForItem(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generation string
+	for _, file := range files {
+		if file.ID == fileID {
+			generation = file.FileGeneration
+		}
+	}
+	postObservation := fmt.Sprintf("/api/v1/library/%d/files/%d/replacement-observations", itemID, fileID)
+	var queued apigen.ReplacementObservation
+	e.post(t, postObservation, fmt.Sprintf(`{"requestId":%q,"fileGeneration":%q}`, "observe-before-change", generation)).
+		expect(t, http.StatusAccepted).into(t, &queued)
+	workerCtx, cancel := context.WithCancel(ctx)
+	e.acq.StartImporters(workerCtx)
+	t.Cleanup(func() { cancel(); e.acq.WaitImporters() })
+	var observed apigen.ReplacementObservation
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		e.get(t, "/api/v1/replacement-observations/"+queued.ObservationId).
+			expect(t, http.StatusOK).into(t, &observed)
+		if observed.State == "ready" || observed.State == "stale" || observed.State == "failed" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	e.acq.WaitImporters()
+	if observed.State != "ready" {
+		t.Fatalf("observation did not reach ready state before mutation: %+v", observed)
+	}
+	changedBytes := []byte("different bytes after the user reviewed the file")
+	if err := os.WriteFile(path, changedBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := map[string]any{
+		"requestId": "reject-changed-observation", "scope": "download", "copyId": 0,
+		"sourceFileId": fileID, "intent": "replace_bad", "blacklistSourceRelease": false,
+		"reasonCode": "corrupt_media", "reason": "attempt must be refused after mutation",
+		"observedFiles": []map[string]any{{"id": fileID, "fileGeneration": generation, "observationId": queued.ObservationId}},
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.post(t, fmt.Sprintf("/api/v1/library/%d/replacement-operations", itemID), string(body)).expect(t, http.StatusConflict)
+	var history apigen.LibraryLifecycleReview
+	e.get(t, fmt.Sprintf("/api/v1/library/%d/replacement-operations", itemID)).expect(t, http.StatusOK).into(t, &history)
+	if len(history.Operations) != 0 {
+		t.Fatalf("stale observation reserved an operation: %+v", history.Operations)
+	}
+	actual, err := os.ReadFile(path)
+	if err != nil || string(actual) != string(changedBytes) {
+		t.Fatalf("rejected request changed current file: got=%q err=%v", actual, err)
+	}
+}

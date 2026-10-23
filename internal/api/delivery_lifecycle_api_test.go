@@ -25,7 +25,15 @@ type apiDeliveryProtocolClient struct {
 	accepted       int
 	sourceRetries  int
 	sourceProgress string
+	sourceRetryErr error
 }
+
+type apiDeliveryRetryDeadlineError struct{ deadline time.Time }
+
+func (e apiDeliveryRetryDeadlineError) Error() string {
+	return "Runner cleanup service is temporarily unavailable"
+}
+func (e apiDeliveryRetryDeadlineError) RetryDeadline() time.Time { return e.deadline }
 
 func (c *apiDeliveryProtocolClient) ListDeliveries(context.Context, uint64, int) (ports.RunnerDeliveryPage, error) {
 	return ports.RunnerDeliveryPage{ProtocolVersion: 1}, nil
@@ -40,6 +48,9 @@ func (c *apiDeliveryProtocolClient) RetryDeliverySourceCleanup(_ context.Context
 	c.sourceRetries++
 	if deliveryID != c.delivery.DeliveryID {
 		return ports.RunnerDelivery{}, fmt.Errorf("unexpected delivery %q", deliveryID)
+	}
+	if c.sourceRetryErr != nil {
+		return ports.RunnerDelivery{}, c.sourceRetryErr
 	}
 	c.delivery.SourceCleanup = json.RawMessage(c.sourceProgress)
 	return c.delivery, nil
@@ -225,6 +236,54 @@ func TestDeliveryLifecycleRetryHandoffAndRunnerCleanupReturnAcceptedAfterProtoco
 	service.StartImporters(workerCtx)
 	t.Cleanup(func() { cancel(); service.WaitImporters() })
 	e.post(t, fmt.Sprintf("/api/v1/downloads/deliveries/%d/retry-curator-cleanup", handoff.ID), `{}`).expect(t, http.StatusAccepted)
+}
+
+func TestDeliveryLifecycleRunnerCleanupHTTPPersistsFailureAndHonorsRetryAfter(t *testing.T) {
+	e := newAPIEnv(t)
+	clientID := acqAddClient(t, e, "qbittorrent")
+	itemID := e.addMovie(t)
+	downloadID := acqGrab(t, e, itemID)
+	r := apiDeliveryReceipt(t, e, clientID, downloadID, "delivery-api-retry-deadline")
+	if err := e.db.PrepareDeliveryAcceptance(context.Background(), sqlite.DeliveryReceipt{
+		ID: r.ID, ConsumerReceiptID: "curator-receipt-retry-deadline", NextAttemptAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := e.db.DeliveryReceiptByID(context.Background(), r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.SetDeliveryAccepted(context.Background(), prepared); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	protocol := &apiDeliveryProtocolClient{fakeClient: fakeClient{}, delivery: r.Delivery, sourceRetryErr: apiDeliveryRetryDeadlineError{deadline}}
+	service := acquisition.New(e.db, e.bus, nil, nil, func(ports.ClientConfig) ports.DownloadClient { return protocol })
+	e.srv.deps.Acquisition = service
+	e.acq = service
+	e.h = e.srv.Handler()
+
+	base := fmt.Sprintf("/api/v1/downloads/deliveries/%d", r.ID)
+	e.post(t, base+"/retry-runner-cleanup", `{}`).expect(t, http.StatusConflict)
+	if protocol.sourceRetries != 1 {
+		t.Fatalf("first cleanup retry made %d calls, want exactly one", protocol.sourceRetries)
+	}
+	var detail apigen.DeliveryLifecycleReceipt
+	e.get(t, base).expect(t, http.StatusOK).into(t, &detail)
+	if detail.SourceCleanupAttempts == nil || *detail.SourceCleanupAttempts != 1 || detail.SourceCleanupError == nil || *detail.SourceCleanupError != protocol.sourceRetryErr.Error() {
+		t.Fatalf("failed cleanup attempt was not durably exposed: attempts=%v error=%v", detail.SourceCleanupAttempts, detail.SourceCleanupError)
+	}
+	if detail.SourceCleanupNextAttemptAt == nil || detail.SourceCleanupNextAttemptAt.Before(deadline) {
+		t.Fatalf("persisted retry deadline %v precedes provider Retry-After %s", detail.SourceCleanupNextAttemptAt, deadline)
+	}
+
+	// An explicit second click must not retry ahead of Runner's deadline. This
+	// verifies the HTTP route reads the durable deadline instead of relying on
+	// an in-process timer or client-side button state.
+	e.post(t, base+"/retry-runner-cleanup", `{}`).expect(t, http.StatusConflict)
+	if protocol.sourceRetries != 1 {
+		t.Fatalf("retry before Retry-After deadline reached Runner %d times", protocol.sourceRetries)
+	}
 }
 
 func TestDeliveryLifecycleResolveQueuesOnlySelectedDurableManifestPath(t *testing.T) {

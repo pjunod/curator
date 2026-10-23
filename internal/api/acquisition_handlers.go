@@ -72,7 +72,8 @@ func replacementOperationDTO(op sqlite.ReplacementOperation, files []sqlite.Repl
 		Intent: op.Intent, Scope: op.Scope, CopyId: &copyID, MediaItemId: &itemID,
 		SourceGeneration: &sourceGeneration, SourceTransfer: &sourceTransfer, SourceRelease: &sourceRelease,
 		SourceGuid: &sourceGUID, SourceIndexerId: &sourceIndexerID, EpisodeIds: &episodes,
-		LastError: &lastError, Files: &fileRows, RetryAttempts: &retries, BlockedWarning: &blockedWarning}
+		BlacklistSourceRelease: op.BlacklistSourceRelease,
+		LastError:              &lastError, Files: &fileRows, RetryAttempts: &retries, BlockedWarning: &blockedWarning}
 	if !op.BlockedSince.IsZero() {
 		value := op.BlockedSince
 		out.BlockedSince = &value

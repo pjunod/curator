@@ -110,6 +110,10 @@ authorizes that one anchored file; it does not treat other files with similar
 titles as part of the same release. Source generation and transfer are
 optional for legacy files and, when supplied, must match the anchored library
 provenance.
+Every replacement-operation response includes the saved
+`blacklistSourceRelease` boolean. It reports the choice made for that
+operation, including in detail and history responses; it does not reflect a
+later change to the global blacklist.
 Retry exclusion uses exact indexer ID plus GUID when both sides have complete
 stable identity. With incomplete identity, normalized release title plus
 indexer name is an explicitly ambiguous request-local fallback; Curator never
