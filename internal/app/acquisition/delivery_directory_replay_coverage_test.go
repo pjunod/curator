@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -176,6 +177,43 @@ func TestEmptyDeliveryDirectoryCleanupRejectsReplacedPublicationDirectory(t *tes
 	}
 	if _, err := os.Stat(filepath.Join(held, epRelease+".mkv")); err != nil {
 		t.Fatalf("original accepted publication was not retained for review: %v", err)
+	}
+}
+
+func TestEmptyDeliveryDirectoryCancellationLeavesAcceptedTreeForRetry(t *testing.T) {
+	ctx := context.Background()
+	svc, _, dl, cfg, publication := deliveryImportFixture(t, &deliveryImportClient{})
+	receiptID := receiptIDFor(t, svc.db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatalf("import accepted payload: %v", err)
+	}
+	receipt, err := svc.db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(publication, "nested", "empty")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if removed, err := svc.removeEmptyDeliveryDirectories(cancelled, receipt); !errors.Is(err, context.Canceled) || removed {
+		t.Fatalf("cancelled directory sweep removed or accepted the publication tree: removed=%v err=%v", removed, err)
+	}
+	if info, err := os.Stat(nested); err != nil || !info.IsDir() {
+		t.Fatalf("cancelled sweep changed the nested directory: info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(publication, epRelease+".mkv")); err != nil {
+		t.Fatalf("cancelled sweep changed accepted payload bytes: %v", err)
+	}
+	if removed, err := svc.removeEmptyDeliveryDirectories(ctx, receipt); err != nil || removed {
+		t.Fatalf("uncancelled retry did not safely prune only the empty child tree: removed=%v err=%v", removed, err)
+	}
+	if _, err := os.Stat(publication); err != nil {
+		t.Fatalf("non-empty accepted publication was removed during retry: %v", err)
+	}
+	if _, err := os.Stat(nested); !os.IsNotExist(err) {
+		t.Fatalf("empty nested directory remained after resumed sweep: %v", err)
 	}
 }
 

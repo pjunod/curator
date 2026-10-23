@@ -51,3 +51,25 @@ func TestBadReplacementUnlinkBeforeDatabaseCommitReconcilesAfterRestart(t *testi
 		t.Fatalf("worker did not advance after exact source cleanup: operation=%+v err=%v", updated, err)
 	}
 }
+
+func TestBadReplacementDoesNotAdoptUnrelatedQuarantineName(t *testing.T) {
+	svc, db, ctx, op, reviewed, source := reviewedBadReplacementFixture(t)
+	quarantine := filepath.Join(filepath.Dir(source), replacementQuarantinePrefix+op.ID+"-"+strconv.FormatInt(reviewed.MediaFileID, 10))
+	unrelated := []byte("unrelated file owns the quarantine name")
+	if err := os.WriteFile(quarantine, unrelated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.removeBadReplacementFile(ctx, op, reviewed); err == nil || !strings.Contains(err.Error(), "quarantine identity changed") {
+		t.Fatalf("worker adopted an unrelated existing quarantine path: %v", err)
+	}
+	if got, err := os.ReadFile(source); err != nil || string(got) != "bytes" {
+		t.Fatalf("refused quarantine collision changed the reviewed source: %q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(quarantine); err != nil || string(got) != string(unrelated) {
+		t.Fatalf("refused quarantine collision changed unrelated bytes: %q err=%v", got, err)
+	}
+	files, err := db.ListReplacementFiles(ctx, op.ID)
+	if err != nil || len(files) != 1 || files[0].RemovalState != "pending" {
+		t.Fatalf("collision consumed the durable review obligation: files=%+v err=%v", files, err)
+	}
+}

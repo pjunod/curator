@@ -75,7 +75,7 @@ func TestRemovedDeliveryFileAndDirectoryRetryObligationCommitAtomically(t *testi
 	if row.CleanupState != "pending" || currentReceiptDirectoryState(t, ctx, db, receipt.ID) != "protected" {
 		t.Fatalf("failed cross-row cleanup commit left a stranded state: file=%+v receipt=%+v", row, currentReceipt)
 	}
-	due, err := db.DeliveryFileCleanupReceipts(ctx, receipt.ClientID)
+	due, err := db.DeliveryFileCleanupReceipts(ctx, receipt.ClientID, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
