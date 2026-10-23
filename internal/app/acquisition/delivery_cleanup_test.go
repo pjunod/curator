@@ -345,9 +345,10 @@ func TestPackFallbackExcessCleanupWakesAfterReplacementCommitAndRestart(t *testi
 	worker.scheduleDeliveryFileCleanup(ctx, cfg)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		row, err = reopened.DeliveryFileOutcomeByPath(ctx, receiptID, extraName)
-		sidecarRow, err = reopened.DeliveryFileOutcomeByPath(ctx, receiptID, extraSidecar)
-		if err == nil && row.CleanupState == "removed" && sidecarRow.CleanupState == "removed" {
+		currentRow, rowErr := reopened.DeliveryFileOutcomeByPath(ctx, receiptID, extraName)
+		currentSidecar, sidecarErr := reopened.DeliveryFileOutcomeByPath(ctx, receiptID, extraSidecar)
+		if rowErr == nil && sidecarErr == nil && currentRow.CleanupState == "removed" && currentSidecar.CleanupState == "removed" {
+			row, sidecarRow, err = currentRow, currentSidecar, nil
 			break
 		}
 		time.Sleep(20 * time.Millisecond)

@@ -139,7 +139,7 @@ func TestLibraryReviewReportAndResolutionStayBoundToExactFileGeneration(t *testi
 	reviewURL := base + "/replacement-operations"
 	reportURL := fmt.Sprintf("%s/files/%d/report", base, fileID)
 	e.post(t, reportURL, `{`).expect(t, http.StatusBadRequest)
-	e.post(t, reportURL, fmt.Sprintf(`{"fileGeneration":"stale","reasonCode":"suspected_corruption","reason":"review bytes"}`)).expect(t, http.StatusConflict)
+	e.post(t, reportURL, `{"fileGeneration":"stale","reasonCode":"suspected_corruption","reason":"review bytes"}`).expect(t, http.StatusConflict)
 	var empty apigen.LibraryLifecycleReview
 	e.get(t, reviewURL).expect(t, http.StatusOK).into(t, &empty)
 	if len(empty.OpenReports) != 0 {

@@ -2,6 +2,8 @@ package acquisition
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/filename"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -27,7 +30,6 @@ func TestManualAdditionalResolveImportsOnlySelectedMediaSidecarsAcrossRestart(t 
 		secondMedia:    []byte("second episode media"),
 		secondSubtitle: secondSubtitleBytes,
 	})
-	ctx = context.Background()
 	copyID, copyRoot := configureManualAdditional(t, ctx, db, &dl, publication, []string{"episode:" + itoa(dl.MediaItemID) + ":1:1"}, []string{filepath.Join(publication, epRelease+".mkv")})
 	receiptID := receiptIDFor(t, db, dl.ID)
 	var err error
@@ -103,6 +105,14 @@ func TestManualAdditionalWithoutExplicitSelectionImportsAndCleansMatchedSubtitle
 	svc, db, dl, cfg, publication := deliveryImportFixtureWithFiles(t, protocol, map[string][]byte{subtitleName: caption})
 	_, copyRoot := configureManualAdditional(t, ctx, db, &dl, publication, []string{"episode:" + itoa(dl.MediaItemID) + ":1:1"}, nil)
 	receiptID := receiptIDFor(t, db, dl.ID)
+	receipt, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := svc.verifyDeliveryManifest(ctx, cfg, receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
 		t.Fatalf("normal manual-additional import without a Resolve selection failed: %v", err)
 	}
@@ -119,7 +129,16 @@ func TestManualAdditionalWithoutExplicitSelectionImportsAndCleansMatchedSubtitle
 	if _, err := os.Stat(outcome.LibraryPath); err != nil {
 		t.Fatalf("manual-additional subtitle target is missing: outcome=%+v err=%v", outcome, err)
 	}
-	receipt, err := db.DeliveryReceiptByID(ctx, receiptID)
+	replay, err := svc.importDeliverySidecars(ctx, receipt, verified, ImportResult{})
+	if err != nil || replay.Imported != 1 || len(replay.Files) != 1 || !replay.Files[0].Imported {
+		rows, _ := db.DeliveryFileOutcomes(ctx, receiptID)
+		t.Fatalf("replaying the already committed media/subtitle mapping was not idempotent: result=%+v verified=%+v ledger=%+v err=%v", replay, verified, rows, err)
+	}
+	if err := svc.recordDeliveryImportOutcomes(ctx, receipt, verified, replay); err != nil {
+		t.Fatalf("persist idempotent sidecar replay outcome: %v", err)
+	}
+	assertOutcomePlacedBytes(t, ctx, db, receiptID, subtitleName, caption)
+	receipt, err = db.DeliveryReceiptByID(ctx, receiptID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +152,159 @@ func TestManualAdditionalWithoutExplicitSelectionImportsAndCleansMatchedSubtitle
 	if _, err := os.Stat(filepath.Join(publication, subtitleName)); !os.IsNotExist(err) {
 		t.Fatalf("matched imported subtitle remained in completed payload: stat err=%v", err)
 	}
+}
+
+func TestAcceptedSidecarPublishesExistingVerifiedStageAfterRestart(t *testing.T) {
+	caption := []byte("sidecar stage survived process exit")
+	ctx, _, db, _, _, receipt, media, sidecar, result := prepareSidecarMedia(t, caption)
+	if result.Imported != 1 || len(result.Files) != 1 || !result.Files[0].Imported {
+		t.Fatalf("fixture media was not committed: %+v", result)
+	}
+	target := acceptedSidecarTarget(t, media.Path, media.SourcePath, sidecar.relative)
+	stageName := expectedCaptionStagePath(target)
+	if err := os.WriteFile(stageName, caption, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dbDir := filepath.Dir(db.Path)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := sqlite.Open(dbDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reopened.Close() }()
+	if err := reopened.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(reopened, nil, nil, nil, nil)
+	receipt, err = reopened.DeliveryReceiptByID(ctx, receipt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = svc.importDeliverySidecars(ctx, receipt, []verifiedDeliveryFile{sidecar}, ImportResult{})
+	if err != nil || result.Imported != 1 || len(result.Files) != 1 {
+		t.Fatalf("retry did not publish the verified deterministic stage: result=%+v err=%v", result, err)
+	}
+	if err := svc.recordDeliveryImportOutcomes(ctx, receipt, []verifiedDeliveryFile{sidecar}, result); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stageName); !os.IsNotExist(err) {
+		t.Fatalf("successfully published stage file was not removed: %v", err)
+	}
+	got, size, err := fileDigest(ctx, target)
+	if err != nil || size != int64(len(caption)) || got != sha256Hex(caption) {
+		t.Fatalf("recovered sidecar target identity mismatch: sha256=%s size=%d err=%v", got, size, err)
+	}
+	assertOutcomePlacedBytes(t, ctx, reopened, receipt.ID, sidecar.relative, caption)
+}
+
+func TestAcceptedSidecarFinalPublishRejectsReplacedMediaDirectory(t *testing.T) {
+	caption := []byte("sidecar must not follow a replaced directory")
+	ctx, svc, _, _, _, receipt, media, sidecar, _ := prepareSidecarMedia(t, caption)
+	mediaInfo, err := os.Lstat(media.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentPath := filepath.Dir(media.Path)
+	parentInfo, err := os.Lstat(parentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := acceptedSidecarTarget(t, media.Path, media.SourcePath, sidecar.relative)
+	stageName := expectedCaptionStagePath(target)
+	backup := parentPath + ".reviewed-before-replacement"
+	if err := os.Rename(parentPath, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(parentPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stageName, caption, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.publishAcceptedSidecar(ctx, receipt, sidecar, media.Path, target, stageName, parentInfo, mediaInfo); err == nil {
+		t.Fatal("final publish accepted a replacement directory at the reviewed media path")
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatalf("sidecar was published through a replaced directory: %v", err)
+	}
+	if _, err := os.Stat(stageName); err != nil {
+		t.Fatalf("failed publish destroyed the verified recovery stage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(backup, filepath.Base(media.Path))); err != nil {
+		t.Fatalf("original reviewed media directory was not preserved: %v", err)
+	}
+}
+
+func prepareSidecarMedia(t *testing.T, caption []byte) (context.Context, *Service, *sqlite.DB, sqlite.Download, ports.ClientConfig, sqlite.DeliveryReceipt, FileOutcome, verifiedDeliveryFile, ImportResult) {
+	t.Helper()
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	subtitleName := strings.TrimSuffix(epRelease, ".mkv") + ".en.srt"
+	svc, db, dl, cfg, publication := deliveryImportFixtureWithFiles(t, protocol, map[string][]byte{subtitleName: caption})
+	receipts, err := db.DeliveryReceiptsForClient(ctx, dl.ClientID, 1)
+	if err != nil || len(receipts) != 1 {
+		t.Fatalf("receipt lookup=%+v err=%v", receipts, err)
+	}
+	r := receipts[0]
+	verified, err := svc.verifyDeliveryManifest(ctx, cfg, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var media, sidecar verifiedDeliveryFile
+	manifest := make([]sqlite.DeliveryManifestFile, 0, len(verified))
+	for _, file := range verified {
+		manifest = append(manifest, sqlite.DeliveryManifestFile{Path: file.relative, SizeBytes: file.size, SHA256: file.digest, FileGeneration: file.generation})
+		if filename.IsVideo(file.relative) || filename.IsBook(file.relative) {
+			media = file
+		}
+		if file.relative == subtitleName {
+			sidecar = file
+		}
+	}
+	if media.relative == "" || sidecar.relative == "" {
+		t.Fatalf("fixture lacks associated media or subtitle: %+v", verified)
+	}
+	if err := db.EnsureDeliveryFileOutcomes(ctx, r.ID, manifest, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	mediaResult, err := svc.importDownloadFiles(ctx, dl, publication, []string{media.absolute}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.recordDeliveryImportOutcomes(ctx, r, verified, mediaResult); err != nil {
+		t.Fatal(err)
+	}
+	var mediaOutcome FileOutcome
+	for _, outcome := range mediaResult.Files {
+		if outcome.Imported && outcome.Path != "" && (filename.IsVideo(outcome.SourcePath) || filename.IsBook(outcome.SourcePath)) {
+			mediaOutcome = outcome
+			break
+		}
+	}
+	if mediaOutcome.Path == "" {
+		t.Fatalf("fixture media import has no library target: %+v", mediaResult)
+	}
+	return ctx, svc, db, dl, cfg, r, mediaOutcome, sidecar, mediaResult
+}
+
+func acceptedSidecarTarget(t *testing.T, mediaPath, mediaSourcePath, sidecarRelative string) string {
+	t.Helper()
+	mediaSourceStem := strings.TrimSuffix(filepath.Base(mediaSourcePath), filepath.Ext(mediaSourcePath))
+	sidecarStem := strings.TrimSuffix(filepath.Base(sidecarRelative), filepath.Ext(sidecarRelative))
+	if !strings.HasPrefix(strings.ToLower(sidecarStem), strings.ToLower(mediaSourceStem)+".") {
+		t.Fatalf("fixture sidecar %q does not match imported source media %q", sidecarRelative, mediaSourcePath)
+	}
+	suffix := sidecarStem[len(mediaSourceStem):]
+	mediaStem := strings.TrimSuffix(filepath.Base(mediaPath), filepath.Ext(mediaPath))
+	targetName := mediaStem + suffix + filepath.Ext(sidecarRelative)
+	return filepath.Join(filepath.Dir(mediaPath), targetName)
+}
+
+func expectedCaptionStagePath(target string) string {
+	digest := sha256.Sum256([]byte(filepath.Clean(target)))
+	return filepath.Join(filepath.Dir(target), ".monarr-caption-"+hex.EncodeToString(digest[:12])+".stage")
 }
 
 func configureManualAdditional(t *testing.T, ctx context.Context, db *sqlite.DB, dl *sqlite.Download, publication string, wantables, queuedPaths []string) (int64, string) {

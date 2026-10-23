@@ -393,15 +393,12 @@ func TestProviderRetryDeadlinesSurviveRetryNowAndRestart(t *testing.T) {
 	if err = db.FailDeliverySourceRefresh(ctx, r.ID, "429", provider); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.ForceDeliverySourceRefreshNow(ctx, r.ID); err != nil {
-		t.Fatal(err)
-	}
 	var sourceDue int64
 	if err = db.R.QueryRowContext(ctx, `SELECT next_attempt_at FROM runner_delivery_source_refresh WHERE receipt_id=?`, r.ID).Scan(&sourceDue); err != nil {
 		t.Fatal(err)
 	}
 	if sourceDue < provider.UnixMilli() {
-		t.Fatalf("source refresh Retry Now bypassed provider deadline: %v < %v", time.UnixMilli(sourceDue), provider)
+		t.Fatalf("persisted source-refresh retry deadline predates provider Retry-After: %v < %v", time.UnixMilli(sourceDue), provider)
 	}
 	dir := filepath.Dir(db.Path)
 	if err = db.Close(); err != nil {

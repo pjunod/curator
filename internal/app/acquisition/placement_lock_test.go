@@ -384,6 +384,86 @@ func TestReconcilePreparedPlacementRejectsSameBytesFromDifferentStagedObject(t *
 	}
 }
 
+func TestReconcilePlacementDoesNotRefreshPinnedPublishedGeneration(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	data := corpusFile(t, wholeCorpus1080)
+	dest := filepath.Join(t.TempDir(), "library", "episode.mkv")
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		t.Fatal(err)
+	}
+	storage, parentIdentity, err := placementParentIdentity(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := fmt.Sprintf("%x", sha256.Sum256([]byte("pinned-reconcile-generation")))
+	temporary := filepath.Join(filepath.Dir(dest), ".monarr-stage-"+id)
+	backup := filepath.Join(filepath.Dir(dest), ".monarr-prior-"+id)
+	if err := os.WriteFile(temporary, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	staged, err := os.Lstat(temporary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := sqlite.Placement{
+		ID: id, Source: filepath.Join(t.TempDir(), "source.mkv"), Target: dest,
+		Temporary: temporary, Backup: backup,
+		SHA256: fmt.Sprintf("%x", sha256.Sum256(data)), Size: int64(len(data)),
+		TemporaryFileGeneration: deliveryFileGeneration(staged),
+		TemporaryObjectIdentity: deliveryFileStableIdentity(staged),
+		StorageRoot:             filepath.Dir(dest), StorageIdentity: storage,
+		StorageRootIdentity: parentIdentity, TargetParentIdentity: parentIdentity,
+		ItemID: item.ID, State: "prepared",
+	}
+	if err := db.PreparePlacement(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(temporary, dest); err != nil {
+		t.Fatal(err)
+	}
+	published, err := os.Lstat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.PublishedFileGeneration = deliveryFileGeneration(published)
+	if err := db.UpdatePreparedPlacement(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an external same-content replacement after publication was
+	// recorded but before the placement transaction was committed.
+	held := dest + ".held-old-inode"
+	if err := os.Rename(dest, held); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(held) }()
+	if err := os.WriteFile(dest, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := os.Lstat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(published, replacement) {
+		t.Fatal("test setup reused the pinned published inode")
+	}
+	svc.reconcilePlacements(ctx)
+	got, err := db.GetPlacement(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "prepared" || got.PublishedFileGeneration != p.PublishedFileGeneration {
+		t.Fatalf("reconciliation refreshed or committed a replaced publication: state=%q pinned=%q got=%q", got.State, p.PublishedFileGeneration, got.PublishedFileGeneration)
+	}
+	if contents, err := os.ReadFile(dest); err != nil || string(contents) != string(data) {
+		t.Fatalf("reconciliation changed the external replacement: %v", err)
+	}
+}
+
 func TestLegacyPublishedPlacementIdentityUpgradeRemainsCompatible(t *testing.T) {
 	for _, method := range []string{"prepare", "reconcile"} {
 		t.Run(method, func(t *testing.T) {

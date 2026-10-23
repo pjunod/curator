@@ -114,7 +114,7 @@ func (s *Service) recordDeliveryImportOutcomes(ctx context.Context, r sqlite.Del
 			continue
 		}
 		if row.Disposition != "pending" && row.Disposition != "unselected_recoverable" &&
-			!(excessOperationID != "" && (row.Disposition == "known_incidental" || row.Disposition == "unknown_recoverable")) {
+			(excessOperationID == "" || (row.Disposition != "known_incidental" && row.Disposition != "unknown_recoverable")) {
 			continue
 		}
 		if row.Disposition == "pending" || row.Disposition == "unselected_recoverable" ||
@@ -148,7 +148,7 @@ func replacementExcessSidecarOperation(sidecar verifiedDeliveryFile, verified []
 	}
 	var matchedMedia verifiedDeliveryFile
 	for _, candidate := range verified {
-		if !(filename.IsVideo(candidate.relative) || filename.IsBook(candidate.relative)) ||
+		if (!filename.IsVideo(candidate.relative) && !filename.IsBook(candidate.relative)) ||
 			filepath.Dir(candidate.relative) != filepath.Dir(sidecar.relative) {
 			continue
 		}
@@ -950,6 +950,13 @@ func (s *Service) cleanupDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 			return err
 		}
 	}
+	// Record a due directory-cleanup obligation before touching the publication
+	// tree. If the process or database fails after removing the directory but
+	// before recording success, the scheduler can safely replay against the
+	// same receipt and accepted directory identity.
+	if err := s.db.SetDeliveryDirectoryCleanup(ctx, r.ID, "pending", ""); err != nil {
+		return err
+	}
 	directoryEvent, err := s.db.BeginDeliveryAttempt(ctx, r.ID, "cleanup_directory")
 	if err != nil {
 		return fmt.Errorf("record payload-directory cleanup attempt: %w", err)
@@ -964,7 +971,14 @@ func (s *Service) cleanupDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 		if err := s.db.FinishDeliveryAttempt(ctx, directoryEvent.ID, "succeeded", ""); err != nil {
 			return err
 		}
-		return s.db.SetDeliveryDirectoryCleanup(ctx, r.ID, "removed", "")
+		if err := s.db.SetDeliveryDirectoryCleanup(ctx, r.ID, "removed", ""); err != nil {
+			// The filesystem deletion is already complete. Preserve a due retry
+			// obligation so a transient database failure cannot strand an empty
+			// receipt forever outside DeliveryFileCleanupReceipts.
+			retryErr := s.db.SetDeliveryDirectoryCleanup(ctx, r.ID, "retry", err.Error())
+			return errors.Join(err, retryErr)
+		}
+		return nil
 	}
 	const detail = "publication still contains recoverable or unrelated files"
 	if err := s.db.FinishDeliveryAttempt(ctx, directoryEvent.ID, "blocked", detail); err != nil {

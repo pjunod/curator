@@ -270,9 +270,19 @@ that its regression tests pass.
 - Astra reviewed Runner PR #254 at `f53cdcbfc9d0fa4a8f193cbc9a22b66c26738554`
   and requested three corrections: retain verified files when they are actual
   inputs to a shared PAR repair set; use the greater of scheduled backoff and
-  Retry-After; durably reassess retained sources when Keep is disabled. Corrections and focused regressions now pass; the final revision still
-  requires Astra review. Primary review also required unknown-integrity siblings
-  to remain protected after partial publication, not only after total failure.
+  Retry-After; durably reassess retained sources when Keep is disabled. Follow-up
+  review found that Keep-off also had to resume an existing deletion journal
+  after retryable I/O or interruption, including ordinary failures where Keep
+  was initially disabled and no separate failure assessment was saved. Revision
+  `f043a02` resumes only the exact authorized journal, preserving attempt progress
+  and review holds; fresh deletion still requires an unusable-source assessment.
+  State regressions pass (181 passed, two ignored); Astra reviewed
+  Runner head `b7c259df5c912f3f41d35f1d29374bf4ab051a45` and approved
+  source with no remaining actionable findings. Approval carries through
+  `d84cd83db7e2567e8b660ad00af940f6c402f8a7`, whose only change waits for
+  actual three-voter quorum readiness before cluster failure injection. Primary review also
+  required unknown-integrity siblings to remain protected after partial
+  publication, not only after total failure.
 - Astra's Curator PR review at `dd7f09d6ffb3947c21c87b86151d9a85a5a499cf`
   requested four corrections: reject ambiguous transfer tags in both manual
   restart paths; record actual pack-excess provenance; wake its cleanup after
@@ -280,11 +290,22 @@ that its regression tests pass.
   copies. Worker/restart regressions now exercise these real paths. Primary
   review added uniquely associated excess-sidecar cleanup and persisted retry
   deadlines when current replacement proof is temporarily unavailable. Unknown
-  sidecars and ambiguous media associations remain protected.
+  sidecars and ambiguous media associations remain protected. Astra reviewed
+  `31c41c1ea0b8d7a2273cff8652e05529e2210d09`, confirmed all four findings
+  resolved and found no additional actionable source defect. Coverage and CI
+  remain separate requirements.
 - Runner Linux dependency audit also reports vulnerable locked dependencies.
   Compatible patches to quinn-proto, rustls, rustls-webpki and the WebPKI
   root packages pass local compilation, strict Clippy and MSRV checks. The
-  revised Linux audit remains pending; no exceptions were added.
+  revised Linux RustSec audit passes on `e3135e9`; no exceptions were added.
+- Additional fault injection found that file-removal recording and the next
+  directory-cleanup obligation could commit separately. They now share one
+  transaction; directory removal also persists its own pending obligation
+  before unlink. Failures recording completion can therefore resume after a
+  database restart without touching library bytes.
+- The saved source-blacklist choice was honored internally but omitted from
+  replacement-operation responses. Detail, history and exact replay now return
+  `blacklistSourceRelease`; the existing UI shows that saved choice.
 - Required race/coverage gates and final Linux CI remain unfinished.
 - Astra must review the exact final PR revisions; the Fable handoff must include
   those revisions and the completed validation results.
@@ -301,14 +322,14 @@ final gates began on 2026-10-22. Results so far:
 | Curator mobile typecheck and unit tests | Passed: 17 files, 109 tests |
 | Curator mobile doctor and Android/iOS export | Passed: 20 checks; both platform bundles exported |
 | Curator Go tests | Full ordinary suite passed after lock-order and manual-admission corrections; acquisition completed in 55.4 seconds. Full non-race coverpkg suite also passed its tests |
-| Curator lint | Pinned golangci-lint passed with zero issues; Linux gofmt sweep found two files requiring formatting. Final make lint remains required |
+| Curator lint | Linux identified formatting and four lint issues; corrected locally. Pinned golangci-lint and gofmt sweep pass; final revision CI remains required |
 | Curator browser acceptance | Passed: 174 tests, zero skipped, including lifecycle polling and mobile cases, against the rebuilt binary and final Vite bundle |
 | Runner strict workspace tests | Passed with required external tools, including actual failed-health salvage, storage-outage Retry Now and HTTP Delivery regressions. Formatting, strict Clippy, Rust 1.95 MSRV and UI harness passed |
-| Runner line coverage | Candidate: 86.2814% (55,818 of 64,693 lines). Identical strict command on baseline `42995f0`: 86.5527% (47,810 of 55,238 lines). Both are below the unchanged 90% floor; candidate is 0.2713 percentage points below baseline. No floor or exclusions changed |
-| Curator race | Pre-final-fix run passed API and other packages; acquisition reached the 900-second timeout during schema migration. No race report was emitted, but this is not a passing gate. Linux initial-head CI likewise exhausted the default ten-minute package budget while new tests were actively running in SQLite migrations. The revised job allows thirty minutes per package and forty-five minutes overall, preserving all tests and instrumentation |
-| Curator coverage | Latest valid candidate 83.1%, below the unchanged 86% floor. Unchanged baseline `7e8e2f2` passes the same non-race coverpkg suite at 86.3%; this deficit is introduced. Additional behavioral coverage and final rerun pending |
+| Runner line coverage | Earlier macOS candidate: 86.2814% (55,818 of 64,693 lines). Identical strict command on baseline `42995f0`: 86.5527% (47,810 of 55,238 lines). Both are below the unchanged 90% floor; candidate is 0.2713 percentage points below baseline. No floor or exclusions changed. Linux at `b7c259d`: all instrumented tests passed; 86.23% (56,297 of 65,285 lines), failing the unchanged 90% floor |
+| Curator race | Pre-final-fix run passed API and other packages; acquisition reached the 900-second timeout during schema migration. No race report was emitted, but this is not a passing gate. Linux initial-head CI likewise exhausted the default ten-minute package budget while new tests were actively running in SQLite migrations. The revised thirty-minute run also timed out in acquisition while an individual test had run for two seconds in migrations; API, library and SQLite packages passed. A test-only isolated database template is being validated to remove repeated full schema construction while preserving migrations, race instrumentation and all cases |
+| Curator coverage | Latest valid candidate 83.7% (batch 5, all test packages passed), below the unchanged 86% floor. Unchanged baseline `7e8e2f2` passes the same non-race coverpkg suite at 86.3%; this deficit is introduced. Additional behavioral coverage and final rerun pending |
 | Curator generated consistency | Two consecutive local pinned sqlc and OpenAPI generations produced identical hashes after the latest schema and lock corrections; diff whitespace check passed |
-| Final PR CI | Runner #254 at `f53cdcb`: Linux Rust merge candidate, promotion gate, static contracts, mobile, dependency exceptions and licenses/bans/sources passed; RustSec audit failed. Curator #70 at `dd7f09d`: browser, mobile, Docker, real personalities and fake-consumer contracts passed; unit race/coverage timed out and gofmt failed on two files. Revised heads remain pending |
+| Final PR CI | Runner `e3135e9` dependency audit passes. Linux Rust/coverage found a cluster port-reservation race and a repeated-byte PAR fixture that fails under Ubuntu par2 0.8.1; test-only corrections are pushed at `b7c259d`, with all 13 local cluster tests and focused PAR regression passing. The Linux instrumented suite passes; the merge suite exposes a further cluster fixture readiness race (node stopped before the voting group is ready), corrected at `d84cd83` with full local cluster suite and three focused repetitions passing; Linux rerun pending. Curator `31c41c1` browser, mobile, Docker and both personality checks pass; lint corrections and full race/coverage validation remain |
 
 Required Curator gates: `make lint`, `make test`, `make test-web`, `make test-e2e`,
 generated-code consistency and required CI. Runner gates follow its pinned Rust

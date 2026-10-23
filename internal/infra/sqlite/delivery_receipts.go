@@ -578,34 +578,6 @@ func (d *DB) deliveryReceiptPage(ctx context.Context, beforeID, downloadID int64
 	return out, next, nil
 }
 
-func (d *DB) DeliveryReceiptsForDownload(ctx context.Context, downloadID int64) ([]DeliveryReceipt, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT id FROM runner_delivery_receipts WHERE download_id=? ORDER BY id DESC`, downloadID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	out := make([]DeliveryReceipt, 0, len(ids))
-	for _, id := range ids {
-		v, err := d.DeliveryReceiptByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, nil
-}
-
 type DeliveryRetryDetails struct {
 	DirectoryState, DirectoryError       string
 	DirectoryAttempts                    int
@@ -654,41 +626,6 @@ func (d *DB) ForceDeliveryCleanupRetryNow(ctx context.Context, receiptID int64) 
 	}
 	_, err = d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET directory_cleanup_next_attempt_at=0,updated_at=? WHERE id=? AND directory_cleanup_state IN ('pending','retry') AND state!='conflict'`, time.Now().UnixMilli(), receiptID)
 	return err
-}
-
-func (d *DB) ForceDeliverySourceRefreshNow(ctx context.Context, receiptID int64) error {
-	now := time.Now().UnixMilli()
-	_, err := d.W.ExecContext(ctx, `INSERT INTO runner_delivery_source_refresh(receipt_id,attempts,blocked_since,next_attempt_at,last_error,updated_at)
-		VALUES(?,0,0,0,'',?) ON CONFLICT(receipt_id) DO UPDATE SET next_attempt_at=CASE WHEN provider_retry_after>? THEN provider_retry_after ELSE 0 END,updated_at=excluded.updated_at`, receiptID, now, now)
-	return err
-}
-
-func (d *DB) DeliveryReceiptsForMappedPath(ctx context.Context, path string) ([]DeliveryReceipt, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT id FROM runner_delivery_receipts WHERE mapped_path=? ORDER BY id`, path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	out := make([]DeliveryReceipt, 0, len(ids))
-	for _, id := range ids {
-		v, err := d.DeliveryReceiptByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, nil
 }
 
 func (d *DB) SetDeliveryFileExplicitlyRemoved(ctx context.Context, receiptID int64, path string) error {
@@ -810,10 +747,15 @@ func (d *DB) SetDeliveryFileCleanup(ctx context.Context, receiptID int64, path, 
 	}
 	now := time.Now()
 	nowMS := now.UnixMilli()
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
 	var delay time.Duration
 	if state == "retry" {
 		var attempts int
-		if err := d.R.QueryRowContext(ctx, `SELECT cleanup_attempts FROM runner_delivery_file_outcomes WHERE receipt_id=? AND path=?`, receiptID, path).Scan(&attempts); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT cleanup_attempts FROM runner_delivery_file_outcomes WHERE receipt_id=? AND path=?`, receiptID, path).Scan(&attempts); err != nil {
 			return err
 		}
 		delay = deliveryCleanupRetryDelay(attempts + 1)
@@ -822,7 +764,7 @@ func (d *DB) SetDeliveryFileCleanup(ctx context.Context, receiptID int64, path, 
 	if delay > 0 {
 		next = now.Add(delay).UnixMilli()
 	}
-	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET cleanup_state=?,cleanup_error=?,updated_at=?,
+	res, err := tx.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET cleanup_state=?,cleanup_error=?,updated_at=?,
 		cleanup_attempts=cleanup_attempts+CASE WHEN ?='retry' THEN 1 ELSE 0 END,
 		cleanup_blocked_since=CASE WHEN ?='retry' AND cleanup_blocked_since=0 THEN ? ELSE cleanup_blocked_since END,
 		cleanup_next_attempt_at=?
@@ -837,21 +779,23 @@ func (d *DB) SetDeliveryFileCleanup(ctx context.Context, receiptID int64, path, 
 	}
 	if n == 0 {
 		var count int
-		if err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_delivery_file_outcomes WHERE receipt_id=? AND path=? AND cleanup_state='removed'`, receiptID, path).Scan(&count); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_delivery_file_outcomes WHERE receipt_id=? AND path=? AND cleanup_state='removed'`, receiptID, path).Scan(&count); err != nil {
 			return err
 		}
-		if count == 1 {
-			return nil
+		if count != 1 {
+			return ErrDeliveryReceiptStale
 		}
-		return ErrDeliveryReceiptStale
 	}
 	if state == "removed" {
-		_, err = d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET directory_cleanup_state='pending',directory_cleanup_next_attempt_at=0,updated_at=? WHERE id=?`, nowMS, receiptID)
+		res, err = tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET directory_cleanup_state='pending',directory_cleanup_next_attempt_at=0,updated_at=? WHERE id=?`, nowMS, receiptID)
 		if err != nil {
 			return err
 		}
+		if err := requireDeliveryTransition(res, nil); err != nil {
+			return err
+		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ScheduleProtectedDeliveryFileRetry records a future recheck for an excess
@@ -897,7 +841,7 @@ func deliveryCleanupRetryDelay(attempt int) time.Duration {
 }
 
 func (d *DB) SetDeliveryDirectoryCleanup(ctx context.Context, receiptID int64, state, message string) error {
-	if state != "removed" && state != "retry" && state != "protected" {
+	if state != "pending" && state != "removed" && state != "retry" && state != "protected" {
 		return fmt.Errorf("invalid delivery directory cleanup state %q", state)
 	}
 	now := time.Now()

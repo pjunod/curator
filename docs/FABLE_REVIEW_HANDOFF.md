@@ -13,8 +13,8 @@ the user has reviewed your findings. Do not deploy or modify production media.
 
 | Repository | Baseline | Pull request | Reviewed head |
 |---|---|---|---|
-| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra requested changes on `dd7f09d6ffb3947c21c87b86151d9a85a5a499cf`; revised review pending |
-| Runner (`pjunod/runner`) | `42995f0b45a7eb977c383c4b630fa75e58bbedfb` | [#254](https://github.com/pjunod/runner/pull/254) | Final revision pending; Astra requested changes on `f53cdcbfc9d0fa4a8f193cbc9a22b66c26738554` |
+| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source review passed at `31c41c1ea0b8d7a2273cff8652e05529e2210d09`; validation and final test revision pending |
+| Runner (`pjunod/runner`) | `42995f0b45a7eb977c383c4b630fa75e58bbedfb` | [#254](https://github.com/pjunod/runner/pull/254) | Astra source review passed at `d84cd83db7e2567e8b660ad00af940f6c402f8a7`; final Linux validation pending |
 
 The primary agent reviews construction. Lower-cost agents implement changes;
 Astra performs adversarial source review and will review the final PR revisions.
@@ -109,7 +109,9 @@ regressions; test names alone do not establish coverage:
   dependency independently. Removing Keep must actually schedule reassessment,
   including for failed jobs with no publication. An unknown-integrity sibling
   must remain protected after another sibling publishes; diagnostic text is
-  not deletion authority.
+  not deletion authority. Exercise Keep on/off after deletion has partly run or
+  hit an I/O failure; cancelling and resuming must preserve the exact journal,
+  attempts and conflict holds rather than strand the source indefinitely.
 - Lost Add acknowledgement and restart; cancellation before dispatch, during
   an in-flight Add, and while a retry waits; manual and automatic paths. For
   qBittorrent, distinguish successful handleless acceptance from a lost response:
@@ -130,6 +132,10 @@ regressions; test names alone do not establish coverage:
   selected publication after the original private working path is retired.
 - Import commit before terminal receipt, unlink before cleanup receipt, selected
   Resolve after Activity dismissal, and Resolve waiting for another import.
+  File-removal recording must atomically persist the directory cleanup
+  obligation; directory deletion must have durable pending work before unlink.
+  Failure to finish the attempt event or final success stamp must leave that
+  work discoverable after restart, even when no payload files remain.
 - Import/admission lock order: per-download, then import destination, then
   storage authority. Large staging copies and hashes must leave storage-only
   actions responsive. Final publication must revalidate the identities measured

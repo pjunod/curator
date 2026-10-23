@@ -251,14 +251,3 @@ func TestLegacyCopyRemoveSearchCannotBypassReplacementScope(t *testing.T) {
 		t.Fatalf("copy row was removed before review: %v", err)
 	}
 }
-
-// Two things going wrong must both be reported. A single-slot note would have
-// the blocklist failure quietly overwrite the unlink failure.
-func TestAcq2NotesAccumulateRatherThanOverwrite(t *testing.T) {
-	if got := joinNote("", "first"); got != "first" {
-		t.Errorf("joinNote empty = %q", got)
-	}
-	if got := joinNote("first", "second"); got != "first; second" {
-		t.Errorf("joinNote = %q", got)
-	}
-}

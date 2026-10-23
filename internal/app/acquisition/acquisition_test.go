@@ -67,6 +67,50 @@ type removeCall struct {
 	DeleteData bool
 }
 
+var acquisitionSchemaTemplate struct {
+	once sync.Once
+	data []byte
+	err  error
+}
+
+func migratedAcquisitionSchema() ([]byte, error) {
+	acquisitionSchemaTemplate.once.Do(func() {
+		dir, err := os.MkdirTemp("", "monarr-acquisition-schema-")
+		if err != nil {
+			acquisitionSchemaTemplate.err = err
+			return
+		}
+		defer func() {
+			if cleanupErr := os.RemoveAll(dir); cleanupErr != nil && acquisitionSchemaTemplate.err == nil {
+				acquisitionSchemaTemplate.err = cleanupErr
+			}
+		}()
+
+		db, err := sqlite.Open(dir)
+		if err != nil {
+			acquisitionSchemaTemplate.err = err
+			return
+		}
+		if err := db.Migrate(context.Background()); err != nil {
+			_ = db.Close()
+			acquisitionSchemaTemplate.err = err
+			return
+		}
+		if err := db.Checkpoint(context.Background()); err != nil {
+			_ = db.Close()
+			acquisitionSchemaTemplate.err = err
+			return
+		}
+		path := db.Path
+		if err := db.Close(); err != nil {
+			acquisitionSchemaTemplate.err = err
+			return
+		}
+		acquisitionSchemaTemplate.data, acquisitionSchemaTemplate.err = os.ReadFile(path)
+	})
+	return acquisitionSchemaTemplate.data, acquisitionSchemaTemplate.err
+}
+
 func (f *fakeClient) Add(ctx context.Context, url, cat string) (ports.Handle, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -100,7 +144,15 @@ func (f *fakeClient) GetRequestAdmission(ctx context.Context, token string) (por
 
 func setup(t *testing.T, releases []ports.Release, client *fakeClient) (*Service, *sqlite.DB, int64) {
 	t.Helper()
-	db, err := sqlite.Open(t.TempDir())
+	dbDir := t.TempDir()
+	schema, err := migratedAcquisitionSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dbDir, sqlite.FileName), schema, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sqlite.Open(dbDir)
 	if err != nil {
 		t.Fatal(err)
 	}
