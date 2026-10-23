@@ -185,16 +185,101 @@ func TestManualHandlelessAcceptanceWaitsForExactTransferWithoutReplay(t *testing
 	if len(client.added) != 1 {
 		t.Fatalf("accepted handleless replay duplicated Add: %v", client.added)
 	}
-	client.statuses = []ports.DownloadStatus{{Handle: "torrent-hash-42", Transfer: accepted.Transfer, State: ports.StateDownloading}}
-	if replay, replayErr := svc.GrabManual(ctx, req); replayErr != nil || replay != id {
-		t.Fatalf("exact-transfer reconciliation=%d err=%v", replay, replayErr)
+	client.statuses = []ports.DownloadStatus{
+		{Handle: "torrent-hash-42", Transfer: accepted.Transfer, State: ports.StateDownloading},
+		{Handle: "other-torrent-hash", Transfer: accepted.Transfer, State: ports.StateDownloading},
 	}
-	settled, err := db.GetDownload(ctx, id)
+	dir := filepath.Dir(db.Path)
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if err = reopened.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fresh := New(reopened, nil, nil,
+		func(ports.IndexerConfig) ports.Indexer { return fakeIndexer{} },
+		func(ports.ClientConfig) ports.DownloadClient { return client },
+	)
+	if replay, replayErr := fresh.GrabManual(ctx, req); replayErr != nil || replay != id {
+		t.Fatalf("ambiguous exact-transfer reconciliation after restart=%d err=%v", replay, replayErr)
+	}
+	stillPending, err := reopened.GetDownload(ctx, id)
+	if err != nil || stillPending.Handle != "" || stillPending.SubmissionPhase != "submitted" {
+		t.Fatalf("ambiguous exact token was bound after restart: %+v err=%v", stillPending, err)
+	}
+	client.statuses = []ports.DownloadStatus{{Handle: "torrent-hash-42", Transfer: accepted.Transfer, State: ports.StateDownloading}}
+	if replay, replayErr := fresh.GrabManual(ctx, req); replayErr != nil || replay != id {
+		t.Fatalf("unique exact-transfer reconciliation=%d err=%v", replay, replayErr)
+	}
+	settled, err := reopened.GetDownload(ctx, id)
 	if err != nil || settled.SubmissionPhase != "submitted" || settled.Handle != "torrent-hash-42" || settled.Transfer != accepted.Transfer || settled.GenerationKey != accepted.GenerationKey {
 		t.Fatalf("exact status did not bind the original request: %+v err=%v", settled, err)
 	}
 	if len(client.added) != 1 {
 		t.Fatalf("exact status reconciliation re-submitted: %v", client.added)
+	}
+}
+
+func TestManualUncertainHandlelessAcceptanceRequiresUniqueTransferAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	client := &handlelessTransferClient{}
+	svc, db, itemID := setup(t, nil, &client.fakeClient)
+	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	req := GrabRequest{MediaItemID: itemID, Season: 1, Episode: 1,
+		Title: "Test.Show.S01E01.1080p.WEB-DL.MANUAL", DownloadURL: "magnet:uncertain-handleless",
+		Indexer: "idx", Protocol: "torrent", RequestID: "manual-uncertain-handleless"}
+	id, err := svc.GrabManual(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := db.GetDownload(ctx, id)
+	if err != nil || accepted.Handle != "" || accepted.Transfer == "" || !accepted.ExactTransferCorrelation {
+		t.Fatalf("handleless accepted row=%+v err=%v", accepted, err)
+	}
+	if err = db.SetSubmissionPhase(ctx, id, "uncertain"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(db.Path)
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if err = reopened.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fresh := New(reopened, nil, nil,
+		func(ports.IndexerConfig) ports.Indexer { return fakeIndexer{} },
+		func(ports.ClientConfig) ports.DownloadClient { return client })
+	client.statuses = []ports.DownloadStatus{
+		{Handle: "torrent-a", Transfer: accepted.Transfer, State: ports.StateDownloading},
+		{Handle: "torrent-b", Transfer: accepted.Transfer, State: ports.StateDownloading},
+	}
+	if _, err = fresh.resumeManualRequest(ctx, id); err == nil {
+		t.Fatal("uncertain request accepted an ambiguous transfer match")
+	}
+	pending, err := reopened.GetDownload(ctx, id)
+	if err != nil || pending.Handle != "" || pending.SubmissionPhase != "uncertain" {
+		t.Fatalf("ambiguous uncertain request was bound or changed phase: %+v err=%v", pending, err)
+	}
+	client.statuses = []ports.DownloadStatus{{Handle: "torrent-a", Transfer: accepted.Transfer, State: ports.StateDownloading}}
+	if _, err = fresh.resumeManualRequest(ctx, id); err != nil {
+		t.Fatalf("unique exact transfer was not adopted: %v", err)
+	}
+	settled, err := reopened.GetDownload(ctx, id)
+	if err != nil || settled.Handle != "torrent-a" || settled.Transfer != accepted.Transfer || settled.GenerationKey != accepted.GenerationKey {
+		t.Fatalf("unique transfer did not bind exact request: %+v err=%v", settled, err)
+	}
+	if len(client.added) != 1 {
+		t.Fatalf("uncertain handleless acceptance was replayed: %v", client.added)
 	}
 }
 
@@ -434,6 +519,13 @@ func TestExactTransferCorrelationDoesNotDowngradeButLegacyKeepsNativeHandle(t *t
 		{Transfer: duplicateTag.Transfer, Handle: "other-job"},
 	}); ok {
 		t.Fatal("duplicate exact tags were treated as an unambiguous status")
+	}
+	manualDuplicate := sqlite.Download{Intent: GrabIntentManualAdditional, Transfer: "manual-duplicate-token"}
+	if _, ok := matchStatus(manualDuplicate, []ports.DownloadStatus{
+		{Transfer: manualDuplicate.Transfer, Handle: "manual-job-a"},
+		{Transfer: manualDuplicate.Transfer, Handle: "manual-job-b"},
+	}); ok {
+		t.Fatal("manual exact-token replay selected one of two duplicate client statuses")
 	}
 	if _, ok := matchStatus(duplicateTag, []ports.DownloadStatus{{Transfer: duplicateTag.Transfer, Handle: "reused-job"}}); ok {
 		t.Fatal("exact token with a conflicting pinned handle was accepted")

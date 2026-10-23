@@ -260,7 +260,7 @@ func sameDeliveryImmutable(a, b ports.RunnerDelivery) bool {
 	sort.Slice(bo, func(i, j int) bool { return bytes.Compare([]byte(bo[i].SourcePath), []byte(bo[j].SourcePath)) < 0 })
 	for i := range ao {
 		ao[i].SourceCleanupStatus, bo[i].SourceCleanupStatus = "", ""
-		if ao[i].SourcePath != bo[i].SourcePath || ao[i].Classification != bo[i].Classification || ao[i].Outcome != bo[i].Outcome || ao[i].Reason != bo[i].Reason || (ao[i].PublicationPath == nil) != (bo[i].PublicationPath == nil) || (ao[i].PublicationPath != nil && *ao[i].PublicationPath != *bo[i].PublicationPath) {
+		if ao[i].SourcePath != bo[i].SourcePath || ao[i].Classification != bo[i].Classification || ao[i].Outcome != bo[i].Outcome || ao[i].Reason != bo[i].Reason || ao[i].RepairDependency != bo[i].RepairDependency || (ao[i].PublicationPath == nil) != (bo[i].PublicationPath == nil) || (ao[i].PublicationPath != nil && *ao[i].PublicationPath != *bo[i].PublicationPath) {
 			return false
 		}
 	}
@@ -713,16 +713,12 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 		result, err = s.importDownloadFiles(ctx, fresh, r.MappedPath, selected, manual)
 	}
 	if err == nil {
-		sidecarCandidates := files
-		if manual {
-			sidecarCandidates = make([]verifiedDeliveryFile, 0, len(files))
-			for _, file := range files {
-				if selectedSet[filepath.Clean(file.absolute)] {
-					sidecarCandidates = append(sidecarCandidates, file)
-				}
-			}
-		}
-		result, err = s.importDeliverySidecars(ctx, r, sidecarCandidates, result)
+		// Give the sidecar matcher the full verified manifest. It only places a
+		// sidecar when it can associate it with media imported in this attempt
+		// or with a previously committed media ledger row. This lets a manual
+		// Resolve select one media file and still bring along its matching
+		// subtitle/artwork, while leaving sidecars for unselected siblings alone.
+		result, err = s.importDeliverySidecars(ctx, r, files, result)
 	}
 	if ledgerErr := s.recordDeliveryImportOutcomes(ctx, r, files, result); ledgerErr != nil {
 		s.log.Error("accepted delivery file outcomes could not be recorded", "delivery", r.Delivery.DeliveryID, "err", ledgerErr)

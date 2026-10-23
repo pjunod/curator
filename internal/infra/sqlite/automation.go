@@ -50,7 +50,9 @@ func (d *DB) AddReleaseIdentityBlocklist(ctx context.Context, mediaItemID, index
 func (d *DB) ReleaseIdentityBlocklistReason(ctx context.Context, mediaItemID, indexerID int64, guid string) (string, bool, error) {
 	var reason string
 	err := d.R.QueryRowContext(ctx, `SELECT reason FROM release_blacklist_identity WHERE media_item_id=? AND indexer_id=? AND guid=?`, mediaItemID, indexerID, guid).Scan(&reason)
-	if errors.Is(err, sql.ErrNoRows) { return "", false, nil }
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
 	return reason, err == nil, err
 }
 

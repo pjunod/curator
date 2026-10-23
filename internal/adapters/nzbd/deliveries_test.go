@@ -28,6 +28,17 @@ func TestSharedRunnerDeliveryFixtureDecodesActualDTOs(t *testing.T) {
 	if err := json.Unmarshal(fixture.Delivery, &delivery); err != nil {
 		t.Fatal(err)
 	}
+	var repairFixture struct {
+		FileOutcomes []struct {
+			RepairDependency *bool `json:"repairDependency"`
+		} `json:"fileOutcomes"`
+	}
+	if err := json.Unmarshal(fixture.Delivery, &repairFixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(repairFixture.FileOutcomes) != 2 || repairFixture.FileOutcomes[0].RepairDependency == nil || *repairFixture.FileOutcomes[0].RepairDependency || repairFixture.FileOutcomes[1].RepairDependency == nil || *repairFixture.FileOutcomes[1].RepairDependency {
+		t.Fatalf("Runner delivery fixture repairDependency fields = %+v", repairFixture.FileOutcomes)
+	}
 	got, err := convertRunnerDelivery(delivery)
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +83,7 @@ func TestDeliveryProtocolRequestsAndValidation(t *testing.T) {
 				t.Errorf("unexpected list request: %s %s", r.Method, r.URL.String())
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"protocolVersion":1,"deliveries":[{"protocolVersion":1,"sequence":18,"deliveryId":"delivery-1","publicationGeneration":"gen-1","sourceArtifactId":"source-1","sourceGeneration":"source-gen-1","artifactId":"a1","jobId":17,"requestToken":"t-17","runnerInstanceId":"runner-1","publicationPath":"/completed/a","manifestDigest":"digest","files":[{"path":"movie.mkv","sizeBytes":1,"sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"}],"terminalOutcome":"PAR_FAILURE","failureStage":"par_verify","failureCause":"missing recovery blocks","keepSourceOnFailure":true,"fileOutcomes":[{"sourcePath":"The Sample Film.mkv","publicationPath":"The Sample Film.mkv","classification":"selected_output","outcome":"published","reason":"verified output","sourceCleanupStatus":"retained"},{"sourcePath":"é<&.par2","publicationPath":null,"classification":"repair_input","outcome":"unresolved","reason":"needed for later repair","sourceCleanupStatus":"retained"}],"readyAt":1700000000}],"nextCursor":18}`))
+			_, _ = w.Write([]byte(`{"protocolVersion":1,"deliveries":[{"protocolVersion":1,"sequence":18,"deliveryId":"delivery-1","publicationGeneration":"gen-1","sourceArtifactId":"source-1","sourceGeneration":"source-gen-1","artifactId":"a1","jobId":17,"requestToken":"t-17","runnerInstanceId":"runner-1","publicationPath":"/completed/a","manifestDigest":"digest","files":[{"path":"movie.mkv","sizeBytes":1,"sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"}],"terminalOutcome":"PAR_FAILURE","failureStage":"par_verify","failureCause":"missing recovery blocks","keepSourceOnFailure":true,"fileOutcomes":[{"sourcePath":"The Sample Film.mkv","publicationPath":"The Sample Film.mkv","classification":"selected_output","outcome":"published","reason":"verified output","sourceCleanupStatus":"retained","repairDependency":true},{"sourcePath":"é<&.par2","publicationPath":null,"classification":"repair_input","outcome":"unresolved","reason":"needed for later repair","sourceCleanupStatus":"retained"}],"readyAt":1700000000}],"nextCursor":18}`))
 		case "/api/v1/deliveries/delivery-1/accept":
 			accepted = true
 			if r.Method != http.MethodPost {
@@ -91,7 +102,7 @@ func TestDeliveryProtocolRequestsAndValidation(t *testing.T) {
 			if r.Method != http.MethodGet {
 				t.Errorf("lookup method = %s", r.Method)
 			}
-			_, _ = w.Write([]byte(`{"protocolVersion":1,"sequence":18,"deliveryId":"delivery-1","publicationGeneration":"gen-1","sourceArtifactId":"source-1","sourceGeneration":"source-gen-1","artifactId":"a1","jobId":17,"requestToken":"t-17","runnerInstanceId":"runner-1","publicationPath":"/completed/a","manifestDigest":"digest","files":[{"path":"movie.mkv","sizeBytes":1,"sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"}],"terminalOutcome":"PAR_FAILURE","failureStage":"par_verify","failureCause":"missing recovery blocks","keepSourceOnFailure":true,"fileOutcomes":[{"sourcePath":"The Sample Film.mkv","publicationPath":"The Sample Film.mkv","classification":"selected_output","outcome":"published","reason":"verified output","sourceCleanupStatus":"removed"},{"sourcePath":"é<&.par2","publicationPath":null,"classification":"repair_input","outcome":"unresolved","reason":"needed for later repair","sourceCleanupStatus":"retained"}],"readyAt":1700000000,"sourceCleanup":{"state":"removed"}}`))
+			_, _ = w.Write([]byte(`{"protocolVersion":1,"sequence":18,"deliveryId":"delivery-1","publicationGeneration":"gen-1","sourceArtifactId":"source-1","sourceGeneration":"source-gen-1","artifactId":"a1","jobId":17,"requestToken":"t-17","runnerInstanceId":"runner-1","publicationPath":"/completed/a","manifestDigest":"digest","files":[{"path":"movie.mkv","sizeBytes":1,"sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"}],"terminalOutcome":"PAR_FAILURE","failureStage":"par_verify","failureCause":"missing recovery blocks","keepSourceOnFailure":true,"fileOutcomes":[{"sourcePath":"The Sample Film.mkv","publicationPath":"The Sample Film.mkv","classification":"selected_output","outcome":"published","reason":"verified output","sourceCleanupStatus":"removed","repairDependency":true},{"sourcePath":"é<&.par2","publicationPath":null,"classification":"repair_input","outcome":"unresolved","reason":"needed for later repair","sourceCleanupStatus":"retained"}],"readyAt":1700000000,"sourceCleanup":{"state":"removed"}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -102,14 +113,14 @@ func TestDeliveryProtocolRequestsAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Deliveries) != 1 || page.Deliveries[0].JobID != "17" || !page.Deliveries[0].ReadyAt.Equal(time.Unix(1700000000, 0).UTC()) || page.Deliveries[0].TerminalOutcome != "PAR_FAILURE" || page.Deliveries[0].FailureStage != "par_verify" || !page.Deliveries[0].KeepSourceOnFailure || len(page.Deliveries[0].FileOutcomes) != 2 || page.Deliveries[0].SourceGeneration != "source-gen-1" {
+	if len(page.Deliveries) != 1 || page.Deliveries[0].JobID != "17" || !page.Deliveries[0].ReadyAt.Equal(time.Unix(1700000000, 0).UTC()) || page.Deliveries[0].TerminalOutcome != "PAR_FAILURE" || page.Deliveries[0].FailureStage != "par_verify" || !page.Deliveries[0].KeepSourceOnFailure || len(page.Deliveries[0].FileOutcomes) != 2 || page.Deliveries[0].SourceGeneration != "source-gen-1" || !page.Deliveries[0].FileOutcomes[0].RepairDependency {
 		t.Fatalf("wire delivery conversion = %+v", page.Deliveries)
 	}
 	if err := c.AcceptDelivery(t.Context(), "delivery-1", ports.RunnerDeliveryAcceptance{ProtocolVersion: 1, PublicationGeneration: "gen-1", ManifestDigest: "digest", ConsumerReceiptID: "receipt"}); err != nil {
 		t.Fatal(err)
 	}
 	fresh, err := c.GetDelivery(t.Context(), "delivery-1")
-	if err != nil || fresh.ProtocolVersion != 1 || fresh.DeliveryID != "delivery-1" || string(fresh.SourceCleanup) != `{"state":"removed"}` || len(fresh.FileOutcomes) != 2 || fresh.FileOutcomes[0].SourceCleanupStatus != "removed" || fresh.TerminalOutcome != "PAR_FAILURE" {
+	if err != nil || fresh.ProtocolVersion != 1 || fresh.DeliveryID != "delivery-1" || string(fresh.SourceCleanup) != `{"state":"removed"}` || len(fresh.FileOutcomes) != 2 || fresh.FileOutcomes[0].SourceCleanupStatus != "removed" || !fresh.FileOutcomes[0].RepairDependency || fresh.TerminalOutcome != "PAR_FAILURE" {
 		t.Fatalf("source cleanup lookup=%+v err=%v", fresh, err)
 	}
 	if !listed || !accepted || !lookedUp {

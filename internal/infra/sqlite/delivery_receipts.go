@@ -301,7 +301,7 @@ func sameDeliveryImmutable(a, b ports.RunnerDelivery) bool {
 }
 
 func sameRunnerFileOutcomeIdentity(a, b ports.RunnerFileOutcome) bool {
-	if a.SourcePath != b.SourcePath || a.Classification != b.Classification || a.Outcome != b.Outcome || a.Reason != b.Reason {
+	if a.SourcePath != b.SourcePath || a.Classification != b.Classification || a.Outcome != b.Outcome || a.Reason != b.Reason || a.RepairDependency != b.RepairDependency {
 		return false
 	}
 	if (a.PublicationPath == nil) != (b.PublicationPath == nil) {
@@ -854,6 +854,35 @@ func (d *DB) SetDeliveryFileCleanup(ctx context.Context, receiptID int64, path, 
 	return nil
 }
 
+// ScheduleProtectedDeliveryFileRetry records a future recheck for an excess
+// file whose replacement operation completed but whose current-placement
+// proof is temporarily unavailable. It keeps the bytes protected and lets the
+// receipt scheduler move on to other due work until the persisted deadline.
+func (d *DB) ScheduleProtectedDeliveryFileRetry(ctx context.Context, receiptID int64, path, message string) error {
+	if receiptID <= 0 || path == "" {
+		return fmt.Errorf("receipt and path are required")
+	}
+	var attempts int
+	if err := d.R.QueryRowContext(ctx, `SELECT cleanup_attempts FROM runner_delivery_file_outcomes WHERE receipt_id=? AND path=?`, receiptID, path).Scan(&attempts); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrDeliveryReceiptStale
+		}
+		return err
+	}
+	now := time.Now()
+	next := now.Add(deliveryCleanupRetryDelay(attempts + 1)).UnixMilli()
+	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET cleanup_state='protected',cleanup_error=?,updated_at=?,
+		cleanup_attempts=cleanup_attempts+1,
+		cleanup_blocked_since=CASE WHEN cleanup_blocked_since=0 THEN ? ELSE cleanup_blocked_since END,
+		cleanup_next_attempt_at=?
+		WHERE receipt_id=? AND path=? AND cleanup_state!='removed' AND disposition IN ('unknown_recoverable','known_incidental','disposable_selected_scope')`,
+		message, now.UnixMilli(), now.UnixMilli(), next, receiptID, path)
+	if err != nil {
+		return err
+	}
+	return requireDeliveryTransition(res, nil)
+}
+
 func deliveryCleanupRetryDelay(attempt int) time.Duration {
 	switch {
 	case attempt <= 1:
@@ -966,7 +995,12 @@ func (d *DB) DeliveryFileImports(ctx context.Context, receiptID int64) ([]Delive
 }
 
 func (d *DB) DeliveryFileCleanupReceipts(ctx context.Context, clientID int64, limit int) ([]int64, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT r.id FROM runner_delivery_receipts r LEFT JOIN runner_delivery_file_outcomes f ON f.receipt_id=r.id WHERE r.client_id=? AND r.state!='conflict' AND ((f.cleanup_state IN ('pending','retry') AND f.cleanup_next_attempt_at<=? AND f.disposition IN ('placed','redundant','disposable_selected_scope')) OR (r.directory_cleanup_state IN ('pending','retry') AND r.directory_cleanup_next_attempt_at<=?)) GROUP BY r.id ORDER BY MIN(CASE WHEN f.cleanup_next_attempt_at=0 THEN f.updated_at ELSE f.cleanup_next_attempt_at END),r.sequence LIMIT ?`, clientID, time.Now().UnixMilli(), time.Now().UnixMilli(), limit)
+	now := time.Now().UnixMilli()
+	rows, err := d.R.QueryContext(ctx, `SELECT r.id FROM runner_delivery_receipts r LEFT JOIN runner_delivery_file_outcomes f ON f.receipt_id=r.id WHERE r.client_id=? AND r.state!='conflict' AND ((f.cleanup_state IN ('pending','retry') AND f.cleanup_next_attempt_at<=? AND f.disposition IN ('placed','redundant','disposable_selected_scope')) OR (r.directory_cleanup_state IN ('pending','retry') AND r.directory_cleanup_next_attempt_at<=?) OR (r.state='imported' AND EXISTS (
+		SELECT 1 FROM runner_delivery_file_imports i JOIN replacement_operations o ON o.operation_id=i.replacement_operation_id
+		JOIN runner_delivery_file_outcomes x ON x.receipt_id=i.receipt_id AND x.path=i.path
+		WHERE i.receipt_id=r.id AND i.replacement_disposition='excess' AND o.state='complete' AND x.cleanup_state='protected' AND x.cleanup_next_attempt_at<=? AND x.disposition IN ('unknown_recoverable','known_incidental','disposable_selected_scope')
+	))) GROUP BY r.id ORDER BY MIN(CASE WHEN f.cleanup_next_attempt_at=0 THEN f.updated_at ELSE f.cleanup_next_attempt_at END),r.sequence LIMIT ?`, clientID, now, now, now, limit)
 	if err != nil {
 		return nil, err
 	}

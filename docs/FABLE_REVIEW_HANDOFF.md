@@ -13,7 +13,7 @@ the user has reviewed your findings. Do not deploy or modify production media.
 
 | Repository | Baseline | Pull request | Reviewed head |
 |---|---|---|---|
-| Curator (`pjunod/monarr`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | Pending | Pending |
+| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra requested changes on `dd7f09d6ffb3947c21c87b86151d9a85a5a499cf`; revised review pending |
 | Runner (`pjunod/runner`) | `42995f0b45a7eb977c383c4b630fa75e58bbedfb` | [#254](https://github.com/pjunod/runner/pull/254) | Final revision pending; Astra requested changes on `f53cdcbfc9d0fa4a8f193cbc9a22b66c26738554` |
 
 The primary agent reviews construction. Lower-cost agents implement changes;
@@ -107,7 +107,9 @@ regressions; test names alone do not establish coverage:
   A good published episode may still be an input to a retained shared PAR set:
   Curator can remove its publication, so Runner must preserve that specific
   dependency independently. Removing Keep must actually schedule reassessment,
-  including for failed jobs with no publication.
+  including for failed jobs with no publication. An unknown-integrity sibling
+  must remain protected after another sibling publishes; diagnostic text is
+  not deletion authority.
 - Lost Add acknowledgement and restart; cancellation before dispatch, during
   an in-flight Add, and while a retry waits; manual and automatic paths. For
   qBittorrent, distinguish successful handleless acceptance from a lost response:
@@ -119,6 +121,9 @@ regressions; test names alone do not establish coverage:
   Add and automatic retry share a download lock and preserve Retry-After.
   Planned imports must retain the stable source GUID and indexer ID needed
   for the episode replacement blacklist choice.
+  Check both manual restart branches: acknowledged Add with no handle and an
+  uncertain non-idempotent Add. Neither may bind the first of several exact
+  matching tags, even if the normal queue matcher rejects ambiguity.
 - Cluster grants versus private processing copies: preserve grant ownership
   restrictions, carry the persisted admission cohort only into owned copies,
   and preserve live Keep changes. Sealing and leader adoption must follow the
@@ -137,6 +142,16 @@ regressions; test names alone do not establish coverage:
 - Quality replacement whose new file disappears, changes or receives a review
   flag before old-media cleanup. Episode coverage must remain correct across
   mixed-quality packs and shared physical files.
+- Pack fallback through the actual importer: it must record why unused episodes
+  are disposable, wait for selected replacement coverage, and schedule cleanup
+  after that coverage commits even if an earlier cleanup pass retained them.
+  A test that inserts excess-file provenance by hand does not prove this flow.
+  Include uniquely paired excess subtitles, retain ambiguous/unmatched sidecars,
+  and verify a missing current-placement proof schedules a future recheck
+  rather than repeatedly occupying the cleanup queue.
+- Manual additional-copy import and selected Resolve must carry matching
+  subtitles/artwork through the actual queued worker and restart. Unselected
+  sibling media and its sidecars must remain untouched.
 - Existing layouts on desktop and phone: action visibility, explicit blacklist
   choice, focus entry/dismissal/return, retry feedback and trace pagination.
 

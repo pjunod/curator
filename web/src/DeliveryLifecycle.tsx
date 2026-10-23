@@ -122,7 +122,7 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
             <strong className="mono">{file.path}</strong> · {fmtBytes(file.sizeBytes)}
             <div>Curator: {row ? `${row.disposition.replaceAll('_', ' ')} · ${cleanupStatus(row.cleanupState, row.cleanupError, row.cleanupBlockedSince, row.cleanupNextAttemptAt)} · ${row.cleanupAttempts} attempts` : 'not yet resolved'}</div>
             {row?.reason && <div className="muted">{row.reason}</div>}{row?.cleanupError && <div className="error-text">{row.cleanupError}</div>}
-            {source && <div className="muted">Runner source: {source.classification} · {source.outcome} · cleanup {source.sourceCleanupStatus}{source.reason ? ` · ${source.reason}` : ''}</div>}
+            {source && <div className="muted">Runner source: {source.classification} · {source.outcome}{source.repairDependency ? ' · retained as a repair input' : ''} · cleanup {source.sourceCleanupStatus}{source.reason ? ` · ${source.reason}` : ''}</div>}
           </li>
         })}</ul>
         <button disabled={busy || selectedPaths.length === 0 || receipt.state === 'conflict'} onClick={() => importSelected.mutate()}>Queue import selected ({selectedPaths.length})</button>

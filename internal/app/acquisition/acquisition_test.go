@@ -56,10 +56,10 @@ type fakeClient struct {
 	// removeErr makes the client refuse to delete a payload — the case the
 	// field produced, where monarr imported, asked, was told no, and left
 	// 90 GB in the completed folder forever.
-	removeErr error
-	admission ports.RequestAdmission
+	removeErr      error
+	admission      ports.RequestAdmission
 	admissionFound bool
-	admissionErr error
+	admissionErr   error
 }
 
 type removeCall struct {

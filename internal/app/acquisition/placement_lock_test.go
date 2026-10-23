@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -455,5 +456,171 @@ func TestPlacementIdentityUpgradeDoesNotAcceptPartialJournalIdentity(t *testing.
 	}
 	if err = svc.preparePlacementPublication(ctx, &p); err == nil {
 		t.Fatal("partially identified journal fell back to legacy digest-only adoption")
+	}
+}
+
+func TestRollbackPreparedPlacementRestoresReviewedBackup(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(item.Path, "rollback")
+	if err = os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "episode.mkv")
+	backup := filepath.Join(root, ".monarr-prior-rollback")
+	temporary := filepath.Join(root, ".monarr-stage-rollback")
+	oldBytes, newBytes := []byte("reviewed old bytes"), []byte("published replacement bytes")
+	if err = os.WriteFile(target, newBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(backup, oldBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	p := sqlite.Placement{
+		ID: "rollback-reviewed-backup", Source: "source.mkv", Target: target,
+		Temporary: temporary, Backup: backup,
+		SHA256:         fmt.Sprintf("%x", sha256.Sum256(newBytes)),
+		PreviousSHA256: fmt.Sprintf("%x", sha256.Sum256(oldBytes)),
+		Size:           int64(len(newBytes)), ItemID: item.ID, State: "prepared",
+	}
+	if err = db.PreparePlacement(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.rollbackPlacement(ctx, p); err != nil {
+		t.Fatalf("rollback prepared placement: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != string(oldBytes) {
+		t.Fatalf("rollback target = %q, %v; want reviewed bytes", got, err)
+	}
+	if _, err = os.Lstat(backup); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rollback backup still exists: %v", err)
+	}
+	var journalState string
+	if err = db.R.QueryRowContext(ctx, `SELECT state FROM import_placements WHERE id=?`, p.ID).Scan(&journalState); err != nil {
+		t.Fatal(err)
+	}
+	if journalState != "rolled_back" {
+		t.Fatalf("journal state = %q; want rolled_back", journalState)
+	}
+}
+
+func TestRollbackPreparedPlacementPreservesChangedTarget(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(item.Path, "rollback-changed")
+	if err = os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "episode.mkv")
+	backup := filepath.Join(root, ".monarr-prior-changed")
+	oldBytes, changedBytes := []byte("reviewed old bytes"), []byte("new unrelated bytes")
+	if err = os.WriteFile(target, changedBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(backup, oldBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	p := sqlite.Placement{
+		ID: "rollback-changed-target", Source: "source.mkv", Target: target,
+		Temporary: filepath.Join(root, ".monarr-stage-changed"), Backup: backup,
+		SHA256:         fmt.Sprintf("%x", sha256.Sum256([]byte("replacement bytes"))),
+		PreviousSHA256: fmt.Sprintf("%x", sha256.Sum256(oldBytes)),
+		ItemID:         item.ID, State: "prepared",
+	}
+	if err = db.PreparePlacement(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.rollbackPlacement(ctx, p); err == nil {
+		t.Fatal("rollback accepted an unrelated current target")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != string(changedBytes) {
+		t.Fatalf("changed target = %q, %v; it must remain untouched", got, err)
+	}
+	if got, readErr := os.ReadFile(backup); readErr != nil || string(got) != string(oldBytes) {
+		t.Fatalf("reviewed backup = %q, %v; it must remain available", got, readErr)
+	}
+}
+
+func TestReconcileCommittedPlacementRetriesVerifiedCleanup(t *testing.T) {
+	for _, tamperBackup := range []bool{false, true} {
+		t.Run(map[bool]string{false: "verified cleanup", true: "tampered backup"}[tamperBackup], func(t *testing.T) {
+			svc, db, itemID := setup(t, nil, &fakeClient{})
+			ctx := context.Background()
+			item, err := db.GetMediaItemFull(ctx, itemID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(item.Path, "committed-cleanup")
+			if err = os.MkdirAll(root, 0755); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(root, "episode.mkv")
+			backup := filepath.Join(root, ".monarr-prior-committed")
+			temporary := filepath.Join(root, ".monarr-stage-committed")
+			oldBytes, newBytes := []byte("superseded bytes"), []byte("committed bytes")
+			if tamperBackup {
+				oldBytes = []byte("changed backup")
+			}
+			for path, data := range map[string][]byte{target: newBytes, backup: oldBytes, temporary: newBytes} {
+				if err = os.WriteFile(path, data, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			storage, parentIdentity, err := placementParentIdentity(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			targetInfo, err := os.Lstat(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := sqlite.Placement{
+				ID:     "committed-cleanup-" + map[bool]string{false: "valid", true: "tampered"}[tamperBackup],
+				Source: "source.mkv", Target: target, Temporary: temporary, Backup: backup,
+				SHA256:                  fmt.Sprintf("%x", sha256.Sum256(newBytes)),
+				PreviousSHA256:          fmt.Sprintf("%x", sha256.Sum256([]byte("superseded bytes"))),
+				PublishedFileGeneration: deliveryFileGeneration(targetInfo),
+				StorageRoot:             root, StorageIdentity: storage, StorageRootIdentity: parentIdentity,
+				TargetParentIdentity: parentIdentity, Size: int64(len(newBytes)), ItemID: item.ID, State: "committed",
+			}
+			if err = db.PreparePlacement(ctx, p); err != nil {
+				t.Fatal(err)
+			}
+			svc.reconcilePlacements(ctx)
+			var journalState string
+			if err = db.R.QueryRowContext(ctx, `SELECT state FROM import_placements WHERE id=?`, p.ID).Scan(&journalState); err != nil {
+				t.Fatal(err)
+			}
+			if tamperBackup {
+				if journalState != "committed" {
+					t.Fatalf("tampered cleanup state = %q; want committed/pending", journalState)
+				}
+				if _, statErr := os.Lstat(backup); statErr != nil {
+					t.Fatalf("tampered backup was removed: %v", statErr)
+				}
+				return
+			}
+			if journalState != "cleaned" {
+				t.Fatalf("verified cleanup state = %q; want cleaned", journalState)
+			}
+			for _, path := range []string{backup, temporary} {
+				if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("verified cleanup left %s: %v", path, statErr)
+				}
+			}
+			if data, readErr := os.ReadFile(target); readErr != nil || string(data) != string(newBytes) {
+				t.Fatalf("committed target changed: %v", readErr)
+			}
+		})
 	}
 }

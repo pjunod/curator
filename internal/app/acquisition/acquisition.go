@@ -978,16 +978,18 @@ func (s *Service) resumeManualRequest(ctx context.Context, id int64) (int64, err
 			_ = s.db.ScheduleManualAdmissionRetry(context.WithoutCancel(ctx), id, time.Now(), "accepted request is waiting for exact transfer-token correlation: "+statusErr.Error())
 			return id, nil
 		}
-		for _, st := range statuses {
-			if dl.Transfer == "" || st.Transfer != dl.Transfer || st.Handle == "" {
-				continue
-			}
+		st, matched := matchStatus(dl, statuses)
+		if matched && st.Handle != "" {
 			if err := s.db.CommitManualSubmission(ctx, id, dl.GenerationKey, string(st.Handle), dl.Transfer); err != nil {
 				return id, fmt.Errorf("persist reconciled manual submission: %w", err)
 			}
 			return id, nil
 		}
-		_ = s.db.ScheduleManualAdmissionRetry(context.WithoutCancel(ctx), id, time.Now(), "client accepted the request; waiting for exact transfer-token correlation")
+		detail := "client accepted the request; waiting for exact transfer-token correlation"
+		if matched {
+			detail = "client status matched the transfer token but omitted its handle; waiting for exact correlation"
+		}
+		_ = s.db.ScheduleManualAdmissionRetry(context.WithoutCancel(ctx), id, time.Now(), detail)
 		return id, nil
 	}
 	providerDeadline, deadlineErr := s.db.DownloadProviderRetryAfter(ctx, id)
@@ -1036,20 +1038,15 @@ func (s *Service) resumeManualRequest(ctx context.Context, id int64) (int64, err
 			if statusErr != nil {
 				return id, statusErr
 			}
-			for _, st := range statuses {
-				matches := st.Transfer == dl.Transfer && dl.Transfer != ""
-				if st.Transfer == "" && dl.Handle != "" && string(st.Handle) == dl.Handle {
-					matches = true
+			st, matched := matchStatus(dl, statuses)
+			if matched {
+				if st.Handle == "" {
+					return id, fmt.Errorf("manual request matched by transfer token but the client omitted its handle")
 				}
-				if matches {
-					if st.Handle == "" {
-						return id, fmt.Errorf("manual request matched by transfer token but the client omitted its handle")
-					}
-					if err := s.db.CommitManualSubmission(ctx, id, dl.GenerationKey, string(st.Handle), dl.Transfer); err != nil {
-						return id, fmt.Errorf("persist reconciled manual submission: %w", err)
-					}
-					return id, nil
+				if err := s.db.CommitManualSubmission(ctx, id, dl.GenerationKey, string(st.Handle), dl.Transfer); err != nil {
+					return id, fmt.Errorf("persist reconciled manual submission: %w", err)
 				}
+				return id, nil
 			}
 			return id, fmt.Errorf("manual submission is uncertain; refusing to create a possible duplicate without request-token idempotency")
 		}
@@ -2251,18 +2248,25 @@ func matchStatus(dl sqlite.Download, statuses []ports.DownloadStatus) (ports.Dow
 		return match, count == 1
 	}
 	if dl.Intent == GrabIntentManualAdditional {
+		var matched ports.DownloadStatus
+		count := 0
 		for _, st := range statuses {
 			if st.Transfer != "" {
 				if st.Transfer == dl.Transfer && dl.Transfer != "" {
-					return st, true
+					if dl.Handle != "" && st.Handle != "" && string(st.Handle) != dl.Handle {
+						return ports.DownloadStatus{}, false
+					}
+					matched = st
+					count++
 				}
 				continue
 			}
 			if dl.Handle != "" && string(st.Handle) == dl.Handle {
-				return st, true
+				matched = st
+				count++
 			}
 		}
-		return ports.DownloadStatus{}, false
+		return matched, count == 1
 	}
 	if dl.Handle != "" {
 		for _, st := range statuses {

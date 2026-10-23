@@ -1632,6 +1632,7 @@ export interface DeliverySourceFileOutcome {
   classification: string
   outcome: string
   reason: string
+  repairDependency?: boolean
   sourceCleanupStatus: string
 }
 export interface RunnerSourceCleanupTrace {

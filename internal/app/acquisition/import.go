@@ -73,6 +73,8 @@ type ImportResult struct {
 // payload. The retry sweep looks for exactly this.
 var ErrImportBlocked = errors.New("import stopped")
 
+var errReplacementFileOutsideScope = errors.New("replacement file is outside selected episode scope")
+
 // HistoryImportBlocked records a half-finished import, so "where did the
 // second half of that season go" has an answer that is not the server log.
 const HistoryImportBlocked = "import_blocked"
@@ -535,6 +537,9 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 				return result, err
 			}
 			outcome.Reason = err.Error()
+			if errors.Is(err, errReplacementFileOutsideScope) {
+				outcome.ReplacementDisposition = "excess"
+			}
 			if retryableIO(err) {
 				// Not a verdict on the file — a condition of the machine.
 				// Stop here: every remaining file would fail the same way,
@@ -967,6 +972,21 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 			return placement{}, fmt.Errorf("indivisible file includes unknown episode S%02dE%02d", season, epNum)
 		}
 		if scope.Planned && !slices.Contains(scope.AllowedEpisodeIDs, epID) {
+			selectedSibling := false
+			allEpisodesKnown := true
+			for _, candidateEpisode := range eps {
+				candidateID, candidateErr := s.db.GetEpisodeID(ctx, item.ID, season, candidateEpisode)
+				if candidateErr != nil {
+					allEpisodesKnown = false
+					break
+				}
+				if slices.Contains(scope.AllowedEpisodeIDs, candidateID) {
+					selectedSibling = true
+				}
+			}
+			if scope.ReplacementOperationID != "" && allEpisodesKnown && !selectedSibling {
+				return placement{}, fmt.Errorf("%w: episode %d", errReplacementFileOutsideScope, epNum)
+			}
 			return placement{}, fmt.Errorf("episode %d outside planned import allowlist", epNum)
 		}
 		epIDs = append(epIDs, epID)

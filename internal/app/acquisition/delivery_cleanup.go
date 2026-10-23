@@ -104,19 +104,80 @@ func (s *Service) recordDeliveryImportOutcomes(ctx context.Context, r sqlite.Del
 		}
 		row := ledgerByPath[f.relative]
 		disposition, reason := "unknown_recoverable", "manifest file was not attempted by the importer"
+		excessOperationID := replacementExcessSidecarOperation(f, verified, result)
 		if knownDeliverySidecar(f.relative) {
 			disposition, reason = "known_incidental", "recognized non-media sidecar retained outside media selection"
+			if excessOperationID != "" {
+				reason = "sidecar is associated only with an out-of-scope media file; retained until its selected replacement commits"
+			}
 		} else if row.Disposition == "unselected_recoverable" {
 			continue
 		}
-		if row.Disposition != "pending" && row.Disposition != "unselected_recoverable" {
+		if row.Disposition != "pending" && row.Disposition != "unselected_recoverable" &&
+			!(excessOperationID != "" && (row.Disposition == "known_incidental" || row.Disposition == "unknown_recoverable")) {
 			continue
 		}
-		if err := s.db.UpdateDeliveryFileDisposition(ctx, r.ID, f.relative, disposition, reason, ""); err != nil {
-			errs = append(errs, err)
+		if row.Disposition == "pending" || row.Disposition == "unselected_recoverable" ||
+			(excessOperationID != "" && row.Disposition == "unknown_recoverable") {
+			if err := s.db.UpdateDeliveryFileDisposition(ctx, r.ID, f.relative, disposition, reason, ""); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		if excessOperationID != "" {
+			if err := s.db.RecordDeliveryFileImport(ctx, sqlite.DeliveryFileImport{
+				ReceiptID: r.ID, Path: f.relative, SourceGeneration: r.GenerationKey,
+				SourceTransfer: r.Delivery.RequestToken, SourcePayloadGeneration: r.Delivery.PublicationGeneration,
+				ReplacementOperationID: excessOperationID, ReplacementDisposition: "excess",
+			}); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// replacementExcessSidecarOperation returns replacement authority only when a
+// non-generic sidecar matches exactly one media member in the immutable
+// publication, and that media member was positively classified as excess by
+// this same import attempt. Unknown, mixed, and ambiguous associations remain
+// ordinary reviewable sidecars.
+func replacementExcessSidecarOperation(sidecar verifiedDeliveryFile, verified []verifiedDeliveryFile, result ImportResult) string {
+	if !knownDeliverySidecar(sidecar.relative) || deliveryGenericArtName(filepath.Base(sidecar.relative)) {
+		return ""
+	}
+	var matchedMedia verifiedDeliveryFile
+	for _, candidate := range verified {
+		if !(filename.IsVideo(candidate.relative) || filename.IsBook(candidate.relative)) ||
+			filepath.Dir(candidate.relative) != filepath.Dir(sidecar.relative) {
+			continue
+		}
+		mediaStem := strings.TrimSuffix(filepath.Base(candidate.relative), filepath.Ext(candidate.relative))
+		sidecarStem := strings.TrimSuffix(filepath.Base(sidecar.relative), filepath.Ext(sidecar.relative))
+		matched, _ := deliverySidecarStemMatch(mediaStem, sidecarStem, sidecar.relative)
+		if !matched {
+			continue
+		}
+		if matchedMedia.relative != "" {
+			return ""
+		}
+		matchedMedia = candidate
+	}
+	if matchedMedia.relative == "" {
+		return ""
+	}
+	var operationID string
+	for _, outcome := range result.Files {
+		if filepath.Clean(outcome.SourcePath) != filepath.Clean(matchedMedia.absolute) ||
+			outcome.ReplacementDisposition != "excess" || outcome.ReplacementOperationID == "" {
+			continue
+		}
+		if operationID != "" && operationID != outcome.ReplacementOperationID {
+			return ""
+		}
+		operationID = outcome.ReplacementOperationID
+	}
+	return operationID
 }
 
 func (s *Service) replacementOperationCommitted(ctx context.Context, operationID string) bool {
@@ -824,12 +885,28 @@ func (s *Service) cleanupDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 		return err
 	}
 	for _, imported := range imports {
-		if imported.ReplacementDisposition != "excess" || !s.replacementOperationCommitted(ctx, imported.ReplacementOperationID) {
+		if imported.ReplacementDisposition != "excess" || imported.ReplacementOperationID == "" {
 			continue
 		}
+		op, opErr := s.db.GetReplacementOperation(ctx, imported.ReplacementOperationID)
+		if opErr != nil || op.State != "complete" {
+			continue
+		}
+		operationCommitted := s.replacementOperationCommitted(ctx, imported.ReplacementOperationID)
 		for i := range rows {
 			row := &rows[i]
 			if row.Path != imported.Path || row.CleanupState == "removed" || row.Disposition == "disposable_selected_scope" {
+				continue
+			}
+			if row.CleanupNextAttemptAt.After(time.Now()) {
+				continue
+			}
+			if !operationCommitted {
+				if err := s.db.ScheduleProtectedDeliveryFileRetry(ctx, r.ID, row.Path,
+					"replacement operation completed but current selected placement proof is unavailable; source remains protected"); err != nil {
+					return err
+				}
+				row.CleanupState = "protected"
 				continue
 			}
 			if err := s.db.UpdateDeliveryFileDisposition(ctx, r.ID, row.Path, "disposable_selected_scope",

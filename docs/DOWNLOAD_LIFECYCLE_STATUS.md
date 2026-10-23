@@ -1,6 +1,6 @@
 # Download lifecycle — implementation and review status
 
-**Status:** Curator functional gates pass; coverage and race gates remain; Astra requested Runner corrections; not deployed  
+**Status:** Both PRs open; Astra corrections under validation; coverage and race gates remain; not deployed
 **Updated:** 2026-10-22
 
 Companion to [the approved operating proposal](DOWNLOAD_LIFECYCLE_PROPOSAL.md)
@@ -37,7 +37,7 @@ per-indexer control and visibility work rather than duplicating that fix.
 | Scoped replacement, reports, indexer controls, timelines | Built; review corrections and behavioral validation remain | Agreed scope and UI behaviors are implemented and observable |
 | Final Astra review and validation | Adversarial source/fix review complete; validation and exact final PR review pending | Astra reviews the final PRs; findings addressed; repository gates and lifecycle acceptance verified |
 | Fable review handoff | Requested 2026-10-22; pending final PRs | Both PR links, agreed behavior, validation evidence, review findings and remaining risks supplied for independent review |
-| PRs, merge, rollout | Runner PR #254 open; Curator PR pending; keep both unmerged for Fable review | User receives handoff before merge; backlog remains separately controlled |
+| PRs, merge, rollout | Runner PR #254 and Curator PR #70 open; keep both unmerged for Fable review | User receives handoff before merge; backlog remains separately controlled |
 | Existing backlog report and batch actions | Read-only per-payload report captured; five exact duplicate media pairs verified for proposed batch V1 | No imports, retries or deletion executed; batch approval remains separate |
 
 ## 3. Foundation integration decisions
@@ -262,13 +262,29 @@ that its regression tests pass.
   Go suite and all 174 browser tests. Manual admission also rechecks its exact
   selected files after waiting for locks, preventing a deleted selection from
   creating a forgotten job.
+- Primary review found that startup placement reconciliation bypassed the
+  staged-object checks used by normal publication replay. Both paths now share
+  that check. Regressions reject a same-content different inode, preserve old
+  digest-only journal compatibility, and prevent partially identified journals
+  from falling back to that compatibility path.
 - Astra reviewed Runner PR #254 at `f53cdcbfc9d0fa4a8f193cbc9a22b66c26738554`
   and requested three corrections: retain verified files when they are actual
   inputs to a shared PAR repair set; use the greater of scheduled backoff and
-  Retry-After; durably reassess retained sources when Keep is disabled. These
-  findings remain open while the builder prepares corrections and regressions.
+  Retry-After; durably reassess retained sources when Keep is disabled. Corrections and focused regressions now pass; the final revision still
+  requires Astra review. Primary review also required unknown-integrity siblings
+  to remain protected after partial publication, not only after total failure.
+- Astra's Curator PR review at `dd7f09d6ffb3947c21c87b86151d9a85a5a499cf`
+  requested four corrections: reject ambiguous transfer tags in both manual
+  restart paths; record actual pack-excess provenance; wake its cleanup after
+  replacement commits; and import matching sidecars with manual additional
+  copies. Worker/restart regressions now exercise these real paths. Primary
+  review added uniquely associated excess-sidecar cleanup and persisted retry
+  deadlines when current replacement proof is temporarily unavailable. Unknown
+  sidecars and ambiguous media associations remain protected.
 - Runner Linux dependency audit also reports vulnerable locked dependencies.
-  Compatible patch updates are being investigated without adding exceptions.
+  Compatible patches to quinn-proto, rustls, rustls-webpki and the WebPKI
+  root packages pass local compilation, strict Clippy and MSRV checks. The
+  revised Linux audit remains pending; no exceptions were added.
 - Required race/coverage gates and final Linux CI remain unfinished.
 - Astra must review the exact final PR revisions; the Fable handoff must include
   those revisions and the completed validation results.
@@ -285,14 +301,14 @@ final gates began on 2026-10-22. Results so far:
 | Curator mobile typecheck and unit tests | Passed: 17 files, 109 tests |
 | Curator mobile doctor and Android/iOS export | Passed: 20 checks; both platform bundles exported |
 | Curator Go tests | Full ordinary suite passed after lock-order and manual-admission corrections; acquisition completed in 55.4 seconds. Full non-race coverpkg suite also passed its tests |
-| Curator lint | Pinned lint passed with zero issues after lock-order and manual-admission corrections, using a fresh isolated cache |
+| Curator lint | Pinned golangci-lint passed with zero issues; Linux gofmt sweep found two files requiring formatting. Final make lint remains required |
 | Curator browser acceptance | Passed: 174 tests, zero skipped, including lifecycle polling and mobile cases, against the rebuilt binary and final Vite bundle |
 | Runner strict workspace tests | Passed with required external tools, including actual failed-health salvage, storage-outage Retry Now and HTTP Delivery regressions. Formatting, strict Clippy, Rust 1.95 MSRV and UI harness passed |
 | Runner line coverage | Candidate: 86.2814% (55,818 of 64,693 lines). Identical strict command on baseline `42995f0`: 86.5527% (47,810 of 55,238 lines). Both are below the unchanged 90% floor; candidate is 0.2713 percentage points below baseline. No floor or exclusions changed |
-| Curator race | Pre-final-fix run passed API and other packages; acquisition reached the 900-second timeout during schema migration. No race report was emitted, but this is not a passing gate. Final run uses a longer timeout without dropping tests |
-| Curator coverage | Latest candidate 82.6%, below the unchanged 86% floor. Unchanged baseline `7e8e2f2` passes the same non-race coverpkg suite at 86.3%; this deficit is introduced. Additional behavioral coverage and final rerun pending |
+| Curator race | Pre-final-fix run passed API and other packages; acquisition reached the 900-second timeout during schema migration. No race report was emitted, but this is not a passing gate. Linux initial-head CI likewise exhausted the default ten-minute package budget while new tests were actively running in SQLite migrations. The revised job allows thirty minutes per package and forty-five minutes overall, preserving all tests and instrumentation |
+| Curator coverage | Latest valid candidate 83.1%, below the unchanged 86% floor. Unchanged baseline `7e8e2f2` passes the same non-race coverpkg suite at 86.3%; this deficit is introduced. Additional behavioral coverage and final rerun pending |
 | Curator generated consistency | Two consecutive local pinned sqlc and OpenAPI generations produced identical hashes after the latest schema and lock corrections; diff whitespace check passed |
-| Final PR CI | Runner #254 at `f53cdcb`: Linux Rust merge candidate, promotion gate, static contracts, mobile, dependency exceptions and licenses/bans/sources passed; RustSec audit failed. Revised heads and Curator CI remain pending |
+| Final PR CI | Runner #254 at `f53cdcb`: Linux Rust merge candidate, promotion gate, static contracts, mobile, dependency exceptions and licenses/bans/sources passed; RustSec audit failed. Curator #70 at `dd7f09d`: browser, mobile, Docker, real personalities and fake-consumer contracts passed; unit race/coverage timed out and gofmt failed on two files. Revised heads remain pending |
 
 Required Curator gates: `make lint`, `make test`, `make test-web`, `make test-e2e`,
 generated-code consistency and required CI. Runner gates follow its pinned Rust
@@ -321,7 +337,8 @@ standard library, but the bundled SQLite build requires an unavailable
 `riscv64-linux-gnu-gcc`. This is an environment limitation, not a passing Linux
 check; final Linux CI remains required. Native pinned static builds pass.
 
-PR: [Runner #254](https://github.com/pjunod/runner/pull/254); Curator pending.
+PRs: [Runner #254](https://github.com/pjunod/runner/pull/254) and
+[Curator #70](https://github.com/pjunod/curator/pull/70).
 Merge: not performed. Deployment: not performed. Backlog
 deletion/import/retry actions: not performed. Temporary unused managed worktree
 was queued for archival; implementation uses independent clones.

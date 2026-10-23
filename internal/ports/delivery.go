@@ -25,6 +25,7 @@ type RunnerFileOutcome struct {
 	Classification      string  `json:"classification"`
 	Outcome             string  `json:"outcome"`
 	Reason              string  `json:"reason"`
+	RepairDependency    bool    `json:"repairDependency,omitempty"`
 	SourceCleanupStatus string  `json:"sourceCleanupStatus"`
 }
 

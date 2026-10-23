@@ -990,6 +990,10 @@ func deliveryImportFixture(t *testing.T, protocol *deliveryImportClient) (*Servi
 }
 
 func deliveryImportFixtureWithFiles(t *testing.T, protocol *deliveryImportClient, extra map[string][]byte) (*Service, *sqlite.DB, sqlite.Download, ports.ClientConfig, string) {
+	return deliveryImportFixtureWithMainContent(t, protocol, []byte("video"), extra)
+}
+
+func deliveryImportFixtureWithMainContent(t *testing.T, protocol *deliveryImportClient, mainContent []byte, extra map[string][]byte) (*Service, *sqlite.DB, sqlite.Download, ports.ClientConfig, string) {
 	t.Helper()
 	ordinary := &fakeClient{}
 	svc, db, itemID := setup(t, nil, ordinary)
@@ -1008,7 +1012,7 @@ func deliveryImportFixtureWithFiles(t *testing.T, protocol *deliveryImportClient
 	if err := os.MkdirAll(publication, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	content := []byte("video")
+	content := mainContent
 	filename := epRelease + ".mkv"
 	if err := os.WriteFile(filepath.Join(publication, filename), content, 0o644); err != nil {
 		t.Fatal(err)
