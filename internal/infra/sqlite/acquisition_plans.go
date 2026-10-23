@@ -178,15 +178,6 @@ func (d *DB) SetSubmissionPhase(ctx context.Context, id int64, phase string) err
 	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET submission_phase=?,manual_retry_at=CASE WHEN ?='pending' OR ?='submitted' THEN 0 ELSE manual_retry_at END,manual_retry_attempts=CASE WHEN ?='submitted' THEN 0 ELSE manual_retry_attempts END,manual_blocked_at=CASE WHEN ?='submitted' THEN 0 ELSE manual_blocked_at END,updated_at=? WHERE id=?`, phase, phase, phase, phase, phase, time.Now().UnixMilli(), id)
 	return err
 }
-func (d *DB) SetDownloadDeliveryExpected(ctx context.Context, id int64, expected bool) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET delivery_expected=?,updated_at=? WHERE id=?`, boolInt(expected), time.Now().UnixMilli(), id)
-	return err
-}
-func (d *DB) SetDownloadRequestTokenIdempotent(ctx context.Context, id int64, idempotent bool) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET request_token_idempotent=?,updated_at=? WHERE id=?`, boolInt(idempotent), time.Now().UnixMilli(), id)
-	return err
-}
-
 func (d *DB) DownloadProviderRetryAfter(ctx context.Context, id int64) (time.Time, error) {
 	var due int64
 	err := d.R.QueryRowContext(ctx, `SELECT provider_retry_after FROM downloads WHERE id=?`, id).Scan(&due)
