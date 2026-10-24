@@ -13,7 +13,7 @@ the user has reviewed your findings. Do not deploy or modify production media.
 
 | Repository | Baseline | Pull request | Reviewed head |
 |---|---|---|---|
-| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source approval is bound to `33dba5d9787f456f61fd71ca68276a6e54b4ea83`, including duplicate completion and recovery cancellation. Full local tests, focused race tests and lint pass. Linux tests, browser, mobile, lint, Docker and compatibility pass at `744ae51`, but its coverage gate fails at 85.0% |
+| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source approval is bound to `62eebc20fbacfff328f30b93ea78898c52c4e4bd`, including duplicate completion, recovery cancellation and the subsequent custody regressions. Latest full local coverage is 85.1%, below 86%. Full local tests, focused race tests and lint pass. Linux tests, browser, mobile, lint, Docker and compatibility pass at `744ae51`, but its coverage gate fails at 85.0% |
 | Runner (`pjunod/runner`) | `42995f0b45a7eb977c383c4b630fa75e58bbedfb` | [#254](https://github.com/pjunod/runner/pull/254) | Astra source approval, normal Linux PR checks and supply-chain audit pass at `83cd4cdfef3ec62a67237fc918114f622ef638a2`; separate manual coverage gate remains below 90% |
 
 The primary agent reviews construction. Lower-cost agents implement changes;
