@@ -720,10 +720,23 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 		// subtitle/artwork, while leaving sidecars for unselected siblings alone.
 		result, err = s.importDeliverySidecars(ctx, r, files, result)
 	}
-	if ledgerErr := s.recordDeliveryImportOutcomes(ctx, r, files, result); ledgerErr != nil {
+	ledgerErr := s.recordDeliveryImportOutcomes(ctx, r, files, result)
+	if ledgerErr != nil {
 		s.log.Error("accepted delivery file outcomes could not be recorded", "delivery", r.Delivery.DeliveryID, "err", ledgerErr)
-		if err == nil {
+		if err != nil {
+			err = errors.Join(err, fmt.Errorf("persist accepted delivery outcomes: %w", ledgerErr))
+		} else {
 			err = ledgerErr
+		}
+	}
+	allRedundant := false
+	if err != nil && errors.Is(err, ErrNoFilesImported) && !errors.Is(err, ErrImportBlocked) &&
+		ledgerErr == nil && ctx.Err() == nil && result.Blocked == nil && !manual && len(selected) > 0 {
+		redundant, proofErr := s.allSelectedDeliveryFilesRedundant(ctx, receiptID, selectedManifest)
+		if proofErr != nil {
+			err = errors.Join(err, fmt.Errorf("verify persisted redundant delivery outcomes: %w", proofErr))
+		} else if redundant {
+			allRedundant, err = true, nil
 		}
 	}
 	if err != nil {
@@ -734,6 +747,9 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 		return err
 	}
 	detail := fmt.Sprintf("imported %d file(s) from accepted Runner manifest", result.Imported)
+	if allRedundant {
+		detail = "all selected media already present as verified redundant files"
+	}
 	if manual {
 		detail = fmt.Sprintf("manually imported %d selected file(s) from accepted Runner manifest", result.Imported)
 	}
@@ -782,6 +798,27 @@ func manualSelectionAlreadyResolved(requested []string, r sqlite.DeliveryReceipt
 		}
 	}
 	return true
+}
+
+func (s *Service) allSelectedDeliveryFilesRedundant(ctx context.Context, receiptID int64, selected map[string]bool) (bool, error) {
+	if len(selected) == 0 {
+		return false, nil
+	}
+	rows, err := s.db.DeliveryFileOutcomes(ctx, receiptID)
+	if err != nil {
+		return false, err
+	}
+	byPath := make(map[string]sqlite.DeliveryFileOutcome, len(rows))
+	for _, row := range rows {
+		byPath[row.Path] = row
+	}
+	for path := range selected {
+		row, ok := byPath[path]
+		if !ok || row.Disposition != "redundant" || row.CleanupState == "removed" || row.LibraryPath == "" || row.FileGeneration == "" {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 type verifiedDeliveryFile struct {

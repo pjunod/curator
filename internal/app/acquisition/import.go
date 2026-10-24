@@ -73,6 +73,11 @@ type ImportResult struct {
 // payload. The retry sweep looks for exactly this.
 var ErrImportBlocked = errors.New("import stopped")
 
+// ErrNoFilesImported marks a complete import attempt where every selected
+// file was declined. Delivery admission may resolve this only when durable
+// outcome records prove that every selected file is already redundant.
+var ErrNoFilesImported = errors.New("no files imported")
+
 var errReplacementFileOutsideScope = errors.New("replacement file is outside selected episode scope")
 
 // HistoryImportBlocked records a half-finished import, so "where did the
@@ -601,7 +606,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		// Say WHY, per file. This is the message a user actually reads when
 		// an import does nothing, and "no files imported" alone told them
 		// only that something went wrong somewhere.
-		return result, fmt.Errorf("no files imported from %s — %s", savePath, result.reasons(5))
+		return result, fmt.Errorf("%w from %s — %s", ErrNoFilesImported, savePath, result.reasons(5))
 	}
 
 	_ = s.db.AddHistory(ctx, "imported", item.ID, dl.ReleaseTitle,

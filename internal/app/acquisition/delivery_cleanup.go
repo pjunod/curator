@@ -767,21 +767,20 @@ func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.De
 		// alone.
 		existingDigest, existingSize, digestErr := fileDigest(ctx, existing.Path)
 		afterDigest, afterDigestErr := os.Lstat(existing.Path)
-		if digestErr == nil && afterDigestErr == nil && os.SameFile(before, afterDigest) &&
+		exactBytes := digestErr == nil && afterDigestErr == nil && os.SameFile(before, afterDigest) &&
 			deliveryFileGeneration(before) != "" && deliveryFileGeneration(before) == deliveryFileGeneration(afterDigest) &&
 			existing.QualityKnown && existing.Provenance.Verified(existing.Confidence) &&
-			profile.Acceptable(existing.Quality) && existingSize == f.size && existingDigest == f.digest {
-			return existing.Path, deliveryFileGeneration(afterDigest), true
-		}
+			existingSize == f.size && existingDigest == f.digest
 		if quality.IsBookFormat(candidate.Source) {
 			// Native books are not probed. Only exact-content duplication with a
 			// trusted existing format can establish redundancy for them.
-			digest, size, digestErr := fileDigest(ctx, existing.Path)
-			after, statErr := os.Lstat(existing.Path)
-			if digestErr == nil && digest == f.digest && size == f.size && statErr == nil && os.SameFile(before, after) && deliveryFileGeneration(before) != "" && deliveryFileGeneration(before) == deliveryFileGeneration(after) && !profile.Upgrade(candidate, nil, existing.Quality, true, quality.Audio{}) {
-				return existing.Path, deliveryFileGeneration(after), true
+			if exactBytes && profile.Acceptable(existing.Quality) && !profile.Upgrade(candidate, nil, existing.Quality, true, quality.Audio{}) {
+				return existing.Path, deliveryFileGeneration(afterDigest), true
 			}
 			continue
+		}
+		if exactBytes && profile.Acceptable(existing.Quality) {
+			return existing.Path, deliveryFileGeneration(afterDigest), true
 		}
 		if filename.IsVideo(existing.Path) {
 			candidateQuality, candidateAudio, sourceGeneration, ok := freshDeliveryVideoQuality(f.absolute, candidate, item.Runtime)
