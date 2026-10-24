@@ -790,6 +790,62 @@ func (d *DB) UpdateDownloadHandoff(ctx context.Context, dl Download) error {
 	})
 }
 
+// CommitManualImportAdmission writes the target, selected-file handoff, and
+// queue-row state as one durable admission. For a new manual import, the row
+// itself is inserted in the same transaction; a failed handoff write must not
+// leave a row the caller cannot identify or safely retry.
+func (d *DB) CommitManualImportAdmission(ctx context.Context, dl Download) (Download, error) {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return Download{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := d.Write.WithTx(tx)
+	if dl.ID == 0 {
+		params, err := downloadInsertParams(dl)
+		if err != nil {
+			return Download{}, err
+		}
+		dl.ID, err = q.InsertDownload(ctx, params)
+		if err != nil {
+			return Download{}, err
+		}
+		dl.GenerationKey = params.GenerationKey
+	} else if dl.GenerationKey == "" {
+		return Download{}, fmt.Errorf("manual import generation identity is required")
+	}
+
+	handoff, err := json.Marshal(dl.Handoff)
+	if err != nil {
+		return Download{}, err
+	}
+	if dl.Handoff == nil {
+		handoff = []byte("[]")
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE downloads SET media_item_id=?,copy_id=?,state=?,progress=?,error=?,
+		save_path=?,import_path=?,handoff_log=?,updated_at=? WHERE id=? AND generation_key=?`,
+		dl.MediaItemID, sql.NullInt64{Int64: dl.CopyID, Valid: dl.CopyID != 0}, dl.State, dl.Progress, dl.Error,
+		dl.SavePath, dl.ImportPath, string(handoff), time.Now().UnixMilli(), dl.ID, dl.GenerationKey)
+	if err != nil {
+		return Download{}, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return Download{}, err
+	}
+	if rows != 1 {
+		return Download{}, ErrNotFound
+	}
+	row, err := q.GetDownload(ctx, dl.ID)
+	if err != nil {
+		return Download{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Download{}, err
+	}
+	return downloadFromRow(row), nil
+}
+
 // UpdateDownloadTarget persists the target chosen in a manual-import form.
 // It is deliberately separate from stage transitions: many automatic
 // handoff callers carry only a partial Download and must never erase copy_id.

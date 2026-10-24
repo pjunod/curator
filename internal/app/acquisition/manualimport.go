@@ -358,23 +358,21 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 			return 0, fmt.Errorf("this payload is fenced for explicit legacy review; select exact files from its current inventory")
 		}
 	}
+	var dl sqlite.Download
 	if id == 0 {
-		id, err = s.db.InsertDownload(ctx, sqlite.Download{
+		dl = sqlite.Download{
 			MediaItemID: req.MediaItemID, CopyID: req.CopyID,
 			ReleaseTitle: filepath.Base(filepath.Clean(req.Path)),
 			Protocol:     "manual", State: "downloaded", ImportPath: req.Path,
-		})
+		}
+	} else {
+		dl, err = s.db.GetDownload(ctx, id)
 		if err != nil {
 			return 0, err
 		}
-	}
-
-	dl, err := s.db.GetDownload(ctx, id)
-	if err != nil {
-		return 0, err
-	}
-	if s.ImportRunning(id) {
-		return 0, fmt.Errorf("import is already running")
+		if s.ImportRunning(id) {
+			return 0, fmt.Errorf("import is already running")
+		}
 	}
 	dl.MediaItemID = req.MediaItemID
 	dl.CopyID = req.CopyID
@@ -385,9 +383,6 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 		if err != nil {
 			return 0, err
 		}
-	}
-	if err := s.db.UpdateDownloadTarget(ctx, dl); err != nil {
-		return 0, err
 	}
 	dl.Error = ""
 	dl.State = "downloaded"
@@ -410,9 +405,11 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 		ReviewFiles:       handoffReviewFiles(req.ReviewLegacyFiles),
 		TargetMediaItemID: req.MediaItemID, TargetCopyID: req.CopyID, TargetIdentity: targetIdentity,
 	})
-	if err := s.db.UpdateDownloadHandoff(ctx, dl); err != nil {
+	dl, err = s.db.CommitManualImportAdmission(ctx, dl)
+	if err != nil {
 		return 0, err
 	}
+	id = dl.ID
 	unlockAdmission()
 	ctx = dispatchCtx
 	if !s.enqueueImport(ctx, dl, ports.ClientConfig{}) {
