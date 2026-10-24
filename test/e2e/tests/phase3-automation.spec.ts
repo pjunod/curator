@@ -1,6 +1,5 @@
 import { rmSync } from 'node:fs'
-import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { openFixtureDatabase } from '../fixture-db'
 import { expect, test } from '@playwright/test'
 
 // Phase 3: the automation loop, end to end. Earlier specs imported the
@@ -76,7 +75,7 @@ test('deleted file → rescan → wanted → RSS auto-grab → re-imported + not
 
   // Advance the persisted due time in this disposable fixture. Production
   // pacing deliberately refuses a second feed fetch within its RSS interval.
-  const fixture = new DatabaseSync(join(process.env.E2E_DATA_DIR!, 'monarr.db'))
+  const fixture = openFixtureDatabase()
   fixture.prepare('UPDATE indexers SET next_rss_at=0').run()
   fixture.close()
   // One eligible RSS pass grabs it back without anyone clicking anything.

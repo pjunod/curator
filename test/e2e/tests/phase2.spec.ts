@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { openFixtureDatabase } from '../fixture-db'
 
 // Phase 2 full loop against fake torznab + fake qBittorrent:
 // configure → interactive search (with rejection reasons) → grab →
@@ -118,7 +117,7 @@ test('series: season pack grab fans out to every episode', async ({ request }) =
 })
 
 test('automatic RSS fills monitored primary copies beside explicit additions', async ({ request }) => {
-  const db = new DatabaseSync(join(process.env.E2E_DATA_DIR!, 'monarr.db'))
+  const db = openFixtureDatabase()
   db.prepare('UPDATE indexers SET next_rss_at=0').run()
   db.close()
   const response = await request.post('/api/v1/system/tasks/rss.sync/run')
@@ -131,7 +130,7 @@ test('automatic RSS fills monitored primary copies beside explicit additions', a
     const movie = await (await request.get(`/api/v1/library/${movieId}`)).json()
     const series = await (await request.get(`/api/v1/library/${seriesId}`)).json()
     const season = series.seasons.find((row: any) => row.number === 1)
-    const db = new DatabaseSync(join(process.env.E2E_DATA_DIR!, 'monarr.db'))
+    const db = openFixtureDatabase()
     const primaryEpisodes = db.prepare(`
       SELECT DISTINCT mfe.episode_id
       FROM media_files mf

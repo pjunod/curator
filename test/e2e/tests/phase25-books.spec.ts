@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { openFixtureDatabase } from '../fixture-db'
 
 // Phase 2.5 (ADR 0006): the full book loop — search Open Library, add,
 // interactive release search (format-graded), grab an EPUB, auto-import
@@ -27,7 +26,7 @@ async function refreshQueueUntil(request: any, pred: (rows: any[]) => boolean) {
 }
 
 async function runRSSUntil(request: any, pred: () => Promise<boolean>) {
-  const db = new DatabaseSync(join(process.env.E2E_DATA_DIR!, 'monarr.db'))
+  const db = openFixtureDatabase()
   db.prepare('UPDATE indexers SET next_rss_at=0').run()
   db.close()
   const response = await request.post('/api/v1/system/tasks/rss.sync/run')
