@@ -1,13 +1,16 @@
 # Fable review handoff — Runner and Curator download lifecycle
 
-**Status:** ready for independent review; coverage gates remain blocked; do not merge
+**Status:** archived review brief; user waived Fable review on 2026-10-23
 **Written:** 2026-10-22 · **Updated:** 2026-10-23
 
 Read [the approved operating proposal](DOWNLOAD_LIFECYCLE_PROPOSAL.md) first,
 then [implementation status](DOWNLOAD_LIFECYCLE_STATUS.md) and
 [Cinema's HTTP integration contract](BAD_DOWNLOAD_API.md). Review both services
-and their shared ownership boundary independently. Keep both PRs unmerged until
-the user has reviewed your findings. Do not deploy or modify production media.
+and their shared ownership boundary independently. On 2026-10-23 the user waived
+Fable review because quota was unavailable and authorized merging after
+adversarial agent review and passing unit tests. The evidence below records the
+earlier handoff checkpoint; consult the PRs for subsequent validation and merge
+status. Deployment and production media changes remain separate.
 
 ## 1. Review targets
 

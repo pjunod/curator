@@ -1,6 +1,6 @@
 # Download lifecycle — implementation and review status
 
-**Status:** Both PRs open; source corrections reviewed; Curator coverage gate remains below its floor; not deployed
+**Status:** User authorized merge after adversarial review and passing unit tests; coverage shortfall disclosed; not deployed
 **Updated:** 2026-10-23
 
 Companion to [the approved operating proposal](DOWNLOAD_LIFECYCLE_PROPOSAL.md)
@@ -36,8 +36,8 @@ per-indexer control and visibility work rather than duplicating that fix.
 | Curator adoption, additional copies, import/cleanup, Resolve | Built and source reviewed; worker and admission regressions pass | Durable purpose and per-file outcomes survive retries and Activity dismissal |
 | Scoped replacement, reports, indexer controls, timelines | Built and source reviewed; scoped replacement and UI regressions pass | Agreed scope and UI behaviors are implemented and observable |
 | Final Astra review and validation | Adversarial source/fix review complete; coverage and final Curator CI remain unresolved | Astra reviews the final PRs; findings addressed; repository gates and lifecycle acceptance verified |
-| Fable review handoff | Prepared for independent review; both PRs remain unmerged and coverage blockers are explicit | Both PR links, agreed behavior, validation evidence, review findings and remaining risks supplied for independent review |
-| PRs, merge, rollout | Runner PR #254 and Curator PR #70 open; keep both unmerged for Fable review | User receives handoff before merge; backlog remains separately controlled |
+| Fable review handoff | Prepared; Fable review waived by user on 2026-10-23 because quota was unavailable | Both PR links, agreed behavior, validation evidence, review findings and remaining risks supplied for independent review |
+| PRs, merge, rollout | Runner PR #254 and Curator PR #70 authorized for merge after adversarial review and passing unit tests | Fable handoff delivered; backlog remains separately controlled |
 | Existing backlog report and batch actions | Read-only per-payload report captured; five exact duplicate media pairs verified for proposed batch V1 | No imports, retries or deletion executed; batch approval remains separate |
 
 ## 3. Foundation integration decisions
@@ -467,3 +467,26 @@ PRs: [Runner #254](https://github.com/pjunod/runner/pull/254) and
 Merge: not performed. Deployment: not performed. Backlog
 deletion/import/retry actions: not performed. Temporary unused managed worktree
 was queued for archival; implementation uses independent clones.
+
+## 6. User-authorized merge checkpoint, 2026-10-23
+
+The user waived Fable review because quota was unavailable and requested merge
+after adversarial agent review and passing unit tests. Astra approved Curator
+`d99768a` and Runner `83cd4cd` with no actionable findings. Runner subsequently
+merged main's iOS build-number-only update (11 to 12); Astra approved the exact
+result `f67a353`. The earlier Fable hold no longer applies.
+
+Final Curator Linux Go tests passed, including the full race-instrumented API
+and acquisition suites; all 124 web unit tests passed. The unit job failed only
+at the coverage floor: 85.2% versus 86%. This is an explicit accepted merge
+limitation under the user's instruction, not a passing coverage gate. Coverage
+floors and exclusions remain unchanged.
+
+The final browser run exposed zero-timeout SQLite writes in its direct fixture
+connection. A transient server write lock aborted the audiobook setup and
+caused later stateful assertions to fail. The test harness now gives fixture
+connections a bounded busy timeout; application behavior and assertions remain
+unchanged. Its validation and final merge result are recorded on the PR.
+
+Merging does not authorize deployment or any existing-backlog batch. The
+read-only report and proposed batches retain their separate approval boundary.
