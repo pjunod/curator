@@ -75,8 +75,13 @@ for (const width of [390, 1280]) {
     await expect(rows.first()).toContainText('episode-051.mkv')
     await expect(controls.getByRole('button', { name: 'Next ›' })).toBeDisabled()
     // Removing the only final-page row must leave a populated preceding page.
-    await rows.first().getByRole('button', { name: 'Delete', exact: true }).click()
-    await rows.first().getByRole('button', { name: 'Delete', exact: true }).click()
+    const deleteFile = async () => {
+      await rows.first().getByRole('button', { name: 'Delete…', exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: 'Delete library file' })
+      await expect(dialog.getByRole('button', { name: 'Delete file', exact: true })).toBeVisible()
+      await dialog.getByRole('button', { name: 'Delete file', exact: true }).click()
+    }
+    await deleteFile()
     await expect(fileSummary).toHaveText('Files (50)')
     await expect(rows).toHaveCount(25)
     await expect(controls).toContainText('Page 2 of 2')

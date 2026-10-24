@@ -48,6 +48,7 @@ type fakeClient struct {
 	// assert monarr asked the client to throw the payload away — and, just as
 	// importantly, that it did not.
 	removed []removeCall
+	addErr  error
 	// polls counts Statuses calls, so a test can assert Monarr talked to the
 	// client at all — which is what the Connections panel and the contact
 	// clock actually report on.
@@ -55,7 +56,10 @@ type fakeClient struct {
 	// removeErr makes the client refuse to delete a payload — the case the
 	// field produced, where monarr imported, asked, was told no, and left
 	// 90 GB in the completed folder forever.
-	removeErr error
+	removeErr      error
+	admission      ports.RequestAdmission
+	admissionFound bool
+	admissionErr   error
 }
 
 type removeCall struct {
@@ -63,11 +67,55 @@ type removeCall struct {
 	DeleteData bool
 }
 
+var acquisitionSchemaTemplate struct {
+	once sync.Once
+	data []byte
+	err  error
+}
+
+func migratedAcquisitionSchema() ([]byte, error) {
+	acquisitionSchemaTemplate.once.Do(func() {
+		dir, err := os.MkdirTemp("", "monarr-acquisition-schema-")
+		if err != nil {
+			acquisitionSchemaTemplate.err = err
+			return
+		}
+		defer func() {
+			if cleanupErr := os.RemoveAll(dir); cleanupErr != nil && acquisitionSchemaTemplate.err == nil {
+				acquisitionSchemaTemplate.err = cleanupErr
+			}
+		}()
+
+		db, err := sqlite.Open(dir)
+		if err != nil {
+			acquisitionSchemaTemplate.err = err
+			return
+		}
+		if err := db.Migrate(context.Background()); err != nil {
+			_ = db.Close()
+			acquisitionSchemaTemplate.err = err
+			return
+		}
+		if err := db.Checkpoint(context.Background()); err != nil {
+			_ = db.Close()
+			acquisitionSchemaTemplate.err = err
+			return
+		}
+		path := db.Path
+		if err := db.Close(); err != nil {
+			acquisitionSchemaTemplate.err = err
+			return
+		}
+		acquisitionSchemaTemplate.data, acquisitionSchemaTemplate.err = os.ReadFile(path)
+	})
+	return acquisitionSchemaTemplate.data, acquisitionSchemaTemplate.err
+}
+
 func (f *fakeClient) Add(ctx context.Context, url, cat string) (ports.Handle, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.added = append(f.added, url)
-	return "h1", nil
+	return "h1", f.addErr
 }
 func (f *fakeClient) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 	f.mu.Lock()
@@ -82,10 +130,29 @@ func (f *fakeClient) Remove(ctx context.Context, h ports.Handle, del bool) error
 	return f.removeErr
 }
 func (f *fakeClient) Test(ctx context.Context) error { return nil }
+func (f *fakeClient) GetRequestAdmission(ctx context.Context, token string) (ports.RequestAdmission, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.admissionErr != nil {
+		return ports.RequestAdmission{}, false, f.admissionErr
+	}
+	if f.admissionFound && f.admission.RequestToken != token {
+		return ports.RequestAdmission{}, false, nil
+	}
+	return f.admission, f.admissionFound, nil
+}
 
 func setup(t *testing.T, releases []ports.Release, client *fakeClient) (*Service, *sqlite.DB, int64) {
 	t.Helper()
-	db, err := sqlite.Open(t.TempDir())
+	dbDir := t.TempDir()
+	schema, err := migratedAcquisitionSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dbDir, sqlite.FileName), schema, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sqlite.Open(dbDir)
 	if err != nil {
 		t.Fatal(err)
 	}

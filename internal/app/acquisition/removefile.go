@@ -6,35 +6,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/pjunod/monarr/internal/domain"
 )
 
-// Removing one file, by hand.
-//
-// Everything else in this package moves files because a rule said so: an
-// upgrade replaces what it beats, a failed download blocklists itself. This is
-// the other case — a person looked at a specific file, decided it is bad, and
-// wants it gone. Until now there was no way to say that. The Files table was
-// read-only, DeleteMediaFile existed in the storage layer with no caller above
-// it, and the only route to a blocklist ran through the download queue, which
-// forgets a release the moment it imports.
-//
-// Two things are deliberately separate here. Deleting a file says "I do not
-// want this copy". Blocklisting says "and never take this release again".
-// They usually travel together and they are not the same statement: a file
-// deleted to free space should not poison a release that was fine.
-
-// RemoveFileRequest is one user decision about one file.
+// RemoveFileRequest preserves the old remove endpoint's shape. Bad and quality
+// replacement decisions use the reviewed replacement workflow; Search and
+// Blocklist remain for wire compatibility and are rejected below.
 type RemoveFileRequest struct {
 	// FromDisk deletes the bytes, not just the row. Default false is the
 	// cautious reading of an ambiguous request; the UI sets it explicitly.
 	FromDisk bool
-	// Blocklist declares the release that produced this file bad, so
-	// automation never grabs it again. No-op for a file monarr did not grab.
+	// Deprecated: use the reviewed replacement workflow to blocklist a source.
 	Blocklist bool
-	// Search hunts for a replacement once the file is gone. Only meaningful
-	// with Blocklist or FromDisk, since otherwise nothing changed.
+	// Deprecated: replacement acquisition requires an explicit reviewed scope.
 	Search bool
 	// Reason is what the user (or the UI) says about it, kept in history.
 	Reason string
@@ -53,7 +36,8 @@ type RemoveFileResult struct {
 	Note string `json:"note,omitempty"`
 }
 
-// RemoveFile deletes one library file and optionally declares its release bad.
+// RemoveFile removes one library association, and optionally its bytes. Bad or
+// replacement decisions must use the reviewed replacement workflow.
 //
 // The row goes first and the bytes second, and the order matters: if the
 // unlink fails (a read-only mount, a permission), the row is already gone and
@@ -61,6 +45,9 @@ type RemoveFileResult struct {
 // The reverse order can leave a row pointing at nothing, which reads as "you
 // have this file" forever.
 func (s *Service) RemoveFile(ctx context.Context, itemID, fileID int64, req RemoveFileRequest) (RemoveFileResult, error) {
+	if req.Search || req.Blocklist {
+		return RemoveFileResult{}, ErrReplacementReviewRequired
+	}
 	rec, err := s.db.GetFileQuality(ctx, fileID)
 	if err != nil {
 		return RemoveFileResult{}, err
@@ -76,7 +63,7 @@ func (s *Service) RemoveFile(ctx context.Context, itemID, fileID int64, req Remo
 		return RemoveFileResult{}, err
 	}
 
-	release, indexer := s.db.FileSource(ctx, fileID)
+	release, _ := s.db.FileSource(ctx, fileID)
 	result := RemoveFileResult{Path: rec.Path}
 
 	if err := s.db.DeleteFile(ctx, fileID); err != nil {
@@ -96,26 +83,6 @@ func (s *Service) RemoveFile(ctx context.Context, itemID, fileID int64, req Remo
 		}
 	}
 
-	if req.Blocklist {
-		if release == "" {
-			// An adopted file has no source release, and inventing one from
-			// the filename would blocklist a string no indexer ever offered.
-			result.Note = joinNote(result.Note,
-				"monarr did not grab this file, so there is no release to blocklist")
-		} else {
-			reason := req.Reason
-			if reason == "" {
-				reason = "marked bad by user"
-			}
-			if err := s.db.AddBlocklist(ctx, itemID, release, indexer, reason); err != nil {
-				result.Note = joinNote(result.Note, fmt.Sprintf("could not blocklist %q: %v", release, err))
-				s.log.Warn("remove file: blocklist failed", "release", release, "err", err)
-			} else {
-				result.Blocklisted = release
-			}
-		}
-	}
-
 	_ = s.db.AddHistory(ctx, HistoryFileRemoved, itemID, release, map[string]any{
 		"file":        filepath.Base(rec.Path),
 		"fromDisk":    result.DeletedFromDisk,
@@ -125,18 +92,8 @@ func (s *Service) RemoveFile(ctx context.Context, itemID, fileID int64, req Remo
 	s.log.Info("file removed by user", "item", item.Title, "file", filepath.Base(rec.Path),
 		"fromDisk", result.DeletedFromDisk, "blocklisted", result.Blocklisted)
 
-	// The item just lost a file, so whatever the wanted index believed about
-	// it is now wrong. Invalidate before searching, or the search re-derives
-	// the same stale answer and finds nothing to do.
+	// The item just lost a file, so invalidate its cached wanted state.
 	s.InvalidateWanted()
-
-	if req.Search {
-		if err := s.searchReplacement(ctx, item, rec.CopyID); err != nil {
-			result.Note = joinNote(result.Note, fmt.Sprintf("could not start a search: %v", err))
-		} else {
-			result.Searched = true
-		}
-	}
 	return result, nil
 }
 
@@ -144,43 +101,3 @@ func (s *Service) RemoveFile(ctx context.Context, itemID, fileID int64, req Remo
 // rather than only in the log because "where did my file go" is a question
 // asked days later, by which point the log has rotated.
 const HistoryFileRemoved = "file_removed"
-
-// searchReplacement hunts for whatever the item is now missing.
-//
-// It re-derives the wantables from scratch rather than reusing the deleted
-// file's, because a deletion can change the shape of what is wanted: removing
-// the only file of a movie turns "upgrade" into "missing", and removing one
-// episode of a season leaves the rest alone.
-func (s *Service) searchReplacement(ctx context.Context, item domain.MediaItem, copyID int64) error {
-	enabled, err := s.enabledIndexers(ctx)
-	if err != nil {
-		return err
-	}
-	if len(enabled) == 0 {
-		return ErrNoIndexers
-	}
-	var cp *domain.MediaCopy
-	if copyID != 0 {
-		c, err := s.db.GetMediaCopy(ctx, item.ID, copyID)
-		if err == nil {
-			cp = &c
-		}
-	}
-	target, err := s.targetCopy(ctx, item, 0, 0, cp)
-	if err != nil {
-		// A series needs a season to build a wantable, and "which season"
-		// is not a question a file deletion answers. Fall back to the
-		// item-wide sweep, which figures it out from the wanted index.
-		_, err := s.AutoSearchItem(ctx, item.ID)
-		return err
-	}
-	_, err = s.searchAndGrabBest(ctx, target, enabled)
-	return err
-}
-
-func joinNote(existing, add string) string {
-	if existing == "" {
-		return add
-	}
-	return existing + "; " + add
-}

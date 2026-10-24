@@ -1,10 +1,10 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import type { LanguageOption, ReleaseCandidate } from '../api'
 import { fmtBytes, grabRelease, listLanguages, searchReleases } from '../api'
 import { releaseLanguagesLabel } from '../language'
-import { ActionDialog, ActionNotice } from '../ActionDialog'
+import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { PageSizePicker, Pager, clampPage, sliceForPage } from '../Pager'
 
 // ReleaseSearch is the interactive search panel.
@@ -38,6 +38,20 @@ export function ReleaseSearch(props: {
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(50)
+  const [confirmingBlacklist, setConfirmingBlacklist] = useState<ReleaseCandidate | null>(null)
+  const requestIds = useRef(new Map<string, string>())
+  const confirmationTrigger = useRef<HTMLButtonElement | null>(null)
+
+  const requestKey = (c: ReleaseCandidate) => `${c.indexer}\u0000${c.title}\u0000${c.downloadUrl}`
+  const requestIdFor = (c: ReleaseCandidate) => {
+    const key = requestKey(c)
+    let id = requestIds.current.get(key)
+    if (!id) {
+      id = globalThis.crypto?.randomUUID?.() ?? `manual-${Date.now()}-${Math.random().toString(16).slice(2)}`
+      requestIds.current.set(key, id)
+    }
+    return id
+  }
 
   const search = useQuery({
     queryKey: ['releases', mediaItemId, copyId ?? 0, season ?? -1, episode ?? -1],
@@ -51,14 +65,21 @@ export function ReleaseSearch(props: {
   const languages = useQuery({ queryKey: ['languages'], queryFn: listLanguages, staleTime: Infinity })
 
   const grab = useMutation({
-    mutationFn: (c: ReleaseCandidate) =>
+    mutationFn: ({ c, downloadAnyway }: { c: ReleaseCandidate; downloadAnyway: boolean }) =>
       grabRelease({
         mediaItemId, copyId, season, episode,
         title: c.title, downloadUrl: c.downloadUrl, indexer: c.indexer,
         protocol: c.protocol, size: c.size, candidateToken: c.candidateToken,
+        intent: 'additional_copy', requestId: requestIdFor(c),
+        ...(downloadAnyway ? { downloadAnyway: true } : {}),
       }),
     onMutate: () => setGrabbed(null),
-    onSuccess: (_res, c) => setGrabbed(c.title),
+    onSuccess: (_res, { c }) => {
+      setGrabbed(c.title)
+      requestIds.current.delete(requestKey(c))
+      setConfirmingBlacklist(null)
+      requestAnimationFrame(() => confirmationTrigger.current?.focus({ preventScroll: true }))
+    },
   })
 
   const all = useMemo(() => search.data?.candidates ?? [], [search.data])
@@ -91,7 +112,28 @@ export function ReleaseSearch(props: {
   )
 
   return (
-    <ActionDialog title={`Interactive search — ${label}`} className="release-search" onClose={props.onClose}>
+    <ActionDialog title={confirmingBlacklist ? 'Download blacklisted release anyway?' : `Interactive search — ${label}`} className="release-search" onClose={props.onClose}>
+      {confirmingBlacklist ? (
+        <div className="blacklist-confirmation">
+          {grab.isError && <ActionNotice warning>{String((grab.error as Error).message)}</ActionNotice>}
+          <ActionNotice warning>
+            This release remains blacklisted for automatic searches. This confirmation applies only to this manual additional copy.
+          </ActionNotice>
+          <p><span className="mono">{confirmingBlacklist.title}</span></p>
+          <p>Blacklist reason: {confirmingBlacklist.blacklistReason}</p>
+          <div className="dialog-actions">
+            <button onClick={() => {
+              setConfirmingBlacklist(null)
+              requestAnimationFrame(() => confirmationTrigger.current?.focus({ preventScroll: true }))
+            }}>Cancel</button>
+            <button className="btn-accent" disabled={grab.isPending}
+              onClick={() => grab.mutate({ c: confirmingBlacklist, downloadAnyway: true })}>
+              {grab.isPending ? 'Submitting…' : 'Download anyway'}
+            </button>
+          </div>
+        </div>
+      ) : (
+      <>
       {search.isFetching && <p className="muted">Searching indexers…</p>}
       {search.data?.partial && (
         <ActionNotice warning>
@@ -166,7 +208,15 @@ export function ReleaseSearch(props: {
                       c={c}
                       languages={languages.data}
                       busy={grab.isPending}
-                      onGrab={() => grab.mutate(c)}
+                      onGrab={(event) => {
+                        if (c.blacklistReason) {
+                          focusActionTrigger(event)
+                          confirmationTrigger.current = event.currentTarget
+                          setConfirmingBlacklist(c)
+                        } else {
+                          grab.mutate({ c, downloadAnyway: false })
+                        }
+                      }}
                     />
                   ))}
                 </tbody>
@@ -178,6 +228,9 @@ export function ReleaseSearch(props: {
             <Pager page={current} size={size} total={filtered.length} onPage={setPage} />
           </div>
         </>
+      )}
+
+      </>
       )}
     </ActionDialog>
   )
@@ -201,7 +254,7 @@ function ReleaseRow({
   c: ReleaseCandidate
   languages?: LanguageOption[]
   busy: boolean
-  onGrab: () => void
+  onGrab: (event: SyntheticEvent<HTMLButtonElement>) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [first, ...rest] = c.rejections
@@ -229,6 +282,7 @@ function ReleaseRow({
             the profile would take — but it is a caution, not a refusal, and it
             has to read as one. */}
         {c.warning && <div className="warn-text">⚠ {c.warning}</div>}
+        {c.blacklistReason && <div className="warn-text">⚠ Blacklisted: {c.blacklistReason}</div>}
         {first && (
           <div className="error-text">
             ✕ {first.reason}

@@ -55,13 +55,45 @@ test('queue columns do not overlap each other', async ({ page }) => {
   }
 })
 
+for (const width of [390, 1280]) {
+  test(`reservation errors stay compact and readable at ${width}px`, async ({ page }) => {
+    const error = 'The client accepted the request but its exact handle could not be committed; Curator is reconciling by transfer token while protecting this reservation.'
+    await page.route('**/api/v1/queue/summary', route => route.fulfill({ json: {
+      total: 1, active: 1, counts: { grabbed: 1 }, retentionDays: 30,
+    } }))
+    await page.route('**/api/v1/queue?*', route => route.fulfill({ json: [{
+      id: 778, mediaItemId: 8, title: 'A.Long.Release.Name.2026.1080p.WEB-DL', state: 'grabbed',
+      progress: 0, protocol: 'usenet', quality: 'WEB-DL 1080p', addedAt: new Date().toISOString(),
+      submissionPhase: 'uncertain', error, parkedReason: error,
+    }] }))
+
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/activity')
+    const row = page.locator('.queue-table tbody tr:not(.section-row)').first()
+    await expect(row).toBeVisible()
+    const box = await row.boundingBox()
+    expect(box?.height ?? 999).toBeLessThan(width < 500 ? 260 : 140)
+    let toggle = row.getByRole('button', { name: /handoff/ })
+    if (await toggle.getAttribute('aria-expanded') === 'true') {
+      await toggle.click()
+      toggle = row.getByRole('button', { name: 'Show handoff' })
+    }
+    await toggle.focus()
+    await page.keyboard.press('Enter')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('.handoff').getByText(error, { exact: false })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+    await page.screenshot({ path: test.info().outputPath(`queue-diagnostic-${width}.png`) })
+  })
+}
+
 test('a long file list scrolls instead of growing the page', async ({ page }) => {
   const dir = mkdtempSync(join(process.env.E2E_MEDIA_ROOT!, 'long-import-'))
   for (let i = 1; i <= 30; i++) {
     writeFileSync(join(dir, `Test.Show.S01E${String(i).padStart(2, '0')}.1080p.WEB-DL.mkv`), 'x')
   }
   await page.goto('/activity')
-  await page.getByRole('button', { name: 'Manual import' }).click()
+  await page.getByRole('button', { name: 'Resolve', exact: true }).click()
   // The folder preview and the per-file import report are both unbounded —
   // a season pack is 24 rows and a mis-pointed path can be hundreds.
   const panel = page.locator('.manual-import')

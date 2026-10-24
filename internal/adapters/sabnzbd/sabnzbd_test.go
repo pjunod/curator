@@ -2,12 +2,30 @@ package sabnzbd
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/pjunod/monarr/internal/ports"
 )
+
+func TestAddURLExplicitRejectionIsDefiniteAdmissionRefusal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("mode") == "addurl" {
+			_, _ = w.Write([]byte(`{"status":false,"nzo_ids":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	client := New(ports.ClientConfig{Type: "sabnzbd", URL: srv.URL, Password: "sabkey"})
+	handle, err := client.Add(context.Background(), "https://indexer.invalid/release.nzb", "monarr")
+	if handle != "" || !errors.Is(err, ports.ErrAdmissionRejected) {
+		t.Fatalf("Add() = %q, %v; want empty handle and definite rejection", handle, err)
+	}
+}
 
 func fakeSab(t *testing.T) *httptest.Server {
 	t.Helper()

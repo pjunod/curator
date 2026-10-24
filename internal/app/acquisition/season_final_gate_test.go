@@ -786,10 +786,16 @@ func TestPersistedRSSWakeDispatchesBeforeMaximumIdleSweep(t *testing.T) {
 	go func() { s.RunRSSPacing(ctx); close(finished) }()
 	select {
 	case <-client.called:
-		cancel()
 	case <-time.After(5 * time.Second):
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Fatal("RSS pacing did not stop after timed-out dispatch")
+		}
 		t.Fatal("persisted due time did not wake RSS")
 	}
+	cancel()
 	select {
 	case <-finished:
 	case <-time.After(5 * time.Second):
@@ -798,5 +804,74 @@ func TestPersistedRSSWakeDispatchesBeforeMaximumIdleSweep(t *testing.T) {
 	var calls int
 	if err := db.R.QueryRowContext(context.Background(), `SELECT count(*) FROM indexer_request_usage WHERE bucket='rss'`).Scan(&calls); err != nil || calls != 1 {
 		t.Fatalf("due sweep debit = %d %v", calls, err)
+	}
+}
+
+func TestPersistedOverdueRSSDeadlineDispatchesPromptly(t *testing.T) {
+	client := &rssWakeClient{called: make(chan struct{})}
+	s, db, _ := autoSetup(t, []ports.Release{rel("Test.Movie.2024.1080p.WEB-DL-OVERDUE", 10)}, &client.fakeClient)
+	s.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := db.W.ExecContext(ctx, `UPDATE indexers SET next_rss_at=?`, time.Now().Add(-time.Second).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan struct{})
+	go func() { s.RunRSSPacing(ctx); close(finished) }()
+	select {
+	case <-client.called:
+	case <-time.After(5 * time.Second):
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Fatal("RSS pacing did not stop after overdue-deadline timeout")
+		}
+		t.Fatal("persisted overdue deadline did not wake RSS")
+	}
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RSS pacing did not stop on cancellation after overdue dispatch")
+	}
+	var calls int
+	if err := db.R.QueryRowContext(context.Background(), `SELECT count(*) FROM indexer_request_usage WHERE bucket='rss'`).Scan(&calls); err != nil || calls != 1 {
+		t.Fatalf("overdue due sweep debit = %d %v", calls, err)
+	}
+}
+
+func TestPersistedOverdueRSSDeadlineWithNoWantedWorkDoesNotDispatch(t *testing.T) {
+	client := &fakeClient{}
+	s, db, _ := autoSetup(t, []ports.Release{rel("Test.Movie.2024.1080p.WEB-DL-NO-WANTED", 10)}, client)
+	s.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := db.W.ExecContext(ctx, `UPDATE media_items SET monitored=0`); err != nil {
+		t.Fatal(err)
+	}
+	s.InvalidateWanted()
+	due := time.Now().Add(-time.Second).UnixMilli()
+	if _, err := db.W.ExecContext(ctx, `UPDATE indexers SET next_rss_at=?`, due); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan struct{})
+	go func() { s.RunRSSPacing(ctx); close(finished) }()
+	// Allow the prompt overdue check to run. With no wanted rows, SyncRSS must
+	// return before requesting RSS and leave the persisted deadline untouched.
+	time.Sleep(350 * time.Millisecond)
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RSS pacing did not stop on cancellation after the no-work check")
+	}
+	var calls int
+	if err := db.R.QueryRowContext(context.Background(), `SELECT count(*) FROM indexer_request_usage WHERE bucket='rss'`).Scan(&calls); err != nil || calls != 0 {
+		t.Fatalf("no-wanted RSS run made provider requests: count=%d err=%v", calls, err)
+	}
+	var stored int64
+	if err := db.R.QueryRowContext(context.Background(), `SELECT next_rss_at FROM indexers LIMIT 1`).Scan(&stored); err != nil || stored != due {
+		t.Fatalf("no-wanted RSS run changed due time: got=%d want=%d err=%v", stored, due, err)
 	}
 }

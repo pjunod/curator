@@ -10,6 +10,89 @@ info:
     name: GPL-3.0
 
 paths:
+  /downloads/deliveries:
+    get:
+      operationId: listDeliveryLifecycle
+      summary: Paginated durable Runner handoff and cleanup receipts
+      parameters:
+        - name: beforeId
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: downloadId
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200":
+          description: One bounded page; nextBeforeId pages older receipts without truncation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryLifecyclePage" }
+
+  /downloads/deliveries/{receiptId}:
+    get:
+      operationId: getDeliveryLifecycleReceipt
+      summary: Read one durable Runner handoff and cleanup receipt
+      parameters:
+        - { name: receiptId, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: Durable lifecycle detail, even after Activity is dismissed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryLifecycleReceipt" }
+        "404": { description: Delivery receipt not found. }
+
+  /downloads/deliveries/{receiptId}/import:
+    post:
+      operationId: resolveDeliveryImport
+      summary: Import an explicitly selected subset of an accepted Runner manifest
+      parameters:
+        - { name: receiptId, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResolveDeliveryImportRequest" }
+      responses:
+        "202": { description: Manifest-bound import queued. }
+        "409": { description: Delivery association changed or work is already active. }
+
+  /downloads/deliveries/{receiptId}/retry-handoff:
+    post:
+      operationId: retryDeliveryHandoff
+      summary: Retry acceptance or import for one durable delivery
+      parameters:
+        - { name: receiptId, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "202": { description: Handoff retry queued. }
+        "409": { description: Delivery cannot be retried in its current state. }
+
+  /downloads/deliveries/{receiptId}/retry-runner-cleanup:
+    post:
+      operationId: retryRunnerDeliveryCleanup
+      summary: Retry Runner-owned processing-source cleanup
+      parameters:
+        - { name: receiptId, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "202": { description: Runner cleanup retry requested. }
+        "409": { description: Runner does not permit a cleanup retry. }
+
+  /downloads/deliveries/{receiptId}/retry-curator-cleanup:
+    post:
+      operationId: retryCuratorDeliveryCleanup
+      summary: Retry Curator-owned accepted-publication cleanup
+      parameters:
+        - { name: receiptId, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "202": { description: Curator cleanup retry queued. }
+        "409": { description: Cleanup is not eligible to retry. }
+
   /downloads/inventory/entry:
     delete:
       operationId: deleteCompletedEntry
@@ -24,6 +107,16 @@ paths:
               properties:
                 path: { type: string }
                 fingerprint: { type: string }
+                reviewLegacy: { type: boolean, description: Explicitly approve deletion of only the selected current files from a legacy review entry. }
+                files:
+                  type: array
+                  description: Exact inventory file identities selected for explicit deletion of a delivery-managed or explicitly reviewed legacy payload. Required for these entries; no directory removal is performed.
+                  items:
+                    type: object
+                    required: [path, snapshotIdentity]
+                    properties:
+                      path: { type: string }
+                      snapshotIdentity: { type: string }
       responses:
         "204":
           description: Files removed and accounting updated.
@@ -2190,6 +2283,198 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /library/{id}/files/{fileId}/report:
+    post:
+      operationId: reportLibraryFile
+      summary: Record a review flag for existing library media
+      description: Stores reported evidence separately; it does not change quality, coverage, or acquisition state.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LibraryFileReportRequest" }
+      responses:
+        "204": { description: Review flag recorded. }
+        "404":
+          description: The reviewed generation is no longer current.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The reviewed generation changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /library/{id}/review-flags/{flagId}/resolve:
+    post:
+      operationId: resolveLibraryReviewFlag
+      summary: Resolve a user report for the exact reviewed file generation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: flagId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileGeneration]
+              properties:
+                fileGeneration: { type: string }
+      responses:
+        "204": { description: Review flag resolved. }
+        "404": { description: No matching open review flag. }
+        "409": { description: File generation changed. }
+
+  /library/{id}/files/{fileId}/replacement-observations:
+    post:
+      operationId: startReplacementFileObservation
+      summary: Prepare a read-only, generation-bound file observation
+      description: Hashes and fingerprints current bytes in the background before an explicit replacement decision can act on them.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReplacementObservationRequest" }
+      responses:
+        "202":
+          description: Observation queued or already running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReplacementObservation" }
+        "200":
+          description: Idempotent replay of an existing observation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReplacementObservation" }
+        "409":
+          description: The file generation changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /replacement-observations/{observationId}:
+    get:
+      operationId: getReplacementFileObservation
+      summary: Read a prepared file observation
+      parameters:
+        - name: observationId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Observation status and exact byte identity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReplacementObservation" }
+        "404":
+          description: No such observation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /library/{id}/replacement-operations:
+    get:
+      operationId: getLibraryLifecycleReview
+      summary: List durable replacement operations and open file reports for an item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Item-level lifecycle review, available after files or Activity rows are removed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibraryLifecycleReview" }
+        "404":
+          description: Item was not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      operationId: createReplacementOperation
+      summary: Start a reviewed bad-source or quality replacement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReplacementRequest" }
+      responses:
+        "202":
+          description: Durable replacement operation accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReplacementOperation" }
+        "400":
+          description: Invalid replacement scope or missing explicit decision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Item or file was not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The reviewed source changed or the request ID conflicts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /replacement-operations/{operationId}:
+    get:
+      operationId: getReplacementOperation
+      summary: Read a durable replacement operation
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Current operation and snapshotted file evidence.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReplacementOperation" }
+        "404":
+          description: No such operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/{id}/seasons/{season}:
     patch:
       operationId: setSeasonMonitored
@@ -2858,6 +3143,87 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    DeliveryLifecyclePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DeliveryLifecycleReceipt" }
+        nextBeforeId: { type: integer, format: int64 }
+    ResolveDeliveryImportRequest:
+      type: object
+      required: [paths]
+      properties:
+        paths:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items: { type: string, minLength: 1, maxLength: 4096 }
+    DeliveryLifecycleReceipt:
+      type: object
+      required: [receiptId, clientId, downloadId, deliveryId, publicationGeneration, manifestDigest, state, acceptance, manifestFiles, curatorFiles, attemptHistory]
+      properties:
+        receiptId: { type: integer, format: int64 }
+        clientId: { type: integer, format: int64 }
+        downloadId: { type: integer, format: int64 }
+        generationKey: { type: string }
+        mediaItemId: { type: integer, format: int64 }
+        copyId: { type: integer, format: int64 }
+        deliveryId: { type: string }
+        publicationGeneration: { type: string }
+        manifestDigest: { type: string }
+        runnerInstanceId: { type: string }
+        jobId: { type: string }
+        requestToken: { type: string }
+        publicationPath: { type: string }
+        mappedPath: { type: string }
+        readyAt: { type: string, format: date-time }
+        terminalOutcome: { type: string }
+        failureStage: { type: string }
+        failureCause: { type: string }
+        keepSourceOnFailure: { type: boolean }
+        state: { type: string }
+        acceptance: { type: string }
+        consumerReceiptId: { type: string }
+        attempts: { type: integer }
+        blockedSince: { type: string, format: date-time }
+        nextAttemptAt: { type: string, format: date-time }
+        error: { type: string }
+        manifestFiles:
+          type: array
+          items:
+            type: object
+            required: [path, sizeBytes, sha256]
+            properties:
+              path: { type: string }
+              sizeBytes: { type: integer, format: int64 }
+              sha256: { type: string }
+        sourceFileOutcomes: { type: array, items: { type: object, additionalProperties: true } }
+        attemptHistory:
+          type: array
+          items:
+            type: object
+            required: [id, stage, attempt, startedAt, result]
+            properties:
+              id: { type: integer, format: int64 }
+              stage: { type: string }
+              attempt: { type: integer }
+              startedAt: { type: string, format: date-time }
+              finishedAt: { type: string, format: date-time }
+              result: { type: string }
+              error: { type: string }
+        sourceCleanup: { type: object, additionalProperties: true }
+        sourceCleanupAttempts: { type: integer }
+        sourceCleanupBlockedSince: { type: string, format: date-time }
+        sourceCleanupNextAttemptAt: { type: string, format: date-time }
+        sourceCleanupError: { type: string }
+        directoryCleanupState: { type: string }
+        directoryCleanupAttempts: { type: integer }
+        directoryCleanupBlockedSince: { type: string, format: date-time }
+        directoryCleanupNextAttemptAt: { type: string, format: date-time }
+        directoryCleanupError: { type: string }
+        curatorFiles: { type: array, items: { type: object, additionalProperties: true } }
     SystemStatus:
       type: object
       required:
@@ -3213,6 +3579,14 @@ components:
           items:
             type: integer
             format: int64
+        fileGeneration: { type: string }
+        sourceGeneration: { type: string }
+        sourceTransfer: { type: string }
+        sourcePayloadGeneration: { type: string }
+        sourceFileGeneration: { type: string }
+        sourceGuid: { type: string }
+        sourceIndexerId: { type: integer, format: int64 }
+        sourceIndexer: { type: string }
         quality:
           type: string
           description: >
@@ -3249,7 +3623,6 @@ components:
             The release that put this file here, when monarr grabbed it.
             Empty for an adopted file -- which is also why there is nothing to
             blocklist for one.
-
     MediaItemDetail:
       type: object
       required:
@@ -4204,6 +4577,124 @@ components:
             A caution that does not decline the release: the profile would take
             it, but something does not add up. Today that means an advertised
             size too small to hold what the name claims.
+        blacklistReason:
+          type: string
+          description: Exact blocklist reason; Download anyway applies only to this manual request.
+
+    ReplacementObservationRequest:
+      type: object
+      required: [requestId, fileGeneration]
+      properties:
+        requestId: { type: string }
+        fileGeneration: { type: string }
+
+    ReplacementObservation:
+      type: object
+      required: [observationId, requestId, state, fileGeneration]
+      properties:
+        observationId: { type: string }
+        requestId: { type: string }
+        state: { type: string }
+        fileGeneration: { type: string }
+        sourceGeneration: { type: string }
+        sha256: { type: string }
+        size: { type: integer, format: int64 }
+        error: { type: string }
+
+    LibraryFileReportRequest:
+      type: object
+      required: [fileGeneration, reasonCode, reason]
+      properties:
+        fileGeneration: { type: string }
+        reasonCode: { type: string }
+        reason: { type: string }
+        evidence: { type: object, additionalProperties: true }
+
+    ReplacementRequest:
+      type: object
+      required: [requestId, scope, copyId, sourceFileId, intent, blacklistSourceRelease, reasonCode, reason, observedFiles]
+      properties:
+        requestId: { type: string }
+        sourceGeneration: { type: string }
+        sourceTransfer: { type: string }
+        scope: { type: string, enum: [episodes, download] }
+        copyId: { type: integer, format: int64 }
+        sourceFileId: { type: integer, format: int64 }
+        episodeIds:
+          type: array
+          items: { type: integer, format: int64 }
+        intent: { type: string, enum: [replace_bad, replace_quality] }
+        blacklistSourceRelease: { type: boolean }
+        reasonCode: { type: string }
+        reason: { type: string }
+        observedFiles:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [id, fileGeneration, observationId]
+            properties:
+              id: { type: integer, format: int64 }
+              fileGeneration: { type: string }
+              observationId: { type: string }
+
+    ReplacementOperation:
+      type: object
+      required: [operationId, requestId, state, intent, scope, blacklistSourceRelease]
+      properties:
+        operationId: { type: string }
+        requestId: { type: string }
+        state: { type: string }
+        intent: { type: string }
+        scope: { type: string }
+        blacklistSourceRelease:
+          type: boolean
+          description: The exact blacklist choice saved with this operation; never inferred from current blacklist state.
+        mediaItemId: { type: integer, format: int64 }
+        copyId: { type: integer, format: int64 }
+        sourceGeneration: { type: string }
+        sourceTransfer: { type: string }
+        sourceRelease: { type: string }
+        sourceGuid: { type: string }
+        sourceIndexerId: { type: integer, format: int64 }
+        episodeIds:
+          type: array
+          items: { type: integer, format: int64 }
+        lastError: { type: string }
+        retryAttempts: { type: integer }
+        blockedSince: { type: string, format: date-time }
+        nextAttemptAt: { type: string, format: date-time }
+        blockedWarning: { type: boolean }
+        files:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    LibraryLifecycleReview:
+      type: object
+      required: [operations, openReports]
+      properties:
+        operations:
+          type: array
+          items: { $ref: "#/components/schemas/ReplacementOperation" }
+        openReports:
+          type: array
+          items: { $ref: "#/components/schemas/LibraryReviewFlag" }
+
+    LibraryReviewFlag:
+      type: object
+      required: [id, mediaItemId, mediaFileId, fileGeneration, reasonCode, reason, state, createdAt, updatedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        mediaItemId: { type: integer, format: int64 }
+        mediaFileId: { type: integer, format: int64 }
+        fileGeneration: { type: string }
+        reasonCode: { type: string }
+        reason: { type: string }
+        state: { type: string, enum: [open] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
 
     RemoveFileResult:
       type: object
@@ -4224,7 +4715,7 @@ components:
 
     GrabRequest:
       type: object
-      required: [mediaItemId, title, downloadUrl, protocol]
+      required: [mediaItemId, title, downloadUrl, protocol, intent, requestId]
       properties:
         mediaItemId: { type: integer, format: int64 }
         copyId:
@@ -4241,6 +4732,16 @@ components:
         candidateToken:
           type: string
           description: Opaque token returned by Release Search. Absent means an explicit manual override.
+        intent:
+          type: string
+          enum: [additional_copy]
+          description: Manual acquisition always creates an independent additional copy.
+        requestId:
+          type: string
+          description: Stable idempotency key for one deliberate manual Grab action.
+        downloadAnyway:
+          type: boolean
+          description: One-request override for an existing automatic blacklist entry; it does not remove the entry.
 
     ScannedFile:
       type: object
@@ -4255,6 +4756,9 @@ components:
         episodes:
           type: array
           items: { type: integer }
+        snapshotIdentity:
+          type: string
+          description: Stable preview snapshot token used to detect changed files before explicit legacy review import.
 
     ImportPathDefault:
       type: object
@@ -4371,6 +4875,22 @@ components:
           description: >
             Tie the import to a stuck queue row so it's marked imported (or
             failed) by this attempt. 0 = a standalone import.
+        reviewLegacy:
+          type: boolean
+          description: Explicitly approve only the selected files from a fenced legacy payload for this manual import.
+        reviewLegacyFingerprint:
+          type: string
+          description: Exact inventory fingerprint shown in the legacy review preview.
+        reviewLegacyFiles:
+          type: array
+          description: Exact selected path and snapshot identities from the preview; required when reviewLegacy is true.
+          minItems: 1
+          items:
+            type: object
+            required: [path, snapshotIdentity]
+            properties:
+              path: { type: string }
+              snapshotIdentity: { type: string }
 
     ManualImportAccepted:
       type: object
@@ -4941,6 +5461,9 @@ components:
             The in-memory importer state. `queued` means the job was accepted
             and is waiting for one of the bounded import workers; `running`
             means a worker owns it. Absent means no importer owns this row.
+        importRetryAttempts: { type: integer, minimum: 0 }
+        importBlockedSince: { type: string, format: date-time }
+        importRetryAt: { type: string, format: date-time }
         stage:
           type: string
           description: >
@@ -5027,15 +5550,33 @@ components:
         files: { type: integer }
         status: { type: string }
         reason: { type: string }
+        legacyReview: { type: boolean, description: Pre-delivery legacy item held for read-only review. }
+        deliveryManaged: { type: boolean, description: Runner payload governed by its accepted per-file manifest. }
+        reviewFiles:
+          type: array
+          description: Current file metadata snapshots for review and exact selected-file operations; the accepted delivery manifest remains the deletion authority.
+          items:
+            $ref: '#/components/schemas/CompletedReviewFile'
         receipts:
           type: array
           items:
             $ref: '#/components/schemas/CompletedReceipt'
+    CompletedReviewFile:
+      type: object
+      required: [path, sizeBytes, modifiedAt, mode, snapshotIdentity]
+      properties:
+        path: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        modifiedAt: { type: string, format: date-time }
+        mode: { type: string }
+        snapshotIdentity: { type: string, description: Current metadata snapshot token; it is not proof of storage or content. }
     CompletedReceipt:
       type: object
       required: [downloadId, path, clientId, title, state, protocol, payloadRemoved, live]
       properties:
         downloadId: { type: integer, format: int64 }
+        mediaItemId: { type: integer, format: int64, description: Exact associated library item when retained by the download record. }
+        copyId: { type: integer, format: int64, description: Exact associated copy; zero means primary copy. }
         path: { type: string }
         clientId: { type: integer, format: int64 }
         title: { type: string }
@@ -5043,6 +5584,8 @@ components:
         protocol: { type: string }
         payloadRemoved: { type: boolean }
         live: { type: boolean }
+        legacyReview: { type: boolean }
+        deliveryManaged: { type: boolean }
 
     RecommendationFilters:
       type: object

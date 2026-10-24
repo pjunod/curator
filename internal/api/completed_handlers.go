@@ -32,6 +32,24 @@ func (s *Server) DeleteCompletedEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	if body.Files != nil {
+		selected := make([]acquisition.CompletedFileSelection, 0, len(*body.Files))
+		for _, file := range *body.Files {
+			selected = append(selected, acquisition.CompletedFileSelection{Path: file.Path, SnapshotIdentity: file.SnapshotIdentity})
+		}
+		var err error
+		if body.ReviewLegacy != nil && *body.ReviewLegacy {
+			err = s.deps.Acquisition.DeleteSelectedLegacyFiles(r.Context(), body.Path, body.Fingerprint, selected)
+		} else {
+			err = s.deps.Acquisition.DeleteSelectedDeliveryFiles(r.Context(), body.Path, body.Fingerprint, selected)
+		}
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if err := s.deps.Acquisition.DeleteCompletedEntry(r.Context(), body.Path, body.Fingerprint); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return

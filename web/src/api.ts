@@ -176,7 +176,84 @@ export interface MediaFileInfo {
   implausible?: string
   /** The release that put this file here; empty for an adopted file. */
   sourceRelease?: string
+  fileGeneration?: string
+  sourceGeneration?: string
+  sourceTransfer?: string
+  sourcePayloadGeneration?: string
+  sourceFileGeneration?: string
+  sourceGuid?: string
+  sourceIndexerId?: number
+  sourceIndexer?: string
 }
+
+export interface ReplacementRequest {
+  requestId: string
+  sourceGeneration?: string
+  sourceTransfer?: string
+  scope: 'episodes' | 'download'
+  copyId: number
+  sourceFileId: number
+  episodeIds?: number[]
+  intent: 'replace_bad' | 'replace_quality'
+  blacklistSourceRelease: boolean
+  reasonCode: string
+  reason: string
+  observedFiles: Array<{ id: number; fileGeneration: string; observationId: string }>
+}
+export interface ReplacementObservation {
+  observationId: string
+  requestId: string
+  state: 'pending' | 'ready' | 'stale' | 'failed' | string
+  fileGeneration: string
+  sourceGeneration?: string
+  sha256?: string
+  size?: number
+  error?: string
+}
+export const startReplacementFileObservation = (itemId: number, fileId: number, request: { requestId: string; fileGeneration: string }) =>
+  send<ReplacementObservation>('POST', `/library/${itemId}/files/${fileId}/replacement-observations`, request)
+export const getReplacementFileObservation = (observationId: string) =>
+  get<ReplacementObservation>(`/replacement-observations/${encodeURIComponent(observationId)}`)
+export interface ReplacementOperation {
+  operationId: string
+  requestId: string
+  state: string
+  intent: string
+  scope: string
+  blacklistSourceRelease: boolean
+  copyId?: number
+  episodeIds?: number[]
+  retryAttempts?: number
+  nextAttemptAt?: string
+  blockedSince?: string
+  blockedWarning?: boolean
+  lastError?: string
+}
+export const createReplacementOperation = (itemId: number, request: ReplacementRequest) =>
+  send<ReplacementOperation>('POST', `/library/${itemId}/replacement-operations`, request)
+export const getReplacementOperation = (operationId: string) =>
+  get<ReplacementOperation>(`/replacement-operations/${encodeURIComponent(operationId)}`)
+export interface LibraryReviewFlag {
+  id: number
+  mediaItemId: number
+  mediaFileId: number
+  fileGeneration: string
+  reasonCode: string
+  reason: string
+  state: 'open'
+  createdAt: string
+  updatedAt: string
+}
+export interface LibraryLifecycleReview {
+  operations: ReplacementOperation[]
+  openReports: LibraryReviewFlag[]
+}
+export const getLibraryLifecycleReview = (itemId: number) =>
+  get<LibraryLifecycleReview>(`/library/${itemId}/replacement-operations`)
+export const resolveLibraryReviewFlag = (itemId: number, flagId: number, fileGeneration: string) =>
+  send<void>('POST', `/library/${itemId}/review-flags/${flagId}/resolve`, { fileGeneration })
+export const reportLibraryFile = (itemId: number, fileId: number, request: { fileGeneration: string; reasonCode: string; reason: string; evidence?: Record<string, unknown> }) =>
+  send<void>('POST', `/library/${itemId}/files/${fileId}/report`, request)
 
 export interface MediaCopy {
   id: number
@@ -798,6 +875,7 @@ export interface ReleaseCandidate {
   candidateToken: string
   /** A caution that does not decline the release — today, an implausible size. */
   warning?: string
+  blacklistReason?: string
 }
 
 export interface GrabRequest {
@@ -811,6 +889,9 @@ export interface GrabRequest {
   protocol: string
   size?: number
   candidateToken?: string
+  intent: 'additional_copy'
+  requestId: string
+  downloadAnyway?: boolean
 }
 
 export interface ReleaseSearchResponse {
@@ -847,6 +928,9 @@ export interface QueueItem {
   importPath?: string
   /** Whether the bounded Curator importer is waiting for a worker or owns one. */
   importState?: 'queued' | 'running'
+  importRetryAttempts?: number
+  importBlockedSince?: string
+  importRetryAt?: string
   handoff?: HandoffEntry[]
   addedAt: string
   /**
@@ -876,6 +960,7 @@ export interface ScannedFile {
   quality: string
   season: number // -1 when not a series file
   episodes: number[]
+  snapshotIdentity?: string
 }
 
 export interface ManualImportRequest {
@@ -885,6 +970,10 @@ export interface ManualImportRequest {
   mediaItemId: number
   copyId?: number
   downloadId?: number
+  /** Explicitly approves only the selected current files from the legacy review cohort. */
+  reviewLegacy?: boolean
+  reviewLegacyFingerprint?: string
+  reviewLegacyFiles?: CompletedFileSelection[]
 }
 
 export const getProfiles = () => get<QualityProfile[]>('/profiles')
@@ -1487,10 +1576,17 @@ export const getRecoveryPreview = (id: string) => get<RecoveryPreviewTask>('/imp
 
 export interface CompletedReceipt {
   downloadId: number
+  mediaItemId?: number
+  copyId?: number
   path: string
+  clientId: number
   title: string
   state: string
+  protocol: string
+  payloadRemoved: boolean
   live: boolean
+  legacyReview?: boolean
+  deliveryManaged?: boolean
 }
 export interface CompletedEntry {
   fingerprint: string
@@ -1499,7 +1595,17 @@ export interface CompletedEntry {
   files: number
   status: string
   reason: string
+  legacyReview?: boolean
+  deliveryManaged?: boolean
+  reviewFiles?: CompletedReviewFile[]
   receipts: CompletedReceipt[]
+}
+export interface CompletedReviewFile {
+  path: string
+  sizeBytes: number
+  modifiedAt: string
+  mode: string
+  snapshotIdentity: string
 }
 export interface CompletedRoot {
   path: string
@@ -1516,8 +1622,110 @@ export interface CompletedInventory {
 }
 export const getCompletedInventory = () => get<CompletedInventory>('/downloads/inventory')
 
-export const deleteCompletedEntry = (path: string, fingerprint: string) =>
-  send('DELETE', '/downloads/inventory/entry', { path, fingerprint })
+export interface DeliveryLifecycleFile {
+  path: string
+  sizeBytes: number
+  sha256: string
+}
+export interface DeliverySourceFileOutcome {
+  sourcePath: string
+  publicationPath?: string | null
+  classification: string
+  outcome: string
+  reason: string
+  repairDependency?: boolean
+  sourceCleanupStatus: string
+}
+export interface RunnerSourceCleanupTrace {
+  status?: string
+  attempts?: number
+  startedAt?: number | null
+  lastAttemptAt?: number | null
+  completedAt?: number | null
+  nextRetryAt?: number | null
+  blockedSince?: number | null
+  error?: string | null
+  warning?: boolean | string | null
+  attemptHistory?: Array<{ attempt: number; startedAtMs: number; endedAtMs?: number | null; workMs?: number | null; waitMs: number; outcome: string; error?: string | null }>
+  [key: string]: unknown
+}
+export interface CuratorDeliveryFileOutcome {
+  path: string
+  sizeBytes: number
+  sha256: string
+  disposition: string
+  cleanupState: string
+  reason: string
+  cleanupError?: string
+  cleanupAttempts: number
+  cleanupBlockedSince?: string
+  cleanupNextAttemptAt?: string
+  libraryPath?: string
+}
+export interface DeliveryLifecycleReceipt {
+  receiptId: number
+  clientId: number
+  downloadId: number
+  generationKey?: string
+  mediaItemId?: number
+  copyId?: number
+  deliveryId: string
+  publicationGeneration: string
+  manifestDigest: string
+  runnerInstanceId?: string
+  jobId?: string
+  requestToken?: string
+  publicationPath?: string
+  mappedPath?: string
+  readyAt: string
+  terminalOutcome: string
+  failureStage?: string
+  failureCause?: string
+  keepSourceOnFailure: boolean
+  state: string
+  acceptance: string
+  consumerReceiptId?: string
+  attempts: number
+  attemptHistory: Array<{ id: number; stage: string; attempt: number; startedAt: string; finishedAt?: string; result: string; error?: string }>
+  blockedSince?: string
+  nextAttemptAt?: string
+  error?: string
+  manifestFiles: DeliveryLifecycleFile[]
+  sourceFileOutcomes?: DeliverySourceFileOutcome[]
+  sourceCleanup?: RunnerSourceCleanupTrace | null
+  sourceCleanupAttempts: number
+  sourceCleanupBlockedSince?: string
+  sourceCleanupNextAttemptAt?: string
+  sourceCleanupError?: string
+  directoryCleanupState: string
+  directoryCleanupAttempts: number
+  directoryCleanupBlockedSince?: string
+  directoryCleanupNextAttemptAt?: string
+  directoryCleanupError?: string
+  curatorFiles: CuratorDeliveryFileOutcome[]
+}
+export interface DeliveryLifecyclePage { items: DeliveryLifecycleReceipt[]; nextBeforeId?: number }
+export const getDeliveryLifecycle = (beforeId?: number, limit = 50, downloadId?: number) => {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (beforeId) params.set('beforeId', String(beforeId))
+  if (downloadId) params.set('downloadId', String(downloadId))
+  return get<DeliveryLifecyclePage>(`/downloads/deliveries?${params}`)
+}
+export const getDeliveryLifecycleReceipt = (receiptId: number) =>
+  get<DeliveryLifecycleReceipt>(`/downloads/deliveries/${receiptId}`)
+export const retryDeliveryHandoff = (receiptId: number) =>
+  send('POST', `/downloads/deliveries/${receiptId}/retry-handoff`)
+export const retryRunnerDeliveryCleanup = (receiptId: number) =>
+  send('POST', `/downloads/deliveries/${receiptId}/retry-runner-cleanup`)
+export const retryCuratorDeliveryCleanup = (receiptId: number) =>
+  send('POST', `/downloads/deliveries/${receiptId}/retry-curator-cleanup`)
+export const queueDeliveryImport = (receiptId: number, paths: string[]) =>
+  send('POST', `/downloads/deliveries/${receiptId}/import`, { paths })
+
+export const deleteCompletedEntry = (path: string, fingerprint: string, files?: CompletedFileSelection[], reviewLegacy = false) =>
+  send('DELETE', '/downloads/inventory/entry', { path, fingerprint, ...(files ? { files } : {}), ...(reviewLegacy ? { reviewLegacy: true } : {}) })
+
+export interface CompletedFileSelection { path: string; snapshotIdentity: string }
 
 export interface SeasonSelection {
  version: number

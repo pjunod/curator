@@ -2,13 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
 import { deleteCompletedEntry, fmtBytes, getCompletedInventory, getSettings, getTasks, runTask, updateSettings } from './api'
-import type { CompletedEntry, CompletedRoot } from './api'
+import type { CompletedEntry, CompletedRoot, CompletedReviewFile } from './api'
 import { clampPage, Pager, PageSizePicker, sliceForPage } from './Pager'
+import { DeliveryLifecycleForDownload } from './DeliveryLifecycle'
 import './CompletedFolders.css'
 
 type StorageRow = { root: CompletedRoot; entry: CompletedEntry }
 const rowKey = ({ root, entry }: StorageRow) => JSON.stringify([root.path, entry.path])
-const canDelete = ({ root, entry }: StorageRow) => !root.error && !['active', 'awaiting_import', 'storage'].includes(entry.status)
+const isLegacyReview = ({ entry }: StorageRow) => entry.legacyReview || entry.receipts.some((receipt) => receipt.legacyReview)
+const isDeliveryManaged = ({ entry }: StorageRow) => !!entry.deliveryManaged || entry.receipts.some((receipt) => receipt.deliveryManaged)
+const canDelete = (row: StorageRow) => !row.root.error && !isLegacyReview(row) && !isDeliveryManaged(row) && !['active', 'awaiting_import', 'storage'].includes(row.entry.status)
 const canImport = ({ root, entry }: StorageRow) => !root.error && !['active', 'symlink', 'retained', 'storage'].includes(entry.status)
 const statusLabel = (status: string) => status.replace(/_/g, ' ')
 
@@ -18,14 +21,14 @@ type DeletionState = { running: boolean; total: number; progress: number; delete
 // QueryClient outlives route and responsive-shell remounts. Keep both the
 // operation lock and its outcome there, so returning to Activity cannot start
 // another batch while an earlier one is still removing files.
-async function deleteStorageRows(qc: QueryClient, rows: StorageRow[]) {
+async function deleteStorageRows(qc: QueryClient, rows: StorageRow[], filesByKey: Record<string, CompletedReviewFile[]> = {}, legacyReviewKeys: string[] = []) {
   if (qc.getQueryData<DeletionState | null>(deletionKey)?.running) return
   const state: DeletionState = { running: true, total: rows.length, progress: 0, deletedKeys: [], errors: [] }
   const publish = () => qc.setQueryData(deletionKey, { ...state, deletedKeys: [...state.deletedKeys], errors: [...state.errors] })
   publish()
   for (const row of rows) {
     try {
-      await deleteCompletedEntry(row.entry.path, row.entry.fingerprint)
+      await deleteCompletedEntry(row.entry.path, row.entry.fingerprint, filesByKey[rowKey(row)], legacyReviewKeys.includes(rowKey(row)))
       state.deletedKeys.push(rowKey(row))
     } catch (error) {
       state.errors.push(`${row.entry.path}: ${error instanceof Error ? error.message : 'Deletion failed'}`)
@@ -38,7 +41,7 @@ async function deleteStorageRows(qc: QueryClient, rows: StorageRow[]) {
   void qc.invalidateQueries({ queryKey: ['completed-inventory'] })
 }
 
-export function CompletedFolders({ onImport }: { onImport: (path: string) => void }) {
+export function CompletedFolders({ onImport }: { onImport: (path: string, mode?: 'legacy' | 'delivery', downloadId?: number) => void }) {
   const qc = useQueryClient()
   const inventory = useQuery({
     queryKey: ['completed-inventory'], queryFn: getCompletedInventory, refetchInterval: 5_000,
@@ -62,6 +65,8 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
   const [page, setPage] = useState(0)
   // Remember the reviewed fingerprint, so refreshes cannot silently select changed files.
   const [selected, setSelected] = useState<Record<string, string>>({})
+  const [deliveryFileSelection, setDeliveryFileSelection] = useState<Record<string, string>>({})
+  const [legacyFileSelection, setLegacyFileSelection] = useState<Record<string, string>>({})
   const [confirm, setConfirm] = useState<StorageRow[] | null>(null)
   const deletionQuery = useQuery<DeletionState | null>({
     queryKey: deletionKey, queryFn: () => null, initialData: null, enabled: false, gcTime: Infinity,
@@ -100,7 +105,7 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
   const entries = data?.roots.flatMap((root) => root.entries.map((entry) => ({ root, entry }))) ?? []
   const selectedRows = entries.filter((row) => canDelete(row) && selected[rowKey(row)] === row.entry.fingerprint)
   const isSelected = (row: StorageRow) => canDelete(row) && selected[rowKey(row)] === row.entry.fingerprint
-  const remove = useMutation({ mutationFn: (rows: StorageRow[]) => deleteStorageRows(qc, rows) })
+  const remove = useMutation({ mutationFn: ({ rows, filesByKey, legacyReviewKeys }: { rows: StorageRow[]; filesByKey?: Record<string, CompletedReviewFile[]>; legacyReviewKeys?: string[] }) => deleteStorageRows(qc, rows, filesByKey, legacyReviewKeys) })
   const needle = search.trim().toLowerCase()
   const filtered = entries.filter(({ entry }) =>
     (status === 'all' || (status === 'attention' ? !['active', 'retained', 'storage'].includes(entry.status) : entry.status === status)) &&
@@ -123,7 +128,14 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
   const selectedBytes = selectedRows.reduce((sum, { entry }) => sum + entry.bytes, 0)
   const confirmBytes = confirm?.reduce((sum, { entry }) => sum + entry.bytes, 0) ?? 0
   const confirmFiles = confirm?.reduce((sum, { entry }) => sum + entry.files, 0) ?? 0
-  const confirmationChanged = !busy && confirm?.some((row) => !entries.some((current) => rowKey(current) === rowKey(row) && canDelete(current) && current.entry.fingerprint === row.entry.fingerprint))
+  const deliveryConfirm = confirm?.length === 1 && isDeliveryManaged(confirm[0]) ? confirm[0] : null
+  const legacyConfirm = confirm?.length === 1 && isLegacyReview(confirm[0]) ? confirm[0] : null
+  const selectedFileEntry = deliveryConfirm ?? legacyConfirm
+  const selectedDeliveryFiles = deliveryConfirm?.entry.reviewFiles?.filter((file) => deliveryFileSelection[file.path] === file.snapshotIdentity) ?? []
+  const selectedLegacyFiles = legacyConfirm?.entry.reviewFiles?.filter((file) => legacyFileSelection[file.path] === file.snapshotIdentity) ?? []
+  const selectedExplicitFiles = deliveryConfirm ? selectedDeliveryFiles : selectedLegacyFiles
+  const confirmationChanged = !busy && confirm?.some((row) => !entries.some((current) => rowKey(current) === rowKey(row) &&
+    (isDeliveryManaged(row) ? isDeliveryManaged(current) && !current.root.error : isLegacyReview(row) ? isLegacyReview(current) && !current.root.error : canDelete(current)) && current.entry.fingerprint === row.entry.fingerprint))
 
   return <section className="panel download-storage" aria-label="Download storage">
     <div className="storage-heading">
@@ -162,12 +174,32 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
       setConfirm(null)
     }}>
     {confirm && <>
-      <h3 id="storage-confirm-title">Delete {confirm.length} {confirm.length === 1 ? 'entry' : 'entries'} permanently?</h3>
-      <p>{confirmFiles} files · {fmtBytes(confirmBytes)} logical size. This cannot be undone.</p>
-      <ul>{confirm.map(({ root, entry }) => <li key={`${root.path}:${entry.path}`} className="mono">{entry.path}</li>)}</ul>
+      <h3 id="storage-confirm-title">{deliveryConfirm ? 'Delete selected delivery files permanently?' : `Delete ${confirm.length} ${confirm.length === 1 ? 'entry' : 'entries'} permanently?`}</h3>
+      {selectedFileEntry ? <>
+        <p>{deliveryConfirm ? 'Choose exact files from this accepted Runner manifest.' : 'Choose exact current files to discard from this legacy review entry. No manifest or ownership is inferred.'} Unselected siblings and directories remain untouched.</p>
+        <p className="mono">{selectedFileEntry.entry.path}</p>
+        <div className="storage-file-selection">{selectedFileEntry.entry.reviewFiles?.map((file) => {
+          const selection = deliveryConfirm ? deliveryFileSelection : legacyFileSelection
+          const setSelection = deliveryConfirm ? setDeliveryFileSelection : setLegacyFileSelection
+          return <label key={file.path}>
+            <input type="checkbox" checked={selection[file.path] === file.snapshotIdentity} onChange={(event) => setSelection((previous) => {
+              const next = { ...previous }
+              if (event.target.checked) next[file.path] = file.snapshotIdentity
+              else delete next[file.path]
+              return next
+            })} />
+            <span className="mono">{file.path}</span> · {fmtBytes(file.sizeBytes)} · {new Date(file.modifiedAt).toLocaleString()}
+          </label>
+        })}</div>
+        {!selectedFileEntry.entry.reviewFiles?.length && <p className="muted">Refresh the completed-storage inventory to list current files.</p>}
+        <p>{selectedExplicitFiles.length} selected · {fmtBytes(selectedExplicitFiles.reduce((sum, file) => sum + file.sizeBytes, 0))}</p>
+      </> : <>
+        <p>{confirmFiles} files · {fmtBytes(confirmBytes)} logical size. This cannot be undone.</p>
+        <ul>{confirm.map(({ root, entry }) => <li key={`${root.path}:${entry.path}`} className="mono">{entry.path}</li>)}</ul>
+      </>}
       {confirmationChanged && <p className="error-text">The inventory changed. Cancel and select the entries again.</p>}
-      <div className="storage-actions"><button className="btn-danger" disabled={busy || confirmationChanged} onClick={() => remove.mutate(confirm)}>
-        {busy ? `Deleting ${deletion?.progress ?? 0} of ${confirm.length}…` : 'Confirm delete'}
+      <div className="storage-actions"><button className="btn-danger" disabled={busy || confirmationChanged || (selectedFileEntry ? selectedExplicitFiles.length === 0 : false)} onClick={() => remove.mutate({ rows: confirm, ...(selectedFileEntry ? { filesByKey: { [rowKey(selectedFileEntry)]: selectedExplicitFiles } } : {}), ...(legacyConfirm ? { legacyReviewKeys: [rowKey(legacyConfirm)] } : {}) })}>
+        {busy ? `Deleting ${deletion?.progress ?? 0} of ${confirm.length}…` : selectedFileEntry ? 'Delete selected files' : 'Confirm delete'}
       </button><button ref={keepFiles} onClick={() => setConfirm(null)}>{busy ? 'Close' : 'Keep files'}</button></div>
     </>}
     </dialog>
@@ -205,14 +237,18 @@ export function CompletedFolders({ onImport }: { onImport: (path: string) => voi
             })} />
             <div className="storage-entry-name"><strong title={entry.path}>{name}</strong><div className="mono muted storage-path" title={entry.path}>{entry.path.slice(0, -name.length)}</div>
               {entry.receipts.length > 0 && <details><summary>{entry.receipts.length} download {entry.receipts.length === 1 ? 'record' : 'records'}</summary>
-                {entry.receipts.map((r, i) => <div key={`${r.downloadId}:${i}`}>#{r.downloadId} {r.title}{!r.live && ' (history only)'}</div>)}
+                {entry.receipts.map((r, i) => <div key={`${r.downloadId}:${i}`}>#{r.downloadId} {r.title}{!r.live && ' (history only)'}
+                  {r.deliveryManaged && <DeliveryLifecycleForDownload downloadId={r.downloadId} />}
+                </div>)}
               </details>}
             </div>
             <div className="storage-entry-size"><strong>{fmtBytes(entry.bytes)}</strong><span className="muted">{entry.files} {entry.files === 1 ? 'file' : 'files'}</span></div>
             <div className="storage-entry-status"><span className={`pill ${entry.status === 'failed' ? 'pill-error' : ''}`}>{statusLabel(entry.status)}</span><p className="muted">{entry.reason}</p></div>
             <div className="storage-entry-actions">
-              <button disabled={!canImport(row) || busy} onClick={() => onImport(entry.path)}>Review import</button>
-              <button disabled={!canDelete(row) || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => openConfirmation([row], event.currentTarget)}>Delete files…</button>
+              <button disabled={!canImport(row) || busy} onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onImport(entry.path, isLegacyReview(row) ? 'legacy' : isDeliveryManaged(row) ? 'delivery' : undefined, entry.receipts.find((receipt) => receipt.deliveryManaged)?.downloadId) }}>{isLegacyReview(row) ? 'Review legacy batch' : isDeliveryManaged(row) ? 'Resolve handoff' : 'Resolve files'}</button>
+              {isDeliveryManaged(row) ? <button disabled={!!root.error || !entry.reviewFiles?.length || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => { setDeliveryFileSelection({}); openConfirmation([row], event.currentTarget) }}>Delete selected files…</button>
+                : isLegacyReview(row) ? <button disabled={!!root.error || !entry.reviewFiles?.length || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => { setLegacyFileSelection({}); openConfirmation([row], event.currentTarget) }}>Delete selected files…</button>
+                : <button disabled={!canDelete(row) || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => openConfirmation([row], event.currentTarget)}>Delete files…</button>}
             </div>
           </article>
         })}
@@ -235,7 +271,7 @@ export function CompletedFolderSettings() {
     <h3 style={{ marginTop: 18 }}>Download storage folders</h3>
     <p className="muted">Curator-owned working folders, one absolute path per line as seen by the server.
       Every file beneath these roots is accounted for, including completed downloads.
-      Leave blank to use /working/monarr when mounted, otherwise discover download folders. Unknown files remain visible for review. Saving these folders also accepts their current mount identities after a mount replacement.</p>
+      Leave blank to use /working/monarr when mounted, otherwise discover download folders. Unknown files remain visible for review. Ordinary remounts are verified automatically; saving settings does not change storage identity or authorize cleanup on a different mount.</p>
     <textarea rows={3} className="mono" aria-label="Download storage folders"
       value={value ?? settings.data?.completedRoots ?? ''} onChange={(e) => setValue(e.target.value)}
       placeholder="/working/monarr" />

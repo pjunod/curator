@@ -402,6 +402,104 @@ func TestAcq2AnEpisodeUpgradeLeavesItsSiblingsAlone(t *testing.T) {
 	}
 }
 
+func TestReplacementImportKeepsSharedOldFileAndDetachesOnlySelectedEpisode(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seasonDir := filepath.Join(item.Path, "Season 1")
+	if err := os.MkdirAll(seasonDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := filepath.Join(seasonDir, "Test Show - S01E01-E02 - Shared [HDTV 720p].mkv")
+	if err := os.WriteFile(oldPath, []byte("shared old bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldID, err := db.UpsertFile(ctx, itemID, 0, oldPath, int64(len("shared old bytes")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep1, err := db.GetEpisodeID(ctx, itemID, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep2, err := db.GetEpisodeID(ctx, itemID, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReplaceFileEpisodeLinks(ctx, oldID, []int64{ep1, ep2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFileQualityFrom(ctx, oldID, quality.Quality{Source: quality.SourceHDTV, Resolution: 720}, mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone); err != nil {
+		t.Fatal(err)
+	}
+	files, err := db.ListFilesForItem(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oldGeneration string
+	for _, file := range files {
+		if file.ID == oldID {
+			oldGeneration = file.FileGeneration
+		}
+	}
+	observation, _, err := svc.StartReplacementFileObservation(ctx, itemID, oldID, oldGeneration, "observe-shared-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.processReplacementFileObservations(ctx)
+	observation, err = svc.GetReplacementFileObservation(ctx, observation.ID)
+	if err != nil || observation.State != "ready" {
+		t.Fatalf("observation=%+v err=%v", observation, err)
+	}
+	blacklist := false
+	op, _, err := svc.CreateReplacement(ctx, ReplacementRequest{RequestID: "replace-shared-episode", Scope: "episodes", MediaItemID: itemID,
+		SourceFileID: oldID, EpisodeIDs: []int64{ep1}, Intent: "replace_quality", BlacklistSourceRelease: &blacklist,
+		ReasonCode: "quality_preference", Reason: "replace only episode one", ObservedFiles: []ReplacementObservedFile{{ID: oldID, FileGeneration: oldGeneration, ObservationID: observation.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := t.TempDir()
+	if err := os.WriteFile(filepath.Join(payload, "Test.Show.S01E01.1080p.WEB-DL.mkv"), []byte("replacement bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.importDownload(ctx, sqlite.Download{MediaItemID: itemID, ReleaseTitle: "Test.Show.S01E01.1080p.WEB-DL-GRP", Indexer: "idx", GenerationKey: "replacement-download-generation", ReplacementOperationID: op.ID}, payload, false)
+	if err != nil || result.Imported != 1 {
+		t.Fatalf("replacement import=%+v err=%v", result, err)
+	}
+	if err := svc.processReplacementOperation(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Fatalf("shared old file was deleted: %v", err)
+	}
+	files, err = db.ListFilesForItem(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oldLinks []int64
+	var replacementLinks []int64
+	for _, file := range files {
+		if file.ID == oldID {
+			oldLinks = file.EpisodeIDs
+		}
+		if file.SourceGeneration == "replacement-download-generation" {
+			replacementLinks = file.EpisodeIDs
+		}
+	}
+	if len(oldLinks) != 1 || oldLinks[0] != ep2 {
+		t.Fatalf("old shared episode links=%v, want only episode 2", oldLinks)
+	}
+	if len(replacementLinks) != 1 || replacementLinks[0] != ep1 {
+		t.Fatalf("replacement episode links=%v, want only episode 1", replacementLinks)
+	}
+	if final, err := db.GetReplacementOperation(ctx, op.ID); err != nil || final.State != "complete" {
+		t.Fatalf("replacement operation=%+v err=%v", final, err)
+	}
+}
+
 // A replaced file that cannot be unlinked (a read-only mount, a permission)
 // must not take the import down with it: the new file is already in place and
 // the row is already correct.

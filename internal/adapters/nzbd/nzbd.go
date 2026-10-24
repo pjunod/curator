@@ -74,9 +74,40 @@ func (c *Client) authorize(req *http.Request) {
 type APIError struct {
 	StatusCode int
 	Message    string
+	RetryAt    time.Time
 }
 
-func (e *APIError) Error() string { return fmt.Sprintf("nzbd: %s (%d)", e.Message, e.StatusCode) }
+func (e *APIError) Error() string            { return fmt.Sprintf("nzbd: %s (%d)", e.Message, e.StatusCode) }
+func (e *APIError) HTTPStatusCode() int      { return e.StatusCode }
+func (e *APIError) RetryDeadline() time.Time { return e.RetryAt }
+
+func apiError(resp *http.Response, message string) *APIError {
+	return &APIError{StatusCode: resp.StatusCode, Message: message, RetryAt: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
+}
+
+func parseRetryAfter(raw string, now time.Time) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	const maxInt64 = int64(^uint64(0) >> 1)
+	if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil && seconds >= 0 {
+		nowMS := now.UnixMilli()
+		if nowMS > 0 && seconds <= (maxInt64-nowMS)/1000 {
+			return time.UnixMilli(nowMS + seconds*1000)
+		}
+		return time.Time{}
+	}
+	parsed, err := http.ParseTime(raw)
+	if err != nil || !parsed.After(now) {
+		return time.Time{}
+	}
+	deadlineMS := parsed.UnixMilli()
+	if deadlineMS <= 0 || !time.UnixMilli(deadlineMS).Equal(parsed) {
+		return time.Time{}
+	}
+	return parsed
+}
 
 func (c *Client) do(ctx context.Context, method, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, method,
@@ -93,7 +124,7 @@ func (c *Client) do(ctx context.Context, method, path string, out any) error {
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode == http.StatusUnauthorized {
-		return &APIError{StatusCode: resp.StatusCode, Message: "authentication rejected"}
+		return apiError(resp, "authentication rejected")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// nzbd answers errors as {"error": "..."} — surface its words, not
@@ -102,13 +133,13 @@ func (c *Client) do(ctx context.Context, method, path string, out any) error {
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(raw, &e) == nil && e.Error != "" {
-			return &APIError{StatusCode: resp.StatusCode, Message: e.Error}
+			return apiError(resp, e.Error)
 		}
-		return &APIError{StatusCode: resp.StatusCode, Message: "unexpected response"}
+		return apiError(resp, "unexpected response")
 	}
 	// Accepted is pending, not a receipt that the bytes have gone.
 	if resp.StatusCode == http.StatusAccepted {
-		return &APIError{StatusCode: resp.StatusCode, Message: "operation pending; retry later"}
+		return apiError(resp, "operation pending; retry later")
 	}
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
@@ -150,11 +181,18 @@ func (c *Client) AddWithOptions(ctx context.Context, downloadURL, category strin
 		// A JSON object of string→string. Keys starting with `*` are
 		// nzbd's internal namespace and are refused with a 422; ours never
 		// is, but the encoding is exact either way.
-		params, err := json.Marshal(map[string]string{TransferParam: options.Transfer})
+		params := map[string]string{TransferParam: options.Transfer}
+		if options.DeliveryExpected {
+			params[DeliveryParam] = "1"
+		}
+		if options.ManualAdditional {
+			params[ManualAdditionalParam] = "1"
+		}
+		encodedParams, err := json.Marshal(params)
 		if err != nil {
 			return "", err
 		}
-		q.Set("params", string(params))
+		q.Set("params", string(encodedParams))
 	}
 	var out struct {
 		ID int64 `json:"id"`
@@ -173,6 +211,14 @@ func (c *Client) AddWithOptions(ctx context.Context, downloadURL, category strin
 // the ability to grep one id across both applications.
 const TransferParam = "monarr-transfer"
 
+// DeliveryParam marks managed admissions for Runner's durable delivery
+// handoff. Standalone Runner jobs remain under Runner's ordinary custody.
+const DeliveryParam = "monarr-delivery"
+
+// ManualAdditionalParam marks an intentional independent copy to Runner.
+// The transfer token remains the idempotency key for retries of that request.
+const ManualAdditionalParam = "monarr-manual-additional"
+
 // job is one row of `GET /api/v1/jobs`.
 type job struct {
 	ID              int64                  `json:"id"`
@@ -184,6 +230,7 @@ type job struct {
 	Ready           bool                   `json:"ready"`
 	Stages          []stageSpan            `json:"stages"`
 	Control         *ports.DownloadControl `json:"control"`
+	Params          [][2]string            `json:"params"`
 }
 
 type stageSpan struct {
@@ -320,6 +367,7 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 			Control:  j.Control,
 			Handle:   ports.Handle(strconv.FormatInt(j.ID, 10)),
 			Name:     j.Name,
+			Transfer: paramValue(j.Params, TransferParam),
 			State:    st,
 			Progress: progress,
 			Message:  msg,
@@ -349,6 +397,7 @@ func statusOfHistory(h historyEntry) ports.DownloadStatus {
 		Control:  historyControl(h),
 		Handle:   ports.Handle(strconv.FormatInt(h.Job, 10)),
 		Name:     h.Name,
+		Transfer: paramValue(h.Params, TransferParam),
 		Progress: 1,
 		SavePath: h.FinalDir,
 	}
@@ -383,6 +432,15 @@ func statusOfHistory(h historyEntry) ports.DownloadStatus {
 		}
 	}
 	return st
+}
+
+func paramValue(params [][2]string, key string) string {
+	for _, pair := range params {
+		if len(pair) == 2 && pair[0] == key {
+			return pair[1]
+		}
+	}
+	return ""
 }
 
 func historyControl(h historyEntry) *ports.DownloadControl {
@@ -437,12 +495,49 @@ func (c *Client) Remove(ctx context.Context, h ports.Handle, deleteData bool) er
 // (which is also how Test knows it is talking to nzbd) and the queue-hold
 // reasons.
 type statusDto struct {
-	Version        string `json:"version"`
-	DownloadPaused bool   `json:"download_paused"`
-	DiskLow        bool   `json:"disk_low"`
-	QuotaReached   bool   `json:"quota_reached"`
-	BlockedServers []int  `json:"blocked_servers"`
-	HealthAbort    bool   `json:"health_abort"`
+	Version        string   `json:"version"`
+	Capabilities   []string `json:"capabilities"`
+	DownloadPaused bool     `json:"download_paused"`
+	DiskLow        bool     `json:"disk_low"`
+	QuotaReached   bool     `json:"quota_reached"`
+	BlockedServers []int    `json:"blocked_servers"`
+	HealthAbort    bool     `json:"health_abort"`
+}
+
+// SupportsRequestTokenIdempotency implements the independently negotiated
+// Runner Add replay contract advertised by /api/v1/status.
+func (c *Client) SupportsRequestTokenIdempotency(ctx context.Context) (bool, error) {
+	st, err := c.status(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, capability := range st.Capabilities {
+		if capability == "request-token-idempotency-v1" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// GetRequestAdmission resolves a transfer token after queue/history removal.
+// Runner's receipt is immutable and does not expose the original source URL.
+func (c *Client) GetRequestAdmission(ctx context.Context, transferToken string) (ports.RequestAdmission, bool, error) {
+	if strings.TrimSpace(transferToken) == "" {
+		return ports.RequestAdmission{}, false, fmt.Errorf("nzbd: transfer token is required")
+	}
+	var wire runnerRequestAdmissionWire
+	err := c.do(ctx, http.MethodGet, "/api/v1/request-admissions/"+url.PathEscape(transferToken), &wire)
+	if err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			return ports.RequestAdmission{}, false, nil
+		}
+		return ports.RequestAdmission{}, false, err
+	}
+	if wire.RequestToken != transferToken || wire.ProtocolVersion != 1 {
+		return ports.RequestAdmission{}, false, fmt.Errorf("nzbd: request admission identity or protocol version mismatch")
+	}
+	return wire.portValue(), true, nil
 }
 
 // Test implements ports.DownloadClient.
@@ -517,7 +612,7 @@ func (c *Client) RecoveryRequest(ctx context.Context, method, path, recoveryToke
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &APIError{StatusCode: resp.StatusCode, Message: string(raw)}
+		return apiError(resp, string(raw))
 	}
 	if out != nil {
 		return json.Unmarshal(raw, out)

@@ -364,3 +364,11 @@ and native interaction contract, renderings, and Fable review dispositions.
 and verification.
 
 Runner recovery placement and cleanup are documented in [ADR 0020](docs/adr/0021-file-lifecycle-recovery.md) and the [recovery usage guide](docs/usage.md#recover-media-retained-by-runner).
+
+The [approved download lifecycle proposal](docs/DOWNLOAD_LIFECYCLE_PROPOSAL.md)
+records Runner/Curator ownership, failure retention, handoff, cleanup, replacement,
+and the reviewed interface scope. [Implementation status](docs/DOWNLOAD_LIFECYCLE_STATUS.md)
+tracks building, review, validation, and delivery. The [Cinema replacement API
+draft](docs/BAD_DOWNLOAD_API.md) describes the separate integration contract.
+The [Fable review handoff](docs/FABLE_REVIEW_HANDOFF.md) collects review scope,
+cross-service boundaries and final validation evidence for the independent review.

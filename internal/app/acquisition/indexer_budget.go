@@ -90,16 +90,11 @@ func (s *Service) rememberIndexerDelay(ctx context.Context, id int64, err error)
 // RunRSSPacing supplements the scheduler's maximum-idle sweep with persisted
 // due times. The sweep mutex coalesces simultaneous scheduler/timer wakeups.
 func (s *Service) RunRSSPacing(ctx context.Context) {
+	var lastAttemptedDue int64
 	for {
 		var due int64
 		err := s.db.R.QueryRowContext(ctx, `SELECT COALESCE(min(max(next_rss_at,retry_at)),0) FROM indexers WHERE enabled=1`).Scan(&due)
-		wait := 15 * time.Minute
-		if err == nil && due > 0 {
-			until := time.Until(time.UnixMilli(due))
-			if until > 0 && until < wait {
-				wait = until
-			}
-		}
+		wait := rssPacingDelay(due, err, lastAttemptedDue, time.Now())
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
@@ -110,7 +105,32 @@ func (s *Service) RunRSSPacing(ctx context.Context) {
 		if err = s.SyncRSS(ctx); err != nil {
 			s.log.Warn("rss due sweep failed", "err", err)
 		}
+		// Remember the exact deadline that woke this sweep. If SyncRSS found
+		// no eligible work, hit a budget cap, or could not persist a dispatch,
+		// the due time may remain unchanged. The first overdue deadline gets a
+		// prompt attempt; an unchanged one falls back to the normal idle sweep
+		// instead of spinning.
+		lastAttemptedDue = due
 	}
+}
+
+func rssPacingDelay(due int64, queryErr error, lastAttemptedDue int64, now time.Time) time.Duration {
+	const idleSweep = 15 * time.Minute
+	const overdueFirstAttempt = 100 * time.Millisecond
+	if queryErr != nil || due <= 0 {
+		return idleSweep
+	}
+	until := time.UnixMilli(due).Sub(now)
+	if until > 0 {
+		if until < idleSweep {
+			return until
+		}
+		return idleSweep
+	}
+	if due != lastAttemptedDue {
+		return overdueFirstAttempt
+	}
+	return idleSweep
 }
 
 type strictAcquisitionIndexer struct {

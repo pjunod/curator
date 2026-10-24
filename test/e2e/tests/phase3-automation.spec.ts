@@ -1,6 +1,5 @@
 import { rmSync } from 'node:fs'
-import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { openFixtureDatabase } from '../fixture-db'
 import { expect, test } from '@playwright/test'
 
 // Phase 3: the automation loop, end to end. Earlier specs imported the
@@ -11,7 +10,7 @@ import { expect, test } from '@playwright/test'
 test.describe.configure({ mode: 'serial' })
 
 const ARR = `http://127.0.0.1:${process.env.FAKE_ARR_PORT ?? 7799}`
-const MOVIE = 'The.Test.Movie.2024.1080p.WEB-DL.x264-E2E'
+const AUTO_MOVIE_REGRAB = 'The.Test.Movie.2024.1080p.WEB-DL.x264-AUTO-REGRAB'
 
 async function runTask(request: any, name: string) {
   const res = await request.post(`/api/v1/system/tasks/${name}/run`)
@@ -54,10 +53,13 @@ test('deleted file → rescan → wanted → RSS auto-grab → re-imported + not
   const movies = await (await request.get('/api/v1/library?kind=movie')).json()
   const movieId = movies[0].id
   const detail = await (await request.get(`/api/v1/library/${movieId}`)).json()
-  expect(detail.files.length).toBe(1)
+  const primary = detail.files.find((file: any) => !file.path.includes('(Manual copy '))
+  const manual = detail.files.find((file: any) => file.path.includes('(Manual copy '))
+  expect(primary).toBeTruthy()
+  expect(manual).toBeTruthy()
 
   // A human deletes the file on disk (blueprint: tolerate filesystem edits).
-  rmSync(detail.files[0].path)
+  rmSync(primary.path)
   await request.post('/api/v1/library/scan')
 
   // The reconcile prunes the record and the movie becomes wanted.
@@ -73,7 +75,7 @@ test('deleted file → rescan → wanted → RSS auto-grab → re-imported + not
 
   // Advance the persisted due time in this disposable fixture. Production
   // pacing deliberately refuses a second feed fetch within its RSS interval.
-  const fixture = new DatabaseSync(join(process.env.E2E_DATA_DIR!, 'monarr.db'))
+  const fixture = openFixtureDatabase()
   fixture.prepare('UPDATE indexers SET next_rss_at=0').run()
   fixture.close()
   // One eligible RSS pass grabs it back without anyone clicking anything.
@@ -83,21 +85,23 @@ test('deleted file → rescan → wanted → RSS auto-grab → re-imported + not
       async () => {
         await runTask(request, 'queue.refresh')
         const rows = await (await request.get('/api/v1/queue')).json()
-        return rows.filter((r: any) => r.title === MOVIE && r.state === 'imported').length >= 2
+        return rows.some((r: any) => r.title === AUTO_MOVIE_REGRAB && r.state === 'imported')
       },
       { timeout: 20_000, intervals: [500] },
     )
     .toBe(true)
 
   const after = await (await request.get(`/api/v1/library/${movieId}`)).json()
-  expect(after.files.length).toBe(1)
+  expect(after.files).toHaveLength(2)
+  expect(after.files.some((file: any) => !file.path.includes('(Manual copy '))).toBe(true)
+  expect(after.files.some((file: any) => file.path === manual.path)).toBe(true)
 
   // The webhook notifier heard about the import.
   await expect
     .poll(
       async () => {
         const log = await (await request.get(`${ARR}/webhook-sink/log`)).json()
-        return log.some((n: any) => n.event === 'import' && n.body === MOVIE)
+        return log.some((n: any) => n.event === 'import' && n.body === AUTO_MOVIE_REGRAB)
       },
       { timeout: 10_000, intervals: [500] },
     )

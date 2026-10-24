@@ -161,7 +161,7 @@ func TestPlacementRestartNeverOverwritesUnrelatedBytes(t *testing.T) {
 			if strings.HasPrefix(scenario, "cancel") {
 				err = svc.rollbackPlacement(ctx, p)
 			} else {
-				err = svc.publishPlacement(ctx, p)
+				err = svc.publishPlacement(ctx, &p)
 			}
 			success := scenario == "cancel-missing-target" || scenario == "cancel-new-target"
 			if (err == nil) != success {
@@ -237,5 +237,47 @@ func TestRecoveryRootIdentityAndOverlapRequireReview(t *testing.T) {
 	}
 	if _, err = svc.PreviewRecovery(ctx, req); err == nil || !strings.Contains(err.Error(), "overlaps") {
 		t.Fatalf("overlapping mount accepted: %v", err)
+	}
+}
+
+func TestRecoveryFinalObservationPinsSameSizeSameMtimeReplacement(t *testing.T) {
+	svc, db, itemID := autoSetup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(item.Path, "existing.mkv")
+	if err = os.WriteFile(path, []byte("original-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.UpsertFile(ctx, itemID, 0, path, int64(len("original-bytes"))); err != nil {
+		t.Fatal(err)
+	}
+	r := RecoveryImport{ID: "review", Request: RecoveryRequest{MediaItemID: itemID}}
+	before, err := svc.recoveryFinalObservation(ctx, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(item.Path, "replacement.tmp")
+	if err = os.WriteFile(replacement, []byte("changed-bytes!"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chtimes(replacement, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	after, err := svc.recoveryFinalObservation(ctx, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("same-size, same-mtime replacement was not detected by final observation")
 	}
 }

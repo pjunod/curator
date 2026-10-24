@@ -35,11 +35,19 @@ import (
 // one person who needed them. A refusal without a reason is indistinguishable
 // from a bug.
 type FileOutcome struct {
-	Name     string `json:"name"`
-	Imported bool   `json:"imported"`
-	Upgrade  bool   `json:"upgrade,omitempty"`
-	Quality  string `json:"quality,omitempty"`
-	Reason   string `json:"reason,omitempty"`
+	Name                    string `json:"name"`
+	SourcePath              string `json:"sourcePath,omitempty"`
+	ReplacementOperationID  string `json:"replacementOperationId,omitempty"`
+	ReplacementDisposition  string `json:"replacementDisposition,omitempty"`
+	PlacementID             string `json:"placementId,omitempty"`
+	FileGeneration          string `json:"fileGeneration,omitempty"`
+	SourceFileGeneration    string `json:"sourceFileGeneration,omitempty"`
+	SourcePayloadGeneration string `json:"sourcePayloadGeneration,omitempty"`
+	SourceGeneration        string `json:"sourceGeneration,omitempty"`
+	Imported                bool   `json:"imported"`
+	Upgrade                 bool   `json:"upgrade,omitempty"`
+	Quality                 string `json:"quality,omitempty"`
+	Reason                  string `json:"reason,omitempty"`
 	// Retryable marks a file that failed on the environment (a full disk,
 	// a mount that went away) rather than on its own merits — worth trying
 	// again unchanged, unlike a quality decision.
@@ -64,6 +72,13 @@ type ImportResult struct {
 // machine — a full volume, a mount that went away — rather than on the
 // payload. The retry sweep looks for exactly this.
 var ErrImportBlocked = errors.New("import stopped")
+
+// ErrNoFilesImported marks a complete import attempt where every selected
+// file was declined. Delivery admission may resolve this only when durable
+// outcome records prove that every selected file is already redundant.
+var ErrNoFilesImported = errors.New("no files imported")
+
+var errReplacementFileOutsideScope = errors.New("replacement file is outside selected episode scope")
 
 // HistoryImportBlocked records a half-finished import, so "where did the
 // second half of that season go" has an answer that is not the server log.
@@ -192,8 +207,10 @@ func openLibraryCoverURL(value string) string {
 // is not a good enough answer when a season pack drops six files into a
 // library that is otherwise unchanged.
 type placement struct {
-	Path    string
-	Upgrade bool
+	Path           string
+	Upgrade        bool
+	PlacementID    string
+	FileGeneration string
 }
 
 // Skipped returns the files that did not land, in payload order.
@@ -270,7 +287,9 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	// The import scope: which copy this grab was for decides the profile,
 	// the destination folder, and which existing files count as "current".
 	scope := importScope{DownloadID: dl.ID, Dest: item.Path, ProfileID: item.QualityProfileID,
-		Release: dl.ReleaseTitle, Indexer: dl.Indexer, Attempt: fmt.Sprintf("%d:%d:%s", dl.ID, dl.AddedAt.UnixNano(), dl.Handle)}
+		Release: dl.ReleaseTitle, Indexer: dl.Indexer, SourceGeneration: dl.GenerationKey, Transfer: dl.Transfer,
+		SourceGUID: dl.SourceGUID, SourceIndexerID: dl.SourceIndexerID,
+		ReplacementOperationID: dl.ReplacementOperationID, Attempt: dl.GenerationKey}
 	if dl.CopyID != 0 {
 		cp, err := s.db.GetMediaCopy(ctx, dl.MediaItemID, dl.CopyID)
 		if err != nil {
@@ -285,6 +304,19 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	if scope.Dest == "" {
 		return ImportResult{}, ErrNoLibraryFolder
 	}
+	if dl.ReplacementOperationID != "" {
+		op, e := s.db.GetReplacementOperation(ctx, dl.ReplacementOperationID)
+		if e != nil {
+			return ImportResult{}, fmt.Errorf("replacement operation: %w", e)
+		}
+		if op.MediaItemID != item.ID || op.CopyID != scope.CopyID {
+			return ImportResult{}, fmt.Errorf("replacement operation target changed; import refused")
+		}
+		if op.Scope == "episodes" {
+			scope.Planned = true
+			scope.AllowedEpisodeIDs = append([]int64(nil), op.EpisodeIDs...)
+		}
+	}
 
 	if dl.PlanID != 0 {
 		allowed, e := s.effectiveImportAllowlist(ctx, dl)
@@ -293,6 +325,36 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		}
 		scope.Planned = true
 		scope.AllowedEpisodeIDs = allowed
+	}
+	if dl.Intent == GrabIntentManualAdditional && item.Kind == domain.KindSeries {
+		if dl.Season < 0 {
+			return ImportResult{}, fmt.Errorf("manual series request has no season scope")
+		}
+		requestedEpisode := 0
+		for _, want := range dl.WantableIDs {
+			want = strings.SplitN(want, ":c", 2)[0]
+			var itemID int64
+			var season, episode int
+			if n, _ := fmt.Sscanf(want, "episode:%d:%d:%d", &itemID, &season, &episode); n == 3 && itemID == item.ID {
+				requestedEpisode = episode
+				break
+			}
+		}
+		scope.Planned = true
+		scope.AllowedEpisodeIDs = nil
+		for _, season := range item.Seasons {
+			if season.Number != dl.Season {
+				continue
+			}
+			for _, episode := range season.Episodes {
+				if requestedEpisode == 0 || episode.EpisodeNumber == requestedEpisode {
+					scope.AllowedEpisodeIDs = append(scope.AllowedEpisodeIDs, episode.ID)
+				}
+			}
+		}
+		if len(scope.AllowedEpisodeIDs) == 0 {
+			return ImportResult{}, fmt.Errorf("manual series request does not resolve to an episode in season %d", dl.Season)
+		}
 	}
 
 	isMedia := filename.IsVideo
@@ -384,14 +446,14 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			bookQualities[i] = q
 			if quality.BookTypeForSource(q.Source) != quality.BookTypeForSource(profile.Target.Source) {
 				outcomes = append(outcomes, FileOutcome{
-					Name: filepath.Base(src), Quality: q.Display(),
+					Name: filepath.Base(src), SourcePath: src, Quality: q.Display(),
 					Reason: fmt.Sprintf("%s is not accepted by the %s profile", q.Display(), profile.Name),
 				})
 				continue
 			}
 			if !manual && !profile.Acceptable(q) {
 				outcomes = append(outcomes, FileOutcome{
-					Name: filepath.Base(src), Quality: q.Display(),
+					Name: filepath.Base(src), SourcePath: src, Quality: q.Display(),
 					Reason: fmt.Sprintf("%s is below the floor for profile %q", q.Display(), profile.Name),
 				})
 			}
@@ -405,7 +467,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			if err != nil {
 				outcomes = outcomes[:0]
 				for i, src := range videos {
-					outcomes = append(outcomes, FileOutcome{Name: filepath.Base(src), Quality: bookQualities[i].Display(), Reason: err.Error()})
+					outcomes = append(outcomes, FileOutcome{Name: filepath.Base(src), SourcePath: src, Quality: bookQualities[i].Display(), Reason: err.Error()})
 				}
 				return ImportResult{Files: outcomes}, fmt.Errorf("no files imported from %s — %v", savePath, err)
 			}
@@ -432,7 +494,10 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			q = dl.Quality
 		}
 
-		outcome := FileOutcome{Name: filepath.Base(src), Quality: q.Display()}
+		outcome := FileOutcome{Name: filepath.Base(src), SourcePath: src, Quality: q.Display(),
+			ReplacementOperationID: scope.ReplacementOperationID, SourceGeneration: scope.SourceGeneration,
+			SourceFileGeneration:    acceptedSourceGeneration(ctx, src),
+			SourcePayloadGeneration: acceptedPublicationGeneration(ctx)}
 		// Refuse a file that is provably incomplete, before it is placed.
 		//
 		// This is the one refusal in the import path that is not a judgement
@@ -477,6 +542,9 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 				return result, err
 			}
 			outcome.Reason = err.Error()
+			if errors.Is(err, errReplacementFileOutsideScope) {
+				outcome.ReplacementDisposition = "excess"
+			}
 			if retryableIO(err) {
 				// Not a verdict on the file — a condition of the machine.
 				// Stop here: every remaining file would fail the same way,
@@ -494,6 +562,10 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		} else {
 			outcome.Imported, outcome.Upgrade = true, put.Upgrade
 			outcome.Path = put.Path
+			outcome.PlacementID, outcome.FileGeneration = put.PlacementID, put.FileGeneration
+			if scope.ReplacementOperationID != "" {
+				outcome.ReplacementDisposition = "selected"
+			}
 			if scope.PublishedDigests != nil {
 				if digest, _, e := fileDigest(ctx, put.Path); e == nil {
 					scope.PublishedDigests[put.Path] = digest
@@ -504,7 +576,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		}
 		result.Files = append(result.Files, outcome)
 	}
-	if audioPlan != nil && result.Blocked == nil && result.Imported == len(videos) && audioPlan.Upgrade {
+	if audioPlan != nil && result.Blocked == nil && result.Imported == len(videos) && audioPlan.Upgrade && scope.ReplacementOperationID == "" {
 		keep := make([]string, 0, len(result.Files))
 		for _, outcome := range result.Files {
 			if outcome.Imported {
@@ -534,7 +606,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		// Say WHY, per file. This is the message a user actually reads when
 		// an import does nothing, and "no files imported" alone told them
 		// only that something went wrong somewhere.
-		return result, fmt.Errorf("no files imported from %s — %s", savePath, result.reasons(5))
+		return result, fmt.Errorf("%w from %s — %s", ErrNoFilesImported, savePath, result.reasons(5))
 	}
 
 	_ = s.db.AddHistory(ctx, "imported", item.ID, dl.ReleaseTitle,
@@ -695,8 +767,13 @@ type importScope struct {
 	// and they exist so each placed file can remember its own origin —
 	// without that, "this file is bad, blocklist it" has nothing to blocklist
 	// once the download row leaves the queue.
-	Release string
-	Indexer string
+	Release                string
+	Indexer                string
+	SourceGeneration       string
+	Transfer               string
+	SourceGUID             string
+	SourceIndexerID        int64
+	ReplacementOperationID string
 }
 
 // importLanguages reads the languages an import claims, from the release
@@ -758,14 +835,22 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	if err != nil {
 		return placement{}, err
 	}
+	dest, err = replacementPlacementDestination(ctx, src, dest, scope)
+	if err != nil {
+		return placement{}, err
+	}
 	_, err = s.commitPlacement(ctx, item, scope, src, dest, q, nil, upgrade)
 	if err != nil {
 		return placement{}, err
 	}
-	if upgrade {
+	placed, err := s.placementMetadata(ctx, dest, upgrade)
+	if err != nil {
+		return placement{}, err
+	}
+	if upgrade && scope.ReplacementOperationID == "" {
 		s.removeExistingFiles(ctx, item, scope.CopyID, nil, dest)
 	}
-	return placement{Path: dest, Upgrade: upgrade}, nil
+	return placed, nil
 }
 
 // importBookFile places one book file into <library>/<Author>/<Title>/ as
@@ -815,11 +900,15 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 		if err != nil {
 			return placement{}, err
 		}
+		dest, err = replacementPlacementDestination(ctx, src, dest, scope)
+		if err != nil {
+			return placement{}, err
+		}
 		_, err = s.commitPlacement(ctx, item, scope, src, dest, q, nil, plan.Upgrade)
 		if err != nil {
 			return placement{}, err
 		}
-		return placement{Path: dest, Upgrade: plan.Upgrade}, nil
+		return s.placementMetadata(ctx, dest, plan.Upgrade)
 	}
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
@@ -849,13 +938,17 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 	if err != nil {
 		return placement{}, err
 	}
+	dest, err = replacementPlacementDestination(ctx, src, dest, scope)
+	if err != nil {
+		return placement{}, err
+	}
 	_, err = s.commitPlacement(ctx, item, scope, src, dest, q, nil, upgrade)
 	if err != nil {
 		return placement{}, err
 	}
 	// Books are not probed: the extension IS the format (ADR 0006), so the
 	// provenance is the filename and there is nothing to measure.
-	return placement{Path: dest, Upgrade: upgrade}, nil
+	return s.placementMetadata(ctx, dest, upgrade)
 }
 
 func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
@@ -884,6 +977,21 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 			return placement{}, fmt.Errorf("indivisible file includes unknown episode S%02dE%02d", season, epNum)
 		}
 		if scope.Planned && !slices.Contains(scope.AllowedEpisodeIDs, epID) {
+			selectedSibling := false
+			allEpisodesKnown := true
+			for _, candidateEpisode := range eps {
+				candidateID, candidateErr := s.db.GetEpisodeID(ctx, item.ID, season, candidateEpisode)
+				if candidateErr != nil {
+					allEpisodesKnown = false
+					break
+				}
+				if slices.Contains(scope.AllowedEpisodeIDs, candidateID) {
+					selectedSibling = true
+				}
+			}
+			if scope.ReplacementOperationID != "" && allEpisodesKnown && !selectedSibling {
+				return placement{}, fmt.Errorf("%w: episode %d", errReplacementFileOutsideScope, epNum)
+			}
 			return placement{}, fmt.Errorf("episode %d outside planned import allowlist", epNum)
 		}
 		epIDs = append(epIDs, epID)
@@ -943,14 +1051,30 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	if err != nil {
 		return placement{}, err
 	}
+	dest, err = replacementPlacementDestination(ctx, src, dest, scope)
+	if err != nil {
+		return placement{}, err
+	}
 	_, err = s.commitPlacement(ctx, item, scope, src, dest, q, epIDs, upgrade)
 	if err != nil {
 		return placement{}, err
 	}
-	if upgrade {
+	placed, err := s.placementMetadata(ctx, dest, upgrade)
+	if err != nil {
+		return placement{}, err
+	}
+	if upgrade && scope.ReplacementOperationID == "" {
 		s.removeExistingFiles(ctx, item, scope.CopyID, epIDs, dest)
 	}
-	return placement{Path: dest, Upgrade: upgrade}, nil
+	return placed, nil
+}
+
+func (s *Service) placementMetadata(ctx context.Context, path string, upgrade bool) (placement, error) {
+	custody, err := s.db.GetMediaFileCustodyByPath(ctx, path)
+	if err != nil {
+		return placement{}, err
+	}
+	return placement{Path: path, Upgrade: upgrade, PlacementID: custody.PlacementID, FileGeneration: custody.FileGeneration}, nil
 }
 
 func movieDestination(root string, item domain.MediaItem, src string, q quality.Quality) string {
@@ -1077,7 +1201,7 @@ func placeContext(ctx context.Context, src, dest string, onBytes func(done, tota
 	// reported the new release at the old file's size and the user re-grabbed
 	// the same movie over and over watching nothing change.
 	if existing, err := os.Stat(dest); err == nil {
-		if srcInfo, serr := os.Stat(src); serr == nil && os.SameFile(existing, srcInfo) {
+		if srcInfo, serr := os.Stat(src); serr == nil && os.SameFile(existing, srcInfo) && !requiresIndependentPlacementCopy(ctx) {
 			return applyMode(dest, fileMode()) // genuinely the same file
 		}
 		// Fall through and replace it. The write below goes to a temp file and
@@ -1119,10 +1243,11 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 	// between is smaller than the one a fixed name leaves open forever.
 	if reserved, err := os.CreateTemp(dir, ".monarr-link-*"); err == nil {
 		_, recoveryCopy := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext)
+		independentCopy := requiresIndependentPlacementCopy(ctx)
 		link := reserved.Name()
 		_ = reserved.Close()
 		_ = os.Remove(link)
-		if !recoveryCopy {
+		if !recoveryCopy && !independentCopy {
 			if err := os.Link(src, link); err == nil {
 				return link, nil
 			}

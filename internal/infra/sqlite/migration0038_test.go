@@ -63,11 +63,49 @@ func TestAcquisitionMigrationPreservesLegacyQueueAndRefusesCustodyDowngrade(t *t
 	if _, err = db.W.ExecContext(ctx, `UPDATE downloads SET submission_phase='submitted' WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
-	if err = goose.DownToContext(ctx, db.W, "migrations", 37); err != nil {
-		t.Fatal(err)
+	if err = goose.DownToContext(ctx, db.W, "migrations", 37); err == nil {
+		t.Fatal("downgrade discarded durable legacy cleanup review custody")
 	}
 	var n int
 	if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM downloads`).Scan(&n); err != nil || n != 7 {
-		t.Fatal("downgrade lost legacy rows", err)
+		t.Fatal("refused custody downgrade changed legacy rows", err)
+	}
+}
+
+func TestSubmissionPhaseMigrationRefusesUncertainDowngrade(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	goose.SetBaseFS(migrationsFS)
+	goose.SetLogger(goose.NopLogger())
+	if err = goose.SetDialect("sqlite3"); err != nil {
+		t.Fatal(err)
+	}
+	if err = goose.UpToContext(ctx, db.W, "migrations", 37); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.W.ExecContext(ctx, `INSERT INTO media_items(id,kind,title,sort_title,added_at,updated_at) VALUES(1,'series','Legacy','legacy',0,0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.W.ExecContext(ctx, `INSERT INTO downloads(id,media_item_id,protocol,release_title,state,added_at,updated_at) VALUES(1,1,'torrent','legacy','grabbed',1,2)`); err != nil {
+		t.Fatal(err)
+	}
+	if err = goose.UpToContext(ctx, db.W, "migrations", 38); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.W.ExecContext(ctx, `UPDATE downloads SET submission_phase='uncertain' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err = goose.DownToContext(ctx, db.W, "migrations", 37); err == nil {
+		t.Fatal("downgrade erased an uncertain submission")
+	}
+	if _, err = db.W.ExecContext(ctx, `UPDATE downloads SET submission_phase='submitted' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err = goose.DownToContext(ctx, db.W, "migrations", 37); err != nil {
+		t.Fatal(err)
 	}
 }

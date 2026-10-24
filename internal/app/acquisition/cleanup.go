@@ -11,25 +11,12 @@ import (
 	"github.com/pjunod/monarr/internal/ports"
 )
 
-// Cleaning up after an import.
-//
-// Monarr never did. Every grab left the payload sitting in the download
-// client's completed folder forever, and because place() falls back to copying
-// whenever the client's disk and the library are not the same filesystem — the
-// normal arrangement, fast local disk for downloads and a big array for the
-// library — that leftover is a second full copy in real bytes. It is invisible
-// from inside monarr, it never triggers a disk-space warning that names it,
-// and it grows by the size of everything you have ever grabbed.
-//
-// Two paths lead here, and they exist for different reasons. One removes a
-// payload the moment its import succeeds, which is the behaviour that should
-// always have been there. The other is a sweep, which exists because the first
-// one only helps from now on: turning the setting on has to also collect the
-// backlog it was not there to prevent.
+// Legacy whole-payload cleanup for clients that do not use the durable
+// Runner delivery protocol. Delivery-managed generations are fenced below and
+// cleaned from their accepted per-file manifest instead.
 
-// cleanupPerSweep bounds one pass. Asking a client to delete several hundred
-// jobs in one burst is a good way to make it stop answering, and a backlog
-// that takes a few hours to drain is not a problem — it took months to build.
+// cleanupPerSweep bounds one legacy-client cleanup pass. Asking a client to
+// delete several hundred jobs in one burst can make it stop answering.
 const cleanupPerSweep = 25
 
 // JobCleanup is the scheduled sweep's task name.
@@ -54,6 +41,12 @@ const HistoryPayloadRemoved = "payload_removed"
 // only set when the client agreed, so anything that did not work is simply
 // tried again on the next sweep.
 func (s *Service) removePayload(ctx context.Context, dl downloadRef) bool {
+	if s.deliveryExpectedDownload(ctx, dl) {
+		return false
+	}
+	if s.legacyCleanupReview(ctx, dl) {
+		return false
+	}
 	if dl.Handle == "" {
 		return false
 	}
@@ -92,10 +85,11 @@ func (s *Service) removePayload(ctx context.Context, dl downloadRef) bool {
 // downloadRef is the handful of fields cleanup needs, so both callers can pass
 // what they already have without either one re-reading the row.
 type downloadRef struct {
-	ID          int64
-	MediaItemID int64
-	ClientID    int64
-	Handle      string
+	ID            int64
+	MediaItemID   int64
+	ClientID      int64
+	Handle        string
+	GenerationKey string
 	// ImportPath is where monarr just imported from — the fallback target
 	// when the client will not remove its own payload.
 	ImportPath   string
@@ -103,16 +97,11 @@ type downloadRef struct {
 	Size         int64
 }
 
-// CleanupPayloads sweeps imported downloads whose payload is still on the
-// client's disk and removes it. Returns how many it collected.
-//
-// This is what drains a backlog. The per-import removal only helps from the
-// moment it is switched on, and somebody enabling it after a year of grabs
-// wants the year of grabs gone too — the setting means "monarr should not be
-// leaving these around", not "monarr should stop leaving NEW ones around".
-//
-// Attempts rotate so a blocked row cannot starve later payloads. The batch
-// is capped so a client is never handed hundreds of deletions at once.
+// CleanupPayloads retries eligible legacy imported downloads for clients
+// whose whole-payload cleanup setting is enabled. Runner delivery generations
+// are excluded: their manifest ledger owns per-file cleanup and preserves
+// unresolved siblings. Attempts rotate so a blocked row cannot starve later
+// payloads, and the batch is capped to avoid overwhelming a client.
 func (s *Service) CleanupPayloads(ctx context.Context) error {
 	s.cleanupPartialPayloads(ctx)
 	rows, err := s.db.ImportedCleanupCandidates(ctx, cleanupPerSweep)
@@ -128,7 +117,8 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 		ctx, releaseStorage := s.lockStorageDecision(ctx)
 		unlock := func() { releaseStorage(); unlockDownload() }
 		dl, err := s.db.GetDownload(ctx, candidate.ID)
-		if err != nil || dl.State != "imported" || dl.PayloadRemoved || !dl.AddedAt.Equal(candidate.AddedAt) {
+		if err != nil || candidate.GenerationKey == "" || dl.GenerationKey != candidate.GenerationKey ||
+			dl.DeliveryExpected || dl.State != "imported" || dl.PayloadRemoved || !dl.AddedAt.Equal(candidate.AddedAt) {
 			unlock()
 			continue
 		}
@@ -154,7 +144,7 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 		}
 		ref := downloadRef{
 			ID: dl.ID, MediaItemID: dl.MediaItemID, ClientID: dl.ClientID,
-			Handle: dl.Handle, ImportPath: dl.ImportPath,
+			Handle: dl.Handle, GenerationKey: dl.GenerationKey, ImportPath: dl.ImportPath,
 			ReleaseTitle: dl.ReleaseTitle, Size: dl.Size,
 		}
 		if s.removePayload(ctx, ref) {
@@ -163,8 +153,8 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 			bytes += dl.Size
 			continue
 		}
-		// The backlog gets the same disk fallback the inline path gets:
-		// most of a backlog IS the payloads a client declined to remove.
+		// Legacy whole-payload cleanup gets the same guarded local fallback as
+		// the inline path. Delivery-managed generations cannot reach this branch.
 		s.removeImportedDir(ctx, ref)
 		confirmed, err := s.db.GetDownload(ctx, dl.ID)
 		unlock()
@@ -180,11 +170,8 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 	return nil
 }
 
-// cleanupAfterImport removes one payload immediately after its import lands.
-//
-// Runs inline rather than waiting for the sweep because the disk pressure is
-// immediate: on a library that grabs a dozen 60 GB remuxes overnight, an hourly
-// sweep is several hundred gigabytes late.
+// cleanupAfterImport requests legacy whole-payload cleanup after import. The
+// durable Runner path is handled separately by the delivery file ledger.
 func (s *Service) cleanupAfterImport(ctx context.Context, dl downloadRef) {
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
 	defer releaseStorage()
@@ -193,16 +180,14 @@ func (s *Service) cleanupAfterImport(ctx context.Context, dl downloadRef) {
 	}
 	// The client would not, or could not, remove it. Ask the disk directly.
 	//
-	// This is the other half of the terabyte: monarr imported, told the
-	// client to delete the payload, the client's delete did not take, and
-	// nothing ever looked again — 90 GB per grab, in the very folder monarr
-	// had just read. The bytes are in the library now; the copy in the
-	// completed folder is nobody's.
+	// A client may fail to delete its payload. The guarded fallback is limited
+	// to legacy whole-payload cleanup; Runner publications use per-file proof.
 	s.removeImportedDir(ctx, dl)
 }
 
-// removeImportedDir deletes the completed download's own directory after a
-// verified-complete import, when the download client did not.
+// removeImportedDir deletes a legacy completed download's own directory after
+// a verified-complete import, when the client did not. Delivery-managed
+// Runner generations are rejected at this boundary.
 //
 // Guarded, hard, in both directions: it only ever removes the directory the
 // client itself reported and monarr just imported FROM, it refuses anything
@@ -210,6 +195,12 @@ func (s *Service) cleanupAfterImport(ctx context.Context, dl downloadRef) {
 // inside one — a library folder is not a payload, whatever a path mapping
 // says. A wrong deletion here is somebody's media, so every doubt is a no.
 func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
+	if s.deliveryExpectedDownload(ctx, dl) {
+		return
+	}
+	if s.legacyCleanupReview(ctx, dl) {
+		return
+	}
 	dir := strings.TrimSpace(dl.ImportPath)
 	if dir == "" || !filepath.IsAbs(dir) {
 		return
@@ -224,8 +215,9 @@ func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
 		// covers the disk as much as it covers the client.
 		return
 	}
-	// Runner owns its processing and recovery trees. Curator owns its configured
-	// working tree, including completed, and may clean imported payloads there.
+	// Runner owns its processing and recovery trees. Legacy Runner paths can be
+	// deleted only in a configured Curator-owned working tree; delivery-managed
+	// publications never reach this whole-directory fallback.
 	if cfg.Type == "nzbd" && !s.ownsDownloadPath(ctx, dir) {
 		s.log.Warn("cleanup: Runner payload remains pending; retry through Runner", "download", dl.ID, "dir", dir)
 		return
@@ -252,6 +244,94 @@ func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
 		"release", dl.ReleaseTitle, "dir", dir, "size", dl.Size)
 	_ = s.db.AddHistory(ctx, HistoryPayloadRemoved, dl.MediaItemID, dl.ReleaseTitle,
 		map[string]any{"dir": dir, "bytes": dl.Size, "by": "monarr (the client did not)"})
+}
+
+// deliveryExpectedDownload fences legacy whole-directory cleanup from every
+// delivery-managed generation. Those files are removed only from the accepted
+// manifest ledger, which preserves unresolved siblings and Activity history.
+func (s *Service) deliveryExpectedDownload(ctx context.Context, dl downloadRef) bool {
+	if dl.ID <= 0 {
+		return false
+	}
+	current, err := s.db.GetDownload(ctx, dl.ID)
+	if err != nil {
+		return true
+	}
+	if dl.GenerationKey != "" && current.GenerationKey != dl.GenerationKey {
+		return true
+	}
+	return current.DeliveryExpected
+}
+
+// legacyCleanupReview keeps every pre-migration acquisition out of automatic
+// cleanup until a later explicit review workflow authorizes a concrete action.
+// The immutable generation key binds the check when integer IDs are reused.
+func (s *Service) legacyCleanupReview(ctx context.Context, dl downloadRef) bool {
+	if dl.ID <= 0 {
+		return dl.Handle != "" || dl.ImportPath != ""
+	}
+	current, err := s.db.GetDownload(ctx, dl.ID)
+	if err != nil {
+		s.log.Warn("cleanup: could not resolve download generation", "download", dl.ID, "err", err)
+		return true
+	}
+	// A ref without its immutable generation cannot safely distinguish an old
+	// in-flight operation from a new row reusing the same integer ID/path.
+	if dl.GenerationKey == "" || current.GenerationKey == "" || dl.GenerationKey != current.GenerationKey {
+		return true
+	}
+	for _, path := range []string{current.ImportPath, dl.ImportPath} {
+		if path != "" && !filepath.IsAbs(path) {
+			// A relative path cannot be compared with the durable path cohort.
+			return true
+		}
+	}
+	review, err := s.db.LegacyCleanupReview(ctx, current.GenerationKey, current.ImportPath)
+	if err == nil && !review && dl.ImportPath != current.ImportPath {
+		review, err = s.db.LegacyCleanupReview(ctx, current.GenerationKey, dl.ImportPath)
+	}
+	if err != nil {
+		s.log.Warn("cleanup: could not verify legacy review custody", "download", dl.ID, "err", err)
+		return true
+	}
+	if review {
+		return true
+	}
+	// A reviewed directory protects every nested path and every parent that
+	// could contain it. Normalize filesystem aliases using the configured
+	// completed roots before comparing path boundaries.
+	paths, err := s.db.LegacyCleanupReviewPaths(ctx)
+	if err != nil {
+		s.log.Warn("cleanup: could not load legacy review paths", "download", dl.ID, "err", err)
+		return true
+	}
+	receipts, err := s.db.CompletedReceipts(ctx)
+	if err != nil {
+		s.log.Warn("cleanup: could not resolve legacy review roots", "download", dl.ID, "err", err)
+		return true
+	}
+	roots, err := s.completedRoots(ctx, receipts)
+	if err != nil {
+		s.log.Warn("cleanup: could not resolve legacy review roots", "download", dl.ID, "err", err)
+		return true
+	}
+	targets := []string{current.ImportPath, dl.ImportPath}
+	for _, target := range targets {
+		if target == "" || !filepath.IsAbs(target) {
+			continue
+		}
+		target = storagePath(filepath.Clean(target), roots)
+		for _, reviewed := range paths {
+			if !filepath.IsAbs(reviewed) {
+				continue
+			}
+			reviewed = storagePath(filepath.Clean(reviewed), roots)
+			if within(target, reviewed) || within(reviewed, target) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // within reports whether child is under parent, on path boundaries — so

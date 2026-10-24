@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   type ManualImportRequest,
+  type CompletedEntry,
+  type CompletedRoot,
   type QueueItem,
   type ScannedFile,
   type Stage,
@@ -13,20 +15,25 @@ import {
   clearFinishedQueue,
   fmtBytes,
   fmtRelative,
+  getCompletedInventory,
   getLibrary,
   getLibraryItem,
   getManualImportDefaultPath,
   getQueuePage,
   getQueueSummary,
+  getTasks,
   importQueueItem,
   resumeQueueItem,
   manualImport,
   removeQueueItem,
   resolveQueueReservation,
   scanImportPath,
+  runTask,
 } from '../api'
 import { PathInput } from '../PathInput'
 import { CompletedFolders } from '../CompletedFolders'
+import { DeliveryLifecycleArchive, DeliveryLifecycleForDownload } from '../DeliveryLifecycle'
+import '../LegacyReview.css'
 
 const STATE_PILL: Record<string, string> = {
   imported: 'pill-ok',
@@ -237,6 +244,7 @@ export function ActivityPage() {
   const qc = useQueryClient()
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [manual, setManual] = useState<Partial<ManualImportRequest> | null>(null)
+  const [resolveMode, setResolveMode] = useState<'files' | 'delivery' | 'legacy'>('files')
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [shown, setShown] = useState<Record<string, number>>({ imported: PAGE, failed: PAGE })
@@ -370,16 +378,20 @@ export function ActivityPage() {
     <>
       <header className="page-head">
         <h1>Activity</h1>
-        <button onClick={() => setManual(manual ? null : {})} aria-expanded={!!manual}>
-          {manual ? 'Close manual import' : 'Manual import'}
+        <button onClick={() => { setResolveMode('files'); setManual(manual ? null : {}) }} aria-expanded={!!manual}>
+          {manual ? 'Close Resolve' : 'Resolve'}
         </button>
       </header>
 
-      {manual && <ManualImportPanel key={manual.path ?? 'manual'} prefill={manual} onDone={() => { setManual(null); invalidate() }} />}
+      {manual && <ActionDialog title="Resolve" className="resolve-dialog" onClose={() => setManual(null)}>
+        <ResolvePanel key={manual.path ?? 'resolve'} embedded initialMode={resolveMode} prefill={manual} onDone={() => { setManual(null); invalidate() }} />
+      </ActionDialog>}
 
       {actionErr && <div className="banner warning">{actionErr}</div>}
 
-      <CompletedFolders onImport={(path) => setManual({ path })} />
+      <CompletedFolders onImport={(path, mode, downloadId) => { setResolveMode(mode === 'legacy' ? 'legacy' : mode === 'delivery' ? 'delivery' : 'files'); setManual({ path, downloadId }) }} />
+
+      <DeliveryLifecycleArchive />
 
       <div className="activity-toolbar">
         <input
@@ -521,6 +533,144 @@ export function ActivityPage() {
   )
 }
 
+export function ResolvePanel({
+  initialMode = 'files',
+  prefill = {},
+  embedded = false,
+  onDone = () => {},
+}: {
+  initialMode?: 'files' | 'delivery' | 'legacy'
+  prefill?: Partial<ManualImportRequest>
+  embedded?: boolean
+  onDone?: () => void
+}) {
+  const [mode, setMode] = useState<'files' | 'delivery' | 'legacy'>(initialMode)
+  const [selectedPath, setSelectedPath] = useState(prefill.path ?? '')
+  const [selectedLegacy, setSelectedLegacy] = useState(false)
+  const [legacyFingerprint, setLegacyFingerprint] = useState('')
+  return <section className={`resolve-panel${embedded ? ' resolve-panel-embedded' : ''}`} aria-label="Resolve downloads">
+    {!embedded && <header className="resolve-heading">
+      <div>
+        <h2>Resolve</h2>
+        <p className="muted">Choose a destination for unassociated files, inspect an existing legacy backlog, or resolve files from an accepted Runner manifest.</p>
+      </div>
+    </header>}
+    <nav className="resolve-modes" aria-label="Resolve source">
+      <button aria-pressed={mode === 'files'} onClick={() => setMode('files')}>Completed files</button>
+      <button aria-pressed={mode === 'delivery'} onClick={() => setMode('delivery')}>Runner delivery</button>
+      <button aria-pressed={mode === 'legacy'} onClick={() => setMode('legacy')}>Legacy backlog</button>
+    </nav>
+    {mode === 'files' ? <ManualImportPanel prefill={{ ...prefill, path: selectedPath || prefill.path, reviewLegacy: selectedLegacy, reviewLegacyFingerprint: legacyFingerprint }} onDone={onDone} /> : mode === 'delivery' ? prefill.downloadId ? <DeliveryLifecycleForDownload downloadId={prefill.downloadId} /> : <DeliveryLifecycleArchive initiallyOpen /> : <LegacyReviewReport onResolve={(path, fingerprint) => { setSelectedPath(path); setSelectedLegacy(true); setMode('files'); setLegacyFingerprint(fingerprint) }} />}
+  </section>
+}
+
+function LegacyReviewReport({ onResolve }: { onResolve: (path: string, fingerprint: string) => void }) {
+  const inventory = useQuery({ queryKey: ['completed-inventory'], queryFn: getCompletedInventory })
+  const tasks = useQuery({ queryKey: ['tasks'], queryFn: getTasks, refetchInterval: 2_000 })
+  const qc = useQueryClient()
+  const [scanRequestedFrom, setScanRequestedFrom] = useState<string | null>(null)
+  const scanTask = tasks.data?.find((task) => task.name === 'downloads.inventory')
+  const scan = useMutation({
+    mutationFn: () => runTask('downloads.inventory'),
+    onMutate: () => setScanRequestedFrom(scanTask?.lastRunAt ?? ''),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['tasks'] }) },
+    onError: () => setScanRequestedFrom(null),
+  })
+  const scanFinished = scanRequestedFrom !== null && !!scanTask && !scanTask.running && scanTask.lastRunAt !== scanRequestedFrom
+  const [selected, setSelected] = useState<Record<string, boolean>>({})
+  const rows = inventory.data?.roots.flatMap((root) => root.entries
+    .filter((entry) => entry.legacyReview || entry.receipts.some((receipt) => receipt.legacyReview))
+    .map((entry) => ({ root, entry }))) ?? []
+  const selectedRows = rows.filter(({ entry }) => selected[entry.path])
+  const selectedBytes = selectedRows.reduce((sum, row) => sum + row.entry.bytes, 0)
+  const exportReport = () => {
+    const quote = (value: string) => `"${value.replaceAll('"', '""')}"`
+    const lines = [['payload', 'file', 'bytes', 'modified_at', 'mode', 'snapshot_identity', 'download_ids', 'titles', 'proposed_outcome']]
+    for (const { entry } of selectedRows) {
+      const receipts = entry.receipts.filter((receipt) => receipt.legacyReview)
+      for (const file of entry.reviewFiles ?? []) {
+        lines.push([entry.path, file.path, String(file.sizeBytes), file.modifiedAt, file.mode, file.snapshotIdentity,
+          receipts.map((receipt) => String(receipt.downloadId)).join(';'),
+          receipts.map((receipt) => receipt.title).join(';'),
+          'Manual preview required; select exact files and target before importing'])
+      }
+      if (!entry.reviewFiles?.length) {
+        lines.push([entry.path, '', String(entry.bytes), '', '', entry.fingerprint,
+          receipts.map((receipt) => String(receipt.downloadId)).join(';'),
+          receipts.map((receipt) => receipt.title).join(';'),
+          'Refresh inventory, then inspect exact files before choosing an action'])
+      }
+    }
+    const csv = lines.map((line) => line.map(quote).join(',')).join('\r\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'curator-legacy-review-proposal.csv'
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+  return <section className="panel legacy-review-report" aria-label="Legacy backlog review report">
+    <h3>Existing backlog review</h3>
+    <p className="muted">Read-only report of pre-delivery downloads. Each proposal uses the current complete file inventory and associated download records. Resolve opens the existing explicit file-selection preview; it does not import until you choose files and a destination.</p>
+    <div className="row-actions">
+      <button disabled={scan.isPending || !!scanTask?.running} onClick={() => scan.mutate()}>{scanTask?.running ? 'Refreshing inventory…' : 'Refresh inventory'}</button>
+      {scanFinished && <span role="status" className={scanTask?.lastError ? 'error-text' : 'muted'}>{scanTask?.lastError ? `Scan failed: ${scanTask.lastError}` : 'Inventory refreshed.'}</span>}
+      {scan.error && <span role="alert" className="error-text">{scan.error.message}</span>}
+    </div>
+    {inventory.isLoading && <p role="status">Loading the latest completed-storage inventory…</p>}
+    {inventory.error && <p role="alert" className="error-text">{inventory.error.message}</p>}
+    {inventory.data?.roots.some((root) => root.error) && <p role="alert" className="warning-text">One or more storage scans are incomplete. The report uses the last complete inventory for those roots; scan them before approving any future action.</p>}
+    <p><strong>{rows.length}</strong> legacy payloads · <strong>{rows.reduce((sum, row) => sum + row.entry.files, 0)}</strong> files · <strong>{fmtBytes(rows.reduce((sum, row) => sum + row.entry.bytes, 0))}</strong></p>
+    <div className="row-actions">
+      <button disabled={!rows.length} onClick={() => setSelected(Object.fromEntries(rows.map(({ entry }) => [entry.path, true])))}>Select all for proposal</button>
+      <button disabled={!selectedRows.length} onClick={() => setSelected({})}>Clear proposal selection</button>
+      <button disabled={!selectedRows.length} onClick={exportReport}>Export selected proposal</button>
+      <span className="muted">{selectedRows.length} selected · {fmtBytes(selectedBytes)}</span>
+    </div>
+    {rows.length === 0 ? <p className="muted">No legacy review entries are visible in the latest completed-storage scan.</p> : <div className="legacy-review-list">
+      {rows.map(({ root, entry }) => <LegacyReviewEntry key={entry.path} root={root} entry={entry} selected={!!selected[entry.path]} onSelect={(checked) => setSelected((previous) => ({ ...previous, [entry.path]: checked }))} onResolve={onResolve} />)}
+    </div>}
+  </section>
+}
+
+function LegacyReviewEntry({ root, entry, selected, onSelect, onResolve }: {
+  root: CompletedRoot
+  entry: CompletedEntry
+  selected: boolean
+  onSelect: (checked: boolean) => void
+  onResolve: (path: string, fingerprint: string) => void
+}) {
+  const receipts = entry.receipts.filter((receipt) => receipt.legacyReview)
+  const primaryReceipt = receipts.find((receipt) => (receipt.mediaItemId ?? 0) > 0)
+  const target = useQuery({
+    queryKey: ['library', primaryReceipt?.mediaItemId],
+    queryFn: () => getLibraryItem(primaryReceipt!.mediaItemId!),
+    enabled: !!primaryReceipt,
+  })
+  const matchingCopyFiles = target.data?.files.filter((file) => (file.copyId ?? 0) === (primaryReceipt?.copyId ?? 0)) ?? []
+  const proposed = entry.reviewFiles?.length
+    ? 'Inspect the listed files in the explicit importer, then choose the exact title and copy.'
+    : 'Refresh the inventory before deciding.'
+  return <article className="legacy-review-entry">
+    <label><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} /> Include in proposal</label>
+    <strong className="mono">{entry.path}</strong>
+    <p>{entry.files} files · {fmtBytes(entry.bytes)} · {entry.reason}</p>
+    <p className="muted">Proposal: {proposed}</p>
+    <button disabled={!entry.reviewFiles?.length} onClick={() => onResolve(entry.path, entry.fingerprint)}>Inspect files and choose destination</button>
+    <details><summary>Current file identities and evidence</summary>
+      <p className="muted">Payload snapshot {entry.fingerprint}. Root scan: {root.lastCompleteAt ? new Date(root.lastCompleteAt).toLocaleString() : 'unknown'}. Snapshot identities describe current metadata only; they do not prove storage identity or authorize cleanup.</p>
+      <p>Associated history: {receipts.map((receipt) => `#${receipt.downloadId} ${receipt.title}`).join('; ') || 'orphaned legacy path'}.</p>
+      {primaryReceipt && <div className="legacy-target-evidence">
+        <strong>Recorded destination: {target.data?.title ?? `library item #${primaryReceipt.mediaItemId}`} · {primaryReceipt.copyId ? `copy #${primaryReceipt.copyId}` : 'primary copy'}</strong>
+        {target.isLoading ? <p className="muted">Checking the recorded destination…</p> : target.error ? <p className="error-text">The recorded library target could not be read: {target.error.message}</p> : matchingCopyFiles.length
+          ? <><p className="muted">Same-copy library files are listed below. Current content health is unverified by this report; filenames, sizes, and old receipts do not prove equivalent or safe-to-remove content.</p><ul>{matchingCopyFiles.map((file) => <li key={file.id}><span className="mono">{file.path}</span> · {fmtBytes(file.size)} · quality evidence {file.verified ? 'verified' : 'unverified'}</li>)}</ul></>
+          : <p className="muted">No current files are recorded for this exact copy. The report cannot propose a duplicate or cleanup outcome.</p>}
+      </div>}
+      {entry.reviewFiles?.length ? <ul>{entry.reviewFiles.map((file) => <li key={file.path}><span className="mono">{file.path}</span> · {fmtBytes(file.sizeBytes)} · {new Date(file.modifiedAt).toLocaleString()} · {file.mode} <details><summary>Snapshot identity</summary><code>{file.snapshotIdentity}</code></details></li>)}</ul> : <p className="muted">A fresh complete inventory scan is needed to enumerate current files.</p>}
+    </details>
+  </article>
+}
+
 function RowGroup(props: {
   d: QueueItem
   open: boolean
@@ -562,15 +712,16 @@ function RowGroup(props: {
           </button>
         </td>
         <td className="mono">
-          {d.title}
+          <span className="queue-title" title={d.title}>{d.title}</span>
           {/* One line, elided: the release column is what is left after the
               fixed columns, and a four-line match sentence under every title
               turned each row into a paragraph. The full reason is the title. */}
           {d.match?.reason && <div className="muted queue-match" title={d.match.reason}>Match: {d.match.reason}</div>}
-          {d.error && <div className="error-text">{d.error}</div>}
-          {d.parkedReason && <div className="muted">Reserved: {d.parkedReason}</div>}
-          <button onClick={(event)=>{focusActionTrigger(event);setWhyOpen(true)}}>Why chosen</button>
-          {(d.parkedReason || d.submissionPhase==='uncertain') && <button onClick={(event)=>{focusActionTrigger(event);setAcknowledged(false);resolve.reset();setReviewOpen(true)}}>Review reservation</button>}
+          {d.error && <div className="error-text queue-row-detail" title={d.error}>{d.error}</div>}
+          {d.importBlockedSince && <div className={`queue-row-detail ${Date.now() - new Date(d.importBlockedSince).getTime() >= 30 * 60 * 1000 ? 'warning-text' : 'muted'}`} title={`Import blocked ${fmtRelative(d.importBlockedSince)} · ${d.importRetryAttempts ?? 0} retries · ${d.importRetryAt && new Date(d.importRetryAt).getTime() > Date.now() ? `next retry ${fmtRelative(d.importRetryAt)}` : 'retry due'}`}>
+            Import blocked {fmtRelative(d.importBlockedSince)} · {d.importRetryAttempts ?? 0} retries · {d.importRetryAt && new Date(d.importRetryAt).getTime() > Date.now() ? `next retry ${fmtRelative(d.importRetryAt)}` : 'retry due'}
+          </div>}
+          {d.parkedReason && <div className="muted queue-row-detail" title={`Reserved: ${d.parkedReason}`}>Reserved: {d.parkedReason}</div>}
           {reviewOpen && <ActionDialog title="Review episode reservation" onClose={()=>setReviewOpen(false)}>
             <p>The original submission may still exist or complete later. Releasing custody permits a deliberate Search to acquire another copy. The original row and a persistent possible-duplicate warning remain.</p>
             <p>{d.parkedReason || 'Submission acceptance is uncertain.'}</p>
@@ -628,6 +779,8 @@ function RowGroup(props: {
         </td>
         <td>
           <div className="row-actions">
+            <button onClick={(event)=>{focusActionTrigger(event);setWhyOpen(true)}}>Why chosen</button>
+            {(d.parkedReason || d.submissionPhase==='uncertain') && <button onClick={(event)=>{focusActionTrigger(event);setAcknowledged(false);resolve.reset();setReviewOpen(true)}}>Review reservation</button>}
             {held && d.control?.retry_policy === 'resume_same_job' && <button onClick={props.onImport} disabled={busy}>Resume same job</button>}
             {canImport && !held && (
               <button onClick={props.onImport} disabled={busy}>
@@ -692,6 +845,8 @@ function HandoffDetail({ d }: { d: QueueItem }) {
   const steps = d.handoff ?? []
   return (
     <div className="handoff">
+      <DeliveryLifecycleForDownload downloadId={d.id} />
+      {d.error && <p className="error-text"><strong>Latest error:</strong> {d.error}</p>}
       {(d.savePath || d.importPath) && (
         <div className="handoff-paths">
           {d.savePath && (
@@ -782,6 +937,9 @@ function ManualImportPanel({
         mediaItemId: itemId,
         copyId: copyId || undefined,
         downloadId: prefill.downloadId,
+        reviewLegacy: prefill.reviewLegacy,
+        reviewLegacyFingerprint: prefill.reviewLegacy ? prefill.reviewLegacyFingerprint : undefined,
+        reviewLegacyFiles: prefill.reviewLegacy ? (scanned ?? []).filter(file => selected.has(file.path)).map(({ path, snapshotIdentity }) => ({ path, snapshotIdentity: snapshotIdentity ?? '' })) : undefined,
       }),
     onSuccess: () => {
       setImportErr('')
@@ -804,6 +962,7 @@ function ManualImportPanel({
         Point Curator at a folder or file, choose where it belongs, and import it — for a download
         Curator couldn't place automatically, or files you moved into place yourself.
       </p>
+      {prefill.reviewLegacy && <p className="warning-text">Legacy review approval is tied to this inventory snapshot, destination, and exact selected files. If the files or payload change, refresh the backlog and review again.</p>}
 
       <div className="form-row">
         <label htmlFor="manual-import-path">Path</label>

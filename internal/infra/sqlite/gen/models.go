@@ -52,6 +52,7 @@ type CompletedReceipt struct {
 	State          string
 	Protocol       string
 	PayloadRemoved int64
+	GenerationKey  string
 }
 
 type CompletedScan struct {
@@ -67,41 +68,61 @@ type CustomFormat struct {
 }
 
 type Download struct {
-	ID                int64
-	MediaItemID       int64
-	CopyID            sql.NullInt64
-	Wantables         string
-	Season            int64
-	ReleaseTitle      string
-	Indexer           string
-	Protocol          string
-	Quality           string
-	Size              int64
-	ClientID          int64
-	Handle            string
-	State             string
-	Progress          float64
-	Error             string
-	SavePath          string
-	ImportPath        string
-	HandoffLog        string
-	AddedAt           int64
-	Transfer          string
-	PayloadRemoved    int64
-	MatchEvidence     string
-	RunnerControl     string
-	PlanID            sql.NullInt64
-	CandidateKey      string
-	SubmissionPhase   string
-	ExecutionPayload  string
-	ReservedEpisodes  string
-	ParkedReason      string
-	ParkedAt          int64
-	Superseded        int64
-	Observation       string
-	CleanupPending    int64
-	UpdatedAt         int64
-	ActivityDismissed int64
+	ID                            int64
+	MediaItemID                   int64
+	CopyID                        sql.NullInt64
+	Wantables                     string
+	Season                        int64
+	ReleaseTitle                  string
+	Indexer                       string
+	Protocol                      string
+	Quality                       string
+	Size                          int64
+	ClientID                      int64
+	Handle                        string
+	State                         string
+	Progress                      float64
+	Error                         string
+	SavePath                      string
+	ImportPath                    string
+	HandoffLog                    string
+	AddedAt                       int64
+	Transfer                      string
+	PayloadRemoved                int64
+	MatchEvidence                 string
+	RunnerControl                 string
+	PlanID                        sql.NullInt64
+	CandidateKey                  string
+	SubmissionPhase               string
+	ExecutionPayload              string
+	ReservedEpisodes              string
+	ParkedReason                  string
+	ParkedAt                      int64
+	Superseded                    int64
+	Observation                   string
+	CleanupPending                int64
+	UpdatedAt                     int64
+	ActivityDismissed             int64
+	GenerationKey                 string
+	Intent                        string
+	RequestID                     string
+	RequestFingerprint            string
+	BlacklistOverride             int64
+	DeliveryExpected              int64
+	RequestTokenIdempotent        int64
+	ManualRetryAt                 int64
+	ManualRetryAttempts           int64
+	ManualBlockedAt               int64
+	ReplacementOperationID        string
+	SourceGuid                    string
+	SourceIndexerID               int64
+	RunnerInstanceID              string
+	RunnerAdmissionGeneration     string
+	RunnerSubmissionRetryAt       int64
+	RunnerSubmissionRetryAttempts int64
+	RunnerSubmissionBlockedAt     int64
+	ProviderRetryAfter            int64
+	ExactTransferCorrelation      int64
 }
 
 type DownloadClient struct {
@@ -208,9 +229,36 @@ type Job struct {
 	FinishedAt         int64
 }
 
+type LegacyCleanupReview struct {
+	GenerationKey string
+	Path          string
+}
+
+type LibraryReviewFlag struct {
+	ID             int64
+	MediaItemID    int64
+	MediaFileID    int64
+	FileGeneration string
+	ReasonCode     string
+	Reason         string
+	Evidence       string
+	State          string
+	CreatedAt      int64
+	UpdatedAt      int64
+}
+
 type LifecycleLibraryRevision struct {
 	ID       int64
 	Revision int64
+}
+
+type ManualGrabRequest struct {
+	RequestID          string
+	RequestFingerprint string
+	DownloadID         int64
+	GenerationKey      string
+	CopyID             int64
+	CreatedAt          int64
 }
 
 type MediaAlias struct {
@@ -240,25 +288,48 @@ type MediaCopy struct {
 }
 
 type MediaFile struct {
-	ID                int64
-	MediaItemID       sql.NullInt64
-	Path              string
-	Size              int64
-	AddedAt           int64
-	Quality           string
-	CopyID            sql.NullInt64
-	MediaInfo         string
-	QualityProvenance string
-	QualityConfidence string
-	ProbedAt          int64
-	SourceRelease     string
-	SourceIndexer     string
-	AudioLanguages    string
+	ID                      int64
+	MediaItemID             sql.NullInt64
+	Path                    string
+	Size                    int64
+	AddedAt                 int64
+	Quality                 string
+	CopyID                  sql.NullInt64
+	MediaInfo               string
+	QualityProvenance       string
+	QualityConfidence       string
+	ProbedAt                int64
+	SourceRelease           string
+	SourceIndexer           string
+	AudioLanguages          string
+	FileGeneration          string
+	SourceGeneration        string
+	SourceTransfer          string
+	SourcePayloadGeneration string
+	SourceGuid              string
+	SourceIndexerID         int64
+	SourceFileGeneration    string
 }
 
 type MediaFileEpisode struct {
 	MediaFileID int64
 	EpisodeID   int64
+}
+
+type MediaFilePlacement struct {
+	PlacementID             string
+	MediaFileID             int64
+	FileGeneration          string
+	SourceGeneration        string
+	SourceTransfer          string
+	SourcePayloadGeneration string
+	SourceGuid              string
+	SourceIndexerID         int64
+	Path                    string
+	Sha256                  string
+	CommittedAt             int64
+	ReplacementOperationID  string
+	SourceFileGeneration    string
 }
 
 type MediaIdentityRevision struct {
@@ -391,11 +462,252 @@ type RecoveryReceiptOutbox struct {
 	UpdatedAt int64
 }
 
+type ReleaseBlacklistIdentity struct {
+	ID          int64
+	MediaItemID int64
+	Guid        string
+	IndexerID   int64
+	Reason      string
+	AddedAt     int64
+}
+
+type ReplacementFileObservation struct {
+	ObservationID        string
+	RequestID            string
+	MediaItemID          int64
+	MediaFileID          int64
+	FileGeneration       string
+	SourceGeneration     string
+	Path                 string
+	StorageIdentity      string
+	State                string
+	Sha256               string
+	FileIdentity         string
+	Size                 int64
+	Error                string
+	CreatedAt            int64
+	UpdatedAt            int64
+	FilesystemGeneration string
+}
+
+type ReplacementOperation struct {
+	OperationID            string
+	RequestID              string
+	Fingerprint            string
+	State                  string
+	Intent                 string
+	Scope                  string
+	MediaItemID            int64
+	CopyID                 int64
+	SourceGeneration       string
+	SourceTransfer         string
+	SourceRelease          string
+	SourceIndexer          string
+	SourceGuid             string
+	SourceIndexerID        int64
+	BlacklistSourceRelease int64
+	ReasonCode             string
+	Reason                 string
+	EpisodeIds             string
+	Result                 string
+	LastError              string
+	CreatedAt              int64
+	UpdatedAt              int64
+	RetryAttempts          int64
+	BlockedSince           int64
+	NextAttemptAt          int64
+}
+
+type ReplacementOperationFile struct {
+	OperationID      string
+	MediaFileID      int64
+	FileGeneration   string
+	SourceGeneration string
+	Path             string
+	Sha256           string
+	EpisodeIds       string
+	Disposition      string
+	RemovalState     string
+	FileIdentity     string
+	ObservationID    string
+	StorageIdentity  string
+	SizeBytes        int64
+}
+
+type ReplacementOperationStep struct {
+	ID            int64
+	OperationID   string
+	Step          string
+	State         string
+	Attempt       int64
+	Error         string
+	StartedAt     int64
+	EndedAt       int64
+	NextAttemptAt int64
+}
+
+type ReplacementStorageIdentityPin struct {
+	RootPath            string
+	StorageIdentity     string
+	SourceObservationID string
+	PinnedAt            int64
+}
+
 type RootFolder struct {
 	ID      int64
 	Path    string
 	AddedAt int64
 	Kind    string
+}
+
+type RunnerAdmissionPollSchedule struct {
+	DownloadID    int64
+	GenerationKey string
+	NextAttemptAt int64
+	Attempts      int64
+	LastError     string
+}
+
+type RunnerClientInstance struct {
+	ClientID          int64
+	RunnerInstanceID  string
+	DeliveryV1Enabled int64
+	UpdatedAt         int64
+}
+
+type RunnerDeliveryAttemptEvent struct {
+	ID         int64
+	ReceiptID  int64
+	Stage      string
+	Attempt    int64
+	StartedAt  int64
+	FinishedAt sql.NullInt64
+	Result     string
+	Error      string
+}
+
+type RunnerDeliveryCursor struct {
+	ClientID      int64
+	AfterSequence int64
+	UpdatedAt     int64
+}
+
+type RunnerDeliveryExplicitDeleteBatch struct {
+	BatchID                      string
+	ReceiptID                    int64
+	PayloadPath                  string
+	InventoryFingerprint         string
+	PublicationDirectoryIdentity string
+	StorageIdentity              string
+	GenerationKey                string
+	RequestToken                 string
+	PublicationGeneration        string
+	RetryAttempts                int64
+	RetryNextAttemptAt           int64
+	RetryBlockedSince            int64
+	RetryError                   string
+	CreatedAt                    int64
+}
+
+type RunnerDeliveryExplicitDeleteFile struct {
+	BatchID          string
+	Path             string
+	ReviewedPath     string
+	SnapshotIdentity string
+	ParentIdentity   string
+	HistoryRecorded  int64
+	CompletedAt      int64
+}
+
+type RunnerDeliveryFileImport struct {
+	ID                      int64
+	ReceiptID               int64
+	Path                    string
+	SourceGeneration        string
+	SourceTransfer          string
+	SourcePayloadGeneration string
+	ReplacementOperationID  string
+	ReplacementDisposition  string
+	PlacementID             string
+	LibraryFileGeneration   string
+	LibraryFileIdentity     string
+	LibraryPath             string
+	CreatedAt               int64
+}
+
+type RunnerDeliveryFileOutcome struct {
+	ReceiptID            int64
+	Path                 string
+	SizeBytes            int64
+	Sha256               string
+	FileGeneration       string
+	Disposition          string
+	CleanupState         string
+	Reason               string
+	LibraryPath          string
+	ManualAdditional     int64
+	CleanupError         string
+	CleanupAttempts      int64
+	CleanupBlockedSince  int64
+	CleanupNextAttemptAt int64
+	UpdatedAt            int64
+}
+
+type RunnerDeliveryReceipt struct {
+	ID                            int64
+	ClientID                      int64
+	DeliveryID                    string
+	Sequence                      int64
+	PublicationGeneration         string
+	ManifestDigest                string
+	ArtifactID                    string
+	JobID                         string
+	RequestToken                  string
+	RunnerInstanceID              string
+	ReadyAt                       int64
+	PublicationPath               string
+	MappedPath                    string
+	FilesJson                     string
+	SourceCleanupJson             string
+	State                         string
+	AckState                      string
+	ConsumerReceiptID             string
+	DownloadID                    int64
+	GenerationKey                 string
+	DownloadHandle                string
+	MediaItemID                   int64
+	CopyID                        int64
+	Error                         string
+	Attempts                      int64
+	BlockedSince                  int64
+	NextAttemptAt                 int64
+	CreatedAt                     int64
+	UpdatedAt                     int64
+	SourceCleanupRefreshedAt      int64
+	DirectoryCleanupAttempts      int64
+	DirectoryCleanupBlockedSince  int64
+	DirectoryCleanupNextAttemptAt int64
+	DirectoryCleanupState         string
+	DirectoryCleanupError         string
+	SourceArtifactID              string
+	SourceGeneration              string
+	TerminalOutcome               string
+	FailureStage                  string
+	FailureCause                  string
+	KeepSourceOnFailure           int64
+	FileOutcomesJson              string
+	PublicationDirectoryIdentity  string
+	ProviderRetryAfter            int64
+}
+
+type RunnerDeliverySourceRefresh struct {
+	ReceiptID          int64
+	Attempts           int64
+	BlockedSince       int64
+	NextAttemptAt      int64
+	LastError          string
+	UpdatedAt          int64
+	ProviderRetryAfter int64
 }
 
 type ScheduledTask struct {

@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
-import type { MonarrClient } from '../api'
+import { ApiError, type MonarrClient } from '../api'
 import { AppScreen, Badge, Button, Chip, Field, Header, IconButton, InlineError, LoadingState, MessageState, Panel } from '../components/UI'
 import { formatBytes } from '../format'
 import { acceptedCount, candidateKey, filterCandidates, grabbedMessage, scopeLabel, type ReleaseFilter } from '../releaseSearch'
@@ -50,6 +50,10 @@ function ReleaseSearchBody({
   const [grabbing, setGrabbing] = useState<string | null>(null)
   const [grabError, setGrabError] = useState('')
   const [grabbed, setGrabbed] = useState('')
+  // Keep one id per exact manual action so a timeout/retry replays the same
+  // admission. An explicit blacklist override is a different fingerprint
+  // and therefore gets its own durable request id.
+  const requestIds = useRef(new Map<string, string>())
 
   // Searches take up to two minutes. A response belongs to the scope that
   // asked for it: one that lands after the scope moved on, or after the
@@ -86,8 +90,14 @@ function ReleaseSearchBody({
     setScope(next)
   }
 
-  const grab = useCallback(async (candidate: ReleaseCandidate) => {
+  const grab = useCallback(async (candidate: ReleaseCandidate, downloadAnyway = false) => {
     const key = candidateKey(candidate)
+    const action = `${item.id}:${scope.copyId ?? 0}:${scope.season ?? -1}:${scope.episode ?? 0}:${key}:${downloadAnyway}`
+    let requestId = requestIds.current.get(action)
+    if (!requestId) {
+      requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+      requestIds.current.set(action, requestId)
+    }
     setGrabbing(key)
     setGrabError('')
     setGrabbed('')
@@ -103,9 +113,23 @@ function ReleaseSearchBody({
         protocol: candidate.protocol,
         size: candidate.size,
         candidateToken: candidate.candidateToken,
+        intent: 'additional_copy',
+        requestId,
+        downloadAnyway,
       })
       setGrabbed(grabbedMessage(candidate.title))
     } catch (cause) {
+      if (cause instanceof ApiError && cause.code === 'blacklist_confirmation_required' && !downloadAnyway) {
+        Alert.alert(
+          'Release is blacklisted',
+          cause.message || candidate.blacklistReason || 'This release was blacklisted. Download it once anyway?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Download once', onPress: () => void grab(candidate, true) },
+          ],
+        )
+        return
+      }
       setGrabError(cause instanceof Error ? cause.message : 'Could not grab this release.')
     } finally {
       setGrabbing(null)
@@ -113,6 +137,17 @@ function ReleaseSearchBody({
   }, [client, item.id, scope])
 
   const confirmGrab = useCallback((candidate: ReleaseCandidate) => {
+    if (candidate.blacklistReason) {
+      Alert.alert(
+        'Release is blacklisted',
+        candidate.blacklistReason,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Download once', onPress: () => void grab(candidate, true) },
+        ],
+      )
+      return
+    }
     if (candidate.accepted) {
       void grab(candidate)
       return

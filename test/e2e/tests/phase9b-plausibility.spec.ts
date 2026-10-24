@@ -53,7 +53,7 @@ test('a file monarr cannot believe does not count as having the item', async ({ 
   expect(checked).toBeGreaterThan(0)
 })
 
-test('the files table offers Delete and Delete & blocklist', async ({ page, request }) => {
+test('the files table offers Report, Mark bad & replace, and explicit Delete', async ({ page, request }) => {
   const movies = await (await request.get('/api/v1/library?kind=movie')).json()
   const withFile = await (async () => {
     for (const m of movies) {
@@ -67,18 +67,17 @@ test('the files table offers Delete and Delete & blocklist', async ({ page, requ
   await page.goto(`/library/${withFile.id}`)
   const files = page.locator('section.panel').filter({ hasText: 'Files' }).last()
   await files.locator('summary').click()
-  await expect(files.getByRole('button', { name: 'Delete', exact: true }).first()).toBeVisible()
+  await expect(files.getByRole('button', { name: 'Report', exact: true }).first()).toBeVisible()
+  await expect(files.getByRole('button', { name: 'Mark bad & replace', exact: true }).first()).toBeVisible()
+  await expect(files.getByRole('button', { name: 'Delete…', exact: true }).first()).toBeVisible()
 
-  // Blocklisting needs a source release. An imported file has one; an adopted
-  // file does not, and the button says so rather than half-working.
-  const blocklist = files.getByRole('button', { name: 'Delete & blocklist' }).first()
-  await expect(blocklist).toBeVisible()
-  const file = withFile.files[0]
-  if (file.sourceRelease) {
-    await expect(blocklist).toBeEnabled()
-  } else {
-    await expect(blocklist).toBeDisabled()
-  }
+  const report = files.getByRole('button', { name: 'Report', exact: true }).first()
+  await report.click()
+  const dialog = page.getByRole('dialog', { name: 'Report library file' })
+  await expect(dialog).toContainText('A report creates a review flag only. It does not change quality, remove this file, or start a download.')
+  await expect(dialog.getByRole('button', { name: 'Save report' })).toBeEnabled()
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(report).toBeFocused()
 })
 
 test('deleting a file removes it and says what happened', async ({ request }) => {

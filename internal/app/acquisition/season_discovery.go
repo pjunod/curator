@@ -890,7 +890,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 			return ErrNoClient
 		}
 		exec, _ := json.Marshal(plannedExecution{URL: r.DownloadURL, Category: cfg.Category, Priority: priority, ClientFingerprint: clientFingerprint(*cfg)})
-		dl := sqlite.Download{MediaItemID: item.ID, CopyID: p.CopyID, Season: p.Season, ReleaseTitle: r.Title, Indexer: r.Indexer, Protocol: r.Protocol, Quality: parser.Parse(r.Title).Quality, Size: r.Size, ClientID: cfg.ID, CandidateKey: string(key), ExecutionPayload: string(exec), ReservedEpisodes: decisionFacts.ImportAllowlists[key], MatchEvidence: evidence[key]}
+		dl := sqlite.Download{MediaItemID: item.ID, CopyID: p.CopyID, Season: p.Season, ReleaseTitle: r.Title, Indexer: r.Indexer, Protocol: r.Protocol, Quality: parser.Parse(r.Title).Quality, Size: r.Size, ClientID: cfg.ID, CandidateKey: string(key), ExecutionPayload: string(exec), ReservedEpisodes: decisionFacts.ImportAllowlists[key], MatchEvidence: evidence[key], SourceGUID: r.GUID, SourceIndexerID: r.IndexerID}
 		for _, id := range dl.ReservedEpisodes {
 			dl.WantableIDs = append(dl.WantableIDs, string(byEp[acquisitionplan.EpisodeKey(id)].ID()))
 		}
@@ -912,9 +912,11 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	if plan.Cost.KnownBytes > (1<<62)-1 {
 		return fmt.Errorf("plan staging size overflow")
 	}
-	if err = s.checkStorageIdentity(ctx, dest); err != nil {
-		return err
-	}
+	// checkStorageIdentity verifies configured completed-storage roots. A
+	// library destination is not a completed root; applying that cleanup guard
+	// here incorrectly rejects normal season admissions outside download
+	// staging. Placement and the library's own path/root checks remain the
+	// authority for this destination.
 	if err = recoveryCapacity(dest, 2*plan.Cost.KnownBytes); err != nil {
 		return err
 	}

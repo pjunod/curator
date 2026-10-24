@@ -82,6 +82,183 @@ func TestManualImportDefaultsToTheCompletedFolderMonarrSees(t *testing.T) {
 	}
 }
 
+func TestLegacyReviewImportRequiresExactSelectionAndPersistsApproval(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	completedRoot := t.TempDir()
+	payload := filepath.Join(completedRoot, "legacy-payload")
+	if err := os.MkdirAll(payload, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	selected := filepath.Join(payload, "Reviewed.Show.S01E01.1080p.WEB-DL.mkv")
+	sibling := filepath.Join(payload, "Reviewed.Show.S01E02.1080p.WEB-DL.mkv")
+	if err := os.WriteFile(selected, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sibling, []byte("untouched sibling"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetCompletedRoots(ctx, completedRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.QueueManualImport(ctx, ManualImportRequest{Path: payload, MediaItemID: itemID, ReviewLegacy: true}); err == nil {
+		t.Fatal("legacy review import accepted an implicit whole-path selection")
+	}
+
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := svc.CompletedInventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reviewed *CompletedEntry
+	for i := range inventory.Roots {
+		for j := range inventory.Roots[i].Entries {
+			if canonicalCompletedPath(inventory.Roots[i].Entries[j].Path) == canonicalCompletedPath(payload) {
+				reviewed = &inventory.Roots[i].Entries[j]
+			}
+		}
+	}
+	if reviewed == nil || reviewed.Fingerprint == "" {
+		t.Fatalf("review inventory did not include stable evidence: %+v", inventory)
+	}
+	var selection []CompletedFileSelection
+	for _, file := range reviewed.ReviewFiles {
+		if canonicalCompletedPath(file.Path) == canonicalCompletedPath(selected) {
+			selection = append(selection, CompletedFileSelection{Path: file.Path, SnapshotIdentity: file.SnapshotIdentity})
+		}
+	}
+	if len(selection) != 1 {
+		t.Fatalf("selected file snapshot missing: %+v", reviewed.ReviewFiles)
+	}
+	id, err := svc.QueueManualImport(ctx, ManualImportRequest{
+		Path: payload, Paths: []string{selection[0].Path}, MediaItemID: itemID, ReviewLegacy: true,
+		ReviewLegacyFingerprint: reviewed.Fingerprint, ReviewLegacyFiles: selection,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		dl, err := db.GetDownload(ctx, id)
+		return err == nil && dl.State == "imported"
+	})
+	if _, err := os.Stat(selected); err != nil {
+		t.Fatalf("source selected file unexpectedly removed: %v", err)
+	}
+	if content, err := os.ReadFile(sibling); err != nil || string(content) != "untouched sibling" {
+		t.Fatalf("unselected sibling was changed: content=%q err=%v", content, err)
+	}
+	dl, err := db.GetDownload(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved := false
+	for _, h := range dl.Handoff {
+		if h.Step == stepLegacyReviewImportQueued && len(h.Paths) == 1 && canonicalCompletedPath(h.Paths[0]) == canonicalCompletedPath(selected) && h.ReviewFingerprint == reviewed.Fingerprint && len(h.ReviewFiles) == 1 && h.ReviewFiles[0].SnapshotIdentity == selection[0].SnapshotIdentity {
+			approved = true
+		}
+	}
+	if !approved {
+		t.Fatalf("legacy approval was not durably tied to exact files: %+v", dl.Handoff)
+	}
+	dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, Paths: []string{sibling}, Detail: "later ordinary manual selection"})
+	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.runImport(ctx, dl); err == nil || !strings.Contains(err.Error(), "legacy payload review") {
+		t.Fatalf("newer unreviewed selection inherited earlier legacy approval: %v", err)
+	}
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(item.Path, filepath.Base(sibling))); !os.IsNotExist(err) {
+		t.Fatalf("new unreviewed sibling was placed with an older approval: %v", err)
+	}
+}
+
+func TestLegacyReviewWorkerRejectsReusedPathAfterQueuedApproval(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	completedRoot := t.TempDir()
+	payload := filepath.Join(completedRoot, "legacy-payload")
+	if err := os.MkdirAll(payload, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	selected := filepath.Join(payload, "Reviewed.Show.S01E01.1080p.WEB-DL.mkv")
+	if err := os.WriteFile(selected, []byte("original bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetCompletedRoots(ctx, completedRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := svc.CompletedInventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry *CompletedEntry
+	for i := range inventory.Roots {
+		for j := range inventory.Roots[i].Entries {
+			if canonicalCompletedPath(inventory.Roots[i].Entries[j].Path) == canonicalCompletedPath(payload) {
+				entry = &inventory.Roots[i].Entries[j]
+			}
+		}
+	}
+	if entry == nil {
+		t.Fatal("legacy payload missing from review inventory")
+		return
+	}
+	var file CompletedFileSelection
+	for _, current := range entry.ReviewFiles {
+		if canonicalCompletedPath(current.Path) == canonicalCompletedPath(selected) {
+			file = CompletedFileSelection{Path: current.Path, SnapshotIdentity: current.SnapshotIdentity}
+		}
+	}
+	if file.SnapshotIdentity == "" {
+		t.Fatal("selected snapshot identity missing")
+	}
+	svc.importMu.Lock()
+	svc.importCh = make(chan importJob, 1)
+	svc.importCtx = ctx
+	svc.importJobs = map[int64]*importTicket{}
+	svc.importMu.Unlock()
+	id, err := svc.QueueManualImport(ctx, ManualImportRequest{Path: payload, Paths: []string{file.Path}, MediaItemID: itemID,
+		ReviewLegacy: true, ReviewLegacyFingerprint: entry.Fingerprint, ReviewLegacyFiles: []CompletedFileSelection{file}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(selected, []byte("a different file generation at the same path"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dl, err := db.GetDownload(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.runImport(ctx, dl); err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("worker accepted a different file generation at the approved path: %v", err)
+	}
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(item.Path, filepath.Base(selected))); !os.IsNotExist(err) {
+		t.Fatalf("changed file was placed after its approval expired: %v", err)
+	}
+	if err := svc.CancelImport(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Pointing at one file is as valid as pointing at a folder — and pointing at a
 // file that is not media has to come back empty rather than pretending.
 func TestAcq2ScanImportPathAcceptsASingleFile(t *testing.T) {

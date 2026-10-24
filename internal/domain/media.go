@@ -294,9 +294,19 @@ type MediaFile struct {
 	MediaItemID int64
 	CopyID      int64 // 0 = the primary copy
 	Path        string
-	Size        int64
-	EpisodeIDs  []int64
-	AddedAt     time.Time
+	// FileGeneration changes whenever new bytes are committed at this path.
+	// SourceGeneration/Transfer identify the immutable acquisition that placed
+	// those bytes; they survive queue and Activity retention.
+	FileGeneration          string
+	SourceGeneration        string
+	SourceTransfer          string
+	SourcePayloadGeneration string
+	SourceFileGeneration    string
+	SourceGUID              string
+	SourceIndexerID         int64
+	Size                    int64
+	EpisodeIDs              []int64
+	AddedAt                 time.Time
 
 	// What this file actually is, and how we know (ADR 0013). Quality is the
 	// canonical (source, resolution) pair; QualityKnown separates "we looked

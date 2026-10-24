@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
@@ -110,28 +111,79 @@ func TestBlockedImportIsRetriedWhenSpaceReturns(t *testing.T) {
 	}
 }
 
-// M1, the bound: a retry that never gives up is a slower loop.
-func TestImportRetriesAreBounded(t *testing.T) {
+// Environmental failures remain retryable; the delay increases but never
+// reaches a permanent attempt cap.
+func TestImportRetriesBackOffWithoutPermanentCap(t *testing.T) {
 	dl := sqlite.Download{State: "failed", Error: ErrImportBlocked.Error() + ": disk", ImportPath: "/x"}
 	if !blockedImport(dl) {
 		t.Fatal("a blocked import must be retryable")
 	}
-	for i := 0; i < importRetryMax; i++ {
+	for i := 0; i < 20; i++ {
 		dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepImportRetry})
 	}
-	if importAttempts(dl) != importRetryMax {
-		t.Fatalf("attempts %d, want %d", importAttempts(dl), importRetryMax)
+	if importAttempts(dl) != 20 || !blockedImport(dl) {
+		t.Fatalf("blocked import stopped after %d attempts", importAttempts(dl))
 	}
-	// A row at the cap is still "blocked", but the sweep skips it — that
-	// check lives in RetryBlockedImports and is asserted by construction
-	// here: the count is what it consults.
-	if importAttempts(dl) < importRetryMax {
-		t.Error("the cap would never be reached")
+	if got := importRetryDelay(0); got != 30*time.Second {
+		t.Fatalf("first retry delay=%s", got)
+	}
+	if got := importRetryDelay(1); got != time.Minute {
+		t.Fatalf("second retry delay=%s", got)
+	}
+	if got := importRetryDelay(2); got != 2*time.Minute {
+		t.Fatalf("third retry delay=%s", got)
+	}
+	if got := importRetryDelay(3); got != 5*time.Minute {
+		t.Fatalf("fourth retry delay=%s", got)
+	}
+	if got := importRetryDelay(20); got != 5*time.Minute {
+		t.Fatalf("steady retry delay=%s", got)
+	}
+	dl.DeliveryExpected = true
+	if blockedImport(dl) {
+		t.Error("delivery-managed imports must use the durable manifest retry journal")
 	}
 	// And an import failure that is NOT environmental is never retried.
 	other := sqlite.Download{State: "failed", Error: "no files imported from /x — bad names", ImportPath: "/x"}
 	if blockedImport(other) {
 		t.Error("a payload monarr cannot parse is not a disk problem; retrying it is a loop")
+	}
+}
+
+func TestAutomaticImportRetryLeavesLegacyReviewCohortUntouched(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setupUsenet(t, client)
+	ctx := context.Background()
+	payload := t.TempDir()
+	src := filepath.Join(payload, "Test.Show.S01E01.1080p.WEB-DL.mkv")
+	if err := os.WriteFile(src, corpusFile(t, wholeCorpus720), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dl := insertImportable(t, db, itemID, payload)
+	restore := failPlacement(t, syscall.ENOSPC)
+	if err := svc.runImport(ctx, dl); err == nil {
+		t.Fatal("expected blocked import")
+	}
+	restore()
+	if _, err := db.R.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+		t.Fatal(err)
+	}
+	before, err := db.GetDownload(ctx, dl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := importRetryBackoff
+	importRetryBackoff = 0
+	defer func() { importRetryBackoff = prev }()
+	if err := svc.RetryBlockedImports(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := db.GetDownload(ctx, dl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.State != before.State || len(after.Handoff) != len(before.Handoff) {
+		t.Fatalf("retry changed legacy row before review: state %q->%q, handoff %d->%d", before.State, after.State, len(before.Handoff), len(after.Handoff))
 	}
 }
 
@@ -182,8 +234,10 @@ func TestPayloadDirInsideARootFolderIsNeverRemoved(t *testing.T) {
 	if err := os.MkdirAll(inside, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	dl := insertImportable(t, db, itemID, filepath.Join(t.TempDir(), "reported-source"))
 	svc.removeImportedDir(ctx, downloadRef{
-		ID: 1, MediaItemID: itemID, ClientID: 1, ImportPath: inside, ReleaseTitle: "x",
+		ID: dl.ID, MediaItemID: itemID, ClientID: dl.ClientID,
+		GenerationKey: dl.GenerationKey, ImportPath: inside, ReleaseTitle: "x",
 	})
 	if _, err := os.Stat(inside); err != nil {
 		t.Fatalf("a directory inside a root folder was removed: %v", err)

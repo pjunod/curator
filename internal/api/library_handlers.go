@@ -60,6 +60,8 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 			"TMDB API key not configured — set it under Settings")
 	case errors.Is(err, library.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
+	case errors.Is(err, acquisition.ErrReplacementReviewRequired):
+		writeCodedError(w, http.StatusConflict, "replacement_review_required", err.Error())
 	default:
 		s.deps.Log.Error("library api error", "err", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -291,6 +293,14 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		}
 		fi := apigen.MediaFileInfo{
 			Id: f.ID, Path: f.Path, Size: f.Size, EpisodeIds: ids,
+			FileGeneration: optStr(f.FileGeneration), SourceGeneration: optStr(f.SourceGeneration),
+			SourceTransfer: optStr(f.SourceTransfer), SourcePayloadGeneration: optStr(f.SourcePayloadGeneration),
+			SourceFileGeneration: optStr(f.SourceFileGeneration), SourceGuid: optStr(f.SourceGUID),
+			SourceIndexer: optStr(f.SourceIndexer),
+		}
+		if f.SourceIndexerID != 0 {
+			id := f.SourceIndexerID
+			fi.SourceIndexerId = &id
 		}
 		// What this file is, and how we know (ADR 0013). The label and the
 		// facts line are rendered here rather than in the client so the API,
@@ -1409,14 +1419,10 @@ func (s *Server) searchInBackground(itemID int64, why string) {
 	}()
 }
 
-// RemoveLibraryFile implements DELETE /library/{id}/files/{fileId}: drop one
-// file, and optionally condemn the release that produced it.
-//
-// The three flags arrive separately because they are three separate decisions
-// (see the endpoint description). The handler's only job is to not conflate
-// them, and to report back what actually happened rather than assuming every
-// part worked — a blocklist that could not find a source release is a thing
-// the user needs told, not a silent no-op.
+// RemoveLibraryFile implements DELETE /library/{id}/files/{fileId}. Bad or
+// quality decisions require the reviewed replacement workflow; the legacy
+// Search and Blocklist parameters are forwarded so the service can reject
+// them without mutating the file.
 func (s *Server) RemoveLibraryFile(w http.ResponseWriter, r *http.Request, id int64, fileID int64,
 	params apigen.RemoveLibraryFileParams) {
 	req := acquisition.RemoveFileRequest{
@@ -1424,7 +1430,7 @@ func (s *Server) RemoveLibraryFile(w http.ResponseWriter, r *http.Request, id in
 		Blocklist: params.Blocklist != nil && *params.Blocklist,
 		Search:    params.Search != nil && *params.Search,
 	}
-	if req.Blocklist {
+	if params.Blocklist != nil && *params.Blocklist {
 		req.Reason = "marked bad by user"
 	}
 	res, err := s.deps.Acquisition.RemoveFile(r.Context(), id, fileID, req)

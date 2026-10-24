@@ -139,11 +139,9 @@ func TestAcq2APartialImportPutsTheSkippedFilesOnTheTrace(t *testing.T) {
 	}
 }
 
-// Blocklist & replace is the explicit escalation: throw the payload away,
-// declare the release bad, and go and find another. A blocklist that does not
-// blocklist is the one outcome this button must not have — so it is never
-// treated as blameless, however the download ended.
-func TestAcq2BlocklistReplaceRemovesBansAndResearches(t *testing.T) {
+// The legacy queue endpoint lacks an observed library-file and episode scope,
+// so it must leave both the download and acquisition state untouched.
+func TestLegacyBlocklistReplaceRequiresReviewedReplacement(t *testing.T) {
 	client := &fakeClient{}
 	svc, db, movieID := autoSetup(t, []ports.Release{
 		rel("Test.Movie.2024.1080p.WEB-DL.x264-FIRST", 50),
@@ -160,24 +158,21 @@ func TestAcq2BlocklistReplaceRemovesBansAndResearches(t *testing.T) {
 	}
 	first := active[0]
 
-	if err := svc.BlocklistReplace(ctx, first.ID); err != nil {
-		t.Fatal(err)
+	if err := svc.BlocklistReplace(ctx, first.ID); !errors.Is(err, ErrReplacementReviewRequired) {
+		t.Fatalf("legacy endpoint error = %v", err)
 	}
-	if len(client.removed) != 1 || !client.removed[0].DeleteData {
-		t.Errorf("the payload was not thrown away: %+v", client.removed)
+	if len(client.removed) != 0 {
+		t.Errorf("legacy endpoint removed a payload: %+v", client.removed)
 	}
-	if blocked, _ := db.IsBlocklisted(ctx, first.ReleaseTitle, "idx"); !blocked {
-		t.Error("the release was not blocklisted")
-	}
-	if len(client.added) != 2 || !strings.HasSuffix(client.added[1], "SECOND") {
-		t.Errorf("no replacement was grabbed: %v", client.added)
+	if blocked, _ := db.IsBlocklisted(ctx, first.ReleaseTitle, "idx"); blocked {
+		t.Error("legacy endpoint created a blocklist")
 	}
 	got, _ := db.GetDownload(ctx, first.ID)
-	if got.State != "failed" || got.Error != "blocklisted by user" {
-		t.Errorf("row = %q / %q", got.State, got.Error)
+	if got.State != first.State || got.Error != first.Error {
+		t.Errorf("legacy endpoint changed row = %q / %q", got.State, got.Error)
 	}
-	if err := svc.BlocklistReplace(ctx, 8675309); err == nil {
-		t.Error("blocklisted a download that does not exist")
+	if len(client.added) != 1 {
+		t.Errorf("legacy endpoint searched automatically: %v", client.added)
 	}
 	_ = movieID
 }
@@ -341,21 +336,23 @@ func TestAcq2CleanupIsBestEffort(t *testing.T) {
 	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return stubborn }
 	ctx := context.Background()
 	clients, _ := db.ListDownloadClients(ctx)
+	dl := insertImportable(t, db, itemID, t.TempDir())
 
-	if svc.removePayload(ctx, downloadRef{ID: 1, ClientID: clients[0].ID}) {
+	if svc.removePayload(ctx, downloadRef{ID: dl.ID, GenerationKey: dl.GenerationKey, ClientID: clients[0].ID}) {
 		t.Error("claimed to remove a payload for a download with no handle")
 	}
-	if svc.removePayload(ctx, downloadRef{ID: 1, ClientID: 4242, Handle: "h1"}) {
+	if svc.removePayload(ctx, downloadRef{ID: dl.ID, GenerationKey: dl.GenerationKey, ClientID: 4242, Handle: "h1"}) {
 		t.Error("claimed to remove a payload via a client that is not configured")
 	}
 	if svc.removePayload(ctx, downloadRef{
-		ID: 1, MediaItemID: itemID, ClientID: clients[0].ID, Handle: "h1",
+		ID: dl.ID, MediaItemID: itemID, ClientID: clients[0].ID, Handle: "h1",
+		GenerationKey: dl.GenerationKey,
 	}) {
 		t.Error("claimed success when the client refused the delete")
 	}
 
 	// And a refusal leaves the row pending, so the next sweep tries again.
-	dl := insertImportable(t, db, itemID, t.TempDir())
+	dl = insertImportable(t, db, itemID, t.TempDir())
 	if err := db.UpdateDownloadState(ctx, dl.ID, "imported", 1, ""); err != nil {
 		t.Fatal(err)
 	}

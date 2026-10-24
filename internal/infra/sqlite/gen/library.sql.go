@@ -1155,7 +1155,7 @@ func (q *Queries) ListAllMediaCopies(ctx context.Context) ([]MediaCopy, error) {
 }
 
 const listAllMediaFiles = `-- name: ListAllMediaFiles :many
-SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer, audio_languages FROM media_files ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer, audio_languages, file_generation, source_generation, source_transfer, source_payload_generation, source_guid, source_indexer_id, source_file_generation FROM media_files ORDER BY path
 `
 
 func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
@@ -1182,6 +1182,13 @@ func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
 			&i.SourceRelease,
 			&i.SourceIndexer,
 			&i.AudioLanguages,
+			&i.FileGeneration,
+			&i.SourceGeneration,
+			&i.SourceTransfer,
+			&i.SourcePayloadGeneration,
+			&i.SourceGuid,
+			&i.SourceIndexerID,
+			&i.SourceFileGeneration,
 		); err != nil {
 			return nil, err
 		}
@@ -1402,7 +1409,7 @@ func (q *Queries) ListMediaCopies(ctx context.Context, mediaItemID int64) ([]Med
 }
 
 const listMediaFilesForItem = `-- name: ListMediaFilesForItem :many
-SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer, audio_languages FROM media_files WHERE media_item_id = ? ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer, audio_languages, file_generation, source_generation, source_transfer, source_payload_generation, source_guid, source_indexer_id, source_file_generation FROM media_files WHERE media_item_id = ? ORDER BY path
 `
 
 func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.NullInt64) ([]MediaFile, error) {
@@ -1429,6 +1436,13 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.Nul
 			&i.SourceRelease,
 			&i.SourceIndexer,
 			&i.AudioLanguages,
+			&i.FileGeneration,
+			&i.SourceGeneration,
+			&i.SourceTransfer,
+			&i.SourcePayloadGeneration,
+			&i.SourceGuid,
+			&i.SourceIndexerID,
+			&i.SourceFileGeneration,
 		); err != nil {
 			return nil, err
 		}

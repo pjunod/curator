@@ -74,17 +74,23 @@ function isUsenetClient(type: string): boolean {
   return type === 'sabnzbd' || type === 'nzbget' || type === 'nzbd'
 }
 
+function isNativeRunnerClient(type: string): boolean {
+  return type === 'nzbd'
+}
+
 export function AcquisitionSettings() {
   const qc = useQueryClient()
   const indexers = useQuery({ queryKey: ['indexers'], queryFn: getIndexers })
-  const [budgetEdit, setBudgetEdit] = useState<{id:number; name:string; cap:number} | null>(null)
+  const [budgetEdit, setBudgetEdit] = useState<{id:number; name:string; enabled:boolean; cap:number} | null>(null)
   const saveBudget = useMutation({
-    mutationFn: () => updateIndexerBudget(budgetEdit!.id, budgetEdit!.cap),
+    mutationFn: () => updateIndexerBudget(budgetEdit!.id, budgetEdit!.enabled ? budgetEdit!.cap : 0),
     onSuccess: () => { setBudgetEdit(null); void qc.invalidateQueries({queryKey:['indexers']}) },
   })
   const clients = useQuery({ queryKey: ['downloadclients'], queryFn: getDownloadClients })
 
   const [idx, setIdx] = useState<IndexerInput>({ name: '', url: '', apiKey: '', protocol: 'torrent' })
+  const [idxLimitEnabled, setIdxLimitEnabled] = useState(false)
+  const [idxLimit, setIdxLimit] = useState(100)
   const [idxMsg, setIdxMsg] = useState('')
   const [cli, setCli] = useState<DownloadClientInput>({
     type: 'qbittorrent', name: '', url: '', username: '', password: '', category: 'monarr',
@@ -110,9 +116,11 @@ export function AcquisitionSettings() {
     onError: (e) => setIdxMsg(`✕ ${(e as Error).message}`),
   })
   const saveIdx = useMutation({
-    mutationFn: () => addIndexer({ ...idx, enabled: true }),
+    mutationFn: () => addIndexer({ ...idx, enabled: true, dailyRequestCap: idxLimitEnabled ? idxLimit : 0 }),
     onSuccess: () => {
       setIdx({ name: '', url: '', apiKey: '', protocol: idx.protocol })
+      setIdxLimitEnabled(false)
+      setIdxLimit(100)
       setIdxMsg('')
       void qc.invalidateQueries({ queryKey: ['indexers'] })
     },
@@ -167,10 +175,11 @@ export function AcquisitionSettings() {
   return (
     <>
       {budgetEdit && <ActionDialog title={`Request cap · ${budgetEdit.name}`} onClose={()=>setBudgetEdit(null)}>
-        <label>Daily request cap <input type="number" min="0" step="1" value={budgetEdit.cap} onChange={(e)=>setBudgetEdit({...budgetEdit,cap:Math.max(0,Number(e.target.value))})}/></label>
-        <p className="muted">0 means unlimited requests. Positive caps apply per rolling day. Provider retry delays still apply, and existing usage is retained when the cap changes.</p>
+        <label className="inline-control"><input type="checkbox" checked={budgetEdit.enabled} onChange={(e)=>setBudgetEdit({...budgetEdit,enabled:e.target.checked})}/> Limit API requests</label>
+        {budgetEdit.enabled && <label>Requests per rolling day <input type="number" min="1" step="1" value={budgetEdit.cap} onChange={(e)=>setBudgetEdit({...budgetEdit,cap:Math.max(1,Number(e.target.value))})}/></label>}
+        <p className="muted">This limit applies to RSS, automatic search and manual search for this indexer. Provider retry delays and grab limits still apply; existing usage is retained when the limit changes.</p>
         {saveBudget.error && <p role="alert">{saveBudget.error.message}</p>}
-        <button disabled={saveBudget.isPending || !Number.isInteger(budgetEdit.cap)} onClick={()=>saveBudget.mutate()}>Save request cap</button>
+        <button disabled={saveBudget.isPending || (budgetEdit.enabled && (!Number.isInteger(budgetEdit.cap) || budgetEdit.cap < 1))} onClick={()=>saveBudget.mutate()}>Save request limit</button>
       </ActionDialog>}
       <section className="panel" id="indexers">
         <h2>Indexers</h2>
@@ -189,7 +198,7 @@ export function AcquisitionSettings() {
                 </td>
                 <td>
                   <RowTest run={() => testIndexerById(i.id)} />
-                  <button onClick={(event)=>{focusActionTrigger(event);saveBudget.reset();setBudgetEdit({id:i.id,name:i.name,cap:i.dailyRequestCap ?? 0})}}>Request cap</button>
+                  <button onClick={(event)=>{focusActionTrigger(event);saveBudget.reset();const cap=i.dailyRequestCap ?? 0;setBudgetEdit({id:i.id,name:i.name,enabled:cap>0,cap:cap>0?cap:100})}}>Request limit</button>
                 </td>
                 <td>
                   <button onClick={() => delIdx.mutate(i.id)}>Remove</button>
@@ -207,10 +216,10 @@ export function AcquisitionSettings() {
           <input placeholder="Name" value={idx.name} onChange={(e) => setIdx({ ...idx, name: e.target.value })} />
           <input placeholder="URL (http://prowlarr:9696/1)" value={idx.url} onChange={(e) => setIdx({ ...idx, url: e.target.value })} />
           <input placeholder="API key" value={idx.apiKey} onChange={(e) => setIdx({ ...idx, apiKey: e.target.value })} />
-          <label>Daily API request cap
-            <input type="number" min="0" value={idx.dailyRequestCap ?? 0} onChange={e=>setIdx({...idx,dailyRequestCap:Number(e.target.value)})}/>
-            <small>0 means unlimited requests. Positive caps cover RSS, automatic search and manual search per rolling day; provider retry delays and grab caps still apply.</small>
-          </label>
+          <label className="inline-control"><input type="checkbox" checked={idxLimitEnabled} onChange={e=>setIdxLimitEnabled(e.target.checked)}/> Limit API requests</label>
+          {idxLimitEnabled && <label>Requests per rolling day
+            <input type="number" min="1" step="1" value={idxLimit} onChange={e=>setIdxLimit(Math.max(1,Number(e.target.value)))}/>
+          </label>}
           <select value={idx.protocol} onChange={(e) => setIdx({ ...idx, protocol: e.target.value as 'torrent' | 'usenet' })}>
             <option value="torrent">torrent</option>
             <option value="usenet">usenet</option>
@@ -218,10 +227,11 @@ export function AcquisitionSettings() {
           <button onClick={() => testIdx.mutate()} disabled={testIdx.isPending || !idx.url}>
             Test
           </button>
-          <button className="btn-accent" onClick={() => saveIdx.mutate()} disabled={saveIdx.isPending || !idx.name || !idx.url}>
+          <button className="btn-accent" onClick={() => saveIdx.mutate()} disabled={saveIdx.isPending || !idx.name || !idx.url || (idxLimitEnabled && (!Number.isInteger(idxLimit) || idxLimit < 1))}>
             Add indexer
           </button>
         </div>
+        <p className="muted">The request limit is independent for each indexer and applies to RSS, automatic search and manual search. When off, requests are unlimited apart from provider retry delays and grab limits.</p>
         {idxMsg && <p className={idxMsg.startsWith('✓') ? 'ok-text' : 'error-text'}>{idxMsg}</p>}
       </section>
 
@@ -278,24 +288,28 @@ export function AcquisitionSettings() {
                   </label>
 
 
-                  <label
-                    className="approval-toggle"
-                    title={
-                      isUsenetClient(c.type)
-                        ? 'Delete the payload from this client once Curator has imported it. Without this, every grab leaves a second full copy behind.'
-                        : 'Delete the payload once imported. This torrent is still seeding — turning it on throws that away.'
-                    }
-                  >
-                    <input
-                      type="checkbox"
-                      checked={!!c.removeCompleted}
-                      onChange={() =>
-                        toggleClient.mutate({ c, patch: { removeCompleted: !c.removeCompleted } })
+                  {isNativeRunnerClient(c.type) ? (
+                    <span className="muted">Verified per-file cleanup managed by Curator</span>
+                  ) : (
+                    <label
+                      className="approval-toggle"
+                      title={
+                        isUsenetClient(c.type)
+                          ? 'Delete the payload from this client once Curator has imported it. Without this, every grab leaves a second full copy behind.'
+                          : 'Delete the payload once imported. This torrent is still seeding — turning it on throws that away.'
                       }
-                      disabled={toggleClient.isPending}
-                    />{' '}
-                    Clean up after import
-                  </label>
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!c.removeCompleted}
+                        onChange={() =>
+                          toggleClient.mutate({ c, patch: { removeCompleted: !c.removeCompleted } })
+                        }
+                        disabled={toggleClient.isPending}
+                      />{' '}
+                      Clean up after import
+                    </label>
+                  )}
                 </td>
                 <td>
                   <RowTest run={() => testDownloadClientById(c.id)} />
@@ -385,17 +399,21 @@ export function AcquisitionSettings() {
             />{' '}
             Require approval
           </label>
-          <label
-            className="approval-toggle"
-            title="Delete the payload from the client once Curator has imported it. Without this, every grab leaves a second full copy behind — and when the download disk and the library are different filesystems, that copy is real bytes rather than a hardlink."
-          >
-            <input
-              type="checkbox"
-              checked={cli.removeCompleted ?? isUsenetClient(cli.type)}
-              onChange={(e) => setCli({ ...cli, removeCompleted: e.target.checked })}
-            />{' '}
-            Clean up after import
-          </label>
+          {isNativeRunnerClient(cli.type) ? (
+            <p className="muted">Curator cleans verified imported files from Runner deliveries and keeps unresolved payload files available in Resolve.</p>
+          ) : (
+            <label
+              className="approval-toggle"
+              title="Delete the payload from the client once Curator has imported it. Without this, every grab leaves a second full copy behind — and when the download disk and the library are different filesystems, that copy is real bytes rather than a hardlink."
+            >
+              <input
+                type="checkbox"
+                checked={cli.removeCompleted ?? isUsenetClient(cli.type)}
+                onChange={(e) => setCli({ ...cli, removeCompleted: e.target.checked })}
+              />{' '}
+              Clean up after import
+            </label>
+          )}
           {cli.type === 'nzbd' && (
             <label
               className="approval-toggle"

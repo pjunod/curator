@@ -93,6 +93,7 @@ func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Relea
 		MediaItemID: w.MediaItemID(), CopyID: domain.WantableCopy(w),
 		Season: season, Episode: episode,
 		Title: r.Title, DownloadURL: r.DownloadURL, Indexer: r.Indexer,
+		SourceGUID: r.GUID, IndexerID: r.IndexerID,
 		Protocol: r.Protocol, Size: r.Size,
 		MatchEvidence: &evidence,
 	})

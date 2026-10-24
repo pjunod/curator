@@ -3,6 +3,7 @@ package nzbd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -112,7 +114,7 @@ func TestAddCarriesTheTransferID(t *testing.T) {
 
 	h, err := client(t, srv, "", "tok").AddWithOptions(context.Background(),
 		"https://indexer/x.nzb", "tv", ports.AddOptions{
-			Name: "Show.S01E01.1080p.WEB-DL-GRP", Transfer: "t-42-a3f9c1", Priority: 100,
+			Name: "Show.S01E01.1080p.WEB-DL-GRP", Transfer: "t-42-a3f9c1", Priority: 100, DeliveryExpected: true, ManualAdditional: true,
 		})
 	if err != nil {
 		t.Fatalf("AddTagged: %v", err)
@@ -142,6 +144,12 @@ func TestAddCarriesTheTransferID(t *testing.T) {
 	if params[TransferParam] != "t-42-a3f9c1" {
 		t.Errorf("params = %v, want %s set", params, TransferParam)
 	}
+	if params[DeliveryParam] != "1" {
+		t.Errorf("params = %v, want %s=1 for managed delivery custody", params, DeliveryParam)
+	}
+	if params[ManualAdditionalParam] != "1" {
+		t.Errorf("params = %v, want %s=1 for independent manual copy", params, ManualAdditionalParam)
+	}
 	// nzbd's client registry keys on this; without it a healthy native
 	// consumer is invisible in nzbd's UI and looks like nothing connected.
 	if got := rec.header.Get("X-Nzbd-Client"); !strings.HasPrefix(got, "monarr/") {
@@ -160,6 +168,61 @@ func TestAddWithoutATransferSendsNoParams(t *testing.T) {
 	}
 	if _, present := rec.query["params"]; present {
 		t.Errorf("params sent when there is no transfer id: %q", rec.query.Get("params"))
+	}
+}
+
+func TestAPIErrorPreservesOnlyBoundedRetryAfter(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name, value string
+		want        bool
+	}{
+		{"seconds", "120", true},
+		{"date", now.Add(90 * time.Second).UTC().Format(http.TimeFormat), true},
+		{"malformed", "soon", false},
+		{"overflow", "999999999999999999999999999999", false},
+		{"long valid seconds", strconv.FormatInt(int64((30*24*time.Hour)/time.Second), 10), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{StatusCode: 429, Header: make(http.Header)}
+			resp.Header.Set("Retry-After", tc.value)
+			err := apiError(resp, "slow down")
+			if got := !err.RetryDeadline().IsZero(); got != tc.want {
+				t.Fatalf("deadline=%v want present=%v", err.RetryDeadline(), tc.want)
+			}
+			if tc.want && err.RetryDeadline().Before(now) {
+				t.Fatalf("deadline in past: %v", err.RetryDeadline())
+			}
+		})
+	}
+}
+
+func TestRetryAfterSecondsNearUnixMilliLimitCannotWrapDeadline(t *testing.T) {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	// The seconds-only bound must account for subsecond precision. This time
+	// has room for less than one whole second in Unix milliseconds; adding one
+	// second used to wrap RetryDeadline into a negative timestamp.
+	now := time.Unix(maxInt64/1000-1, 999_000_000)
+	if got := parseRetryAfter("1", now); !got.IsZero() {
+		t.Fatalf("overflowing seconds Retry-After produced deadline %v", got)
+	}
+	if got := parseRetryAfter("0", now); got.IsZero() || got.UnixMilli() < 0 {
+		t.Fatalf("safe zero-seconds Retry-After was rejected or wrapped: %v", got)
+	}
+}
+
+func TestAddCarriesRetryAfterIntoAdapterIndependentErrorContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "75")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"slow down"}`))
+	}))
+	defer server.Close()
+	client := New(ports.ClientConfig{URL: server.URL})
+	_, err := client.Add(context.Background(), "https://example.test/release", "")
+	var deadline ports.RetryDeadline
+	if !errors.As(err, &deadline) || deadline.RetryDeadline().Before(time.Now().Add(70*time.Second)) {
+		t.Fatalf("Add error lost provider retry boundary: %T %v", err, err)
 	}
 }
 
@@ -208,6 +271,9 @@ func TestStatusesMapsQueueAndHistory(t *testing.T) {
 	// A queued job, with progress from the byte counters.
 	if s := by["1"]; s.State != ports.StateQueued || s.Progress != 0.25 {
 		t.Errorf("job 1 = %+v, want queued at 0.25", s)
+	}
+	if s := by["1"]; s.Transfer != "t-42-a3f9c1" {
+		t.Errorf("job 1 transfer = %q, want exact request token", s.Transfer)
 	}
 
 	// Post-processing is NOT completion. A job mid-unpack whose files are
@@ -386,6 +452,50 @@ func TestTest(t *testing.T) {
 	srv := fake(t, nil, nil)
 	if err := client(t, srv, "", "tok").Test(context.Background()); err != nil {
 		t.Fatalf("Test against a healthy daemon: %v", err)
+	}
+}
+
+func TestRequestTokenIdempotencyRequiresExplicitCapability(t *testing.T) {
+	srv := fake(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/api/v1/status" {
+			_, _ = w.Write([]byte(`{"version":"0.1.0","capabilities":["request-token-idempotency-v1"]}`))
+			return true
+		}
+		return false
+	})
+	got, err := client(t, srv, "", "tok").SupportsRequestTokenIdempotency(context.Background())
+	if err != nil || !got {
+		t.Fatalf("explicit Runner capability = %v, %v; want true", got, err)
+	}
+
+	legacy := fake(t, nil, nil)
+	got, err = client(t, legacy, "", "tok").SupportsRequestTokenIdempotency(context.Background())
+	if err != nil || got {
+		t.Fatalf("unadvertised capability = %v, %v; want false", got, err)
+	}
+}
+
+func TestRequestAdmissionLookupUsesExactTransferToken(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"protocolVersion":1,"requestToken":"t-9-aabbcc","jobId":9,"generation":"gen-9","runnerInstanceId":"runner-1","outcome":"failed","terminalOutcome":"FAILURE/FETCH","sourceArtifactId":"artifact-1","sourceGeneration":"source-gen-1","failureStage":"fetch","failureCause":"descriptor unavailable","custodyState":"no_payload","keepSourceOnFailure":false,"sourceCleanupStatus":"not_required"}`))
+	}))
+	defer srv.Close()
+	got, found, err := client(t, srv, "", "tok").GetRequestAdmission(context.Background(), "t-9-aabbcc")
+	if err != nil || !found {
+		t.Fatalf("lookup = %+v found=%v err=%v", got, found, err)
+	}
+	if gotPath != "/api/v1/request-admissions/t-9-aabbcc" || got.Outcome != "failed" || got.TerminalOutcome != "FAILURE/FETCH" || got.FailureCause != "descriptor unavailable" || got.SourceArtifactID != "artifact-1" || got.SourceGeneration != "source-gen-1" || got.SourceCleanupStatus != "not_required" {
+		t.Fatalf("lookup path/result = %q %+v", gotPath, got)
+	}
+	missing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer missing.Close()
+	if _, found, err := client(t, missing, "", "tok").GetRequestAdmission(context.Background(), "t-absent"); err != nil || found {
+		t.Fatalf("missing lookup found=%v err=%v; want a clean absent receipt", found, err)
 	}
 }
 

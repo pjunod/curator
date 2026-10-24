@@ -204,8 +204,8 @@ export function RecoveryImports() {
   const copies = item.data?.copies ?? []
 
   return <section className="panel recovery">
-    <h2>Runner recovery imports</h2>
-    <p className="muted">Media that Runner is holding — a failed download it parked, or a folder it adopted — comes into the library in three steps: Runner stages a verified copy (its <b>Files</b> tab: open the folder’s details, tick the files, <i>Preview recovery copy</i>, <i>Stage</i>), you point that handoff at a library title here, and Curator copies it into place and sends Runner the receipt.</p>
+    <h2>Resolve a Runner handoff</h2>
+    <p className="muted">Choose a verified Runner handoff, select its library title and copy, then preview the files before importing them. Runner keeps its source until the import receipt is committed.</p>
 
     <div className="recovery-readiness" role="group" aria-label="Recovery readiness">
       <Readiness label="Runner" ok={runnerOk} detail={runnerOk === false ? (recoveries.error?.message ?? clientErrors[0]?.error ?? 'unreachable') : handoffs.length + (handoffs.length === 1 ? ' handoff' : ' handoffs')} />

@@ -62,7 +62,8 @@ func TestGapGrabWithoutSeasonKeepsRetainedSearchEvidence(t *testing.T) {
 	// No "season" field at all: the handler will default it to -1.
 	rr := e.post(t, "/api/v1/grab", fmt.Sprintf(`{
 		"mediaItemId":%d,"title":%q,"downloadUrl":%q,"protocol":%q,
-		"indexer":%q,"size":%d,"candidateToken":%q}`,
+		"indexer":%q,"size":%d,"candidateToken":%q,
+		"intent":"additional_copy","requestId":"gap-grab-match"}`,
 		item, c.Title, c.DownloadUrl, c.Protocol, c.Indexer, c.Size, c.CandidateToken)).
 		expect(t, http.StatusCreated)
 	var grabbed struct {
@@ -78,6 +79,7 @@ func TestGapGrabWithoutSeasonKeepsRetainedSearchEvidence(t *testing.T) {
 	m := queue[0].Match
 	if m == nil {
 		t.Fatal("queue row carries no match evidence")
+		return
 	}
 	if !m.Matched {
 		t.Errorf("matched = false; the retained search evidence said true: %+v", m)
@@ -111,7 +113,8 @@ func TestGapGrabWithAForeignTokenIsRecordedAsManualOverride(t *testing.T) {
 	e.post(t, "/api/v1/grab", fmt.Sprintf(`{
 		"mediaItemId":%d,"title":"Fight.Club.1999.2160p.WEB-DL.x265-OTHER",
 		"downloadUrl":"http://indexer.invalid/other","protocol":"torrent",
-		"indexer":"nzb.invalid","candidateToken":%q}`, item, cands[0].CandidateToken)).
+		"indexer":"nzb.invalid","candidateToken":%q,
+		"intent":"additional_copy","requestId":"gap-foreign-token"}`, item, cands[0].CandidateToken)).
 		expect(t, http.StatusCreated)
 
 	var queue []apigen.QueueItem
@@ -151,8 +154,9 @@ func gapGrabTitled(t *testing.T, e *apiEnv, itemID int64, title string) int64 {
 	t.Helper()
 	rr := e.post(t, "/api/v1/grab", fmt.Sprintf(`{
 		"mediaItemId":%d,"title":%q,"downloadUrl":%q,
-		"protocol":"torrent","indexer":"nzb.invalid","size":8589934592}`,
-		itemID, title, "http://indexer.invalid/"+url.PathEscape(title))).
+		"protocol":"torrent","indexer":"nzb.invalid","size":8589934592,
+		"intent":"additional_copy","requestId":%q}`,
+		itemID, title, "http://indexer.invalid/"+url.PathEscape(title), "gap-"+url.PathEscape(title))).
 		expect(t, http.StatusCreated)
 	var out struct {
 		ID int64 `json:"id"`
@@ -300,6 +304,7 @@ func TestGapHistoryListsTheGrab(t *testing.T) {
 	}
 	if grabbed == nil {
 		t.Fatalf("no grabbed event in %+v", events)
+		return
 	}
 	if grabbed.MediaItemId != item {
 		t.Errorf("mediaItemId = %d, want %d", grabbed.MediaItemId, item)

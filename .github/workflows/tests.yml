@@ -16,7 +16,10 @@ jobs:
   unit:
     name: Unit tests (Go + web)
     runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
-    timeout-minutes: 20
+    # The full race + coverpkg suite repeatedly migrates fresh SQLite databases
+    # across every supported schema version. Keep enough room for those real
+    # integration tests under instrumentation rather than truncating them.
+    timeout-minutes: 45
     # Read-only. This job used to push the coverage badge to main; it does
     # not any more (see "Flag a stale coverage badge" below), and a token
     # that cannot write is a better guarantee of that than a comment.
@@ -55,7 +58,7 @@ jobs:
         run: |
           # Coverage is a release gate, so never reuse a self-hosted runner's
           # cached test result/profile from a previous checkout.
-          go test -count=1 -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+          go test -timeout=30m -count=1 -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
           pct="$(sh scripts/coverage-badge.sh coverage.out coverage.svg coverage-hand.out)"
           echo "COVERAGE_PCT=$pct" >> "$GITHUB_ENV"
           {

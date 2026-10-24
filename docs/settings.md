@@ -250,6 +250,14 @@ limit per root. Activity shows queued, running, and completed or failed scan
 status. A failed scan preserves the last complete inventory and disables file
 actions for that root until a complete scan succeeds. Deletion checks scan only
 the selected payload, rather than walking every sibling again.
+Storage verification accepts ordinary remounts automatically, including device
+number changes and configured bind aliases. The currently observed mount source
+and filesystem type are persisted independently of other settings. A missing
+mount, a local directory exposed underneath an absent mount, or a different
+source blocks destructive work and retries automatically; re-saving this
+settings form cannot authorize a different storage destination. Verification
+must succeed again when the expected mount returns. Path containment and
+per-operation file identity checks still apply.
 `GET /api/v1/downloads/inventory` reads the cached result;
 it does not walk the disk. See [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
 for the classifications, size semantics, and recovery actions. Activity
@@ -308,9 +316,14 @@ stopped. Common cases:
   the bytes (a full volume, a mount gone read-only). The files that landed
   are in the library; the payload is deliberately left alone, and the
   `downloads.import-retry` task finishes the job by itself once there is
-  room (every 15 minutes, up to six attempts). Free space is the only
-  action needed. This is the one import failure Monarr retries on its own:
-  everything else fails identically however many times it is repeated.
+  room (after 30 seconds, 1 minute, 2 minutes, then every 5 minutes).
+  Correct the recorded storage problem; these retries have no attempt limit.
+
+Native Runner deliveries have their own durable import, acknowledgement, and
+cleanup retries. Temporary storage and I/O errors keep the affected obligation
+pending. The lifecycle trace shows the cause and next attempt; a rejected or
+conflicting manifest requires review. A missing path in a legacy client row
+still uses the explicit Retry action described above.
 
 Every failed row offers **Retry** (re-run the import once the underlying
 problem is fixed, using the same path), **Manual import** (browse to the
@@ -828,15 +841,31 @@ Set `MONARR_METRICS=true` to expose Prometheus text at `/metrics`: build
 info, library counts by kind, active queue depth, wanted total, uptime.
 Off by default.
 
-## Runner payload cleanup
+## Runner delivery ownership
 
-For native Runner clients, cleanup first requests deletion through Runner and
-verifies that the local payload disappeared. Runner-owned source and recovery
-trees stay pending when Runner cannot remove them. Curator may remove a verified
-imported payload directly inside its own declared working trees, including
-`/working/monarr/completed`; it never applies that fallback to Runner-owned
-`/processing` or recovery storage.
-Queue removal falls back to History only when the queue returns HTTP 404.
+New native Runner downloads opt into the additive delivery protocol at
+admission. Curator durably records the immutable manifest and matching request
+generation before acknowledging it. Imports and completed-payload cleanup use
+that manifest: Curator removes only verified files with a committed placement,
+same-copy redundancy proof, or completed replacement scope. Recoverable,
+unselected, and unknown siblings remain available in Resolve. This per-file
+cleanup is required for new Runner deliveries and is not controlled by the
+legacy **Clean up after import** setting used for other clients.
+
+Runner retains ownership of its separate processing source and reports its
+cleanup status. Curator does not use Runner's whole-job delete operation to
+clean a transferred publication. Older Runner history is fenced for review;
+its presence or a matching title is not proof of an accepted manifest or
+current library destination. Queue removal falls back to History only when the
+queue returns HTTP 404.
+
+Activity and completed-folder entries link to the same durable lifecycle
+trace. It reports publication acceptance, Runner source cleanup, Curator
+per-file cleanup, attempts, elapsed blockage, and the next scheduled retry.
+The three retry actions are independent and do not redownload the release.
+After 30 minutes blocked, the trace calls out that the operator should review
+the recorded cause. Explicit deletion is per selected manifest file; it keeps
+unselected siblings and the remaining receipt visible.
 
 ## Recovery and Dev settings
 
@@ -896,14 +925,15 @@ A resumed Runner transfer continues updating progress at the same control
 revision. Completed history preserves the resolving revision after the queue
 row retires, so a missed SSE resume event does not strand the acquisition.
 
-## Indexer daily request cap
+## Indexer request limit
 
-Settings → Acquisition → Indexers accepts a daily API request cap. **Zero means
-unlimited:** Curator imposes no daily or twelve-hour request allowance. Existing
-indexers configured with zero become unlimited when this version is installed;
-set an explicit positive cap to keep a local allowance. Requests from other
-applications are outside this ledger. Provider retry delays and NZB/grab
-allowances still apply.
+Settings → Acquisition → Indexers provides an independent **Limit API requests:
+Off / On** control for each indexer. Off removes Curator's local daily, bucket,
+and twelve-hour allowance restrictions for that indexer. On applies the entered
+requests-per-rolling-day value. The limit covers RSS, automatic search, and
+manual search; another indexer's setting and usage are separate. Requests from
+other applications are outside this ledger. Provider retry delays, configured
+RSS cadence, concurrency, and NZB/grab limits still apply.
 
 | Effective budget | Interactive | RSS calls / cadence | Automatic search |
 |---|---|---|---|
@@ -928,6 +958,7 @@ for the next automatic pass. RSS due times persist across restart and advance
 from actual dispatch; missed ticks do not produce catch-up bursts.
 A provider Retry-After delays the next request even when local tokens remain.
 
-Use **Request cap** beside a saved indexer to change its allowance without
-re-entering credentials. Changes retain the rolling usage ledger, so restoring
-a positive cap counts calls made while unlimited. The dialog shows saving errors in place and returns focus to the initiating button.
+Use **Request limit** beside a saved indexer to switch the limit on or off
+without re-entering credentials. Changes retain the rolling usage ledger, so
+turning a limit back on counts calls made while it was off. The dialog shows
+saving errors in place and returns focus to the initiating button.

@@ -89,34 +89,134 @@ func (s *Service) dispatchPlan(ctx context.Context, id int64) error {
 				return s.settleSeasonPlan(ctx, p, rows, "needs_replan")
 			}
 		}
-		claimed, err := s.db.ClaimPlannedSubmission(ctx, dl.ID)
+		blocked, err := s.db.IsBlocklisted(ctx, dl.ReleaseTitle, dl.Indexer)
 		if err != nil {
 			return err
 		}
-		if !claimed {
-			continue
+		if !blocked && dl.SourceGUID != "" && dl.SourceIndexerID > 0 {
+			_, blocked, err = s.db.ReleaseIdentityBlocklistReason(ctx, dl.MediaItemID, dl.SourceIndexerID, dl.SourceGUID)
+			if err != nil {
+				return err
+			}
 		}
-		dl.State = "grabbed"
-		s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, "submitting planned release as "+dl.Transfer)
-		handle, err := addToClient(ctx, s.newClient(cfg), payload.URL, cfg.Category, dl.ReleaseTitle, dl.Transfer, payload.Priority)
+		if blocked {
+			return s.settleSeasonPlan(ctx, p, rows, "needs_replan")
+		}
+		client := s.newClient(cfg)
+		if client == nil {
+			return fmt.Errorf("planned download client is unavailable")
+		}
+		deliveryExpected, requestTokenIdempotent, err := negotiateRunnerDelivery(ctx, client)
 		if err != nil {
-			// Transport errors cannot prove nonacceptance. Retain the intent and
-			// identity even when there is no returned handle.
-			_ = s.db.SetSubmissionPhase(context.WithoutCancel(ctx), dl.ID, "uncertain")
-			_ = s.db.UpdateDownloadState(context.WithoutCancel(ctx), dl.ID, "grabbed", 0, "submission uncertain; reconciling before any retry")
-			continue
-		}
-		if err = s.db.SetDownloadHandle(ctx, dl.ID, string(handle), dl.Transfer); err != nil {
 			return err
 		}
-		if err = s.db.SetSubmissionPhase(ctx, dl.ID, "submitted"); err != nil {
+		exactTransferCorrelation := false
+		if correlator, ok := client.(ports.ExactTransferCorrelator); ok {
+			exactTransferCorrelation = correlator.SupportsExactTransferCorrelation()
+		}
+		accepted, err := s.dispatchPlannedDownload(ctx, p, dl, payload, cfg, client, deliveryExpected, requestTokenIdempotent, exactTransferCorrelation)
+		if err != nil {
 			return err
 		}
-		_ = s.db.AddHistory(ctx, "grabbed", dl.MediaItemID, dl.ReleaseTitle, map[string]any{"planId": id, "downloadId": dl.ID})
-		s.publish(ReleaseGrabbed{MediaItemID: dl.MediaItemID, Title: dl.ReleaseTitle, Indexer: dl.Indexer, Protocol: dl.Protocol})
+		if accepted {
+			_ = s.db.AddHistory(ctx, "grabbed", dl.MediaItemID, dl.ReleaseTitle, map[string]any{"planId": id, "downloadId": dl.ID})
+			s.publish(ReleaseGrabbed{MediaItemID: dl.MediaItemID, Title: dl.ReleaseTitle, Indexer: dl.Indexer, Protocol: dl.Protocol})
+		}
 	}
 	_, err = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET state='active',revision=revision+1,updated_at=? WHERE id=? AND state IN ('admitted','dispatching','active')`, time.Now().UnixMilli(), id)
 	return err
+}
+
+// dispatchPlannedDownload serializes planned admission with cancellation,
+// receipt recovery, and automatic retry for this exact row. Protocol IO is
+// negotiated by the caller before taking this per-download lock.
+func (s *Service) dispatchPlannedDownload(ctx context.Context, plan sqlite.AcquisitionPlan, dl sqlite.Download, payload plannedExecution, cfg ports.ClientConfig, client ports.DownloadClient, deliveryExpected, requestTokenIdempotent, exactTransferCorrelation bool) (bool, error) {
+	unlock := s.lockDownload(dl.ID)
+	defer unlock()
+
+	fresh, err := s.db.GetDownload(ctx, dl.ID)
+	if err != nil {
+		return false, err
+	}
+	if fresh.GenerationKey != dl.GenerationKey || fresh.Transfer != dl.Transfer || fresh.PlanID != plan.ID || fresh.State != "planned" || fresh.SubmissionPhase != "pending" || fresh.Superseded || fresh.ParkedAt.UnixMilli() != 0 {
+		return false, nil
+	}
+	currentPlan, err := s.db.GetAcquisitionPlan(ctx, plan.ID)
+	if err != nil {
+		return false, err
+	}
+	if currentPlan.State != "admitted" && currentPlan.State != "dispatching" && currentPlan.State != "active" {
+		return false, nil
+	}
+	pinned, err := s.db.SetPlannedSubmissionCapabilities(ctx, fresh.ID, deliveryExpected, requestTokenIdempotent, exactTransferCorrelation)
+	if err != nil {
+		return false, err
+	}
+	if !pinned {
+		return false, nil
+	}
+	claimed, err := s.db.ClaimPlannedSubmission(ctx, fresh.ID)
+	if err != nil || !claimed {
+		return false, err
+	}
+	fresh, err = s.db.GetDownload(ctx, dl.ID)
+	if err != nil {
+		return false, err
+	}
+	if fresh.GenerationKey != dl.GenerationKey || fresh.Transfer != dl.Transfer || fresh.PlanID != plan.ID || fresh.SubmissionPhase != "submitting" || fresh.Superseded || fresh.ParkedAt.UnixMilli() != 0 {
+		return false, nil
+	}
+	currentPlan, err = s.db.GetAcquisitionPlan(ctx, plan.ID)
+	if err != nil {
+		return false, err
+	}
+	if currentPlan.State != "admitted" && currentPlan.State != "dispatching" && currentPlan.State != "active" {
+		return false, nil
+	}
+	if deliveryExpected {
+		s.rememberRunnerDelivery(cfg.ID)
+	}
+	fresh.DeliveryExpected = deliveryExpected
+	fresh.RequestTokenIdempotent = requestTokenIdempotent
+	fresh.ExactTransferCorrelation = exactTransferCorrelation
+	s.advance(ctx, &fresh, "grabbed", 0, "", stepGrabbed, "submitting planned release as "+fresh.Transfer)
+	handle, err := addToClient(ctx, client, payload.URL, cfg.Category, fresh.ReleaseTitle, fresh.Transfer, payload.Priority, deliveryExpected, false)
+	if err != nil {
+		if permanentSubmissionRefusal(err) {
+			reason := "client permanently rejected the exact planned submission: " + err.Error()
+			if e := s.db.RejectDownloadSubmission(context.WithoutCancel(ctx), fresh.ID, fresh.GenerationKey, fresh.Transfer, reason); e != nil {
+				return false, e
+			}
+			return false, nil
+		}
+		if e := s.db.SetSubmissionPhase(context.WithoutCancel(ctx), fresh.ID, "uncertain"); e != nil {
+			return false, e
+		}
+		if e := s.db.UpdateDownloadState(context.WithoutCancel(ctx), fresh.ID, "grabbed", 0, "submission uncertain; reconciling before any retry"); e != nil {
+			return false, e
+		}
+		if requestTokenIdempotent {
+			if _, e := s.db.ScheduleRunnerSubmissionRetry(context.WithoutCancel(ctx), fresh.ID, fresh.GenerationKey, time.Now(), err.Error(), submissionRetryDeadline(err)); e != nil {
+				return false, e
+			}
+		}
+		return false, nil
+	}
+	if handle == "" {
+		if !exactTransferCorrelation {
+			if err = s.db.SetSubmissionPhase(context.WithoutCancel(ctx), fresh.ID, "uncertain"); err != nil {
+				return false, err
+			}
+			return false, s.db.UpdateDownloadState(context.WithoutCancel(ctx), fresh.ID, "grabbed", 0, "client accepted without an exact handle or transfer correlation; review required")
+		}
+		err = s.db.RecordHandlelessSubmission(context.WithoutCancel(ctx), fresh.ID, fresh.GenerationKey, fresh.Transfer)
+	} else {
+		err = s.db.RecordDownloadSubmission(context.WithoutCancel(ctx), fresh.ID, fresh.GenerationKey, fresh.Transfer, string(handle))
+	}
+	if err != nil {
+		return false, fmt.Errorf("persist planned submission acknowledgement: %w", err)
+	}
+	return true, nil
 }
 
 // RunSeasonCoordinator repairs pending dispatch and reconciles bounded claims.
@@ -247,6 +347,14 @@ func (s *Service) observeUncertain(ctx context.Context, dl sqlite.Download, cfg 
 	}
 	dl = fresh
 	if dl.SubmissionPhase != "uncertain" && dl.SubmissionPhase != "submitting" {
+		return
+	}
+	// Managed manual requests are deliberately allowed to submit the same
+	// release more than once. A title-only inventory match could bind two
+	// deliberate requests to one job, and an empty inventory cannot prove
+	// absence for a client without exact request-token support. Their exact
+	// transfer token is reconciled through RequestAdmissionProtocol instead.
+	if dl.Intent == GrabIntentManualAdditional || dl.ExactTransferCorrelation || dl.RequestTokenIdempotent || dl.DeliveryExpected {
 		return
 	}
 	now := time.Now()

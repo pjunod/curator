@@ -239,6 +239,21 @@ func (e DownloadClientInputType) Valid() bool {
 	}
 }
 
+// Defines values for GrabRequestIntent.
+const (
+	AdditionalCopy GrabRequestIntent = "additional_copy"
+)
+
+// Valid indicates whether the value is a known member of the GrabRequestIntent enum.
+func (e GrabRequestIntent) Valid() bool {
+	switch e {
+	case AdditionalCopy:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusError   HealthStatus = "error"
@@ -332,6 +347,21 @@ func (e IndexerInputProtocol) Valid() bool {
 	case IndexerInputProtocolTorrent:
 		return true
 	case IndexerInputProtocolUsenet:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LibraryReviewFlagState.
+const (
+	Open LibraryReviewFlagState = "open"
+)
+
+// Valid indicates whether the value is a known member of the LibraryReviewFlagState enum.
+func (e LibraryReviewFlagState) Valid() bool {
+	switch e {
+	case Open:
 		return true
 	default:
 		return false
@@ -863,6 +893,42 @@ func (e RecommendationStatusModelState) Valid() bool {
 	case RecommendationStatusModelStateNotInstalled:
 		return true
 	case RecommendationStatusModelStateReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReplacementRequestIntent.
+const (
+	ReplaceBad     ReplacementRequestIntent = "replace_bad"
+	ReplaceQuality ReplacementRequestIntent = "replace_quality"
+)
+
+// Valid indicates whether the value is a known member of the ReplacementRequestIntent enum.
+func (e ReplacementRequestIntent) Valid() bool {
+	switch e {
+	case ReplaceBad:
+		return true
+	case ReplaceQuality:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReplacementRequestScope.
+const (
+	Download ReplacementRequestScope = "download"
+	Episodes ReplacementRequestScope = "episodes"
+)
+
+// Valid indicates whether the value is a known member of the ReplacementRequestScope enum.
+func (e ReplacementRequestScope) Valid() bool {
+	switch e {
+	case Download:
+		return true
+	case Episodes:
 		return true
 	default:
 		return false
@@ -1414,14 +1480,23 @@ type ClearedCount struct {
 // CompletedEntry defines model for CompletedEntry.
 type CompletedEntry struct {
 	Bytes int64 `json:"bytes"`
-	Files int   `json:"files"`
+
+	// DeliveryManaged Runner payload governed by its accepted per-file manifest.
+	DeliveryManaged *bool `json:"deliveryManaged,omitempty"`
+	Files           int   `json:"files"`
 
 	// Fingerprint Recursive metadata and filesystem identity token for reviewed deletion.
-	Fingerprint string             `json:"fingerprint"`
-	Path        string             `json:"path"`
-	Reason      string             `json:"reason"`
-	Receipts    []CompletedReceipt `json:"receipts"`
-	Status      string             `json:"status"`
+	Fingerprint string `json:"fingerprint"`
+
+	// LegacyReview Pre-delivery legacy item held for read-only review.
+	LegacyReview *bool              `json:"legacyReview,omitempty"`
+	Path         string             `json:"path"`
+	Reason       string             `json:"reason"`
+	Receipts     []CompletedReceipt `json:"receipts"`
+
+	// ReviewFiles Current file metadata snapshots for review and exact selected-file operations; the accepted delivery manifest remains the deletion authority.
+	ReviewFiles *[]CompletedReviewFile `json:"reviewFiles,omitempty"`
+	Status      string                 `json:"status"`
 }
 
 // CompletedInventory defines model for CompletedInventory.
@@ -1435,14 +1510,33 @@ type CompletedInventory struct {
 
 // CompletedReceipt defines model for CompletedReceipt.
 type CompletedReceipt struct {
-	ClientId       int64  `json:"clientId"`
-	DownloadId     int64  `json:"downloadId"`
-	Live           bool   `json:"live"`
+	ClientId int64 `json:"clientId"`
+
+	// CopyId Exact associated copy; zero means primary copy.
+	CopyId          *int64 `json:"copyId,omitempty"`
+	DeliveryManaged *bool  `json:"deliveryManaged,omitempty"`
+	DownloadId      int64  `json:"downloadId"`
+	LegacyReview    *bool  `json:"legacyReview,omitempty"`
+	Live            bool   `json:"live"`
+
+	// MediaItemId Exact associated library item when retained by the download record.
+	MediaItemId    *int64 `json:"mediaItemId,omitempty"`
 	Path           string `json:"path"`
 	PayloadRemoved bool   `json:"payloadRemoved"`
 	Protocol       string `json:"protocol"`
 	State          string `json:"state"`
 	Title          string `json:"title"`
+}
+
+// CompletedReviewFile defines model for CompletedReviewFile.
+type CompletedReviewFile struct {
+	Mode       string    `json:"mode"`
+	ModifiedAt time.Time `json:"modifiedAt"`
+	Path       string    `json:"path"`
+	SizeBytes  int64     `json:"sizeBytes"`
+
+	// SnapshotIdentity Current metadata snapshot token; it is not proof of storage or content.
+	SnapshotIdentity string `json:"snapshotIdentity"`
 }
 
 // CompletedRoot defines model for CompletedRoot.
@@ -1551,6 +1645,68 @@ type Delivery struct {
 
 // DeliveryStatus defines model for Delivery.Status.
 type DeliveryStatus string
+
+// DeliveryLifecyclePage defines model for DeliveryLifecyclePage.
+type DeliveryLifecyclePage struct {
+	Items        []DeliveryLifecycleReceipt `json:"items"`
+	NextBeforeId *int64                     `json:"nextBeforeId,omitempty"`
+}
+
+// DeliveryLifecycleReceipt defines model for DeliveryLifecycleReceipt.
+type DeliveryLifecycleReceipt struct {
+	Acceptance     string `json:"acceptance"`
+	AttemptHistory []struct {
+		Attempt    int        `json:"attempt"`
+		Error      *string    `json:"error,omitempty"`
+		FinishedAt *time.Time `json:"finishedAt,omitempty"`
+		Id         int64      `json:"id"`
+		Result     string     `json:"result"`
+		Stage      string     `json:"stage"`
+		StartedAt  time.Time  `json:"startedAt"`
+	} `json:"attemptHistory"`
+	Attempts                      *int                     `json:"attempts,omitempty"`
+	BlockedSince                  *time.Time               `json:"blockedSince,omitempty"`
+	ClientId                      int64                    `json:"clientId"`
+	ConsumerReceiptId             *string                  `json:"consumerReceiptId,omitempty"`
+	CopyId                        *int64                   `json:"copyId,omitempty"`
+	CuratorFiles                  []map[string]interface{} `json:"curatorFiles"`
+	DeliveryId                    string                   `json:"deliveryId"`
+	DirectoryCleanupAttempts      *int                     `json:"directoryCleanupAttempts,omitempty"`
+	DirectoryCleanupBlockedSince  *time.Time               `json:"directoryCleanupBlockedSince,omitempty"`
+	DirectoryCleanupError         *string                  `json:"directoryCleanupError,omitempty"`
+	DirectoryCleanupNextAttemptAt *time.Time               `json:"directoryCleanupNextAttemptAt,omitempty"`
+	DirectoryCleanupState         *string                  `json:"directoryCleanupState,omitempty"`
+	DownloadId                    int64                    `json:"downloadId"`
+	Error                         *string                  `json:"error,omitempty"`
+	FailureCause                  *string                  `json:"failureCause,omitempty"`
+	FailureStage                  *string                  `json:"failureStage,omitempty"`
+	GenerationKey                 *string                  `json:"generationKey,omitempty"`
+	JobId                         *string                  `json:"jobId,omitempty"`
+	KeepSourceOnFailure           *bool                    `json:"keepSourceOnFailure,omitempty"`
+	ManifestDigest                string                   `json:"manifestDigest"`
+	ManifestFiles                 []struct {
+		Path      string `json:"path"`
+		Sha256    string `json:"sha256"`
+		SizeBytes int64  `json:"sizeBytes"`
+	} `json:"manifestFiles"`
+	MappedPath                 *string                   `json:"mappedPath,omitempty"`
+	MediaItemId                *int64                    `json:"mediaItemId,omitempty"`
+	NextAttemptAt              *time.Time                `json:"nextAttemptAt,omitempty"`
+	PublicationGeneration      string                    `json:"publicationGeneration"`
+	PublicationPath            *string                   `json:"publicationPath,omitempty"`
+	ReadyAt                    *time.Time                `json:"readyAt,omitempty"`
+	ReceiptId                  int64                     `json:"receiptId"`
+	RequestToken               *string                   `json:"requestToken,omitempty"`
+	RunnerInstanceId           *string                   `json:"runnerInstanceId,omitempty"`
+	SourceCleanup              *map[string]interface{}   `json:"sourceCleanup,omitempty"`
+	SourceCleanupAttempts      *int                      `json:"sourceCleanupAttempts,omitempty"`
+	SourceCleanupBlockedSince  *time.Time                `json:"sourceCleanupBlockedSince,omitempty"`
+	SourceCleanupError         *string                   `json:"sourceCleanupError,omitempty"`
+	SourceCleanupNextAttemptAt *time.Time                `json:"sourceCleanupNextAttemptAt,omitempty"`
+	SourceFileOutcomes         *[]map[string]interface{} `json:"sourceFileOutcomes,omitempty"`
+	State                      string                    `json:"state"`
+	TerminalOutcome            *string                   `json:"terminalOutcome,omitempty"`
+}
 
 // DirEntry defines model for DirEntry.
 type DirEntry struct {
@@ -1680,16 +1836,28 @@ type GrabRequest struct {
 	CandidateToken *string `json:"candidateToken,omitempty"`
 
 	// CopyId Additional quality copy or book edition; absent/0 selects the primary target.
-	CopyId      *int64  `json:"copyId,omitempty"`
-	DownloadUrl string  `json:"downloadUrl"`
-	Episode     *int    `json:"episode,omitempty"`
-	Indexer     *string `json:"indexer,omitempty"`
-	MediaItemId int64   `json:"mediaItemId"`
-	Protocol    string  `json:"protocol"`
-	Season      *int    `json:"season,omitempty"`
-	Size        *int64  `json:"size,omitempty"`
-	Title       string  `json:"title"`
+	CopyId *int64 `json:"copyId,omitempty"`
+
+	// DownloadAnyway One-request override for an existing automatic blacklist entry; it does not remove the entry.
+	DownloadAnyway *bool   `json:"downloadAnyway,omitempty"`
+	DownloadUrl    string  `json:"downloadUrl"`
+	Episode        *int    `json:"episode,omitempty"`
+	Indexer        *string `json:"indexer,omitempty"`
+
+	// Intent Manual acquisition always creates an independent additional copy.
+	Intent      GrabRequestIntent `json:"intent"`
+	MediaItemId int64             `json:"mediaItemId"`
+	Protocol    string            `json:"protocol"`
+
+	// RequestId Stable idempotency key for one deliberate manual Grab action.
+	RequestId string `json:"requestId"`
+	Season    *int   `json:"season,omitempty"`
+	Size      *int64 `json:"size,omitempty"`
+	Title     string `json:"title"`
 }
+
+// GrabRequestIntent Manual acquisition always creates an independent additional copy.
+type GrabRequestIntent string
 
 // HandoffEntry defines model for HandoffEntry.
 type HandoffEntry struct {
@@ -1827,6 +1995,36 @@ type LanguageOption struct {
 	Name string `json:"name"`
 }
 
+// LibraryFileReportRequest defines model for LibraryFileReportRequest.
+type LibraryFileReportRequest struct {
+	Evidence       *map[string]interface{} `json:"evidence,omitempty"`
+	FileGeneration string                  `json:"fileGeneration"`
+	Reason         string                  `json:"reason"`
+	ReasonCode     string                  `json:"reasonCode"`
+}
+
+// LibraryLifecycleReview defines model for LibraryLifecycleReview.
+type LibraryLifecycleReview struct {
+	OpenReports []LibraryReviewFlag    `json:"openReports"`
+	Operations  []ReplacementOperation `json:"operations"`
+}
+
+// LibraryReviewFlag defines model for LibraryReviewFlag.
+type LibraryReviewFlag struct {
+	CreatedAt      time.Time              `json:"createdAt"`
+	FileGeneration string                 `json:"fileGeneration"`
+	Id             int64                  `json:"id"`
+	MediaFileId    int64                  `json:"mediaFileId"`
+	MediaItemId    int64                  `json:"mediaItemId"`
+	Reason         string                 `json:"reason"`
+	ReasonCode     string                 `json:"reasonCode"`
+	State          LibraryReviewFlagState `json:"state"`
+	UpdatedAt      time.Time              `json:"updatedAt"`
+}
+
+// LibraryReviewFlagState defines model for LibraryReviewFlag.State.
+type LibraryReviewFlagState string
+
 // ManualImportAccepted defines model for ManualImportAccepted.
 type ManualImportAccepted struct {
 	// DownloadId Activity row that now owns the background import.
@@ -1845,6 +2043,18 @@ type ManualImportRequest struct {
 
 	// Paths Exact files selected from the scan. Every path must be a media file under path. Absent imports the whole path for backwards compatibility; an explicit selection must contain a file.
 	Paths *[]string `json:"paths,omitempty"`
+
+	// ReviewLegacy Explicitly approve only the selected files from a fenced legacy payload for this manual import.
+	ReviewLegacy *bool `json:"reviewLegacy,omitempty"`
+
+	// ReviewLegacyFiles Exact selected path and snapshot identities from the preview; required when reviewLegacy is true.
+	ReviewLegacyFiles *[]struct {
+		Path             string `json:"path"`
+		SnapshotIdentity string `json:"snapshotIdentity"`
+	} `json:"reviewLegacyFiles,omitempty"`
+
+	// ReviewLegacyFingerprint Exact inventory fingerprint shown in the legacy review preview.
+	ReviewLegacyFingerprint *string `json:"reviewLegacyFingerprint,omitempty"`
 }
 
 // MatchEvidence defines model for MatchEvidence.
@@ -1908,8 +2118,9 @@ type MediaFileInfo struct {
 	EpisodeIds []int64 `json:"episodeIds"`
 
 	// Facts The measured facts as one line, e.g. "1080p · HEVC · HDR10 · TrueHD · 23 Mbps". Empty when the file was never probed.
-	Facts *string `json:"facts,omitempty"`
-	Id    int64   `json:"id"`
+	Facts          *string `json:"facts,omitempty"`
+	FileGeneration *string `json:"fileGeneration,omitempty"`
+	Id             int64   `json:"id"`
 
 	// Implausible Why this file's own measurements cannot be true, in one sentence ready to show. Empty for every file that adds up. When set, the file is not counted toward the item being satisfied, so the search for a real copy continues.
 	Implausible *string `json:"implausible,omitempty"`
@@ -1922,11 +2133,18 @@ type MediaFileInfo struct {
 	ProvenanceLabel *string `json:"provenanceLabel,omitempty"`
 
 	// Quality The file's recorded quality, e.g. "WEB-DL 1080p". Empty when the file exists but nothing could be determined about it -- which is not the same as the file being absent (ADR 0013).
-	Quality *string `json:"quality,omitempty"`
-	Size    int64   `json:"size"`
+	Quality                 *string `json:"quality,omitempty"`
+	Size                    int64   `json:"size"`
+	SourceFileGeneration    *string `json:"sourceFileGeneration,omitempty"`
+	SourceGeneration        *string `json:"sourceGeneration,omitempty"`
+	SourceGuid              *string `json:"sourceGuid,omitempty"`
+	SourceIndexer           *string `json:"sourceIndexer,omitempty"`
+	SourceIndexerId         *int64  `json:"sourceIndexerId,omitempty"`
+	SourcePayloadGeneration *string `json:"sourcePayloadGeneration,omitempty"`
 
 	// SourceRelease The release that put this file here, when monarr grabbed it. Empty for an adopted file -- which is also why there is nothing to blocklist for one.
-	SourceRelease *string `json:"sourceRelease,omitempty"`
+	SourceRelease  *string `json:"sourceRelease,omitempty"`
+	SourceTransfer *string `json:"sourceTransfer,omitempty"`
 
 	// Verified Whether the SOURCE half of `quality` is trustworthy enough to justify replacing this file (the don't-churn rule, ADR 0013).
 	Verified *bool `json:"verified,omitempty"`
@@ -2297,11 +2515,14 @@ type QueueItem struct {
 	Error  *string `json:"error,omitempty"`
 
 	// Handoff The download → import handoff, step by step.
-	Handoff *[]HandoffEntry `json:"handoff,omitempty"`
-	Id      int64           `json:"id"`
+	Handoff            *[]HandoffEntry `json:"handoff,omitempty"`
+	Id                 int64           `json:"id"`
+	ImportBlockedSince *time.Time      `json:"importBlockedSince,omitempty"`
 
 	// ImportPath Where Monarr looked for the files after remote path mapping.
-	ImportPath *string `json:"importPath,omitempty"`
+	ImportPath          *string    `json:"importPath,omitempty"`
+	ImportRetryAt       *time.Time `json:"importRetryAt,omitempty"`
+	ImportRetryAttempts *int       `json:"importRetryAttempts,omitempty"`
 
 	// ImportState The in-memory importer state. `queued` means the job was accepted and is waiting for one of the bounded import workers; `running` means a worker owns it. Absent means no importer owns this row.
 	ImportState  *QueueItemImportState `json:"importState,omitempty"`
@@ -2527,6 +2748,9 @@ type ReleaseCandidate struct {
 	Accepted bool   `json:"accepted"`
 	Age      string `json:"age"`
 
+	// BlacklistReason Exact blocklist reason; Download anyway applies only to this manual request.
+	BlacklistReason *string `json:"blacklistReason,omitempty"`
+
 	// CandidateToken Opaque short-lived server proof binding this row to its displayed match evidence.
 	CandidateToken string `json:"candidateToken"`
 	DownloadUrl    string `json:"downloadUrl"`
@@ -2564,6 +2788,80 @@ type RemoveFileResult struct {
 	Note     *string `json:"note,omitempty"`
 	Path     string  `json:"path"`
 	Searched bool    `json:"searched"`
+}
+
+// ReplacementObservation defines model for ReplacementObservation.
+type ReplacementObservation struct {
+	Error            *string `json:"error,omitempty"`
+	FileGeneration   string  `json:"fileGeneration"`
+	ObservationId    string  `json:"observationId"`
+	RequestId        string  `json:"requestId"`
+	Sha256           *string `json:"sha256,omitempty"`
+	Size             *int64  `json:"size,omitempty"`
+	SourceGeneration *string `json:"sourceGeneration,omitempty"`
+	State            string  `json:"state"`
+}
+
+// ReplacementObservationRequest defines model for ReplacementObservationRequest.
+type ReplacementObservationRequest struct {
+	FileGeneration string `json:"fileGeneration"`
+	RequestId      string `json:"requestId"`
+}
+
+// ReplacementOperation defines model for ReplacementOperation.
+type ReplacementOperation struct {
+	// BlacklistSourceRelease The exact blacklist choice saved with this operation; never inferred from current blacklist state.
+	BlacklistSourceRelease bool                      `json:"blacklistSourceRelease"`
+	BlockedSince           *time.Time                `json:"blockedSince,omitempty"`
+	BlockedWarning         *bool                     `json:"blockedWarning,omitempty"`
+	CopyId                 *int64                    `json:"copyId,omitempty"`
+	EpisodeIds             *[]int64                  `json:"episodeIds,omitempty"`
+	Files                  *[]map[string]interface{} `json:"files,omitempty"`
+	Intent                 string                    `json:"intent"`
+	LastError              *string                   `json:"lastError,omitempty"`
+	MediaItemId            *int64                    `json:"mediaItemId,omitempty"`
+	NextAttemptAt          *time.Time                `json:"nextAttemptAt,omitempty"`
+	OperationId            string                    `json:"operationId"`
+	RequestId              string                    `json:"requestId"`
+	RetryAttempts          *int                      `json:"retryAttempts,omitempty"`
+	Scope                  string                    `json:"scope"`
+	SourceGeneration       *string                   `json:"sourceGeneration,omitempty"`
+	SourceGuid             *string                   `json:"sourceGuid,omitempty"`
+	SourceIndexerId        *int64                    `json:"sourceIndexerId,omitempty"`
+	SourceRelease          *string                   `json:"sourceRelease,omitempty"`
+	SourceTransfer         *string                   `json:"sourceTransfer,omitempty"`
+	State                  string                    `json:"state"`
+}
+
+// ReplacementRequest defines model for ReplacementRequest.
+type ReplacementRequest struct {
+	BlacklistSourceRelease bool                     `json:"blacklistSourceRelease"`
+	CopyId                 int64                    `json:"copyId"`
+	EpisodeIds             *[]int64                 `json:"episodeIds,omitempty"`
+	Intent                 ReplacementRequestIntent `json:"intent"`
+	ObservedFiles          []struct {
+		FileGeneration string `json:"fileGeneration"`
+		Id             int64  `json:"id"`
+		ObservationId  string `json:"observationId"`
+	} `json:"observedFiles"`
+	Reason           string                  `json:"reason"`
+	ReasonCode       string                  `json:"reasonCode"`
+	RequestId        string                  `json:"requestId"`
+	Scope            ReplacementRequestScope `json:"scope"`
+	SourceFileId     int64                   `json:"sourceFileId"`
+	SourceGeneration *string                 `json:"sourceGeneration,omitempty"`
+	SourceTransfer   *string                 `json:"sourceTransfer,omitempty"`
+}
+
+// ReplacementRequestIntent defines model for ReplacementRequest.Intent.
+type ReplacementRequestIntent string
+
+// ReplacementRequestScope defines model for ReplacementRequest.Scope.
+type ReplacementRequestScope string
+
+// ResolveDeliveryImportRequest defines model for ResolveDeliveryImportRequest.
+type ResolveDeliveryImportRequest struct {
+	Paths []string `json:"paths"`
 }
 
 // ReviewCounts defines model for ReviewCounts.
@@ -2643,6 +2941,9 @@ type ScannedFile struct {
 	// Season -1 when not a series file
 	Season int   `json:"season"`
 	Size   int64 `json:"size"`
+
+	// SnapshotIdentity Stable preview snapshot token used to detect changed files before explicit legacy review import.
+	SnapshotIdentity *string `json:"snapshotIdentity,omitempty"`
 }
 
 // SearchResult defines model for SearchResult.
@@ -2994,10 +3295,25 @@ type DiscoverItemsParams struct {
 	Page *int `form:"page,omitempty" json:"page,omitempty"`
 }
 
+// ListDeliveryLifecycleParams defines parameters for ListDeliveryLifecycle.
+type ListDeliveryLifecycleParams struct {
+	BeforeId   *int64 `form:"beforeId,omitempty" json:"beforeId,omitempty"`
+	Limit      *int   `form:"limit,omitempty" json:"limit,omitempty"`
+	DownloadId *int64 `form:"downloadId,omitempty" json:"downloadId,omitempty"`
+}
+
 // DeleteCompletedEntryJSONBody defines parameters for DeleteCompletedEntry.
 type DeleteCompletedEntryJSONBody struct {
+	// Files Exact inventory file identities selected for explicit deletion of a delivery-managed or explicitly reviewed legacy payload. Required for these entries; no directory removal is performed.
+	Files *[]struct {
+		Path             string `json:"path"`
+		SnapshotIdentity string `json:"snapshotIdentity"`
+	} `json:"files,omitempty"`
 	Fingerprint string `json:"fingerprint"`
 	Path        string `json:"path"`
+
+	// ReviewLegacy Explicitly approve deletion of only the selected current files from a legacy review entry.
+	ReviewLegacy *bool `json:"reviewLegacy,omitempty"`
 }
 
 // BrowseFilesystemParams defines parameters for BrowseFilesystem.
@@ -3132,6 +3448,11 @@ type RepairLibraryFolderJSONBody struct {
 	Path string `json:"path"`
 }
 
+// ResolveLibraryReviewFlagJSONBody defines parameters for ResolveLibraryReviewFlag.
+type ResolveLibraryReviewFlagJSONBody struct {
+	FileGeneration string `json:"fileGeneration"`
+}
+
 // PreviewMetadataParams defines parameters for PreviewMetadata.
 type PreviewMetadataParams struct {
 	Kind   MediaKind `form:"kind" json:"kind"`
@@ -3203,6 +3524,9 @@ type TestDownloadClientJSONRequestBody = DownloadClientInput
 // UpdateDownloadClientJSONRequestBody defines body for UpdateDownloadClient for application/json ContentType.
 type UpdateDownloadClientJSONRequestBody = DownloadClientInput
 
+// ResolveDeliveryImportJSONRequestBody defines body for ResolveDeliveryImport for application/json ContentType.
+type ResolveDeliveryImportJSONRequestBody = ResolveDeliveryImportRequest
+
 // DeleteCompletedEntryJSONRequestBody defines body for DeleteCompletedEntry for application/json ContentType.
 type DeleteCompletedEntryJSONRequestBody DeleteCompletedEntryJSONBody
 
@@ -3269,8 +3593,20 @@ type UpdateMediaCopyJSONRequestBody = MediaCopyUpdate
 // SetEpisodeMonitoredJSONRequestBody defines body for SetEpisodeMonitored for application/json ContentType.
 type SetEpisodeMonitoredJSONRequestBody = MonitorRequest
 
+// StartReplacementFileObservationJSONRequestBody defines body for StartReplacementFileObservation for application/json ContentType.
+type StartReplacementFileObservationJSONRequestBody = ReplacementObservationRequest
+
+// ReportLibraryFileJSONRequestBody defines body for ReportLibraryFile for application/json ContentType.
+type ReportLibraryFileJSONRequestBody = LibraryFileReportRequest
+
 // RepairLibraryFolderJSONRequestBody defines body for RepairLibraryFolder for application/json ContentType.
 type RepairLibraryFolderJSONRequestBody RepairLibraryFolderJSONBody
+
+// CreateReplacementOperationJSONRequestBody defines body for CreateReplacementOperation for application/json ContentType.
+type CreateReplacementOperationJSONRequestBody = ReplacementRequest
+
+// ResolveLibraryReviewFlagJSONRequestBody defines body for ResolveLibraryReviewFlag for application/json ContentType.
+type ResolveLibraryReviewFlagJSONRequestBody ResolveLibraryReviewFlagJSONBody
 
 // SetSeasonMonitoredJSONRequestBody defines body for SetSeasonMonitored for application/json ContentType.
 type SetSeasonMonitoredJSONRequestBody = MonitorRequest
@@ -3361,6 +3697,24 @@ type ServerInterface interface {
 	// TestDownloadClientById Test a saved download client with its stored credentials
 	// (POST /downloadclients/{id}/test)
 	TestDownloadClientById(w http.ResponseWriter, r *http.Request, id int64)
+	// ListDeliveryLifecycle Paginated durable Runner handoff and cleanup receipts
+	// (GET /downloads/deliveries)
+	ListDeliveryLifecycle(w http.ResponseWriter, r *http.Request, params ListDeliveryLifecycleParams)
+	// GetDeliveryLifecycleReceipt Read one durable Runner handoff and cleanup receipt
+	// (GET /downloads/deliveries/{receiptId})
+	GetDeliveryLifecycleReceipt(w http.ResponseWriter, r *http.Request, receiptId int64)
+	// ResolveDeliveryImport Import an explicitly selected subset of an accepted Runner manifest
+	// (POST /downloads/deliveries/{receiptId}/import)
+	ResolveDeliveryImport(w http.ResponseWriter, r *http.Request, receiptId int64)
+	// RetryCuratorDeliveryCleanup Retry Curator-owned accepted-publication cleanup
+	// (POST /downloads/deliveries/{receiptId}/retry-curator-cleanup)
+	RetryCuratorDeliveryCleanup(w http.ResponseWriter, r *http.Request, receiptId int64)
+	// RetryDeliveryHandoff Retry acceptance or import for one durable delivery
+	// (POST /downloads/deliveries/{receiptId}/retry-handoff)
+	RetryDeliveryHandoff(w http.ResponseWriter, r *http.Request, receiptId int64)
+	// RetryRunnerDeliveryCleanup Retry Runner-owned processing-source cleanup
+	// (POST /downloads/deliveries/{receiptId}/retry-runner-cleanup)
+	RetryRunnerDeliveryCleanup(w http.ResponseWriter, r *http.Request, receiptId int64)
 	// GetCompletedInventory Cached disk accounting for completed download folders
 	// (GET /downloads/inventory)
 	GetCompletedInventory(w http.ResponseWriter, r *http.Request)
@@ -3526,6 +3880,12 @@ type ServerInterface interface {
 	// RemoveLibraryFile Remove one file from an item, and optionally condemn its release
 	// (DELETE /library/{id}/files/{fileId})
 	RemoveLibraryFile(w http.ResponseWriter, r *http.Request, id int64, fileId int64, params RemoveLibraryFileParams)
+	// StartReplacementFileObservation Prepare a read-only, generation-bound file observation
+	// (POST /library/{id}/files/{fileId}/replacement-observations)
+	StartReplacementFileObservation(w http.ResponseWriter, r *http.Request, id int64, fileId int64)
+	// ReportLibraryFile Record a review flag for existing library media
+	// (POST /library/{id}/files/{fileId}/report)
+	ReportLibraryFile(w http.ResponseWriter, r *http.Request, id int64, fileId int64)
 	// GetLibraryPlacementSuggestion Suggest the default root and exact folder for an existing item
 	// (GET /library/{id}/placement-suggestion)
 	GetLibraryPlacementSuggestion(w http.ResponseWriter, r *http.Request, id int64)
@@ -3541,9 +3901,18 @@ type ServerInterface interface {
 	// RepairLibraryFolder Reconnect an item to an existing media folder and scan it
 	// (POST /library/{id}/repair-folder)
 	RepairLibraryFolder(w http.ResponseWriter, r *http.Request, id int64)
+	// GetLibraryLifecycleReview List durable replacement operations and open file reports for an item
+	// (GET /library/{id}/replacement-operations)
+	GetLibraryLifecycleReview(w http.ResponseWriter, r *http.Request, id int64)
+	// CreateReplacementOperation Start a reviewed bad-source or quality replacement
+	// (POST /library/{id}/replacement-operations)
+	CreateReplacementOperation(w http.ResponseWriter, r *http.Request, id int64)
 	// RescanManualEntry Re-read a manual series' folder for episodes that have appeared
 	// (POST /library/{id}/rescan)
 	RescanManualEntry(w http.ResponseWriter, r *http.Request, id int64)
+	// ResolveLibraryReviewFlag Resolve a user report for the exact reviewed file generation
+	// (POST /library/{id}/review-flags/{flagId}/resolve)
+	ResolveLibraryReviewFlag(w http.ResponseWriter, r *http.Request, id int64, flagId int64)
 	// SetSeasonMonitored Monitor or unmonitor one season (cascades to its episodes)
 	// (PATCH /library/{id}/seasons/{season})
 	SetSeasonMonitored(w http.ResponseWriter, r *http.Request, id int64, season int)
@@ -3634,6 +4003,12 @@ type ServerInterface interface {
 	// ResumeQueueItem Resume the retained Runner job after resource admission
 	// (POST /queue/{id}/resume)
 	ResumeQueueItem(w http.ResponseWriter, r *http.Request, id int64)
+	// GetReplacementFileObservation Read a prepared file observation
+	// (GET /replacement-observations/{observationId})
+	GetReplacementFileObservation(w http.ResponseWriter, r *http.Request, observationId string)
+	// GetReplacementOperation Read a durable replacement operation
+	// (GET /replacement-operations/{operationId})
+	GetReplacementOperation(w http.ResponseWriter, r *http.Request, operationId string)
 	// ListRootFolders List library root folders
 	// (GET /rootfolders)
 	ListRootFolders(w http.ResponseWriter, r *http.Request)
@@ -4038,6 +4413,195 @@ func (siw *ServerInterfaceWrapper) TestDownloadClientById(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.TestDownloadClientById(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListDeliveryLifecycle operation middleware
+func (siw *ServerInterfaceWrapper) ListDeliveryLifecycle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListDeliveryLifecycleParams
+
+	// ------------- Optional query parameter "beforeId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "beforeId", r.URL.Query(), &params.BeforeId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "beforeId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "beforeId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "downloadId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "downloadId", r.URL.Query(), &params.DownloadId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "downloadId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "downloadId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDeliveryLifecycle(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDeliveryLifecycleReceipt operation middleware
+func (siw *ServerInterfaceWrapper) GetDeliveryLifecycleReceipt(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "receiptId" -------------
+	var receiptId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "receiptId", r.PathValue("receiptId"), &receiptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "receiptId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDeliveryLifecycleReceipt(w, r, receiptId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResolveDeliveryImport operation middleware
+func (siw *ServerInterfaceWrapper) ResolveDeliveryImport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "receiptId" -------------
+	var receiptId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "receiptId", r.PathValue("receiptId"), &receiptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "receiptId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveDeliveryImport(w, r, receiptId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetryCuratorDeliveryCleanup operation middleware
+func (siw *ServerInterfaceWrapper) RetryCuratorDeliveryCleanup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "receiptId" -------------
+	var receiptId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "receiptId", r.PathValue("receiptId"), &receiptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "receiptId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetryCuratorDeliveryCleanup(w, r, receiptId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetryDeliveryHandoff operation middleware
+func (siw *ServerInterfaceWrapper) RetryDeliveryHandoff(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "receiptId" -------------
+	var receiptId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "receiptId", r.PathValue("receiptId"), &receiptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "receiptId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetryDeliveryHandoff(w, r, receiptId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetryRunnerDeliveryCleanup operation middleware
+func (siw *ServerInterfaceWrapper) RetryRunnerDeliveryCleanup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "receiptId" -------------
+	var receiptId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "receiptId", r.PathValue("receiptId"), &receiptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "receiptId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetryRunnerDeliveryCleanup(w, r, receiptId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5318,6 +5882,76 @@ func (siw *ServerInterfaceWrapper) RemoveLibraryFile(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// StartReplacementFileObservation operation middleware
+func (siw *ServerInterfaceWrapper) StartReplacementFileObservation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "fileId" -------------
+	var fileId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "fileId", r.PathValue("fileId"), &fileId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fileId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartReplacementFileObservation(w, r, id, fileId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReportLibraryFile operation middleware
+func (siw *ServerInterfaceWrapper) ReportLibraryFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "fileId" -------------
+	var fileId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "fileId", r.PathValue("fileId"), &fileId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fileId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReportLibraryFile(w, r, id, fileId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetLibraryPlacementSuggestion operation middleware
 func (siw *ServerInterfaceWrapper) GetLibraryPlacementSuggestion(w http.ResponseWriter, r *http.Request) {
 
@@ -5490,6 +6124,58 @@ func (siw *ServerInterfaceWrapper) RepairLibraryFolder(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// GetLibraryLifecycleReview operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryLifecycleReview(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryLifecycleReview(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateReplacementOperation operation middleware
+func (siw *ServerInterfaceWrapper) CreateReplacementOperation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateReplacementOperation(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RescanManualEntry operation middleware
 func (siw *ServerInterfaceWrapper) RescanManualEntry(w http.ResponseWriter, r *http.Request) {
 
@@ -5507,6 +6193,41 @@ func (siw *ServerInterfaceWrapper) RescanManualEntry(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RescanManualEntry(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResolveLibraryReviewFlag operation middleware
+func (siw *ServerInterfaceWrapper) ResolveLibraryReviewFlag(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "flagId" -------------
+	var flagId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "flagId", r.PathValue("flagId"), &flagId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "flagId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveLibraryReviewFlag(w, r, id, flagId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6298,6 +7019,58 @@ func (siw *ServerInterfaceWrapper) ResumeQueueItem(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetReplacementFileObservation operation middleware
+func (siw *ServerInterfaceWrapper) GetReplacementFileObservation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "observationId" -------------
+	var observationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "observationId", r.PathValue("observationId"), &observationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "observationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetReplacementFileObservation(w, r, observationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetReplacementOperation operation middleware
+func (siw *ServerInterfaceWrapper) GetReplacementOperation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetReplacementOperation(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRootFolders operation middleware
 func (siw *ServerInterfaceWrapper) ListRootFolders(w http.ResponseWriter, r *http.Request) {
 
@@ -6771,6 +7544,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloads/deliveries", wrapper.ListDeliveryLifecycle)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloads/deliveries/{receiptId}", wrapper.GetDeliveryLifecycleReceipt)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/import", wrapper.ResolveDeliveryImport)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-handoff", wrapper.RetryDeliveryHandoff)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-runner-cleanup", wrapper.RetryRunnerDeliveryCleanup)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-curator-cleanup", wrapper.RetryCuratorDeliveryCleanup)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloads/inventory/entry", wrapper.DeleteCompletedEntry)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloads/inventory", wrapper.GetCompletedInventory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/status", wrapper.GetSystemStatus)
@@ -6868,6 +7647,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.UpdateMediaCopy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/probe", wrapper.ReprobeLibraryItem)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}/files/{fileId}", wrapper.RemoveLibraryFile)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/files/{fileId}/report", wrapper.ReportLibraryFile)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/review-flags/{flagId}/resolve", wrapper.ResolveLibraryReviewFlag)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/files/{fileId}/replacement-observations", wrapper.StartReplacementFileObservation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/replacement-observations/{observationId}", wrapper.GetReplacementFileObservation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/replacement-operations", wrapper.GetLibraryLifecycleReview)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/replacement-operations", wrapper.CreateReplacementOperation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/replacement-operations/{operationId}", wrapper.GetReplacementOperation)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/seasons/{season}", wrapper.SetSeasonMonitored)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/episodes/{episodeId}", wrapper.SetEpisodeMonitored)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)

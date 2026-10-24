@@ -28,6 +28,10 @@ type Client struct {
 }
 
 var _ ports.DownloadClient = (*Client)(nil)
+var _ ports.ConfiguredAdder = (*Client)(nil)
+var _ ports.ExactTransferCorrelator = (*Client)(nil)
+
+const transferTagPrefix = "monarr-transfer-"
 
 // New returns a Client; login happens lazily on first use.
 func New(cfg ports.ClientConfig) *Client {
@@ -115,20 +119,73 @@ func (c *Client) get(ctx context.Context, path string, params url.Values) ([]byt
 	return body, nil
 }
 
-// Add implements ports.DownloadClient: hands the torrent URL/magnet to the
-// client under our category. qBittorrent identifies torrents by hash, which
-// we discover on the next Statuses poll; Add returns an empty handle and
-// the tracker reconciles by category+name.
+// Add implements ports.DownloadClient.
 func (c *Client) Add(ctx context.Context, downloadURL, category string) (ports.Handle, error) {
-	form := url.Values{"urls": {downloadURL}, "category": {category}}
+	return c.AddWithOptions(ctx, downloadURL, category, ports.AddOptions{})
+}
+
+// AddWithOptions tags the torrent with the opaque transfer token at admission
+// so a later info poll can bind the accepted request to its exact hash. The
+// WebUI API returns no hash from add; callers persist the transfer and wait
+// for the exact tag to appear. A duplicate add that does not echo its new tag
+// therefore remains unresolved instead of falling back to title matching.
+func (c *Client) AddWithOptions(ctx context.Context, downloadURL, category string, options ports.AddOptions) (ports.Handle, error) {
+	form := url.Values{"urls": {downloadURL}}
+	if category != "" {
+		form.Set("category", category)
+	}
+	if options.Name != "" {
+		form.Set("rename", options.Name)
+	}
+	if options.Transfer != "" {
+		if !validTransferToken(options.Transfer) {
+			return "", fmt.Errorf("qbittorrent: transfer token contains unsupported characters")
+		}
+		form.Set("tags", transferTagPrefix+options.Transfer)
+	}
 	body, err := c.postForm(ctx, "/api/v2/torrents/add", form)
 	if err != nil {
 		return "", err
 	}
 	if strings.Contains(string(body), "Fails") {
-		return "", fmt.Errorf("qbittorrent: add failed")
+		return "", fmt.Errorf("qbittorrent: add failed: %w", ports.ErrAdmissionRejected)
 	}
 	return "", nil
+}
+
+// SupportsExactTransferCorrelation reports that AddWithOptions tags requests
+// and Statuses returns the echoed token. The native handle remains unknown
+// until qBittorrent exposes the torrent in its info listing.
+func (c *Client) SupportsExactTransferCorrelation() bool { return true }
+
+func validTransferToken(token string) bool {
+	if len(token) == 0 || len(token) > 128 {
+		return false
+	}
+	for _, r := range token {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func transferFromTags(tags string) string {
+	var found string
+	for _, tag := range strings.Split(tags, ",") {
+		tag = strings.TrimSpace(tag)
+		if !strings.HasPrefix(tag, transferTagPrefix) {
+			continue
+		}
+		candidate := strings.TrimPrefix(tag, transferTagPrefix)
+		if !validTransferToken(candidate) || found != "" {
+			return ""
+		}
+		found = candidate
+	}
+	return found
 }
 
 type torrentInfo struct {
@@ -142,6 +199,7 @@ type torrentInfo struct {
 	SavePath       string   `json:"save_path"`
 	// content_path: file for single-file torrents, folder otherwise.
 	ContentPath string `json:"content_path"`
+	Tags        string `json:"tags"`
 }
 
 // Statuses implements ports.DownloadClient for our category.
@@ -160,6 +218,7 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 			BytesCompleted: t.BytesCompleted, ConnectedSeeds: t.ConnectedSeeds, Availability: t.Availability, OperationalState: t.State,
 			Handle:   ports.Handle(t.Hash),
 			Name:     t.Name,
+			Transfer: transferFromTags(t.Tags),
 			Progress: t.Progress,
 			SavePath: t.ContentPath,
 		}
