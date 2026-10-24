@@ -117,7 +117,8 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 		ctx, releaseStorage := s.lockStorageDecision(ctx)
 		unlock := func() { releaseStorage(); unlockDownload() }
 		dl, err := s.db.GetDownload(ctx, candidate.ID)
-		if err != nil || dl.DeliveryExpected || dl.State != "imported" || dl.PayloadRemoved || !dl.AddedAt.Equal(candidate.AddedAt) {
+		if err != nil || candidate.GenerationKey == "" || dl.GenerationKey != candidate.GenerationKey ||
+			dl.DeliveryExpected || dl.State != "imported" || dl.PayloadRemoved || !dl.AddedAt.Equal(candidate.AddedAt) {
 			unlock()
 			continue
 		}

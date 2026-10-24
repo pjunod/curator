@@ -13,7 +13,7 @@ the user has reviewed your findings. Do not deploy or modify production media.
 
 | Repository | Baseline | Pull request | Reviewed head |
 |---|---|---|---|
-| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source approval is bound to `264e1fdc6b14f365321bccd3ea7d2efd59ae522c`; full local tests, focused race tests, lint and generated consistency pass; coverage remains below 86%; Linux lint, Docker and compatibility pass, with the test workflow running |
+| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source approval is bound to `3e115fa40331130ed59f932bec6c6b6b7cb978bf`; the following cleanup correction is source-approved pending commit binding. Full local tests, focused race tests and lint pass. Linux tests, browser, mobile, lint, Docker and compatibility pass at `264e1fd`, but its coverage gate fails at 84.9% |
 | Runner (`pjunod/runner`) | `42995f0b45a7eb977c383c4b630fa75e58bbedfb` | [#254](https://github.com/pjunod/runner/pull/254) | Astra source approval, normal Linux PR checks and supply-chain audit pass at `83cd4cdfef3ec62a67237fc918114f622ef638a2`; separate manual coverage gate remains below 90% |
 
 The primary agent reviews construction. Lower-cost agents implement changes;
@@ -226,6 +226,13 @@ recorded through a symlink alias. Its full Go suite, focused race checks and
 lint pass; the aggregate coverage gate remains below 86%. Additional regressions
 exercise manual-import admission, recovery receipt rollback and revision checks,
 and season discovery after an indexer capability update.
+
+Also inspect legacy partial cleanup's absence path: unavailable or different
+storage must retain custody, a reused Activity row must not inherit an older
+sweep's authority, and restoring the expected storage must resume without saving
+settings again. Astra approved the source correction; full Go tests, focused
+race checks and lint pass. Aggregate coverage remains 84.9%, below the unchanged
+86% floor; final revision CI and review binding remain pending.
 
 Use disposable fixtures for additional testing. Report findings with exact
 repository/head, file and line, concrete trigger, resulting behavior, severity,

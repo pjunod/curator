@@ -355,6 +355,18 @@ that its regression tests pass.
   receipt rollback and exact retry, stale recovery-revision transaction rollback,
   and season discovery recovering after indexer capability changes. Coverage
   remains 84.9%; the required 86% gate is unchanged.
+- A further cleanup audit found that the legacy partial-payload absence path
+  could settle custody without verifying the mounted storage. Candidate sweeps
+  also lacked a complete generation check after waiting for a row lock. The
+  correction preserves the selected generation across the sweep and final
+  database writes, verifies storage before accepting absence, and retains
+  pending custody during an outage or mount mismatch. Astra approved the source
+  correction; the full Go suite, focused race tests and pinned lint pass.
+  Regressions use an actual reused row ID with the original timestamp and a new
+  generation, changed Delivery ownership, unavailable storage, a different mount,
+  and automatic recovery after the expected source returns. Coverage is 84.9%
+  (22,988/27,073 statements), below the unchanged 86% floor. This does not
+  authorize backlog cleanup.
 - Runner `677d4fa` encountered newly published Tokio advisory
   `RUSTSEC-2026-0386`. Revision `83cd4cd` updates Tokio to 1.53.3 and the
   yanked chacha20 dependency to 0.10.2. Workspace tests, strict Clippy,
@@ -379,10 +391,10 @@ final gates began on 2026-10-22. Results so far:
 | Curator browser acceptance | Passed: 174 tests, zero skipped, including lifecycle polling and mobile cases, against the rebuilt binary and final Vite bundle |
 | Runner strict workspace tests | Passed with required external tools, including actual failed-health salvage, storage-outage Retry Now and HTTP Delivery regressions. Formatting, strict Clippy, Rust 1.95 MSRV and UI harness passed |
 | Runner line coverage | Linux `b7c259d` instrumented workspace tests pass, but manual coverage enforcement fails at 86.23% (56,297/65,285 lines), below the unchanged 90% floor. Earlier identical macOS commands measured candidate 86.2814% and baseline `42995f0` 86.5527%; both fail 90%. No Linux baseline measurement is claimed |
-| Curator Go race instrumentation | Full acquisition package passed locally in 547.452 seconds with `-race -covermode=atomic -coverpkg=./... -count=1`. Each test still owns an isolated database; an immutable migrated-schema template removes repeated schema construction. This resolves the earlier local timeout. Full Linux race-instrumented tests also pass at `ce7e550` (acquisition 770.961 seconds); that job fails only at the 84.8% coverage result |
+| Curator Go race instrumentation | Full acquisition package passed locally in 547.452 seconds with `-race -covermode=atomic -coverpkg=./... -count=1`. Each test still owns an isolated database; an immutable migrated-schema template removes repeated schema construction. This resolves the earlier local timeout. Full Linux race-instrumented tests also pass at `264e1fd` (acquisition 972.909 seconds); that job fails only at the 84.9% coverage result |
 | Curator coverage | Full ordinary coverpkg suite passes all packages; latest measured candidate is 84.9% after the exact deletion-journal and worker regressions, below the unchanged 86% floor. Unchanged baseline `7e8e2f2` passed the same command at 86.3%; this deficit is introduced and blocks the coverage gate. Additional meaningful failure-path coverage is in progress |
 | Curator generated consistency | Two consecutive local pinned sqlc and OpenAPI generations produced identical hashes with migration 0061; diff whitespace check passed |
-| Final PR CI | Curator `ce7e550`: browser, mobile, lint, Docker and all Go race tests pass; coverage fails at 84.8%. Both compatibility personalities passed at `a2441fc`; that job was cancelled on superseded `ce7e550`. Runner `83cd4cd`: all normal Linux PR checks and supply-chain audit pass. Astra approval is bound to Curator `264e1fd` and Runner `83cd4cd`; Curator `264e1fd` Linux lint, Docker and both compatibility personalities pass; its test workflow is still running. Curator final revision CI and coverage remain unresolved |
+| Final PR CI | Curator `264e1fd`: browser, mobile, lint, Docker, both compatibility personalities and all Go race tests pass; coverage fails at 84.9%. Runner `83cd4cd`: all normal Linux PR checks and supply-chain audit pass. Astra approval is bound to Curator `3e115fa` and Runner `83cd4cd`; the following partial-cleanup correction is source-approved pending commit binding. Curator final revision CI and coverage remain unresolved |
 
 Required Curator gates: `make lint`, `make test`, `make test-web`, `make test-e2e`,
 generated-code consistency and required CI. Runner gates follow its pinned Rust
