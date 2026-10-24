@@ -97,9 +97,10 @@ func TestReplacementHTTPAdmissionIsBoundToSelectedCopyScope(t *testing.T) {
 			}
 			var observation apigen.ReplacementObservation
 			e.get(t, "/api/v1/replacement-observations/"+observationID).expect(t, http.StatusOK).into(t, &observation)
-			if observation.State == "ready" {
+			switch observation.State {
+			case "ready":
 				ready[observationID] = true
-			} else if observation.State == "stale" || observation.State == "failed" {
+			case "stale", "failed":
 				cancel()
 				workerService.WaitImporters()
 				t.Fatalf("copy-scope observation failed: %+v", observation)
