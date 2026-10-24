@@ -20,8 +20,22 @@ func TestRecoveryCancelAckOutageKeepsCancellationPendingForReplay(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	original, err := svc.recoveryClient(ctx, request.ClientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest RunnerRecovery
+	if err = original.RecoveryRequest(ctx, http.MethodGet, "recoveries/"+request.RecoveryID, "", nil, &manifest); err != nil {
+		t.Fatal(err)
+	}
 	var cancelCalls, ackCalls atomic.Int32
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/recoveries/abc123" {
+			observed := manifest
+			observed.State = "cancel_pending"
+			_ = json.NewEncoder(w).Encode(observed)
+			return
+		}
 		if r.Method != http.MethodPost || r.Header.Get("X-Recovery-Token") != "credential" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -30,7 +44,9 @@ func TestRecoveryCancelAckOutageKeepsCancellationPendingForReplay(t *testing.T) 
 		case "/api/v1/recoveries/abc123/cancel":
 			cancelCalls.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(RunnerRecovery{ID: "abc123", State: "cancel_pending"})
+			cancelled := manifest
+			cancelled.State = "cancel_pending"
+			_ = json.NewEncoder(w).Encode(cancelled)
 		case "/api/v1/recoveries/abc123/cancel-ack":
 			if ackCalls.Add(1) == 1 {
 				http.Error(w, "temporary acknowledgement outage", http.StatusServiceUnavailable)

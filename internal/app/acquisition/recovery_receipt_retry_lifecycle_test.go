@@ -23,6 +23,7 @@ func TestRecoveryReceiptOutboxRetriesRemoteAndLocalFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			markRecoveryImportingForTest(t, db, job.ID)
 			if err := svc.runRecovery(ctx, job); err != nil {
 				t.Fatalf("prepare durable receipt outbox: %v", err)
 			}

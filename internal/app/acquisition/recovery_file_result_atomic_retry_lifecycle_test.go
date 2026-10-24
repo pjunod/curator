@@ -19,6 +19,7 @@ func TestRecoveryPerFileReceiptFailureKeepsPlacementPreparedForExactRetry(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	markRecoveryImportingForTest(t, db, job.ID)
 	if _, err := db.W.ExecContext(ctx, `CREATE TRIGGER reject_recovery_file_receipt BEFORE INSERT ON recovery_file_results
 		BEGIN SELECT RAISE(ABORT,'injected per-file receipt outage'); END`); err != nil {
 		t.Fatal(err)

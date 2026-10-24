@@ -38,6 +38,7 @@ type RecoveryFile struct {
 }
 type RunnerRecovery struct {
 	ID             string         `json:"id"`
+	ImportID       string         `json:"import_id,omitempty"`
 	Installation   string         `json:"installation"`
 	Artifact       string         `json:"artifact"`
 	Generation     string         `json:"generation"`
@@ -679,6 +680,27 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 	if err = client.RecoveryRequest(ctx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/claim", cfg.ConsumerToken, map[string]any{"import_id": r.ID, "manifest_digest": r.Recovery.ManifestDigest}, nil); err != nil {
 		return err
 	}
+	// Record that this local operation now owns the Runner claim before any
+	// placement work. This distinguishes a legitimate pre-claim user cancel
+	// from a later recovery whose import token must match exactly.
+	r.Recovery.ImportID = r.ID
+	r.Recovery.State = "claimed"
+	r.State = "importing"
+	claimData, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	claimResult, err := s.db.W.ExecContext(ctx, `UPDATE recovery_imports SET data=?,updated_at=? WHERE id=? AND state='importing'`, string(claimData), time.Now().UnixMilli(), r.ID)
+	if err != nil {
+		return err
+	}
+	claimRows, err := claimResult.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if claimRows != 1 {
+		return context.Canceled
+	}
 	// Heartbeats are informational. Runner never expires a silent claim.
 	ctx, stopHeartbeat := context.WithCancel(ctx)
 	heartbeatDone := make(chan struct{})
@@ -694,8 +716,10 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 				var remote RunnerRecovery
 				e := client.RecoveryRequest(heartbeatCtx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/claim", cfg.ConsumerToken, map[string]any{"import_id": r.ID, "manifest_digest": r.Recovery.ManifestDigest}, &remote)
 				if e != nil {
-					if client.RecoveryRequest(heartbeatCtx, http.MethodGet, "recoveries/"+r.Recovery.ID, "", nil, &remote) == nil && remote.State == "cancel_pending" {
-						_ = s.CancelRecoveryImport(heartbeatCtx, r.ID)
+					if client.RecoveryRequest(heartbeatCtx, http.MethodGet, "recoveries/"+r.Recovery.ID, "", nil, &remote) == nil && recoveryMatchesImport(r, remote) && remote.State == "cancel_pending" {
+						if cancelErr := s.CancelRecoveryImport(heartbeatCtx, r.ID); cancelErr != nil {
+							s.log.Warn("recovery cancellation could not be persisted after heartbeat conflict", "id", r.ID, "err", cancelErr)
+						}
 						return
 					}
 				}
@@ -854,10 +878,15 @@ func (s *Service) recoverySweep(ctx context.Context) {
 			return
 		}
 		latest, readErr := s.RecoveryImport(ctx, id)
+		if readErr != nil {
+			continue
+		}
 		var state string
-		_ = s.db.R.QueryRowContext(ctx, `SELECT state FROM recovery_imports WHERE id=?`, id).Scan(&state)
+		if stateErr := s.db.R.QueryRowContext(ctx, `SELECT state FROM recovery_imports WHERE id=?`, id).Scan(&state); stateErr != nil {
+			continue
+		}
 		if state == "cancel_pending" {
-			s.ackRecoveryCancel(ctx, r)
+			s.ackRecoveryCancel(ctx, latest)
 			continue
 		}
 		if e != nil && readErr == nil {
@@ -872,7 +901,7 @@ func (s *Service) recoverySweep(ctx context.Context) {
 func (s *Service) deliverRecoveryReceipts(ctx context.Context) {
 	s.recoveryReceiptMu.Lock()
 	defer s.recoveryReceiptMu.Unlock()
-	rows, err := s.db.R.QueryContext(ctx, `SELECT import_id,receipt FROM recovery_receipt_outbox WHERE delivered=0 ORDER BY updated_at LIMIT 25`)
+	rows, err := s.db.R.QueryContext(ctx, `SELECT o.import_id,o.receipt FROM recovery_receipt_outbox o JOIN recovery_imports i ON i.id=o.import_id WHERE o.delivered=0 AND i.state='receipt_pending' ORDER BY o.updated_at LIMIT 25`)
 	if err != nil {
 		return
 	}
@@ -902,10 +931,12 @@ func (s *Service) deliverRecoveryReceipts(ctx context.Context) {
 		e = client.RecoveryRequest(ctx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/receipt", cfg.ConsumerToken, json.RawMessage(p.raw), &remote)
 		if e != nil {
 			_, _ = s.db.W.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET last_error=?,updated_at=? WHERE import_id=?`, e.Error(), time.Now().UnixMilli(), p.id)
+			s.reconcileReceiptCancellation(ctx, r, client)
 			continue
 		}
 		if remote.State != "imported" {
 			_, _ = s.db.W.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET last_error=?,updated_at=? WHERE import_id=?`, "Runner receipt state is "+remote.State+"; source remains held", time.Now().UnixMilli(), p.id)
+			s.reconcileReceiptCancellation(ctx, r, client)
 			continue
 		}
 		// Delivery acknowledgement and local completion are one transaction;
@@ -920,8 +951,24 @@ func (s *Service) deliverRecoveryReceipts(ctx context.Context) {
 		if e != nil {
 			continue
 		}
-		if _, e = tx.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET delivered=1,last_error='' WHERE import_id=?`, p.id); e == nil {
-			_, e = tx.ExecContext(ctx, `UPDATE recovery_imports SET state='imported',data=?,updated_at=? WHERE id=?`, string(raw), time.Now().UnixMilli(), p.id)
+		result, e := tx.ExecContext(ctx, `UPDATE recovery_imports SET state='imported',data=?,updated_at=? WHERE id=? AND state='receipt_pending'`, string(raw), time.Now().UnixMilli(), p.id)
+		if e == nil {
+			var changed int64
+			changed, e = result.RowsAffected()
+			if e == nil && changed != 1 {
+				e = fmt.Errorf("recovery state changed before receipt acknowledgement")
+			}
+		}
+		if e == nil {
+			var outboxResult sql.Result
+			outboxResult, e = tx.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET delivered=1,last_error='' WHERE import_id=? AND delivered=0`, p.id)
+			if e == nil {
+				var changed int64
+				changed, e = outboxResult.RowsAffected()
+				if e == nil && changed != 1 {
+					e = fmt.Errorf("recovery receipt outbox changed before acknowledgement")
+				}
+			}
 		}
 		if e == nil {
 			e = tx.Commit()
@@ -938,6 +985,106 @@ func (s *Service) deliverRecoveryReceipts(ctx context.Context) {
 		}
 
 	}
+}
+
+// recoveryMatchesImport binds a Runner observation to the durable local claim.
+// A recovery ID alone is insufficient because installations may restore an
+// artifact identifier or reuse a visible recovery ID.
+func recoveryMatchesImport(local RecoveryImport, remote RunnerRecovery) bool {
+	return recoveryIdentityMatches(local, remote) && remote.ImportID == local.ID
+}
+
+func recoveryIdentityMatches(local RecoveryImport, remote RunnerRecovery) bool {
+	return remote.ID == local.Recovery.ID &&
+		remote.Installation != "" && remote.Installation == local.Recovery.Installation &&
+		remote.Artifact != "" && remote.Artifact == local.Recovery.Artifact &&
+		remote.Generation != "" && remote.Generation == local.Recovery.Generation &&
+		remote.ManifestDigest != "" && remote.ManifestDigest == local.Recovery.ManifestDigest &&
+		remote.Published != "" && remote.Published == local.Recovery.Published
+}
+
+func recoveryCancellationMatches(local RecoveryImport, remote RunnerRecovery, receiptPending bool) bool {
+	if !recoveryIdentityMatches(local, remote) {
+		return false
+	}
+	requireImportID := receiptPending || local.Recovery.State == "claimed" || local.Recovery.ImportID != ""
+	switch remote.State {
+	case "published":
+		// A locally queued cancellation may reach Runner before this import has
+		// claimed the artifact. A published artifact must not already belong to
+		// another import.
+		return !requireImportID && remote.ImportID == ""
+	case "claimed":
+		return remote.ImportID == local.ID
+	case "cancel_pending", "cancelled":
+		return remote.ImportID == local.ID || (!requireImportID && remote.ImportID == "")
+	default:
+		return false
+	}
+}
+
+func (s *Service) reconcileReceiptCancellation(ctx context.Context, r RecoveryImport, client interface {
+	RecoveryRequest(context.Context, string, string, string, any, any) error
+}) {
+	var remote RunnerRecovery
+	if err := client.RecoveryRequest(ctx, http.MethodGet, "recoveries/"+r.Recovery.ID, "", nil, &remote); err != nil {
+		return
+	}
+	if !recoveryMatchesImport(r, remote) || (remote.State != "cancel_pending" && remote.State != "cancelled") {
+		return
+	}
+	now := time.Now().UnixMilli()
+	reason := "Runner cancellation reconciled after receipt was not accepted; committed placements remain in the library"
+	r.State = "cancel_pending"
+	r.Error = reason
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return
+	}
+	tx, err := s.db.W.BeginTx(ctx, nil)
+	if err != nil {
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	var currentRaw, currentState string
+	if err = tx.QueryRowContext(ctx, `SELECT data,state FROM recovery_imports WHERE id=?`, r.ID).Scan(&currentRaw, &currentState); err != nil || currentState != "receipt_pending" {
+		return
+	}
+	var current RecoveryImport
+	if err = json.Unmarshal([]byte(currentRaw), &current); err != nil || !sameRecoveryClaim(r, current) {
+		return
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE recovery_imports SET state='cancel_pending',data=?,updated_at=? WHERE id=? AND state='receipt_pending'`, string(raw), now, r.ID)
+	if err != nil {
+		return
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return
+	}
+	outboxResult, err := tx.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET last_error=?,updated_at=? WHERE import_id=? AND delivered=0`, reason, now, r.ID)
+	if err != nil {
+		return
+	}
+	outboxRows, err := outboxResult.RowsAffected()
+	if err != nil || outboxRows != 1 {
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		s.log.Warn("receipt cancellation reconciliation remains pending", "id", r.ID, "err", err)
+	}
+}
+
+func sameRecoveryClaim(a, b RecoveryImport) bool {
+	return a.ID == b.ID &&
+		a.Recovery.ID == b.Recovery.ID &&
+		a.Recovery.ImportID == b.Recovery.ImportID &&
+		a.Recovery.State == b.Recovery.State &&
+		a.Recovery.Installation == b.Recovery.Installation &&
+		a.Recovery.Artifact == b.Recovery.Artifact &&
+		a.Recovery.Generation == b.Recovery.Generation &&
+		a.Recovery.ManifestDigest == b.Recovery.ManifestDigest &&
+		a.Recovery.Published == b.Recovery.Published
 }
 func (s *Service) startRecoveryWorker(ctx context.Context) {
 	s.startRecoveryPreviewWorker(ctx)
@@ -1003,14 +1150,6 @@ func (s *Service) CancelRecoveryImport(ctx context.Context, id string) error {
 	return nil
 }
 func (s *Service) ackRecoveryCancel(ctx context.Context, r RecoveryImport) {
-	s.importTargetMu.Lock()
-	err := s.rollbackRecoveryPlacements(ctx, r.ID)
-	s.importTargetMu.Unlock()
-	if err != nil {
-		r.State, r.Error = "cancel_pending", "Cancellation reconciliation: "+err.Error()
-		_ = s.saveRecoveryImport(ctx, r)
-		return
-	}
 	cfg, err := s.RecoverySettings(ctx)
 	if err != nil {
 		return
@@ -1019,18 +1158,107 @@ func (s *Service) ackRecoveryCancel(ctx context.Context, r RecoveryImport) {
 	if err != nil {
 		return
 	}
-	var remote RunnerRecovery
-	if err = client.RecoveryRequest(ctx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/cancel", cfg.ConsumerToken, nil, &remote); err != nil {
+	var observed RunnerRecovery
+	var outboxCount int
+	if err = s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM recovery_receipt_outbox WHERE import_id=?`, r.ID).Scan(&outboxCount); err != nil {
+		s.log.Warn("Runner cancellation local receipt state could not be verified", "id", r.ID, "err", err)
 		return
 	}
-	if remote.State == "cancel_pending" {
-		if err = client.RecoveryRequest(ctx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/cancel-ack", cfg.ConsumerToken, nil, nil); err != nil {
+	if err = client.RecoveryRequest(ctx, http.MethodGet, "recoveries/"+r.Recovery.ID, "", nil, &observed); err != nil || !recoveryCancellationMatches(r, observed, outboxCount > 0) {
+		if err != nil {
+			s.log.Warn("Runner cancellation identity could not be verified", "id", r.ID, "err", err)
+		} else {
+			s.log.Warn("Runner cancellation identity changed; local source remains held", "id", r.ID, "state", observed.State, "import_id", observed.ImportID)
+		}
+		return
+	}
+	s.importTargetMu.Lock()
+	err = s.rollbackRecoveryPlacements(ctx, r.ID)
+	s.importTargetMu.Unlock()
+	if err != nil {
+		r.State, r.Error = "cancel_pending", "Cancellation reconciliation: "+err.Error()
+		_ = s.saveRecoveryImport(ctx, r)
+		return
+	}
+	if observed.State != "cancelled" {
+		var remote RunnerRecovery
+		if err = client.RecoveryRequest(ctx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/cancel", cfg.ConsumerToken, nil, &remote); err != nil {
+			return
+		}
+		if !recoveryCancellationMatches(r, remote, outboxCount > 0) {
+			s.log.Warn("Runner cancellation response identity changed; local source remains held", "id", r.ID, "state", remote.State, "import_id", remote.ImportID)
+			return
+		}
+		if remote.State == "cancel_pending" {
+			if err = client.RecoveryRequest(ctx, http.MethodPost, "recoveries/"+r.Recovery.ID+"/cancel-ack", cfg.ConsumerToken, nil, nil); err != nil {
+				return
+			}
+		} else if remote.State != "cancelled" {
+			s.log.Warn("Runner cancellation remains pending", "id", r.ID, "state", remote.State)
 			return
 		}
 	}
+	if err = s.finishRecoveryCancellation(ctx, r.ID); err != nil {
+		s.log.Warn("recovery cancellation acknowledgement remains pending locally", "id", r.ID, "err", err)
+	}
+}
+
+// finishRecoveryCancellation atomically records the terminal local state and
+// retires the receipt from dispatch while preserving its undelivered audit row.
+func (s *Service) finishRecoveryCancellation(ctx context.Context, id string) error {
+	tx, err := s.db.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var raw string
+	var state string
+	if err = tx.QueryRowContext(ctx, `SELECT data,state FROM recovery_imports WHERE id=?`, id).Scan(&raw, &state); err != nil {
+		return err
+	}
+	if state != "cancel_pending" {
+		return fmt.Errorf("recovery cancellation is no longer pending")
+	}
+	var r RecoveryImport
+	if err = json.Unmarshal([]byte(raw), &r); err != nil {
+		return err
+	}
 	r.State = "cancelled"
-	r.Error = "Worker stopped; source remains on review hold"
-	_ = s.saveRecoveryImport(ctx, r)
+	r.Error = "Runner cancellation acknowledged; committed placements remain in the library and source remains on review hold"
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UnixMilli()
+	result, err := tx.ExecContext(ctx, `UPDATE recovery_imports SET state='cancelled',data=?,updated_at=? WHERE id=? AND state='cancel_pending'`, string(data), now, id)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return fmt.Errorf("recovery cancellation changed before acknowledgement was persisted")
+	}
+	outboxResult, err := tx.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET last_error=?,updated_at=? WHERE import_id=? AND delivered=0`, r.Error, now, id)
+	if err != nil {
+		return err
+	}
+	outboxRows, err := outboxResult.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if outboxRows == 0 {
+		var count int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM recovery_receipt_outbox WHERE import_id=?`, id).Scan(&count); err != nil {
+			return err
+		}
+		if count != 0 {
+			return fmt.Errorf("recovery receipt outbox was already delivered during cancellation")
+		}
+	}
+	return tx.Commit()
 }
 func (s *Service) RecoveryImports(ctx context.Context) ([]RecoveryImport, error) {
 	rows, err := s.db.R.QueryContext(ctx, `SELECT data,state FROM recovery_imports ORDER BY updated_at DESC LIMIT 100`)
@@ -1076,7 +1304,7 @@ func (s *Service) RecoveryMetrics(ctx context.Context) (map[string]int64, error)
 		return nil, err
 	}
 	var pending int64
-	if err = s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM recovery_receipt_outbox WHERE delivered=0`).Scan(&pending); err != nil {
+	if err = s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM recovery_receipt_outbox o JOIN recovery_imports i ON i.id=o.import_id WHERE o.delivered=0 AND i.state='receipt_pending'`).Scan(&pending); err != nil {
 		return nil, err
 	}
 	out["receipt_outbox_pending"] = pending

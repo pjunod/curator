@@ -22,6 +22,17 @@ import (
 func recoveryFixture(t *testing.T) (*Service, *sqlite.DB, RecoveryRequest, *atomic.Int32) {
 	return recoveryNamedFixture(t, "Recovered.2024.1080p.WEB-DL.mkv", false)
 }
+
+func markRecoveryImportingForTest(t *testing.T, db *sqlite.DB, id string) {
+	t.Helper()
+	result, err := db.W.ExecContext(context.Background(), `UPDATE recovery_imports SET state='importing' WHERE id=? AND state='queued'`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := result.RowsAffected(); err != nil || count != 1 {
+		t.Fatalf("test worker could not claim queued recovery %q: rows=%d err=%v", id, count, err)
+	}
+}
 func recoveryNamedFixture(t *testing.T, name string, extra bool) (*Service, *sqlite.DB, RecoveryRequest, *atomic.Int32) {
 	t.Helper()
 	svc, db, itemID := autoSetup(t, nil, &fakeClient{})
@@ -35,7 +46,7 @@ func recoveryNamedFixture(t *testing.T, name string, extra bool) (*Service, *sql
 	if err := os.WriteFile(filepath.Join(payload, name), bytes, 0644); err != nil {
 		t.Fatal(err)
 	}
-	manifest := RunnerRecovery{ID: "abc123", Installation: "test-installation", Generation: "generation", State: "published", ManifestDigest: "sealed", Published: "/published/abc123", Files: []RecoveryFile{{ID: "file", Path: name, Bytes: int64(len(bytes)), SHA256: fmt.Sprintf("%x", sha256.Sum256(bytes))}}}
+	manifest := RunnerRecovery{ID: "abc123", Installation: "test-installation", Artifact: "artifact-test", Generation: "generation", State: "published", ManifestDigest: "sealed", Published: "/published/abc123", Files: []RecoveryFile{{ID: "file", Path: name, Bytes: int64(len(bytes)), SHA256: fmt.Sprintf("%x", sha256.Sum256(bytes))}}}
 	if extra {
 		duplicate := manifest.Files[0]
 		duplicate.ID = "alternate"
@@ -470,6 +481,7 @@ func TestPartialRunnerReceiptCannotBecomeLocalCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	markRecoveryImportingForTest(t, db, job.ID)
 	if err = svc.runRecovery(ctx, job); err != nil {
 		t.Fatal(err)
 	}
