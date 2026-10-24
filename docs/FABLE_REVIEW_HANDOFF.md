@@ -1,6 +1,6 @@
 # Fable review handoff — Runner and Curator download lifecycle
 
-**Status:** being prepared; final PR revisions and validation are pending  
+**Status:** ready for independent review; coverage gates remain blocked; do not merge
 **Written:** 2026-10-22 · **Updated:** 2026-10-23
 
 Read [the approved operating proposal](DOWNLOAD_LIFECYCLE_PROPOSAL.md) first,
@@ -13,11 +13,11 @@ the user has reviewed your findings. Do not deploy or modify production media.
 
 | Repository | Baseline | Pull request | Reviewed head |
 |---|---|---|---|
-| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source approval is bound to `62eebc20fbacfff328f30b93ea78898c52c4e4bd`, including duplicate completion, recovery cancellation and the subsequent custody regressions. Latest full local coverage is 85.1%, below 86%. Full local tests, focused race tests and lint pass. Linux tests, browser, mobile, lint, Docker and compatibility pass at `744ae51`, but its coverage gate fails at 85.0% |
+| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source approval is bound to `7e402065253453a42e4f7aee44f535cd6bc7f31e`, including duplicate completion, recovery cancellation and the subsequent custody regressions. Latest full local coverage is 85.1%, below 86%. Full local tests, focused race tests and lint pass. Linux tests, browser, mobile, lint, Docker and compatibility pass at `744ae51`, but its coverage gate fails at 85.0% |
 | Runner (`pjunod/runner`) | `42995f0b45a7eb977c383c4b630fa75e58bbedfb` | [#254](https://github.com/pjunod/runner/pull/254) | Astra source approval, normal Linux PR checks and supply-chain audit pass at `83cd4cdfef3ec62a67237fc918114f622ef638a2`; separate manual coverage gate remains below 90% |
 
 The primary agent reviews construction. Lower-cost agents implement changes;
-Astra performs adversarial source review and will review the final PR revisions.
+Astra has performed adversarial source review and follow-up reviews of fixes.
 Challenge the implementation independently, including code marked corrected in
 the status page. Prior review records what was examined; it is not a substitute
 for checking final behavior.
@@ -225,23 +225,36 @@ validation table distinguishes tests that passed from tests merely authored.
 
 ## 6. Validation and review evidence
 
-Final command results, coverage, CI links and Astra's exact-head verdict will be
-recorded here before this handoff is delivered. The status page records interim passing checks, remaining integration failures
-and environment limits. A passing focused regression is not a passing full gate.
+Astra approved Curator source checkpoint `7e40206` and Runner `83cd4cd`.
+Curator `5243139` changes only the observation test state dispatch to satisfy
+pinned lint; the final PR head includes the review handoff documentation.
+Resolve the PR head before reviewing and record it in your report.
+The Curator full ordinary Go suite, focused acquisition/SQLite/API race checks,
+and pinned lint pass. Its latest full coverage result is **85.1%
+(23,175/27,227 non-generated statements), below the unchanged 86% floor**.
+Baseline `7e8e2f2` passed the same command at 86.3%; this is an introduced
+coverage deficit, not a pre-existing gate failure. Independent source review can
+proceed, but this result does not establish merge readiness. No gate is waived.
 
-The next reviewed correction canonicalizes legacy deletion ownership paths:
-active downloads and unfinished placements must protect a payload even when
-recorded through a symlink alias. Its full Go suite, focused race checks and
-lint pass; the aggregate coverage gate remains below 86%. Additional regressions
-exercise manual-import admission, recovery receipt rollback and revision checks,
-and season discovery after an indexer capability update.
+Curator Linux checkpoint `744ae51` passed every actual Go race test, browser
+acceptance, mobile, lint, Docker and compatibility check; the test workflow
+failed only at 85.0% coverage. The final pushed checkpoint still needs its Linux
+results; earlier passing runs do not establish final-head CI success. Runner `83cd4cd` passes all normal Linux PR checks and its dependency
+audit. Its separate manual coverage gate remains below 90%; the earlier same-
+command macOS comparison failed that floor at both baseline and candidate.
+Full details and log provenance are in [implementation status](DOWNLOAD_LIFECYCLE_STATUS.md).
 
-Also inspect legacy partial cleanup's absence path: unavailable or different
-storage must retain custody, a reused Activity row must not inherit an older
-sweep's authority, and restoring the expected storage must resume without saving
-settings again. Astra approved the source correction; full Go tests, focused
-race checks and lint pass. Aggregate coverage remains 84.9%, below the unchanged
-86% floor; final revision CI and review binding remain pending.
+The latest custody regressions verify current library bytes before source
+cleanup, nested-parent identity during deletion replay, the durable directory
+obligation before removal, additional-copy scope, placement transaction rollback,
+and replacement admission surviving a failed operation-step write. Restart
+cases reopen SQLite and construct a fresh service. Changed quarantine bytes
+block a configured replacement candidate; valid reviewed bytes retire before
+one candidate is admitted. HTTP admission rejects cross-copy and mixed-copy
+selections without creating operations. Manual-import admission revalidates a
+file changed while waiting for its target lock; the queued book worker preserves
+unselected siblings. Completed-root discovery survives dismissed history and
+uses persisted automatic publications while excluding manual-only roots.
 
 Use disposable fixtures for additional testing. Report findings with exact
 repository/head, file and line, concrete trigger, resulting behavior, severity,
