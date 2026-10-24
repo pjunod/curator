@@ -298,17 +298,10 @@ func TestRunnerAdmissionPollRecoveryAndInstallationBindingRejectReusedIdentity(t
 }
 
 func TestProtectedDeliveryFileRetryBackoffAndExplicitRemovalAreSeparate(t *testing.T) {
-	ctx := context.Background()
-	db, _ := openLifecycleCoverageDB(t)
+	db, ctx, receipt, batch := explicitDeleteFixture(t)
 	defer func() { _ = db.Close() }()
-	receipt, err := db.SaveDiscoveredDelivery(ctx, 72, coverageDelivery("protected-file-backoff"), "/mounted/protected-file")
-	if err != nil {
-		t.Fatal(err)
-	}
-	file := DeliveryManifestFile{Path: "Season 01/Episode.mkv", SizeBytes: 9, SHA256: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881", FileGeneration: "source-file-generation"}
-	if err := db.EnsureDeliveryFileOutcomes(ctx, receipt.ID, []DeliveryManifestFile{file}, map[string]bool{file.Path: true}, false); err != nil {
-		t.Fatal(err)
-	}
+	manifest := receipt.Delivery.Files[0]
+	file := DeliveryManifestFile{Path: manifest.Path, SizeBytes: manifest.SizeBytes, SHA256: manifest.SHA256, FileGeneration: "journal-file-generation"}
 	if err := db.UpdateDeliveryFileDisposition(ctx, receipt.ID, file.Path, "unknown_recoverable", "complete candidate awaits a concrete handler", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -342,12 +335,23 @@ func TestProtectedDeliveryFileRetryBackoffAndExplicitRemovalAreSeparate(t *testi
 	if err := db.SetDeliveryFileCleanup(ctx, receipt.ID, file.Path, "removed", "stale worker"); !errors.Is(err, ErrDeliveryReceiptStale) {
 		t.Fatalf("ordinary cleanup retired positively recoverable bytes: %v", err)
 	}
-	if err := db.SetDeliveryFileExplicitlyRemoved(ctx, receipt.ID, file.Path); err != nil {
-		t.Fatalf("exact operator removal failed: %v", err)
+	if err := db.PrepareExplicitDeliveryDeleteBatch(ctx, batch); err != nil {
+		t.Fatalf("exact operator removal intent was not journaled: %v", err)
+	}
+	if err := db.CompleteExplicitDeliveryFileDelete(ctx, batch.ID, receipt.ID, file.Path, "explicit_delivery_file_removed_retry_matrix", 0, "release", map[string]string{"path": file.Path}); err != nil {
+		t.Fatalf("exact operator removal transaction failed: %v", err)
 	}
 	removed, err := db.DeliveryFileOutcomeByPath(ctx, receipt.ID, file.Path)
 	if err != nil || removed.CleanupState != "removed" || removed.CleanupError != "operator explicitly selected this manifest file" {
 		t.Fatalf("operator removal did not settle exact selected file: %+v err=%v", removed, err)
+	}
+	stored, err := db.ExplicitDeliveryDeleteBatch(ctx, batch.ID)
+	if err != nil || len(stored.Files) != 1 || !stored.Files[0].HistoryRecorded || stored.Files[0].CompletedAt.IsZero() {
+		t.Fatalf("operator removal did not persist its exact journal audit: batch=%+v err=%v", stored, err)
+	}
+	var historyCount int
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM history_events WHERE type='explicit_delivery_file_removed_retry_matrix'`).Scan(&historyCount); err != nil || historyCount != 1 {
+		t.Fatalf("operator removal history count=%d err=%v, want one", historyCount, err)
 	}
 	if err := db.ScheduleProtectedDeliveryFileRetry(ctx, receipt.ID, file.Path, "stale retry"); !errors.Is(err, ErrDeliveryReceiptStale) {
 		t.Fatalf("retry resurrected an explicitly removed file: %v", err)

@@ -958,23 +958,6 @@ func (d *DB) ForceDeliveryCleanupRetryNow(ctx context.Context, receiptID int64) 
 	return err
 }
 
-func (d *DB) SetDeliveryFileExplicitlyRemoved(ctx context.Context, receiptID int64, path string) error {
-	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes
-		SET cleanup_state='removed',cleanup_error='operator explicitly selected this manifest file',cleanup_next_attempt_at=0,updated_at=?
-		WHERE receipt_id=? AND path=? AND file_generation!='' AND cleanup_state!='removed'`, time.Now().UnixMilli(), receiptID, path)
-	if err != nil {
-		return err
-	}
-	return requireDeliveryTransition(res, err)
-}
-
-func (d *DB) PrepareExplicitDeliveryFileDelete(ctx context.Context, receiptID int64, path string) error {
-	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes
-		SET cleanup_state='pending',cleanup_error='operator selected this manifest file for deletion',cleanup_next_attempt_at=0,updated_at=?
-		WHERE receipt_id=? AND path=? AND file_generation!='' AND cleanup_state!='removed'`, time.Now().UnixMilli(), receiptID, path)
-	return requireDeliveryTransition(res, err)
-}
-
 // EnsureDeliveryFileOutcomes journals every immutable manifest entry before
 // import begins. Existing rows are checked rather than rewritten, so a
 // changed manifest cannot silently replace the cleanup audit.

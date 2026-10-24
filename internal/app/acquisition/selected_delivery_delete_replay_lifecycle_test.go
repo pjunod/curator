@@ -303,8 +303,15 @@ func TestSelectedDeliveryDeleteReplayPreservesRecreatedPathAndRejectsGenericPend
 		if err := db.EnsureExplicitDeliveryFileOutcome(ctx, receipt.ID, manifest); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.PrepareExplicitDeliveryFileDelete(ctx, receipt.ID, epRelease+".mkv"); err != nil {
+		// Model a legacy/incomplete generic pending marker with deliberately no
+		// exact-delete batch. Such a marker is not valid operator authority to
+		// replay an unlink after the source disappeared.
+		res, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET cleanup_state='pending',cleanup_error='legacy unjournaled selection',cleanup_next_attempt_at=0 WHERE receipt_id=? AND path=? AND file_generation!=''`, receipt.ID, epRelease+".mkv")
+		if err != nil {
 			t.Fatal(err)
+		}
+		if changed, err := res.RowsAffected(); err != nil || changed != 1 {
+			t.Fatalf("legacy unjournaled pending fixture changed %d rows err=%v, want one exact outcome", changed, err)
 		}
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
