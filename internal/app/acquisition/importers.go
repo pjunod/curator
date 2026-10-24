@@ -97,6 +97,7 @@ func (s *Service) StartImporters(ctx context.Context) {
 		s.startManualAdmissionWorker(ctx)
 		s.startAutomaticAdmissionWorker(ctx)
 		s.startReplacementWorker(ctx)
+		s.startDeliveryFileCleanupRetryWorker(ctx)
 	})
 }
 

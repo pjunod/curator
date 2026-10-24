@@ -1,7 +1,7 @@
 # Fable review handoff — Runner and Curator download lifecycle
 
 **Status:** being prepared; final PR revisions and validation are pending  
-**Written:** 2026-10-22
+**Written:** 2026-10-22 · **Updated:** 2026-10-23
 
 Read [the approved operating proposal](DOWNLOAD_LIFECYCLE_PROPOSAL.md) first,
 then [implementation status](DOWNLOAD_LIFECYCLE_STATUS.md) and
@@ -13,8 +13,8 @@ the user has reviewed your findings. Do not deploy or modify production media.
 
 | Repository | Baseline | Pull request | Reviewed head |
 |---|---|---|---|
-| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source review passed at `31c41c1ea0b8d7a2273cff8652e05529e2210d09`; validation and final test revision pending |
-| Runner (`pjunod/runner`) | `42995f0b45a7eb977c383c4b630fa75e58bbedfb` | [#254](https://github.com/pjunod/runner/pull/254) | Astra source review passed at `d84cd83db7e2567e8b660ad00af940f6c402f8a7`; final Linux validation pending |
+| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra approved source through `ce7e55093f29cb3dc200e675f3bb247a498c1dc8`; Astra also reviewed the later explicit-delete journal without remaining findings; final validation and final revision confirmation remain pending |
+| Runner (`pjunod/runner`) | `42995f0b45a7eb977c383c4b630fa75e58bbedfb` | [#254](https://github.com/pjunod/runner/pull/254) | Astra source approval, normal Linux PR checks and supply-chain audit pass at `83cd4cdfef3ec62a67237fc918114f622ef638a2`; separate manual coverage gate remains below 90% |
 
 The primary agent reviews construction. Lower-cost agents implement changes;
 Astra performs adversarial source review and will review the final PR revisions.
@@ -190,6 +190,14 @@ must not be mistaken for a link to the original processing source. Repeated
 failed cluster sealing must not accumulate private copies. Check that legacy
 selected-file deletion validates the recorded review identity, the live file,
 and direct library references before removing anything.
+
+For Delivery-managed selected deletion, interrupt after the first unlink and
+before its database completion, reopen the database, and scan the inventory
+again. Replay must use the original complete reviewed batch. A changed
+fingerprint cannot authorize additional paths. Recreated files, different
+parents, replaced publications and changed storage identities must be retained.
+An audit insertion failure must roll back the completion record; replay must
+produce exactly one deletion event per selected file.
 
 ## 5. Acceptance review entry points
 

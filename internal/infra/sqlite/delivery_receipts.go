@@ -67,6 +67,331 @@ type DeliveryManifestFile struct {
 	FileGeneration string
 }
 
+// ExplicitDeliveryDeleteBatch is the exact user-reviewed selection for one
+// immutable publication. It is committed atomically before the first unlink.
+type ExplicitDeliveryDeleteBatch struct {
+	ID                           string
+	ReceiptID                    int64
+	PayloadPath                  string
+	InventoryFingerprint         string
+	PublicationDirectoryIdentity string
+	StorageIdentity              string
+	GenerationKey                string
+	RequestToken                 string
+	PublicationGeneration        string
+	RetryAttempts                int
+	RetryNextAttemptAt           time.Time
+	RetryBlockedSince            time.Time
+	RetryError                   string
+	Files                        []ExplicitDeliveryDeleteFile
+}
+
+type ExplicitDeliveryDeleteFile struct {
+	ReviewedPath     string
+	Path             string
+	SnapshotIdentity string
+	ParentIdentity   string
+	HistoryRecorded  bool
+	CompletedAt      time.Time
+}
+
+func (d *DB) PrepareExplicitDeliveryDeleteBatch(ctx context.Context, batch ExplicitDeliveryDeleteBatch) error {
+	if batch.ID == "" || batch.ReceiptID <= 0 || batch.PayloadPath == "" || batch.InventoryFingerprint == "" ||
+		batch.PublicationDirectoryIdentity == "" || batch.StorageIdentity == "" || batch.GenerationKey == "" ||
+		batch.RequestToken == "" || batch.PublicationGeneration == "" || len(batch.Files) == 0 {
+		return fmt.Errorf("invalid explicit delivery deletion batch")
+	}
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var receiptID int64
+	var payloadPath, fingerprint, publicationIdentity, storageIdentity, generationKey, requestToken, publicationGeneration string
+	created := false
+	err = tx.QueryRowContext(ctx, `SELECT receipt_id,payload_path,inventory_fingerprint,publication_directory_identity,storage_identity,generation_key,request_token,publication_generation
+		FROM runner_delivery_explicit_delete_batches WHERE batch_id=?`, batch.ID).
+		Scan(&receiptID, &payloadPath, &fingerprint, &publicationIdentity, &storageIdentity, &generationKey, &requestToken, &publicationGeneration)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = tx.ExecContext(ctx, `INSERT INTO runner_delivery_explicit_delete_batches
+			(batch_id,receipt_id,payload_path,inventory_fingerprint,publication_directory_identity,storage_identity,generation_key,request_token,publication_generation,created_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?)`, batch.ID, batch.ReceiptID, batch.PayloadPath, batch.InventoryFingerprint,
+			batch.PublicationDirectoryIdentity, batch.StorageIdentity, batch.GenerationKey, batch.RequestToken,
+			batch.PublicationGeneration, time.Now().UnixMilli())
+		if err != nil {
+			return err
+		}
+		created = true
+	} else if receiptID != batch.ReceiptID || payloadPath != batch.PayloadPath || fingerprint != batch.InventoryFingerprint ||
+		publicationIdentity != batch.PublicationDirectoryIdentity || storageIdentity != batch.StorageIdentity ||
+		generationKey != batch.GenerationKey || requestToken != batch.RequestToken || publicationGeneration != batch.PublicationGeneration {
+		return ErrDeliveryReceiptStale
+	}
+	if !created {
+		var existingCount int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_delivery_explicit_delete_files WHERE batch_id=?`, batch.ID).Scan(&existingCount); err != nil {
+			return err
+		}
+		if existingCount != len(batch.Files) {
+			return ErrDeliveryReceiptStale
+		}
+	}
+	seen := make(map[string]bool, len(batch.Files))
+	for _, file := range batch.Files {
+		if file.Path == "" || file.ReviewedPath == "" || file.SnapshotIdentity == "" || file.ParentIdentity == "" || seen[file.Path] {
+			return fmt.Errorf("invalid or duplicate explicit delivery deletion path")
+		}
+		seen[file.Path] = true
+		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO runner_delivery_explicit_delete_files(batch_id,path,reviewed_path,snapshot_identity,parent_identity) VALUES(?,?,?,?,?)`, batch.ID, file.Path, file.ReviewedPath, file.SnapshotIdentity, file.ParentIdentity)
+		if err != nil {
+			return err
+		}
+		var savedPath, saved, savedParent string
+		if err := tx.QueryRowContext(ctx, `SELECT reviewed_path,snapshot_identity,parent_identity FROM runner_delivery_explicit_delete_files WHERE batch_id=? AND path=?`, batch.ID, file.Path).Scan(&savedPath, &saved, &savedParent); err != nil {
+			return err
+		}
+		if savedPath != file.ReviewedPath || saved != file.SnapshotIdentity || savedParent != file.ParentIdentity {
+			return ErrDeliveryReceiptStale
+		}
+		var generation, cleanupState string
+		if err := tx.QueryRowContext(ctx, `SELECT file_generation,cleanup_state FROM runner_delivery_file_outcomes WHERE receipt_id=? AND path=?`, batch.ReceiptID, file.Path).Scan(&generation, &cleanupState); err != nil {
+			return err
+		}
+		if generation == "" {
+			return fmt.Errorf("explicit deletion file has no manifest generation")
+		}
+		if cleanupState != "removed" {
+			if _, err := tx.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET cleanup_state='pending',cleanup_error='operator selected this manifest file for deletion',cleanup_next_attempt_at=0,updated_at=? WHERE receipt_id=? AND path=?`, time.Now().UnixMilli(), batch.ReceiptID, file.Path); err != nil {
+				return err
+			}
+		}
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_delivery_explicit_delete_files WHERE batch_id=?`, batch.ID).Scan(&count); err != nil {
+		return err
+	}
+	if count != len(batch.Files) {
+		return ErrDeliveryReceiptStale
+	}
+	return tx.Commit()
+}
+
+func (d *DB) ExplicitDeliveryDeleteBatch(ctx context.Context, batchID string) (ExplicitDeliveryDeleteBatch, error) {
+	var batch ExplicitDeliveryDeleteBatch
+	var next, blocked int64
+	err := d.R.QueryRowContext(ctx, `SELECT batch_id,receipt_id,payload_path,inventory_fingerprint,publication_directory_identity,storage_identity,generation_key,request_token,publication_generation,retry_attempts,retry_next_attempt_at,retry_blocked_since,retry_error
+		FROM runner_delivery_explicit_delete_batches WHERE batch_id=?`, batchID).
+		Scan(&batch.ID, &batch.ReceiptID, &batch.PayloadPath, &batch.InventoryFingerprint, &batch.PublicationDirectoryIdentity, &batch.StorageIdentity, &batch.GenerationKey, &batch.RequestToken, &batch.PublicationGeneration, &batch.RetryAttempts, &next, &blocked, &batch.RetryError)
+	if errors.Is(err, sql.ErrNoRows) {
+		return batch, ErrNotFound
+	}
+	if err != nil {
+		return batch, err
+	}
+	if next > 0 {
+		batch.RetryNextAttemptAt = time.UnixMilli(next)
+	}
+	if blocked > 0 {
+		batch.RetryBlockedSince = time.UnixMilli(blocked)
+	}
+	batch.Files, err = d.explicitDeliveryDeleteFiles(ctx, batchID)
+	return batch, err
+}
+
+// ExplicitDeliveryDeleteBatchesDue returns only incomplete, due batches in
+// oldest-deadline order. The caller performs filesystem work on the bounded
+// cleanup worker, never on the receipt/control-plane sweep.
+func (d *DB) ExplicitDeliveryDeleteBatchesDue(ctx context.Context, receiptID int64, limit int) ([]ExplicitDeliveryDeleteBatch, error) {
+	return d.explicitDeliveryDeleteBatches(ctx, receiptID, limit, true)
+}
+
+// ExplicitDeliveryDeleteBatchesPending returns every incomplete exact batch;
+// callers use it only to keep generic cleanup from bypassing a reviewed batch
+// whose persisted retry deadline has not arrived yet.
+func (d *DB) ExplicitDeliveryDeleteBatchesPending(ctx context.Context, receiptID int64, limit int) ([]ExplicitDeliveryDeleteBatch, error) {
+	return d.explicitDeliveryDeleteBatches(ctx, receiptID, limit, false)
+}
+
+// HasPendingExplicitDeliveryDelete reports whether an incomplete reviewed
+// batch owns the whole payload (empty path) or one exact manifest path.
+func (d *DB) HasPendingExplicitDeliveryDelete(ctx context.Context, receiptID int64, path string) (bool, error) {
+	var exists int
+	query := `SELECT EXISTS(SELECT 1 FROM runner_delivery_explicit_delete_batches b
+		JOIN runner_delivery_explicit_delete_files f ON f.batch_id=b.batch_id
+		WHERE b.receipt_id=? AND f.history_recorded=0`
+	args := []any{receiptID}
+	if path != "" {
+		query += ` AND f.path=?`
+		args = append(args, path)
+	}
+	query += `)`
+	err := d.R.QueryRowContext(ctx, query, args...).Scan(&exists)
+	return exists == 1, err
+}
+
+func (d *DB) explicitDeliveryDeleteBatches(ctx context.Context, receiptID int64, limit int, dueOnly bool) ([]ExplicitDeliveryDeleteBatch, error) {
+	if receiptID <= 0 || limit <= 0 {
+		return nil, nil
+	}
+	query := `SELECT b.batch_id,b.receipt_id,b.payload_path,b.inventory_fingerprint,b.publication_directory_identity,b.storage_identity,b.generation_key,b.request_token,b.publication_generation,b.retry_attempts,b.retry_next_attempt_at,b.retry_blocked_since,b.retry_error
+		FROM runner_delivery_explicit_delete_batches b
+		WHERE b.receipt_id=? AND EXISTS (
+			SELECT 1 FROM runner_delivery_explicit_delete_files f WHERE f.batch_id=b.batch_id AND f.history_recorded=0
+		)
+		`
+	args := []any{receiptID}
+	if dueOnly {
+		query += ` AND b.retry_next_attempt_at<=?`
+		args = append(args, time.Now().UnixMilli())
+	}
+	query += ` ORDER BY CASE WHEN b.retry_next_attempt_at=0 THEN b.created_at ELSE b.retry_next_attempt_at END,b.created_at LIMIT ?`
+	args = append(args, limit)
+	rows, err := d.R.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ExplicitDeliveryDeleteBatch
+	for rows.Next() {
+		var batch ExplicitDeliveryDeleteBatch
+		var next, blocked int64
+		if err := rows.Scan(&batch.ID, &batch.ReceiptID, &batch.PayloadPath, &batch.InventoryFingerprint, &batch.PublicationDirectoryIdentity,
+			&batch.StorageIdentity, &batch.GenerationKey, &batch.RequestToken, &batch.PublicationGeneration, &batch.RetryAttempts, &next, &blocked, &batch.RetryError); err != nil {
+			return nil, err
+		}
+		if next > 0 {
+			batch.RetryNextAttemptAt = time.UnixMilli(next)
+		}
+		if blocked > 0 {
+			batch.RetryBlockedSince = time.UnixMilli(blocked)
+		}
+		files, err := d.explicitDeliveryDeleteFiles(ctx, batch.ID)
+		if err != nil {
+			return nil, err
+		}
+		batch.Files = files
+		out = append(out, batch)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) explicitDeliveryDeleteFiles(ctx context.Context, batchID string) ([]ExplicitDeliveryDeleteFile, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT path,reviewed_path,snapshot_identity,parent_identity,history_recorded,completed_at FROM runner_delivery_explicit_delete_files WHERE batch_id=? ORDER BY path`, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var files []ExplicitDeliveryDeleteFile
+	for rows.Next() {
+		var file ExplicitDeliveryDeleteFile
+		var history int
+		var completed int64
+		if err := rows.Scan(&file.Path, &file.ReviewedPath, &file.SnapshotIdentity, &file.ParentIdentity, &history, &completed); err != nil {
+			return nil, err
+		}
+		file.HistoryRecorded = history == 1
+		if completed > 0 {
+			file.CompletedAt = time.UnixMilli(completed)
+		}
+		files = append(files, file)
+	}
+	return files, rows.Err()
+}
+
+// ScheduleExplicitDeliveryDeleteRetry records local retry timing and surfaces
+// the failure in the existing per-file lifecycle rows. It never creates new
+// path authority: the immutable batch rows remain the only selection source.
+func (d *DB) ScheduleExplicitDeliveryDeleteRetry(ctx context.Context, batchID, message string) error {
+	if batchID == "" {
+		return fmt.Errorf("explicit delivery deletion batch is required")
+	}
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var receiptID int64
+	var attempts int
+	if err := tx.QueryRowContext(ctx, `SELECT receipt_id,retry_attempts FROM runner_delivery_explicit_delete_batches WHERE batch_id=?`, batchID).Scan(&receiptID, &attempts); err != nil {
+		return err
+	}
+	now := time.Now()
+	next := now.Add(deliveryCleanupRetryDelay(attempts + 1)).UnixMilli()
+	if _, err := tx.ExecContext(ctx, `UPDATE runner_delivery_explicit_delete_batches SET retry_attempts=retry_attempts+1,retry_next_attempt_at=?,retry_blocked_since=CASE WHEN retry_blocked_since=0 THEN ? ELSE retry_blocked_since END,retry_error=? WHERE batch_id=?`, next, now.UnixMilli(), message, batchID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET cleanup_state=CASE WHEN cleanup_state='removed' THEN 'removed' ELSE 'retry' END,cleanup_error=?,cleanup_attempts=cleanup_attempts+1,cleanup_blocked_since=CASE WHEN cleanup_blocked_since=0 THEN ? ELSE cleanup_blocked_since END,cleanup_next_attempt_at=?,updated_at=?
+		WHERE receipt_id=? AND path IN (SELECT path FROM runner_delivery_explicit_delete_files WHERE batch_id=? AND history_recorded=0)`, message, now.UnixMilli(), next, now.UnixMilli(), receiptID, batchID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CompleteExplicitDeliveryFileDelete commits the removed outcome and its
+// operator-visible history event together. The batch membership row is the
+// durable authorization for both the unlink replay and this final stamp.
+func (d *DB) CompleteExplicitDeliveryFileDelete(ctx context.Context, batchID string, receiptID int64, path, eventType string, mediaItemID int64, releaseTitle string, data any) error {
+	if batchID == "" || receiptID <= 0 || path == "" || eventType == "" {
+		return fmt.Errorf("invalid explicit delivery delete completion")
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var batchReceipt int64
+	var historyRecorded int
+	err = tx.QueryRowContext(ctx, `SELECT b.receipt_id,f.history_recorded
+		FROM runner_delivery_explicit_delete_batches b
+		JOIN runner_delivery_explicit_delete_files f ON f.batch_id=b.batch_id
+		WHERE b.batch_id=? AND f.path=?`, batchID, path).Scan(&batchReceipt, &historyRecorded)
+	if err != nil {
+		return err
+	}
+	if batchReceipt != receiptID {
+		return ErrDeliveryReceiptStale
+	}
+	var cleanupState string
+	if err := tx.QueryRowContext(ctx, `SELECT cleanup_state FROM runner_delivery_file_outcomes WHERE receipt_id=? AND path=?`, receiptID, path).Scan(&cleanupState); err != nil {
+		return err
+	}
+	if cleanupState != "removed" {
+		res, err := tx.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes
+			SET cleanup_state='removed',cleanup_error='operator explicitly selected this manifest file',cleanup_next_attempt_at=0,updated_at=?
+			WHERE receipt_id=? AND path=? AND file_generation!='' AND cleanup_state!='removed'`, time.Now().UnixMilli(), receiptID, path)
+		if err := requireDeliveryTransition(res, err); err != nil {
+			return err
+		}
+	}
+	if historyRecorded == 0 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO history_events (ts,type,media_item_id,release_title,data) VALUES(?,?,?,?,?)`,
+			time.Now().UnixMilli(), eventType, mediaItemID, releaseTitle, string(raw)); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE runner_delivery_explicit_delete_files SET history_recorded=1,completed_at=? WHERE batch_id=? AND path=? AND history_recorded=0`, time.Now().UnixMilli(), batchID, path)
+		if err := requireDeliveryTransition(res, err); err != nil {
+			return err
+		}
+	}
+	var incomplete int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_delivery_explicit_delete_files WHERE batch_id=? AND history_recorded=0`, batchID).Scan(&incomplete); err != nil {
+		return err
+	}
+	if incomplete == 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE runner_delivery_explicit_delete_batches SET retry_next_attempt_at=0,retry_error='' WHERE batch_id=?`, batchID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // DeliveryFileImport is immutable provenance for one attempt to place a
 // manifest entry in the library. Multiple rows may refer to one manifest
 // path when a later Resolve operation places that source again.
@@ -620,11 +945,16 @@ func (d *DB) ForceDeliveryRetryNow(ctx context.Context, receiptID int64) error {
 }
 
 func (d *DB) ForceDeliveryCleanupRetryNow(ctx context.Context, receiptID int64) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET cleanup_next_attempt_at=0,updated_at=? WHERE receipt_id=? AND cleanup_state IN ('pending','retry') AND disposition IN ('placed','redundant','disposable_selected_scope')`, time.Now().UnixMilli(), receiptID)
+	now := time.Now().UnixMilli()
+	_, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_explicit_delete_batches SET retry_next_attempt_at=0 WHERE receipt_id=? AND EXISTS (SELECT 1 FROM runner_delivery_explicit_delete_files f WHERE f.batch_id=runner_delivery_explicit_delete_batches.batch_id AND f.history_recorded=0)`, receiptID)
 	if err != nil {
 		return err
 	}
-	_, err = d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET directory_cleanup_next_attempt_at=0,updated_at=? WHERE id=? AND directory_cleanup_state IN ('pending','retry') AND state!='conflict'`, time.Now().UnixMilli(), receiptID)
+	_, err = d.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET cleanup_next_attempt_at=0,updated_at=? WHERE receipt_id=? AND cleanup_state IN ('pending','retry') AND disposition IN ('placed','redundant','disposable_selected_scope')`, now, receiptID)
+	if err != nil {
+		return err
+	}
+	_, err = d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET directory_cleanup_next_attempt_at=0,updated_at=? WHERE id=? AND directory_cleanup_state IN ('pending','retry') AND state!='conflict'`, now, receiptID)
 	return err
 }
 
@@ -940,11 +1270,16 @@ func (d *DB) DeliveryFileImports(ctx context.Context, receiptID int64) ([]Delive
 
 func (d *DB) DeliveryFileCleanupReceipts(ctx context.Context, clientID int64, limit int) ([]int64, error) {
 	now := time.Now().UnixMilli()
-	rows, err := d.R.QueryContext(ctx, `SELECT r.id FROM runner_delivery_receipts r LEFT JOIN runner_delivery_file_outcomes f ON f.receipt_id=r.id WHERE r.client_id=? AND r.state!='conflict' AND ((f.cleanup_state IN ('pending','retry') AND f.cleanup_next_attempt_at<=? AND f.disposition IN ('placed','redundant','disposable_selected_scope')) OR (r.directory_cleanup_state IN ('pending','retry') AND r.directory_cleanup_next_attempt_at<=?) OR (r.state='imported' AND EXISTS (
+	rows, err := d.R.QueryContext(ctx, `SELECT r.id FROM runner_delivery_receipts r LEFT JOIN runner_delivery_file_outcomes f ON f.receipt_id=r.id WHERE (?=0 OR r.client_id=?) AND r.state!='conflict' AND ((f.cleanup_state IN ('pending','retry') AND f.cleanup_next_attempt_at<=? AND f.disposition IN ('placed','redundant','disposable_selected_scope')) OR (r.directory_cleanup_state IN ('pending','retry') AND r.directory_cleanup_next_attempt_at<=?) OR EXISTS (
+		SELECT 1 FROM runner_delivery_explicit_delete_batches b JOIN runner_delivery_explicit_delete_files bf ON bf.batch_id=b.batch_id
+		WHERE b.receipt_id=r.id AND bf.history_recorded=0 AND b.retry_next_attempt_at<=?
+	) OR (r.state='imported' AND EXISTS (
 		SELECT 1 FROM runner_delivery_file_imports i JOIN replacement_operations o ON o.operation_id=i.replacement_operation_id
 		JOIN runner_delivery_file_outcomes x ON x.receipt_id=i.receipt_id AND x.path=i.path
 		WHERE i.receipt_id=r.id AND i.replacement_disposition='excess' AND o.state='complete' AND x.cleanup_state='protected' AND x.cleanup_next_attempt_at<=? AND x.disposition IN ('unknown_recoverable','known_incidental','disposable_selected_scope')
-	))) GROUP BY r.id ORDER BY MIN(CASE WHEN f.cleanup_next_attempt_at=0 THEN f.updated_at ELSE f.cleanup_next_attempt_at END),r.sequence LIMIT ?`, clientID, now, now, now, limit)
+	))) GROUP BY r.id ORDER BY COALESCE(
+		(SELECT MIN(CASE WHEN b.retry_next_attempt_at=0 THEN b.created_at ELSE b.retry_next_attempt_at END) FROM runner_delivery_explicit_delete_batches b JOIN runner_delivery_explicit_delete_files bf ON bf.batch_id=b.batch_id WHERE b.receipt_id=r.id AND bf.history_recorded=0 AND b.retry_next_attempt_at<=?),
+		MIN(CASE WHEN f.cleanup_next_attempt_at=0 THEN f.updated_at ELSE f.cleanup_next_attempt_at END),r.sequence,r.id) LIMIT ?`, clientID, clientID, now, now, now, now, now, limit)
 	if err != nil {
 		return nil, err
 	}

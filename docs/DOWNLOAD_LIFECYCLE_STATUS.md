@@ -1,7 +1,7 @@
 # Download lifecycle — implementation and review status
 
-**Status:** Both PRs open; Astra corrections under validation; coverage and race gates remain; not deployed
-**Updated:** 2026-10-22
+**Status:** Both PRs open; source corrections reviewed; Curator coverage gate remains below its floor; not deployed
+**Updated:** 2026-10-23
 
 Companion to [the approved operating proposal](DOWNLOAD_LIFECYCLE_PROPOSAL.md)
 and [the replacement API draft](BAD_DOWNLOAD_API.md). This page records actual
@@ -292,8 +292,10 @@ that its regression tests pass.
   deadlines when current replacement proof is temporarily unavailable. Unknown
   sidecars and ambiguous media associations remain protected. Astra reviewed
   `31c41c1ea0b8d7a2273cff8652e05529e2210d09`, confirmed all four findings
-  resolved and found no additional actionable source defect. Coverage and CI
-  remain separate requirements.
+  resolved and found no additional actionable source defect. Astra subsequently
+  approved `9cfd7184f23eefb5313099da953058169f0c0cc8`, including the atomic
+  file/directory cleanup obligations and saved blacklist-choice response.
+  Coverage and CI remain separate requirements.
 - Runner Linux dependency audit also reports vulnerable locked dependencies.
   Compatible patches to quinn-proto, rustls, rustls-webpki and the WebPKI
   root packages pass local compilation, strict Clippy and MSRV checks. The
@@ -306,7 +308,48 @@ that its regression tests pass.
 - The saved source-blacklist choice was honored internally but omitted from
   replacement-operation responses. Detail, history and exact replay now return
   `blacklistSourceRelease`; the existing UI shows that saved choice.
-- Required race/coverage gates and final Linux CI remain unfinished.
+- Full Linux race tests pass at Curator `a2441fc`; its coverage result is 84.2%,
+  below the unchanged 86% floor. Runner normal Linux PR checks all pass at
+  `708f9af`; its separate manual coverage gate remains below 90%.
+- Validation found that a positive RSS deadline already in the past waited
+  another 15 minutes. The corrected scheduler promptly attempts it once, then
+  uses the idle sweep if no work changes that deadline. Future deadlines,
+  per-indexer quotas and provider retry limits remain enforced.
+- A database failure during manual-import admission could leave an orphan row
+  after the caller received no ID. Target, selection, review approval and row
+  state now commit together. Trigger-backed tests verify rollback and retry for
+  both new and existing records. Astra reviewed both fixes; they are committed
+  in `720a148`. Full ordinary tests pass, lint reports zero issues, and coverage
+  is 84.4%. Further failure-path tests are being added to meet 86%.
+- Retry and observation fixes in `ce7e550` pass full ordinary Go tests,
+  lint, and focused race tests across acquisition, SQLite and API. Coverage
+  is 84.7% (22,565/26,629 non-generated statements); the 86% gate still fails.
+  A stale observation can now terminate after its library row changes or
+  disappears, without retaining digest or filesystem authority. Replayed
+  handleless acknowledgements preserve retry history and deadlines.
+- Explicit selected-file deletion now journals the complete reviewed batch
+  before unlink and atomically commits each removed outcome with its history
+  event. A local bounded worker discovers pending batches after restart without
+  Runner or the original browser request. Ordinary cleanup preserves pending
+  selections and their publication directory until audit completion. The saved
+  absolute path spelling preserves alias-based review identities; retargeting
+  an alias retains both source and replacement bytes and records a retry against
+  the original batch. Retry now includes those saved batches.
+- Migration 0061 retains immutable file/parent, receipt, publication and storage
+  identities plus retry state. Its downgrade refuses to discard any batch
+  history; use a pre-upgrade database backup for rollback. SQLite tests cover
+  both empty-journal downgrade and populated-journal refusal.
+- Astra reviewed the complete deletion-journal correction with no remaining
+  actionable findings. Full ordinary tests, focused acquisition/SQLite/API race
+  tests, pinned lint and two identical pinned generations pass. Coverage is
+  84.9%; the unchanged 86% gate still blocks final validation. Added regressions
+  also cover stale recovery targets, changed quality replacements, sidecar
+  ownership, protected language requirements and real HTTP import retry.
+- Runner `677d4fa` encountered newly published Tokio advisory
+  `RUSTSEC-2026-0386`. Revision `83cd4cd` updates Tokio to 1.53.3 and the
+  yanked chacha20 dependency to 0.10.2. Workspace tests, strict Clippy,
+  formatting and the Rust 1.95 check pass. Linux supply-chain and main fast-lane
+  workflows both pass at `83cd4cd`; Astra approved that exact source revision.
 - Astra must review the exact final PR revisions; the Fable handoff must include
   those revisions and the completed validation results.
 
@@ -325,11 +368,11 @@ final gates began on 2026-10-22. Results so far:
 | Curator lint | Linux identified formatting and four lint issues; corrected locally. Pinned golangci-lint and gofmt sweep pass; final revision CI remains required |
 | Curator browser acceptance | Passed: 174 tests, zero skipped, including lifecycle polling and mobile cases, against the rebuilt binary and final Vite bundle |
 | Runner strict workspace tests | Passed with required external tools, including actual failed-health salvage, storage-outage Retry Now and HTTP Delivery regressions. Formatting, strict Clippy, Rust 1.95 MSRV and UI harness passed |
-| Runner line coverage | Earlier macOS candidate: 86.2814% (55,818 of 64,693 lines). Identical strict command on baseline `42995f0`: 86.5527% (47,810 of 55,238 lines). Both are below the unchanged 90% floor; candidate is 0.2713 percentage points below baseline. No floor or exclusions changed. Linux at `b7c259d`: all instrumented tests passed; 86.23% (56,297 of 65,285 lines), failing the unchanged 90% floor |
-| Curator race | Pre-final-fix run passed API and other packages; acquisition reached the 900-second timeout during schema migration. No race report was emitted, but this is not a passing gate. Linux initial-head CI likewise exhausted the default ten-minute package budget while new tests were actively running in SQLite migrations. The revised thirty-minute run also timed out in acquisition while an individual test had run for two seconds in migrations; API, library and SQLite packages passed. A test-only isolated database template is being validated to remove repeated full schema construction while preserving migrations, race instrumentation and all cases |
-| Curator coverage | Latest valid candidate 83.7% (batch 5, all test packages passed), below the unchanged 86% floor. Unchanged baseline `7e8e2f2` passes the same non-race coverpkg suite at 86.3%; this deficit is introduced. Additional behavioral coverage and final rerun pending |
-| Curator generated consistency | Two consecutive local pinned sqlc and OpenAPI generations produced identical hashes after the latest schema and lock corrections; diff whitespace check passed |
-| Final PR CI | Runner `e3135e9` dependency audit passes. Linux Rust/coverage found a cluster port-reservation race and a repeated-byte PAR fixture that fails under Ubuntu par2 0.8.1; test-only corrections are pushed at `b7c259d`, with all 13 local cluster tests and focused PAR regression passing. The Linux instrumented suite passes; the merge suite exposes a further cluster fixture readiness race (node stopped before the voting group is ready), corrected at `d84cd83` with full local cluster suite and three focused repetitions passing; Linux rerun pending. Curator `31c41c1` browser, mobile, Docker and both personality checks pass; lint corrections and full race/coverage validation remain |
+| Runner line coverage | Linux `b7c259d` instrumented workspace tests pass, but manual coverage enforcement fails at 86.23% (56,297/65,285 lines), below the unchanged 90% floor. Earlier identical macOS commands measured candidate 86.2814% and baseline `42995f0` 86.5527%; both fail 90%. No Linux baseline measurement is claimed |
+| Curator Go race instrumentation | Full acquisition package passed locally in 547.452 seconds with `-race -covermode=atomic -coverpkg=./... -count=1`. Each test still owns an isolated database; an immutable migrated-schema template removes repeated schema construction. This resolves the earlier local timeout. Full Linux race-instrumented tests also pass at `a2441fc`; that job fails only at the 84.2% coverage result |
+| Curator coverage | Full ordinary coverpkg suite passes all packages; latest measured candidate is 84.9% after the exact deletion-journal and worker regressions, below the unchanged 86% floor. Unchanged baseline `7e8e2f2` passed the same command at 86.3%; this deficit is introduced and blocks the coverage gate. Additional meaningful failure-path coverage is in progress |
+| Curator generated consistency | Two consecutive local pinned sqlc and OpenAPI generations produced identical hashes with migration 0061; diff whitespace check passed |
+| Final PR CI | Curator `a2441fc`: browser, mobile, lint, Docker, both personality suites and all Go race tests pass; coverage fails at 84.2%. Runner `83cd4cd`: all normal Linux PR checks and supply-chain audit pass. Astra approved Curator `ce7e550` and Runner `83cd4cd`; Astra also reviewed the newer Curator deletion-journal work; exact final revision confirmation remains required. Curator final revision CI and coverage remain unresolved |
 
 Required Curator gates: `make lint`, `make test`, `make test-web`, `make test-e2e`,
 generated-code consistency and required CI. Runner gates follow its pinned Rust

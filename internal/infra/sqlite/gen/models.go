@@ -592,6 +592,33 @@ type RunnerDeliveryCursor struct {
 	UpdatedAt     int64
 }
 
+type RunnerDeliveryExplicitDeleteBatch struct {
+	BatchID                      string
+	ReceiptID                    int64
+	PayloadPath                  string
+	InventoryFingerprint         string
+	PublicationDirectoryIdentity string
+	StorageIdentity              string
+	GenerationKey                string
+	RequestToken                 string
+	PublicationGeneration        string
+	RetryAttempts                int64
+	RetryNextAttemptAt           int64
+	RetryBlockedSince            int64
+	RetryError                   string
+	CreatedAt                    int64
+}
+
+type RunnerDeliveryExplicitDeleteFile struct {
+	BatchID          string
+	Path             string
+	ReviewedPath     string
+	SnapshotIdentity string
+	ParentIdentity   string
+	HistoryRecorded  int64
+	CompletedAt      int64
+}
+
 type RunnerDeliveryFileImport struct {
 	ID                      int64
 	ReceiptID               int64

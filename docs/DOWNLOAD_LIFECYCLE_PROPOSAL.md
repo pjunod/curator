@@ -326,6 +326,41 @@ Every manifest entry ends as imported, satisfied by a verified existing copy
 episode is not permission to delete unresolved siblings in a season pack.
 Cleanup proceeds per resolved file when a payload is only partially resolved.
 
+**Explicit deletion replay:** before deleting a selected Delivery-managed batch,
+Curator durably records the complete selection, each reviewed file and parent
+identity, receipt generation, publication identity and expected storage. If the
+process stops after an unlink, retry resumes that same batch even after a fresh
+inventory scan changes its fingerprint. It cannot add files to the approved
+selection. A new object at a deleted path requires new review. Completion and
+its history event commit together, so a database failure leaves a retryable
+operation with a visible eventual result. The local cleanup worker discovers
+pending batches after restart and retries them on the normal cleanup schedule,
+even while Runner is offline. Retry now uses the saved batch; it does not need
+the browser to retain the original request. A generic old pending-cleanup row
+cannot grant this replay authority.
+
+```text
+ Review exact files + publication + storage
+                    |
+                    v
+ Commit complete batch before any unlink
+                    |
+                    v
+ Recheck file / parent / storage --> changed --> Hold for new review
+                    |
+                    v
+ Unlink selected file + sync parent
+                    |
+                    +-- crash / DB failure --> Reload exact batch
+                    |                          Prove same parent + absence
+                    |                          Retry completion
+                    v
+ Commit removed outcome + history together
+                    |
+                    v
+ Continue selected siblings only
+```
+
 ### 4.1 Communication — durable facts instead of a fragile notification
 
 Reuse the existing transfer identifier and journals. The minimum shared facts

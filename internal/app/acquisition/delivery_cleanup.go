@@ -862,7 +862,99 @@ func (s *Service) scheduleDeliveryFileCleanup(ctx context.Context, cfg ports.Cli
 	}
 }
 
+// startDeliveryFileCleanupRetryWorker re-enqueues locally due cleanup
+// receipts. It does not contact Runner, so an offline or removed client
+// cannot strand an already reviewed deletion batch.
+func (s *Service) startDeliveryFileCleanupRetryWorker(ctx context.Context) {
+	s.importWG.Add(1)
+	go func() {
+		defer s.importWG.Done()
+		sweep := func() {
+			ids, err := s.db.DeliveryFileCleanupReceipts(ctx, 0, 32)
+			if err != nil {
+				s.log.Warn("delivery file cleanup retry scan failed", "err", err)
+				return
+			}
+			for _, id := range ids {
+				if ctx.Err() != nil {
+					return
+				}
+				r, err := s.db.DeliveryReceiptByID(ctx, id)
+				if err != nil {
+					s.log.Warn("delivery cleanup receipt read failed", "receipt", id, "err", err)
+					continue
+				}
+				cfg, err := s.db.GetDownloadClient(ctx, r.ClientID)
+				if err != nil {
+					// Cleanup is local and remains authorized by the receipt; a
+					// removed client config must not strand accepted bytes.
+					cfg = ports.ClientConfig{ID: r.ClientID}
+				}
+				s.queueDeliveryCleanup(ctx, cfg, r)
+			}
+		}
+		sweep()
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sweep()
+			}
+		}
+	}()
+}
+
+func (s *Service) resumeExplicitDeliveryDeleteBatches(ctx context.Context, r sqlite.DeliveryReceipt) (map[string]bool, error) {
+	due, err := s.db.ExplicitDeliveryDeleteBatchesDue(ctx, r.ID, 16)
+	if err != nil {
+		return nil, err
+	}
+	pending, err := s.db.ExplicitDeliveryDeleteBatchesPending(ctx, r.ID, 10000)
+	if err != nil {
+		return nil, err
+	}
+	protected := make(map[string]bool)
+	for _, batch := range pending {
+		for _, file := range batch.Files {
+			if !file.HistoryRecorded {
+				protected[file.Path] = true
+			}
+		}
+	}
+	for _, batch := range due {
+		for _, file := range batch.Files {
+			if !file.HistoryRecorded {
+				protected[file.Path] = true
+			}
+		}
+		selections := make([]CompletedFileSelection, 0, len(batch.Files))
+		for _, file := range batch.Files {
+			selections = append(selections, CompletedFileSelection{
+				Path:             file.ReviewedPath,
+				SnapshotIdentity: file.SnapshotIdentity,
+			})
+		}
+		if err := s.deleteSelectedDeliveryFilesForBatch(ctx, batch.ID, batch.PayloadPath, batch.InventoryFingerprint, selections); err != nil {
+			return protected, err
+		}
+	}
+	if len(pending) == 10000 {
+		// Refuse generic cleanup rather than risk missing an explicit path
+		// behind an unexpectedly large journal. Due batches above still get
+		// their independent bounded worker opportunities.
+		return protected, fmt.Errorf("explicit delivery deletion journal exceeds the safe pending-batch scan limit")
+	}
+	return protected, nil
+}
+
 func (s *Service) cleanupDeliveryFiles(ctx context.Context, r sqlite.DeliveryReceipt) error {
+	explicitPaths, err := s.resumeExplicitDeliveryDeleteBatches(ctx, r)
+	if err != nil {
+		return err
+	}
 	// Per-file outcomes can be committed before the download/receipt terminal
 	// stamp. Keep the accepted publication directory available until that stamp
 	// is durable so a crash in this interval can replay from the manifest.
@@ -920,6 +1012,9 @@ func (s *Service) cleanupDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 		}
 	}
 	for _, row := range rows {
+		if explicitPaths[row.Path] {
+			continue
+		}
 		if row.CleanupState == "removed" || row.CleanupState == "protected" {
 			continue
 		}
@@ -949,6 +1044,13 @@ func (s *Service) cleanupDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 		if err := s.db.SetDeliveryFileCleanup(ctx, r.ID, row.Path, "removed", ""); err != nil {
 			return err
 		}
+	}
+	// A reviewed batch owns the publication directory until every selected
+	// path has its own durable completion/audit marker. This also protects the
+	// crash window where generic cleanup already stamped an unlinked file as
+	// removed but the explicit journal still needs to record its event.
+	if len(explicitPaths) > 0 {
+		return nil
 	}
 	// Record a due directory-cleanup obligation before touching the publication
 	// tree. If the process or database fails after removing the directory but
@@ -995,10 +1097,23 @@ func (s *Service) DeleteSelectedDeliveryFiles(ctx context.Context, payloadPath, 
 	if len(selections) == 0 {
 		return fmt.Errorf("select one or more manifest files to delete")
 	}
+	batchID, batchIDErr := explicitDeliveryDeleteBatchID(payloadPath, fingerprint, selections)
+	if batchIDErr != nil {
+		return batchIDErr
+	}
+	return s.deleteSelectedDeliveryFilesForBatch(ctx, batchID, payloadPath, fingerprint, selections)
+}
+
+func (s *Service) deleteSelectedDeliveryFilesForBatch(ctx context.Context, batchID, payloadPath, fingerprint string, selections []CompletedFileSelection) error {
 	s.completedMu.Lock()
-	err := s.deleteSelectedDeliveryFilesLocked(ctx, payloadPath, fingerprint, selections)
+	err := s.deleteSelectedDeliveryFilesLocked(ctx, batchID, payloadPath, fingerprint, selections)
 	s.completedMu.Unlock()
 	if err != nil {
+		if _, batchErr := s.db.ExplicitDeliveryDeleteBatch(ctx, batchID); batchErr == nil {
+			if retryErr := s.db.ScheduleExplicitDeliveryDeleteRetry(ctx, batchID, err.Error()); retryErr != nil {
+				return errors.Join(err, retryErr)
+			}
+		}
 		return err
 	}
 	return s.ScanCompleted(ctx)
@@ -1012,12 +1127,71 @@ type selectedDeliveryDeletion struct {
 	currentSize       int64
 	currentDigest     string
 	currentGeneration string
+	parentIdentity    string
+	absent            bool
 }
 
-func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payloadPath, fingerprint string, selections []CompletedFileSelection) error {
+func persistedBatchFile(batch sqlite.ExplicitDeliveryDeleteBatch, path string) (sqlite.ExplicitDeliveryDeleteFile, bool) {
+	for _, file := range batch.Files {
+		if file.Path == path {
+			return file, true
+		}
+	}
+	return sqlite.ExplicitDeliveryDeleteFile{}, false
+}
+
+func rootStorageIdentity(roots []CompletedRoot, path string) string {
+	for _, root := range roots {
+		if canonicalCompletedPath(root.Path) == canonicalCompletedPath(path) {
+			return root.StorageIdentity
+		}
+	}
+	return ""
+}
+
+func syncDeliveryParent(root *os.Root) error {
+	directory, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = directory.Close() }()
+	return directory.Sync()
+}
+
+func explicitDeliveryDeleteBatchID(payloadPath, fingerprint string, selections []CompletedFileSelection) (string, error) {
+	if len(selections) == 0 {
+		return "", fmt.Errorf("select one or more manifest files to delete")
+	}
+	ordered := append([]CompletedFileSelection(nil), selections...)
+	slices.SortFunc(ordered, func(a, b CompletedFileSelection) int {
+		if a.Path < b.Path {
+			return -1
+		}
+		if a.Path > b.Path {
+			return 1
+		}
+		return strings.Compare(a.SnapshotIdentity, b.SnapshotIdentity)
+	})
+	h := sha256.New()
+	_, _ = io.WriteString(h, canonicalCompletedPath(payloadPath)+"\x00"+fingerprint+"\x00")
+	for _, selection := range ordered {
+		if selection.Path == "" || selection.SnapshotIdentity == "" {
+			return "", fmt.Errorf("each selected delivery file requires a reviewed snapshot")
+		}
+		_, _ = io.WriteString(h, canonicalCompletedPath(selection.Path)+"\x00"+selection.SnapshotIdentity+"\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, batchID, payloadPath, fingerprint string, selections []CompletedFileSelection) error {
 	if !filepath.IsAbs(payloadPath) || fingerprint == "" {
 		return fmt.Errorf("select an unchanged delivery payload from the completed-storage inventory")
 	}
+	existingBatch, batchErr := s.db.ExplicitDeliveryDeleteBatch(ctx, batchID)
+	if batchErr != nil && !errors.Is(batchErr, sqlite.ErrNotFound) {
+		return batchErr
+	}
+	hasBatch := batchErr == nil
 	if !s.ownsDownloadPath(ctx, payloadPath) {
 		return fmt.Errorf("select an entry inside Curator-owned download storage")
 	}
@@ -1031,51 +1205,103 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payload
 		root := &inventory.Roots[i]
 		for j := range root.Entries {
 			entry := &root.Entries[j]
-			if entry.Path == payloadPath && entry.Fingerprint == fingerprint {
+			if canonicalCompletedPath(entry.Path) == canonicalCompletedPath(payloadPath) &&
+				(entry.Fingerprint == fingerprint || hasBatch) {
 				selectedEntry, storageRoot = entry, root.Path
 			}
 		}
 	}
-	if selectedEntry == nil || selectedEntry.LegacyReview || !selectedEntry.DeliveryManaged {
+	if selectedEntry == nil && !hasBatch {
 		return fmt.Errorf("selected payload is not an unchanged delivery-managed entry")
 	}
-	for _, root := range inventory.Roots {
-		if root.Path == storageRoot && root.Error != "" {
-			return fmt.Errorf("inventory is incomplete; scan again before deleting selected files")
+	if selectedEntry != nil && (selectedEntry.LegacyReview || !selectedEntry.DeliveryManaged) {
+		return fmt.Errorf("selected payload is not an unchanged delivery-managed entry")
+	}
+	if hasBatch && (canonicalCompletedPath(existingBatch.PayloadPath) != canonicalCompletedPath(payloadPath) ||
+		existingBatch.InventoryFingerprint != fingerprint) {
+		return fmt.Errorf("selected deletion does not match its original reviewed batch")
+	}
+	if hasBatch {
+		persisted := make(map[string]string, len(existingBatch.Files))
+		for _, file := range existingBatch.Files {
+			persisted[file.Path] = file.SnapshotIdentity
 		}
+		if len(persisted) != len(selections) {
+			return fmt.Errorf("selected deletion does not contain the complete reviewed batch")
+		}
+		for _, selection := range selections {
+			rel, relErr := filepath.Rel(canonicalCompletedPath(payloadPath), canonicalCompletedPath(selection.Path))
+			file, ok := persistedBatchFile(existingBatch, filepath.ToSlash(rel))
+			if relErr != nil || !ok || persisted[filepath.ToSlash(rel)] != selection.SnapshotIdentity || canonicalCompletedPath(file.ReviewedPath) != canonicalCompletedPath(selection.Path) {
+				return fmt.Errorf("selected deletion differs from its persisted reviewed batch")
+			}
+		}
+	}
+	for _, root := range inventory.Roots {
+		if (storageRoot == "" && within(canonicalCompletedPath(root.Path), canonicalCompletedPath(payloadPath))) ||
+			canonicalCompletedPath(root.Path) == canonicalCompletedPath(storageRoot) {
+			if hasBatch && root.StorageIdentity != existingBatch.StorageIdentity {
+				return fmt.Errorf("expected storage changed since the explicit deletion review")
+			}
+			if root.Error != "" {
+				return fmt.Errorf("inventory is incomplete; scan again before deleting selected files")
+			}
+			if storageRoot == "" {
+				storageRoot = root.Path
+			}
+		}
+	}
+	if storageRoot == "" {
+		return fmt.Errorf("configured completed storage root is unavailable")
 	}
 	roots, err := s.completedRoots(ctx, nil)
 	if err != nil {
 		return err
 	}
-	receipts := make([]sqlite.DeliveryReceipt, 0, len(selectedEntry.Receipts))
+	receipts := make([]sqlite.DeliveryReceipt, 0, 1)
 	canonicalPayload := storagePath(payloadPath, roots)
-	for _, association := range selectedEntry.Receipts {
-		if association.DownloadID <= 0 || !association.DeliveryManaged {
-			continue
+	if hasBatch {
+		receipt, getErr := s.db.DeliveryReceiptByID(ctx, existingBatch.ReceiptID)
+		if getErr != nil {
+			return fmt.Errorf("reviewed delivery receipt is unavailable")
 		}
-		beforeID := int64(0)
-		for {
-			page, next, pageErr := s.db.DeliveryReceiptPageForDownload(ctx, association.DownloadID, beforeID, 100)
-			if pageErr != nil {
-				return pageErr
+		if storagePath(receipt.MappedPath, roots) != canonicalPayload {
+			return fmt.Errorf("reviewed receipt no longer maps to this payload")
+		}
+		receipts = append(receipts, receipt)
+	} else {
+		for _, association := range selectedEntry.Receipts {
+			if association.DownloadID <= 0 || !association.DeliveryManaged {
+				continue
 			}
-			for _, receipt := range page {
-				if receipt.MediaItemID == association.MediaItemID && receipt.CopyID == association.CopyID &&
-					storagePath(receipt.MappedPath, roots) == canonicalPayload {
-					receipts = append(receipts, receipt)
+			beforeID := int64(0)
+			for {
+				page, next, pageErr := s.db.DeliveryReceiptPageForDownload(ctx, association.DownloadID, beforeID, 100)
+				if pageErr != nil {
+					return pageErr
 				}
+				for _, receipt := range page {
+					if receipt.MediaItemID == association.MediaItemID && receipt.CopyID == association.CopyID &&
+						storagePath(receipt.MappedPath, roots) == canonicalPayload {
+						receipts = append(receipts, receipt)
+					}
+				}
+				if next == 0 {
+					break
+				}
+				beforeID = next
 			}
-			if next == 0 {
-				break
-			}
-			beforeID = next
 		}
 	}
 	if len(receipts) != 1 || (receipts[0].AckState != "accepted" && (receipts[0].AckState != "pending" || receipts[0].ConsumerReceiptID == "")) || receipts[0].State == "conflict" || receipts[0].State == "importing" {
 		return fmt.Errorf("delivery has no locally prepared acceptance, is importing, or is ambiguous; selected-file deletion requires one stable manifest")
 	}
 	r := receipts[0]
+	if hasBatch && (r.GenerationKey != existingBatch.GenerationKey || r.Delivery.RequestToken != existingBatch.RequestToken ||
+		r.Delivery.PublicationGeneration != existingBatch.PublicationGeneration ||
+		r.PublicationDirectoryIdentity != existingBatch.PublicationDirectoryIdentity) {
+		return fmt.Errorf("delivery identity differs from the persisted explicit deletion review")
+	}
 	if r.DownloadID > 0 {
 		// Import workers serialize on this per-download lock from queue pickup
 		// through placement. Holding it across verification and unlink closes
@@ -1088,10 +1314,10 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payload
 		}
 		r = current
 		dl, err := s.db.GetDownload(ctx, r.DownloadID)
-		if err != nil {
+		if err != nil && (!hasBatch || !errors.Is(err, sqlite.ErrNotFound)) {
 			return fmt.Errorf("delivery download state is unavailable; refusing deletion")
 		}
-		if dl.State == "importing" {
+		if err == nil && dl.State == "importing" {
 			return fmt.Errorf("delivery import is active; wait for it to finish before deleting selected files")
 		}
 	}
@@ -1118,6 +1344,9 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payload
 		return fmt.Errorf("publication directory identity is unavailable on this platform")
 	}
 	if r.PublicationDirectoryIdentity == "" {
+		if hasBatch {
+			return fmt.Errorf("reviewed publication identity is unavailable; refusing replay")
+		}
 		// Explicit review has selected this exact payload and each file will be
 		// checked against the accepted manifest before the identity is pinned.
 		if err := s.db.EnsureDeliveryDirectoryIdentity(ctx, r.ID, identity); err != nil {
@@ -1127,6 +1356,9 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payload
 	} else if identity != r.PublicationDirectoryIdentity {
 		return fmt.Errorf("delivery publication directory does not match its accepted generation")
 	}
+	if hasBatch && existingBatch.PublicationDirectoryIdentity != identity {
+		return fmt.Errorf("publication directory differs from the reviewed deletion batch")
+	}
 	manifest := make(map[string]ports.RunnerFile, len(r.Delivery.Files))
 	for _, file := range r.Delivery.Files {
 		manifest[file.Path] = file
@@ -1134,10 +1366,10 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payload
 	chosen := map[string]bool{}
 	verified := make([]selectedDeliveryDeletion, 0, len(selections))
 	for _, selection := range selections {
-		if !filepath.IsAbs(selection.Path) || selection.SnapshotIdentity == "" || !within(payloadPath, selection.Path) {
+		if !filepath.IsAbs(selection.Path) || selection.SnapshotIdentity == "" || !within(canonicalCompletedPath(payloadPath), canonicalCompletedPath(selection.Path)) {
 			return fmt.Errorf("selected path is outside the delivery payload or has no current snapshot")
 		}
-		rel, err := filepath.Rel(payloadPath, selection.Path)
+		rel, err := filepath.Rel(canonicalCompletedPath(payloadPath), canonicalCompletedPath(selection.Path))
 		if err != nil || rel == "." || !filepath.IsLocal(rel) || !safeDeliveryRelativePath(filepath.ToSlash(rel)) {
 			return fmt.Errorf("selected path is not a safe relative manifest file")
 		}
@@ -1157,8 +1389,42 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payload
 		if ledgerErr == nil && ledger.FileGeneration == "" {
 			return fmt.Errorf("selected file has no durable manifest provenance record: %s", rel)
 		}
-		parent, file, named, err := openDeliveryFileNoSymlinks(payload, filepath.FromSlash(rel))
+		var parent *os.Root
+		var file *os.File
+		var named os.FileInfo
+		parentRelative := filepath.Dir(filepath.FromSlash(rel))
+		parent, err = openDeliveryDirectoryNoSymlinks(payload, parentRelative)
 		if err != nil {
+			return fmt.Errorf("open selected parent %s: %w", rel, err)
+		}
+		name := filepath.Base(filepath.FromSlash(rel))
+		named, err = parent.Lstat(name)
+		parentInfo, parentStatErr := parent.Stat(".")
+		if parentStatErr != nil {
+			_ = parent.Close()
+			return parentStatErr
+		}
+		parentIdentity := deliveryDirectoryObjectIdentity(parentInfo)
+		if errors.Is(err, os.ErrNotExist) && hasBatch {
+			persistedFile, ok := persistedBatchFile(existingBatch, rel)
+			if !ok || canonicalCompletedPath(persistedFile.ReviewedPath) != canonicalCompletedPath(selection.Path) || persistedFile.SnapshotIdentity != selection.SnapshotIdentity || persistedFile.ParentIdentity == "" || persistedFile.ParentIdentity != parentIdentity {
+				_ = parent.Close()
+				return fmt.Errorf("absent selected file is not bound to this reviewed parent and snapshot: %s", rel)
+			}
+			_ = parent.Close()
+			if ledgerErr != nil {
+				return fmt.Errorf("reviewed deletion lost its durable manifest file record: %s", rel)
+			}
+			verified = append(verified, selectedDeliveryDeletion{relative: rel, selection: selection, ledger: ledger, parentIdentity: parentIdentity, absent: true})
+			continue
+		}
+		if err != nil {
+			_ = parent.Close()
+			return fmt.Errorf("open selected file %s: %w", rel, err)
+		}
+		file, err = parent.Open(name)
+		if err != nil {
+			_ = parent.Close()
 			return fmt.Errorf("open selected file %s: %w", rel, err)
 		}
 		info, statErr := file.Stat()
@@ -1189,7 +1455,16 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payload
 				return err
 			}
 		}
-		verified = append(verified, selectedDeliveryDeletion{relative: rel, selection: selection, ledger: ledger, info: info, currentSize: size, currentDigest: digest, currentGeneration: generation})
+		if hasBatch {
+			persistedFile, ok := persistedBatchFile(existingBatch, rel)
+			if !ok || canonicalCompletedPath(persistedFile.ReviewedPath) != canonicalCompletedPath(selection.Path) || persistedFile.SnapshotIdentity != selection.SnapshotIdentity || persistedFile.ParentIdentity != parentIdentity {
+				return fmt.Errorf("selected file differs from its persisted reviewed batch: %s", rel)
+			}
+		}
+		verified = append(verified, selectedDeliveryDeletion{relative: rel, selection: selection, ledger: ledger, info: info, currentSize: size, currentDigest: digest, currentGeneration: generation, parentIdentity: parentIdentity})
+	}
+	if hasBatch && rootStorageIdentity(inventory.Roots, storageRoot) != existingBatch.StorageIdentity {
+		return fmt.Errorf("storage identity differs from the reviewed deletion batch")
 	}
 	s.importTargetMu.Lock()
 	defer s.importTargetMu.Unlock()
@@ -1204,12 +1479,30 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payload
 	}
 	if currentReceipt.DownloadID > 0 {
 		dl, getErr := s.db.GetDownload(decisionCtx, currentReceipt.DownloadID)
-		if getErr != nil || dl.State == "importing" {
+		if (getErr != nil && (!hasBatch || !errors.Is(getErr, sqlite.ErrNotFound))) || (getErr == nil && dl.State == "importing") {
 			return fmt.Errorf("delivery import is active or unavailable; wait for it to finish before deleting selected files")
 		}
 	}
 	if err := s.checkStorageIdentity(decisionCtx, payloadPath); err != nil {
 		return err
+	}
+	if !hasBatch {
+		files := make([]sqlite.ExplicitDeliveryDeleteFile, 0, len(verified))
+		for _, file := range verified {
+			files = append(files, sqlite.ExplicitDeliveryDeleteFile{Path: file.relative, ReviewedPath: file.selection.Path, SnapshotIdentity: file.selection.SnapshotIdentity, ParentIdentity: file.parentIdentity})
+		}
+		batch := sqlite.ExplicitDeliveryDeleteBatch{
+			ID: batchID, ReceiptID: r.ID, PayloadPath: canonicalCompletedPath(payloadPath),
+			InventoryFingerprint: fingerprint, PublicationDirectoryIdentity: r.PublicationDirectoryIdentity,
+			StorageIdentity: rootStorageIdentity(inventory.Roots, storageRoot), GenerationKey: r.GenerationKey,
+			RequestToken: r.Delivery.RequestToken, PublicationGeneration: r.Delivery.PublicationGeneration, Files: files,
+		}
+		if batch.StorageIdentity == "" {
+			return fmt.Errorf("verified storage identity is unavailable; refusing explicit deletion")
+		}
+		if err := s.db.PrepareExplicitDeliveryDeleteBatch(decisionCtx, batch); err != nil {
+			return err
+		}
 	}
 	for _, file := range verified {
 		currentPayload, err := anchor.Lstat(payloadRelative)
@@ -1224,6 +1517,46 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payload
 		}
 		name := filepath.Base(filepath.FromSlash(file.relative))
 		current, err := parent.Lstat(name)
+		parentInfo, parentErr := parent.Stat(".")
+		if parentErr != nil || deliveryDirectoryObjectIdentity(parentInfo) != file.parentIdentity {
+			_ = parent.Close()
+			return fmt.Errorf("selected file parent changed since review: %s", file.relative)
+		}
+		row, rowErr := s.db.DeliveryFileOutcomeByPath(decisionCtx, r.ID, file.relative)
+		if rowErr != nil {
+			_ = parent.Close()
+			return rowErr
+		}
+		if file.absent {
+			if !errors.Is(err, os.ErrNotExist) {
+				_ = parent.Close()
+				return fmt.Errorf("selected file reappeared after its reviewed deletion: %s", file.relative)
+			}
+			persistedFile, persisted := persistedBatchFile(existingBatch, file.relative)
+			if !persisted {
+				_ = parent.Close()
+				return fmt.Errorf("selected file is absent without its exact durable deletion intent: %s", file.relative)
+			}
+			if persistedFile.HistoryRecorded {
+				_ = parent.Close()
+				continue
+			}
+			if err := syncDeliveryParent(parent); err != nil {
+				_ = parent.Close()
+				return err
+			}
+			if err := parent.Close(); err != nil {
+				return err
+			}
+			if err := s.db.CompleteExplicitDeliveryFileDelete(decisionCtx, batchID, r.ID, file.relative, "delivery_file_deleted", r.MediaItemID, filepath.Base(file.selection.Path), map[string]any{
+				"receiptId": r.ID, "downloadId": r.DownloadID, "deliveryId": r.Delivery.DeliveryID, "publicationGeneration": r.Delivery.PublicationGeneration,
+				"manifestPath": file.relative, "manifestSHA256": file.ledger.SHA256, "manifestSizeBytes": file.ledger.SizeBytes,
+				"reviewedFileGeneration": file.selection.SnapshotIdentity, "replayedAfterUnlink": true,
+			}); err != nil {
+				return err
+			}
+			continue
+		}
 		if err != nil {
 			_ = parent.Close()
 			return err
@@ -1232,25 +1565,23 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, payload
 			_ = parent.Close()
 			return fmt.Errorf("selected file changed before deletion: %s", file.relative)
 		}
-		if err := s.db.PrepareExplicitDeliveryFileDelete(decisionCtx, r.ID, file.relative); err != nil {
+		if row.CleanupState == "removed" {
+			_ = parent.Close()
+			return fmt.Errorf("selected file is marked removed but its reviewed bytes reappeared: %s", file.relative)
+		}
+		if err := parent.Remove(name); err != nil {
 			_ = parent.Close()
 			return err
 		}
-		if err := parent.Remove(name); err != nil {
+		if err := syncDeliveryParent(parent); err != nil {
 			_ = parent.Close()
 			return err
 		}
 		if err := parent.Close(); err != nil {
 			return err
 		}
-		if err := syncPath(filepath.Dir(file.selection.Path)); err != nil {
-			return err
-		}
-		if err := s.db.SetDeliveryFileExplicitlyRemoved(decisionCtx, r.ID, file.relative); err != nil {
-			return err
-		}
-		if err := s.db.AddHistory(decisionCtx, "delivery_file_deleted", r.DownloadID, filepath.Base(file.selection.Path), map[string]any{
-			"receiptId": r.ID, "deliveryId": r.Delivery.DeliveryID, "publicationGeneration": r.Delivery.PublicationGeneration,
+		if err := s.db.CompleteExplicitDeliveryFileDelete(decisionCtx, batchID, r.ID, file.relative, "delivery_file_deleted", r.MediaItemID, filepath.Base(file.selection.Path), map[string]any{
+			"receiptId": r.ID, "downloadId": r.DownloadID, "deliveryId": r.Delivery.DeliveryID, "publicationGeneration": r.Delivery.PublicationGeneration,
 			"manifestPath": file.relative, "manifestSHA256": file.ledger.SHA256, "manifestSizeBytes": file.ledger.SizeBytes,
 			"reviewedSHA256": file.currentDigest, "reviewedSizeBytes": file.currentSize, "reviewedFileGeneration": file.currentGeneration,
 		}); err != nil {
@@ -1403,6 +1734,13 @@ func (s *Service) removeVerifiedDeliveryFile(ctx context.Context, r sqlite.Deliv
 	if legacy {
 		return fmt.Errorf("completed-payload cleanup is blocked for the legacy review cohort")
 	}
+	pendingExplicitDelete, err := s.db.HasPendingExplicitDeliveryDelete(decisionCtx, r.ID, row.Path)
+	if err != nil {
+		return err
+	}
+	if pendingExplicitDelete {
+		return fmt.Errorf("an exact reviewed deletion batch owns this payload file")
+	}
 	if err := s.checkStorageIdentity(decisionCtx, r.MappedPath); err != nil {
 		return err
 	}
@@ -1524,10 +1862,21 @@ func digestOpenFile(ctx context.Context, file *os.File) (string, int64, error) {
 }
 
 func (s *Service) removeEmptyDeliveryDirectories(ctx context.Context, r sqlite.DeliveryReceipt) (bool, error) {
-	if err := s.checkStorageIdentity(ctx, r.MappedPath); err != nil {
+	s.importTargetMu.Lock()
+	defer s.importTargetMu.Unlock()
+	decisionCtx, release := s.lockStorageDecision(ctx)
+	defer release()
+	pendingExplicitDelete, err := s.db.HasPendingExplicitDeliveryDelete(decisionCtx, r.ID, "")
+	if err != nil {
 		return false, err
 	}
-	roots, err := s.completedRoots(ctx, nil)
+	if pendingExplicitDelete {
+		return false, fmt.Errorf("an exact reviewed deletion batch still owns the publication directory")
+	}
+	if err := s.checkStorageIdentity(decisionCtx, r.MappedPath); err != nil {
+		return false, err
+	}
+	roots, err := s.completedRoots(decisionCtx, nil)
 	if err != nil {
 		return false, err
 	}
