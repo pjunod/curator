@@ -13,7 +13,7 @@ the user has reviewed your findings. Do not deploy or modify production media.
 
 | Repository | Baseline | Pull request | Reviewed head |
 |---|---|---|---|
-| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra approved source through `ce7e55093f29cb3dc200e675f3bb247a498c1dc8`; Astra also reviewed the later explicit-delete journal without remaining findings; final validation and final revision confirmation remain pending |
+| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source approval is bound to `264e1fdc6b14f365321bccd3ea7d2efd59ae522c`; full local tests, focused race tests, lint and generated consistency pass; coverage remains below 86%; Linux lint, Docker and compatibility pass, with the test workflow running |
 | Runner (`pjunod/runner`) | `42995f0b45a7eb977c383c4b630fa75e58bbedfb` | [#254](https://github.com/pjunod/runner/pull/254) | Astra source approval, normal Linux PR checks and supply-chain audit pass at `83cd4cdfef3ec62a67237fc918114f622ef638a2`; separate manual coverage gate remains below 90% |
 
 The primary agent reviews construction. Lower-cost agents implement changes;
@@ -219,6 +219,13 @@ validation table distinguishes tests that passed from tests merely authored.
 Final command results, coverage, CI links and Astra's exact-head verdict will be
 recorded here before this handoff is delivered. The status page records interim passing checks, remaining integration failures
 and environment limits. A passing focused regression is not a passing full gate.
+
+The next reviewed correction canonicalizes legacy deletion ownership paths:
+active downloads and unfinished placements must protect a payload even when
+recorded through a symlink alias. Its full Go suite, focused race checks and
+lint pass; the aggregate coverage gate remains below 86%. Additional regressions
+exercise manual-import admission, recovery receipt rollback and revision checks,
+and season discovery after an indexer capability update.
 
 Use disposable fixtures for additional testing. Report findings with exact
 repository/head, file and line, concrete trigger, resulting behavior, severity,

@@ -269,12 +269,17 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 	if err != nil {
 		return err
 	}
+	reviewedPath := storagePath(path, roots)
 	for _, dl := range active {
 		candidate := dl.ImportPath
 		if candidate == "" {
 			candidate = dl.SavePath
 		}
-		if candidate != "" && (within(path, candidate) || within(candidate, path)) && dl.State != "failed" && dl.State != "imported" {
+		if candidate == "" {
+			continue
+		}
+		candidate = storagePath(candidate, roots)
+		if candidate != "" && (within(reviewedPath, candidate) || within(candidate, reviewedPath)) && dl.State != "failed" && dl.State != "imported" {
 			return fmt.Errorf("download %d still owns this path; finish or cancel it first", dl.ID)
 		}
 	}
@@ -284,7 +289,11 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 	}
 	for _, p := range placements {
 		for _, candidate := range []string{p.Source, p.Target, p.Temporary, p.Backup} {
-			if candidate != "" && (within(path, candidate) || within(candidate, path)) {
+			if candidate == "" {
+				continue
+			}
+			candidate = storagePath(candidate, roots)
+			if within(reviewedPath, candidate) || within(candidate, reviewedPath) {
 				return fmt.Errorf("pending placement retains this path")
 			}
 		}
