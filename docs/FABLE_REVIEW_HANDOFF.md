@@ -13,7 +13,7 @@ the user has reviewed your findings. Do not deploy or modify production media.
 
 | Repository | Baseline | Pull request | Reviewed head |
 |---|---|---|---|
-| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source approval is bound to `3e115fa40331130ed59f932bec6c6b6b7cb978bf`; the following cleanup correction is source-approved pending commit binding. Full local tests, focused race tests and lint pass. Linux tests, browser, mobile, lint, Docker and compatibility pass at `264e1fd`, but its coverage gate fails at 84.9% |
+| Curator (`pjunod/curator`) | `7e8e2f20693e34233e09920e6015b28369024ce6` | [#70](https://github.com/pjunod/curator/pull/70) | Astra source approval is bound to `33dba5d9787f456f61fd71ca68276a6e54b4ea83`, including duplicate completion and recovery cancellation. Full local tests, focused race tests and lint pass. Linux tests, browser, mobile, lint, Docker and compatibility pass at `744ae51`, but its coverage gate fails at 85.0% |
 | Runner (`pjunod/runner`) | `42995f0b45a7eb977c383c4b630fa75e58bbedfb` | [#254](https://github.com/pjunod/runner/pull/254) | Astra source approval, normal Linux PR checks and supply-chain audit pass at `83cd4cdfef3ec62a67237fc918114f622ef638a2`; separate manual coverage gate remains below 90% |
 
 The primary agent reviews construction. Lower-cost agents implement changes;
@@ -89,6 +89,15 @@ Inspect admission capability negotiation, exact token/body replay, immutable
 delivery identity, mutable cleanup progress, acknowledgement conflict handling,
 manifest ordering/digests, paginated discovery, and accepted-receipt refresh.
 Clearing visible history must not erase custody evidence or create a new request.
+
+Verify all-duplicate imports reach a terminal import outcome only after every
+selected file has durable redundancy evidence. A ledger-write failure must keep
+import retryable, and manual additional copies must bypass this normalization.
+For recovery cancellation, test a failed heartbeat cancellation write followed
+by a rejected receipt, then a restart after Runner acknowledges cancellation but
+the local terminal transaction fails. The exact remote claim must match;
+committed library files survive, the receipt stays undelivered audit history,
+and an already-cancelled remote claim is not cancelled again.
 
 ## 4. Challenge crash, race and filesystem boundaries
 
