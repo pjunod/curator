@@ -61,6 +61,66 @@ func TestPlacedDeliveryCleanupRetainsSourceWhenCurrentLibraryProofChanges(t *tes
 	}
 }
 
+func TestDeliveryDirectoryCleanupRequiresDurablePendingObligationBeforeRemoval(t *testing.T) {
+	ctx := context.Background()
+	svc, db, dl, cfg, publication := deliveryImportFixture(t, &deliveryImportClient{})
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatalf("import accepted payload: %v", err)
+	}
+	receipt, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := mustDeliveryOutcome(t, db, receiptID, epRelease+".mkv")
+	if err := svc.removeVerifiedDeliveryFile(ctx, receipt, row); err != nil {
+		t.Fatalf("settle the already-reviewed file before testing directory custody: %v", err)
+	}
+	if err := db.SetDeliveryFileCleanup(ctx, receiptID, row.Path, "removed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(publication); err != nil || len(entries) != 0 {
+		t.Fatalf("fixture publication directory is not empty before directory cleanup: entries=%v err=%v", entries, err)
+	}
+
+	if _, err := db.W.ExecContext(ctx, `CREATE TRIGGER fail_directory_pending_obligation
+		BEFORE UPDATE OF directory_cleanup_state ON runner_delivery_receipts
+		WHEN NEW.directory_cleanup_state='pending'
+		BEGIN SELECT RAISE(ABORT,'directory cleanup obligation unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.cleanupDeliveryFiles(ctx, receipt); err == nil || !strings.Contains(err.Error(), "directory cleanup obligation unavailable") {
+		t.Fatalf("directory cleanup did not surface failure to persist its pre-delete obligation: %v", err)
+	}
+	if info, err := os.Lstat(publication); err != nil || !info.IsDir() {
+		t.Fatalf("directory removal crossed the failed pending-obligation write: info=%v err=%v", info, err)
+	}
+	var attempts int
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM runner_delivery_attempt_events WHERE receipt_id=? AND stage='cleanup_directory'`, receiptID).Scan(&attempts); err != nil || attempts != 0 {
+		t.Fatalf("directory attempt was recorded without its durable obligation: count=%d err=%v", attempts, err)
+	}
+	if _, err := db.W.ExecContext(ctx, `DROP TRIGGER fail_directory_pending_obligation`); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.cleanupDeliveryFiles(ctx, receipt); err != nil {
+		t.Fatalf("directory cleanup did not replay after the obligation store recovered: %v", err)
+	}
+	if _, err := os.Lstat(publication); !os.IsNotExist(err) {
+		t.Fatalf("successful retry did not remove the empty accepted publication: %v", err)
+	}
+	var state string
+	if err := db.R.QueryRowContext(ctx, `SELECT directory_cleanup_state FROM runner_delivery_receipts WHERE id=?`, receiptID).Scan(&state); err != nil || state != "removed" {
+		t.Fatalf("successful retry did not persist directory completion: state=%q err=%v", state, err)
+	}
+	files, err := db.ListFilesForItem(ctx, dl.MediaItemID)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("directory cleanup changed committed library ownership: files=%+v err=%v", files, err)
+	}
+	if got, err := os.ReadFile(files[0].Path); err != nil || string(got) != "video" {
+		t.Fatalf("directory cleanup changed committed library bytes: %q err=%v", got, err)
+	}
+}
+
 func TestExplicitDeleteReplayRejectsChangedNestedParentThenRetriesExactJournal(t *testing.T) {
 	ctx := context.Background()
 	const relative = "nested/extra.mkv"
