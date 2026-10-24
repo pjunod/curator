@@ -930,6 +930,11 @@ func (s *Service) deliverRecoveryReceipts(ctx context.Context) {
 		}
 		if e != nil {
 			s.log.Warn("receipt acknowledgement remains pending", "id", p.id, "err", e)
+			// A failed local acknowledgement transaction leaves both the outbox
+			// and import pending. Persist the failure outside that rolled-back
+			// transaction so lifecycle readers can explain why the source remains
+			// held. This is best effort because the database may itself be down.
+			_, _ = s.db.W.ExecContext(ctx, `UPDATE recovery_receipt_outbox SET last_error=?,updated_at=? WHERE import_id=? AND delivered=0`, e.Error(), time.Now().UnixMilli(), p.id)
 		}
 
 	}

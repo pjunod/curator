@@ -62,8 +62,8 @@ func (d *DB) RecordHandlelessSubmission(ctx context.Context, downloadID int64, g
 	}
 	now := time.Now()
 	res, err := d.W.ExecContext(ctx, `UPDATE downloads SET handle='',submission_phase='submitted',runner_submission_retry_at=0,runner_submission_retry_attempts=0,runner_submission_blocked_at=0,
-		manual_retry_at=CASE WHEN intent='manual_additional' THEN ? ELSE manual_retry_at END,
-		manual_retry_attempts=CASE WHEN intent='manual_additional' THEN 1 ELSE manual_retry_attempts END,
+		manual_retry_at=CASE WHEN intent='manual_additional' AND manual_retry_at=0 THEN ? ELSE manual_retry_at END,
+		manual_retry_attempts=CASE WHEN intent='manual_additional' AND manual_retry_attempts=0 THEN 1 ELSE manual_retry_attempts END,
 		manual_blocked_at=CASE WHEN intent='manual_additional' AND manual_blocked_at=0 THEN ? ELSE manual_blocked_at END,
 		error='client accepted the request; waiting for exact transfer-token correlation',updated_at=?
 		WHERE id=? AND generation_key=? AND transfer=? AND exact_transfer_correlation=1 AND submission_phase IN ('submitting','uncertain','submitted') AND handle=''`,
@@ -163,7 +163,7 @@ func (d *DB) ScheduleRunnerSubmissionRetry(ctx context.Context, downloadID int64
 		}
 		return retry, ErrRunnerAdmissionIdentityConflict
 	}
-	retry.DownloadID, retry.GenerationKey, retry.Attempts, retry.BlockedAt = downloadID, generationKey, index+1, time.UnixMilli(blocked)
+	retry.DownloadID, retry.GenerationKey, retry.Attempts, retry.BlockedAt = downloadID, generationKey, retry.Attempts+1, time.UnixMilli(blocked)
 	return retry, nil
 }
 

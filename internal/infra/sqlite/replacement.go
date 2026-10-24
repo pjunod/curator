@@ -613,7 +613,20 @@ func (d *DB) ListPendingReplacementFileObservations(ctx context.Context, limit i
 	return out, rows.Err()
 }
 func (d *DB) FinishReplacementFileObservation(ctx context.Context, o ReplacementFileObservation) error {
-	result, err := d.W.ExecContext(ctx, `UPDATE replacement_file_observations SET state=?,sha256=?,file_identity=?,size=?,error=?,filesystem_generation=?,updated_at=? WHERE observation_id=? AND state='pending' AND EXISTS(SELECT 1 FROM media_files WHERE id=? AND media_item_id=? AND file_generation=? AND path=?)`, o.State, o.SHA256, o.FileIdentity, o.Size, o.Error, o.FilesystemGeneration, time.Now().UnixMilli(), o.ID, o.MediaFileID, o.MediaItemID, o.FileGeneration, o.Path)
+	var result sql.Result
+	var err error
+	if o.State == "stale" {
+		// A stale observation is specifically the durable record that the
+		// selected library tuple stopped matching while the worker was hashing
+		// or waiting in the queue. Require the immutable observation tuple, but
+		// do not require the mutable media_files row to still exist. A deleted,
+		// moved, or regenerated row must terminate this observation instead of
+		// leaving it pending for every future worker sweep. Stale observations
+		// never carry filesystem evidence.
+		result, err = d.W.ExecContext(ctx, `UPDATE replacement_file_observations SET state='stale',sha256='',file_identity='',size=0,error=?,filesystem_generation='',updated_at=? WHERE observation_id=? AND state='pending' AND media_item_id=? AND media_file_id=? AND file_generation=? AND path=?`, o.Error, time.Now().UnixMilli(), o.ID, o.MediaItemID, o.MediaFileID, o.FileGeneration, o.Path)
+	} else {
+		result, err = d.W.ExecContext(ctx, `UPDATE replacement_file_observations SET state=?,sha256=?,file_identity=?,size=?,error=?,filesystem_generation=?,updated_at=? WHERE observation_id=? AND state='pending' AND media_item_id=? AND media_file_id=? AND file_generation=? AND path=? AND EXISTS(SELECT 1 FROM media_files WHERE id=? AND media_item_id=? AND file_generation=? AND path=?)`, o.State, o.SHA256, o.FileIdentity, o.Size, o.Error, o.FilesystemGeneration, time.Now().UnixMilli(), o.ID, o.MediaItemID, o.MediaFileID, o.FileGeneration, o.Path, o.MediaFileID, o.MediaItemID, o.FileGeneration, o.Path)
+	}
 	if err != nil {
 		return err
 	}
