@@ -48,6 +48,10 @@ type seasonCheckpoint struct {
 	// a worker, long after the request context that knew who asked is gone;
 	// it decides which request allowance the comparison is charged to.
 	Manual bool `json:"manual,omitempty"`
+	// A generation distinguishes a fresh button press from the manual epoch
+	// this worker is consuming. It prevents a checkpoint from erasing a request.
+	ManualGeneration   int64 `json:"manualGeneration,omitempty"`
+	BackgroundPriority int64 `json:"backgroundPriority,omitempty"`
 	// manualSpent is set in memory when this run has ended the manual epoch
 	// (see endManualEpoch), so the save that follows does not re-adopt a
 	// promotion it has just consumed.
@@ -126,11 +130,16 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
 			p.Deep = !old.Started.IsZero() && time.Since(old.Started) >= 7*24*time.Hour
 		}
 	}
-	raw, _ := json.Marshal(p)
 	priority := int64(110)
 	if missing {
 		priority = 50
 	}
+	p.BackgroundPriority = priority
+	if manual {
+		priority = domain.JobPriorityInteractive
+		p.ManualGeneration = 1
+	}
+	raw, _ := json.Marshal(p)
 	_, err := s.db.EnqueueJob(ctx, domain.Job{Kind: SeasonSearchJobKind, Payload: string(raw), DedupeKey: seasonJobKey(item, copy, season), Priority: priority, MaxAttempts: 3})
 	if errors.Is(err, sqlite.ErrDuplicateJob) {
 		if manual {
@@ -141,7 +150,13 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
 			// the mark at its next checkpoint and reruns at once instead of
 			// parking on the automatic allowance (see handleSeasonSearch).
 			now := time.Now().UnixMilli()
-			_, err = s.db.W.ExecContext(ctx, `UPDATE jobs SET payload=json_set(payload,'$.manual',json('true')), run_after=min(run_after,?), updated_at=? WHERE kind=? AND dedupe_key=? AND state IN ('queued','leased')`, now, now, SeasonSearchJobKind, seasonJobKey(item, copy, season))
+			_, err = s.db.W.ExecContext(ctx, `UPDATE jobs SET payload=json_set(payload,
+                '$.manual',json('true'),
+                '$.manualGeneration',COALESCE(json_extract(payload,'$.manualGeneration'),0)+1,
+                '$.backgroundPriority',COALESCE(json_extract(payload,'$.backgroundPriority'),?)),
+                priority=?, run_after=min(run_after,?), updated_at=?
+                WHERE kind=? AND dedupe_key=? AND state IN ('queued','leased')`,
+				p.BackgroundPriority, domain.JobPriorityInteractive, now, now, SeasonSearchJobKind, seasonJobKey(item, copy, season))
 			return seasonQueued, err
 		}
 		return seasonQueued, nil
@@ -216,23 +231,28 @@ func (s *Service) seasonSnapshot(ctx context.Context, p seasonCheckpoint) (domai
 	return item, pack, profile, targets, eligiblePack, nil
 }
 func (s *Service) saveSeasonCheckpoint(ctx context.Context, j domain.Job, p seasonCheckpoint) error {
-	// A person may have promoted this job while the worker held it. The
-	// worker's copy predates that, and writing it back verbatim would erase
-	// the promotion.
-	if !p.Manual && !p.manualSpent && s.seasonJobPromoted(ctx, j.ID) {
-		p.Manual = true
-	}
+	// Payload and scheduling class are saved together. Storage preserves a
+	// newer manual generation even when this worker ends its older epoch.
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
-	return s.db.UpdateJobCheckpoint(ctx, j.ID, j.LeaseOwner, string(raw))
+	background := p.BackgroundPriority
+	if background <= 0 {
+		background = j.Priority
+		if background <= 0 {
+			background = 110
+		}
+	}
+	return s.db.UpdateJobCheckpoint(ctx, j.ID, j.LeaseOwner, string(raw), p.manualSpent, background)
 }
 
-func (s *Service) seasonJobPromoted(ctx context.Context, jobID int64) bool {
+func (s *Service) seasonJobPromoted(ctx context.Context, jobID int64, started seasonCheckpoint) bool {
 	var manual bool
-	err := s.db.R.QueryRowContext(ctx, `SELECT COALESCE(json_extract(payload,'$.manual'),0) FROM jobs WHERE id=?`, jobID).Scan(&manual)
-	return err == nil && manual
+	var generation int64
+	err := s.db.R.QueryRowContext(ctx, `SELECT COALESCE(json_extract(payload,'$.manual'),0),
+        COALESCE(json_extract(payload,'$.manualGeneration'),0) FROM jobs WHERE id=?`, jobID).Scan(&manual, &generation)
+	return err == nil && manual && (!started.Manual || generation > started.ManualGeneration)
 }
 
 // endManualEpoch returns the checkpoint to unattended work. Manual covers the
@@ -308,7 +328,7 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 	_ = json.Unmarshal([]byte(j.Payload), &started)
 	err := s.runSeasonSearch(ctx, j)
 	var deferred *sqlite.BudgetDeferred
-	if errors.As(err, &deferred) && !started.Manual && time.Until(deferred.At) > time.Minute && s.seasonJobPromoted(ctx, j.ID) {
+	if errors.As(err, &deferred) && time.Until(deferred.At) > 0 && s.seasonJobPromoted(ctx, j.ID, started) {
 		return &sqlite.BudgetDeferred{At: time.Now(), Reason: "promoted to a manual comparison"}
 	}
 	return err

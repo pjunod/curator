@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 )
 
@@ -236,7 +237,7 @@ func (s *Scheduler) runLoop(ctx context.Context, rt *taskRuntime) {
 			s.runOnce(ctx, rt)
 		case <-rt.trigger:
 			timer.Stop()
-			s.runOnce(ctx, rt)
+			s.runOnce(domain.WithInteractiveJob(ctx), rt)
 		}
 	}
 }

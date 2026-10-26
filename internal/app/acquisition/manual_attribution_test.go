@@ -160,6 +160,9 @@ func TestSeriesAutoSearchCarriesManualAttributionIntoTheJob(t *testing.T) {
 		if n, manual := seasonJobManual(t, db); n == 0 || manual {
 			t.Fatalf("queued season jobs = %d manual = %v, want unattended jobs", n, manual)
 		}
+		if _, err := db.ClaimInteractiveJob(ctx, "season-fixture", nil, time.Hour); !errors.Is(err, sqlite.ErrNotFound) {
+			t.Fatalf("unattended season comparison used reserved worker: %v", err)
+		}
 		spendAllowance(t, db, "search", true)
 		job, err := db.ClaimJob(ctx, "season-fixture", nil, time.Hour)
 		if err != nil {
@@ -184,6 +187,10 @@ func TestSeriesAutoSearchCarriesManualAttributionIntoTheJob(t *testing.T) {
 		}
 		if n, manual := seasonJobManual(t, db); n == 0 || !manual {
 			t.Fatalf("queued season jobs = %d manual = %v, want manual jobs", n, manual)
+		}
+		var background int
+		if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE kind=? AND state='queued' AND priority<>?`, SeasonSearchJobKind, domain.JobPriorityInteractive).Scan(&background); err != nil || background != 0 {
+			t.Fatalf("manual season jobs lost interactive priority: count=%d err=%v", background, err)
 		}
 		runQueuedSeason(t, svc, db)
 		if asked := idx.asked(); len(asked) == 0 {
@@ -218,6 +225,10 @@ func TestSeriesAutoSearchCarriesManualAttributionIntoTheJob(t *testing.T) {
 		}
 		if parked != 0 {
 			t.Fatalf("%d promoted jobs are still parked in the future", parked)
+		}
+		job, err := db.ClaimInteractiveJob(ctx, "manual-promotion", nil, time.Hour)
+		if err != nil || job.Kind != SeasonSearchJobKind || job.Priority != domain.JobPriorityInteractive {
+			t.Fatalf("promoted season comparison could not use reserved worker: %+v %v", job, err)
 		}
 	})
 
@@ -315,6 +326,13 @@ func TestSeriesAutoSearchCarriesManualAttributionIntoTheJob(t *testing.T) {
 		if asked := idx.asked(); len(asked) != 0 {
 			t.Fatalf("asked = %v, want nothing sent by the unattended step", asked)
 		}
+		if err := db.DeferJob(ctx, job.ID, deferred.Reason, deferred.At); err != nil {
+			t.Fatal(err)
+		}
+		promoted, err := db.ClaimInteractiveJob(ctx, "reserved", nil, time.Hour)
+		if err != nil || promoted.ID != job.ID {
+			t.Fatalf("held-job promotion lost reserved priority: %+v %v", promoted, err)
+		}
 	})
 
 	t.Run("the reruns a manual comparison schedules for itself are unattended", func(t *testing.T) {
@@ -350,5 +368,169 @@ func TestManualSeasonForecastUsesTheManualPool(t *testing.T) {
 	}
 	if !feasibleFinishManual(now, b, day, 55, time.Second).After(deadline) {
 		t.Fatal("a manual comparison larger than the free manual pool was forecast as feasible")
+	}
+}
+
+func TestExpiredManualSeasonEpochReturnsToBackgroundWorkers(t *testing.T) {
+	svc, db, itemID, _ := seriesFixture(t)
+	ctx := context.Background()
+	if _, err := svc.AutoSearchItem(WithManualSearch(ctx), itemID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := db.ClaimInteractiveJob(ctx, "manual-epoch", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint seasonCheckpoint
+	if err := json.Unmarshal([]byte(job.Payload), &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint.Started = time.Now().Add(-25 * time.Hour)
+	checkpoint.Deadline = time.Now().Add(-time.Hour)
+	if err := svc.saveSeasonCheckpoint(ctx, job, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	job, err = db.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deferred *sqlite.BudgetDeferred
+	if err := svc.handleSeasonSearch(ctx, job); !errors.As(err, &deferred) {
+		t.Fatalf("expired comparison did not defer: %v", err)
+	}
+	// Make the automatic continuation ready without waiting a minute.
+	if err := db.DeferJob(ctx, job.ID, deferred.Reason, time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClaimInteractiveJob(ctx, "reserved", nil, time.Hour); !errors.Is(err, sqlite.ErrNotFound) {
+		t.Fatalf("automatic continuation consumed reserved capacity: %v", err)
+	}
+	next, err := db.ClaimJob(ctx, "background", nil, time.Hour)
+	if err != nil || next.ID != job.ID || next.Priority != checkpoint.BackgroundPriority {
+		t.Fatalf("automatic continuation priority: %+v %v", next, err)
+	}
+	var continued seasonCheckpoint
+	if err := json.Unmarshal([]byte(next.Payload), &continued); err != nil || continued.Manual {
+		t.Fatalf("manual epoch persisted after expiry: %+v %v", continued, err)
+	}
+}
+
+func TestFreshManualSeasonRequestSurvivesEpochCompletion(t *testing.T) {
+	for _, before := range []bool{true, false} {
+		name := "request after checkpoint"
+		if before {
+			name = "request before checkpoint"
+		}
+		t.Run(name, func(t *testing.T) {
+			svc, db, itemID, _ := seriesFixture(t)
+			ctx := context.Background()
+			request := func() {
+				t.Helper()
+				if _, err := svc.AutoSearchItem(WithManualSearch(ctx), itemID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			request()
+			job, err := db.ClaimInteractiveJob(ctx, "finishing-epoch", nil, time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var checkpoint seasonCheckpoint
+			if err := json.Unmarshal([]byte(job.Payload), &checkpoint); err != nil {
+				t.Fatal(err)
+			}
+			oldGeneration := checkpoint.ManualGeneration
+			checkpoint.endManualEpoch()
+			if before {
+				request()
+			}
+			if err := svc.saveSeasonCheckpoint(ctx, job, checkpoint); err != nil {
+				t.Fatal(err)
+			}
+			if !before {
+				request()
+			}
+			saved, err := db.GetJob(ctx, job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(saved.Payload), &checkpoint); err != nil {
+				t.Fatal(err)
+			}
+			if !checkpoint.Manual || checkpoint.ManualGeneration <= oldGeneration || saved.Priority != domain.JobPriorityInteractive || saved.LeaseOwner != job.LeaseOwner || saved.Attempts != job.Attempts {
+				t.Fatalf("fresh manual request lost at epoch boundary: checkpoint=%+v job=%+v", checkpoint, saved)
+			}
+			if err := db.DeferClaimedJob(ctx, job, "automatic epoch scheduled before fresh request", time.Now().Add(24*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			next, err := db.ClaimInteractiveJob(ctx, "reserved", nil, time.Hour)
+			if err != nil || next.ID != job.ID {
+				t.Fatalf("fresh manual request not claimable: %+v %v", next, err)
+			}
+		})
+	}
+}
+
+func TestInteractiveSeasonSweepKeepsPriorityDuringItsRequestedEpoch(t *testing.T) {
+	svc, db, itemID, _ := seriesFixture(t)
+	ctx := context.Background()
+	// A manually triggered sweep keeps automatic provider budgeting.
+	if _, err := svc.AutoSearchItem(domain.WithInteractiveJob(ctx), itemID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := db.ClaimInteractiveJob(ctx, "sweep", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint seasonCheckpoint
+	if err := json.Unmarshal([]byte(job.Payload), &checkpoint); err != nil || checkpoint.Manual {
+		t.Fatalf("sweep changed provider budgeting: %+v %v", checkpoint, err)
+	}
+	if err := svc.saveSeasonCheckpoint(ctx, job, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := db.GetJob(ctx, job.ID)
+	if err != nil || saved.Priority != domain.JobPriorityInteractive {
+		t.Fatalf("checkpoint prematurely demoted requested epoch: %+v %v", saved, err)
+	}
+}
+
+func TestFreshManualRequestDuringExpiredSeasonEpochIsImmediatelyEligible(t *testing.T) {
+	svc, db, itemID, _ := seriesFixture(t)
+	ctx := context.Background()
+	if _, err := svc.AutoSearchItem(WithManualSearch(ctx), itemID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := db.ClaimInteractiveJob(ctx, "old-manual-epoch", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint seasonCheckpoint
+	if err := json.Unmarshal([]byte(job.Payload), &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint.Started = time.Now().Add(-25 * time.Hour)
+	checkpoint.Deadline = time.Now().Add(-time.Hour)
+	if err := svc.saveSeasonCheckpoint(ctx, job, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	job, err = db.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A fresh press lands while a worker is still consuming the previous request.
+	if _, err := svc.AutoSearchItem(WithManualSearch(ctx), itemID); err != nil {
+		t.Fatal(err)
+	}
+	var deferred *sqlite.BudgetDeferred
+	if err := svc.handleSeasonSearch(ctx, job); !errors.As(err, &deferred) || time.Until(deferred.At) > time.Second {
+		t.Fatalf("fresh request inherited old epoch's delay: %v", err)
+	}
+	if err := db.DeferClaimedJob(ctx, job, deferred.Reason, deferred.At); err != nil {
+		t.Fatal(err)
+	}
+	next, err := db.ClaimInteractiveJob(ctx, "reserved", nil, time.Hour)
+	if err != nil || next.ID != job.ID {
+		t.Fatalf("fresh request was parked: %+v %v", next, err)
 	}
 }

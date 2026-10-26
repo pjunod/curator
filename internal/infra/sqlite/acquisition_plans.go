@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -282,11 +283,31 @@ func (d *DB) ParkDownload(ctx context.Context, id int64, reason string) error {
 	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET parked_at=CASE WHEN parked_at=0 THEN ? ELSE parked_at END,parked_reason=CASE WHEN parked_reason LIKE 'operator cancellation%' THEN parked_reason ELSE ? END WHERE id=? AND superseded=0`, time.Now().UnixMilli(), reason, id)
 	return err
 }
-func (d *DB) UpdateJobCheckpoint(ctx context.Context, id int64, owner, payload string) error {
+func (d *DB) UpdateJobCheckpoint(ctx context.Context, id int64, owner, payload string, manualSpent bool, backgroundPriority int64) error {
 	if len(payload) > 2<<20 {
 		return fmt.Errorf("discovery checkpoint exceeds 2 MiB")
 	}
-	res, err := d.W.ExecContext(ctx, `UPDATE jobs SET payload=?,updated_at=? WHERE id=? AND state='leased' AND lease_owner=? AND lease_expires_at>?`, payload, time.Now().UnixMilli(), id, owner, time.Now().UnixMilli())
+	// The request can land before or after this write. Keep a newer stored
+	// generation, or let the later promotion overwrite this checkpoint. A
+	// consumed manual epoch demotes only when no fresh request superseded it.
+	now := time.Now().UnixMilli()
+	res, err := d.W.ExecContext(ctx, `
+        WITH incoming(payload,manual_spent,background_priority,ts) AS (VALUES(?,?,?,?))
+        UPDATE jobs SET
+          payload=CASE WHEN COALESCE(json_extract(jobs.payload,'$.manualGeneration'),0)
+                              > COALESCE(json_extract(incoming.payload,'$.manualGeneration'),0)
+            THEN json_set(incoming.payload,'$.manual',json('true'),
+                          '$.manualGeneration',json_extract(jobs.payload,'$.manualGeneration'))
+            ELSE incoming.payload END,
+          priority=CASE WHEN COALESCE(json_extract(jobs.payload,'$.manualGeneration'),0)
+                               > COALESCE(json_extract(incoming.payload,'$.manualGeneration'),0)
+                            OR COALESCE(json_extract(incoming.payload,'$.manual'),0)=1
+            THEN ? WHEN incoming.manual_spent THEN incoming.background_priority
+            ELSE jobs.priority END,
+          updated_at=incoming.ts
+        FROM incoming
+        WHERE jobs.id=? AND state='leased' AND lease_owner=? AND lease_expires_at>incoming.ts`,
+		payload, manualSpent, backgroundPriority, now, domain.JobPriorityInteractive, id, owner)
 	if err != nil {
 		return err
 	}

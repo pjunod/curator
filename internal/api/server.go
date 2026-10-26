@@ -15,6 +15,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/app/recommendation"
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/scheduler"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -110,7 +111,9 @@ func (s *Server) Handler() http.Handler {
 			writeError(w, http.StatusBadRequest, err.Error())
 		},
 	})
-	mux.Handle("/api/v1/", s.noteCallers(s.authGuard(apiHandler)))
+	mux.Handle("/api/v1/", s.noteCallers(s.authGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiHandler.ServeHTTP(w, r.WithContext(domain.WithInteractiveJob(r.Context())))
+	}))))
 	mux.Handle("/metrics", s.metricsHandler())
 	// The compat personalities are machine callers by definition — Prowlarr,
 	// Jellyseerr, Bazarr — so they belong on the same list.

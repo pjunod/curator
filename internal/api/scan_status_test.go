@@ -141,3 +141,27 @@ func TestCorruptScanReportDoesNotBecomeSuccessOrEmptyResults(t *testing.T) {
 		}
 	}
 }
+
+func TestManualScanPromotesExistingScheduledScan(t *testing.T) {
+	e := newAPIEnv(t)
+	e.lib.WithQueue(jobs.New(e.db, e.bus, nil, jobs.Options{}))
+	ctx := context.Background()
+	if err := e.lib.EnqueueScan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	scheduled, err := e.db.LatestJob(ctx, library.JobScan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.EnqueueJob(ctx, domain.Job{Kind: "background", Priority: 1}); err != nil {
+		t.Fatal(err)
+	}
+	rr := do(t, e.h, http.MethodPost, "/api/v1/library/scan", "")
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("manual scan: %d %s", rr.Code, rr.Body.String())
+	}
+	claimed, err := e.db.ClaimInteractiveJob(ctx, "worker", nil, time.Minute)
+	if err != nil || claimed.ID != scheduled.ID || claimed.Priority != domain.JobPriorityInteractive {
+		t.Fatalf("manual scan did not promote queued scan: %+v %v", claimed, err)
+	}
+}

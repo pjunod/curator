@@ -106,9 +106,9 @@ func (s *Service) WithQueue(q JobEnqueuer) *Service {
 }
 
 // EnqueueScan asks for a reconcile. The dedupe key means requesting a scan
-// while one is already queued or running is a no-op rather than a second
-// scan — which is the behaviour a "Scan now" button wants, and the behaviour
-// two instances need.
+// while one is already queued or running coalesces rather than making a second
+// scan. An interactive request also promotes an already queued scan, so a
+// "Scan now" click takes priority while two instances still coalesce.
 //
 // Without a queue configured the scan runs inline, so nothing regresses on a
 // deployment that has not adopted the queue.

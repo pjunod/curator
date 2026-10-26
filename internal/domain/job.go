@@ -1,6 +1,27 @@
 package domain
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+// JobPriorityInteractive outranks periodic work (whose priorities are positive).
+// Zero remains the store's default priority.
+const JobPriorityInteractive int64 = -100
+
+type interactiveJobKey struct{}
+
+// WithInteractiveJob marks enqueue operations caused by an explicit request.
+// Workers do not inherit it: a scan's automatic probe backfill stays background.
+func WithInteractiveJob(ctx context.Context) context.Context {
+	return context.WithValue(ctx, interactiveJobKey{}, true)
+}
+
+// IsInteractiveJob reports whether enqueueing is part of an explicit request.
+func IsInteractiveJob(ctx context.Context) bool {
+	interactive, _ := ctx.Value(interactiveJobKey{}).(bool)
+	return interactive
+}
 
 // JobState is where a unit of work is in its lifecycle.
 type JobState string

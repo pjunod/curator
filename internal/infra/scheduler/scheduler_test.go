@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 )
 
@@ -192,5 +193,40 @@ func TestPersistedStateSeedsSnapshot(t *testing.T) {
 	}
 	if !snap[0].LastRunAt.Equal(then) || snap[0].LastError != "old failure" {
 		t.Errorf("persisted state not seeded: %+v", snap[0])
+	}
+}
+
+func TestOnlyManualTriggersMarkEnqueuedJobsInteractive(t *testing.T) {
+	s := New(nil, nil, nil)
+	runs := make(chan bool, 3)
+	if err := s.Register(Task{Name: "scan", Interval: time.Hour, RunOnStart: true, Fn: func(ctx context.Context) error {
+		runs <- domain.IsInteractiveJob(ctx)
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); s.Wait() }()
+	if err := s.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case interactive := <-runs:
+		if interactive {
+			t.Fatal("startup marked interactive")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("startup did not run")
+	}
+	if err := s.Trigger("scan"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case interactive := <-runs:
+		if !interactive {
+			t.Fatal("manual trigger lost priority")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("manual trigger did not run")
 	}
 }

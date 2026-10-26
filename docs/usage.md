@@ -394,6 +394,13 @@ and measuring files continue as separate jobs.
 
 Scans also run on a 12-hour schedule.
 
+Ad-hoc requests take priority over scheduled queue work. One worker is reserved
+for these requests, in addition to the two general workers, so long-running
+background jobs cannot occupy every slot. Requesting an already queued scan
+promotes that job without creating a duplicate. Reopen **Scanning…** to
+promote an unstarted scan queued before this update. Running jobs finish normally;
+retry backoff, provider quota deadlines, and file-access routing still apply.
+
 ## Monitoring seasons and episodes
 
 On a series page, each season row carries a checkbox. Unticking it stops
