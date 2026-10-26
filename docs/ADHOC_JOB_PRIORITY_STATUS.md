@@ -28,11 +28,14 @@ quota deadlines and retry backoff remain binding even for ad-hoc requests.
   promotion errors when the same job makes progress.
 - [x] Lint and the full Go suite passed with the pinned toolchain. All 124 web
   unit tests and all 192 browser tests passed with Node 22.
+- [x] All Go race tests passed. API and acquisition exceeded the initial
+  ten-minute default; both passed with CI's thirty-minute timeout. Combined
+  coverage is **86.1%**, above the unchanged **86.0%** floor.
 - [x] Open [PR #73](https://github.com/pjunod/curator/pull/73).
 - [ ] Complete CI, including the full race/coverage gate, before merge.
 - [ ] Archive the task-owned managed worktree after completion.
 
 The PR body is the live delivery record for final CI, merge, and cleanup.
-The extra local race/coverage run uses the shared compiler cache; CI runs its
-own full race/coverage gate with the repository's 30-minute test timeout.
+The local race/coverage runs used the shared compiler cache. CI runs its own
+full race/coverage gate with the repository's 30-minute test timeout.
 Source work stays in the task-owned managed worktree until delivery completes.
