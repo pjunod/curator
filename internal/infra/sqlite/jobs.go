@@ -183,6 +183,18 @@ func (d *DB) GetJob(ctx context.Context, id int64) (domain.Job, error) {
 	return jobFromRow(r), nil
 }
 
+// LatestJob returns the most recently requested job of a kind. Inspecting the
+// durable job, rather than its scheduler trigger, tracks the actual work.
+func (d *DB) LatestJob(ctx context.Context, kind string) (domain.Job, error) {
+	j, err := scanJob(d.R.QueryRowContext(ctx, `
+		SELECT id, kind, payload, state, priority, run_after, attempts,
+		       max_attempts, last_error, dedupe_key, required_capability,
+		       affinity_node, lease_owner, lease_expires_at,
+		       created_at, updated_at, finished_at
+		  FROM jobs WHERE kind = ? ORDER BY id DESC LIMIT 1`, kind))
+	return j, wrapNotFound(err)
+}
+
 // ListJobsByState returns up to limit jobs in claim order.
 func (d *DB) ListJobsByState(ctx context.Context, state string, limit int64) ([]domain.Job, error) {
 	rows, err := d.Read.ListJobsByState(ctx, sqlitegen.ListJobsByStateParams{

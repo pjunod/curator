@@ -749,13 +749,29 @@ func (s *Server) RepairLibraryFolder(w http.ResponseWriter, r *http.Request, id 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ScanLibrary implements POST /library/scan: queues the reconcile task.
+// ScanLibrary implements POST /library/scan. Enqueue directly so acceptance
+// means the durable job exists, and enqueue failures reach the caller.
 func (s *Server) ScanLibrary(w http.ResponseWriter, r *http.Request) {
-	if err := s.deps.Scheduler.Trigger(ScanTaskName); err != nil {
+	if err := s.deps.Library.EnqueueScan(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	status, err := s.deps.Library.ScanStatus(r.Context())
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, status)
+}
+
+// GetScanStatus implements GET /library/scan.
+func (s *Server) GetScanStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := s.deps.Library.ScanStatus(r.Context())
+	if err != nil {
+		s.libraryErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 // GetScanReport implements GET /library/scan/report.

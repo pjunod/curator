@@ -959,6 +959,33 @@ func (e RootKind) Valid() bool {
 	}
 }
 
+// Defines values for ScanStatusState.
+const (
+	ScanStatusStateCompleted ScanStatusState = "completed"
+	ScanStatusStateFailed    ScanStatusState = "failed"
+	ScanStatusStateIdle      ScanStatusState = "idle"
+	ScanStatusStateQueued    ScanStatusState = "queued"
+	ScanStatusStateRunning   ScanStatusState = "running"
+)
+
+// Valid indicates whether the value is a known member of the ScanStatusState enum.
+func (e ScanStatusState) Valid() bool {
+	switch e {
+	case ScanStatusStateCompleted:
+		return true
+	case ScanStatusStateFailed:
+		return true
+	case ScanStatusStateIdle:
+		return true
+	case ScanStatusStateQueued:
+		return true
+	case ScanStatusStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SeriesMonitorMode.
 const (
 	SeriesMonitorModeAll        SeriesMonitorMode = "all"
@@ -2928,6 +2955,20 @@ type ScanReport struct {
 	UnmatchedTotal *int `json:"unmatchedTotal,omitempty"`
 }
 
+// ScanStatus defines model for ScanStatus.
+type ScanStatus struct {
+	Attempts *int64  `json:"attempts,omitempty"`
+	Error    *string `json:"error,omitempty"`
+	Id       *int64  `json:"id,omitempty"`
+
+	// RequestedAt Earliest timestamp for a report belonging to this scan.
+	RequestedAt *time.Time      `json:"requestedAt,omitempty"`
+	State       ScanStatusState `json:"state"`
+}
+
+// ScanStatusState defines model for ScanStatus.State.
+type ScanStatusState string
+
 // ScannedFile defines model for ScannedFile.
 type ScannedFile struct {
 	Episodes []int `json:"episodes"`
@@ -3832,6 +3873,9 @@ type ServerInterface interface {
 	// GetReviewQueue One page of the adoption review queue
 	// (GET /library/review)
 	GetReviewQueue(w http.ResponseWriter, r *http.Request, params GetReviewQueueParams)
+	// GetScanStatus Status of the latest disk scan job
+	// (GET /library/scan)
+	GetScanStatus(w http.ResponseWriter, r *http.Request)
 	// ScanLibrary Trigger a disk scan / reconcile
 	// (POST /library/scan)
 	ScanLibrary(w http.ResponseWriter, r *http.Request)
@@ -5392,6 +5436,20 @@ func (siw *ServerInterfaceWrapper) GetReviewQueue(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReviewQueue(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetScanStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetScanStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetScanStatus(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7565,6 +7623,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/placement-suggestion", wrapper.GetLibraryPlacementSuggestion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/aliases", wrapper.AddLibraryAlias)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}/aliases/{aliasId}", wrapper.DeleteLibraryAlias)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan", wrapper.GetScanStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/scan", wrapper.ScanLibrary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/scan/report", wrapper.GetScanReport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/review", wrapper.GetReviewQueue)

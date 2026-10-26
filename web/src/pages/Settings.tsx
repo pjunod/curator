@@ -16,7 +16,6 @@ import {
   getSettings,
   runAdoption,
   setRootAutoAdopt,
-  triggerScan,
   unignoreDir,
   updateRootFolderKind,
   updateSettings,
@@ -28,6 +27,7 @@ import { NotifierSettings } from './SettingsNotifiers'
 import { PathInput } from '../PathInput'
 import { ReviewWindow } from '../ReviewWindow'
 import { MissingFolders } from '../MissingFolders'
+import { DiskScanControl } from '../DiskScan'
 import { RecoveryEnableSettings } from './Recovery'
 import { ResolvePanel } from './Activity'
 
@@ -129,15 +129,6 @@ export function SettingsPage() {
   const autoAdopt = useMutation({
     mutationFn: ({ id, on }: { id: number; on: boolean }) => setRootAutoAdopt(id, on),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
-  })
-  const scan = useMutation({
-    mutationFn: triggerScan,
-    onSuccess: () => {
-      setTimeout(() => {
-        void qc.invalidateQueries({ queryKey: ['scan-report'] })
-        void qc.invalidateQueries({ queryKey: ['review'] })
-      }, 1500)
-    },
   })
 
   return (
@@ -356,9 +347,7 @@ export function SettingsPage() {
 
         <h3 style={{ marginTop: 18 }}>Disk scan</h3>
         <div className="form-row">
-          <button onClick={() => scan.mutate()} disabled={scan.isPending}>
-            Scan now
-          </button>
+          <DiskScanControl label="Scan now" />
           <button onClick={() => adopt.mutate()} disabled={adopt.isPending}>
             {adopt.isPending ? 'Matching…' : 'Match unmatched folders'}
           </button>

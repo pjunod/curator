@@ -249,6 +249,8 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
 - **[Architecture](docs/architecture.md)** and **[ADRs](docs/adr/)** — the design and why.
 - **[Release identity plan](docs/plan-release-identity.md)** — implementation contract for
   aliases, optional country qualifiers, direct TVDB/IMDb lookup, and indexer ID fallbacks.
+- **[Disk scan status](docs/SCAN_DISK_STATUS.md)** — visible progress, review,
+  validation, and delivery of the scan feedback fix.
 - **[Release identity status](docs/RELEASE_IDENTITY_STATUS.md)** — live implementation,
   review, validation, and delivery state for that plan.
 - **[Download failure fix plan](docs/RUNNER_FAILURE_FIX_PLAN.md)** — Monster root

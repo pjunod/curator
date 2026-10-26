@@ -34,7 +34,7 @@ type SettingsStore interface {
 	SetMeta(ctx context.Context, key, value string) error
 }
 
-// ScanTaskName is the scheduler task POST /library/scan triggers.
+// ScanTaskName is the periodic scheduler task that enqueues library scans.
 const ScanTaskName = "library.reconcile"
 
 // Deps is everything the server needs, wired in cmd/monarr.

@@ -5,10 +5,10 @@ import type { BookType, MediaItemSummary, MediaKind } from '../api'
 import {
   ACTIVE_DOWNLOAD_STATES, bulkEditLibrary, completeness, getLibrary,
   getProfiles, getQueue, getReviewQueue, getScanReport, getSettings, posterUrl,
-  triggerScan,
 } from '../api'
 import { PAGE_SIZES, Pager, PageSizePicker, sliceForPage } from '../Pager'
 import { CardSizePicker } from '../CardSizePicker'
+import { DiskScanControl } from '../DiskScan'
 
 // CardBadges: the poster stays a poster. Nothing is drawn over the artwork —
 // quality, target, upgrade state and ratings all live on the item page, which
@@ -335,18 +335,6 @@ export function LibraryPage() {
     return counts
   }, [items.data])
 
-  const scan = useMutation({
-    mutationFn: triggerScan,
-    onSuccess: () => {
-      // The scan runs async; refresh the report and library shortly after.
-      setTimeout(() => {
-        void qc.invalidateQueries({ queryKey: ['scan-report'] })
-        void qc.invalidateQueries({ queryKey: ['review'] })
-        void qc.invalidateQueries({ queryKey: ['library'] })
-      }, 1500)
-    },
-  })
-
   // Mass editor (Phase 5): select items, apply monitoring/profile at once.
   const [editing, setEditing] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -478,9 +466,7 @@ export function LibraryPage() {
         </div>
         <CardSizePicker />
         <div className="head-actions">
-          <button onClick={() => scan.mutate()} disabled={scan.isPending}>
-            Scan disk
-          </button>
+          <DiskScanControl label="Scan disk" />
           <button onClick={() => { setEditing(!editing); setSelected(new Set()) }}>
             {editing ? 'Done' : 'Edit'}
           </button>

@@ -100,6 +100,14 @@ so re-adding the same root restores the association.
 
 ### Disk scan — repairing folders with recorded media
 
+**Scan now** opens the same **Disk scan** window as **Scan disk** on the
+Library page: queued · running · waiting to retry · complete · failed. While
+active, **Scanning…** reopens the current scan without queueing another.
+Completion refreshes the report and library automatically; request and job
+errors appear inside the window. Status follows the durable scan job, so a
+timer finishing its enqueue step does not claim the scan has finished.
+Folder matching and file measurement continue separately after the scan.
+
 **Folders needing attention** lists entries with previously recorded media
 whose assigned folder is missing, inaccessible, or no longer a directory.
 A title awaiting its first download has no folder to repair and stays out of

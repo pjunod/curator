@@ -729,7 +729,15 @@ export async function recommendSeries(body: RecommendationRequest, signal?: Abor
 export const getRecommendationStatus = () => get<RecommendationStatus>('/metadata/recommendations/status')
 export const installRecommendationModel = () => send('POST', '/metadata/recommendations/model/install')
 export const removeRecommendationModel = () => send('DELETE', '/metadata/recommendations/model')
-export const triggerScan = () => send('POST', '/library/scan')
+export interface ScanStatus {
+  requestedAt?: string
+  id?: number
+  state: 'idle' | 'queued' | 'running' | 'completed' | 'failed'
+  attempts?: number
+  error?: string
+}
+export const getScanStatus = () => get<ScanStatus>('/library/scan')
+export const triggerScan = () => send<ScanStatus>('POST', '/library/scan')
 export const getScanReport = async (): Promise<ScanReport | null> => {
   const res = await fetch('/api/v1/library/scan/report')
   if (res.status === 404) return null

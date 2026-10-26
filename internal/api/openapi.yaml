@@ -450,12 +450,24 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
 
   /library/scan:
+    get:
+      operationId: getScanStatus
+      summary: Status of the latest disk scan job
+      responses:
+        "200":
+          description: Durable scan state, including retries and failures.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScanStatus" }
     post:
       operationId: scanLibrary
       summary: Trigger a disk scan / reconcile
       responses:
         "202":
-          description: Scan requested (runs via the scheduler; watch SSE).
+          description: Scan queued, or an existing active scan reused.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScanStatus" }
 
   /library/scan/report:
     get:
@@ -4069,6 +4081,21 @@ components:
           type: string
         name:
           type: string
+
+    ScanStatus:
+      type: object
+      required: [state]
+      properties:
+        id: { type: integer, format: int64 }
+        requestedAt:
+          type: string
+          format: date-time
+          description: Earliest timestamp for a report belonging to this scan.
+        state:
+          type: string
+          enum: [idle, queued, running, completed, failed]
+        attempts: { type: integer, format: int64 }
+        error: { type: string }
 
     ScanReport:
       type: object
