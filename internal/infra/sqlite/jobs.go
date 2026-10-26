@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -31,6 +32,11 @@ func (d *DB) EnqueueJob(ctx context.Context, j domain.Job) (int64, error) {
 		maxAttempts = 3
 	}
 	priority := j.Priority
+	// Some transactional services enqueue directly without the runtime Queue.
+	// Request origin must carry the same priority at the storage boundary.
+	if domain.IsInteractiveJob(ctx) {
+		priority = domain.JobPriorityInteractive
+	}
 	if priority == 0 {
 		priority = 100
 	}
@@ -310,4 +316,37 @@ func scanJob(row *sql.Row) (domain.Job, error) {
 func (d *DB) DeferJob(ctx context.Context, id int64, cause string, at time.Time) error {
 	_, err := d.W.ExecContext(ctx, `UPDATE jobs SET state='queued',attempts=max(0,attempts-1),run_after=?,last_error=?,lease_owner='',lease_expires_at=0,updated_at=? WHERE id=? AND state='leased'`, at.UnixMilli(), cause, time.Now().UnixMilli(), id)
 	return err
+}
+
+// DeferClaimedJob refunds a budget deferral without parking a newer manual
+// request that arrived while this claim was running. Comparing generations in
+// the write closes the window between the handler's final check and deferral.
+func (d *DB) DeferClaimedJob(ctx context.Context, job domain.Job, cause string, at time.Time) error {
+	var claimed struct {
+		ManualGeneration int64 `json:"manualGeneration"`
+	}
+	_ = json.Unmarshal([]byte(job.Payload), &claimed)
+	now := time.Now().UnixMilli()
+	result, err := d.W.ExecContext(ctx, `UPDATE jobs SET state='queued',
+   attempts=max(0,attempts-1),
+   run_after=CASE WHEN json_valid(payload) THEN
+     CASE WHEN COALESCE(json_extract(payload,'$.manualGeneration'),0)>?
+                    AND COALESCE(json_extract(payload,'$.manual'),0)=1
+       THEN min(run_after,?) ELSE ? END
+     ELSE ? END,
+   last_error=?,lease_owner='',lease_expires_at=0,updated_at=?
+   WHERE id=? AND state='leased' AND lease_owner=? AND lease_expires_at>?`,
+		claimed.ManualGeneration, at.UnixMilli(), at.UnixMilli(), at.UnixMilli(),
+		cause, now, job.ID, job.LeaseOwner, now)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return errors.New("deferred job lease lost")
+	}
+	return nil
 }

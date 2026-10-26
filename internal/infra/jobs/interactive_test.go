@@ -2,6 +2,7 @@ package jobs_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -64,4 +65,47 @@ func TestInteractiveJobRunsWhileBackgroundWorkersAreOccupied(t *testing.T) {
 		t.Fatal("reserved worker consumed background work")
 	default:
 	}
+}
+
+type automaticEpochDeferral struct{ until time.Time }
+
+func (e automaticEpochDeferral) Error() string            { return "automatic epoch deferred" }
+func (e automaticEpochDeferral) DeferredUntil() time.Time { return e.until }
+
+func TestNewManualGenerationCannotBeParkedByAnOlderClaim(t *testing.T) {
+	db := newStore(t)
+	q := jobs.New(db, nil, nil, jobs.Options{Workers: 1, PollInterval: 5 * time.Millisecond})
+	reran := make(chan struct{}, 1)
+	if err := q.Register("generation", func(ctx context.Context, j domain.Job) error {
+		var p struct {
+			Generation int `json:"manualGeneration"`
+		}
+		if err := json.Unmarshal([]byte(j.Payload), &p); err != nil {
+			return err
+		}
+		if p.Generation == 1 {
+			// The new request lands after this handler chose a long automatic delay.
+			_, err := db.W.ExecContext(ctx, `UPDATE jobs SET payload=?,run_after=? WHERE id=?`, `{"manual":true,"manualGeneration":2}`, time.Now().UnixMilli(), j.ID)
+			if err != nil {
+				return err
+			}
+			return automaticEpochDeferral{time.Now().Add(24 * time.Hour)}
+		}
+		reran <- struct{}{}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); q.Wait() }()
+	if _, err := q.Enqueue(domain.WithInteractiveJob(ctx), domain.Job{Kind: "generation", Payload: `{"manual":true,"manualGeneration":1}`}); err != nil {
+		t.Fatal(err)
+	}
+	q.Start(ctx)
+	select {
+	case <-reran:
+	case <-time.After(5 * time.Second):
+		t.Fatal("old claim parked the newer manual request for a day")
+	}
+	waitFor(t, "new request to complete", func() bool { counts, err := q.Counts(ctx); return err == nil && counts["done"] == 1 })
 }

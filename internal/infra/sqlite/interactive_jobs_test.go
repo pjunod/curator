@@ -17,7 +17,7 @@ func TestDuplicateRequestPromotesQueuedJobWithoutResettingItsDeadline(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.EnqueueJob(ctx, domain.Job{Kind: "scan", DedupeKey: "scan", Priority: domain.JobPriorityInteractive}); !errors.Is(err, ErrDuplicateJob) {
+	if _, err := db.EnqueueJob(domain.WithInteractiveJob(ctx), domain.Job{Kind: "scan", DedupeKey: "scan", Priority: 50}); !errors.Is(err, ErrDuplicateJob) {
 		t.Fatal(err)
 	}
 	j, err := db.GetJob(ctx, id)
@@ -86,5 +86,95 @@ func TestDuplicateRequestDoesNotChangeRunningJob(t *testing.T) {
 	got, err := db.GetJob(ctx, id)
 	if err != nil || got.Priority != 50 || got.State != domain.JobLeased || got.Attempts != leased.Attempts || !got.LeaseExpiresAt.Equal(leased.LeaseExpiresAt) {
 		t.Fatalf("running job changed: %+v %v", got, err)
+	}
+}
+
+// Season acquisition writes directly through the store, without jobs.Queue.
+func TestDirectStoreEnqueueHonorsInteractiveOrigin(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	for _, priority := range []int64{0, 50, 110} {
+		id, err := db.EnqueueJob(domain.WithInteractiveJob(ctx), domain.Job{Kind: "direct", Priority: priority})
+		if err != nil {
+			t.Fatal(err)
+		}
+		job, err := db.ClaimInteractiveJob(ctx, "worker", nil, time.Minute)
+		if err != nil || job.ID != id || job.Priority != domain.JobPriorityInteractive {
+			t.Fatalf("direct enqueue bypassed interactive priority: %+v %v", job, err)
+		}
+		if err := db.CompleteJob(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestGuardedDeferralKeepsQuotaDeadlineWithoutANewerManualRequest(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	for _, payload := range []string{`{}`, `{"manual":true,"manualGeneration":2}`, `{"manual":false,"manualGeneration":3}`} {
+		id, err := db.EnqueueJob(ctx, domain.Job{Kind: "quota", Payload: payload, Priority: domain.JobPriorityInteractive})
+		if err != nil {
+			t.Fatal(err)
+		}
+		job, err := db.ClaimInteractiveJob(ctx, "worker", nil, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(2 * time.Hour).Truncate(time.Millisecond)
+		if err := db.DeferClaimedJob(ctx, job, "quota exhausted", deadline); err != nil {
+			t.Fatal(err)
+		}
+		saved, err := db.GetJob(ctx, id)
+		if err != nil || !saved.RunAfter.Equal(deadline) || saved.State != domain.JobQueued || saved.Attempts != 0 || saved.LeaseOwner != "" {
+			t.Fatalf("quota deferral changed deadline or lease: %+v %v", saved, err)
+		}
+	}
+	if _, err := db.ClaimInteractiveJob(ctx, "reserved", nil, time.Hour); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("quota-bound job claimed early: %v", err)
+	}
+}
+
+func TestGuardedDeferralCannotAlterAnotherLeaseOrCompletedJob(t *testing.T) {
+	for _, state := range []string{"expired", "reclaimed", "completed"} {
+		t.Run(state, func(t *testing.T) {
+			db := openTestDB(t)
+			ctx := context.Background()
+			id, err := db.EnqueueJob(ctx, domain.Job{Kind: "quota", Priority: domain.JobPriorityInteractive})
+			if err != nil {
+				t.Fatal(err)
+			}
+			job, err := db.ClaimInteractiveJob(ctx, "old-worker", nil, time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state == "completed" {
+				if err := db.CompleteJob(ctx, id); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if _, err := db.W.ExecContext(ctx, `UPDATE jobs SET lease_expires_at=? WHERE id=?`, time.Now().Add(-time.Second).UnixMilli(), id); err != nil {
+					t.Fatal(err)
+				}
+				if state == "reclaimed" {
+					if _, err := db.ReclaimExpiredLeases(ctx); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := db.ClaimInteractiveJob(ctx, "new-worker", nil, time.Hour); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			before, err := db.GetJob(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.DeferClaimedJob(ctx, job, "stale deferral", time.Now().Add(time.Hour)); err == nil {
+				t.Fatal("stale claim changed durable scheduling")
+			}
+			after, err := db.GetJob(ctx, id)
+			if err != nil || after.State != before.State || after.LeaseOwner != before.LeaseOwner || after.Attempts != before.Attempts || !after.RunAfter.Equal(before.RunAfter) {
+				t.Fatalf("stale worker altered job: before=%+v after=%+v err=%v", before, after, err)
+			}
+		})
 	}
 }

@@ -316,6 +316,12 @@ func (q *Queue) finish(ctx context.Context, job domain.Job, runErr error) {
 	switch {
 	case errors.As(runErr, &deferred):
 		if store, ok := q.store.(interface {
+			DeferClaimedJob(context.Context, domain.Job, string, time.Time) error
+		}); ok {
+			if err := store.DeferClaimedJob(recCtx, job, runErr.Error(), deferred.DeferredUntil()); err != nil {
+				q.log.Error("jobs: defer failed", "err", err)
+			}
+		} else if store, ok := q.store.(interface {
 			DeferJob(context.Context, int64, string, time.Time) error
 		}); ok {
 			if err := store.DeferJob(recCtx, job.ID, runErr.Error(), deferred.DeferredUntil()); err != nil {
