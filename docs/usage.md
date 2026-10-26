@@ -383,6 +383,15 @@ existing collection and run **Scan disk** (Library page):
   See [folder repair](settings.md#disk-scan--repairing-folders-with-recorded-media)
   for validation rules and recovery when the files themselves are gone.
 
+The button opens a **Disk scan** window immediately and changes to
+**Scanning…**. The window shows whether the scan is queued, running, waiting
+to retry, complete, or failed. Completion refreshes the library and folder
+review counts and shows the numbers of items scanned, files linked, and files
+removed. Close the window to keep using the app; **Scanning…** reopens the
+active scan without queueing another. You can leave the page and return to
+check it because its status is saved with the job. Matching unmatched folders
+and measuring files continue as separate jobs.
+
 Scans also run on a 12-hour schedule.
 
 ## Monitoring seasons and episodes

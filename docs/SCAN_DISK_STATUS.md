@@ -1,0 +1,54 @@
+# Disk scan status — visible progress through durable completion
+
+**Status:** review approved; final validation running · **Updated:** 2026-10-26 · **Version:** 0.38.1
+
+Companion to [usage](usage.md#adopting-an-existing-library) and
+[settings](settings.md#disk-scan--repairing-folders-with-recorded-media).
+This page records the scan feedback fix, review, validation, and delivery.
+
+## Behavior and implementation
+
+The previous buttons queued work silently and refreshed once after 1.5 seconds.
+The scheduler only enqueues the actual scan, so its completion cannot establish
+that the filesystem reconciliation finished.
+
+Library and Settings now open the shared action dialog immediately. Status
+comes from the latest durable `library.scan` job: queued · running · retrying ·
+complete · failed. The active button reopens progress without another request.
+Completion refreshes the library, report, and review counts. Background polling
+does not move scroll or focus. Closing the dialog restores focus to its opener.
+Adoption and file probing remain separate jobs after scan completion.
+
+The request enqueues directly so enqueue failures reach the initiating action.
+The status lookup uses a `(kind, id)` index in migration 0062. No media files or
+settings are changed by this status reporting.
+
+## Review and verification
+
+- [x] Port the earlier isolated fix onto main `6942993` in an independent clone.
+- [x] Preserve current Settings recovery routing and regenerate the API bindings.
+- [x] Bump from 0.38.0 to 0.38.1 and update usage/settings documentation.
+- [x] Adversarial agent review; three actionable findings corrected.
+  - Polling-confirmed jobs supersede a lost POST response error.
+  - Report timestamps must belong to the completed job before counts appear;
+    report errors remain visible and results keep retrying.
+  - Status reads cannot delay submission of the scan request.
+  - Unknown initial status cannot let historical completion hide a rejection.
+  - The rejected-request fixture changes GET state only after an accepted POST.
+- [x] Focused final rereview approved with no remaining actionable findings.
+- [ ] Final `make lint`, `make test`, `make test-web`, and `make test-e2e`.
+- [ ] CI and merge to main without bypassing protections.
+
+Browser coverage includes desktop and phone geometry, immediate request
+feedback, queued and long-running scans, dismissal and reopening, focus return,
+background polling, request rejection/retry, and durable worker failure.
+
+## Delivery and cleanup
+
+PR: pending creation. Merge: pending review and checks.
+
+After merge, remove the task-owned remote branch and independent clone. Remove
+only the earlier agent-created copies and temporary artifacts when their bytes
+still match this task's originals; preserve all unrelated owner work. The app
+refused archival of the earlier worktree because it treats it as the chat's
+primary checkout; retry through the owning app and retain it if still refused.
