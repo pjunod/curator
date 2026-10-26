@@ -84,6 +84,10 @@ func (f *fakeStore) ClaimJob(context.Context, string, []string, time.Duration) (
 	return j, nil
 }
 
+func (f *fakeStore) ClaimInteractiveJob(context.Context, string, []string, time.Duration) (domain.Job, error) {
+	return domain.Job{}, sqlite.ErrNotFound
+}
+
 func (f *fakeStore) CompleteJob(context.Context, int64) error {
 	f.note("complete")
 	f.mu.Lock()

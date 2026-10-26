@@ -217,3 +217,69 @@ test('an old completion cannot hide a rejected request when initial status was u
     unblockStatus()
   }
 })
+
+for (const width of [390, 1280]) {
+  for (const [path, label] of [['/', 'Scan disk'], ['/settings', 'Scan now']]) {
+    test(`${label} promotes an existing queued scan at ${width}px and exposes priority failures`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 700 })
+      let posts = 0
+      let reject = true
+      const scan = { id: 99, state: 'queued', attempts: 0, requestedAt: '2026-10-26T10:00:00Z' }
+      await page.route('**/api/v1/library/scan', (route) => {
+        if (route.request().method() === 'POST') {
+          posts++
+          return reject
+            ? route.fulfill({ status: 500, json: { message: 'queue unavailable' } })
+            : route.fulfill({ status: 202, json: scan })
+        }
+        return route.fulfill({ json: scan })
+      })
+      await page.goto(path)
+      const trigger = page.getByRole('button', { name: 'Scanning…', exact: true })
+      await trigger.scrollIntoViewIfNeeded()
+      await trigger.click()
+      const dialog = page.getByRole('dialog', { name: 'Disk scan', exact: true })
+      await expect(dialog.getByRole('alert')).toContainText('Could not prioritize disk scan: queue unavailable')
+      await expect(dialog.getByRole('alert')).toBeInViewport({ ratio: 1 })
+      expect(posts).toBe(1)
+      reject = false
+      await dialog.getByRole('button', { name: 'Retry priority request', exact: true }).click()
+      await expect(dialog.getByRole('status')).toContainText('Disk scan queued')
+      await expect(dialog.getByRole('status')).toBeInViewport({ ratio: 1 })
+      expect(posts).toBe(2)
+      await page.keyboard.press('Escape')
+      await expect(trigger).toBeFocused()
+    })
+  }
+}
+
+for (const nextState of ['running', 'queued', 'completed']) {
+  test(`a failed priority request yields to ${nextState} progress of the same scan`, async ({ page }) => {
+    let progressed = false
+    let posts = 0
+    await page.route('**/api/v1/library/scan', (route) => {
+      if (route.request().method() === 'POST') {
+        posts++
+        return route.fulfill({ status: 500, json: { message: 'queue unavailable' } })
+      }
+      return route.fulfill({ json: {
+        id: 101, state: progressed ? nextState : 'queued', attempts: progressed ? 1 : 0,
+        error: progressed && nextState === 'queued' ? 'disk unavailable' : '',
+        requestedAt: '2026-10-26T10:00:00Z',
+      } })
+    })
+    await page.route('**/api/v1/library/scan/report', (route) => route.fulfill({ json: {
+      scannedAt: '2026-10-26T11:00:00Z', rootsScanned: 1, itemsScanned: 12,
+      filesLinked: 8, filesRemoved: 2, unmatchedDirs: [], missingItems: [], missingPaths: [],
+    } }))
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Scanning…', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Disk scan', exact: true })
+    await expect(dialog.getByRole('alert')).toContainText('Could not prioritize disk scan')
+    progressed = true
+    await expect(dialog.getByRole('status')).toContainText(nextState === 'running' ? 'Scanning disk…'
+      : nextState === 'queued' ? 'waiting to retry after 1 attempt: disk unavailable' : '12 items scanned')
+    await expect(dialog.getByRole('alert')).toHaveCount(0)
+    expect(posts).toBe(1)
+  })
+}

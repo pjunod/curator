@@ -52,12 +52,16 @@ export function useDiskScan() {
   const previous = request.context?.previous
   const observedNewJob = !!previous && !!status.data && status.data.state !== 'idle' &&
     (status.data.id !== previous?.id || status.data.requestedAt !== previous?.requestedAt)
-  const observedActiveJob = state === 'queued' || state === 'running'
+  const observedActiveJob = (state === 'queued' || state === 'running') &&
+    previous?.state !== 'queued' && previous?.state !== 'running'
+  const observedPromotionProgress = previous?.state === 'queued' &&
+    (state === 'running' || state === 'completed' || state === 'failed' ||
+      (status.data?.attempts ?? 0) > (previous.attempts ?? 0))
   useEffect(() => {
     // Once durable work confirms an ambiguous request, do not resurrect its
     // transport error when that job later reaches a terminal state.
-    if (request.error && (observedNewJob || observedActiveJob)) request.reset()
-  }, [request.error, request.reset, observedNewJob, observedActiveJob])
+    if (request.error && (observedNewJob || observedActiveJob || observedPromotionProgress)) request.reset()
+  }, [request.error, request.reset, observedNewJob, observedActiveJob, observedPromotionProgress])
 
   return {
     start: () => request.mutate(),
@@ -66,14 +70,15 @@ export function useDiskScan() {
     status: status.data,
     report: reportMatchesScan(report.data) ? report.data : undefined,
     reportError: report.error,
-    requestError: observedNewJob || observedActiveJob ? null : request.error,
+    requestError: observedNewJob || observedActiveJob || observedPromotionProgress ? null : request.error,
+    promoting: previous?.state === 'queued',
     statusError: status.error,
   }
 }
 
 export function DiskScanFeedback({ scan }: { scan: ReturnType<typeof useDiskScan> }) {
   if (scan.requestError) {
-    return <div className="banner warning" role="alert">Could not start disk scan: {scan.requestError.message}</div>
+    return <div className="banner warning" role="alert">Could not {scan.promoting ? 'prioritize' : 'start'} disk scan: {scan.requestError.message}</div>
   }
   let message = ''
   if (scan.requesting) message = 'Requesting disk scan…'
@@ -109,13 +114,16 @@ export function DiskScanControl({ label }: { label: string }) {
     <button onClick={(event) => {
       focusActionTrigger(event)
       setOpen(true)
-      if (!scan.busy) scan.start()
+      // Reopening an unstarted scan promotes the durable job, including one
+      // queued by a timer or an older server. Retries keep their deadline.
+      if (!scan.busy || (!scan.requesting && scan.status?.state === 'queued' && !scan.status.attempts)) scan.start()
     }}>
       {scan.busy ? 'Scanning…' : label}
     </button>
     {open && <ActionDialog title="Disk scan" onClose={() => setOpen(false)}>
       <DiskScanFeedback scan={scan} />
       <p className="muted">You can close this window while the scan continues. Folder matching and file measurement run separately after the scan.</p>
+      {scan.requestError && scan.status?.state === 'queued' && <button onClick={scan.start}>Retry priority request</button>}
       {!scan.busy && <button onClick={scan.start}>
         {scan.requestError || scan.status?.state === 'failed' ? 'Try again' : 'Scan again'}
       </button>}

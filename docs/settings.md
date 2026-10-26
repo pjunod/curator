@@ -102,11 +102,19 @@ so re-adding the same root restores the association.
 
 **Scan now** opens the same **Disk scan** window as **Scan disk** on the
 Library page: queued · running · waiting to retry · complete · failed. While
-active, **Scanning…** reopens the current scan without queueing another.
+active, **Scanning…** reopens the current scan. Reopening an unstarted queued
+scan also requests priority for that same job.
 Completion refreshes the report and library automatically; request and job
 errors appear inside the window. Status follows the durable scan job, so a
 timer finishing its enqueue step does not claim the scan has finished.
 Folder matching and file measurement continue separately after the scan.
+
+Ad-hoc requests take priority over scheduled queue work. One worker is reserved
+for these requests, in addition to the two general workers, so long-running
+background jobs cannot occupy every slot. Requesting an already queued scan
+promotes that job without creating a duplicate. Reopen **Scanning…** to
+promote an unstarted scan queued before this update. Running jobs finish normally;
+retry backoff, provider quota deadlines, and file-access routing still apply.
 
 **Folders needing attention** lists entries with previously recorded media
 whose assigned folder is missing, inaccessible, or no longer a directory.

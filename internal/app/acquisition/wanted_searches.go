@@ -537,7 +537,7 @@ func (s *Service) enqueueWantedChunk(ctx context.Context, run sqlite.WantedSearc
 	}
 	payload, _ := json.Marshal(wantedChunkPayload{RunID: run.RunID, Ordinal: run.Cursor})
 	id, err := s.wantedQueue.Enqueue(ctx, domain.Job{Kind: WantedSearchJobKind,
-		Payload: string(payload), Priority: 100, RunAfter: run.NextReadyAt,
+		Payload: string(payload), Priority: domain.JobPriorityInteractive, RunAfter: run.NextReadyAt,
 		DedupeKey: "wanted.search:" + run.RunID})
 	if err != nil {
 		return err

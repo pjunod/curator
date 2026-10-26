@@ -17,7 +17,9 @@ import (
 // "exactly one cluster-wide" without electing a leader (ADR 0008 §2).
 var ErrDuplicateJob = errors.New("job already queued")
 
-// EnqueueJob adds a job. A dedupe collision returns ErrDuplicateJob.
+// EnqueueJob adds a job. A dedupe collision promotes queued work when the
+// request has higher priority, then returns ErrDuplicateJob. Running work and
+// retry/provider deadlines are preserved.
 func (d *DB) EnqueueJob(ctx context.Context, j domain.Job) (int64, error) {
 	now := time.Now()
 	runAfter := j.RunAfter
@@ -50,6 +52,14 @@ func (d *DB) EnqueueJob(ctx context.Context, j domain.Job) (int64, error) {
 	})
 	if err != nil {
 		if isConstraint(err) {
+			if j.DedupeKey != "" {
+				_, promoteErr := d.W.ExecContext(ctx, `UPDATE jobs SET priority = ?, updated_at = ?
+				 WHERE dedupe_key = ? AND kind = ? AND state = 'queued' AND priority > ?`,
+					priority, now.UnixMilli(), j.DedupeKey, j.Kind, priority)
+				if promoteErr != nil {
+					return 0, promoteErr
+				}
+			}
 			return 0, ErrDuplicateJob
 		}
 		return 0, err
@@ -67,6 +77,16 @@ func (d *DB) EnqueueJob(ctx context.Context, j domain.Job) (int64, error) {
 // instead of skipping. The Postgres version of this method is the same
 // statement with FOR UPDATE SKIP LOCKED, and every call site is unchanged.
 func (d *DB) ClaimJob(ctx context.Context, owner string, capabilities []string, lease time.Duration) (domain.Job, error) {
+	return d.claimJob(ctx, owner, capabilities, lease, false)
+}
+
+// ClaimInteractiveJob leaves the reserved worker idle when only background
+// work is ready. It shares the normal claim's routing, deadlines and leases.
+func (d *DB) ClaimInteractiveJob(ctx context.Context, owner string, capabilities []string, lease time.Duration) (domain.Job, error) {
+	return d.claimJob(ctx, owner, capabilities, lease, true)
+}
+
+func (d *DB) claimJob(ctx context.Context, owner string, capabilities []string, lease time.Duration, interactiveOnly bool) (domain.Job, error) {
 	now := time.Now()
 	// A node always advertises its own name as a capability so that
 	// affinity and capability routing can share one matching rule.
@@ -82,6 +102,7 @@ func (d *DB) ClaimJob(ctx context.Context, owner string, capabilities []string, 
 		     SELECT id FROM jobs
 		      WHERE state = 'queued'
 		        AND run_after <= ?
+		        AND (? = 0 OR priority <= ?)
 		        AND (required_capability IS NULL OR required_capability IN (%s))
 		        AND (affinity_node IS NULL OR affinity_node = ?)
 		      ORDER BY priority, run_after
@@ -92,7 +113,7 @@ func (d *DB) ClaimJob(ctx context.Context, owner string, capabilities []string, 
 		          affinity_node, lease_owner, lease_expires_at,
 		          created_at, updated_at, finished_at`, placeholders)
 
-	args := []any{owner, now.Add(lease).UnixMilli(), now.UnixMilli(), now.UnixMilli()}
+	args := []any{owner, now.Add(lease).UnixMilli(), now.UnixMilli(), now.UnixMilli(), interactiveOnly, domain.JobPriorityInteractive}
 	for _, c := range caps {
 		args = append(args, c)
 	}

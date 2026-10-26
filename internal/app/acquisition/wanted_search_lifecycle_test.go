@@ -82,6 +82,9 @@ func TestWantedSearchRunDrainsEveryTargetBeyondBacklogCapOneJobAtATime(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
+		if job.Priority != domain.JobPriorityInteractive {
+			t.Fatalf("wanted continuation lost interactive priority: %+v", job)
+		}
 		if err := svc.handleWantedSearchChunk(ctx, job); err != nil {
 			t.Fatal(err)
 		}

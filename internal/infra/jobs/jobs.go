@@ -28,6 +28,7 @@ import (
 type Store interface {
 	EnqueueJob(ctx context.Context, j domain.Job) (int64, error)
 	ClaimJob(ctx context.Context, owner string, capabilities []string, lease time.Duration) (domain.Job, error)
+	ClaimInteractiveJob(ctx context.Context, owner string, capabilities []string, lease time.Duration) (domain.Job, error)
 	CompleteJob(ctx context.Context, id int64) error
 	RetryJob(ctx context.Context, id int64, cause string, runAfter time.Time) error
 	FailJob(ctx context.Context, id int64, cause string) error
@@ -61,7 +62,9 @@ func (JobFinished) EventType() string { return "job.finished" }
 // Options configure a Queue. Zero values are replaced with the defaults
 // documented on each field.
 type Options struct {
-	// Workers is how many jobs run concurrently on this node. Default 2:
+	// Workers is the general worker count. One additional worker is reserved
+	// for interactive jobs so long background work cannot occupy every slot.
+	// Default 2:
 	// most Monarr work is I/O against a provider or a disk, and a homelab
 	// NAS is not helped by more parallel walks.
 	Workers int
@@ -151,18 +154,22 @@ func (q *Queue) Register(kind string, h Handler) error {
 // sqlite.ErrDuplicateJob and is normally not an error to the caller: it
 // means the same work is already scheduled.
 func (q *Queue) Enqueue(ctx context.Context, j domain.Job) (int64, error) {
+	if domain.IsInteractiveJob(ctx) {
+		j.Priority = domain.JobPriorityInteractive
+	}
 	return q.store.EnqueueJob(ctx, j)
 }
 
 // EnqueueUnique adds a job unless an identical one is already pending,
-// reporting whether it was actually added. This is the common case for
+// reporting whether it was actually added. A higher-priority request promotes
+// an existing queued job without adding one. This is the common case for
 // periodic work — the scheduler enqueues, and the dedupe key means a slow
 // run never stacks up behind itself.
 func (q *Queue) EnqueueUnique(ctx context.Context, j domain.Job) (bool, error) {
 	if j.DedupeKey == "" {
 		j.DedupeKey = j.Kind
 	}
-	_, err := q.store.EnqueueJob(ctx, j)
+	_, err := q.Enqueue(ctx, j)
 	if errors.Is(err, sqlite.ErrDuplicateJob) {
 		return false, nil
 	}
@@ -188,22 +195,27 @@ func (q *Queue) Start(ctx context.Context) {
 		q.wg.Add(1)
 		go func(n int) {
 			defer q.wg.Done()
-			q.worker(ctx, n)
+			q.worker(ctx, n, false)
 		}(i)
 	}
+	q.wg.Add(1)
+	go func() {
+		defer q.wg.Done()
+		q.worker(ctx, 0, true)
+	}()
 	q.wg.Add(1)
 	go func() {
 		defer q.wg.Done()
 		q.reaper(ctx)
 	}()
 	q.log.Info("jobs: queue started",
-		"node", q.opts.Node, "workers", q.opts.Workers, "lease", q.opts.Lease)
+		"node", q.opts.Node, "workers", q.opts.Workers, "interactive_workers", 1, "lease", q.opts.Lease)
 }
 
 // Wait blocks until every worker has stopped.
 func (q *Queue) Wait() { q.wg.Wait() }
 
-func (q *Queue) worker(ctx context.Context, n int) {
+func (q *Queue) worker(ctx context.Context, n int, interactiveOnly bool) {
 	// Stagger pollers so N workers don't wake in lockstep and contend for
 	// the same write lock on an idle queue.
 	stagger := time.Duration(n) * q.opts.PollInterval / time.Duration(max(q.opts.Workers, 1))
@@ -219,7 +231,7 @@ func (q *Queue) worker(ctx context.Context, n int) {
 		// Drain everything available before going back to sleep, so a
 		// burst of enqueued work is not paced at one job per tick.
 		for {
-			claimed, err := q.claimAndRun(ctx)
+			claimed, err := q.claimAndRun(ctx, interactiveOnly)
 			if err != nil || !claimed {
 				break
 			}
@@ -237,8 +249,12 @@ func (q *Queue) worker(ctx context.Context, n int) {
 
 // claimAndRun leases one job and executes it, reporting whether anything was
 // claimed.
-func (q *Queue) claimAndRun(ctx context.Context) (bool, error) {
-	job, err := q.store.ClaimJob(ctx, q.opts.Node, q.opts.Capabilities, q.opts.Lease)
+func (q *Queue) claimAndRun(ctx context.Context, interactiveOnly bool) (bool, error) {
+	claim := q.store.ClaimJob
+	if interactiveOnly {
+		claim = q.store.ClaimInteractiveJob
+	}
+	job, err := claim(ctx, q.opts.Node, q.opts.Capabilities, q.opts.Lease)
 	if errors.Is(err, sqlite.ErrNotFound) {
 		return false, nil
 	}
