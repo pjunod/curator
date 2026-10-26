@@ -2,7 +2,7 @@
 
 Companion to [settings.md](settings.md): this page records the queue fix.
 
-**Status:** review approved; final validation running · **Written:** 2026-10-26
+**Status:** review approved; local gates passed; CI pending · **Written:** 2026-10-26
 
 ## Behavior
 
@@ -26,9 +26,13 @@ quota deadlines and retry backoff remain binding even for ad-hoc requests.
 - [x] Adversarial review approved after fixing queued-scan promotion in the UI,
   distinguishing request origin from the metadata force flag, and clearing stale
   promotion errors when the same job makes progress.
-- [~] Lint passed; all 124 web unit tests and all 192 browser tests passed.
-  The full Go race/coverage gate is running with Go 1.25.7.
-- [ ] Open reviewed PR, validate CI, and merge through branch protection.
+- [x] Lint and the full Go suite passed with the pinned toolchain. All 124 web
+  unit tests and all 192 browser tests passed with Node 22.
+- [x] Open [PR #73](https://github.com/pjunod/curator/pull/73).
+- [ ] Complete CI, including the full race/coverage gate, before merge.
 - [ ] Archive the task-owned managed worktree after completion.
 
-PR and final validation will be recorded here before delivery.
+The PR body is the live delivery record for final CI, merge, and cleanup.
+The extra local race/coverage run uses the shared compiler cache; CI runs its
+own full race/coverage gate with the repository's 30-minute test timeout.
+Source work stays in the task-owned managed worktree until delivery completes.
