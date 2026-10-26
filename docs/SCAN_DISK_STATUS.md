@@ -52,6 +52,20 @@ Browser coverage includes desktop and phone geometry, immediate request
 feedback, queued and long-running scans, dismissal and reopening, focus return,
 background polling, request rejection/retry, and durable worker failure.
 
+## Coverage gate follow-up
+
+All CI Go tests, including race instrumentation, passed at `7c9e382`.
+Browser, mobile, compatibility, Docker, generation, vet, and lint also passed.
+The unit job failed only at coverage: 85.1% against the unchanged 86.0% floor.
+Main's existing unit job likewise fails that floor at its published 85.2%.
+
+Three additional reviewed API regressions cover unavailable status storage,
+a durable enqueue followed by status-read failure, and a corrupt saved report.
+The full local Go suite and lint pass after these additions; measured local
+coverage is 85.2%. The floor and exclusions remain unchanged. Final CI results
+and any explicit user decision about the inherited gap belong in the PR's
+live delivery checklist.
+
 ## Delivery and cleanup
 
 PR: [#72 — visible disk scan progress and results](https://github.com/pjunod/curator/pull/72).

@@ -81,3 +81,63 @@ func TestScanEnqueueFailureReachesCaller(t *testing.T) {
 		t.Fatalf("enqueue failure: %d %s", rr.Code, rr.Body.String())
 	}
 }
+
+type scanQueueFunc func(context.Context, domain.Job) (bool, error)
+
+func (f scanQueueFunc) EnqueueUnique(ctx context.Context, job domain.Job) (bool, error) {
+	return f(ctx, job)
+}
+
+// A status read failure must remain an error, never a synthetic idle or
+// completed state that could make a broken scan look successful.
+func TestScanStatusStorageFailureIsVisible(t *testing.T) {
+	e := newAPIEnv(t)
+	if err := e.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rr := do(t, e.h, http.MethodGet, "/api/v1/library/scan", "")
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("unavailable status: %d %s", rr.Code, rr.Body.String())
+	}
+	var body struct{ Message string }
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil || body.Message == "" {
+		t.Fatalf("missing actionable status error: %s, %v", rr.Body.String(), err)
+	}
+}
+
+func TestScanAcceptedButStatusReadFails(t *testing.T) {
+	e := newAPIEnv(t)
+	e.lib.WithQueue(scanQueueFunc(func(ctx context.Context, job domain.Job) (bool, error) {
+		if _, err := e.db.EnqueueJob(ctx, job); err != nil {
+			return false, err
+		}
+		// The job is durable, but the status store goes away before the
+		// response can be built. Polling can recover after storage returns.
+		return true, e.db.Close()
+	}))
+	rr := do(t, e.h, http.MethodPost, "/api/v1/library/scan", "")
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("unavailable accepted-job status: %d %s", rr.Code, rr.Body.String())
+	}
+	var body struct{ Message string }
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil || body.Message == "" {
+		t.Fatalf("missing accepted-job status error: %s, %v", rr.Body.String(), err)
+	}
+}
+
+func TestCorruptScanReportDoesNotBecomeSuccessOrEmptyResults(t *testing.T) {
+	e := newAPIEnv(t)
+	if err := e.db.SetMeta(context.Background(), "last_scan_report", "{"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/v1/library/scan/report", "/api/v1/library/scan"} {
+		rr := do(t, e.h, http.MethodGet, path, "")
+		if rr.Code != http.StatusInternalServerError {
+			t.Fatalf("corrupt report at %s: %d %s", path, rr.Code, rr.Body.String())
+		}
+		var body struct{ Message string }
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil || body.Message == "" {
+			t.Fatalf("missing corrupt-report error: %s, %v", rr.Body.String(), err)
+		}
+	}
+}
