@@ -510,11 +510,19 @@ func main() {
 	p := newProvider()
 	defer p.server.Close()
 	defer close(p.schedule.stop)
+	result := runBenchmark(m, *trials, e, p)
+	output, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Println(string(output))
+}
+
+// runBenchmark keeps the prototype's budget, cooldown, cache, and cancellation
+// checks together while allowing hermetic protocol helpers in contract tests.
+func runBenchmark(m modeSpec, trials int, e *embedder, p *provider) map[string]any {
 	g := &gate{cached: map[string]bool{}}
 	var complete []float64
 	var failed string
 	var ordinaryLatency, rejectLatency time.Duration
-	for trial := 0; trial < *trials; trial++ {
+	for trial := 0; trial < trials; trial++ {
 		delete(g.cached, m.name)
 		if g.admit(m.name) != "cold" {
 			panic("cold admission failed")
@@ -636,7 +644,7 @@ func main() {
 	peakText, _ := os.ReadFile("/sys/fs/cgroup/memory.peak")
 	result := map[string]any{
 		"scope": "single-cgroup Go scheduler + persistent helper; loopback stub provider with 35ms injected latency",
-		"mode":  m.name, "trials_requested": *trials, "trials_complete": len(complete),
+		"mode":  m.name, "trials_requested": trials, "trials_complete": len(complete),
 		"failure": failed, "provider_calls_complete": m.aliases + m.pages + m.details,
 		"ordinary_title_latency_ms": float64(ordinaryLatency.Microseconds()) / 1000,
 		"second_cold_rejection_ms":  float64(rejectLatency.Microseconds()) / 1000,
@@ -656,8 +664,7 @@ func main() {
 	if len(cacheTimes) > 0 {
 		result["cache_p95_ms"] = percentile(cacheTimes, 0.95) * 1000
 	}
-	output, _ := json.MarshalIndent(result, "", "  ")
-	fmt.Println(string(output))
+	return result
 }
 
 func boolInt(value bool) int {

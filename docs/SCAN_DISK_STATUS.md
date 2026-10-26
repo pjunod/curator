@@ -62,9 +62,17 @@ Main's existing unit job likewise fails that floor at its published 85.2%.
 Three additional reviewed API regressions cover unavailable status storage,
 a durable enqueue followed by status-read failure, and a corrupt saved report.
 The full local Go suite and lint pass after these additions; measured local
-coverage is 85.2%. The floor and exclusions remain unchanged. Final CI results
-and any explicit user decision about the inherited gap belong in the PR's
-live delivery checklist.
+coverage is 85.2%. The floor and exclusions remain unchanged. The user explicitly required restoring the full floor before merge; no waiver
+applies. Additional adversarially reviewed contract tests now cover identity and
+file evidence, preview/provider fallbacks, book edition setup, settings write
+ordering, import policies, partial search headers, review warnings, common audio,
+job deferral, and benchmark helper/provider cancellation. The benchmark CLI's
+unchanged orchestration was extracted for hermetic subprocess tests.
+
+The full local `make coverage` gate passes at **86.0%**, and focused race tests
+for the added contracts pass. The tracked badge is refreshed in this change.
+The floor and exclusions remain unchanged; final CI and merge remain tracked
+in the PR's live delivery checklist.
 
 ## Delivery and cleanup
 
