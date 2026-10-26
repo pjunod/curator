@@ -1,6 +1,6 @@
 # Disk scan status — visible progress through durable completion
 
-**Status:** review approved; final validation running · **Updated:** 2026-10-26 · **Version:** 0.38.1
+**Status:** implementation verified; see PR for live delivery status · **Updated:** 2026-10-26 · **Version:** 0.38.1
 
 Companion to [usage](usage.md#adopting-an-existing-library) and
 [settings](settings.md#disk-scan--repairing-folders-with-recorded-media).
@@ -36,8 +36,17 @@ settings are changed by this status reporting.
   - Unknown initial status cannot let historical completion hide a rejection.
   - The rejected-request fixture changes GET state only after an accepted POST.
 - [x] Focused final rereview approved with no remaining actionable findings.
-- [ ] Final `make lint`, `make test`, `make test-web`, and `make test-e2e`.
-- [ ] CI and merge to main without bypassing protections.
+- [x] Final `make lint` and full `make test` passed with Go 1.25.7.
+- [x] Node 22 web gate: 124 unit tests passed; build/type checking passed.
+- [x] Full browser gate: 185 tests passed, including 390px/1280px geometry.
+- [x] Generated SQL/API bindings verified with the pinned generator versions.
+  The pinned sqlc requires a newer Go compiler; generation used automatic
+  toolchain selection, while application validation used Go 1.25.7.
+- [x] Lint passed with a registered reusable linter cache slot after the global
+  cache returned diagnostics referencing deleted temporary checkouts. The
+  shared compiler cache was preserved.
+CI, merge, and cleanup are tracked in the live [PR #72](https://github.com/pjunod/curator/pull/72)
+delivery checklist; no branch protection bypass is authorized.
 
 Browser coverage includes desktop and phone geometry, immediate request
 feedback, queued and long-running scans, dismissal and reopening, focus return,
@@ -45,7 +54,9 @@ background polling, request rejection/retry, and durable worker failure.
 
 ## Delivery and cleanup
 
-PR: pending creation. Merge: pending review and checks.
+PR: [#72 — visible disk scan progress and results](https://github.com/pjunod/curator/pull/72).
+The PR conversation/body is the live record for CI, merge, and final cleanup;
+this source page records the reviewed implementation and local verification.
 
 After merge, remove the task-owned remote branch and independent clone. Remove
 only the earlier agent-created copies and temporary artifacts when their bytes
