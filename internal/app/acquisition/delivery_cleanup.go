@@ -1944,11 +1944,12 @@ func digestOpenFile(ctx context.Context, file *os.File) (string, int64, error) {
 	h := sha256.New()
 	buf := make([]byte, 256*1024)
 	var total int64
+	src := newVerifyReader(ctx, file)
 	for {
 		if err := ctx.Err(); err != nil {
 			return "", total, err
 		}
-		n, err := file.Read(buf)
+		n, err := src.Read(buf)
 		if n > 0 {
 			_, _ = h.Write(buf[:n])
 			total += int64(n)

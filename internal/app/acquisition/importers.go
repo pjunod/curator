@@ -82,6 +82,13 @@ func (s *Service) StartImporters(ctx context.Context) {
 		s.cleanupCh = make(chan importJob, importQueue)
 		s.importCtx = ctx
 		s.importJobs = map[int64]*importTicket{}
+		// Attempts left "running" by an earlier process never finished; say so
+		// instead of showing them as in progress forever.
+		if n, err := s.db.InterruptUnfinishedDeliveryAttempts(ctx, time.Now()); err != nil {
+			s.log.Warn("could not mark interrupted delivery attempts", "err", err)
+		} else if n > 0 {
+			s.log.Info("marked delivery attempts interrupted by the previous process", "attempts", n)
+		}
 	})
 	for i := 0; i < importWorkers; i++ {
 		s.importWG.Add(1)

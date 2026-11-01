@@ -165,6 +165,27 @@ func fileDigestSnapshot(ctx context.Context, path string) (string, int64, string
 	if err := rejectSymlinks(path, false); err != nil {
 		return "", 0, "", err
 	}
+	// Concurrent digests of one unchanged file share a single read (see
+	// verify_reads.go). The key is the generation this caller sees now; the
+	// shared result must end at that same generation, as a private read would.
+	pre, err := os.Lstat(path)
+	if err != nil || !pre.Mode().IsRegular() || deliveryFileGeneration(pre) == "" {
+		return readFileDigestSnapshot(ctx, path)
+	}
+	want := deliveryFileGeneration(pre)
+	digest, n, generation, err := joinDigest(ctx, path+"\x00"+want, func() (string, int64, string, error) {
+		return readFileDigestSnapshot(ctx, path)
+	})
+	if err != nil {
+		return "", 0, "", err
+	}
+	if generation != want {
+		return "", 0, "", fmt.Errorf("file changed during verification: %s", path)
+	}
+	return digest, n, generation, nil
+}
+
+func readFileDigestSnapshot(ctx context.Context, path string) (string, int64, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", 0, "", err
@@ -179,7 +200,7 @@ func fileDigestSnapshot(ctx context.Context, path string) (string, int64, string
 	}
 	beforeGeneration := deliveryFileGeneration(before)
 	h := sha256.New()
-	n, err := io.Copy(h, &contextReader{ctx: ctx, r: f})
+	n, err := io.Copy(h, newVerifyReader(ctx, f))
 	if err != nil {
 		return "", 0, "", err
 	}

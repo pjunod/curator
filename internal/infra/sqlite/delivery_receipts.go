@@ -453,6 +453,20 @@ func (d *DB) BeginDeliveryAttempt(ctx context.Context, receiptID int64, stage st
 	return DeliveryAttemptEvent{ID: id, ReceiptID: receiptID, Stage: stage, Attempt: attempt, StartedAt: now, Result: "running"}, nil
 }
 
+// InterruptUnfinishedDeliveryAttempts marks attempts that an earlier process
+// started and never finished. They stay unfinished — no finish time is
+// invented and no outcome inferred — but they are no longer "running": the
+// process that ran them is gone. Called once at process start.
+func (d *DB) InterruptUnfinishedDeliveryAttempts(ctx context.Context, startedBefore time.Time) (int64, error) {
+	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_attempt_events SET result='interrupted',
+		error=CASE WHEN error='' THEN 'Curator stopped before this attempt finished; its outcome is unknown' ELSE error END
+		WHERE result='running' AND finished_at IS NULL AND started_at<?`, startedBefore.UnixMilli())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (d *DB) FinishDeliveryAttempt(ctx context.Context, eventID int64, result, detail string) error {
 	if eventID <= 0 || strings.TrimSpace(result) == "" || result == "running" {
 		return fmt.Errorf("attempt and terminal result are required")

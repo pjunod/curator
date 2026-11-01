@@ -599,6 +599,30 @@ does not parse (AVI, TS, WMV) is cached and not retried, because nothing about
 the next scan makes it parseable. To force the issue, **Re-measure files** on
 any item page ignores the cache entirely.
 
+## Verification read budget (`MONARR_VERIFY_READ_MBPS`)
+
+Curator proves bytes by reading them: a Runner delivery is hashed against its
+manifest before import, a duplicate is hashed against the library file it
+matches before its payload is deleted, and a placement is checked after the
+copy. On network storage every one of those reads crosses the storage link.
+
+All verification reads in the process share one budget, in megabytes per
+second. The default is **100**, about a third of a 2.5 GbE link, so
+verification never crowds out placement writes, Runner, or playback on the
+same storage. `0` removes the limit; an invalid value keeps the default.
+Placement copies are not limited — they are the import itself. Concurrent
+checks of the same unchanged file share one read.
+
+```bash
+# Raise on 10 GbE or local disks; 0 = unlimited.
+MONARR_VERIFY_READ_MBPS=250
+```
+
+Why it exists: on 2026-11-01 verification reads held nuc3's 2.5 GbE link to
+its NAS at line rate for hours, and whenever writes joined that load the NAS
+stopped answering NFS for up to nine minutes, freezing everything on the
+mount.
+
 ## Custom formats
 
 Regex rules scored against release titles, case-insensitive RE2. Scores

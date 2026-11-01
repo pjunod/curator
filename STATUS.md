@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-## Samples no longer fail Runner delivery imports; settled failures back off — 2026-11-01 · v0.38.6
+## Samples, settled retries, identical bytes, storage stalls — 2026-11-01 · v0.38.6
 
 **Status:** branch `codex/delivery-sample-files` — adversarial review done and
 addressed (below). Full gate, CI and merge pending.
@@ -71,6 +71,47 @@ that re-hashes every stuck payload on each restart.
 whose title contains "sample" is skipped. Narrowing it to a delimited token
 risks placing an undelimited sample clip as the episode, which would then
 block the real file as "does not improve on" it. Kept the conservative rule.
+
+**Storage stalls on nuc3 (diagnosed 2026-11-01, Paul asked).** The NAS (QNAP,
+NFSv4, `hard` mounts) stopped answering nuc3 six times today: 13:28 (27 s),
+15:37 (3 min), 17:58 (8 min), 19:09 (9 min), 21:44 (6 min), plus once on
+Oct 30. Each time everything on the mount froze — Curator's imports and
+cleanups, and Runner, whose held-jobs recovery (#261) parked the affected jobs
+as `storage_unavailable` and resumed them correctly.
+
+- Cause, from Prometheus: nuc3's storage link is a 2.5 GbE USB adapter
+  (RTL8156B, `enx6c1ff71662f6`). It ran receive-saturated at 2.2–2.44 Gbit/s
+  for hours, and every outage began as a write phase started on top of that
+  (transmit rising to 0.2–0.5 Gbit/s). No NIC errors or drops, no NFS
+  retransmits, QNAP CPU never above 46%: the NAS's storage, not the network,
+  gives out under saturating reads plus writes.
+- Who was reading: Curator, at 267 MB/s — the whole link. A goroutine dump
+  (taken with Paul's OK; it restarted Curator) and its open files showed three
+  redundancy proofs hashing the same 2.9 GB library file at once, and a manual
+  placement hashing its 18.6 GB target while holding `importTargetMu`, which
+  every other import and cleanup was waiting on. Underneath it all, the
+  forever-retry loops re-read whole payloads every few minutes.
+- No deadlock: the dump showed every lock waiter behind that one placement,
+  and the scheduler loops idle between ticks.
+
+Fixed here:
+
+- One verification read budget for the process (`MONARR_VERIFY_READ_MBPS`,
+  default 100 MB/s, `0` = unlimited) paces every content digest — delivery
+  verification and recheck, redundancy proofs, placement checks, cleanup.
+  Placement copies are not paced.
+- Concurrent digests of one unchanged file share a single read (keyed by
+  file generation; not a cache — nothing outlives the read).
+- The settled-failure backoff (above) removes the bulk of the re-reads.
+- Attempts left "running" by a previous process are marked `interrupted` at
+  start (no finish time invented, no outcome inferred).
+
+Not changed, for Paul: placement still holds `importTargetMu` for the whole
+import, so one slow placement holds up everything (measured: 55 minutes behind
+The Craft Legacy). Parallel placement would not have helped today — the link
+was the bottleneck — but the placement check's hash runs inside that lock, and
+with the read budget it takes longer per byte while contending far less. The
+storage link itself (a USB 2.5 GbE adapter to the NAS) is the hardware limit.
 
 v0.38.5 measured live on nuc3 (started 21:30:10Z): two imports in flight at
 once, and 2.9 GB duplicate cleanups running 225–275 s each on the cleanup

@@ -1157,6 +1157,7 @@ func (s *Service) recheckDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 }
 
 func copyHashContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+	src = newVerifyReader(ctx, src)
 	buf := make([]byte, 128*1024)
 	var total int64
 	for {

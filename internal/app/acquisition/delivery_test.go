@@ -1823,6 +1823,35 @@ func TestSupersededPlacementWithIdenticalLibraryBytesIsCleanedUp(t *testing.T) {
 	}
 }
 
+// Field report: attempts begun by a process that then stopped were shown as
+// "running" for hours. A new process marks them interrupted — still with no
+// finish time and no inferred outcome.
+func TestStartImportersMarksAttemptsOfThePreviousProcessInterrupted(t *testing.T) {
+	ctx := context.Background()
+	svc, db, dl, _, _ := deliveryImportFixture(t, &deliveryImportClient{})
+	receiptID := receiptIDFor(t, db, dl.ID)
+	stale, err := db.BeginDeliveryAttempt(ctx, receiptID, "import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	workerCtx, cancel := context.WithCancel(ctx)
+	svc.StartImporters(workerCtx)
+	defer func() { cancel(); svc.WaitImporters() }()
+	events, err := db.DeliveryAttemptEvents(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.ID == stale.ID && (e.Result != "interrupted" || !e.FinishedAt.IsZero() || e.Error == "") {
+			t.Fatalf("stale attempt = %+v, want interrupted, unfinished, explained", e)
+		}
+	}
+	if len(events) == 0 {
+		t.Fatal("attempt not found")
+	}
+}
+
 func TestTransientDeliveryAckDoesNotBlockImportAndRestartNeedsNoPayload(t *testing.T) {
 	ctx := context.Background()
 	protocol := &deliveryImportClient{failCount: 2}
