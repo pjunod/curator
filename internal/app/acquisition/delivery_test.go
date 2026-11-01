@@ -1257,8 +1257,15 @@ func TestDeliveryRedundancyRequiresHealthySameCopyQualityEvidence(t *testing.T) 
 		reviewFlag           bool
 		sourceFixture        string
 		targetFixture        string
+		obfuscated           bool
+		obfuscatedSibling    bool
 		wantRedundant        bool
 	}{
+		// Field report 2026-11-01: twelve byte-identical copies of an imported
+		// obfuscated episode were retained and retried forever, because the
+		// proof read the episode from the hash file name.
+		{name: "obfuscated duplicate with equal bytes", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", obfuscated: true, wantRedundant: true},
+		{name: "obfuscated file beside an anonymous sibling", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", obfuscated: true, obfuscatedSibling: true},
 		{name: "equal quality and equal bytes", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", wantRedundant: true},
 		{name: "better encoding with different bytes", quality: quality.Quality{Source: quality.SourceBluray, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, sourceFixture: "mkv-1080p-h264-ac3-whole.mkv", targetFixture: "mkv-1080p-h264-ac3-ger-whole.mkv", wantRedundant: true},
 		{name: "wrong copy", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, wrongCopy: true},
@@ -1271,7 +1278,15 @@ func TestDeliveryRedundancyRequiresHealthySameCopyQualityEvidence(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			protocol := &deliveryImportClient{}
-			svc, db, dl, cfg, _ := deliveryImportFixture(t, protocol)
+			mainName := epRelease + ".mkv"
+			if tc.obfuscated {
+				mainName = "321d9664e6a50c195e7e830b3f78b487.mkv"
+			}
+			var extra map[string][]byte
+			if tc.obfuscatedSibling {
+				extra = map[string][]byte{"15713ef716b33f8a63def50814ec76d0.mkv": []byte("other")}
+			}
+			svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, mainName, []byte("video"), extra)
 			receipts, err := db.DeliveryReceiptsForClient(ctx, dl.ClientID, 1)
 			if err != nil || len(receipts) != 1 {
 				t.Fatalf("receipt lookup=%+v err=%v", receipts, err)
@@ -1282,6 +1297,11 @@ func TestDeliveryRedundancyRequiresHealthySameCopyQualityEvidence(t *testing.T) 
 				t.Fatalf("manifest verification=%+v err=%v", verified, err)
 			}
 			f := verified[0]
+			for _, candidate := range verified {
+				if candidate.relative == mainName {
+					f = candidate
+				}
+			}
 			sourceFixture := tc.sourceFixture
 			if sourceFixture == "" {
 				sourceFixture = "mkv-1080p-h264-ac3.mkv"

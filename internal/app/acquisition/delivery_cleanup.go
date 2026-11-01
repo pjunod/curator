@@ -662,6 +662,19 @@ func (s *Service) deliverySidecarLibraryProof(ctx context.Context, r sqlite.Deli
 
 // Redundancy is proven from the exact associated copy, current bytes and
 // episode coverage. Importer skip reasons and matching titles are not proof.
+// deliveryManifestMediaCount counts the video files a delivery published,
+// skipping samples the way collectFiles does, so redundancy and import agree
+// on whether a payload holds exactly one media file.
+func deliveryManifestMediaCount(r sqlite.DeliveryReceipt) int {
+	n := 0
+	for _, file := range r.Delivery.Files {
+		if filename.IsVideo(file.Path) && !strings.Contains(strings.ToLower(filepath.Base(file.Path)), "sample") {
+			n++
+		}
+	}
+	return n
+}
+
 func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.DeliveryReceipt, f verifiedDeliveryFile, requiredPath string) (string, string, bool) {
 	// Manual additional copies are independently requested media and must not
 	// be disposed as redundant, even if their bytes match a primary copy.
@@ -705,6 +718,16 @@ func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.De
 	expectedEpisodes := []int64(nil)
 	if item.Kind == domain.KindSeries {
 		parsed := parser.Parse(filepath.Base(f.relative))
+		// An obfuscated duplicate ("321d96….mkv") names no episode; borrow the
+		// grabbed release's, under the same conditions the importer uses, or a
+		// byte-identical copy of an imported episode can never be proven
+		// redundant and is retried and retained forever.
+		if download, err := s.db.GetDownload(ctx, r.DownloadID); err == nil {
+			season, episodes := grabbedEpisodeTargets(download.WantableIDs, item.ID)
+			if borrowed, ok := releaseEpisodeIdentity(parsed, f.relative, download.ReleaseTitle, deliveryManifestMediaCount(r), season, episodes); ok {
+				parsed = borrowed
+			}
+		}
 		if parsed.Season < 0 || len(parsed.Episodes) == 0 {
 			return "", "", false
 		}
