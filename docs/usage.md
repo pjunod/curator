@@ -1400,3 +1400,18 @@ raw device observation strengthens automatically only when the current raw mount
 still exactly matches it. A missing or changed raw source needs review. When no
 stable UUID is available, the comparison explicitly labels the device-path
 fallback; network storage keeps its server/export identity.
+
+### Read the joined lifecycle trace
+
+Runner lifecycle history joins download and processing steps, publication and
+handoff, Curator import, completed-file cleanup, and processing-source cleanup.
+Measured times stay separate for different machines and restarts. Overlapping
+completed steps count once within their recorded timing reference. Processing
+details expand major steps and do not add their duration a second time. Missing,
+running and interrupted durations stay explicitly unknown.
+
+Clustered publications show each processing-source copy's node, cleanup status,
+retry attempts and reason. Retry controls show their pending state and visible
+result. Background status refresh preserves focus and scroll position. Reporting
+and file deletion show results in a dialog that remains visible after the file
+row or review form changes.

@@ -527,6 +527,18 @@ func (d *DB) SaveDiscoveredDelivery(ctx context.Context, clientID int64, v ports
 	if err != nil {
 		return DeliveryReceipt{}, err
 	}
+	timing, err := json.Marshal(v.LifecycleTiming)
+	if err != nil {
+		return DeliveryReceipt{}, err
+	}
+	stages, err := json.Marshal(v.RunnerStages)
+	if err != nil {
+		return DeliveryReceipt{}, err
+	}
+	copies, err := json.Marshal(v.SourceCopies)
+	if err != nil {
+		return DeliveryReceipt{}, err
+	}
 	cleanup := string(v.SourceCleanup)
 	if cleanup == "" {
 		cleanup = "null"
@@ -543,7 +555,7 @@ func (d *DB) SaveDiscoveredDelivery(ctx context.Context, clientID int64, v ports
 		runner_instance_id, ready_at, publication_path, mapped_path, files_json, source_cleanup_json,
 		terminal_outcome, failure_stage, failure_cause, keep_source_on_failure, file_outcomes_json,
 		state, ack_state, consumer_receipt_id, download_id, generation_key, download_handle,
-		media_item_id, copy_id, error, attempts, blocked_since, next_attempt_at, publication_directory_identity
+		media_item_id, copy_id, error, attempts, blocked_since, next_attempt_at, publication_directory_identity,runner_stages_json,source_copies_json,lifecycle_timing_json
 		FROM runner_delivery_receipts WHERE client_id=? AND delivery_id=?`, clientID, v.DeliveryID), &existing)
 	if err == nil {
 		changed := !sameDeliveryImmutable(existing.Delivery, v)
@@ -559,12 +571,13 @@ func (d *DB) SaveDiscoveredDelivery(ctx context.Context, clientID int64, v ports
 		} else {
 			// Cleanup progress and per-file cleanup statuses are mutable Runner
 			// state. Refresh them without changing the immutable association.
-			_, err = tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET source_cleanup_json=?,file_outcomes_json=?,updated_at=? WHERE id=?`, cleanup, string(fileOutcomes), now, existing.ID)
+			_, err = tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET source_cleanup_json=?,file_outcomes_json=?,source_copies_json=?,updated_at=? WHERE id=?`, cleanup, string(fileOutcomes), string(copies), now, existing.ID)
 			if err != nil {
 				return DeliveryReceipt{}, err
 			}
 			existing.Delivery.SourceCleanup = v.SourceCleanup
 			existing.Delivery.FileOutcomes = v.FileOutcomes
+			existing.Delivery.SourceCopies = v.SourceCopies
 			if err = tx.Commit(); err != nil {
 				return DeliveryReceipt{}, err
 			}
@@ -597,11 +610,11 @@ func (d *DB) SaveDiscoveredDelivery(ctx context.Context, clientID int64, v ports
 		(client_id, delivery_id, sequence, publication_generation, source_artifact_id, source_generation, manifest_digest,
 		artifact_id, job_id, request_token, runner_instance_id, ready_at, publication_path,
 		mapped_path, files_json, source_cleanup_json, terminal_outcome, failure_stage, failure_cause,
-		keep_source_on_failure, file_outcomes_json, state, error, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, clientID, v.DeliveryID,
+		keep_source_on_failure, file_outcomes_json, state, error, created_at, updated_at,runner_stages_json,source_copies_json,lifecycle_timing_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?)`, clientID, v.DeliveryID,
 		v.Sequence, v.PublicationGeneration, v.SourceArtifactID, v.SourceGeneration, v.ManifestDigest, v.ArtifactID, v.JobID,
 		v.RequestToken, v.RunnerInstanceID, v.ReadyAt.UnixMilli(), v.PublicationPath, mappedPath, string(files), cleanup,
-		v.TerminalOutcome, v.FailureStage, v.FailureCause, v.KeepSourceOnFailure, string(fileOutcomes), state, receiptErr, now, now)
+		v.TerminalOutcome, v.FailureStage, v.FailureCause, v.KeepSourceOnFailure, string(fileOutcomes), state, receiptErr, now, now, string(stages), string(copies), string(timing))
 	if err != nil {
 		return DeliveryReceipt{}, err
 	}
@@ -616,6 +629,12 @@ func (d *DB) SaveDiscoveredDelivery(ctx context.Context, clientID int64, v ports
 }
 
 func sameDeliveryImmutable(a, b ports.RunnerDelivery) bool {
+	if !ports.SameRunnerLifecycleTiming(a.LifecycleTiming, b.LifecycleTiming) {
+		return false
+	}
+	if !ports.SameRunnerStages(a.RunnerStages, b.RunnerStages) {
+		return false
+	}
 	if a.Sequence != b.Sequence || a.DeliveryID != b.DeliveryID || a.PublicationGeneration != b.PublicationGeneration ||
 		a.SourceArtifactID != b.SourceArtifactID || a.SourceGeneration != b.SourceGeneration ||
 		a.ManifestDigest != b.ManifestDigest || a.ArtifactID != b.ArtifactID || a.JobID != b.JobID ||
@@ -660,8 +679,9 @@ func scanDeliveryReceipt(row interface{ Scan(...any) error }, out *DeliveryRecei
 	var id, clientID, downloadID, mediaID, copyID int64
 	var attempts int
 	var deliveryID, generation, sourceArtifact, sourceGeneration, digest, artifact, job, token, runnerID, pubPath, mapped, filesRaw, cleanupRaw, terminalOutcome, failureStage, failureCause, fileOutcomesRaw, state, ack, consumer, genKey, handle, message, directoryIdentity string
+	var stagesRaw, copiesRaw, timingRaw string
 	var keepSourceOnFailure bool
-	if err := row.Scan(&id, &clientID, &seq, &deliveryID, &generation, &sourceArtifact, &sourceGeneration, &digest, &artifact, &job, &token, &runnerID, &readyAt, &pubPath, &mapped, &filesRaw, &cleanupRaw, &terminalOutcome, &failureStage, &failureCause, &keepSourceOnFailure, &fileOutcomesRaw, &state, &ack, &consumer, &downloadID, &genKey, &handle, &mediaID, &copyID, &message, &attempts, &blockedSince, &next, &directoryIdentity); err != nil {
+	if err := row.Scan(&id, &clientID, &seq, &deliveryID, &generation, &sourceArtifact, &sourceGeneration, &digest, &artifact, &job, &token, &runnerID, &readyAt, &pubPath, &mapped, &filesRaw, &cleanupRaw, &terminalOutcome, &failureStage, &failureCause, &keepSourceOnFailure, &fileOutcomesRaw, &state, &ack, &consumer, &downloadID, &genKey, &handle, &mediaID, &copyID, &message, &attempts, &blockedSince, &next, &directoryIdentity, &stagesRaw, &copiesRaw, &timingRaw); err != nil {
 		return err
 	}
 	var files []ports.RunnerFile
@@ -678,12 +698,24 @@ func scanDeliveryReceipt(row interface{ Scan(...any) error }, out *DeliveryRecei
 			return fmt.Errorf("decode delivery file outcomes: %w", err)
 		}
 	}
+	var timing *ports.RunnerLifecycleTiming
+	if err := json.Unmarshal([]byte(timingRaw), &timing); err != nil {
+		return fmt.Errorf("decode Runner lifecycle timing: %w", err)
+	}
+	var stages *ports.RunnerStages
+	var copies []ports.RunnerSourceCopy
+	if err := json.Unmarshal([]byte(stagesRaw), &stages); err != nil {
+		return fmt.Errorf("decode Runner stage snapshot: %w", err)
+	}
+	if err := json.Unmarshal([]byte(copiesRaw), &copies); err != nil {
+		return fmt.Errorf("decode Runner source copies: %w", err)
+	}
 	ready := time.UnixMilli(readyAt)
 	blocked := time.Time{}
 	if blockedSince != 0 {
 		blocked = time.UnixMilli(blockedSince)
 	}
-	*out = DeliveryReceipt{ID: id, ClientID: clientID, Delivery: ports.RunnerDelivery{Sequence: uint64(seq), DeliveryID: deliveryID, PublicationGeneration: generation, SourceArtifactID: sourceArtifact, SourceGeneration: sourceGeneration, ManifestDigest: digest, ArtifactID: artifact, JobID: job, RequestToken: token, RunnerInstanceID: runnerID, PublicationPath: pubPath, Files: files, TerminalOutcome: terminalOutcome, FailureStage: failureStage, FailureCause: failureCause, KeepSourceOnFailure: keepSourceOnFailure, FileOutcomes: fileOutcomes, ReadyAt: ready, SourceCleanup: cleanup}, MappedPath: mapped, PublicationDirectoryIdentity: directoryIdentity, State: state, AckState: ack, ConsumerReceiptID: consumer, DownloadID: downloadID, GenerationKey: genKey, DownloadHandle: handle, MediaItemID: mediaID, CopyID: copyID, ReadyAt: ready, Error: message, Attempts: attempts, BlockedSince: blocked, NextAttemptAt: time.UnixMilli(next)}
+	*out = DeliveryReceipt{ID: id, ClientID: clientID, Delivery: ports.RunnerDelivery{RunnerStages: stages, SourceCopies: copies, LifecycleTiming: timing, Sequence: uint64(seq), DeliveryID: deliveryID, PublicationGeneration: generation, SourceArtifactID: sourceArtifact, SourceGeneration: sourceGeneration, ManifestDigest: digest, ArtifactID: artifact, JobID: job, RequestToken: token, RunnerInstanceID: runnerID, PublicationPath: pubPath, Files: files, TerminalOutcome: terminalOutcome, FailureStage: failureStage, FailureCause: failureCause, KeepSourceOnFailure: keepSourceOnFailure, FileOutcomes: fileOutcomes, ReadyAt: ready, SourceCleanup: cleanup}, MappedPath: mapped, PublicationDirectoryIdentity: directoryIdentity, State: state, AckState: ack, ConsumerReceiptID: consumer, DownloadID: downloadID, GenerationKey: genKey, DownloadHandle: handle, MediaItemID: mediaID, CopyID: copyID, ReadyAt: ready, Error: message, Attempts: attempts, BlockedSince: blocked, NextAttemptAt: time.UnixMilli(next)}
 	return nil
 }
 
@@ -848,7 +880,7 @@ func requireDeliveryTransition(res sql.Result, err error) error {
 }
 
 func (d *DB) DeliveryReceiptsForClient(ctx context.Context, clientID int64, limit int) ([]DeliveryReceipt, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT id,client_id,sequence,delivery_id,publication_generation,source_artifact_id,source_generation,manifest_digest,artifact_id,job_id,request_token,runner_instance_id,ready_at,publication_path,mapped_path,files_json,source_cleanup_json,terminal_outcome,failure_stage,failure_cause,keep_source_on_failure,file_outcomes_json,state,ack_state,consumer_receipt_id,download_id,generation_key,download_handle,media_item_id,copy_id,error,attempts,blocked_since,next_attempt_at,publication_directory_identity FROM runner_delivery_receipts WHERE client_id=? AND (state IN ('unresolved','ready','importing') OR ack_state='pending') AND next_attempt_at<=? ORDER BY next_attempt_at,sequence LIMIT ?`, clientID, time.Now().UnixMilli(), limit)
+	rows, err := d.R.QueryContext(ctx, `SELECT id,client_id,sequence,delivery_id,publication_generation,source_artifact_id,source_generation,manifest_digest,artifact_id,job_id,request_token,runner_instance_id,ready_at,publication_path,mapped_path,files_json,source_cleanup_json,terminal_outcome,failure_stage,failure_cause,keep_source_on_failure,file_outcomes_json,state,ack_state,consumer_receipt_id,download_id,generation_key,download_handle,media_item_id,copy_id,error,attempts,blocked_since,next_attempt_at,publication_directory_identity,runner_stages_json,source_copies_json,lifecycle_timing_json FROM runner_delivery_receipts WHERE client_id=? AND (state IN ('unresolved','ready','importing') OR ack_state='pending') AND next_attempt_at<=? ORDER BY next_attempt_at,sequence LIMIT ?`, clientID, time.Now().UnixMilli(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -866,7 +898,7 @@ func (d *DB) DeliveryReceiptsForClient(ctx context.Context, clientID int64, limi
 
 func (d *DB) DeliveryReceiptByID(ctx context.Context, id int64) (DeliveryReceipt, error) {
 	var v DeliveryReceipt
-	err := scanDeliveryReceipt(d.R.QueryRowContext(ctx, `SELECT id,client_id,sequence,delivery_id,publication_generation,source_artifact_id,source_generation,manifest_digest,artifact_id,job_id,request_token,runner_instance_id,ready_at,publication_path,mapped_path,files_json,source_cleanup_json,terminal_outcome,failure_stage,failure_cause,keep_source_on_failure,file_outcomes_json,state,ack_state,consumer_receipt_id,download_id,generation_key,download_handle,media_item_id,copy_id,error,attempts,blocked_since,next_attempt_at,publication_directory_identity FROM runner_delivery_receipts WHERE id=?`, id), &v)
+	err := scanDeliveryReceipt(d.R.QueryRowContext(ctx, `SELECT id,client_id,sequence,delivery_id,publication_generation,source_artifact_id,source_generation,manifest_digest,artifact_id,job_id,request_token,runner_instance_id,ready_at,publication_path,mapped_path,files_json,source_cleanup_json,terminal_outcome,failure_stage,failure_cause,keep_source_on_failure,file_outcomes_json,state,ack_state,consumer_receipt_id,download_id,generation_key,download_handle,media_item_id,copy_id,error,attempts,blocked_since,next_attempt_at,publication_directory_identity,runner_stages_json,source_copies_json,lifecycle_timing_json FROM runner_delivery_receipts WHERE id=?`, id), &v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, ErrNotFound
 	}
@@ -1299,7 +1331,7 @@ func (d *DB) DeliveryFileCleanupReceipts(ctx context.Context, clientID int64, li
 }
 
 func (d *DB) DeliveryReceiptsNeedingSourceRefresh(ctx context.Context, clientID int64, limit int) ([]DeliveryReceipt, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT r.id,r.client_id,r.sequence,r.delivery_id,r.publication_generation,r.source_artifact_id,r.source_generation,r.manifest_digest,r.artifact_id,r.job_id,r.request_token,r.runner_instance_id,r.ready_at,r.publication_path,r.mapped_path,r.files_json,r.source_cleanup_json,r.terminal_outcome,r.failure_stage,r.failure_cause,r.keep_source_on_failure,r.file_outcomes_json,r.state,r.ack_state,r.consumer_receipt_id,r.download_id,r.generation_key,r.download_handle,r.media_item_id,r.copy_id,r.error,r.attempts,r.blocked_since,r.next_attempt_at,r.publication_directory_identity
+	rows, err := d.R.QueryContext(ctx, `SELECT r.id,r.client_id,r.sequence,r.delivery_id,r.publication_generation,r.source_artifact_id,r.source_generation,r.manifest_digest,r.artifact_id,r.job_id,r.request_token,r.runner_instance_id,r.ready_at,r.publication_path,r.mapped_path,r.files_json,r.source_cleanup_json,r.terminal_outcome,r.failure_stage,r.failure_cause,r.keep_source_on_failure,r.file_outcomes_json,r.state,r.ack_state,r.consumer_receipt_id,r.download_id,r.generation_key,r.download_handle,r.media_item_id,r.copy_id,r.error,r.attempts,r.blocked_since,r.next_attempt_at,r.publication_directory_identity,r.runner_stages_json,r.source_copies_json,r.lifecycle_timing_json
 		FROM runner_delivery_receipts r LEFT JOIN runner_delivery_source_refresh s ON s.receipt_id=r.id
 		WHERE r.client_id=? AND r.state!='conflict' AND (r.ack_state='accepted' OR (r.ack_state='pending' AND r.consumer_receipt_id!='')) AND COALESCE(s.next_attempt_at,0)<=?
 		ORDER BY COALESCE(s.next_attempt_at,r.source_cleanup_refreshed_at),r.sequence LIMIT ?`, clientID, time.Now().UnixMilli(), limit)
@@ -1318,7 +1350,7 @@ func (d *DB) DeliveryReceiptsNeedingSourceRefresh(ctx context.Context, clientID 
 	return out, rows.Err()
 }
 
-func (d *DB) RefreshDeliverySourceCleanup(ctx context.Context, receiptID int64, sourceCleanup json.RawMessage, fileOutcomes []ports.RunnerFileOutcome, retryAfter time.Duration) error {
+func (d *DB) RefreshDeliverySourceCleanup(ctx context.Context, receiptID int64, sourceCleanup json.RawMessage, fileOutcomes []ports.RunnerFileOutcome, retryAfter time.Duration, sourceCopies ...[]ports.RunnerSourceCopy) error {
 	if len(sourceCleanup) == 0 {
 		sourceCleanup = json.RawMessage("null")
 	}
@@ -1326,13 +1358,21 @@ func (d *DB) RefreshDeliverySourceCleanup(ctx context.Context, receiptID int64, 
 	if err != nil {
 		return err
 	}
+	copiesRaw := "null"
+	if len(sourceCopies) > 0 {
+		raw, err := json.Marshal(sourceCopies[0])
+		if err != nil {
+			return err
+		}
+		copiesRaw = string(raw)
+	}
 	now := time.Now().UnixMilli()
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, err := tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET source_cleanup_json=?,file_outcomes_json=?,source_cleanup_refreshed_at=?,updated_at=? WHERE id=?`, string(sourceCleanup), string(fileOutcomesJSON), now, now, receiptID)
+	res, err := tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET source_cleanup_json=?,file_outcomes_json=?,source_copies_json=CASE WHEN ? THEN ? ELSE source_copies_json END,source_cleanup_refreshed_at=?,updated_at=? WHERE id=?`, string(sourceCleanup), string(fileOutcomesJSON), len(sourceCopies) > 0, copiesRaw, now, now, receiptID)
 	if err := requireDeliveryTransition(res, err); err != nil {
 		return err
 	}

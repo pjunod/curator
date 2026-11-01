@@ -10,6 +10,8 @@ import {
   type DeliveryLifecycleReceipt,
 } from './api'
 import { fmtBytes, fmtRelative } from './api'
+import { LifecycleTimeline } from './JoinedLifecycleTimeline'
+import { ActionNotice } from './ActionDialog'
 
 const elapsed = (value?: string) => value && !value.startsWith('0001') && Number.isFinite(new Date(value).getTime()) ? fmtRelative(value) : 'not recorded'
 const pending = (value?: string) => !!value && !value.startsWith('0001') && new Date(value).getTime() > Date.now()
@@ -52,8 +54,9 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
   const blocked = [receipt.blockedSince, receipt.sourceCleanupBlockedSince, receipt.directoryCleanupBlockedSince,
     ...receipt.curatorFiles.map((file) => file.cleanupBlockedSince)].filter((value) => value && !value.startsWith('0001')) as string[]
   const longestBlock = blocked.map((value) => new Date(value).getTime()).filter(Number.isFinite).sort()[0]
-  const warning = longestBlock !== undefined && Date.now() - longestBlock >= 30 * 60 * 1000
-  const busy = handoff.isPending || runnerCleanup.isPending || curatorCleanup.isPending || importSelected.isPending
+  const sourceBlockedAt = typeof receipt.sourceCleanup?.blockedSince === 'number' && receipt.sourceCleanup.blockedSince > 0 ? receipt.sourceCleanup.blockedSince * 1000 : undefined
+  const warning = (longestBlock !== undefined && Date.now() - longestBlock >= 30 * 60 * 1000) || (sourceBlockedAt !== undefined && Date.now() - sourceBlockedAt >= 30 * 60 * 1000)
+  const busy = handoff.isPending || runnerCleanup.isPending || curatorCleanup.isPending || importSelected.isPending || abandon.isPending
   const runnerSource = receipt.sourceCleanup ?? {}
   const runnerSourceState = typeof runnerSource.status === 'string' ? runnerSource.status : 'unknown'
   const acknowledgement = receipt.acceptance.replaceAll('_', ' ')
@@ -68,9 +71,10 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
         <p>Pending deletion: {request.paths.join(', ')}{request.error ? ` · ${request.error}` : ''}</p>
         <button disabled={abandon.isPending} onClick={() => abandon.mutate(request.id)}>Cancel deletion request</button>
       </div>)}
-      {abandon.isSuccess && <p role="status">Deletion request cancelled. Review the current files before another action.</p>}
-      {abandon.isError && <p role="alert">{(abandon.error as Error).message}</p>}
+      {abandon.isSuccess && <ActionNotice revision={abandon.submittedAt}>Deletion request cancelled. Review the current files before another action.</ActionNotice>}
+      {abandon.isError && <ActionNotice warning revision={abandon.submittedAt}>{(abandon.error as Error).message}</ActionNotice>}
       <p><strong>Attempts:</strong> {receipt.attempts} {knownTimestamp(receipt.blockedSince) ? `· blocked ${elapsed(receipt.blockedSince)}` : ''}{pending(receipt.nextAttemptAt) ? ` · next handoff ${fmtRelative(receipt.nextAttemptAt!)}` : ''}</p>
+      <LifecycleTimeline receipt={receipt} />
       <details className="delivery-attempt-history"><summary>Curator attempt history ({receipt.attemptHistory?.length ?? 0})</summary>
         {receipt.attemptHistory?.length ? <ol>{receipt.attemptHistory.map((event, index) => {
           const previous = [...receipt.attemptHistory.slice(0, index)].reverse().find((item) => item.stage === event.stage && knownTimestamp(item.finishedAt))
@@ -106,12 +110,12 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
       <p><strong>Curator publication cleanup:</strong> {cleanupStatus(receipt.directoryCleanupState, receipt.directoryCleanupError, receipt.directoryCleanupBlockedSince, receipt.directoryCleanupNextAttemptAt)} · {receipt.directoryCleanupAttempts} attempts</p>
       {receipt.directoryCleanupError && <p className="error-text">{receipt.directoryCleanupError}</p>}
       <div className="row-actions">
-        {receipt.state !== 'conflict' && <button disabled={busy} onClick={() => handoff.mutate()}>Retry handoff</button>}
-        <button disabled={busy} onClick={() => runnerCleanup.mutate()}>Retry Runner source cleanup</button>
-        <button disabled={busy || receipt.state === 'conflict'} onClick={() => curatorCleanup.mutate()}>Retry Curator cleanup</button>
+        {receipt.state !== 'conflict' && <button aria-disabled={busy} onClick={() => { if (!busy) handoff.mutate() }}>{handoff.isPending ? 'Retrying handoff…' : 'Retry handoff'}</button>}
+        <button aria-disabled={busy} onClick={() => { if (!busy) runnerCleanup.mutate() }}>{runnerCleanup.isPending ? 'Retrying Runner source cleanup…' : 'Retry Runner source cleanup'}</button>
+        <button aria-disabled={busy || receipt.state === 'conflict'} onClick={() => { if (!busy && receipt.state !== 'conflict') curatorCleanup.mutate() }}>{curatorCleanup.isPending ? 'Retrying Curator cleanup…' : 'Retry Curator cleanup'}</button>
       </div>
-      {(handoff.error || runnerCleanup.error || curatorCleanup.error) && <p role="alert" className="error-text">{(handoff.error || runnerCleanup.error || curatorCleanup.error)?.message}</p>}
-      {(handoff.isSuccess || runnerCleanup.isSuccess || curatorCleanup.isSuccess) && <p role="status" className="muted">Retry queued. The durable receipt remains visible until its obligation is complete.</p>}
+      {(handoff.error || runnerCleanup.error || curatorCleanup.error) && <ActionNotice warning revision={Math.max(handoff.submittedAt, runnerCleanup.submittedAt, curatorCleanup.submittedAt)}>{(handoff.error || runnerCleanup.error || curatorCleanup.error)?.message}</ActionNotice>}
+      {(handoff.isSuccess || runnerCleanup.isSuccess || curatorCleanup.isSuccess) && <ActionNotice revision={Math.max(handoff.submittedAt, runnerCleanup.submittedAt, curatorCleanup.submittedAt)}>Retry queued. The durable receipt remains visible until its obligation is complete.</ActionNotice>}
       <details><summary>Transfer and publication identity</summary>
         <dl><dt>Delivery</dt><dd className="mono">{receipt.deliveryId}</dd><dt>Runner instance</dt><dd className="mono">{receipt.runnerInstanceId || 'unknown'}</dd>
           <dt>Publication generation</dt><dd className="mono">{receipt.publicationGeneration}</dd><dt>Manifest digest</dt><dd className="mono">{receipt.manifestDigest}</dd>
@@ -134,8 +138,8 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
           </li>
         })}</ul>
         <button disabled={busy || selectedPaths.length === 0 || receipt.state === 'conflict'} onClick={() => importSelected.mutate()}>Queue import selected ({selectedPaths.length})</button>
-        {importSelected.error && <p role="alert" className="error-text">{importSelected.error.message}</p>}
-        {importSelected.isSuccess && <p role="status" className="muted">Selected manifest files queued for verification and import.</p>}
+        {importSelected.error && <ActionNotice warning revision={importSelected.submittedAt}>{importSelected.error.message}</ActionNotice>}
+        {importSelected.isSuccess && <ActionNotice revision={importSelected.submittedAt}>Selected manifest files queued for verification and import.</ActionNotice>}
       </details>
       {receipt.sourceCleanup && <details><summary>Runner cleanup trace</summary><pre>{JSON.stringify(receipt.sourceCleanup, null, 2)}</pre></details>}
     </div>

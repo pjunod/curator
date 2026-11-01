@@ -4020,3 +4020,8 @@ a.pill-info:hover {
   font: inherit;
   font-size: 14px;
 }
+
+.lifecycle-timeline { margin: 1rem 0; }
+.lifecycle-clock-lane { border-left: 2px solid var(--border, #333); margin: .75rem 0; padding: .25rem .8rem; }
+.lifecycle-clock-lane > p { margin: .3rem 0; }
+.lifecycle-clock-lane ol { margin: .5rem 0; padding-left: 1.3rem; }

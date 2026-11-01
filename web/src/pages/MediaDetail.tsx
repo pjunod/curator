@@ -872,7 +872,6 @@ function FileActions({ item, file, onDone, onDeleted }: { item: MediaItemDetail;
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([])
   const [observationIds, setObservationIds] = useState<Record<number, string>>({})
   const [operation, setOperation] = useState<{ operationId: string; state: string } | null>(null)
-  const [feedback, setFeedback] = useState('')
   const [focusRevision, setFocusRevision] = useState(0)
   const generation = file.fileGeneration ?? ''
   const scopeFiles = item.files.filter((candidate) => {
@@ -930,7 +929,7 @@ function FileActions({ item, file, onDone, onDeleted }: { item: MediaItemDetail;
   })
   const report = useMutation({
     mutationFn: () => reportLibraryFile(item.id, file.id, { fileGeneration: generation, reasonCode, reason: reason.trim() }),
-    onSuccess: () => { setDialog(null); setFeedback('Report saved for review. No file or acquisition state changed.'); onDone(); void qc.invalidateQueries({ queryKey: ['library-lifecycle-review', item.id] }) },
+    onSuccess: () => { setFocusRevision((revision) => revision + 1); onDone(); void qc.invalidateQueries({ queryKey: ['library-lifecycle-review', item.id] }) },
   })
   const replace = useMutation({
     mutationFn: () => createReplacementOperation(item.id, {
@@ -965,7 +964,7 @@ function FileActions({ item, file, onDone, onDeleted }: { item: MediaItemDetail;
     focusActionTrigger(event)
     setDialog(kind); setReason(kind === 'replace_quality' ? 'Upgrade quality' : 'Reported by user')
     setReasonCode(kind === 'replace_quality' ? 'quality_preference' : 'user_reported_bad')
-    setBlacklist(null); setSelectedEpisodes([]); setObservationIds({}); setOperation(null); setFeedback('')
+    setBlacklist(null); setSelectedEpisodes([]); setObservationIds({}); setOperation(null)
     observe.reset(); replace.reset(); report.reset()
   }
   const refreshObservation = () => {
@@ -990,14 +989,13 @@ function FileActions({ item, file, onDone, onDeleted }: { item: MediaItemDetail;
       <button onClick={(event) => begin('replace_quality', event)}>Replace quality</button>
       <button onClick={(event) => { focusActionTrigger(event); setDialog('delete') }}>Delete…</button>
     </div>
-    {feedback && <div className="muted">{feedback}</div>}
     {dialog && <ActionDialog title={dialog === 'report' ? 'Report library file' : dialog === 'delete' ? 'Delete library file' : operation ? 'Replacement started' : 'Review replacement'} onClose={() => setDialog(null)}>
       <p className="mono">{name}</p>
       {dialog === 'delete' ? <>
         <p>Delete this file from disk and from the library?</p>
         <div className="row-actions"><button className="btn-danger" disabled={remove.isPending} onClick={() => remove.mutate()}>{remove.isPending ? 'Deleting…' : 'Delete file'}</button><button onClick={() => setDialog(null)}>Cancel</button></div>
         {remove.isError && <p className="error-text">{(remove.error as Error).message}</p>}
-      </> : dialog === 'report' ? <>
+      </> : dialog === 'report' ? report.isSuccess ? <><ActionNotice>Report saved for review.</ActionNotice><button onClick={() => setDialog(null)}>Done</button></> : <>
         <p className="muted">A report creates a review flag only. It does not change quality, remove this file, or start a download.</p>
         <label>Reason code<select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}><option value="user_reported_bad">User reported a problem</option><option value="corrupt_media">Corrupt media</option><option value="wrong_content">Wrong content</option><option value="incomplete_media">Incomplete media</option></select></label>
         <label className="replacement-reason-field">What did you notice?<textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label>

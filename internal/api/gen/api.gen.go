@@ -1712,8 +1712,11 @@ type DeliveryLifecycleReceipt struct {
 	GenerationKey                 *string                  `json:"generationKey,omitempty"`
 	JobId                         *string                  `json:"jobId,omitempty"`
 	KeepSourceOnFailure           *bool                    `json:"keepSourceOnFailure,omitempty"`
-	ManifestDigest                string                   `json:"manifestDigest"`
-	ManifestFiles                 []struct {
+
+	// LifecycleTiming Immutable version-1 intervals. Only completed monotonic endpoints in one node boot clock contribute to a known-work union.
+	LifecycleTiming *map[string]interface{} `json:"lifecycleTiming,omitempty"`
+	ManifestDigest  string                  `json:"manifestDigest"`
+	ManifestFiles   []struct {
 		Path      string `json:"path"`
 		Sha256    string `json:"sha256"`
 		SizeBytes int64  `json:"sizeBytes"`
@@ -1726,20 +1729,26 @@ type DeliveryLifecycleReceipt struct {
 		Id    string   `json:"id"`
 		Paths []string `json:"paths"`
 	} `json:"pendingDeleteRequests,omitempty"`
-	PublicationGeneration      string                    `json:"publicationGeneration"`
-	PublicationPath            *string                   `json:"publicationPath,omitempty"`
-	ReadyAt                    *time.Time                `json:"readyAt,omitempty"`
-	ReceiptId                  int64                     `json:"receiptId"`
-	RequestToken               *string                   `json:"requestToken,omitempty"`
-	RunnerInstanceId           *string                   `json:"runnerInstanceId,omitempty"`
-	SourceCleanup              *map[string]interface{}   `json:"sourceCleanup,omitempty"`
-	SourceCleanupAttempts      *int                      `json:"sourceCleanupAttempts,omitempty"`
-	SourceCleanupBlockedSince  *time.Time                `json:"sourceCleanupBlockedSince,omitempty"`
-	SourceCleanupError         *string                   `json:"sourceCleanupError,omitempty"`
-	SourceCleanupNextAttemptAt *time.Time                `json:"sourceCleanupNextAttemptAt,omitempty"`
-	SourceFileOutcomes         *[]map[string]interface{} `json:"sourceFileOutcomes,omitempty"`
-	State                      string                    `json:"state"`
-	TerminalOutcome            *string                   `json:"terminalOutcome,omitempty"`
+	PublicationGeneration string     `json:"publicationGeneration"`
+	PublicationPath       *string    `json:"publicationPath,omitempty"`
+	ReadyAt               *time.Time `json:"readyAt,omitempty"`
+	ReceiptId             int64      `json:"receiptId"`
+	RequestToken          *string    `json:"requestToken,omitempty"`
+	RunnerInstanceId      *string    `json:"runnerInstanceId,omitempty"`
+
+	// RunnerStages Immutable POST substages from one Runner node clock; excluded from aggregate major-stage totals.
+	RunnerStages               *map[string]interface{} `json:"runnerStages,omitempty"`
+	SourceCleanup              *map[string]interface{} `json:"sourceCleanup,omitempty"`
+	SourceCleanupAttempts      *int                    `json:"sourceCleanupAttempts,omitempty"`
+	SourceCleanupBlockedSince  *time.Time              `json:"sourceCleanupBlockedSince,omitempty"`
+	SourceCleanupError         *string                 `json:"sourceCleanupError,omitempty"`
+	SourceCleanupNextAttemptAt *time.Time              `json:"sourceCleanupNextAttemptAt,omitempty"`
+
+	// SourceCopies Mutable per-copy processing-source cleanup obligations; no local deletion authority.
+	SourceCopies       *[]map[string]interface{} `json:"sourceCopies,omitempty"`
+	SourceFileOutcomes *[]map[string]interface{} `json:"sourceFileOutcomes,omitempty"`
+	State              string                    `json:"state"`
+	TerminalOutcome    *string                   `json:"terminalOutcome,omitempty"`
 }
 
 // DirEntry defines model for DirEntry.

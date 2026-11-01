@@ -31,26 +31,29 @@ type RunnerFileOutcome struct {
 
 // RunnerDelivery is a durable Runner publication awaiting Curator acceptance.
 type RunnerDelivery struct {
-	ProtocolVersion       int                 `json:"protocolVersion,omitempty"`
-	Sequence              uint64              `json:"sequence"`
-	DeliveryID            string              `json:"deliveryId"`
-	PublicationGeneration string              `json:"publicationGeneration"`
-	SourceArtifactID      string              `json:"sourceArtifactId,omitempty"`
-	SourceGeneration      string              `json:"sourceGeneration,omitempty"`
-	ArtifactID            string              `json:"artifactId"`
-	JobID                 string              `json:"jobId"`
-	RequestToken          string              `json:"requestToken"`
-	RunnerInstanceID      string              `json:"runnerInstanceId"`
-	PublicationPath       string              `json:"publicationPath"`
-	ManifestDigest        string              `json:"manifestDigest"`
-	Files                 []RunnerFile        `json:"files"`
-	TerminalOutcome       string              `json:"terminalOutcome,omitempty"`
-	FailureStage          string              `json:"failureStage,omitempty"`
-	FailureCause          string              `json:"failureCause,omitempty"`
-	KeepSourceOnFailure   bool                `json:"keepSourceOnFailure,omitempty"`
-	FileOutcomes          []RunnerFileOutcome `json:"fileOutcomes,omitempty"`
-	ReadyAt               time.Time           `json:"readyAt"`
-	SourceCleanup         json.RawMessage     `json:"sourceCleanup,omitempty"`
+	LifecycleTiming       *RunnerLifecycleTiming `json:"lifecycleTiming,omitempty"`
+	RunnerStages          *RunnerStages          `json:"runnerStages,omitempty"`
+	SourceCopies          []RunnerSourceCopy     `json:"sourceCopies,omitempty"`
+	ProtocolVersion       int                    `json:"protocolVersion,omitempty"`
+	Sequence              uint64                 `json:"sequence"`
+	DeliveryID            string                 `json:"deliveryId"`
+	PublicationGeneration string                 `json:"publicationGeneration"`
+	SourceArtifactID      string                 `json:"sourceArtifactId,omitempty"`
+	SourceGeneration      string                 `json:"sourceGeneration,omitempty"`
+	ArtifactID            string                 `json:"artifactId"`
+	JobID                 string                 `json:"jobId"`
+	RequestToken          string                 `json:"requestToken"`
+	RunnerInstanceID      string                 `json:"runnerInstanceId"`
+	PublicationPath       string                 `json:"publicationPath"`
+	ManifestDigest        string                 `json:"manifestDigest"`
+	Files                 []RunnerFile           `json:"files"`
+	TerminalOutcome       string                 `json:"terminalOutcome,omitempty"`
+	FailureStage          string                 `json:"failureStage,omitempty"`
+	FailureCause          string                 `json:"failureCause,omitempty"`
+	KeepSourceOnFailure   bool                   `json:"keepSourceOnFailure,omitempty"`
+	FileOutcomes          []RunnerFileOutcome    `json:"fileOutcomes,omitempty"`
+	ReadyAt               time.Time              `json:"readyAt"`
+	SourceCleanup         json.RawMessage        `json:"sourceCleanup,omitempty"`
 }
 
 // RunnerDeliveryPage is one bounded response from Runner's pending-delivery
@@ -141,4 +144,78 @@ type RunnerDeliveryRejection struct {
 	Sequence   uint64 `json:"sequence"`
 	DeliveryID string `json:"deliveryId"`
 	Reason     string `json:"reason"`
+}
+
+// RunnerStages is an immutable bounded snapshot from one node clock. A nil
+// duration is interrupted/unknown evidence, never a fabricated elapsed value.
+type RunnerStages struct {
+	NodeID      string            `json:"nodeId"`
+	ClockDomain string            `json:"clockDomain"`
+	Spans       []RunnerStageSpan `json:"spans"`
+}
+type RunnerStageSpan struct {
+	Stage         string `json:"stage"`
+	StartedAtUnix int64  `json:"started_at_unix"`
+	Milliseconds  *int64 `json:"ms,omitempty"`
+}
+
+// RunnerSourceCopy is mutable progress for one independently retained source.
+// These progress facts carry no local deletion authority.
+type RunnerSourceCopy struct {
+	ID          string `json:"id"`
+	OwnerNode   string `json:"ownerNode"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
+	Attempts    uint32 `json:"attempts"`
+	NextRetryAt *int64 `json:"nextRetryAt,omitempty"`
+}
+
+func SameRunnerStages(a, b *RunnerStages) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.NodeID != b.NodeID || a.ClockDomain != b.ClockDomain || len(a.Spans) != len(b.Spans) {
+		return false
+	}
+	for i, left := range a.Spans {
+		right := b.Spans[i]
+		if left.Stage != right.Stage || left.StartedAtUnix != right.StartedAtUnix || (left.Milliseconds == nil) != (right.Milliseconds == nil) {
+			return false
+		}
+		if left.Milliseconds != nil && *left.Milliseconds != *right.Milliseconds {
+			return false
+		}
+	}
+	return true
+}
+
+type RunnerLifecycleTiming struct {
+	Version   int                       `json:"version"`
+	Intervals []RunnerLifecycleInterval `json:"intervals"`
+}
+type RunnerLifecycleInterval struct {
+	Stage            string  `json:"stage"`
+	NodeID           string  `json:"nodeId"`
+	ClockDomain      string  `json:"clockDomain"`
+	StartUnixMS      int64   `json:"startUnixMs"`
+	EndUnixMS        *int64  `json:"endUnixMs,omitempty"`
+	StartMonotonicMS *int64  `json:"startMonotonicMs,omitempty"`
+	EndMonotonicMS   *int64  `json:"endMonotonicMs,omitempty"`
+	DurationMS       *int64  `json:"durationMs,omitempty"`
+	State            string  `json:"state"`
+	Observations     *uint32 `json:"observations,omitempty"`
+}
+
+func SameRunnerLifecycleTiming(a, b *RunnerLifecycleTiming) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Version != b.Version || len(a.Intervals) != len(b.Intervals) {
+		return false
+	}
+	// Struct encoding is canonical for the fixed wire fields and compares nil
+	// measurements separately from recorded zeros without ordering map keys.
+	left, _ := json.Marshal(a.Intervals)
+	right, _ := json.Marshal(b.Intervals)
+	return string(left) == string(right)
 }

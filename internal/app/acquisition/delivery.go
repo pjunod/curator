@@ -204,7 +204,7 @@ func (s *Service) refreshOneDeliverySourceCleanup(ctx context.Context, lookup po
 	if deliverySourceCleanupTerminal(fresh.SourceCleanup) {
 		retryAfter = 24 * time.Hour
 	}
-	return s.db.RefreshDeliverySourceCleanup(ctx, r.ID, fresh.SourceCleanup, fresh.FileOutcomes, retryAfter)
+	return s.db.RefreshDeliverySourceCleanup(ctx, r.ID, fresh.SourceCleanup, fresh.FileOutcomes, retryAfter, fresh.SourceCopies)
 }
 
 func deliverySourceCleanupTerminal(raw json.RawMessage) bool {
@@ -248,6 +248,12 @@ func deliverySourceCleanupTerminal(raw json.RawMessage) bool {
 }
 
 func sameDeliveryImmutable(a, b ports.RunnerDelivery) bool {
+	if !ports.SameRunnerLifecycleTiming(a.LifecycleTiming, b.LifecycleTiming) {
+		return false
+	}
+	if !ports.SameRunnerStages(a.RunnerStages, b.RunnerStages) {
+		return false
+	}
 	if a.Sequence != b.Sequence || a.DeliveryID != b.DeliveryID || a.PublicationGeneration != b.PublicationGeneration ||
 		a.SourceArtifactID != b.SourceArtifactID || a.SourceGeneration != b.SourceGeneration ||
 		a.ManifestDigest != b.ManifestDigest || a.ArtifactID != b.ArtifactID || a.JobID != b.JobID ||

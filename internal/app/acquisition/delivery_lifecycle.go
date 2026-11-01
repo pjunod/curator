@@ -13,6 +13,9 @@ import (
 )
 
 type DeliveryLifecycleReceipt struct {
+	LifecycleTiming               *ports.RunnerLifecycleTiming `json:"lifecycleTiming,omitempty"`
+	RunnerStages                  *ports.RunnerStages          `json:"runnerStages,omitempty"`
+	SourceCopies                  []ports.RunnerSourceCopy     `json:"sourceCopies,omitempty"`
 	ReceiptID                     int64                        `json:"receiptId"`
 	ClientID                      int64                        `json:"clientId"`
 	DownloadID                    int64                        `json:"downloadId"`
@@ -129,8 +132,8 @@ func (s *Service) deliveryLifecycleReceipt(ctx context.Context, r sqlite.Deliver
 		pending = append(pending, DeliveryDeleteRequest{ID: b.ID, Paths: paths, Error: b.RetryError})
 	}
 	return DeliveryLifecycleReceipt{
-		PendingDeleteRequests: pending,
-		ReceiptID:             r.ID, ClientID: r.ClientID, DownloadID: r.DownloadID, GenerationKey: r.GenerationKey,
+		PendingDeleteRequests: pending, RunnerStages: r.Delivery.RunnerStages, SourceCopies: r.Delivery.SourceCopies, LifecycleTiming: r.Delivery.LifecycleTiming,
+		ReceiptID: r.ID, ClientID: r.ClientID, DownloadID: r.DownloadID, GenerationKey: r.GenerationKey,
 		MediaItemID: r.MediaItemID, CopyID: r.CopyID, DeliveryID: r.Delivery.DeliveryID,
 		PublicationGeneration: r.Delivery.PublicationGeneration, ManifestDigest: r.Delivery.ManifestDigest,
 		RunnerInstanceID: r.Delivery.RunnerInstanceID, JobID: r.Delivery.JobID, RequestToken: r.Delivery.RequestToken,
@@ -248,7 +251,7 @@ func (s *Service) RetryRunnerSourceCleanup(ctx context.Context, receiptID int64)
 	if deliverySourceCleanupTerminal(fresh.SourceCleanup) {
 		retryAfter = 24 * time.Hour
 	}
-	if err := s.db.RefreshDeliverySourceCleanup(ctx, receiptID, fresh.SourceCleanup, fresh.FileOutcomes, retryAfter); err != nil {
+	if err := s.db.RefreshDeliverySourceCleanup(ctx, receiptID, fresh.SourceCleanup, fresh.FileOutcomes, retryAfter, fresh.SourceCopies); err != nil {
 		return err
 	}
 	return nil

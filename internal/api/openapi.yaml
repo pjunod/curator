@@ -3223,6 +3223,18 @@ components:
       type: object
       required: [receiptId, clientId, downloadId, deliveryId, publicationGeneration, manifestDigest, state, acceptance, manifestFiles, curatorFiles, attemptHistory]
       properties:
+        runnerStages:
+          type: object
+          description: Immutable POST substages from one Runner node clock; excluded from aggregate major-stage totals.
+          additionalProperties: true
+        lifecycleTiming:
+          type: object
+          description: Immutable version-1 intervals. Only completed monotonic endpoints in one node boot clock contribute to a known-work union.
+          additionalProperties: true
+        sourceCopies:
+          type: array
+          description: Mutable per-copy processing-source cleanup obligations; no local deletion authority.
+          items: { type: object, additionalProperties: true }
         receiptId: { type: integer, format: int64 }
         clientId: { type: integer, format: int64 }
         downloadId: { type: integer, format: int64 }

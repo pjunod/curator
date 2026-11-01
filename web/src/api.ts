@@ -1672,7 +1672,18 @@ export interface CuratorDeliveryFileOutcome {
   cleanupNextAttemptAt?: string
   libraryPath?: string
 }
+export interface RunnerLifecycleInterval {
+ stage: string; nodeId: string; clockDomain: string; startUnixMs: number; endUnixMs?: number
+ startMonotonicMs?: number; endMonotonicMs?: number; durationMs?: number
+ state: 'completed' | 'interrupted' | 'running' | 'unknown'; observations?: number
+}
+export interface RunnerLifecycleTiming { version: number; intervals: RunnerLifecycleInterval[] }
+export interface RunnerStages { nodeId: string; clockDomain: string; spans: Array<{ stage: string; started_at_unix: number; ms?: number }> }
+export interface RunnerSourceCopy { id: string; ownerNode: string; status: string; error?: string; attempts: number; nextRetryAt?: number }
 export interface DeliveryLifecycleReceipt {
+  lifecycleTiming?: RunnerLifecycleTiming
+  runnerStages?: RunnerStages
+  sourceCopies?: RunnerSourceCopy[]
   pendingDeleteRequests?: Array<{ id: string; paths: string[]; error?: string }>
   receiptId: number
   clientId: number
