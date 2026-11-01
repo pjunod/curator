@@ -1224,8 +1224,10 @@ per-file import and cleanup outcomes. It removes only files with committed
 placement, same-copy redundancy evidence, or an approved replacement scope;
 unknown and recoverable siblings stay in Resolve. A release's sample clip is
 never imported: the episode beside it imports normally and the sample is
-recorded as a known incidental file. A manifest that holds only a sample (or
-only sidecars) is a failed import, not an empty success. Runner handles its own
+recorded as a known incidental file, including when Resolve's selection
+includes it. A manifest that holds only a sample (or only sidecars) is a
+failed import rather than an empty one marked imported; Runner still has its
+acknowledgement, because the manifest itself was valid. Runner handles its own
 processing source and reports that cleanup separately.
 
 Activity and each completed-folder entry expose the durable lifecycle trace.

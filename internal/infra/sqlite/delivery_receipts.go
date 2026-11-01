@@ -749,6 +749,22 @@ func (d *DB) SetDeliveryRetry(ctx context.Context, r DeliveryReceipt, providerDe
 	return requireDeliveryTransition(res, err)
 }
 
+// ResetDeliveryRetryBackoff brings every import retry that is backed off
+// beyond horizon forward to now (or to a provider's Retry-After, whichever is
+// later). Called once at process start: a settled failure waits hours between
+// attempts, and a new process may carry the code that resolves it. Returns the
+// number of receipts brought forward.
+func (d *DB) ResetDeliveryRetryBackoff(ctx context.Context, horizon time.Duration) (int64, error) {
+	now := time.Now()
+	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET next_attempt_at=MAX(?,provider_retry_after),updated_at=?
+		WHERE state IN ('unresolved','ready') AND attempts>0 AND next_attempt_at>?`,
+		now.UnixMilli(), now.UnixMilli(), now.Add(horizon).UnixMilli())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (d *DB) DeliveryAcknowledgementRetryDue(ctx context.Context, receiptID int64, now time.Time) (bool, error) {
 	var due int
 	err := d.R.QueryRowContext(ctx, `SELECT CASE WHEN attempts>0 AND MAX(next_attempt_at,provider_retry_after)>? THEN 0 WHEN provider_retry_after>? THEN 0 ELSE 1 END FROM runner_delivery_receipts WHERE id=? AND ack_state='pending' AND consumer_receipt_id!=''`, now.UnixMilli(), now.UnixMilli(), receiptID).Scan(&due)

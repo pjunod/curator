@@ -414,12 +414,13 @@ func (s *Service) deliveryRetry(ctx context.Context, r *sqlite.DeliveryReceipt, 
 		r.BlockedSince = time.Now()
 	}
 	r.Attempts++
-	delay := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}[min(r.Attempts-1, 3)]
-	r.NextAttemptAt = time.Now().Add(delay)
 	var providerDeadline time.Time
+	settled := false
 	if len(cause) > 0 {
 		providerDeadline = submissionRetryDeadline(cause[0])
+		settled = settledDeliveryFailure(cause[0])
 	}
+	r.NextAttemptAt = time.Now().Add(deliveryRetryDelay(r.Attempts, settled))
 	if providerDeadline.After(r.NextAttemptAt) {
 		r.NextAttemptAt = providerDeadline
 	}
@@ -429,6 +430,42 @@ func (s *Service) deliveryRetry(ctx context.Context, r *sqlite.DeliveryReceipt, 
 	if err := s.db.SetDeliveryRetry(ctx, *r, providerDeadline); err != nil {
 		s.log.Warn("delivery retry state write failed", "delivery", r.Delivery.DeliveryID, "err", err)
 	}
+}
+
+// deliveryRetryCeiling is the longest a settled delivery failure waits
+// between attempts. Process start brings every backed-off receipt forward
+// (ResetDeliveryRetryBackoff), so a deploy that fixes the cause is picked up
+// within minutes rather than hours.
+const deliveryRetryCeiling = 6 * time.Hour
+
+// deliveryRetryDelay is the wait before attempt n+1. Environmental failures
+// (a missing mount, a full disk, an unreachable Runner) clear on their own
+// and keep the five-minute ceiling. A settled failure is the importer's
+// verdict on the payload itself; repeating it every five minutes re-read the
+// whole payload and wrote a history row and a notification each time (1,206
+// attempts on one wtFOCK delivery), so after the first few it doubles up to
+// deliveryRetryCeiling.
+func deliveryRetryDelay(attempts int, settled bool) time.Duration {
+	steps := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
+	if attempts <= len(steps) {
+		return steps[max(attempts, 1)-1]
+	}
+	if !settled {
+		return steps[len(steps)-1]
+	}
+	delay := steps[len(steps)-1]
+	for i := len(steps); i < attempts && delay < deliveryRetryCeiling; i++ {
+		delay *= 2
+	}
+	return min(delay, deliveryRetryCeiling)
+}
+
+// settledDeliveryFailure reports whether an attempt ended in the importer's
+// verdict on the payload (nothing importable, every file declined) rather
+// than in the environment. Only a change of code, policy or library can
+// change that verdict, so it is retried slowly.
+func settledDeliveryFailure(err error) bool {
+	return errors.Is(err, ErrNoFilesImported) && !errors.Is(err, ErrImportBlocked)
 }
 
 func (s *Service) markDeliveryImported(ctx context.Context, receiptID int64) {
@@ -673,7 +710,10 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 				if !manifestPaths[p] {
 					return fmt.Errorf("manually selected path is absent from the accepted delivery manifest: %s", p)
 				}
-				if verifiedPaths[p] && deliveryImportablePath(item.Kind, p) {
+				// A sample in the selection is dropped, not fatal: Resolve lists
+				// every manifest file, and "select all" must still import the
+				// episode. The ledger records the sample as incidental.
+				if verifiedPaths[p] && deliveryImportablePath(item.Kind, p) && !isReleaseSample(p) {
 					selected = append(selected, p)
 				}
 			}
@@ -682,16 +722,6 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 			}
 			break
 		}
-	}
-	// An automatic import with nothing to place is not an import. Without
-	// this, a manifest that holds only a sample (or only sidecars) skipped the
-	// importer, reported success with zero files, and acknowledged the
-	// delivery to Runner as consumed.
-	if !manual && !deliveryManifestHasMedia(item.Kind, r.Delivery.Files) {
-		err := fmt.Errorf("%w: the accepted Runner manifest holds no importable media (samples and sidecars only)", ErrNoFilesImported)
-		s.failImport(ctx, &fresh, err.Error())
-		s.deliveryRetry(ctx, &r, "accepted delivery import is pending: "+err.Error(), err)
-		return err
 	}
 	selectedSet := map[string]bool{}
 	for _, p := range selected {
@@ -733,7 +763,15 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 	ctx = withAcceptedPublicationGeneration(ctx, r.Delivery.PublicationGeneration)
 	ctx = withIndependentPlacementCopy(ctx)
 	var result ImportResult
-	if len(selected) > 0 {
+	switch {
+	case !manual && !deliveryManifestHasMedia(item.Kind, r.Delivery.Files):
+		// An automatic import with nothing to place is not an import. Without
+		// this, a manifest that holds only a sample (or only sidecars) skipped
+		// the importer and the delivery was marked imported with zero files.
+		// It falls through the shared failure path below, so the ledger still
+		// records every file and the failure is retried as settled.
+		err = fmt.Errorf("%w: the accepted Runner manifest holds no importable media (samples and sidecars only)", ErrNoFilesImported)
+	case len(selected) > 0:
 		result, err = s.importDownloadFiles(ctx, fresh, r.MappedPath, selected, manual)
 	}
 	if err == nil {
@@ -764,10 +802,19 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 		}
 	}
 	if err != nil {
+		message := "accepted delivery import is pending: " + err.Error()
 		if !errors.Is(err, context.Canceled) {
-			s.failImport(ctx, &fresh, err.Error())
+			if r.Error == message {
+				// The same verdict the person was already told about. The
+				// download returns to failed with its trace step, but a retry
+				// that changed nothing is not a new event: no history row and
+				// no notification per attempt.
+				s.advance(ctx, &fresh, "failed", fresh.Progress, err.Error(), stepFailed, err.Error())
+			} else {
+				s.failImport(ctx, &fresh, err.Error())
+			}
 		}
-		s.deliveryRetry(ctx, &r, "accepted delivery import is pending: "+err.Error(), err)
+		s.deliveryRetry(ctx, &r, message, err)
 		return err
 	}
 	detail := fmt.Sprintf("imported %d file(s) from accepted Runner manifest", result.Imported)

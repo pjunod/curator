@@ -834,7 +834,8 @@ func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) 
 	return out, err
 }
 
-// isReleaseSample reports whether a media file is a release's sample clip.
+// isReleaseSample reports whether a media file is a release's sample clip:
+// "sample" in its name, or a file inside the release's Sample/ folder.
 //
 // Every path that chooses media for the library asks this one question: the
 // completed-folder scan, the manual-import browser, the Runner delivery
@@ -842,8 +843,17 @@ func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) 
 // to carry their own copies of it, and the delivery selection had none, so a
 // release that shipped its sample was handed to a validator that refuses
 // samples and failed every attempt, forever.
+//
+// The name test is deliberately broad: it errs toward skipping a real file
+// whose title contains the word (recoverable by renaming) over placing a
+// forty-megabyte clip as the episode (silent, and it blocks the real file as
+// "does not improve on" what is already there).
 func isReleaseSample(path string) bool {
-	return strings.Contains(strings.ToLower(filepath.Base(path)), "sample")
+	if strings.Contains(strings.ToLower(filepath.Base(path)), "sample") {
+		return true
+	}
+	parent := strings.ToLower(filepath.Base(filepath.Dir(path)))
+	return parent == "sample" || parent == "samples"
 }
 
 // importScope pins an import to one copy of the item: its id (0 =

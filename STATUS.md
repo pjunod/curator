@@ -1,9 +1,9 @@
 # Monarr — Project Status
 
-## Samples no longer fail Runner delivery imports — 2026-11-01 · v0.38.6
+## Samples no longer fail Runner delivery imports; settled failures back off — 2026-11-01 · v0.38.6
 
-**Status:** branch `codex/delivery-sample-files` — review, gate, CI and merge
-pending.
+**Status:** branch `codex/delivery-sample-files` — adversarial review done and
+addressed (below). Full gate, CI and merge pending.
 
 Measuring v0.38.5 on nuc3 turned up a second permanent loop. Every Runner
 delivery that shipped a scene sample (`sample-<release>.mkv`) failed on every
@@ -14,21 +14,58 @@ whole import. The completed-folder scan has always skipped samples, so only
 Runner deliveries hit it. Live damage: Good.Trouble S02E09 and S02E10 grabbed
 six times each (up to 239 attempts per copy), wtFOCK S02E03, S02E10, S03E01,
 S03E02, S03E05 and S03E06 three or four times each (up to 1,206 attempts since
-Oct 27).
+Oct 27). No new grabs of either show since v0.38.4's re-grab guard.
 
 - One `isReleaseSample` predicate now serves the completed scan, the manual
-  browser, the delivery selection, the selection validator and the redundancy
-  proof's media count. The delivery selection was the one path without it.
+  browser, the delivery selection (automatic and Resolve), the selection
+  validator and the redundancy proof's media count. It also recognizes files
+  inside a release's `Sample/` folder.
 - A sample is recorded as `known_incidental` ("release sample excluded from
-  media selection") instead of "not attempted by the importer".
-- A manifest with no importable media (only a sample, or only sidecars) is now
-  a failed import. Before, it skipped the importer, reported "imported 0
-  file(s)" and acknowledged the delivery to Runner as consumed.
+  media selection"); rows an earlier attempt left as "not attempted by the
+  importer" are corrected on the next attempt. Still protected either way.
+- Resolve's select-all (sample included) imports the episode instead of
+  rejecting the batch.
+- A manifest with no importable media (only a sample, or only sidecars) is a
+  failed import. Before, it skipped the importer and the delivery was marked
+  imported with zero files. Runner's acknowledgement is unchanged (it is sent
+  before the importer runs; the manifest itself was valid).
 
-v0.38.5 measured live on nuc3 (started 21:30:10Z): imports overlapped (two
-workers busy at once), and two 2.9 GB duplicate cleanups ran 225 s on the
-cleanup workers alongside them. The HIG S05E04 duplicates 38 and 112 resolved
-as redundant and were removed.
+**The amplifier.** Every failed delivery import retried every 5 minutes
+forever, re-reading the whole payload and writing an `import_failed` history
+row and a notification each time — 742 rows in 11 hours for these two shows.
+That turned all three of today's defects into 1,000-attempt loops.
+
+- A settled failure (`ErrNoFilesImported` without `ErrImportBlocked`: the
+  importer's verdict on the payload) now backs off past 5 minutes, doubling to
+  a 6-hour ceiling. Environmental failures keep the 5-minute ceiling.
+- A retry that ends in exactly the failure already on record returns the
+  download to failed without a new history row or notification.
+- Process start brings every backed-off receipt forward once, so a deploy that
+  fixes the cause clears it in minutes. **Retry** still forces one at once.
+
+**Review** (adversarial agent): no deletion-safety findings. Addressed: the
+zero-media guard created its own forever loop and skipped the ledger (now it
+falls through the shared failure path, and the loop is fixed generally, above);
+comments and docs claimed it withheld Runner's acknowledgement (corrected;
+tests assert the ack); Resolve select-all with the sample failed; stale sample
+rows were not reclassified; `Sample/` folders were missed.
+**Decision for Paul:** the name test stays a substring match, so a real episode
+whose title contains "sample" is skipped. Narrowing it to a delimited token
+risks placing an undelimited sample clip as the episode, which would then
+block the real file as "does not improve on" it. Kept the conservative rule.
+
+v0.38.5 measured live on nuc3 (started 21:30:10Z): two imports in flight at
+once, and 2.9 GB duplicate cleanups running 225–275 s each on the cleanup
+workers alongside them. The HIG S05E04/E06 duplicates are draining as
+redundant.
+
+**Also found, not changed (decision for Paul):** Good.Trouble S02E06 AVON is a
+66 MB, one-minute fake that was imported six times, each copy replacing the
+last. Five payloads are `placed`/`retry` ("verified library placement is no
+longer present") and retry hourly. They are copies of the same release as the current
+library file, which is flagged implausible, and the redundancy proof
+requires an unflagged one. Proposed: let an exact-bytes match against the
+current library file prove redundancy even when that file is flagged.
 
 ## Imports no longer wait behind cleanup — 2026-11-01 · v0.38.5
 

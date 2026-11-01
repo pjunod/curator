@@ -337,8 +337,14 @@ stopped. Common cases:
 
 Native Runner deliveries have their own durable import, acknowledgement, and
 cleanup retries. Temporary storage and I/O errors keep the affected obligation
-pending. The lifecycle trace shows the cause and next attempt; a rejected or
-conflicting manifest requires review. A missing path in a legacy client row
+pending and retry every 5 minutes. When the importer itself declined the
+payload (nothing importable, every file declined by policy), the retry backs
+off — 10, 20, 40 minutes and so on, up to every 6 hours — and a repeat of the
+same failure adds no new history entry or notification. Every restart retries
+those once straight away, so an upgrade that fixes the cause is picked up in
+minutes; **Retry** in Activity or Resolve retries one immediately. The
+lifecycle trace shows the cause and next attempt; a rejected or conflicting
+manifest requires review. A missing path in a legacy client row
 still uses the explicit Retry action described above.
 
 Every failed row offers **Retry** (re-run the import once the underlying

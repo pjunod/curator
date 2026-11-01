@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1508,12 +1509,14 @@ func TestDeliveryWithSampleImportsTheEpisodeAndRecordsTheSample(t *testing.T) {
 }
 
 // A manifest with nothing but a sample has nothing to place. It used to skip
-// the importer, report "imported 0 file(s)", and acknowledge the delivery to
-// Runner as consumed.
+// the importer and mark the delivery imported with zero files. Runner's
+// acknowledgement is unaffected: the manifest was valid and accepted before
+// the importer judged it.
 func TestDeliveryOfOnlyASampleIsAFailedImportNotASuccess(t *testing.T) {
 	ctx := context.Background()
 	protocol := &deliveryImportClient{}
-	svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, "sample-"+epRelease+".mkv", []byte("sample clip"), nil)
+	sample := "sample-" + epRelease + ".mkv"
+	svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, sample, []byte("sample clip"), nil)
 	receiptID := receiptIDFor(t, db, dl.ID)
 	err := svc.runDeliveryImport(ctx, dl, cfg, receiptID)
 	if !errors.Is(err, ErrNoFilesImported) {
@@ -1523,9 +1526,174 @@ func TestDeliveryOfOnlyASampleIsAFailedImportNotASuccess(t *testing.T) {
 	if rerr != nil || receipt.State == "imported" {
 		t.Fatalf("receipt = %+v err=%v, must not be imported", receipt, rerr)
 	}
+	if protocol.accepts != 1 || receipt.AckState != "accepted" {
+		t.Fatalf("accepts=%d ack=%q, want the valid manifest accepted once", protocol.accepts, receipt.AckState)
+	}
 	fresh, gerr := db.GetDownload(ctx, dl.ID)
 	if gerr != nil || fresh.State != "failed" {
 		t.Fatalf("download state = %q err=%v, want failed", fresh.State, gerr)
+	}
+	outcomes, oerr := db.DeliveryFileOutcomes(ctx, receiptID)
+	if oerr != nil || len(outcomes) != 1 || outcomes[0].Disposition != "known_incidental" || !strings.Contains(outcomes[0].Reason, "sample") {
+		t.Fatalf("ledger = %+v err=%v, want the sample recorded as known_incidental", outcomes, oerr)
+	}
+	if got := importFailedRows(t, db); got != 1 {
+		t.Fatalf("import_failed history rows after one attempt = %d, want 1", got)
+	}
+
+	// The retry reaches the same verdict. It is retried, but it is not a new
+	// event: no second history row (and so no second notification).
+	if err := svc.runDeliveryImport(ctx, fresh, cfg, receiptID); !errors.Is(err, ErrNoFilesImported) {
+		t.Fatalf("second attempt err = %v, want ErrNoFilesImported", err)
+	}
+	if got := importFailedRows(t, db); got != 1 {
+		t.Fatalf("import_failed history rows after an identical retry = %d, want 1", got)
+	}
+	receipt, _ = db.DeliveryReceiptByID(ctx, receiptID)
+	if receipt.Attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", receipt.Attempts)
+	}
+}
+
+func importFailedRows(t *testing.T, db *sqlite.DB) int {
+	t.Helper()
+	events, err := db.ListHistory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range events {
+		if e.Type == "import_failed" {
+			n++
+		}
+	}
+	return n
+}
+
+// Resolve lists every manifest file; selecting all of them, sample included,
+// must import the episode rather than reject the batch.
+func TestManualDeliverySelectionIncludingTheSampleImportsTheEpisode(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	sample := "sample-" + epRelease + ".mkv"
+	svc, db, dl, cfg, publication := deliveryImportFixtureWithFiles(t, protocol, map[string][]byte{sample: []byte("sample clip")})
+	receiptID := receiptIDFor(t, db, dl.ID)
+	dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(),
+		Paths: []string{filepath.Join(publication, epRelease+".mkv"), filepath.Join(publication, sample)}})
+	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatalf("select-all including the sample must import the episode, got: %v", err)
+	}
+	outcomes, err := db.DeliveryFileOutcomes(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range outcomes {
+		want := "placed"
+		if o.Path == sample {
+			want = "known_incidental"
+		}
+		if o.Disposition != want {
+			t.Fatalf("%s disposition = %q, want %q (%+v)", o.Path, o.Disposition, want, outcomes)
+		}
+	}
+}
+
+// Receipts that failed before samples were recognized recorded the sample as
+// a file the importer never attempted. The next attempt corrects that.
+func TestDeliveryRetryReclassifiesAnEarlierUnattemptedSample(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	sample := "sample-" + epRelease + ".mkv"
+	svc, db, dl, cfg, _ := deliveryImportFixtureWithFiles(t, protocol, map[string][]byte{sample: []byte("sample clip")})
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatal(err)
+	}
+	// What an attempt before sample recognition left behind.
+	if _, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET disposition='unknown_recoverable',reason='manifest file was not attempted by the importer' WHERE receipt_id=? AND path=?`, receiptID, sample); err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := svc.verifyDeliveryManifest(ctx, cfg, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.recordDeliveryImportOutcomes(ctx, r, files, ImportResult{}); err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, sample)
+	if err != nil || row.Disposition != "known_incidental" || row.CleanupState != "protected" {
+		t.Fatalf("sample row = %+v err=%v, want known_incidental and still protected", row, err)
+	}
+}
+
+func TestReleaseSampleRecognition(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/c/Show.S01E01-GRP/sample-show.s01e01-grp.mkv":   true,
+		"/c/Show.S01E01-GRP/Sample/show.s01e01-grp.mkv":   true,
+		"Samples/grp-show.s01e01.mkv":                     true,
+		"/c/Show.S01E01-GRP/show.s01e01-grp.mkv":          false,
+		"/c/Free.Samples.S01E01-GRP/show.s01e01-grp.mkv":  false,
+		"/c/Show.S01E01.Blood.Sample-GRP/show.s01e01.mkv": false,
+	} {
+		if got := isReleaseSample(path); got != want {
+			t.Errorf("isReleaseSample(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+// Environmental failures keep retrying every five minutes. A settled verdict
+// on the payload backs off to the ceiling instead of re-reading the payload
+// and notifying 288 times a day.
+func TestDeliveryRetryDelayBacksOffOnlySettledFailures(t *testing.T) {
+	for _, c := range []struct {
+		attempts int
+		settled  bool
+		want     time.Duration
+	}{
+		{1, true, 30 * time.Second}, {4, true, 5 * time.Minute}, {5, true, 10 * time.Minute},
+		{8, true, 80 * time.Minute}, {12, true, deliveryRetryCeiling}, {1206, true, deliveryRetryCeiling},
+		{5, false, 5 * time.Minute}, {1206, false, 5 * time.Minute},
+	} {
+		if got := deliveryRetryDelay(c.attempts, c.settled); got != c.want {
+			t.Errorf("deliveryRetryDelay(%d, %v) = %v, want %v", c.attempts, c.settled, got, c.want)
+		}
+	}
+	if !settledDeliveryFailure(fmt.Errorf("x: %w", ErrNoFilesImported)) {
+		t.Error("no files imported is a settled verdict")
+	}
+	if settledDeliveryFailure(errors.Join(ErrNoFilesImported, ErrImportBlocked)) || settledDeliveryFailure(errors.New("payload missing")) {
+		t.Error("a blocked destination or a missing payload is environmental")
+	}
+}
+
+// Process start brings backed-off receipts forward once, so a deploy that
+// fixes a settled failure is picked up promptly.
+func TestStartImportersBringsBackedOffDeliveriesForward(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	svc, db, dl, _, _ := deliveryImportFixture(t, protocol)
+	receiptID := receiptIDFor(t, db, dl.ID)
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.State, r.Attempts, r.NextAttemptAt = "ready", 9, time.Now().Add(3*time.Hour)
+	if err := db.SetDeliveryRetry(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	svc.StartImporters(workerCtx)
+	defer func() { cancel(); svc.WaitImporters() }()
+	after, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil || after.NextAttemptAt.After(time.Now().Add(time.Minute)) {
+		t.Fatalf("next attempt = %v err=%v, want brought forward to now", after.NextAttemptAt, err)
 	}
 }
 

@@ -112,6 +112,15 @@ func (s *Service) recordDeliveryImportOutcomes(ctx context.Context, r sqlite.Del
 			}
 		} else if isReleaseSample(f.relative) && (filename.IsVideo(f.relative) || filename.IsBook(f.relative)) {
 			disposition, reason = "known_incidental", "release sample excluded from media selection"
+			if row.Disposition == "unknown_recoverable" && excessOperationID == "" {
+				// Recorded by an attempt that predates sample recognition. The
+				// file is still protected either way; this corrects what Resolve
+				// says about it.
+				if err := s.db.UpdateDeliveryFileDisposition(ctx, r.ID, f.relative, disposition, reason, ""); err != nil {
+					errs = append(errs, err)
+				}
+				continue
+			}
 		} else if row.Disposition == "unselected_recoverable" {
 			continue
 		}
