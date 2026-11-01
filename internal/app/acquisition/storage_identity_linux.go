@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -184,21 +183,4 @@ func unescapeMountInfo(value string) string {
 		b.WriteByte(value[i])
 	}
 	return b.String()
-}
-
-// fileDevice and fileChangeTime feed the digest memo (digest_memo.go).
-func fileDevice(info os.FileInfo) (string, bool) {
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", false
-	}
-	return fmt.Sprintf("%d", st.Dev), true
-}
-
-func fileChangeTime(info os.FileInfo) (time.Time, bool) {
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return time.Time{}, false
-	}
-	return time.Unix(st.Ctim.Sec, st.Ctim.Nsec), true
 }

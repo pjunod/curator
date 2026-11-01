@@ -1,20 +1,26 @@
 # Monarr — Project Status
 
-## Imports stop re-reading the same bytes — 2026-11-01 · v0.38.5
+## Imports no longer wait behind cleanup — 2026-11-01 · v0.38.5
 
-**Status:** in progress on `codex/import-digest-memo`.
+**Status:** [PR #76](https://github.com/pjunod/curator/pull/76) — review
+addressed; gate and CI pending.
 
 Paul asked why importing is slow and whether it must be serial. Measured on
-nuc3 after v0.38.4: duplicate proofs took 250–280 s per 2.9 GB file against
-31 s for a real 2.5 GB import, and attempts ran strictly one after another.
+nuc3 after v0.38.4: a real 2.5 GB import took 31 s; proving a 2.9 GB
+duplicate took 250–280 s; and attempts ran strictly one after another.
 
-- **Slow:** each attempt read the same payload three or four times over
-  network mounts (verify, recheck, placement or redundancy proof) and
-  remembered nothing between attempts. Digests are now memoized by file
-  generation with git's racily-clean rule ([ADR 0025](docs/adr/0025-digest-memo.md)).
 - **Serial:** imports have two workers by design, but payload cleanup shared
-  them; a 31 GB cleanup re-hashing both copies held one worker for 20+ min,
-  leaving one for everything else. Cleanup now has its own worker.
+  them. A 31 GB cleanup re-reading both copies held one worker for 20+ min,
+  leaving one for every import. Cleanup now has its own worker.
+- **Re-reads:** a retry of an accepted delivery re-read its payload twice
+  (verify, then a recheck moments later with nothing in between). The recheck
+  now runs only when an acknowledgement round trip separates it from the
+  verification.
+- **Rejected after review:** remembering digests by file generation (inode,
+  size, mtime, ctime). mmap writes change bytes without changing mtime/ctime
+  (reproduced on ext4), and the racy-margin rule mixed the file server's
+  clock with Curator's. A wrong digest feeds a cleanup that deletes, so every
+  proof that can lead to deletion keeps reading the bytes.
 
 ## Obfuscated duplicates are redundant — 2026-11-01 · v0.38.4
 

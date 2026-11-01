@@ -178,19 +178,6 @@ func fileDigestSnapshot(ctx context.Context, path string) (string, int64, string
 		return "", 0, "", fmt.Errorf("not a regular file: %s", path)
 	}
 	beforeGeneration := deliveryFileGeneration(before)
-	if digest, ok := lookupDigest(before); ok {
-		// The bytes of this exact generation were read in full before. The
-		// path must still name the same, unchanged file.
-		current, err := os.Lstat(path)
-		if err != nil {
-			return "", 0, "", err
-		}
-		if os.SameFile(before, current) && beforeGeneration != "" && deliveryFileGeneration(current) == beforeGeneration {
-			return digest, before.Size(), beforeGeneration, nil
-		}
-	}
-	hashStarted := time.Now()
-	digestFullReads.Add(1)
 	h := sha256.New()
 	n, err := io.Copy(h, &contextReader{ctx: ctx, r: f})
 	if err != nil {
@@ -210,9 +197,7 @@ func fileDigestSnapshot(ctx context.Context, path string) (string, int64, string
 		(beforeGeneration != "" && (beforeGeneration != afterGeneration || afterGeneration != currentGeneration)) || n != before.Size() {
 		return "", 0, "", fmt.Errorf("file changed during verification: %s", path)
 	}
-	digest := hex.EncodeToString(h.Sum(nil))
-	rememberDigest(after, digest, hashStarted)
-	return digest, n, currentGeneration, nil
+	return hex.EncodeToString(h.Sum(nil)), n, currentGeneration, nil
 }
 func syncPath(path string) error {
 	f, err := os.Open(path)
