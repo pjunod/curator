@@ -139,3 +139,40 @@ func TestNativeTorrentCapacitySeparatesNNTPAndPreservesStatusFailure(t *testing.
 		t.Fatalf("status error masked: %v", err)
 	}
 }
+
+func TestNativeTorrentDurable202AdmissionAnd200ReplayPreserveCleanupPending(t *testing.T) {
+	adds, histories := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/status":
+			_, _ = w.Write([]byte(`{"version":"fixture","capabilities":["deliveries-v1","native-torrent-deliveries-v1"]}`))
+		case "/api/v1/jobs":
+			adds++
+			if adds == 1 {
+				w.WriteHeader(202)
+			}
+			_, _ = w.Write([]byte(`{"id":42,"created":false}`))
+		case "/api/v1/jobs/42/actions/delete-files":
+			w.WriteHeader(202)
+			_, _ = w.Write([]byte(`{"id":42,"pending":true}`))
+		default:
+			histories++
+			w.WriteHeader(500)
+		}
+	}))
+	defer server.Close()
+	client := NewTorrent(ports.ClientConfig{URL: server.URL})
+	options := ports.AddOptions{Transfer: "same-pending-request", DeliveryExpected: true, ManualAdditional: true}
+	for attempt := 0; attempt < 2; attempt++ {
+		handle, err := client.AddWithOptions(t.Context(), "magnet:?xt=urn:btih:fixture", "movies", options)
+		if err != nil || handle != "42" {
+			t.Fatalf("attempt %d handle=%q err=%v", attempt, handle, err)
+		}
+	}
+	if err := client.Remove(t.Context(), "42", true); err == nil || !strings.Contains(err.Error(), "operation pending") {
+		t.Fatalf("cleanup202 treated as done: %v", err)
+	}
+	if histories != 0 {
+		t.Fatalf("pending cleanup fell back to other routes: %d", histories)
+	}
+}

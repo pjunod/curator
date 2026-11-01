@@ -1335,6 +1335,11 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, batchID
 			}
 		}
 	}
+	if len(receipts) == 1 {
+		if err := deliveryReceiptActionGuard(receipts[0]); err != nil {
+			return err
+		}
+	}
 	if len(receipts) != 1 || (receipts[0].AckState != "accepted" && (receipts[0].AckState != "pending" || receipts[0].ConsumerReceiptID == "")) || receipts[0].State == "conflict" || receipts[0].State == "importing" {
 		return fmt.Errorf("delivery has no locally prepared acceptance, is importing, or is ambiguous; selected-file deletion requires one stable manifest")
 	}
@@ -1344,14 +1349,20 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, batchID
 		r.PublicationDirectoryIdentity != existingBatch.PublicationDirectoryIdentity) {
 		return fmt.Errorf("delivery identity differs from the persisted explicit deletion review")
 	}
+	if err := deliveryReceiptActionGuard(r); err != nil {
+		return err
+	}
 	if r.DownloadID > 0 {
 		// Import workers serialize on this per-download lock from queue pickup
 		// through placement. Holding it across verification and unlink closes
 		// the race where an import starts after the initial state check.
 		unlockDownload := s.lockDownload(r.DownloadID)
 		defer unlockDownload()
-		current, err := s.db.DeliveryReceiptByID(ctx, r.ID)
-		if err != nil || (current.AckState != "accepted" && (current.AckState != "pending" || current.ConsumerReceiptID == "")) || current.State == "conflict" || current.State == "importing" {
+		current, err := s.deliveryReceiptForAction(ctx, r.ID)
+		if err != nil {
+			return err
+		}
+		if (current.AckState != "accepted" && (current.AckState != "pending" || current.ConsumerReceiptID == "")) || current.State == "conflict" || current.State == "importing" {
 			return fmt.Errorf("delivery became active or ambiguous; selected-file deletion requires a locally prepared manifest")
 		}
 		r = current

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,9 +44,9 @@ func TestDualRunnerModesKeepStatusFallbackAndProvenDeliveryOwnershipSeparate(t *
 			after := r.URL.Query().Get("after")
 			afterQueries = append(afterQueries, after)
 			if after == "0" {
-				_ = json.NewEncoder(w).Encode(map[string]any{"protocolVersion": 1, "deliveries": []any{v}, "nextCursor": 1})
+				_ = json.NewEncoder(w).Encode(map[string]any{"protocolVersion": 1, "deliveries": []any{v}, "nextCursor": v["sequence"]})
 			} else {
-				_ = json.NewEncoder(w).Encode(map[string]any{"protocolVersion": 1, "deliveries": []any{}, "nextCursor": 1})
+				_ = json.NewEncoder(w).Encode(map[string]any{"protocolVersion": 1, "deliveries": []any{}, "nextCursor": v["sequence"]})
 			}
 		default:
 			w.WriteHeader(404)
@@ -89,27 +90,85 @@ func TestDualRunnerModesKeepStatusFallbackAndProvenDeliveryOwnershipSeparate(t *
 	if skip, err := db.DeliveryBelongsToOtherRunnerMode(ctx, native, delivery); err != nil || skip {
 		t.Fatalf("unpinned admission skipped: %v %v", skip, err)
 	}
-	if err := db.BindRunnerAdmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer, instance, "admission-generation"); err != nil {
-		t.Fatal(err)
-	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := New(db, bus.New(log), log, nil, nil)
 	svc.discoverRunnerDeliveries(ctx, native, nativeClient)
+	page, _, err := db.DeliveryReceiptPage(ctx, 0, 100)
+	if err != nil || len(page) != 1 || page[0].OwnedByClientID != 0 || page[0].State != "unresolved" {
+		t.Fatalf("unbound first discovery=%+v %v", page, err)
+	}
+	duplicateID := page[0].ID
+	if err := db.BindRunnerAdmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer, instance, "admission-generation"); err != nil {
+		t.Fatal(err)
+	}
+	svc.discoverRunnerDeliveries(ctx, native, nativeClient)
+	duplicate, err := db.DeliveryReceiptByID(ctx, duplicateID)
+	if err != nil || duplicate.OwnedByClientID != usenet.ID || duplicate.State != "conflict" || duplicate.AckState != "not_accepted" || duplicate.DownloadID != 0 {
+		t.Fatalf("resolved duplicate view=%+v %v", duplicate, err)
+	}
+	projected, err := svc.DeliveryLifecycleByID(ctx, duplicateID)
+	if err != nil || projected.State != "owned_by_other_client" || projected.OwnedByClientID != usenet.ID {
+		t.Fatalf("public duplicate=%+v %v", projected, err)
+	}
+	for _, action := range []func() error{func() error { return svc.RetryDeliveryHandoff(ctx, duplicateID) }, func() error { return svc.RetryRunnerSourceCleanup(ctx, duplicateID) }, func() error { return svc.RetryCuratorDeliveryCleanup(ctx, duplicateID) }, func() error { return svc.QueueDeliveryImport(ctx, duplicateID, []string{"movie.mkv"}) }, func() error { return svc.AbandonDeliveryDeleteRequest(ctx, duplicateID, "anything") }} {
+		if err := action(); err == nil || !strings.Contains(err.Error(), "another configured Runner client") {
+			t.Fatalf("read-only direct action=%v", err)
+		}
+	}
 	var count int
-	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM runner_delivery_receipts WHERE client_id=?`, native.ID).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("proven other-mode delivery duplicated: %d %v", count, err)
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM runner_delivery_receipts WHERE client_id=?`, native.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("view not retained exactly once: %d %v", count, err)
 	}
 	if len(afterQueries) < 2 || afterQueries[0] != "0" || afterQueries[1] != "1" {
-		t.Fatalf("skip did not progress trusted cursor: %v", afterQueries)
+		t.Fatalf("discovery did not progress trusted cursor: %v", afterQueries)
 	}
 	v["runnerInstanceId"] = "unknown-runner"
+	v["deliveryId"] = "unknown-delivery"
+	v["sequence"] = 2
 	svc.discoverRunnerDeliveries(ctx, native, nativeClient)
-	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM runner_delivery_receipts WHERE client_id=? AND state='unresolved'`, native.ID).Scan(&count); err != nil || count != 1 {
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM runner_delivery_receipts WHERE client_id=? AND owned_by_client_id=0 AND state IN ('unresolved','conflict')`, native.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("unknown ownership not retained for review: %d %v", count, err)
 	}
 	v["runnerInstanceId"] = instance
+	v["deliveryId"] = "owned-usenet-delivery"
+	v["sequence"] = 1
 	svc.discoverRunnerDeliveries(ctx, usenet, usenetClient)
 	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM runner_delivery_receipts WHERE client_id=? AND job_id=?`, usenet.ID, strconv.Itoa(17)).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("owning protocol did not retain its receipt: %d %v", count, err)
+	}
+	// A proven association or accepted custody is never rewritten as a
+	// duplicate view, even when the other mode's admission is now pinned.
+	for _, proof := range []struct{ name, sql string }{
+		{"associated", "UPDATE runner_delivery_receipts SET download_id=?,generation_key=?,download_handle=? WHERE id=?"},
+		{"accepted", "UPDATE runner_delivery_receipts SET ack_state='accepted',consumer_receipt_id='durable-consumer' WHERE id=?"},
+	} {
+		t.Run(proof.name, func(t *testing.T) {
+			protectedDelivery := duplicate.Delivery
+			protectedDelivery.DeliveryID += "-" + proof.name
+			protected, err := db.SaveDiscoveredDelivery(ctx, native.ID, protectedDelivery, protectedDelivery.PublicationPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if proof.name == "associated" {
+				_, err = db.W.ExecContext(ctx, proof.sql, dl.ID, dl.GenerationKey, dl.Handle, protected.ID)
+			} else {
+				_, err = db.W.ExecContext(ctx, proof.sql, protected.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := db.DeliveryReceiptByID(ctx, protected.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			skip, err := db.ReconcileOtherRunnerModeView(ctx, native, protectedDelivery)
+			if err != nil || skip {
+				t.Fatalf("protected receipt superseded: %v %v", skip, err)
+			}
+			after, err := db.DeliveryReceiptByID(ctx, protected.ID)
+			if err != nil || after.OwnedByClientID != 0 || after.State != before.State || after.AckState != before.AckState || after.ConsumerReceiptID != before.ConsumerReceiptID || after.DownloadID != before.DownloadID || after.GenerationKey != before.GenerationKey {
+				t.Fatalf("custody changed: before=%+v after=%+v err=%v", before, after, err)
+			}
+		})
 	}
 }

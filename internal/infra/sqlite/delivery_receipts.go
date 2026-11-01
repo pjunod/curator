@@ -19,6 +19,7 @@ import (
 // DeliveryReceipt is Curator's durable record of one immutable Runner
 // publication. It intentionally outlives the Activity/download row.
 type DeliveryReceipt struct {
+	OwnedByClientID              int64
 	ID                           int64
 	ClientID                     int64
 	Delivery                     ports.RunnerDelivery
@@ -555,12 +556,12 @@ func (d *DB) SaveDiscoveredDelivery(ctx context.Context, clientID int64, v ports
 		runner_instance_id, ready_at, publication_path, mapped_path, files_json, source_cleanup_json,
 		terminal_outcome, failure_stage, failure_cause, keep_source_on_failure, file_outcomes_json,
 		state, ack_state, consumer_receipt_id, download_id, generation_key, download_handle,
-		media_item_id, copy_id, error, attempts, blocked_since, next_attempt_at, publication_directory_identity,runner_stages_json,source_copies_json,lifecycle_timing_json
+		media_item_id, copy_id, error, attempts, blocked_since, next_attempt_at, publication_directory_identity,runner_stages_json,source_copies_json,lifecycle_timing_json,owned_by_client_id
 		FROM runner_delivery_receipts WHERE client_id=? AND delivery_id=?`, clientID, v.DeliveryID), &existing)
 	if err == nil {
 		changed := !sameDeliveryImmutable(existing.Delivery, v)
 		if changed {
-			_, err = tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET state='conflict', error=?, updated_at=? WHERE id=?`, "Runner reused a delivery ID with changed immutable publication facts", now, existing.ID)
+			_, err = tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET state='conflict', owned_by_client_id=0, error=?, updated_at=? WHERE id=?`, "Runner reused a delivery ID with changed immutable publication facts", now, existing.ID)
 			if err != nil {
 				return DeliveryReceipt{}, err
 			}
@@ -676,12 +677,12 @@ func sameRunnerFileOutcomeIdentity(a, b ports.RunnerFileOutcome) bool {
 
 func scanDeliveryReceipt(row interface{ Scan(...any) error }, out *DeliveryReceipt) error {
 	var seq, next, readyAt, blockedSince int64
-	var id, clientID, downloadID, mediaID, copyID int64
+	var id, clientID, downloadID, mediaID, copyID, ownedByClientID int64
 	var attempts int
 	var deliveryID, generation, sourceArtifact, sourceGeneration, digest, artifact, job, token, runnerID, pubPath, mapped, filesRaw, cleanupRaw, terminalOutcome, failureStage, failureCause, fileOutcomesRaw, state, ack, consumer, genKey, handle, message, directoryIdentity string
 	var stagesRaw, copiesRaw, timingRaw string
 	var keepSourceOnFailure bool
-	if err := row.Scan(&id, &clientID, &seq, &deliveryID, &generation, &sourceArtifact, &sourceGeneration, &digest, &artifact, &job, &token, &runnerID, &readyAt, &pubPath, &mapped, &filesRaw, &cleanupRaw, &terminalOutcome, &failureStage, &failureCause, &keepSourceOnFailure, &fileOutcomesRaw, &state, &ack, &consumer, &downloadID, &genKey, &handle, &mediaID, &copyID, &message, &attempts, &blockedSince, &next, &directoryIdentity, &stagesRaw, &copiesRaw, &timingRaw); err != nil {
+	if err := row.Scan(&id, &clientID, &seq, &deliveryID, &generation, &sourceArtifact, &sourceGeneration, &digest, &artifact, &job, &token, &runnerID, &readyAt, &pubPath, &mapped, &filesRaw, &cleanupRaw, &terminalOutcome, &failureStage, &failureCause, &keepSourceOnFailure, &fileOutcomesRaw, &state, &ack, &consumer, &downloadID, &genKey, &handle, &mediaID, &copyID, &message, &attempts, &blockedSince, &next, &directoryIdentity, &stagesRaw, &copiesRaw, &timingRaw, &ownedByClientID); err != nil {
 		return err
 	}
 	var files []ports.RunnerFile
@@ -715,7 +716,7 @@ func scanDeliveryReceipt(row interface{ Scan(...any) error }, out *DeliveryRecei
 	if blockedSince != 0 {
 		blocked = time.UnixMilli(blockedSince)
 	}
-	*out = DeliveryReceipt{ID: id, ClientID: clientID, Delivery: ports.RunnerDelivery{RunnerStages: stages, SourceCopies: copies, LifecycleTiming: timing, Sequence: uint64(seq), DeliveryID: deliveryID, PublicationGeneration: generation, SourceArtifactID: sourceArtifact, SourceGeneration: sourceGeneration, ManifestDigest: digest, ArtifactID: artifact, JobID: job, RequestToken: token, RunnerInstanceID: runnerID, PublicationPath: pubPath, Files: files, TerminalOutcome: terminalOutcome, FailureStage: failureStage, FailureCause: failureCause, KeepSourceOnFailure: keepSourceOnFailure, FileOutcomes: fileOutcomes, ReadyAt: ready, SourceCleanup: cleanup}, MappedPath: mapped, PublicationDirectoryIdentity: directoryIdentity, State: state, AckState: ack, ConsumerReceiptID: consumer, DownloadID: downloadID, GenerationKey: genKey, DownloadHandle: handle, MediaItemID: mediaID, CopyID: copyID, ReadyAt: ready, Error: message, Attempts: attempts, BlockedSince: blocked, NextAttemptAt: time.UnixMilli(next)}
+	*out = DeliveryReceipt{OwnedByClientID: ownedByClientID, ID: id, ClientID: clientID, Delivery: ports.RunnerDelivery{RunnerStages: stages, SourceCopies: copies, LifecycleTiming: timing, Sequence: uint64(seq), DeliveryID: deliveryID, PublicationGeneration: generation, SourceArtifactID: sourceArtifact, SourceGeneration: sourceGeneration, ManifestDigest: digest, ArtifactID: artifact, JobID: job, RequestToken: token, RunnerInstanceID: runnerID, PublicationPath: pubPath, Files: files, TerminalOutcome: terminalOutcome, FailureStage: failureStage, FailureCause: failureCause, KeepSourceOnFailure: keepSourceOnFailure, FileOutcomes: fileOutcomes, ReadyAt: ready, SourceCleanup: cleanup}, MappedPath: mapped, PublicationDirectoryIdentity: directoryIdentity, State: state, AckState: ack, ConsumerReceiptID: consumer, DownloadID: downloadID, GenerationKey: genKey, DownloadHandle: handle, MediaItemID: mediaID, CopyID: copyID, ReadyAt: ready, Error: message, Attempts: attempts, BlockedSince: blocked, NextAttemptAt: time.UnixMilli(next)}
 	return nil
 }
 
@@ -880,7 +881,7 @@ func requireDeliveryTransition(res sql.Result, err error) error {
 }
 
 func (d *DB) DeliveryReceiptsForClient(ctx context.Context, clientID int64, limit int) ([]DeliveryReceipt, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT id,client_id,sequence,delivery_id,publication_generation,source_artifact_id,source_generation,manifest_digest,artifact_id,job_id,request_token,runner_instance_id,ready_at,publication_path,mapped_path,files_json,source_cleanup_json,terminal_outcome,failure_stage,failure_cause,keep_source_on_failure,file_outcomes_json,state,ack_state,consumer_receipt_id,download_id,generation_key,download_handle,media_item_id,copy_id,error,attempts,blocked_since,next_attempt_at,publication_directory_identity,runner_stages_json,source_copies_json,lifecycle_timing_json FROM runner_delivery_receipts WHERE client_id=? AND (state IN ('unresolved','ready','importing') OR ack_state='pending') AND next_attempt_at<=? ORDER BY next_attempt_at,sequence LIMIT ?`, clientID, time.Now().UnixMilli(), limit)
+	rows, err := d.R.QueryContext(ctx, `SELECT id,client_id,sequence,delivery_id,publication_generation,source_artifact_id,source_generation,manifest_digest,artifact_id,job_id,request_token,runner_instance_id,ready_at,publication_path,mapped_path,files_json,source_cleanup_json,terminal_outcome,failure_stage,failure_cause,keep_source_on_failure,file_outcomes_json,state,ack_state,consumer_receipt_id,download_id,generation_key,download_handle,media_item_id,copy_id,error,attempts,blocked_since,next_attempt_at,publication_directory_identity,runner_stages_json,source_copies_json,lifecycle_timing_json,owned_by_client_id FROM runner_delivery_receipts WHERE client_id=? AND (state IN ('unresolved','ready','importing') OR ack_state='pending') AND next_attempt_at<=? ORDER BY next_attempt_at,sequence LIMIT ?`, clientID, time.Now().UnixMilli(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -898,7 +899,7 @@ func (d *DB) DeliveryReceiptsForClient(ctx context.Context, clientID int64, limi
 
 func (d *DB) DeliveryReceiptByID(ctx context.Context, id int64) (DeliveryReceipt, error) {
 	var v DeliveryReceipt
-	err := scanDeliveryReceipt(d.R.QueryRowContext(ctx, `SELECT id,client_id,sequence,delivery_id,publication_generation,source_artifact_id,source_generation,manifest_digest,artifact_id,job_id,request_token,runner_instance_id,ready_at,publication_path,mapped_path,files_json,source_cleanup_json,terminal_outcome,failure_stage,failure_cause,keep_source_on_failure,file_outcomes_json,state,ack_state,consumer_receipt_id,download_id,generation_key,download_handle,media_item_id,copy_id,error,attempts,blocked_since,next_attempt_at,publication_directory_identity,runner_stages_json,source_copies_json,lifecycle_timing_json FROM runner_delivery_receipts WHERE id=?`, id), &v)
+	err := scanDeliveryReceipt(d.R.QueryRowContext(ctx, `SELECT id,client_id,sequence,delivery_id,publication_generation,source_artifact_id,source_generation,manifest_digest,artifact_id,job_id,request_token,runner_instance_id,ready_at,publication_path,mapped_path,files_json,source_cleanup_json,terminal_outcome,failure_stage,failure_cause,keep_source_on_failure,file_outcomes_json,state,ack_state,consumer_receipt_id,download_id,generation_key,download_handle,media_item_id,copy_id,error,attempts,blocked_since,next_attempt_at,publication_directory_identity,runner_stages_json,source_copies_json,lifecycle_timing_json,owned_by_client_id FROM runner_delivery_receipts WHERE id=?`, id), &v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, ErrNotFound
 	}
@@ -1331,7 +1332,7 @@ func (d *DB) DeliveryFileCleanupReceipts(ctx context.Context, clientID int64, li
 }
 
 func (d *DB) DeliveryReceiptsNeedingSourceRefresh(ctx context.Context, clientID int64, limit int) ([]DeliveryReceipt, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT r.id,r.client_id,r.sequence,r.delivery_id,r.publication_generation,r.source_artifact_id,r.source_generation,r.manifest_digest,r.artifact_id,r.job_id,r.request_token,r.runner_instance_id,r.ready_at,r.publication_path,r.mapped_path,r.files_json,r.source_cleanup_json,r.terminal_outcome,r.failure_stage,r.failure_cause,r.keep_source_on_failure,r.file_outcomes_json,r.state,r.ack_state,r.consumer_receipt_id,r.download_id,r.generation_key,r.download_handle,r.media_item_id,r.copy_id,r.error,r.attempts,r.blocked_since,r.next_attempt_at,r.publication_directory_identity,r.runner_stages_json,r.source_copies_json,r.lifecycle_timing_json
+	rows, err := d.R.QueryContext(ctx, `SELECT r.id,r.client_id,r.sequence,r.delivery_id,r.publication_generation,r.source_artifact_id,r.source_generation,r.manifest_digest,r.artifact_id,r.job_id,r.request_token,r.runner_instance_id,r.ready_at,r.publication_path,r.mapped_path,r.files_json,r.source_cleanup_json,r.terminal_outcome,r.failure_stage,r.failure_cause,r.keep_source_on_failure,r.file_outcomes_json,r.state,r.ack_state,r.consumer_receipt_id,r.download_id,r.generation_key,r.download_handle,r.media_item_id,r.copy_id,r.error,r.attempts,r.blocked_since,r.next_attempt_at,r.publication_directory_identity,r.runner_stages_json,r.source_copies_json,r.lifecycle_timing_json,r.owned_by_client_id
 		FROM runner_delivery_receipts r LEFT JOIN runner_delivery_source_refresh s ON s.receipt_id=r.id
 		WHERE r.client_id=? AND r.state!='conflict' AND (r.ack_state='accepted' OR (r.ack_state='pending' AND r.consumer_receipt_id!='')) AND COALESCE(s.next_attempt_at,0)<=?
 		ORDER BY COALESCE(s.next_attempt_at,r.source_cleanup_refreshed_at),r.sequence LIMIT ?`, clientID, time.Now().UnixMilli(), limit)
@@ -1686,27 +1687,88 @@ func (d *DB) AbandonExplicitDeliveryDelete(ctx context.Context, receiptID int64,
 // DeliveryBelongsToOtherRunnerMode suppresses a duplicate view only when an
 // exact durable admission proves this publication belongs to the other native
 // protocol client. Unknown/unpinned/ambiguous custody still journals for review.
-func (d *DB) DeliveryBelongsToOtherRunnerMode(ctx context.Context, current ports.ClientConfig, delivery ports.RunnerDelivery) (bool, error) {
+type deliveryModeQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func otherRunnerModeOwner(ctx context.Context, q deliveryModeQuerier, current ports.ClientConfig, delivery ports.RunnerDelivery) (int64, string, error) {
 	if !ports.IsNativeRunnerClient(current.Type) || delivery.JobID == "" || delivery.RequestToken == "" || delivery.RunnerInstanceID == "" {
-		return false, nil
+		return 0, "", nil
 	}
-	rows, err := d.R.QueryContext(ctx, `SELECT d.client_id,COALESCE(c.type,'') FROM downloads d LEFT JOIN download_clients c ON c.id=d.client_id
- WHERE d.transfer=? AND d.handle=? AND d.runner_instance_id=? AND d.runner_admission_generation!='' AND d.generation_key!='' AND d.delivery_expected=1 LIMIT 2`, delivery.RequestToken, delivery.JobID, delivery.RunnerInstanceID)
+	rows, err := q.QueryContext(ctx, `SELECT d.client_id,COALESCE(c.type,''),COALESCE(c.name,'') FROM downloads d LEFT JOIN download_clients c ON c.id=d.client_id
+      WHERE d.transfer=? AND d.handle=? AND d.runner_instance_id=? AND d.runner_admission_generation!='' AND d.generation_key!='' AND d.delivery_expected=1
+      AND EXISTS(SELECT 1 FROM download_clients current WHERE current.id=? AND current.type=?) LIMIT 2`, delivery.RequestToken, delivery.JobID, delivery.RunnerInstanceID, current.ID, current.Type)
 	if err != nil {
-		return false, err
+		return 0, "", err
 	}
 	defer rows.Close()
 	count := 0
 	var id int64
-	var kind string
+	var kind, name string
 	for rows.Next() {
-		if err := rows.Scan(&id, &kind); err != nil {
-			return false, err
+		if err := rows.Scan(&id, &kind, &name); err != nil {
+			return 0, "", err
 		}
 		count++
 	}
 	if err := rows.Err(); err != nil {
+		return 0, "", err
+	}
+	if count == 1 && id != current.ID && ports.IsNativeRunnerClient(kind) && kind != current.Type {
+		return id, name, nil
+	}
+	return 0, "", nil
+}
+func (d *DB) DeliveryBelongsToOtherRunnerMode(ctx context.Context, current ports.ClientConfig, delivery ports.RunnerDelivery) (bool, error) {
+	id, _, err := otherRunnerModeOwner(ctx, d.R, current, delivery)
+	return id > 0, err
+}
+
+// ReconcileOtherRunnerModeView keeps a previously unresolved duplicate visible
+// as read-only. Every predicate is rechecked in one transaction; accepted or
+// otherwise proven custody is never superseded and no file is mutated.
+func (d *DB) ReconcileOtherRunnerModeView(ctx context.Context, current ports.ClientConfig, delivery ports.RunnerDelivery) (bool, error) {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
 		return false, err
 	}
-	return count == 1 && id != current.ID && ports.IsNativeRunnerClient(kind) && kind != current.Type, nil
+	defer tx.Rollback()
+	ownerID, ownerName, err := otherRunnerModeOwner(ctx, tx, current, delivery)
+	if err != nil {
+		return false, err
+	}
+	if ownerID == 0 {
+		return false, nil
+	}
+	var existing DeliveryReceipt
+	err = scanDeliveryReceipt(tx.QueryRowContext(ctx, `SELECT id,client_id,sequence,delivery_id,publication_generation,source_artifact_id,source_generation,manifest_digest,artifact_id,job_id,request_token,runner_instance_id,ready_at,publication_path,mapped_path,files_json,source_cleanup_json,terminal_outcome,failure_stage,failure_cause,keep_source_on_failure,file_outcomes_json,state,ack_state,consumer_receipt_id,download_id,generation_key,download_handle,media_item_id,copy_id,error,attempts,blocked_since,next_attempt_at,publication_directory_identity,runner_stages_json,source_copies_json,lifecycle_timing_json,owned_by_client_id FROM runner_delivery_receipts WHERE client_id=? AND delivery_id=?`, current.ID, delivery.DeliveryID), &existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, tx.Commit()
+	}
+	if err != nil {
+		return false, err
+	}
+	if !sameDeliveryImmutable(existing.Delivery, delivery) {
+		return false, nil
+	}
+	if existing.OwnedByClientID == ownerID && existing.State == "conflict" {
+		return true, tx.Commit()
+	}
+	message := fmt.Sprintf("This publication belongs to Runner client %s (ID %d). Use that client's receipt; this duplicate view has no import or cleanup authority.", ownerName, ownerID)
+	result, err := tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET owned_by_client_id=?,state='conflict',error=?,blocked_since=0,next_attempt_at=0,updated_at=?
+      WHERE id=? AND state='unresolved' AND ack_state='not_accepted' AND consumer_receipt_id='' AND download_id=0 AND generation_key='' AND download_handle='' AND media_item_id=0 AND copy_id=0 AND publication_directory_identity=''
+      AND NOT EXISTS(SELECT 1 FROM runner_delivery_file_outcomes f WHERE f.receipt_id=runner_delivery_receipts.id)
+      AND NOT EXISTS(SELECT 1 FROM runner_delivery_file_imports f WHERE f.receipt_id=runner_delivery_receipts.id)
+      AND NOT EXISTS(SELECT 1 FROM runner_delivery_explicit_delete_batches b WHERE b.receipt_id=runner_delivery_receipts.id)`, ownerID, message, time.Now().UnixMilli(), existing.ID)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if changed == 0 {
+		return false, nil
+	}
+	return true, tx.Commit()
 }

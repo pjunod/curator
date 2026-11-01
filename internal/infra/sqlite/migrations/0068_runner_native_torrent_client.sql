@@ -34,6 +34,10 @@ BEGIN UPDATE lifecycle_library_revision SET revision=revision+1 WHERE id=1; END;
 CREATE INDEX downloads_runner_mode_admission ON downloads(transfer,handle,runner_instance_id)
 WHERE runner_admission_generation!='';
 
+-- A duplicate protocol view has no custody of its own. Keep it visible and
+-- protected; do not widen the existing state/acceptance authority machine.
+ALTER TABLE runner_delivery_receipts ADD COLUMN owned_by_client_id INTEGER NOT NULL DEFAULT 0;
+
 -- +goose Down
 -- Refuse to erase a configured native acquisition's client contract. Older
 -- binaries would otherwise construct the wrong adapter for this type.
@@ -45,6 +49,7 @@ INSERT INTO native_torrent_downgrade_guard SELECT CASE WHEN EXISTS (
 ) THEN 0 ELSE 1 END;
 DROP TABLE native_torrent_downgrade_guard;
 DROP INDEX downloads_runner_mode_admission;
+ALTER TABLE runner_delivery_receipts DROP COLUMN owned_by_client_id;
 CREATE TABLE download_clients_new (
  id INTEGER PRIMARY KEY,
  type TEXT NOT NULL CHECK (type IN ('qbittorrent','sabnzbd','transmission','deluge','nzbget','nzbd')),

@@ -184,7 +184,8 @@ sync pushes them in.
 | Deluge | torrent | web password only |
 | SABnzbd | usenet | API key (in the password field) |
 | NZBGet | usenet | username + password (defaults `nzbget`/`tegbzn6789`); **leave both blank if you've disabled auth** (empty `ControlPassword`) |
-| nzbd (native) | usenet | a token in the password field with the username blank, or username + password |
+| Runner · Usenet (`nzbd`) | usenet | a token in the password field with the username blank, or username + password |
+| Runner · native torrent (`runner-torrent`) | torrent | a token in the password field with the username blank, or username + password |
 
 Blank credentials mean "send no auth at all" — valid whenever the client
 itself doesn't require it.
@@ -195,10 +196,10 @@ enabled torrent client, usenet to the first enabled usenet client. The
 queue is polled every 30 s; completed items import automatically unless the
 client requires approval (below).
 
-### nzbd, natively (`nzbd` vs `NZBGet`)
+### Runner, natively (`nzbd` vs `NZBGet`)
 
 [nzbd](https://github.com/pjunod/nzbd) speaks NZBGet's API, so it works as
-an `NZBGet` client and always has. The `nzbd (native)` type talks to its
+an `NZBGet` client and always has. The **Runner · Usenet** (`nzbd`) type talks to its
 own `/api/v1` instead, which buys three things the compat API cannot
 express:
 
@@ -211,15 +212,40 @@ express:
   repair takes.
 - **Live updates** (below), which need an event stream compat does not have.
 
-Everything else behaves identically, and switching an existing client's
-type is safe: in-flight downloads reconcile by handle either way.
+The native Usenet and NZBGet compatibility types reconcile existing Usenet
+downloads by handle. Native torrent acquisition is a separate client type;
+add it as its own configuration rather than changing an existing client's
+protocol.
+
+### Native Runner torrent acquisition
+
+Choose **Runner · native torrent**, enter the Runner server URL (default port
+`6789`) and its credentials, then **Test** before saving. Runner must advertise
+both `native-torrent-deliveries-v1` and `deliveries-v1`; an unsupported server
+shows an actionable error. This mode uses native JSON job admission and the
+same durable Delivery handoff as native Usenet. It does not use a qBittorrent
+compatibility endpoint.
+
+Runner keeps its torrent seed job separate from each acquisition child. The
+child makes a private processing copy, passes it through post-processing and
+publishes its own Delivery. Seed ratio, seed time and backend controls belong
+to the donor job. Curator controls only the child and its admitted payload.
+An explicit **Download another copy** request creates a fresh acquisition;
+retrying an uncertain admission reuses its existing request token.
+
+For a server serving both protocols, add **Runner · Usenet** and **Runner ·
+native torrent** as two clients. Protocol routing and exact request identities
+keep their jobs separate. If the other mode saw a publication before ownership
+was pinned, its retained view says which client owns it and offers no import,
+cleanup or retry actions. Accepted or otherwise proven custody is never
+superseded. See the [native torrent lifecycle diagram](usage.md#runner-native-torrent-acquisitions)
+for the seed, child, publication and library boundaries.
 
 ### Live updates (per client, default off)
 
 **Live updates** holds the client's event stream open, so a finished
 download is imported the moment post-processing ends instead of up to 30
-seconds later. Only the native `nzbd` type can stream today; the checkbox
-only appears for it.
+seconds later. Both native Runner types can stream; the checkbox appears for those types.
 
 **Push never replaces the poll.** The 30 s sweep keeps running underneath,
 and it is what notices a stream that died quietly. So the worst case for a

@@ -94,7 +94,7 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
           </li>
         })}</ol> : <p className="muted">No Curator attempt history was recorded before this version. Historical durations are unknown.</p>}
       </details>
-      {receipt.error && <p className="error-text">{receipt.error}</p>}
+      {receipt.error && <p className={receipt.ownedByClientId ? "muted" : "error-text"}>{receipt.error}</p>}
       {warning && <p className="warning-text" role="status">This lifecycle has been blocked for at least 30 minutes. Review the cause and retry when the underlying issue is corrected.</p>}
       {receipt.failureStage && <p><strong>Runner stage:</strong> {receipt.failureStage}{receipt.failureCause ? ` · ${receipt.failureCause}` : ''} {receipt.keepSourceOnFailure ? '· source kept on failure' : ''}</p>}
       <p><strong>Runner source cleanup:</strong> {cleanupStatus(runnerSourceState, runnerSource.error ?? undefined, runnerTimestamp(runnerSource.blockedSince), runnerTimestamp(runnerSource.nextRetryAt))} · {Number(runnerSource.attempts ?? 0)} attempts
@@ -115,11 +115,11 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
       {runnerSource.warning === true && <p className="warning-text">Runner reports that source cleanup needs attention.</p>}
       <p><strong>Curator publication cleanup:</strong> {cleanupStatus(receipt.directoryCleanupState, receipt.directoryCleanupError, receipt.directoryCleanupBlockedSince, receipt.directoryCleanupNextAttemptAt)} · {receipt.directoryCleanupAttempts} attempts</p>
       {receipt.directoryCleanupError && <p className="error-text">{receipt.directoryCleanupError}</p>}
-      <div className="row-actions">
+      {!receipt.ownedByClientId && <div className="row-actions">
         {receipt.state !== 'conflict' && <button aria-disabled={busy} onClick={() => { if (!busy) handoff.mutate() }}>{handoff.isPending ? 'Retrying handoff…' : 'Retry handoff'}</button>}
         <button aria-disabled={busy} onClick={() => { if (!busy) runnerCleanup.mutate() }}>{runnerCleanup.isPending ? 'Retrying Runner source cleanup…' : 'Retry Runner source cleanup'}</button>
         <button aria-disabled={busy || receipt.state === 'conflict'} onClick={() => { if (!busy && receipt.state !== 'conflict') curatorCleanup.mutate() }}>{curatorCleanup.isPending ? 'Retrying Curator cleanup…' : 'Retry Curator cleanup'}</button>
-      </div>
+      </div>}
       {(handoff.error || runnerCleanup.error || curatorCleanup.error) && <ActionNotice warning revision={Math.max(handoff.submittedAt, runnerCleanup.submittedAt, curatorCleanup.submittedAt)}>{(handoff.error || runnerCleanup.error || curatorCleanup.error)?.message}</ActionNotice>}
       {(handoff.isSuccess || runnerCleanup.isSuccess || curatorCleanup.isSuccess) && <ActionNotice revision={Math.max(handoff.submittedAt, runnerCleanup.submittedAt, curatorCleanup.submittedAt)}>Retry queued. The durable receipt remains visible until its obligation is complete.</ActionNotice>}
       <details><summary>Transfer and publication identity</summary>
@@ -136,14 +136,14 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
           const resolved = row && ['placed', 'redundant', 'disposable_selected_scope'].includes(row.disposition)
           const removed = row?.cleanupState === 'removed'
           return <li key={file.path}>
-            {!resolved && !removed && <label><input type="checkbox" aria-label={`Select ${file.path} for import`} checked={selectedPaths.includes(file.path)} onChange={(event) => setSelectedPaths((previous) => event.target.checked ? [...previous, file.path] : previous.filter((path) => path !== file.path))} /> </label>}
+            {!receipt.ownedByClientId && !resolved && !removed && <label><input type="checkbox" aria-label={`Select ${file.path} for import`} checked={selectedPaths.includes(file.path)} onChange={(event) => setSelectedPaths((previous) => event.target.checked ? [...previous, file.path] : previous.filter((path) => path !== file.path))} /> </label>}
             <strong className="mono">{file.path}</strong> · {fmtBytes(file.sizeBytes)}
             <div>Curator: {row ? `${row.disposition.replaceAll('_', ' ')} · ${cleanupStatus(row.cleanupState, row.cleanupError, row.cleanupBlockedSince, row.cleanupNextAttemptAt)} · ${row.cleanupAttempts} attempts` : 'not yet resolved'}</div>
             {row?.reason && <div className="muted">{row.reason}</div>}{row?.cleanupError && <div className="error-text">{row.cleanupError}</div>}
             {source && <div className="muted">Runner source: {source.classification} · {source.outcome}{source.repairDependency ? ' · retained as a repair input' : ''} · cleanup {source.sourceCleanupStatus}{source.reason ? ` · ${source.reason}` : ''}</div>}
           </li>
         })}</ul>
-        <button disabled={busy || selectedPaths.length === 0 || receipt.state === 'conflict'} onClick={() => importSelected.mutate()}>Queue import selected ({selectedPaths.length})</button>
+        {!receipt.ownedByClientId && <button disabled={busy || selectedPaths.length === 0 || receipt.state === 'conflict'} onClick={() => importSelected.mutate()}>Queue import selected ({selectedPaths.length})</button>}
         {importSelected.error && <ActionNotice warning revision={importSelected.submittedAt}>{importSelected.error.message}</ActionNotice>}
         {importSelected.isSuccess && <ActionNotice revision={importSelected.submittedAt}>Selected manifest files queued for verification and import.</ActionNotice>}
       </details>

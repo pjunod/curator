@@ -1727,9 +1727,12 @@ type DeliveryLifecycleReceipt struct {
 		Sha256    string `json:"sha256"`
 		SizeBytes int64  `json:"sizeBytes"`
 	} `json:"manifestFiles"`
-	MappedPath            *string    `json:"mappedPath,omitempty"`
-	MediaItemId           *int64     `json:"mediaItemId,omitempty"`
-	NextAttemptAt         *time.Time `json:"nextAttemptAt,omitempty"`
+	MappedPath    *string    `json:"mappedPath,omitempty"`
+	MediaItemId   *int64     `json:"mediaItemId,omitempty"`
+	NextAttemptAt *time.Time `json:"nextAttemptAt,omitempty"`
+
+	// OwnedByClientId Read-only duplicate view owned by another configured Runner client.
+	OwnedByClientId       *int64 `json:"ownedByClientId,omitempty"`
 	PendingDeleteRequests *[]struct {
 		Error *string  `json:"error,omitempty"`
 		Id    string   `json:"id"`

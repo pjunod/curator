@@ -3303,6 +3303,7 @@ components:
         directoryCleanupBlockedSince: { type: string, format: date-time }
         directoryCleanupNextAttemptAt: { type: string, format: date-time }
         directoryCleanupError: { type: string }
+        ownedByClientId: { type: integer, format: int64, description: Read-only duplicate view owned by another configured Runner client. }
         curatorFiles: { type: array, items: { type: object, additionalProperties: true } }
     SystemStatus:
       type: object

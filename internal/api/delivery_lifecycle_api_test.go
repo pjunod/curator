@@ -373,3 +373,32 @@ func TestDeliveryLifecycleResolveQueuesOnlySelectedDurableManifestPath(t *testin
 	// The activity row records a bounded handoff, not a synchronous claim that
 	// import completed successfully; the real worker will stamp its outcome.
 }
+
+func TestOtherRunnerClientReceiptIsReadOnlyThroughHTTP(t *testing.T) {
+	e := newAPIEnv(t)
+	clientID := acqAddClient(t, e, "qbittorrent")
+	downloadID := acqGrab(t, e, e.addMovie(t))
+	r := apiDeliveryReceipt(t, e, clientID, downloadID, "duplicate-other-client")
+	if _, err := e.db.W.ExecContext(t.Context(), `UPDATE runner_delivery_receipts SET owned_by_client_id=987,state='conflict',error='Owned by Runner client Usenet (ID 987)' WHERE id=?`, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	base := fmt.Sprintf("/api/v1/downloads/deliveries/%d", r.ID)
+	var detail apigen.DeliveryLifecycleReceipt
+	e.get(t, base).expect(t, http.StatusOK).into(t, &detail)
+	if detail.State != "owned_by_other_client" || detail.OwnedByClientId == nil || *detail.OwnedByClientId != 987 {
+		t.Fatalf("read-only projection=%+v", detail)
+	}
+	for _, action := range []struct{ path, body string }{
+		{"retry-handoff", `{}`}, {"retry-runner-cleanup", `{}`}, {"retry-curator-cleanup", `{}`},
+		{"import", `{"paths":["Season 01/épisode.mkv"]}`}, {"delete-batches/stale/abandon", `{}`},
+	} {
+		response := e.post(t, base+"/"+action.path, action.body).expect(t, http.StatusConflict)
+		if !strings.Contains(response.Body.String(), "another configured Runner client") || !strings.Contains(response.Body.String(), "987") {
+			t.Fatalf("missing owning-client reason: %s", response.Body.String())
+		}
+	}
+	after, err := e.db.DeliveryReceiptByID(t.Context(), r.ID)
+	if err != nil || after.OwnedByClientID != 987 || after.State != "conflict" || after.AckState != r.AckState || after.DownloadID != r.DownloadID {
+		t.Fatalf("refused actions changed receipt: %+v %v", after, err)
+	}
+}

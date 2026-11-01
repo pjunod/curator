@@ -114,6 +114,12 @@ func (c *Client) do(ctx context.Context, method, path string, out any) error {
 	return c.doBody(ctx, method, path, nil, out)
 }
 func (c *Client) doBody(ctx context.Context, method, path string, body io.Reader, out any) error {
+	return c.doBodyPolicy(ctx, method, path, body, out, false)
+}
+
+// Only admission may accept 202 as a durable pending job handle. Cleanup and
+// removal still require an actual completed response.
+func (c *Client) doBodyPolicy(ctx context.Context, method, path string, body io.Reader, out any, admission bool) error {
 	req, err := http.NewRequestWithContext(ctx, method,
 		strings.TrimRight(c.cfg.URL, "/")+path, body)
 	if err != nil {
@@ -145,7 +151,7 @@ func (c *Client) doBody(ctx context.Context, method, path string, body io.Reader
 		return apiError(resp, "unexpected response")
 	}
 	// Accepted is pending, not a receipt that the bytes have gone.
-	if resp.StatusCode == http.StatusAccepted {
+	if resp.StatusCode == http.StatusAccepted && !admission {
 		return apiError(resp, "operation pending; retry later")
 	}
 	if out != nil {

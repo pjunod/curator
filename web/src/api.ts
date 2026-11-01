@@ -1681,6 +1681,7 @@ export interface RunnerLifecycleTiming { version: number; intervals: RunnerLifec
 export interface RunnerStages { nodeId: string; clockDomain: string; spans: Array<{ stage: string; started_at_unix: number; ms?: number }> }
 export interface RunnerSourceCopy { id: string; ownerNode: string; status: string; error?: string; attempts: number; nextRetryAt?: number }
 export interface DeliveryLifecycleReceipt {
+  ownedByClientId?: number
   lifecycleTiming?: RunnerLifecycleTiming
   runnerStages?: RunnerStages
   sourceCopies?: RunnerSourceCopy[]

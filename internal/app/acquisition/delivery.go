@@ -83,7 +83,7 @@ func (s *Service) discoverRunnerDeliveries(ctx context.Context, cfg ports.Client
 			}
 		}
 		for _, delivery := range page.Deliveries {
-			otherMode, err := s.db.DeliveryBelongsToOtherRunnerMode(ctx, cfg, delivery)
+			otherMode, err := s.db.ReconcileOtherRunnerModeView(ctx, cfg, delivery)
 			if err != nil {
 				s.log.Warn("delivery client association lookup failed", "client", cfg.Name, "err", err)
 				return

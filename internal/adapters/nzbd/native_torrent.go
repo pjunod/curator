@@ -84,7 +84,7 @@ func (c *Client) addNativeTorrent(ctx context.Context, source, category string, 
 	var result struct {
 		ID int64 `json:"id"`
 	}
-	if err := c.doBody(ctx, http.MethodPost, "/api/v1/jobs", strings.NewReader(string(raw)), &result); err != nil {
+	if err := c.doBodyPolicy(ctx, http.MethodPost, "/api/v1/jobs", strings.NewReader(string(raw)), &result, true); err != nil {
 		return "", err
 	}
 	if result.ID <= 0 {

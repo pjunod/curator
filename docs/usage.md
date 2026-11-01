@@ -1457,7 +1457,11 @@ keeps queue/history views separate, including legacy Usenet title fallback.
 Shared collection rows are skipped for a mode only when the other configured
 native client has an exact durable job, request-token and Runner-installation
 admission match. Unknown, unpinned or ambiguous ownership remains visible for
-review. This comparison grants no import or cleanup authority to either client.
+review. An unaccepted, unassociated view discovered before that admission was
+pinned is retained as **owned by other client**, with the owner named and all
+mutation controls disabled. Accepted or otherwise proven custody is never
+superseded. This comparison grants no import or cleanup authority to either
+client.
 
 ```mermaid
 flowchart LR
