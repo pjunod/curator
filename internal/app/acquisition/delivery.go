@@ -642,8 +642,11 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 	}
 	selected := make([]string, 0, len(files))
 	expectedDigests := make(map[string]string, len(files))
+	// Automatic selection takes the media the importer would take from the
+	// same folder on disk: a release's sample clip is not an episode, and the
+	// selection validator refuses it, so offering it failed the whole import.
 	for _, f := range files {
-		if deliveryImportablePath(item.Kind, f.absolute) {
+		if deliveryImportablePath(item.Kind, f.absolute) && !isReleaseSample(f.absolute) {
 			selected = append(selected, f.absolute)
 		}
 		expectedDigests[f.absolute] = f.digest
@@ -679,6 +682,16 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 			}
 			break
 		}
+	}
+	// An automatic import with nothing to place is not an import. Without
+	// this, a manifest that holds only a sample (or only sidecars) skipped the
+	// importer, reported success with zero files, and acknowledged the
+	// delivery to Runner as consumed.
+	if !manual && !deliveryManifestHasMedia(item.Kind, r.Delivery.Files) {
+		err := fmt.Errorf("%w: the accepted Runner manifest holds no importable media (samples and sidecars only)", ErrNoFilesImported)
+		s.failImport(ctx, &fresh, err.Error())
+		s.deliveryRetry(ctx, &r, "accepted delivery import is pending: "+err.Error(), err)
+		return err
 	}
 	selectedSet := map[string]bool{}
 	for _, p := range selected {
@@ -788,6 +801,17 @@ func deliveryImportablePath(kind domain.MediaKind, name string) bool {
 		return filename.IsBook(name)
 	}
 	return filename.IsVideo(name)
+}
+
+// deliveryManifestHasMedia reports whether Runner published anything the
+// importer would place: media of the item's kind that is not a sample.
+func deliveryManifestHasMedia(kind domain.MediaKind, files []ports.RunnerFile) bool {
+	for _, f := range files {
+		if deliveryImportablePath(kind, f.Path) && !isReleaseSample(f.Path) {
+			return true
+		}
+	}
+	return false
 }
 
 func manualSelectionAlreadyResolved(requested []string, r sqlite.DeliveryReceipt, prior map[string]sqlite.DeliveryFileOutcome) bool {

@@ -667,8 +667,7 @@ func selectedFiles(root string, selected []string, isMedia func(string) bool) ([
 			return nil, fmt.Errorf("selected file is outside %s: %s", root, raw)
 		}
 		info, err := os.Stat(p)
-		if err != nil || info.IsDir() || !isMedia(p) ||
-			strings.Contains(strings.ToLower(filepath.Base(p)), "sample") {
+		if err != nil || info.IsDir() || !isMedia(p) || isReleaseSample(p) {
 			return nil, fmt.Errorf("selected file is not importable: %s", raw)
 		}
 		if !seen[p] {
@@ -826,14 +825,25 @@ func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) 
 		if err != nil || d.IsDir() || !isMedia(path) {
 			return err
 		}
-		// Skip samples.
-		if strings.Contains(strings.ToLower(filepath.Base(path)), "sample") {
+		if isReleaseSample(path) {
 			return nil
 		}
 		out = append(out, path)
 		return nil
 	})
 	return out, err
+}
+
+// isReleaseSample reports whether a media file is a release's sample clip.
+//
+// Every path that chooses media for the library asks this one question: the
+// completed-folder scan, the manual-import browser, the Runner delivery
+// selection, and the trust-boundary check on an explicit selection. They used
+// to carry their own copies of it, and the delivery selection had none, so a
+// release that shipped its sample was handed to a validator that refuses
+// samples and failed every attempt, forever.
+func isReleaseSample(path string) bool {
+	return strings.Contains(strings.ToLower(filepath.Base(path)), "sample")
 }
 
 // importScope pins an import to one copy of the item: its id (0 =

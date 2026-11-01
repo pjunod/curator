@@ -54,7 +54,7 @@ func (s *Service) ScanImportPath(ctx context.Context, path string) ([]ScannedFil
 			if err != nil || d.IsDir() || !isMedia(p) {
 				return nil
 			}
-			if strings.Contains(strings.ToLower(filepath.Base(p)), "sample") {
+			if isReleaseSample(p) {
 				return nil
 			}
 			paths = append(paths, p)

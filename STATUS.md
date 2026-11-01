@@ -1,5 +1,35 @@
 # Monarr — Project Status
 
+## Samples no longer fail Runner delivery imports — 2026-11-01 · v0.38.6
+
+**Status:** branch `codex/delivery-sample-files` — review, gate, CI and merge
+pending.
+
+Measuring v0.38.5 on nuc3 turned up a second permanent loop. Every Runner
+delivery that shipped a scene sample (`sample-<release>.mkv`) failed on every
+attempt with "selected file is not importable: …/sample-…mkv": the automatic
+delivery selection offered every video in the manifest, samples included, to
+the validator for explicit selections, which refuses samples and fails the
+whole import. The completed-folder scan has always skipped samples, so only
+Runner deliveries hit it. Live damage: Good.Trouble S02E09 and S02E10 grabbed
+six times each (up to 239 attempts per copy), wtFOCK S02E03, S02E10, S03E01,
+S03E02, S03E05 and S03E06 three or four times each (up to 1,206 attempts since
+Oct 27).
+
+- One `isReleaseSample` predicate now serves the completed scan, the manual
+  browser, the delivery selection, the selection validator and the redundancy
+  proof's media count. The delivery selection was the one path without it.
+- A sample is recorded as `known_incidental` ("release sample excluded from
+  media selection") instead of "not attempted by the importer".
+- A manifest with no importable media (only a sample, or only sidecars) is now
+  a failed import. Before, it skipped the importer, reported "imported 0
+  file(s)" and acknowledged the delivery to Runner as consumed.
+
+v0.38.5 measured live on nuc3 (started 21:30:10Z): imports overlapped (two
+workers busy at once), and two 2.9 GB duplicate cleanups ran 225 s on the
+cleanup workers alongside them. The HIG S05E04 duplicates 38 and 112 resolved
+as redundant and were removed.
+
 ## Imports no longer wait behind cleanup — 2026-11-01 · v0.38.5
 
 **Status:** [PR #76](https://github.com/pjunod/curator/pull/76) — two reviews
@@ -7,7 +37,7 @@ addressed (memo rejected; comment and cleanup worker count fixed). Full gate
 once: lint 0 · go test green (the chmod-based
 `TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired` fails only
 as root; rerun alone as non-root on the final commit: pass) · web 124 ·
-e2e 192. CI and merge pending.
+e2e 192. CI green, merged (990e768), deployed to nuc3 by Paul.
 
 Paul asked why importing is slow and whether it must be serial. Measured on
 nuc3 after v0.38.4: a real 2.5 GB import took 31 s; proving a 2.9 GB
@@ -39,8 +69,8 @@ now accepts exact bytes only; the sole-file count now requires both manifest
 and disk to agree, as the importer counts disk). Full gate once on the final
 tree: lint 0 · go test green (the chmod-based
 `TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired` fails only
-as root; rerun alone as non-root: pass) · web 124 · e2e 192. CI and merge
-pending.
+as root; rerun alone as non-root: pass) · web 124 · e2e 192. CI green,
+merged; deployed to nuc3 by Paul.
 
 After v0.38.3 reached nuc3 both stuck episodes imported within minutes
 (`episode_from_release`), but the other twelve byte-identical copies of each
@@ -56,8 +86,8 @@ exact bytes against a verified, unflagged library file — is unchanged.
 ## Obfuscated imports and the re-grab loop — 2026-11-01 · v0.38.3
 
 **Status:** [PR #74](https://github.com/pjunod/curator/pull/74) — review addressed,
-local gate green, CI and merge pending; deploy to nuc3 handed off (this session
-has no SSH key for nuc3).
+local gate green, CI green, merged; deployed to nuc3 by Paul (the earlier
+"no SSH key" note was wrong — nuc3 uses the same key as every node).
 
 Field report: two episodes sat in Runner's "Fetching NZB" for most of a day
 behind a 22-hour indexer `Retry-After`. The quota had been spent by Curator,

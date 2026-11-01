@@ -110,6 +110,8 @@ func (s *Service) recordDeliveryImportOutcomes(ctx context.Context, r sqlite.Del
 			if excessOperationID != "" {
 				reason = "sidecar is associated only with an out-of-scope media file; retained until its selected replacement commits"
 			}
+		} else if isReleaseSample(f.relative) && (filename.IsVideo(f.relative) || filename.IsBook(f.relative)) {
+			disposition, reason = "known_incidental", "release sample excluded from media selection"
 		} else if row.Disposition == "unselected_recoverable" {
 			continue
 		}
@@ -668,7 +670,7 @@ func (s *Service) deliverySidecarLibraryProof(ctx context.Context, r sqlite.Deli
 func deliveryPayloadMediaCount(r sqlite.DeliveryReceipt) int {
 	manifest := 0
 	for _, file := range r.Delivery.Files {
-		if filename.IsVideo(file.Path) && !strings.Contains(strings.ToLower(filepath.Base(file.Path)), "sample") {
+		if filename.IsVideo(file.Path) && !isReleaseSample(file.Path) {
 			manifest++
 		}
 	}

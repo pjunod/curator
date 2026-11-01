@@ -1471,6 +1471,64 @@ func TestObfuscatedDuplicateDeliveryResolvesAsRedundant(t *testing.T) {
 	}
 }
 
+// A scene release ships its sample clip beside the episode. The automatic
+// delivery selection used to offer the sample to a validator that refuses
+// samples, so the whole import failed on every retry and the episode was
+// grabbed again and again (Good.Trouble S02E09: six copies, 239 attempts).
+func TestDeliveryWithSampleImportsTheEpisodeAndRecordsTheSample(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	sample := "sample-" + epRelease + ".mkv"
+	svc, db, dl, cfg, _ := deliveryImportFixtureWithFiles(t, protocol, map[string][]byte{
+		sample:             []byte("sample clip"),
+		epRelease + ".nfo": []byte("nfo"),
+	})
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatalf("a delivery carrying its sample must import the episode, got: %v", err)
+	}
+	receipt, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil || receipt.State != "imported" {
+		t.Fatalf("receipt = %+v err=%v, want imported", receipt, err)
+	}
+	outcomes, err := db.DeliveryFileOutcomes(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]sqlite.DeliveryFileOutcome{}
+	for _, o := range outcomes {
+		byPath[o.Path] = o
+	}
+	if got := byPath[epRelease+".mkv"].Disposition; got != "placed" {
+		t.Fatalf("episode disposition = %q, want placed (%+v)", got, outcomes)
+	}
+	if got := byPath[sample]; got.Disposition != "known_incidental" || !strings.Contains(got.Reason, "sample") {
+		t.Fatalf("sample outcome = %+v, want known_incidental naming the sample", got)
+	}
+}
+
+// A manifest with nothing but a sample has nothing to place. It used to skip
+// the importer, report "imported 0 file(s)", and acknowledge the delivery to
+// Runner as consumed.
+func TestDeliveryOfOnlyASampleIsAFailedImportNotASuccess(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, "sample-"+epRelease+".mkv", []byte("sample clip"), nil)
+	receiptID := receiptIDFor(t, db, dl.ID)
+	err := svc.runDeliveryImport(ctx, dl, cfg, receiptID)
+	if !errors.Is(err, ErrNoFilesImported) {
+		t.Fatalf("sample-only delivery err = %v, want ErrNoFilesImported", err)
+	}
+	receipt, rerr := db.DeliveryReceiptByID(ctx, receiptID)
+	if rerr != nil || receipt.State == "imported" {
+		t.Fatalf("receipt = %+v err=%v, must not be imported", receipt, rerr)
+	}
+	fresh, gerr := db.GetDownload(ctx, dl.ID)
+	if gerr != nil || fresh.State != "failed" {
+		t.Fatalf("download state = %q err=%v, want failed", fresh.State, gerr)
+	}
+}
+
 func TestTransientDeliveryAckDoesNotBlockImportAndRestartNeedsNoPayload(t *testing.T) {
 	ctx := context.Background()
 	protocol := &deliveryImportClient{failCount: 2}
