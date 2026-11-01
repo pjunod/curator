@@ -52,7 +52,7 @@ func TestDeliveryTimingImmutableAndPerCopyCleanupMutableAcrossRestart(t *testing
 	if actual.State == "conflict" || !ports.SameRunnerStages(actual.Delivery.RunnerStages, v.RunnerStages) || !ports.SameRunnerLifecycleTiming(actual.Delivery.LifecycleTiming, v.LifecycleTiming) || len(actual.Delivery.SourceCopies) != 1 || actual.Delivery.SourceCopies[0].Status != "removed" {
 		t.Fatalf("timing/copy refresh lost evidence: %+v", actual.Delivery)
 	}
-	if err := goose.DownContext(ctx, reopened.W, "migrations"); err == nil {
+	if err := goose.DownToContext(ctx, reopened.W, "migrations", 66); err == nil {
 		t.Fatal("downgrade discarded durable stage/copy evidence")
 	}
 	*v.LifecycleTiming.Intervals[0].DurationMS = 41

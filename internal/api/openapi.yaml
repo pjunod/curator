@@ -4540,7 +4540,7 @@ components:
       type: object
       required: [type, name, url]
       properties:
-        type: { type: string, enum: [qbittorrent, sabnzbd, transmission, deluge, nzbget, nzbd] }
+        type: { type: string, enum: [qbittorrent, sabnzbd, transmission, deluge, nzbget, nzbd, runner-torrent] }
         name: { type: string }
         url: { type: string }
         username: { type: string }

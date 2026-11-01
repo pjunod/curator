@@ -1682,3 +1682,31 @@ func (d *DB) AbandonExplicitDeliveryDelete(ctx context.Context, receiptID int64,
 	}
 	return tx.Commit()
 }
+
+// DeliveryBelongsToOtherRunnerMode suppresses a duplicate view only when an
+// exact durable admission proves this publication belongs to the other native
+// protocol client. Unknown/unpinned/ambiguous custody still journals for review.
+func (d *DB) DeliveryBelongsToOtherRunnerMode(ctx context.Context, current ports.ClientConfig, delivery ports.RunnerDelivery) (bool, error) {
+	if !ports.IsNativeRunnerClient(current.Type) || delivery.JobID == "" || delivery.RequestToken == "" || delivery.RunnerInstanceID == "" {
+		return false, nil
+	}
+	rows, err := d.R.QueryContext(ctx, `SELECT d.client_id,COALESCE(c.type,'') FROM downloads d LEFT JOIN download_clients c ON c.id=d.client_id
+ WHERE d.transfer=? AND d.handle=? AND d.runner_instance_id=? AND d.runner_admission_generation!='' AND d.generation_key!='' AND d.delivery_expected=1 LIMIT 2`, delivery.RequestToken, delivery.JobID, delivery.RunnerInstanceID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	count := 0
+	var id int64
+	var kind string
+	for rows.Next() {
+		if err := rows.Scan(&id, &kind); err != nil {
+			return false, err
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return count == 1 && id != current.ID && ports.IsNativeRunnerClient(kind) && kind != current.Type, nil
+}

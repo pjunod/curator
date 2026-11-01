@@ -109,7 +109,7 @@ func DefaultPortFor(kind string) int {
 		return 9091
 	case "deluge":
 		return 8112
-	case "nzbget", "nzbd":
+	case "nzbget", "nzbd", "runner-torrent":
 		return 6789
 	case "plurx":
 		return 32400

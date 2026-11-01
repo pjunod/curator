@@ -816,7 +816,7 @@ export interface PathMapping {
 }
 
 export interface DownloadClientInput {
-  type: 'qbittorrent' | 'sabnzbd' | 'transmission' | 'deluge' | 'nzbget' | 'nzbd'
+  type: 'qbittorrent' | 'sabnzbd' | 'transmission' | 'deluge' | 'nzbget' | 'nzbd' | 'runner-torrent'
   name: string
   url: string
   username?: string

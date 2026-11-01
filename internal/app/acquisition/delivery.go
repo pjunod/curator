@@ -83,6 +83,14 @@ func (s *Service) discoverRunnerDeliveries(ctx context.Context, cfg ports.Client
 			}
 		}
 		for _, delivery := range page.Deliveries {
+			otherMode, err := s.db.DeliveryBelongsToOtherRunnerMode(ctx, cfg, delivery)
+			if err != nil {
+				s.log.Warn("delivery client association lookup failed", "client", cfg.Name, "err", err)
+				return
+			}
+			if otherMode {
+				continue
+			}
 			mapped := ""
 			if filepath.IsAbs(delivery.PublicationPath) {
 				mapped = ports.MapRemotePath(cfg.PathMappings, delivery.PublicationPath)
@@ -303,7 +311,7 @@ func (s *Service) runnerDeliveryEnabled(ctx context.Context, cfg ports.ClientCon
 	enabled, err := s.db.RunnerDeliveryV1Enabled(ctx, cfg.ID)
 	if err != nil {
 		s.log.Warn("Runner delivery capability lookup failed", "client", cfg.Name, "err", err)
-		return cfg.Type == "nzbd"
+		return ports.IsNativeRunnerClient(cfg.Type)
 	}
 	if enabled {
 		s.rememberRunnerDelivery(cfg.ID)

@@ -210,3 +210,27 @@ test('blacklisted release override requires its explicit one-time confirmation',
   const completedSearch = page.getByRole('dialog', { name: /Interactive search/ })
   await inViewport(completedSearch.getByRole('status'))
 })
+
+test('native Runner torrent settings keep explicit protocol choice and unsupported capability feedback', async ({ page }) => {
+  await page.route('**/api/v1/downloadclients', route => route.fulfill({ json: [] }))
+  let tested: Record<string, unknown> | undefined
+  await page.route('**/api/v1/downloadclients/test', async route => {
+    tested = route.request().postDataJSON()
+    await route.fulfill({ status: 400, json: { message: 'Runner native torrent acquisition is unsupported: native-torrent-deliveries-v1 is required.' } })
+  })
+  await page.goto('/settings')
+  const settings = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Download clients', exact: true }) }).first()
+  const type = settings.getByRole('combobox').first()
+  await expect(type.locator('option[value="nzbd"]')).toHaveText('Runner · Usenet')
+  await type.selectOption('runner-torrent')
+  await settings.getByPlaceholder('Host (192.168.1.10)').fill('runner.fixture')
+  await expect(settings.getByPlaceholder('Token, or password')).toBeVisible()
+  await expect(settings.getByText(/separate managed copy/)).toBeVisible()
+  await settings.getByRole('button', { name: 'Test', exact: true }).last().click()
+  await expect(settings.getByText(/unsupported: native-torrent-deliveries-v1 is required/)).toBeVisible()
+  expect(tested?.type).toBe('runner-torrent')
+  expect(tested?.url).toBe('http://runner.fixture:6789')
+  await settings.getByText(/unsupported: native-torrent-deliveries-v1 is required/).scrollIntoViewIfNeeded()
+  await inViewport(settings.getByRole('button', { name: 'Add client', exact: true }))
+  await screenshot(page, 'native-runner-torrent-settings')
+})

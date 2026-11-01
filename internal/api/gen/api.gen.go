@@ -163,12 +163,13 @@ func (e DownloadClientConfigMode) Valid() bool {
 
 // Defines values for DownloadClientConfigType.
 const (
-	DownloadClientConfigTypeDeluge       DownloadClientConfigType = "deluge"
-	DownloadClientConfigTypeNzbd         DownloadClientConfigType = "nzbd"
-	DownloadClientConfigTypeNzbget       DownloadClientConfigType = "nzbget"
-	DownloadClientConfigTypeQbittorrent  DownloadClientConfigType = "qbittorrent"
-	DownloadClientConfigTypeSabnzbd      DownloadClientConfigType = "sabnzbd"
-	DownloadClientConfigTypeTransmission DownloadClientConfigType = "transmission"
+	DownloadClientConfigTypeDeluge        DownloadClientConfigType = "deluge"
+	DownloadClientConfigTypeNzbd          DownloadClientConfigType = "nzbd"
+	DownloadClientConfigTypeNzbget        DownloadClientConfigType = "nzbget"
+	DownloadClientConfigTypeQbittorrent   DownloadClientConfigType = "qbittorrent"
+	DownloadClientConfigTypeRunnerTorrent DownloadClientConfigType = "runner-torrent"
+	DownloadClientConfigTypeSabnzbd       DownloadClientConfigType = "sabnzbd"
+	DownloadClientConfigTypeTransmission  DownloadClientConfigType = "transmission"
 )
 
 // Valid indicates whether the value is a known member of the DownloadClientConfigType enum.
@@ -181,6 +182,8 @@ func (e DownloadClientConfigType) Valid() bool {
 	case DownloadClientConfigTypeNzbget:
 		return true
 	case DownloadClientConfigTypeQbittorrent:
+		return true
+	case DownloadClientConfigTypeRunnerTorrent:
 		return true
 	case DownloadClientConfigTypeSabnzbd:
 		return true
@@ -211,12 +214,13 @@ func (e DownloadClientInputMode) Valid() bool {
 
 // Defines values for DownloadClientInputType.
 const (
-	DownloadClientInputTypeDeluge       DownloadClientInputType = "deluge"
-	DownloadClientInputTypeNzbd         DownloadClientInputType = "nzbd"
-	DownloadClientInputTypeNzbget       DownloadClientInputType = "nzbget"
-	DownloadClientInputTypeQbittorrent  DownloadClientInputType = "qbittorrent"
-	DownloadClientInputTypeSabnzbd      DownloadClientInputType = "sabnzbd"
-	DownloadClientInputTypeTransmission DownloadClientInputType = "transmission"
+	DownloadClientInputTypeDeluge        DownloadClientInputType = "deluge"
+	DownloadClientInputTypeNzbd          DownloadClientInputType = "nzbd"
+	DownloadClientInputTypeNzbget        DownloadClientInputType = "nzbget"
+	DownloadClientInputTypeQbittorrent   DownloadClientInputType = "qbittorrent"
+	DownloadClientInputTypeRunnerTorrent DownloadClientInputType = "runner-torrent"
+	DownloadClientInputTypeSabnzbd       DownloadClientInputType = "sabnzbd"
+	DownloadClientInputTypeTransmission  DownloadClientInputType = "transmission"
 )
 
 // Valid indicates whether the value is a known member of the DownloadClientInputType enum.
@@ -229,6 +233,8 @@ func (e DownloadClientInputType) Valid() bool {
 	case DownloadClientInputTypeNzbget:
 		return true
 	case DownloadClientInputTypeQbittorrent:
+		return true
+	case DownloadClientInputTypeRunnerTorrent:
 		return true
 	case DownloadClientInputTypeSabnzbd:
 		return true

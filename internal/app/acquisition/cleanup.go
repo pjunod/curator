@@ -218,7 +218,7 @@ func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
 	// Runner owns its processing and recovery trees. Legacy Runner paths can be
 	// deleted only in a configured Curator-owned working tree; delivery-managed
 	// publications never reach this whole-directory fallback.
-	if cfg.Type == "nzbd" && !s.ownsDownloadPath(ctx, dir) {
+	if ports.IsNativeRunnerClient(cfg.Type) && !s.ownsDownloadPath(ctx, dir) {
 		s.log.Warn("cleanup: Runner payload remains pending; retry through Runner", "download", dl.ID, "dir", dir)
 		return
 	}

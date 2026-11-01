@@ -1427,3 +1427,44 @@ retry attempts and reason. Retry controls show their pending state and visible
 result. Background status refresh preserves focus and scroll position. Reporting
 and file deletion show results in a dialog that remains visible after the file
 row or review form changes.
+
+### Runner native torrent acquisitions
+
+Add **Runner · native torrent** (`runner-torrent`) as an explicit torrent client
+in Settings → Download clients, including from the phone web interface. The
+native phone app's Administration link opens this same configuration. The
+existing **Runner · Usenet** (`nzbd`) client keeps its Usenet meaning, and ordinary
+qBittorrent clients keep their own adapter.
+
+Native mode requires Runner's advertised `native-torrent-deliveries-v1` and
+`deliveries-v1` capabilities. An unsupported server gives an actionable error
+before admission; there is no compatibility-API fallback. Each Curator request
+uses Runner's JSON `/api/v1/jobs` source admission with its persisted transfer
+token, delivery intent, priority and explicit additional-copy intent. Replaying
+a request keeps that token; a fresh Grab uses a fresh request.
+
+The returned handle names the managed acquisition child. Its separately owned
+publication goes through the existing Delivery acceptance, per-file placement
+and cleanup ledger. The seed donor keeps its backend association and seeding
+policy. Curator does not change seed limits or delete donor data by labeling an
+acquisition complete. Queue/history observations select explicit acquisition
+roles, and native capacity reporting excludes NNTP provider quota/health limits.
+Existing Runner custody checks apply to both native client modes. A downgrade
+refuses while a `runner-torrent` client remains configured.
+
+Use two separate client entries when one Runner serves both protocols. Curator
+keeps queue/history views separate, including legacy Usenet title fallback.
+Shared collection rows are skipped for a mode only when the other configured
+native client has an exact durable job, request-token and Runner-installation
+admission match. Unknown, unpinned or ambiguous ownership remains visible for
+review. This comparison grants no import or cleanup authority to either client.
+
+```mermaid
+flowchart LR
+    request[Curator request · fresh token] --> child[Private acquisition child · own job ID]
+    seed[Seed donor · own backend and policy] -->|verified payload copy| child
+    child --> post[Runner POST]
+    post --> delivery[Immutable Delivery publication]
+    delivery --> library[Curator placement and receipt]
+    seed --> seeding[Seeding follows donor policy]
+```

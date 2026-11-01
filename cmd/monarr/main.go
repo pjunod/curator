@@ -193,22 +193,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 
 	// Acquisition: real adapters injected as factories.
 	indexerFactory := func(cfg ports.IndexerConfig) ports.Indexer { return torznab.New(cfg) }
-	clientFactory := func(cfg ports.ClientConfig) ports.DownloadClient {
-		switch cfg.Type {
-		case "sabnzbd":
-			return sabnzbd.New(cfg)
-		case "nzbget":
-			return nzbget.New(cfg)
-		case "nzbd":
-			return nzbd.New(cfg)
-		case "transmission":
-			return transmission.New(cfg)
-		case "deluge":
-			return deluge.New(cfg)
-		default:
-			return qbittorrent.New(cfg)
-		}
-	}
+	clientFactory := downloadClientForConfig
 	acq := acquisition.New(db, b, log, indexerFactory, clientFactory)
 	// The data plane gets its own registry and its own workers. Cancel ctx to
 	// stop them; WaitImporters drains, in the same shape the jobs queue uses.
@@ -632,4 +617,23 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	sched.Wait()
 	log.Info("goodbye")
 	return nil
+}
+
+func downloadClientForConfig(cfg ports.ClientConfig) ports.DownloadClient {
+	switch cfg.Type {
+	case "sabnzbd":
+		return sabnzbd.New(cfg)
+	case "nzbget":
+		return nzbget.New(cfg)
+	case "nzbd":
+		return nzbd.New(cfg)
+	case "runner-torrent":
+		return nzbd.NewTorrent(cfg)
+	case "transmission":
+		return transmission.New(cfg)
+	case "deluge":
+		return deluge.New(cfg)
+	default:
+		return qbittorrent.New(cfg)
+	}
 }
