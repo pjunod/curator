@@ -96,7 +96,7 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
       </details>
       {receipt.error && <p className={receipt.ownedByClientId ? "muted" : "error-text"}>{receipt.error}</p>}
       {warning && <p className="warning-text" role="status">This lifecycle has been blocked for at least 30 minutes. Review the cause and retry when the underlying issue is corrected.</p>}
-      {receipt.failureStage && <p><strong>Runner stage:</strong> {receipt.failureStage}{receipt.failureCause ? ` · ${receipt.failureCause}` : ''} {receipt.keepSourceOnFailure ? '· source kept on failure' : ''}</p>}
+      {receipt.failureStage && <p><strong>Runner stage:</strong> {receipt.failureStage}{receipt.failureCause ? ` · ${receipt.failureCause}` : ''} {receipt.keepSourceOnFailure ? '· Keep was enabled at failure' : ''}</p>}
       <p><strong>Runner source cleanup:</strong> {cleanupStatus(runnerSourceState, runnerSource.error ?? undefined, runnerTimestamp(runnerSource.blockedSince), runnerTimestamp(runnerSource.nextRetryAt))} · {Number(runnerSource.attempts ?? 0)} attempts
         {runnerSource.startedAt ? ` · started ${runnerTime(runnerSource.startedAt)}` : ''}{runnerSource.lastAttemptAt ? ` · last attempt ${runnerTime(runnerSource.lastAttemptAt)}` : ''}{runnerSource.completedAt ? ` · completed ${runnerTime(runnerSource.completedAt)}` : ''}{runnerSource.nextRetryAt ? ` · Runner next ${runnerTime(runnerSource.nextRetryAt)}` : ''}
       </p>
