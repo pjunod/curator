@@ -68,12 +68,12 @@ const timedReceipt = (id = 901) => ({
   mappedPath: `/completed/Reviewable.${id}`, readyAt: new Date().toISOString(), terminalOutcome: 'SUCCESS', keepSourceOnFailure: false, state: 'imported', acceptance: 'accepted', attempts: 1,
   blockedSince: '0001-01-01T00:00:00Z', attemptHistory: [{ id: 1, stage: 'import', attempt: 1, startedAt: '2026-11-01T10:00:00Z', finishedAt: '2026-11-01T10:00:01Z', result: 'succeeded' }],
   lifecycleTiming: { version: 1, intervals: [
-    { stage: 'download', nodeId: 'worker-a', clockDomain: 'worker-a:boot-1', startUnixMs: 1793527200000, startMonotonicMs: 0, endMonotonicMs: 2000, durationMs: 2000, state: 'completed' },
-    { stage: 'post_processing', nodeId: 'worker-a', clockDomain: 'worker-a:boot-1', startUnixMs: 1793527201000, startMonotonicMs: 1000, endMonotonicMs: 3000, durationMs: 2000, state: 'completed' },
+    { stage: 'download', nodeId: 'worker-a', clockDomain: 'worker-a:boot-862c4ae1-1941-4eb8-b91f-0cf79da321c9', startUnixMs: 1793527200000, startMonotonicMs: 0, endMonotonicMs: 2000, durationMs: 2000, state: 'completed' },
+    { stage: 'post_processing', nodeId: 'worker-a', clockDomain: 'worker-a:boot-862c4ae1-1941-4eb8-b91f-0cf79da321c9', startUnixMs: 1793527201000, startMonotonicMs: 1000, endMonotonicMs: 3000, durationMs: 2000, state: 'completed' },
     { stage: 'queue', nodeId: 'leader', clockDomain: 'leader:boot-2', startUnixMs: 1793527200000, state: 'interrupted' },
   ] },
   runnerStages: { nodeId: 'worker-a', clockDomain: 'worker-a:post', spans: [{ stage: 'unpack', started_at_unix: 1793527201, ms: 500 }] },
-  sourceCopies: [{ id: 'worker-copy-1', ownerNode: 'worker-a', status: 'retry', attempts: 2, error: 'Storage was temporarily unavailable' }],
+  sourceCopies: [{ id: 'worker-a-publication-862c4ae1-1941-4eb8-b91f-0cf79da321c9-source-copy-9aa78ce7063553ff', ownerNode: 'worker-a', status: 'retry', attempts: 2, error: 'Storage was temporarily unavailable' }],
   sourceCleanup: { status: 'retry', attempts: 2 }, sourceCleanupAttempts: 0, directoryCleanupState: 'retry', directoryCleanupAttempts: 1, manifestFiles: [], curatorFiles: [],
 })
 
@@ -93,6 +93,18 @@ test('joined timing, actual retry clicks and receipt pagination stay visible', a
   await expect(trace.getByText(/Measured total unavailable.*no complete timing/)).toBeVisible()
   await expect(trace.getByText(/739.*d ago/)).toHaveCount(0)
   await screenshot(page, 'joined-lifecycle')
+  const timingLane = trace.locator('.lifecycle-clock-lane').first()
+  await timingLane.getByText('Timing reference', { exact: true }).click()
+  await timingLane.scrollIntoViewIfNeeded()
+  await inViewport(timingLane.getByText('worker-a:boot-862c4ae1-1941-4eb8-b91f-0cf79da321c9', { exact: true }))
+  await screenshot(page, 'lifecycle-stage-lanes')
+  const copies = trace.getByRole('region', { name: 'Processing source copies' })
+  await copies.getByText('Copy reference', { exact: true }).click()
+  const copyId = copies.getByText('worker-a-publication-862c4ae1-1941-4eb8-b91f-0cf79da321c9-source-copy-9aa78ce7063553ff', { exact: true })
+  await copyId.scrollIntoViewIfNeeded()
+  await inViewport(copyId)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
+  await screenshot(page, 'lifecycle-source-copies')
   for (const name of ['Retry handoff', 'Retry Runner source cleanup', 'Retry Curator cleanup']) {
     const button = trace.getByRole('button', { name, exact: true })
     await button.scrollIntoViewIfNeeded()
@@ -102,6 +114,7 @@ test('joined timing, actual retry clicks and receipt pagination stay visible', a
     await inViewport(result)
     await expect(button).toBeFocused()
   }
+  await screenshot(page, 'lifecycle-retry-controls')
   expect(retried).toEqual(['retry-handoff', 'retry-runner-cleanup', 'retry-curator-cleanup'])
   await archive.getByRole('button', { name: 'Older receipts' }).click()
   trace = archive.locator('.delivery-lifecycle')

@@ -32,9 +32,10 @@ const completedFolder = (receipt: DeliveryLifecycleReceipt) => {
   const path = completedPath(receipt).replace(/[\\/]+$/, '')
   return path.split(/[\\/]/).at(-1) || 'folder unknown'
 }
+const runnerTimestamp = (value: unknown) => typeof value === 'number' && value > 0 ? new Date(value * 1000).toISOString() : undefined
 const cleanupStatus = (status: string, error?: string, blocked?: string, next?: string) => {
   if (status === 'removed' || status === 'succeeded') return 'Complete'
-  if (status === 'retry' || error) return `Retry pending · blocked ${elapsed(blocked)}${pending(next) ? ` · next ${fmtRelative(next!)}` : ''}`
+  if (status === 'retry' || error) return `Retry pending${knownTimestamp(blocked) ? ` · blocked ${elapsed(blocked)}` : ''}${pending(next) ? ` · next ${fmtRelative(next!)}` : ''}`
   return status.replaceAll('_', ' ')
 }
 
@@ -91,12 +92,12 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
       {receipt.error && <p className="error-text">{receipt.error}</p>}
       {warning && <p className="warning-text" role="status">This lifecycle has been blocked for at least 30 minutes. Review the cause and retry when the underlying issue is corrected.</p>}
       {receipt.failureStage && <p><strong>Runner stage:</strong> {receipt.failureStage}{receipt.failureCause ? ` · ${receipt.failureCause}` : ''} {receipt.keepSourceOnFailure ? '· source kept on failure' : ''}</p>}
-      <p><strong>Runner source cleanup:</strong> {cleanupStatus(runnerSourceState, receipt.sourceCleanupError, receipt.sourceCleanupBlockedSince, receipt.sourceCleanupNextAttemptAt)} · {Number(runnerSource.attempts ?? receipt.sourceCleanupAttempts)} attempts
+      <p><strong>Runner source cleanup:</strong> {cleanupStatus(runnerSourceState, runnerSource.error ?? undefined, runnerTimestamp(runnerSource.blockedSince), runnerTimestamp(runnerSource.nextRetryAt))} · {Number(runnerSource.attempts ?? 0)} attempts
         {runnerSource.startedAt ? ` · started ${runnerTime(runnerSource.startedAt)}` : ''}{runnerSource.lastAttemptAt ? ` · last attempt ${runnerTime(runnerSource.lastAttemptAt)}` : ''}{runnerSource.completedAt ? ` · completed ${runnerTime(runnerSource.completedAt)}` : ''}{runnerSource.nextRetryAt ? ` · Runner next ${runnerTime(runnerSource.nextRetryAt)}` : ''}
       </p>
       {receipt.sourceCleanupAttempts > 0 && <p className="muted">Curator status refresh: {receipt.sourceCleanupAttempts} attempts{receipt.sourceCleanupBlockedSince ? ` · blocked ${elapsed(receipt.sourceCleanupBlockedSince)}` : ''}{pending(receipt.sourceCleanupNextAttemptAt) ? ` · next ${fmtRelative(receipt.sourceCleanupNextAttemptAt!)}` : ''}</p>}
       {receipt.sourceCleanupError && <p className="error-text">{receipt.sourceCleanupError}</p>}
-      <details><summary>Runner source cleanup attempts ({runnerSource.attemptHistory?.length ?? 0})</summary>
+      <details><summary>Recorded cleanup attempt details ({runnerSource.attemptHistory?.length ?? 0})</summary>
         {runnerSource.attemptHistory?.length ? <ol>{runnerSource.attemptHistory.map((event) => <li key={event.attempt}>
           Attempt {event.attempt} · {event.outcome} · started {runnerMillisTime(event.startedAtMs)} · wait {span(event.waitMs)}
           {typeof event.workMs === 'number' ? ` · work ${span(event.workMs)}` : ' · work duration not recorded'}

@@ -174,9 +174,11 @@ export function CompletedFolders({ onImport }: { onImport: (path: string, mode?:
         <p>This root has {previewStorage.data.existingPayloads} previously recorded payloads and {previewStorage.data.existingRequests} pre-change requests ({previewStorage.data.inFlightRequests} still in flight). These require fresh review after acceptance. Other roots keep their own custody rules.</p>
         <p>Acceptance permits future requests to use this storage. It does not approve cleanup of existing payloads.</p>
         {previewStorage.data.activeImports > 0 && <p role="alert">{previewStorage.data.activeImports} imports are active. Wait for them to finish or cancel them, then refresh this review.</p>}
-        <button disabled={acceptStorage.isPending || previewStorage.isPending || previewStorage.data.activeImports > 0} onClick={() => acceptStorage.mutate(previewStorage.data!)}>{acceptStorage.isPending ? 'Accepting…' : 'Accept replacement storage'}</button>
       </>}
-      <button disabled={previewStorage.isPending} onClick={() => { acceptStorage.reset(); previewStorage.mutate(storageReview) }}>Refresh review</button>
+      <div className="row-actions">
+        {previewStorage.data && <button disabled={acceptStorage.isPending || previewStorage.isPending || previewStorage.data.activeImports > 0} onClick={() => acceptStorage.mutate(previewStorage.data!)}>{acceptStorage.isPending ? 'Accepting…' : 'Accept replacement storage'}</button>}
+        <button disabled={previewStorage.isPending} onClick={() => { acceptStorage.reset(); previewStorage.mutate(storageReview) }}>Refresh review</button>
+      </div>
       {acceptStorage.isError && <ActionNotice warning>{(acceptStorage.error as Error).message}</ActionNotice>}
     </ActionDialog>}
     <div className="storage-roots">{data?.roots.map((root) => <div key={root.path}>
