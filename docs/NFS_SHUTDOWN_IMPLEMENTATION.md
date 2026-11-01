@@ -30,7 +30,8 @@ The first code batch changes [application startup](../cmd/monarr/main.go),
   write deadline. Unsupported adapters fail explicitly.
 - Registered notification, subscription, coordination and event loops are
   joined before their dependency cleanup. The subscriber supervisor joins its
-  children; a wanted-search cancellation watcher joins before its owner returns.
+  children; wanted-search cancellation watchers and job lease heartbeats join
+  before their owners return.
 - Background search retains its nondurable five-minute operation semantics;
   admission and WaitGroup registration share a mutex, work uses application
   cancellation, and shutdown joins its actual cleanup.

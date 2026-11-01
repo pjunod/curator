@@ -1354,6 +1354,7 @@ the ten-second HTTP grace; if it expires, their contexts and connections are
 canceled, and dependency cleanup still waits for the actual handlers to return.
 Background searches stop accepting new work and are canceled/joined before the
 database closes. Listener startup failure also cancels the workers it started.
+Job workers join their lease heartbeats before queue shutdown completes.
 
 These changes do not interrupt a thread blocked in NFS writeback. Storage calls
 may still delay shutdown until the NAS responds. Event-stream support requires
