@@ -52,6 +52,7 @@ type DeliveryLifecycleReceipt struct {
 	DirectoryCleanupNextAttemptAt time.Time                    `json:"directoryCleanupNextAttemptAt,omitempty"`
 	DirectoryCleanupError         string                       `json:"directoryCleanupError,omitempty"`
 	CuratorFiles                  []sqlite.DeliveryFileOutcome `json:"curatorFiles"`
+	PendingDeleteRequests         []DeliveryDeleteRequest      `json:"pendingDeleteRequests,omitempty"`
 	AttemptHistory                []DeliveryLifecycleAttempt   `json:"attemptHistory"`
 }
 
@@ -113,8 +114,23 @@ func (s *Service) deliveryLifecycleReceipt(ctx context.Context, r sqlite.Deliver
 	for _, event := range events {
 		attempts = append(attempts, DeliveryLifecycleAttempt{ID: event.ID, Stage: event.Stage, Attempt: event.Attempt, StartedAt: event.StartedAt, FinishedAt: event.FinishedAt, Result: event.Result, Error: event.Error})
 	}
+	batches, err := s.db.ExplicitDeliveryDeleteBatchesPending(ctx, r.ID, 100)
+	if err != nil {
+		return DeliveryLifecycleReceipt{}, err
+	}
+	pending := make([]DeliveryDeleteRequest, 0, len(batches))
+	for _, b := range batches {
+		paths := []string{}
+		for _, f := range b.Files {
+			if !f.HistoryRecorded {
+				paths = append(paths, f.Path)
+			}
+		}
+		pending = append(pending, DeliveryDeleteRequest{ID: b.ID, Paths: paths, Error: b.RetryError})
+	}
 	return DeliveryLifecycleReceipt{
-		ReceiptID: r.ID, ClientID: r.ClientID, DownloadID: r.DownloadID, GenerationKey: r.GenerationKey,
+		PendingDeleteRequests: pending,
+		ReceiptID:             r.ID, ClientID: r.ClientID, DownloadID: r.DownloadID, GenerationKey: r.GenerationKey,
 		MediaItemID: r.MediaItemID, CopyID: r.CopyID, DeliveryID: r.Delivery.DeliveryID,
 		PublicationGeneration: r.Delivery.PublicationGeneration, ManifestDigest: r.Delivery.ManifestDigest,
 		RunnerInstanceID: r.Delivery.RunnerInstanceID, JobID: r.Delivery.JobID, RequestToken: r.Delivery.RequestToken,
@@ -369,4 +385,35 @@ func (s *Service) QueueDeliveryImport(ctx context.Context, receiptID int64, path
 		return fmt.Errorf("import worker is unavailable or full; retry the selected import")
 	}
 	return nil
+}
+
+// AbandonDeliveryDeleteRequest serializes with selected-file mutation and import
+// so a late worker cannot revive the cancelled selection.
+func (s *Service) AbandonDeliveryDeleteRequest(ctx context.Context, receiptID int64, batchID string) error {
+	s.completedMu.Lock()
+	defer s.completedMu.Unlock()
+	r, err := s.db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		return err
+	}
+	unlock := s.lockDownload(r.DownloadID)
+	defer unlock()
+	s.importTargetMu.Lock()
+	defer s.importTargetMu.Unlock()
+	ctx, release := s.lockStorageDecision(ctx)
+	defer release()
+	current, err := s.db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		return err
+	}
+	if current.State == "importing" || s.ImportRunning(current.DownloadID) {
+		return fmt.Errorf("delivery import is active; wait for it to finish before cancelling deletion")
+	}
+	return s.db.AbandonExplicitDeliveryDelete(ctx, receiptID, batchID)
+}
+
+type DeliveryDeleteRequest struct {
+	ID    string   `json:"id"`
+	Paths []string `json:"paths"`
+	Error string   `json:"error,omitempty"`
 }

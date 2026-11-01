@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   getDeliveryLifecycle,
+  abandonDeliveryDeleteRequest,
   retryCuratorDeliveryCleanup,
   retryDeliveryHandoff,
   retryRunnerDeliveryCleanup,
@@ -10,7 +11,7 @@ import {
 } from './api'
 import { fmtBytes, fmtRelative } from './api'
 
-const elapsed = (value?: string) => value ? fmtRelative(value) : 'not recorded'
+const elapsed = (value?: string) => value && !value.startsWith('0001') && Number.isFinite(new Date(value).getTime()) ? fmtRelative(value) : 'not recorded'
 const pending = (value?: string) => !!value && !value.startsWith('0001') && new Date(value).getTime() > Date.now()
 const runnerTime = (value: unknown) => typeof value === 'number' && value > 0 ? fmtRelative(new Date(value * 1000).toISOString()) : 'not recorded'
 const runnerMillisTime = (value: unknown) => typeof value === 'number' && value > 0 ? fmtRelative(new Date(value).toISOString()) : 'not recorded'
@@ -43,6 +44,7 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
     void qc.invalidateQueries({ queryKey: ['completed-inventory'] })
     void qc.invalidateQueries({ queryKey: ['queue'] })
   }
+  const abandon = useMutation({ mutationFn: (requestId: string) => abandonDeliveryDeleteRequest(receipt.receiptId, requestId), onSettled: invalidate })
   const handoff = useMutation({ mutationFn: () => retryDeliveryHandoff(receipt.receiptId), onSettled: invalidate })
   const runnerCleanup = useMutation({ mutationFn: () => retryRunnerDeliveryCleanup(receipt.receiptId), onSettled: invalidate })
   const curatorCleanup = useMutation({ mutationFn: () => retryCuratorDeliveryCleanup(receipt.receiptId), onSettled: invalidate })
@@ -62,7 +64,13 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
       <p><strong>Completed folder:</strong> <span className="mono">{completedPath(receipt) || 'path unknown'}</span></p>
       <p><strong>Publication:</strong> {receipt.terminalOutcome || 'outcome not reported'} · {receipt.state.replaceAll('_', ' ')} · acknowledgement: {acknowledgement} · ready {elapsed(receipt.readyAt)}</p>
       <p className="muted">Resolved library target: item {receipt.mediaItemId ?? 'unknown'} · copy {receipt.copyId ?? 0} · download {receipt.downloadId}</p>
-      <p><strong>Attempts:</strong> {receipt.attempts} · blocked {elapsed(receipt.blockedSince)}{pending(receipt.nextAttemptAt) ? ` · next handoff ${fmtRelative(receipt.nextAttemptAt!)}` : ''}</p>
+      {receipt.pendingDeleteRequests?.map((request) => <div key={request.id}>
+        <p>Pending deletion: {request.paths.join(', ')}{request.error ? ` · ${request.error}` : ''}</p>
+        <button disabled={abandon.isPending} onClick={() => abandon.mutate(request.id)}>Cancel deletion request</button>
+      </div>)}
+      {abandon.isSuccess && <p role="status">Deletion request cancelled. Review the current files before another action.</p>}
+      {abandon.isError && <p role="alert">{(abandon.error as Error).message}</p>}
+      <p><strong>Attempts:</strong> {receipt.attempts} {knownTimestamp(receipt.blockedSince) ? `· blocked ${elapsed(receipt.blockedSince)}` : ''}{pending(receipt.nextAttemptAt) ? ` · next handoff ${fmtRelative(receipt.nextAttemptAt!)}` : ''}</p>
       <details className="delivery-attempt-history"><summary>Curator attempt history ({receipt.attemptHistory?.length ?? 0})</summary>
         {receipt.attemptHistory?.length ? <ol>{receipt.attemptHistory.map((event, index) => {
           const previous = [...receipt.attemptHistory.slice(0, index)].reverse().find((item) => item.stage === event.stage && knownTimestamp(item.finishedAt))

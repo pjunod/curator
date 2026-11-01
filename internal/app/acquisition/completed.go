@@ -225,6 +225,10 @@ func (s *Service) CompletedInventory(ctx context.Context) (CompletedInventory, e
 func (s *Service) ScanCompleted(ctx context.Context) error {
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
+	return s.scanCompletedLocked(ctx)
+}
+
+func (s *Service) scanCompletedLocked(ctx context.Context) error {
 	receipts, err := s.db.CompletedReceipts(ctx)
 	if err != nil {
 		return err

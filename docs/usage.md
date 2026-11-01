@@ -1343,3 +1343,33 @@ absence evidence; its uncertainty remains reserved instead of silently retrying.
 After checking the client, explicitly acknowledge possible duplicates to release
 that reservation. The original identity remains superseded and cannot publish
 later. This action does not add a replacement; use a deliberate Search afterward.
+
+## Download lifecycle decisions and review
+
+Runner admission reads the `deliveries-v1` status capability independently of
+retained publications. Curator persists that choice before submitting a download.
+Malformed or oversized discovery entries remain at Runner and produce a
+`delivery_discovery_rejected` History event; later supported deliveries continue.
+A rejection grants no acceptance or cleanup authority.
+
+Release Search evidence expires after ten minutes. Refresh the search if Curator
+reports expired evidence. A failed manual submission retries the same request;
+a successful submission followed by another deliberate grab creates a new request.
+You can remove a pending manual request before it dispatches.
+
+A replacement owns the download admitted for its operation. While that operation
+is open, automatic acquisition excludes its original release for the selected
+item, copy and episodes. This exclusion does not globally blacklist the source.
+Download-scope review accepts files from the selected source only.
+
+The lifecycle detail shows pending file-deletion requests. **Cancel deletion
+request** stops its remaining work and preserves completed file outcomes and
+History. Review the current files before approving another selection. If a file
+is already absent on replay, History records confirmed absence; it does not claim
+that the retry deleted those bytes. A missing or superseded library placement
+protects the retained payload for review instead of retrying cleanup indefinitely.
+
+Historical acquisitions may finish importing automatically only when their
+persisted trace proves they were still grabbed or downloading before the original
+upgrade cutover. Ambiguous traces and completed or failed backlog remain held for
+explicit review. Import permission never removes the legacy cleanup fence.

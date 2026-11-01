@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 type ReplacementObservedFile struct {
@@ -148,6 +150,9 @@ func (s *Service) CreateReplacement(ctx context.Context, req ReplacementRequest)
 			(sameReplacementSource(anchorFile, f) && req.SourceGeneration != "" && f.SourceGeneration != req.SourceGeneration) ||
 			(sameReplacementSource(anchorFile, f) && req.SourceTransfer != "" && req.SourceTransfer != f.SourceTransfer) {
 			return sqlite.ReplacementOperation{}, false, ErrReplacementStale
+		}
+		if req.Scope == "download" && !sameReplacementSource(anchorFile, f) {
+			return sqlite.ReplacementOperation{}, false, replacementInvalid("observed file belongs to a different source download")
 		}
 		observed[f.ID] = true
 		rel, e := filepath.Rel(filepath.Clean(root), filepath.Clean(f.Path))
@@ -498,4 +503,60 @@ func (s *Service) trustedReplacementStorageIdentity(ctx context.Context, root st
 		return "", err
 	}
 	return identity, nil
+}
+
+// checkReplacementSourceExclusion applies at final automatic admission so RSS,
+// season planning and wanted searches obey the same request-scoped exclusion.
+func (s *Service) checkReplacementSourceExclusion(ctx context.Context, item domain.MediaItem, req GrabRequest) error {
+	operations, err := s.db.ReplacementSourceExclusions(ctx, item.ID, req.CopyID)
+	if err != nil {
+		return err
+	}
+	candidate := Candidate{Release: ports.Release{Title: req.Title, Indexer: req.Indexer, GUID: req.SourceGUID, IndexerID: req.IndexerID}}
+	parsed := parser.Parse(req.Title)
+	for _, op := range operations {
+		if !sameSourceRelease(op, candidate) {
+			continue
+		}
+		overlap := item.Kind != domain.KindSeries
+		for _, id := range op.EpisodeIDs {
+			for _, reserved := range req.ReservedEpisodeIDs {
+				if reserved == id {
+					overlap = true
+				}
+			}
+			if len(req.ReservedEpisodeIDs) > 0 {
+				continue
+			}
+			season, episode, ok := episodeNumbers(item, id)
+			if !ok || season != req.Season {
+				continue
+			}
+			if req.Episode <= 0 || episode == req.Episode {
+				overlap = true
+			}
+			// A multi-episode release reserves its whole described acquisition, even
+			// when an entry point supplied only the first episode as its target.
+			if parsed.Season == season {
+				for _, number := range parsed.Episodes {
+					if number == episode {
+						overlap = true
+					}
+				}
+			}
+		}
+		if overlap {
+			return fmt.Errorf("%w: original source is excluded for replacement %s", sqlite.ErrReplacementScopeConflict, op.ID)
+		}
+	}
+	return nil
+}
+
+func grabRequestForDownload(dl sqlite.Download) GrabRequest {
+	p := parser.Parse(dl.ReleaseTitle)
+	episode := 0
+	if len(p.Episodes) == 1 {
+		episode = p.Episodes[0]
+	}
+	return GrabRequest{MediaItemID: dl.MediaItemID, CopyID: dl.CopyID, Season: dl.Season, Episode: episode, Title: dl.ReleaseTitle, Indexer: dl.Indexer, SourceGUID: dl.SourceGUID, IndexerID: dl.SourceIndexerID, ReplacementOperationID: dl.ReplacementOperationID, ReservedEpisodeIDs: dl.ReservedEpisodes}
 }

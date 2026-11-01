@@ -56,9 +56,10 @@ type RunnerDelivery struct {
 // RunnerDeliveryPage is one bounded response from Runner's pending-delivery
 // journal. NextCursor is the sequence cursor for the next request.
 type RunnerDeliveryPage struct {
-	ProtocolVersion int              `json:"protocolVersion"`
-	Deliveries      []RunnerDelivery `json:"deliveries"`
-	NextCursor      uint64           `json:"nextCursor"`
+	ProtocolVersion int                       `json:"protocolVersion"`
+	Deliveries      []RunnerDelivery          `json:"deliveries"`
+	NextCursor      uint64                    `json:"nextCursor"`
+	Rejected        []RunnerDeliveryRejection `json:"rejected,omitempty"`
 }
 
 type RunnerDeliveryAcceptance struct {
@@ -74,6 +75,12 @@ type RunnerDeliveryAcceptance struct {
 type DeliveryProtocol interface {
 	ListDeliveries(ctx context.Context, after uint64, limit int) (RunnerDeliveryPage, error)
 	AcceptDelivery(ctx context.Context, deliveryID string, acceptance RunnerDeliveryAcceptance) error
+}
+
+// DeliveryCapabilityProtocol advertises publication support independently of
+// the delivery collection, whose retained rows may be malformed or oversized.
+type DeliveryCapabilityProtocol interface {
+	SupportsDeliveryV1(ctx context.Context) (bool, error)
 }
 
 // RequestTokenIdempotency is a separately negotiated Runner capability.
@@ -126,4 +133,12 @@ type DeliverySourceCleanupRetryProtocol interface {
 // unsupported endpoint (404) from authentication, transport, and server errors.
 type HTTPStatusCoder interface {
 	HTTPStatusCode() int
+}
+
+// RunnerDeliveryRejection records an unsupported entry without accepting custody
+// or granting mutation authority over its files.
+type RunnerDeliveryRejection struct {
+	Sequence   uint64 `json:"sequence"`
+	DeliveryID string `json:"deliveryId"`
+	Reason     string `json:"reason"`
 }

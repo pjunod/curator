@@ -980,3 +980,14 @@ Use **Request limit** beside a saved indexer to switch the limit on or off
 without re-entering credentials. Changes retain the rolling usage ledger, so
 turning a limit back on counts calls made while it was off. The dialog shows
 saving errors in place and returns focus to the initiating button.
+
+### Runner lifecycle capability and historical custody
+
+Curator negotiates Runner's `deliveries-v1` capability through status and saves
+that decision before download admission. An unavailable status endpoint reports an
+error; a Runner without the advertised capability uses the legacy import path.
+Changing retained Delivery manifests cannot change this negotiated contract.
+
+The legacy review cohort keeps its cleanup fence after upgrade. Historical trace
+evidence may permit an acquisition that was still in flight at cutover to finish
+importing, but it grants no automatic deletion authority over old payloads.

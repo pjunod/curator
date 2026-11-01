@@ -89,25 +89,11 @@ func (c *Client) ListDeliveries(ctx context.Context, after uint64, limit int) (p
 		return ports.RunnerDeliveryPage{}, fmt.Errorf("nzbd: delivery page limit must be between 1 and %d", maxDeliveryPage)
 	}
 	path := "/api/v1/deliveries?after=" + strconv.FormatUint(after, 10) + "&limit=" + strconv.Itoa(limit)
-	var wire runnerDeliveryPageWire
-	if err := c.deliveryRequest(ctx, http.MethodGet, path, nil, &wire); err != nil {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.cfg.URL, "/")+path, nil)
+	if err != nil {
 		return ports.RunnerDeliveryPage{}, err
 	}
-	if wire.ProtocolVersion != 1 {
-		return ports.RunnerDeliveryPage{}, fmt.Errorf("nzbd: unsupported delivery protocol version %d", wire.ProtocolVersion)
-	}
-	if len(wire.Deliveries) > limit {
-		return ports.RunnerDeliveryPage{}, fmt.Errorf("nzbd: delivery page returned %d rows for limit %d", len(wire.Deliveries), limit)
-	}
-	page := ports.RunnerDeliveryPage{ProtocolVersion: wire.ProtocolVersion, NextCursor: wire.NextCursor, Deliveries: make([]ports.RunnerDelivery, 0, len(wire.Deliveries))}
-	for _, d := range wire.Deliveries {
-		converted, err := convertRunnerDelivery(d)
-		if err != nil {
-			return ports.RunnerDeliveryPage{}, err
-		}
-		page.Deliveries = append(page.Deliveries, converted)
-	}
-	return page, nil
+	return c.listDeliveryPage(req, limit)
 }
 
 // GetDelivery refreshes durable mutable progress for a delivery that has

@@ -168,3 +168,16 @@ func (d *DB) ForgetCompletedScan(ctx context.Context, root string) error {
 	_, err := d.W.ExecContext(ctx, `DELETE FROM completed_scans WHERE root = ?`, root)
 	return err
 }
+
+// LegacyAutomaticImportReview preserves historical cleanup fences while
+// permitting only acquisitions proven active at the original migration cutover
+// to finish importing. It grants no deletion or acknowledgement authority.
+func (d *DB) LegacyAutomaticImportReview(ctx context.Context, generationKey, path string) (bool, error) {
+	review, err := d.LegacyCleanupReview(ctx, generationKey, path)
+	if err != nil || !review {
+		return review, err
+	}
+	var proven bool
+	err = d.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM legacy_inflight_import_evidence WHERE generation_key=?)`, generationKey).Scan(&proven)
+	return !proven, err
+}

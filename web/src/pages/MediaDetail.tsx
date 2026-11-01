@@ -863,7 +863,7 @@ function ProvenanceBadge({ f }: { f: MediaFileInfo }) {
   )
 }
 
-function FileActions({ item, file, onDone }: { item: MediaItemDetail; file: MediaFileInfo; onDone: () => void }) {
+function FileActions({ item, file, onDone, onDeleted }: { item: MediaItemDetail; file: MediaFileInfo; onDone: () => void; onDeleted: (message: string) => void }) {
   const qc = useQueryClient()
   const [dialog, setDialog] = useState<'delete' | 'report' | 'replace_bad' | 'replace_quality' | null>(null)
   const [reason, setReason] = useState('Reported by user')
@@ -911,7 +911,7 @@ function FileActions({ item, file, onDone }: { item: MediaItemDetail; file: Medi
   }, [scopeFiles, observationQueriesByFileID, item.id])
   const remove = useMutation({
     mutationFn: () => removeLibraryFile(item.id, file.id, { fromDisk: true }),
-    onSuccess: (result) => { setDialog(null); setFeedback(result.note ?? 'File removed.'); onDone() },
+    onSuccess: (result) => { setDialog(null); onDeleted(result.note ?? 'File removed.'); onDone() },
   })
   const observe = useMutation({
     mutationFn: async () => Promise.all(scopeFiles.map((candidate) => {
@@ -1084,6 +1084,8 @@ function LifecycleReviewPanel({ item }: { item: MediaItemDetail }) {
 // Keep pagination local to the item. Refreshes preserve the viewer's page;
 // shrinking the list clamps it, and switching items remounts this panel.
 function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: () => void }) {
+  const [deletedNotice, setDeletedNotice] = useState('')
+  const filesSummary = useRef<HTMLElement>(null)
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(25)
   const [navigation, setNavigation] = useState(0)
@@ -1104,9 +1106,10 @@ function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: 
 
   return (
     <section className="panel item-files">
+      {deletedNotice && <ActionDialog title="File deletion result" returnFocus={filesSummary} onClose={() => setDeletedNotice('')}><p role="status">{deletedNotice}</p></ActionDialog>}
       <LifecycleReviewPanel item={m} />
       <details>
-        <summary className="item-section-summary"><h2>Files <span className="muted">({m.files.length})</span></h2></summary>
+        <summary ref={filesSummary} className="item-section-summary"><h2>Files <span className="muted">({m.files.length})</span></h2></summary>
         {m.files.length === 0 ? (
           <p className="muted">
             No files on disk yet. Run a disk scan from the Library page once the folder has
@@ -1171,6 +1174,7 @@ function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: 
                           item={m}
                           file={f}
                           onDone={onChanged}
+                          onDeleted={setDeletedNotice}
                         />
                       </td>
                     </tr>

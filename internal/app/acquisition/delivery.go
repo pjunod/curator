@@ -63,13 +63,23 @@ func (s *Service) discoverRunnerDeliveries(ctx context.Context, cfg ports.Client
 			s.log.Warn("delivery discovery failed", "client", cfg.Name, "err", err)
 			break
 		}
-		if page.ProtocolVersion != 1 || len(page.Deliveries) > deliveryPageSize {
+		if page.ProtocolVersion != 1 || len(page.Deliveries)+len(page.Rejected) > deliveryPageSize {
 			s.log.Warn("delivery discovery returned invalid page", "client", cfg.Name)
 			break
 		}
 		s.rememberRunnerDelivery(cfg.ID)
 		if err := s.db.EnableRunnerDeliveryV1(ctx, cfg.ID); err != nil {
 			s.log.Warn("Runner delivery capability could not be persisted", "client", cfg.Name, "err", err)
+		}
+		for _, rejected := range page.Rejected {
+			if rejected.Sequence <= after || rejected.Sequence > page.NextCursor {
+				s.log.Warn("invalid rejected delivery sequence", "client", cfg.Name)
+				return
+			}
+			if err := s.db.RecordDeliveryDiscoveryRejection(ctx, cfg.ID, rejected); err != nil {
+				s.log.Warn("delivery rejection journal write failed", "client", cfg.Name, "err", err)
+				return
+			}
 		}
 		for _, delivery := range page.Deliveries {
 			mapped := ""
@@ -897,6 +907,9 @@ func (s *Service) verifyDeliveryManifest(ctx context.Context, cfg ports.ClientCo
 	}
 	if digest != v.ManifestDigest {
 		return nil, fmt.Errorf("runner manifest digest does not match its file list")
+	}
+	if err := s.db.ReconcileDeliveryPlacements(ctx, r.ID); err != nil {
+		return nil, err
 	}
 	ledgerRows, err := s.db.DeliveryFileOutcomes(ctx, r.ID)
 	if err != nil {

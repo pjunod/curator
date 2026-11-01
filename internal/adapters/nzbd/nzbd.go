@@ -504,6 +504,21 @@ type statusDto struct {
 	HealthAbort    bool     `json:"health_abort"`
 }
 
+// SupportsDeliveryV1 negotiates the explicit status capability without reading
+// any retained publication manifests.
+func (c *Client) SupportsDeliveryV1(ctx context.Context) (bool, error) {
+	st, err := c.status(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, capability := range st.Capabilities {
+		if capability == "deliveries-v1" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // SupportsRequestTokenIdempotency implements the independently negotiated
 // Runner Add replay contract advertised by /api/v1/status.
 func (c *Client) SupportsRequestTokenIdempotency(ctx context.Context) (bool, error) {

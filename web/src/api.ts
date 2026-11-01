@@ -1671,6 +1671,7 @@ export interface CuratorDeliveryFileOutcome {
   libraryPath?: string
 }
 export interface DeliveryLifecycleReceipt {
+  pendingDeleteRequests?: Array<{ id: string; paths: string[]; error?: string }>
   receiptId: number
   clientId: number
   downloadId: number
@@ -1748,3 +1749,6 @@ export interface SeasonSelection {
 }
 
 export const resolveQueueReservation = (id: number) => send<void>('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})
+
+export const abandonDeliveryDeleteRequest = (receiptId: number, requestId: string) =>
+ send('POST', `/downloads/deliveries/${receiptId}/delete-batches/${encodeURIComponent(requestId)}/abandon`)

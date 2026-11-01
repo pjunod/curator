@@ -93,6 +93,18 @@ paths:
         "202": { description: Curator cleanup retry queued. }
         "409": { description: Cleanup is not eligible to retry. }
 
+  /downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon:
+    post:
+      operationId: abandonDeliveryDeleteRequest
+      summary: Cancel remaining work in an exact reviewed deletion request
+      parameters:
+        - { name: receiptId, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: batchId, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 256 } }
+      responses:
+        "204": { description: Remaining deletion cancelled; completed outcomes and history preserved. }
+        "404": { description: Delivery receipt or deletion request not found. }
+        "409": { description: Delivery work is active or deletion identity changed. }
+
   /downloads/inventory/entry:
     delete:
       operationId: deleteCompletedEntry
@@ -1573,6 +1585,11 @@ paths:
             schema:
               $ref: "#/components/schemas/GrabRequest"
       responses:
+        "409":
+          description: Request identity conflicts, request was retained, candidate evidence expired, or blacklist confirmation is required.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "201":
           description: Queued; returns the download row id.
           content:
@@ -2445,6 +2462,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/ReplacementRequest" }
       responses:
+        "200": { description: Existing request replayed with its original identity. }
         "202":
           description: Durable replacement operation accepted.
           content:
@@ -3212,6 +3230,15 @@ components:
               sizeBytes: { type: integer, format: int64 }
               sha256: { type: string }
         sourceFileOutcomes: { type: array, items: { type: object, additionalProperties: true } }
+        pendingDeleteRequests:
+          type: array
+          items:
+            type: object
+            required: [id, paths]
+            properties:
+              id: { type: string }
+              paths: { type: array, items: { type: string } }
+              error: { type: string }
         attemptHistory:
           type: array
           items:

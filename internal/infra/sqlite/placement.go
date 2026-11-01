@@ -175,6 +175,9 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 		if currentID != fid || currentGeneration != generation {
 			return 0, ErrPlacementGenerationChanged
 		}
+		if err := recordPlacementDeliveryOutcome(ctx, tx, p); err != nil {
+			return 0, err
+		}
 		return fid, tx.Commit()
 	}
 	if p.RecoveryImport != "" {

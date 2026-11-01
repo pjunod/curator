@@ -148,6 +148,26 @@ func (s *Service) dispatchPlannedDownload(ctx context.Context, plan sqlite.Acqui
 	if currentPlan.State != "admitted" && currentPlan.State != "dispatching" && currentPlan.State != "active" {
 		return false, nil
 	}
+	s.importTargetMu.Lock()
+	decisionCtx, releaseDecision := s.lockStorageDecision(ctx)
+	item, scopeErr := s.db.GetMediaItemFull(decisionCtx, fresh.MediaItemID)
+	if scopeErr == nil {
+		scopeErr = s.checkReplacementSourceExclusion(decisionCtx, item, grabRequestForDownload(fresh))
+	}
+	if scopeErr != nil {
+		releaseDecision()
+		s.importTargetMu.Unlock()
+		_ = s.db.RejectDownloadSubmission(ctx, fresh.ID, fresh.GenerationKey, fresh.Transfer, "original source excluded by open replacement operation")
+		return false, scopeErr
+	}
+	if deliveryExpected {
+		scopeErr = s.db.EnableRunnerDeliveryV1(decisionCtx, cfg.ID)
+	}
+	releaseDecision()
+	s.importTargetMu.Unlock()
+	if scopeErr != nil {
+		return false, scopeErr
+	}
 	pinned, err := s.db.SetPlannedSubmissionCapabilities(ctx, fresh.ID, deliveryExpected, requestTokenIdempotent, exactTransferCorrelation)
 	if err != nil {
 		return false, err

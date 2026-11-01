@@ -914,6 +914,30 @@ func (s *Service) replacementEpisodeCovered(ctx context.Context, op sqlite.Repla
 }
 
 func (s *Service) searchAndAdmitReplacement(ctx context.Context, op sqlite.ReplacementOperation, item domain.MediaItem, season, episode int) error {
+	// A reservation owned by another acquisition cannot be adopted. Wait
+	// without spending indexer quota until its exact target scope is free.
+	reservations, reservationErr := s.db.ListDownloadReservations(ctx)
+	if reservationErr != nil {
+		return reservationErr
+	}
+	for _, row := range reservations {
+		if row.ReplacementOperationID == op.ID || row.MediaItemID != op.MediaItemID || row.CopyID != op.CopyID {
+			continue
+		}
+		occupied := item.Kind != domain.KindSeries
+		for _, id := range op.EpisodeIDs {
+			numberSeason, numberEpisode, ok := episodeNumbers(item, id)
+			if !ok || numberSeason != season || (episode > 0 && numberEpisode != episode) {
+				continue
+			}
+			if s.downloadReservesEpisode(ctx, row, id) {
+				occupied = true
+			}
+		}
+		if occupied {
+			return s.db.TransitionReplacementOperation(ctx, op.ID, "waiting_for_release", "waiting for another acquisition to release the selected scope")
+		}
+	}
 	candidates, status, err := s.SearchCopyDetailed(ctx, op.MediaItemID, op.CopyID, season, episode)
 	if err != nil {
 		_ = s.db.TransitionReplacementOperation(ctx, op.ID, "waiting_for_release", err.Error())
@@ -935,12 +959,21 @@ func (s *Service) searchAndAdmitReplacement(ctx context.Context, op sqlite.Repla
 				continue
 			}
 			evidence := candidate.Match
-			_, err = s.Grab(ctx, GrabRequest{MediaItemID: op.MediaItemID, CopyID: op.CopyID,
+			downloadID, grabErr := s.Grab(ctx, GrabRequest{MediaItemID: op.MediaItemID, CopyID: op.CopyID,
 				Season: season, Episode: episode, Title: candidate.Release.Title, DownloadURL: candidate.Release.DownloadURL,
 				Indexer: candidate.Release.Indexer, SourceGUID: candidate.Release.GUID, IndexerID: candidate.Release.IndexerID,
 				Protocol: candidate.Release.Protocol, Size: candidate.Release.Size, CandidateToken: candidate.Token,
 				MatchEvidence: &evidence, ReplacementOperationID: op.ID})
-			if err != nil {
+			if grabErr != nil {
+				continue
+			}
+			// Grab may return an existing reservation. Only our own persisted row
+			// establishes replacement ownership; another acquisition cannot satisfy it.
+			accepted, lookupErr := s.db.GetDownload(ctx, downloadID)
+			if lookupErr != nil {
+				return false, lookupErr
+			}
+			if accepted.ReplacementOperationID != op.ID || accepted.MediaItemID != op.MediaItemID || accepted.CopyID != op.CopyID {
 				continue
 			}
 			return true, s.db.TransitionReplacementOperation(ctx, op.ID, "replacing", "")

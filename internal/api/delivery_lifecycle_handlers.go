@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"net/http"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
@@ -39,7 +41,7 @@ func (s *Server) GetDeliveryLifecycleReceipt(w http.ResponseWriter, r *http.Requ
 	}
 	item, err := s.deps.Acquisition.DeliveryLifecycleByID(r.Context(), receiptId)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		s.deliveryLifecycleError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
@@ -51,7 +53,7 @@ func (s *Server) RetryDeliveryHandoff(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	if err := s.deps.Acquisition.RetryDeliveryHandoff(r.Context(), receiptId); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+		s.deliveryLifecycleError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -63,7 +65,7 @@ func (s *Server) RetryRunnerDeliveryCleanup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := s.deps.Acquisition.RetryRunnerSourceCleanup(r.Context(), receiptId); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+		s.deliveryLifecycleError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -75,7 +77,7 @@ func (s *Server) RetryCuratorDeliveryCleanup(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := s.deps.Acquisition.RetryCuratorDeliveryCleanup(r.Context(), receiptId); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+		s.deliveryLifecycleError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -92,8 +94,34 @@ func (s *Server) ResolveDeliveryImport(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	if err := s.deps.Acquisition.QueueDeliveryImport(r.Context(), receiptId, body.Paths); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+		s.deliveryLifecycleError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *Server) AbandonDeliveryDeleteRequest(w http.ResponseWriter, r *http.Request, receiptId int64, batchId string) {
+	if s.deps.Acquisition == nil {
+		writeError(w, http.StatusServiceUnavailable, "download lifecycle is unavailable")
+		return
+	}
+	if err := s.deps.Acquisition.AbandonDeliveryDeleteRequest(r.Context(), receiptId, batchId); err != nil {
+		s.deliveryLifecycleError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deliveryLifecycleError(w http.ResponseWriter, err error) {
+	if errors.Is(err, sqlite.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "delivery receipt or deletion request not found")
+		return
+	}
+	var databaseError interface{ Code() int }
+	if errors.As(err, &databaseError) {
+		s.deps.Log.Error("delivery lifecycle database error", "err", err)
+		writeError(w, http.StatusInternalServerError, "download lifecycle operation could not be saved")
+		return
+	}
+	writeError(w, http.StatusConflict, err.Error())
 }

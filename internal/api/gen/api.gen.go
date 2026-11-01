@@ -1716,9 +1716,14 @@ type DeliveryLifecycleReceipt struct {
 		Sha256    string `json:"sha256"`
 		SizeBytes int64  `json:"sizeBytes"`
 	} `json:"manifestFiles"`
-	MappedPath                 *string                   `json:"mappedPath,omitempty"`
-	MediaItemId                *int64                    `json:"mediaItemId,omitempty"`
-	NextAttemptAt              *time.Time                `json:"nextAttemptAt,omitempty"`
+	MappedPath            *string    `json:"mappedPath,omitempty"`
+	MediaItemId           *int64     `json:"mediaItemId,omitempty"`
+	NextAttemptAt         *time.Time `json:"nextAttemptAt,omitempty"`
+	PendingDeleteRequests *[]struct {
+		Error *string  `json:"error,omitempty"`
+		Id    string   `json:"id"`
+		Paths []string `json:"paths"`
+	} `json:"pendingDeleteRequests,omitempty"`
 	PublicationGeneration      string                    `json:"publicationGeneration"`
 	PublicationPath            *string                   `json:"publicationPath,omitempty"`
 	ReadyAt                    *time.Time                `json:"readyAt,omitempty"`
@@ -3744,6 +3749,9 @@ type ServerInterface interface {
 	// GetDeliveryLifecycleReceipt Read one durable Runner handoff and cleanup receipt
 	// (GET /downloads/deliveries/{receiptId})
 	GetDeliveryLifecycleReceipt(w http.ResponseWriter, r *http.Request, receiptId int64)
+	// AbandonDeliveryDeleteRequest Cancel remaining work in an exact reviewed deletion request
+	// (POST /downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon)
+	AbandonDeliveryDeleteRequest(w http.ResponseWriter, r *http.Request, receiptId int64, batchId string)
 	// ResolveDeliveryImport Import an explicitly selected subset of an accepted Runner manifest
 	// (POST /downloads/deliveries/{receiptId}/import)
 	ResolveDeliveryImport(w http.ResponseWriter, r *http.Request, receiptId int64)
@@ -4542,6 +4550,41 @@ func (siw *ServerInterfaceWrapper) GetDeliveryLifecycleReceipt(w http.ResponseWr
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetDeliveryLifecycleReceipt(w, r, receiptId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AbandonDeliveryDeleteRequest operation middleware
+func (siw *ServerInterfaceWrapper) AbandonDeliveryDeleteRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "receiptId" -------------
+	var receiptId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "receiptId", r.PathValue("receiptId"), &receiptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "receiptId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "batchId" -------------
+	var batchId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "batchId", r.PathValue("batchId"), &batchId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "batchId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AbandonDeliveryDeleteRequest(w, r, receiptId, batchId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7608,6 +7651,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-handoff", wrapper.RetryDeliveryHandoff)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-runner-cleanup", wrapper.RetryRunnerDeliveryCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-curator-cleanup", wrapper.RetryCuratorDeliveryCleanup)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon", wrapper.AbandonDeliveryDeleteRequest)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloads/inventory/entry", wrapper.DeleteCompletedEntry)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloads/inventory", wrapper.GetCompletedInventory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/status", wrapper.GetSystemStatus)
