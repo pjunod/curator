@@ -1410,6 +1410,12 @@ completed steps count once within their recorded timing reference. Processing
 details expand major steps and do not add their duration a second time. Missing,
 running and interrupted durations stay explicitly unknown.
 
+The lifecycle API projects each Curator file ledger with the same camel-case
+fields the UI reads (`path`, `disposition`, `cleanupState`, `cleanupError` and
+retry timing). A placement may be complete while its exact publication file
+still reports a cleanup permission error; the error stays visible until the
+separate cleanup obligation completes.
+
 Clustered publications show each processing-source copy's node, cleanup status,
 retry attempts and reason. Retry controls show their pending state and visible
 result. Background status refresh preserves focus and scroll position. Reporting

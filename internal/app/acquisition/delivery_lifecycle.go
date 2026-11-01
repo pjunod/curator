@@ -54,9 +54,29 @@ type DeliveryLifecycleReceipt struct {
 	DirectoryCleanupBlockedSince  time.Time                    `json:"directoryCleanupBlockedSince,omitempty"`
 	DirectoryCleanupNextAttemptAt time.Time                    `json:"directoryCleanupNextAttemptAt,omitempty"`
 	DirectoryCleanupError         string                       `json:"directoryCleanupError,omitempty"`
-	CuratorFiles                  []sqlite.DeliveryFileOutcome `json:"curatorFiles"`
+	CuratorFiles                  []DeliveryLifecycleFile      `json:"curatorFiles"`
 	PendingDeleteRequests         []DeliveryDeleteRequest      `json:"pendingDeleteRequests,omitempty"`
 	AttemptHistory                []DeliveryLifecycleAttempt   `json:"attemptHistory"`
+}
+
+// DeliveryLifecycleFile is the public projection of the persisted file ledger.
+// Keep API casing explicit rather than exposing database struct field names.
+type DeliveryLifecycleFile struct {
+	ReceiptID            int64     `json:"receiptId"`
+	Path                 string    `json:"path"`
+	SizeBytes            int64     `json:"sizeBytes"`
+	SHA256               string    `json:"sha256"`
+	FileGeneration       string    `json:"fileGeneration"`
+	Disposition          string    `json:"disposition"`
+	CleanupState         string    `json:"cleanupState"`
+	Reason               string    `json:"reason"`
+	LibraryPath          string    `json:"libraryPath"`
+	ManualAdditional     bool      `json:"manualAdditional"`
+	CleanupError         string    `json:"cleanupError"`
+	CleanupAttempts      int       `json:"cleanupAttempts"`
+	CleanupBlockedSince  time.Time `json:"cleanupBlockedSince"`
+	CleanupNextAttemptAt time.Time `json:"cleanupNextAttemptAt"`
+	UpdatedAt            time.Time `json:"updatedAt"`
 }
 
 type DeliveryLifecycleAttempt struct {
@@ -147,7 +167,7 @@ func (s *Service) deliveryLifecycleReceipt(ctx context.Context, r sqlite.Deliver
 		SourceCleanupNextAttemptAt: details.SourceNext, SourceCleanupError: details.SourceError,
 		DirectoryCleanupState: details.DirectoryState, DirectoryCleanupAttempts: details.DirectoryAttempts,
 		DirectoryCleanupBlockedSince: details.DirectoryBlockedSince, DirectoryCleanupNextAttemptAt: details.DirectoryNext,
-		DirectoryCleanupError: details.DirectoryError, CuratorFiles: files, AttemptHistory: attempts,
+		DirectoryCleanupError: details.DirectoryError, CuratorFiles: lifecycleFileProjection(files), AttemptHistory: attempts,
 	}, nil
 }
 
@@ -419,4 +439,12 @@ type DeliveryDeleteRequest struct {
 	ID    string   `json:"id"`
 	Paths []string `json:"paths"`
 	Error string   `json:"error,omitempty"`
+}
+
+func lifecycleFileProjection(files []sqlite.DeliveryFileOutcome) []DeliveryLifecycleFile {
+	out := make([]DeliveryLifecycleFile, 0, len(files))
+	for _, file := range files {
+		out = append(out, DeliveryLifecycleFile(file))
+	}
+	return out
 }
