@@ -28,8 +28,8 @@ test, a per-candidate scan) fixed in the second commit.
 **Validation:** `make lint` 0 issues; `make test` green (one test,
 `TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired`, depends on
 `chmod 0500` and fails only when run as root — rerun alone as a non-root user:
-pass); `make test-web` green; `make test-e2e` rerun in progress after installing
-the pinned Playwright browser (the first run never launched a browser).
+pass); `make test-web` green; `make test-e2e` 192/192 after installing the pinned
+Playwright browser (the first run never launched a browser).
 **Decision for later review:** the block is keyed by release title, not by
 item copy; a file name with episodes but no season is not completed from the
 release. Both conservative.
