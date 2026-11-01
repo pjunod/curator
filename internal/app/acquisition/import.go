@@ -477,6 +477,17 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	if audioPlan != nil {
 		scope.PublishedDigests = map[string]string{}
 	}
+	// The borrow below asks how many media files the whole payload holds,
+	// not how many were selected: choosing one of two anonymous files in a
+	// manual import says nothing about which episode it is.
+	payloadMedia := len(videos)
+	if item.Kind == domain.KindSeries && selected != nil {
+		payloadMedia = 0
+		if all, err := collectFiles(savePath, isMedia); err == nil {
+			payloadMedia = len(all)
+		}
+	}
+	grabbedSeason, grabbedEpisodes := grabbedEpisodeTargets(dl.WantableIDs, item.ID)
 	result := ImportResult{Files: make([]FileOutcome, 0, len(videos))}
 	for fileIndex, src := range videos {
 		p := parser.Parse(filepath.Base(src))
@@ -487,11 +498,13 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			}
 		}
 		if item.Kind == domain.KindSeries {
-			if fromRelease, ok := releaseEpisodeIdentity(p, src, dl.ReleaseTitle, len(videos)); ok {
+			if fromRelease, ok := releaseEpisodeIdentity(p, src, dl.ReleaseTitle, payloadMedia, grabbedSeason, grabbedEpisodes); ok {
 				p = fromRelease
 				s.log.Info("import: file name carries no episode; using the grabbed release",
 					"release", dl.ReleaseTitle, "file", filepath.Base(src),
 					"season", p.Season, "episodes", p.Episodes)
+				_ = s.db.AddHistory(ctx, HistoryEpisodeFromRelease, item.ID, dl.ReleaseTitle,
+					map[string]any{"file": filepath.Base(src), "season": p.Season, "episodes": p.Episodes})
 			}
 		}
 		q := p.Quality
@@ -730,6 +743,10 @@ func (s *Service) checkDelivered(ctx context.Context, dl sqlite.Download, itemID
 	})
 }
 
+// HistoryEpisodeFromRelease records a payload file whose episode came from the
+// grabbed release title because its own name carried none.
+const HistoryEpisodeFromRelease = "episode_from_release"
+
 // releaseEpisodeIdentity lends a payload file the episode identity of the
 // release monarr grabbed, when the file's own name carries none.
 //
@@ -742,29 +759,55 @@ func (s *Service) checkDelivered(ctx context.Context, dl sqlite.Download, itemID
 // until the indexer's daily quota ran out.
 //
 // The grabbed release title is not a guess: it is what was matched against
-// this wantable when the grab was decided. It is borrowed only when that
-// cannot misplace anything: the file's own name yields no episodes, the
-// payload holds exactly one media file, and the release names specific
-// episodes rather than a season. A season pack of obfuscated files, or a
-// payload with several anonymous files, still fails visibly — there is no
-// evidence for which file is which episode.
-func releaseEpisodeIdentity(p parser.Parsed, src, releaseTitle string, mediaFiles int) (parser.Parsed, bool) {
+// the download's wantable when the grab was decided. It is borrowed only when
+// that cannot misplace anything: the file's own name yields no episodes, the
+// whole payload holds exactly one media file, the release names specific
+// episodes rather than a season, and those episodes cover every episode the
+// download was grabbed for. A season pack of obfuscated files, a payload with
+// several anonymous files, or a download with no recorded episode target
+// still fails visibly — there is no evidence for which file is which.
+func releaseEpisodeIdentity(p parser.Parsed, src, releaseTitle string, payloadMedia, grabbedSeason int, grabbedEpisodes []int) (parser.Parsed, bool) {
 	if len(p.Episodes) > 0 {
 		return p, false
 	}
 	if fx, ok := filename.Extract(filepath.Base(src)); ok && len(fx.Episodes) > 0 {
 		return p, false
 	}
-	if mediaFiles != 1 || strings.TrimSpace(releaseTitle) == "" {
+	if payloadMedia != 1 || strings.TrimSpace(releaseTitle) == "" || len(grabbedEpisodes) == 0 {
 		return p, false
 	}
 	release := parser.Parse(releaseTitle)
-	if release.SeasonPack || release.Season < 0 || len(release.Episodes) == 0 {
+	if release.SeasonPack || release.Season < 0 || len(release.Episodes) == 0 || release.Season != grabbedSeason {
 		return p, false
+	}
+	for _, want := range grabbedEpisodes {
+		if !slices.Contains(release.Episodes, want) {
+			return p, false
+		}
 	}
 	p.Season = release.Season
 	p.Episodes = append([]int(nil), release.Episodes...)
 	return p, true
+}
+
+// grabbedEpisodeTargets returns the season and episodes a download was
+// grabbed for, from its episode wantables for this item. A download aimed at
+// a season, at several seasons, or at nothing recorded returns no episodes.
+func grabbedEpisodeTargets(wantables []string, itemID int64) (int, []int) {
+	season := -1
+	var episodes []int
+	for _, id := range wantables {
+		var item, s, e, copyID int64
+		if !parseEpisodeWantable(id, &item, &s, &e, &copyID) || item != itemID {
+			continue
+		}
+		if season >= 0 && int(s) != season {
+			return -1, nil
+		}
+		season = int(s)
+		episodes = append(episodes, int(e))
+	}
+	return season, episodes
 }
 
 func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) {

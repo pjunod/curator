@@ -147,6 +147,11 @@ const minJudgeableDurationMS = 60_000
 // bitrate to test, a file under a minute has no meaningful one, and a file
 // whose resolution tier is unrecognized has no floor to compare against; all
 // of them get the benefit of the doubt.
+// TruncatedReasonPrefix begins every cut-short verdict, so a stored failure
+// reason can be recognised as a transfer that stopped rather than a verdict
+// on the release.
+const TruncatedReasonPrefix = "the file is cut short"
+
 func Implausible(i Info) (Implausibility, bool) {
 	if !i.Measured() {
 		return Implausibility{}, false
@@ -169,7 +174,7 @@ func Implausible(i Info) (Implausibility, bool) {
 	// Blocklist the first. Go look at the download client for the second.
 	if i.Truncated() {
 		return because(CodeTruncated,
-			"the file is cut short: the container says %s, only %s is here, %s never arrived",
+			TruncatedReasonPrefix+": the container says %s, only %s is here, %s never arrived",
 			humanSize(i.DeclaredBytes), humanSize(i.SizeBytes), humanSize(i.MissingBytes())), true
 	}
 	if i.BitrateKbps <= 0 || i.DurationMS < minJudgeableDurationMS {

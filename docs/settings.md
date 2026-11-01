@@ -388,7 +388,9 @@ Event types: `grabbed`, `failed`, `imported`, `import_failed`,
 `short_delivery`, `payload_removed`, `quality_mismatch`,
 `implausible_file`, `language_mismatch` (a placed file measured to carry
 none of the profile's required audio languages; the release is
-blocklisted), `file_removed`.
+blocklisted), `file_removed`, `episode_from_release` (an obfuscated file
+whose name carried no episode was placed under the episodes of the release
+monarr grabbed).
 
 ## Quality profiles
 

@@ -239,8 +239,14 @@ ORDER BY id;
 -- name: ListFailedDownloadsSince :many
 SELECT * FROM downloads WHERE state='failed' AND superseded=0 AND added_at>=? ORDER BY id;
 
--- name: ListRetainedFailedDownloads :many
-SELECT * FROM downloads WHERE state='failed' AND superseded=0 AND payload_removed=0 ORDER BY id;
+-- name: ListRetainedFailedDownloadsForRelease :many
+-- The title is compared folded the way normalizeRelease folds it (separators
+-- to spaces, lower case). Parked and dismissed rows are excluded: removing a
+-- download from Activity is how an operator lets its release be grabbed again.
+SELECT * FROM downloads WHERE state='failed' AND superseded=0 AND payload_removed=0
+AND parked_at=0 AND activity_dismissed=0
+AND trim(lower(replace(replace(replace(release_title,'.',' '),'_',' '),'-',' '))) = sqlc.arg(normalized_title)
+ORDER BY id;
 
 -- name: DeleteDismissedImportedDownload :execrows
 DELETE FROM downloads WHERE downloads.id = ? AND activity_dismissed = 1 AND state = 'imported' AND payload_removed = 1 AND submission_phase NOT IN ('pending','submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM runner_delivery_receipts r WHERE r.download_id=downloads.id AND (r.state!='imported' OR r.ack_state!='accepted')) AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title)));

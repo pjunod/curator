@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
@@ -101,21 +103,26 @@ func TestReleaseEpisodeIdentityOnlyFillsAnAnonymousSoleFile(t *testing.T) {
 	cases := []struct {
 		name, file, release string
 		files               int
+		grabbedSeason       int
+		grabbed             []int
 		want                bool
 		season              int
 		episodes            []int
 	}{
-		{"sole anonymous file, episode release", anon, obfuscatedRelease, 1, true, 1, []int{1}},
-		{"multi-episode release", anon, "Test.Show.S01E01E02.1080p.WEB-DL-GRP", 1, true, 1, []int{1, 2}},
-		{"season pack release", anon, "Test.Show.S01.1080p.WEB-DL-GRP", 1, false, 0, nil},
-		{"several media files", anon, obfuscatedRelease, 2, false, 0, nil},
-		{"file names its own episode", "Test.Show.S01E02.mkv", obfuscatedRelease, 1, false, 0, nil},
-		{"no release title", anon, "", 1, false, 0, nil},
+		{"sole anonymous file, episode release", anon, obfuscatedRelease, 1, 1, []int{1}, true, 1, []int{1}},
+		{"multi-episode release covering the grab", anon, "Test.Show.S01E01E02.1080p.WEB-DL-GRP", 1, 1, []int{1}, true, 1, []int{1, 2}},
+		{"season pack release", anon, "Test.Show.S01.1080p.WEB-DL-GRP", 1, 1, []int{1}, false, 0, nil},
+		{"several media files in the payload", anon, obfuscatedRelease, 2, 1, []int{1}, false, 0, nil},
+		{"file names its own episode", "Test.Show.S01E02.mkv", obfuscatedRelease, 1, 1, []int{1}, false, 0, nil},
+		{"no release title", anon, "", 1, 1, []int{1}, false, 0, nil},
+		{"no recorded episode target", anon, obfuscatedRelease, 1, -1, nil, false, 0, nil},
+		{"release disagrees with the grabbed episode", anon, obfuscatedRelease, 1, 1, []int{2}, false, 0, nil},
+		{"release disagrees with the grabbed season", anon, obfuscatedRelease, 1, 2, []int{1}, false, 0, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := parser.Parse(tc.file)
-			got, ok := releaseEpisodeIdentity(p, "/payload/"+tc.file, tc.release, tc.files)
+			got, ok := releaseEpisodeIdentity(p, "/payload/"+tc.file, tc.release, tc.files, tc.grabbedSeason, tc.grabbed)
 			if ok != tc.want {
 				t.Fatalf("borrowed = %v, want %v", ok, tc.want)
 			}
@@ -134,6 +141,91 @@ func TestReleaseEpisodeIdentityOnlyFillsAnAnonymousSoleFile(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGrabbedEpisodeTargets(t *testing.T) {
+	season, eps := grabbedEpisodeTargets([]string{"episode:7:1:3:c2", "episode:7:1:4", "episode:8:1:9", "season:7:1"}, 7)
+	if season != 1 || len(eps) != 2 || eps[0] != 3 || eps[1] != 4 {
+		t.Fatalf("got S%d %v", season, eps)
+	}
+	if season, eps := grabbedEpisodeTargets([]string{"episode:7:1:3", "episode:7:2:1"}, 7); season != -1 || eps != nil {
+		t.Fatalf("a grab spanning seasons must yield no target, got S%d %v", season, eps)
+	}
+	if season, eps := grabbedEpisodeTargets([]string{"season:7:1"}, 7); season != -1 || eps != nil {
+		t.Fatalf("a season grab must yield no episode target, got S%d %v", season, eps)
+	}
+}
+
+// Choosing one of two anonymous files says nothing about which episode it
+// is: a manual import of a subset must not borrow the release's episodes.
+func TestManualImportOfOneAnonymousFileAmongSeveralIsNotGuessed(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setup(t, nil, client)
+	ctx := context.Background()
+
+	id := grabAndComplete(t, svc, client, itemID, obfuscatedRelease,
+		"321d9664e6a50c195e7e830b3f78b487.mkv", "15713ef716b33f8a63def50814ec76d0.mkv")
+	dl, err := db.GetDownload(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.ManualImport(ctx, ManualImportRequest{
+		Path: dl.ImportPath, Paths: []string{filepath.Join(dl.ImportPath, "321d9664e6a50c195e7e830b3f78b487.mkv")},
+		MediaItemID: itemID, DownloadID: id,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot determine episodes") {
+		t.Fatalf("manual import of one of two anonymous files: err = %v, want a visible identity failure", err)
+	}
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(item.Files) != 0 {
+		t.Fatalf("a guessed placement landed: %+v", item.Files)
+	}
+}
+
+// The field path: a Runner delivery whose only media file is a hash.
+func TestRunnerDeliveryOfAnObfuscatedEpisodeImports(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, "321d9664e6a50c195e7e830b3f78b487.mkv", []byte("video"), nil)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptIDFor(t, db, dl.ID)); err != nil {
+		t.Fatalf("obfuscated Runner delivery: %v", err)
+	}
+	files, err := db.ListFilesForItem(ctx, dl.MediaItemID)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("placed files = %+v err=%v", files, err)
+	}
+	if !strings.Contains(files[0].Path, "S01E01") {
+		t.Errorf("placed at %q, want the S01E01 slot", files[0].Path)
+	}
+}
+
+// The loop on the field path: two anonymous files cannot be assigned, the
+// import fails, the delivery retries in place — and automation must pass the
+// release over while that payload is here.
+func TestRunnerDeliveryAwaitingImportIsPassedOver(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	svc, db, dl, cfg, publication := deliveryImportFixtureNamed(t, protocol, "321d9664e6a50c195e7e830b3f78b487.mkv", []byte("video"),
+		map[string][]byte{"15713ef716b33f8a63def50814ec76d0.mkv": []byte("other")})
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptIDFor(t, db, dl.ID)); err == nil {
+		t.Fatal("two anonymous files must not import")
+	}
+	row, err := db.GetDownload(ctx, dl.ID)
+	if err != nil || row.State != "failed" {
+		t.Fatalf("row = %+v err=%v, want failed", row, err)
+	}
+	if !svc.skipCandidate(ctx, epRelease, "idx") {
+		t.Fatal("a release whose Runner payload is awaiting import is still offered to automation")
+	}
+	if err := os.RemoveAll(publication); err != nil {
+		t.Fatal(err)
+	}
+	if svc.skipCandidate(ctx, epRelease, "idx") {
+		t.Error("a release whose payload is gone must be eligible again")
 	}
 }
 
@@ -179,20 +271,22 @@ func TestAReleaseAwaitingImportIsNotGrabbedAgain(t *testing.T) {
 		t.Fatalf("a different release must still be grabbable: %v", err)
 	}
 
-	// Once the retained payload is gone, the original release is a
-	// candidate again: there is nothing here to retry.
-	if err := db.MarkPayloadRemoved(ctx, id); err != nil {
-		t.Fatal(err)
+	// Removing the download from Activity parks it: an operator's decision
+	// to let the release be grabbed again.
+	if err := svc.RemoveDownload(ctx, id, false); err != nil {
+		t.Fatalf("remove from Activity: %v", err)
 	}
 	if svc.skipCandidate(ctx, obfuscatedRelease, "idx") {
-		t.Error("a release whose payload was removed must be eligible again")
+		row, _ := db.GetDownload(ctx, id)
+		t.Errorf("a release removed from Activity must be eligible again (row state=%s parked=%v)", row.State, row.ParkedAt)
 	}
 }
 
 // A download that failed in the client never reached import: its release
 // is not "already here".
 func TestAClientFailureIsNotTreatedAsAwaitingImport(t *testing.T) {
-	dl := sqlite.Download{State: "failed", Handoff: []sqlite.HandoffEntry{{Step: stepGrabbed}, {Step: stepFailed}}}
+	payload := t.TempDir()
+	dl := sqlite.Download{State: "failed", ImportPath: payload, Handoff: []sqlite.HandoffEntry{{Step: stepGrabbed}, {Step: stepFailed}}}
 	if importFailedOnRetainedPayload(dl) {
 		t.Error("a client-side failure was read as a retained import failure")
 	}
@@ -200,9 +294,25 @@ func TestAClientFailureIsNotTreatedAsAwaitingImport(t *testing.T) {
 	if !importFailedOnRetainedPayload(dl) {
 		t.Error("an import failure with its payload retained was not recognised")
 	}
-	dl.PayloadRemoved = true
-	if importFailedOnRetainedPayload(dl) {
+	short := dl
+	short.Error = "no files imported from x — ep.mkv: " + mediainfo.TruncatedReasonPrefix + ": the container says 4 GiB"
+	if importFailedOnRetainedPayload(short) {
+		t.Error("a cut-short payload blocks its release; a fresh grab could complete it")
+	}
+	gone := dl
+	gone.ImportPath = filepath.Join(payload, "absent")
+	if importFailedOnRetainedPayload(gone) {
+		t.Error("a payload no longer on disk was treated as retained")
+	}
+	removed := dl
+	removed.PayloadRemoved = true
+	if importFailedOnRetainedPayload(removed) {
 		t.Error("a removed payload was treated as retained")
+	}
+	parked := dl
+	parked.ParkedAt = time.Now()
+	if importFailedOnRetainedPayload(parked) {
+		t.Error("a row parked by the operator was treated as retained")
 	}
 }
 

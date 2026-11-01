@@ -144,10 +144,11 @@ func (d *DB) ListDownloadReservations(ctx context.Context) ([]Download, error) {
 	return out, nil
 }
 
-// RetainedFailedDownloads lists failed downloads whose payload has not been
-// removed — the rows whose bytes may still be on disk awaiting a retry.
-func (d *DB) RetainedFailedDownloads(ctx context.Context) ([]Download, error) {
-	rows, err := d.Read.ListRetainedFailedDownloads(ctx)
+// RetainedFailedDownloadsForRelease lists failed, unparked, undismissed
+// downloads of one release (title already folded by the caller) whose payload
+// has not been removed — the rows whose bytes may still be on disk.
+func (d *DB) RetainedFailedDownloadsForRelease(ctx context.Context, normalizedTitle string) ([]Download, error) {
+	rows, err := d.Read.ListRetainedFailedDownloadsForRelease(ctx, normalizedTitle)
 	if err != nil {
 		return nil, err
 	}

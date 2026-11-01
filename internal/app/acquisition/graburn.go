@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
@@ -76,19 +79,32 @@ func (s *Service) alreadyInFlight(ctx context.Context, req GrabRequest) int64 {
 var ErrReleaseAwaitingImport = errors.New("release already delivered and awaiting import")
 
 // importFailedOnRetainedPayload reports whether a download's bytes arrived,
-// monarr attempted to import them, the import failed, and the payload has not
-// been removed. Only such a row proves that grabbing the same release again
-// would fetch bytes that are already here.
+// monarr attempted to import them, the import failed for a reason fetching
+// the same bytes again cannot change, and those bytes are still on disk.
+//
+// Excluded, because a fresh grab of the same release could help: a payload
+// that was cut short (a transfer that stopped — deliberately not a verdict on
+// the release, see truncatedPayload), and a payload that is no longer there.
+// Excluded because an operator decided: a row parked or dismissed from
+// Activity.
 func importFailedOnRetainedPayload(dl sqlite.Download) bool {
-	if dl.State != "failed" || dl.PayloadRemoved || dl.Superseded {
+	if dl.State != "failed" || dl.PayloadRemoved || dl.Superseded || dl.ParkedAt.UnixMilli() > 0 {
 		return false
 	}
+	if strings.Contains(dl.Error, mediainfo.TruncatedReasonPrefix) {
+		return false
+	}
+	attempted := false
 	for _, event := range dl.Handoff {
 		if event.Step == stepImporting {
-			return true
+			attempted = true
 		}
 	}
-	return false
+	if !attempted || !filepath.IsAbs(dl.ImportPath) {
+		return false
+	}
+	_, err := os.Stat(dl.ImportPath)
+	return err == nil
 }
 
 // deliveredAwaitingImport reports the id of a download for the same release
@@ -98,7 +114,7 @@ func (s *Service) deliveredAwaitingImport(ctx context.Context, title string) int
 	if want == "" {
 		return 0
 	}
-	rows, err := s.db.RetainedFailedDownloads(ctx)
+	rows, err := s.db.RetainedFailedDownloadsForRelease(ctx, want)
 	if err != nil {
 		return 0
 	}
@@ -115,7 +131,15 @@ func (s *Service) deliveredAwaitingImport(ctx context.Context, title string) int
 // (rather than refusing at Grab) lets the selection fall through to a
 // different release, which is the one that can actually help.
 func (s *Service) skipCandidate(ctx context.Context, title, indexer string) bool {
-	return s.isBlocklisted(ctx, title, indexer) || s.deliveredAwaitingImport(ctx, title) != 0
+	if s.isBlocklisted(ctx, title, indexer) {
+		return true
+	}
+	if id := s.deliveredAwaitingImport(ctx, title); id != 0 {
+		s.log.Info("passing over a release already delivered and awaiting import",
+			"release", title, "download", id)
+		return true
+	}
+	return false
 }
 
 // normalizeRelease folds the separators indexers disagree about, so
