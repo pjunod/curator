@@ -660,21 +660,27 @@ func (s *Service) deliverySidecarLibraryProof(ctx context.Context, r sqlite.Deli
 	return "", "", false
 }
 
-// Redundancy is proven from the exact associated copy, current bytes and
-// episode coverage. Importer skip reasons and matching titles are not proof.
-// deliveryManifestMediaCount counts the video files a delivery published,
-// skipping samples the way collectFiles does, so redundancy and import agree
-// on whether a payload holds exactly one media file.
-func deliveryManifestMediaCount(r sqlite.DeliveryReceipt) int {
-	n := 0
+// deliveryPayloadMediaCount is the number of media files a delivery holds, for
+// the sole-file condition on borrowing a release's episodes. The importer
+// counts what is on disk under the publication (collectFiles); the manifest
+// is what Runner published. A payload counts as a sole file only when both
+// say exactly one, so the proof can never borrow where the importer refused.
+func deliveryPayloadMediaCount(r sqlite.DeliveryReceipt) int {
+	manifest := 0
 	for _, file := range r.Delivery.Files {
 		if filename.IsVideo(file.Path) && !strings.Contains(strings.ToLower(filepath.Base(file.Path)), "sample") {
-			n++
+			manifest++
 		}
 	}
-	return n
+	onDisk, err := collectFiles(r.MappedPath, filename.IsVideo)
+	if err != nil {
+		return 0
+	}
+	return max(manifest, len(onDisk))
 }
 
+// Redundancy is proven from the exact associated copy, current bytes and
+// episode coverage. Importer skip reasons and matching titles are not proof.
 func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.DeliveryReceipt, f verifiedDeliveryFile, requiredPath string) (string, string, bool) {
 	// Manual additional copies are independently requested media and must not
 	// be disposed as redundant, even if their bytes match a primary copy.
@@ -702,9 +708,9 @@ func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.De
 	if !quality.IsBookFormat(candidate.Source) {
 		candidate = parser.Parse(filepath.Base(f.relative)).Quality
 	}
+	download, downloadErr := s.db.GetDownload(ctx, r.DownloadID)
 	if candidate.Source == quality.SourceUnknown || (candidate.Resolution == 0 && !quality.IsBookFormat(candidate.Source)) {
-		download, err := s.db.GetDownload(ctx, r.DownloadID)
-		if err == nil && download.Quality.Source != quality.SourceUnknown {
+		if downloadErr == nil && download.Quality.Source != quality.SourceUnknown {
 			candidate = download.Quality
 		}
 	}
@@ -716,16 +722,21 @@ func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.De
 		return "", "", false
 	}
 	expectedEpisodes := []int64(nil)
+	// identityBorrowed limits the proof to exact bytes: a borrowed episode is
+	// the indexer's word, and only identical bytes to a verified library file
+	// make that word irrelevant. A different file judged "no better" on a
+	// borrowed episode could be a different episode, and cleanup deletes it.
+	identityBorrowed := false
 	if item.Kind == domain.KindSeries {
 		parsed := parser.Parse(filepath.Base(f.relative))
 		// An obfuscated duplicate ("321d96….mkv") names no episode; borrow the
 		// grabbed release's, under the same conditions the importer uses, or a
 		// byte-identical copy of an imported episode can never be proven
 		// redundant and is retried and retained forever.
-		if download, err := s.db.GetDownload(ctx, r.DownloadID); err == nil {
+		if downloadErr == nil {
 			season, episodes := grabbedEpisodeTargets(download.WantableIDs, item.ID)
-			if borrowed, ok := releaseEpisodeIdentity(parsed, f.relative, download.ReleaseTitle, deliveryManifestMediaCount(r), season, episodes); ok {
-				parsed = borrowed
+			if borrowed, ok := releaseEpisodeIdentity(parsed, f.relative, download.ReleaseTitle, deliveryPayloadMediaCount(r), season, episodes); ok {
+				parsed, identityBorrowed = borrowed, true
 			}
 		}
 		if parsed.Season < 0 || len(parsed.Episodes) == 0 {
@@ -804,6 +815,9 @@ func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.De
 		}
 		if exactBytes && profile.Acceptable(existing.Quality) {
 			return existing.Path, deliveryFileGeneration(afterDigest), true
+		}
+		if identityBorrowed {
+			continue
 		}
 		if filename.IsVideo(existing.Path) {
 			candidateQuality, candidateAudio, sourceGeneration, ok := freshDeliveryVideoQuality(f.absolute, candidate, item.Runtime)

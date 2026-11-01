@@ -2,7 +2,11 @@
 
 ## Obfuscated duplicates are redundant — 2026-11-01 · v0.38.4
 
-**Status:** in review on `codex/obfuscated-duplicate-redundancy`.
+**Status:** [PR #75](https://github.com/pjunod/curator/pull/75) — adversarial
+review addressed (one blocker: a borrowed episode reached the different-bytes
+branch, which could mark a different file redundant and delete it — the borrow
+now accepts exact bytes only; the sole-file count now requires both manifest
+and disk to agree, as the importer counts disk); full gate and CI pending.
 
 After v0.38.3 reached nuc3 both stuck episodes imported within minutes
 (`episode_from_release`), but the other twelve byte-identical copies of each
