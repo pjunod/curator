@@ -1,5 +1,35 @@
 # Monarr — Project Status
 
+## Imports no longer wait behind cleanup — 2026-11-01 · v0.38.5
+
+**Status:** [PR #76](https://github.com/pjunod/curator/pull/76) — two reviews
+addressed (memo rejected; comment and cleanup worker count fixed). Full gate
+once: lint 0 · go test green (the chmod-based
+`TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired` fails only
+as root; rerun alone as non-root on the final commit: pass) · web 124 ·
+e2e 192. CI and merge pending.
+
+Paul asked why importing is slow and whether it must be serial. Measured on
+nuc3 after v0.38.4: a real 2.5 GB import took 31 s; proving a 2.9 GB
+duplicate took 250–280 s; and attempts ran strictly one after another.
+
+- **Serial:** imports have two workers by design, but payload cleanup shared
+  them. A 31 GB cleanup re-reading both copies held one worker for 20+ min,
+  leaving one for every import. Cleanup now has its own two workers.
+  Placement itself stays serialized by `importTargetMu`, one process-wide
+  destination lock that recovery, replacement, deletion and season cleanup
+  also take; narrowing it per item is a separate decision for Paul (large
+  crash-safety surface, limited gain while copies share one mount).
+- **Re-reads:** a retry of an accepted delivery re-read its payload twice
+  (verify, then a recheck moments later with nothing in between). The recheck
+  now runs only when an acknowledgement round trip separates it from the
+  verification.
+- **Rejected after review:** remembering digests by file generation (inode,
+  size, mtime, ctime). mmap writes change bytes without changing mtime/ctime
+  (reproduced on ext4), and the racy-margin rule mixed the file server's
+  clock with Curator's. A wrong digest feeds a cleanup that deletes, so every
+  proof that can lead to deletion keeps reading the bytes.
+
 ## Obfuscated duplicates are redundant — 2026-11-01 · v0.38.4
 
 **Status:** [PR #75](https://github.com/pjunod/curator/pull/75) — adversarial

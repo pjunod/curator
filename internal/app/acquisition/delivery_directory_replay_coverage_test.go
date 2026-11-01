@@ -59,13 +59,13 @@ func TestDeliveryDirectoryRemovalStampFailureIsScheduledAfterRestart(t *testing.
 		t.Fatal(err)
 	}
 	restarted := New(reopened, bus.New(nil), nil, func(ports.IndexerConfig) ports.Indexer { return fakeIndexer{} }, func(ports.ClientConfig) ports.DownloadClient { return &deliveryImportClient{} })
-	restarted.importCh = make(chan importJob, 1)
+	restarted.cleanupCh = make(chan importJob, 1)
 	restarted.importCtx = ctx
 	restarted.importJobs = make(map[int64]*importTicket)
 	restarted.deliveryCleanupJobs = make(map[int64]bool)
 	restarted.scheduleDeliveryFileCleanup(ctx, cfg)
 	select {
-	case job := <-restarted.importCh:
+	case job := <-restarted.cleanupCh:
 		if !job.deliveryCleanupOnly || job.deliveryReceiptID != receiptID {
 			t.Fatalf("scheduler queued the wrong durable cleanup obligation: %+v", job)
 		}
@@ -126,13 +126,13 @@ func TestDeliveryDirectoryRemovalEventFailureKeepsPrewrittenRetryAfterRestart(t 
 		t.Fatal(err)
 	}
 	restarted := New(reopened, bus.New(nil), nil, func(ports.IndexerConfig) ports.Indexer { return fakeIndexer{} }, func(ports.ClientConfig) ports.DownloadClient { return &deliveryImportClient{} })
-	restarted.importCh = make(chan importJob, 1)
+	restarted.cleanupCh = make(chan importJob, 1)
 	restarted.importCtx = ctx
 	restarted.importJobs = make(map[int64]*importTicket)
 	restarted.deliveryCleanupJobs = make(map[int64]bool)
 	restarted.scheduleDeliveryFileCleanup(ctx, cfg)
 	select {
-	case job := <-restarted.importCh:
+	case job := <-restarted.cleanupCh:
 		restarted.runImportTracked(job.ctx, job)
 	default:
 		t.Fatal("scheduler did not find the prewritten directory retry after reopening SQLite")
@@ -261,13 +261,13 @@ func TestDeliveryFileCleanupKeepsMovedPublicationPendingForReview(t *testing.T) 
 		t.Fatalf("moved publication did not retain a durable reviewable file obligation: row=%+v", row)
 	}
 	restarted := New(reopened, bus.New(nil), nil, func(ports.IndexerConfig) ports.Indexer { return fakeIndexer{} }, func(ports.ClientConfig) ports.DownloadClient { return &deliveryImportClient{} })
-	restarted.importCh = make(chan importJob, 1)
+	restarted.cleanupCh = make(chan importJob, 1)
 	restarted.importCtx = ctx
 	restarted.importJobs = make(map[int64]*importTicket)
 	restarted.deliveryCleanupJobs = make(map[int64]bool)
 	restarted.scheduleDeliveryFileCleanup(ctx, cfg)
 	select {
-	case job := <-restarted.importCh:
+	case job := <-restarted.cleanupCh:
 		if !job.deliveryCleanupOnly || job.deliveryReceiptID != receiptID {
 			t.Fatalf("moved publication retry scheduled wrong work: %+v", job)
 		}
@@ -296,13 +296,13 @@ func TestDismissedImportedActivityStillSchedulesReceiptOwnedCleanup(t *testing.T
 	if queryErr := db.R.QueryRowContext(ctx, `SELECT activity_dismissed FROM downloads WHERE id=?`, dl.ID).Scan(&dismissed); err != nil || queryErr != nil || dismissed != 1 {
 		t.Fatalf("pending receipt custody was not retained behind dismissed Activity: download=%+v dismissed=%d getErr=%v queryErr=%v", retained, dismissed, err, queryErr)
 	}
-	svc.importCh = make(chan importJob, 1)
+	svc.cleanupCh = make(chan importJob, 1)
 	svc.importCtx = ctx
 	svc.importJobs = make(map[int64]*importTicket)
 	svc.deliveryCleanupJobs = make(map[int64]bool)
 	svc.scheduleDeliveryFileCleanup(ctx, cfg)
 	select {
-	case job := <-svc.importCh:
+	case job := <-svc.cleanupCh:
 		if !job.deliveryCleanupOnly || job.deliveryReceiptID != receiptID {
 			t.Fatalf("dismissed receipt scheduled wrong work: %+v", job)
 		}
