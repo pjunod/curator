@@ -1456,7 +1456,7 @@ func (d *DB) RecordDeliveryDiscoveryRejection(ctx context.Context, clientID int6
 		return err
 	}
 	if count > 0 {
-		raw, err := json.Marshal(map[string]any{"clientId": clientID, "sequence": rejected.Sequence, "deliveryId": rejected.DeliveryID, "reason": rejected.Reason, "sourceRetained": true})
+		raw, err := json.Marshal(map[string]any{"clientId": clientID, "sequence": rejected.Sequence, "deliveryId": rejected.DeliveryID, "reason": rejected.Reason, "publicationNotAccepted": true})
 		if err != nil {
 			return err
 		}

@@ -65,7 +65,7 @@ func TestAbandonDeleteRequestRetainsCompletedHistoryAndCannotRevive(t *testing.T
 	if err := db.CompleteExplicitDeliveryFileDelete(ctx, batch.ID, r.ID, "movie.mkv", "delivery_file_deleted", r.MediaItemID, "movie", nil); err == nil {
 		t.Fatal("late worker fabricated cancellation deletion")
 	}
-	if err := goose.DownContext(ctx, db.W, "migrations"); err == nil {
+	if err := goose.DownToContext(ctx, db.W, "migrations", 64); err == nil {
 		t.Fatal("downgrade erased cancelled deletion authority")
 	}
 	cancelled, err := db.ExplicitDeliveryDeleteBatch(ctx, batch.ID)

@@ -1379,3 +1379,24 @@ without request-token idempotency, Activity and History request operator review.
 Curator preserves the reservation and does not replay an Add that could duplicate
 an already accepted download. Ordinary manual import also respects historical
 review fences when you select a parent or child of the recorded payload folder.
+
+### Review intentional replacement of download storage
+
+Activity → Download storage shows the expected and observed mount when storage
+changes. Returning the expected mount recovers automatically. For an intentional
+replacement, open **Review changed storage…** to compare both identities and the
+counts of existing payloads and pre-change requests, including work still in
+flight. Refresh the review if custody changes before acceptance.
+
+**Accept replacement storage** verifies future work in that root. Existing
+payload paths and acquisition generations stay fenced for fresh review in that
+root; unrelated roots keep their own custody rules. Acceptance grants no cleanup
+permission over old bytes. Active imports must finish or be cancelled first.
+A mount change or interrupted inventory scan continues to block operations until
+the configured storage is verified again.
+
+Linux uses a filesystem UUID from `/dev/disk/by-uuid` when available. An existing
+raw device observation strengthens automatically only when the current raw mount
+still exactly matches it. A missing or changed raw source needs review. When no
+stable UUID is available, the comparison explicitly labels the device-path
+fallback; network storage keeps its server/export identity.

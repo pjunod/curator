@@ -204,7 +204,7 @@ func readDeliveryFields(r *bufio.Reader) (map[string]json.RawMessage, string, er
 		budget := remaining
 		identity := name == "sequence" || name == "deliveryId" || name == "discoveryError"
 		if count > 32 {
-			invalid = "delivery entry exceeds 32 fields; source retained for review"
+			invalid = "delivery entry exceeds 32 fields; publication retained for review"
 			budget = 0
 		}
 		if identity {
@@ -218,7 +218,7 @@ func readDeliveryFields(r *bufio.Reader) (map[string]json.RawMessage, string, er
 			invalid = "duplicate delivery field"
 		}
 		if over {
-			invalid = "delivery entry exceeds 8 MiB; source retained for review"
+			invalid = "delivery entry exceeds 8 MiB; publication retained for review"
 			value = json.RawMessage("null")
 		}
 		if !json.Valid(value) {
@@ -230,7 +230,7 @@ func readDeliveryFields(r *bufio.Reader) (map[string]json.RawMessage, string, er
 			remaining -= len(key) + len(value)
 			if remaining < 0 {
 				remaining = 0
-				invalid = "delivery entry exceeds 8 MiB; source retained for review"
+				invalid = "delivery entry exceeds 8 MiB; publication retained for review"
 			}
 		}
 		allowEnd = true

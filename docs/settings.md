@@ -991,3 +991,9 @@ Changing retained Delivery manifests cannot change this negotiated contract.
 The legacy review cohort keeps its cleanup fence after upgrade. Historical trace
 evidence may permit an acquisition that was still in flight at cutover to finish
 importing, but it grants no automatic deletion authority over old payloads.
+
+Intentional download-storage replacement is reviewed from Activity → Download
+storage. The action compares the exact expected and observed identities and
+previews affected custody. It applies only to the selected root and cannot grant
+old acquisitions cleanup authority on the replacement volume. Ordinary return of
+the expected storage still recovers automatically without changing settings.

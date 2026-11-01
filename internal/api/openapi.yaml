@@ -105,6 +105,35 @@ paths:
         "404": { description: Delivery receipt or deletion request not found. }
         "409": { description: Delivery work is active or deletion identity changed. }
 
+  /downloads/inventory/storage-change/preview:
+    post:
+      operationId: previewCompletedStorageChange
+      summary: Review expected and observed storage and the exact affected custody
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StorageChangeRequest' }
+      responses:
+        "200":
+          description: Exact root comparison and affected historical custody counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageChangeReview' }
+        "409": { description: Storage comparison is stale or unavailable. }
+  /downloads/inventory/storage-change/accept:
+    post:
+      operationId: acceptCompletedStorageChange
+      summary: Accept intentionally changed storage while fencing existing custody for review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StorageChangeRequest' }
+      responses:
+        "204": { description: New storage accepted and old custody fenced atomically; inventory scan requested. }
+        "409": { description: Review or observed storage changed, or imports are active. }
+
   /downloads/inventory/entry:
     delete:
       operationId: deleteCompletedEntry
@@ -5581,6 +5610,26 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CompletedRoot'
+    StorageChangeRequest:
+      type: object
+      required: [root, expectedIdentity, observedIdentity]
+      properties:
+        root: { type: string }
+        expectedIdentity: { type: string }
+        observedIdentity: { type: string }
+        reviewToken: { type: string }
+    StorageChangeReview:
+      allOf:
+        - { $ref: '#/components/schemas/StorageChangeRequest' }
+        - type: object
+          required: [expectedDescription, observedDescription, existingPayloads, existingRequests, inFlightRequests, activeImports]
+          properties:
+            expectedDescription: { type: string }
+            observedDescription: { type: string }
+            existingPayloads: { type: integer }
+            existingRequests: { type: integer }
+            inFlightRequests: { type: integer }
+            activeImports: { type: integer }
     CompletedRoot:
       type: object
       required: [path, rootIdentity, checkedAt, lastCompleteAt, error, entries, bytes]
@@ -5591,6 +5640,8 @@ components:
         lastCompleteAt: { type: string, format: date-time }
         error: { type: string }
         bytes: { type: integer, format: int64 }
+        storageIdentity: { type: string }
+        observedStorageIdentity: { type: string }
         entries:
           type: array
           items:

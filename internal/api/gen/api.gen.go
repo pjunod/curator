@@ -1568,13 +1568,15 @@ type CompletedReviewFile struct {
 
 // CompletedRoot defines model for CompletedRoot.
 type CompletedRoot struct {
-	Bytes          int64            `json:"bytes"`
-	CheckedAt      time.Time        `json:"checkedAt"`
-	Entries        []CompletedEntry `json:"entries"`
-	Error          string           `json:"error"`
-	LastCompleteAt time.Time        `json:"lastCompleteAt"`
-	Path           string           `json:"path"`
-	RootIdentity   string           `json:"rootIdentity"`
+	Bytes                   int64            `json:"bytes"`
+	CheckedAt               time.Time        `json:"checkedAt"`
+	Entries                 []CompletedEntry `json:"entries"`
+	Error                   string           `json:"error"`
+	LastCompleteAt          time.Time        `json:"lastCompleteAt"`
+	ObservedStorageIdentity *string          `json:"observedStorageIdentity,omitempty"`
+	Path                    string           `json:"path"`
+	RootIdentity            string           `json:"rootIdentity"`
+	StorageIdentity         *string          `json:"storageIdentity,omitempty"`
 }
 
 // Connection defines model for Connection.
@@ -3094,6 +3096,28 @@ type SettingsUpdate struct {
 	TraktClientId *string `json:"traktClientId,omitempty"`
 }
 
+// StorageChangeRequest defines model for StorageChangeRequest.
+type StorageChangeRequest struct {
+	ExpectedIdentity string  `json:"expectedIdentity"`
+	ObservedIdentity string  `json:"observedIdentity"`
+	ReviewToken      *string `json:"reviewToken,omitempty"`
+	Root             string  `json:"root"`
+}
+
+// StorageChangeReview defines model for StorageChangeReview.
+type StorageChangeReview struct {
+	ActiveImports       int     `json:"activeImports"`
+	ExistingPayloads    int     `json:"existingPayloads"`
+	ExistingRequests    int     `json:"existingRequests"`
+	ExpectedDescription string  `json:"expectedDescription"`
+	ExpectedIdentity    string  `json:"expectedIdentity"`
+	InFlightRequests    int     `json:"inFlightRequests"`
+	ObservedDescription string  `json:"observedDescription"`
+	ObservedIdentity    string  `json:"observedIdentity"`
+	ReviewToken         *string `json:"reviewToken,omitempty"`
+	Root                string  `json:"root"`
+}
+
 // SystemStatus defines model for SystemStatus.
 type SystemStatus struct {
 	// AppName Example: Monarr
@@ -3576,6 +3600,12 @@ type ResolveDeliveryImportJSONRequestBody = ResolveDeliveryImportRequest
 // DeleteCompletedEntryJSONRequestBody defines body for DeleteCompletedEntry for application/json ContentType.
 type DeleteCompletedEntryJSONRequestBody DeleteCompletedEntryJSONBody
 
+// AcceptCompletedStorageChangeJSONRequestBody defines body for AcceptCompletedStorageChange for application/json ContentType.
+type AcceptCompletedStorageChangeJSONRequestBody = StorageChangeRequest
+
+// PreviewCompletedStorageChangeJSONRequestBody defines body for PreviewCompletedStorageChange for application/json ContentType.
+type PreviewCompletedStorageChangeJSONRequestBody = StorageChangeRequest
+
 // GrabReleaseJSONRequestBody defines body for GrabRelease for application/json ContentType.
 type GrabReleaseJSONRequestBody = GrabRequest
 
@@ -3770,6 +3800,12 @@ type ServerInterface interface {
 	// DeleteCompletedEntry Explicitly delete an unchanged entry from Curator-owned download storage
 	// (DELETE /downloads/inventory/entry)
 	DeleteCompletedEntry(w http.ResponseWriter, r *http.Request)
+	// AcceptCompletedStorageChange Accept intentionally changed storage while fencing existing custody for review
+	// (POST /downloads/inventory/storage-change/accept)
+	AcceptCompletedStorageChange(w http.ResponseWriter, r *http.Request)
+	// PreviewCompletedStorageChange Review expected and observed storage and the exact affected custody
+	// (POST /downloads/inventory/storage-change/preview)
+	PreviewCompletedStorageChange(w http.ResponseWriter, r *http.Request)
 	// StreamEvents Server-sent events
 	// (GET /events)
 	StreamEvents(w http.ResponseWriter, r *http.Request)
@@ -4717,6 +4753,34 @@ func (siw *ServerInterfaceWrapper) DeleteCompletedEntry(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteCompletedEntry(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptCompletedStorageChange operation middleware
+func (siw *ServerInterfaceWrapper) AcceptCompletedStorageChange(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptCompletedStorageChange(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewCompletedStorageChange operation middleware
+func (siw *ServerInterfaceWrapper) PreviewCompletedStorageChange(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewCompletedStorageChange(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7652,6 +7716,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-runner-cleanup", wrapper.RetryRunnerDeliveryCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-curator-cleanup", wrapper.RetryCuratorDeliveryCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon", wrapper.AbandonDeliveryDeleteRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/preview", wrapper.PreviewCompletedStorageChange)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/accept", wrapper.AcceptCompletedStorageChange)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloads/inventory/entry", wrapper.DeleteCompletedEntry)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloads/inventory", wrapper.GetCompletedInventory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/status", wrapper.GetSystemStatus)

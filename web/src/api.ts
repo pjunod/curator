@@ -1616,6 +1616,8 @@ export interface CompletedReviewFile {
   snapshotIdentity: string
 }
 export interface CompletedRoot {
+  storageIdentity?: string
+  observedStorageIdentity?: string
   path: string
   checkedAt: string
   lastCompleteAt: string
@@ -1752,3 +1754,8 @@ export const resolveQueueReservation = (id: number) => send<void>('POST', `/queu
 
 export const abandonDeliveryDeleteRequest = (receiptId: number, requestId: string) =>
  send('POST', `/downloads/deliveries/${receiptId}/delete-batches/${encodeURIComponent(requestId)}/abandon`)
+
+export interface StorageChangeRequest { root: string; expectedIdentity: string; observedIdentity: string; reviewToken?: string }
+export interface StorageChangeReview extends StorageChangeRequest { expectedDescription: string; observedDescription: string; existingPayloads: number; existingRequests: number; inFlightRequests: number; activeImports: number }
+export const previewCompletedStorageChange = (request: StorageChangeRequest) => send<StorageChangeReview>('POST', '/downloads/inventory/storage-change/preview', request)
+export const acceptCompletedStorageChange = (request: StorageChangeRequest) => send('POST', '/downloads/inventory/storage-change/accept', request)
