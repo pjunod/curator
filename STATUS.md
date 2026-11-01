@@ -6,7 +6,11 @@
 review addressed (one blocker: a borrowed episode reached the different-bytes
 branch, which could mark a different file redundant and delete it — the borrow
 now accepts exact bytes only; the sole-file count now requires both manifest
-and disk to agree, as the importer counts disk); full gate and CI pending.
+and disk to agree, as the importer counts disk). Full gate once on the final
+tree: lint 0 · go test green (the chmod-based
+`TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired` fails only
+as root; rerun alone as non-root: pass) · web 124 · e2e 192. CI and merge
+pending.
 
 After v0.38.3 reached nuc3 both stuck episodes imported within minutes
 (`episode_from_release`), but the other twelve byte-identical copies of each
