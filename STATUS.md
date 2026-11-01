@@ -35,13 +35,18 @@ forever, re-reading the whole payload and writing an `import_failed` history
 row and a notification each time — 742 rows in 11 hours for these two shows.
 That turned all three of today's defects into 1,000-attempt loops.
 
-- A settled failure (`ErrNoFilesImported` without `ErrImportBlocked`: the
-  importer's verdict on the payload) now backs off past 5 minutes, doubling to
-  a 6-hour ceiling. Environmental failures keep the 5-minute ceiling.
-- A retry that ends in exactly the failure already on record returns the
-  download to failed without a new history row or notification.
-- Process start brings every backed-off receipt forward once, so a deploy that
-  fixes the cause clears it in minutes. **Retry** still forces one at once.
+- A settled failure (the importer's verdict: `ErrNoFilesImported`, with no
+  storage block, ledger or proof error joined in) now waits about as long as
+  the delivery has been blocked, from 5 minutes up to 1 hour. Elapsed time,
+  not the attempt count, sets the pace (acknowledgement retries also count
+  attempts). Environmental failures keep 5 minutes, and so does any receipt
+  whose Runner acknowledgement is still pending.
+- An automatic retry that ends in exactly the failure last recorded in the
+  download's trace returns it to failed without a new history row or
+  notification.
+- **Retry** and Resolve re-imports reset the attempt count and blocked time.
+- Lease writes touch only the next-attempt time (they used to write back the
+  scheduler's possibly stale error, attempts and blocked-since).
 
 **Review** (adversarial agent): no deletion-safety findings. Addressed: the
 zero-media guard created its own forever loop and skipped the ledger (now it
@@ -49,6 +54,16 @@ falls through the shared failure path, and the loop is fixed generally, above);
 comments and docs claimed it withheld Runner's acknowledgement (corrected;
 tests assert the ack); Resolve select-all with the sample failed; stale sample
 rows were not reclassified; `Sample/` folders were missed.
+**Second review** (Sonnet, on the retry change): no blockers. Addressed: the
+repeat check used the receipt's error, which acknowledgement and verification
+failures overwrite (duplicates returned during a Runner outage; now it reads
+the download's trace); ack failures doubled the backoff (now elapsed-time
+based); joined ledger/proof errors counted as settled; a pending ack waited on
+the import's backoff; attempts never reset on Retry or re-import; the lease
+write's stale snapshot. The 6-hour ceiling and the restart-time reset were
+dropped for a 1-hour ceiling: "settled" includes verdicts that clear on their
+own (an episode not yet in metadata), and an hour bounds that without a reset
+that re-hashes every stuck payload on each restart.
 **Decision for Paul:** the name test stays a substring match, so a real episode
 whose title contains "sample" is skipped. Narrowing it to a delimited token
 risks placing an undelimited sample clip as the episode, which would then

@@ -1649,20 +1649,22 @@ func TestReleaseSampleRecognition(t *testing.T) {
 }
 
 // Environmental failures keep retrying every five minutes. A settled verdict
-// on the payload backs off to the ceiling instead of re-reading the payload
-// and notifying 288 times a day.
+// on the payload waits about as long as it has been blocked, up to an hour,
+// instead of re-reading the payload 288 times a day.
 func TestDeliveryRetryDelayBacksOffOnlySettledFailures(t *testing.T) {
 	for _, c := range []struct {
 		attempts int
 		settled  bool
+		blocked  time.Duration
 		want     time.Duration
 	}{
-		{1, true, 30 * time.Second}, {4, true, 5 * time.Minute}, {5, true, 10 * time.Minute},
-		{8, true, 80 * time.Minute}, {12, true, deliveryRetryCeiling}, {1206, true, deliveryRetryCeiling},
-		{5, false, 5 * time.Minute}, {1206, false, 5 * time.Minute},
+		{0, true, 0, 30 * time.Second}, {1, true, time.Hour, 30 * time.Second}, {4, true, time.Hour, 5 * time.Minute},
+		{5, true, 2 * time.Minute, 5 * time.Minute}, {5, true, 20 * time.Minute, 20 * time.Minute},
+		{1206, true, 120 * time.Hour, deliveryRetryCeiling},
+		{5, false, 20 * time.Minute, 5 * time.Minute}, {1206, false, 120 * time.Hour, 5 * time.Minute},
 	} {
-		if got := deliveryRetryDelay(c.attempts, c.settled); got != c.want {
-			t.Errorf("deliveryRetryDelay(%d, %v) = %v, want %v", c.attempts, c.settled, got, c.want)
+		if got := deliveryRetryDelay(c.attempts, c.settled, c.blocked); got != c.want {
+			t.Errorf("deliveryRetryDelay(%d, %v, %v) = %v, want %v", c.attempts, c.settled, c.blocked, got, c.want)
 		}
 	}
 	if !settledDeliveryFailure(fmt.Errorf("x: %w", ErrNoFilesImported)) {
@@ -1673,27 +1675,61 @@ func TestDeliveryRetryDelayBacksOffOnlySettledFailures(t *testing.T) {
 	}
 }
 
-// Process start brings backed-off receipts forward once, so a deploy that
-// fixes a settled failure is picked up promptly.
-func TestStartImportersBringsBackedOffDeliveriesForward(t *testing.T) {
+// While Runner's acknowledgement keeps failing, every attempt rewrites the
+// receipt's error and counts an attempt. Neither may re-announce the same
+// import failure, and the shared schedule must stay at the environmental pace
+// so the acknowledgement (and Runner's source cleanup) is not held for an hour.
+func TestSettledFailureDuringAckOutageNotifiesOnceAndKeepsAckPace(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{failCount: 100}
+	svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, "sample-"+epRelease+".mkv", []byte("sample clip"), nil)
+	receiptID := receiptIDFor(t, db, dl.ID)
+	for i := 0; i < 6; i++ {
+		fresh, err := db.GetDownload(ctx, dl.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = svc.runDeliveryImport(ctx, fresh, cfg, receiptID)
+		// Between import attempts an acknowledgement or verification failure
+		// rewrites the receipt's error. Age the block too, so a settled
+		// backoff would be visible.
+		if _, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET error='Runner acceptance is pending: connection refused',blocked_since=? WHERE id=?`, time.Now().Add(-3*time.Hour).UnixMilli(), receiptID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := importFailedRows(t, db); got != 1 {
+		t.Fatalf("import_failed rows across an acknowledgement outage = %d, want 1", got)
+	}
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil || r.AckState != "pending" {
+		t.Fatalf("receipt = %+v err=%v, want ack still pending", r, err)
+	}
+	if wait := time.Until(r.NextAttemptAt); wait > 5*time.Minute+time.Second {
+		t.Fatalf("next attempt in %v with the acknowledgement pending, want at most 5m", wait)
+	}
+}
+
+// A person's Retry starts the ladder over; it must not inherit an hour's wait
+// from failures before it.
+func TestOperatorRetryResetsTheBackoff(t *testing.T) {
 	ctx := context.Background()
 	protocol := &deliveryImportClient{}
-	svc, db, dl, _, _ := deliveryImportFixture(t, protocol)
+	_, db, dl, _, _ := deliveryImportFixture(t, protocol)
 	receiptID := receiptIDFor(t, db, dl.ID)
 	r, err := db.DeliveryReceiptByID(ctx, receiptID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.State, r.Attempts, r.NextAttemptAt = "ready", 9, time.Now().Add(3*time.Hour)
+	r.Attempts, r.BlockedSince, r.NextAttemptAt = 40, time.Now().Add(-10*time.Hour), time.Now().Add(time.Hour)
 	if err := db.SetDeliveryRetry(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	workerCtx, cancel := context.WithCancel(ctx)
-	svc.StartImporters(workerCtx)
-	defer func() { cancel(); svc.WaitImporters() }()
+	if err := db.ForceDeliveryRetryNow(ctx, receiptID); err != nil {
+		t.Fatal(err)
+	}
 	after, err := db.DeliveryReceiptByID(ctx, receiptID)
-	if err != nil || after.NextAttemptAt.After(time.Now().Add(time.Minute)) {
-		t.Fatalf("next attempt = %v err=%v, want brought forward to now", after.NextAttemptAt, err)
+	if err != nil || after.Attempts != 0 || !after.BlockedSince.IsZero() && after.BlockedSince.UnixMilli() != 0 || after.NextAttemptAt.After(time.Now()) {
+		t.Fatalf("after Retry: attempts=%d blocked=%v next=%v err=%v, want a fresh ladder due now", after.Attempts, after.BlockedSince, after.NextAttemptAt, err)
 	}
 }
 

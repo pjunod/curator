@@ -338,11 +338,12 @@ stopped. Common cases:
 Native Runner deliveries have their own durable import, acknowledgement, and
 cleanup retries. Temporary storage and I/O errors keep the affected obligation
 pending and retry every 5 minutes. When the importer itself declined the
-payload (nothing importable, every file declined by policy), the retry backs
-off — 10, 20, 40 minutes and so on, up to every 6 hours — and a repeat of the
-same failure adds no new history entry or notification. Every restart retries
-those once straight away, so an upgrade that fixes the cause is picked up in
-minutes; **Retry** in Activity or Resolve retries one immediately. The
+payload (nothing importable, every file declined by policy), the retry waits
+about as long as the delivery has already been blocked — up to once an hour —
+and a repeat of the same failure adds no new history entry or notification.
+While Runner's acknowledgement is still pending the 5-minute pace holds.
+**Retry** in Activity or Resolve retries one immediately and starts the wait
+over. The
 lifecycle trace shows the cause and next attempt; a rejected or conflicting
 manifest requires review. A missing path in a legacy client row
 still uses the explicit Retry action described above.

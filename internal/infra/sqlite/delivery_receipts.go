@@ -749,20 +749,16 @@ func (d *DB) SetDeliveryRetry(ctx context.Context, r DeliveryReceipt, providerDe
 	return requireDeliveryTransition(res, err)
 }
 
-// ResetDeliveryRetryBackoff brings every import retry that is backed off
-// beyond horizon forward to now (or to a provider's Retry-After, whichever is
-// later). Called once at process start: a settled failure waits hours between
-// attempts, and a new process may carry the code that resolves it. Returns the
-// number of receipts brought forward.
-func (d *DB) ResetDeliveryRetryBackoff(ctx context.Context, horizon time.Duration) (int64, error) {
-	now := time.Now()
-	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET next_attempt_at=MAX(?,provider_retry_after),updated_at=?
-		WHERE state IN ('unresolved','ready') AND attempts>0 AND next_attempt_at>?`,
-		now.UnixMilli(), now.UnixMilli(), now.Add(horizon).UnixMilli())
-	if err != nil {
-		return 0, err
+// SetDeliveryLease moves only a receipt's next attempt. The scheduler holds
+// a snapshot of the receipt; writing its error, attempts or blocked-since
+// back would overwrite what a still-running attempt recorded.
+func (d *DB) SetDeliveryLease(ctx context.Context, receiptID int64, next time.Time) error {
+	at := int64(0)
+	if !next.IsZero() {
+		at = next.UnixMilli()
 	}
-	return res.RowsAffected()
+	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET next_attempt_at=?,updated_at=? WHERE id=? AND state!='conflict'`, at, time.Now().UnixMilli(), receiptID)
+	return requireDeliveryTransition(res, err)
 }
 
 func (d *DB) DeliveryAcknowledgementRetryDue(ctx context.Context, receiptID int64, now time.Time) (bool, error) {
@@ -821,7 +817,7 @@ func (d *DB) QueueDeliveryReimport(ctx context.Context, expected DeliveryReceipt
 	if err := requireDeliveryTransition(res, err); err != nil {
 		return err
 	}
-	res, err = tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET state='ready',error='',next_attempt_at=0,updated_at=? WHERE id=? AND download_id=? AND state='imported' AND (ack_state='accepted' OR (ack_state='pending' AND consumer_receipt_id!='')) AND generation_key=? AND client_id=? AND download_handle=? AND request_token=? AND publication_generation=? AND manifest_digest=? AND mapped_path=?`,
+	res, err = tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET state='ready',error='',next_attempt_at=0,attempts=0,blocked_since=0,updated_at=? WHERE id=? AND download_id=? AND state='imported' AND (ack_state='accepted' OR (ack_state='pending' AND consumer_receipt_id!='')) AND generation_key=? AND client_id=? AND download_handle=? AND request_token=? AND publication_generation=? AND manifest_digest=? AND mapped_path=?`,
 		now, expected.ID, dl.ID, dl.GenerationKey, expected.ClientID, expected.DownloadHandle, expected.Delivery.RequestToken, expected.Delivery.PublicationGeneration, expected.Delivery.ManifestDigest, expected.MappedPath)
 	if err := requireDeliveryTransition(res, err); err != nil {
 		return err
@@ -956,7 +952,7 @@ func (d *DB) DeliveryRetryDetails(ctx context.Context, receiptID int64) (Deliver
 
 func (d *DB) ForceDeliveryRetryNow(ctx context.Context, receiptID int64) error {
 	now := time.Now().UnixMilli()
-	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET next_attempt_at=CASE WHEN provider_retry_after>? THEN provider_retry_after ELSE 0 END,updated_at=? WHERE id=? AND state!='conflict'`, now, now, receiptID)
+	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET next_attempt_at=CASE WHEN provider_retry_after>? THEN provider_retry_after ELSE 0 END,attempts=0,blocked_since=0,updated_at=? WHERE id=? AND state!='conflict'`, now, now, receiptID)
 	return requireDeliveryTransition(res, err)
 }
 

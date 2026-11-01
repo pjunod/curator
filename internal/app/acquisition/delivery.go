@@ -385,23 +385,23 @@ func hasQueuedDeliverySelection(dl sqlite.Download) bool {
 }
 
 func (s *Service) queueDeliveryImport(ctx context.Context, cfg ports.ClientConfig, dl sqlite.Download, r sqlite.DeliveryReceipt) {
+	// Lease writes touch only the next-attempt time: the scheduler's snapshot
+	// of error, attempts and blocked-since may already be older than what a
+	// still-running attempt has written.
 	if s.ImportRunning(dl.ID) {
-		r.NextAttemptAt = time.Now().Add(5 * time.Minute)
-		if err := s.db.SetDeliveryRetry(ctx, r); err != nil {
+		if err := s.db.SetDeliveryLease(ctx, r.ID, time.Now().Add(5*time.Minute)); err != nil {
 			s.log.Warn("delivery worker lease write failed", "delivery", r.Delivery.DeliveryID, "err", err)
 		}
 		return
 	}
 	// Persist a short lease before enqueue so repeated polls cannot keep the
 	// same oldest rows at the front of the bounded journal query.
-	r.NextAttemptAt = time.Now().Add(5 * time.Minute)
-	if err := s.db.SetDeliveryRetry(ctx, r); err != nil {
+	if err := s.db.SetDeliveryLease(ctx, r.ID, time.Now().Add(5*time.Minute)); err != nil {
 		s.log.Warn("delivery worker lease write failed", "delivery", r.Delivery.DeliveryID, "err", err)
 		return
 	}
 	if !s.enqueueDeliveryImport(ctx, dl, cfg, r.ID) {
-		r.NextAttemptAt = time.Time{}
-		if err := s.db.SetDeliveryRetry(ctx, r); err != nil {
+		if err := s.db.SetDeliveryLease(ctx, r.ID, time.Time{}); err != nil {
 			s.log.Warn("delivery queue retry write failed", "delivery", r.Delivery.DeliveryID, "err", err)
 		}
 		s.log.Warn("delivery import queue full; will retry", "client", cfg.Name, "delivery", r.Delivery.DeliveryID)
@@ -409,18 +409,25 @@ func (s *Service) queueDeliveryImport(ctx context.Context, cfg ports.ClientConfi
 }
 
 func (s *Service) deliveryRetry(ctx context.Context, r *sqlite.DeliveryReceipt, message string, cause ...error) {
+	s.deliveryRetryAs(ctx, r, message, false, cause...)
+}
+
+// deliveryRetryAs is deliveryRetry with the failure's class decided by the
+// caller, which alone knows whether anything environmental was joined in.
+func (s *Service) deliveryRetryAs(ctx context.Context, r *sqlite.DeliveryReceipt, message string, settled bool, cause ...error) {
 	r.Error = message
 	if r.BlockedSince.IsZero() {
 		r.BlockedSince = time.Now()
 	}
 	r.Attempts++
 	var providerDeadline time.Time
-	settled := false
 	if len(cause) > 0 {
 		providerDeadline = submissionRetryDeadline(cause[0])
-		settled = settledDeliveryFailure(cause[0])
 	}
-	r.NextAttemptAt = time.Now().Add(deliveryRetryDelay(r.Attempts, settled))
+	// A pending Runner acknowledgement shares this schedule, and Runner's
+	// source cleanup waits on it: keep the environmental pace until it lands.
+	settled = settled && r.AckState != "pending"
+	r.NextAttemptAt = time.Now().Add(deliveryRetryDelay(r.Attempts, settled, time.Since(r.BlockedSince)))
 	if providerDeadline.After(r.NextAttemptAt) {
 		r.NextAttemptAt = providerDeadline
 	}
@@ -433,31 +440,45 @@ func (s *Service) deliveryRetry(ctx context.Context, r *sqlite.DeliveryReceipt, 
 }
 
 // deliveryRetryCeiling is the longest a settled delivery failure waits
-// between attempts. Process start brings every backed-off receipt forward
-// (ResetDeliveryRetryBackoff), so a deploy that fixes the cause is picked up
-// within minutes rather than hours.
-const deliveryRetryCeiling = 6 * time.Hour
+// between attempts. An hour, not more: "settled" includes verdicts that clear
+// on their own (an episode the next metadata refresh adds, a quality probe
+// still running), and a deploy that fixes the cause should not wait long.
+const deliveryRetryCeiling = time.Hour
 
-// deliveryRetryDelay is the wait before attempt n+1. Environmental failures
-// (a missing mount, a full disk, an unreachable Runner) clear on their own
-// and keep the five-minute ceiling. A settled failure is the importer's
-// verdict on the payload itself; repeating it every five minutes re-read the
-// whole payload and wrote a history row and a notification each time (1,206
-// attempts on one wtFOCK delivery), so after the first few it doubles up to
-// deliveryRetryCeiling.
-func deliveryRetryDelay(attempts int, settled bool) time.Duration {
+// deliveryRetryDelay is the wait before the next attempt. Environmental
+// failures (a missing mount, a full disk, an unreachable Runner) keep the
+// five-minute ceiling. A settled failure is the importer's verdict on the
+// payload; repeating it every five minutes re-read the whole payload each
+// time (1,206 attempts on one wtFOCK delivery), so after the first few
+// attempts it waits about as long as it has already been blocked, up to the
+// ceiling. Elapsed time, not the attempt count, sets the pace: other retries
+// on the same receipt (the Runner acknowledgement) also count attempts.
+func deliveryRetryDelay(attempts int, settled bool, blocked time.Duration) time.Duration {
 	steps := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
 	if attempts <= len(steps) {
 		return steps[max(attempts, 1)-1]
 	}
+	floor := steps[len(steps)-1]
 	if !settled {
-		return steps[len(steps)-1]
+		return floor
 	}
-	delay := steps[len(steps)-1]
-	for i := len(steps); i < attempts && delay < deliveryRetryCeiling; i++ {
-		delay *= 2
+	return min(max(blocked, floor), deliveryRetryCeiling)
+}
+
+// lastRecordedFailure is the failure detail of the newest terminal step in a
+// download's trace, or "" when the newest is an import (or there is none).
+// It is what the person was last told, so a retry that ends the same way
+// need not tell them again.
+func lastRecordedFailure(handoff []sqlite.HandoffEntry) string {
+	for i := len(handoff) - 1; i >= 0; i-- {
+		switch handoff[i].Step {
+		case stepFailed:
+			return handoff[i].Detail
+		case stepImported:
+			return ""
+		}
 	}
-	return min(delay, deliveryRetryCeiling)
+	return ""
 }
 
 // settledDeliveryFailure reports whether an attempt ended in the importer's
@@ -662,6 +683,7 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 		return fmt.Errorf("delivery download generation changed after acceptance")
 	}
 	fresh.ImportPath, fresh.SavePath = r.MappedPath, r.Delivery.PublicationPath
+	priorFailure := lastRecordedFailure(fresh.Handoff)
 	if fresh.State != "importing" {
 		s.advance(ctx, &fresh, "importing", 1, "", stepImporting, "validating and importing accepted Runner manifest")
 	}
@@ -792,29 +814,34 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 		}
 	}
 	allRedundant := false
+	// Settled means the importer's verdict alone. A ledger write or a proof
+	// read that failed alongside it is environmental, and must not slow the
+	// retry that will let it succeed.
+	settled := settledDeliveryFailure(err) && ledgerErr == nil
 	if err != nil && errors.Is(err, ErrNoFilesImported) && !errors.Is(err, ErrImportBlocked) &&
 		ledgerErr == nil && ctx.Err() == nil && result.Blocked == nil && !manual && len(selected) > 0 {
 		redundant, proofErr := s.allSelectedDeliveryFilesRedundant(ctx, receiptID, selectedManifest)
 		if proofErr != nil {
+			settled = false
 			err = errors.Join(err, fmt.Errorf("verify persisted redundant delivery outcomes: %w", proofErr))
 		} else if redundant {
 			allRedundant, err = true, nil
 		}
 	}
 	if err != nil {
-		message := "accepted delivery import is pending: " + err.Error()
 		if !errors.Is(err, context.Canceled) {
-			if r.Error == message {
-				// The same verdict the person was already told about. The
-				// download returns to failed with its trace step, but a retry
-				// that changed nothing is not a new event: no history row and
-				// no notification per attempt.
+			if !manual && err.Error() == priorFailure {
+				// The same verdict the person was already told about, by the
+				// last failure in this download's trace. The download returns to
+				// failed with its trace step, but an automatic retry that
+				// changed nothing is not a new event: no history row and no
+				// notification per attempt.
 				s.advance(ctx, &fresh, "failed", fresh.Progress, err.Error(), stepFailed, err.Error())
 			} else {
 				s.failImport(ctx, &fresh, err.Error())
 			}
 		}
-		s.deliveryRetry(ctx, &r, message, err)
+		s.deliveryRetryAs(ctx, &r, "accepted delivery import is pending: "+err.Error(), settled, err)
 		return err
 	}
 	detail := fmt.Sprintf("imported %d file(s) from accepted Runner manifest", result.Imported)

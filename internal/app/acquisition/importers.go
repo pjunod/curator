@@ -82,13 +82,6 @@ func (s *Service) StartImporters(ctx context.Context) {
 		s.cleanupCh = make(chan importJob, importQueue)
 		s.importCtx = ctx
 		s.importJobs = map[int64]*importTicket{}
-		// Settled delivery failures back off for hours. One prompt attempt per
-		// process start lets a deploy that fixes their cause clear them.
-		if n, err := s.db.ResetDeliveryRetryBackoff(ctx, 5*time.Minute); err != nil {
-			s.log.Warn("delivery retry backoff reset failed", "err", err)
-		} else if n > 0 {
-			s.log.Info("brought backed-off delivery imports forward", "receipts", n)
-		}
 	})
 	for i := 0; i < importWorkers; i++ {
 		s.importWG.Add(1)
