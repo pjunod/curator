@@ -41,6 +41,17 @@ const (
 	// than correctness. An unbounded channel would trade that for unbounded
 	// memory, which is a worse deal.
 	importQueue = 64
+
+	// cleanupWorkers runs payload cleanup apart from imports.
+	//
+	// Cleanup re-verifies both copies before deleting one, which for a large
+	// remux is tens of gigabytes of reads. It used to share the import
+	// workers, so one 31 GB cleanup held an import slot for over twenty
+	// minutes and every new download waited behind the other (field data
+	// 2026-11-01). Cleanup is never urgent; imports are what the user is
+	// waiting for. One dedicated worker keeps it moving without ever taking
+	// an import slot.
+	cleanupWorkers = 1
 )
 
 // importJob is one download ready to be moved into the library.
@@ -69,6 +80,7 @@ type importTicket struct {
 func (s *Service) StartImporters(ctx context.Context) {
 	s.importOnce.Do(func() {
 		s.importCh = make(chan importJob, importQueue)
+		s.cleanupCh = make(chan importJob, importQueue)
 		s.importCtx = ctx
 		s.importJobs = map[int64]*importTicket{}
 	})
@@ -89,7 +101,24 @@ func (s *Service) StartImporters(ctx context.Context) {
 			}
 		}()
 	}
-	s.log.Info("import workers started", "workers", importWorkers)
+	for i := 0; i < cleanupWorkers; i++ {
+		s.importWG.Add(1)
+		go func() {
+			defer s.importWG.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case job, ok := <-s.cleanupCh:
+					if !ok {
+						return
+					}
+					s.runImportTracked(job.ctx, job)
+				}
+			}
+		}()
+	}
+	s.log.Info("import workers started", "workers", importWorkers, "cleanup_workers", cleanupWorkers)
 	s.importRecoverOnce.Do(func() {
 		s.reconcilePlacements(ctx)
 		s.startRecoveryWorker(ctx)
@@ -165,7 +194,7 @@ func (s *Service) enqueueDeliveryImport(ctx context.Context, dl sqlite.Download,
 
 func (s *Service) queueDeliveryCleanup(ctx context.Context, cfg ports.ClientConfig, receipt sqlite.DeliveryReceipt) bool {
 	s.importMu.Lock()
-	if s.importCh == nil || s.importCtx == nil {
+	if s.cleanupCh == nil || s.importCtx == nil {
 		s.importMu.Unlock()
 		return false
 	}
@@ -181,7 +210,7 @@ func (s *Service) queueDeliveryCleanup(ctx context.Context, cfg ports.ClientConf
 	s.deliveryCleanupJobs[receipt.ID] = true
 	job := importJob{cfg: cfg, ctx: jobCtx, deliveryReceiptID: receipt.ID, deliveryCleanupOnly: true, cleanupCancel: cancel}
 	select {
-	case s.importCh <- job:
+	case s.cleanupCh <- job:
 		s.importMu.Unlock()
 		return true
 	default:
@@ -400,6 +429,7 @@ type importerFields struct {
 	importOnce          sync.Once
 	importRecoverOnce   sync.Once
 	importCh            chan importJob
+	cleanupCh           chan importJob
 	importWG            sync.WaitGroup
 	registry            *transfers.Registry
 	importCtx           context.Context

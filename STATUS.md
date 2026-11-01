@@ -1,5 +1,21 @@
 # Monarr — Project Status
 
+## Imports stop re-reading the same bytes — 2026-11-01 · v0.38.5
+
+**Status:** in progress on `codex/import-digest-memo`.
+
+Paul asked why importing is slow and whether it must be serial. Measured on
+nuc3 after v0.38.4: duplicate proofs took 250–280 s per 2.9 GB file against
+31 s for a real 2.5 GB import, and attempts ran strictly one after another.
+
+- **Slow:** each attempt read the same payload three or four times over
+  network mounts (verify, recheck, placement or redundancy proof) and
+  remembered nothing between attempts. Digests are now memoized by file
+  generation with git's racily-clean rule ([ADR 0025](docs/adr/0025-digest-memo.md)).
+- **Serial:** imports have two workers by design, but payload cleanup shared
+  them; a 31 GB cleanup re-hashing both copies held one worker for 20+ min,
+  leaving one for everything else. Cleanup now has its own worker.
+
 ## Obfuscated duplicates are redundant — 2026-11-01 · v0.38.4
 
 **Status:** [PR #75](https://github.com/pjunod/curator/pull/75) — adversarial

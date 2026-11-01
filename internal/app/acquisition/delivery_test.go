@@ -500,7 +500,7 @@ func TestConcurrentDeliveryHandoffAndCleanupRetriesAreSerialized(t *testing.T) {
 	// The cleanup job registry coalesces repeated endpoint retries to one
 	// queued worker for this accepted receipt, even when requests race.
 	svc.importMu.Lock()
-	svc.importCh = make(chan importJob, 8)
+	svc.cleanupCh = make(chan importJob, 8)
 	svc.importCtx = ctx
 	svc.importJobs = map[int64]*importTicket{}
 	svc.importMu.Unlock()
@@ -517,14 +517,14 @@ func TestConcurrentDeliveryHandoffAndCleanupRetriesAreSerialized(t *testing.T) {
 			t.Errorf("cleanup retry: %v", err)
 		}
 	}
-	if got := len(svc.importCh); got != 1 {
+	if got := len(svc.cleanupCh); got != 1 {
 		t.Fatalf("concurrent cleanup retries queued %d workers, want one", got)
 	}
 	if len(svc.deliveryCleanupJobs) != 1 || !svc.deliveryCleanupJobs[receiptID] {
 		t.Fatalf("cleanup worker lease not coalesced: %+v", svc.deliveryCleanupJobs)
 	}
-	for len(svc.importCh) > 0 {
-		job := <-svc.importCh
+	for len(svc.cleanupCh) > 0 {
+		job := <-svc.cleanupCh
 		if job.cleanupCancel != nil {
 			job.cleanupCancel()
 		}

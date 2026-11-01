@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func deliveryFileGeneration(info os.FileInfo) string {
@@ -65,4 +66,21 @@ func statfsString(value []int8) string {
 		bytes = append(bytes, byte(b))
 	}
 	return string(bytes)
+}
+
+// fileDevice and fileChangeTime feed the digest memo (digest_memo.go).
+func fileDevice(info os.FileInfo) (string, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%d", st.Dev), true
+}
+
+func fileChangeTime(info os.FileInfo) (time.Time, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Unix(st.Ctimespec.Sec, st.Ctimespec.Nsec), true
 }

@@ -551,7 +551,11 @@ was the duration column of an unrelated scheduled task.
 
 So since 2026-07: imports run on their own bounded worker pool, the poll
 returns in milliseconds whatever the library is doing, and the data plane
-reports itself here. Control-plane checks (`client:<name>`) only ever mean
+reports itself here. Two workers import; payload cleanup has a third worker
+of its own, so verifying a large payload before deleting it never holds up
+an import. A file's SHA-256 is read once per unchanged file and remembered
+([ADR 0025](adr/0025-digest-memo.md)), so retries, redundancy proofs and
+cleanup do not re-read gigabytes they have already verified. Control-plane checks (`client:<name>`) only ever mean
 "can Monarr reach this"; data-plane trouble has its own check (`imports`),
 which warns when an import has been running long enough to be stuck rather
 than merely slow.

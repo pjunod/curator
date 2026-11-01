@@ -933,6 +933,12 @@ func (s *Service) verifyDeliveryManifest(ctx context.Context, cfg ports.ClientCo
 			if exists && prior.FileGeneration != "" && prior.FileGeneration != generation {
 				return verifiedDeliveryFile{}, fmt.Errorf("manifest file %q was replaced after its accepted observation", f.Path)
 			}
+			verifiedFile := verifiedDeliveryFile{relative: f.Path, absolute: filepath.Join(r.MappedPath, filepath.FromSlash(f.Path)), root: root, relativeRoot: rel, size: f.SizeBytes, digest: f.SHA256, generation: generation, rootInfo: rootInfo, payloadInfo: info, info: st}
+			if digest, ok := lookupDigest(st); ok && digest == f.SHA256 && deliveryFileGeneration(st) == generation {
+				return verifiedFile, nil
+			}
+			hashStarted := time.Now()
+			digestFullReads.Add(1)
 			h := sha256.New()
 			n, copyErr := copyHashContext(ctx, h, file)
 			after, statErr := file.Stat()
@@ -945,7 +951,8 @@ func (s *Service) verifyDeliveryManifest(ctx context.Context, cfg ports.ClientCo
 			if !os.SameFile(named, after) || deliveryFileGeneration(after) != generation || n != f.SizeBytes || hex.EncodeToString(h.Sum(nil)) != f.SHA256 {
 				return verifiedDeliveryFile{}, fmt.Errorf("manifest file %q failed size or SHA-256 verification", f.Path)
 			}
-			return verifiedDeliveryFile{relative: f.Path, absolute: filepath.Join(r.MappedPath, filepath.FromSlash(f.Path)), root: root, relativeRoot: rel, size: f.SizeBytes, digest: f.SHA256, generation: generation, rootInfo: rootInfo, payloadInfo: info, info: st}, nil
+			rememberDigest(after, f.SHA256, hashStarted)
+			return verifiedFile, nil
 		}()
 		if err != nil {
 			return nil, err
@@ -1018,6 +1025,13 @@ func (s *Service) recheckDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 			_ = parent.Close()
 			return fmt.Errorf("manifest file %q changed after verification", expected.relative)
 		}
+		if digest, ok := lookupDigest(st); ok && digest == expected.digest {
+			_ = f.Close()
+			_ = parent.Close()
+			continue
+		}
+		hashStarted := time.Now()
+		digestFullReads.Add(1)
 		h := sha256.New()
 		n, copyErr := copyHashContext(ctx, h, f)
 		closeErr := f.Close()
@@ -1034,6 +1048,7 @@ func (s *Service) recheckDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 		if n != expected.size || hex.EncodeToString(h.Sum(nil)) != expected.digest {
 			return fmt.Errorf("manifest file %q content changed after verification", expected.relative)
 		}
+		rememberDigest(st, expected.digest, hashStarted)
 	}
 	return nil
 }
