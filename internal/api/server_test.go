@@ -57,6 +57,9 @@ func newTestServer(t *testing.T) (*Server, *bus.Bus, *scheduler.Scheduler, func(
 		StartedAt: time.Now().Add(-time.Minute),
 	})
 	cleanup := func() {
+		srv.BeginShutdown()
+		srv.CancelRequests()
+		srv.Wait()
 		cancel()
 		sched.Wait()
 		b.Close()

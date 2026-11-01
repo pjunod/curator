@@ -349,10 +349,11 @@ func TestSupervisorSubscribesOnlyToPushClients(t *testing.T) {
 	svc, db, _ := setup(t, nil, &client.fakeClient)
 	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
 
 	running := map[int64]context.CancelFunc{}
-	svc.syncSubscribers(ctx, running) // the seeded client is poll mode
+	svc.syncSubscribers(ctx, running, &workers) // the seeded client is poll mode
 	if len(running) != 0 {
 		t.Fatalf("subscribed to %d poll-mode client(s)", len(running))
 	}
@@ -364,7 +365,7 @@ func TestSupervisorSubscribesOnlyToPushClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc.syncSubscribers(ctx, running)
+	svc.syncSubscribers(ctx, running, &workers)
 	if _, ok := running[id]; !ok {
 		t.Fatalf("no subscription started for the push client: %v", running)
 	}
@@ -377,7 +378,7 @@ func TestSupervisorSubscribesOnlyToPushClients(t *testing.T) {
 	if err := db.UpdateDownloadClient(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	svc.syncSubscribers(ctx, running)
+	svc.syncSubscribers(ctx, running, &workers)
 	if _, ok := running[id]; ok {
 		t.Error("the subscription survived being switched back to poll")
 	}
@@ -425,4 +426,66 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("condition never became true")
+}
+
+// A subscriber may need to finish network/client cleanup after cancellation.
+// The supervisor must join that return before callers close its store and bus.
+type cleanupSubscriber struct {
+	fakeClient
+	started  chan struct{}
+	cleaning chan struct{}
+	release  chan struct{}
+}
+
+func (c *cleanupSubscriber) Subscribe(ctx context.Context) (<-chan ports.ClientEvent, error) {
+	close(c.started)
+	<-ctx.Done()
+	close(c.cleaning)
+	<-c.release
+	return nil, ctx.Err()
+}
+
+func TestSubscriberSupervisorJoinsChildrenAfterCancellation(t *testing.T) {
+	client := &cleanupSubscriber{started: make(chan struct{}), cleaning: make(chan struct{}), release: make(chan struct{})}
+	svc, db, _ := setup(t, nil, &client.fakeClient)
+	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	ctx, cancel := context.WithCancel(context.Background())
+	if _, err := db.AddDownloadClient(ctx, ports.ClientConfig{Type: "nzbd", Name: "cleanup", URL: "http://unused.invalid", Enabled: true, Mode: "push"}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(client.release) }) }
+	t.Cleanup(func() {
+		cancel()
+		release()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Error("subscriber supervisor did not finish")
+		}
+	})
+	go func() { svc.RunSubscribers(ctx); close(done) }()
+	select {
+	case <-client.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("subscriber did not start")
+	}
+	cancel()
+	select {
+	case <-client.cleaning:
+	case <-time.After(time.Second):
+		t.Fatal("subscriber did not observe cancellation")
+	}
+	select {
+	case <-done:
+		t.Error("supervisor returned before child cleanup")
+	case <-time.After(30 * time.Millisecond):
+	}
+	release()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not join completed child")
+	}
 }

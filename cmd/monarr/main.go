@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -101,6 +102,9 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer log.Info("goodbye") // registered first: registered cleanup precedes it.
+	defer cancelRun()
 	startedAt := time.Now()
 	log.Info("monarr starting",
 		"version", buildinfo.Version, "commit", buildinfo.Commit,
@@ -200,16 +204,21 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	inflight := transfers.New()
 	acq.SetRegistry(inflight)
 	acq.StartImporters(ctx)
-	defer acq.WaitImporters()
+	defer func() { cancelRun(); acq.WaitImporters() }()
+
+	// These application loops own bus/DB calls beyond cancellation. Join
+	// their actual return before dependency teardown, including startup errors.
+	var loops sync.WaitGroup
+	defer func() { cancelRun(); loops.Wait() }()
 
 	// Notifications (Phase 3): bus events fan out to configured targets.
 	notifierFactory := func(cfg ports.NotifierConfig) ports.Notifier { return notify.New(cfg) }
 	dispatcher := appnotify.New(db, b, log, notifierFactory).WithRegistry(inflight)
-	go dispatcher.Run(ctx)
+	loops.Go(func() { dispatcher.Run(ctx) })
 	// The delivery worker runs beside it: a retry scheduled two minutes out
 	// has no bus event to wake it, and a dead server must not stall the
 	// event loop while it times out.
-	go dispatcher.RunDeliveries(ctx)
+	loops.Go(func() { dispatcher.RunDeliveries(ctx) })
 
 	// API key (Phase 4 compat auth; Phase 5 hardens the native API with it).
 	apiKey, err := db.GetMeta(ctx, api.APIKeySetting)
@@ -389,7 +398,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// notices a stream that died quietly. The supervisor re-reads the
 	// client list itself, so switching a client to push in the settings
 	// UI takes effect without a restart.
-	go acq.RunSubscribers(ctx)
+	loops.Go(func() { acq.RunSubscribers(ctx) })
 	// Phase 3 automation: the RSS loop grabs wanted releases as they appear;
 	// backlog search actively hunts for what RSS already scrolled past.
 	if err := sched.Register(scheduler.Task{
@@ -490,6 +499,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err := sched.Start(ctx); err != nil {
 		return err
 	}
+	defer func() { cancelRun(); sched.Wait() }()
 
 	// Job queue (ADR 0008 step 1). Started after the scheduler so periodic
 	// work can enqueue jobs, and worth running on a single instance for the
@@ -513,11 +523,11 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		return err
 	}
 	queue.Start(ctx)
-	defer queue.Wait()
-	go acq.RunWantedSearchCoordinator(ctx)
-	go acq.RunSeasonCoordinator(ctx)
-	go acq.RunRSSPacing(ctx)
-	go func() {
+	defer func() { cancelRun(); queue.Wait() }()
+	loops.Go(func() { acq.RunWantedSearchCoordinator(ctx) })
+	loops.Go(func() { acq.RunSeasonCoordinator(ctx) })
+	loops.Go(func() { acq.RunRSSPacing(ctx) })
+	loops.Go(func() {
 		finished, cancel := bus.Subscribe[jobs.JobFinished](b, 32)
 		defer cancel()
 		for {
@@ -532,10 +542,10 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 				}
 			}
 		}
-	}()
+	})
 
 	// Library changes invalidate the wanted index (imports do it in-service).
-	go func() {
+	loops.Go(func() {
 		added, cancelAdded := bus.Subscribe[library.MediaAdded](b, 16)
 		defer cancelAdded()
 		scans, cancelScans := bus.Subscribe[library.ScanCompleted](b, 16)
@@ -558,10 +568,11 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 				acq.InvalidateWanted()
 			}
 		}
-	}()
+	})
 
 	// HTTP.
 	srv := api.New(api.Deps{
+		Context:             ctx,
 		Log:                 log,
 		Bus:                 b,
 		Health:              reg,
@@ -591,6 +602,21 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// Register cleanup before serving: listener failure must cancel producers
+	// before any worker wait, just like the signal-driven path.
+	httpServer.RegisterOnShutdown(srv.StopStreams)
+	defer func() {
+		cancelRun()
+		srv.BeginShutdown()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutCtx); err != nil {
+			log.Warn("http shutdown", "err", err)
+			srv.CancelRequests()
+			_ = httpServer.Close()
+		}
+		srv.Wait()
+	}()
 	stopDiscovery := discovery.Start(cfg.Port, buildinfo.Version, log)
 	defer stopDiscovery()
 
@@ -609,13 +635,6 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		return err
 	}
 
-	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := httpServer.Shutdown(shutCtx); err != nil {
-		log.Warn("http shutdown", "err", err)
-	}
-	sched.Wait()
-	log.Info("goodbye")
 	return nil
 }
 

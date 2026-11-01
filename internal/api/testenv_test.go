@@ -205,6 +205,7 @@ func newAPIEnv(t *testing.T) *apiEnv {
 		StartedAt:       time.Now().Add(-time.Minute),
 	})
 
+	t.Cleanup(func() { srv.BeginShutdown(); srv.CancelRequests(); srv.Wait() })
 	return &apiEnv{h: srv.Handler(), srv: srv, db: db, bus: b, lib: lib, acq: acq, root: root}
 }
 

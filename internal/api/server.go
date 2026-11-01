@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
@@ -40,9 +41,12 @@ const ScanTaskName = "library.reconcile"
 
 // Deps is everything the server needs, wired in cmd/monarr.
 type Deps struct {
-	Log    *slog.Logger
-	Bus    *bus.Bus
-	Health *health.Registry
+	// Context owns background work; request cancellation remains separate so
+	// ordinary handlers retain their HTTP shutdown grace.
+	Context context.Context
+	Log     *slog.Logger
+	Bus     *bus.Bus
+	Health  *health.Registry
 	// Connections is the monitor behind the Connections panel; nil renders
 	// the panel empty rather than failing.
 	Connections *health.ConnectionMonitor
@@ -83,6 +87,18 @@ type Deps struct {
 // Server implements apigen.ServerInterface.
 type Server struct {
 	deps Deps
+
+	streamsCtx         context.Context
+	cancelStreams      context.CancelFunc
+	backgroundCtx      context.Context
+	cancelBackground   context.CancelFunc
+	requestsCtx        context.Context
+	cancelRequests     context.CancelFunc
+	lifecycleMu        sync.Mutex
+	closing            bool
+	handlers           sync.WaitGroup
+	background         sync.WaitGroup
+	streamWriteTimeout time.Duration
 }
 
 var _ apigen.ServerInterface = (*Server)(nil)
@@ -95,7 +111,17 @@ func New(deps Deps) *Server {
 	if deps.StartedAt.IsZero() {
 		deps.StartedAt = time.Now()
 	}
-	return &Server{deps: deps}
+	parent := deps.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	streamsCtx, cancelStreams := context.WithCancel(context.Background())
+	backgroundCtx, cancelBackground := context.WithCancel(parent)
+	requestsCtx, cancelRequests := context.WithCancel(context.Background())
+	return &Server{deps: deps, streamsCtx: streamsCtx, cancelStreams: cancelStreams,
+		backgroundCtx: backgroundCtx, cancelBackground: cancelBackground,
+		requestsCtx: requestsCtx, cancelRequests: cancelRequests,
+		streamWriteTimeout: 5 * time.Second}
 }
 
 // Handler returns the root handler: /api/v1/* plus the embedded SPA on /.
@@ -124,7 +150,7 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/radarr/", s.noteCallers(http.StripPrefix("/radarr", s.deps.CompatRadarr)))
 	}
 	mux.Handle("/", s.spaHandler())
-	return s.recoverer(s.requestLogger(mux))
+	return s.trackRequests(s.recoverer(s.requestLogger(mux)))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -150,6 +176,14 @@ type statusRecorder struct {
 func (sr *statusRecorder) WriteHeader(code int) {
 	sr.status = code
 	sr.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap preserves ResponseController deadline support through logging.
+func (sr *statusRecorder) Unwrap() http.ResponseWriter { return sr.ResponseWriter }
+
+// FlushError preserves flush failures, which SSE must observe to end a stream.
+func (sr *statusRecorder) FlushError() error {
+	return http.NewResponseController(sr.ResponseWriter).Flush()
 }
 
 // Flush passes through so SSE works behind the recorder.
