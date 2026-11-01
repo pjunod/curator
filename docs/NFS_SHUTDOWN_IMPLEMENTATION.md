@@ -1,6 +1,6 @@
 # NFS shutdown implementation — lifecycle fixes and concrete next contracts
 
-**Status:** lifecycle code awaiting final review/gate; cancellation and maintenance contracts awaiting focused design review · **Written:** 2026-11-01
+**Status:** lifecycle reviewed and locally validated; PR CI pending; cancellation and maintenance require detailed implementation design · **Written:** 2026-11-01
 
 Companion to [implementation status](NFS_SHUTDOWN_IMPLEMENTATION_STATUS.md) and
 [deployment](deployment.md). This contract separates the implemented lifecycle
