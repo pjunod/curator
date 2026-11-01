@@ -1,6 +1,6 @@
 # NFS shutdown status — implementation, review and delivery
 
-**Status:** lifecycle review and local gate passed; PR/CI pending · **Updated:** 2026-11-01
+**Status:** lifecycle review and local gate passed; PR #78 CI pending · **Updated:** 2026-11-01
 
 Companion to the [implementation contract](NFS_SHUTDOWN_IMPLEMENTATION.md).
 This page records actual implementation state, separately from the earlier
@@ -17,10 +17,10 @@ incident/proposal reviews. A code review is not runtime qualification of NFS.
 | Maintenance drain-before-stop and actual-exit deployment command | Not implemented |
 | Automatic NFS stage/failover recovery | Not implemented; coordination qualification still required |
 | Writeback prototype/selection and production grace | Not selected; lifecycle fixes do not make NFS interruptible |
-| PR | Pending |
-| Adversarial code/design review | Astra source review completed; deadline lifetime, joins, bounded tests, publication ordering, reversible maintenance design and stale test callers addressed; final gate remains |
+| PR | [#78 — shutdown ownership](https://github.com/pjunod/curator/pull/78) |
+| Adversarial code/design review | Astra source review completed; deadline lifetime, joins, bounded tests, publication ordering, reversible maintenance design and stale test callers addressed; local gate passed |
 | Final validation | Go 1.25.7 / Node 22.23.4: make lint PASS (fresh task analysis cache), make test PASS, make test-web PASS (124 tests), make test-e2e PASS (192 tests); required CI pending |
-| Merge | Pending review, final gate and branch protection |
+| Merge | Waiting for all PR CI results; no branch-protection bypass |
 | Cleanup | Registered task clone retained until merge; documentation snapshot stash preserved in prior managed worktree |
 
 No production container, mount or setting has been changed by implementation.
