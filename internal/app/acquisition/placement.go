@@ -464,7 +464,7 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		}
 	}
 	// Hashing, backup creation, and payload staging happen outside the global
-	// storage authority lock. importTargetMu still reserves this destination.
+	// storage authority lock. The item's import target lock still reserves it.
 	if err = s.preparePlacementPublication(ctx, &p); err != nil {
 		return 0, err
 	}
@@ -945,8 +945,8 @@ func syncOpenedDirectory(root *os.Root) error {
 	return dir.Sync()
 }
 func (s *Service) reconcilePlacements(ctx context.Context) {
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	ctx, releaseTargets := s.lockAllImportTargets(ctx)
+	defer releaseTargets()
 	rows, err := s.db.PendingPlacements(ctx)
 	if err != nil {
 		s.log.Error("placement reconciliation unavailable", "err", err)

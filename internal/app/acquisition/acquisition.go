@@ -131,8 +131,9 @@ func (ImportFailed) EventType() string { return "import.failed" }
 type Service struct {
 	completedMu       sync.Mutex
 	storageDecisionMu sync.Mutex
-	// Shared by ordinary and recovery imports, including crash reconciliation.
-	importTargetMu    sync.Mutex
+	// Publication authority, per media item (import_targets.go). Shared by
+	// ordinary and recovery imports, including crash reconciliation.
+	importTargets     importTargets
 	recoveryMu        sync.Mutex
 	recoveryReceiptMu sync.Mutex
 	recoveryCancels   map[string]context.CancelFunc
@@ -1268,9 +1269,9 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 	// removed again below; the alternative (add first, insert second) is
 	// a download running in a client that Monarr has no record of, which
 	// is the worse of the two failures by a distance.
-	s.importTargetMu.Lock()
-	allocationCtx, releaseStorageAllocation := s.lockStorageDecision(ctx)
-	releaseAllocation := func() { releaseStorageAllocation(); s.importTargetMu.Unlock() }
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, req.MediaItemID)
+	allocationCtx, releaseStorageAllocation := s.lockStorageDecision(targetCtx)
+	releaseAllocation := func() { releaseStorageAllocation(); releaseTarget() }
 	active, activeErr := s.db.ListDownloadReservations(allocationCtx)
 	if activeErr != nil {
 		releaseAllocation()

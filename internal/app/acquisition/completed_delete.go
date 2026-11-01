@@ -16,8 +16,8 @@ import (
 func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint string) error {
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	ctx, releaseTargets := s.lockAllImportTargets(ctx)
+	defer releaseTargets()
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
 	defer releaseStorage()
 	if fingerprint == "" || !s.ownsDownloadPath(ctx, path) {
@@ -221,8 +221,8 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 	}
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	ctx, releaseTargets := s.lockAllImportTargets(ctx)
+	defer releaseTargets()
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
 	defer releaseStorage()
 	if !s.ownsDownloadPath(ctx, path) {

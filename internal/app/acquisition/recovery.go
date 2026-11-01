@@ -582,8 +582,8 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 	}
 	key := preview.Recovery.Installation + "/" + preview.Recovery.ID + "/" + preview.Recovery.ManifestDigest
 	id := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	ctx, releaseTarget := s.lockImportTarget(ctx, req.MediaItemID)
+	defer releaseTarget()
 	snapshot, _, err := s.targetSnapshot(ctx, req.MediaItemID, req.CopyID)
 	if err != nil {
 		return RecoveryImport{}, err
@@ -663,9 +663,8 @@ func (s *Service) saveRecoveryImport(ctx context.Context, r RecoveryImport) erro
 	return err
 }
 func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
-	ctx = context.WithValue(ctx, targetHeldKey{}, true)
+	ctx, releaseTarget := s.lockImportTarget(ctx, r.Request.MediaItemID)
+	defer releaseTarget()
 	if err := s.validateRecoveryTarget(ctx, r); err != nil {
 		return err
 	}
@@ -1172,9 +1171,9 @@ func (s *Service) ackRecoveryCancel(ctx context.Context, r RecoveryImport) {
 		}
 		return
 	}
-	s.importTargetMu.Lock()
-	err = s.rollbackRecoveryPlacements(ctx, r.ID)
-	s.importTargetMu.Unlock()
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, r.Request.MediaItemID)
+	err = s.rollbackRecoveryPlacements(targetCtx, r.ID)
+	releaseTarget()
 	if err != nil {
 		r.State, r.Error = "cancel_pending", "Cancellation reconciliation: "+err.Error()
 		_ = s.saveRecoveryImport(ctx, r)

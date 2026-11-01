@@ -261,11 +261,9 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 // selection preserves the automatic/legacy whole-payload behavior; a
 // present selection imports exactly what the manual-import scan offered.
 func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, savePath string, selected []string, manual bool) (ImportResult, error) {
-	if ctx.Value(targetHeldKey{}) != true {
-		s.importTargetMu.Lock()
-		defer s.importTargetMu.Unlock()
-		ctx = context.WithValue(ctx, targetHeldKey{}, true)
-	}
+	var releaseTarget func()
+	ctx, releaseTarget = s.lockImportTarget(ctx, dl.MediaItemID)
+	defer releaseTarget()
 
 	// A queued job may carry older custody than an operator acknowledgment.
 	// Re-read every persisted row under the publication/admission lock.

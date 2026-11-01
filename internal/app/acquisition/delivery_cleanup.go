@@ -439,8 +439,8 @@ func shortDeliveryStageID(value string) string {
 }
 
 func (s *Service) publishAcceptedSidecar(ctx context.Context, r sqlite.DeliveryReceipt, source verifiedDeliveryFile, mediaPath, target, stageName string, expectedDir, expectedMedia os.FileInfo) error {
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	ctx, releaseTarget := s.lockImportTarget(ctx, r.MediaItemID)
+	defer releaseTarget()
 	if err := rejectSymlinks(target, true); err != nil {
 		return err
 	}
@@ -1560,9 +1560,9 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, batchID
 	if hasBatch && rootStorageIdentity(inventory.Roots, storageRoot) != existingBatch.StorageIdentity {
 		return fmt.Errorf("storage identity differs from the reviewed deletion batch")
 	}
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
-	decisionCtx, release := s.lockStorageDecision(ctx)
+	targetCtx, releaseTargets := s.lockAllImportTargets(ctx)
+	defer releaseTargets()
+	decisionCtx, release := s.lockStorageDecision(targetCtx)
 	defer release()
 	// Import admission can race the hashing pass above. Recheck after taking
 	// the same short lock used by placement so explicit deletion never removes
@@ -1825,9 +1825,9 @@ func (s *Service) removeVerifiedDeliveryFile(ctx context.Context, r sqlite.Deliv
 	// Keep the expensive hashing above outside global import/storage locks. The
 	// short critical section rechecks the current generation at the anchored
 	// name immediately before unlink so a path swap cannot redirect cleanup.
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
-	decisionCtx, release := s.lockStorageDecision(ctx)
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, r.MediaItemID)
+	defer releaseTarget()
+	decisionCtx, release := s.lockStorageDecision(targetCtx)
 	defer release()
 	legacy, err := s.db.LegacyCleanupReview(decisionCtx, r.GenerationKey, r.MappedPath)
 	if err != nil {
@@ -1965,9 +1965,9 @@ func digestOpenFile(ctx context.Context, file *os.File) (string, int64, error) {
 }
 
 func (s *Service) removeEmptyDeliveryDirectories(ctx context.Context, r sqlite.DeliveryReceipt) (bool, error) {
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
-	decisionCtx, release := s.lockStorageDecision(ctx)
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, r.MediaItemID)
+	defer releaseTarget()
+	decisionCtx, release := s.lockStorageDecision(targetCtx)
 	defer release()
 	pendingExplicitDelete, err := s.db.HasPendingExplicitDeliveryDelete(decisionCtx, r.ID, "")
 	if err != nil {

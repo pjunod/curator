@@ -111,9 +111,9 @@ func (s *Service) cleanupPartialPayloadCandidate(ctx context.Context, candidate 
 // settleAbsentPartialPayload verifies the configured storage while holding the
 // final target/storage authority. The caller already holds the download lock.
 func (s *Service) settleAbsentPartialPayload(ctx context.Context, candidate partialCleanupOwner, path string) {
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
-	decisionCtx, releaseStorage := s.lockStorageDecision(ctx)
+	targetCtx, releaseTargets := s.lockAllImportTargets(ctx)
+	defer releaseTargets()
+	decisionCtx, releaseStorage := s.lockStorageDecision(targetCtx)
 	defer releaseStorage()
 	current, err := s.db.GetDownload(decisionCtx, candidate.DownloadID)
 	if err != nil || current.GenerationKey != candidate.GenerationKey || current.State != "failed" ||

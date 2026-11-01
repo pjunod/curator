@@ -649,14 +649,14 @@ func (s *Service) replacementFinalCheck(ctx context.Context, op sqlite.Replaceme
 }
 
 func (s *Service) quarantineAndRemoveReplacementSource(ctx context.Context, op sqlite.ReplacementOperation, f sqlite.ReplacementFile, rootPath, storage, parentRel, name, quarantineName string, reviewed os.FileInfo) error {
-	s.importTargetMu.Lock()
-	decisionCtx, release := s.lockStorageDecision(ctx)
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, op.MediaItemID)
+	decisionCtx, release := s.lockStorageDecision(targetCtx)
 	locked := true
 	unlock := func() {
 		if locked {
 			locked = false
 			release()
-			s.importTargetMu.Unlock()
+			releaseTarget()
 		}
 	}
 	defer unlock()
@@ -716,14 +716,14 @@ func (s *Service) quarantineAndRemoveReplacementSource(ctx context.Context, op s
 }
 
 func (s *Service) removeVerifiedReplacementQuarantine(ctx context.Context, op sqlite.ReplacementOperation, f sqlite.ReplacementFile, rootPath, storage, parentRel, sourceName, quarantineName string, reviewedParent, reviewed os.FileInfo) error {
-	s.importTargetMu.Lock()
-	decisionCtx, release := s.lockStorageDecision(ctx)
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, op.MediaItemID)
+	decisionCtx, release := s.lockStorageDecision(targetCtx)
 	locked := true
 	unlock := func() {
 		if locked {
 			locked = false
 			release()
-			s.importTargetMu.Unlock()
+			releaseTarget()
 		}
 	}
 	defer unlock()
@@ -776,9 +776,9 @@ func (s *Service) removeVerifiedReplacementQuarantine(ctx context.Context, op sq
 }
 
 func (s *Service) deleteMissingBadReplacementRecord(ctx context.Context, op sqlite.ReplacementOperation, f sqlite.ReplacementFile, rootPath, storage string) error {
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
-	decisionCtx, release := s.lockStorageDecision(ctx)
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, op.MediaItemID)
+	defer releaseTarget()
+	decisionCtx, release := s.lockStorageDecision(targetCtx)
 	defer release()
 	if err := s.replacementFinalCheck(decisionCtx, op, f, rootPath, storage); err != nil {
 		return err
@@ -848,9 +848,9 @@ func verifyReplacementQuarantineDigest(ctx context.Context, rootPath, parentRel,
 }
 
 func (s *Service) finalizeReplacementQuarantine(ctx context.Context, op sqlite.ReplacementOperation, f sqlite.ReplacementFile, rootPath, storage, parentRel, sourceName, quarantineName string, expected os.FileInfo) error {
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
-	decisionCtx, release := s.lockStorageDecision(ctx)
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, op.MediaItemID)
+	defer releaseTarget()
+	decisionCtx, release := s.lockStorageDecision(targetCtx)
 	defer release()
 	if err := s.replacementFinalCheck(decisionCtx, op, f, rootPath, storage); err != nil {
 		return err

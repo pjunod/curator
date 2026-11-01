@@ -546,8 +546,8 @@ func (s *Service) downloadReservesEpisode(ctx context.Context, dl sqlite.Downloa
 func (s *Service) ResolveReservation(ctx context.Context, id int64) error {
 	unlock := s.lockDownload(id)
 	defer unlock()
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	ctx, releaseTargets := s.lockAllImportTargets(ctx)
+	defer releaseTargets()
 	dl, err := s.db.GetDownload(ctx, id)
 	if err != nil {
 		return err
