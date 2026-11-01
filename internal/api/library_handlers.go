@@ -1422,8 +1422,8 @@ func qualityText(f domain.MediaFile) string {
 // not a reason to fail the edit — the item stays wanted and the RSS/backlog
 // loops pick it up regardless.
 func (s *Server) searchInBackground(itemID int64, why string) {
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	s.startBackground(func(parent context.Context) {
+		ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 		defer cancel()
 		out, err := s.deps.Acquisition.AutoSearchItem(ctx, itemID)
 		if err != nil {
@@ -1432,7 +1432,7 @@ func (s *Server) searchInBackground(itemID int64, why string) {
 		}
 		s.deps.Log.Info("background search done", "item", itemID, "trigger", why,
 			"targets", len(out.Targets), "grabbed", out.Grabbed)
-	}()
+	})
 }
 
 // RemoveLibraryFile implements DELETE /library/{id}/files/{fileId}. Bad or

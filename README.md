@@ -246,6 +246,8 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
   wire format, where you watch it in the UI, and the command that proves it works.
 - **[Deployment](docs/deployment.md)** — storage rules for the SQLite database (why the live
   DB must not sit on NFS/Gluster), floating-node/HA patterns, backup/restore.
+- **[Shutdown implementation status](docs/NFS_SHUTDOWN_IMPLEMENTATION_STATUS.md)** —
+  lifecycle fixes, review/gate results, and the concrete cancellation/deployment plan.
 - **[Architecture](docs/architecture.md)** and **[ADRs](docs/adr/)** — the design and why.
 - **[Release identity plan](docs/plan-release-identity.md)** — implementation contract for
   aliases, optional country qualifiers, direct TVDB/IMDb lookup, and indexer ID fallbacks.

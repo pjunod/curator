@@ -17,10 +17,43 @@ type sseEnvelope struct {
 // StreamEvents implements GET /events: every bus event as an SSE data line,
 // with periodic comment heartbeats so proxies keep the connection alive.
 func (s *Server) StreamEvents(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
+	if _, ok := w.(http.Flusher); !ok {
 		writeError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
+	}
+
+	controller := http.NewResponseController(w)
+	if err := controller.SetWriteDeadline(time.Now().Add(s.streamWriteTimeout)); err != nil {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported: write deadline unavailable")
+		return
+	}
+	writeFailed := false
+	defer func() {
+		// Keep final response flushing bounded, but do not extend a failed
+		// write's expired deadline. Successful frames clear it while idle;
+		// HTTP/2 deadlines can terminate a stream even without another write.
+		if !writeFailed {
+			_ = controller.SetWriteDeadline(time.Now().Add(s.streamWriteTimeout))
+		}
+	}()
+	writeFrame := func(frame string) bool {
+		if err := controller.SetWriteDeadline(time.Now().Add(s.streamWriteTimeout)); err != nil {
+			writeFailed = true
+			return false
+		}
+		if _, err := fmt.Fprint(w, frame); err != nil {
+			writeFailed = true
+			return false
+		}
+		if err := controller.Flush(); err != nil {
+			writeFailed = true
+			return false
+		}
+		if err := controller.SetWriteDeadline(time.Time{}); err != nil {
+			writeFailed = true
+			return false
+		}
+		return true
 	}
 
 	events, cancel := s.deps.Bus.SubscribeAll(64)
@@ -34,8 +67,9 @@ func (s *Server) StreamEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Ask EventSource clients to wait 3s before reconnecting.
-	fmt.Fprint(w, "retry: 3000\n\n")
-	flusher.Flush()
+	if !writeFrame("retry: 3000\n\n") {
+		return
+	}
 
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
@@ -44,9 +78,12 @@ func (s *Server) StreamEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-s.streamsCtx.Done():
+			return
 		case <-heartbeat.C:
-			fmt.Fprint(w, ": ping\n\n")
-			flusher.Flush()
+			if !writeFrame(": ping\n\n") {
+				return
+			}
 		case e, open := <-events:
 			if !open {
 				return // bus closed; client will reconnect
@@ -56,8 +93,9 @@ func (s *Server) StreamEvents(w http.ResponseWriter, r *http.Request) {
 				s.deps.Log.Warn("sse: could not marshal event", "event", e.EventType(), "err", err)
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", payload)
-			flusher.Flush()
+			if !writeFrame(fmt.Sprintf("data: %s\n\n", payload)) {
+				return
+			}
 		}
 	}
 }

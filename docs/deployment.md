@@ -151,3 +151,18 @@ no either. Put `/data` on replicated block storage (Longhorn/Ceph
 RBD/DRBD) if you have it, or local disk with Litestream replication if you
 don't, or pin the container and ship the daily snapshots to the shared
 pool.
+
+## Shutdown keeps dependency ownership until work actually stops
+
+Monarr stops SSE streams explicitly and bounds stream writes to stalled clients.
+A listener bind failure cancels and drains its workers rather than waiting for
+an external signal. Shutdown joins active HTTP handlers and background searches
+before closing queues, the encoder, event bus, or database; a canceled context
+alone is not evidence that a filesystem call has returned. The final `goodbye`
+message follows owned cleanup.
+
+A hard-mounted NFS write, sync or close may still block process exit. Do not
+interpret these lifecycle fixes as making NFS killable or selecting a safe
+stop-grace value. The deployment-drain and cancellation work is tracked in
+[NFS_SHUTDOWN_IMPLEMENTATION.md](NFS_SHUTDOWN_IMPLEMENTATION.md); its pending
+features and unqualified failover behavior are not present in this release.

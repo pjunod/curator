@@ -84,16 +84,18 @@ func (s *Service) linkFor(cfg ports.ClientConfig) *linkState {
 // takes effect without a restart.
 func (s *Service) RunSubscribers(ctx context.Context) {
 	running := map[int64]context.CancelFunc{}
+	var workers sync.WaitGroup
 	defer func() {
 		for _, cancel := range running {
 			cancel()
 		}
+		workers.Wait()
 	}()
 
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	for {
-		s.syncSubscribers(ctx, running)
+		s.syncSubscribers(ctx, running, &workers)
 		select {
 		case <-ctx.Done():
 			return
@@ -104,7 +106,7 @@ func (s *Service) RunSubscribers(ctx context.Context) {
 
 // syncSubscribers starts subscriptions for clients that want one and stops
 // those that no longer do.
-func (s *Service) syncSubscribers(ctx context.Context, running map[int64]context.CancelFunc) {
+func (s *Service) syncSubscribers(ctx context.Context, running map[int64]context.CancelFunc, workers *sync.WaitGroup) {
 	clients, err := s.db.ListDownloadClients(ctx)
 	if err != nil {
 		s.log.Warn("subscribe: could not list clients", "err", err)
@@ -139,7 +141,7 @@ func (s *Service) syncSubscribers(ctx context.Context, running map[int64]context
 		}
 		cctx, cancel := context.WithCancel(ctx)
 		running[id] = cancel
-		go s.subscribeTo(cctx, cfg, sub)
+		workers.Go(func() { s.subscribeTo(cctx, cfg, sub) })
 	}
 }
 

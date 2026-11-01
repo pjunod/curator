@@ -1343,3 +1343,20 @@ absence evidence; its uncertainty remains reserved instead of silently retrying.
 After checking the client, explicitly acknowledge possible duplicates to release
 that reservation. The original identity remains superseded and cannot publish
 later. This action does not add a replacement; use a deliberate Search afterward.
+
+## Server shutdown and event streams
+
+On shutdown, Monarr closes its event streams so a connected browser or phone
+cannot consume the full HTTP grace period. Each event/heartbeat write has a
+five-second network write deadline, so a client that stops reading cannot keep
+that stream writing indefinitely. Ordinary requests already in progress retain
+the ten-second HTTP grace; if it expires, their contexts and connections are
+canceled, and dependency cleanup still waits for the actual handlers to return.
+Background searches stop accepting new work and are canceled/joined before the
+database closes. Listener startup failure also cancels the workers it started.
+Job workers join their lease heartbeats before queue shutdown completes.
+
+These changes do not interrupt a thread blocked in NFS writeback. Storage calls
+may still delay shutdown until the NAS responds. Event-stream support requires
+both flushing and response write deadlines; unsupported HTTP response adapters
+receive an explicit streaming error rather than an unbounded stream.

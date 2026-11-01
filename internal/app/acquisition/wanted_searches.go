@@ -463,7 +463,9 @@ func (s *Service) executeWantedTarget(ctx context.Context, run sqlite.WantedSear
 	}
 	searchCtx, stopSearch := context.WithCancel(searchParent)
 	done := make(chan struct{})
+	watcherDone := make(chan struct{})
 	go func() {
+		defer close(watcherDone)
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -487,6 +489,7 @@ func (s *Service) executeWantedTarget(ctx context.Context, run sqlite.WantedSear
 	// that arrived during the search means the search was cut short.
 	interrupted := searchCtx.Err() != nil && ctx.Err() == nil
 	stopSearch()
+	<-watcherDone
 	result.Seen, result.Matched, result.Accepted, result.Grabbed = tally.Seen, tally.Matched, tally.Accepted, tally.Grabbed
 	if errors.Is(err, errWantedCancelled) || (errors.Is(err, context.Canceled) && ctx.Err() == nil) {
 		return skip("cancelled", "run cancellation was requested before grab")

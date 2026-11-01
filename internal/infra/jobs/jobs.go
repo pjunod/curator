@@ -280,10 +280,12 @@ func (q *Queue) claimAndRun(ctx context.Context, interactiveOnly bool) (bool, er
 	// enough for the reaper to reclaim it — cancel the work rather than let
 	// two nodes write the same result.
 	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	beat := time.NewTicker(q.opts.Lease / 3)
-	defer beat.Stop()
+	heartbeatDone := make(chan struct{})
+	defer func() { cancel(); <-heartbeatDone }()
 	go func() {
+		defer close(heartbeatDone)
+		defer beat.Stop()
 		for {
 			select {
 			case <-runCtx.Done():
