@@ -51,7 +51,7 @@ func (c *Client) addNativeTorrent(ctx context.Context, source, category string, 
 	if err != nil {
 		return "", fmt.Errorf("Runner native torrent source: %w", err)
 	}
-	sourceType := "url"
+	sourceType := "torrent_url"
 	switch strings.ToLower(uri.Scheme) {
 	case "magnet":
 		sourceType = "magnet"

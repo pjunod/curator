@@ -147,6 +147,13 @@ retained and only the selected episode association is detached. For
 is committed. Search prefers individual episodes and can fall back to a pack;
 the import and excess-output cleanup remain limited to selected episode scope.
 The operation stays bound to its selected copy, including additional copies.
+Its replacement download is the one returned by the operation's own accepted
+grab; an unrelated reservation does not satisfy it. Source exclusion
+is enforced at manual, scheduled and season-plan dispatch for the selected
+acquisition scope. An explicit sibling-only episode scope may still acquire
+the same pack for unaffected episodes; this request-local exclusion does not
+become a global blacklist. Late completion callbacks cannot reopen a terminal
+operation.
 
 The Media Detail UI exposes **Report**, **Mark bad & replace**,
 **Replace quality**, and **Delete** separately. Reports do not start

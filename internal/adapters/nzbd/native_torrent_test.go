@@ -46,6 +46,13 @@ func TestNativeTorrentUsesIndependentJSONAdmissionAndRequiredCapabilities(t *tes
 			if err != nil || handle != "42" {
 				t.Fatalf("handle=%q err=%v", handle, err)
 			}
+			expectedType := "torrent_url"
+			if strings.HasPrefix(source, "magnet:") {
+				expectedType = "magnet"
+			}
+			if posted["source"].(map[string]any)["type"] != expectedType {
+				t.Fatalf("native source type=%v want %q", posted["source"], expectedType)
+			}
 			if posted["source"].(map[string]any)["uri"] != source || posted["priority"] != float64(100) || posted["category"] != "movies" {
 				t.Fatalf("admission=%#v", posted)
 			}

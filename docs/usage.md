@@ -1439,8 +1439,10 @@ qBittorrent clients keep their own adapter.
 Native mode requires Runner's advertised `native-torrent-deliveries-v1` and
 `deliveries-v1` capabilities. An unsupported server gives an actionable error
 before admission; there is no compatibility-API fallback. Each Curator request
-uses Runner's JSON `/api/v1/jobs` source admission with its persisted transfer
-token, delivery intent, priority and explicit additional-copy intent. Replaying
+uses Runner's JSON `/api/v1/jobs` source admission (`source.type` is
+`torrent_url` for an HTTP torrent URL or `magnet` for a magnet URI), with its
+persisted transfer token, delivery intent, priority and explicit additional-copy
+intent. Replaying
 a request keeps that token; a fresh Grab uses a fresh request.
 
 The returned handle names the managed acquisition child. Its separately owned
