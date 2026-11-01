@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -592,7 +593,17 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 			return err
 		}
 	}
+	// The recheck below binds the verified bytes across the acknowledgement's
+	// network round trip, the one long external wait between verification and
+	// import. Without an acknowledgement in this attempt it is a second full
+	// read of a multi-gigabyte payload moments after the first, and it never
+	// covered the later waits (the import target lock) anyway: the bytes are
+	// bound where they are used, because placement (commitPlacement), the
+	// sidecar copy (copyAcceptedSidecar) and cleanup each re-hash the source
+	// against the manifest digest before acting on it.
+	acknowledged := false
 	if r.AckState == "pending" {
+		acknowledged = true
 		if ackErr := s.completeDeliveryAcceptance(ctx, cfg, receiptID); errors.Is(ackErr, ports.ErrDeliveryConflict) {
 			return ackErr
 		}
@@ -607,7 +618,7 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 			return fmt.Errorf("runner rejected the accepted delivery tuple")
 		}
 	}
-	if len(files) > 0 {
+	if len(files) > 0 && acknowledged {
 		if err := s.recheckDeliveryFiles(ctx, r, files); err != nil {
 			s.deliveryRetry(ctx, &r, err.Error())
 			return err
@@ -952,6 +963,7 @@ func (s *Service) verifyDeliveryManifest(ctx context.Context, cfg ports.ClientCo
 			if exists && prior.FileGeneration != "" && prior.FileGeneration != generation {
 				return verifiedDeliveryFile{}, fmt.Errorf("manifest file %q was replaced after its accepted observation", f.Path)
 			}
+			deliveryPayloadReads.Add(1)
 			h := sha256.New()
 			n, copyErr := copyHashContext(ctx, h, file)
 			after, statErr := file.Stat()
@@ -973,6 +985,10 @@ func (s *Service) verifyDeliveryManifest(ctx context.Context, cfg ports.ClientCo
 	}
 	return verified, nil
 }
+
+// deliveryPayloadReads counts full reads of Runner payload files, so tests can
+// pin how often an import attempt re-reads gigabytes it has already verified.
+var deliveryPayloadReads atomic.Int64
 
 // Reopen through os.Root and bind every component to the captured identities
 // and content before handing the absolute paths to the established placement
@@ -1037,6 +1053,7 @@ func (s *Service) recheckDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 			_ = parent.Close()
 			return fmt.Errorf("manifest file %q changed after verification", expected.relative)
 		}
+		deliveryPayloadReads.Add(1)
 		h := sha256.New()
 		n, copyErr := copyHashContext(ctx, h, f)
 		closeErr := f.Close()
