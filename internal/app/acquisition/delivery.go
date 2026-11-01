@@ -385,23 +385,26 @@ func hasQueuedDeliverySelection(dl sqlite.Download) bool {
 }
 
 func (s *Service) queueDeliveryImport(ctx context.Context, cfg ports.ClientConfig, dl sqlite.Download, r sqlite.DeliveryReceipt) {
-	// Lease writes touch only the next-attempt time: the scheduler's snapshot
-	// of error, attempts and blocked-since may already be older than what a
-	// still-running attempt has written.
+	// The lease write also persists what the scheduler resolved in r (a new
+	// association clears its error and counts the attempt), so it writes the
+	// whole retry state, not only the next-attempt time.
 	if s.ImportRunning(dl.ID) {
-		if err := s.db.SetDeliveryLease(ctx, r.ID, time.Now().Add(5*time.Minute)); err != nil {
+		r.NextAttemptAt = time.Now().Add(5 * time.Minute)
+		if err := s.db.SetDeliveryRetry(ctx, r); err != nil {
 			s.log.Warn("delivery worker lease write failed", "delivery", r.Delivery.DeliveryID, "err", err)
 		}
 		return
 	}
 	// Persist a short lease before enqueue so repeated polls cannot keep the
 	// same oldest rows at the front of the bounded journal query.
-	if err := s.db.SetDeliveryLease(ctx, r.ID, time.Now().Add(5*time.Minute)); err != nil {
+	r.NextAttemptAt = time.Now().Add(5 * time.Minute)
+	if err := s.db.SetDeliveryRetry(ctx, r); err != nil {
 		s.log.Warn("delivery worker lease write failed", "delivery", r.Delivery.DeliveryID, "err", err)
 		return
 	}
 	if !s.enqueueDeliveryImport(ctx, dl, cfg, r.ID) {
-		if err := s.db.SetDeliveryLease(ctx, r.ID, time.Time{}); err != nil {
+		r.NextAttemptAt = time.Time{}
+		if err := s.db.SetDeliveryRetry(ctx, r); err != nil {
 			s.log.Warn("delivery queue retry write failed", "delivery", r.Delivery.DeliveryID, "err", err)
 		}
 		s.log.Warn("delivery import queue full; will retry", "client", cfg.Name, "delivery", r.Delivery.DeliveryID)

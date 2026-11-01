@@ -342,8 +342,7 @@ payload (nothing importable, every file declined by policy), the retry waits
 about as long as the delivery has already been blocked — up to once an hour —
 and a repeat of the same failure adds no new history entry or notification.
 While Runner's acknowledgement is still pending the 5-minute pace holds.
-**Retry** in Activity or Resolve retries one immediately and starts the wait
-over. The
+**Retry** in Activity or Resolve retries one immediately. The
 lifecycle trace shows the cause and next attempt; a rejected or conflicting
 manifest requires review. A missing path in a legacy client row
 still uses the explicit Retry action described above.

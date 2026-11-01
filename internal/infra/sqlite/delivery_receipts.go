@@ -749,18 +749,6 @@ func (d *DB) SetDeliveryRetry(ctx context.Context, r DeliveryReceipt, providerDe
 	return requireDeliveryTransition(res, err)
 }
 
-// SetDeliveryLease moves only a receipt's next attempt. The scheduler holds
-// a snapshot of the receipt; writing its error, attempts or blocked-since
-// back would overwrite what a still-running attempt recorded.
-func (d *DB) SetDeliveryLease(ctx context.Context, receiptID int64, next time.Time) error {
-	at := int64(0)
-	if !next.IsZero() {
-		at = next.UnixMilli()
-	}
-	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET next_attempt_at=?,updated_at=? WHERE id=? AND state!='conflict'`, at, time.Now().UnixMilli(), receiptID)
-	return requireDeliveryTransition(res, err)
-}
-
 func (d *DB) DeliveryAcknowledgementRetryDue(ctx context.Context, receiptID int64, now time.Time) (bool, error) {
 	var due int
 	err := d.R.QueryRowContext(ctx, `SELECT CASE WHEN attempts>0 AND MAX(next_attempt_at,provider_retry_after)>? THEN 0 WHEN provider_retry_after>? THEN 0 ELSE 1 END FROM runner_delivery_receipts WHERE id=? AND ack_state='pending' AND consumer_receipt_id!=''`, now.UnixMilli(), now.UnixMilli(), receiptID).Scan(&due)
@@ -952,7 +940,7 @@ func (d *DB) DeliveryRetryDetails(ctx context.Context, receiptID int64) (Deliver
 
 func (d *DB) ForceDeliveryRetryNow(ctx context.Context, receiptID int64) error {
 	now := time.Now().UnixMilli()
-	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET next_attempt_at=CASE WHEN provider_retry_after>? THEN provider_retry_after ELSE 0 END,attempts=0,blocked_since=0,updated_at=? WHERE id=? AND state!='conflict'`, now, now, receiptID)
+	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET next_attempt_at=CASE WHEN provider_retry_after>? THEN provider_retry_after ELSE 0 END,updated_at=? WHERE id=? AND state!='conflict'`, now, now, receiptID)
 	return requireDeliveryTransition(res, err)
 }
 

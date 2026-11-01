@@ -699,10 +699,21 @@ func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.De
 	if ledgerErr != nil || ledger.ManualAdditional {
 		return "", "", false
 	}
-	item, err := s.db.GetMediaItemFull(ctx, r.MediaItemID)
-	if err != nil {
+	scope, ok := s.deliveryLibraryScope(ctx, r, f)
+	if !ok {
 		return "", "", false
 	}
+	if path, generation, ok := deliveryExactLibraryCopy(ctx, s.db, f, scope, requiredPath); ok {
+		return path, generation, true
+	}
+	// Different bytes. Only a verified, unflagged library file that the
+	// candidate does not improve on makes it redundant — and never on a
+	// borrowed episode: that is the indexer's word, and a different file
+	// judged "no better" could be a different episode, which cleanup deletes.
+	if scope.identityBorrowed {
+		return "", "", false
+	}
+	item := scope.item
 	profileID := item.QualityProfileID
 	if r.CopyID != 0 {
 		copy, err := s.db.GetMediaCopy(ctx, r.MediaItemID, r.CopyID)
@@ -716,79 +727,25 @@ func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.De
 		return "", "", false
 	}
 	candidate := quality.Quality{Source: quality.Source(filename.BookQualitySource(f.relative))}
-	if !quality.IsBookFormat(candidate.Source) {
-		candidate = parser.Parse(filepath.Base(f.relative)).Quality
+	if quality.IsBookFormat(candidate.Source) {
+		// Native books are not probed: only exact bytes (above) prove them.
+		return "", "", false
 	}
-	download, downloadErr := s.db.GetDownload(ctx, r.DownloadID)
-	if candidate.Source == quality.SourceUnknown || (candidate.Resolution == 0 && !quality.IsBookFormat(candidate.Source)) {
-		if downloadErr == nil && download.Quality.Source != quality.SourceUnknown {
-			candidate = download.Quality
+	candidate = parser.Parse(filepath.Base(f.relative)).Quality
+	if candidate.Source == quality.SourceUnknown || candidate.Resolution == 0 {
+		if scope.downloadErr == nil && scope.download.Quality.Source != quality.SourceUnknown {
+			candidate = scope.download.Quality
 		}
 	}
 	if candidate.Source == quality.SourceUnknown || !profile.Acceptable(candidate) {
 		return "", "", false
 	}
-	mediaFiles, err := s.db.ListFilesForItem(ctx, r.MediaItemID)
-	if err != nil {
-		return "", "", false
-	}
-	expectedEpisodes := []int64(nil)
-	// identityBorrowed limits the proof to exact bytes: a borrowed episode is
-	// the indexer's word, and only identical bytes to a verified library file
-	// make that word irrelevant. A different file judged "no better" on a
-	// borrowed episode could be a different episode, and cleanup deletes it.
-	identityBorrowed := false
-	if item.Kind == domain.KindSeries {
-		parsed := parser.Parse(filepath.Base(f.relative))
-		// An obfuscated duplicate ("321d96….mkv") names no episode; borrow the
-		// grabbed release's, under the same conditions the importer uses, or a
-		// byte-identical copy of an imported episode can never be proven
-		// redundant and is retried and retained forever.
-		if downloadErr == nil {
-			season, episodes := grabbedEpisodeTargets(download.WantableIDs, item.ID)
-			if borrowed, ok := releaseEpisodeIdentity(parsed, f.relative, download.ReleaseTitle, deliveryPayloadMediaCount(r), season, episodes); ok {
-				parsed, identityBorrowed = borrowed, true
-			}
-		}
-		if parsed.Season < 0 || len(parsed.Episodes) == 0 {
-			return "", "", false
-		}
-		for _, season := range item.Seasons {
-			if season.Number != parsed.Season {
-				continue
-			}
-			for _, number := range parsed.Episodes {
-				found := false
-				for _, episode := range season.Episodes {
-					if episode.EpisodeNumber == number {
-						expectedEpisodes = append(expectedEpisodes, episode.ID)
-						found = true
-						break
-					}
-				}
-				if !found {
-					return "", "", false
-				}
-			}
-		}
-		if len(expectedEpisodes) != len(parsed.Episodes) {
-			return "", "", false
-		}
-		slices.Sort(expectedEpisodes)
-	}
-	for _, existing := range mediaFiles {
-		if existing.MediaItemID != r.MediaItemID || existing.CopyID != r.CopyID || !existing.QualityKnown || existing.FileGeneration == "" || !existing.Provenance.Verified(existing.Confidence) || existing.Provenance == mediainfo.ProvenanceFailed || existing.Provenance == mediainfo.ProvenanceImplausible {
+	for _, existing := range scope.files {
+		if !existing.QualityKnown || !existing.Provenance.Verified(existing.Confidence) || existing.Provenance == mediainfo.ProvenanceFailed || existing.Provenance == mediainfo.ProvenanceImplausible {
 			continue
 		}
 		if requiredPath != "" && filepath.Clean(existing.Path) != filepath.Clean(requiredPath) {
 			continue
-		}
-		if item.Kind == domain.KindSeries {
-			got := append([]int64(nil), existing.EpisodeIDs...)
-			slices.Sort(got)
-			if !slices.Equal(got, expectedEpisodes) {
-				continue
-			}
 		}
 		// A report is an independent review signal, not quality or planner
 		// evidence. Any open flag (or inability to read the flag state) blocks
@@ -800,52 +757,142 @@ func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.De
 		if replacementFileMarkedBad(ctx, s.db, existing.ID, existing.FileGeneration) {
 			continue
 		}
+		if !filename.IsVideo(existing.Path) || !profile.Acceptable(existing.Quality) {
+			continue
+		}
 		before, err := os.Lstat(existing.Path)
 		if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
-		// Exact bytes are stronger redundancy evidence than a second probe:
-		// the existing file's associated quality is already verified, its
-		// episode coverage was checked above, and the accepted manifest bytes
-		// are identical. This also lets exact duplicate detection work with a
-		// manifest whose filename is incomplete while never trusting a title
-		// alone.
-		existingDigest, existingSize, digestErr := fileDigest(ctx, existing.Path)
-		afterDigest, afterDigestErr := os.Lstat(existing.Path)
-		exactBytes := digestErr == nil && afterDigestErr == nil && os.SameFile(before, afterDigest) &&
-			deliveryFileGeneration(before) != "" && deliveryFileGeneration(before) == deliveryFileGeneration(afterDigest) &&
-			existing.QualityKnown && existing.Provenance.Verified(existing.Confidence) &&
-			existingSize == f.size && existingDigest == f.digest
-		if quality.IsBookFormat(candidate.Source) {
-			// Native books are not probed. Only exact-content duplication with a
-			// trusted existing format can establish redundancy for them.
-			if exactBytes && profile.Acceptable(existing.Quality) && !profile.Upgrade(candidate, nil, existing.Quality, true, quality.Audio{}) {
-				return existing.Path, deliveryFileGeneration(afterDigest), true
-			}
+		candidateQuality, candidateAudio, sourceGeneration, ok := freshDeliveryVideoQuality(f.absolute, candidate, item.Runtime)
+		if !ok || sourceGeneration != f.generation || !profile.LanguageAcceptable(candidateAudio.Languages) || !profile.LanguageMet(candidateAudio) {
 			continue
 		}
-		if exactBytes && profile.Acceptable(existing.Quality) {
-			return existing.Path, deliveryFileGeneration(afterDigest), true
-		}
-		if identityBorrowed {
+		currentQuality, currentAudio, _, ok := freshDeliveryVideoQuality(existing.Path, existing.Quality, item.Runtime)
+		if !ok {
 			continue
 		}
-		if filename.IsVideo(existing.Path) {
-			candidateQuality, candidateAudio, sourceGeneration, ok := freshDeliveryVideoQuality(f.absolute, candidate, item.Runtime)
-			if !ok || sourceGeneration != f.generation || !profile.LanguageAcceptable(candidateAudio.Languages) || !profile.LanguageMet(candidateAudio) {
+		if profile.Upgrade(candidateQuality, candidateAudio.Languages, currentQuality, true, currentAudio) {
+			continue
+		}
+		after, statErr := os.Lstat(existing.Path)
+		if statErr == nil && os.SameFile(before, after) && deliveryFileGeneration(before) != "" && deliveryFileGeneration(before) == deliveryFileGeneration(after) {
+			return existing.Path, deliveryFileGeneration(after), true
+		}
+	}
+	return "", "", false
+}
+
+// deliveryLibraryScope is what a payload file must match in the library: the
+// receipt's item and copy, and — for a series — exactly the episodes the file
+// is for, borrowed from the grabbed release under the importer's own
+// conditions when the file name has none (obfuscated posts).
+type deliveryLibraryScope struct {
+	item             domain.MediaItem
+	files            []domain.MediaFile
+	expectedEpisodes []int64
+	identityBorrowed bool
+	download         sqlite.Download
+	downloadErr      error
+}
+
+func (s *Service) deliveryLibraryScope(ctx context.Context, r sqlite.DeliveryReceipt, f verifiedDeliveryFile) (deliveryLibraryScope, bool) {
+	var scope deliveryLibraryScope
+	item, err := s.db.GetMediaItemFull(ctx, r.MediaItemID)
+	if err != nil {
+		return scope, false
+	}
+	scope.item = item
+	scope.download, scope.downloadErr = s.db.GetDownload(ctx, r.DownloadID)
+	if item.Kind == domain.KindSeries {
+		parsed := parser.Parse(filepath.Base(f.relative))
+		if scope.downloadErr == nil {
+			season, episodes := grabbedEpisodeTargets(scope.download.WantableIDs, item.ID)
+			if borrowed, ok := releaseEpisodeIdentity(parsed, f.relative, scope.download.ReleaseTitle, deliveryPayloadMediaCount(r), season, episodes); ok {
+				parsed, scope.identityBorrowed = borrowed, true
+			}
+		}
+		if parsed.Season < 0 || len(parsed.Episodes) == 0 {
+			return scope, false
+		}
+		for _, season := range item.Seasons {
+			if season.Number != parsed.Season {
 				continue
 			}
-			currentQuality, currentAudio, _, ok := freshDeliveryVideoQuality(existing.Path, existing.Quality, item.Runtime)
-			if !ok {
+			for _, number := range parsed.Episodes {
+				found := false
+				for _, episode := range season.Episodes {
+					if episode.EpisodeNumber == number {
+						scope.expectedEpisodes = append(scope.expectedEpisodes, episode.ID)
+						found = true
+						break
+					}
+				}
+				if !found {
+					return scope, false
+				}
+			}
+		}
+		if len(scope.expectedEpisodes) != len(parsed.Episodes) {
+			return scope, false
+		}
+		slices.Sort(scope.expectedEpisodes)
+	}
+	files, err := s.db.ListFilesForItem(ctx, r.MediaItemID)
+	if err != nil {
+		return scope, false
+	}
+	for _, existing := range files {
+		if existing.MediaItemID != r.MediaItemID || existing.CopyID != r.CopyID || existing.FileGeneration == "" {
+			continue
+		}
+		if item.Kind == domain.KindSeries {
+			got := append([]int64(nil), existing.EpisodeIDs...)
+			slices.Sort(got)
+			if !slices.Equal(got, scope.expectedEpisodes) {
 				continue
 			}
-			if profile.Upgrade(candidateQuality, candidateAudio.Languages, currentQuality, true, currentAudio) {
-				continue
-			}
-			after, statErr := os.Lstat(existing.Path)
-			if statErr == nil && os.SameFile(before, after) && deliveryFileGeneration(before) != "" && deliveryFileGeneration(before) == deliveryFileGeneration(after) {
-				return existing.Path, deliveryFileGeneration(after), true
-			}
+		}
+		scope.files = append(scope.files, existing)
+	}
+	return scope, true
+}
+
+// deliveryExactLibraryCopy finds a library file in scope holding exactly the
+// payload file's bytes, in the same format. Identical bytes make the payload
+// copy redundant whatever the library file's standing — unverified quality,
+// an open review flag, an implausible runtime, a profile that would reject
+// it: deleting the payload loses nothing the library does
+// not already hold. (Paul, 2026-11-01: six
+// copies of a one-minute fake were imported over one another, and the five
+// superseded payloads were retained forever because the surviving library
+// copy was flagged.) The digest is bound to one stable file generation.
+func deliveryExactLibraryCopy(ctx context.Context, db *sqlite.DB, f verifiedDeliveryFile, scope deliveryLibraryScope, requiredPath string) (string, string, bool) {
+	for _, existing := range scope.files {
+		if requiredPath != "" && filepath.Clean(existing.Path) != filepath.Clean(requiredPath) {
+			continue
+		}
+		// The same format, too: a book's format is its extension, so identical
+		// bytes delivered as .epub over a library .pdf are a format change the
+		// import must make, not a duplicate.
+		if !strings.EqualFold(filepath.Ext(existing.Path), filepath.Ext(f.relative)) {
+			continue
+		}
+		// An in-flight replace-bad operation owns the fate of the file it
+		// selected and of the payloads that answer it; it is not this proof's
+		// to settle.
+		if replacementFileMarkedBad(ctx, db, existing.ID, existing.FileGeneration) {
+			continue
+		}
+		before, err := os.Lstat(existing.Path)
+		if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() != f.size {
+			continue
+		}
+		digest, size, err := fileDigest(ctx, existing.Path)
+		after, statErr := os.Lstat(existing.Path)
+		if err == nil && statErr == nil && os.SameFile(before, after) && deliveryFileGeneration(before) != "" &&
+			deliveryFileGeneration(before) == deliveryFileGeneration(after) && size == f.size && digest == f.digest {
+			return existing.Path, deliveryFileGeneration(after), true
 		}
 	}
 	return "", "", false
@@ -1688,6 +1735,14 @@ func (s *Service) removeVerifiedDeliveryFile(ctx context.Context, r sqlite.Deliv
 			return err
 		}
 		libraryEvidencePath, libraryEvidenceGeneration, ok = s.deliveryLibraryPlacementProof(ctx, r, f, row.LibraryPath, expectedLibraryGeneration, expectedLibraryIdentity)
+		if !ok && !row.ManualAdditional {
+			// The placement was superseded — typically by a later copy of the
+			// same release imported over it. If the library still holds these
+			// exact bytes for the same episodes, this copy is redundant.
+			if scope, scoped := s.deliveryLibraryScope(ctx, r, f); scoped {
+				libraryEvidencePath, libraryEvidenceGeneration, ok = deliveryExactLibraryCopy(ctx, s.db, f, scope, "")
+			}
+		}
 		if !ok {
 			return fmt.Errorf("verified library placement is no longer present")
 		}

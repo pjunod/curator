@@ -44,9 +44,12 @@ That turned all three of today's defects into 1,000-attempt loops.
 - An automatic retry that ends in exactly the failure last recorded in the
   download's trace returns it to failed without a new history row or
   notification.
-- **Retry** and Resolve re-imports reset the attempt count and blocked time.
-- Lease writes touch only the next-attempt time (they used to write back the
-  scheduler's possibly stale error, attempts and blocked-since).
+- A Resolve re-import of an imported delivery resets attempts and blocked
+  time; **Retry** retries at once and keeps them (the pace is elapsed-time
+  based, so the count no longer matters).
+- Not changed: the scheduler's lease write still writes its snapshot of the
+  retry state, because that write is also how a freshly resolved association
+  (cleared error, counted attempt) is persisted.
 
 **Review** (adversarial agent): no deletion-safety findings. Addressed: the
 zero-media guard created its own forever loop and skipped the ledger (now it
@@ -59,8 +62,8 @@ repeat check used the receipt's error, which acknowledgement and verification
 failures overwrite (duplicates returned during a Runner outage; now it reads
 the download's trace); ack failures doubled the backoff (now elapsed-time
 based); joined ledger/proof errors counted as settled; a pending ack waited on
-the import's backoff; attempts never reset on Retry or re-import; the lease
-write's stale snapshot. The 6-hour ceiling and the restart-time reset were
+the import's backoff; attempts never reset on re-import. The lease write's
+stale snapshot was left (see above). The 6-hour ceiling and the restart-time reset were
 dropped for a 1-hour ceiling: "settled" includes verdicts that clear on their
 own (an episode not yet in metadata), and an hour bounds that without a reset
 that re-hashes every stuck payload on each restart.
@@ -74,13 +77,25 @@ once, and 2.9 GB duplicate cleanups running 225–275 s each on the cleanup
 workers alongside them. The HIG S05E04/E06 duplicates are draining as
 redundant.
 
-**Also found, not changed (decision for Paul):** Good.Trouble S02E06 AVON is a
-66 MB, one-minute fake that was imported six times, each copy replacing the
-last. Five payloads are `placed`/`retry` ("verified library placement is no
-longer present") and retry hourly. They are copies of the same release as the current
-library file, which is flagged implausible, and the redundancy proof
-requires an unflagged one. Proposed: let an exact-bytes match against the
-current library file prove redundancy even when that file is flagged.
+**Identical bytes are redundant** (approved by Paul). Good.Trouble S02E06 AVON
+is a 66 MB, one-minute fake that was imported six times, each copy placed over
+the last. The five superseded payloads sat `placed`/`retry` ("verified library
+placement is no longer present"), retried hourly, because the surviving
+library copy is flagged implausible and the proof required an unflagged file.
+
+- A library file in scope (same item, copy and episodes, same format) holding
+  exactly the payload's bytes — digest bound to one stable file generation —
+  now proves the payload redundant whatever that file's standing: unverified
+  quality, an open review flag, an implausible runtime, a profile that would
+  reject it. Deleting the payload loses nothing the library does not hold.
+- A `placed` row whose placement was superseded falls back to that proof.
+- Kept out: a file selected by an in-flight replace-bad operation (that
+  operation owns it and the payloads answering it), and a different extension
+  (identical bytes delivered as .epub over a library .pdf are a format change).
+- Tests that asserted the old rule (review flag, copy profile) now expect
+  redundancy; a new test covers the superseded placement (fails before with
+  the production error) and refuses one whose placement now holds different
+  bytes.
 
 ## Imports no longer wait behind cleanup — 2026-11-01 · v0.38.5
 

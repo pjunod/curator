@@ -1222,7 +1222,11 @@ Native Runner downloads have separate publication and processing-source
 ownership. Curator accepts the immutable publication manifest, then records
 per-file import and cleanup outcomes. It removes only files with committed
 placement, same-copy redundancy evidence, or an approved replacement scope;
-unknown and recoverable siblings stay in Resolve. A release's sample clip is
+unknown and recoverable siblings stay in Resolve. A payload file whose exact
+bytes the library already holds for the same episodes, in the same format, is
+redundant even when that library file is flagged or of unverified quality —
+including a copy whose own placement a later copy of the same release
+replaced. A file selected by an in-progress replacement is left to it. A release's sample clip is
 never imported: the episode beside it imports normally and the sample is
 recorded as a known incidental file, including when Resolve's selection
 includes it. A manifest that holds only a sample (or only sidecars) is a

@@ -1280,8 +1280,10 @@ func TestDeliveryRedundancyRequiresHealthySameCopyQualityEvidence(t *testing.T) 
 		{name: "wrong copy", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, wrongCopy: true},
 		{name: "unhealthy file", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceImplausible},
 		{name: "same-size corruption after indexing", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", tamperTarget: true},
-		{name: "associated copy profile rejects candidate", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", alternateCopyProfile: true},
-		{name: "open review flag blocks redundancy", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", reviewFlag: true},
+		// Identical bytes are redundant whatever the library file's standing: the
+		// library already holds them (Paul, 2026-11-01).
+		{name: "associated copy profile rejects candidate", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", alternateCopyProfile: true, wantRedundant: true},
+		{name: "open review flag does not protect an identical copy", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", reviewFlag: true, wantRedundant: true},
 		{name: "missing target", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, removeTarget: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1709,27 +1711,115 @@ func TestSettledFailureDuringAckOutageNotifiesOnceAndKeepsAckPace(t *testing.T) 
 	}
 }
 
-// A person's Retry starts the ladder over; it must not inherit an hour's wait
-// from failures before it.
-func TestOperatorRetryResetsTheBackoff(t *testing.T) {
+// A Resolve re-import of an imported delivery starts its retry pace over: the
+// blocked time on the receipt belongs to failures before the import.
+func TestDeliveryReimportStartsTheRetryPaceOver(t *testing.T) {
 	ctx := context.Background()
 	protocol := &deliveryImportClient{}
-	_, db, dl, _, _ := deliveryImportFixture(t, protocol)
+	svc, db, dl, cfg, _ := deliveryImportFixture(t, protocol)
 	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET attempts=40,blocked_since=? WHERE id=?`, time.Now().Add(-10*time.Hour).UnixMilli(), receiptID); err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil || r.State != "imported" {
+		t.Fatalf("receipt = %+v err=%v, want imported", r, err)
+	}
+	fresh, err := db.GetDownload(ctx, dl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh.State = "awaiting_import"
+	fresh.Handoff = append(fresh.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(), Paths: []string{filepath.Join(r.MappedPath, epRelease+".mkv")}})
+	if err := db.QueueDeliveryReimport(ctx, r, fresh); err != nil {
+		t.Fatal(err)
+	}
+	after, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil || after.Attempts != 0 || after.BlockedSince.UnixMilli() > 0 {
+		t.Fatalf("after re-import: attempts=%d blocked=%v err=%v, want a fresh pace", after.Attempts, after.BlockedSince, err)
+	}
+}
+
+// Field report 2026-11-01: a one-minute fake was imported six times, each
+// copy placed over the last. The five earlier payloads stayed "placed" and
+// retried cleanup hourly forever ("verified library placement is no longer
+// present"), because the surviving library copy was flagged implausible. A
+// superseded placement whose exact bytes are still in the library is
+// redundant, whatever that file's standing.
+func TestSupersededPlacementWithIdenticalLibraryBytesIsCleanedUp(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	svc, db, dl, cfg, publication := deliveryImportFixture(t, protocol)
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, epRelease+".mkv")
+	if err != nil || row.Disposition != "placed" || row.LibraryPath == "" {
+		t.Fatalf("fixture row = %+v err=%v, want placed", row, err)
+	}
+	// A later copy of the same release lands over the placement: same bytes,
+	// new inode.
+	library := row.LibraryPath
+	bytes, err := os.ReadFile(library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(library+".next", bytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(library+".next", library); err != nil {
+		t.Fatal(err)
+	}
+	files, err := db.ListFilesForItem(ctx, dl.MediaItemID)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("library files = %+v err=%v", files, err)
+	}
+	if err := db.SetFileQualityFrom(ctx, files[0].ID, files[0].Quality, mediainfo.ProvenanceImplausible, mediainfo.ConfidenceNone); err != nil {
+		t.Fatal(err)
+	}
 	r, err := db.DeliveryReceiptByID(ctx, receiptID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Attempts, r.BlockedSince, r.NextAttemptAt = 40, time.Now().Add(-10*time.Hour), time.Now().Add(time.Hour)
-	if err := db.SetDeliveryRetry(ctx, r); err != nil {
+	if err := svc.removeVerifiedDeliveryFile(ctx, r, row); err != nil {
+		t.Fatalf("superseded placement with identical library bytes must be removable, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(publication, epRelease+".mkv")); !os.IsNotExist(err) {
+		t.Fatalf("payload copy still present: %v", err)
+	}
+	if got, err := os.ReadFile(library); err != nil || string(got) != string(bytes) {
+		t.Fatalf("library copy changed: %q err=%v", got, err)
+	}
+
+	// Different bytes at the superseded placement prove nothing.
+	svc2, db2, dl2, cfg2, publication2 := deliveryImportFixture(t, &deliveryImportClient{})
+	receipt2 := receiptIDFor(t, db2, dl2.ID)
+	if err := svc2.runDeliveryImport(ctx, dl2, cfg2, receipt2); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.ForceDeliveryRetryNow(ctx, receiptID); err != nil {
+	row2, err := db2.DeliveryFileOutcomeByPath(ctx, receipt2, epRelease+".mkv")
+	if err != nil {
 		t.Fatal(err)
 	}
-	after, err := db.DeliveryReceiptByID(ctx, receiptID)
-	if err != nil || after.Attempts != 0 || !after.BlockedSince.IsZero() && after.BlockedSince.UnixMilli() != 0 || after.NextAttemptAt.After(time.Now()) {
-		t.Fatalf("after Retry: attempts=%d blocked=%v next=%v err=%v, want a fresh ladder due now", after.Attempts, after.BlockedSince, after.NextAttemptAt, err)
+	if err := os.WriteFile(row2.LibraryPath+".next", []byte("other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(row2.LibraryPath+".next", row2.LibraryPath); err != nil {
+		t.Fatal(err)
+	}
+	r2, err := db2.DeliveryReceiptByID(ctx, receipt2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc2.removeVerifiedDeliveryFile(ctx, r2, row2); err == nil {
+		t.Fatal("cleanup removed a payload whose superseded placement now holds different bytes")
+	}
+	if _, err := os.Stat(filepath.Join(publication2, epRelease+".mkv")); err != nil {
+		t.Fatalf("payload removed without proof: %v", err)
 	}
 }
 
