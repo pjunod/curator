@@ -229,7 +229,7 @@ test('native Runner torrent settings keep explicit protocol choice and unsupport
   await settings.getByRole('button', { name: 'Test', exact: true }).last().click()
   await expect(settings.getByText(/unsupported: native-torrent-deliveries-v1 is required/)).toBeVisible()
   expect(tested?.type).toBe('runner-torrent')
-  expect(tested?.url).toBe('http://runner.fixture:6789')
+  expect(tested?.url).toBe('runner.fixture:6789')
   await settings.getByText(/unsupported: native-torrent-deliveries-v1 is required/).scrollIntoViewIfNeeded()
   await inViewport(settings.getByRole('button', { name: 'Add client', exact: true }))
   await screenshot(page, 'native-runner-torrent-settings')
