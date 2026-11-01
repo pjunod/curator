@@ -1639,6 +1639,89 @@ func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 	return items, nil
 }
 
+const listRetainedFailedDownloads = `-- name: ListRetainedFailedDownloads :many
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation FROM downloads WHERE state='failed' AND superseded=0 AND payload_removed=0 ORDER BY id
+`
+
+func (q *Queries) ListRetainedFailedDownloads(ctx context.Context) ([]Download, error) {
+	rows, err := q.db.QueryContext(ctx, listRetainedFailedDownloads)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Download
+	for rows.Next() {
+		var i Download
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.CopyID,
+			&i.Wantables,
+			&i.Season,
+			&i.ReleaseTitle,
+			&i.Indexer,
+			&i.Protocol,
+			&i.Quality,
+			&i.Size,
+			&i.ClientID,
+			&i.Handle,
+			&i.State,
+			&i.Progress,
+			&i.Error,
+			&i.SavePath,
+			&i.ImportPath,
+			&i.HandoffLog,
+			&i.AddedAt,
+			&i.Transfer,
+			&i.PayloadRemoved,
+			&i.MatchEvidence,
+			&i.RunnerControl,
+			&i.PlanID,
+			&i.CandidateKey,
+			&i.SubmissionPhase,
+			&i.ExecutionPayload,
+			&i.ReservedEpisodes,
+			&i.ParkedReason,
+			&i.ParkedAt,
+			&i.Superseded,
+			&i.Observation,
+			&i.CleanupPending,
+			&i.UpdatedAt,
+			&i.ActivityDismissed,
+			&i.GenerationKey,
+			&i.Intent,
+			&i.RequestID,
+			&i.RequestFingerprint,
+			&i.BlacklistOverride,
+			&i.DeliveryExpected,
+			&i.RequestTokenIdempotent,
+			&i.ManualRetryAt,
+			&i.ManualRetryAttempts,
+			&i.ManualBlockedAt,
+			&i.ReplacementOperationID,
+			&i.SourceGuid,
+			&i.SourceIndexerID,
+			&i.RunnerInstanceID,
+			&i.RunnerAdmissionGeneration,
+			&i.RunnerSubmissionRetryAt,
+			&i.RunnerSubmissionRetryAttempts,
+			&i.RunnerSubmissionBlockedAt,
+			&i.ProviderRetryAfter,
+			&i.ExactTransferCorrelation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markPayloadRemoved = `-- name: MarkPayloadRemoved :exec
 UPDATE downloads SET payload_removed = 1, updated_at = ? WHERE id = ?
 `

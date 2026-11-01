@@ -1229,6 +1229,14 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 				"release", req.Title, "download", existing)
 			return existing, nil
 		}
+		// Its bytes already arrived here and failed to import. The payload is
+		// retained and retried in place; fetching the same bytes again
+		// cannot change the verdict and only spends indexer quota.
+		if existing := s.deliveredAwaitingImport(ctx, req.Title); existing != 0 {
+			s.log.Info("grab: release already delivered and awaiting import; not grabbing it again",
+				"release", req.Title, "download", existing)
+			return 0, fmt.Errorf("%w (download %d)", ErrReleaseAwaitingImport, existing)
+		}
 	}
 
 	var base string

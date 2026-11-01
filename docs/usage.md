@@ -747,12 +747,22 @@ second copy of 90 GB. Titles are compared with the separators folded, because
 `True.Lies-HDS` and `True Lies HDS` are one release and indexers disagree
 about punctuation.
 
+Nor will automation grab a release whose bytes are **already here**: a
+download that arrived, failed to import, and whose payload is still retained
+is retried in place, so fetching the identical release again could only
+produce the identical failure. Candidate selection passes over that release
+and takes a different one if the indexer has it. Once the retained payload is
+removed (or imported), the release is eligible again. A manual grab is never
+refused for this.
+
 Replacement is bounded too. When a download fails, Monarr searches for a
 replacement immediately — that is what you want the first time and the second
 time. After **three failed grabs for the same want inside twelve hours** it
 stops, records `regrab_capped`, and leaves the item wanted. Five releases of
 one movie in ten hours is not persistence; it is a loop with your bandwidth
-as its budget. A manual grab is never capped.
+as its budget. The cap applies to every automatic path — the RSS sync, Auto
+search, the backlog pass and the replacement search. A manual grab is never
+capped.
 
 ## Interactive search
 
@@ -843,7 +853,7 @@ Common reasons, and what they mean:
 |---|---|
 | `… does not improve on the … already here (profile "X")` | Only automation is gated by the profile. A manual import is the override and goes ahead anyway. |
 | `no known episodes for S20 [18 19 20]` | monarr has no episode records for those numbers — refresh the series metadata first. |
-| `cannot determine episodes from "<name>"` | The filename carries no `S00E00` pattern monarr recognises. |
+| `cannot determine episodes from "<name>"` | Neither the filename nor the grabbed release identifies the episode. An obfuscated file (a hash such as `321d96….mkv`) imports under its grabbed release automatically when it is the only media file in the payload and the release names specific episodes; a season pack or a payload of several anonymous files cannot be assigned safely — use **Manual import** and choose the episode. |
 | `item has no library folder assigned` | This can remain on older rows created before the add/grab guard. Press **Assign folder**: the form opens with Monarr's default root and exact folder name filled in. Saving queues every affected failed import automatically. New search/add and grab requests are refused before downloading when no destination exists. |
 
 A **manual** import is never blocked by the quality profile: you pointed at

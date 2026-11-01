@@ -153,7 +153,7 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 			continue
 		}
 		for _, r := range releases {
-			if s.isBlocklisted(ctx, r.Title, r.Indexer) {
+			if s.skipCandidate(ctx, r.Title, r.Indexer) {
 				continue
 			}
 			p := parser.Parse(r.Title)
@@ -200,6 +200,14 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 				fresh, err := s.wantableFromID(ctx, string(w.ID()))
 				if err != nil || !fresh.Monitored() || len(s.notInFlight(ctx, []domain.Wantable{fresh})) == 0 {
 					unlock()
+					continue
+				}
+				// RSS is an automatic grab like any other; the regrab cap is
+				// what stops a wantable whose every grab fails from cycling.
+				if capped, spent := s.regrabCapped(ctx, fresh); capped {
+					unlock()
+					s.log.Info("rss: regrab capped; not grabbing", "release", r.Title,
+						"wantable", fresh.ID(), "failed_grabs", spent)
 					continue
 				}
 				freshProfile, err := s.db.GetProfile(ctx, fresh.ProfileID())
@@ -477,7 +485,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 			eligible := func(rs []ports.Release) bool {
 				eligible := false
 				for _, release := range rs {
-					if s.isBlocklisted(ctx, release.Title, release.Indexer) {
+					if s.skipCandidate(ctx, release.Title, release.Indexer) {
 						continue
 					}
 					parsed := parser.Parse(release.Title)
@@ -553,7 +561,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 	for _, r := range deduplicateReleases(releases) {
 		tally.Seen++
 
-		if s.isBlocklisted(ctx, r.Title, r.Indexer) {
+		if s.skipCandidate(ctx, r.Title, r.Indexer) {
 			continue
 		}
 		p := parser.Parse(r.Title)

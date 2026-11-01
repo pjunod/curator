@@ -486,6 +486,14 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 				p.Episodes = target.Episodes
 			}
 		}
+		if item.Kind == domain.KindSeries {
+			if fromRelease, ok := releaseEpisodeIdentity(p, src, dl.ReleaseTitle, len(videos)); ok {
+				p = fromRelease
+				s.log.Info("import: file name carries no episode; using the grabbed release",
+					"release", dl.ReleaseTitle, "file", filepath.Base(src),
+					"season", p.Season, "episodes", p.Episodes)
+			}
+		}
 		q := p.Quality
 		if item.Kind == domain.KindBook {
 			q = bookQualities[fileIndex]
@@ -720,6 +728,43 @@ func (s *Service) checkDelivered(ctx context.Context, dl sqlite.Download, itemID
 		"files":      len(files),
 		"indexer":    dl.Indexer,
 	})
+}
+
+// releaseEpisodeIdentity lends a payload file the episode identity of the
+// release monarr grabbed, when the file's own name carries none.
+//
+// Field report 2026-11-01: obfuscated Usenet posts ship the episode as
+// "321d9664e6a50c195e7e830b3f78b487.mkv", with par2 sets named the same way,
+// so neither the client nor par2 can restore a meaningful name. Reading
+// identity from the file name alone meant every such delivery failed with
+// "cannot determine episodes", the episode stayed missing, and automation
+// grabbed the identical release again — thirteen times for one episode,
+// until the indexer's daily quota ran out.
+//
+// The grabbed release title is not a guess: it is what was matched against
+// this wantable when the grab was decided. It is borrowed only when that
+// cannot misplace anything: the file's own name yields no episodes, the
+// payload holds exactly one media file, and the release names specific
+// episodes rather than a season. A season pack of obfuscated files, or a
+// payload with several anonymous files, still fails visibly — there is no
+// evidence for which file is which episode.
+func releaseEpisodeIdentity(p parser.Parsed, src, releaseTitle string, mediaFiles int) (parser.Parsed, bool) {
+	if len(p.Episodes) > 0 {
+		return p, false
+	}
+	if fx, ok := filename.Extract(filepath.Base(src)); ok && len(fx.Episodes) > 0 {
+		return p, false
+	}
+	if mediaFiles != 1 || strings.TrimSpace(releaseTitle) == "" {
+		return p, false
+	}
+	release := parser.Parse(releaseTitle)
+	if release.SeasonPack || release.Season < 0 || len(release.Episodes) == 0 {
+		return p, false
+	}
+	p.Season = release.Season
+	p.Episodes = append([]int(nil), release.Episodes...)
+	return p, true
 }
 
 func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) {

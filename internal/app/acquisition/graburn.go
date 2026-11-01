@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -21,10 +22,22 @@ import (
 // past it. And `handleFailure` re-searched with no counter and no delay, so
 // a wantable whose every release fails just cycles the indexer's top five.
 //
-// Two guards, both at the point of decision:
+// Three guards, all at the point of decision:
 //   - the same release already in flight is never grabbed a second time
+//   - the same release already delivered here, whose import failed and whose
+//     payload is still retained, is never grabbed again automatically
 //   - a wantable that has burned reGrabLimit grabs inside reGrabWindow stops
-//     until the window rolls off
+//     until the window rolls off — on every automatic path, RSS included
+//
+// Field report 2026-11-01: one obfuscated episode (payload named
+// "321d96….mkv") failed import with "cannot determine episodes" and RSS
+// grabbed the identical NZB thirteen times in five days. A failed import
+// marks the row failed, which correctly lets a DIFFERENT release be tried —
+// but nothing distinguished "this release's bytes are already on disk and
+// failed to import" from "this release failed to download". Downloading the
+// same bytes again cannot change an import verdict; the retained payload is
+// already retried in place. RSS also never consulted the regrab cap, so the
+// loop was paced only by the indexer, until its daily quota answered 429.
 
 const (
 	// reGrabLimit is how many failed grabs one wantable may spend inside
@@ -56,6 +69,53 @@ func (s *Service) alreadyInFlight(ctx context.Context, req GrabRequest) int64 {
 		}
 	}
 	return 0
+}
+
+// ErrReleaseAwaitingImport refuses an automatic grab of a release whose bytes
+// are already here awaiting import.
+var ErrReleaseAwaitingImport = errors.New("release already delivered and awaiting import")
+
+// importFailedOnRetainedPayload reports whether a download's bytes arrived,
+// monarr attempted to import them, the import failed, and the payload has not
+// been removed. Only such a row proves that grabbing the same release again
+// would fetch bytes that are already here.
+func importFailedOnRetainedPayload(dl sqlite.Download) bool {
+	if dl.State != "failed" || dl.PayloadRemoved || dl.Superseded {
+		return false
+	}
+	for _, event := range dl.Handoff {
+		if event.Step == stepImporting {
+			return true
+		}
+	}
+	return false
+}
+
+// deliveredAwaitingImport reports the id of a download for the same release
+// whose payload is retained after a failed import, or 0.
+func (s *Service) deliveredAwaitingImport(ctx context.Context, title string) int64 {
+	want := normalizeRelease(title)
+	if want == "" {
+		return 0
+	}
+	rows, err := s.db.RetainedFailedDownloads(ctx)
+	if err != nil {
+		return 0
+	}
+	for _, dl := range rows {
+		if normalizeRelease(dl.ReleaseTitle) == want && importFailedOnRetainedPayload(dl) {
+			return dl.ID
+		}
+	}
+	return 0
+}
+
+// skipCandidate reports whether automation must pass over a release: it is
+// blocklisted, or its bytes are already here awaiting import. Passing over
+// (rather than refusing at Grab) lets the selection fall through to a
+// different release, which is the one that can actually help.
+func (s *Service) skipCandidate(ctx context.Context, title, indexer string) bool {
+	return s.isBlocklisted(ctx, title, indexer) || s.deliveredAwaitingImport(ctx, title) != 0
 }
 
 // normalizeRelease folds the separators indexers disagree about, so
