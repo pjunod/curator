@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"github.com/pressly/goose/v3"
 	"testing"
 )
 
@@ -63,6 +64,13 @@ func TestAbandonDeleteRequestRetainsCompletedHistoryAndCannotRevive(t *testing.T
 	}
 	if err := db.CompleteExplicitDeliveryFileDelete(ctx, batch.ID, r.ID, "movie.mkv", "delivery_file_deleted", r.MediaItemID, "movie", nil); err == nil {
 		t.Fatal("late worker fabricated cancellation deletion")
+	}
+	if err := goose.DownContext(ctx, db.W, "migrations"); err == nil {
+		t.Fatal("downgrade erased cancelled deletion authority")
+	}
+	cancelled, err := db.ExplicitDeliveryDeleteBatch(ctx, batch.ID)
+	if err != nil || cancelled.AbandonedAt.IsZero() {
+		t.Fatalf("failed downgrade lost cancellation: %+v %v", cancelled, err)
 	}
 	// A newly reviewed request has its own authority; cancelled rows do not block it.
 	batch.ID = "new-delete-request"

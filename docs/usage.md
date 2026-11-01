@@ -1373,3 +1373,9 @@ Historical acquisitions may finish importing automatically only when their
 persisted trace proves they were still grabbed or downloading before the original
 upgrade cutover. Ambiguous traces and completed or failed backlog remain held for
 explicit review. Import permission never removes the legacy cleanup fence.
+
+If an automatic submission remains uncertain for thirty minutes on a client
+without request-token idempotency, Activity and History request operator review.
+Curator preserves the reservation and does not replay an Add that could duplicate
+an already accepted download. Ordinary manual import also respects historical
+review fences when you select a parent or child of the recorded payload folder.

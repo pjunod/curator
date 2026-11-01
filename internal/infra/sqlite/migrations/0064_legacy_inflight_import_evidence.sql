@@ -23,7 +23,7 @@ WHERE EXISTS(SELECT 1 FROM legacy_cleanup_review l WHERE l.generation_key=d.gene
  AND NOT EXISTS(SELECT 1 FROM json_each(d.handoff_log) j
       WHERE json_extract(j.value,'$.at')<c.cutover_ms+1000
         AND json_extract(j.value,'$.step') IN
-            ('downloaded','awaiting_import','importing','imported','failed','removed','manual_queued'));
+            ('downloaded','awaiting_import','importing','imported','failed','removed','manual_queued','manual_import_queued'));
 
 -- +goose StatementBegin
 CREATE TRIGGER legacy_inflight_import_evidence_immutable BEFORE UPDATE ON legacy_inflight_import_evidence

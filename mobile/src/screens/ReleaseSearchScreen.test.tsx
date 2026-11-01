@@ -118,6 +118,21 @@ describe('ReleaseSearchScreen', () => {
     expect(client.grabRelease.mock.calls[3]![0].requestId).toBe(retryable.requestId)
   })
 
+  it('uses a fresh request after success while preserving uncertain retry identity', async () => {
+    const client = makeClient([candidate({ candidateToken: 'repeat-success' })])
+    await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{ season: 1 }} onBack={vi.fn()} />) })
+    await press('Grab')
+    const first = client.grabRelease.mock.calls[0]![0].requestId
+    client.grabRelease.mockRejectedValueOnce(new Error('response lost'))
+    await press('Grab')
+    const second = client.grabRelease.mock.calls[1]![0].requestId
+    expect(second).not.toBe(first)
+    await press('Grab')
+    expect(client.grabRelease.mock.calls[2]![0].requestId).toBe(second)
+    await press('Grab')
+    expect(client.grabRelease.mock.calls[3]![0].requestId).not.toBe(second)
+  })
+
   it('narrows to accepted releases as a view and re-searches when the scope changes', async () => {
     const client = makeClient([
       candidate({ title: 'A', candidateToken: 'a', accepted: true }),

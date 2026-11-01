@@ -1493,7 +1493,7 @@ func commitDeliveryFileOutcome(ctx context.Context, tx *sql.Tx, v DeliveryFileIm
 	now := time.Now().UnixMilli()
 	eligible := disposition == "placed" || disposition == "redundant" || disposition == "disposable_selected_scope"
 	res, err := tx.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET disposition=?,reason=?,library_path=?,updated_at=?,
- cleanup_state=CASE WHEN ? AND cleanup_state!='removed' THEN 'pending' ELSE cleanup_state END
+ cleanup_state=CASE WHEN ? AND cleanup_state='protected' AND cleanup_error='' THEN 'pending' ELSE cleanup_state END
  WHERE receipt_id=? AND path=? AND (disposition IN ('pending','unknown_recoverable') OR
  (disposition IN ('unselected_recoverable','known_incidental') AND ? IN ('known_incidental','placed','redundant','disposable_selected_scope')) OR
  (disposition=? AND library_path=?))`, disposition, reason, libraryPath, now, eligible, v.ReceiptID, v.Path, disposition, disposition, libraryPath)
