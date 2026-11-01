@@ -20,6 +20,7 @@ func TestDeliveryTimingImmutableAndPerCopyCleanupMutableAcrossRestart(t *testing
 	v.Sequence++
 	v.RunnerStages = &ports.RunnerStages{NodeID: "worker", ClockDomain: "worker:post", Spans: []ports.RunnerStageSpan{{Stage: "unpack", StartedAtUnix: 1700000000, Milliseconds: timingNumber(20)}}}
 	v.LifecycleTiming = &ports.RunnerLifecycleTiming{Version: 1, Intervals: []ports.RunnerLifecycleInterval{{Stage: "post_processing", NodeID: "worker", ClockDomain: "worker:boot-1", StartUnixMS: 1700000000000, StartMonotonicMS: timingNumber(10), EndMonotonicMS: timingNumber(50), DurationMS: timingNumber(40), State: "completed"}}}
+	v.LifecycleTiming.OmittedIntervals = map[string]uint32{"queue": 2}
 	v.SourceCopies = []ports.RunnerSourceCopy{{ID: "worker-copy", OwnerNode: "worker", Status: "pending"}}
 	saved, err := db.SaveDiscoveredDelivery(ctx, r.ClientID, v, r.MappedPath)
 	if err != nil {

@@ -190,8 +190,9 @@ func SameRunnerStages(a, b *RunnerStages) bool {
 }
 
 type RunnerLifecycleTiming struct {
-	Version   int                       `json:"version"`
-	Intervals []RunnerLifecycleInterval `json:"intervals"`
+	OmittedIntervals map[string]uint32         `json:"omittedIntervals,omitempty"`
+	Version          int                       `json:"version"`
+	Intervals        []RunnerLifecycleInterval `json:"intervals"`
 }
 type RunnerLifecycleInterval struct {
 	Stage            string  `json:"stage"`
@@ -215,7 +216,7 @@ func SameRunnerLifecycleTiming(a, b *RunnerLifecycleTiming) bool {
 	}
 	// Struct encoding is canonical for the fixed wire fields and compares nil
 	// measurements separately from recorded zeros without ordering map keys.
-	left, _ := json.Marshal(a.Intervals)
-	right, _ := json.Marshal(b.Intervals)
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
 	return string(left) == string(right)
 }

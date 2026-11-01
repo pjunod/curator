@@ -1677,7 +1677,7 @@ export interface RunnerLifecycleInterval {
  startMonotonicMs?: number; endMonotonicMs?: number; durationMs?: number
  state: 'completed' | 'interrupted' | 'running' | 'unknown'; observations?: number
 }
-export interface RunnerLifecycleTiming { version: number; intervals: RunnerLifecycleInterval[] }
+export interface RunnerLifecycleTiming { version: number; intervals: RunnerLifecycleInterval[]; omittedIntervals?: Record<string, number> }
 export interface RunnerStages { nodeId: string; clockDomain: string; spans: Array<{ stage: string; started_at_unix: number; ms?: number }> }
 export interface RunnerSourceCopy { id: string; ownerNode: string; status: string; error?: string; attempts: number; nextRetryAt?: number }
 export interface DeliveryLifecycleReceipt {

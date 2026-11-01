@@ -57,7 +57,7 @@ export function lifecycleTimeline(receipt: DeliveryLifecycleReceipt): TimelineLa
     })) })
   }
   if (receipt.runnerStages) {
-    lanes.push({ id: 'runner-post-details', label: `Processing details · ${receipt.runnerStages.nodeId}`, clockDomain: receipt.runnerStages.clockDomain, unknownIntervals: 0,
+    lanes.push({ id: 'runner-post-details', label: `Processing details · ${receipt.runnerStages.nodeId === 'unrecorded' ? 'origin not recorded' : receipt.runnerStages.nodeId}`, clockDomain: receipt.runnerStages.clockDomain, unknownIntervals: 0,
       rows: receipt.runnerStages.spans.map((stage, index) => ({ id: `post:${index}`, stage: stage.stage.replaceAll('_', ' '), startedAtMs: stage.started_at_unix > 0 ? stage.started_at_unix * 1000 : undefined,
         workMs: finite(stage.ms) ? stage.ms : undefined, state: finite(stage.ms) ? 'completed' : 'interrupted; duration unknown', detailOnly: true })) })
   }

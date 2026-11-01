@@ -232,6 +232,16 @@ func validateRunnerEvidence(stages *ports.RunnerStages, copies []ports.RunnerSou
 		if timing.Version != 1 || len(timing.Intervals) > 128 {
 			return fmt.Errorf("nzbd: invalid lifecycle timing snapshot")
 		}
+		if len(timing.OmittedIntervals) > 5 {
+			return fmt.Errorf("nzbd: invalid omitted timing counters")
+		}
+		for stage := range timing.OmittedIntervals {
+			switch stage {
+			case "queue", "url_fetch", "download", "post_processing", "handoff":
+			default:
+				return fmt.Errorf("nzbd: unknown omitted timing stage")
+			}
+		}
 		for _, interval := range timing.Intervals {
 			if interval.NodeID == "" || len(interval.NodeID) > maxDeliveryIdentityBytes || interval.ClockDomain == "" || len(interval.ClockDomain) > maxDeliveryIdentityBytes || interval.Stage == "" || len(interval.Stage) > 128 || interval.StartUnixMS < 0 || len(interval.State) > 128 {
 				return fmt.Errorf("nzbd: malformed lifecycle timing interval")

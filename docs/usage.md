@@ -1408,7 +1408,13 @@ handoff, Curator import, completed-file cleanup, and processing-source cleanup.
 Measured times stay separate for different machines and restarts. Overlapping
 completed steps count once within their recorded timing reference. Processing
 details expand major steps and do not add their duration a second time. Missing,
-running and interrupted durations stay explicitly unknown.
+running and interrupted durations stay explicitly unknown. The immutable Runner
+snapshot ends at publication; consumer acceptance and later handoff retries have
+their own receipt observations. Historical POST details retain measured durations
+with origin unrecorded when their original machine/session cannot be proved.
+Bounded history says **at least N omitted** and labels totals as a **recorded
+subset**; omission counts are conservative lower bounds, never an exact lifetime
+total.
 
 The lifecycle API projects each Curator file ledger with the same camel-case
 fields the UI reads (`path`, `disposition`, `cleanupState`, `cleanupError` and

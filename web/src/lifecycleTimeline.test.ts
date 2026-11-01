@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { LifecycleTimeline } from './JoinedLifecycleTimeline'
 import type { DeliveryLifecycleReceipt, RunnerLifecycleInterval } from './api'
 import { lifecycleTimeline, monotonicWork } from './lifecycleTimeline'
 
@@ -6,6 +9,11 @@ const interval = (start: number, end: number, overrides: Partial<RunnerLifecycle
 const receipt = (overrides: Partial<DeliveryLifecycleReceipt> = {}) => ({ receiptId: 1, runnerInstanceId: 'runner', readyAt: '2026-11-01T10:00:00Z', acceptance: 'accepted', attemptHistory: [], ...overrides }) as DeliveryLifecycleReceipt
 
 describe('joined lifecycle timing', () => {
+  it('labels omitted observations as a recorded subset with lower-bound counts', () => {
+    const html = renderToStaticMarkup(createElement(LifecycleTimeline, { receipt: receipt({ lifecycleTiming: { version: 1, omittedIntervals: { queue: 2 }, intervals: [interval(0, 100)] } }) }))
+    expect(html).toContain('Recorded subset: at least 2 queue intervals omitted')
+    expect(html).toContain('Recorded subset ·')
+  })
   it('unions overlapping measured work only within one node boot clock', () => {
     const result = monotonicWork([interval(0, 100), interval(50, 150), interval(20, 30)])
     expect(result).toEqual({ knownWorkMs: 150, overlapMs: 60, unknownIntervals: 0 })
