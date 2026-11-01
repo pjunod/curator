@@ -1257,8 +1257,23 @@ func TestDeliveryRedundancyRequiresHealthySameCopyQualityEvidence(t *testing.T) 
 		reviewFlag           bool
 		sourceFixture        string
 		targetFixture        string
+		obfuscated           bool
+		obfuscatedSibling    bool
+		unlistedSibling      bool
 		wantRedundant        bool
 	}{
+		// Field report 2026-11-01: twelve byte-identical copies of an imported
+		// obfuscated episode were retained and retried forever, because the
+		// proof read the episode from the hash file name.
+		{name: "obfuscated duplicate with equal bytes", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", obfuscated: true, wantRedundant: true},
+		{name: "obfuscated file beside an anonymous sibling", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", obfuscated: true, obfuscatedSibling: true},
+		// A borrowed episode is the indexer's word: only identical bytes may
+		// settle it. A different file judged "no better" could be a different
+		// episode, and cleanup would delete it.
+		{name: "obfuscated file with different bytes", quality: quality.Quality{Source: quality.SourceBluray, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, sourceFixture: "mkv-1080p-h264-ac3-whole.mkv", targetFixture: "mkv-1080p-h264-ac3-ger-whole.mkv", obfuscated: true},
+		// The importer counts media on disk; an unlisted extra video means it
+		// would refuse to borrow, so the proof must refuse too.
+		{name: "obfuscated file beside an unlisted video on disk", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", obfuscated: true, unlistedSibling: true},
 		{name: "equal quality and equal bytes", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", wantRedundant: true},
 		{name: "better encoding with different bytes", quality: quality.Quality{Source: quality.SourceBluray, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, sourceFixture: "mkv-1080p-h264-ac3-whole.mkv", targetFixture: "mkv-1080p-h264-ac3-ger-whole.mkv", wantRedundant: true},
 		{name: "wrong copy", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, wrongCopy: true},
@@ -1271,7 +1286,27 @@ func TestDeliveryRedundancyRequiresHealthySameCopyQualityEvidence(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			protocol := &deliveryImportClient{}
-			svc, db, dl, cfg, _ := deliveryImportFixture(t, protocol)
+			mainName := epRelease + ".mkv"
+			if tc.obfuscated {
+				mainName = "321d9664e6a50c195e7e830b3f78b487.mkv"
+			}
+			var extra map[string][]byte
+			if tc.obfuscatedSibling {
+				extra = map[string][]byte{"15713ef716b33f8a63def50814ec76d0.mkv": []byte("other")}
+			}
+			svc, db, dl, cfg, publication := deliveryImportFixtureNamed(t, protocol, mainName, []byte("video"), extra)
+			if tc.obfuscated {
+				// What a real grab carries; the importer and the proof fall
+				// back to it when the file name says nothing.
+				if _, err := db.W.ExecContext(ctx, `UPDATE downloads SET quality=? WHERE id=?`, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}.String(), dl.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.unlistedSibling {
+				if err := os.WriteFile(filepath.Join(publication, "15713ef716b33f8a63def50814ec76d0.mkv"), []byte("other"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			receipts, err := db.DeliveryReceiptsForClient(ctx, dl.ClientID, 1)
 			if err != nil || len(receipts) != 1 {
 				t.Fatalf("receipt lookup=%+v err=%v", receipts, err)
@@ -1282,6 +1317,11 @@ func TestDeliveryRedundancyRequiresHealthySameCopyQualityEvidence(t *testing.T) 
 				t.Fatalf("manifest verification=%+v err=%v", verified, err)
 			}
 			f := verified[0]
+			for _, candidate := range verified {
+				if candidate.relative == mainName {
+					f = candidate
+				}
+			}
 			sourceFixture := tc.sourceFixture
 			if sourceFixture == "" {
 				sourceFixture = "mkv-1080p-h264-ac3.mkv"
@@ -1379,6 +1419,55 @@ func TestDeliveryRedundancyRequiresHealthySameCopyQualityEvidence(t *testing.T) 
 				t.Fatalf("redundant=%v, want %v", redundant, tc.wantRedundant)
 			}
 		})
+	}
+}
+
+// The live symptom: a byte-identical obfuscated duplicate of an episode that
+// is already imported retried forever with "episode 1 is protected by current
+// policy". It must resolve as redundant on the first attempt.
+func TestObfuscatedDuplicateDeliveryResolvesAsRedundant(t *testing.T) {
+	ctx := context.Background()
+	content, err := os.ReadFile(filepath.Join("..", "..", "domain", "mediainfo", "testdata", "mkv-1080p-h264-ac3.mkv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	protocol := &deliveryImportClient{}
+	svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, "321d9664e6a50c195e7e830b3f78b487.mkv", content, nil)
+	if _, err := db.W.ExecContext(ctx, `UPDATE downloads SET quality=? WHERE id=?`, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}.String(), dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	item, err := db.GetMediaItemFull(ctx, dl.MediaItemID)
+	if err != nil || len(item.Seasons) == 0 || len(item.Seasons[0].Episodes) == 0 {
+		t.Fatalf("item episodes=%+v err=%v", item.Seasons, err)
+	}
+	target := filepath.Join(item.Path, "Season 1", "Test Show - S01E01 - Pilot [WEB-DL 1080p].mkv")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fileID, err := db.UpsertFile(ctx, dl.MediaItemID, 0, target, int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReplaceFileEpisodeLinks(ctx, fileID, []int64{item.Seasons[0].Episodes[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFileQualityFrom(ctx, fileID, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone); err != nil {
+		t.Fatal(err)
+	}
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatalf("an identical obfuscated duplicate must resolve as redundant, got: %v", err)
+	}
+	receipt, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil || receipt.State != "imported" {
+		t.Fatalf("receipt = %+v err=%v, want imported", receipt, err)
+	}
+	outcomes, err := db.DeliveryFileOutcomes(ctx, receiptID)
+	if err != nil || len(outcomes) != 1 || outcomes[0].Disposition != "redundant" {
+		t.Fatalf("file outcome = %+v err=%v, want redundant", outcomes, err)
 	}
 }
 

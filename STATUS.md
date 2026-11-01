@@ -1,5 +1,28 @@
 # Monarr — Project Status
 
+## Obfuscated duplicates are redundant — 2026-11-01 · v0.38.4
+
+**Status:** [PR #75](https://github.com/pjunod/curator/pull/75) — adversarial
+review addressed (one blocker: a borrowed episode reached the different-bytes
+branch, which could mark a different file redundant and delete it — the borrow
+now accepts exact bytes only; the sole-file count now requires both manifest
+and disk to agree, as the importer counts disk). Full gate once on the final
+tree: lint 0 · go test green (the chmod-based
+`TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired` fails only
+as root; rerun alone as non-root: pass) · web 124 · e2e 192. CI and merge
+pending.
+
+After v0.38.3 reached nuc3 both stuck episodes imported within minutes
+(`episode_from_release`), but the other twelve byte-identical copies of each
+stayed `unknown_recoverable`, retried every few minutes with a fresh
+`import_failed` row ("episode N is protected by current policy"), and were
+never cleaned up. The redundancy proof read the duplicate's episode from its
+file name — the same defect v0.38.3 fixed in the importer — so a hash-named
+copy could never be proven redundant. The proof now borrows the grabbed
+release's episodes under the importer's exact conditions (sole media file in
+the manifest, release covers the grabbed episode); everything after that —
+exact bytes against a verified, unflagged library file — is unchanged.
+
 ## Obfuscated imports and the re-grab loop — 2026-11-01 · v0.38.3
 
 **Status:** [PR #74](https://github.com/pjunod/curator/pull/74) — review addressed,
