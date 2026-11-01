@@ -15,8 +15,13 @@ import { ActionNotice } from './ActionDialog'
 
 const elapsed = (value?: string) => value && !value.startsWith('0001') && Number.isFinite(new Date(value).getTime()) ? fmtRelative(value) : 'not recorded'
 const pending = (value?: string) => !!value && !value.startsWith('0001') && new Date(value).getTime() > Date.now()
-const runnerTime = (value: unknown) => typeof value === 'number' && value > 0 ? fmtRelative(new Date(value * 1000).toISOString()) : 'not recorded'
-const runnerMillisTime = (value: unknown) => typeof value === 'number' && value > 0 ? fmtRelative(new Date(value).toISOString()) : 'not recorded'
+const runnerDate = (value: unknown, scale: number) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
+  const date = new Date(value * scale)
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined
+}
+const runnerTime = (value: unknown) => { const date = runnerDate(value, 1000); return date ? fmtRelative(date) : 'not recorded' }
+const runnerMillisTime = (value: unknown) => { const date = runnerDate(value, 1); return date ? fmtRelative(date) : 'not recorded' }
 const span = (milliseconds: number) => {
   if (!Number.isFinite(milliseconds) || milliseconds < 0) return 'unknown'
   const seconds = Math.floor(milliseconds / 1000)
@@ -32,7 +37,7 @@ const completedFolder = (receipt: DeliveryLifecycleReceipt) => {
   const path = completedPath(receipt).replace(/[\\/]+$/, '')
   return path.split(/[\\/]/).at(-1) || 'folder unknown'
 }
-const runnerTimestamp = (value: unknown) => typeof value === 'number' && value > 0 ? new Date(value * 1000).toISOString() : undefined
+const runnerTimestamp = (value: unknown) => runnerDate(value, 1000)
 const cleanupStatus = (status: string, error?: string, blocked?: string, next?: string) => {
   if (status === 'removed' || status === 'succeeded') return 'Complete'
   if (status === 'retry' || error) return `Retry pending${knownTimestamp(blocked) ? ` · blocked ${elapsed(blocked)}` : ''}${pending(next) ? ` · next ${fmtRelative(next!)}` : ''}`
