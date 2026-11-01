@@ -22,10 +22,12 @@ export interface TimelineLane {
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 const timestamp = (value?: string) => value && !value.startsWith('0001') && Number.isFinite(Date.parse(value)) ? Date.parse(value) : undefined
 
+const measuredIntervalDuration = (interval: RunnerLifecycleInterval) => interval.state === 'completed' && finite(interval.startMonotonicMs) && finite(interval.endMonotonicMs) && finite(interval.durationMs) && interval.endMonotonicMs >= interval.startMonotonicMs && interval.durationMs === interval.endMonotonicMs - interval.startMonotonicMs ? interval.durationMs : undefined
+
 // Only explicit monotonic endpoints in one boot clock can establish overlap.
 // Wall timestamps are plotting anchors and never fill missing measurements.
 export function monotonicWork(intervals: RunnerLifecycleInterval[]) {
-  const complete = intervals.filter((interval) => interval.state === 'completed' && finite(interval.startMonotonicMs) && finite(interval.endMonotonicMs) && finite(interval.durationMs) && interval.endMonotonicMs >= interval.startMonotonicMs && interval.durationMs === interval.endMonotonicMs - interval.startMonotonicMs)
+  const complete = intervals.filter((interval) => measuredIntervalDuration(interval) !== undefined)
   const ordered = complete.map((interval) => [interval.startMonotonicMs!, interval.endMonotonicMs!] as const).sort((a, b) => a[0] - b[0])
   let total = 0
   let end: number | undefined
@@ -50,7 +52,7 @@ export function lifecycleTimeline(receipt: DeliveryLifecycleReceipt): TimelineLa
     const first = intervals[0]
     lanes.push({ id: key, label: `Runner · ${first.nodeId}`, clockDomain: first.clockDomain, ...monotonicWork(intervals), rows: intervals.map((interval, index) => ({
       id: `${key}:${index}`, stage: interval.stage.replaceAll('_', ' '), startedAtMs: finite(interval.startUnixMs) && interval.startUnixMs > 0 ? interval.startUnixMs : undefined,
-      workMs: finite(interval.durationMs) ? interval.durationMs : undefined, state: interval.state,
+      workMs: measuredIntervalDuration(interval), state: interval.state,
       monotonic: finite(interval.startMonotonicMs) && finite(interval.endMonotonicMs) ? [interval.startMonotonicMs, interval.endMonotonicMs] : undefined,
     })) })
   }

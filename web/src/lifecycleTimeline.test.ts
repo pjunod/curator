@@ -19,6 +19,10 @@ describe('joined lifecycle timing', () => {
     ])
     expect(result).toEqual({ knownWorkMs: 100, overlapMs: 0, unknownIntervals: 3 })
   })
+  it('leaves invalid or incomplete major row measurements unknown', () => {
+    const lanes = lifecycleTimeline(receipt({ lifecycleTiming: { version: 1, intervals: [interval(0, 100), interval(100, 200, { endMonotonicMs: undefined }), interval(200, 300, { state: 'interrupted' }), interval(300, 400, { durationMs: 99 })] } }))
+    expect(lanes[0].rows.map((row) => row.workMs)).toEqual([100, undefined, undefined, undefined])
+  })
   it('keeps nodes and boot domains separate and excludes POST detail from major totals', () => {
     const lanes = lifecycleTimeline(receipt({ lifecycleTiming: { version: 1, intervals: [interval(0, 100), interval(50, 150, { stage: 'post_processing' }), interval(0, 40, { nodeId: 'other-node' }), interval(0, 30, { clockDomain: 'worker:boot-2' })] }, runnerStages: { nodeId: 'worker', clockDomain: 'worker:post', spans: [{ stage: 'unpack', started_at_unix: 1700000000, ms: 90 }] } }))
     expect(lanes.filter((lane) => lane.knownWorkMs !== undefined).map((lane) => lane.knownWorkMs)).toEqual([150, 40, 30])
