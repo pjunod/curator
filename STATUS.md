@@ -3,8 +3,11 @@
 ## Imports no longer wait behind cleanup — 2026-11-01 · v0.38.5
 
 **Status:** [PR #76](https://github.com/pjunod/curator/pull/76) — two reviews
-addressed (memo rejected; comment and cleanup worker count fixed); gate and
-CI pending.
+addressed (memo rejected; comment and cleanup worker count fixed). Full gate
+once: lint 0 · go test green (the chmod-based
+`TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired` fails only
+as root; rerun alone as non-root on the final commit: pass) · web 124 ·
+e2e 192. CI and merge pending.
 
 Paul asked why importing is slow and whether it must be serial. Measured on
 nuc3 after v0.38.4: a real 2.5 GB import took 31 s; proving a 2.9 GB
