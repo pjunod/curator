@@ -14,6 +14,9 @@ import (
 // storage. A cached path alone is not authority: repeat ownership, live-work,
 // mount identity and recursive metadata checks before the rooted deletion.
 func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint string) error {
+	// An operator is waiting on this request: its verification reads are
+	// foreground and are not held to the background budget.
+	ctx = withForegroundVerification(ctx)
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
 	ctx, releaseTargets := s.lockAllImportTargets(ctx)
@@ -216,6 +219,9 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 // the retained legacy path fence; it does not invent or infer a Runner
 // manifest for historical files.
 func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerprint string, selections []CompletedFileSelection) error {
+	// An operator is waiting on this request: its verification reads are
+	// foreground and are not held to the background budget.
+	ctx = withForegroundVerification(ctx)
 	if len(selections) == 0 || !filepath.IsAbs(path) || fingerprint == "" {
 		return fmt.Errorf("select exact files from a legacy review entry")
 	}

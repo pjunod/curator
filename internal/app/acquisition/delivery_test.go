@@ -2040,3 +2040,47 @@ func TestSafeDeliveryRelativePath(t *testing.T) {
 		}
 	}
 }
+
+// Review finding (probe-confirmed): a library row that aliases the payload's
+// own path made the payload its own redundancy proof, and cleanup deleted
+// the only copy. Evidence inside the publication or a completed root is
+// never library evidence.
+func TestPayloadIsNeverItsOwnRedundancyEvidence(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	svc, db, dl, cfg, publication := deliveryImportFixture(t, protocol)
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, epRelease+".mkv")
+	if err != nil || row.Disposition != "placed" {
+		t.Fatalf("fixture row = %+v err=%v, want placed", row, err)
+	}
+	payload := filepath.Join(publication, epRelease+".mkv")
+	// The library bytes are gone and the library row now names the payload.
+	if err := os.Remove(row.LibraryPath); err != nil {
+		t.Fatal(err)
+	}
+	files, err := db.ListFilesForItem(ctx, dl.MediaItemID)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("library files = %+v err=%v", files, err)
+	}
+	info, err := os.Lstat(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `UPDATE media_files SET path=?,file_generation=? WHERE id=?`, payload, deliveryFileGeneration(info), files[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.removeVerifiedDeliveryFile(ctx, r, row); err == nil {
+		t.Fatal("cleanup accepted the payload as proof of its own redundancy")
+	}
+	if _, err := os.Stat(payload); err != nil {
+		t.Fatalf("the only copy was deleted: %v", err)
+	}
+}

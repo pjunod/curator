@@ -606,12 +606,19 @@ manifest before import, a duplicate is hashed against the library file it
 matches before its payload is deleted, and a placement is checked after the
 copy. On network storage every one of those reads crosses the storage link.
 
-All verification reads in the process share one budget, in megabytes per
-second. The default is **100**, about a third of a 2.5 GbE link, so
-verification never crowds out placement writes, Runner, or playback on the
-same storage. `0` removes the limit; an invalid value keeps the default.
-Placement copies are not limited — they are the import itself. Concurrent
-checks of the same unchanged file share one read.
+Verification reads are held to a budget in megabytes per second. The
+default is **100**, about a third of a 2.5 GbE link, so verification never
+crowds out placement writes, Runner, or playback on the same storage. `0`
+removes the limit; an invalid value keeps the default and logs a warning.
+Placement copies are not limited — they are the import itself (small
+sidecar copies are verified as they copy, so they count). Concurrent checks
+of the same unchanged file share one read.
+
+Reads something is waiting on — an import's checks while it holds its
+title, an operator's **Delete files…** request — have their own budget of
+the same size. While one is running, background checks (duplicate proofs,
+verification before an import) slow to a tenth of the budget, so a waiting
+import or request is never starved by work that is not.
 
 ```bash
 # Raise on 10 GbE or local disks; 0 = unlimited.

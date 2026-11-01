@@ -3,6 +3,7 @@ package acquisition
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,26 +16,116 @@ import (
 )
 
 func TestVerifyReadBudgetParsing(t *testing.T) {
-	if l := newVerifyReadLimiter(""); l == nil || l.Limit() != rate.Limit(defaultVerifyReadMBps*1e6) {
-		t.Fatalf("unset budget = %v, want the %d MB/s default", l, defaultVerifyReadMBps)
+	limit := func(b *verifyBudget) rate.Limit {
+		if b == nil {
+			return 0
+		}
+		return b.background.Limit()
 	}
-	if l := newVerifyReadLimiter("0"); l != nil {
+	if b := newVerifyBudget(""); b == nil || limit(b) != rate.Limit(defaultVerifyReadMBps*1e6) || b.foreground.Limit() != limit(b) || b.yield.Limit() != limit(b)/10 {
+		t.Fatalf("unset budget = %v, want the %d MB/s default", limit(b), defaultVerifyReadMBps)
+	}
+	if b := newVerifyBudget("0"); b != nil {
 		t.Fatal("0 must mean unlimited")
 	}
-	if l := newVerifyReadLimiter("250"); l == nil || l.Limit() != rate.Limit(250e6) {
-		t.Fatalf("250 = %v", l)
+	if b := newVerifyBudget("250"); limit(b) != rate.Limit(250e6) {
+		t.Fatalf("250 = %v", limit(b))
 	}
 	for _, bad := range []string{"fast", "-5", "1.5"} {
-		if l := newVerifyReadLimiter(bad); l == nil || l.Limit() != rate.Limit(defaultVerifyReadMBps*1e6) {
-			t.Fatalf("%q must keep the default, not turn the budget off: %v", bad, l)
+		if b := newVerifyBudget(bad); limit(b) != rate.Limit(defaultVerifyReadMBps*1e6) {
+			t.Fatalf("%q must keep the default, not turn the budget off: %v", bad, limit(b))
 		}
+	}
+}
+
+func testBudget(bytesPerSecond float64) *verifyBudget {
+	l := rate.Limit(bytesPerSecond)
+	return &verifyBudget{foreground: rate.NewLimiter(l, 1<<20), background: rate.NewLimiter(l, 1<<20), yield: rate.NewLimiter(l/10, 1<<20)}
+}
+
+// Review finding: an import holds its title's target while it hashes, and
+// background proofs drawing on the same budget starved it. Foreground reads
+// have their own budget, and background reads yield while one is active.
+func TestForegroundVerificationIsNotStarvedByBackgroundReads(t *testing.T) {
+	b := testBudget(10 << 20)
+	held, release := (&Service{}).lockImportTarget(context.Background(), 1)
+	defer release()
+	if !foregroundVerification(held) || !foregroundVerification(withForegroundVerification(context.Background())) || foregroundVerification(context.Background()) {
+		t.Fatal("foreground classification is wrong")
+	}
+	// Exhaust the background budget; foreground must not wait on it.
+	_ = b.background.WaitN(context.Background(), 1<<20)
+	start := time.Now()
+	fg := &verifyReader{ctx: held, r: bytes.NewReader(make([]byte, 1<<20)), budget: b, foreground: true}
+	if _, err := io.Copy(io.Discard, fg); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("a foreground read waited %v on the background budget", elapsed)
+	}
+	// With a foreground read just seen, background reads also pay the yield
+	// budget (1 MiB/s here): 2 MiB past the burst takes about a second.
+	_ = b.yield.WaitN(context.Background(), 1<<20)
+	start = time.Now()
+	bg := &verifyReader{ctx: context.Background(), r: bytes.NewReader(make([]byte, 1<<19)), budget: b}
+	if _, err := io.Copy(io.Discard, bg); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed < 300*time.Millisecond {
+		t.Fatalf("a background read beside a foreground one took %v; it did not yield", elapsed)
+	}
+}
+
+// rate.Limiter refuses a wait that would pass the deadline with an error
+// that does not wrap context.DeadlineExceeded; callers must still see one.
+func TestVerifyReadDeadlineIsReportedAsDeadline(t *testing.T) {
+	b := testBudget(1)
+	_ = b.background.WaitN(context.Background(), 1<<20)
+	// The wait (64 bytes at 1 B/s) is far past the deadline, so the limiter
+	// refuses at once rather than waiting.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	v := &verifyReader{ctx: ctx, r: bytes.NewReader(make([]byte, 64)), budget: b}
+	_, err := v.Read(make([]byte, 64))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want it to wrap context.DeadlineExceeded", err)
+	}
+}
+
+// A leader that panics must not strand waiters on its entry.
+func TestDigestLeaderPanicReleasesWaiters(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		defer func() { _ = recover() }()
+		_, _, _, _ = joinDigest(context.Background(), "panicking-file", func() (string, int64, string, error) {
+			close(started)
+			<-release
+			panic("read exploded")
+		})
+	}()
+	<-started
+	result := make(chan string, 1)
+	go func() {
+		d, _, _, _ := joinDigest(context.Background(), "panicking-file", func() (string, int64, string, error) { return "reread", 1, "g", nil })
+		result <- d
+	}()
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	select {
+	case d := <-result:
+		if d != "reread" {
+			t.Fatalf("waiter got %q, want its own read after the leader panicked", d)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter stranded by a panicking leader")
 	}
 }
 
 // The budget is real: reading past the burst waits for it.
 func TestVerifyReaderPacesToTheBudget(t *testing.T) {
 	data := bytes.Repeat([]byte{7}, 3<<20)
-	v := &verifyReader{ctx: context.Background(), r: bytes.NewReader(data), limiter: rate.NewLimiter(rate.Limit(10<<20), 1<<20)}
+	v := &verifyReader{ctx: context.Background(), r: bytes.NewReader(data), budget: testBudget(10 << 20)}
 	start := time.Now()
 	n, err := io.Copy(io.Discard, v)
 	if err != nil || n != int64(len(data)) {

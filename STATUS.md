@@ -2,8 +2,9 @@
 
 ## Samples, settled retries, identical bytes, storage stalls — 2026-11-01 · v0.38.6
 
-**Status:** branch `codex/delivery-sample-files` — adversarial review done and
-addressed (below). Full gate, CI and merge pending.
+**Status:** branch `codex/delivery-sample-files` — three adversarial reviews
+addressed (below); the per-title lock and the review-three fixes get a fourth
+review, then the full gate, CI and merge.
 
 Measuring v0.38.5 on nuc3 turned up a second permanent loop. Every Runner
 delivery that shipped a scene sample (`sample-<release>.mkv`) failed on every
@@ -106,12 +107,19 @@ Fixed here:
 - Attempts left "running" by a previous process are marked `interrupted` at
   start (no finish time invented, no outcome inferred).
 
-Not changed, for Paul: placement still holds `importTargetMu` for the whole
-import, so one slow placement holds up everything (measured: 55 minutes behind
-The Craft Legacy). Parallel placement would not have helped today — the link
-was the bottleneck — but the placement check's hash runs inside that lock, and
-with the read budget it takes longer per byte while contending far less. The
-storage link itself (a USB 2.5 GbE adapter to the NAS) is the hardware limit.
+**One title no longer holds every title** (Paul: "fix the rest"). At 23:25Z
+Maschile and Quem Ama Cuida had finished in Runner and sat queued behind The
+Craft 1996 (68 GB remux, placing at 10.7 MB/s, about two hours), because
+`importTargetMu` was one process-wide mutex held for an import's whole run.
+It is now `importTargets`: a global RWMutex plus one mutex per media item.
+Imports, recovery, replacement, admission, sidecar publication and receipt
+cleanup take their title's lock (global shared), so different titles proceed
+concurrently and one title is serialized as before. Path-addressed operator
+deletes, partial-payload settlement, reservation resolution and the
+placement journal's reconciliation at start take the global lock
+exclusively. The storage-decision lock still serializes the short
+publish-and-commit window. The storage link (a USB 2.5 GbE adapter to the
+NAS) remains the hardware limit.
 
 v0.38.5 measured live on nuc3 (started 21:30:10Z): two imports in flight at
 once, and 2.9 GB duplicate cleanups running 225–275 s each on the cleanup
@@ -137,6 +145,34 @@ library copy is flagged implausible and the proof required an unflagged file.
   redundancy; a new test covers the superseded placement (fails before with
   the production error) and refuses one whose placement now holds different
   bytes.
+
+**Third review** (full model, on identical bytes and read pacing). No blocker
+in the rule as designed. Addressed:
+
+- High, probe-confirmed: a library row aliasing the payload's own path made
+  the payload its own proof, and cleanup deleted the only copy. Evidence
+  inside the receipt's publication or any completed root is never library
+  evidence, at proof time and again under the lock (test fails without it).
+- High: the read budget starved the import-lock holder — background proofs
+  drew from the same budget while every other import waited on the lock.
+  Reads made while holding a title, or for an operator's request, now have
+  their own budget, and background reads slow to a tenth while one is
+  active. With the per-title lock the blast radius is one title anyway.
+- The limiter's deadline refusal now reads as `context.DeadlineExceeded`, so
+  a waiter re-reads rather than inheriting the leader's error; a panicking
+  leader releases its waiters; an invalid budget value is logged.
+- The lock-time recheck refuses evidence a replace-bad selection made since
+  the proof now owns; `redundant` rows whose recorded library file was
+  replaced fall back to identical bytes in scope, as `placed` rows do; the
+  redundancy reason no longer claims a quality verdict for identical bytes.
+- Operator **Delete files…** requests verify on the foreground budget.
+
+Not changed, deliberately: reusing a placement's target digest across its
+checks would reintroduce the generation-keyed memo rejected in #76 (mmap
+writes change bytes without changing mtime/ctime); the per-title lock bounds
+the cost to the title being upgraded. Two processes sharing one database
+would mark each other's live attempts `interrupted` — Curator is single
+instance. The lease write's snapshot is unchanged (above).
 
 ## Imports no longer wait behind cleanup — 2026-11-01 · v0.38.5
 

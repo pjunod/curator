@@ -55,7 +55,7 @@ func (s *Service) recordDeliveryImportOutcomes(ctx context.Context, r sqlite.Del
 				disposition, reason = "unknown_recoverable", "replacement operation has not committed selected placements; excess payload is retained"
 			}
 		} else if targetPath, _, ok := s.deliveryRedundantLibraryProof(ctx, r, f, ""); ok {
-			disposition, reason, libraryPath = "redundant", "same-copy usable file at "+targetPath+" already satisfies the quality profile", targetPath
+			disposition, reason, libraryPath = "redundant", "same-copy library file at "+targetPath+" holds these exact bytes or is a verified file this release does not improve on", targetPath
 		}
 		if err := s.db.UpdateDeliveryFileDisposition(ctx, r.ID, f.relative, disposition, reason, libraryPath); err != nil {
 			errs = append(errs, err)
@@ -794,10 +794,20 @@ type deliveryLibraryScope struct {
 	identityBorrowed bool
 	download         sqlite.Download
 	downloadErr      error
+	// payloadSpace is where payloads live: this receipt's publication and
+	// every completed root. Nothing there is library evidence — a library
+	// row that aliases the payload would otherwise prove the payload
+	// redundant by itself, and cleanup would delete the only copy.
+	payloadSpace []string
 }
 
 func (s *Service) deliveryLibraryScope(ctx context.Context, r sqlite.DeliveryReceipt, f verifiedDeliveryFile) (deliveryLibraryScope, bool) {
 	var scope deliveryLibraryScope
+	space, ok := s.deliveryPayloadSpace(ctx, r)
+	if !ok {
+		return scope, false
+	}
+	scope.payloadSpace = space
 	item, err := s.db.GetMediaItemFull(ctx, r.MediaItemID)
 	if err != nil {
 		return scope, false
@@ -872,6 +882,9 @@ func deliveryExactLibraryCopy(ctx context.Context, db *sqlite.DB, f verifiedDeli
 		if requiredPath != "" && filepath.Clean(existing.Path) != filepath.Clean(requiredPath) {
 			continue
 		}
+		if pathWithinAny(existing.Path, scope.payloadSpace) {
+			continue
+		}
 		// The same format, too: a book's format is its extension, so identical
 		// bytes delivered as .epub over a library .pdf are a format change the
 		// import must make, not a duplicate.
@@ -896,6 +909,48 @@ func deliveryExactLibraryCopy(ctx context.Context, db *sqlite.DB, f verifiedDeli
 		}
 	}
 	return "", "", false
+}
+
+// deliveryPayloadSpace is the receipt's publication plus every completed
+// root. An unreadable root list fails closed: no evidence can be trusted.
+func (s *Service) deliveryPayloadSpace(ctx context.Context, r sqlite.DeliveryReceipt) ([]string, bool) {
+	roots, err := s.completedRoots(ctx, nil)
+	if err != nil {
+		return nil, false
+	}
+	space := append([]string{}, roots...)
+	if r.MappedPath != "" {
+		space = append(space, r.MappedPath)
+	}
+	return space, true
+}
+
+// pathWithinAny reports whether path, with its directory's symlinks
+// resolved, is any of roots or beneath one. Hardlinked placements are not
+// affected: they live in the library, not here.
+func pathWithinAny(path string, roots []string) bool {
+	resolve := func(p string) string {
+		p = filepath.Clean(p)
+		if dir, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+			return filepath.Join(dir, filepath.Base(p))
+		}
+		return p
+	}
+	target := resolve(path)
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		base := filepath.Clean(root)
+		if resolved, err := filepath.EvalSymlinks(base); err == nil {
+			base = resolved
+		}
+		rel, err := filepath.Rel(base, target)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func replacementFileMarkedBad(ctx context.Context, db *sqlite.DB, fileID int64, generation string) bool {
@@ -1188,6 +1243,9 @@ func (s *Service) cleanupDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 // the current scanned file identity authorizes this one discard, even if its
 // bytes no longer match the published digest. Siblings remain untouched.
 func (s *Service) DeleteSelectedDeliveryFiles(ctx context.Context, payloadPath, fingerprint string, selections []CompletedFileSelection) error {
+	// An operator is waiting on this request: its verification reads are
+	// foreground and are not held to the background budget.
+	ctx = withForegroundVerification(ctx)
 	if len(selections) == 0 {
 		return fmt.Errorf("select one or more manifest files to delete")
 	}
@@ -1762,6 +1820,14 @@ func (s *Service) removeVerifiedDeliveryFile(ctx context.Context, r sqlite.Deliv
 	default:
 		var ok bool
 		libraryEvidencePath, libraryEvidenceGeneration, ok = s.deliveryRedundantLibraryProof(ctx, r, f, row.LibraryPath)
+		if !ok && !row.ManualAdditional {
+			// The recorded library file was replaced, possibly by an
+			// identical copy under another name. Identical bytes anywhere in
+			// scope still make this copy redundant.
+			if scope, scoped := s.deliveryLibraryScope(ctx, r, f); scoped {
+				libraryEvidencePath, libraryEvidenceGeneration, ok = deliveryExactLibraryCopy(ctx, s.db, f, scope, "")
+			}
+		}
 		if !ok {
 			return fmt.Errorf("same-copy redundancy proof no longer holds")
 		}
@@ -1928,12 +1994,18 @@ func (s *Service) deliveryLibraryEvidenceOwned(ctx context.Context, r sqlite.Del
 	} else {
 		for _, file := range files {
 			if filepath.Clean(file.Path) == filepath.Clean(path) && file.MediaItemID == r.MediaItemID && file.CopyID == r.CopyID {
-				owned = true
+				// A replace-bad selection made since the proof owns this
+				// file's fate; leave the payload until it resolves.
+				owned = !replacementFileMarkedBad(ctx, s.db, file.ID, file.FileGeneration)
 				break
 			}
 		}
 	}
 	if !owned {
+		return false
+	}
+	// Evidence inside the payload's own space is the payload, not the library.
+	if space, ok := s.deliveryPayloadSpace(ctx, r); !ok || pathWithinAny(path, space) {
 		return false
 	}
 	info, err := os.Lstat(path)
