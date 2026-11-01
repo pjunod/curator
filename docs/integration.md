@@ -551,9 +551,11 @@ was the duration column of an unrelated scheduled task.
 
 So since 2026-07: imports run on their own bounded worker pool, the poll
 returns in milliseconds whatever the library is doing, and the data plane
-reports itself here. Two workers import; payload cleanup has a third worker
-of its own, because cleanup re-reads both copies before deleting one — tens of
-gigabytes for a remux — and that must never hold up an import. Control-plane checks (`client:<name>`) only ever mean
+reports itself here. Two workers import; payload cleanup has two workers of
+its own, because cleanup re-reads both copies before deleting one (tens of
+gigabytes for a remux) and that must never hold up an import. Library
+placement itself is serialized by one destination lock, so two imports
+overlap in verification but publish one at a time. Control-plane checks (`client:<name>`) only ever mean
 "can Monarr reach this"; data-plane trouble has its own check (`imports`),
 which warns when an import has been running long enough to be stuck rather
 than merely slow.

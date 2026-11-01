@@ -47,11 +47,10 @@ const (
 	// Cleanup re-verifies both copies before deleting one, which for a large
 	// remux is tens of gigabytes of reads. It used to share the import
 	// workers, so one 31 GB cleanup held an import slot for over twenty
-	// minutes and every new download waited behind the other (field data
-	// 2026-11-01). Cleanup is never urgent; imports are what the user is
-	// waiting for. One dedicated worker keeps it moving without ever taking
-	// an import slot.
-	cleanupWorkers = 1
+	// minutes (field data 2026-11-01). Its own pool keeps it from ever taking
+	// an import slot. Two, as before, so one large cleanup cannot hold up the
+	// small ones behind it: cleanup is what frees completed-folder space.
+	cleanupWorkers = 2
 )
 
 // importJob is one download ready to be moved into the library.

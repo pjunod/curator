@@ -2,8 +2,9 @@
 
 ## Imports no longer wait behind cleanup — 2026-11-01 · v0.38.5
 
-**Status:** [PR #76](https://github.com/pjunod/curator/pull/76) — review
-addressed; gate and CI pending.
+**Status:** [PR #76](https://github.com/pjunod/curator/pull/76) — two reviews
+addressed (memo rejected; comment and cleanup worker count fixed); gate and
+CI pending.
 
 Paul asked why importing is slow and whether it must be serial. Measured on
 nuc3 after v0.38.4: a real 2.5 GB import took 31 s; proving a 2.9 GB
@@ -11,7 +12,11 @@ duplicate took 250–280 s; and attempts ran strictly one after another.
 
 - **Serial:** imports have two workers by design, but payload cleanup shared
   them. A 31 GB cleanup re-reading both copies held one worker for 20+ min,
-  leaving one for every import. Cleanup now has its own worker.
+  leaving one for every import. Cleanup now has its own two workers.
+  Placement itself stays serialized by `importTargetMu`, one process-wide
+  destination lock that recovery, replacement, deletion and season cleanup
+  also take; narrowing it per item is a separate decision for Paul (large
+  crash-safety surface, limited gain while copies share one mount).
 - **Re-reads:** a retry of an accepted delivery re-read its payload twice
   (verify, then a recheck moments later with nothing in between). The recheck
   now runs only when an acknowledgement round trip separates it from the

@@ -578,9 +578,13 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 		}
 	}
 	// The recheck below binds the verified bytes across the acknowledgement's
-	// network round trip. With no acknowledgement in this attempt the bytes
-	// were verified moments ago with nothing in between, and a second full
-	// read of a multi-gigabyte payload protects nothing the first did not.
+	// network round trip, the one long external wait between verification and
+	// import. Without an acknowledgement in this attempt it is a second full
+	// read of a multi-gigabyte payload moments after the first, and it never
+	// covered the later waits (the import target lock) anyway: the bytes are
+	// bound where they are used, because placement (commitPlacement), the
+	// sidecar copy (copyAcceptedSidecar) and cleanup each re-hash the source
+	// against the manifest digest before acting on it.
 	acknowledged := false
 	if r.AckState == "pending" {
 		acknowledged = true
