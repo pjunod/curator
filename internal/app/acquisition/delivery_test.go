@@ -995,6 +995,13 @@ func deliveryImportFixtureWithFiles(t *testing.T, protocol *deliveryImportClient
 
 func deliveryImportFixtureWithMainContent(t *testing.T, protocol *deliveryImportClient, mainContent []byte, extra map[string][]byte) (*Service, *sqlite.DB, sqlite.Download, ports.ClientConfig, string) {
 	t.Helper()
+	return deliveryImportFixtureNamed(t, protocol, epRelease+".mkv", mainContent, extra)
+}
+
+// deliveryImportFixtureNamed publishes the main media file under mainName, so
+// a test can deliver what obfuscated posts actually ship.
+func deliveryImportFixtureNamed(t *testing.T, protocol *deliveryImportClient, mainName string, mainContent []byte, extra map[string][]byte) (*Service, *sqlite.DB, sqlite.Download, ports.ClientConfig, string) {
+	t.Helper()
 	ordinary := &fakeClient{}
 	svc, db, itemID := setup(t, nil, ordinary)
 	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return protocol }
@@ -1013,7 +1020,7 @@ func deliveryImportFixtureWithMainContent(t *testing.T, protocol *deliveryImport
 		t.Fatal(err)
 	}
 	content := mainContent
-	filename := epRelease + ".mkv"
+	filename := mainName
 	if err := os.WriteFile(filepath.Join(publication, filename), content, 0o644); err != nil {
 		t.Fatal(err)
 	}

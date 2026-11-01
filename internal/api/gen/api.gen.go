@@ -1921,7 +1921,7 @@ type HistoryEvent struct {
 	ReleaseTitle string                  `json:"releaseTitle"`
 	Ts           time.Time               `json:"ts"`
 
-	// Type grabbed | failed | imported | import_failed | import_blocked | import_retried | regrab_capped | short_delivery | payload_removed | file_removed | quality_mismatch | implausible_file.
+	// Type grabbed | failed | imported | import_failed | import_blocked | import_retried | regrab_capped | short_delivery | payload_removed | file_removed | quality_mismatch | implausible_file | episode_from_release.
 	Type string `json:"type"`
 }
 

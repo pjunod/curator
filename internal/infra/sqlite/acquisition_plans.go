@@ -143,6 +143,22 @@ func (d *DB) ListDownloadReservations(ctx context.Context) ([]Download, error) {
 	}
 	return out, nil
 }
+
+// RetainedFailedDownloadsForRelease lists failed, unparked, undismissed
+// downloads of one release (title already folded by the caller) whose payload
+// has not been removed — the rows whose bytes may still be on disk.
+func (d *DB) RetainedFailedDownloadsForRelease(ctx context.Context, normalizedTitle string) ([]Download, error) {
+	rows, err := d.Read.ListRetainedFailedDownloadsForRelease(ctx, normalizedTitle)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Download, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, downloadFromRow(r))
+	}
+	return out, nil
+}
+
 func (d *DB) RecentFailedDownloads(ctx context.Context, since time.Time) ([]Download, error) {
 	rows, err := d.Read.ListFailedDownloadsSince(ctx, since.UnixMilli())
 	if err != nil {

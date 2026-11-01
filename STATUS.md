@@ -1,5 +1,39 @@
 # Monarr — Project Status
 
+## Obfuscated imports and the re-grab loop — 2026-11-01 · v0.38.3
+
+**Status:** [PR #74](https://github.com/pjunod/curator/pull/74) — review addressed,
+local gate green, CI and merge pending; deploy to nuc3 handed off (this session
+has no SSH key for nuc3).
+
+Field report: two episodes sat in Runner's "Fetching NZB" for most of a day
+behind a 22-hour indexer `Retry-After`. The quota had been spent by Curator,
+which grabbed the same two obfuscated NZBs thirteen times each since
+2026-10-27. Runner delivered and Curator accepted all 26; every import failed
+with `cannot determine episodes from "321d96….mkv"`.
+
+- **Root cause:** episode identity came only from the payload file's basename.
+  A sole anonymous file now borrows the grabbed release's episodes when the
+  whole payload has one media file and the release covers the grabbed episode
+  (`episode_from_release` history event).
+- **Loop:** a failed import released the want and the identical release was
+  grabbed again. Candidate selection now passes over a release whose bytes are
+  retained after a failed import (not cut short, still on disk, not removed
+  from Activity); `Grab` refuses it as a backstop.
+- **Guard bypass:** RSS now applies the regrab cap.
+
+**Review:** adversarial agent — no blockers; five should-fix findings
+(manual-subset mis-assignment, an unclearable block, docs, no Runner-path
+test, a per-candidate scan) fixed in the second commit.
+**Validation:** `make lint` 0 issues; `make test` green (one test,
+`TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired`, depends on
+`chmod 0500` and fails only when run as root — rerun alone as a non-root user:
+pass); `make test-web` green; `make test-e2e` 192/192 after installing the pinned
+Playwright browser (the first run never launched a browser).
+**Decision for later review:** the block is keyed by release title, not by
+item copy; a file name with episodes but no season is not completed from the
+release. Both conservative.
+
 ## Zero request cap means unlimited — 2026-10-22 · v0.37.2
 
 **Status:** implementation, adversarial review and local validation complete.

@@ -711,7 +711,7 @@ func (s *Service) hasTargetSingle(ctx context.Context, rs []ports.Release, ep do
 	}
 	for _, r := range rs {
 		parsed := parser.Parse(r.Title)
-		if parsed.SeasonPack || len(parsed.Episodes) != 1 || !releaseMatch(r, parsed, ep, index).Matched || s.isBlocklisted(ctx, r.Title, r.Indexer) {
+		if parsed.SeasonPack || len(parsed.Episodes) != 1 || !releaseMatch(r, parsed, ep, index).Matched || s.skipCandidate(ctx, r.Title, r.Indexer) {
 			continue
 		}
 		if !decision.Decide(releaseOf(parsed), ep, profile).Accepted || !profile.Met(parsed.Quality, true) {
@@ -784,7 +784,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 		}
 		parsed := parser.Parse(r.Title)
 		isPack := parsed.SeasonPack
-		if s.isBlocklisted(ctx, r.Title, r.Indexer) || isPack && (!allowPacks || packIncomplete) || !isPack && len(parsed.Episodes) != 1 {
+		if s.skipCandidate(ctx, r.Title, r.Indexer) || isPack && (!allowPacks || packIncomplete) || !isPack && len(parsed.Episodes) != 1 {
 			continue
 		}
 		var w domain.Wantable = pack
