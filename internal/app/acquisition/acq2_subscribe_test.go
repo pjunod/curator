@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -155,13 +156,14 @@ func TestAcq2SyncSubscribersDoesNotResubscribeWhatIsAlreadyRunning(t *testing.T)
 	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
 	cfg := acq2PushCfg(t, svc)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
 
 	running := map[int64]context.CancelFunc{}
-	svc.syncSubscribers(ctx, running)
+	svc.syncSubscribers(ctx, running, &workers)
 	waitFor(t, func() bool { return client.subscriptions() == 1 })
-	svc.syncSubscribers(ctx, running)
-	svc.syncSubscribers(ctx, running)
+	svc.syncSubscribers(ctx, running, &workers)
+	svc.syncSubscribers(ctx, running, &workers)
 	if got := client.subscriptions(); got != 1 {
 		t.Errorf("opened %d streams for one client", got)
 	}
@@ -179,10 +181,11 @@ func TestAcq2APushClientThatCannotStreamStaysOnThePoll(t *testing.T) {
 	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return plain }
 	acq2PushCfg(t, svc)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
 
 	running := map[int64]context.CancelFunc{}
-	svc.syncSubscribers(ctx, running)
+	svc.syncSubscribers(ctx, running, &workers)
 	if len(running) != 0 {
 		t.Errorf("started %d subscription(s) on a client that cannot push", len(running))
 	}
