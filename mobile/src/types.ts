@@ -295,6 +295,8 @@ export interface MatchEvidence {
 }
 
 export interface QueueItem {
+ importControl?: { generationKey:string;epoch:string;outcome:''|'pending'|'cancelled'|'completed';pendingPublications:number;retainedPublications:number }
+ importState?: 'queued'|'running'
  planId?: number
  planState?: string
  submissionPhase?: string

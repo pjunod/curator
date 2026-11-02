@@ -167,6 +167,36 @@ type IgnoredPath struct {
 	IgnoredAt int64
 }
 
+type ImportAttemptControl struct {
+	DownloadID    int64
+	GenerationKey string
+	AttemptEpoch  int64
+	Outcome       string
+	RequestedAt   sql.NullInt64
+	FinalizedAt   sql.NullInt64
+	PlanSealed    int64
+}
+
+type ImportAttemptFile struct {
+	DownloadID    int64
+	GenerationKey string
+	AttemptEpoch  int64
+	Source        string
+	Kind          string
+	Outcome       string
+	PlacementID   sql.NullString
+}
+
+type ImportAttemptStage struct {
+	DownloadID    int64
+	GenerationKey string
+	AttemptEpoch  int64
+	Stage         string
+	Source        string
+	Target        string
+	State         string
+}
+
 type ImportList struct {
 	ID               int64
 	Name             string
@@ -185,6 +215,22 @@ type ImportPlacement struct {
 	State     string
 	Data      string
 	UpdatedAt int64
+}
+
+type ImportPublicationAuthorization struct {
+	DownloadID    int64
+	GenerationKey string
+	AttemptEpoch  int64
+	PublicationID string
+	PlacementID   sql.NullString
+	ReceiptID     sql.NullInt64
+	Source        string
+	Target        string
+	Payload       string
+	AuthorizedAt  int64
+	Outcome       string
+	ResolvedAt    sql.NullInt64
+	Resolution    string
 }
 
 type Indexer struct {

@@ -469,7 +469,7 @@ func (s *Server) AddLibraryItem(w http.ResponseWriter, r *http.Request) {
 	// Search on add (Sonarr semantics): fire-and-forget; failures land in
 	// the log and the item stays wanted for the RSS/backlog loops.
 	if body.SearchNow != nil && *body.SearchNow && item.Monitored && s.deps.Acquisition != nil {
-		s.searchInBackground(item.ID, "add")
+		s.searchInBackground(r.Context(), item.ID, "add")
 	}
 	writeJSON(w, http.StatusCreated, detailDTO(item))
 }
@@ -583,7 +583,7 @@ func (s *Server) UpdateLibraryItem(w http.ResponseWriter, r *http.Request, id in
 	profileChanged := beforeErr == nil && body.QualityProfileId != nil &&
 		*body.QualityProfileId != before.QualityProfileID
 	if profileChanged && item.Monitored && s.deps.Acquisition != nil {
-		s.searchInBackground(item.ID, "profile change")
+		s.searchInBackground(r.Context(), item.ID, "profile change")
 	}
 	// Older search-added rows could exist without a destination. Once this
 	// edit supplies one, the thing that blocked their imports is gone, so put
@@ -1421,8 +1421,8 @@ func qualityText(f domain.MediaFile) string {
 // indexer, which is far longer than any sane HTTP timeout, and a failure is
 // not a reason to fail the edit — the item stays wanted and the RSS/backlog
 // loops pick it up regardless.
-func (s *Server) searchInBackground(itemID int64, why string) {
-	s.startBackground(func(parent context.Context) {
+func (s *Server) searchInBackground(ctx context.Context, itemID int64, why string) {
+	s.startBackgroundFrom(ctx, func(parent context.Context) {
 		ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 		defer cancel()
 		out, err := s.deps.Acquisition.AutoSearchItem(ctx, itemID)

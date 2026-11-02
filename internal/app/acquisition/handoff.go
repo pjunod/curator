@@ -101,6 +101,9 @@ func (s *Service) onDownloaded(ctx context.Context, dl sqlite.Download, cfg port
 // bad release to replace. The error is returned as well so a user-initiated
 // import can report why it failed.
 func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
+ var controlErr error
+ ctx,controlErr=s.ensureImportContext(ctx,dl);if controlErr!=nil{return controlErr}
+ if dl.ID!=0 {fresh,e:=s.db.GetDownload(ctx,dl.ID);if e!=nil{return e};dl.State,dl.Handoff=fresh.State,fresh.Handoff}
 	imp := dl.ImportPath
 	if imp == "" {
 		imp = dl.SavePath
@@ -196,7 +199,9 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	if skipped := result.Skipped(); len(skipped) > 0 {
 		detail += fmt.Sprintf("; %d skipped — %s", len(skipped), result.reasons(3))
 	}
-	s.advance(ctx, &dl, "imported", 1, "", stepImported, detail)
+	if _,bound:=importAttemptFrom(ctx);bound {
+ if err:=s.completeBoundImport(ctx,detail);err!=nil{return err}
+ } else {s.advance(ctx,&dl,"imported",1,"",stepImported,detail)}
 	// The library has the files now, so the client's copy is just occupying a
 	// disk. Inline rather than left to the hourly sweep: a night of 60 GB
 	// remuxes is several hundred gigabytes of "we will get to it".
@@ -214,64 +219,24 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 // the underlying problem (a mount, a path mapping) is fixed. It uses the
 // path captured at download time.
 func (s *Service) ImportNow(ctx context.Context, id int64) error {
-	unlock := s.lockDownload(id)
-	defer unlock()
-	// Keep the historical inline seam for focused service tests. Production
-	// always starts the bounded workers and takes the asynchronous path below.
-	held, holdErr := s.db.GetDownload(ctx, id)
-	if holdErr != nil {
-		return holdErr
-	}
-	if held.RunnerControl != "" {
-		var control *ports.DownloadControl
-		if json.Unmarshal([]byte(held.RunnerControl), &control) != nil || control.Held() {
-			return fmt.Errorf("runner transfer is held; resolve it before importing")
-		}
-	}
-	if s.importCh == nil {
-		dl, err := s.db.GetDownload(ctx, id)
-		if err != nil {
-			return err
-		}
-		if dl.State == "imported" {
-			return nil
-		}
-		if dl.ImportPath == "" && dl.SavePath == "" {
-			return fmt.Errorf("no download path recorded yet — wait for the download to finish")
-		}
-		return s.runImport(ctx, dl)
-	}
-
-	// Queueing and the durable transition are one per-download decision. A
-	// worker may receive the channel item immediately, but it takes this same
-	// lock before it can import, so Activity cannot observe the old failed row
-	// after the retry has already been accepted.
-	dl, err := s.db.GetDownload(ctx, id)
-	if err != nil {
-		return err
-	}
-	if dl.State == "imported" {
-		return nil
-	}
-	if dl.ImportPath == "" && dl.SavePath == "" {
-		return fmt.Errorf("no download path recorded yet — wait for the download to finish")
-	}
-	if s.ImportRunning(id) {
-		return fmt.Errorf("import is already running")
-	}
-	var cfg ports.ClientConfig
-	if dl.ClientID != 0 {
-		cfg, err = s.db.GetDownloadClient(ctx, dl.ClientID)
-		if err != nil {
-			return err
-		}
-	}
-	if !s.enqueueImport(ctx, dl, cfg) {
-		return fmt.Errorf("import is already queued")
-	}
-	s.advance(ctx, &dl, "downloaded", dl.Progress, "", stepImportQueued,
-		"waiting for an import worker")
-	return nil
+ ctx,release,err:=ports.TryWork(ctx,s.admission,"explicit import retry");if err!=nil{return err};defer release()
+ unlock,ok:=s.tryLockDownload(id);if !ok{return fmt.Errorf("import is still running")};defer unlock()
+ dl,err:=s.db.GetDownload(ctx,id);if err!=nil{return err}
+ if dl.RunnerControl!="" {var control *ports.DownloadControl;if json.Unmarshal([]byte(dl.RunnerControl),&control)!=nil||control.Held(){return fmt.Errorf("runner transfer is held; resolve it before importing")}}
+ if dl.State=="imported"{return nil}
+ if dl.ImportPath==""&&dl.SavePath==""{return fmt.Errorf("no download path recorded yet — wait for the download to finish")}
+ if s.ImportRunning(id){return fmt.Errorf("import is already running or queued")}
+ if a,e:=s.db.GetImportAttempt(ctx,id,dl.GenerationKey);e==nil&&a.Outcome=="pending"{s.finishCancelledImport(ctx,a.ImportAttemptKey)}
+ a,err:=s.db.BeginImportRetry(ctx,id,dl.GenerationKey);if err!=nil{return importControlError(err)}
+ dl,err=s.db.GetDownload(ctx,id);if err!=nil{return err}
+ if s.importCh==nil {
+  bound,finish,e:=s.beginInlineImport(ctx,dl,a.ImportAttemptKey);if e!=nil{return e};defer finish()
+  return s.runImport(bound,dl)
+ }
+ var cfg ports.ClientConfig
+ if dl.ClientID!=0 {cfg,err=s.db.GetDownloadClient(ctx,dl.ClientID);if err!=nil{return err}}
+ if !s.enqueueImport(ctx,dl,cfg){return fmt.Errorf("import queue is full; durable retry remains recorded")}
+ return nil
 }
 
 // RetryFolderlessImports queues every failed import whose only blocker was

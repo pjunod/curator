@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+ "encoding/json"
+ "crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -263,9 +265,7 @@ func (s *Service) importDeliverySidecars(ctx context.Context, r sqlite.DeliveryR
 		if deliveryGenericArtName(filepath.Base(sidecar.relative)) && len(genericTargets) == 1 {
 			matches = 1
 		}
-		if matches == 0 {
-			continue
-		}
+        if matches==0{if err:=s.recordSkippedImportFile(ctx,sidecar.absolute);err!=nil{return result,err};continue}
 		if matches > 1 {
 			return result, fmt.Errorf("caption %q matches multiple imported media files", sidecar.relative)
 		}
@@ -346,9 +346,7 @@ func (s *Service) copyAcceptedSidecar(ctx context.Context, r sqlite.DeliveryRece
 		return fmt.Errorf("associated library media is unavailable")
 	}
 	if digest, size, err := fileDigest(ctx, target); err == nil {
-		if digest == source.digest && size == source.size {
-			return nil
-		}
+        if digest==source.digest&&size==source.size{return s.publishAcceptedSidecar(ctx,r,source,mediaPath,target,"",dirInfo,mediaInfo)}
 		return fmt.Errorf("library caption already exists with different content")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -386,19 +384,10 @@ func (s *Service) copyAcceptedSidecar(ctx context.Context, r sqlite.DeliveryRece
 	if _, err := input.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	stageName := filepath.Join(filepath.Dir(target), ".monarr-caption-"+shortDeliveryStageID(target)+".stage")
-	stage, err := os.OpenFile(stageName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		// Deterministic staging lets a retry recover a process crash between
-		// writing and publishing the sidecar, without leaving random temp files.
-		if digest, size, verifyErr := fileDigest(ctx, stageName); verifyErr == nil && size == source.size && digest == source.digest {
-			return s.publishAcceptedSidecar(ctx, r, source, mediaPath, target, stageName, dirInfo, mediaInfo)
-		}
-		if removeErr := os.Remove(stageName); removeErr != nil {
-			return errors.Join(err, removeErr)
-		}
-		stage, err = os.OpenFile(stageName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	}
+    nonce:=make([]byte,16);if _,err=rand.Read(nonce);err!=nil{return err}
+    stageName:=filepath.Join(filepath.Dir(target),".monarr-caption-"+hex.EncodeToString(nonce)+".stage")
+    if key,ok:=importAttemptFrom(ctx);ok{if err=s.db.RecordImportStage(ctx,key,source.absolute,target,stageName);err!=nil{return importControlError(err)}}
+    stage,err:=os.OpenFile(stageName,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0o600)
 	if err != nil {
 		return err
 	}
@@ -455,33 +444,34 @@ func (s *Service) publishAcceptedSidecar(ctx context.Context, r sqlite.DeliveryR
 	if !owned {
 		return fmt.Errorf("associated library media is no longer owned by this copy")
 	}
-	if digest, size, err := fileDigest(ctx, target); err == nil {
-		if digest == source.digest && size == source.size {
-			if err := os.Remove(stageName); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			return syncDeliveryDirectory(filepath.Dir(target))
-		}
-		return fmt.Errorf("library caption already exists with different content")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err := os.Link(stageName, target); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			digest, size, verifyErr := fileDigest(ctx, target)
-			if verifyErr == nil && size == source.size && digest == source.digest {
-				if removeErr := os.Remove(stageName); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-					return removeErr
-				}
-				return syncDeliveryDirectory(filepath.Dir(target))
-			}
-		}
-		return err
-	}
-	if err := os.Remove(stageName); err != nil {
-		return err
-	}
-	return syncDeliveryDirectory(filepath.Dir(target))
+    if err:=s.db.AssertPublicationTargetAvailable(ctx,target);err!=nil{return importControlError(err)}
+    var publication sqlite.ImportPublication
+    key,bound:=importAttemptFrom(ctx)
+    if bound {
+        payload,_:=json.Marshal(map[string]any{"source":source.absolute,"target":target,"sha256":source.digest,"size":source.size,"stage":stageName,"mediaPath":mediaPath,"mediaIdentity":deliveryFileGeneration(mediaInfo),"parentIdentity":deliveryDirectoryObjectIdentity(dirInfo)})
+        publication=sqlite.ImportPublication{ImportAttemptKey:key,ID:fmt.Sprintf("sidecar:%d:%d:%s",r.ID,key.Epoch,shortDeliveryStageID(source.absolute)),ReceiptID:r.ID,Source:source.absolute,Target:target,Payload:string(payload)}
+        if err:=s.db.AuthorizeImportSidecar(ctx,publication);err!=nil{return importControlError(err)}
+        // The durable grant won cancellation ordering. Keep ownership through
+        // the external link, directory sync and coupled result transaction.
+        ctx=context.WithoutCancel(ctx)
+    }
+    finish:=func()error{
+        if stageName!=""{if err:=os.Remove(stageName);err!=nil&&!errors.Is(err,os.ErrNotExist){return err}}
+        if err:=syncDeliveryDirectory(filepath.Dir(target));err!=nil{return err}
+        if !bound{return nil}
+        info,err:=os.Lstat(target);if err!=nil{return err}
+        local,cancel:=context.WithTimeout(ctx,10*time.Second);defer cancel()
+        return s.db.CommitImportSidecar(local,publication,sqlite.DeliveryFileImport{ReceiptID:r.ID,Path:source.relative,SourceGeneration:r.GenerationKey,SourceTransfer:r.Delivery.RequestToken,SourcePayloadGeneration:r.Delivery.PublicationGeneration,LibraryFileGeneration:deliveryFileGeneration(info),LibraryFileIdentity:deliveryFileGeneration(info),LibraryPath:target})
+    }
+    if digest,size,err:=fileDigest(ctx,target);err==nil{
+        if digest==source.digest&&size==source.size{return finish()};return fmt.Errorf("library caption already exists with different content")
+    }else if !errors.Is(err,os.ErrNotExist){return err}
+    if stageName==""{return fmt.Errorf("caption stage is missing")}
+    if err:=os.Link(stageName,target);err!=nil{
+        if errors.Is(err,os.ErrExist){digest,size,e:=fileDigest(ctx,target);if e==nil&&size==source.size&&digest==source.digest{return finish()}}
+        return err
+    }
+    return finish()
 }
 
 func syncDeliveryDirectory(path string) error {
@@ -906,6 +896,11 @@ func (s *Service) startDeliveryFileCleanupRetryWorker(ctx context.Context) {
 	go func() {
 		defer s.importWG.Done()
 		sweep := func() {
+			ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "cleanup retry admission")
+			if admissionErr != nil {
+				return
+			}
+			defer releaseWork()
 			ids, err := s.db.DeliveryFileCleanupReceipts(ctx, 0, 32)
 			if err != nil {
 				s.log.Warn("delivery file cleanup retry scan failed", "err", err)

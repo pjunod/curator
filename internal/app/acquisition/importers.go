@@ -2,8 +2,7 @@ package acquisition
 
 import (
 	"context"
-	"fmt"
-	"sync"
+		"sync"
 	"time"
 
 	"github.com/pjunod/monarr/internal/app/transfers"
@@ -62,6 +61,7 @@ type importJob struct {
 	deliveryReceiptID   int64
 	deliveryCleanupOnly bool
 	cleanupCancel       context.CancelFunc
+ lockHeld bool
 }
 
 // importTicket is the durable row's in-memory place in the worker queue.
@@ -71,6 +71,7 @@ type importJob struct {
 type importTicket struct {
 	cancel context.CancelFunc
 	queued bool
+ attempt sqlite.ImportAttemptKey
 }
 
 // StartImporters launches the import workers. Cancel ctx to stop them, then
@@ -119,7 +120,9 @@ func (s *Service) StartImporters(ctx context.Context) {
 	}
 	s.log.Info("import workers started", "workers", importWorkers, "cleanup_workers", cleanupWorkers)
 	s.importRecoverOnce.Do(func() {
-		s.reconcilePlacements(ctx)
+		s.reconcileImportCancellations(ctx)
+ s.startImportCancellationWorker(ctx)
+ s.reconcilePlacements(ctx)
 		s.startRecoveryWorker(ctx)
 		s.recoverManualImports(ctx)
 		s.startManualAdmissionWorker(ctx)
@@ -221,55 +224,61 @@ func (s *Service) queueDeliveryCleanup(ctx context.Context, cfg ports.ClientConf
 }
 
 func (s *Service) enqueueImportJob(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, receiptID int64, inline bool) bool {
-	if s.importCh == nil {
-		if !inline {
-			return false
-		}
-		s.runImportTracked(ctx, importJob{dl: dl, cfg: cfg})
-		return true
-	}
-
-	// One queued OR running job per download. This is also the durable-row
-	// recovery guard: repeated 30-second observations of an orphaned
-	// "importing" row must not enqueue the same payload over and over while it
-	// waits behind a large copy.
-	s.importMu.Lock()
-	if s.importJobs == nil {
-		s.importJobs = map[int64]*importTicket{}
-	}
-	if _, exists := s.importJobs[dl.ID]; exists {
-		s.importMu.Unlock()
-		return false
-	}
-	parent := s.importCtx
-	if parent == nil {
-		parent = ctx
-	}
-	// A worker never inherits the caller's synchronous storage lock lease.
-	parent = context.WithValue(parent, storageDecisionKey{}, nil)
-	jobCtx, cancel := context.WithCancel(parent)
-	ticket := &importTicket{cancel: cancel, queued: true}
-	s.importJobs[dl.ID] = ticket
-	select {
-	case s.importCh <- importJob{dl: dl, cfg: cfg, ctx: jobCtx, ticket: ticket, deliveryReceiptID: receiptID}:
-		s.importMu.Unlock()
-		return true
-	default:
-		delete(s.importJobs, dl.ID)
-		s.importMu.Unlock()
-		cancel()
-		// Full. The next sweep sees the same completed download and offers
-		// it again, so this costs 30 seconds and nothing else.
-		s.log.Warn("import queue full; deferring to the next sweep",
-			"download", dl.ID, "release", dl.ReleaseTitle)
-		return false
-	}
+ inlineRun:=s.importCh==nil
+ if inlineRun&&!inline{return false}
+ var key sqlite.ImportAttemptKey
+ if dl.ID!=0 {
+  a,err:=s.db.EnsureImportAttempt(ctx,dl.ID,dl.GenerationKey)
+  if err!=nil || a.Outcome!="" {return false}
+  key=a.ImportAttemptKey
+ }
+ s.importMu.Lock()
+ if dl.ID!=0 {
+  current,e:=s.db.GetImportAttempt(ctx,dl.ID,dl.GenerationKey)
+  if e!=nil||current.ImportAttemptKey!=key||current.Outcome!=""{s.importMu.Unlock();return false}
+ }
+ if s.importJobs==nil{s.importJobs=map[int64]*importTicket{}}
+ if _,exists:=s.importJobs[dl.ID];exists&&dl.ID!=0{s.importMu.Unlock();return false}
+ parent:=ctx
+ if !inlineRun {
+  if s.importCtx!=nil{parent=s.importCtx}
+  parent=context.WithValue(parent,storageDecisionKey{},nil)
+ }
+ jobCtx,cancel:=context.WithCancel(parent)
+ var ticket *importTicket
+ if dl.ID!=0 {
+  jobCtx=withImportAttempt(jobCtx,key)
+  ticket=&importTicket{cancel:cancel,queued:!inlineRun,attempt:key}
+  s.importJobs[dl.ID]=ticket
+ }
+ job:=importJob{dl:dl,cfg:cfg,ctx:jobCtx,ticket:ticket,deliveryReceiptID:receiptID,lockHeld:inlineRun}
+ if inlineRun {s.importMu.Unlock();defer cancel();s.runImportTracked(jobCtx,job);return true}
+ select {
+ case s.importCh<-job:s.importMu.Unlock();return true
+ default:
+  if s.importJobs[dl.ID]==ticket{delete(s.importJobs,dl.ID)}
+  s.importMu.Unlock();cancel()
+  s.log.Warn("import queue full; durable work will be offered again","download",dl.ID)
+  return false
+ }
 }
 
 // runImportTracked imports one download and reports it as in flight for the
 // whole of it — which is the entire point: before this, a running import was
 // visible nowhere at all.
 func (s *Service) runImportTracked(ctx context.Context, job importJob) {
+	workCtx, release, err := ports.EnterWork(ctx, s.admission, "import or cleanup execution")
+	if err != nil {
+		stopped, cancel := context.WithCancel(ctx)
+		cancel()
+		s.runImportOwned(stopped, job) // release ticket ownership without running I/O
+		return
+	}
+	defer release()
+	s.runImportOwned(workCtx, job)
+}
+
+func (s *Service) runImportOwned(ctx context.Context, job importJob) {
 	if job.deliveryCleanupOnly {
 		defer func() {
 			if job.cleanupCancel != nil {
@@ -302,16 +311,19 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 		}()
 	}
 	if ctx.Err() != nil {
-		return // cancelled while it was still waiting for a worker
-	}
+ if key,ok:=importAttemptFrom(ctx);ok {
+  if job.lockHeld {s.finishCancelledImport(ctx,key)} else if unlock,held:=s.tryLockDownload(job.dl.ID);held{s.finishCancelledImport(ctx,key);unlock()}
+ }
+ return
+ }
 
 	if job.ticket != nil {
 		// Restart, cancel, poll and push can all address this row concurrently.
 		// An asynchronous copy owns the same per-download lock as reconciliation
 		// so there is never a second importer writing underneath it. The inline
 		// test path is already called with this lock held by reconciliation.
-		unlock := s.lockDownload(job.dl.ID)
-		defer unlock()
+		if !job.lockHeld {unlock:=s.lockDownload(job.dl.ID);defer unlock()}
+ defer s.finishCancelledImport(ctx,job.ticket.attempt)
 		fresh, err := s.db.GetDownload(ctx, job.dl.ID)
 		if err != nil {
 			return
@@ -324,6 +336,8 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 			}
 			return
 		}
+ bound,controlErr:=s.ensureImportContext(ctx,fresh)
+ if controlErr!=nil{return};ctx=bound
 		if ctx.Err() != nil || persistedDownloadHeld(fresh.RunnerControl) {
 			return
 		}
@@ -382,44 +396,10 @@ func (s *Service) ImportStatus(download int64) string {
 	return "running"
 }
 
-// CancelImport stops a queued/running import and returns the row to the
-// downloaded state so it can be restarted later. The source payload is left
-// alone. Any destination temp file is removed by the copy path.
-func (s *Service) CancelImport(ctx context.Context, id int64) error {
-	dl, err := s.db.GetDownload(ctx, id)
-	if err != nil {
-		return err
-	}
-	s.importMu.Lock()
-	ticket := s.importJobs[id]
-	s.importMu.Unlock()
-	if ticket != nil {
-		ticket.cancel()
-	}
-	if dl.State != "importing" && ticket == nil {
-		return fmt.Errorf("download is not importing")
-	}
-
-	// Cancel before waiting for the import's row lock. A long cross-filesystem
-	// copy observes the context, removes its temp file, and releases the lock;
-	// then this durable transition is the final word.
-	unlock := s.lockDownload(id)
-	defer unlock()
-	dl, err = s.db.GetDownload(ctx, id)
-	if err != nil {
-		return err
-	}
-	if dl.State == "imported" {
-		return fmt.Errorf("import already finished")
-	}
-	s.importMu.Lock()
-	if s.importJobs[id] == ticket {
-		delete(s.importJobs, id)
-	}
-	s.importMu.Unlock()
-	s.advance(ctx, &dl, "downloaded", dl.Progress, "", stepImportCancelled,
-		"import cancelled; payload kept and ready to restart")
-	return nil
+// CancelImport requests durable cancellation. A nil error means accepted;
+// CancelImportAttempt exposes pending versus finalized outcomes to HTTP callers.
+func (s *Service) CancelImport(ctx context.Context,id int64) error {
+ _,err:=s.CancelImportAttempt(ctx,id,nil);return err
 }
 
 // importerFields is the state StartImporters needs. Kept beside the workers

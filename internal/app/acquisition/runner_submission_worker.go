@@ -55,6 +55,11 @@ func (s *Service) startAutomaticAdmissionWorker(ctx context.Context) {
 }
 
 func (s *Service) processRunnerSubmissionRetries(ctx context.Context) {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "processRunnerSubmissionRetries")
+	if admissionErr != nil {
+		return
+	}
+	defer releaseWork()
 	now := time.Now()
 	retries, err := s.db.ListRunnerSubmissionRetries(ctx, now, 16)
 	if err != nil {

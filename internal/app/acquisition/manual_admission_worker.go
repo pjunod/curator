@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"fmt"
+	"github.com/pjunod/monarr/internal/ports"
 	"time"
 )
 
@@ -17,6 +18,11 @@ func (s *Service) startManualAdmissionWorker(ctx context.Context) {
 	go func() {
 		defer s.importWG.Done()
 		process := func() {
+			ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "manual submission retry")
+			if admissionErr != nil {
+				return
+			}
+			defer releaseWork()
 			now := time.Now()
 			retries, err := s.db.ListManualAdmissionRetries(ctx, now, 32)
 			if err != nil {

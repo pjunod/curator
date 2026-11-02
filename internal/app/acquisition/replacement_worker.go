@@ -49,6 +49,11 @@ func (s *Service) startReplacementWorker(ctx context.Context) {
 // off the API request path; the resulting digest and filesystem identity bind
 // the user's later destructive decision to the exact bytes they reviewed.
 func (s *Service) processReplacementFileObservations(ctx context.Context) {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "processReplacementFileObservations")
+	if admissionErr != nil {
+		return
+	}
+	defer releaseWork()
 	observations, err := s.db.ListPendingReplacementFileObservations(ctx, 32)
 	if err != nil {
 		s.log.Warn("replacement observation list failed", "err", err)
@@ -177,6 +182,11 @@ func (s *Service) processReplacementFileObservations(ctx context.Context) {
 }
 
 func (s *Service) processReplacementOperations(ctx context.Context) {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "processReplacementOperations")
+	if admissionErr != nil {
+		return
+	}
+	defer releaseWork()
 	operations, err := s.db.ListOpenReplacementOperations(ctx, 32)
 	if err != nil {
 		s.log.Warn("replacement worker: could not list operations", "err", err)

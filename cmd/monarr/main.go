@@ -49,6 +49,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/app/importlist"
 	"github.com/pjunod/monarr/internal/app/library"
+	"github.com/pjunod/monarr/internal/app/maintenance"
 	appnotify "github.com/pjunod/monarr/internal/app/notify"
 	"github.com/pjunod/monarr/internal/app/recommendation"
 	"github.com/pjunod/monarr/internal/app/transfers"
@@ -68,6 +69,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if len(os.Args) > 1 && os.Args[1] == "maintenance" {
+		if err := runMaintenance(ctx, os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "advertise" {
 		log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 		if err := runAdvertise(ctx, os.Args[2:], os.Stdout, log, discovery.Publish); err != nil {
@@ -106,6 +114,8 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	defer log.Info("goodbye") // registered first: registered cleanup precedes it.
 	defer cancelRun()
 	startedAt := time.Now()
+	admission := maintenance.New()
+	defer admission.Close()
 	log.Info("monarr starting",
 		"version", buildinfo.Version, "commit", buildinfo.Commit,
 		"addr", cfg.Addr(), "dataDir", cfg.DataDir, "uiEmbedded", api.UIBuilt())
@@ -214,6 +224,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		}
 	}
 	acq := acquisition.New(db, b, log, indexerFactory, clientFactory)
+	acq.SetAdmission(admission)
 	// The data plane gets its own registry and its own workers. Cancel ctx to
 	// stop them; WaitImporters drains, in the same shape the jobs queue uses.
 	inflight := transfers.New()
@@ -270,7 +281,15 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}, log)
 
 	// Compat personalities (ADR 0003): Sonarr/Radarr v3 translation surfaces.
+	var compatScheduler *scheduler.Scheduler
 	compatDeps := compat.Deps{
+		Admission: admission,
+		TriggerSearch: func(ctx context.Context) error {
+			if compatScheduler == nil {
+				return fmt.Errorf("scheduler is not running")
+			}
+			return compatScheduler.TriggerContext(ctx, "backlog.search")
+		},
 		Log: log, Library: lib, Store: db, APIKey: keyFn,
 		ResolveTVDB: meta.FindSeriesByTVDB,
 	}
@@ -371,6 +390,8 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 
 	// Scheduler.
 	sched := scheduler.New(sqlite.NewTaskStore(db), b, log)
+	sched.SetAdmission(admission)
+	compatScheduler = sched
 	if err := sched.Register(scheduler.Task{
 		Name:       "health.check",
 		Interval:   time.Minute,
@@ -519,7 +540,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// Job queue (ADR 0008 step 1). Started after the scheduler so periodic
 	// work can enqueue jobs, and worth running on a single instance for the
 	// retries and failure visibility the timer scheduler cannot give.
-	queue := jobs.New(db, b, log, jobs.Options{PruneHook: func(ctx context.Context, before time.Time) error {
+	queue := jobs.New(db, b, log, jobs.Options{Admission: admission, PruneHook: func(ctx context.Context, before time.Time) error {
 		_, err := db.PruneWantedSearches(ctx, before)
 		return err
 	}})
@@ -587,6 +608,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 
 	// HTTP.
 	srv := api.New(api.Deps{
+		Maintenance:         admission,
 		Context:             ctx,
 		Log:                 log,
 		Bus:                 b,
@@ -622,6 +644,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	httpServer.RegisterOnShutdown(srv.StopStreams)
 	defer func() {
 		cancelRun()
+		admission.Close()
 		srv.BeginShutdown()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

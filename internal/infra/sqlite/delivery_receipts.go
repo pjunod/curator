@@ -1216,14 +1216,16 @@ func (d *DB) DeliveryFileOutcomeByPath(ctx context.Context, receiptID int64, pat
 	return v, err
 }
 
-func (d *DB) RecordDeliveryFileImport(ctx context.Context, v DeliveryFileImport) error {
+func (d *DB) RecordDeliveryFileImport(ctx context.Context,v DeliveryFileImport)error{return recordDeliveryFileImport(ctx,d.W,v)}
+
+func recordDeliveryFileImport(ctx context.Context,q interface {ExecContext(context.Context,string,...any)(sql.Result,error)}, v DeliveryFileImport) error {
 	if v.ReceiptID <= 0 || v.Path == "" || (v.ReplacementDisposition != "" && v.ReplacementDisposition != "selected" && v.ReplacementDisposition != "excess") {
 		return fmt.Errorf("invalid delivery file import provenance")
 	}
 	if v.CreatedAt.IsZero() {
 		v.CreatedAt = time.Now()
 	}
-	_, err := d.W.ExecContext(ctx, `INSERT OR IGNORE INTO runner_delivery_file_imports
+	_, err := q.ExecContext(ctx, `INSERT OR IGNORE INTO runner_delivery_file_imports
 		(receipt_id,path,source_generation,source_transfer,source_payload_generation,replacement_operation_id,replacement_disposition,placement_id,library_file_generation,library_file_identity,library_path,created_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, v.ReceiptID, v.Path, v.SourceGeneration, v.SourceTransfer, v.SourcePayloadGeneration,
 		v.ReplacementOperationID, v.ReplacementDisposition, v.PlacementID, v.LibraryFileGeneration,

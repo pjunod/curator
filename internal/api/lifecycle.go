@@ -12,6 +12,7 @@ func (s *Server) StopStreams() { s.cancelStreams() }
 // BeginShutdown closes request/background admission before any Wait can run.
 // Ordinary requests already admitted retain their HTTP shutdown grace.
 func (s *Server) BeginShutdown() {
+	s.deps.Maintenance.Close()
 	s.lifecycleMu.Lock()
 	s.closing = true
 	s.lifecycleMu.Unlock()
@@ -52,13 +53,24 @@ func (s *Server) trackRequests(next http.Handler) http.Handler {
 
 // startBackground serializes admission and registration with shutdown.
 func (s *Server) startBackground(work func(context.Context)) bool {
+	return s.startBackgroundFrom(s.backgroundCtx, work)
+}
+
+func (s *Server) startBackgroundFrom(parent context.Context, work func(context.Context)) bool {
 	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	if s.closing || s.backgroundCtx.Err() != nil {
-		s.lifecycleMu.Unlock()
+		return false
+	}
+	base, cancel := context.WithCancel(context.WithoutCancel(parent))
+	stop := context.AfterFunc(s.backgroundCtx, cancel)
+	ctx, release, err := s.deps.Maintenance.TryEnter(base, "background search")
+	if err != nil {
+		stop()
+		cancel()
 		return false
 	}
 	s.background.Add(1)
-	s.lifecycleMu.Unlock()
-	go func() { defer s.background.Done(); work(s.backgroundCtx) }()
+	go func() { defer s.background.Done(); defer release(); defer cancel(); defer stop(); work(ctx) }()
 	return true
 }

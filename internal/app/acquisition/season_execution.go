@@ -237,6 +237,11 @@ func (s *Service) RunSeasonCoordinator(ctx context.Context) {
 	}
 }
 func (s *Service) reconcileSeasonPlans(ctx context.Context) {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "reconcileSeasonPlans")
+	if admissionErr != nil {
+		return
+	}
+	defer releaseWork()
 	rows, err := s.db.R.QueryContext(ctx, `SELECT id FROM acquisition_plans WHERE state IN ('admitted','dispatching','active','cancel_requested') ORDER BY id`)
 	if err != nil {
 		return

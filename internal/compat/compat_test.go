@@ -98,7 +98,7 @@ func newEnv(t *testing.T) *env {
 			}
 			return fakeProvider{}.GetSeries(ctx, 100)
 		},
-		TriggerSearch: func() { searches.Add(1) },
+		TriggerSearch: func(context.Context) error { searches.Add(1); return nil },
 	}
 	sonarr := httptest.NewServer(compat.NewSonarr(deps).Handler())
 	t.Cleanup(sonarr.Close)

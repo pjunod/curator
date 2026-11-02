@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/pjunod/monarr/internal/ports"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -831,6 +832,11 @@ func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 	return tx.Commit()
 }
 func (s *Service) recoverySweep(ctx context.Context) {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "recoverySweep")
+	if admissionErr != nil {
+		return
+	}
+	defer releaseWork()
 	rows, err := s.db.R.QueryContext(ctx, `SELECT id FROM recovery_imports WHERE state IN ('queued','importing','cancel_pending') ORDER BY updated_at LIMIT 5`)
 	if err != nil {
 		return
@@ -899,6 +905,11 @@ func (s *Service) recoverySweep(ctx context.Context) {
 	s.deliverRecoveryReceipts(ctx)
 }
 func (s *Service) deliverRecoveryReceipts(ctx context.Context) {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "deliverRecoveryReceipts")
+	if admissionErr != nil {
+		return
+	}
+	defer releaseWork()
 	s.recoveryReceiptMu.Lock()
 	defer s.recoveryReceiptMu.Unlock()
 	rows, err := s.db.R.QueryContext(ctx, `SELECT o.import_id,o.receipt FROM recovery_receipt_outbox o JOIN recovery_imports i ON i.id=o.import_id WHERE o.delivered=0 AND i.state='receipt_pending' ORDER BY o.updated_at LIMIT 25`)

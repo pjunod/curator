@@ -189,6 +189,7 @@ type Service struct {
 	// The data plane: import workers and the in-flight registry. See
 	// importers.go for why they are not on the poll goroutine.
 	importerFields
+	admission ports.WorkAdmission
 }
 
 type runnerAdmissionPollPermitKey struct{}
@@ -202,6 +203,8 @@ func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, ni IndexerFactory, nc Clie
 }
 
 // noteContact records the outcome of one exchange with a client.
+func (s *Service) SetAdmission(a ports.WorkAdmission) { s.admission = a }
+
 func (s *Service) noteContact(clientID int64, err error) {
 	s.contactMu.Lock()
 	defer s.contactMu.Unlock()
@@ -2038,7 +2041,7 @@ func (s *Service) endUnseenTransfers(active []sqlite.Download, seen map[int64]bo
 	}
 }
 
-func (s *Service) lockDownload(id int64) func() {
+func (s *Service) downloadMutex(id int64) *sync.Mutex {
 	s.reconcileMu.Lock()
 	if s.reconciling == nil {
 		s.reconciling = map[int64]*sync.Mutex{}
@@ -2049,9 +2052,11 @@ func (s *Service) lockDownload(id int64) func() {
 		s.reconciling[id] = m
 	}
 	s.reconcileMu.Unlock()
-	m.Lock()
-	return m.Unlock
+ return m
 }
+
+func (s *Service) lockDownload(id int64) func() { m:=s.downloadMutex(id);m.Lock();return m.Unlock }
+func (s *Service) tryLockDownload(id int64) (func(),bool) {m:=s.downloadMutex(id);if !m.TryLock(){return nil,false};return m.Unlock,true}
 
 func (s *Service) lockDeliveryAcknowledgement(receiptID int64) func() {
 	s.deliveryAckMu.Lock()
