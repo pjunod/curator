@@ -811,8 +811,15 @@ func (d *DB) CommitManualImportAdmission(ctx context.Context, dl Download) (Down
 			return Download{}, err
 		}
 		dl.GenerationKey = params.GenerationKey
-	} else if dl.GenerationKey == "" {
-		return Download{}, fmt.Errorf("manual import generation identity is required")
+	} else {
+		if dl.GenerationKey == "" {
+			return Download{}, fmt.Errorf("manual import generation identity is required")
+		}
+		// Selection, target and epoch advance commit together. A failed or
+		// refused manual request cannot unsuppress the previous selection.
+		if _, err = beginImportRetry(ctx, tx, dl.ID, dl.GenerationKey, false); err != nil {
+			return Download{}, err
+		}
 	}
 
 	handoff, err := json.Marshal(dl.Handoff)

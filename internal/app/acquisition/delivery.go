@@ -742,8 +742,10 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 		expectedDigests[f.absolute] = f.digest
 	}
 	manual := fresh.Intent == "manual_additional"
+	explicitSelection := false
 	for i := len(fresh.Handoff) - 1; i >= 0; i-- {
 		if fresh.Handoff[i].Step == stepManualQueued {
+			explicitSelection = true
 			manual = true
 			requested := fresh.Handoff[i].Paths
 			if len(requested) == 0 {
@@ -811,10 +813,145 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 	for _, file := range files {
 		acceptedGenerations[filepath.Clean(file.absolute)] = file.generation
 	}
+
+	ctx, err = s.ensureImportContext(ctx, fresh)
+	if err != nil {
+		return err
+	}
+	ctx = context.WithValue(ctx, deliveryAttemptPlanKey{}, true)
+	allSelected := map[string]bool{}
+	for _, p := range selected {
+		allSelected[filepath.Clean(p)] = true
+	}
+	if manual && explicitSelection {
+		for i := len(fresh.Handoff) - 1; i >= 0; i-- {
+			if fresh.Handoff[i].Step == stepManualQueued {
+				for _, p := range fresh.Handoff[i].Paths {
+					if deliveryImportablePath(item.Kind, p) && !isReleaseSample(p) {
+						allSelected[filepath.Clean(p)] = true
+					}
+				}
+				break
+			}
+		}
+	} else {
+		for _, f := range r.Delivery.Files {
+			p := filepath.Clean(filepath.Join(r.MappedPath, filepath.FromSlash(f.Path)))
+			if deliveryImportablePath(item.Kind, p) && !isReleaseSample(p) {
+				allSelected[p] = true
+			}
+		}
+	}
+	var attemptPlan []sqlite.ImportAttemptFile
+	for _, f := range r.Delivery.Files {
+		p := filepath.Clean(filepath.Join(r.MappedPath, filepath.FromSlash(f.Path)))
+		kind := ""
+		if allSelected[p] {
+			kind = "media"
+		} else if knownDeliverySidecar(f.Path) {
+			kind = "sidecar"
+		}
+		if kind != "" {
+			attemptPlan = append(attemptPlan, sqlite.ImportAttemptFile{Source: p, Kind: kind})
+		}
+		expectedDigests[p] = f.SHA256
+		if prior, ok := priorByPath[f.Path]; ok && acceptedGenerations[p] == "" {
+			acceptedGenerations[p] = prior.FileGeneration
+		}
+	}
+	key, _ := importAttemptFrom(ctx)
+	if err = s.db.SealImportAttempt(ctx, key, attemptPlan, false); err != nil {
+		return importControlError(err)
+	}
 	ctx = withExpectedSourceDigests(ctx, expectedDigests)
 	ctx = withAcceptedSourceGenerations(ctx, acceptedGenerations)
 	ctx = withAcceptedPublicationGeneration(ctx, r.Delivery.PublicationGeneration)
 	ctx = withIndependentPlacementCopy(ctx)
+
+	// Previously cleaned sidecars still belong to the sealed attempt plan.
+	// Reuse requires current same-copy association and exact physical bytes.
+	priorImports, e := s.db.DeliveryFileImports(ctx, r.ID)
+	if e != nil {
+		return e
+	}
+	for _, f := range r.Delivery.Files {
+		if !knownDeliverySidecar(f.Path) {
+			continue
+		}
+		if _, exists := verifiedByPath[f.Path]; exists {
+			continue
+		}
+		prior := priorByPath[f.Path]
+		p := filepath.Clean(filepath.Join(r.MappedPath, filepath.FromSlash(f.Path)))
+		if prior.Disposition != "placed" {
+			if e := s.recordSkippedImportFile(ctx, p); e != nil {
+				return e
+			}
+			continue
+		}
+		verified := verifiedDeliveryFile{relative: f.Path, absolute: p, size: f.SizeBytes, digest: f.SHA256, generation: prior.FileGeneration}
+		proven := false
+		for _, receipt := range priorImports {
+			if receipt.Path == f.Path && receipt.SourceGeneration == r.GenerationKey && receipt.SourceTransfer == r.Delivery.RequestToken && receipt.SourcePayloadGeneration == r.Delivery.PublicationGeneration {
+				if _, _, ok := s.deliveryLibraryPlacementProof(ctx, r, verified, receipt.LibraryPath, receipt.LibraryFileGeneration, receipt.LibraryFileIdentity); ok {
+					proven = true
+					break
+				}
+			}
+		}
+		if !proven {
+			return fmt.Errorf("prior sidecar requires Library review: %s", f.Path)
+		}
+		if e := s.db.ResolveImportFile(ctx, key, p, "committed", ""); e != nil {
+			return importControlError(e)
+		}
+	}
+	var reusedResults []FileOutcome
+	scope := importScope{Dest: item.Path, CopyID: fresh.CopyID, Transfer: fresh.Transfer, ReplacementOperationID: fresh.ReplacementOperationID}
+	if fresh.CopyID != 0 {
+		cp, e := s.db.GetMediaCopy(ctx, item.ID, fresh.CopyID)
+		if e != nil {
+			return e
+		}
+		if cp.Path != "" {
+			scope.Dest = cp.Path
+		}
+	}
+	for _, f := range r.Delivery.Files {
+		p := filepath.Clean(filepath.Join(r.MappedPath, filepath.FromSlash(f.Path)))
+		if !allSelected[p] {
+			continue
+		}
+		if _, exists := verifiedByPath[f.Path]; exists {
+			continue
+		}
+		prior := priorByPath[f.Path]
+		if prior.Disposition == "redundant" || prior.Disposition == "disposable_selected_scope" {
+			// Re-prove redundant media through the existing ledger cleanup proof;
+			// a historical disposition by itself cannot satisfy a new attempt.
+			if prior.Disposition != "redundant" {
+				return fmt.Errorf("selected disposed member requires a fresh selection: %s", f.Path)
+			}
+			vf := verifiedDeliveryFile{relative: f.Path, absolute: p, size: f.SizeBytes, digest: f.SHA256, generation: prior.FileGeneration}
+			if _, _, ok := s.deliveryRedundantLibraryProof(ctx, r, vf, prior.LibraryPath); !ok {
+				return fmt.Errorf("prior redundant target requires Library review: %s", f.Path)
+			}
+			if e := s.recordSkippedImportFile(ctx, p); e != nil {
+				return e
+			}
+			continue
+		}
+		targetCtx, releaseTarget := s.lockImportTarget(ctx, item.ID)
+		put, ok, e := s.reuseCommittedImport(targetCtx, fresh, item, scope, p)
+		releaseTarget()
+		if e != nil {
+			return e
+		}
+		if !ok {
+			return fmt.Errorf("prior imported member requires Library review: %s", f.Path)
+		}
+		reusedResults = append(reusedResults, FileOutcome{Name: filepath.Base(p), SourcePath: p, Imported: true, Path: put.Path, PlacementID: put.PlacementID, FileGeneration: put.FileGeneration})
+	}
 	var result ImportResult
 	switch {
 	case !manual && !deliveryManifestHasMedia(item.Kind, r.Delivery.Files):
@@ -836,6 +973,12 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 		result, err = s.importDeliverySidecars(ctx, r, files, result)
 	}
 	ledgerErr := s.recordDeliveryImportOutcomes(ctx, r, files, result)
+	result.Files = append(result.Files, reusedResults...)
+	result.Imported += len(reusedResults)
+	if len(reusedResults) > 0 && errors.Is(err, ErrNoFilesImported) && !errors.Is(err, ErrImportBlocked) && ctx.Err() == nil {
+		err = nil
+	}
+
 	if ledgerErr != nil {
 		s.log.Error("accepted delivery file outcomes could not be recorded", "delivery", r.Delivery.DeliveryID, "err", ledgerErr)
 		if err != nil {
@@ -885,7 +1028,9 @@ func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Downlo
 	if skipped := result.Skipped(); len(skipped) > 0 {
 		detail += fmt.Sprintf("; %d skipped — %s", len(skipped), result.reasons(3))
 	}
-	s.advance(ctx, &fresh, "imported", 1, "", stepImported, detail)
+	if e := s.completeBoundImport(ctx, detail); e != nil {
+		return e
+	}
 	s.InvalidateWanted()
 	if r.AckState == "pending" {
 		if ackErr := s.completeDeliveryAcceptance(ctx, cfg, receiptID); errors.Is(ackErr, ports.ErrDeliveryConflict) {

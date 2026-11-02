@@ -29,7 +29,7 @@ export function ActionDialog({ title, className = '', onClose, children, returnF
     return () => {
       node.close()
       document.body.style.overflow = previousOverflow
-      const target = trigger?.isConnected ? trigger : returnFocus?.current
+      const target = returnFocus?.current?.isConnected ? returnFocus.current : trigger
       if (target?.isConnected) target.focus({ preventScroll: true })
     }
   }, [returnFocus])

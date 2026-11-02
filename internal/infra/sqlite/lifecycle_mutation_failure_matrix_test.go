@@ -148,6 +148,10 @@ func TestQueueDeliveryReimportRollsBackDownloadUpdateOnReceiptWriteFailure(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	originalControl, err := db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	dl.State = "importing"
 	dl.Handoff = []HandoffEntry{{Step: "manual_import_queued", At: time.Now().UnixMilli(), Paths: []string{"Movie.mkv"}}}
 	trigger := fmt.Sprintf(`CREATE TRIGGER reject_receipt_reopen BEFORE UPDATE OF state ON runner_delivery_receipts WHEN NEW.id=%d AND NEW.state='ready' BEGIN SELECT RAISE(ABORT,'injected receipt reopen failure'); END`, receipt.ID)
@@ -156,6 +160,10 @@ func TestQueueDeliveryReimportRollsBackDownloadUpdateOnReceiptWriteFailure(t *te
 	}
 	if err := db.QueueDeliveryReimport(ctx, expected, dl); err == nil {
 		t.Fatal("reimport partially succeeded when receipt reopen failed")
+	}
+	rolledBack, err := db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey)
+	if err != nil || rolledBack.Epoch != originalControl.Epoch || rolledBack.Outcome != originalControl.Outcome {
+		t.Fatalf("receipt failure advanced control: %+v %v", rolledBack, err)
 	}
 	currentDownload, err := db.GetDownload(ctx, dl.ID)
 	if err != nil {
@@ -173,6 +181,10 @@ func TestQueueDeliveryReimportRollsBackDownloadUpdateOnReceiptWriteFailure(t *te
 	}
 	if err := db.QueueDeliveryReimport(ctx, expected, dl); err != nil {
 		t.Fatalf("exact selected Resolve request did not retry: %v", err)
+	}
+	admitted, err := db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey)
+	if err != nil || admitted.Epoch != originalControl.Epoch+1 || admitted.Outcome != "" {
+		t.Fatalf("successful requeue epoch: %+v %v", admitted, err)
 	}
 	currentDownload, err = db.GetDownload(ctx, dl.ID)
 	if err != nil {

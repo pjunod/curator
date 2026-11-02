@@ -55,7 +55,8 @@ type Deps struct {
 	ResolveTVDB func(ctx context.Context, tvdbID int64) (domain.MediaItem, error)
 	// TriggerSearch kicks the backlog search when a consumer posts a
 	// *Search command. Optional.
-	TriggerSearch func()
+	TriggerSearch func(context.Context) error
+	Admission     ports.WorkAdmission
 }
 
 // Personality is one mounted translation surface.
@@ -111,7 +112,7 @@ func (p *Personality) Handler() http.Handler {
 	// Everything else: log it so the shim can grow deliberately (§6).
 	mux.HandleFunc("/", p.logUnknown)
 
-	return p.auth(lowercasePath(mux))
+	return p.auth(lowercasePath(p.admitRequests(mux)))
 }
 
 // ---- middleware ----
@@ -259,7 +260,10 @@ func (p *Personality) command(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if strings.Contains(strings.ToLower(body.Name), "search") && p.deps.TriggerSearch != nil {
-		p.deps.TriggerSearch()
+		if err := p.deps.TriggerSearch(r.Context()); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"message": err.Error()})
+			return
+		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": 1, "name": body.Name, "commandName": body.Name,
@@ -296,4 +300,35 @@ func rootPathOf(item domain.MediaItem, roots []library.RootFolderInfo) string {
 		}
 	}
 	return ""
+}
+
+// Explicit read routes: lookup may hydrate metadata, so it participates even
+// though it is a GET. Unknown routes also pass admission before dispatch.
+var maintenanceReadRoutes = map[string]bool{
+	"GET /api/v3/system/status": true, "GET /api/v3/health": true,
+	"GET /api/v3/tag": true, "GET /api/v3/qualityprofile": true,
+	"GET /api/v3/rootfolder": true, "GET /api/v3/queue": true,
+	"GET /api/v3/history": true, "GET /api/v3/languageprofile": true,
+	"GET /api/v3/series": true, "GET /api/v3/series/{id}": true,
+	"GET /api/v3/episode": true, "GET /api/v3/episodefile": true,
+	"GET /api/v3/movie": true, "GET /api/v3/movie/{id}": true,
+	"GET /api/v3/moviefile": true, "GET /api/v3/indexer": true,
+	"GET /api/v3/indexer/schema": true,
+}
+
+func (p *Personality) admitRequests(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pattern := mux.Handler(r)
+		if maintenanceReadRoutes[pattern] {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		ctx, release, err := ports.TryWork(r.Context(), p.deps.Admission, "compat "+pattern)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"message": err.Error()})
+			return
+		}
+		defer release()
+		mux.ServeHTTP(w, r.WithContext(ctx))
+	})
 }

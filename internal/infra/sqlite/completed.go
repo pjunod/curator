@@ -149,7 +149,8 @@ func (d *DB) LegacyCleanupReviewPath(ctx context.Context, path string) (bool, er
 	}
 	path = canonicalStorageReviewPath(path)
 	for _, candidate := range paths {
-		if canonicalStorageReviewPath(candidate) == path {
+		candidate = canonicalStorageReviewPath(candidate)
+		if storageReviewWithin(candidate, path) || storageReviewWithin(path, candidate) {
 			return true, nil
 		}
 	}

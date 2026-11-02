@@ -15,6 +15,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/discover"
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/app/library"
+	"github.com/pjunod/monarr/internal/app/maintenance"
 	"github.com/pjunod/monarr/internal/app/recommendation"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
@@ -43,10 +44,11 @@ const ScanTaskName = "library.reconcile"
 type Deps struct {
 	// Context owns background work; request cancellation remains separate so
 	// ordinary handlers retain their HTTP shutdown grace.
-	Context context.Context
-	Log     *slog.Logger
-	Bus     *bus.Bus
-	Health  *health.Registry
+	Context     context.Context
+	Maintenance *maintenance.Coordinator
+	Log         *slog.Logger
+	Bus         *bus.Bus
+	Health      *health.Registry
 	// Connections is the monitor behind the Connections panel; nil renders
 	// the panel empty rather than failing.
 	Connections *health.ConnectionMonitor
@@ -105,6 +107,9 @@ var _ apigen.ServerInterface = (*Server)(nil)
 
 // New returns a Server. Deps.Log must be non-nil.
 func New(deps Deps) *Server {
+	if deps.Maintenance == nil {
+		deps.Maintenance = maintenance.New()
+	}
 	if deps.Log == nil {
 		deps.Log = slog.Default()
 	}
@@ -128,7 +133,8 @@ func New(deps Deps) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	apiHandler := apigen.HandlerWithOptions(s, apigen.StdHTTPServerOptions{
-		BaseURL: "/api/v1",
+		BaseURL:     "/api/v1",
+		Middlewares: []apigen.MiddlewareFunc{s.admitMutation},
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			if r.URL.Path == "/api/v1/metadata/preview" {
 				writeCodedError(w, http.StatusBadRequest, "invalid_external_id", err.Error())

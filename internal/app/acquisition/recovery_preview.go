@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pjunod/monarr/internal/ports"
 	"time"
 )
 
@@ -43,6 +44,11 @@ func (s *Service) RecoveryPreviewStatus(ctx context.Context, id string) (Recover
 	return task, err
 }
 func (s *Service) recoveryPreviewSweep(ctx context.Context) {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "recoveryPreviewSweep")
+	if admissionErr != nil {
+		return
+	}
+	defer releaseWork()
 	var id, raw string
 	if err := s.db.R.QueryRowContext(ctx, `SELECT id,request FROM recovery_previews WHERE state IN ('queued','running') ORDER BY updated_at LIMIT 1`).Scan(&id, &raw); err != nil {
 		return

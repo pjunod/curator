@@ -192,6 +192,7 @@ type Service struct {
 	// The data plane: import workers and the in-flight registry. See
 	// importers.go for why they are not on the poll goroutine.
 	importerFields
+	admission ports.WorkAdmission
 }
 
 type runnerAdmissionPollPermitKey struct{}
@@ -205,6 +206,8 @@ func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, ni IndexerFactory, nc Clie
 }
 
 // noteContact records the outcome of one exchange with a client.
+func (s *Service) SetAdmission(a ports.WorkAdmission) { s.admission = a }
+
 func (s *Service) noteContact(clientID int64, err error) {
 	s.contactMu.Lock()
 	defer s.contactMu.Unlock()
@@ -2123,6 +2126,7 @@ func (s *Service) lockDownload(id int64) func() {
 	m := s.downloadMutex(id)
 	m.Lock()
 	return m.Unlock
+
 }
 
 func (s *Service) tryLockDownload(id int64) (func(), bool) {

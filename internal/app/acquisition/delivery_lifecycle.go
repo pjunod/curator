@@ -394,15 +394,18 @@ func (s *Service) QueueDeliveryImport(ctx context.Context, receiptID int64, path
 	dl.ImportPath, dl.SavePath = r.MappedPath, r.Delivery.PublicationPath
 	// Reopening an imported receipt must also reopen its download state. The
 	// importer deliberately skips terminal imported rows during recovery.
-	if r.State == "imported" {
-		dl.State = "awaiting_import"
-	}
+	dl.State = "awaiting_import"
 	dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(), Detail: fmt.Sprintf("operator selected %d accepted manifest file(s)", len(selected)), Paths: selected})
-	if r.State == "imported" {
-		if err := s.db.QueueDeliveryReimport(ctx, r, dl); err != nil {
+	a, err := s.db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+	if err != nil {
+		return err
+	}
+	if a.Outcome == "pending" {
+		if _, err = s.db.FinalizeImportCancellation(ctx, a.ImportAttemptKey); err != nil {
 			return err
 		}
-	} else if err := s.db.UpdateDownloadHandoff(ctx, dl); err != nil {
+	}
+	if err = s.db.QueueDeliveryReimport(ctx, r, dl); err != nil {
 		return err
 	}
 	cfg, err := s.db.GetDownloadClient(ctx, r.ClientID)

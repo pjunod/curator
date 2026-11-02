@@ -229,7 +229,7 @@ func TestDeliveryLifecycleRetryRoutesReturnConflictsForUnreadyOrUnsupportedWork(
 	e.post(t, base+"/retry-runner-cleanup", `{}`).expect(t, http.StatusConflict)
 	e.post(t, base+"/retry-curator-cleanup", `{}`).expect(t, http.StatusConflict)
 	for _, endpoint := range []string{"retry-handoff", "retry-runner-cleanup", "retry-curator-cleanup"} {
-		e.post(t, "/api/v1/downloads/deliveries/999999/"+endpoint, `{}`).expect(t, http.StatusConflict)
+		e.post(t, "/api/v1/downloads/deliveries/999999/"+endpoint, `{}`).expect(t, http.StatusNotFound)
 	}
 }
 

@@ -165,6 +165,9 @@ func TestLegacyReviewImportRequiresExactSelectionAndPersistsApproval(t *testing.
 	if !approved {
 		t.Fatalf("legacy approval was not durably tied to exact files: %+v", dl.Handoff)
 	}
+	if _, err := db.BeginImportRetry(ctx, dl.ID, dl.GenerationKey); err != nil {
+		t.Fatal(err)
+	}
 	dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, Paths: []string{sibling}, Detail: "later ordinary manual selection"})
 	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
 		t.Fatal(err)

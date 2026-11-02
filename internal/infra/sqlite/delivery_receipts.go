@@ -850,7 +850,7 @@ func (d *DB) SetDeliveryImported(ctx context.Context, id int64) error {
 }
 
 // QueueDeliveryReimport atomically records an explicit selected-file request
-// and reopens only the corresponding already-imported receipt. If the process
+// and its import epoch, reopening only the corresponding exact receipt. If the process
 // stops after this commit but before enqueue, the ready receipt and persisted
 // handoff selection are both available to the ordinary recovery sweep.
 func (d *DB) QueueDeliveryReimport(ctx context.Context, expected DeliveryReceipt, dl Download) error {
@@ -866,14 +866,17 @@ func (d *DB) QueueDeliveryReimport(ctx context.Context, expected DeliveryReceipt
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err = beginImportRetry(ctx, tx, dl.ID, dl.GenerationKey, false); err != nil {
+		return err
+	}
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `UPDATE downloads SET state=?,progress=?,error=?,save_path=?,import_path=?,handoff_log=?,updated_at=? WHERE id=? AND generation_key=? AND client_id=? AND handle=? AND transfer=? AND media_item_id=? AND COALESCE(copy_id,0)=?`,
 		dl.State, dl.Progress, dl.Error, dl.SavePath, dl.ImportPath, string(handoff), now, dl.ID, expected.GenerationKey, expected.ClientID, expected.DownloadHandle, expected.Delivery.RequestToken, expected.MediaItemID, expected.CopyID)
 	if err := requireDeliveryTransition(res, err); err != nil {
 		return err
 	}
-	res, err = tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET state='ready',error='',next_attempt_at=0,attempts=0,blocked_since=0,updated_at=? WHERE id=? AND download_id=? AND state='imported' AND (ack_state='accepted' OR (ack_state='pending' AND consumer_receipt_id!='')) AND generation_key=? AND client_id=? AND download_handle=? AND request_token=? AND publication_generation=? AND manifest_digest=? AND mapped_path=?`,
-		now, expected.ID, dl.ID, dl.GenerationKey, expected.ClientID, expected.DownloadHandle, expected.Delivery.RequestToken, expected.Delivery.PublicationGeneration, expected.Delivery.ManifestDigest, expected.MappedPath)
+	res, err = tx.ExecContext(ctx, `UPDATE runner_delivery_receipts SET state='ready',error='',next_attempt_at=0,attempts=0,blocked_since=0,updated_at=? WHERE id=? AND download_id=? AND state=? AND state!='conflict' AND (state!='imported' OR ack_state='accepted' OR (ack_state='pending' AND consumer_receipt_id!='')) AND generation_key=? AND client_id=? AND download_handle=? AND request_token=? AND publication_generation=? AND manifest_digest=? AND mapped_path=?`,
+		now, expected.ID, dl.ID, expected.State, dl.GenerationKey, expected.ClientID, expected.DownloadHandle, expected.Delivery.RequestToken, expected.Delivery.PublicationGeneration, expected.Delivery.ManifestDigest, expected.MappedPath)
 	if err := requireDeliveryTransition(res, err); err != nil {
 		return err
 	}
@@ -1284,13 +1287,19 @@ func (d *DB) DeliveryFileOutcomeByPath(ctx context.Context, receiptID int64, pat
 }
 
 func (d *DB) RecordDeliveryFileImport(ctx context.Context, v DeliveryFileImport) error {
+	return recordDeliveryFileImport(ctx, d.W, v)
+}
+
+func recordDeliveryFileImport(ctx context.Context, q interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, v DeliveryFileImport) error {
 	if v.ReceiptID <= 0 || v.Path == "" || (v.ReplacementDisposition != "" && v.ReplacementDisposition != "selected" && v.ReplacementDisposition != "excess") {
 		return fmt.Errorf("invalid delivery file import provenance")
 	}
 	if v.CreatedAt.IsZero() {
 		v.CreatedAt = time.Now()
 	}
-	_, err := d.W.ExecContext(ctx, `INSERT OR IGNORE INTO runner_delivery_file_imports
+	_, err := q.ExecContext(ctx, `INSERT OR IGNORE INTO runner_delivery_file_imports
 		(receipt_id,path,source_generation,source_transfer,source_payload_generation,replacement_operation_id,replacement_disposition,placement_id,library_file_generation,library_file_identity,library_path,created_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, v.ReceiptID, v.Path, v.SourceGeneration, v.SourceTransfer, v.SourcePayloadGeneration,
 		v.ReplacementOperationID, v.ReplacementDisposition, v.PlacementID, v.LibraryFileGeneration,

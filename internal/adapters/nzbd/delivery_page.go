@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,9 +19,14 @@ import (
 const deliveryFieldBudget = 8 << 20
 const deliveryPageBudget = 16 << 20
 
-func readDeliveryPage(body io.Reader, limit int) (ports.RunnerDeliveryPage, error) {
-	r := bufio.NewReader(io.LimitReader(body, deliveryPageBudget+1))
-	page := ports.RunnerDeliveryPage{}
+func readDeliveryPage(body io.Reader, limit int) (page ports.RunnerDeliveryPage, resultErr error) {
+	budget := &io.LimitedReader{R: body, N: deliveryPageBudget + 1}
+	defer func() {
+		if budget.N == 0 {
+			resultErr = fmt.Errorf("nzbd: delivery response exceeds 16 MiB")
+		}
+	}()
+	r := bufio.NewReader(budget)
 	if err := jsonPunctuation(r, '{'); err != nil {
 		return page, err
 	}
@@ -75,7 +81,7 @@ func readDeliveryPage(body io.Reader, limit int) (ports.RunnerDeliveryPage, erro
 				rowEndAllowed = true
 				count++
 				if count > limit {
-					return page, fmt.Errorf("nzbd: delivery page exceeds row limit")
+					return page, fmt.Errorf("nzbd: delivery page returned %d rows for limit %d (row limit exceeded)", count, limit)
 				}
 				fields, invalid, err := readDeliveryFields(r)
 				if err != nil {
@@ -344,18 +350,40 @@ func (c *Client) listDeliveryPage(req *http.Request, limit int) (ports.RunnerDel
 	if err != nil {
 		return ports.RunnerDeliveryPage{}, fmt.Errorf("nzbd: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return ports.RunnerDeliveryPage{}, apiError(resp, "unexpected delivery response")
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024+1))
+		closeErr := resp.Body.Close()
+		message := "unexpected delivery response"
+		if resp.StatusCode == http.StatusUnauthorized {
+			message = "authentication rejected"
+		} else {
+			var body struct {
+				Error string `json:"error"`
+			}
+			if len(raw) <= 64*1024 && json.Unmarshal(raw, &body) == nil && body.Error != "" {
+				message = body.Error
+			}
+		}
+		return ports.RunnerDeliveryPage{}, errors.Join(apiError(resp, message), readErr, closeErr)
 	}
-	page, err := readDeliveryPage(resp.Body, limit)
-	if err != nil && limit > 1 {
-		_ = resp.Body.Close()
+	page, parseErr := readDeliveryPage(resp.Body, limit)
+	closeErr := resp.Body.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("nzbd: close delivery response: %w", closeErr)
+	}
+	if parseErr != nil && closeErr == nil && limit > 1 && req.Context().Err() == nil {
 		retry := req.Clone(req.Context())
 		query := retry.URL.Query()
 		query.Set("limit", "1")
 		retry.URL.RawQuery = query.Encode()
-		return c.listDeliveryPage(retry, 1)
+		fallback, fallbackErr := c.listDeliveryPage(retry, 1)
+		if fallbackErr != nil {
+			return fallback, errors.Join(fmt.Errorf("nzbd: bad delivery response (read delivery response): %w", parseErr), fallbackErr)
+		}
+		return fallback, nil
 	}
-	return page, err
+	if parseErr != nil {
+		parseErr = fmt.Errorf("nzbd: bad delivery response (read delivery response): %w", parseErr)
+	}
+	return page, errors.Join(parseErr, closeErr)
 }

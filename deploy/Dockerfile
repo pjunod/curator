@@ -76,6 +76,7 @@ RUN ["/usr/lib/jellyfin-ffmpeg/ffmpeg", "-version"]
 
 # ---- runtime ----
 FROM media-runtime AS runtime
+LABEL org.pjunod.curator.deployment-drain="v1"
 COPY --from=embed /src/tools/curator-embed/target/release/curator-embed /curator-embed
 COPY --from=build /monarr /monarr
 COPY --from=build --chown=1000:1000 /data-skel /data

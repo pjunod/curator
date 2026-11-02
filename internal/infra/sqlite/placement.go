@@ -17,6 +17,7 @@ import (
 // Placement is an intent persisted before a library rename. Its metadata is
 // sufficient to reconcile a published file after a crash without recopying it.
 type Placement struct {
+	ImportEpoch             *int64               `json:"import_attempt_epoch,omitempty"`
 	DownloadID              int64                `json:"download_id,omitempty"`
 	SourceGeneration        string               `json:"source_generation,omitempty"`
 	SourceTransfer          string               `json:"source_transfer,omitempty"`
@@ -67,8 +68,26 @@ func (d *DB) PreparePlacement(ctx context.Context, p Placement) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.W.ExecContext(ctx, `INSERT INTO import_placements(id,target,state,data,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, p.ID, p.Target, p.State, string(raw), time.Now().UnixMilli())
-	return err
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO import_placements(id,target,state,data,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, p.ID, p.Target, p.State, string(raw), time.Now().UnixMilli()); err != nil {
+		return err
+	}
+	var existing string
+	if err = tx.QueryRowContext(ctx, `SELECT data FROM import_placements WHERE id=?`, p.ID).Scan(&existing); err != nil {
+		return err
+	}
+	var prior Placement
+	if err = json.Unmarshal([]byte(existing), &prior); err != nil {
+		return err
+	}
+	if placementEpoch(prior) != placementEpoch(p) || prior.Source != p.Source || prior.Target != p.Target || prior.SHA256 != p.SHA256 {
+		return ErrPlacementGenerationChanged
+	}
+	return tx.Commit()
 }
 
 // UpdatePreparedPlacement persists the filesystem identities collected during
@@ -82,7 +101,7 @@ func (d *DB) UpdatePreparedPlacement(ctx context.Context, p Placement) error {
 	if err != nil {
 		return err
 	}
-	result, err := d.W.ExecContext(ctx, `UPDATE import_placements SET data=?,updated_at=? WHERE id=? AND state='prepared'`, string(raw), time.Now().UnixMilli(), p.ID)
+	result, err := d.W.ExecContext(ctx, `UPDATE import_placements SET data=?,updated_at=? WHERE id=? AND state='prepared' AND COALESCE(json_extract(data,'$.import_attempt_epoch'),-1)=?`, string(raw), time.Now().UnixMilli(), p.ID, placementEpoch(p))
 	if err != nil {
 		return err
 	}
@@ -114,7 +133,10 @@ func (d *DB) UnresolvedPlacementReferences(ctx context.Context) ([]Placement, er
 	return d.unresolvedPlacements(ctx, false)
 }
 func (d *DB) unresolvedPlacements(ctx context.Context, batch bool) ([]Placement, error) {
-	query := `SELECT data FROM import_placements WHERE state IN ('prepared','committed') ORDER BY updated_at`
+	query := `SELECT data FROM import_placements WHERE state IN ('prepared','committed','retained') ORDER BY updated_at`
+	if batch {
+		query = `SELECT data FROM import_placements WHERE state IN ('prepared','committed') ORDER BY updated_at`
+	}
 	if batch {
 		query += ` LIMIT 100`
 	}
@@ -135,7 +157,25 @@ func (d *DB) unresolvedPlacements(ctx context.Context, batch bool) ([]Placement,
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	_ = rows.Close()
+	if !batch {
+		sidecars, e := d.unresolvedSidecarReferences(ctx)
+		if e != nil {
+			return nil, e
+		}
+		out = append(out, sidecars...)
+	}
+	return out, nil
+}
+
+func placementEpoch(p Placement) int64 {
+	if p.ImportEpoch == nil {
+		return -1
+	}
+	return *p.ImportEpoch
 }
 
 // CommitPlacement couples library metadata, episode links and the per-file
@@ -146,9 +186,33 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var state string
-	if err = tx.QueryRowContext(ctx, `SELECT state FROM import_placements WHERE id=?`, p.ID).Scan(&state); err != nil {
+	var state, preparedRaw string
+	if err = tx.QueryRowContext(ctx, `SELECT state,data FROM import_placements WHERE id=?`, p.ID).Scan(&state, &preparedRaw); err != nil {
 		return 0, err
+	}
+	var prepared Placement
+	if err = json.Unmarshal([]byte(preparedRaw), &prepared); err != nil {
+		return 0, err
+	}
+	if placementEpoch(prepared) != placementEpoch(p) || (state != "prepared" && state != "committed" && state != "cleaned") {
+		return 0, ErrPlacementGenerationChanged
+	}
+	if p.ImportEpoch != nil {
+		publication, e := placementPublication(p)
+		if e != nil {
+			return 0, e
+		}
+		if e = commitImportPublication(ctx, tx, publication); e != nil {
+			return 0, e
+		}
+	} else if p.DownloadID != 0 {
+		var held int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM import_attempt_controls WHERE download_id=? AND generation_key=? AND outcome IN ('pending','cancelled')`, p.DownloadID, p.SourceGeneration).Scan(&held); err != nil {
+			return 0, err
+		}
+		if held > 0 {
+			return 0, ErrImportCancelled
+		}
 	}
 	if state == "committed" || state == "cleaned" {
 		var fid int64

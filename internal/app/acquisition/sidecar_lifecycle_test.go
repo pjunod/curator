@@ -154,7 +154,7 @@ func TestManualAdditionalWithoutExplicitSelectionImportsAndCleansMatchedSubtitle
 	}
 }
 
-func TestAcceptedSidecarPublishesExistingVerifiedStageAfterRestart(t *testing.T) {
+func TestAcceptedSidecarRetainsPriorStageAndPublishesFreshCopyAfterRestart(t *testing.T) {
 	caption := []byte("sidecar stage survived process exit")
 	ctx, _, db, _, _, receipt, media, sidecar, result := prepareSidecarMedia(t, caption)
 	if result.Imported != 1 || len(result.Files) != 1 || !result.Files[0].Imported {
@@ -189,8 +189,8 @@ func TestAcceptedSidecarPublishesExistingVerifiedStageAfterRestart(t *testing.T)
 	if err := svc.recordDeliveryImportOutcomes(ctx, receipt, []verifiedDeliveryFile{sidecar}, result); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(stageName); !os.IsNotExist(err) {
-		t.Fatalf("successfully published stage file was not removed: %v", err)
+	if got, err := os.ReadFile(stageName); err != nil || string(got) != string(caption) {
+		t.Fatalf("retry changed retained prior stage: %q %v", got, err)
 	}
 	got, size, err := fileDigest(ctx, target)
 	if err != nil || size != int64(len(caption)) || got != sha256Hex(caption) {

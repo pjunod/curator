@@ -15,6 +15,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // TaskFunc does the work. It must respect ctx cancellation.
@@ -74,23 +75,32 @@ type TaskCompleted struct {
 // EventType implements bus.Event.
 func (TaskCompleted) EventType() string { return "task.completed" }
 
+type triggerRequest struct {
+	ctx     context.Context
+	release func()
+}
+
 type taskRuntime struct {
 	def     Task
 	state   TaskState
-	trigger chan struct{}
+	trigger chan triggerRequest
 }
 
 // Scheduler runs registered tasks. Create with New, Register tasks, then
 // Start once.
 type Scheduler struct {
-	mu      sync.Mutex
-	tasks   map[string]*taskRuntime
-	order   []string
-	store   Store
-	bus     *bus.Bus
-	log     *slog.Logger
-	started bool
-	wg      sync.WaitGroup
+	mu        sync.Mutex
+	tasks     map[string]*taskRuntime
+	order     []string
+	store     Store
+	bus       *bus.Bus
+	log       *slog.Logger
+	started   bool
+	ready     bool
+	stopping  bool
+	ctx       context.Context
+	admission ports.WorkAdmission
+	wg        sync.WaitGroup
 	// jitterFrac spreads runs by up to this fraction of the interval so
 	// periodic work doesn't thundering-herd external services.
 	jitterFrac float64
@@ -130,7 +140,7 @@ func (s *Scheduler) Register(t Task) error {
 	s.tasks[t.Name] = &taskRuntime{
 		def:     t,
 		state:   TaskState{Name: t.Name, Interval: t.Interval},
-		trigger: make(chan struct{}, 1),
+		trigger: make(chan triggerRequest, 1),
 	}
 	s.order = append(s.order, t.Name)
 	return nil
@@ -138,6 +148,8 @@ func (s *Scheduler) Register(t Task) error {
 
 // Start seeds state from the store and launches one goroutine per task.
 // It returns immediately; cancel ctx to stop, then Wait for drain.
+func (s *Scheduler) SetAdmission(a ports.WorkAdmission) { s.admission = a }
+
 func (s *Scheduler) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
@@ -145,6 +157,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		return fmt.Errorf("scheduler: already started")
 	}
 	s.started = true
+	s.ctx = ctx
 	s.mu.Unlock()
 
 	if s.store != nil {
@@ -172,6 +185,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		s.wg.Add(1)
 		go s.runLoop(ctx, rt)
 	}
+	s.ready = true
 	s.log.Info("scheduler: started", "tasks", len(s.order))
 	return nil
 }
@@ -181,20 +195,31 @@ func (s *Scheduler) Wait() { s.wg.Wait() }
 
 // Trigger requests an immediate run of the named task. Requests coalesce: if
 // a trigger is already pending, this is a no-op.
-func (s *Scheduler) Trigger(name string) error {
+func (s *Scheduler) Trigger(name string) error { return s.TriggerContext(context.Background(), name) }
+
+func (s *Scheduler) TriggerContext(ctx context.Context, name string) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	rt, ok := s.tasks[name]
-	started := s.started
-	s.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("scheduler: unknown task %q", name)
 	}
-	if !started {
-		return fmt.Errorf("scheduler: not started")
+	if !s.started || !s.ready || s.stopping || s.ctx.Err() != nil {
+		return fmt.Errorf("scheduler: not running")
 	}
+	base, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(s.ctx, cancel)
+	child, release, err := ports.TryWork(base, s.admission, "manual task "+name)
+	if err != nil {
+		stop()
+		cancel()
+		return err
+	}
+	done := func() { stop(); cancel(); release() }
 	select {
-	case rt.trigger <- struct{}{}:
+	case rt.trigger <- triggerRequest{child, done}:
 	default:
+		done()
 	}
 	return nil
 }
@@ -221,6 +246,19 @@ func (s *Scheduler) delay(t Task) time.Duration {
 
 func (s *Scheduler) runLoop(ctx context.Context, rt *taskRuntime) {
 	defer s.wg.Done()
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.stopping = true
+		for {
+			select {
+			case request := <-rt.trigger:
+				request.release()
+			default:
+				return
+			}
+		}
+	}()
 	if rt.def.RunOnStart {
 		s.runOnce(ctx, rt)
 	}
@@ -235,14 +273,23 @@ func (s *Scheduler) runLoop(ctx context.Context, rt *taskRuntime) {
 			return
 		case <-timer.C:
 			s.runOnce(ctx, rt)
-		case <-rt.trigger:
+		case request := <-rt.trigger:
 			timer.Stop()
-			s.runOnce(domain.WithInteractiveJob(ctx), rt)
+			s.runOnce(domain.WithInteractiveJob(request.ctx), rt)
+			request.release()
 		}
 	}
 }
 
 func (s *Scheduler) runOnce(ctx context.Context, rt *taskRuntime) {
+	ctx, release, admissionErr := ports.TryWork(ctx, s.admission, "scheduled task "+rt.def.Name)
+	if admissionErr != nil {
+		s.mu.Lock()
+		rt.state.NextRunAt = time.Now().Add(s.delay(rt.def))
+		s.mu.Unlock()
+		return
+	}
+	defer release()
 	if ctx.Err() != nil {
 		return
 	}

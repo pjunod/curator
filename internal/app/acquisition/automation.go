@@ -104,6 +104,11 @@ func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Relea
 // recent releases, match them against the wanted index, and grab everything
 // the decision engine accepts (blueprint §5.1 "RSS sync loop").
 func (s *Service) SyncRSS(ctx context.Context) error {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "SyncRSS")
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer releaseWork()
 	s.rssSweepMu.Lock()
 	defer s.rssSweepMu.Unlock()
 	wanted, err := s.Wanted(ctx)

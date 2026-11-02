@@ -55,6 +55,11 @@ func (s *Service) startAutomaticAdmissionWorker(ctx context.Context) {
 }
 
 func (s *Service) processRunnerSubmissionRetries(ctx context.Context) {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "processRunnerSubmissionRetries")
+	if admissionErr != nil {
+		return
+	}
+	defer releaseWork()
 	now := time.Now()
 	if err := s.db.FlagUnsafeAutomaticSubmissions(ctx, now); err != nil {
 		s.log.Warn("automatic uncertain submission warning could not be saved", "err", err)

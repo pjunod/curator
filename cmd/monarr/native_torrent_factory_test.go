@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/pjunod/monarr/internal/ports"
 	"net/http"
 	"net/http/httptest"
@@ -34,5 +35,15 @@ func TestProductionFactorySelectsNativeRunnerTorrentConstructor(t *testing.T) {
 	}
 	if ports.ProtocolOfClient("runner-torrent") != "torrent" || ports.DefaultPortFor("runner-torrent") != 6789 {
 		t.Fatal("native type protocol or default port wrong")
+	}
+}
+
+func TestProductionFactoryRetainsExistingClientAdapters(t *testing.T) {
+	for _, tc := range []struct{ kind, want string }{{"sabnzbd", "*sabnzbd.Client"}, {"nzbget", "*nzbget.Client"}, {"nzbd", "*nzbd.Client"}, {"transmission", "*transmission.Client"}, {"deluge", "*deluge.Client"}, {"qbittorrent", "*qbittorrent.Client"}} {
+		t.Run(tc.kind, func(t *testing.T) {
+			if got := fmt.Sprintf("%T", downloadClientForConfig(ports.ClientConfig{Type: tc.kind, URL: "http://127.0.0.1:1"})); got != tc.want {
+				t.Fatalf("adapter changed: %s", got)
+			}
+		})
 	}
 }

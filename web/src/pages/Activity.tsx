@@ -1,9 +1,10 @@
 import { ActionDialog, focusActionTrigger } from '../ActionDialog'
-import { useState } from 'react'
+import { useState,useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   type ManualImportRequest,
+  type ImportAttemptIdentity,
   type CompletedEntry,
   type CompletedRoot,
   type QueueItem,
@@ -11,6 +12,8 @@ import {
   type Stage,
   blocklistQueueItem,
   cancelQueueImport,
+  getImportReview,
+  resolveImportReview,
   clearFailedQueue,
   clearFinishedQueue,
   fmtBytes,
@@ -180,6 +183,10 @@ function sections(rows: QueueItem[]): Section[] {
 // is a different and usually false statement about a job that is midway
 // through repairing a 60 GB archive.
 function StageProgress({ d }: { d: QueueItem }) {
+  if(d.importControl?.outcome==='pending') return <span role="status">{d.importControl.pendingPublications>0&&!d.importState ? 'Cancellation pending · publication review required' : 'Cancelling · waiting for actual writer exit'}</span>
+  if(d.importControl?.retainedPublications) return <span className="warning-text">Cancelled · retained publication requires Library review</span>
+  if(d.importControl?.outcome==='cancelled') return <span className="muted">Cancelled · files retained; explicit retry available</span>
+
   if (d.control && (d.control.lifecycle === 'held' || d.control.version !== 1)) {
     return <div><span className="pill pill-neutral">Held</span><div className="muted">{d.control.message}</div><div className="muted">Transfer {Math.round(d.progress * 100)}% · import pending</div></div>
   }
@@ -241,6 +248,8 @@ const GROUPS = [
 ]
 
 export function ActivityPage() {
+ const actionTrigger=useRef<HTMLElement|null>(null)
+ const rememberAction=()=>{actionTrigger.current=document.activeElement instanceof HTMLElement?document.activeElement:null}
   const qc = useQueryClient()
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [manual, setManual] = useState<Partial<ManualImportRequest> | null>(null)
@@ -290,7 +299,7 @@ export function ActivityPage() {
     onSettled: invalidate,
   })
   const cancelImport = useMutation({
-    mutationFn: (id: number) => cancelQueueImport(id),
+    mutationFn: ({id,identity}:{id:number;identity:ImportAttemptIdentity}) => cancelQueueImport(id,identity),
     onMutate: () => setActionErr(''),
     onError: (e: Error) => setActionErr(e.message),
     onSettled: invalidate,
@@ -336,8 +345,8 @@ export function ActivityPage() {
     open: expanded.has(d.id),
     busy,
     onToggle: () => toggle(d.id),
-    onImport: () => doImport.mutate(d.id),
-    onCancelImport: () => cancelImport.mutate(d.id),
+    onImport: () => {rememberAction();doImport.mutate(d.id)},
+    onCancelImport: () => {rememberAction();if(d.importControl)cancelImport.mutate({id:d.id,identity:d.importControl});else setActionErr('Refresh Activity before cancelling this import.')},
     onBlocklist: () => doBlocklist.mutate(d.id),
     onRemove: () => remove.mutate(d.id),
     onManual: () =>
@@ -387,7 +396,7 @@ export function ActivityPage() {
         <ResolvePanel key={manual.path ?? 'resolve'} embedded initialMode={resolveMode} prefill={manual} onDone={() => { setManual(null); invalidate() }} />
       </ActionDialog>}
 
-      {actionErr && <div className="banner warning">{actionErr}</div>}
+      {actionErr && <ActionDialog returnFocus={actionTrigger} title="Activity action failed" onClose={()=>setActionErr('')}><p role="alert">{actionErr}</p></ActionDialog>}
 
       <CompletedFolders onImport={(path, mode, downloadId) => { setResolveMode(mode === 'legacy' ? 'legacy' : mode === 'delivery' ? 'delivery' : 'files'); setManual({ path, downloadId }) }} />
 
@@ -688,11 +697,15 @@ function RowGroup(props: {
   const [acknowledged,setAcknowledged]=useState(false)
   const qc=useQueryClient()
   const resolve=useMutation({mutationFn:()=>resolveQueueReservation(d.id),onSuccess:()=>{setReviewOpen(false);void qc.invalidateQueries({queryKey:['queue']});void qc.invalidateQueries({queryKey:['queue-summary']})}})
+  const [importReviewOpen,setImportReviewOpen]=useState(false)
+  const cancellationPending=d.importControl?.outcome==='pending'
+  const publicationReview=!!d.importControl?.retainedPublications||!!d.importControl?.pendingPublications
+  const retryBlocked=cancellationPending||publicationReview
   const queuedImport = d.importState === 'queued'
   const startingImport = d.importState === 'running' && !d.stage
-  const canImport = (d.state === 'awaiting_import' || d.state === 'downloaded') && !d.importState
-  const canRetry = d.state === 'failed' && d.submissionPhase !== 'uncertain'
-  const interruptedImport = d.state === 'importing' && !d.stage && !d.importState
+  const canImport = (d.state === 'awaiting_import' || d.state === 'downloaded') && !d.importState && !retryBlocked
+  const canRetry = d.state === 'failed' && d.submissionPhase !== 'uncertain' && !retryBlocked
+  const interruptedImport = d.state === 'importing' && !d.stage && !d.importState && !retryBlocked
   const activeImport = d.stage === 'importing'
   const importerOwned = queuedImport || startingImport || activeImport
   const held = !!d.control && (d.control.lifecycle === 'held' || d.control.version !== 1)
@@ -757,7 +770,7 @@ function RowGroup(props: {
             APPLICATION is doing this. Curator's own name appears exactly once,
             on the one stage Curator performs itself.
           */}
-          {queuedImport ? (
+          {cancellationPending ? <span className="pill pill-warning">cancelling</span> : publicationReview ? <span className="pill pill-warning">review required</span> : queuedImport ? (
             <span className="pill pill-neutral">queued</span>
           ) : startingImport ? (
             <span className="muted stage-owner">Curator</span>
@@ -780,16 +793,19 @@ function RowGroup(props: {
         <td>
           <div className="row-actions">
             <button onClick={(event)=>{focusActionTrigger(event);setWhyOpen(true)}}>Why chosen</button>
+            {(d.importControl?.outcome==='pending'||d.importControl?.outcome==='cancelled'||publicationReview||!!d.importControl?.heldStages)&&<button onClick={(event)=>{focusActionTrigger(event);setImportReviewOpen(true)}}>Review retained import</button>}
+            {importReviewOpen&&<ActionDialog title="Review retained import" onClose={()=>setImportReviewOpen(false)}><ImportReviewPanel id={d.id}/></ActionDialog>}
+
             {(d.parkedReason || d.submissionPhase==='uncertain') && <button onClick={(event)=>{focusActionTrigger(event);setAcknowledged(false);resolve.reset();setReviewOpen(true)}}>Review reservation</button>}
-            {held && d.control?.retry_policy === 'resume_same_job' && <button onClick={props.onImport} disabled={busy}>Resume same job</button>}
+            {held && d.control?.retry_policy === 'resume_same_job' && <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>Resume same job</button>}
             {canImport && !held && (
-              <button onClick={props.onImport} disabled={busy}>
+              <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>
                 Import now
               </button>
             )}
             {canRetry && !held && (
               <>
-                <button onClick={props.onImport} disabled={busy}>
+                <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>
                   Retry
                 </button>
                 <button onClick={props.onManual} disabled={busy}>
@@ -798,12 +814,12 @@ function RowGroup(props: {
               </>
             )}
             {interruptedImport && (
-              <button onClick={props.onImport} disabled={busy}>
+              <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>
                 Restart import
               </button>
             )}
-            {(importerOwned || interruptedImport) && (
-              <button className="btn-danger" onClick={props.onCancelImport} disabled={busy}>
+            {(importerOwned || interruptedImport) && !cancellationPending && (
+              <button className="btn-danger" onClick={(event)=>{focusActionTrigger(event);props.onCancelImport()}} disabled={busy}>
                 Cancel import
               </button>
             )}
@@ -1106,4 +1122,30 @@ function ManualImportPanel({
       {importErr && <p className="error-text">{importErr}</p>}
     </section>
   )
+}
+
+function ImportReviewPanel({id}:{id:number}) {
+  const qc=useQueryClient()
+  const [ack,setAck]=useState(false)
+  const review=useQuery({queryKey:['import-review',id],queryFn:()=>getImportReview(id),refetchInterval:4000})
+  const action=useMutation({mutationFn:({action,ids}:{action:string;ids:string[]})=>resolveImportReview(id,review.data!.attempt,action,ids,ack),onSuccess:()=>{setAck(false);void qc.invalidateQueries({queryKey:['import-review',id]});void qc.invalidateQueries({queryKey:['queue']})}})
+  const data=review.data
+  if(review.isLoading)return <p role="status">Loading durable import custody…</p>
+  if(review.error)return <p role="alert">{review.error.message}</p>
+  if(!data)return null
+  const pending=data.publications.filter(p=>p.outcome==='pending')
+  const retained=data.publications.filter(p=>p.resolution==='retained_for_review'||p.resolution==='operator_adopted')
+  const stages=data.stages??[]
+  const disabled=!ack||action.isPending||data.writerActive
+  return <>
+    <p>Attempt {data.attempt.epoch}: {data.attempt.outcome||'active'}. {data.writerActive?'An importer still owns this work. Wait for its actual exit.':'No local importer ticket is active.'}</p>
+    <p>These records describe retained custody. They do not prove whether a target was published. Review the source, stage and Library before disposition.</p>
+    <ul>{data.publications.filter(p=>p.outcome==='pending'||p.resolution).map(p=><li key={p.id}><strong>{p.outcome} {p.resolution}</strong><p className="path-chip">{p.source} → {p.target}</p></li>)}{stages.map(p=><li key={p.id}>Retained stage <span className="path-chip">{p.stage}</span><p>{p.source} → {p.target}</p></li>)}</ul>
+    <label><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/>I have fenced every external writer and reviewed these exact records. For disposition, I have independently handled all listed bytes; for adoption, I have verified the current Library ownership. Curator will retain files and perform no deletion.</label>
+    {action.error&&<p role="alert">{action.error.message}</p>}
+    {action.isSuccess&&<p role="status">Review recorded. Retained filesystem bytes were left in place.</p>}
+    {pending.length>0&&<button disabled={disabled} onClick={()=>action.mutate({action:'retain_uncertain',ids:pending.map(p=>p.id)})}>Finalize cancellation and retain uncertain bytes</button>}
+    {retained.length>0&&<button disabled={disabled} onClick={()=>action.mutate({action:'operator_adopted',ids:retained.map(p=>p.id)})}>Record verified Library adoption</button>}
+    {(retained.length>0||stages.length>0)&&<button disabled={disabled} onClick={()=>action.mutate({action:'operator_disposed',ids:[...retained.map(p=>p.id),...stages.map(p=>p.id)]})}>Attest all listed bytes independently handled</button>}
+  </>
 }

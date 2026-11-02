@@ -41,3 +41,6 @@ deploy/.env
 # Playwright artifacts
 test/e2e/test-results/
 test-results/
+
+__pycache__/
+*.pyc

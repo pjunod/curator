@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -169,6 +170,19 @@ func (s *Service) ManualImportDefaultPath(ctx context.Context) string {
 // escape hatch when automation can't resolve the payload. When tied to a
 // download row it records the outcome on that row's handoff trace.
 func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (ImportResult, error) {
+	ctx, releaseWork, admissionErr := ports.TryWork(ctx, s.admission, "inline manual import")
+	if admissionErr != nil {
+		return ImportResult{}, admissionErr
+	}
+	defer releaseWork()
+	if req.DownloadID != 0 {
+		unlock, ok := s.tryLockDownload(req.DownloadID)
+		if !ok {
+			return ImportResult{}, fmt.Errorf("import is still running")
+		}
+		defer unlock()
+	}
+
 	dl := sqlite.Download{
 		MediaItemID: req.MediaItemID, CopyID: req.CopyID,
 		ReleaseTitle: filepath.Base(req.Path), ImportPath: req.Path,
@@ -189,25 +203,57 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (Im
 		return ImportResult{}, fmt.Errorf("no target item chosen")
 	}
 
-	// manual=true: the user pointed at this folder and pressed Import. The
-	// profile gates AUTOMATION; telling a person "does not improve on" after
-	// they explicitly asked is the same mistake as gating a manual grab.
-	result, err := s.importDownloadFiles(ctx, dl, req.Path, req.Paths, true)
-	files := result.Imported
 	if req.DownloadID != 0 {
-		row, gerr := s.db.GetDownload(ctx, req.DownloadID)
-		if gerr == nil {
-			row.ImportPath = req.Path
-			if err != nil {
-				s.advance(ctx, &row, "failed", row.Progress, err.Error(), stepFailed,
-					"manual import failed: "+err.Error())
-			} else {
-				s.advance(ctx, &row, "imported", 1, "", stepImported,
-					fmt.Sprintf("manually imported %d file(s) from %s", files, req.Path))
+		if s.ImportRunning(dl.ID) {
+			return ImportResult{}, fmt.Errorf("import is already running or queued")
+		}
+		if a, e := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey); e == nil && a.Outcome == "pending" {
+			s.finishCancelledImport(ctx, a.ImportAttemptKey)
+		}
+		dl.State = "downloaded"
+		dl.Error = ""
+		paths := append([]string(nil), req.Paths...)
+		if req.Paths == nil {
+			item, e := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
+			if e != nil {
+				return ImportResult{}, e
+			}
+			isMedia := filename.IsVideo
+			if item.Kind == "book" {
+				isMedia = filename.IsBook
+			}
+			paths, e = collectFiles(req.Path, isMedia)
+			if e != nil {
+				return ImportResult{}, e
 			}
 		}
+		dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(), Detail: "inline manual import selection", Paths: paths, TargetMediaItemID: dl.MediaItemID, TargetCopyID: dl.CopyID})
+		var err error
+		dl, err = s.db.CommitManualImportAdmission(ctx, dl)
+		if err != nil {
+			return ImportResult{}, importControlError(err)
+		}
+		a, err := s.db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		bound, finish, err := s.beginInlineImport(ctx, dl, a.ImportAttemptKey)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		ctx = bound
+		defer finish()
 	}
+	result, err := s.importDownloadFiles(ctx, dl, req.Path, req.Paths, true)
 	if err != nil {
+		if req.DownloadID != 0 && !errors.Is(err, context.Canceled) {
+			if row, e := s.db.GetDownload(ctx, req.DownloadID); e == nil {
+				s.advance(ctx, &row, "failed", row.Progress, err.Error(), stepFailed, "manual import failed: "+err.Error())
+			}
+		}
+		return result, err
+	}
+	if err = s.completeBoundImport(ctx, fmt.Sprintf("manually imported %d selected file(s)", result.Imported)); err != nil {
 		return result, err
 	}
 	s.InvalidateWanted()
@@ -234,7 +280,10 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 		}
 	}
 	if id != 0 {
-		unlock := s.lockDownload(id)
+		unlock, ok := s.tryLockDownload(id)
+		if !ok {
+			return 0, fmt.Errorf("import is still running")
+		}
 		defer unlock()
 	}
 	item, err := s.db.GetMediaItemFull(ctx, req.MediaItemID)
@@ -372,6 +421,18 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 		}
 		if s.ImportRunning(id) {
 			return 0, fmt.Errorf("import is already running")
+		}
+	}
+	if dl.ID != 0 {
+		a, e := s.db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+		if e != nil {
+			return 0, e
+		}
+		if a.Outcome == "pending" {
+			a, e = s.db.FinalizeImportCancellation(ctx, a.ImportAttemptKey)
+			if e != nil {
+				return 0, e
+			}
 		}
 	}
 	dl.MediaItemID = req.MediaItemID

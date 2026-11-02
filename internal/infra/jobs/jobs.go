@@ -21,6 +21,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // Store is the persistence the queue needs. Narrow on purpose: the Postgres
@@ -62,6 +63,7 @@ func (JobFinished) EventType() string { return "job.finished" }
 // Options configure a Queue. Zero values are replaced with the defaults
 // documented on each field.
 type Options struct {
+	Admission ports.WorkAdmission
 	// Workers is the general worker count. One additional worker is reserved
 	// for interactive jobs so long background work cannot occupy every slot.
 	// Default 2:
@@ -250,6 +252,11 @@ func (q *Queue) worker(ctx context.Context, n int, interactiveOnly bool) {
 // claimAndRun leases one job and executes it, reporting whether anything was
 // claimed.
 func (q *Queue) claimAndRun(ctx context.Context, interactiveOnly bool) (bool, error) {
+	ctx, release, err := ports.EnterWork(ctx, q.opts.Admission, "job execution")
+	if err != nil {
+		return false, err
+	}
+	defer release()
 	claim := q.store.ClaimJob
 	if interactiveOnly {
 		claim = q.store.ClaimInteractiveJob
@@ -387,23 +394,27 @@ func (q *Queue) reaper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if n, err := q.store.ReclaimExpiredLeases(ctx); err != nil {
-				if ctx.Err() == nil {
-					q.log.Warn("jobs: reclaim failed", "err", err)
+			q.maintenanceIteration(ctx, func(ctx context.Context) {
+				if n, err := q.store.ReclaimExpiredLeases(ctx); err != nil {
+					if ctx.Err() == nil {
+						q.log.Warn("jobs: reclaim failed", "err", err)
+					}
+				} else if n > 0 {
+					q.log.Info("jobs: reclaimed expired leases", "count", n)
 				}
-			} else if n > 0 {
-				q.log.Info("jobs: reclaimed expired leases", "count", n)
-			}
+			})
 		case <-prune.C:
-			before := time.Now().Add(-q.opts.Retention)
-			if _, err := q.store.PruneFinishedJobs(ctx, before); err != nil && ctx.Err() == nil {
-				q.log.Warn("jobs: prune failed", "err", err)
-			}
-			if q.opts.PruneHook != nil {
-				if err := q.opts.PruneHook(ctx, before); err != nil && ctx.Err() == nil {
-					q.log.Warn("jobs: feature prune failed", "err", err)
+			q.maintenanceIteration(ctx, func(ctx context.Context) {
+				before := time.Now().Add(-q.opts.Retention)
+				if _, err := q.store.PruneFinishedJobs(ctx, before); err != nil && ctx.Err() == nil {
+					q.log.Warn("jobs: prune failed", "err", err)
 				}
-			}
+				if q.opts.PruneHook != nil {
+					if err := q.opts.PruneHook(ctx, before); err != nil && ctx.Err() == nil {
+						q.log.Warn("jobs: feature prune failed", "err", err)
+					}
+				}
+			})
 		}
 	}
 }
@@ -412,4 +423,13 @@ func (q *Queue) publish(e bus.Event) {
 	if q.bus != nil {
 		q.bus.Publish(e)
 	}
+}
+
+func (q *Queue) maintenanceIteration(ctx context.Context, work func(context.Context)) {
+	ctx, release, err := ports.EnterWork(ctx, q.opts.Admission, "job retention")
+	if err != nil {
+		return
+	}
+	defer release()
+	work(ctx)
 }

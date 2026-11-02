@@ -13,20 +13,64 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  go-shards:
+    name: Go race shard ${{ matrix.shard }}
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
+    timeout-minutes: 40
+    outputs:
+      tested-runner: ${{ runner.environment == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build embedded UI
+        working-directory: web
+        run: npm ci && npm run build
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run exact test partition with race and coverage
+        run: python3 scripts/ci-go-shard.py run --count 8 --index "${{ matrix.shard }}" --root "go-coverage-${{ matrix.shard }}"
+      - name: Preserve shard evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage-${{ matrix.shard }}
+          path: go-coverage-${{ matrix.shard }}/
+          retention-days: 7
+          if-no-files-found: error
+
   unit:
     name: Unit tests (Go + web)
-    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
-    # The full race + coverpkg suite repeatedly migrates fresh SQLite databases
-    # across every supported schema version. Keep enough room for those real
-    # integration tests under instrumentation rather than truncating them.
-    timeout-minutes: 45
+    # Keep a fallback run on its captured runner class even after the repo's
+    # temporary dispatch setting has been restored while shards execute.
+    runs-on: ${{ fromJSON(needs.go-shards.outputs.tested-runner || '["ubuntu-24.04"]') }}
+    needs: go-shards
+    if: always()
+    timeout-minutes: 20
     # Read-only. This job used to push the coverage badge to main; it does
     # not any more (see "Flag a stale coverage badge" below), and a token
     # that cannot write is a better guarantee of that than a comment.
     permissions:
       contents: read
     steps:
+      - name: Require every race shard
+        env:
+          SHARD_RESULT: ${{ needs.go-shards.result }}
+        run: test "$SHARD_RESULT" = success
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: go-coverage-*
+          path: go-shards
 
       - uses: actions/setup-node@v4
         with:
@@ -56,9 +100,9 @@ jobs:
 
       - name: go test (race, coverage; includes architecture rules)
         run: |
-          # Coverage is a release gate, so never reuse a self-hosted runner's
-          # cached test result/profile from a previous checkout.
-          go test -timeout=30m -count=1 -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+          # Verify exact test execution and source/profile provenance for ALL
+          # shards before measuring the unchanged coverage population/floor.
+          python3 scripts/ci-go-shard.py merge --count 8 --root go-shards --output coverage.out
           pct="$(sh scripts/coverage-badge.sh coverage.out coverage.svg coverage-hand.out)"
           echo "COVERAGE_PCT=$pct" >> "$GITHUB_ENV"
           {

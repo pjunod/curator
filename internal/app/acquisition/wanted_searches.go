@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/pjunod/monarr/internal/ports"
 	"regexp"
 	"strings"
 	"time"
@@ -551,6 +552,11 @@ func (s *Service) enqueueWantedChunk(ctx context.Context, run sqlite.WantedSearc
 // ReconcileWantedSearches owns continuation and restart recovery. It is safe
 // to call from both the periodic coordinator and a JobFinished notification.
 func (s *Service) ReconcileWantedSearches(ctx context.Context) error {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "ReconcileWantedSearches")
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer releaseWork()
 	runs, err := s.db.ListActiveWantedSearches(ctx)
 	if err != nil {
 		return err

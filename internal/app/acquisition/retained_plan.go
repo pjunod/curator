@@ -56,7 +56,7 @@ func (s *Service) PlanRetainedRecovery(ctx context.Context, candidates []Retaine
 	if err != nil {
 		return plan, err
 	}
-	placements, err := s.db.PendingPlacements(ctx)
+	placements, err := s.db.UnresolvedPlacementReferences(ctx)
 	if err != nil {
 		return plan, err
 	}
@@ -208,7 +208,7 @@ func (s *Service) ValidateRetainedPlan(ctx context.Context, plan RetainedPlan) e
 	if err != nil {
 		return err
 	}
-	pending, err := s.db.PendingPlacements(ctx)
+	pending, err := s.db.UnresolvedPlacementReferences(ctx)
 	if err != nil {
 		return err
 	}

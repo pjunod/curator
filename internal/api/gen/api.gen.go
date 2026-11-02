@@ -143,6 +143,30 @@ func (e DeliveryStatus) Valid() bool {
 	}
 }
 
+// Defines values for DeploymentDrainStatusPhase.
+const (
+	Accepting DeploymentDrainStatusPhase = "accepting"
+	Drained   DeploymentDrainStatusPhase = "drained"
+	Draining  DeploymentDrainStatusPhase = "draining"
+	Stopping  DeploymentDrainStatusPhase = "stopping"
+)
+
+// Valid indicates whether the value is a known member of the DeploymentDrainStatusPhase enum.
+func (e DeploymentDrainStatusPhase) Valid() bool {
+	switch e {
+	case Accepting:
+		return true
+	case Drained:
+		return true
+	case Draining:
+		return true
+	case Stopping:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DownloadClientConfigMode.
 const (
 	DownloadClientConfigModePoll DownloadClientConfigMode = "poll"
@@ -275,6 +299,30 @@ func (e HealthStatus) Valid() bool {
 	case HealthStatusOk:
 		return true
 	case HealthStatusWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImportAttemptStatusOutcome.
+const (
+	ImportAttemptStatusOutcomeCancelled ImportAttemptStatusOutcome = "cancelled"
+	ImportAttemptStatusOutcomeCompleted ImportAttemptStatusOutcome = "completed"
+	ImportAttemptStatusOutcomeEmpty     ImportAttemptStatusOutcome = ""
+	ImportAttemptStatusOutcomePending   ImportAttemptStatusOutcome = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ImportAttemptStatusOutcome enum.
+func (e ImportAttemptStatusOutcome) Valid() bool {
+	switch e {
+	case ImportAttemptStatusOutcomeCancelled:
+		return true
+	case ImportAttemptStatusOutcomeCompleted:
+		return true
+	case ImportAttemptStatusOutcomeEmpty:
+		return true
+	case ImportAttemptStatusOutcomePending:
 		return true
 	default:
 		return false
@@ -1760,6 +1808,23 @@ type DeliveryLifecycleReceipt struct {
 	TerminalOutcome    *string                   `json:"terminalOutcome,omitempty"`
 }
 
+// DeploymentDrainStatus defines model for DeploymentDrainStatus.
+type DeploymentDrainStatus struct {
+	Active         int                        `json:"active"`
+	ElapsedSeconds float32                    `json:"elapsedSeconds"`
+	Generation     string                     `json:"generation"`
+	Phase          DeploymentDrainStatusPhase `json:"phase"`
+	StartedAt      *time.Time                 `json:"startedAt,omitempty"`
+	Work           []struct {
+		Id        int64     `json:"id"`
+		Kind      string    `json:"kind"`
+		StartedAt time.Time `json:"startedAt"`
+	} `json:"work"`
+}
+
+// DeploymentDrainStatusPhase defines model for DeploymentDrainStatus.Phase.
+type DeploymentDrainStatusPhase string
+
 // DirEntry defines model for DirEntry.
 type DirEntry struct {
 	Name string `json:"name"`
@@ -1966,6 +2031,25 @@ type IgnoredPath struct {
 	Path      string    `json:"path"`
 	Reason    string    `json:"reason"`
 }
+
+// ImportAttemptIdentity defines model for ImportAttemptIdentity.
+type ImportAttemptIdentity struct {
+	Epoch         string `json:"epoch"`
+	GenerationKey string `json:"generationKey"`
+}
+
+// ImportAttemptStatus defines model for ImportAttemptStatus.
+type ImportAttemptStatus struct {
+	Epoch                string                     `json:"epoch"`
+	GenerationKey        string                     `json:"generationKey"`
+	HeldStages           int                        `json:"heldStages"`
+	Outcome              ImportAttemptStatusOutcome `json:"outcome"`
+	PendingPublications  int                        `json:"pendingPublications"`
+	RetainedPublications int                        `json:"retainedPublications"`
+}
+
+// ImportAttemptStatusOutcome defines model for ImportAttemptStatus.Outcome.
+type ImportAttemptStatusOutcome string
 
 // ImportList defines model for ImportList.
 type ImportList struct {
@@ -2567,9 +2651,10 @@ type QueueItem struct {
 	Error  *string `json:"error,omitempty"`
 
 	// Handoff The download → import handoff, step by step.
-	Handoff            *[]HandoffEntry `json:"handoff,omitempty"`
-	Id                 int64           `json:"id"`
-	ImportBlockedSince *time.Time      `json:"importBlockedSince,omitempty"`
+	Handoff            *[]HandoffEntry      `json:"handoff,omitempty"`
+	Id                 int64                `json:"id"`
+	ImportBlockedSince *time.Time           `json:"importBlockedSince,omitempty"`
+	ImportControl      *ImportAttemptStatus `json:"importControl,omitempty"`
 
 	// ImportPath Where Monarr looked for the files after remote path mapping.
 	ImportPath          *string    `json:"importPath,omitempty"`
@@ -3591,6 +3676,18 @@ type UpdateRootFolderJSONBody struct {
 	Kind RootKind `json:"kind"`
 }
 
+// AbortDeploymentDrainJSONBody defines parameters for AbortDeploymentDrain.
+type AbortDeploymentDrainJSONBody struct {
+	Generation string `json:"generation"`
+	OwnerToken string `json:"ownerToken"`
+}
+
+// BeginDeploymentDrainJSONBody defines parameters for BeginDeploymentDrain.
+type BeginDeploymentDrainJSONBody struct {
+	// OwnerToken Caller-generated 256-bit random secret; retain for idempotent retry and explicit abort.
+	OwnerToken string `json:"ownerToken"`
+}
+
 // ListWantedSearchResultsParams defines parameters for ListWantedSearchResults.
 type ListWantedSearchResultsParams struct {
 	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
@@ -3723,6 +3820,9 @@ type CreateProfileJSONRequestBody = ProfileInput
 // UpdateProfileJSONRequestBody defines body for UpdateProfile for application/json ContentType.
 type UpdateProfileJSONRequestBody = ProfileInput
 
+// CancelQueueImportJSONRequestBody defines body for CancelQueueImport for application/json ContentType.
+type CancelQueueImportJSONRequestBody = ImportAttemptIdentity
+
 // ResolveQueueReservationJSONRequestBody defines body for ResolveQueueReservation for application/json ContentType.
 type ResolveQueueReservationJSONRequestBody ResolveQueueReservationJSONBody
 
@@ -3734,6 +3834,12 @@ type UpdateRootFolderJSONRequestBody UpdateRootFolderJSONBody
 
 // UpdateSettingsJSONRequestBody defines body for UpdateSettings for application/json ContentType.
 type UpdateSettingsJSONRequestBody = SettingsUpdate
+
+// AbortDeploymentDrainJSONRequestBody defines body for AbortDeploymentDrain for application/json ContentType.
+type AbortDeploymentDrainJSONRequestBody AbortDeploymentDrainJSONBody
+
+// BeginDeploymentDrainJSONRequestBody defines body for BeginDeploymentDrain for application/json ContentType.
+type BeginDeploymentDrainJSONRequestBody BeginDeploymentDrainJSONBody
 
 // CreateWantedSearchJSONRequestBody defines body for CreateWantedSearch for application/json ContentType.
 type CreateWantedSearchJSONRequestBody = WantedSearchRequest
@@ -4097,12 +4203,18 @@ type ServerInterface interface {
 	// BlocklistQueueItem Declare the release bad — blocklist it and search a replacement
 	// (POST /queue/{id}/blocklist)
 	BlocklistQueueItem(w http.ResponseWriter, r *http.Request, id int64)
-	// CancelQueueImport Stop a queued or running import and keep its source payload
+	// CancelQueueImport Durably cancel this import attempt and retain source custody
 	// (POST /queue/{id}/cancel-import)
 	CancelQueueImport(w http.ResponseWriter, r *http.Request, id int64)
 	// ImportQueueItem Import a download now — approve a held one, or retry a failed one
 	// (POST /queue/{id}/import)
 	ImportQueueItem(w http.ResponseWriter, r *http.Request, id int64)
+	// GetImportReview Read retained import custody and publication evidence without storage I/O
+	// (GET /queue/{id}/import-review)
+	GetImportReview(w http.ResponseWriter, r *http.Request, id int64)
+	// ResolveImportReview Record explicit fencing or retained-byte disposition
+	// (POST /queue/{id}/import-review)
+	ResolveImportReview(w http.ResponseWriter, r *http.Request, id int64)
 	// ResolveQueueReservation Acknowledge duplicate risk and release uncertain or cancelled episode custody
 	// (POST /queue/{id}/resolve-reservation)
 	ResolveQueueReservation(w http.ResponseWriter, r *http.Request, id int64)
@@ -4139,6 +4251,15 @@ type ServerInterface interface {
 	// GetConnections The other applications Monarr talks to, and whether they are talking back
 	// (GET /system/connections)
 	GetConnections(w http.ResponseWriter, r *http.Request)
+	// AbortDeploymentDrain Resume admission for the matching drain owner and generation
+	// (DELETE /system/deployment-drain)
+	AbortDeploymentDrain(w http.ResponseWriter, r *http.Request)
+	// GetDeploymentDrain Inspect maintenance admission and active work
+	// (GET /system/deployment-drain)
+	GetDeploymentDrain(w http.ResponseWriter, r *http.Request)
+	// BeginDeploymentDrain Pause new work and drain already admitted operations
+	// (POST /system/deployment-drain)
+	BeginDeploymentDrain(w http.ResponseWriter, r *http.Request)
 	// GetSystemStatus System status
 	// (GET /system/status)
 	GetSystemStatus(w http.ResponseWriter, r *http.Request)
@@ -7150,6 +7271,58 @@ func (siw *ServerInterfaceWrapper) ImportQueueItem(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetImportReview operation middleware
+func (siw *ServerInterfaceWrapper) GetImportReview(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetImportReview(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResolveImportReview operation middleware
+func (siw *ServerInterfaceWrapper) ResolveImportReview(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveImportReview(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ResolveQueueReservation operation middleware
 func (siw *ServerInterfaceWrapper) ResolveQueueReservation(w http.ResponseWriter, r *http.Request) {
 
@@ -7381,6 +7554,48 @@ func (siw *ServerInterfaceWrapper) GetConnections(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetConnections(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AbortDeploymentDrain operation middleware
+func (siw *ServerInterfaceWrapper) AbortDeploymentDrain(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AbortDeploymentDrain(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDeploymentDrain operation middleware
+func (siw *ServerInterfaceWrapper) GetDeploymentDrain(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDeploymentDrain(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeginDeploymentDrain operation middleware
+func (siw *ServerInterfaceWrapper) BeginDeploymentDrain(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginDeploymentDrain(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7738,6 +7953,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/accept", wrapper.AcceptCompletedStorageChange)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloads/inventory/entry", wrapper.DeleteCompletedEntry)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloads/inventory", wrapper.GetCompletedInventory)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/system/deployment-drain", wrapper.AbortDeploymentDrain)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/deployment-drain", wrapper.GetDeploymentDrain)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/deployment-drain", wrapper.BeginDeploymentDrain)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/status", wrapper.GetSystemStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/tasks", wrapper.ListTasks)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/tasks/{name}/run", wrapper.RunTask)
@@ -7808,6 +8026,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resume", wrapper.ResumeQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/cancel-import", wrapper.CancelQueueImport)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue/{id}/import-review", wrapper.GetImportReview)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import-review", wrapper.ResolveImportReview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/blocklist", wrapper.BlocklistQueueItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/scan", wrapper.ScanImportPath)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/default-path", wrapper.GetManualImportDefaultPath)

@@ -69,7 +69,7 @@ func (s *Server) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 // RunTask implements POST /system/tasks/{name}/run.
 func (s *Server) RunTask(w http.ResponseWriter, r *http.Request, name string) {
-	if err := s.deps.Scheduler.Trigger(name); err != nil {
+	if err := s.deps.Scheduler.TriggerContext(r.Context(), name); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

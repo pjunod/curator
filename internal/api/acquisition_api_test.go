@@ -751,7 +751,12 @@ func TestAcqCancelOrphanedImportMakesItRestartable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e.post(t, "/api/v1/queue/"+acqItoa(id)+"/cancel-import", "").
+	dl, err := e.db.GetDownload(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := map[string]string{"generationKey": dl.GenerationKey, "epoch": "0"}
+	e.postImportJSON(t, "/api/v1/queue/"+acqItoa(id)+"/cancel-import", identity).
 		expect(t, http.StatusNoContent)
 	var queue []apigen.QueueItem
 	e.get(t, "/api/v1/queue").expect(t, http.StatusOK).into(t, &queue)
@@ -759,9 +764,9 @@ func TestAcqCancelOrphanedImportMakesItRestartable(t *testing.T) {
 		t.Fatalf("queue after cancel = %+v, want a downloaded/restartable row", queue)
 	}
 
-	e.post(t, "/api/v1/queue/9999/cancel-import", "").expect(t, http.StatusNotFound)
-	e.post(t, "/api/v1/queue/"+acqItoa(id)+"/cancel-import", "").
-		expect(t, http.StatusBadRequest)
+	e.postImportJSON(t, "/api/v1/queue/9999/cancel-import", identity).expect(t, http.StatusNotFound)
+	e.postImportJSON(t, "/api/v1/queue/"+acqItoa(id)+"/cancel-import", identity).
+		expect(t, http.StatusNoContent)
 }
 
 // Blocklisting from the queue does both halves of what the button promises:

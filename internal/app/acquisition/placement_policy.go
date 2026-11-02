@@ -2,7 +2,6 @@ package acquisition
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"slices"
 
@@ -30,7 +29,7 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 	// Destructive replacements must satisfy policy before publication.
 	if replace && (p.Provenance == mediainfo.ProvenanceImplausible || (!scope.Manual && (!profile.Acceptable(p.Quality) || !profile.LanguageAcceptable(langs)))) {
 		s.recordLanguageMismatch(ctx, item.ID, p.Target, scope.Release, scope.Indexer, profile, p.Info)
-		return fmt.Errorf("measured payload does not satisfy current floor, resolution or language policy")
+		return importPolicyRefusalf("measured payload does not satisfy current floor, resolution or language policy")
 	}
 	files, err := s.db.ListFilesForItem(ctx, item.ID)
 	if err != nil {
@@ -50,7 +49,11 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 			continue
 		}
 		if f.Path != p.Target && scope.DeferCleanup && scope.PublishedDigests[f.Path] != "" {
-			if digest, _, e := fileDigest(ctx, f.Path); e == nil && digest == scope.PublishedDigests[f.Path] {
+			digest, _, e := fileDigest(ctx, f.Path)
+			if e != nil {
+				return e
+			}
+			if digest == scope.PublishedDigests[f.Path] {
 				continue
 			}
 		}
@@ -65,7 +68,11 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 		}
 		// A receipt for the same bytes is idempotent; it does not replace them.
 		if f.Path == p.Target {
-			if digest, _, e := fileDigest(ctx, f.Path); e == nil && digest == p.SHA256 {
+			digest, _, e := fileDigest(ctx, f.Path)
+			if e != nil {
+				return e
+			}
+			if digest == p.SHA256 {
 				continue
 			}
 		}
@@ -79,7 +86,7 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 				if scope.ReplacementOperationID != "" && filepath.Clean(f.Path) != filepath.Clean(p.Target) {
 					continue
 				}
-				return fmt.Errorf("replacement overlaps protected sibling episode %d", e)
+				return importPolicyRefusalf("replacement overlaps protected sibling episode %d", e)
 			}
 		}
 		r := byID[f.ID]
@@ -90,25 +97,25 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 			continue
 		}
 		if !r.Known {
-			return fmt.Errorf("existing file quality is unverified")
+			return importPolicyRefusalf("existing file quality is unverified")
 		}
 		allowed := profile.UpgradesAllowed && profile.Upgrade(p.Quality, langs, r.Quality, r.SourceVerified(), r.AudioOf())
 		if scope.Manual {
 			allowed = profile.Upgrade(p.Quality, langs, r.Quality, r.SourceVerified(), r.AudioOf()) || (quality.Better(p.Quality, r.Quality) && profile.LanguageAcceptable(langs))
 		}
 		if !allowed {
-			return fmt.Errorf("measured %s cannot replace existing %s under current policy", p.Quality.Display(), r.Quality.Display())
+			return importPolicyRefusalf("measured %s cannot replace existing %s under current policy", p.Quality.Display(), r.Quality.Display())
 		}
 		// A claim permitting cleanup must be validated against these same facts.
 		if !replace {
-			return fmt.Errorf("replacement requires measured authorization")
+			return importPolicyRefusalf("replacement requires measured authorization")
 		}
 		if f.Path == p.Target {
 			targetAuthorized = true
 		}
 	}
 	if !targetAuthorized {
-		return fmt.Errorf("existing destination bytes have no measured replacement authorization")
+		return importPolicyRefusalf("existing destination bytes have no measured replacement authorization")
 	}
 	return nil
 }

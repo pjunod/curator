@@ -1061,3 +1061,14 @@ storage. The action compares the exact expected and observed identities and
 previews affected custody. It applies only to the selected root and cannot grant
 old acquisitions cleanup authority on the replacement volume. Ordinary return of
 the expected storage still recovers automatically without changing settings.
+
+## Deployment maintenance
+
+Deployment drain is an operational native API control, separate from terminal
+shutdown. GET `/api/v1/system/deployment-drain` reports phase, active work and
+elapsed time. POST starts/idempotently recovers a drain with an owner token;
+DELETE resumes only the matching owner and generation before terminal shutdown.
+Existing native API authentication applies. No storage setting makes hard NFS
+interruptible. Follow the [deployment drain runbook](NFS_DEPLOYMENT_DRAIN.md);
+its stop wait requires measured qualification for the deployment shape.
+

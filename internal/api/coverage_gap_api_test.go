@@ -97,7 +97,7 @@ func TestGapGrabWithoutSeasonKeepsRetainedSearchEvidence(t *testing.T) {
 // a manual override, with the code that says the identity was never
 // resolved. The token is provenance, not authorisation: a mismatch is not a
 // refusal, it is a row that admits it was not searched for.
-func TestGapGrabWithAForeignTokenIsRecordedAsManualOverride(t *testing.T) {
+func TestGapGrabWithAForeignTokenIsRejected(t *testing.T) {
 	e := newAPIEnv(t)
 	acqAddIndexer(t, e)
 	acqAddClient(t, e, "qbittorrent")
@@ -115,25 +115,12 @@ func TestGapGrabWithAForeignTokenIsRecordedAsManualOverride(t *testing.T) {
 		"downloadUrl":"http://indexer.invalid/other","protocol":"torrent",
 		"indexer":"nzb.invalid","candidateToken":%q,
 		"intent":"additional_copy","requestId":"gap-foreign-token"}`, item, cands[0].CandidateToken)).
-		expect(t, http.StatusCreated)
+		expect(t, http.StatusConflict)
 
 	var queue []apigen.QueueItem
 	e.get(t, "/api/v1/queue").expect(t, http.StatusOK).into(t, &queue)
-	if len(queue) != 1 || queue[0].Match == nil {
-		t.Fatalf("queue = %+v, want one row with evidence", queue)
-	}
-	m := queue[0].Match
-	if m.Method == nil || *m.Method != "manual_override" {
-		t.Errorf("method = %v, want manual_override for a token that names another release", m.Method)
-	}
-	if m.Code == nil || *m.Code != "identity_unresolved" {
-		t.Errorf("code = %v, want identity_unresolved", m.Code)
-	}
-	if m.OriginalTitle == nil || *m.OriginalTitle != "Fight.Club.1999.2160p.WEB-DL.x265-OTHER" {
-		t.Errorf("originalTitle = %v, want the grabbed title", m.OriginalTitle)
-	}
-	if m.ParsedTitle == nil || *m.ParsedTitle == "" {
-		t.Errorf("parsedTitle = %v, want the parser's reading of the title", m.ParsedTitle)
+	if len(queue) != 0 {
+		t.Fatalf("foreign token admitted a download: %+v", queue)
 	}
 }
 

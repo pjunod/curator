@@ -1,6 +1,6 @@
 # NFS shutdown implementation — lifecycle fixes and concrete next contracts
 
-**Status:** lifecycle reviewed and locally validated; PR CI pending; cancellation and maintenance require detailed implementation design · **Written:** 2026-11-01
+**Status:** lifecycle PR #78 merged; completion implementation under review; runtime qualification pending · **Written:** 2026-11-01
 
 Companion to [implementation status](NFS_SHUTDOWN_IMPLEMENTATION_STATUS.md) and
 [deployment](deployment.md). This contract separates the implemented lifecycle
@@ -43,7 +43,7 @@ background cleanup. No unit test can establish interruption of hard NFS.
 
 ## 2. Cancellation needs a generation-scoped durable control row
 
-This section is a proposed concrete design, not implemented code. Read the
+This historical design is superseded by [ADR 0025](adr/0025-import-cancellation-and-deployment-drain.md) and migration 0069. Read the ADR for the implemented four-table/epoch/publication/stage contract. Read the
 current [import workers](../internal/app/acquisition/importers.go),
 [manual retry](../internal/app/acquisition/handoff.go), and
 [SQLite handoff writes](../internal/infra/sqlite/acquisition.go) before edits.

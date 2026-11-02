@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/infra/config"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 func TestListenerFailureCancelsAndJoinsWorkersWithoutSignal(t *testing.T) {
@@ -24,7 +25,7 @@ func TestListenerFailureCancelsAndJoinsWorkersWithoutSignal(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	finished := make(chan error, 1)
-	dataDir := t.TempDir()
+	dataDir := shutdownTestDataDir(t)
 	go func() {
 		finished <- run(ctx, config.Config{Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port, DataDir: dataDir}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
@@ -57,7 +58,7 @@ func TestRunShutsDownWithConnectedEventStream(t *testing.T) {
 	_ = listener.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan error, 1)
-	dataDir := t.TempDir()
+	dataDir := shutdownTestDataDir(t)
 	go func() {
 		finished <- run(ctx, config.Config{Host: "127.0.0.1", Port: port, DataDir: dataDir}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
@@ -78,7 +79,7 @@ func TestRunShutsDownWithConnectedEventStream(t *testing.T) {
 	})
 	client := &http.Client{Timeout: 5 * time.Second}
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/api/v1/events"
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for {
 		resp, err := client.Get(url)
 		if err == nil {
@@ -106,4 +107,23 @@ func TestRunShutsDownWithConnectedEventStream(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("connected SSE consumed the HTTP shutdown grace")
 	}
+}
+
+// Migrations are setup, not part of a shutdown latency assertion. Race builds
+// on shared runners can spend seconds migrating an empty database.
+func shutdownTestDataDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	db, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Migrate(t.Context()); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

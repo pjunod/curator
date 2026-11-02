@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/pjunod/monarr/internal/ports"
 	"io"
 	"os"
 	"path/filepath"
@@ -406,6 +407,10 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 			TargetParentIdentity: parentIdentity, Size: size, ItemID: item.ID, CopyID: scope.CopyID,
 			EpisodeIDs: eps, Quality: measured, Info: info, Provenance: prov, Confidence: conf,
 			Release: scope.Release, Indexer: scope.Indexer, State: "prepared"}
+		if key, ok := importAttemptFrom(ctx); ok {
+			epoch := key.Epoch
+			p.ImportEpoch = &epoch
+		}
 		p.CleanupSuperseded = replace && item.Kind == domain.KindBook && !scope.DeferCleanup && scope.ReplacementOperationID == ""
 		p.SupersededDigests = map[string]string{}
 		if replace {
@@ -504,11 +509,27 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 			return 0, fmt.Errorf("recovery target changed before placement publication")
 		}
 	}
+	cleanupCtx := ctx
+	if err = s.db.AssertPublicationTargetAvailable(ctx, p.Target); err != nil {
+		releaseDecision()
+		return 0, importControlError(err)
+	}
+	if p.ImportEpoch != nil && p.State == "prepared" {
+		if err = s.db.AuthorizeImportPlacement(ctx, p); err != nil {
+			releaseDecision()
+			return 0, importControlError(err)
+		}
+		// Publication won the W serialization boundary. Finish its rename/sync and
+		// durable metadata while retaining worker ownership, then honor cancellation.
+		ctx = context.WithoutCancel(ctx)
+	}
 	if err = s.publishPlacement(ctx, &p); err != nil {
 		releaseDecision()
 		return 0, err
 	}
-	fid, err := s.db.CommitPlacement(ctx, p)
+	local, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	fid, err := s.db.CommitPlacement(local, p)
+	cancelCommit()
 	releaseDecision()
 	if err != nil {
 		return 0, err
@@ -527,7 +548,7 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 			s.recordLanguageMismatch(ctx, item.ID, dest, scope.Release, scope.Indexer, profile, p.Info)
 		}
 	}
-	if e := s.cleanupPlacement(ctx, p); e != nil {
+	if e := s.cleanupPlacement(cleanupCtx, p); e != nil {
 		s.log.Warn("placement cleanup remains pending", "id", p.ID, "err", e)
 	}
 	return fid, nil
@@ -607,6 +628,15 @@ func placementParentIdentity(target string) (string, string, error) {
 }
 
 func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Placement) error {
+	if p.ImportEpoch != nil {
+		a, err := s.db.GetImportAttempt(ctx, p.DownloadID, p.SourceGeneration)
+		if err != nil {
+			return err
+		}
+		if a.Epoch != *p.ImportEpoch || a.Outcome == "cancelled" {
+			return importControlError(sqlite.ErrImportCancelled)
+		}
+	}
 	legacyIdentitySnapshot := legacyPlacementIdentitySnapshot(*p)
 	if err := rejectSymlinks(filepath.Dir(p.Target), false); err != nil {
 		return err
@@ -704,8 +734,14 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 	}
 
 	if stagedDigest, _, stagedGeneration, e := fileDigestSnapshot(ctx, p.Temporary); e == nil {
+		if p.ImportEpoch != nil {
+			return fmt.Errorf("existing stage retained; explicit retry or custody review required: %s", p.Temporary)
+		}
 		if stagedDigest != p.SHA256 {
 			return fmt.Errorf("staging identity mismatch; review %s", p.Temporary)
+		}
+		if p.ImportEpoch != nil && p.TemporaryObjectIdentity == "" {
+			return fmt.Errorf("unbound stage requires explicit custody review: %s", p.Temporary)
 		}
 		stagedInfo, statErr := os.Lstat(p.Temporary)
 		if statErr != nil {
@@ -734,7 +770,12 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 		if err = validateReviewedSourceSnapshot(ctx, p.Source); err != nil {
 			return err
 		}
-		if err = placeFile(ctx, p.Source, p.Temporary, progress); err != nil {
+		stagingCtx := ctx
+		if p.ImportEpoch != nil {
+			stagingCtx = context.WithValue(ctx, namedPlacementStageKey{}, namedPlacementStage{source: p.Source, target: p.Temporary, write: func(c context.Context, on func(int64, int64)) error { return s.stageImportPlacement(c, p, on) }})
+		}
+		err = placeFile(stagingCtx, p.Source, p.Temporary, progress)
+		if err != nil {
 			return err
 		}
 		if err = validateReviewedSourceSnapshot(ctx, p.Source); err != nil {
@@ -751,7 +792,13 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 		if statErr != nil {
 			return statErr
 		}
-		p.TemporaryObjectIdentity = deliveryFileStableIdentity(stagedInfo)
+		namedIdentity := deliveryFileStableIdentity(stagedInfo)
+		if p.ImportEpoch != nil && (p.TemporaryObjectIdentity == "" || p.TemporaryObjectIdentity != namedIdentity) {
+			return fmt.Errorf("stage pathname no longer identifies the opened object; custody review required")
+		}
+		if p.ImportEpoch == nil {
+			p.TemporaryObjectIdentity = namedIdentity
+		}
 	} else {
 		return e
 	}
@@ -951,6 +998,11 @@ func syncOpenedDirectory(root *os.Root) error {
 	return dir.Sync()
 }
 func (s *Service) reconcilePlacements(ctx context.Context) {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "reconcilePlacements")
+	if admissionErr != nil {
+		return
+	}
+	defer releaseWork()
 	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 0)
 	if err != nil {
 		s.log.Error("placement reconciliation could not take the library", "err", err)

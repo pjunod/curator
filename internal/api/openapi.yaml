@@ -179,6 +179,57 @@ paths:
               schema:
                 $ref: '#/components/schemas/CompletedInventory'
 
+  /system/deployment-drain:
+    get:
+      operationId: getDeploymentDrain
+      summary: Inspect maintenance admission and active work
+      responses:
+        "200":
+          description: Current process drain status; contains no owner secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeploymentDrainStatus" }
+    post:
+      operationId: beginDeploymentDrain
+      summary: Pause new work and drain already admitted operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ownerToken]
+              properties:
+                ownerToken: { type: string, pattern: "^[a-fA-F0-9]{64}$", description: Caller-generated 256-bit random secret; retain for idempotent retry and explicit abort. }
+      responses:
+        "200":
+          description: Idempotent drain status for this owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeploymentDrainStatus" }
+        "400": { description: Invalid owner token. }
+        "409": { description: Another owner is draining or the process is stopping. }
+    delete:
+      operationId: abortDeploymentDrain
+      summary: Resume admission for the matching drain owner and generation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ownerToken, generation]
+              properties:
+                ownerToken: { type: string }
+                generation: { type: string }
+      responses:
+        "200":
+          description: Admission resumed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeploymentDrainStatus" }
+        "400": { description: Invalid request. }
+        "409": { description: Stale owner/generation or terminal shutdown. }
   /system/status:
     get:
       operationId: getSystemStatus
@@ -1828,24 +1879,39 @@ paths:
   /queue/{id}/cancel-import:
     post:
       operationId: cancelQueueImport
-      summary: Stop a queued or running import and keep its source payload
+      summary: Durably cancel this import attempt and retain source custody
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportAttemptIdentity" }
       responses:
-        "204": { description: Cancelled; the row is ready to restart. }
-        "400":
-          description: The row is not importing, or finished before cancellation.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "404":
-          description: Unknown row.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+        "202": { description: Cancellation persisted; actual writer or publication reconciliation remains pending. }
+        "204": { description: Cancellation finalized after actual writer release. }
+        "400": { description: Invalid request. }
+        "404": { description: Unknown row. }
+        "409": { description: Attempt changed or completed. }
+
+  /queue/{id}/import-review:
+    get:
+      operationId: getImportReview
+      summary: Read retained import custody and publication evidence without storage I/O
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200": { description: Current import control and retained custody. }
+        "404": { description: Unknown row. }
+    post:
+      operationId: resolveImportReview
+      summary: Record explicit fencing or retained-byte disposition
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200": { description: Review recorded; application performs no filesystem deletion. }
+        "400": { description: Explicit acknowledgement required. }
+        "409": { description: Local writer active or attempt changed. }
 
   /queue/{id}/blocklist:
     post:
@@ -3202,6 +3268,25 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    DeploymentDrainStatus:
+      type: object
+      required: [phase, generation, active, elapsedSeconds, work]
+      properties:
+        phase: { type: string, enum: [accepting, draining, drained, stopping] }
+        generation: { type: string }
+        startedAt: { type: string, format: date-time }
+        elapsedSeconds: { type: number }
+        active: { type: integer }
+        work:
+          type: array
+          items:
+            type: object
+            required: [id, kind, startedAt]
+            properties:
+              id: { type: integer, format: int64 }
+              kind: { type: string }
+              startedAt: { type: string, format: date-time }
+
     DeliveryLifecyclePage:
       type: object
       required: [items]
@@ -5512,6 +5597,24 @@ components:
       properties:
         cleared: { type: integer }
 
+    ImportAttemptIdentity:
+      type: object
+      required: [generationKey, epoch]
+      properties:
+        generationKey: { type: string }
+        epoch: { type: string, pattern: '^[0-9]+$' }
+
+    ImportAttemptStatus:
+      allOf:
+        - $ref: "#/components/schemas/ImportAttemptIdentity"
+        - type: object
+          required: [outcome, pendingPublications, retainedPublications, heldStages]
+          properties:
+            outcome: { type: string, enum: ['', pending, cancelled, completed] }
+            pendingPublications: { type: integer }
+            retainedPublications: { type: integer }
+            heldStages: { type: integer }
+
     QueueItem:
       type: object
       required: [id, mediaItemId, title, state, progress, protocol, quality, addedAt]
@@ -5558,6 +5661,7 @@ components:
             The in-memory importer state. `queued` means the job was accepted
             and is waiting for one of the bounded import workers; `running`
             means a worker owns it. Absent means no importer owns this row.
+        importControl: { $ref: "#/components/schemas/ImportAttemptStatus" }
         importRetryAttempts: { type: integer, minimum: 0 }
         importBlockedSince: { type: string, format: date-time }
         importRetryAt: { type: string, format: date-time }

@@ -56,7 +56,7 @@ func TestPlacedDeliveryCleanupRetainsSourceWhenCurrentLibraryProofChanges(t *tes
 		t.Fatalf("accepted source bytes changed after its library proof changed: %q err=%v", got, err)
 	}
 	updated, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, row.Path)
-	if err != nil || updated.CleanupState != "retry" || !strings.Contains(updated.CleanupError, "library placement is no longer present") {
+	if err != nil || updated.CleanupState != "protected" || !strings.Contains(updated.CleanupError, "library placement is no longer present") {
 		t.Fatalf("changed library proof did not remain durably retryable: outcome=%+v err=%v", updated, err)
 	}
 }
@@ -215,7 +215,7 @@ func TestExplicitDeleteReplayRejectsChangedNestedParentThenRetriesExactJournal(t
 		t.Fatalf("exact retry did not durably complete the selected journal: batch=%+v err=%v", completed, err)
 	}
 	var historyCount int
-	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM history_events WHERE type='delivery_file_deleted'`).Scan(&historyCount); err != nil || historyCount != 1 {
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM history_events WHERE type='delivery_file_absence_confirmed'`).Scan(&historyCount); err != nil || historyCount != 1 {
 		t.Fatalf("exact retry should write one deletion history event: count=%d err=%v", historyCount, err)
 	}
 	if _, err := os.Lstat(selectedPath); !os.IsNotExist(err) {

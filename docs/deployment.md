@@ -15,6 +15,13 @@ the revision and SHA-256 values in `tools/curator-embed/model-manifest.json`.
 Inference uses two CPU threads and at most eight texts per batch. Disabling
 ranking stops and reaps the helper while retaining its verified model files.
 
+## Draining before replacement
+
+Use the [deployment drain runbook](NFS_DEPLOYMENT_DRAIN.md) to pause admission,
+finish actual import work, then stop and prove old-container exit before its
+replacement. A NAS outage may block this process; no finite outage deadline is
+guaranteed.
+
 ## Storage and failover
 
 Monarr is deliberately one process with one SQLite file (ADR

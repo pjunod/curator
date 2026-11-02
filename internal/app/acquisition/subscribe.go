@@ -191,6 +191,11 @@ func (s *Service) subscribeTo(ctx context.Context, cfg ports.ClientConfig, sub p
 // handleEvent turns one pushed event into the same reconcile the poll
 // performs — or, for progress, into a coalesced in-memory update.
 func (s *Service) handleEvent(ctx context.Context, cfg ports.ClientConfig, ev ports.ClientEvent, pending map[int64]float64, flushed *time.Time) {
+	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "handleEvent")
+	if admissionErr != nil {
+		return
+	}
+	defer releaseWork()
 	if ev.Kind == ports.EventReset {
 		// We may have missed events. The poll is the reconcile, so ask it
 		// to run now instead of waiting out its interval.

@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -927,6 +928,20 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			since := live.StartedAt
 			item.StageSince = &since
 		}
+		a, e := s.deps.Store.GetImportAttempt(r.Context(), d.ID, d.GenerationKey)
+		if errors.Is(e, sql.ErrNoRows) {
+			a = sqlite.ImportAttempt{ImportAttemptKey: sqlite.ImportAttemptKey{DownloadID: d.ID, GenerationKey: d.GenerationKey}}
+			e = nil
+			if d.State == "imported" {
+				a.Outcome = "completed"
+			}
+		}
+		if e != nil {
+			s.acqErr(w, e)
+			return
+		}
+		status := importStatus(a)
+		item.ImportControl = &status
 		if state := s.deps.Acquisition.ImportStatus(d.ID); state != "" {
 			importState := apigen.QueueItemImportState(state)
 			item.ImportState = &importState
@@ -976,15 +991,26 @@ func (s *Server) ImportQueueItem(w http.ResponseWriter, r *http.Request, id int6
 // CancelQueueImport implements POST /queue/{id}/cancel-import. Cancellation
 // keeps the completed payload and returns the row to a restartable state.
 func (s *Server) CancelQueueImport(w http.ResponseWriter, r *http.Request, id int64) {
-	err := s.deps.Acquisition.CancelImport(r.Context(), id)
-	switch {
-	case err == nil:
-		w.WriteHeader(http.StatusNoContent)
-	case errors.Is(err, acquisition.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not found")
-	default:
-		writeError(w, http.StatusBadRequest, err.Error())
+	var body importIdentity
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, 400, "current generationKey and epoch required")
+		return
 	}
+	key, err := body.key(id)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	result, err := s.deps.Acquisition.CancelImportAttempt(r.Context(), id, &key)
+	if err != nil {
+		s.importControlErr(w, err)
+		return
+	}
+	if result.Status == "cancelled" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": result.Status, "attempt": importStatus(result.Attempt), "reviewRequired": result.ReviewRequired})
 }
 
 // BlocklistQueueItem implements POST /queue/{id}/blocklist: declare the

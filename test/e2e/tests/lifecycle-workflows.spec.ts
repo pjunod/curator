@@ -5,7 +5,19 @@ import { join } from 'node:path'
 test.use({ serviceWorkers: 'block' })
 
 async function inViewport(locator: Locator) {
-  await expect(locator).toBeInViewport({ ratio: 1 })
+  // Chromium can round scroll offsets by a fraction of a CSS pixel. The
+  // bounding-box assertion below still rejects any meaningful clipping.
+  await expect(locator).toBeInViewport({ ratio: 0.99 })
+  // Check overflow ancestors too: percentage alone can hide several clipped
+  // pixels on a wide control. Permit at most one CSS pixel at each edge.
+  await expect.poll(() => locator.evaluate(node => new Promise<number>(resolve => {
+    const observer = new IntersectionObserver(([entry]) => {
+      observer.disconnect()
+      const a = entry.boundingClientRect, b = entry.intersectionRect
+      resolve(Math.max(b.left - a.left, b.top - a.top, a.right - b.right, a.bottom - b.bottom))
+    })
+    observer.observe(node)
+  }))).toBeLessThanOrEqual(1)
   await expect.poll(() => locator.evaluate(node => {
     const box = node.getBoundingClientRect()
     return box.top >= 0 && box.left >= 0 && box.bottom <= innerHeight + 1 && box.right <= innerWidth + 1

@@ -45,7 +45,7 @@ func TestNativeTorrentClientMigrationPreservesConfigTriggersAndRefusesUnsafeDown
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := goose.DownContext(ctx, db.W, "migrations"); err == nil {
+	if err := goose.DownToContext(ctx, db.W, "migrations", 67); err == nil {
 		t.Fatal("downgrade erased configured native adapter contract")
 	}
 	native, err := db.GetDownloadClient(ctx, nativeID)

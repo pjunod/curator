@@ -1504,3 +1504,19 @@ These changes do not interrupt a thread blocked in NFS writeback. Storage calls
 may still delay shutdown until the NAS responds. Event-stream support requires
 both flushing and response write deadlines; unsupported HTTP response adapters
 receive an explicit streaming error rather than an unbounded stream.
+
+## Durable import cancellation and deployment drain
+
+Activity's **Cancel import** records durable intent. **Cancelling** remains
+visible until the actual writer exits or uncertain publication is reviewed.
+Committed library files are kept, and ordinary retries cannot erase cancellation.
+Explicit retry uses a new import epoch. **Review retained import** opens the
+source/stage/publication evidence and explicit fencing/disposition actions inside
+the current viewport; Curator never deletes the retained bytes through review.
+The native mobile Activity screen displays pending and retained-review status;
+use the web dialog for the detailed retained-byte review.
+
+For deployments, pause new mutation/work admission while existing copies finish,
+keep status available, then stop and verify actual exit before replacement. See
+[deployment drain](NFS_DEPLOYMENT_DRAIN.md) for the command, first upgrade and
+pending qualification limits. NAS outages may still block restart.
