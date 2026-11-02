@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
- "strings"
 )
 
 type ImportPublication struct {
@@ -48,10 +48,24 @@ func (d *DB) unresolvedSidecarReferences(ctx context.Context) ([]Placement, erro
 		p.State = "retained"
 		refs = append(refs, p)
 	}
-    if err=rows.Err();err!=nil{return nil,err};rows.Close()
-    stages,err:=d.R.QueryContext(ctx,`SELECT download_id,generation_key,stage,source,target FROM import_attempt_stages WHERE state='held'`);if err!=nil{return nil,err};defer stages.Close()
-    for stages.Next(){var p Placement;if err=stages.Scan(&p.DownloadID,&p.SourceGeneration,&p.Temporary,&p.Source,&p.Target);err!=nil{return nil,err};p.State="retained";refs=append(refs,p)}
-    return refs,stages.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	stages, err := d.R.QueryContext(ctx, `SELECT download_id,generation_key,stage,source,target FROM import_attempt_stages WHERE state='held'`)
+	if err != nil {
+		return nil, err
+	}
+	defer stages.Close()
+	for stages.Next() {
+		var p Placement
+		if err = stages.Scan(&p.DownloadID, &p.SourceGeneration, &p.Temporary, &p.Source, &p.Target); err != nil {
+			return nil, err
+		}
+		p.State = "retained"
+		refs = append(refs, p)
+	}
+	return refs, stages.Err()
 }
 
 func placementPublication(p Placement) (ImportPublication, error) {
@@ -66,6 +80,9 @@ func placementPublication(p Placement) (ImportPublication, error) {
 		"sourceGeneration": p.SourceGeneration, "sourceTransfer": p.SourceTransfer,
 		"payloadGeneration": p.SourcePayloadGeneration, "sourceFileGeneration": p.SourceFileGeneration,
 		"replacement": p.ReplacementOperationID, "epoch": *p.ImportEpoch,
+		"episodes": p.EpisodeIDs, "quality": p.Quality, "info": p.Info, "provenance": p.Provenance, "confidence": p.Confidence,
+		"release": p.Release, "indexer": p.Indexer, "previousSHA256": p.PreviousSHA256, "backup": p.Backup,
+		"sourceGUID": p.SourceGUID, "sourceIndexer": p.SourceIndexerID,
 	})
 	return ImportPublication{ImportAttemptKey: ImportAttemptKey{p.DownloadID, p.SourceGeneration, *p.ImportEpoch},
 		ID: "placement:" + p.ID, PlacementID: p.ID, Source: p.Source, Target: p.Target, Payload: string(data)}, err
@@ -175,7 +192,7 @@ func commitImportPublication(ctx context.Context, tx *sql.Tx, p ImportPublicatio
 // RetainUncertainImport is called with both local TryLocks held and explicit
 // operator fencing acknowledgement. It revokes publication, not its history.
 // No absence observation or inferred lock result grants cleanup authority.
-func (d *DB) RetainUncertainImport(ctx context.Context, key ImportAttemptKey,ids []string) (ImportAttempt, error) {
+func (d *DB) RetainUncertainImport(ctx context.Context, key ImportAttemptKey, ids []string) (ImportAttempt, error) {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return ImportAttempt{}, err
@@ -188,9 +205,38 @@ func (d *DB) RetainUncertainImport(ctx context.Context, key ImportAttemptKey,ids
 	if a.Outcome != "pending" || a.PendingPublications == 0 {
 		return a, ErrImportPublicationPending
 	}
-    selected:=map[string]bool{};for _,id:=range ids{if selected[id]{return a,ErrImportAttemptChanged};selected[id]=true}
-    rows,e:=tx.QueryContext(ctx,`SELECT publication_id FROM import_publication_authorizations WHERE download_id=? AND generation_key=? AND outcome='pending'`,key.DownloadID,key.GenerationKey);if e!=nil{return a,e}
-    count:=0;for rows.Next(){var id string;if e=rows.Scan(&id);e!=nil{rows.Close();return a,e};if !selected[id]{rows.Close();return a,ErrImportAttemptChanged};count++};e=rows.Err();rows.Close();if e!=nil{return a,e};if count!=len(selected){return a,ErrImportAttemptChanged}
+	selected := map[string]bool{}
+	for _, id := range ids {
+		if selected[id] {
+			return a, ErrImportAttemptChanged
+		}
+		selected[id] = true
+	}
+	rows, e := tx.QueryContext(ctx, `SELECT publication_id FROM import_publication_authorizations WHERE download_id=? AND generation_key=? AND outcome='pending'`, key.DownloadID, key.GenerationKey)
+	if e != nil {
+		return a, e
+	}
+	count := 0
+	for rows.Next() {
+		var id string
+		if e = rows.Scan(&id); e != nil {
+			rows.Close()
+			return a, e
+		}
+		if !selected[id] {
+			rows.Close()
+			return a, ErrImportAttemptChanged
+		}
+		count++
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil {
+		return a, e
+	}
+	if count != len(selected) {
+		return a, ErrImportAttemptChanged
+	}
 	now := time.Now().UnixMilli()
 	if _, err = tx.ExecContext(ctx, `UPDATE import_publication_authorizations SET outcome='reconciled',resolved_at=?,resolution='retained_for_review' WHERE download_id=? AND generation_key=? AND outcome='pending'`, now, key.DownloadID, key.GenerationKey); err != nil {
 		return a, err
@@ -246,19 +292,31 @@ func (d *DB) ResolveRetainedImportTargets(ctx context.Context, key ImportAttempt
 	if len(ids) == 0 {
 		return ErrImportReviewRequired
 	}
-    for _,id:=range ids {
-        if strings.HasPrefix(id,"stage:")||strings.HasPrefix(id,"stagepath:"){
-            if disposition!="operator_disposed"{return ErrImportReviewRequired}
-            var result sql.Result
-            if stage,ok:=strings.CutPrefix(id,"stagepath:");ok{
-                result,err=tx.ExecContext(ctx,`UPDATE import_attempt_stages SET state='operator_disposed' WHERE download_id=? AND generation_key=? AND stage=? AND state='held' AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE json_extract(a.payload,'$.stage')=? AND (a.outcome='pending' OR a.resolution IN ('retained_for_review','operator_adopted')))`,key.DownloadID,key.GenerationKey,stage,stage)
-            }else{
-                pid:=strings.TrimPrefix(id,"stage:")
-                result,err=tx.ExecContext(ctx,`UPDATE import_placements SET state='abandoned',data=json_set(data,'$.state','abandoned'),updated_at=? WHERE id=? AND json_extract(data,'$.download_id')=? AND json_extract(data,'$.source_generation')=? AND state IN ('prepared','retained') AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.placement_id=? AND (a.outcome='pending' OR a.resolution IN ('retained_for_review','operator_adopted')))`,time.Now().UnixMilli(),pid,key.DownloadID,key.GenerationKey,pid)
-            }
-            if err!=nil{return err};n,e:=result.RowsAffected();if e!=nil{return e};if n!=1{return ErrImportAttemptChanged};continue
-        }
-        var placement sql.NullString
+	for _, id := range ids {
+		if strings.HasPrefix(id, "stage:") || strings.HasPrefix(id, "stagepath:") {
+			if disposition != "operator_disposed" {
+				return ErrImportReviewRequired
+			}
+			var result sql.Result
+			if stage, ok := strings.CutPrefix(id, "stagepath:"); ok {
+				result, err = tx.ExecContext(ctx, `UPDATE import_attempt_stages SET state='operator_disposed' WHERE download_id=? AND generation_key=? AND stage=? AND state='held' AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE json_extract(a.payload,'$.stage')=? AND (a.outcome='pending' OR a.resolution IN ('retained_for_review','operator_adopted')))`, key.DownloadID, key.GenerationKey, stage, stage)
+			} else {
+				pid := strings.TrimPrefix(id, "stage:")
+				result, err = tx.ExecContext(ctx, `UPDATE import_placements SET state='abandoned',data=json_set(data,'$.state','abandoned'),updated_at=? WHERE id=? AND json_extract(data,'$.download_id')=? AND json_extract(data,'$.source_generation')=? AND state IN ('prepared','retained') AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.placement_id=? AND (a.outcome='pending' OR a.resolution IN ('retained_for_review','operator_adopted')))`, time.Now().UnixMilli(), pid, key.DownloadID, key.GenerationKey, pid)
+			}
+			if err != nil {
+				return err
+			}
+			n, e := result.RowsAffected()
+			if e != nil {
+				return e
+			}
+			if n != 1 {
+				return ErrImportAttemptChanged
+			}
+			continue
+		}
+		var placement sql.NullString
 		var target, mediaPath string
 		if err = tx.QueryRowContext(ctx, `SELECT placement_id,target,COALESCE(json_extract(payload,'$.mediaPath'),target) FROM import_publication_authorizations WHERE download_id=? AND generation_key=? AND publication_id=? AND outcome='reconciled' AND resolution IN ('retained_for_review','operator_adopted')`, key.DownloadID, key.GenerationKey, id).Scan(&placement, &target, &mediaPath); err != nil {
 			return err
@@ -275,7 +333,11 @@ func (d *DB) ResolveRetainedImportTargets(ctx context.Context, key ImportAttempt
 		if _, err = tx.ExecContext(ctx, `UPDATE import_publication_authorizations SET resolution=? WHERE download_id=? AND generation_key=? AND publication_id=? AND outcome='reconciled' AND resolution IN ('retained_for_review','operator_adopted')`, disposition, key.DownloadID, key.GenerationKey, id); err != nil {
 			return err
 		}
-        if disposition=="operator_disposed"{if _,err=tx.ExecContext(ctx,`UPDATE import_attempt_stages SET state='operator_disposed' WHERE stage=(SELECT json_extract(payload,'$.stage') FROM import_publication_authorizations WHERE download_id=? AND generation_key=? AND publication_id=?) AND state='held'`,key.DownloadID,key.GenerationKey,id);err!=nil{return err}}
+		if disposition == "operator_disposed" {
+			if _, err = tx.ExecContext(ctx, `UPDATE import_attempt_stages SET state='operator_disposed' WHERE stage=(SELECT json_extract(payload,'$.stage') FROM import_publication_authorizations WHERE download_id=? AND generation_key=? AND publication_id=?) AND state='held'`, key.DownloadID, key.GenerationKey, id); err != nil {
+				return err
+			}
+		}
 		if placement.Valid {
 			state := "retained"
 			if disposition == "operator_disposed" {
@@ -291,29 +353,76 @@ func (d *DB) ResolveRetainedImportTargets(ctx context.Context, key ImportAttempt
 
 // AuthorizeImportSidecar participates in the same cancellation ordering as a
 // media rename. Receipt association is checked inside the write transaction.
-func(d *DB) AuthorizeImportSidecar(ctx context.Context,p ImportPublication)error{
- tx,err:=d.W.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
- var matches int
- if err=tx.QueryRowContext(ctx,`SELECT count(*) FROM runner_delivery_receipts WHERE id=? AND download_id=? AND generation_key=? AND state!='conflict'`,p.ReceiptID,p.DownloadID,p.GenerationKey).Scan(&matches);err!=nil{return err}
- if matches!=1||p.PlacementID!=""{return ErrImportAttemptChanged}
- if err=authorizeImportPublication(ctx,tx,p);err!=nil{return err};return tx.Commit()
+func (d *DB) AuthorizeImportSidecar(ctx context.Context, p ImportPublication) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var matches int
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM runner_delivery_receipts WHERE id=? AND download_id=? AND generation_key=? AND state!='conflict'`, p.ReceiptID, p.DownloadID, p.GenerationKey).Scan(&matches); err != nil {
+		return err
+	}
+	if matches != 1 || p.PlacementID != "" {
+		return ErrImportAttemptChanged
+	}
+	if err = authorizeImportPublication(ctx, tx, p); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // CommitImportSidecar couples the publication result with the delivery ledger;
 // cancellation cannot finalize between the external link and its bookkeeping.
-func(d *DB) CommitImportSidecar(ctx context.Context,p ImportPublication,v DeliveryFileImport)error{
- tx,err:=d.W.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
- if p.ReceiptID!=v.ReceiptID||p.Target!=v.LibraryPath{return ErrImportAttemptChanged}
- if err=commitImportPublication(ctx,tx,p);err!=nil{return err}
- if err=recordDeliveryFileImport(ctx,tx,v);err!=nil{return err}
- if _,err=tx.ExecContext(ctx,`UPDATE import_attempt_stages SET state='released' WHERE download_id=? AND generation_key=? AND attempt_epoch=? AND stage=json_extract(?,'$.stage') AND state='held'`,p.DownloadID,p.GenerationKey,p.Epoch,p.Payload);err!=nil{return err}
+func (d *DB) CommitImportSidecar(ctx context.Context, p ImportPublication, v DeliveryFileImport) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if p.ReceiptID != v.ReceiptID || p.Target != v.LibraryPath {
+		return ErrImportAttemptChanged
+	}
+	if err = commitImportPublication(ctx, tx, p); err != nil {
+		return err
+	}
+	if err = recordDeliveryFileImport(ctx, tx, v); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE import_attempt_stages SET state='released' WHERE download_id=? AND generation_key=? AND attempt_epoch=? AND stage=json_extract(?,'$.stage') AND state='held'`, p.DownloadID, p.GenerationKey, p.Epoch, p.Payload); err != nil {
+		return err
+	}
 
- result,err:=tx.ExecContext(ctx,`UPDATE runner_delivery_file_outcomes SET disposition='placed',library_path=?,cleanup_state='pending',reason='',updated_at=? WHERE receipt_id=? AND path=?`,v.LibraryPath,time.Now().UnixMilli(),v.ReceiptID,v.Path)
- if err!=nil{return err};n,err:=result.RowsAffected();if err!=nil{return err};if n!=1{return ErrImportPlanChanged};return tx.Commit()
+	result, err := tx.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET disposition='placed',library_path=?,cleanup_state='pending',reason='',updated_at=? WHERE receipt_id=? AND path=?`, v.LibraryPath, time.Now().UnixMilli(), v.ReceiptID, v.Path)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrImportPlanChanged
+	}
+	return tx.Commit()
 }
 
-func(d *DB) RecordImportStage(ctx context.Context,key ImportAttemptKey,source,target,stage string)error{
- tx,err:=d.W.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
- a,err:=guardImportAttempt(ctx,tx,key);if err!=nil{return err};if a.Outcome!=""{return ErrImportCancelled}
- _,err=tx.ExecContext(ctx,`INSERT INTO import_attempt_stages(download_id,generation_key,attempt_epoch,stage,source,target) VALUES(?,?,?,?,?,?)`,key.DownloadID,key.GenerationKey,key.Epoch,stage,source,target);if err!=nil{return err};return tx.Commit()
+func (d *DB) RecordImportStage(ctx context.Context, key ImportAttemptKey, source, target, stage string) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	a, err := guardImportAttempt(ctx, tx, key)
+	if err != nil {
+		return err
+	}
+	if a.Outcome != "" {
+		return ErrImportCancelled
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO import_attempt_stages(download_id,generation_key,attempt_epoch,stage,source,target) VALUES(?,?,?,?,?,?)`, key.DownloadID, key.GenerationKey, key.Epoch, stage, source, target)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }

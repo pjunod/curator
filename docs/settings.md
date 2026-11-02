@@ -1017,3 +1017,13 @@ Use **Request limit** beside a saved indexer to switch the limit on or off
 without re-entering credentials. Changes retain the rolling usage ledger, so
 turning a limit back on counts calls made while it was off. The dialog shows
 saving errors in place and returns focus to the initiating button.
+
+## Deployment maintenance
+
+Deployment drain is an operational native API control, separate from terminal
+shutdown. GET `/api/v1/system/deployment-drain` reports phase, active work and
+elapsed time. POST starts/idempotently recovers a drain with an owner token;
+DELETE resumes only the matching owner and generation before terminal shutdown.
+Existing native API authentication applies. No storage setting makes hard NFS
+interruptible. Follow the [deployment drain runbook](NFS_DEPLOYMENT_DRAIN.md);
+its stop wait requires measured qualification for the deployment shape.

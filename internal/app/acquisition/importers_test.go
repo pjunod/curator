@@ -105,6 +105,13 @@ func TestARunningImportCanBeCancelledAndRestartedLater(t *testing.T) {
 	if err := svc.CancelImport(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
+	deadline := time.Now().Add(5 * time.Second)
+	for svc.ImportRunning(id) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if svc.ImportRunning(id) {
+		t.Fatal("cancelled writer never actually exited")
+	}
 	dl, err = db.GetDownload(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)

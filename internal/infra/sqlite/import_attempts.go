@@ -31,6 +31,7 @@ type ImportAttempt struct {
 	PlanSealed           bool   `json:"planSealed"`
 	PendingPublications  int    `json:"pendingPublications"`
 	RetainedPublications int    `json:"retainedPublications"`
+	HeldStages           int    `json:"heldStages"`
 }
 
 type ImportAttemptFile struct{ Source, Kind, Outcome, PlacementID string }
@@ -41,8 +42,10 @@ func readImportAttempt(ctx context.Context, q interface {
 	var a ImportAttempt
 	err := q.QueryRowContext(ctx, `SELECT download_id,generation_key,attempt_epoch,outcome,plan_sealed,
  (SELECT count(*) FROM import_publication_authorizations p WHERE p.download_id=c.download_id AND p.generation_key=c.generation_key AND p.outcome='pending'),
- (SELECT count(*) FROM import_publication_authorizations p WHERE p.download_id=c.download_id AND p.generation_key=c.generation_key AND p.resolution='retained_for_review')
- FROM import_attempt_controls c WHERE download_id=? AND generation_key=?`, id, generation).Scan(&a.DownloadID, &a.GenerationKey, &a.Epoch, &a.Outcome, &a.PlanSealed, &a.PendingPublications, &a.RetainedPublications)
+ (SELECT count(*) FROM import_publication_authorizations p WHERE p.download_id=c.download_id AND p.generation_key=c.generation_key AND p.resolution='retained_for_review'),
+ (SELECT count(*) FROM import_attempt_stages s WHERE s.download_id=c.download_id AND s.generation_key=c.generation_key AND s.state='held')+
+ (SELECT count(*) FROM import_placements p WHERE json_extract(p.data,'$.download_id')=c.download_id AND json_extract(p.data,'$.source_generation')=c.generation_key AND p.state IN ('prepared','retained'))
+ FROM import_attempt_controls c WHERE download_id=? AND generation_key=?`, id, generation).Scan(&a.DownloadID, &a.GenerationKey, &a.Epoch, &a.Outcome, &a.PlanSealed, &a.PendingPublications, &a.RetainedPublications, &a.HeldStages)
 	return a, err
 }
 
@@ -106,7 +109,15 @@ func (d *DB) BeginImportRetry(ctx context.Context, id int64, generation string) 
 	if err != nil {
 		return ImportAttempt{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer tx.Rollback()
+	a, err := beginImportRetry(ctx, tx, id, generation, true)
+	if err != nil {
+		return a, err
+	}
+	return a, tx.Commit()
+}
+
+func beginImportRetry(ctx context.Context, tx *sql.Tx, id int64, generation string, recordStep bool) (ImportAttempt, error) {
 	a, err := ensureImportAttempt(ctx, tx, id, generation)
 	if err != nil {
 		return a, err
@@ -120,7 +131,7 @@ func (d *DB) BeginImportRetry(ctx context.Context, id int64, generation string) 
 	if a.Outcome == "pending" {
 		return a, ErrImportCancelled
 	}
-	
+
 	if a.Epoch == int64(^uint64(0)>>1) {
 		return a, fmt.Errorf("import epoch exhausted")
 	}
@@ -131,10 +142,12 @@ func (d *DB) BeginImportRetry(ctx context.Context, id int64, generation string) 
 	a.Epoch++
 	a.Outcome = ""
 	a.PlanSealed = false
-	if err = writeImportState(ctx, tx, a.ImportAttemptKey, "downloaded", "import_queued", "waiting for an import worker"); err != nil {
-		return a, err
+	if recordStep {
+		if err = writeImportState(ctx, tx, a.ImportAttemptKey, "downloaded", "import_queued", "waiting for an import worker"); err != nil {
+			return a, err
+		}
 	}
-	return a, tx.Commit()
+	return a, nil
 }
 
 // A complete plan includes potential sidecars, so media completion cannot race
@@ -283,8 +296,11 @@ func completeImportAttempt(ctx context.Context, tx *sql.Tx, a ImportAttempt, det
 	if _, err := tx.ExecContext(ctx, `UPDATE import_attempt_controls SET outcome='completed',finalized_at=? WHERE download_id=? AND generation_key=? AND attempt_epoch=?`, time.Now().UnixMilli(), a.DownloadID, a.GenerationKey, a.Epoch); err != nil {
 		return err
 	}
-	detail:="selected import work completed; committed library files retained";if len(details)>0 {detail=details[0]}
- return writeImportState(ctx, tx, a.ImportAttemptKey, "imported", "imported", detail)
+	detail := "selected import work completed; committed library files retained"
+	if len(details) > 0 {
+		detail = details[0]
+	}
+	return writeImportState(ctx, tx, a.ImportAttemptKey, "imported", "imported", detail)
 }
 
 func (d *DB) RequestImportCancellation(ctx context.Context, key ImportAttemptKey) (ImportAttempt, error) {

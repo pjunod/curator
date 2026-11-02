@@ -49,7 +49,11 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 			continue
 		}
 		if f.Path != p.Target && scope.DeferCleanup && scope.PublishedDigests[f.Path] != "" {
-			if digest, _, e := fileDigest(ctx, f.Path); e == nil && digest == scope.PublishedDigests[f.Path] {
+			digest, _, e := fileDigest(ctx, f.Path)
+			if e != nil {
+				return e
+			}
+			if digest == scope.PublishedDigests[f.Path] {
 				continue
 			}
 		}
@@ -64,7 +68,11 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 		}
 		// A receipt for the same bytes is idempotent; it does not replace them.
 		if f.Path == p.Target {
-			if digest, _, e := fileDigest(ctx, f.Path); e == nil && digest == p.SHA256 {
+			digest, _, e := fileDigest(ctx, f.Path)
+			if e != nil {
+				return e
+			}
+			if digest == p.SHA256 {
 				continue
 			}
 		}

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   type ManualImportRequest,
+  type ImportAttemptIdentity,
   type CompletedEntry,
   type CompletedRoot,
   type QueueItem,
@@ -296,10 +297,7 @@ export function ActivityPage() {
     onSettled: invalidate,
   })
   const cancelImport = useMutation({
-    mutationFn: async (id: number) => {
-      const identity = (await getImportReview(id)).attempt
-      return cancelQueueImport(id, identity)
-    },
+    mutationFn: ({id,identity}:{id:number;identity:ImportAttemptIdentity}) => cancelQueueImport(id,identity),
     onMutate: () => setActionErr(''),
     onError: (e: Error) => setActionErr(e.message),
     onSettled: invalidate,
@@ -346,7 +344,7 @@ export function ActivityPage() {
     busy,
     onToggle: () => toggle(d.id),
     onImport: () => doImport.mutate(d.id),
-    onCancelImport: () => cancelImport.mutate(d.id),
+    onCancelImport: () => {if(d.importControl)cancelImport.mutate({id:d.id,identity:d.importControl});else setActionErr('Refresh Activity before cancelling this import.')},
     onBlocklist: () => doBlocklist.mutate(d.id),
     onRemove: () => remove.mutate(d.id),
     onManual: () =>
@@ -396,7 +394,7 @@ export function ActivityPage() {
         <ResolvePanel key={manual.path ?? 'resolve'} embedded initialMode={resolveMode} prefill={manual} onDone={() => { setManual(null); invalidate() }} />
       </ActionDialog>}
 
-      {actionErr && <div className="banner warning">{actionErr}</div>}
+      {actionErr && <ActionDialog title="Activity action failed" onClose={()=>setActionErr('')}><p role="alert">{actionErr}</p></ActionDialog>}
 
       <CompletedFolders onImport={(path, mode, downloadId) => { setResolveMode(mode === 'legacy' ? 'legacy' : mode === 'delivery' ? 'delivery' : 'files'); setManual({ path, downloadId }) }} />
 
@@ -793,19 +791,19 @@ function RowGroup(props: {
         <td>
           <div className="row-actions">
             <button onClick={(event)=>{focusActionTrigger(event);setWhyOpen(true)}}>Why chosen</button>
-            {(d.importControl?.outcome==='pending'||d.importControl?.outcome==='cancelled'||publicationReview)&&<button onClick={(event)=>{focusActionTrigger(event);setImportReviewOpen(true)}}>Review retained import</button>}
+            {(d.importControl?.outcome==='pending'||d.importControl?.outcome==='cancelled'||publicationReview||!!d.importControl?.heldStages)&&<button onClick={(event)=>{focusActionTrigger(event);setImportReviewOpen(true)}}>Review retained import</button>}
             {importReviewOpen&&<ActionDialog title="Review retained import" onClose={()=>setImportReviewOpen(false)}><ImportReviewPanel id={d.id}/></ActionDialog>}
 
             {(d.parkedReason || d.submissionPhase==='uncertain') && <button onClick={(event)=>{focusActionTrigger(event);setAcknowledged(false);resolve.reset();setReviewOpen(true)}}>Review reservation</button>}
-            {held && d.control?.retry_policy === 'resume_same_job' && <button onClick={props.onImport} disabled={busy}>Resume same job</button>}
+            {held && d.control?.retry_policy === 'resume_same_job' && <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>Resume same job</button>}
             {canImport && !held && (
-              <button onClick={props.onImport} disabled={busy}>
+              <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>
                 Import now
               </button>
             )}
             {canRetry && !held && (
               <>
-                <button onClick={props.onImport} disabled={busy}>
+                <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>
                   Retry
                 </button>
                 <button onClick={props.onManual} disabled={busy}>
@@ -814,12 +812,12 @@ function RowGroup(props: {
               </>
             )}
             {interruptedImport && (
-              <button onClick={props.onImport} disabled={busy}>
+              <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>
                 Restart import
               </button>
             )}
             {(importerOwned || interruptedImport) && !cancellationPending && (
-              <button className="btn-danger" onClick={props.onCancelImport} disabled={busy}>
+              <button className="btn-danger" onClick={(event)=>{focusActionTrigger(event);props.onCancelImport()}} disabled={busy}>
                 Cancel import
               </button>
             )}

@@ -60,6 +60,10 @@ func (s *Service) removePayload(ctx context.Context, dl downloadRef) bool {
 	if dl.ImportPath != "" && !s.safePayloadPath(ctx, dl) {
 		return false
 	}
+	if err := s.assertImportSourceDisposable(ctx, dl.ImportPath); err != nil {
+		s.log.Debug("cleanup: import custody retained", "download", dl.ID, "err", err)
+		return false
+	}
 	if err := s.newClient(cfg).Remove(ctx, ports.Handle(dl.Handle), true); err != nil {
 		s.log.Debug("cleanup: client would not remove the payload",
 			"release", dl.ReleaseTitle, "client", clientLabel(cfg), "err", err)
@@ -132,6 +136,10 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 			dl.ImportPath = dl.SavePath
 		}
 		if dl.ImportPath != "" && !s.safePayloadPath(ctx, downloadRef{ID: dl.ID, ImportPath: dl.ImportPath}) {
+			unlock()
+			continue
+		}
+		if err := s.assertImportSourceDisposable(ctx, dl.ImportPath); err != nil {
 			unlock()
 			continue
 		}
@@ -230,6 +238,10 @@ func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
 		return
 	}
 	if _, err := os.Lstat(dir); err != nil {
+		return
+	}
+	if err := s.assertImportSourceDisposable(ctx, dir); err != nil {
+		s.log.Debug("cleanup: import custody retained", "download", dl.ID, "err", err)
 		return
 	}
 	if err := os.RemoveAll(dir); err != nil {

@@ -915,7 +915,7 @@ export interface HandoffEntry {
 }
 
 export interface ImportAttemptIdentity { generationKey: string; epoch: string }
-export interface ImportAttemptStatus extends ImportAttemptIdentity { outcome: ''|'pending'|'cancelled'|'completed'; pendingPublications: number; retainedPublications: number }
+export interface ImportAttemptStatus extends ImportAttemptIdentity { outcome: ''|'pending'|'cancelled'|'completed'; pendingPublications: number; retainedPublications: number; heldStages: number }
 export interface ImportReview { attempt: ImportAttemptStatus; writerActive: boolean; publications: {id:string;epoch:string;source:string;target:string;outcome:string;resolution:string}[]; stages: {id:string;source:string;target:string;stage:string;state:string}[] }
 export const getImportReview = (id:number) => get<ImportReview>(`/queue/${id}/import-review`)
 export const resolveImportReview = (id:number, identity:ImportAttemptIdentity, action:string, ids:string[],acknowledged:boolean) => send('POST',`/queue/${id}/import-review`,{...identity,action,ids,acknowledged})

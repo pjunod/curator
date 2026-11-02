@@ -19,7 +19,9 @@ outages. A finite outage deadline is not a requirement or a supported guarantee.
 
 ### 1. Cancellation uses an import epoch and per-file progress
 
-Migration 0063 adds three tables, independently of rewritten handoff JSON:
+Migration 0063 adds four tables, independently of rewritten handoff JSON:
+
+- `import_attempt_stages`: journaled sidecar stage names created before opening; held custody survives retry until successful publication or explicit operator disposition. Media stages use their existing placement journal and bind the opened object identity before copying. No automatic cross-node stage resume is enabled.
 
 - `import_attempt_controls`: primary key `(download_id,generation_key)`, retained
   nonnegative `attempt_epoch`, outcome `''|pending|cancelled|completed`, nullable
@@ -52,7 +54,7 @@ otherwise-deletable download. No independently reusable row/epoch is deleted by
 retry. Migration Down refuses effective cancellation or unresolved authorization
 before dropping additive state, following migration 0037's guard pattern.
 
-The concrete DB API is `EnsureImportAttempt`, `BeginImportRetry`,
+The concrete DB API includes `EnsureImportAttempt`, `BeginImportRetry`,
 `RequestImportCancellation`, `FinalizeImportCancellation`, `SealImportAttempt`,
 `ResolveImportFile`, `AuthorizeImportPublication`, and `CompleteImportAttempt`.
 Every mutation rechecks the current download acquisition key and epoch on W.
@@ -160,7 +162,7 @@ admission in exchange for explicit pending outcomes and retained custody.
 
 ## Verification
 
-Tests cover epoch ABA, stale tickets, queued and running cancellation, SQLite
+The final gate must cover epoch ABA, stale tickets, queued and running cancellation, SQLite
 failure, restart suppression, publication/cancellation ordering and multi-file
 partial completion; migration guards and pruning; admission/child/drain races,
 resume and stale abort, API/compat/background/job/worker coverage; and exact-ID

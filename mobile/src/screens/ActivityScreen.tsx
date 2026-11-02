@@ -92,7 +92,7 @@ function ActivityRow({ item, onOpen, onResolve }: { item: QueueItem; onOpen: () 
   const theme = useTheme()
   const fraction = item.total ? (item.bytes ?? 0) / item.total : item.progress || 0
   const progress = Math.max(0, Math.min(100, fraction * 100))
-  const importMessage=item.importControl?.outcome==='pending' ? 'Cancelling · waiting for actual writer exit or publication review' : item.importControl?.retainedPublications ? 'Cancelled · retained publication requires Library review in the web app' : item.importControl?.outcome==='cancelled' ? 'Cancelled · files retained' : ''
+  const importMessage=item.importControl?.outcome==='pending' ? 'Cancelling · waiting for actual writer exit or publication review' : (item.importControl?.retainedPublications||item.importControl?.heldStages) ? 'Cancelled · retained publication requires Library review in the web app' : item.importControl?.outcome==='cancelled' ? 'Cancelled · files retained' : ''
   const tone = item.error || item.state === 'failed' ? 'error' : item.state === 'imported' ? 'ok' : 'neutral'
   return (
     <Panel style={styles.item}>

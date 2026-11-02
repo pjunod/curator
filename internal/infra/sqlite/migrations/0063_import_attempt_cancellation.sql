@@ -75,7 +75,9 @@ END;
 
 -- +goose StatementBegin
 CREATE TRIGGER prevent_cancelled_delivery_receipt_delete BEFORE DELETE ON runner_delivery_receipts
-WHEN EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.receipt_id=OLD.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
+WHEN EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=OLD.download_id AND c.generation_key=OLD.generation_key AND c.outcome IN ('pending','cancelled'))
+ OR EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=OLD.download_id AND s.generation_key=OLD.generation_key AND s.state='held')
+ OR EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.receipt_id=OLD.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
 BEGIN
     SELECT RAISE(ABORT,'delivery retains import publication custody');
 END;

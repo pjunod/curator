@@ -1230,9 +1230,13 @@ func (d *DB) DeliveryFileOutcomeByPath(ctx context.Context, receiptID int64, pat
 	return v, err
 }
 
-func (d *DB) RecordDeliveryFileImport(ctx context.Context,v DeliveryFileImport)error{return recordDeliveryFileImport(ctx,d.W,v)}
+func (d *DB) RecordDeliveryFileImport(ctx context.Context, v DeliveryFileImport) error {
+	return recordDeliveryFileImport(ctx, d.W, v)
+}
 
-func recordDeliveryFileImport(ctx context.Context,q interface {ExecContext(context.Context,string,...any)(sql.Result,error)}, v DeliveryFileImport) error {
+func recordDeliveryFileImport(ctx context.Context, q interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, v DeliveryFileImport) error {
 	if v.ReceiptID <= 0 || v.Path == "" || (v.ReplacementDisposition != "" && v.ReplacementDisposition != "selected" && v.ReplacementDisposition != "excess") {
 		return fmt.Errorf("invalid delivery file import provenance")
 	}

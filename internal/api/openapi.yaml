@@ -5539,11 +5539,12 @@ components:
       allOf:
         - $ref: "#/components/schemas/ImportAttemptIdentity"
         - type: object
-          required: [outcome, pendingPublications, retainedPublications]
+          required: [outcome, pendingPublications, retainedPublications, heldStages]
           properties:
             outcome: { type: string, enum: ['', pending, cancelled, completed] }
             pendingPublications: { type: integer }
             retainedPublications: { type: integer }
+            heldStages: { type: integer }
 
     QueueItem:
       type: object

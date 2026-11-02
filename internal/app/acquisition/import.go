@@ -1,8 +1,8 @@
 package acquisition
 
 import (
- "database/sql"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -262,11 +262,14 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 // selection preserves the automatic/legacy whole-payload behavior; a
 // present selection imports exactly what the manual-import scan offered.
 func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, savePath string, selected []string, manual bool) (ImportResult, error) {
- var controlErr error
- ctx,controlErr=s.ensureImportContext(ctx,dl);if controlErr!=nil{return ImportResult{},controlErr}
- var releaseTarget func()
- ctx,releaseTarget=s.lockImportTarget(ctx,dl.MediaItemID)
- defer releaseTarget()
+	var controlErr error
+	ctx, controlErr = s.ensureImportContext(ctx, dl)
+	if controlErr != nil {
+		return ImportResult{}, controlErr
+	}
+	var releaseTarget func()
+	ctx, releaseTarget = s.lockImportTarget(ctx, dl.MediaItemID)
+	defer releaseTarget()
 
 	// A queued job may carry older custody than an operator acknowledgment.
 	// Re-read every persisted row under the publication/admission lock.
@@ -296,7 +299,9 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		Release: dl.ReleaseTitle, Indexer: dl.Indexer, SourceGeneration: dl.GenerationKey, Transfer: dl.Transfer,
 		SourceGUID: dl.SourceGUID, SourceIndexerID: dl.SourceIndexerID,
 		ReplacementOperationID: dl.ReplacementOperationID, Attempt: dl.GenerationKey}
- if key,ok:=importAttemptFrom(ctx);ok {scope.Attempt=fmt.Sprintf("%s/import-epoch/%d",scope.Attempt,key.Epoch)}
+	if key, ok := importAttemptFrom(ctx); ok {
+		scope.Attempt = fmt.Sprintf("%s/import-epoch/%d", scope.Attempt, key.Epoch)
+	}
 	if dl.CopyID != 0 {
 		cp, err := s.db.GetMediaCopy(ctx, dl.MediaItemID, dl.CopyID)
 		if err != nil {
@@ -413,11 +418,16 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			"chosen", filepath.Base(videos[0]))
 	}
 
- if key,ok:=importAttemptFrom(ctx);ok {
-  plan:=make([]sqlite.ImportAttemptFile,0,len(videos));for _,src:=range videos{plan=append(plan,sqlite.ImportAttemptFile{Source:src,Kind:"media"})}
-  _,deliveryPlan:=ctx.Value(deliveryAttemptPlanKey{}).(bool)
-  if err:=s.db.SealImportAttempt(ctx,key,plan,deliveryPlan);err!=nil{return ImportResult{},importControlError(err)}
- }
+	if key, ok := importAttemptFrom(ctx); ok {
+		plan := make([]sqlite.ImportAttemptFile, 0, len(videos))
+		for _, src := range videos {
+			plan = append(plan, sqlite.ImportAttemptFile{Source: src, Kind: "media"})
+		}
+		_, deliveryPlan := ctx.Value(deliveryAttemptPlanKey{}).(bool)
+		if err := s.db.SealImportAttempt(ctx, key, plan, deliveryPlan); err != nil {
+			return ImportResult{}, importControlError(err)
+		}
+	}
 	// Did we get what was advertised?
 	//
 	// This is the cheapest question in the whole pipeline and it was never
@@ -502,7 +512,9 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	grabbedSeason, grabbedEpisodes := grabbedEpisodeTargets(dl.WantableIDs, item.ID)
 	result := ImportResult{Files: make([]FileOutcome, 0, len(videos))}
 	for fileIndex, src := range videos {
- if err:=ctx.Err();err!=nil{return result,err}
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		p := parser.Parse(filepath.Base(src))
 		if recovery, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
 			if target, ok := recovery.EpisodeTargets[src]; ok {
@@ -533,11 +545,20 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			SourceFileGeneration:    acceptedSourceGeneration(ctx, src),
 			SourcePayloadGeneration: acceptedPublicationGeneration(ctx)}
 
-        if prior,reused,reuseErr:=s.reuseCommittedImport(ctx,dl,item,scope,src);reuseErr!=nil{return result,reuseErr}else if reused {
-            outcome.Imported=true;outcome.Path=prior.Path;outcome.PlacementID=prior.PlacementID;outcome.FileGeneration=prior.FileGeneration
-            if scope.ReplacementOperationID!=""{outcome.ReplacementDisposition="selected"}
-            result.Imported++;result.Files=append(result.Files,outcome);continue
-        }
+		if prior, reused, reuseErr := s.reuseCommittedImport(ctx, dl, item, scope, src); reuseErr != nil {
+			return result, reuseErr
+		} else if reused {
+			outcome.Imported = true
+			outcome.Path = prior.Path
+			outcome.PlacementID = prior.PlacementID
+			outcome.FileGeneration = prior.FileGeneration
+			if scope.ReplacementOperationID != "" {
+				outcome.ReplacementDisposition = "selected"
+			}
+			result.Imported++
+			result.Files = append(result.Files, outcome)
+			continue
+		}
 		// Refuse a file that is provably incomplete, before it is placed.
 		//
 		// This is the one refusal in the import path that is not a judgement
@@ -563,11 +584,13 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 				"release", dl.ReleaseTitle, "file", outcome.Name, "why", why)
 			_ = s.db.AddHistory(ctx, HistoryShortDelivery, item.ID, dl.ReleaseTitle,
 				map[string]any{"file": outcome.Name, "reason": why})
-			if e:=s.recordSkippedImportFile(ctx,src);e!=nil{return result,e}
- result.Files = append(result.Files, outcome)
- continue
- }
- var err error
+			if e := s.recordSkippedImportFile(ctx, src); e != nil {
+				return result, e
+			}
+			result.Files = append(result.Files, outcome)
+			continue
+		}
+		var err error
 		var put placement
 		switch item.Kind {
 		case domain.KindMovie:
@@ -579,8 +602,12 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			put, err = s.importEpisodeFile(ctx, item, scope, profile, epStates, src, p, q, dl.ReleaseTitle, manual)
 		}
 		if err != nil {
-			if errors.Is(err, context.Canceled)||errors.Is(err,ErrImportControl) {return result,err}
- if !retryableIO(err)&&!isImportPolicyRefusal(err){return result,err}
+			if errors.Is(err, context.Canceled) || errors.Is(err, ErrImportControl) {
+				return result, err
+			}
+			if !retryableIO(err) && !isImportPolicyRefusal(err) {
+				return result, err
+			}
 			outcome.Reason = err.Error()
 			if errors.Is(err, errReplacementFileOutsideScope) {
 				outcome.ReplacementDisposition = "excess"
@@ -598,7 +625,9 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 					"placed", result.Imported, "of", len(videos))
 				break
 			}
- if e:=s.recordSkippedImportFile(ctx,src);e!=nil{return result,e}
+			if e := s.recordSkippedImportFile(ctx, src); e != nil {
+				return result, e
+			}
 			s.log.Warn("import: file skipped", "file", outcome.Name, "reason", err)
 		} else {
 			outcome.Imported, outcome.Upgrade = true, put.Upgrade
@@ -1102,8 +1131,10 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	for _, epNum := range eps {
 		epID, err := s.db.GetEpisodeID(ctx, item.ID, season, epNum)
 		if err != nil {
- if !errors.Is(err,sqlite.ErrNotFound)&&!errors.Is(err,sql.ErrNoRows){return placement{},err}
- return placement{}, importPolicyRefusalf("indivisible file includes unknown episode S%02dE%02d", season, epNum)
+			if !errors.Is(err, sqlite.ErrNotFound) && !errors.Is(err, sql.ErrNoRows) {
+				return placement{}, err
+			}
+			return placement{}, importPolicyRefusalf("indivisible file includes unknown episode S%02dE%02d", season, epNum)
 		}
 		if scope.Planned && !slices.Contains(scope.AllowedEpisodeIDs, epID) {
 			selectedSibling := false
@@ -1111,8 +1142,10 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 			for _, candidateEpisode := range eps {
 				candidateID, candidateErr := s.db.GetEpisodeID(ctx, item.ID, season, candidateEpisode)
 				if candidateErr != nil {
- if !errors.Is(candidateErr,sqlite.ErrNotFound)&&!errors.Is(candidateErr,sql.ErrNoRows){return placement{},candidateErr}
- allEpisodesKnown = false
+					if !errors.Is(candidateErr, sqlite.ErrNotFound) && !errors.Is(candidateErr, sql.ErrNoRows) {
+						return placement{}, candidateErr
+					}
+					allEpisodesKnown = false
 					break
 				}
 				if slices.Contains(scope.AllowedEpisodeIDs, candidateID) {
@@ -1300,6 +1333,13 @@ func place(src, dest string, onBytes func(done, total int64)) error {
 }
 
 func placeContext(ctx context.Context, src, dest string, onBytes func(done, total int64)) error {
+	if stage, ok := ctx.Value(namedPlacementStageKey{}).(namedPlacementStage); ok {
+		if stage.source != src || stage.target != dest {
+			return fmt.Errorf("journaled stage binding changed")
+		}
+		return stage.write(ctx, onBytes)
+	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}

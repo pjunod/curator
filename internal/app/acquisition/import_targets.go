@@ -157,13 +157,48 @@ func (s *Service) lockAllImportTargets(ctx context.Context, wait time.Duration) 
 
 // tryLockImportTarget is the nonblocking control-plane form: cancellation
 // review must not wait behind a title's NFS syscall or a global recovery lease.
-func(s *Service)tryLockImportTarget(ctx context.Context,item int64)(context.Context,func(),bool){
- if h,ok:=heldTarget(ctx);ok&&h.covers(item){return ctx,func(){},true}
- t:=&s.importTargets
- if !t.all.TryRLock(){return ctx,nil,false}
- t.mu.Lock();if t.items==nil{t.items=map[int64]*importTargetLock{}}
- l:=t.items[item];if l==nil{l=&importTargetLock{};t.items[item]=l};l.refs++
- if !l.mu.TryLock(){l.refs--;if l.refs==0{delete(t.items,item)};t.mu.Unlock();t.all.RUnlock();return ctx,nil,false};t.mu.Unlock()
- var once sync.Once;active:=&atomic.Bool{};active.Store(true)
- return context.WithValue(ctx,targetHeldKey{},heldImportTarget{item:item,active:active}),func(){once.Do(func(){active.Store(false);l.mu.Unlock();t.mu.Lock();l.refs--;if l.refs==0{delete(t.items,item)};t.mu.Unlock();t.all.RUnlock()})},true
+func (s *Service) tryLockImportTarget(ctx context.Context, item int64) (context.Context, func(), bool) {
+	if h, ok := heldTarget(ctx); ok && h.covers(item) {
+		return ctx, func() {}, true
+	}
+	t := &s.importTargets
+	if !t.all.TryRLock() {
+		return ctx, nil, false
+	}
+	t.mu.Lock()
+	if t.items == nil {
+		t.items = map[int64]*importTargetLock{}
+	}
+	l := t.items[item]
+	if l == nil {
+		l = &importTargetLock{}
+		t.items[item] = l
+	}
+	l.refs++
+	if !l.mu.TryLock() {
+		l.refs--
+		if l.refs == 0 {
+			delete(t.items, item)
+		}
+		t.mu.Unlock()
+		t.all.RUnlock()
+		return ctx, nil, false
+	}
+	t.mu.Unlock()
+	var once sync.Once
+	active := &atomic.Bool{}
+	active.Store(true)
+	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{item: item, active: active}), func() {
+		once.Do(func() {
+			active.Store(false)
+			l.mu.Unlock()
+			t.mu.Lock()
+			l.refs--
+			if l.refs == 0 {
+				delete(t.items, item)
+			}
+			t.mu.Unlock()
+			t.all.RUnlock()
+		})
+	}, true
 }

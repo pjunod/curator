@@ -144,6 +144,17 @@ class Deployment:
             except subprocess.CalledProcessError:
                 print("TERM call failed; actual-exit verification is still required", file=sys.stderr)
         self.verify_daemon_and_service()
+        current = self.inspect()
+        if current["HostConfig"]["RestartPolicy"]["Name"] != "no":
+            raise RuntimeError("captured container restart policy is not disabled")
+        if current["State"]["Running"]:
+            # A persisted intent may precede a crash or lost Docker response.
+            # The supported image retains SIGTERM handling through cleanup;
+            # repeating TERM requests cancellation without sending KILL.
+            try:
+                self.command("kill", "--signal=TERM", self.record["containerId"])
+            except subprocess.CalledProcessError:
+                print("Repeated TERM failed; actual exit is still required", file=sys.stderr)
         print("Waiting for actual old-container exit; no KILL or forced removal will be sent", flush=True)
         exit_code = int(self.command("wait", self.record["containerId"], timeout=self.record["stopWait"]))
         old = self.inspect()

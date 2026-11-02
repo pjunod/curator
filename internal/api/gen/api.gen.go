@@ -2017,6 +2017,7 @@ type ImportAttemptIdentity struct {
 type ImportAttemptStatus struct {
 	Epoch                string                     `json:"epoch"`
 	GenerationKey        string                     `json:"generationKey"`
+	HeldStages           int                        `json:"heldStages"`
 	Outcome              ImportAttemptStatusOutcome `json:"outcome"`
 	PendingPublications  int                        `json:"pendingPublications"`
 	RetainedPublications int                        `json:"retainedPublications"`

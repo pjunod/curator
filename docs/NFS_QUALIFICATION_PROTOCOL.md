@@ -1,6 +1,6 @@
 # NFS shutdown qualification — frozen workload and evidence gates
 
-**Status:** prototype/controller reviewed; data collection not yet started · **Written:** 2026-11-01
+**Status:** prototype/controller reviewed; scratch collection running; policy/application qualification pending · **Written:** 2026-11-01
 
 Companion to [ADR 0025](adr/0025-import-cancellation-and-deployment-drain.md)
 and [implementation status](NFS_SHUTDOWN_IMPLEMENTATION_STATUS.md). Data collection
@@ -115,3 +115,23 @@ Range writeback retains fsync because it is not a durability primitive; see the
 [Linux manual](https://www.kernel.org/pub/linux/docs/man-pages/book/man-pages-6.13.pdf).
 The deployment command explicitly disables the captured old container's restart
 policy before TERM; [Docker documents restart-policy behavior](https://docs.docker.com/engine/containers/start-containers-automatically/).
+
+## 6. Analyzer revision 2 preserves the original campaign
+
+The frozen controller treated every nonzero `nfs_writeback_done.error` as an
+error. This field is signed `task->tk_status`; nonnegative values are success,
+including byte counts. The separately reviewed `analyze.py` accepts nonnegative
+status only with complete own-object completion evidence and `res == count`.
+A smaller final RPC with equal count/result is normal; short, zero-progress,
+oversized, negative or malformed results remain outside the clean class.
+See the [Linux v7.0 trace definition](https://github.com/torvalds/linux/blob/v7.0/fs/nfs/nfstrace.h#L1343)
+and [completion handling](https://github.com/torvalds/linux/blob/v7.0/fs/nfs/write.c#L1385).
+
+Revision 2 saves the exact captured manifest as an exclusive snapshot and hashes
+all finalized per-trial inputs plus its own parser. It preserves original
+classifications/reasons, removes only the erroneous signed-status exclusion,
+re-applies foreign-traffic checks and requires actual sampled `memory.max` to
+match the declared shape. Missing/inconsistent evidence remains ineligible.
+`max` proves that cgroup's limit only, not absence of finite ancestor limits.
+Live or partially classified trials are skipped. Original collection artifacts
+are never rewritten by this analysis.

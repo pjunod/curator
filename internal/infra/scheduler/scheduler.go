@@ -96,7 +96,7 @@ type Scheduler struct {
 	bus       *bus.Bus
 	log       *slog.Logger
 	started   bool
- ready bool
+	ready     bool
 	stopping  bool
 	ctx       context.Context
 	admission ports.WorkAdmission
@@ -185,8 +185,8 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		s.wg.Add(1)
 		go s.runLoop(ctx, rt)
 	}
-	s.ready=true
- s.log.Info("scheduler: started", "tasks", len(s.order))
+	s.ready = true
+	s.log.Info("scheduler: started", "tasks", len(s.order))
 	return nil
 }
 
@@ -283,10 +283,12 @@ func (s *Scheduler) runLoop(ctx context.Context, rt *taskRuntime) {
 
 func (s *Scheduler) runOnce(ctx context.Context, rt *taskRuntime) {
 	ctx, release, admissionErr := ports.TryWork(ctx, s.admission, "scheduled task "+rt.def.Name)
-    if admissionErr!=nil {
-        s.mu.Lock();rt.state.NextRunAt=time.Now().Add(s.delay(rt.def));s.mu.Unlock()
-        return
-    }
+	if admissionErr != nil {
+		s.mu.Lock()
+		rt.state.NextRunAt = time.Now().Add(s.delay(rt.def))
+		s.mu.Unlock()
+		return
+	}
 	defer release()
 	if ctx.Err() != nil {
 		return

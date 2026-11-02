@@ -8,16 +8,16 @@ incident/proposal reviews. A code review is not runtime qualification of NFS.
 
 | Item | State |
 |---|---|
-| Source baseline | Completion clone at `ecee8fe`, branch `codex/nfs-completion` |
+| Source baseline | Completion clone incorporates main at `2c367c5`, branch `codex/nfs-completion` |
 | SSE cancellation and write deadlines | Implemented; responsive/backpressure/HTTP2 tests passed in the full Go gate |
 | Listener failure cancels/drains workers | Implemented; occupied-port regression written; passed in the full Go gate |
 | HTTP/background-search ownership and truthful goodbye | Implemented; handler/background join tests written; passed in the full Go gate |
 | Job lease-heartbeat ownership | Implemented; Astra follow-up review addressed; blocked-store-call regression passed |
 | Concrete cancellation/deployment-drain design | ADR 0025 in progress; Astra identified epoch, sidecar, pruning and uncertain-publication obligations |
-| Durable cancellation migration/UI/API | Concrete transaction design being completed before migration |
-| Maintenance drain-before-stop and actual-exit deployment command | Coordinator and worker/request admission wiring in progress; deployment command and tests pending |
+| Durable cancellation migration/UI/API | Migration 0063, epoch-fenced API and Activity review implemented; final review/gates pending |
+| Maintenance drain-before-stop and actual-exit deployment command | Coordinator, participant wiring and exact-container deployment command implemented; regression tests written; final review/gates pending |
 | Automatic NFS stage/failover recovery | Not implemented; coordination qualification still required |
-| Writeback prototype/selection and production grace | Not selected; lifecycle fixes do not make NFS interruptible |
+| Writeback prototype/selection and production grace | Frozen scratch campaign running; separate reviewed analyzer corrected signed RPC status; 38/53 finalized trials eligible in snapshot 1, 12 OOM failures in 512 MiB shape; no policy or production grace selected |
 | PR | [#78 — shutdown ownership](https://github.com/pjunod/curator/pull/78) merged; completion PR not opened |
 | Adversarial code/design review | Astra source review completed; deadline lifetime, joins, bounded tests, publication ordering, reversible maintenance design and stale test callers addressed; local gate passed |
 | Final validation | Go 1.25.7 / Node 22.23.4: make lint PASS (0 issues), make test PASS, make test-web PASS (124 tests), make test-e2e PASS (192 tests), repeated after the heartbeat follow-up review; all seven #78 CI checks passed. Completion source has not run its final gate |
@@ -59,12 +59,38 @@ results remain separate from local results.
 
 ## Completion work
 
-The shared reversible coordinator now registers native/compat mutations,
-background searches, scheduled work/manual triggers, durable job claims and
-retention, import/cleanup execution, and acquisition retry/recovery/subscriber
-iterations. This is work in progress, not a passing implementation claim.
-Astra's pre-migration review requires epoch-specific prepared placement identity,
-verified prior-receipt reuse, sidecar coverage, bulk-pruning exclusions and a
-visible/safe resolution for uncertain authorization. These are being addressed
-before the cancellation migration. No completion tests have run before final
-source review. NFS qualification and numeric deployment grace remain pending.
+Durable control is independent of handoff JSON and Runner identity. Media and
+sidecar publication grants serialize with cancellation, and their per-file
+results commit with metadata/ledger updates. Retained stages and revoked grants
+keep custody until explicit review. Source has regression tests for epoch ABA,
+actual writer ownership, publication ordering/rollback, partial receipt reuse,
+retained target fences, pruning/stage custody and drain admission. Browser tests
+cover pending cancellation, decimal epochs, visible review and focus/geometry on
+phone and desktop. None of the new application gates has run yet.
+
+The coordinator registers native/compat mutations, detached background searches,
+scheduled work/manual triggers, job claims/retention, import/cleanup execution,
+and acquisition retry/recovery/subscriber iterations. The deployment command
+captures an exact old container, disables restart, sends TERM and verifies actual
+exit before replacement. Unsupported old images are rejected before exec; the
+first-upgrade procedure is documented separately.
+
+The NFS prototype/controller was independently reviewed before standalone gates
+and scratch collection. A later trace audit found the controller misclassified
+positive RPC byte counts in the signed status field as errors. Astra reviewed a
+separate analyzer correction. Its five fixtures pass locally and on nuc3; the
+original frozen manifest/classifications remain unchanged. Snapshot 1 contains
+53 finalized trials, of which 38 meet corrected comparison eligibility. Twelve
+512 MiB trials were OOM killed; those remain failed/ineligible. One full-plus-tail
+trace was manually reconciled against the parser's signed-status handling.
+The campaign continues. These are prototype measurements, not application or
+candidate-policy qualification. Numeric post-drain grace remains pending.
+
+## Completion source review
+
+Astra's final source review identified eight issues: stage descriptor identity,
+atomic manual retry admission, umask-independent media mode, resumable TERM,
+in-viewport action errors, retained-stage UI reachability, automatic source
+custody checks (including bind aliases), and sidecar stage/target identity.
+All eight are repaired with regression coverage. The focused final re-review
+cleared source for full application gates; it did not run tests or qualify NFS.
