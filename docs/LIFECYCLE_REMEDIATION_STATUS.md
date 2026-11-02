@@ -1,6 +1,8 @@
 # Lifecycle remediation — remaining fixes and delivery status
 
-**Status:** completing remaining implementation and proceeding to merge.
+**Status:** Curator PR #82 merged at `059069c7e79cfa40191fdf79ffe3571fcec26589`;
+Runner implementation continues. Historical pending entries below describe
+earlier checkpoints.
 **Started:** 2026-11-01.
 
 **Latest owner direction:** stop repeated review rounds and do not rerun unit

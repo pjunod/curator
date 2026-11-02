@@ -49,12 +49,6 @@ type runnerDeliveryWire struct {
 	SourceCleanup         json.RawMessage              `json:"sourceCleanup,omitempty"`
 }
 
-type runnerDeliveryPageWire struct {
-	ProtocolVersion int                  `json:"protocolVersion"`
-	Deliveries      []runnerDeliveryWire `json:"deliveries"`
-	NextCursor      uint64               `json:"nextCursor"`
-}
-
 type runnerRequestAdmissionWire struct {
 	ProtocolVersion     int    `json:"protocolVersion"`
 	RequestToken        string `json:"requestToken"`

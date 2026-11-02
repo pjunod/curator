@@ -1715,7 +1715,7 @@ func otherRunnerModeOwner(ctx context.Context, q deliveryModeQuerier, current po
 	if err != nil {
 		return 0, "", err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	count := 0
 	var id int64
 	var kind, name string
@@ -1746,7 +1746,7 @@ func (d *DB) ReconcileOtherRunnerModeView(ctx context.Context, current ports.Cli
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	ownerID, ownerName, err := otherRunnerModeOwner(ctx, tx, current, delivery)
 	if err != nil {
 		return false, err

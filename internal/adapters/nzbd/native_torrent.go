@@ -32,7 +32,7 @@ func (c *Client) requireNativeTorrentCapabilities(status statusDto) error {
 		deliveries = deliveries || capability == "deliveries-v1"
 	}
 	if !native || !deliveries {
-		return fmt.Errorf("Runner native torrent acquisition is unsupported by this server: enable its native torrent service with %s and deliveries-v1, or choose a supported download client", NativeTorrentCapability)
+		return fmt.Errorf("native Runner torrent acquisition is unsupported by this server: enable its native torrent service with %s and deliveries-v1, or choose a supported download client", NativeTorrentCapability)
 	}
 	return nil
 }
@@ -45,11 +45,11 @@ func (c *Client) addNativeTorrent(ctx context.Context, source, category string, 
 		return "", err
 	}
 	if strings.TrimSpace(options.Transfer) == "" || !options.DeliveryExpected {
-		return "", fmt.Errorf("Runner native torrent acquisition requires a durable request token and negotiated Delivery admission")
+		return "", fmt.Errorf("native Runner torrent acquisition requires a durable request token and negotiated Delivery admission")
 	}
 	uri, err := url.Parse(source)
 	if err != nil {
-		return "", fmt.Errorf("Runner native torrent source: %w", err)
+		return "", fmt.Errorf("native Runner torrent source: %w", err)
 	}
 	sourceType := "torrent_url"
 	switch strings.ToLower(uri.Scheme) {
@@ -57,10 +57,10 @@ func (c *Client) addNativeTorrent(ctx context.Context, source, category string, 
 		sourceType = "magnet"
 	case "http", "https":
 		if uri.Host == "" {
-			return "", fmt.Errorf("Runner native torrent source requires an absolute HTTP URL")
+			return "", fmt.Errorf("native Runner torrent source requires an absolute HTTP URL")
 		}
 	default:
-		return "", fmt.Errorf("Runner native torrent source must be a magnet or HTTP torrent URL")
+		return "", fmt.Errorf("native Runner torrent source must be a magnet or HTTP torrent URL")
 	}
 	params := map[string]string{TransferParam: options.Transfer, DeliveryParam: "1"}
 	if options.ManualAdditional {
@@ -88,7 +88,7 @@ func (c *Client) addNativeTorrent(ctx context.Context, source, category string, 
 		return "", err
 	}
 	if result.ID <= 0 {
-		return "", fmt.Errorf("Runner native torrent admission omitted its acquisition job ID")
+		return "", fmt.Errorf("native Runner torrent admission omitted its acquisition job ID")
 	}
 	return ports.Handle(strconv.FormatInt(result.ID, 10)), nil
 }
