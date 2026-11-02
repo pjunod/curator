@@ -943,6 +943,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	// The import lock serializes live file reread and durable admission with
 	// publication/fallback. Conditional revision catches non-import edits.
 	targetCtx, releaseTarget := s.lockImportTarget(ctx, item.ID)
+	defer releaseTarget() // idempotent; released explicitly below
 	_, _, _, fresh, _, err := s.seasonSnapshot(targetCtx, p)
 	if err == nil && len(fresh) != len(targets) {
 		err = fmt.Errorf("season targets changed")

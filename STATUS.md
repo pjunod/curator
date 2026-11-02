@@ -116,14 +116,50 @@ Maschile and Quem Ama Cuida had finished in Runner and sat queued behind The
 Craft 1996 (68 GB remux, placing at 10.7 MB/s, about two hours), because
 `importTargetMu` was one process-wide mutex held for an import's whole run.
 It is now `importTargets`: a global RWMutex plus one mutex per media item.
-Imports, recovery, replacement, admission, sidecar publication and receipt
-cleanup take their title's lock (global shared), so different titles proceed
-concurrently and one title is serialized as before. Path-addressed operator
-deletes, partial-payload settlement, reservation resolution and the
-placement journal's reconciliation at start take the global lock
-exclusively. The storage-decision lock still serializes the short
-publish-and-commit window. The storage link (a USB 2.5 GbE adapter to the
-NAS) remains the hardware limit.
+
+- Per title (global shared + the item's lock): imports, grab and
+  manual-import admission, season admission, replacement, sidecar
+  publication, receipt cleanup and explicit delivery deletes, partial
+  payload settlement, reservation resolution. Different titles proceed
+  concurrently; one title is serialized as before.
+- Whole library (exclusive): recovery (its preview is leased against the
+  library-wide revision, so another title's commit would invalidate it),
+  path-addressed legacy deletes whose owners are not known, and the
+  placement journal's reconciliation at start.
+- Exclusive acquisition never queues: a waiting `sync.RWMutex` writer blocks
+  new readers, so one queued request would stop every title behind the
+  slowest placement. It polls `TryLock` with backoff; operator requests wait
+  at most 15 s and report "imports are publishing; try again shortly"; a
+  whole-library request while holding a title is refused, not deadlocked.
+- The storage-decision lock still serializes the short publish-and-commit
+  window. The storage link (a USB 2.5 GbE adapter to the NAS) remains the
+  hardware limit.
+
+**Fourth review** (full model, on the per-title lock and review-three
+fixes). Three blockers, all probe-confirmed, all fixed:
+
+- Recovery was invalidated by any other title's commit (library-wide
+  revision lease): recovery takes the whole library again, as it always did.
+- One queued exclusive request (the hourly partial-payload sweep, an
+  explicit-delete retry, reservation resolution, an operator delete) brought
+  back the original stall: sweep and retry paths now lock the owning title,
+  and exclusive acquisition never queues (above). Tests: a waiting
+  whole-library request does not hold up another title (fails with a queued
+  `Lock`).
+- The payload guard missed bind-mount aliases (pre-existing hole): it now
+  compares filesystem identity with the publication (`os.SameFile`), not
+  path text. That also fixes the medium regression where a library inside a
+  completed root stopped all cleanup — only the publication counts now.
+
+Also fixed: a foreground digest no longer joins a background read; an
+import's own pre-lock verification is foreground; a re-read download that
+names another title is refused under the old title's lock; releases are
+idempotent and deferred, so a panic cannot leak a title lock; replace-bad
+marks count only while the operation is live. Noted, not changed: two
+different-title placements can now overlap on one volume, and the capacity
+check is not a reservation — a simultaneous ENOSPC converges through the
+storage retry; season admission's library-wide revision check fails (and
+retries) somewhat more often under concurrency.
 
 v0.38.5 measured live on nuc3 (started 21:30:10Z): two imports in flight at
 once, and 2.9 GB duplicate cleanups running 225–275 s each on the cleanup

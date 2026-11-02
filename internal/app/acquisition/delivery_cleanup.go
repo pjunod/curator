@@ -794,20 +794,16 @@ type deliveryLibraryScope struct {
 	identityBorrowed bool
 	download         sqlite.Download
 	downloadErr      error
-	// payloadSpace is where payloads live: this receipt's publication and
-	// every completed root. Nothing there is library evidence — a library
-	// row that aliases the payload would otherwise prove the payload
-	// redundant by itself, and cleanup would delete the only copy.
-	payloadSpace []string
+	// publication is this receipt's mapped publication. Nothing inside it is
+	// library evidence — a library row that aliases the payload would
+	// otherwise prove the payload redundant by itself, and cleanup would
+	// delete the only copy.
+	publication string
 }
 
 func (s *Service) deliveryLibraryScope(ctx context.Context, r sqlite.DeliveryReceipt, f verifiedDeliveryFile) (deliveryLibraryScope, bool) {
 	var scope deliveryLibraryScope
-	space, ok := s.deliveryPayloadSpace(ctx, r)
-	if !ok {
-		return scope, false
-	}
-	scope.payloadSpace = space
+	scope.publication = r.MappedPath
 	item, err := s.db.GetMediaItemFull(ctx, r.MediaItemID)
 	if err != nil {
 		return scope, false
@@ -882,7 +878,7 @@ func deliveryExactLibraryCopy(ctx context.Context, db *sqlite.DB, f verifiedDeli
 		if requiredPath != "" && filepath.Clean(existing.Path) != filepath.Clean(requiredPath) {
 			continue
 		}
-		if pathWithinAny(existing.Path, scope.payloadSpace) {
+		if withinPublication(existing.Path, scope.publication) {
 			continue
 		}
 		// The same format, too: a book's format is its extension, so identical
@@ -911,46 +907,41 @@ func deliveryExactLibraryCopy(ctx context.Context, db *sqlite.DB, f verifiedDeli
 	return "", "", false
 }
 
-// deliveryPayloadSpace is the receipt's publication plus every completed
-// root. An unreadable root list fails closed: no evidence can be trusted.
-func (s *Service) deliveryPayloadSpace(ctx context.Context, r sqlite.DeliveryReceipt) ([]string, bool) {
-	roots, err := s.completedRoots(ctx, nil)
+// withinPublication reports whether path is inside the accepted publication
+// (or, for a single-file publication, is that file's own directory entry).
+// It compares filesystem identity, not path text, so a bind-mounted or
+// symlinked alias of the completed folder ("/downloads" for
+// "/working/monarr/completed") is still recognized. Only the publication
+// counts: a library configured inside a completed root is still a library.
+// A hardlinked placement is a different directory entry and is not refused.
+// Anything that cannot be examined is treated as inside: it cannot be
+// evidence.
+func withinPublication(path, publication string) bool {
+	if publication == "" {
+		return true
+	}
+	pub, err := os.Stat(publication)
 	if err != nil {
-		return nil, false
+		return true
 	}
-	space := append([]string{}, roots...)
-	if r.MappedPath != "" {
-		space = append(space, r.MappedPath)
+	parent, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return true
 	}
-	return space, true
-}
-
-// pathWithinAny reports whether path, with its directory's symlinks
-// resolved, is any of roots or beneath one. Hardlinked placements are not
-// affected: they live in the library, not here.
-func pathWithinAny(path string, roots []string) bool {
-	resolve := func(p string) string {
-		p = filepath.Clean(p)
-		if dir, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
-			return filepath.Join(dir, filepath.Base(p))
-		}
-		return p
+	if !pub.IsDir() {
+		pubParent, err := os.Stat(filepath.Dir(publication))
+		return err != nil || (os.SameFile(parent, pubParent) && filepath.Base(path) == filepath.Base(publication))
 	}
-	target := resolve(path)
-	for _, root := range roots {
-		if root == "" {
-			continue
-		}
-		base := filepath.Clean(root)
-		if resolved, err := filepath.EvalSymlinks(base); err == nil {
-			base = resolved
-		}
-		rel, err := filepath.Rel(base, target)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	for dir := filepath.Dir(path); ; {
+		if info, err := os.Stat(dir); err == nil && os.SameFile(info, pub) {
 			return true
 		}
+		next := filepath.Dir(dir)
+		if next == dir {
+			return false
+		}
+		dir = next
 	}
-	return false
 }
 
 func replacementFileMarkedBad(ctx context.Context, db *sqlite.DB, fileID int64, generation string) bool {
@@ -958,7 +949,8 @@ func replacementFileMarkedBad(ctx context.Context, db *sqlite.DB, fileID int64, 
 	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM replacement_operation_files f
 		JOIN replacement_operations o ON o.operation_id=f.operation_id
 		WHERE f.media_file_id=? AND f.file_generation=? AND f.disposition='selected'
-		AND f.removal_state!='removed' AND o.intent='replace_bad'`, fileID, generation).Scan(&count); err != nil {
+		AND f.removal_state!='removed' AND o.intent='replace_bad'
+		AND o.state IN ('accepted','removing','cleanup_blocked','searching','waiting_for_release','replacing')`, fileID, generation).Scan(&count); err != nil {
 		return true
 	}
 	return count != 0
@@ -1618,8 +1610,8 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, batchID
 	if hasBatch && rootStorageIdentity(inventory.Roots, storageRoot) != existingBatch.StorageIdentity {
 		return fmt.Errorf("storage identity differs from the reviewed deletion batch")
 	}
-	targetCtx, releaseTargets := s.lockAllImportTargets(ctx)
-	defer releaseTargets()
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, r.MediaItemID)
+	defer releaseTarget()
 	decisionCtx, release := s.lockStorageDecision(targetCtx)
 	defer release()
 	// Import admission can race the hashing pass above. Recheck after taking
@@ -2004,8 +1996,8 @@ func (s *Service) deliveryLibraryEvidenceOwned(ctx context.Context, r sqlite.Del
 	if !owned {
 		return false
 	}
-	// Evidence inside the payload's own space is the payload, not the library.
-	if space, ok := s.deliveryPayloadSpace(ctx, r); !ok || pathWithinAny(path, space) {
+	// Evidence inside the publication is the payload, not the library.
+	if withinPublication(path, r.MappedPath) {
 		return false
 	}
 	info, err := os.Lstat(path)

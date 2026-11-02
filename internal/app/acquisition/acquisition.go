@@ -1270,6 +1270,9 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 	// a download running in a client that Monarr has no record of, which
 	// is the worse of the two failures by a distance.
 	targetCtx, releaseTarget := s.lockImportTarget(ctx, req.MediaItemID)
+	// Idempotent: the explicit releases below run first; this only matters
+	// if the admission panics.
+	defer releaseTarget()
 	allocationCtx, releaseStorageAllocation := s.lockStorageDecision(targetCtx)
 	releaseAllocation := func() { releaseStorageAllocation(); releaseTarget() }
 	active, activeErr := s.db.ListDownloadReservations(allocationCtx)

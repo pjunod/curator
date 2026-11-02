@@ -111,8 +111,13 @@ func (s *Service) cleanupPartialPayloadCandidate(ctx context.Context, candidate 
 // settleAbsentPartialPayload verifies the configured storage while holding the
 // final target/storage authority. The caller already holds the download lock.
 func (s *Service) settleAbsentPartialPayload(ctx context.Context, candidate partialCleanupOwner, path string) {
-	targetCtx, releaseTargets := s.lockAllImportTargets(ctx)
-	defer releaseTargets()
+	// The caller holds this download's lock, so its title is stable.
+	owner, err := s.db.GetDownload(ctx, candidate.DownloadID)
+	if err != nil {
+		return
+	}
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, owner.MediaItemID)
+	defer releaseTarget()
 	decisionCtx, releaseStorage := s.lockStorageDecision(targetCtx)
 	defer releaseStorage()
 	current, err := s.db.GetDownload(decisionCtx, candidate.DownloadID)

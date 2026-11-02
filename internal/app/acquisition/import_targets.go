@@ -2,7 +2,10 @@ package acquisition
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
+	"time"
 )
 
 // importTargets is the publication authority: who may place into, remove
@@ -18,16 +21,25 @@ import (
 //
 //   - lockImportTarget(item) holds the global authority shared and the
 //     item's own lock exclusively. Different items proceed concurrently;
-//     work on the same item is still serialized exactly as before.
+//     work on the same item is still serialized exactly as before. Work
+//     with no item (an unassociated receipt) shares item key 0.
 //   - lockAllImportTargets() holds the global authority exclusively, for work
 //     that is not scoped to one item: operator deletes addressed by
-//     completed-folder path, and crash reconciliation of the placement
+//     completed-folder path, recovery (whose preview is leased against the
+//     whole library's revision), and crash reconciliation of the placement
 //     journal at start.
 //
-// Neither is reentrant, and no path takes two item locks: a holder passes
-// the scope it holds down through targetHeldKey, and nested work checks
-// that scope instead of locking again. The storage-decision lock is still
-// the single serializer for the short final publish-and-commit window.
+// Exclusive acquisition never queues. sync.RWMutex makes new readers wait
+// behind a waiting writer, so one queued exclusive request would stop every
+// title behind the slowest placement in flight — the original failure.
+// lockAllImportTargets instead polls TryLock until no title is held, within
+// a bounded wait, and reports busy rather than hanging.
+//
+// Neither lock is reentrant. A holder passes the scope it holds down through
+// targetHeldKey; nested work on a covered scope does not lock again, and
+// asking for the global authority while holding a title is refused. No path
+// takes two item locks. The storage-decision lock is still the single
+// serializer for the short final publish-and-commit window.
 type importTargets struct {
 	all   sync.RWMutex
 	mu    sync.Mutex
@@ -46,22 +58,25 @@ type heldImportTarget struct {
 	item int64
 }
 
-func (h heldImportTarget) covers(item int64) bool { return h.all || (item > 0 && h.item == item) }
+func (h heldImportTarget) covers(item int64) bool { return h.all || h.item == item }
 
 func heldTarget(ctx context.Context) (heldImportTarget, bool) {
 	h, ok := ctx.Value(targetHeldKey{}).(heldImportTarget)
 	return h, ok
 }
 
+// ErrImportTargetsBusy reports that the whole-library authority could not be
+// taken within the wait because titles are being published.
+var ErrImportTargetsBusy = errors.New("imports are publishing to the library; try again shortly")
+
 // lockImportTarget takes the publication authority for one media item and
-// returns the context that records it. An unknown item (0) takes the global
-// authority: there is no narrower scope to prove.
+// returns the context that records it.
 func (s *Service) lockImportTarget(ctx context.Context, item int64) (context.Context, func()) {
 	if h, ok := heldTarget(ctx); ok && h.covers(item) {
 		return ctx, func() {}
 	}
-	if item <= 0 {
-		return s.lockAllImportTargets(ctx)
+	if item < 0 {
+		item = 0
 	}
 	t := &s.importTargets
 	t.all.RLock()
@@ -77,22 +92,53 @@ func (s *Service) lockImportTarget(ctx context.Context, item int64) (context.Con
 	l.refs++
 	t.mu.Unlock()
 	l.mu.Lock()
+	var once sync.Once
 	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{item: item}), func() {
-		l.mu.Unlock()
-		t.mu.Lock()
-		if l.refs--; l.refs == 0 {
-			delete(t.items, item)
-		}
-		t.mu.Unlock()
-		t.all.RUnlock()
+		once.Do(func() {
+			l.mu.Unlock()
+			t.mu.Lock()
+			if l.refs--; l.refs == 0 {
+				delete(t.items, item)
+			}
+			t.mu.Unlock()
+			t.all.RUnlock()
+		})
 	}
 }
 
-// lockAllImportTargets takes the exclusive global publication authority.
-func (s *Service) lockAllImportTargets(ctx context.Context) (context.Context, func()) {
-	if h, ok := heldTarget(ctx); ok && h.all {
-		return ctx, func() {}
+// lockAllImportTargets takes the exclusive global publication authority,
+// waiting at most wait (0: until ctx ends) for every held title to finish.
+// It never queues as a writer, so it never holds up other titles while it
+// waits.
+func (s *Service) lockAllImportTargets(ctx context.Context, wait time.Duration) (context.Context, func(), error) {
+	if h, ok := heldTarget(ctx); ok {
+		if h.all {
+			return ctx, func() {}, nil
+		}
+		return ctx, func() {}, fmt.Errorf("whole-library authority requested while holding title %d", h.item)
 	}
-	s.importTargets.all.Lock()
-	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{all: true}), s.importTargets.all.Unlock
+	waitCtx := ctx
+	if wait > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, wait)
+		defer cancel()
+	}
+	backoff := 10 * time.Millisecond
+	for !s.importTargets.all.TryLock() {
+		select {
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return ctx, func() {}, ctx.Err()
+			}
+			return ctx, func() {}, ErrImportTargetsBusy
+		case <-time.After(backoff):
+		}
+		if backoff < time.Second {
+			backoff *= 2
+		}
+	}
+	var once sync.Once
+	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{all: true}), func() {
+		once.Do(s.importTargets.all.Unlock)
+	}, nil
 }

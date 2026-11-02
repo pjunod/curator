@@ -592,6 +592,9 @@ func (s *Service) runDeliveryImport(ctx context.Context, dl sqlite.Download, cfg
 }
 
 func (s *Service) runDeliveryImportAttempt(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, receiptID int64) error {
+	// An import's own verification is on its critical path (its title waits
+	// on it), so it is foreground even before it takes the title's lock.
+	ctx = withForegroundVerification(ctx)
 	r, err := s.db.DeliveryReceiptByID(ctx, receiptID)
 	if err != nil {
 		return err

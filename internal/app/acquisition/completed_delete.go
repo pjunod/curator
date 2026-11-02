@@ -19,7 +19,13 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 	ctx = withForegroundVerification(ctx)
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
-	ctx, releaseTargets := s.lockAllImportTargets(ctx)
+	// Path-addressed: the payload's owners are not known yet, so this takes
+	// the whole library, waiting briefly rather than hanging the request
+	// behind a long placement.
+	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 15*time.Second)
+	if err != nil {
+		return err
+	}
 	defer releaseTargets()
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
 	defer releaseStorage()
@@ -227,7 +233,13 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 	}
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
-	ctx, releaseTargets := s.lockAllImportTargets(ctx)
+	// Path-addressed: the payload's owners are not known yet, so this takes
+	// the whole library, waiting briefly rather than hanging the request
+	// behind a long placement.
+	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 15*time.Second)
+	if err != nil {
+		return err
+	}
 	defer releaseTargets()
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
 	defer releaseStorage()

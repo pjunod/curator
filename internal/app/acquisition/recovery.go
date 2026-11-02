@@ -582,8 +582,13 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 	}
 	key := preview.Recovery.Installation + "/" + preview.Recovery.ID + "/" + preview.Recovery.ManifestDigest
 	id := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
-	ctx, releaseTarget := s.lockImportTarget(ctx, req.MediaItemID)
-	defer releaseTarget()
+	// Recovery is leased against the whole library's revision, so it takes
+	// the whole library (as it always did); a request waits briefly.
+	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 15*time.Second)
+	if err != nil {
+		return RecoveryImport{}, err
+	}
+	defer releaseTargets()
 	snapshot, _, err := s.targetSnapshot(ctx, req.MediaItemID, req.CopyID)
 	if err != nil {
 		return RecoveryImport{}, err
@@ -663,8 +668,13 @@ func (s *Service) saveRecoveryImport(ctx context.Context, r RecoveryImport) erro
 	return err
 }
 func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
-	ctx, releaseTarget := s.lockImportTarget(ctx, r.Request.MediaItemID)
-	defer releaseTarget()
+	// The preview's revision lease covers the whole library: another title's
+	// commit would invalidate it, so recovery excludes every title.
+	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 0)
+	if err != nil {
+		return err
+	}
+	defer releaseTargets()
 	if err := s.validateRecoveryTarget(ctx, r); err != nil {
 		return err
 	}
@@ -1171,9 +1181,13 @@ func (s *Service) ackRecoveryCancel(ctx context.Context, r RecoveryImport) {
 		}
 		return
 	}
-	targetCtx, releaseTarget := s.lockImportTarget(ctx, r.Request.MediaItemID)
-	err = s.rollbackRecoveryPlacements(targetCtx, r.ID)
-	releaseTarget()
+	targetCtx, releaseTargets, lockErr := s.lockAllImportTargets(ctx, 0)
+	if lockErr != nil {
+		err = lockErr
+	} else {
+		err = s.rollbackRecoveryPlacements(targetCtx, r.ID)
+		releaseTargets()
+	}
 	if err != nil {
 		r.State, r.Error = "cancel_pending", "Cancellation reconciliation: "+err.Error()
 		_ = s.saveRecoveryImport(ctx, r)

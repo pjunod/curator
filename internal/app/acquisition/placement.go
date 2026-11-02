@@ -173,7 +173,13 @@ func fileDigestSnapshot(ctx context.Context, path string) (string, int64, string
 		return readFileDigestSnapshot(ctx, path)
 	}
 	want := deliveryFileGeneration(pre)
-	digest, n, generation, err := joinDigest(ctx, path+"\x00"+want, func() (string, int64, string, error) {
+	// Foreground and background readers share only among themselves: a
+	// lock holder joining a background read would wait at background pace.
+	class := "bg"
+	if foregroundVerification(ctx) {
+		class = "fg"
+	}
+	digest, n, generation, err := joinDigest(ctx, class+"\x00"+path+"\x00"+want, func() (string, int64, string, error) {
 		return readFileDigestSnapshot(ctx, path)
 	})
 	if err != nil {
@@ -945,7 +951,11 @@ func syncOpenedDirectory(root *os.Root) error {
 	return dir.Sync()
 }
 func (s *Service) reconcilePlacements(ctx context.Context) {
-	ctx, releaseTargets := s.lockAllImportTargets(ctx)
+	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 0)
+	if err != nil {
+		s.log.Error("placement reconciliation could not take the library", "err", err)
+		return
+	}
 	defer releaseTargets()
 	rows, err := s.db.PendingPlacements(ctx)
 	if err != nil {

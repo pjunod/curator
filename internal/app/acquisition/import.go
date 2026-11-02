@@ -275,6 +275,11 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		if fresh.Superseded || strings.HasPrefix(fresh.ParkedReason, "operator cancellation") {
 			return ImportResult{}, fmt.Errorf("original custody was cancelled or superseded; automatic publication prohibited")
 		}
+		// The lock taken above is this title's; a row that now names another
+		// title is not covered by it.
+		if fresh.MediaItemID != dl.MediaItemID {
+			return ImportResult{}, fmt.Errorf("download changed title while queued; re-queue the import")
+		}
 		dl = fresh
 	}
 	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
