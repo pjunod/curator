@@ -61,7 +61,7 @@ func TestRecoveryWorkerHoldsSourceWhenAdmissionOrPinnedInputChanges(t *testing.T
 					t.Fatalf("changed source bytes were not identified: %q", held.Error)
 				}
 			case "target_generation_changed":
-				if !strings.Contains(held.Error, "library changed since preview") {
+				if !strings.Contains(held.Error, "this title or the library settings changed since preview") {
 					t.Fatalf("changed local target generation was not identified: %q", held.Error)
 				}
 			}

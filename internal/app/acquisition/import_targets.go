@@ -26,9 +26,9 @@ import (
 //     with no item (an unassociated receipt) shares item key 0.
 //   - lockAllImportTargets() holds the global authority exclusively, for work
 //     that is not scoped to one item: operator deletes addressed by
-//     completed-folder path, recovery (whose preview is leased against the
-//     whole library's revision), and crash reconciliation of the placement
-//     journal at start.
+//     completed-folder path and crash reconciliation of the placement journal
+//     at start. Recovery is scoped to its title: its preview is leased against
+//     that title's revision (lifecycle_item_revision), not the library's.
 //
 // Exclusive acquisition never queues. sync.RWMutex makes new readers wait
 // behind a waiting writer, so one queued exclusive request would stop every
@@ -153,6 +153,39 @@ func (s *Service) lockAllImportTargets(ctx context.Context, wait time.Duration) 
 			s.importTargets.all.Unlock()
 		})
 	}, nil
+}
+
+// ErrImportTargetBusy reports that a title's authority could not be taken
+// within the wait because that title is being published.
+var ErrImportTargetBusy = errors.New("this title is being imported; try again shortly")
+
+// waitImportTarget takes one item's authority, waiting at most wait for the
+// title's work in flight. Like lockAllImportTargets it never parks behind the
+// global authority as a waiting reader: it polls, and reports busy.
+func (s *Service) waitImportTarget(ctx context.Context, item int64, wait time.Duration) (context.Context, func(), error) {
+	if h, ok := heldTarget(ctx); ok && !h.covers(item) {
+		return ctx, func() {}, fmt.Errorf("title %d authority requested while holding title %d", item, h.item)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	backoff := 10 * time.Millisecond
+	for {
+		locked, release, ok := s.tryLockImportTarget(ctx, item)
+		if ok {
+			return locked, release, nil
+		}
+		select {
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return ctx, func() {}, ctx.Err()
+			}
+			return ctx, func() {}, ErrImportTargetBusy
+		case <-time.After(backoff):
+		}
+		if backoff < time.Second {
+			backoff *= 2
+		}
+	}
 }
 
 // tryLockImportTarget is for short operator decisions that already hold the

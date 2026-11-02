@@ -299,7 +299,17 @@ type LibraryReviewFlag struct {
 	UpdatedAt      int64
 }
 
+type LifecycleItemRevision struct {
+	MediaItemID int64
+	Revision    int64
+}
+
 type LifecycleLibraryRevision struct {
+	ID       int64
+	Revision int64
+}
+
+type LifecycleSharedRevision struct {
 	ID       int64
 	Revision int64
 }

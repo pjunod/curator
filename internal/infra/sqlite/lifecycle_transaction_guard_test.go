@@ -69,12 +69,10 @@ func TestDeleteRecoverySupersededKeepsFileAcrossStaleAndFailedJournalTransitions
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES('superseded-rollback','importing',json_object('accepted_revision',(SELECT revision FROM lifecycle_library_revision WHERE id=1)),0)`); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES('superseded-rollback','importing',?,0)`, leasedRecoveryData(t, db, itemID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `UPDATE lifecycle_library_revision SET revision=revision+1 WHERE id=1`); err != nil {
-		t.Fatal(err)
-	}
+	touchTitle(t, db, itemID)
 	if err := db.DeleteRecoverySuperseded(ctx, fileID, "superseded-rollback"); err == nil {
 		t.Fatal("superseded file was deleted using a stale recovery revision")
 	}
@@ -82,9 +80,7 @@ func TestDeleteRecoverySupersededKeepsFileAcrossStaleAndFailedJournalTransitions
 	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM media_files WHERE id=? AND file_generation='old-generation'`, fileID).Scan(&remaining); err != nil || remaining != 1 {
 		t.Fatalf("stale review changed the source file row: rows=%d err=%v", remaining, err)
 	}
-	if _, err := db.W.ExecContext(ctx, `UPDATE recovery_imports SET data=json_set(data,'$.accepted_revision',(SELECT revision FROM lifecycle_library_revision WHERE id=1)) WHERE id='superseded-rollback'`); err != nil {
-		t.Fatal(err)
-	}
+	acceptCurrentRecoveryLease(t, db, "superseded-rollback")
 	if _, err := db.W.ExecContext(ctx, `CREATE TRIGGER reject_recovery_advance BEFORE UPDATE OF data ON recovery_imports WHEN OLD.id='superseded-rollback' BEGIN SELECT RAISE(ABORT,'injected recovery revision failure'); END`); err != nil {
 		t.Fatal(err)
 	}

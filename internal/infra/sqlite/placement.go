@@ -248,6 +248,16 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 		if err = checkRecoveryRevision(ctx, tx, p.RecoveryImport); err != nil {
 			return 0, err
 		}
+		// The lease and the import authority cover the recovery's own title.
+		// A file row at its destination owned by anything else is outside both:
+		// the upsert below would hand it to this title.
+		var foreign bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM media_files WHERE path=? AND media_item_id IS NOT ?)`, p.Target, p.ItemID).Scan(&foreign); err != nil {
+			return 0, err
+		}
+		if foreign {
+			return 0, fmt.Errorf("recovery destination %s is recorded for another title; a fresh preview is required", p.Target)
+		}
 	}
 	if p.ReplacementOperationID != "" {
 		var intent, scope, rawEpisodes string
@@ -424,18 +434,48 @@ func (d *DB) LibraryRevision(ctx context.Context) (int64, error) {
 	err := d.R.QueryRowContext(ctx, `SELECT revision FROM lifecycle_library_revision WHERE id=1`).Scan(&revision)
 	return revision, err
 }
+
+// RecoveryLease is what a recovery import's preview depends on: its own
+// title's revision and the revision of the settings every placement reads.
+// Another title's edits advance neither.
+type RecoveryLease struct {
+	Item   int64 `json:"item"`
+	Shared int64 `json:"shared"`
+}
+
+const recoveryLeaseItemSQL = `IFNULL((SELECT revision FROM lifecycle_item_revision WHERE media_item_id=?),0)`
+const recoveryLeaseSharedSQL = `(SELECT revision FROM lifecycle_shared_revision WHERE id=1)`
+
+// RecoveryLease reads the current lease for one media item.
+func (d *DB) RecoveryLease(ctx context.Context, itemID int64) (RecoveryLease, error) {
+	var lease RecoveryLease
+	err := d.R.QueryRowContext(ctx, `SELECT `+recoveryLeaseItemSQL+`,`+recoveryLeaseSharedSQL, itemID).Scan(&lease.Item, &lease.Shared)
+	return lease, err
+}
+
+// checkRecoveryRevision fails unless the import's accepted lease is still
+// current. An import without one (accepted by an older binary against the
+// library-wide revision) is never current.
 func checkRecoveryRevision(ctx context.Context, tx *sql.Tx, id string) error {
 	var matches bool
-	if err := tx.QueryRowContext(ctx, `SELECT revision=json_extract(data,'$.accepted_revision') FROM lifecycle_library_revision,recovery_imports WHERE lifecycle_library_revision.id=1 AND recovery_imports.id=?`, id).Scan(&matches); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT IFNULL(
+ json_extract(data,'$.accepted_lease.item')=IFNULL((SELECT revision FROM lifecycle_item_revision WHERE media_item_id=json_extract(data,'$.request.media_item_id')),0)
+ AND json_extract(data,'$.accepted_lease.shared')=`+recoveryLeaseSharedSQL+`,0)
+ FROM recovery_imports WHERE id=?`, id).Scan(&matches); err != nil {
 		return err
 	}
 	if !matches {
-		return fmt.Errorf("library changed during recovery; a fresh preview is required")
+		return fmt.Errorf("this title or the library settings changed during recovery; a fresh preview is required")
 	}
 	return nil
 }
+
+// advanceRecoveryRevision accepts the import's own committed change into its
+// lease, inside the transaction that made it.
 func advanceRecoveryRevision(ctx context.Context, tx *sql.Tx, id string) error {
-	_, err := tx.ExecContext(ctx, `UPDATE recovery_imports SET data=json_set(data,'$.accepted_revision',(SELECT revision FROM lifecycle_library_revision WHERE id=1)) WHERE id=?`, id)
+	_, err := tx.ExecContext(ctx, `UPDATE recovery_imports SET data=json_set(data,
+ '$.accepted_lease.item',IFNULL((SELECT revision FROM lifecycle_item_revision WHERE media_item_id=json_extract(data,'$.request.media_item_id')),0),
+ '$.accepted_lease.shared',`+recoveryLeaseSharedSQL+`) WHERE id=?`, id)
 	return err
 }
 
