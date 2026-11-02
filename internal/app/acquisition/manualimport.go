@@ -54,7 +54,7 @@ func (s *Service) ScanImportPath(ctx context.Context, path string) ([]ScannedFil
 			if err != nil || d.IsDir() || !isMedia(p) {
 				return nil
 			}
-			if strings.Contains(strings.ToLower(filepath.Base(p)), "sample") {
+			if isReleaseSample(p) {
 				return nil
 			}
 			paths = append(paths, p)
@@ -303,14 +303,14 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 	// Serialize final payload-cohort validation and durable admission with
 	// cleanup/deletion. Import itself runs only after both shared locks release.
 	dispatchCtx := ctx
-	s.importTargetMu.Lock()
-	decisionCtx, releaseStorage := s.lockStorageDecision(ctx)
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, req.MediaItemID)
+	decisionCtx, releaseStorage := s.lockStorageDecision(targetCtx)
 	locked := true
 	unlockAdmission := func() {
 		if locked {
 			locked = false
 			releaseStorage()
-			s.importTargetMu.Unlock()
+			releaseTarget()
 		}
 	}
 	defer unlockAdmission()

@@ -268,11 +268,11 @@ func (s *Service) CreateReplacement(ctx context.Context, req ReplacementRequest)
 	// authority window. The observation worker performed the expensive hash;
 	// this catches a same-path replacement between review and click without
 	// making the API request hash a large media file.
-	s.importTargetMu.Lock()
-	decisionCtx, release := s.lockStorageDecision(ctx)
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, req.MediaItemID)
+	decisionCtx, release := s.lockStorageDecision(targetCtx)
 	defer func() {
 		release()
-		s.importTargetMu.Unlock()
+		releaseTarget()
 	}()
 	for _, f := range opFiles {
 		observation, e := s.db.GetReplacementFileObservation(decisionCtx, f.ObservationID)

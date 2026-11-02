@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"time"
@@ -102,6 +103,10 @@ func (s *Service) cleanupPartialPayloadCandidate(ctx context.Context, candidate 
 		return
 	}
 	if err = s.DeleteCompletedEntry(context.WithValue(ctx, partialCleanupIDKey{}, candidate), path, fingerprint); err != nil {
+		if errors.Is(err, ErrImportTargetsBusy) {
+			s.log.Info("partial payload cleanup deferred: imports are publishing", "download", id)
+			return
+		}
 		s.log.Debug("partial payload remains in custody", "download", id, "reason", err)
 		return
 	}
@@ -111,12 +116,17 @@ func (s *Service) cleanupPartialPayloadCandidate(ctx context.Context, candidate 
 // settleAbsentPartialPayload verifies the configured storage while holding the
 // final target/storage authority. The caller already holds the download lock.
 func (s *Service) settleAbsentPartialPayload(ctx context.Context, candidate partialCleanupOwner, path string) {
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
-	decisionCtx, releaseStorage := s.lockStorageDecision(ctx)
+	// The caller holds this download's lock, so its title is stable.
+	owner, err := s.db.GetDownload(ctx, candidate.DownloadID)
+	if err != nil {
+		return
+	}
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, owner.MediaItemID)
+	defer releaseTarget()
+	decisionCtx, releaseStorage := s.lockStorageDecision(targetCtx)
 	defer releaseStorage()
 	current, err := s.db.GetDownload(decisionCtx, candidate.DownloadID)
-	if err != nil || current.GenerationKey != candidate.GenerationKey || current.State != "failed" ||
+	if err != nil || current.MediaItemID != owner.MediaItemID || current.GenerationKey != candidate.GenerationKey || current.State != "failed" ||
 		!current.CleanupPending || current.DeliveryExpected || current.ImportPath == "" || !filepath.IsAbs(current.ImportPath) {
 		return
 	}
