@@ -167,6 +167,11 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 				if !match.Matched {
 					continue
 				}
+				// Now the title is known: refuse the exact post that already
+				// failed for it, rather than grabbing what Grab will refuse.
+				if s.skipCandidateFor(ctx, w.MediaItemID(), r) {
+					continue
+				}
 				if grabbed[string(w.ID())] {
 					continue
 				}

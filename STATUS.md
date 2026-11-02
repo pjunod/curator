@@ -45,6 +45,14 @@ not even if the operator deleted the files in Runner.
     loop on a persistent dispatch refusal (e.g. a disabled client); with the
     planner and dispatch now agreeing on the blocklist it no longer fires for
     this case.
+- Review (Fable) of the replan change: no loop or indexer hammering
+  (N failures ⇒ at most N reruns; deferrals refund attempts; budgets and
+  RetryAt are rechecked). Fixed: a rerun now starts from a fresh checkpoint
+  (carrying `Started` would park it behind its own plan and hold the single
+  comparison-admission slot for hours); `DeferClaimedJob` no longer parks a
+  replan requested after the handler's last check; a request that lands after
+  the comparison finished queues itself; RSS refuses an identity-blocklisted
+  post once the title is matched.
 
 ## Lifecycle follow-ups after #83 — 2026-11-02 · v0.38.11
 

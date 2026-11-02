@@ -324,6 +324,7 @@ func (d *DB) DeferJob(ctx context.Context, id int64, cause string, at time.Time)
 func (d *DB) DeferClaimedJob(ctx context.Context, job domain.Job, cause string, at time.Time) error {
 	var claimed struct {
 		ManualGeneration int64 `json:"manualGeneration"`
+		ReplanGeneration int64 `json:"replanGeneration"`
 	}
 	_ = json.Unmarshal([]byte(job.Payload), &claimed)
 	now := time.Now().UnixMilli()
@@ -332,11 +333,15 @@ func (d *DB) DeferClaimedJob(ctx context.Context, job domain.Job, cause string, 
    run_after=CASE WHEN json_valid(payload) THEN
      CASE WHEN COALESCE(json_extract(payload,'$.manualGeneration'),0)>?
                     AND COALESCE(json_extract(payload,'$.manual'),0)=1
-       THEN min(run_after,?) ELSE ? END
+       THEN min(run_after,?)
+       -- A failed grab asked for a fresh comparison after the handler's
+       -- last check: run now instead of parking behind this deferral.
+       WHEN COALESCE(json_extract(payload,'$.replanGeneration'),0)>? THEN ?
+       ELSE ? END
      ELSE ? END,
    last_error=?,lease_owner='',lease_expires_at=0,updated_at=?
    WHERE id=? AND state='leased' AND lease_owner=? AND lease_expires_at>?`,
-		claimed.ManualGeneration, at.UnixMilli(), at.UnixMilli(), at.UnixMilli(),
+		claimed.ManualGeneration, at.UnixMilli(), claimed.ReplanGeneration, now, at.UnixMilli(), at.UnixMilli(),
 		cause, now, job.ID, job.LeaseOwner, now)
 	if err != nil {
 		return err

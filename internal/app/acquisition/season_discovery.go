@@ -158,12 +158,24 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
 		// into it silently kept a comparison parked for its next discovery
 		// epoch (up to a day) parked: the replacement waited behind nothing.
 		now := time.Now().UnixMilli()
-		_, err = s.db.W.ExecContext(ctx, `UPDATE jobs SET payload=json_set(payload,
+		res, e := s.db.W.ExecContext(ctx, `UPDATE jobs SET payload=json_set(payload,
                 '$.replanGeneration',COALESCE(json_extract(payload,'$.replanGeneration'),0)+1),
                 priority=min(priority,?), run_after=min(run_after,?), updated_at=?
                 WHERE kind=? AND dedupe_key=? AND state IN ('queued','leased')`,
 			priority, now, now, SeasonSearchJobKind, seasonJobKey(item, copy, season))
-		return seasonQueued, err
+		if e != nil {
+			return seasonQueued, e
+		}
+		if n, e := res.RowsAffected(); e == nil && n == 0 {
+			// The comparison finished between the insert and this update:
+			// nothing holds the key any more, so queue the request itself.
+			_, err = s.db.EnqueueJob(ctx, domain.Job{Kind: SeasonSearchJobKind, Payload: string(raw), DedupeKey: seasonJobKey(item, copy, season), Priority: priority, MaxAttempts: 3})
+			if errors.Is(err, sqlite.ErrDuplicateJob) {
+				err = nil
+			}
+			return seasonQueued, err
+		}
+		return seasonQueued, nil
 	}
 	if errors.Is(err, sqlite.ErrDuplicateJob) {
 		if manual {
@@ -364,6 +376,19 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 		return &sqlite.BudgetDeferred{At: time.Now(), Reason: "promoted to a manual comparison"}
 	}
 	if (err == nil || errors.As(err, &deferred) && time.Until(deferred.At) > 0) && s.seasonReplanRequested(ctx, j.ID, started) {
+		// The evidence this run gathered was consumed by the plan it
+		// admitted. Carrying Started into the rerun would park it behind
+		// that plan as an open comparison and hold the single admission
+		// slot every other season waits on until this download finished.
+		if fresh, e := s.db.GetJob(ctx, j.ID); e == nil {
+			var p seasonCheckpoint
+			if json.Unmarshal([]byte(fresh.Payload), &p) == nil {
+				p.Started, p.Scopes, p.Releases, p.Stage, p.Revision = time.Time{}, nil, nil, "", 0
+				if e = s.saveSeasonCheckpoint(ctx, j, p); e != nil {
+					return e
+				}
+			}
+		}
 		return &sqlite.BudgetDeferred{At: time.Now(), Reason: "a failed grab asked for a fresh comparison"}
 	}
 	return err

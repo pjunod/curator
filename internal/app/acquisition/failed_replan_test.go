@@ -79,4 +79,60 @@ func TestFailedGrabMakesAParkedSeasonComparisonDueAndRerunsARunningOne(t *testin
 	if !svc.seasonReplanRequested(ctx, job.ID, started) {
 		t.Fatal("a failed grab during a running comparison was lost")
 	}
+	// A deferral written after the request must not park it for a day.
+	if err := db.DeferClaimedJob(ctx, job, "new discovery epoch", time.Now().Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.R.QueryRowContext(ctx, `SELECT run_after FROM jobs WHERE id=?`, job.ID).Scan(&runAfter); err != nil {
+		t.Fatal(err)
+	}
+	if runAfter > time.Now().UnixMilli() {
+		t.Fatalf("deferral parked a requested replan for %s", time.Until(time.UnixMilli(runAfter)))
+	}
+	// With no comparison holding the key, the request queues itself.
+	if _, err := db.W.ExecContext(ctx, `UPDATE jobs SET state='done' WHERE id=?`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.enqueueSeason(ctx, itemID, 0, 1, seasonTriggerFailedAcquisition, true); err != nil {
+		t.Fatal(err)
+	}
+	var queued int
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE kind=? AND state='queued'`, SeasonSearchJobKind).Scan(&queued); err != nil || queued != 1 {
+		t.Fatalf("failed grab after the comparison finished queued %d comparisons (err=%v)", queued, err)
+	}
+}
+
+// Review finding: a rerun requested by a failed grab must not carry the
+// finished run's Started evidence, or it parks behind its own plan as an open
+// comparison and holds the admission slot every other season waits on.
+func TestReplanRerunStartsFromAFreshCheckpoint(t *testing.T) {
+	svc, db, itemID, _ := seriesFixture(t)
+	ctx := context.Background()
+	if err := svc.enqueueSeason(ctx, itemID, 0, 1, "backlog", true); err != nil {
+		t.Fatal(err)
+	}
+	job, err := db.ClaimJob(ctx, "comparison", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.enqueueSeason(ctx, itemID, 0, 1, seasonTriggerFailedAcquisition, true); err != nil {
+		t.Fatal(err)
+	}
+	err = svc.handleSeasonSearch(ctx, job)
+	var deferred interface{ Error() string }
+	if err == nil {
+		t.Fatal("a requested replan must rerun, not complete")
+	}
+	deferred = err
+	saved, e := db.GetJob(ctx, job.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var p seasonCheckpoint
+	if e := json.Unmarshal([]byte(saved.Payload), &p); e != nil {
+		t.Fatal(e)
+	}
+	if !p.Started.IsZero() || len(p.Scopes) != 0 || len(p.Releases) != 0 || p.ReplanGeneration != 1 {
+		t.Fatalf("rerun kept the consumed comparison (err=%v): started=%v scopes=%d releases=%d replan=%d", deferred, p.Started, len(p.Scopes), len(p.Releases), p.ReplanGeneration)
+	}
 }
