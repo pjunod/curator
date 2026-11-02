@@ -17,6 +17,8 @@ jobs:
     name: Go race shard ${{ matrix.shard }}
     runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
     timeout-minutes: 40
+    outputs:
+      tested-runner: ${{ runner.environment == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -48,7 +50,9 @@ jobs:
 
   unit:
     name: Unit tests (Go + web)
-    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
+    # Keep a fallback run on its captured runner class even after the repo's
+    # temporary dispatch setting has been restored while shards execute.
+    runs-on: ${{ fromJSON(needs.go-shards.outputs.tested-runner || '["ubuntu-24.04"]') }}
     needs: go-shards
     if: always()
     timeout-minutes: 20
