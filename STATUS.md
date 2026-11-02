@@ -1,5 +1,31 @@
 # Monarr — Project Status
 
+## Failed downloads no longer freeze behind Runner — 2026-11-02 · v0.38.11
+
+**Status:** in progress on `codex/runner-failure-handoff` with the paired
+Runner change (pjunod/nzbd `codex/empty-failed-source`).
+
+Field report (Paul, 2026-11-02): "dexter resurrection already failed all of
+the initially tried downloads, but curator is just sitting there like it
+doesn't know. I would expect it to instantly know the status of the
+downloads is failed, and to continue queueing up more attempts from the
+searches" — and "interconnection is a first class citizen between the two
+apps. time to act like it".
+
+Root cause, verified on nuc3: all 11 jobs ended FAILURE/HEALTH with empty
+`/processing` directories. Runner classified "no files to assess" as
+`unknown`, retained the empty directory "for recovery" as `runner_owned`, and
+never pinned that source into the request receipt. Curator correctly holds a
+replacement while Runner owns failed bytes, so the hold could never settle,
+not even if the operator deleted the files in Runner.
+
+- Runner: an attempt with no source files is unusable and disposed; the
+  file-lifecycle tick disposes any retained failed source whose manifest is
+  empty; retained failures pin `Artifact:Id` + `Artifact:Generation`; old
+  receipts adopt their job's allocation on the next lookup, so the 11 live
+  rows settle on deploy with no click.
+- Curator: a held terminal outcome now retires the in-flight stage, so held
+  failures leave **Downloading** (they showed an empty bar under it).
 ## Lifecycle follow-ups after #83 — 2026-11-02 · v0.38.11
 
 **Status:** [PR #88](https://github.com/pjunod/curator/pull/88), ready, on
