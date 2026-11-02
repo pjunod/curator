@@ -69,7 +69,7 @@ func (s *Server) PreviewCompletedStorageChange(w http.ResponseWriter, r *http.Re
 	}
 	review, err := s.deps.Acquisition.PreviewCompletedStorageChange(r.Context(), request)
 	if err != nil {
-		s.deliveryLifecycleError(w, err)
+		s.deliveryLifecycleError(w, err, http.StatusConflict, "storage comparison is stale or unavailable; review it again")
 		return
 	}
 	writeJSON(w, http.StatusOK, review)
@@ -85,7 +85,7 @@ func (s *Server) AcceptCompletedStorageChange(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := s.deps.Acquisition.AcceptCompletedStorageChange(r.Context(), request); err != nil {
-		s.deliveryLifecycleError(w, err)
+		s.deliveryLifecycleError(w, err, http.StatusConflict, "storage comparison is stale or unavailable; review it again")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

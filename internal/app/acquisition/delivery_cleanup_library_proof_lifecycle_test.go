@@ -214,9 +214,18 @@ func TestExplicitDeleteReplayRejectsChangedNestedParentThenRetriesExactJournal(t
 	if err != nil || len(completed.Files) != 1 || !completed.Files[0].HistoryRecorded {
 		t.Fatalf("exact retry did not durably complete the selected journal: batch=%+v err=%v", completed, err)
 	}
-	var historyCount int
-	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM history_events WHERE type='delivery_file_deleted'`).Scan(&historyCount); err != nil || historyCount != 1 {
-		t.Fatalf("exact retry should write one deletion history event: count=%d err=%v", historyCount, err)
+	// The first attempt's unlink succeeded but its history insert rolled back.
+	// A replay cannot prove its own unlink, so it records exactly one confirmed
+	// absence carrying the durable prior-attempt marker, and no deletion event.
+	var deletedCount, absenceCount int
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM history_events WHERE type='delivery_file_deleted'`).Scan(&deletedCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM history_events WHERE type='delivery_file_absence_confirmed' AND json_extract(data,'$.priorUnlinkAttempt')=1`).Scan(&absenceCount); err != nil {
+		t.Fatal(err)
+	}
+	if deletedCount != 0 || absenceCount != 1 {
+		t.Fatalf("exact retry should write one confirmed-absence history event: deleted=%d absence=%d", deletedCount, absenceCount)
 	}
 	if _, err := os.Lstat(selectedPath); !os.IsNotExist(err) {
 		t.Fatalf("selected source remains after exact retry: %v", err)

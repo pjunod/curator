@@ -487,23 +487,26 @@ func (s *Service) issueCandidateToken(itemID, copyID int64, season, episode int,
 	return token
 }
 
-func (s *Service) consumeCandidateToken(req GrabRequest) (domain.MatchEvidence, string, int64, bool) {
+func (s *Service) consumeCandidateToken(req GrabRequest) (evidence domain.MatchEvidence, guid string, indexerID int64, ok, expired bool) {
 	if req.CandidateToken == "" {
-		return domain.MatchEvidence{}, "", 0, false
+		return domain.MatchEvidence{}, "", 0, false, false
 	}
 	s.candidateMu.Lock()
 	defer s.candidateMu.Unlock()
 	record, ok := s.candidateTokens[req.CandidateToken]
+	if !ok || time.Now().After(record.expiresAt) {
+		return domain.MatchEvidence{}, "", 0, false, true
+	}
 	// A movie or book search issues its token with season 0 (the query has no
 	// season), while the grab handler defaults an omitted season to -1. Both
 	// mean "no season"; comparing them raw rejected every whole-item grab and
 	// downgraded its retained evidence to a manual override.
-	if !ok || time.Now().After(record.expiresAt) || record.itemID != req.MediaItemID ||
+	if record.itemID != req.MediaItemID ||
 		record.copyID != req.CopyID || noSeason(record.season) != noSeason(req.Season) || record.episode != req.Episode ||
 		record.title != req.Title || record.downloadURL != req.DownloadURL || record.indexer != req.Indexer {
-		return domain.MatchEvidence{}, "", 0, false
+		return domain.MatchEvidence{}, "", 0, false, false
 	}
-	return record.evidence, record.guid, record.indexerID, true
+	return record.evidence, record.guid, record.indexerID, true, false
 }
 
 // noSeason folds the two "no season" spellings (0 from a query without one,
@@ -1155,7 +1158,7 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 	evidence := domain.MatchEvidence{Version: 1, Method: "manual_override", Code: "identity_unresolved", Reason: "Manually grabbed without retained search evidence", OriginalTitle: req.Title, ParsedTitle: p.Title}
 	if req.MatchEvidence != nil {
 		evidence = *req.MatchEvidence
-	} else if verified, guid, indexerID, ok := s.consumeCandidateToken(req); ok {
+	} else if verified, guid, indexerID, ok, expired := s.consumeCandidateToken(req); ok {
 		req.SourceGUID, req.IndexerID = guid, indexerID
 		if verified.Matched {
 			evidence = verified
@@ -1163,7 +1166,7 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 			evidence = domain.MatchEvidence{Version: 1, Method: "manual_override", Code: "manual_override",
 				Reason: "Manually grabbed after rejection: " + verified.Reason, OriginalTitle: req.Title, ParsedTitle: p.Title}
 		}
-	} else if req.CandidateToken != "" {
+	} else if expired {
 		// An expired token cannot silently strip the GUID used by blacklist and
 		// source attribution checks. Refresh search to obtain current evidence.
 		return 0, ErrCandidateExpired

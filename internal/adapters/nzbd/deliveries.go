@@ -190,28 +190,12 @@ func (c *Client) deliveryRequest(ctx context.Context, method, path string, body 
 	if err != nil {
 		return fmt.Errorf("nzbd: %w", err)
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
-	closeErr := resp.Body.Close()
+	raw, err := readDeliveryResponse(resp)
 	if err != nil {
-		return fmt.Errorf("nzbd: read delivery response: %w", err)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("nzbd: close delivery response: %w", closeErr)
-	}
-	if len(raw) > 8<<20 {
-		return fmt.Errorf("nzbd: delivery response exceeds 8 MiB")
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		return apiError(resp, "authentication rejected")
+		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var message struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(raw, &message) == nil && message.Error != "" {
-			return apiError(resp, message.Error)
-		}
-		return apiError(resp, "unexpected delivery response")
+		return deliveryStatusError(resp, raw)
 	}
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
@@ -219,6 +203,42 @@ func (c *Client) deliveryRequest(ctx context.Context, method, path string, body 
 		}
 	}
 	return nil
+}
+
+// maxDeliveryResponseBytes bounds a single delivery or error response; pages
+// are streamed under their own deliveryPageBudget.
+const maxDeliveryResponseBytes = 8 << 20
+
+// readDeliveryResponse reads and closes a bounded delivery response, naming
+// which step failed.
+func readDeliveryResponse(resp *http.Response) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxDeliveryResponseBytes+1))
+	closeErr := resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("nzbd: read delivery response: %w", err)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("nzbd: close delivery response: %w", closeErr)
+	}
+	if len(raw) > maxDeliveryResponseBytes {
+		return nil, fmt.Errorf("nzbd: delivery response exceeds %d MiB", maxDeliveryResponseBytes>>20)
+	}
+	return raw, nil
+}
+
+// deliveryStatusError surfaces a non-2xx delivery response with the Runner's
+// own reason and its Retry-After deadline.
+func deliveryStatusError(resp *http.Response, raw []byte) error {
+	if resp.StatusCode == http.StatusUnauthorized {
+		return apiError(resp, "authentication rejected")
+	}
+	var message struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(raw, &message) == nil && message.Error != "" {
+		return apiError(resp, message.Error)
+	}
+	return apiError(resp, "unexpected delivery response")
 }
 
 func validateRunnerEvidence(stages *ports.RunnerStages, copies []ports.RunnerSourceCopy, timing *ports.RunnerLifecycleTiming) error {

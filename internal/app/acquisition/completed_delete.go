@@ -280,13 +280,13 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 			return fmt.Errorf("inventory is incomplete; scan again before deleting selected files")
 		}
 	}
-	legacy, err := s.db.LegacyCleanupReviewPath(ctx, path)
-	if err != nil || !legacy {
-		return fmt.Errorf("legacy review fence is unavailable; refusing deletion")
-	}
 	roots, err := s.completedRoots(ctx, nil)
 	if err != nil {
 		return err
+	}
+	legacy, err := s.legacyReviewEntryFenced(ctx, path, roots)
+	if err != nil || !legacy {
+		return fmt.Errorf("legacy review fence is unavailable; refusing deletion")
 	}
 	root, payloadRelative, err := deliveryRootAndRelative(path, roots)
 	if err != nil {
@@ -419,7 +419,7 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 			_ = parent.Close()
 			return fmt.Errorf("selected legacy file changed before deletion: %s", file.rel)
 		}
-		legacy, fenceErr := s.db.LegacyCleanupReviewPath(ctx, path)
+		legacy, fenceErr := s.legacyReviewEntryFenced(ctx, path, roots)
 		if fenceErr != nil || !legacy {
 			_ = parent.Close()
 			return fmt.Errorf("legacy review fence changed before deletion")
@@ -464,4 +464,34 @@ func (s *Service) rejectReferencedPayload(ctx context.Context, path string, root
 		}
 	}
 	return rows.Err()
+}
+
+// legacyReviewEntryFenced re-derives from durable fences, not the cached
+// inventory, the classification ScanCompleted gives a top-level entry: a
+// historical review path at, above or beneath the entry, or a fenced receipt
+// at or beneath it. Inventory entries are top-level directories while fences
+// record the exact historical payload path, so an exact-path lookup would
+// refuse every nested legacy payload.
+func (s *Service) legacyReviewEntryFenced(ctx context.Context, path string, roots []string) (bool, error) {
+	entry := storagePath(path, roots)
+	paths, err := s.db.LegacyCleanupReviewPaths(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, legacyPath := range paths {
+		legacyPath = storagePath(legacyPath, roots)
+		if within(entry, legacyPath) || within(legacyPath, entry) {
+			return true, nil
+		}
+	}
+	receipts, err := s.db.CompletedReceipts(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, receipt := range receipts {
+		if receipt.LegacyReview && within(entry, storagePath(receipt.Path, roots)) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

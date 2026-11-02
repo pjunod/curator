@@ -127,7 +127,9 @@ func TestDeliveryResponseReadCloseAndSizeFailuresAreReturned(t *testing.T) {
 	}{
 		{name: "read failure", body: &controlledResponseBody{readErr: readFailure}, want: "read delivery response", wantCause: readFailure},
 		{name: "close failure", body: &controlledResponseBody{reader: strings.NewReader("{}"), closeErr: closeFailure}, want: "close delivery response", wantCause: closeFailure},
-		{name: "oversized response", body: &controlledResponseBody{reader: strings.NewReader(strings.Repeat("x", (8<<20)+1))}, want: "exceeds 8 MiB"},
+		// Pages stream under deliveryPageBudget (16 MiB) so one row up to the 8 MiB
+		// field budget can be drained and rejected; the response cap is still named.
+		{name: "oversized response", body: &controlledResponseBody{reader: strings.NewReader(`{"protocolVersion":1,"nextCursor":0,"deliveries":[` + strings.Repeat(" ", deliveryPageBudget) + `]}`)}, want: "exceeds 16 MiB"},
 		{name: "invalid JSON", body: &controlledResponseBody{reader: strings.NewReader("{")}, want: "bad delivery response"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

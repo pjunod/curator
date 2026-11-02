@@ -1177,11 +1177,11 @@ func (s *Service) cleanupDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 			if finishErr := s.db.FinishDeliveryAttempt(ctx, event.ID, "failed", err.Error()); finishErr != nil {
 				s.log.Error("delivery file cleanup attempt history could not be finished", "receipt", r.ID, "path", row.Path, "err", finishErr)
 			}
-			state := "retry"
-			if errors.Is(err, errDeliveryPlacementLost) {
-				state = "protected"
-			}
-			_ = s.db.SetDeliveryFileCleanup(ctx, r.ID, row.Path, state, err.Error())
+			// Every retry re-proves the library placement before unlinking, so a
+			// lost or changed placement stays a due retry rather than a terminal
+			// "protected" row that nothing revisits: a transiently unreadable
+			// library must not strand the payload once the proof returns.
+			_ = s.db.SetDeliveryFileCleanup(ctx, r.ID, row.Path, "retry", err.Error())
 			continue
 		}
 		if err := s.db.FinishDeliveryAttempt(ctx, event.ID, "succeeded", ""); err != nil {
@@ -1827,7 +1827,7 @@ func (s *Service) removeVerifiedDeliveryFile(ctx context.Context, r sqlite.Deliv
 			}
 		}
 		if !ok {
-			return fmt.Errorf("%w; payload retained for explicit review", errDeliveryPlacementLost)
+			return fmt.Errorf("verified library placement is no longer present; payload retained until the placement is proven again or explicitly reviewed")
 		}
 	case "disposable_selected_scope":
 		var ok bool
@@ -2243,8 +2243,6 @@ func deliveryRootReadDir(root *os.Root, name string) ([]os.DirEntry, error) {
 	}
 	return entries, nil
 }
-
-var errDeliveryPlacementLost = errors.New("verified library placement is no longer present")
 
 func (s *Service) unlinkExplicitDeliveryFile(parent *os.Root, name string) error {
 	if s.explicitDeliveryUnlink != nil {

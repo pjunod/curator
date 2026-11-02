@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -17,6 +19,36 @@ import (
 // response also has a byte budget; transport/truncated JSON never advances it.
 const deliveryFieldBudget = 8 << 20
 const deliveryPageBudget = 16 << 20
+
+// deliveryPageError is a protocol violation in a well-framed page: it already
+// names the failure, so listDeliveryPage reports it as is instead of as a
+// framing error.
+type deliveryPageError struct{ err error }
+
+func (e *deliveryPageError) Error() string { return e.err.Error() }
+func (e *deliveryPageError) Unwrap() error { return e.err }
+
+func pageViolation(format string, args ...any) error {
+	return &deliveryPageError{err: fmt.Errorf("nzbd: "+format, args...)}
+}
+
+// deliveryResponseBody observes the transport underneath the streaming page
+// parser, so a broken connection or an over-budget response is reported as
+// such rather than as whichever JSON token happened to be cut short.
+type deliveryResponseBody struct {
+	r   io.Reader
+	n   int64
+	err error
+}
+
+func (b *deliveryResponseBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	b.n += int64(n)
+	if err != nil && err != io.EOF && b.err == nil {
+		b.err = err
+	}
+	return n, err
+}
 
 func readDeliveryPage(body io.Reader, limit int) (ports.RunnerDeliveryPage, error) {
 	r := bufio.NewReader(io.LimitReader(body, deliveryPageBudget+1))
@@ -34,7 +66,7 @@ func readDeliveryPage(body io.Reader, limit int) (ports.RunnerDeliveryPage, erro
 		}
 		if next == '}' {
 			if !allowEnd {
-				return page, fmt.Errorf("nzbd: trailing comma in delivery page")
+				return page, fmt.Errorf("trailing comma in delivery page")
 			}
 			_, _ = r.ReadByte()
 			break
@@ -48,7 +80,7 @@ func readDeliveryPage(body io.Reader, limit int) (ports.RunnerDeliveryPage, erro
 			return page, err
 		}
 		if pageKeys[name] || len(pageKeys) >= 16 {
-			return page, fmt.Errorf("nzbd: duplicate or excessive delivery page fields")
+			return page, fmt.Errorf("duplicate or excessive delivery page fields")
 		}
 		pageKeys[name] = true
 		allowEnd = true
@@ -67,7 +99,7 @@ func readDeliveryPage(body io.Reader, limit int) (ports.RunnerDeliveryPage, erro
 				}
 				if next == ']' {
 					if !rowEndAllowed {
-						return page, fmt.Errorf("nzbd: trailing comma in delivery array")
+						return page, fmt.Errorf("trailing comma in delivery array")
 					}
 					_, _ = r.ReadByte()
 					break
@@ -75,46 +107,13 @@ func readDeliveryPage(body io.Reader, limit int) (ports.RunnerDeliveryPage, erro
 				rowEndAllowed = true
 				count++
 				if count > limit {
-					return page, fmt.Errorf("nzbd: delivery page exceeds row limit")
-				}
-				fields, invalid, err := readDeliveryFields(r)
-				if err != nil {
+					// Frame and discard surplus rows so the violation reports how many
+					// rows the Runner actually sent; the page budget bounds this work.
+					if _, _, err := boundedJSONValue(r, 0); err != nil {
+						return page, err
+					}
+				} else if err := readDeliveryRow(r, &page); err != nil {
 					return page, err
-				}
-				raw, err := json.Marshal(fields)
-				if err != nil {
-					return page, err
-				}
-				var wire runnerDeliveryWire
-				if err := json.Unmarshal(raw, &wire); err != nil {
-					invalid = "malformed delivery entry"
-				}
-				if detail, ok := fields["discoveryError"]; ok {
-					var reason string
-					if json.Unmarshal(detail, &reason) == nil && reason != "" {
-						invalid = reason
-					}
-				}
-				delivery, err := convertRunnerDelivery(wire)
-				if err != nil && invalid == "" {
-					invalid = err.Error()
-				}
-				if invalid != "" {
-					// Parse identity independently: a bad file/type must not erase the
-					// sequence that permits bounded progress through the journal.
-					var sequence uint64
-					var id string
-					_ = json.Unmarshal(fields["sequence"], &sequence)
-					_ = json.Unmarshal(fields["deliveryId"], &id)
-					if sequence == 0 {
-						return page, fmt.Errorf("nzbd: invalid delivery has no journal sequence")
-					}
-					if len(id) > maxDeliveryIdentityBytes {
-						id = ""
-					}
-					page.Rejected = append(page.Rejected, ports.RunnerDeliveryRejection{Sequence: sequence, DeliveryID: id, Reason: invalid})
-				} else {
-					page.Deliveries = append(page.Deliveries, delivery)
 				}
 				next, err = jsonNext(r)
 				if err != nil {
@@ -126,13 +125,19 @@ func readDeliveryPage(body io.Reader, limit int) (ports.RunnerDeliveryPage, erro
 					continue
 				}
 				if next != ']' {
-					return page, fmt.Errorf("nzbd: malformed delivery array")
+					return page, fmt.Errorf("malformed delivery array")
 				}
+			}
+			if count > limit {
+				return page, pageViolation("delivery page returned %d rows for limit %d", count, limit)
 			}
 		} else {
 			value, oversized, err := boundedJSONValue(r, maxDeliveryIdentityBytes)
-			if err != nil || oversized {
-				return page, fmt.Errorf("nzbd: invalid delivery page metadata: %v", err)
+			if err != nil {
+				return page, fmt.Errorf("invalid delivery page metadata: %w", err)
+			}
+			if oversized {
+				return page, fmt.Errorf("delivery page field %q exceeds %d bytes", name, maxDeliveryIdentityBytes)
 			}
 			switch name {
 			case "protocolVersion":
@@ -155,17 +160,63 @@ func readDeliveryPage(body io.Reader, limit int) (ports.RunnerDeliveryPage, erro
 			continue
 		}
 		if next != '}' {
-			return page, fmt.Errorf("nzbd: malformed delivery page")
+			return page, fmt.Errorf("malformed delivery page")
 		}
 	}
 	if page.ProtocolVersion != 1 {
-		return page, fmt.Errorf("nzbd: unsupported delivery protocol version %d", page.ProtocolVersion)
+		return page, pageViolation("unsupported delivery protocol version %d", page.ProtocolVersion)
 	}
 	// No trailing content, including a budget-truncated response, is accepted.
 	if _, err := jsonNext(r); err != io.EOF {
-		return page, fmt.Errorf("nzbd: trailing delivery response")
+		return page, fmt.Errorf("trailing delivery response")
 	}
 	return page, nil
+}
+
+// readDeliveryRow converts one framed delivery entry. A row that fails
+// validation but carries its journal sequence is retained as a rejection so
+// later publications stay reachable; one without a sequence fails the page.
+func readDeliveryRow(r *bufio.Reader, page *ports.RunnerDeliveryPage) error {
+	fields, invalid, err := readDeliveryFields(r)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	var wire runnerDeliveryWire
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		invalid = "malformed delivery entry"
+	}
+	if detail, ok := fields["discoveryError"]; ok {
+		var reason string
+		if json.Unmarshal(detail, &reason) == nil && reason != "" {
+			invalid = reason
+		}
+	}
+	delivery, err := convertRunnerDelivery(wire)
+	if err != nil && invalid == "" {
+		invalid = err.Error()
+	}
+	if invalid != "" {
+		// Parse identity independently: a bad file/type must not erase the
+		// sequence that permits bounded progress through the journal.
+		var sequence uint64
+		var id string
+		_ = json.Unmarshal(fields["sequence"], &sequence)
+		_ = json.Unmarshal(fields["deliveryId"], &id)
+		if sequence == 0 {
+			return pageViolation("invalid delivery has no journal sequence: %s", strings.TrimPrefix(invalid, "nzbd: "))
+		}
+		if len(id) > maxDeliveryIdentityBytes {
+			id = ""
+		}
+		page.Rejected = append(page.Rejected, ports.RunnerDeliveryRejection{Sequence: sequence, DeliveryID: id, Reason: invalid})
+	} else {
+		page.Deliveries = append(page.Deliveries, delivery)
+	}
+	return nil
 }
 
 func readDeliveryFields(r *bufio.Reader) (map[string]json.RawMessage, string, error) {
@@ -184,14 +235,14 @@ func readDeliveryFields(r *bufio.Reader) (map[string]json.RawMessage, string, er
 		}
 		if next == '}' {
 			if !allowEnd {
-				return nil, "", fmt.Errorf("nzbd: trailing comma in delivery entry")
+				return nil, "", fmt.Errorf("trailing comma in delivery entry")
 			}
 			_, _ = r.ReadByte()
 			return fields, invalid, nil
 		}
 		key, over, err := boundedJSONValue(r, maxDeliveryIdentityBytes)
 		if err != nil || over {
-			return nil, "", fmt.Errorf("nzbd: malformed delivery field name")
+			return nil, "", fmt.Errorf("malformed delivery field name")
 		}
 		var name string
 		if err := json.Unmarshal(key, &name); err != nil {
@@ -244,7 +295,7 @@ func readDeliveryFields(r *bufio.Reader) (map[string]json.RawMessage, string, er
 			continue
 		}
 		if next != '}' {
-			return nil, "", fmt.Errorf("nzbd: malformed delivery object")
+			return nil, "", fmt.Errorf("malformed delivery object")
 		}
 	}
 }
@@ -267,7 +318,7 @@ func jsonPunctuation(r *bufio.Reader, want byte) error {
 		return err
 	}
 	if b != want {
-		return fmt.Errorf("nzbd: expected JSON %q", want)
+		return fmt.Errorf("expected JSON %q", want)
 	}
 	_, err = r.ReadByte()
 	return err
@@ -309,11 +360,11 @@ func boundedJSONValue(r *bufio.Reader, budget int) ([]byte, bool, error) {
 			case '{', '[':
 				stack = append(stack, b)
 				if len(stack) > 64 {
-					return nil, false, fmt.Errorf("nzbd: delivery JSON nesting exceeds limit")
+					return nil, false, fmt.Errorf("delivery JSON nesting exceeds limit")
 				}
 			case '}', ']':
 				if len(stack) == 0 || (b == '}' && stack[len(stack)-1] != '{') || (b == ']' && stack[len(stack)-1] != '[') {
-					return nil, false, fmt.Errorf("nzbd: mismatched delivery JSON container")
+					return nil, false, fmt.Errorf("mismatched delivery JSON container")
 				}
 				stack = stack[:len(stack)-1]
 			}
@@ -338,24 +389,54 @@ func boundedJSONValue(r *bufio.Reader, budget int) ([]byte, bool, error) {
 
 // Keep page parsing isolated from admission, which only consults status.
 func (c *Client) listDeliveryPage(req *http.Request, limit int) (ports.RunnerDeliveryPage, error) {
+	page, badBody, err := c.fetchDeliveryPage(req, limit)
+	if err == nil || !badBody || limit == 1 || req.Context().Err() != nil {
+		return page, err
+	}
+	// One oversized or malformed row must not wedge discovery: fall back to a
+	// single-row page, keeping the original failure if that also fails.
+	retry := req.Clone(req.Context())
+	query := retry.URL.Query()
+	query.Set("limit", "1")
+	retry.URL.RawQuery = query.Encode()
+	page, retryErr := c.listDeliveryPage(retry, 1)
+	if retryErr != nil {
+		return page, fmt.Errorf("%w (single-row retry: %w)", err, retryErr)
+	}
+	return page, nil
+}
+
+// fetchDeliveryPage reports badBody when the Runner answered 2xx but the page
+// itself could not be read or accepted; only that case merits a smaller page.
+func (c *Client) fetchDeliveryPage(req *http.Request, limit int) (page ports.RunnerDeliveryPage, badBody bool, err error) {
 	c.authorize(req)
 	req.Header.Set("X-Nzbd-Client", clientHeader())
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return ports.RunnerDeliveryPage{}, fmt.Errorf("nzbd: %w", err)
+		return ports.RunnerDeliveryPage{}, false, fmt.Errorf("nzbd: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return ports.RunnerDeliveryPage{}, apiError(resp, "unexpected delivery response")
+		raw, err := readDeliveryResponse(resp)
+		if err != nil {
+			return ports.RunnerDeliveryPage{}, false, err
+		}
+		return ports.RunnerDeliveryPage{}, false, deliveryStatusError(resp, raw)
 	}
-	page, err := readDeliveryPage(resp.Body, limit)
-	if err != nil && limit > 1 {
-		_ = resp.Body.Close()
-		retry := req.Clone(req.Context())
-		query := retry.URL.Query()
-		query.Set("limit", "1")
-		retry.URL.RawQuery = query.Encode()
-		return c.listDeliveryPage(retry, 1)
+	body := &deliveryResponseBody{r: resp.Body}
+	page, err = readDeliveryPage(body, limit)
+	closeErr := resp.Body.Close()
+	var violation *deliveryPageError
+	switch {
+	case body.err != nil:
+		return ports.RunnerDeliveryPage{}, true, fmt.Errorf("nzbd: read delivery response: %w", body.err)
+	case closeErr != nil:
+		return ports.RunnerDeliveryPage{}, true, fmt.Errorf("nzbd: close delivery response: %w", closeErr)
+	case body.n > deliveryPageBudget:
+		return ports.RunnerDeliveryPage{}, true, fmt.Errorf("nzbd: delivery response exceeds %d MiB", deliveryPageBudget>>20)
+	case errors.As(err, &violation):
+		return ports.RunnerDeliveryPage{}, true, err
+	case err != nil:
+		return ports.RunnerDeliveryPage{}, true, fmt.Errorf("nzbd: bad delivery response: %w", err)
 	}
-	return page, err
+	return page, false, nil
 }
