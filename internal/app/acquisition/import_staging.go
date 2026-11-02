@@ -24,12 +24,12 @@ type namedPlacementStage struct {
 // The open object's identity is persisted before any payload bytes are copied.
 // Failed/partial stages retain custody; no filename or digest alone permits a
 // new process to truncate, delete or resume one on an unqualified NFS client.
-func (s *Service) stageImportPlacement(ctx context.Context, p *sqlite.Placement, progress func(int64, int64)) error {
+func (s *Service) stageImportPlacement(ctx context.Context, p *sqlite.Placement, progress func(int64, int64)) (resultErr error) {
 	in, err := os.Open(p.Source)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { resultErr = errors.Join(resultErr, in.Close()) }()
 	out, err := os.OpenFile(p.Temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode())
 	if err != nil {
 		return err

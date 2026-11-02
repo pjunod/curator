@@ -14,7 +14,7 @@ type cancelOnceStageContext struct {
 }
 
 func (c cancelOnceStageContext) Err() error {
-	if _, err := os.Lstat(c.stagePath); err == nil {
+	if matches, _ := filepath.Glob(c.stagePath); len(matches) > 0 {
 		return context.Canceled
 	}
 	return c.Context.Err()
@@ -26,11 +26,16 @@ func TestAcceptedSidecarInterruptedCopyKeepsSourceAndRetriesStageAfterRestart(t 
 	target := acceptedSidecarTarget(t, media.Path, media.SourcePath, sidecar.relative)
 	stage := expectedCaptionStagePath(target)
 
-	copyCtx := cancelOnceStageContext{Context: ctx, stagePath: stage}
+	copyCtx := cancelOnceStageContext{Context: ctx, stagePath: filepath.Join(filepath.Dir(target), ".monarr-caption-*.stage")}
 	err := svc.copyAcceptedSidecar(copyCtx, receipt, sidecar, media.Path, target)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation after stage creation was not propagated: %v", err)
 	}
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(target), ".monarr-caption-*.stage"))
+	if len(matches) != 1 {
+		t.Fatalf("expected one retained stage: %v", matches)
+	}
+	stage = matches[0]
 	stageInfo, err := os.Lstat(stage)
 	if err != nil || !stageInfo.Mode().IsRegular() || stageInfo.Size() != 0 {
 		t.Fatalf("interrupted stage was not left in a deterministic recoverable state: info=%v err=%v", stageInfo, err)
@@ -51,8 +56,8 @@ func TestAcceptedSidecarInterruptedCopyKeepsSourceAndRetriesStageAfterRestart(t 
 	if err := restarted.copyAcceptedSidecar(ctx, receipt, sidecar, media.Path, target); err != nil {
 		t.Fatalf("retry did not discard the incomplete stage and publish accepted bytes: %v", err)
 	}
-	if _, err := os.Lstat(stage); !os.IsNotExist(err) {
-		t.Fatalf("successful retry left a partial stage behind: %v", err)
+	if _, err := os.Lstat(stage); err != nil {
+		t.Fatalf("retry deleted retained uncertain stage: %v", err)
 	}
 	if got, err := os.ReadFile(target); err != nil || string(got) != string(caption) {
 		t.Fatalf("retry did not publish the exact accepted caption: %q err=%v", got, err)
@@ -71,14 +76,14 @@ func TestAcceptedSidecarNonemptyStageObstructionPreservesSourceForRetry(t *testi
 	if err := os.WriteFile(sentinel, []byte("unrelated obstruction"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.copyAcceptedSidecar(ctx, receipt, sidecar, media.Path, target); err == nil {
-		t.Fatal("copy replaced a nonempty directory occupying the deterministic stage path")
+	if err := svc.copyAcceptedSidecar(ctx, receipt, sidecar, media.Path, target); err != nil {
+		t.Fatal("fresh stage could not bypass an unrelated old obstruction", err)
 	}
 	if got, err := os.ReadFile(sentinel); err != nil || string(got) != "unrelated obstruction" {
 		t.Fatalf("copy error changed the blocking directory: %q err=%v", got, err)
 	}
-	if _, err := os.Lstat(target); !os.IsNotExist(err) {
-		t.Fatalf("copy error published through the blocked stage path: %v", err)
+	if got, err := os.ReadFile(target); err != nil || string(got) != string(caption) {
+		t.Fatalf("fresh owned stage did not publish accepted source: %q %v", got, err)
 	}
 	if got, err := os.ReadFile(sidecar.absolute); err != nil || string(got) != string(caption) {
 		t.Fatalf("copy error changed the accepted source: %q err=%v", got, err)

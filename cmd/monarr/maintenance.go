@@ -70,7 +70,7 @@ func runMaintenance(ctx context.Context, args []string, in io.Reader, out io.Wri
 	if err != nil {
 		return fmt.Errorf("maintenance request failed: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
 		return err

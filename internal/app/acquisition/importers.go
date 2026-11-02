@@ -54,6 +54,7 @@ const (
 
 // importJob is one download ready to be moved into the library.
 type importJob struct {
+	executionCancel     context.CancelFunc
 	dl                  sqlite.Download
 	cfg                 ports.ClientConfig
 	ctx                 context.Context
@@ -68,6 +69,12 @@ type importJob struct {
 // Identity matters: a cancelled queued job can remain in the channel until a
 // worker reaches it, while the same download is restarted with a new ticket.
 // The stale job must not delete or cancel the newer one when it is drained.
+// newImportExecution transfers cancellation ownership to a queued job. Every
+// dequeue/error/inline path releases it; context creation never escapes ownerless.
+func newImportExecution(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(parent)
+}
+
 type importTicket struct {
 	cancel  context.CancelFunc
 	queued  bool
@@ -220,7 +227,7 @@ func (s *Service) queueDeliveryCleanup(ctx context.Context, cfg ports.ClientConf
 		return true
 	}
 	parent := context.WithValue(s.importCtx, storageDecisionKey{}, nil)
-	jobCtx, cancel := context.WithCancel(parent)
+	jobCtx, cancel := newImportExecution(parent)
 	s.deliveryCleanupJobs[receipt.ID] = true
 	job := importJob{cfg: cfg, ctx: jobCtx, deliveryReceiptID: receipt.ID, deliveryCleanupOnly: true, cleanupCancel: cancel}
 	select {
@@ -270,14 +277,14 @@ func (s *Service) enqueueImportJob(ctx context.Context, dl sqlite.Download, cfg 
 		}
 		parent = context.WithValue(parent, storageDecisionKey{}, nil)
 	}
-	jobCtx, cancel := context.WithCancel(parent)
+	jobCtx, cancel := newImportExecution(parent)
 	var ticket *importTicket
 	if dl.ID != 0 {
 		jobCtx = withImportAttempt(jobCtx, key)
 		ticket = &importTicket{cancel: cancel, queued: !inlineRun, attempt: key}
 		s.importJobs[dl.ID] = ticket
 	}
-	job := importJob{dl: dl, cfg: cfg, ctx: jobCtx, ticket: ticket, deliveryReceiptID: receiptID, lockHeld: inlineRun}
+	job := importJob{dl: dl, cfg: cfg, ctx: jobCtx, executionCancel: cancel, ticket: ticket, deliveryReceiptID: receiptID, lockHeld: inlineRun}
 	if inlineRun {
 		s.importMu.Unlock()
 		defer cancel()
@@ -315,6 +322,9 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 }
 
 func (s *Service) runImportOwned(ctx context.Context, job importJob) {
+	if job.executionCancel != nil {
+		defer job.executionCancel()
+	}
 	if job.deliveryCleanupOnly {
 		defer func() {
 			if job.cleanupCancel != nil {

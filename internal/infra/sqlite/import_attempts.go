@@ -109,7 +109,7 @@ func (d *DB) BeginImportRetry(ctx context.Context, id int64, generation string) 
 	if err != nil {
 		return ImportAttempt{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	a, err := beginImportRetry(ctx, tx, id, generation, true)
 	if err != nil {
 		return a, err

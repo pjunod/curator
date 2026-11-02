@@ -72,7 +72,7 @@ func (c *Coordinator) enterLocked(ctx context.Context, kind string) (context.Con
 	}
 	parent, _ := ctx.Value(tokenKey{}).(token)
 	_, live := c.active[parent.id]
-	if (c.paused || c.terminal) && !(parent.coordinator == c && live) {
+	if (c.paused || c.terminal) && (parent.coordinator != c || !live) {
 		return ctx, nil, ports.ErrMaintenance
 	}
 	c.next++

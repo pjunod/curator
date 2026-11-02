@@ -51,12 +51,12 @@ func (d *DB) unresolvedSidecarReferences(ctx context.Context) ([]Placement, erro
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	stages, err := d.R.QueryContext(ctx, `SELECT download_id,generation_key,stage,source,target FROM import_attempt_stages WHERE state='held'`)
 	if err != nil {
 		return nil, err
 	}
-	defer stages.Close()
+	defer func() { _ = stages.Close() }()
 	for stages.Next() {
 		var p Placement
 		if err = stages.Scan(&p.DownloadID, &p.SourceGeneration, &p.Temporary, &p.Source, &p.Target); err != nil {
@@ -220,17 +220,17 @@ func (d *DB) RetainUncertainImport(ctx context.Context, key ImportAttemptKey, id
 	for rows.Next() {
 		var id string
 		if e = rows.Scan(&id); e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return a, e
 		}
 		if !selected[id] {
-			rows.Close()
+			_ = rows.Close()
 			return a, ErrImportAttemptChanged
 		}
 		count++
 	}
 	e = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if e != nil {
 		return a, e
 	}
@@ -358,7 +358,7 @@ func (d *DB) AuthorizeImportSidecar(ctx context.Context, p ImportPublication) er
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var matches int
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM runner_delivery_receipts WHERE id=? AND download_id=? AND generation_key=? AND state!='conflict'`, p.ReceiptID, p.DownloadID, p.GenerationKey).Scan(&matches); err != nil {
 		return err
@@ -379,7 +379,7 @@ func (d *DB) CommitImportSidecar(ctx context.Context, p ImportPublication, v Del
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if p.ReceiptID != v.ReceiptID || p.Target != v.LibraryPath {
 		return ErrImportAttemptChanged
 	}
@@ -412,7 +412,7 @@ func (d *DB) RecordImportStage(ctx context.Context, key ImportAttemptKey, source
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	a, err := guardImportAttempt(ctx, tx, key)
 	if err != nil {
 		return err

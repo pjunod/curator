@@ -35,6 +35,9 @@ func TestAcceptedSidecarPublicationRejectsMediaReplacementDuringStaging(t *testi
 	go func() { result <- svc.copyAcceptedSidecar(ctx, receipt, sidecar, media.Path, target) }()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
+		if matches, _ := filepath.Glob(filepath.Join(filepath.Dir(target), ".monarr-caption-*.stage")); len(matches) > 0 {
+			stage = matches[0]
+		}
 		digest, size, err := fileDigest(ctx, stage)
 		if err == nil && digest == sidecar.digest && size == sidecar.size {
 			break

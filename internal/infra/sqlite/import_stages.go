@@ -16,7 +16,7 @@ func (d *DB) ImportStageCustody(ctx context.Context, id int64, generation string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []ImportStageCustody{}
 	for rows.Next() {
 		var v ImportStageCustody

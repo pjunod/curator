@@ -11,7 +11,7 @@ func (d *DB) CommittedImportPlacements(ctx context.Context, id int64, generation
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Placement
 	for rows.Next() {
 		var raw string
@@ -35,7 +35,7 @@ func (d *DB) SatisfyImportFile(ctx context.Context, key ImportAttemptKey, p Plac
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	a, err := guardImportAttempt(ctx, tx, key)
 	if err != nil {
 		return err
