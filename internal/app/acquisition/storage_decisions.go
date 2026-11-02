@@ -25,7 +25,8 @@ func (s *Service) lockStorageDecision(ctx context.Context) (context.Context, fun
 	lease.active.Store(true)
 	locked := context.WithValue(ctx, storageDecisionKey{}, lease)
 	return locked, func() {
-		lease.active.Store(false)
-		s.storageDecisionMu.Unlock()
+		if lease.active.Swap(false) {
+			s.storageDecisionMu.Unlock()
+		}
 	}
 }

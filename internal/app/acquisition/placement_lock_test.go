@@ -45,12 +45,12 @@ func TestPlacementStagingDoesNotHoldStorageAuthorityOrInvertAdmissionLocks(t *te
 	defer func() { placeFile = previousPlaceFile }()
 
 	// Model an import holding its per-target reservation over staging.
-	svc.importTargetMu.Lock()
+	svc.importTargets.all.Lock()
 	targetLocked := true
 	unlockTarget := func() {
 		if targetLocked {
 			targetLocked = false
-			svc.importTargetMu.Unlock()
+			svc.importTargets.all.Unlock()
 		}
 	}
 	placementDone := make(chan error, 1)

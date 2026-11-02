@@ -82,6 +82,13 @@ func (s *Service) StartImporters(ctx context.Context) {
 		s.cleanupCh = make(chan importJob, importQueue)
 		s.importCtx = ctx
 		s.importJobs = map[int64]*importTicket{}
+		// Attempts left "running" by an earlier process never finished; say so
+		// instead of showing them as in progress forever.
+		if n, err := s.db.InterruptUnfinishedDeliveryAttempts(ctx, time.Now()); err != nil {
+			s.log.Warn("could not mark interrupted delivery attempts", "err", err)
+		} else if n > 0 {
+			s.log.Info("marked delivery attempts interrupted by the previous process", "attempts", n)
+		}
 	})
 	for i := 0; i < importWorkers; i++ {
 		s.importWG.Add(1)
@@ -337,6 +344,10 @@ func (s *Service) runImportTracked(ctx context.Context, job importJob) {
 			job.dl.SavePath = fresh.SavePath
 		}
 		job.dl.State, job.dl.Handoff = fresh.State, fresh.Handoff
+		// The download lock is held from here through the import, so the
+		// row's title is authoritative; a job queued before a manual retarget
+		// must import into the title the row names now.
+		job.dl.MediaItemID, job.dl.CopyID = fresh.MediaItemID, fresh.CopyID
 		s.importMu.Lock()
 		if s.importJobs[job.dl.ID] == job.ticket {
 			job.ticket.queued = false

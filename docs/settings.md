@@ -363,8 +363,14 @@ stopped. Common cases:
 
 Native Runner deliveries have their own durable import, acknowledgement, and
 cleanup retries. Temporary storage and I/O errors keep the affected obligation
-pending. The lifecycle trace shows the cause and next attempt; a rejected or
-conflicting manifest requires review. A missing path in a legacy client row
+pending and retry every 5 minutes. When the importer itself declined the
+payload (nothing importable, every file declined by policy), the retry waits
+about as long as the delivery has already been blocked — up to once an hour —
+and a repeat of the same failure adds no new history entry or notification.
+While Runner's acknowledgement is still pending the 5-minute pace holds.
+**Retry** in Activity or Resolve retries one immediately. The
+lifecycle trace shows the cause and next attempt; a rejected or conflicting
+manifest requires review. A missing path in a legacy client row
 still uses the explicit Retry action described above.
 
 Every failed row offers **Retry** (re-run the import once the underlying
@@ -618,6 +624,38 @@ a mount that was not up) and those get fixed. A container monarr deliberately
 does not parse (AVI, TS, WMV) is cached and not retried, because nothing about
 the next scan makes it parseable. To force the issue, **Re-measure files** on
 any item page ignores the cache entirely.
+
+## Verification read budget (`MONARR_VERIFY_READ_MBPS`)
+
+Curator proves bytes by reading them: a Runner delivery is hashed against its
+manifest before import, a duplicate is hashed against the library file it
+matches before its payload is deleted, and a placement is checked after the
+copy. On network storage every one of those reads crosses the storage link.
+
+Verification reads are held to a budget in megabytes per second. The
+default is **100**, about a third of a 2.5 GbE link, so verification never
+crowds out placement writes, Runner, or playback on the same storage. `0`
+removes the limit; an invalid value keeps the default and logs a warning.
+Placement copies are not limited — they are the import itself (small
+sidecar copies are verified as they copy, so they count). Concurrent checks
+of the same unchanged file share one read.
+
+Reads something is waiting on — an import attempt's checks, checks under a
+title's publication lock, an operator's **Delete files…** request — have their
+own budget of the same size. While one is running, background checks (scheduled
+duplicate proofs and inventory verification) slow to a tenth of the budget, so
+a waiting
+import or request is never starved by work that is not.
+
+```bash
+# Raise on 10 GbE or local disks; 0 = unlimited.
+MONARR_VERIFY_READ_MBPS=250
+```
+
+Why it exists: on 2026-11-01 verification reads held nuc3's 2.5 GbE link to
+its NAS at line rate for hours, and whenever writes joined that load the NAS
+stopped answering NFS for up to nine minutes, freezing everything on the
+mount.
 
 ## Custom formats
 

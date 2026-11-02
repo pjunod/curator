@@ -426,13 +426,26 @@ func (s *Service) AbandonDeliveryDeleteRequest(ctx context.Context, receiptID in
 	}
 	unlock := s.lockDownload(r.DownloadID)
 	defer unlock()
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
-	ctx, release := s.lockStorageDecision(ctx)
-	defer release()
+	// The receipt can have changed while this download's mutation lock was
+	// queued. Pin its current title before taking publication authority.
 	current, err := s.deliveryReceiptForAction(ctx, receiptID)
 	if err != nil {
 		return err
+	}
+	if current.DownloadID != r.DownloadID || current.GenerationKey != r.GenerationKey {
+		return sqlite.ErrDeliveryReceiptStale
+	}
+	r = current
+	ctx, releaseTarget := s.lockImportTarget(ctx, r.MediaItemID)
+	defer releaseTarget()
+	ctx, release := s.lockStorageDecision(ctx)
+	defer release()
+	current, err = s.deliveryReceiptForAction(ctx, receiptID)
+	if err != nil {
+		return err
+	}
+	if current.MediaItemID != r.MediaItemID || current.DownloadID != r.DownloadID || current.GenerationKey != r.GenerationKey {
+		return sqlite.ErrDeliveryReceiptStale
 	}
 	if current.State == "importing" || s.ImportRunning(current.DownloadID) {
 		return fmt.Errorf("delivery import is active; wait for it to finish before cancelling deletion")

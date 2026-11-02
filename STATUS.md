@@ -1,5 +1,241 @@
 # Monarr — Project Status
 
+## Samples, settled retries, identical bytes, storage stalls, per-title lock — 2026-11-01 · v0.38.7
+
+**Status:** [PR #80](https://github.com/pjunod/curator/pull/80) — five
+adversarial reviews addressed (below). Full gate green on the tree before the
+final-review fixes (lint 0 · `make test` all packages, as non-root · web 124 ·
+e2e 192). The final-review fixes invalidated lint, the acquisition and api
+packages and e2e; all four were rerun green on the final tree (lint 0 ·
+acquisition ok · api ok · e2e 192 passed). CI, merge and deploy follow. Main went red under #79 (iOS build 33 for TestFlight left Android `versionCode` at 31; the mobile test keeps them equal): this branch merges main and sets `versionCode` 33. Rebased onto main after #77 and #78
+took 0.38.6 (no code overlap); this is 0.38.7. nuc3 runs 0.38.6 (ecee8fe)
+since 00:05Z, without these fixes: its storage link was receive-saturated
+again at 2.4 Gbit/s right after the restart, and NFS had stalled for 34
+minutes (23:17–23:51Z) beforehand.
+
+Measuring v0.38.5 on nuc3 turned up a second permanent loop. Every Runner
+delivery that shipped a scene sample (`sample-<release>.mkv`) failed on every
+attempt with "selected file is not importable: …/sample-…mkv": the automatic
+delivery selection offered every video in the manifest, samples included, to
+the validator for explicit selections, which refuses samples and fails the
+whole import. The completed-folder scan has always skipped samples, so only
+Runner deliveries hit it. Live damage: Good.Trouble S02E09 and S02E10 grabbed
+six times each (up to 239 attempts per copy), wtFOCK S02E03, S02E10, S03E01,
+S03E02, S03E05 and S03E06 three or four times each (up to 1,206 attempts since
+Oct 27). No new grabs of either show since v0.38.4's re-grab guard.
+
+- One `isReleaseSample` predicate now serves the completed scan, the manual
+  browser, the delivery selection (automatic and Resolve), the selection
+  validator and the redundancy proof's media count. It also recognizes files
+  inside a release's `Sample/` folder.
+- A sample is recorded as `known_incidental` ("release sample excluded from
+  media selection"); rows an earlier attempt left as "not attempted by the
+  importer" are corrected on the next attempt. Still protected either way.
+- Resolve's select-all (sample included) imports the episode instead of
+  rejecting the batch.
+- A manifest with no importable media (only a sample, or only sidecars) is a
+  failed import. Before, it skipped the importer and the delivery was marked
+  imported with zero files. Runner's acknowledgement is unchanged (it is sent
+  before the importer runs; the manifest itself was valid).
+
+**The amplifier.** Every failed delivery import retried every 5 minutes
+forever, re-reading the whole payload and writing an `import_failed` history
+row and a notification each time — 742 rows in 11 hours for these two shows.
+That turned all three of today's defects into 1,000-attempt loops.
+
+- A settled failure (the importer's verdict: `ErrNoFilesImported`, with no
+  storage block, ledger or proof error joined in) now waits about as long as
+  the delivery has been blocked, from 5 minutes up to 1 hour. Elapsed time,
+  not the attempt count, sets the pace (acknowledgement retries also count
+  attempts). Environmental failures keep 5 minutes, and so does any receipt
+  whose Runner acknowledgement is still pending.
+- An automatic retry that ends in exactly the failure last recorded in the
+  download's trace returns it to failed without a new history row or
+  notification.
+- A Resolve re-import of an imported delivery resets attempts and blocked
+  time; **Retry** retries at once and keeps them (the pace is elapsed-time
+  based, so the count no longer matters).
+- Not changed: the scheduler's lease write still writes its snapshot of the
+  retry state, because that write is also how a freshly resolved association
+  (cleared error, counted attempt) is persisted.
+
+**Review** (adversarial agent): no deletion-safety findings. Addressed: the
+zero-media guard created its own forever loop and skipped the ledger (now it
+falls through the shared failure path, and the loop is fixed generally, above);
+comments and docs claimed it withheld Runner's acknowledgement (corrected;
+tests assert the ack); Resolve select-all with the sample failed; stale sample
+rows were not reclassified; `Sample/` folders were missed.
+**Second review** (Sonnet, on the retry change): no blockers. Addressed: the
+repeat check used the receipt's error, which acknowledgement and verification
+failures overwrite (duplicates returned during a Runner outage; now it reads
+the download's trace); ack failures doubled the backoff (now elapsed-time
+based); joined ledger/proof errors counted as settled; a pending ack waited on
+the import's backoff; attempts never reset on re-import. The lease write's
+stale snapshot was left (see above). The 6-hour ceiling and the restart-time reset were
+dropped for a 1-hour ceiling: "settled" includes verdicts that clear on their
+own (an episode not yet in metadata), and an hour bounds that without a reset
+that re-hashes every stuck payload on each restart.
+**Decision for Paul:** the name test stays a substring match, so a real episode
+whose title contains "sample" is skipped. Narrowing it to a delimited token
+risks placing an undelimited sample clip as the episode, which would then
+block the real file as "does not improve on" it. Kept the conservative rule.
+
+**Storage stalls on nuc3 (diagnosed 2026-11-01, Paul asked).** The NAS (QNAP,
+NFSv4, `hard` mounts) stopped answering nuc3 six times today: 13:28 (27 s),
+15:37 (3 min), 17:58 (8 min), 19:09 (9 min), 21:44 (6 min), plus once on
+Oct 30. Each time everything on the mount froze — Curator's imports and
+cleanups, and Runner, whose held-jobs recovery (#261) parked the affected jobs
+as `storage_unavailable` and resumed them correctly.
+
+- Cause, from Prometheus: nuc3's storage link is a 2.5 GbE USB adapter
+  (RTL8156B, `enx6c1ff71662f6`). It ran receive-saturated at 2.2–2.44 Gbit/s
+  for hours, and every outage began as a write phase started on top of that
+  (transmit rising to 0.2–0.5 Gbit/s). No NIC errors or drops, no NFS
+  retransmits, QNAP CPU never above 46%: the NAS's storage, not the network,
+  gives out under saturating reads plus writes.
+- Who was reading: Curator, at 267 MB/s — the whole link. A goroutine dump
+  (taken with Paul's OK; it restarted Curator) and its open files showed three
+  redundancy proofs hashing the same 2.9 GB library file at once, and a manual
+  placement hashing its 18.6 GB target while holding `importTargetMu`, which
+  every other import and cleanup was waiting on. Underneath it all, the
+  forever-retry loops re-read whole payloads every few minutes.
+- No deadlock: the dump showed every lock waiter behind that one placement,
+  and the scheduler loops idle between ticks.
+
+Fixed here:
+
+- One verification read budget for the process (`MONARR_VERIFY_READ_MBPS`,
+  default 100 MB/s, `0` = unlimited) paces every content digest — delivery
+  verification and recheck, redundancy proofs, placement checks, cleanup.
+  Placement copies are not paced.
+- Concurrent digests of one unchanged file share a single read (keyed by
+  file generation; not a cache — nothing outlives the read).
+- The settled-failure backoff (above) removes the bulk of the re-reads.
+- Attempts left "running" by a previous process are marked `interrupted` at
+  start (no finish time invented, no outcome inferred).
+
+**One title no longer holds every title** (Paul: "fix the rest"). At 23:25Z
+Maschile and Quem Ama Cuida had finished in Runner and sat queued behind The
+Craft 1996 (68 GB remux, placing at 10.7 MB/s, about two hours), because
+`importTargetMu` was one process-wide mutex held for an import's whole run.
+It is now `importTargets`: a global RWMutex plus one mutex per media item.
+
+- Per title (global shared + the item's lock): imports, grab and
+  manual-import admission, season admission, replacement, sidecar
+  publication, receipt cleanup and explicit delivery deletes, partial
+  payload settlement, reservation resolution. Different titles proceed
+  concurrently; one title is serialized as before.
+- Whole library (exclusive): recovery (its preview is leased against the
+  library-wide revision, so another title's commit would invalidate it),
+  path-addressed legacy deletes whose owners are not known, and the
+  placement journal's reconciliation at start.
+- Exclusive acquisition never queues: a waiting `sync.RWMutex` writer blocks
+  new readers, so one queued request would stop every title behind the
+  slowest placement. It polls `TryLock` with backoff; operator requests wait
+  at most 15 s and report "imports are publishing; try again shortly"; a
+  whole-library request while holding a title is refused, not deadlocked.
+- The storage-decision lock still serializes the short publish-and-commit
+  window. The storage link (a USB 2.5 GbE adapter to the NAS) remains the
+  hardware limit.
+
+**Fourth review** (full model, on the per-title lock and review-three
+fixes). Three blockers, all probe-confirmed, all fixed:
+
+- Recovery was invalidated by any other title's commit (library-wide
+  revision lease): recovery takes the whole library again, as it always did.
+- One queued exclusive request (the hourly partial-payload sweep, an
+  explicit-delete retry, reservation resolution, an operator delete) brought
+  back the original stall: sweep and retry paths now lock the owning title,
+  and exclusive acquisition never queues (above). Tests: a waiting
+  whole-library request does not hold up another title (fails with a queued
+  `Lock`).
+- The payload guard missed bind-mount aliases (pre-existing hole): it now
+  compares filesystem identity with the publication (`os.SameFile`), not
+  path text. That also fixes the medium regression where a library inside a
+  completed root stopped all cleanup — only the publication counts now.
+
+**Final review** (full model, on the fourth-review fixes): no deadlocks.
+Fixed: a library folder that is a symlink to (or bind mount of) a subfolder
+of the publication passed the guard — any symlinked folder on an evidence
+path is now refused, as placement refuses it, and a library file that is
+the payload file's own directory entry is refused. Recovery's wait for the
+whole library starved under steady imports and then failed its
+library-wide revision check anyway; it now waits without queuing, shows
+"Waiting for imports in progress to finish" on the recovery, and fails at
+once ("library changed while recovery waited…; preview again") the moment
+another title commits. The hourly partial-payload sweep tries the whole
+library for 250 ms, not 15 s, and logs a deferral at Info. A queued job
+picks up its download's current title under the download lock; resolved
+reservations and partial payloads re-check the title after locking; a
+released lock's context can no longer pass as held.
+**Decision for Paul:** recovery still needs a quiet library because its
+preview is leased against one library-wide revision. Leasing it against the
+target title's own revision would let recovery take only its title — a
+migration and a change to the recovery lease, so not done here.
+
+Also fixed: a foreground digest no longer joins a background read; an
+import's own pre-lock verification is foreground; a re-read download that
+names another title is refused under the old title's lock; releases are
+idempotent and deferred, so a panic cannot leak a title lock; replace-bad
+marks count only while the operation is live. Noted, not changed: two
+different-title placements can now overlap on one volume, and the capacity
+check is not a reservation — a simultaneous ENOSPC converges through the
+storage retry; season admission's library-wide revision check fails (and
+retries) somewhat more often under concurrency.
+
+v0.38.5 measured live on nuc3 (started 21:30:10Z): two imports in flight at
+once, and 2.9 GB duplicate cleanups running 225–275 s each on the cleanup
+workers alongside them. The HIG S05E04/E06 duplicates are draining as
+redundant.
+
+**Identical bytes are redundant** (approved by Paul). Good.Trouble S02E06 AVON
+is a 66 MB, one-minute fake that was imported six times, each copy placed over
+the last. The five superseded payloads sat `placed`/`retry` ("verified library
+placement is no longer present"), retried hourly, because the surviving
+library copy is flagged implausible and the proof required an unflagged file.
+
+- A library file in scope (same item, copy and episodes, same format) holding
+  exactly the payload's bytes — digest bound to one stable file generation —
+  now proves the payload redundant whatever that file's standing: unverified
+  quality, an open review flag, an implausible runtime, a profile that would
+  reject it. Deleting the payload loses nothing the library does not hold.
+- A `placed` row whose placement was superseded falls back to that proof.
+- Kept out: a file selected by an in-flight replace-bad operation (that
+  operation owns it and the payloads answering it), and a different extension
+  (identical bytes delivered as .epub over a library .pdf are a format change).
+- Tests that asserted the old rule (review flag, copy profile) now expect
+  redundancy; a new test covers the superseded placement (fails before with
+  the production error) and refuses one whose placement now holds different
+  bytes.
+
+**Third review** (full model, on identical bytes and read pacing). No blocker
+in the rule as designed. Addressed:
+
+- High, probe-confirmed: a library row aliasing the payload's own path made
+  the payload its own proof, and cleanup deleted the only copy. Evidence
+  inside the receipt's publication or any completed root is never library
+  evidence, at proof time and again under the lock (test fails without it).
+- High: the read budget starved the import-lock holder — background proofs
+  drew from the same budget while every other import waited on the lock.
+  Reads made while holding a title, or for an operator's request, now have
+  their own budget, and background reads slow to a tenth while one is
+  active. With the per-title lock the blast radius is one title anyway.
+- The limiter's deadline refusal now reads as `context.DeadlineExceeded`, so
+  a waiter re-reads rather than inheriting the leader's error; a panicking
+  leader releases its waiters; an invalid budget value is logged.
+- The lock-time recheck refuses evidence a replace-bad selection made since
+  the proof now owns; `redundant` rows whose recorded library file was
+  replaced fall back to identical bytes in scope, as `placed` rows do; the
+  redundancy reason no longer claims a quality verdict for identical bytes.
+- Operator **Delete files…** requests verify on the foreground budget.
+
+Not changed, deliberately: reusing a placement's target digest across its
+checks would reintroduce the generation-keyed memo rejected in #76 (mmap
+writes change bytes without changing mtime/ctime); the per-title lock bounds
+the cost to the title being upgraded. Two processes sharing one database
+would mark each other's live attempts `interrupted` — Curator is single
+instance. The lease write's snapshot is unchanged (above).
+
 ## Imports no longer wait behind cleanup — 2026-11-01 · v0.38.5
 
 **Status:** [PR #76](https://github.com/pjunod/curator/pull/76) — two reviews
@@ -7,7 +243,7 @@ addressed (memo rejected; comment and cleanup worker count fixed). Full gate
 once: lint 0 · go test green (the chmod-based
 `TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired` fails only
 as root; rerun alone as non-root on the final commit: pass) · web 124 ·
-e2e 192. CI and merge pending.
+e2e 192. CI green, merged (990e768), deployed to nuc3 by Paul.
 
 Paul asked why importing is slow and whether it must be serial. Measured on
 nuc3 after v0.38.4: a real 2.5 GB import took 31 s; proving a 2.9 GB
@@ -39,8 +275,8 @@ now accepts exact bytes only; the sole-file count now requires both manifest
 and disk to agree, as the importer counts disk). Full gate once on the final
 tree: lint 0 · go test green (the chmod-based
 `TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired` fails only
-as root; rerun alone as non-root: pass) · web 124 · e2e 192. CI and merge
-pending.
+as root; rerun alone as non-root: pass) · web 124 · e2e 192. CI green,
+merged; deployed to nuc3 by Paul.
 
 After v0.38.3 reached nuc3 both stuck episodes imported within minutes
 (`episode_from_release`), but the other twelve byte-identical copies of each
@@ -56,8 +292,8 @@ exact bytes against a verified, unflagged library file — is unchanged.
 ## Obfuscated imports and the re-grab loop — 2026-11-01 · v0.38.3
 
 **Status:** [PR #74](https://github.com/pjunod/curator/pull/74) — review addressed,
-local gate green, CI and merge pending; deploy to nuc3 handed off (this session
-has no SSH key for nuc3).
+local gate green, CI green, merged; deployed to nuc3 by Paul (the earlier
+"no SSH key" note was wrong — nuc3 uses the same key as every node).
 
 Field report: two episodes sat in Runner's "Fetching NZB" for most of a day
 behind a 22-hour indexer `Retry-After`. The quota had been spent by Curator,

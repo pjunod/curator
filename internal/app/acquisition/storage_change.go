@@ -51,8 +51,11 @@ func displayStorageIdentity(identity string) string {
 func (s *Service) PreviewCompletedStorageChange(ctx context.Context, request StorageChangeRequest) (StorageChangeReview, error) {
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 15*time.Second)
+	if err != nil {
+		return StorageChangeReview{}, err
+	}
+	defer releaseTargets()
 	ctx, release := s.lockStorageDecision(ctx)
 	defer release()
 	plan, err := s.completedStorageChangePlan(ctx, request)
@@ -64,8 +67,11 @@ func (s *Service) AcceptCompletedStorageChange(ctx context.Context, request Stor
 	}
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	defer releaseTargets()
 	ctx, release := s.lockStorageDecision(ctx)
 	defer release()
 	plan, err := s.completedStorageChangePlan(ctx, request)

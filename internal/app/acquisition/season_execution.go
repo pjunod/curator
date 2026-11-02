@@ -148,15 +148,34 @@ func (s *Service) dispatchPlannedDownload(ctx context.Context, plan sqlite.Acqui
 	if currentPlan.State != "admitted" && currentPlan.State != "dispatching" && currentPlan.State != "active" {
 		return false, nil
 	}
-	s.importTargetMu.Lock()
-	decisionCtx, releaseDecision := s.lockStorageDecision(ctx)
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, fresh.MediaItemID)
+	defer releaseTarget()
+	decisionCtx, releaseDecision := s.lockStorageDecision(targetCtx)
+	defer releaseDecision()
+	// The title lock was chosen from the pre-wait row. It cannot authorize
+	// a reassociated title, generation, or a plan cancelled while waiting.
+	targeted, targetErr := s.db.GetDownload(decisionCtx, fresh.ID)
+	if targetErr != nil || targeted.MediaItemID != fresh.MediaItemID || targeted.GenerationKey != fresh.GenerationKey || targeted.Transfer != fresh.Transfer || targeted.PlanID != plan.ID {
+		releaseDecision()
+		releaseTarget()
+		if targetErr != nil {
+			return false, targetErr
+		}
+		return false, fmt.Errorf("planned download title or generation changed while awaiting publication authority")
+	}
+	if targeted.Superseded || targeted.ParkedAt.UnixMilli() != 0 || targeted.State != "planned" || targeted.SubmissionPhase != "pending" {
+		releaseDecision()
+		releaseTarget()
+		return false, nil
+	}
+	fresh = targeted
 	item, scopeErr := s.db.GetMediaItemFull(decisionCtx, fresh.MediaItemID)
 	if scopeErr == nil {
 		scopeErr = s.checkReplacementSourceExclusion(decisionCtx, item, grabRequestForDownload(fresh))
 	}
 	if scopeErr != nil {
 		releaseDecision()
-		s.importTargetMu.Unlock()
+		releaseTarget()
 		_ = s.db.RejectDownloadSubmission(ctx, fresh.ID, fresh.GenerationKey, fresh.Transfer, "original source excluded by open replacement operation")
 		return false, scopeErr
 	}
@@ -164,7 +183,7 @@ func (s *Service) dispatchPlannedDownload(ctx context.Context, plan sqlite.Acqui
 		scopeErr = s.db.EnableRunnerDeliveryV1(decisionCtx, cfg.ID)
 	}
 	releaseDecision()
-	s.importTargetMu.Unlock()
+	releaseTarget()
 	if scopeErr != nil {
 		return false, scopeErr
 	}
@@ -566,11 +585,19 @@ func (s *Service) downloadReservesEpisode(ctx context.Context, dl sqlite.Downloa
 func (s *Service) ResolveReservation(ctx context.Context, id int64) error {
 	unlock := s.lockDownload(id)
 	defer unlock()
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	// The download lock keeps its title stable while we take that title.
+	owner, err := s.db.GetDownload(ctx, id)
+	if err != nil {
+		return err
+	}
+	ctx, releaseTarget := s.lockImportTarget(ctx, owner.MediaItemID)
+	defer releaseTarget()
 	dl, err := s.db.GetDownload(ctx, id)
 	if err != nil {
 		return err
+	}
+	if dl.MediaItemID != owner.MediaItemID {
+		return fmt.Errorf("download changed title while resolving; try again")
 	}
 	if dl.Superseded {
 		return nil

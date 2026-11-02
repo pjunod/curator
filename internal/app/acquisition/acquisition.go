@@ -133,8 +133,9 @@ type Service struct {
 	explicitDeliveryUnlink func(*os.Root, string) error // injected filesystem boundary for deterministic recovery tests
 	completedMu            sync.Mutex
 	storageDecisionMu      sync.Mutex
-	// Shared by ordinary and recovery imports, including crash reconciliation.
-	importTargetMu    sync.Mutex
+	// Publication authority, per media item (import_targets.go). Shared by
+	// ordinary and recovery imports, including crash reconciliation.
+	importTargets     importTargets
 	recoveryMu        sync.Mutex
 	recoveryReceiptMu sync.Mutex
 	recoveryCancels   map[string]context.CancelFunc
@@ -1310,9 +1311,11 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 	// removed again below; the alternative (add first, insert second) is
 	// a download running in a client that Monarr has no record of, which
 	// is the worse of the two failures by a distance.
-	s.importTargetMu.Lock()
-	allocationCtx, releaseStorageAllocation := s.lockStorageDecision(ctx)
-	releaseAllocation := func() { releaseStorageAllocation(); s.importTargetMu.Unlock() }
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, req.MediaItemID)
+	defer releaseTarget()
+	allocationCtx, releaseStorageAllocation := s.lockStorageDecision(targetCtx)
+	releaseAllocation := func() { releaseStorageAllocation(); releaseTarget() }
+	defer releaseAllocation()
 	if !manual {
 		if err := s.checkReplacementSourceExclusion(allocationCtx, item, req); err != nil {
 			releaseAllocation()

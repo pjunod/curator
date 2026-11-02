@@ -20,13 +20,13 @@ func TestAcceptedSidecarPublicationRejectsMediaReplacementDuringStaging(t *testi
 	// media identity but before its final publish check. The source is staged
 	// outside that lock, so this models a same-path library replacement in the
 	// expensive-copy window.
-	svc.importTargetMu.Lock()
+	svc.importTargets.all.Lock()
 	result := make(chan error, 1)
 	locked := true
 	finished := false
 	defer func() {
 		if locked {
-			svc.importTargetMu.Unlock()
+			svc.importTargets.all.Unlock()
 		}
 		if !finished {
 			<-result
@@ -53,7 +53,7 @@ func TestAcceptedSidecarPublicationRejectsMediaReplacementDuringStaging(t *testi
 	if err := os.Remove(backup); err != nil {
 		t.Fatal(err)
 	}
-	svc.importTargetMu.Unlock()
+	svc.importTargets.all.Unlock()
 	locked = false
 	publishErr := <-result
 	finished = true
