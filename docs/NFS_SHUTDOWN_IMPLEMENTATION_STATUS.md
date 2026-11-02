@@ -1,6 +1,6 @@
 # NFS shutdown status — implementation, review and delivery
 
-**Status:** #78 merged; cancellation, drain and NFS qualification in progress · **Updated:** 2026-11-01
+**Status:** #78 merged; cancellation, drain and NFS qualification in progress · **Updated:** 2026-11-02
 
 Companion to the [implementation contract](NFS_SHUTDOWN_IMPLEMENTATION.md).
 This page records actual implementation state, separately from the earlier
@@ -17,8 +17,8 @@ incident/proposal reviews. A code review is not runtime qualification of NFS.
 | Durable cancellation migration/UI/API | Migration 0069, epoch-fenced API and Activity review implemented; final review/gates pending |
 | Maintenance drain-before-stop and actual-exit deployment command | Coordinator, participant wiring and exact-container deployment command implemented; regression tests written; final review/gates pending |
 | Automatic NFS stage/failover recovery | Not implemented; coordination qualification still required |
-| Writeback prototype/selection and production grace | Frozen scratch campaign running; separate reviewed analyzer corrected signed RPC status; 38/53 finalized trials eligible in snapshot 1, 12 OOM failures in 512 MiB shape; no policy or production grace selected |
-| PR | [#78 — shutdown ownership](https://github.com/pjunod/curator/pull/78) merged; completion PR not opened |
+| Writeback prototype/selection and production grace | Prototype complete: 120 trials, 40 eligible full completions, 41 OOM failures in 512 MiB shape; no optimized policy qualified. Reviewed real-app campaign running; post-drain wait pending |
+| PR | [#78 — shutdown ownership](https://github.com/pjunod/curator/pull/78) merged; [#83 — durable cancellation and drain](https://github.com/pjunod/curator/pull/83) open |
 | Adversarial code/design review | Astra source review completed; deadline lifetime, joins, bounded tests, publication ordering, reversible maintenance design and stale test callers addressed; local gate passed |
 | Final validation | Go 1.25.7 / Node 22.23.4: make lint PASS (0 issues), make test PASS, make test-web PASS (124 tests), make test-e2e PASS (192 tests), repeated after the heartbeat follow-up review; all seven #78 CI checks passed. Completion source has not run its final gate |
 | Merge | #78 merged at `ecee8fe36a5a6aaa91cacefbb1bd96172fb57e58`; no branch-protection bypass |
@@ -66,7 +66,7 @@ keep custody until explicit review. Source has regression tests for epoch ABA,
 actual writer ownership, publication ordering/rollback, partial receipt reuse,
 retained target fences, pruning/stage custody and drain admission. Browser tests
 cover pending cancellation, decimal epochs, visible review and focus/geometry on
-phone and desktop. None of the new application gates has run yet.
+phone and desktop. All four local application gates passed; subsequent CI found a test constant and fractional-pixel browser assertion, both corrected. The unchanged coverage floor remains a delivery gate.
 
 The coordinator registers native/compat mutations, detached background searches,
 scheduled work/manual triggers, job claims/retention, import/cleanup execution,
@@ -83,8 +83,7 @@ original frozen manifest/classifications remain unchanged. Snapshot 1 contains
 53 finalized trials, of which 38 meet corrected comparison eligibility. Twelve
 512 MiB trials were OOM killed; those remain failed/ineligible. One full-plus-tail
 trace was manually reconciled against the parser's signed-status handling.
-The campaign continues. These are prototype measurements, not application or
-candidate-policy qualification. Numeric post-drain grace remains pending.
+The campaign is complete. Final revision-2 analysis has 40 eligible full completions out of 120 trials, with 41 OOM failures across the low-memory shape. These are prototype measurements, not application or candidate-policy qualification. Numeric post-drain grace remains pending.
 
 ## Completion source review
 

@@ -103,3 +103,13 @@ engineering margin, not an outage bound. Hard NFS can block restart during a NAS
 outage. Automatic cross-node stage resume and failover recovery remain outside
 the qualified envelope. Basic advisory-lock exclusion does not prove namespace,
 lease, delegation or server-recovery behavior.
+
+## Measured nuc3 Docker wait
+
+The [qualification results](NFS_QUALIFICATION_RESULTS.md) record six successful
+post-drain exits between 0.113 and 0.194 seconds for the inspected unlimited-memory
+Docker shape. Set `MEASURED_POST_DRAIN_WAIT_SECONDS=30` for that shape. This adds
+scheduling/cleanup margin; it is a wait before returning a pending receipt,
+not permission to KILL or replace a live process. Direct TERM without draining
+and the failed 512 MiB shape are outside this selection. NAS outages can still
+block restart until actual I/O and process exit complete.

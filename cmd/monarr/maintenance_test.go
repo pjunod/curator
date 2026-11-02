@@ -64,7 +64,7 @@ func TestMaintenanceClientRejectsRedirectInvalidResponseAndBadArguments(t *testi
 			maintenanceServer(t, func(w http.ResponseWriter, r *http.Request) {
 				switch kind {
 				case "redirect":
-					http.Redirect(w, r, "http://127.0.0.1:1/wrong-node", 302)
+					http.Redirect(w, r, "http://127.0.0.1:1/wrong-node", http.StatusFound)
 				case "unauthorized":
 					w.WriteHeader(401)
 				case "invalid JSON":

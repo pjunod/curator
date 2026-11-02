@@ -7,6 +7,7 @@ executes a loopback-only helper in the exact owned container, with no network.
 Timeouts preserve the running writer and prevent the next scenario.
 """
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -103,7 +104,7 @@ class Campaign:
   databases=list((self.root/f'scenario-{record["index"]}'/'data').glob('*.db'))
   if len(databases)!=1:return {'confirmed':False,'reason':'local database identity ambiguous'}
   observations=[]
-  with sqlite3.connect('file:'+str(databases[0])+'?mode=ro',uri=True) as db:
+  with closing(sqlite3.connect('file:'+str(databases[0])+'?mode=ro',uri=True)) as db:
    for raw, in db.execute("SELECT data FROM import_placements WHERE state='prepared'"):
     placement=json.loads(raw);temporary=Path(placement['temporary']);relative=temporary.relative_to('/target');path=self.target/f'scenario-{record["index"]}'/relative
     try:
@@ -186,14 +187,53 @@ class Campaign:
    except Exception as error:sample['error']=str(error)
    with path.open('a') as out:out.write(json.dumps(sample)+'\n')
    stop.wait(.5)
+ def copy_sample(self,record,ids):
+  if time.monotonic()-record.get('_copyContextAt',0)>1:
+   record['_copyRows']=self.wait(record,lambda rows:all(any(r['id']==i and r.get('importState')=='running' for r in rows) for i in ids))
+   record['_copyInspected']=self.inspect(record['containerId']);record['_copyContextAt']=time.monotonic()
+  rows=record['_copyRows']
+  databases=list((self.root/f'scenario-{record["index"]}'/'data').glob('*.db'))
+  if len(databases)!=1:raise RuntimeError('local database identity ambiguous')
+  stages={}
+  with closing(sqlite3.connect('file:'+str(databases[0])+'?mode=ro',uri=True)) as db:
+   placements=db.execute("SELECT p.data FROM import_placements p JOIN import_attempt_controls c ON json_extract(p.data,'$.download_id')=c.download_id AND json_extract(p.data,'$.source_generation')=c.generation_key AND json_extract(p.data,'$.import_attempt_epoch')=c.attempt_epoch WHERE p.state='prepared' AND c.outcome=''").fetchall()
+  inspected=record['_copyInspected'];state=inspected['State'];pid=state['Pid']
+  proc=Path(f'/proc/{pid}');starttime=(proc/'stat').read_text().rsplit(')',1)[1].split()[19]
+  identity={'container':record['containerId'],'pid':pid,'startedAt':state['StartedAt'],'procStarttime':starttime}
+  for raw, in placements:
+   p=json.loads(raw);identifier=p.get('download_id')
+   row=next((r for r in rows if r['id']==identifier and identifier in ids),None)
+   if row is None:continue
+   control=row.get('importControl',{})
+   if p.get('source_generation')!=control.get('generationKey') or str(p.get('import_attempt_epoch'))!=control.get('epoch'):continue
+   relative=Path(p['temporary']).relative_to('/target')
+   if '..' in relative.parts:raise RuntimeError('stage escaped exclusive target')
+   for fd in (proc/'fd').iterdir():
+    try:
+     if os.readlink(fd)!=p['temporary']:continue
+     rawInfo=(proc/'fdinfo'/fd.name).read_text();values=dict(line.split(':',1) for line in rawInfo.splitlines() if ':' in line)
+     inode=int(values['ino']);position=int(values['pos']);flags=int(values['flags'].strip(),8);mount=int(values['mnt_id'])
+     if flags&os.O_ACCMODE!=os.O_WRONLY or not 0<position<p['size']:continue
+     if p.get('temporary_object_identity')!='linux-stable-object-v1:'+str(inode):continue
+     again=dict(line.split(':',1) for line in (proc/'fdinfo'/fd.name).read_text().splitlines() if ':' in line)
+     if os.readlink(fd)!=p['temporary'] or any(again[key]!=values[key] for key in ('ino','mnt_id','flags')):continue
+     latest=int(again['pos'])
+     if latest<position or latest>=p['size']:continue
+     position=latest
+    except FileNotFoundError:continue
+    if identifier in stages:raise RuntimeError('multiple active writer descriptors for one download')
+    stages[identifier]={'path':p['temporary'],'fd':fd.name,'inode':inode,'mount':mount,'flags':flags,'bytes':position,'expected':p['size'],'placement':p['id'],'epoch':control['epoch'],'generation':control['generationKey']}
+  if (proc/'stat').read_text().rsplit(')',1)[1].split()[19]!=starttime:raise RuntimeError('application PID reused')
+  sample={'at':time.monotonic(),'queue':rows,'stages':stages,'process':identity,'meaning':'userspace writable descriptor progress; not NAS durability'}
+  with (self.root/f'scenario-{record["index"]}'/'copy-samples.jsonl').open('a') as out:out.write(json.dumps(sample)+'\n')
+  return sample
  def observe_copy(self,record,ids):
-  def active(rows):return {r['id']:r for r in rows if r['id'] in ids and r.get('importState')=='running' and 0<r.get('bytes',0)<r.get('total',0)}
   deadline=time.monotonic()+900
   while time.monotonic()<deadline:
-   first=self.wait(record,lambda rows:len(active(rows))==len(ids));firstAt=time.monotonic();time.sleep(.5)
-   second=self.api(record,'GET','/queue');secondAt=time.monotonic();a,b=active(first),active(second)
-   if len(b)==len(ids) and all(b[i]['bytes']>a[i]['bytes'] for i in ids):
-    record.setdefault('copyObservations',[]).append({'firstAt':firstAt,'first':first,'secondAt':secondAt,'second':second});self.checkpoint();return second
+   first=self.copy_sample(record,ids);time.sleep(.01);second=self.copy_sample(record,ids)
+   a,b=first['stages'],second['stages']
+   if first['process']==second['process'] and len(a)==len(ids) and len(b)==len(ids) and all(b[i]['bytes']>a[i]['bytes'] and all(a[i][key]==b[i][key] for key in ('path','fd','inode','mount','flags','placement','epoch','generation','expected')) for i in ids):
+    record.setdefault('copyObservations',[]).append({'firstAt':first['at'],'first':first,'secondAt':second['at'],'second':second});self.checkpoint();return second['queue']
   raise TimeoutError('advancing copy phase not observed; no phase qualification')
  def require_exit(self,record,cid,timeout=600):
   code=int(command('docker','wait',cid,timeout=timeout));state=self.inspect(cid)['State'];record['lastExitVerifiedMonotonic']=time.monotonic()
