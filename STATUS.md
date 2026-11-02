@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-## Failed downloads no longer freeze behind Runner — 2026-11-02 · v0.38.11
+## Failed downloads no longer freeze behind Runner — 2026-11-02 · v0.38.12
 
 **Status:** in progress on `codex/runner-failure-handoff` with the paired
 Runner change (pjunod/nzbd `codex/empty-failed-source`).
@@ -26,6 +26,26 @@ not even if the operator deleted the files in Runner.
   rows settle on deploy with no click.
 - Curator: a held terminal outcome now retires the in-flight stage, so held
   failures leave **Downloading** (they showed an empty bar under it).
+- Deployed Runner (`0a4f172`) at 22:20Z: all eleven rows settled to failed
+  and were blocklisted within ten minutes, but nothing re-queued. Two more
+  Curator causes, found live:
+  - The season planner filtered candidates by the title/indexer blocklist
+    only. Failures are blocklisted by release identity (indexer + GUID), so
+    the planner re-chose the identical NZB (download 586 = 585) ten seconds
+    after it failed; dispatch refused it and the plan settled `needs_replan`
+    with its successor dropped (the running job held the dedupe key).
+    `skipCandidateFor` now applies both blocklists wherever the title is known.
+  - A failed grab's season re-search merged into the S01 comparison parked for
+    its next discovery epoch (24 h) and stayed parked; the week-long cooldown
+    could also swallow it. A failure now bumps `replanGeneration`: a parked
+    job is made due, a running one reruns when it finishes, the checkpoint
+    write preserves the bump, and the cooldown does not apply.
+  - Left as a follow-up: settlement's `INSERT OR IGNORE` successor is still
+    dropped while the job that settles is running. Promoting it there could
+    loop on a persistent dispatch refusal (e.g. a disabled client); with the
+    planner and dispatch now agreeing on the blocklist it no longer fires for
+    this case.
+
 ## Lifecycle follow-ups after #83 — 2026-11-02 · v0.38.11
 
 **Status:** [PR #88](https://github.com/pjunod/curator/pull/88), ready, on

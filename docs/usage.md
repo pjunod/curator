@@ -975,7 +975,10 @@ downloading. As soon as Runner disposes of those files (or you delete or Keep
 them in Runner's Files), the next check fails the attempt, blocklists the
 release, and searches for a replacement. Runner disposes of a failed attempt
 that left no files on its own, so a release that failed health before
-anything finished is replaced without anyone touching it.
+anything finished is replaced without anyone touching it. For a series, the
+failure re-runs that season's comparison straight away, even when the season
+was waiting for its next scheduled search, and the failed release (that exact
+post from that indexer) is never chosen again.
 
 Everything terminal is history, and history is collapsed:
 

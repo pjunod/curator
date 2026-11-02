@@ -2250,7 +2250,7 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 		if dl.PlanID != 0 {
 			_, _ = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET replan_pending=1 WHERE id=?`, dl.PlanID)
 		}
-		_ = s.enqueueSeason(ctx, dl.MediaItemID, dl.CopyID, dl.Season, "failed_acquisition", true)
+		_ = s.enqueueSeason(ctx, dl.MediaItemID, dl.CopyID, dl.Season, seasonTriggerFailedAcquisition, true)
 		return
 	}
 	// Automatic re-search: try to replace the failed grab right away.

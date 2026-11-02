@@ -490,7 +490,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 			eligible := func(rs []ports.Release) bool {
 				eligible := false
 				for _, release := range rs {
-					if s.skipCandidate(ctx, release.Title, release.Indexer) {
+					if s.skipCandidateFor(ctx, w.MediaItemID(), release) {
 						continue
 					}
 					parsed := parser.Parse(release.Title)
@@ -566,7 +566,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 	for _, r := range deduplicateReleases(releases) {
 		tally.Seen++
 
-		if s.skipCandidate(ctx, r.Title, r.Indexer) {
+		if s.skipCandidateFor(ctx, w.MediaItemID(), r) {
 			continue
 		}
 		p := parser.Parse(r.Title)

@@ -310,11 +310,15 @@ func (d *DB) UpdateJobCheckpoint(ctx context.Context, id int64, owner, payload s
 	res, err := d.W.ExecContext(ctx, `
         WITH incoming(payload,manual_spent,background_priority,ts) AS (VALUES(?,?,?,?))
         UPDATE jobs SET
-          payload=CASE WHEN COALESCE(json_extract(jobs.payload,'$.manualGeneration'),0)
+          payload=json_set(CASE WHEN COALESCE(json_extract(jobs.payload,'$.manualGeneration'),0)
                               > COALESCE(json_extract(incoming.payload,'$.manualGeneration'),0)
             THEN json_set(incoming.payload,'$.manual',json('true'),
                           '$.manualGeneration',json_extract(jobs.payload,'$.manualGeneration'))
             ELSE incoming.payload END,
+            -- A failed grab may ask for a fresh comparison while this one
+            -- runs; the checkpoint must not erase that request.
+            '$.replanGeneration',max(COALESCE(json_extract(jobs.payload,'$.replanGeneration'),0),
+                                     COALESCE(json_extract(incoming.payload,'$.replanGeneration'),0))),
           priority=CASE WHEN COALESCE(json_extract(jobs.payload,'$.manualGeneration'),0)
                                > COALESCE(json_extract(incoming.payload,'$.manualGeneration'),0)
                             OR COALESCE(json_extract(incoming.payload,'$.manual'),0)=1
