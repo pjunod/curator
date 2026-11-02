@@ -1,5 +1,28 @@
 # Monarr — Project Status
 
+## Lifecycle follow-ups after #83 — 2026-11-02 · v0.38.11
+
+**Status:** draft PR stacked on #87 (owner: Claude for Paul). Adversarial
+review in progress; full gate after its fixes; merge after #87.
+
+#83 repaired main's CI differently from the closed #86. Four of #86's fixes
+were still needed; each was confirmed by a test that fails on main first.
+
+- Legacy cleanup review fences per file: the most specific record holding a
+  file decides, so an ordinary sibling download is not deleted through a
+  legacy fence.
+- Delivery cleanup distinguishes a library it cannot read (retry, with "library
+  placement could not be read; cleanup will retry") from a placement that
+  changed (protected, as before). Size and generation checks run before hashing.
+- nzbd delivery adapter keeps the HTTP status and Retry-After when an error
+  body cannot be read, closed, or is oversized; a transport failure while
+  reading a page no longer triggers the single-row retry.
+- The phone tab bar no longer covers lifecycle action buttons or their results
+  (`web/src/viewportChrome.ts`; e2e checks `clearOfShell` on phone).
+
+Decision for Paul to look over: a changed library placement stays `protected`
+(#82's choice); only an unreadable library retries.
+
 ## Recovery takes only its own title — 2026-11-02 · v0.38.10
 
 **Status:** [PR #87](https://github.com/pjunod/curator/pull/87) — adversarial

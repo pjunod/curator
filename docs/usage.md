@@ -1387,11 +1387,16 @@ scans and actions remain available. Review the current files before approving an
 is already absent on replay, History records confirmed absence; it does not claim
 that the retry deleted those bytes. A missing or superseded library placement
 protects the retained payload for review instead of retrying cleanup indefinitely.
+A library Curator cannot read at that moment (a permissions or mount problem) is
+not treated as a lost placement: cleanup waits and retries, and the trace shows
+"library placement could not be read; cleanup will retry".
 
 Historical acquisitions may finish importing automatically only when their
 persisted trace proves they were still grabbed or downloading before the original
 upgrade cutover. Ambiguous traces and completed or failed backlog remain held for
-explicit review. Import permission never removes the legacy cleanup fence.
+explicit review. Import permission never removes the legacy cleanup fence. The fence applies per file: the most specific
+record holding a file decides, so a legacy review fence on a folder does not
+expose, or protect, an ordinary download inside or beside it.
 
 If an automatic submission remains uncertain for thirty minutes on a client
 without request-token idempotency, Activity and History request operator review.
