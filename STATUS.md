@@ -1,5 +1,43 @@
 # Monarr — Project Status
 
+## Recovery takes only its own title — 2026-11-02 · v0.38.10
+
+**Status:** [PR #87](https://github.com/pjunod/curator/pull/87) — adversarial
+review addressed; rebased onto main after #83 (which also took migration 0069
+and 0.38.9, so this is migration 0070 and 0.38.10); CI, merge and deploy next.
+
+Asked by Paul: "fix the recovery scope". A Runner recovery import was leased
+against `lifecycle_library_revision`, which every title's edit advances, so a
+recovery held every title's import authority and any other title's commit
+voided its preview: it could only run while the whole library was quiet.
+
+- Migration 0070 keeps `lifecycle_item_revision` (per media item: the item,
+  its copies, seasons, episodes, files and file-episode links; moves count for
+  both titles) and `lifecycle_shared_revision` (quality profiles, root
+  folders, custom formats, download clients).
+- A recovery accepts both for its target title; the placement transaction
+  checks and advances them. It takes only its own title's import authority,
+  so other titles import and publish while it runs.
+- Waiting for its own title polls without queuing and fails at once if that
+  title changes. A cancellation on a busy title stays pending for the next
+  sweep instead of holding the sweep.
+- A recovery placement refuses a destination file row owned by another title.
+- Upgrade: queued/importing recoveries accepted under the old revision go back
+  to review; the shared revision starts at 1 so a never-accepted lease is never
+  current. `lifecycle_library_revision` is unchanged for acquisition plans.
+
+**Review (independent agent) — fixed:** legacy rows would have run unleased
+after upgrade (probe-confirmed); cancellation ack blocked the whole sweep on a
+busy title; file-episode links now also advance the file's title; download
+clients added to the shared revision; foreign destination rows refused.
+**Noted:** a recovery waiting on its title can lose the race to a steady
+stream of same-title imports (each commit voids it, so it fails rather than
+waits forever).
+
+**Validation:** before the rebase onto #83: `make lint` 0 · `make test` 50/50
+(non-root) · `make test-web` 131 · `make test-e2e` 208. After the rebase: see
+below.
+
 ## Samples, settled retries, identical bytes, storage stalls, per-title lock — 2026-11-01 · v0.38.7
 
 **Status:** done. [PR #80](https://github.com/pjunod/curator/pull/80)
