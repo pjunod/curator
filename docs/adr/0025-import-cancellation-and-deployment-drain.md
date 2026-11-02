@@ -19,7 +19,7 @@ outages. A finite outage deadline is not a requirement or a supported guarantee.
 
 ### 1. Cancellation uses an import epoch and per-file progress
 
-Migration 0063 adds four tables, independently of rewritten handoff JSON:
+Migration 0069 adds four tables, independently of rewritten handoff JSON:
 
 - `import_attempt_stages`: journaled sidecar stage names created before opening; held custody survives retry until successful publication or explicit operator disposition. Media stages use their existing placement journal and bind the opened object identity before copying. No automatic cross-node stage resume is enabled.
 

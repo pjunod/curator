@@ -14,7 +14,7 @@ incident/proposal reviews. A code review is not runtime qualification of NFS.
 | HTTP/background-search ownership and truthful goodbye | Implemented; handler/background join tests written; passed in the full Go gate |
 | Job lease-heartbeat ownership | Implemented; Astra follow-up review addressed; blocked-store-call regression passed |
 | Concrete cancellation/deployment-drain design | ADR 0025 in progress; Astra identified epoch, sidecar, pruning and uncertain-publication obligations |
-| Durable cancellation migration/UI/API | Migration 0063, epoch-fenced API and Activity review implemented; final review/gates pending |
+| Durable cancellation migration/UI/API | Migration 0069, epoch-fenced API and Activity review implemented; final review/gates pending |
 | Maintenance drain-before-stop and actual-exit deployment command | Coordinator, participant wiring and exact-container deployment command implemented; regression tests written; final review/gates pending |
 | Automatic NFS stage/failover recovery | Not implemented; coordination qualification still required |
 | Writeback prototype/selection and production grace | Frozen scratch campaign running; separate reviewed analyzer corrected signed RPC status; 38/53 finalized trials eligible in snapshot 1, 12 OOM failures in 512 MiB shape; no policy or production grace selected |

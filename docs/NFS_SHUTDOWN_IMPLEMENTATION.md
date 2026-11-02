@@ -43,7 +43,7 @@ background cleanup. No unit test can establish interruption of hard NFS.
 
 ## 2. Cancellation needs a generation-scoped durable control row
 
-This historical design is superseded by [ADR 0025](adr/0025-import-cancellation-and-deployment-drain.md) and migration 0063. Read the ADR for the implemented four-table/epoch/publication/stage contract. Read the
+This historical design is superseded by [ADR 0025](adr/0025-import-cancellation-and-deployment-drain.md) and migration 0069. Read the ADR for the implemented four-table/epoch/publication/stage contract. Read the
 current [import workers](../internal/app/acquisition/importers.go),
 [manual retry](../internal/app/acquisition/handoff.go), and
 [SQLite handoff writes](../internal/infra/sqlite/acquisition.go) before edits.
