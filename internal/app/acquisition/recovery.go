@@ -22,7 +22,6 @@ import (
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/infra/probe"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
-	"github.com/pjunod/monarr/internal/ports"
 )
 
 type RecoverySettings struct {
