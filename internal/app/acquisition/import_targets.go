@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -56,13 +57,16 @@ type importTargetLock struct {
 type heldImportTarget struct {
 	all  bool
 	item int64
+	// active ends at release, so a context that outlives its lock can never
+	// be mistaken for a holder (and skip locking).
+	active *atomic.Bool
 }
 
 func (h heldImportTarget) covers(item int64) bool { return h.all || h.item == item }
 
 func heldTarget(ctx context.Context) (heldImportTarget, bool) {
 	h, ok := ctx.Value(targetHeldKey{}).(heldImportTarget)
-	return h, ok
+	return h, ok && h.active != nil && h.active.Load()
 }
 
 // ErrImportTargetsBusy reports that the whole-library authority could not be
@@ -93,8 +97,11 @@ func (s *Service) lockImportTarget(ctx context.Context, item int64) (context.Con
 	t.mu.Unlock()
 	l.mu.Lock()
 	var once sync.Once
-	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{item: item}), func() {
+	active := &atomic.Bool{}
+	active.Store(true)
+	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{item: item, active: active}), func() {
 		once.Do(func() {
+			active.Store(false)
 			l.mu.Unlock()
 			t.mu.Lock()
 			if l.refs--; l.refs == 0 {
@@ -138,7 +145,12 @@ func (s *Service) lockAllImportTargets(ctx context.Context, wait time.Duration) 
 		}
 	}
 	var once sync.Once
-	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{all: true}), func() {
-		once.Do(s.importTargets.all.Unlock)
+	active := &atomic.Bool{}
+	active.Store(true)
+	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{all: true, active: active}), func() {
+		once.Do(func() {
+			active.Store(false)
+			s.importTargets.all.Unlock()
+		})
 	}, nil
 }

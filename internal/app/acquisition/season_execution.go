@@ -557,6 +557,9 @@ func (s *Service) ResolveReservation(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	if dl.MediaItemID != owner.MediaItemID {
+		return fmt.Errorf("download changed title while resolving; try again")
+	}
 	if dl.Superseded {
 		return nil
 	}

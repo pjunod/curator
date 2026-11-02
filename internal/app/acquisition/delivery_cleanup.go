@@ -878,7 +878,7 @@ func deliveryExactLibraryCopy(ctx context.Context, db *sqlite.DB, f verifiedDeli
 		if requiredPath != "" && filepath.Clean(existing.Path) != filepath.Clean(requiredPath) {
 			continue
 		}
-		if withinPublication(existing.Path, scope.publication) {
+		if withinPublication(existing.Path, scope.publication, f.absolute) {
 			continue
 		}
 		// The same format, too: a book's format is its extension, so identical
@@ -907,24 +907,33 @@ func deliveryExactLibraryCopy(ctx context.Context, db *sqlite.DB, f verifiedDeli
 	return "", "", false
 }
 
-// withinPublication reports whether path is inside the accepted publication
-// (or, for a single-file publication, is that file's own directory entry).
-// It compares filesystem identity, not path text, so a bind-mounted or
-// symlinked alias of the completed folder ("/downloads" for
-// "/working/monarr/completed") is still recognized. Only the publication
-// counts: a library configured inside a completed root is still a library.
-// A hardlinked placement is a different directory entry and is not refused.
-// Anything that cannot be examined is treated as inside: it cannot be
-// evidence.
-func withinPublication(path, publication string) bool {
-	if publication == "" {
-		return true
-	}
-	pub, err := os.Stat(publication)
-	if err != nil {
+// withinPublication reports whether path could be the payload rather than
+// a library copy of it: inside the accepted publication, or the payload
+// file's own directory entry. It compares filesystem identity, not path
+// text, so a bind-mounted alias of the completed folder ("/downloads" for
+// "/working/monarr/completed") is still recognized, and so is a library
+// folder bind-mounted onto a subfolder of the publication (the same-entry
+// check). Any symlinked folder on the path is refused outright, as
+// placement refuses it: a symlinked library folder into the publication
+// would otherwise pass. Only the publication counts — a library configured
+// inside a completed root is still a library — and a hard-linked placement
+// is a different directory entry, not refused. Anything that cannot be
+// examined is treated as inside: it cannot be evidence.
+func withinPublication(path, publication, payloadFile string) bool {
+	if publication == "" || rejectSymlinks(path, false) != nil {
 		return true
 	}
 	parent, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return true
+	}
+	if payloadFile != "" {
+		payloadParent, err := os.Stat(filepath.Dir(payloadFile))
+		if err != nil || (os.SameFile(parent, payloadParent) && filepath.Base(path) == filepath.Base(payloadFile)) {
+			return true
+		}
+	}
+	pub, err := os.Stat(publication)
 	if err != nil {
 		return true
 	}
@@ -1917,7 +1926,7 @@ func (s *Service) removeVerifiedDeliveryFile(ctx context.Context, r sqlite.Deliv
 		if err := s.finalReplacementPlacementCheck(proofCtx, operation); err != nil {
 			return fmt.Errorf("selected-scope replacement placement changed before cleanup: %w", err)
 		}
-	} else if !s.deliveryLibraryEvidenceOwned(decisionCtx, r, libraryEvidencePath, libraryEvidenceGeneration) {
+	} else if !s.deliveryLibraryEvidenceOwned(decisionCtx, r, libraryEvidencePath, libraryEvidenceGeneration, absolute) {
 		return fmt.Errorf("verified library ownership or file identity changed")
 	}
 	parentRel, name := filepath.Dir(filepath.FromSlash(row.Path)), filepath.Base(filepath.FromSlash(row.Path))
@@ -1961,7 +1970,7 @@ func (s *Service) replacementDisposableDeliveryOperation(ctx context.Context, r 
 	return sqlite.ReplacementOperation{}, false
 }
 
-func (s *Service) deliveryLibraryEvidenceOwned(ctx context.Context, r sqlite.DeliveryReceipt, path, generation string) bool {
+func (s *Service) deliveryLibraryEvidenceOwned(ctx context.Context, r sqlite.DeliveryReceipt, path, generation, payloadFile string) bool {
 	if path == "" || generation == "" {
 		return false
 	}
@@ -1997,7 +2006,7 @@ func (s *Service) deliveryLibraryEvidenceOwned(ctx context.Context, r sqlite.Del
 		return false
 	}
 	// Evidence inside the publication is the payload, not the library.
-	if withinPublication(path, r.MappedPath) {
+	if withinPublication(path, r.MappedPath, payloadFile) {
 		return false
 	}
 	info, err := os.Lstat(path)

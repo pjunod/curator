@@ -2,9 +2,10 @@
 
 ## Samples, settled retries, identical bytes, storage stalls, per-title lock — 2026-11-01 · v0.38.7
 
-**Status:** branch `codex/delivery-sample-files` — three adversarial reviews
-addressed (below); the per-title lock and the review-three fixes get a fourth
-review, then the full gate, CI and merge. Rebased onto main after #77 and #78
+**Status:** branch `codex/delivery-sample-files` — five adversarial reviews
+addressed (below). Full gate green on the tree before the final-review fixes
+(lint 0 · `make test` all packages, as non-root · web 124 · e2e 192); lint,
+the acquisition package and e2e rerun on the final tree; then PR, CI, merge. Rebased onto main after #77 and #78
 took 0.38.6 (no code overlap); this is 0.38.7. nuc3 runs 0.38.6 (ecee8fe)
 since 00:05Z, without these fixes: its storage link was receive-saturated
 again at 2.4 Gbit/s right after the restart, and NFS had stalled for 34
@@ -150,6 +151,25 @@ fixes). Three blockers, all probe-confirmed, all fixed:
   compares filesystem identity with the publication (`os.SameFile`), not
   path text. That also fixes the medium regression where a library inside a
   completed root stopped all cleanup — only the publication counts now.
+
+**Final review** (full model, on the fourth-review fixes): no deadlocks.
+Fixed: a library folder that is a symlink to (or bind mount of) a subfolder
+of the publication passed the guard — any symlinked folder on an evidence
+path is now refused, as placement refuses it, and a library file that is
+the payload file's own directory entry is refused. Recovery's wait for the
+whole library starved under steady imports and then failed its
+library-wide revision check anyway; it now waits without queuing, shows
+"Waiting for imports in progress to finish" on the recovery, and fails at
+once ("library changed while recovery waited…; preview again") the moment
+another title commits. The hourly partial-payload sweep tries the whole
+library for 250 ms, not 15 s, and logs a deferral at Info. A queued job
+picks up its download's current title under the download lock; resolved
+reservations and partial payloads re-check the title after locking; a
+released lock's context can no longer pass as held.
+**Decision for Paul:** recovery still needs a quiet library because its
+preview is leased against one library-wide revision. Leasing it against the
+target title's own revision would let recovery take only its title — a
+migration and a change to the recovery lease, so not done here.
 
 Also fixed: a foreground digest no longer joins a background read; an
 import's own pre-lock verification is foreground; a re-read download that

@@ -129,7 +129,7 @@ func TestHeldImportTargetCoversNestedWork(t *testing.T) {
 // The payload guard compares filesystem identity: an alias of the
 // publication (symlink here; a bind mount behaves the same to os.SameFile)
 // is still the publication, a library beside it under the same completed
-// root is not, and a hardlinked placement is a different entry.
+// root is not, and a hard-linked placement is a different entry.
 func TestWithinPublicationUsesFilesystemIdentity(t *testing.T) {
 	root := t.TempDir()
 	completed := filepath.Join(root, "completed")
@@ -152,20 +152,36 @@ func TestWithinPublicationUsesFilesystemIdentity(t *testing.T) {
 	if err := os.Link(payload, placed); err != nil {
 		t.Fatal(err)
 	}
+	// Final review: a library folder that is a symlink to a subfolder of the
+	// publication. None of its parents is the publication itself.
+	season := filepath.Join(pub, "Season 1")
+	if err := os.MkdirAll(season, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	episode := filepath.Join(season, "show.s01e02.mkv")
+	if err := os.WriteFile(episode, []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkedSeason := filepath.Join(root, "lib-season")
+	if err := os.Symlink(season, linkedSeason); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
-		path, publication string
-		want              bool
+		path, publication, payload string
+		want                       bool
 	}{
-		{payload, pub, true},
-		{filepath.Join(alias, "Show.S01E01-GRP", "show.mkv"), pub, true},
-		{placed, pub, false},
-		{placed, payload, false},
-		{payload, payload, true},
-		{filepath.Join(alias, "Show.S01E01-GRP", "show.mkv"), payload, true},
-		{filepath.Join(root, "missing", "x.mkv"), pub, true},
+		{payload, pub, payload, true},
+		{payload, pub, "", true},
+		{filepath.Join(alias, "Show.S01E01-GRP", "show.mkv"), pub, payload, true},
+		{placed, pub, payload, false},
+		{placed, payload, payload, false},
+		{payload, payload, payload, true},
+		{filepath.Join(alias, "Show.S01E01-GRP", "show.mkv"), payload, payload, true},
+		{filepath.Join(linkedSeason, "show.s01e02.mkv"), pub, episode, true},
+		{filepath.Join(root, "missing", "x.mkv"), pub, payload, true},
 	} {
-		if got := withinPublication(c.path, c.publication); got != c.want {
-			t.Errorf("withinPublication(%q, %q) = %v, want %v", c.path, c.publication, got, c.want)
+		if got := withinPublication(c.path, c.publication, c.payload); got != c.want {
+			t.Errorf("withinPublication(%q, %q, %q) = %v, want %v", c.path, c.publication, c.payload, got, c.want)
 		}
 	}
 }

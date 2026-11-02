@@ -22,7 +22,14 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 	// Path-addressed: the payload's owners are not known yet, so this takes
 	// the whole library, waiting briefly rather than hanging the request
 	// behind a long placement.
-	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 15*time.Second)
+	// The hourly partial-payload sweep holds completedMu and a download lock
+	// here, so it must not sit polling: it tries briefly and comes back next
+	// hour. An operator's request waits a little longer.
+	wait := 15 * time.Second
+	if ctx.Value(partialCleanupIDKey{}) != nil {
+		wait = 250 * time.Millisecond
+	}
+	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, wait)
 	if err != nil {
 		return err
 	}

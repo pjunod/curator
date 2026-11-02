@@ -667,10 +667,53 @@ func (s *Service) saveRecoveryImport(ctx context.Context, r RecoveryImport) erro
 	_, err = s.db.W.ExecContext(ctx, `UPDATE recovery_imports SET state=?,data=?,updated_at=? WHERE id=?`, r.State, string(raw), time.Now().UnixMilli(), r.ID)
 	return err
 }
+
+// lockLibraryForRecovery waits for the whole library without queuing (titles
+// keep importing meanwhile), saying on the recovery that it is waiting. Its
+// preview is leased against the library-wide revision, so the moment another
+// title commits the lease is gone and waiting longer is pointless: it fails
+// at once with that reason instead of holding the sweep until the library
+// goes quiet and then failing anyway.
+func (s *Service) lockLibraryForRecovery(ctx context.Context, r RecoveryImport) (context.Context, func(), error) {
+	waiting := false
+	defer func() {
+		if waiting {
+			_, _ = s.db.W.ExecContext(context.WithoutCancel(ctx), `UPDATE recovery_imports SET data=json_remove(data,'$.error') WHERE id=? AND json_extract(data,'$.error')=?`, r.ID, recoveryWaitingDetail)
+		}
+	}()
+	for {
+		locked, release, err := s.lockAllImportTargets(ctx, 30*time.Second)
+		if err == nil {
+			return locked, release, nil
+		}
+		if !errors.Is(err, ErrImportTargetsBusy) {
+			return ctx, nil, err
+		}
+		persisted, err := s.RecoveryImport(ctx, r.ID)
+		if err != nil {
+			return ctx, nil, err
+		}
+		revision, err := s.db.LibraryRevision(ctx)
+		if err != nil {
+			return ctx, nil, err
+		}
+		if revision != persisted.AcceptedRevision {
+			return ctx, nil, fmt.Errorf("library changed while recovery waited for imports in progress; preview again")
+		}
+		if !waiting {
+			waiting = true
+			s.log.Info("recovery waiting for imports in progress to finish", "id", r.ID)
+			_, _ = s.db.W.ExecContext(ctx, `UPDATE recovery_imports SET data=json_set(data,'$.error',?) WHERE id=? AND state='importing'`, recoveryWaitingDetail, r.ID)
+		}
+	}
+}
+
+const recoveryWaitingDetail = "Waiting for imports in progress to finish; recovery takes the whole library."
+
 func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
 	// The preview's revision lease covers the whole library: another title's
 	// commit would invalidate it, so recovery excludes every title.
-	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 0)
+	ctx, releaseTargets, err := s.lockLibraryForRecovery(ctx, r)
 	if err != nil {
 		return err
 	}
