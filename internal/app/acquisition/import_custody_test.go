@@ -147,3 +147,45 @@ func TestSourceCustodyCannotBeBypassedThroughBindAlias(t *testing.T) {
 		t.Fatal("bind alias bypassed retained source custody")
 	}
 }
+
+func TestSourceCustodyFailsClosedForUnknownOrUnavailableRoots(t *testing.T) {
+	for _, kind := range []string{"unknown-path", "no-roots", "missing-root", "file-root", "relative-source"} {
+		t.Run(kind, func(t *testing.T) {
+			svc, db, itemID := setup(t, nil, &fakeClient{})
+			ctx := context.Background()
+			root := t.TempDir()
+			source := filepath.Join(root, "held")
+			candidate := filepath.Join(root, "other")
+			if kind == "relative-source" {
+				source = "unknown-relative-source"
+			}
+			dl := insertImportable(t, db, itemID, source)
+			a, e := db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if e = db.RecordImportStage(ctx, a.ImportAttemptKey, source, "/library/caption", "/library/.stage"); e != nil {
+				t.Fatal(e)
+			}
+			switch kind {
+			case "unknown-path":
+				candidate = "relative-candidate"
+			case "no-roots":
+				root = "relative-ignored-root"
+			case "missing-root":
+				root = filepath.Join(root, "unavailable")
+			case "file-root":
+				root = filepath.Join(root, "not-directory")
+				if e = os.WriteFile(root, []byte("file"), 0600); e != nil {
+					t.Fatal(e)
+				}
+			}
+			if e = db.SetMeta(ctx, CompletedRootsSetting, root); e != nil {
+				t.Fatal(e)
+			}
+			if e = svc.assertImportSourceDisposable(ctx, candidate); e == nil {
+				t.Fatalf("%s source disposal was authorized", kind)
+			}
+		})
+	}
+}

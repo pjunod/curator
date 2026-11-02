@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pjunod/monarr/internal/ports"
 	sqliteDriver "modernc.org/sqlite"
 )
 
@@ -22,6 +23,7 @@ var errImportStorageFault = errors.New("injected import storage failure")
 type importFaultDriver struct {
 	at, calls int
 	fired     bool
+	malformed bool // Inject SQL NULL in a required identity at a successful row boundary.
 }
 
 func (d *importFaultDriver) trip() error {
@@ -62,7 +64,11 @@ func (c *importFaultConn) ExecContext(ctx context.Context, q string, args []driv
 	if e := c.fault.trip(); e != nil {
 		return nil, e
 	}
-	return c.Conn.(driver.ExecerContext).ExecContext(ctx, q, args)
+	result, e := c.Conn.(driver.ExecerContext).ExecContext(ctx, q, args)
+	if e != nil {
+		return nil, e
+	}
+	return &importFaultResult{Result: result, fault: c.fault}, nil
 }
 func (c *importFaultConn) QueryContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
 	if e := c.fault.trip(); e != nil {
@@ -75,6 +81,24 @@ func (c *importFaultConn) QueryContext(ctx context.Context, q string, args []dri
 	return &importFaultRows{Rows: rows, fault: c.fault}, nil
 }
 
+type importFaultResult struct {
+	driver.Result
+	fault *importFaultDriver
+}
+
+func (r *importFaultResult) RowsAffected() (int64, error) {
+	if e := r.fault.trip(); e != nil {
+		return 0, e
+	}
+	return r.Result.RowsAffected()
+}
+func (r *importFaultResult) LastInsertId() (int64, error) {
+	if e := r.fault.trip(); e != nil {
+		return 0, e
+	}
+	return r.Result.LastInsertId()
+}
+
 type importFaultRows struct {
 	driver.Rows
 	fault *importFaultDriver
@@ -82,6 +106,12 @@ type importFaultRows struct {
 
 func (r *importFaultRows) Next(dest []driver.Value) error {
 	if e := r.fault.trip(); e != nil {
+		if r.fault.malformed {
+			if nextErr := r.Rows.Next(dest); nextErr == nil {
+				dest[0] = nil // Valid driver.Value; required identities cannot be NULL.
+				return nil
+			}
+		}
 		return e
 	}
 	return r.Rows.Next(dest)
@@ -94,7 +124,7 @@ type importFaultTx struct {
 
 func (tx *importFaultTx) Commit() error {
 	if e := tx.fault.trip(); e != nil {
-		_ = tx.Tx.Rollback()
+		_ = tx.Rollback()
 		return e
 	}
 	return tx.Tx.Commit()
@@ -103,7 +133,7 @@ func (tx *importFaultTx) Commit() error {
 func importDurableSnapshot(t *testing.T, db *DB) string {
 	t.Helper()
 	all := map[string][]any{}
-	for _, table := range []string{"downloads", "media_files", "media_file_placements", "import_placements", "import_attempt_controls", "import_attempt_files", "import_publication_authorizations", "import_attempt_stages", "lifecycle_library_revision", "history_events", "runner_delivery_file_imports", "runner_delivery_file_outcomes"} {
+	for _, table := range []string{"downloads", "runner_delivery_receipts", "runner_delivery_attempt_events", "media_files", "media_file_placements", "import_placements", "import_attempt_controls", "import_attempt_files", "import_publication_authorizations", "import_attempt_stages", "lifecycle_library_revision", "history_events", "runner_delivery_file_imports", "runner_delivery_file_outcomes", "runner_delivery_discovery_rejections"} {
 		rows, e := db.R.QueryContext(t.Context(), `SELECT * FROM `+table+` ORDER BY rowid`)
 		if e != nil {
 			t.Fatal(e)
@@ -141,7 +171,7 @@ func importDurableSnapshot(t *testing.T, db *DB) string {
 }
 
 func TestImportStorageFailuresCannotCommitPartialAuthority(t *testing.T) {
-	for _, operation := range []string{"admit", "retry", "seal", "grant", "media-result", "cancel", "finalize", "retain", "dispose", "stage", "reuse", "resolve", "complete", "sidecar"} {
+	for _, operation := range []string{"admit", "retry", "seal", "grant", "media-result", "cancel", "finalize", "retain", "dispose", "stage", "reuse", "resolve", "complete", "sidecar", "manual-fresh", "manual-retry", "discovery-rejection", "prepare", "sidecar-grant", "dispose-stage", "dispose-stagepath"} {
 		t.Run(operation, func(t *testing.T) {
 			completed := false
 			for point := 1; point <= 80; point++ {
@@ -150,7 +180,7 @@ func TestImportStorageFailuresCannotCommitPartialAuthority(t *testing.T) {
 				var dl Download
 				var a ImportAttempt
 				var receipt DeliveryReceipt
-				if operation == "sidecar" {
+				if operation == "sidecar" || operation == "sidecar-grant" {
 					var original Placement
 					db, receipt, original = atomicDeliveryFixture(t)
 					var e error
@@ -170,19 +200,21 @@ func TestImportStorageFailuresCannotCommitPartialAuthority(t *testing.T) {
 				if operation != "seal" {
 					mustSeal(t, db, a, p.Source)
 				}
-				if operation != "sidecar" {
+				if operation != "sidecar" && operation != "sidecar-grant" {
 					if e := db.PreparePlacement(ctx, p); e != nil {
 						t.Fatal(e)
 					}
 				}
 				var sidecar ImportPublication
-				if operation == "sidecar" {
+				if operation == "sidecar" || operation == "sidecar-grant" {
 					sidecar = ImportPublication{ImportAttemptKey: a.ImportAttemptKey, ID: "fault-sidecar", ReceiptID: receipt.ID, Source: p.Source, Target: p.Target, Payload: `{"stage":"/library/.sidecar-stage"}`}
 					if e := db.RecordImportStage(ctx, a.ImportAttemptKey, p.Source, p.Target, "/library/.sidecar-stage"); e != nil {
 						t.Fatal(e)
 					}
-					if e := db.AuthorizeImportSidecar(ctx, sidecar); e != nil {
-						t.Fatal(e)
+					if operation == "sidecar" {
+						if e := db.AuthorizeImportSidecar(ctx, sidecar); e != nil {
+							t.Fatal(e)
+						}
 					}
 				}
 				if operation == "complete" {
@@ -205,6 +237,19 @@ func TestImportStorageFailuresCannotCommitPartialAuthority(t *testing.T) {
 						t.Fatal(e)
 					}
 				}
+				if operation == "dispose-stage" || operation == "dispose-stagepath" {
+					if operation == "dispose-stagepath" {
+						if e := db.RecordImportStage(ctx, a.ImportAttemptKey, p.Source, p.Target, p.Temporary); e != nil {
+							t.Fatal(e)
+						}
+					}
+					if _, e := db.RequestImportCancellation(ctx, a.ImportAttemptKey); e != nil {
+						t.Fatal(e)
+					}
+					if _, e := db.FinalizeImportCancellation(ctx, a.ImportAttemptKey); e != nil {
+						t.Fatal(e)
+					}
+				}
 				if operation == "reuse" {
 					if _, e := db.CommitPlacement(ctx, p); e != nil {
 						t.Fatal(e)
@@ -215,6 +260,11 @@ func TestImportStorageFailuresCannotCommitPartialAuthority(t *testing.T) {
 						t.Fatal(e)
 					}
 					mustSeal(t, db, a, p.Source)
+				}
+				if operation == "prepare" {
+					if _, e := db.W.ExecContext(ctx, `DELETE FROM import_placements WHERE id=?`, p.ID); e != nil {
+						t.Fatal(e)
+					}
 				}
 				if operation == "admit" {
 					if _, e := db.W.ExecContext(ctx, `DELETE FROM import_attempt_files WHERE download_id=?`, dl.ID); e != nil {
@@ -237,6 +287,14 @@ func TestImportStorageFailuresCannotCommitPartialAuthority(t *testing.T) {
 				t.Cleanup(func() { db.W = original; _ = writer.Close() })
 				db.W = writer
 				switch operation {
+				case "sidecar-grant":
+					e = db.AuthorizeImportSidecar(ctx, sidecar)
+				case "dispose-stage":
+					e = db.ResolveRetainedImportTargets(ctx, a.ImportAttemptKey, []string{"stage:" + p.ID}, "operator_disposed")
+				case "dispose-stagepath":
+					e = db.ResolveRetainedImportTargets(ctx, a.ImportAttemptKey, []string{"stagepath:" + p.Temporary}, "operator_disposed")
+				case "prepare":
+					e = db.PreparePlacement(ctx, p)
 				case "admit":
 					_, e = db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
 				case "retry":
@@ -265,6 +323,15 @@ func TestImportStorageFailuresCannotCommitPartialAuthority(t *testing.T) {
 					e = db.CompleteImportAttempt(ctx, a.ImportAttemptKey)
 				case "sidecar":
 					e = db.CommitImportSidecar(ctx, sidecar, DeliveryFileImport{ReceiptID: receipt.ID, Path: "movie.mkv", LibraryPath: p.Target, SourceGeneration: dl.GenerationKey})
+				case "manual-fresh":
+					request := dl
+					request.ID = 0
+					request.GenerationKey = ""
+					_, e = db.CommitManualImportAdmission(ctx, request)
+				case "manual-retry":
+					_, e = db.CommitManualImportAdmission(ctx, dl)
+				case "discovery-rejection":
+					e = db.RecordDeliveryDiscoveryRejection(ctx, 1, ports.RunnerDeliveryRejection{Sequence: 7, DeliveryID: "rejected", Reason: "invalid manifest"})
 				}
 				db.W = original
 				if closeErr := writer.Close(); closeErr != nil {

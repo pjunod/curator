@@ -95,3 +95,27 @@ func TestMaintenanceClientRejectsRedirectInvalidResponseAndBadArguments(t *testi
 		t.Fatal("connection failure accepted")
 	}
 }
+
+func TestMaintenanceClientResolvesWildcardHostsAndRejectsTruncatedBody(t *testing.T) {
+	maintenanceServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, `{"phase":"accepting"}`) })
+	t.Setenv("MONARR_HOST", "0.0.0.0")
+	if e := runMaintenance(t.Context(), []string{"status"}, strings.NewReader("{}"), io.Discard); e != nil {
+		t.Fatal(e)
+	}
+	t.Setenv("MONARR_HOST", "invalid\nhost")
+	if e := runMaintenance(t.Context(), []string{"status"}, strings.NewReader("{}"), io.Discard); e == nil {
+		t.Fatal("invalid request host accepted")
+	}
+	t.Setenv("MONARR_HOST", "::")
+	t.Setenv("MONARR_PORT", "1")
+	if e := runMaintenance(t.Context(), []string{"status"}, strings.NewReader("{}"), io.Discard); e == nil || !strings.Contains(e.Error(), "[::1]") {
+		t.Fatalf("IPv6 wildcard was not bound to loopback: %v", e)
+	}
+	maintenanceServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, _ = io.WriteString(w, `{}`)
+	})
+	if e := runMaintenance(t.Context(), []string{"status"}, strings.NewReader("{}"), io.Discard); e == nil {
+		t.Fatal("truncated maintenance response accepted")
+	}
+}

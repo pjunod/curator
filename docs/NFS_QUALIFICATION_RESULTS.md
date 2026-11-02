@@ -54,7 +54,9 @@ The application campaign freezes source/build receipts, Linux app/helper hashes,
 immutable base-image ID, controller and deployment script. Each exclusive Compose
 project uses an isolated local database, read-only source, private NAS target,
 no network, no published ports and no restart policy. No production service is
-stopped or replaced. The app is the reviewed PR implementation at `75460a3`.
+stopped or replaced. The initial app is the reviewed PR implementation at `75460a3`; a targeted
+cancellation/restart follow-up uses `0993c17`, after correcting durable-before-
+signal ordering. Both runs freeze independent binary/source receipts.
 
 The scenarios cover drain/abort/re-drain with live status and rejected mutation,
 actual old-container exit before replacement, cancellation followed by restart,
@@ -126,3 +128,16 @@ raw prototype trials under `/home/pjunod/codex-nfs-qualification/completion-f2ce
 and application runs under `app-completion-75460a3`. Original and revised
 classifications are distinct. Source edits and receipts are outside compiler
 cache directories. Live or uncertain objects are never removed by a timeout.
+
+## 5. Cancellation ordering follow-up
+
+Race CI exposed an early-signal ordering window: a writer could unwind before
+its cancellation intent committed. Signaling now follows the durable commit;
+failed journal persistence leaves the actual writer running. A deterministic
+regression injects that persistence failure. The rebuilt `0993c17` app repeated
+the unlimited-memory 10 GiB cancellation/restart scenario in a fresh scratch
+project: actual writable-descriptor progress was confirmed, cancellation was
+durable, the writer actually exited, and the restarted process retained the same
+cancelled epoch without re-importing. The captured manifest reports completion.
+This follow-up updates cancellation qualification; it does not turn the failed
+512 MiB shape or untested coordination faults into passes.

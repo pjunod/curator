@@ -264,3 +264,69 @@ func TestFailedCancellationPersistenceDoesNotSignalActualWriter(t *testing.T) {
 	}
 	svc.finishCancelledImport(writer, a.ImportAttemptKey)
 }
+
+func TestCancellationBookkeepingFailuresKeepIntentAndDoNotInventCompletion(t *testing.T) {
+	for _, phase := range []string{"control-read", "finalize"} {
+		t.Run(phase, func(t *testing.T) {
+			svc, db, itemID := setup(t, nil, &fakeClient{})
+			ctx := context.Background()
+			dl := insertImportable(t, db, itemID, "/source/video")
+			dl.State = "downloaded"
+			if e := db.UpdateDownloadHandoff(ctx, dl); e != nil {
+				t.Fatal(e)
+			}
+			a, e := db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+			if e != nil {
+				t.Fatal(e)
+			}
+			trigger := `CREATE TRIGGER fail_cancel BEFORE INSERT ON import_attempt_controls BEGIN SELECT RAISE(ABORT,'control unavailable'); END`
+			if phase == "finalize" {
+				trigger = `CREATE TRIGGER fail_cancel BEFORE UPDATE ON downloads BEGIN SELECT RAISE(ABORT,'finalization unavailable'); END`
+			}
+			if _, e = db.W.ExecContext(ctx, trigger); e != nil {
+				t.Fatal(e)
+			}
+			if _, e = svc.CancelImportAttempt(ctx, dl.ID, &a.ImportAttemptKey); e == nil {
+				t.Fatal("bookkeeping failure reported cancellation complete")
+			}
+			current, e := db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey)
+			want := ""
+			if phase == "finalize" {
+				want = "pending"
+			}
+			if e != nil || current.Outcome != want {
+				t.Fatalf("failed bookkeeping lost durable boundary: %+v %v", current, e)
+			}
+			if _, e = db.W.ExecContext(ctx, `DROP TRIGGER fail_cancel`); e != nil {
+				t.Fatal(e)
+			}
+			result, e := svc.CancelImportAttempt(ctx, dl.ID, &a.ImportAttemptKey)
+			if e != nil || result.Status != "cancelled" {
+				t.Fatalf("quiescent recovery did not finish: %+v %v", result, e)
+			}
+		})
+	}
+}
+
+func TestCompletedLibraryTransitionWinsLateCancellationWithoutSignaling(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	dl := insertImportable(t, db, itemID, "/source/video")
+	a, e := db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+	if e != nil {
+		t.Fatal(e)
+	}
+	// Model the persisted library transition observed before the final control
+	// stamp. A late request reconciles completion instead of cancelling it.
+	dl.State = "imported"
+	if e = db.UpdateDownloadHandoff(ctx, dl); e != nil {
+		t.Fatal(e)
+	}
+	writer, cancel := context.WithCancel(ctx)
+	defer cancel()
+	svc.importJobs = map[int64]*importTicket{dl.ID: {attempt: a.ImportAttemptKey, cancel: cancel}}
+	result, e := svc.CancelImportAttempt(ctx, dl.ID, &a.ImportAttemptKey)
+	if !errors.Is(e, sqlite.ErrImportCompleted) || result.Status != "completed" || writer.Err() != nil {
+		t.Fatalf("late cancellation overrode completion: %+v %v %v", result, e, writer.Err())
+	}
+}
