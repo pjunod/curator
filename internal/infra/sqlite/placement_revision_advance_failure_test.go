@@ -16,12 +16,8 @@ func TestCommitPlacementRollsBackWhenRecoveryRevisionAdvanceFails(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	revision, err := db.LibraryRevision(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
 	const importID = "revision-advance-failure"
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES(?,?,json_object('accepted_revision',?),?)`, importID, "importing", revision, time.Now().UnixMilli()); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES(?,?,?,?)`, importID, "importing", leasedRecoveryData(t, db, itemID), time.Now().UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	p := Placement{

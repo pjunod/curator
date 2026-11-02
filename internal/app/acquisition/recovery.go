@@ -89,22 +89,22 @@ type RecoveryPreview struct {
 	CopyBytes int64                 `json:"copy_bytes"`
 }
 type RecoveryTargetSnapshot struct {
-	Revision int64             `json:"revision"`
-	Metadata string            `json:"metadata"`
-	Files    map[string]string `json:"files"`
+	Lease    sqlite.RecoveryLease `json:"lease"`
+	Metadata string               `json:"metadata"`
+	Files    map[string]string    `json:"files"`
 }
 type RecoveryImport struct {
-	Destinations     map[string]string      `json:"destinations"`
-	CurrentFile      string                 `json:"current_file,omitempty"`
-	CopiedBytes      int64                  `json:"copied_bytes,omitempty"`
-	TotalBytes       int64                  `json:"total_bytes,omitempty"`
-	AcceptedRevision int64                  `json:"accepted_revision"`
-	TargetSnapshot   RecoveryTargetSnapshot `json:"target_snapshot"`
-	ID               string                 `json:"id"`
-	State            string                 `json:"state"`
-	Request          RecoveryRequest        `json:"request"`
-	Recovery         RunnerRecovery         `json:"recovery"`
-	Error            string                 `json:"error,omitempty"`
+	Destinations   map[string]string      `json:"destinations"`
+	CurrentFile    string                 `json:"current_file,omitempty"`
+	CopiedBytes    int64                  `json:"copied_bytes,omitempty"`
+	TotalBytes     int64                  `json:"total_bytes,omitempty"`
+	AcceptedLease  sqlite.RecoveryLease   `json:"accepted_lease"`
+	TargetSnapshot RecoveryTargetSnapshot `json:"target_snapshot"`
+	ID             string                 `json:"id"`
+	State          string                 `json:"state"`
+	Request        RecoveryRequest        `json:"request"`
+	Recovery       RunnerRecovery         `json:"recovery"`
+	Error          string                 `json:"error,omitempty"`
 }
 
 func (s *Service) RecoverySettings(ctx context.Context) (RecoverySettings, error) {
@@ -215,11 +215,11 @@ func (s *Service) recoveryPayload(ctx context.Context, r RunnerRecovery) (string
 }
 func (s *Service) targetSnapshot(ctx context.Context, itemID, copyID int64) (RecoveryTargetSnapshot, string, error) {
 	snapshot := RecoveryTargetSnapshot{Files: map[string]string{}}
-	revision, err := s.db.LibraryRevision(ctx)
+	lease, err := s.db.RecoveryLease(ctx, itemID)
 	if err != nil {
 		return snapshot, "", err
 	}
-	snapshot.Revision = revision
+	snapshot.Lease = lease
 	item, err := s.db.GetMediaItemFull(ctx, itemID)
 	if err != nil {
 		return snapshot, "", err
@@ -299,12 +299,12 @@ func (s *Service) targetSnapshot(ctx context.Context, itemID, copyID int64) (Rec
 		}
 		snapshot.Files[f.Path] = fmt.Sprintf("%x", sha256.Sum256(raw))
 	}
-	after, err := s.db.LibraryRevision(ctx)
+	after, err := s.db.RecoveryLease(ctx, itemID)
 	if err != nil {
 		return snapshot, "", err
 	}
-	if after != revision {
-		return snapshot, "", fmt.Errorf("library changed while building preview; retry")
+	if after != lease {
+		return snapshot, "", fmt.Errorf("this title changed while building preview; retry")
 	}
 	return snapshot, dest, nil
 }
@@ -321,19 +321,19 @@ func (s *Service) validateRecoveryTarget(ctx context.Context, r RecoveryImport) 
 	if err != nil {
 		return err
 	}
-	revision, err := s.db.LibraryRevision(ctx)
+	lease, err := s.db.RecoveryLease(ctx, r.Request.MediaItemID)
 	if err != nil {
 		return err
 	}
-	if revision != persisted.AcceptedRevision {
-		return fmt.Errorf("library changed since preview; new preview required")
+	if lease != persisted.AcceptedLease {
+		return fmt.Errorf("this title or the library settings changed since preview; new preview required")
 	}
 
 	current, _, err := s.targetSnapshot(ctx, r.Request.MediaItemID, r.Request.CopyID)
 	if err != nil {
 		return err
 	}
-	expected := RecoveryTargetSnapshot{Revision: current.Revision, Metadata: r.TargetSnapshot.Metadata, Files: map[string]string{}}
+	expected := RecoveryTargetSnapshot{Lease: current.Lease, Metadata: r.TargetSnapshot.Metadata, Files: map[string]string{}}
 	for path, fingerprint := range r.TargetSnapshot.Files {
 		expected.Files[path] = fingerprint
 	}
@@ -583,9 +583,9 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 	}
 	key := preview.Recovery.Installation + "/" + preview.Recovery.ID + "/" + preview.Recovery.ManifestDigest
 	id := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
-	// Recovery is leased against the whole library's revision, so it takes
-	// the whole library (as it always did); a request waits briefly.
-	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 15*time.Second)
+	// Recovery is leased against its own title, so it takes only that
+	// title; a request waits briefly for an import of the same title.
+	ctx, releaseTargets, err := s.waitImportTarget(ctx, req.MediaItemID, 15*time.Second)
 	if err != nil {
 		return RecoveryImport{}, err
 	}
@@ -605,7 +605,7 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 	for _, f := range preview.Files {
 		destinations[f.ID] = f.Destination
 	}
-	r := RecoveryImport{Destinations: destinations, ID: id, State: "queued", Request: req, Recovery: preview.Recovery, TargetSnapshot: snapshot, AcceptedRevision: snapshot.Revision}
+	r := RecoveryImport{Destinations: destinations, ID: id, State: "queued", Request: req, Recovery: preview.Recovery, TargetSnapshot: snapshot, AcceptedLease: snapshot.Lease}
 	raw, err := json.Marshal(r)
 	if err != nil {
 		return r, err
@@ -630,7 +630,7 @@ func (s *Service) QueueRecovery(ctx context.Context, req RecoveryRequest) (Recov
 			existing.Destinations = destinations
 			existing.Request = req
 			existing.TargetSnapshot = snapshot
-			existing.AcceptedRevision = snapshot.Revision
+			existing.AcceptedLease = snapshot.Lease
 			existing.State = "queued"
 			existing.Error = ""
 			return existing, s.saveRecoveryImport(ctx, existing)
@@ -669,13 +669,13 @@ func (s *Service) saveRecoveryImport(ctx context.Context, r RecoveryImport) erro
 	return err
 }
 
-// lockLibraryForRecovery waits for the whole library without queuing (titles
-// keep importing meanwhile), saying on the recovery that it is waiting. Its
-// preview is leased against the library-wide revision, so the moment another
-// title commits the lease is gone and waiting longer is pointless: it fails
-// at once with that reason instead of holding the sweep until the library
-// goes quiet and then failing anyway.
-func (s *Service) lockLibraryForRecovery(ctx context.Context, r RecoveryImport) (context.Context, func(), error) {
+// lockTitleForRecovery waits for the recovery's title without queuing,
+// saying on the recovery that it is waiting. Its preview is leased against
+// that title, so the moment the title commits something else the lease is
+// gone and waiting longer is pointless: it fails at once with that reason
+// instead of holding the sweep until the title goes quiet and failing anyway.
+// Other titles import and publish throughout.
+func (s *Service) lockTitleForRecovery(ctx context.Context, r RecoveryImport) (context.Context, func(), error) {
 	waiting := false
 	defer func() {
 		if waiting {
@@ -683,38 +683,38 @@ func (s *Service) lockLibraryForRecovery(ctx context.Context, r RecoveryImport) 
 		}
 	}()
 	for {
-		locked, release, err := s.lockAllImportTargets(ctx, 30*time.Second)
+		locked, release, err := s.waitImportTarget(ctx, r.Request.MediaItemID, 30*time.Second)
 		if err == nil {
 			return locked, release, nil
 		}
-		if !errors.Is(err, ErrImportTargetsBusy) {
+		if !errors.Is(err, ErrImportTargetBusy) {
 			return ctx, nil, err
 		}
 		persisted, err := s.RecoveryImport(ctx, r.ID)
 		if err != nil {
 			return ctx, nil, err
 		}
-		revision, err := s.db.LibraryRevision(ctx)
+		lease, err := s.db.RecoveryLease(ctx, r.Request.MediaItemID)
 		if err != nil {
 			return ctx, nil, err
 		}
-		if revision != persisted.AcceptedRevision {
-			return ctx, nil, fmt.Errorf("library changed while recovery waited for imports in progress; preview again")
+		if lease != persisted.AcceptedLease {
+			return ctx, nil, fmt.Errorf("this title changed while recovery waited for its import in progress; preview again")
 		}
 		if !waiting {
 			waiting = true
-			s.log.Info("recovery waiting for imports in progress to finish", "id", r.ID)
+			s.log.Info("recovery waiting for its title's import in progress to finish", "id", r.ID, "item", r.Request.MediaItemID)
 			_, _ = s.db.W.ExecContext(ctx, `UPDATE recovery_imports SET data=json_set(data,'$.error',?) WHERE id=? AND state='importing'`, recoveryWaitingDetail, r.ID)
 		}
 	}
 }
 
-const recoveryWaitingDetail = "Waiting for imports in progress to finish; recovery takes the whole library."
+const recoveryWaitingDetail = "Waiting for this title's import in progress to finish."
 
 func (s *Service) runRecovery(ctx context.Context, r RecoveryImport) error {
-	// The preview's revision lease covers the whole library: another title's
-	// commit would invalidate it, so recovery excludes every title.
-	ctx, releaseTargets, err := s.lockLibraryForRecovery(ctx, r)
+	// The preview's lease covers this title (and shared settings), so recovery
+	// excludes only this title's other work.
+	ctx, releaseTargets, err := s.lockTitleForRecovery(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -1235,13 +1235,10 @@ func (s *Service) ackRecoveryCancel(ctx context.Context, r RecoveryImport) {
 		}
 		return
 	}
-	targetCtx, releaseTargets, lockErr := s.lockAllImportTargets(ctx, 0)
-	if lockErr != nil {
-		err = lockErr
-	} else {
-		err = s.rollbackRecoveryPlacements(targetCtx, r.ID)
-		releaseTargets()
-	}
+	// Its prepared placements are all for its own title.
+	targetCtx, releaseTargets := s.lockImportTarget(ctx, r.Request.MediaItemID)
+	err = s.rollbackRecoveryPlacements(targetCtx, r.ID)
+	releaseTargets()
 	if err != nil {
 		r.State, r.Error = "cancel_pending", "Cancellation reconciliation: "+err.Error()
 		_ = s.saveRecoveryImport(ctx, r)

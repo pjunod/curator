@@ -15,7 +15,7 @@ func TestPlacementReceiptAndMetadataAreAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES('import','importing',json_object('accepted_revision',(SELECT revision FROM lifecycle_library_revision WHERE id=1)),0)`); err != nil {
+	if _, err = db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES('import','importing',?,0)`, leasedRecoveryData(t, db, item)); err != nil {
 		t.Fatal(err)
 	}
 	p := Placement{ID: "placement", ItemID: item, Target: "/library/recovered.mkv", Size: 42, SHA256: "digest", RecoveryImport: "import", RecoveryFile: "file", State: "prepared", Quality: quality.Quality{Resolution: 1080}}

@@ -1276,8 +1276,13 @@ that it stopped, then keeps the source for review.
 Recovery inspection uses only Curator's bounded native parser. The UI reports
 “Media recognized; completeness not proven.” An intact copy can faithfully copy a
 bad source. Review episode mappings and concrete destinations before importing.
-A stale library revision requires a fresh preview, including after a concurrent
-ordinary import or metadata edit.
+A recovery is tied to the title it imports into. Changing that title — an
+ordinary import of it, a metadata or episode edit, a file added or removed —
+or changing quality profiles, root folders or custom formats requires a fresh
+preview. Other titles keep importing while a recovery runs and do not affect
+it. If the title is being imported when the recovery starts, the recovery shows
+"Waiting for this title's import in progress to finish." and fails at once,
+asking for a new preview, if that import changes the title.
 
 Back up Curator's database and library in one coordinated maintenance window.
 After restoring either, keep Runner sources held while reviewing recovered

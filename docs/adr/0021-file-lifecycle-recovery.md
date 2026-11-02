@@ -41,9 +41,19 @@ Verified temporary and rollback files are cleaned after the commit.
 
 A database revision detects library, profile, root, copy and episode changes during
 a recovery copy. The metadata transaction compares the accepted revision and
-advances it with its own writes. The initial revision is global, deliberately
-conservative: an unrelated library edit can require a fresh recovery preview.
-The coordinator serializes imports while network downloading stays concurrent.
+advances it with its own writes. The initial revision was global, deliberately
+conservative: an unrelated library edit required a fresh recovery preview, and
+recovery took every title's import authority.
+
+**Amended (v0.38.9, migration 0069):** the lease is per title. Triggers keep
+`lifecycle_item_revision` (one row per media item: the item, its copies,
+seasons, episodes, files and file-episode links, moves counting for both
+titles) and `lifecycle_shared_revision` (quality profiles, root folders,
+custom formats). A recovery accepts both for its target title and takes only
+that title's import authority, so other titles import and publish while it
+runs. An import accepted under the old global revision is never current and
+needs a fresh preview. `lifecycle_library_revision` is unchanged and still
+fences retained acquisition plans.
 
 A persisted import and receipt outbox survive browser closure and daemon restart.
 Final delivery acknowledgement and local completion commit in one transaction.

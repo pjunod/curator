@@ -17,11 +17,7 @@ func TestCommitPlacementRejectsStaleRecoveryRevisionWithoutPartialReceipt(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	revision, err := db.LibraryRevision(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES('placement-revision-cas','importing',json_object('accepted_revision',?),?)`, revision, time.Now().UnixMilli()); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES('placement-revision-cas','importing',?,?)`, leasedRecoveryData(t, db, itemID), time.Now().UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	p := Placement{
@@ -32,10 +28,8 @@ func TestCommitPlacementRejectsStaleRecoveryRevisionWithoutPartialReceipt(t *tes
 	if err := db.PreparePlacement(ctx, p); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `UPDATE lifecycle_library_revision SET revision=revision+1 WHERE id=1`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.CommitPlacement(ctx, p); err == nil || !strings.Contains(err.Error(), "library changed during recovery") {
+	touchTitle(t, db, itemID)
+	if _, err := db.CommitPlacement(ctx, p); err == nil || !strings.Contains(err.Error(), "changed during recovery") {
 		t.Fatalf("stale recovery placement commit error=%v, want revision conflict", err)
 	}
 	assertUncommitted := func() {
@@ -60,9 +54,7 @@ func TestCommitPlacementRejectsStaleRecoveryRevisionWithoutPartialReceipt(t *tes
 	}
 	assertUncommitted()
 
-	if _, err := db.W.ExecContext(ctx, `UPDATE recovery_imports SET data=json_set(data,'$.accepted_revision',(SELECT revision FROM lifecycle_library_revision WHERE id=1)) WHERE id=?`, p.RecoveryImport); err != nil {
-		t.Fatal(err)
-	}
+	acceptCurrentRecoveryLease(t, db, p.RecoveryImport)
 	fileID, err := db.CommitPlacement(ctx, p)
 	if err != nil || fileID == 0 {
 		t.Fatalf("prepared recovery intent did not commit after fresh revision acceptance: fileID=%d err=%v", fileID, err)
