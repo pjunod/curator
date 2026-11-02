@@ -118,7 +118,7 @@ for (const width of [390, 1280]) {
     await expect(trace.getByText(/acknowledgement: accepted/)).toBeVisible()
     await expect(trace.getByText(/accepted accepted/)).toHaveCount(0)
     await trace.getByText('Curator attempt history (2)', { exact: true }).click()
-    await trace.getByText('Runner source cleanup attempts (2)', { exact: true }).click()
+    await trace.getByText('Recorded cleanup attempt details (2)', { exact: true }).click()
     await trace.getByText('Per-file outcomes (1 publication files)', { exact: true }).click()
     await expect(trace.getByText(/blocked for at least 30 minutes/)).toBeVisible()
     await expect(trace.getByText(/work 4s/).first()).toBeVisible()

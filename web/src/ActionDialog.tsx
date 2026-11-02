@@ -1,4 +1,5 @@
 import { useId, useLayoutEffect, useRef, type ReactNode, type SyntheticEvent, type RefObject } from 'react'
+import { rootScrollPadding, viewportChromeInsets } from './viewportChrome'
 
 // Safari does not focus buttons on pointer activation. Remember the actual
 // opener through focus before mounting a dialog so dismissal returns to it.
@@ -63,23 +64,13 @@ export function ActionNotice({ children, warning = false, revision = 0 }: {
       previous.current = { text: node.textContent, revision }
       if (!node.closest('dialog')) {
         // Page feedback shares the viewport with navigation; native dialogs
-        // sit above it. Measure the actual bars, including safe-area padding
-        // and Theater's wrapped tablet navigation, rather than guessing heights.
-        let top = 16
-        let bottom = 16
-        document.querySelectorAll<HTMLElement>('.mobile-top, .mobile-tabs, [data-layout="theater"] .sidebar').forEach((bar) => {
-          const style = getComputedStyle(bar)
-          if (style.position !== 'fixed' && style.position !== 'sticky') return
-          // Computed 'top' on fixed bottom tabs is a resolved pixel value,
-          // even though the stylesheet specifies only bottom: 0.
-          if (bar.matches('.mobile-tabs') && style.position === 'fixed') {
-            bottom = Math.max(bottom, bar.offsetHeight + (parseFloat(style.bottom) || 0) + 16)
-          } else {
-            top = Math.max(top, bar.offsetHeight + (parseFloat(style.top) || 0) + 16)
-          }
-        })
-        node.style.scrollMarginTop = `${top}px`
-        node.style.scrollMarginBottom = `${bottom}px`
+        // sit above it. The shell normally reserves its bars as root scroll
+        // padding; scroll margin adds breathing room plus any bar height that
+        // padding does not already cover, so the two never count it twice.
+        const bars = viewportChromeInsets()
+        const reserved = rootScrollPadding()
+        node.style.scrollMarginTop = `${Math.max(16, bars.top + 16 - reserved.top)}px`
+        node.style.scrollMarginBottom = `${Math.max(16, bars.bottom + 16 - reserved.bottom)}px`
       }
       node.scrollIntoView({ block: 'nearest', behavior: 'instant' })
     }

@@ -11,6 +11,15 @@ async function inViewport(locator: Locator) {
     return box.top >= 0 && box.left >= 0 && box.bottom <= innerHeight + 1 && box.right <= innerWidth + 1
   })).toBe(true)
 }
+// IntersectionObserver visibility misses the opaque phone tab bar and sticky
+// header. The control's centre must be the control, not the shell over it.
+async function clearOfShell(locator: Locator) {
+  await expect.poll(() => locator.evaluate(node => {
+    const box = node.getBoundingClientRect()
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+    return !!hit && (hit === node || node.contains(hit))
+  })).toBe(true)
+}
 async function screenshot(page: Page, name: string) {
   const directory = process.env.LIFECYCLE_SCREENSHOTS_DIR
   if (!directory) return
@@ -109,9 +118,11 @@ test('joined timing, actual retry clicks and receipt pagination stay visible', a
     const button = trace.getByRole('button', { name, exact: true })
     await button.scrollIntoViewIfNeeded()
     await inViewport(button)
+    await clearOfShell(button)
     await button.click()
     const result = trace.getByRole('status').filter({ hasText: 'Retry queued' })
     await inViewport(result)
+    await clearOfShell(result)
     await expect(button).toBeFocused()
   }
   await screenshot(page, 'lifecycle-retry-controls')
