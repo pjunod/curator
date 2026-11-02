@@ -214,7 +214,11 @@ func TestExplicitDeliveryDeleteJournalMigrationDownRequiresEmptyJournal(t *testi
 		RequestToken: receipt.Delivery.RequestToken, PublicationGeneration: receipt.Delivery.PublicationGeneration,
 		Files: []ExplicitDeliveryDeleteFile{{Path: manifest.Path, ReviewedPath: filepath.Join("/reviewed/payload", filepath.FromSlash(manifest.Path)), SnapshotIdentity: "migration-snapshot", ParentIdentity: "migration-parent"}},
 	}
-	if err := db.PrepareExplicitDeliveryDeleteBatch(ctx, batch); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO runner_delivery_explicit_delete_batches(batch_id,receipt_id,payload_path,inventory_fingerprint,publication_directory_identity,storage_identity,generation_key,request_token,publication_generation,created_at) VALUES(?,?,?,?,?,?,?,?,?,0)`, batch.ID, batch.ReceiptID, batch.PayloadPath, batch.InventoryFingerprint, batch.PublicationDirectoryIdentity, batch.StorageIdentity, batch.GenerationKey, batch.RequestToken, batch.PublicationGeneration); err != nil {
+		t.Fatal(err)
+	}
+	file := batch.Files[0]
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO runner_delivery_explicit_delete_files(batch_id,path,reviewed_path,snapshot_identity,parent_identity) VALUES(?,?,?,?,?)`, batch.ID, file.Path, file.ReviewedPath, file.SnapshotIdentity, file.ParentIdentity); err != nil {
 		t.Fatal(err)
 	}
 	if err := goose.DownToContext(ctx, db.W, "migrations", 60); err == nil {

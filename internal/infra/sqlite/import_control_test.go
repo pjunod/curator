@@ -310,3 +310,179 @@ func TestFailedManualSelectionCannotClearPriorCancellation(t *testing.T) {
 		t.Fatalf("successful selection not atomically admitted: %+v %v", control, e)
 	}
 }
+
+func TestImportPlanCannotChangeUnderExistingPublication(t *testing.T) {
+	db, dl, a := importControlFixture(t)
+	ctx := context.Background()
+	for _, files := range [][]ImportAttemptFile{{{Source: "", Kind: "media"}}, {{Source: "/source/one", Kind: "unknown"}}, {{Source: "/source/one", Kind: "media"}, {Source: "/source/one", Kind: "media"}}} {
+		if e := db.SealImportAttempt(ctx, a.ImportAttemptKey, files, false); !errors.Is(e, ErrImportPlanChanged) {
+			t.Fatalf("invalid plan admitted: %v", e)
+		}
+	}
+	mustSeal(t, db, a, "/source/one", "/source/two")
+	if e := db.SealImportAttempt(ctx, a.ImportAttemptKey, []ImportAttemptFile{{Source: "/source/one", Kind: "media"}}, true); e != nil {
+		t.Fatal(e)
+	}
+	if e := db.SealImportAttempt(ctx, a.ImportAttemptKey, []ImportAttemptFile{{Source: "/source/one", Kind: "media"}}, false); !errors.Is(e, ErrImportPlanChanged) {
+		t.Fatal("silent plan shrink", e)
+	}
+	if e := db.SealImportAttempt(ctx, a.ImportAttemptKey, []ImportAttemptFile{{Source: "/source/other", Kind: "media"}}, true); !errors.Is(e, ErrImportPlanChanged) {
+		t.Fatal("silent plan substitution", e)
+	}
+	if e := db.CompleteImportAttempt(ctx, a.ImportAttemptKey); !errors.Is(e, ErrImportPlanChanged) {
+		t.Fatal("unfinished plan completed", e)
+	}
+	if e := db.ResolveImportFile(ctx, a.ImportAttemptKey, "/source/one", "skipped", ""); e != nil {
+		t.Fatal(e)
+	}
+	if e := db.ResolveImportFile(ctx, a.ImportAttemptKey, "/source/one", "committed", ""); !errors.Is(e, ErrImportPlanChanged) {
+		t.Fatal("resolved outcome silently changed", e)
+	}
+	if e := db.ResolveImportFile(ctx, a.ImportAttemptKey, "/source/two", "invented", ""); !errors.Is(e, ErrImportPlanChanged) {
+		t.Fatal("invalid outcome admitted", e)
+	}
+	wrong := a.ImportAttemptKey
+	wrong.GenerationKey += "-other"
+	if _, e := db.RequestImportCancellation(ctx, wrong); !errors.Is(e, ErrImportAttemptChanged) {
+		t.Fatal("foreign generation cancelled", e)
+	}
+	if _, e := db.EnsureImportAttempt(ctx, dl.ID, wrong.GenerationKey); !errors.Is(e, ErrImportAttemptChanged) {
+		t.Fatal("foreign generation initialized", e)
+	}
+	if _, e := db.EnsureImportAttempt(ctx, 999999, "missing"); !errors.Is(e, ErrNotFound) {
+		t.Fatal(e)
+	}
+}
+
+func TestImportTransactionFailuresKeepDurablePriorState(t *testing.T) {
+	for _, phase := range []string{"seal", "grant", "result", "cancel-intent", "finalize"} {
+		t.Run(phase, func(t *testing.T) {
+			db, dl, a := importControlFixture(t)
+			ctx := context.Background()
+			source := "/source/video"
+			if phase != "seal" {
+				mustSeal(t, db, a, source)
+			}
+			p := controlPlacement(dl, a, "fault", source, "/library/video")
+			if e := db.PreparePlacement(ctx, p); e != nil {
+				t.Fatal(e)
+			}
+			if phase == "result" {
+				if e := db.AuthorizeImportPlacement(ctx, p); e != nil {
+					t.Fatal(e)
+				}
+			}
+			if phase == "finalize" {
+				if _, e := db.RequestImportCancellation(ctx, a.ImportAttemptKey); e != nil {
+					t.Fatal(e)
+				}
+			}
+			trigger := map[string]string{
+				"seal":          `CREATE TRIGGER fail_control BEFORE INSERT ON import_attempt_files BEGIN SELECT RAISE(ABORT,'plan persistence failed'); END`,
+				"grant":         `CREATE TRIGGER fail_control BEFORE INSERT ON import_publication_authorizations BEGIN SELECT RAISE(ABORT,'grant persistence failed'); END`,
+				"result":        `CREATE TRIGGER fail_control BEFORE UPDATE ON import_attempt_files WHEN NEW.outcome='committed' BEGIN SELECT RAISE(ABORT,'result persistence failed'); END`,
+				"cancel-intent": `CREATE TRIGGER fail_control BEFORE UPDATE ON import_attempt_controls WHEN NEW.outcome='pending' BEGIN SELECT RAISE(ABORT,'intent persistence failed'); END`,
+				"finalize":      `CREATE TRIGGER fail_control BEFORE UPDATE ON downloads BEGIN SELECT RAISE(ABORT,'handoff persistence failed'); END`,
+			}[phase]
+			if _, e := db.W.ExecContext(ctx, trigger); e != nil {
+				t.Fatal(e)
+			}
+			var e error
+			switch phase {
+			case "seal":
+				e = db.SealImportAttempt(ctx, a.ImportAttemptKey, []ImportAttemptFile{{Source: source, Kind: "media"}}, false)
+			case "grant":
+				e = db.AuthorizeImportPlacement(ctx, p)
+			case "result":
+				_, e = db.CommitPlacement(ctx, p)
+			case "cancel-intent":
+				_, e = db.RequestImportCancellation(ctx, a.ImportAttemptKey)
+			case "finalize":
+				_, e = db.FinalizeImportCancellation(ctx, a.ImportAttemptKey)
+			}
+			if e == nil {
+				t.Fatal("failed persistence reported success")
+			}
+			current, e := db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey)
+			if e != nil {
+				t.Fatal(e)
+			}
+			expectedOutcome := ""
+			if phase == "finalize" {
+				expectedOutcome = "pending"
+			}
+			if current.Outcome != expectedOutcome {
+				t.Fatalf("partial control transition: %+v", current)
+			}
+			if phase == "seal" && current.PlanSealed {
+				t.Fatal("partially sealed plan")
+			}
+			if phase == "grant" && current.PendingPublications != 0 {
+				t.Fatal("partially authorized grant")
+			}
+			if phase == "result" {
+				files, e := db.ImportAttemptFiles(ctx, a.ImportAttemptKey)
+				if e != nil || files[0].Outcome != "pending" || current.PendingPublications != 1 {
+					t.Fatalf("partial result: %+v %+v %v", files, current, e)
+				}
+			}
+		})
+	}
+}
+
+func TestRetainedAdoptionAndStageDispositionKeepTheirSeparateCustody(t *testing.T) {
+	db, dl, a := importControlFixture(t)
+	ctx := context.Background()
+	mustSeal(t, db, a, "/source/video")
+	p := controlPlacement(dl, a, "adopt", "/source/video", "/library/video")
+	if e := db.PreparePlacement(ctx, p); e != nil {
+		t.Fatal(e)
+	}
+	if e := db.AuthorizeImportPlacement(ctx, p); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := db.RequestImportCancellation(ctx, a.ImportAttemptKey); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := db.RetainUncertainImport(ctx, a.ImportAttemptKey, []string{"placement:adopt"}); e != nil {
+		t.Fatal(e)
+	}
+	fid, e := db.UpsertFile(ctx, dl.MediaItemID, 0, p.Target, 42)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = db.W.ExecContext(ctx, `UPDATE media_files SET file_generation='reviewed-current-generation' WHERE id=?`, fid); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.ResolveRetainedImportTargets(ctx, a.ImportAttemptKey, []string{"placement:adopt"}, "operator_adopted"); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.AssertPublicationTargetAvailable(ctx, p.Target); e != nil {
+		t.Fatal(e)
+	}
+	refs, e := db.ImportSourceCustodyPaths(ctx)
+	if e != nil || len(refs) == 0 {
+		t.Fatal("adoption forgot source custody", e)
+	}
+	retry, e := db.BeginImportRetry(ctx, dl.ID, dl.GenerationKey)
+	if e != nil {
+		t.Fatal(e)
+	}
+	p2 := controlPlacement(dl, retry, "preauth", "/source/two", "/library/two")
+	if e = db.PreparePlacement(ctx, p2); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.ResolveRetainedImportTargets(ctx, retry.ImportAttemptKey, []string{"stage:preauth"}, "operator_disposed"); e != nil {
+		t.Fatal(e)
+	}
+	stage, e := db.GetPlacement(ctx, "preauth")
+	if e != nil || stage.State != "abandoned" {
+		t.Fatalf("%+v %v", stage, e)
+	}
+	if e = db.ResolveRetainedImportTargets(ctx, retry.ImportAttemptKey, nil, "operator_adopted"); !errors.Is(e, ErrImportReviewRequired) {
+		t.Fatal(e)
+	}
+	if e = db.ResolveRetainedImportTargets(ctx, retry.ImportAttemptKey, []string{"missing"}, "automatic"); e == nil {
+		t.Fatal("implicit cleanup disposition accepted")
+	}
+}

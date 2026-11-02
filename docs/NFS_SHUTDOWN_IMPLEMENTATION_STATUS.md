@@ -102,3 +102,12 @@ those were repaired and separately reviewed. Browser installation was missing
 and is now present. Main subsequently added migrations63–68 through PR82, so the
 completion migration is69 and version0.38.9; latest main is incorporated before
 repeating invalidated gates. No failing check is represented as passing.
+
+All four local application gates passed after current-main repairs: Go1.25.7,
+lint0 issues, web133 tests and browser212 tests. The separate release coverage
+check measured84.9%, below the86.0% floor; meaningful control/fault-path coverage
+is being added, with no lowered floor or exclusions. Self-hosted CI is queued
+(m6 offline, nynuc busy). The prototype campaign completed120 trials with30
+confirmed TERM observations. Astra cleared the real-app scratch qualification
+controller after provenance, log lifetime, actual-copy and exit-evidence fixes;
+its run and numeric deployment grace are still pending.

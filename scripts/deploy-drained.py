@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 
 class Deployment:
@@ -24,10 +25,13 @@ class Deployment:
         self.path = Path(receipt)
         self.run, self.clock, self.sleep = run, clock, sleep
         self.record = {}
+        self.measurement_session = uuid.uuid4().hex
+        self.term_started = None
 
     def save(self, phase):
         self.record["phase"] = phase
         self.record["updatedAt"] = time.time()
+        self.record.setdefault("phaseTimes", {}).setdefault(phase, self.record["updatedAt"])
         if self.path.is_symlink():
             raise RuntimeError("receipt must not be a symlink")
         # Atomic durable replacement preserves the owner token across a crash.
@@ -138,6 +142,8 @@ class Deployment:
             # Prevent Docker's restart policy from creating another old writer.
             self.save("restart_disable_requested")
             self.command("update", "--restart=no", self.record["containerId"])
+            self.term_started = self.clock()
+            self.record["termMeasurementSession"] = self.measurement_session
             self.save("term_requested")  # persist before signaling, including a lost client reply
             try:
                 self.command("kill", "--signal=TERM", self.record["containerId"])
@@ -164,6 +170,9 @@ class Deployment:
                 or old["HostConfig"]["RestartPolicy"]["Name"] != "no"):
             raise RuntimeError("actual stopped state was not established; replacement refused")
         self.record["exit"] = state
+        self.record["termToVerifiedExitSeconds"] = self.clock()-self.term_started if self.term_started is not None else None
+        if self.term_started is None:
+            self.record["exitTimingLimitation"] = "resumed receipt; original signal-to-exit monotonic interval unavailable"
         self.save("exit_verified")
         self.verify_daemon_and_service()
         self.compose("up", "--detach", "--no-deps", "--no-build", "--force-recreate", self.record["service"], timeout=120)
