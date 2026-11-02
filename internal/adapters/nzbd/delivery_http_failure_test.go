@@ -247,3 +247,101 @@ func TestDeliveryAcceptanceOutageRetainsRetryAndRequestIdentity(t *testing.T) {
 		t.Fatalf("accept outage lost Retry-After: %T %v", err, err)
 	}
 }
+
+// Callers branch on a non-2xx status (404 means unsupported; 429 and 503
+// carry a retry deadline), so a body that cannot be read only adds detail:
+// the status and Retry-After must survive it on every delivery route.
+func TestDeliveryStatusSurvivesAnUnreadableErrorBody(t *testing.T) {
+	readFailure := errors.New("injected error-body read failure")
+	closeFailure := errors.New("injected error-body close failure")
+	for _, tc := range []struct {
+		name string
+		call func(*Client) error
+	}{
+		{name: "list", call: func(c *Client) error { _, err := c.ListDeliveries(t.Context(), 0, 5); return err }},
+		{name: "get", call: func(c *Client) error { _, err := c.GetDelivery(t.Context(), "d1"); return err }},
+		{name: "accept", call: func(c *Client) error {
+			return c.AcceptDelivery(t.Context(), "d1", ports.RunnerDeliveryAcceptance{ProtocolVersion: 1, PublicationGeneration: "g", ManifestDigest: "d", ConsumerReceiptID: "r"})
+		}},
+		{name: "source cleanup retry", call: func(c *Client) error { _, err := c.RetryDeliverySourceCleanup(t.Context(), "d1"); return err }},
+	} {
+		for _, body := range []struct {
+			name string
+			make func() *controlledResponseBody
+			want string
+		}{
+			{name: "read", make: func() *controlledResponseBody { return &controlledResponseBody{readErr: readFailure} }, want: readFailure.Error()},
+			{name: "close", make: func() *controlledResponseBody {
+				return &controlledResponseBody{reader: strings.NewReader(`{"error":"busy"}`), closeErr: closeFailure}
+			}, want: closeFailure.Error()},
+			{name: "oversize", make: func() *controlledResponseBody {
+				return &controlledResponseBody{reader: strings.NewReader(strings.Repeat("x", (16<<20)+1))}
+			}, want: "exceeds"},
+		} {
+			for _, status := range []int{http.StatusNotFound, http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+				t.Run(tc.name+"/"+body.name+"/"+http.StatusText(status), func(t *testing.T) {
+					client := New(ports.ClientConfig{URL: "http://runner.invalid"})
+					client.http = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+						header := make(http.Header)
+						header.Set("Retry-After", "45")
+						return &http.Response{StatusCode: status, Header: header, Body: body.make()}, nil
+					})}
+					err := tc.call(client)
+					var apiErr *APIError
+					if !errors.As(err, &apiErr) || apiErr.HTTPStatusCode() != status {
+						t.Fatalf("error = %T %v, want APIError with status %d", err, err, status)
+					}
+					if body.name == "read" && !strings.Contains(err.Error(), body.want) {
+						t.Fatalf("error %v dropped the body failure %q", err, body.want)
+					}
+					if deadline := apiErr.RetryDeadline(); deadline.Before(time.Now().Add(40 * time.Second)) {
+						t.Fatalf("Retry-After deadline = %v, want at least 40s ahead", deadline)
+					}
+				})
+			}
+		}
+	}
+}
+
+// The single-row retry exists for a page too large or too malformed to read
+// whole. A transport failure while reading (or closing) a 2xx page is not
+// that: a smaller page would only repeat it, so the page is not re-requested.
+func TestDeliveryPageTransportFailureDoesNotRetrySingleRow(t *testing.T) {
+	readFailure := errors.New("injected page read failure")
+	closeFailure := errors.New("injected page close failure")
+	for _, tc := range []struct {
+		name      string
+		body      func() *controlledResponseBody
+		wantCalls int32
+		wantCause error
+	}{
+		{name: "read failure before any bytes", body: func() *controlledResponseBody { return &controlledResponseBody{readErr: readFailure} }, wantCalls: 1, wantCause: readFailure},
+		{name: "read failure mid page", body: func() *controlledResponseBody {
+			return &controlledResponseBody{reader: io.MultiReader(strings.NewReader(`{"protocolVersion":1,"deliveries":[`), &controlledResponseBody{readErr: readFailure})}
+		}, wantCalls: 1, wantCause: readFailure},
+		{name: "close failure", body: func() *controlledResponseBody {
+			return &controlledResponseBody{reader: strings.NewReader(`{"protocolVersion":1,"deliveries":[`), closeErr: closeFailure}
+		}, wantCalls: 1, wantCause: closeFailure},
+		// Page-content problems still fall back to one row at a time.
+		{name: "malformed page", body: func() *controlledResponseBody { return &controlledResponseBody{reader: strings.NewReader("{")} }, wantCalls: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			client := New(ports.ClientConfig{URL: "http://runner.invalid"})
+			client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: tc.body()}, nil
+			})}
+			_, err := client.ListDeliveries(t.Context(), 0, 5)
+			if err == nil {
+				t.Fatal("failed page returned no error")
+			}
+			if tc.wantCause != nil && !errors.Is(err, tc.wantCause) {
+				t.Fatalf("error %v does not wrap injected cause %v", err, tc.wantCause)
+			}
+			if got := calls.Load(); got != tc.wantCalls {
+				t.Fatalf("page requested %d times, want %d (err=%v)", got, tc.wantCalls, err)
+			}
+		})
+	}
+}

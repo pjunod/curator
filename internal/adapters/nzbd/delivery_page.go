@@ -366,12 +366,17 @@ func (c *Client) listDeliveryPage(req *http.Request, limit int) (ports.RunnerDel
 		}
 		return ports.RunnerDeliveryPage{}, errors.Join(apiError(resp, message), readErr, closeErr)
 	}
-	page, parseErr := readDeliveryPage(resp.Body, limit)
+	body := &deliveryTransportBody{r: resp.Body}
+	page, parseErr := readDeliveryPage(body, limit)
 	closeErr := resp.Body.Close()
 	if closeErr != nil {
 		closeErr = fmt.Errorf("nzbd: close delivery response: %w", closeErr)
 	}
-	if parseErr != nil && closeErr == nil && limit > 1 && req.Context().Err() == nil {
+	// Only a page-content problem (oversize, malformed, protocol violation)
+	// falls back to one row at a time. A transport failure reading or closing
+	// the body is not a page too large to read: a smaller page would only
+	// repeat it.
+	if parseErr != nil && body.err == nil && closeErr == nil && limit > 1 && req.Context().Err() == nil {
 		retry := req.Clone(req.Context())
 		query := retry.URL.Query()
 		query.Set("limit", "1")
@@ -386,4 +391,21 @@ func (c *Client) listDeliveryPage(req *http.Request, limit int) (ports.RunnerDel
 		parseErr = fmt.Errorf("nzbd: bad delivery response (read delivery response): %w", parseErr)
 	}
 	return page, errors.Join(parseErr, closeErr)
+}
+
+// deliveryTransportBody records a failure of the response body itself, so a
+// transport error is told apart from a page whose content could not be used.
+// A clean end of body is not a transport failure: a page cut short there is
+// malformed content.
+type deliveryTransportBody struct {
+	r   io.Reader
+	err error
+}
+
+func (b *deliveryTransportBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) && b.err == nil {
+		b.err = err
+	}
+	return n, err
 }
