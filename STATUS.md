@@ -2,9 +2,10 @@
 
 ## Lifecycle follow-ups after #83 — 2026-11-02 · v0.38.11
 
-**Status:** [PR #88](https://github.com/pjunod/curator/pull/88), draft,
-stacked on #87 (owner: Claude for Paul). Review addressed; full gate next;
-merge after #87.
+**Status:** [PR #88](https://github.com/pjunod/curator/pull/88), ready, on
+`main` after #87 (owner: Claude for Paul). Review addressed; full local gate
+green (`make lint` 0 · `make test` 53 packages ok · `make test-web` 133 ·
+`make test-e2e` 212). CI, merge and deploy to nuc3 next.
 
 #83 repaired main's CI differently from the closed #86. Four of #86's fixes
 were still needed; each was confirmed by a test that fails on main first.
@@ -45,9 +46,10 @@ Decision for Paul to look over: a changed library placement stays `protected`
 
 ## Recovery takes only its own title — 2026-11-02 · v0.38.10
 
-**Status:** [PR #87](https://github.com/pjunod/curator/pull/87) — adversarial
-review addressed; rebased onto main after #83 (which also took migration 0069
-and 0.38.9, so this is migration 0070 and 0.38.10); CI, merge and deploy next.
+**Status:** merged ([PR #87](https://github.com/pjunod/curator/pull/87),
+fb24a61) and deployed to nuc3 2026-11-02: `/api/v1/system/status` reports
+0.38.10, commit fb24a61, schema 70. No recovery rows existed, so none returned
+to review. Rebased onto main after #83, which took migration 0069 and 0.38.9.
 
 Asked by Paul: "fix the recovery scope". A Runner recovery import was leased
 against `lifecycle_library_revision`, which every title's edit advances, so a
