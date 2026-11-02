@@ -1688,6 +1688,16 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 	}
 	if dl.RequestTokenIdempotent && (source == "admission" || st.State == ports.StateFailed || st.State == ports.StateRemoved || st.State == ports.StateCompleted) {
 		if authoritative, hold := s.authoritativeRunnerObservation(ctx, dl, cfg, st); hold {
+			// A hold defers what Curator does next; it does not make the
+			// client's work current again. Runner reported a terminal outcome,
+			// so nothing of this job is in flight there. Returning before the
+			// in-flight view heard it left held failures under "Downloading"
+			// with an empty bar for as long as the hold lasted (field report
+			// 2026-11-02, eleven FAILURE/HEALTH rows).
+			switch st.State {
+			case ports.StateFailed, ports.StateRemoved, ports.StateCompleted:
+				s.watchDownloading(dl, st, "")
+			}
 			return
 		} else {
 			st = authoritative
@@ -2240,7 +2250,7 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 		if dl.PlanID != 0 {
 			_, _ = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET replan_pending=1 WHERE id=?`, dl.PlanID)
 		}
-		_ = s.enqueueSeason(ctx, dl.MediaItemID, dl.CopyID, dl.Season, "failed_acquisition", true)
+		_ = s.enqueueSeason(ctx, dl.MediaItemID, dl.CopyID, dl.Season, seasonTriggerFailedAcquisition, true)
 		return
 	}
 	// Automatic re-search: try to replace the failed grab right away.

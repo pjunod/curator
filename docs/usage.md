@@ -967,6 +967,19 @@ The Activity page leads with what is **moving**: the in-flight sections
 whole, because a partly-hidden answer to "what is happening" is not an
 answer.
 
+A download leaves those sections the moment Runner reports how it ended,
+even when Monarr cannot act on that ending yet. When Runner still owns a
+failed attempt's source files, the row waits under **Waiting** with the
+reason ("replacement held until cleanup is settled"); it is no longer shown as
+downloading. As soon as Runner disposes of those files (or you delete or Keep
+them in Runner's Files), the next check fails the attempt, blocklists the
+release, and searches for a replacement. Runner disposes of a failed attempt
+that left no files on its own, so a release that failed health before
+anything finished is replaced without anyone touching it. For a series, the
+failure re-runs that season's comparison straight away, even when the season
+was waiting for its next scheduled search, and the failed release (that exact
+post from that indexer) is never chosen again.
+
 Everything terminal is history, and history is collapsed:
 
 - **Finished** and **Failed** are headings with a count. Open one and it

@@ -1,5 +1,59 @@
 # Monarr — Project Status
 
+## Failed downloads no longer freeze behind Runner — 2026-11-02 · v0.38.12
+
+**Status:** in progress on `codex/runner-failure-handoff` with the paired
+Runner change (pjunod/nzbd `codex/empty-failed-source`).
+
+Field report (Paul, 2026-11-02): "dexter resurrection already failed all of
+the initially tried downloads, but curator is just sitting there like it
+doesn't know. I would expect it to instantly know the status of the
+downloads is failed, and to continue queueing up more attempts from the
+searches" — and "interconnection is a first class citizen between the two
+apps. time to act like it".
+
+Root cause, verified on nuc3: all 11 jobs ended FAILURE/HEALTH with empty
+`/processing` directories. Runner classified "no files to assess" as
+`unknown`, retained the empty directory "for recovery" as `runner_owned`, and
+never pinned that source into the request receipt. Curator correctly holds a
+replacement while Runner owns failed bytes, so the hold could never settle,
+not even if the operator deleted the files in Runner.
+
+- Runner: an attempt with no source files is unusable and disposed; the
+  file-lifecycle tick disposes any retained failed source whose manifest is
+  empty; retained failures pin `Artifact:Id` + `Artifact:Generation`; old
+  receipts adopt their job's allocation on the next lookup, so the 11 live
+  rows settle on deploy with no click.
+- Curator: a held terminal outcome now retires the in-flight stage, so held
+  failures leave **Downloading** (they showed an empty bar under it).
+- Deployed Runner (`0a4f172`) at 22:20Z: all eleven rows settled to failed
+  and were blocklisted within ten minutes, but nothing re-queued. Two more
+  Curator causes, found live:
+  - The season planner filtered candidates by the title/indexer blocklist
+    only. Failures are blocklisted by release identity (indexer + GUID), so
+    the planner re-chose the identical NZB (download 586 = 585) ten seconds
+    after it failed; dispatch refused it and the plan settled `needs_replan`
+    with its successor dropped (the running job held the dedupe key).
+    `skipCandidateFor` now applies both blocklists wherever the title is known.
+  - A failed grab's season re-search merged into the S01 comparison parked for
+    its next discovery epoch (24 h) and stayed parked; the week-long cooldown
+    could also swallow it. A failure now bumps `replanGeneration`: a parked
+    job is made due, a running one reruns when it finishes, the checkpoint
+    write preserves the bump, and the cooldown does not apply.
+  - Left as a follow-up: settlement's `INSERT OR IGNORE` successor is still
+    dropped while the job that settles is running. Promoting it there could
+    loop on a persistent dispatch refusal (e.g. a disabled client); with the
+    planner and dispatch now agreeing on the blocklist it no longer fires for
+    this case.
+- Review (Fable) of the replan change: no loop or indexer hammering
+  (N failures ⇒ at most N reruns; deferrals refund attempts; budgets and
+  RetryAt are rechecked). Fixed: a rerun now starts from a fresh checkpoint
+  (carrying `Started` would park it behind its own plan and hold the single
+  comparison-admission slot for hours); `DeferClaimedJob` no longer parks a
+  replan requested after the handler's last check; a request that lands after
+  the comparison finished queues itself; RSS refuses an identity-blocklisted
+  post once the title is matched.
+
 ## Lifecycle follow-ups after #83 — 2026-11-02 · v0.38.11
 
 **Status:** [PR #88](https://github.com/pjunod/curator/pull/88), ready, on

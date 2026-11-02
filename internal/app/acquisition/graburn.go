@@ -12,6 +12,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // Not grabbing the same thing twice, and not grabbing forever.
@@ -140,6 +141,25 @@ func (s *Service) skipCandidate(ctx context.Context, title, indexer string) bool
 		return true
 	}
 	return false
+}
+
+// skipCandidateFor is skipCandidate for a known title. A failed download is
+// blocklisted by its exact release identity (indexer + GUID) whenever the
+// indexer supplied one, and that identity table is per title, so the
+// title/indexer check alone passed straight over it: the season planner
+// re-chose the identical NZB seconds after it failed, dispatch refused it as
+// blocklisted, and the season stalled (field report 2026-11-02, Dexter:
+// Resurrection S02E01). Every path that knows the title must refuse what
+// dispatch and Grab would refuse.
+func (s *Service) skipCandidateFor(ctx context.Context, itemID int64, r ports.Release) bool {
+	if s.skipCandidate(ctx, r.Title, r.Indexer) {
+		return true
+	}
+	if itemID == 0 || r.GUID == "" || r.IndexerID == 0 {
+		return false
+	}
+	_, blocked, err := s.db.ReleaseIdentityBlocklistReason(ctx, itemID, r.IndexerID, r.GUID)
+	return err == nil && blocked
 }
 
 // normalizeRelease folds the separators indexers disagree about, so

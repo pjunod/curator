@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -562,5 +564,75 @@ func TestRunnerReceiptPollingIsBoundedAndFairAcrossSweep(t *testing.T) {
 	}
 	if len(seen) != 100 {
 		t.Fatalf("bounded polling starved tail rows: got %d distinct tokens, want all 100; inserted=%v polled=%v", len(seen), tokens, client.tokens)
+	}
+}
+
+// Field report 2026-11-02: eleven FAILURE/HEALTH jobs sat under "Downloading"
+// with an empty bar. Runner retained their (empty) sources, the cleanup hold
+// returned before the in-flight view heard the terminal outcome, and the
+// downloading stage begun by the coarse queue failure was never retired.
+// Once Runner disposes the source, the very next observation must fail the
+// attempt so the want is replaced.
+func TestHeldRunnerFailureLeavesDownloadingAndSettlesWhenRunnerDisposes(t *testing.T) {
+	base := &fakeClient{}
+	svc, db, itemID := setup(t, nil, base)
+	registry := transfers.New()
+	svc.SetRegistry(registry)
+	ctx := context.Background()
+	clients, err := db.ListDownloadClients(ctx)
+	if err != nil || len(clients) == 0 {
+		t.Fatalf("clients=%v err=%v", clients, err)
+	}
+	dl, err := db.InsertDownloadRecord(ctx, sqlite.Download{MediaItemID: itemID, ClientID: clients[0].ID,
+		WantableIDs: []string{"movie:" + itoa(itemID)}, ReleaseTitle: "Test.Movie.2025.2160p.WEB-DL.health",
+		Indexer: "idx", Protocol: "usenet", State: "downloading", Intent: GrabIntentAutomatic,
+		RequestTokenIdempotent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.SetDownloadHandle(ctx, dl.ID, "2202", "t-health"); err != nil {
+		t.Fatal(err)
+	}
+	admission := ports.RequestAdmission{ProtocolVersion: 1, RequestToken: "t-health", JobID: "2202",
+		Generation: "admission-generation", RunnerInstanceID: "runner", Outcome: "failed",
+		TerminalOutcome: "FAILURE/HEALTH", FailureStage: "health", CustodyState: "runner_owned",
+		FailureCause: "retained for recovery: no regular source files were available"}
+	client := &requestAdmissionFakeClient{fakeClient: base, admission: admission, found: true}
+	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
+	observe := func(st ports.DownloadState, message string) sqlite.Download {
+		t.Helper()
+		if _, e := db.W.ExecContext(ctx, `UPDATE runner_admission_poll_schedule SET next_attempt_at=0`); e != nil {
+			t.Fatal(e)
+		}
+		base.mu.Lock()
+		base.statuses = []ports.DownloadStatus{{Handle: "2202", Transfer: "t-health", State: st, Message: message}}
+		base.mu.Unlock()
+		if e := svc.RefreshQueue(ctx); e != nil {
+			t.Fatal(e)
+		}
+		row, e := db.GetDownload(ctx, dl.ID)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return row
+	}
+
+	observe(ports.StateQueued, "waiting for authoritative failure outcome")
+	if _, live := svc.LiveStage(dl.ID); !live {
+		t.Fatal("coarse queue failure should still read as in flight until history settles it")
+	}
+	held := observe(ports.StateFailed, "FAILURE/HEALTH")
+	if held.State != "awaiting_import" || !strings.Contains(held.Error, "replacement held") {
+		t.Fatalf("retained Runner source should hold replacement: state=%s error=%q", held.State, held.Error)
+	}
+	if stage, live := svc.LiveStage(dl.ID); live {
+		t.Fatalf("a held terminal failure is not downloading: stage=%+v", stage)
+	}
+
+	client.admission.CustodyState = "deleted_by_runner"
+	client.admission.SourceCleanupStatus = "removed"
+	settled := observe(ports.StateFailed, "FAILURE/HEALTH")
+	if settled.State != "failed" {
+		t.Fatalf("Runner disposed the source; the attempt must fail and be replaced: state=%s error=%q", settled.State, settled.Error)
 	}
 }

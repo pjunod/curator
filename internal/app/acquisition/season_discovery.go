@@ -52,6 +52,12 @@ type seasonCheckpoint struct {
 	// this worker is consuming. It prevents a checkpoint from erasing a request.
 	ManualGeneration   int64 `json:"manualGeneration,omitempty"`
 	BackgroundPriority int64 `json:"backgroundPriority,omitempty"`
+	// ReplanGeneration counts failed grabs that asked this season to be
+	// compared again. A queued comparison parked for its next discovery
+	// epoch is made due at once, and one already running reruns when it
+	// finishes, so a failed release is replaced now rather than at the next
+	// epoch (field report 2026-11-02: Dexter: Resurrection S01 waited a day).
+	ReplanGeneration int64 `json:"replanGeneration,omitempty"`
 	// manualSpent is set in memory when this run has ended the manual epoch
 	// (see endManualEpoch), so the save that follows does not re-adopt a
 	// promotion it has just consumed.
@@ -89,6 +95,10 @@ const (
 	seasonCompared    = SkipComparedRecently
 )
 
+// seasonTriggerFailedAcquisition marks a comparison requested because a grab
+// for this season failed and its release was blocklisted.
+const seasonTriggerFailedAcquisition = "failed_acquisition"
+
 func (s *Service) enqueueSeason(ctx context.Context, item, copy int64, season int, trigger string, missing bool) error {
 	_, err := s.enqueueSeasonStatus(ctx, item, copy, season, trigger, missing)
 	return err
@@ -115,7 +125,9 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
 			// comparison that just completed. A person pressing the button is
 			// asking for it again on purpose, so that cooldown does not apply
 			// to them; only their own request, completed minutes ago, does.
-			if trigger != "rss_improvement" && !old.CooldownUntil.IsZero() {
+			// A failed grab is new evidence, not a repeat: the release the
+			// last comparison chose is now blocklisted.
+			if trigger != "rss_improvement" && trigger != seasonTriggerFailedAcquisition && !old.CooldownUntil.IsZero() {
 				until := old.CooldownUntil
 				if manual {
 					until = time.Time{}
@@ -141,6 +153,30 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
 	}
 	raw, _ := json.Marshal(p)
 	_, err := s.db.EnqueueJob(ctx, domain.Job{Kind: SeasonSearchJobKind, Payload: string(raw), DedupeKey: seasonJobKey(item, copy, season), Priority: priority, MaxAttempts: 3})
+	if errors.Is(err, sqlite.ErrDuplicateJob) && !manual && trigger == seasonTriggerFailedAcquisition {
+		// The season already has a comparison queued or running. Merging
+		// into it silently kept a comparison parked for its next discovery
+		// epoch (up to a day) parked: the replacement waited behind nothing.
+		now := time.Now().UnixMilli()
+		res, e := s.db.W.ExecContext(ctx, `UPDATE jobs SET payload=json_set(payload,
+                '$.replanGeneration',COALESCE(json_extract(payload,'$.replanGeneration'),0)+1),
+                priority=min(priority,?), run_after=min(run_after,?), updated_at=?
+                WHERE kind=? AND dedupe_key=? AND state IN ('queued','leased')`,
+			priority, now, now, SeasonSearchJobKind, seasonJobKey(item, copy, season))
+		if e != nil {
+			return seasonQueued, e
+		}
+		if n, e := res.RowsAffected(); e == nil && n == 0 {
+			// The comparison finished between the insert and this update:
+			// nothing holds the key any more, so queue the request itself.
+			_, err = s.db.EnqueueJob(ctx, domain.Job{Kind: SeasonSearchJobKind, Payload: string(raw), DedupeKey: seasonJobKey(item, copy, season), Priority: priority, MaxAttempts: 3})
+			if errors.Is(err, sqlite.ErrDuplicateJob) {
+				err = nil
+			}
+			return seasonQueued, err
+		}
+		return seasonQueued, nil
+	}
 	if errors.Is(err, sqlite.ErrDuplicateJob) {
 		if manual {
 			// The season is already queued, typically parked until the
@@ -247,6 +283,14 @@ func (s *Service) saveSeasonCheckpoint(ctx context.Context, j domain.Job, p seas
 	return s.db.UpdateJobCheckpoint(ctx, j.ID, j.LeaseOwner, string(raw), p.manualSpent, background)
 }
 
+// seasonReplanRequested reports whether a failed grab asked for a fresh
+// comparison after this run claimed its checkpoint.
+func (s *Service) seasonReplanRequested(ctx context.Context, jobID int64, started seasonCheckpoint) bool {
+	var generation int64
+	err := s.db.R.QueryRowContext(ctx, `SELECT COALESCE(json_extract(payload,'$.replanGeneration'),0) FROM jobs WHERE id=?`, jobID).Scan(&generation)
+	return err == nil && generation > started.ReplanGeneration
+}
+
 func (s *Service) seasonJobPromoted(ctx context.Context, jobID int64, started seasonCheckpoint) bool {
 	var manual bool
 	var generation int64
@@ -330,6 +374,22 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 	var deferred *sqlite.BudgetDeferred
 	if errors.As(err, &deferred) && time.Until(deferred.At) > 0 && s.seasonJobPromoted(ctx, j.ID, started) {
 		return &sqlite.BudgetDeferred{At: time.Now(), Reason: "promoted to a manual comparison"}
+	}
+	if (err == nil || errors.As(err, &deferred) && time.Until(deferred.At) > 0) && s.seasonReplanRequested(ctx, j.ID, started) {
+		// The evidence this run gathered was consumed by the plan it
+		// admitted. Carrying Started into the rerun would park it behind
+		// that plan as an open comparison and hold the single admission
+		// slot every other season waits on until this download finished.
+		if fresh, e := s.db.GetJob(ctx, j.ID); e == nil {
+			var p seasonCheckpoint
+			if json.Unmarshal([]byte(fresh.Payload), &p) == nil {
+				p.Started, p.Scopes, p.Releases, p.Stage, p.Revision = time.Time{}, nil, nil, "", 0
+				if e = s.saveSeasonCheckpoint(ctx, j, p); e != nil {
+					return e
+				}
+			}
+		}
+		return &sqlite.BudgetDeferred{At: time.Now(), Reason: "a failed grab asked for a fresh comparison"}
 	}
 	return err
 }
@@ -711,7 +771,7 @@ func (s *Service) hasTargetSingle(ctx context.Context, rs []ports.Release, ep do
 	}
 	for _, r := range rs {
 		parsed := parser.Parse(r.Title)
-		if parsed.SeasonPack || len(parsed.Episodes) != 1 || !releaseMatch(r, parsed, ep, index).Matched || s.skipCandidate(ctx, r.Title, r.Indexer) {
+		if parsed.SeasonPack || len(parsed.Episodes) != 1 || !releaseMatch(r, parsed, ep, index).Matched || s.skipCandidateFor(ctx, ep.MediaItemID(), r) {
 			continue
 		}
 		if !decision.Decide(releaseOf(parsed), ep, profile).Accepted || !profile.Met(parsed.Quality, true) {
@@ -784,7 +844,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 		}
 		parsed := parser.Parse(r.Title)
 		isPack := parsed.SeasonPack
-		if s.skipCandidate(ctx, r.Title, r.Indexer) || isPack && (!allowPacks || packIncomplete) || !isPack && len(parsed.Episodes) != 1 {
+		if s.skipCandidateFor(ctx, item.ID, r) || isPack && (!allowPacks || packIncomplete) || !isPack && len(parsed.Episodes) != 1 {
 			continue
 		}
 		var w domain.Wantable = pack
