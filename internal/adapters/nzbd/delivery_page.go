@@ -417,10 +417,7 @@ func (c *Client) fetchDeliveryPage(req *http.Request, limit int) (page ports.Run
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, err := readDeliveryResponse(resp)
-		if err != nil {
-			return ports.RunnerDeliveryPage{}, false, err
-		}
-		return ports.RunnerDeliveryPage{}, false, deliveryStatusError(resp, raw)
+		return ports.RunnerDeliveryPage{}, false, deliveryStatusError(resp, raw, err)
 	}
 	body := &deliveryResponseBody{r: resp.Body}
 	page, err = readDeliveryPage(body, limit)
@@ -428,9 +425,11 @@ func (c *Client) fetchDeliveryPage(req *http.Request, limit int) (page ports.Run
 	var violation *deliveryPageError
 	switch {
 	case body.err != nil:
-		return ports.RunnerDeliveryPage{}, true, fmt.Errorf("nzbd: read delivery response: %w", body.err)
+		// A transport failure is not a page too large to read: a smaller
+		// page would only repeat it.
+		return ports.RunnerDeliveryPage{}, false, fmt.Errorf("nzbd: read delivery response: %w", body.err)
 	case closeErr != nil:
-		return ports.RunnerDeliveryPage{}, true, fmt.Errorf("nzbd: close delivery response: %w", closeErr)
+		return ports.RunnerDeliveryPage{}, false, fmt.Errorf("nzbd: close delivery response: %w", closeErr)
 	case body.n > deliveryPageBudget:
 		return ports.RunnerDeliveryPage{}, true, fmt.Errorf("nzbd: delivery response exceeds %d MiB", deliveryPageBudget>>20)
 	case errors.As(err, &violation):

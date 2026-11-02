@@ -597,38 +597,75 @@ func (s *Service) deliveryLibraryGeneration(ctx context.Context, receiptID int64
 }
 
 func (s *Service) deliveryLibraryPlacementProof(ctx context.Context, r sqlite.DeliveryReceipt, f verifiedDeliveryFile, libraryPath, expectedGeneration, expectedIdentity string) (string, string, bool) {
+	path, generation, ok, _ := s.deliveryLibraryPlacementCheck(ctx, r, f, libraryPath, expectedGeneration, expectedIdentity)
+	return path, generation, ok
+}
+
+// deliveryLibraryPlacementCheck proves a placement and, when it cannot, says
+// whether the failure was the environment (the database or library storage
+// could not be read: worth retrying) rather than a definitive change (the row
+// or file is gone, or now holds another generation or other bytes). Cheap
+// identity checks run before hashing, so a changed library file is never
+// re-read in full to learn what its size or generation already shows.
+func (s *Service) deliveryLibraryPlacementCheck(ctx context.Context, r sqlite.DeliveryReceipt, f verifiedDeliveryFile, libraryPath, expectedGeneration, expectedIdentity string) (path, generation string, ok, transient bool) {
 	if knownDeliverySidecar(libraryPath) {
-		// Sidecars have no media_files generation. On the first import the
-		// FileOutcome generation is the physical file observation; later
-		// cleanup retries use the separately persisted LibraryFileIdentity.
 		if expectedIdentity == "" {
 			expectedIdentity = expectedGeneration
 		}
-		return s.deliverySidecarLibraryProof(ctx, r, f, libraryPath, expectedIdentity)
+		path, generation, ok = s.deliverySidecarLibraryProof(ctx, r, f, libraryPath, expectedIdentity)
+		return path, generation, ok, !ok && libraryStorageUnreadable(libraryPath)
 	}
 	if libraryPath == "" || expectedGeneration == "" {
-		return "", "", false
+		return "", "", false, false
 	}
 	files, err := s.db.ListFilesForItem(ctx, r.MediaItemID)
 	if err != nil {
-		return "", "", false
+		return "", "", false, true
 	}
 	for _, existing := range files {
 		if filepath.Clean(existing.Path) != filepath.Clean(libraryPath) || existing.MediaItemID != r.MediaItemID || existing.CopyID != r.CopyID {
 			continue
 		}
+		if existing.FileGeneration != expectedGeneration {
+			return "", "", false, false
+		}
 		before, err := os.Lstat(existing.Path)
-		if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 {
-			return "", "", false
+		if err != nil {
+			return "", "", false, libraryStorageUnreadable(existing.Path)
+		}
+		if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() != f.size ||
+			deliveryFileGeneration(before) == "" || (expectedIdentity != "" && deliveryFileGeneration(before) != expectedIdentity) {
+			return "", "", false, false
 		}
 		digest, size, err := fileDigest(ctx, existing.Path)
-		after, statErr := os.Lstat(existing.Path)
-		if err == nil && statErr == nil && os.SameFile(before, after) && deliveryFileGeneration(before) != "" && deliveryFileGeneration(before) == deliveryFileGeneration(after) && existing.FileGeneration == expectedGeneration && (expectedIdentity == "" || deliveryFileGeneration(after) == expectedIdentity) && size == f.size && digest == f.digest {
-			return existing.Path, deliveryFileGeneration(after), true
+		if err != nil {
+			return "", "", false, true
 		}
-		return "", "", false
+		after, statErr := os.Lstat(existing.Path)
+		if statErr != nil {
+			return "", "", false, libraryStorageUnreadable(existing.Path)
+		}
+		if os.SameFile(before, after) && deliveryFileGeneration(before) == deliveryFileGeneration(after) && size == f.size && digest == f.digest {
+			return existing.Path, deliveryFileGeneration(after), true, false
+		}
+		return "", "", false, false
 	}
-	return "", "", false
+	return "", "", false, false
+}
+
+// libraryStorageUnreadable reports whether a library path cannot be observed
+// at all — an error other than "absent", or its folder itself missing, as an
+// unmounted library looks — rather than observed and found changed.
+func libraryStorageUnreadable(path string) bool {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return false
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	_, parentErr := os.Stat(filepath.Dir(path))
+	return parentErr != nil
 }
 
 func (s *Service) deliverySidecarLibraryProof(ctx context.Context, r sqlite.DeliveryReceipt, f verifiedDeliveryFile, libraryPath, expectedGeneration string) (string, string, bool) {
@@ -1177,11 +1214,14 @@ func (s *Service) cleanupDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 			if finishErr := s.db.FinishDeliveryAttempt(ctx, event.ID, "failed", err.Error()); finishErr != nil {
 				s.log.Error("delivery file cleanup attempt history could not be finished", "receipt", r.ID, "path", row.Path, "err", finishErr)
 			}
-			// Every retry re-proves the library placement before unlinking, so a
-			// lost or changed placement stays a due retry rather than a terminal
-			// "protected" row that nothing revisits: a transiently unreadable
-			// library must not strand the payload once the proof returns.
-			_ = s.db.SetDeliveryFileCleanup(ctx, r.ID, row.Path, "retry", err.Error())
+			// A placement observed gone or changed is definitive: the payload is
+			// kept for explicit review instead of re-proving (and re-hashing the
+			// library) forever. A library that could not be read retries.
+			state := "retry"
+			if errors.Is(err, errDeliveryPlacementLost) {
+				state = "protected"
+			}
+			_ = s.db.SetDeliveryFileCleanup(ctx, r.ID, row.Path, state, err.Error())
 			continue
 		}
 		if err := s.db.FinishDeliveryAttempt(ctx, event.ID, "succeeded", ""); err != nil {
@@ -1817,7 +1857,11 @@ func (s *Service) removeVerifiedDeliveryFile(ctx context.Context, r sqlite.Deliv
 		if err != nil {
 			return err
 		}
-		libraryEvidencePath, libraryEvidenceGeneration, ok = s.deliveryLibraryPlacementProof(ctx, r, f, row.LibraryPath, expectedLibraryGeneration, expectedLibraryIdentity)
+		var transient bool
+		libraryEvidencePath, libraryEvidenceGeneration, ok, transient = s.deliveryLibraryPlacementCheck(ctx, r, f, row.LibraryPath, expectedLibraryGeneration, expectedLibraryIdentity)
+		if transient {
+			return fmt.Errorf("library placement could not be read; cleanup will retry")
+		}
 		if !ok && !row.ManualAdditional {
 			// The placement was superseded — typically by a later copy of the
 			// same release imported over it. If the library still holds these
@@ -1827,7 +1871,7 @@ func (s *Service) removeVerifiedDeliveryFile(ctx context.Context, r sqlite.Deliv
 			}
 		}
 		if !ok {
-			return fmt.Errorf("verified library placement is no longer present; payload retained until the placement is proven again or explicitly reviewed")
+			return fmt.Errorf("%w; payload retained for explicit review", errDeliveryPlacementLost)
 		}
 	case "disposable_selected_scope":
 		var ok bool
@@ -2243,6 +2287,8 @@ func deliveryRootReadDir(root *os.Root, name string) ([]os.DirEntry, error) {
 	}
 	return entries, nil
 }
+
+var errDeliveryPlacementLost = errors.New("verified library placement is no longer present")
 
 func (s *Service) unlinkExplicitDeliveryFile(parent *os.Root, name string) error {
 	if s.explicitDeliveryUnlink != nil {

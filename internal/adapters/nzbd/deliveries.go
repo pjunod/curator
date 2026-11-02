@@ -191,11 +191,11 @@ func (c *Client) deliveryRequest(ctx context.Context, method, path string, body 
 		return fmt.Errorf("nzbd: %w", err)
 	}
 	raw, err := readDeliveryResponse(resp)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return deliveryStatusError(resp, raw, err)
+	}
 	if err != nil {
 		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return deliveryStatusError(resp, raw)
 	}
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
@@ -227,8 +227,17 @@ func readDeliveryResponse(resp *http.Response) ([]byte, error) {
 }
 
 // deliveryStatusError surfaces a non-2xx delivery response with the Runner's
-// own reason and its Retry-After deadline.
-func deliveryStatusError(resp *http.Response, raw []byte) error {
+// own reason and its Retry-After deadline. The status stands even when the
+// body could not be read: callers branch on it (404 means unsupported, 429
+// and 503 carry a retry deadline), so the read failure only adds detail.
+func deliveryStatusError(resp *http.Response, raw []byte, readErr error) error {
+	if readErr != nil {
+		apiErr := apiError(resp, "unexpected delivery response; body unreadable: "+readErr.Error())
+		if resp.StatusCode == http.StatusUnauthorized {
+			apiErr.Message = "authentication rejected"
+		}
+		return apiErr
+	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return apiError(resp, "authentication rejected")
 	}

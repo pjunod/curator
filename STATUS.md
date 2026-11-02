@@ -2,8 +2,8 @@
 
 ## Main repaired after #82 — 2026-11-02 · v0.38.8 (unreleased)
 
-**Status:** branch `codex/main-ci-repair` — independent review running; PR
-next. PR #82 (`codex/lifecycle-remaining-fixes`) merged with CI red, so
+**Status:** [PR #86](https://github.com/pjunod/curator/pull/86) — review
+addressed; CI and merge next. PR #82 (`codex/lifecycle-remaining-fixes`) merged with CI red, so
 nothing could merge cleanly. nuc3 still runs 0.38.7 and was never affected.
 
 What was broken, and the fix — each traced to its #82 change:
@@ -14,14 +14,33 @@ What was broken, and the fix — each traced to its #82 change:
 | Migration tests (3) | fixtures written with today's query layer against old schemas; a dropped column that now carries an index | fixtures created at the latest schema and stepped down; the index dropped with its column |
 | Runner delivery pages | streaming reader lost the Runner's status messages (401/429 text) and which step failed (read, close, size, framing); validation reasons and the exact row-limit error dropped | page fetch and request path share one bounded reader and status mapper |
 | Lifecycle retry routes | a not-ready receipt answered 404 instead of the documented 409 | each route picks its not-found status |
-| Legacy completed deletes | every nested legacy payload refused with "legacy review fence is unavailable" (top-level entry matched against the exact payload path) | fence derived from durable records the way the scan classifies it |
-| Cleanup after a lost placement | row marked `protected`, which nothing revisits | due retry again; each retry re-proves the placement before unlinking |
+| Legacy completed deletes | every nested legacy payload refused with "legacy review fence is unavailable" (top-level entry matched against the exact payload path) | the fence decides each selected file: the most specific durable record containing it (historical review path or receipt) must be a legacy one |
+| Cleanup after a lost placement | any failure to prove the placement marked `protected`, even an unreadable library | an unreadable library (I/O error, folder missing as when unmounted) retries; a placement observed gone or changed stays `protected` for explicit review, as #82 intended; size and generation are checked before hashing |
 | Manual grab with a search token | a live token for a different release refused as expired | only a missing or expired token is refused; a foreign one is a manual override |
 | Phone layout | the fixed tab bar covered the lifecycle Retry buttons (focus/scroll treated them as visible) | shell reserves its measured bars as scroll padding |
 | e2e | spec clicked a heading #82 renamed | follows the new label |
 
+**Review (independent agent) — fixed:** (1) the first fence fix classified the
+whole top-level entry, which let an ordinary sibling download in the same
+category folder be deleted once it had failed or imported (probe-confirmed);
+now per file, with a regression test for both states. (2) Restoring `retry`
+for every lost placement meant re-hashing a replaced multi-GB library file
+every 5 minutes forever; split into transient (retry) and definitive
+(protected), with a test for each. (3) A non-2xx delivery response whose body
+could not be read lost its status (404 → unsupported, 429/503 → retry
+deadline); the status now stands. (4) A mid-body transport failure no longer
+triggers the single-row page retry. (5) The expired-token message no longer
+says "or changed". Not changed: a single delivery row over 16 MiB still stops
+discovery (pre-existing in #82).
+
+**Decision for Paul:** an older test expected a changed library placement to
+stay a retry; #82 chose `protected` (explicit review). Kept #82's choice for a
+placement observed gone or changed, since retrying re-hashes the library
+indefinitely; the older test now expects `protected`.
+
 **Validation:** `make lint` 0 · `make test` all 50 packages (non-root) ·
-`make test-web` 131 · `make test-e2e` 208. Work split across three agents on
+`make test-web` 131 · `make test-e2e` 208; after the review fixes, lint and the
+acquisition, api, sqlite and adapter packages rerun green. Work split across three agents on
 the full model (adapter/API, acquisition, web/e2e), merged and checked here.
 
 **Noted, not changed:** `QueueManualImport`'s legacy-review path still matches

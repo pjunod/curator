@@ -284,10 +284,6 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 	if err != nil {
 		return err
 	}
-	legacy, err := s.legacyReviewEntryFenced(ctx, path, roots)
-	if err != nil || !legacy {
-		return fmt.Errorf("legacy review fence is unavailable; refusing deletion")
-	}
 	root, payloadRelative, err := deliveryRootAndRelative(path, roots)
 	if err != nil {
 		return err
@@ -378,6 +374,10 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 		if !ok || reviewed.SnapshotIdentity == "" || reviewed.SnapshotIdentity != selection.SnapshotIdentity {
 			return fmt.Errorf("selected file was not in the reviewed inventory: %s", rel)
 		}
+		legacy, err := s.legacyReviewFileFenced(ctx, selection.Path, roots)
+		if err != nil || !legacy {
+			return fmt.Errorf("legacy review fence is unavailable for %s; refusing deletion", rel)
+		}
 		if err := s.rejectReferencedPayload(ctx, selection.Path, roots); err != nil {
 			return err
 		}
@@ -419,7 +419,7 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 			_ = parent.Close()
 			return fmt.Errorf("selected legacy file changed before deletion: %s", file.rel)
 		}
-		legacy, fenceErr := s.legacyReviewEntryFenced(ctx, path, roots)
+		legacy, fenceErr := s.legacyReviewFileFenced(ctx, file.selection.Path, roots)
 		if fenceErr != nil || !legacy {
 			_ = parent.Close()
 			return fmt.Errorf("legacy review fence changed before deletion")
@@ -466,32 +466,42 @@ func (s *Service) rejectReferencedPayload(ctx context.Context, path string, root
 	return rows.Err()
 }
 
-// legacyReviewEntryFenced re-derives from durable fences, not the cached
-// inventory, the classification ScanCompleted gives a top-level entry: a
-// historical review path at, above or beneath the entry, or a fenced receipt
-// at or beneath it. Inventory entries are top-level directories while fences
-// record the exact historical payload path, so an exact-path lookup would
-// refuse every nested legacy payload.
-func (s *Service) legacyReviewEntryFenced(ctx context.Context, path string, roots []string) (bool, error) {
-	entry := storagePath(path, roots)
+// legacyReviewFileFenced decides one selected file from durable records,
+// not the cached inventory. Inventory entries are top-level folders and may
+// mix a fenced historical payload with ordinary downloads beside it, so the
+// entry's classification is no authority for every file in it. The most
+// specific record containing the file decides: a historical review path or a
+// legacy-review receipt fences it; any other receipt (an ordinary download,
+// failed or imported) does not. A file no record contains is not fenced.
+func (s *Service) legacyReviewFileFenced(ctx context.Context, file string, roots []string) (bool, error) {
+	target := storagePath(file, roots)
+	best, fenced := -1, false
+	consider := func(recordPath string, legacy bool) {
+		recordPath = storagePath(recordPath, roots)
+		if recordPath == "" || !within(recordPath, target) {
+			return
+		}
+		depth := len(filepath.Clean(recordPath))
+		switch {
+		case depth > best:
+			best, fenced = depth, legacy
+		case depth == best && !legacy:
+			fenced = false
+		}
+	}
 	paths, err := s.db.LegacyCleanupReviewPaths(ctx)
 	if err != nil {
 		return false, err
 	}
 	for _, legacyPath := range paths {
-		legacyPath = storagePath(legacyPath, roots)
-		if within(entry, legacyPath) || within(legacyPath, entry) {
-			return true, nil
-		}
+		consider(legacyPath, true)
 	}
 	receipts, err := s.db.CompletedReceipts(ctx)
 	if err != nil {
 		return false, err
 	}
 	for _, receipt := range receipts {
-		if receipt.LegacyReview && within(entry, storagePath(receipt.Path, roots)) {
-			return true, nil
-		}
+		consider(receipt.Path, receipt.LegacyReview)
 	}
-	return false, nil
+	return best >= 0 && fenced, nil
 }

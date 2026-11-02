@@ -44,7 +44,7 @@ func TestPlacedDeliveryCleanupRetainsSourceWhenCurrentLibraryProofChanges(t *tes
 	// A still-present DB row is not enough: the actual library file generation
 	// must continue to match the committed import ledger before source cleanup.
 	if err := svc.cleanupDeliveryFiles(ctx, receipt); err != nil {
-		t.Fatalf("cleanup should persist a retry for changed library proof: %v", err)
+		t.Fatalf("cleanup should persist the changed library proof: %v", err)
 	}
 	if got, err := os.ReadFile(row.LibraryPath); err != nil || string(got) != replacementBytes {
 		t.Fatalf("cleanup changed the replacement library bytes: %q err=%v", got, err)
@@ -56,8 +56,58 @@ func TestPlacedDeliveryCleanupRetainsSourceWhenCurrentLibraryProofChanges(t *tes
 		t.Fatalf("accepted source bytes changed after its library proof changed: %q err=%v", got, err)
 	}
 	updated, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, row.Path)
-	if err != nil || updated.CleanupState != "retry" || !strings.Contains(updated.CleanupError, "library placement is no longer present") {
-		t.Fatalf("changed library proof did not remain durably retryable: outcome=%+v err=%v", updated, err)
+	// Observed changed bytes are definitive: the payload is kept for explicit
+	// review rather than re-proved (and the library re-hashed) on every pass.
+	if err != nil || updated.CleanupState != "protected" || !strings.Contains(updated.CleanupError, "library placement is no longer present") {
+		t.Fatalf("changed library proof was not retained for explicit review: outcome=%+v err=%v", updated, err)
+	}
+}
+
+// A library that cannot be read is not evidence the placement changed: the
+// payload stays and cleanup retries, so it resumes once storage is back.
+func TestPlacedDeliveryCleanupRetriesWhenTheLibraryCannotBeRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads through directory permissions")
+	}
+	ctx := context.Background()
+	svc, db, dl, cfg, publication := deliveryImportFixture(t, &deliveryImportClient{})
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatalf("import accepted payload: %v", err)
+	}
+	receipt, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := mustDeliveryOutcome(t, db, receiptID, epRelease+".mkv")
+	folder := filepath.Dir(row.LibraryPath)
+	if err := os.Chmod(folder, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(folder, 0o755) }()
+	if err := svc.cleanupDeliveryFiles(ctx, receipt); err != nil {
+		t.Fatalf("cleanup should persist a retry for an unreadable library: %v", err)
+	}
+	updated, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, row.Path)
+	if err != nil || updated.CleanupState != "retry" || !strings.Contains(updated.CleanupError, "could not be read") {
+		t.Fatalf("unreadable library was not a due retry: outcome=%+v err=%v", updated, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(publication, filepath.FromSlash(row.Path))); err != nil || string(got) != "video" {
+		t.Fatalf("source changed while the library was unreadable: %q err=%v", got, err)
+	}
+	if err := os.Chmod(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The retry is scheduled; make it due now instead of waiting out the backoff.
+	if _, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET cleanup_next_attempt_at=0 WHERE receipt_id=? AND path=?`, receiptID, row.Path); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.cleanupDeliveryFiles(ctx, receipt); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, row.Path)
+	if err != nil || removed.CleanupState != "removed" {
+		t.Fatalf("cleanup did not resume once the library was readable: outcome=%+v err=%v", removed, err)
 	}
 }
 

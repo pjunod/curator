@@ -2459,4 +2459,4 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 	return s.db.DeleteDownload(ctx, id)
 }
 
-var ErrCandidateExpired = errors.New("release search evidence expired or changed; search again before grabbing")
+var ErrCandidateExpired = errors.New("release search evidence expired; search again before grabbing")
