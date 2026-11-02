@@ -1,10 +1,14 @@
 # Monarr — Project Status
 
-## Samples, settled retries, identical bytes, storage stalls — 2026-11-01 · v0.38.6
+## Samples, settled retries, identical bytes, storage stalls, per-title lock — 2026-11-01 · v0.38.7
 
 **Status:** branch `codex/delivery-sample-files` — three adversarial reviews
 addressed (below); the per-title lock and the review-three fixes get a fourth
-review, then the full gate, CI and merge.
+review, then the full gate, CI and merge. Rebased onto main after #77 and #78
+took 0.38.6 (no code overlap); this is 0.38.7. nuc3 runs 0.38.6 (ecee8fe)
+since 00:05Z, without these fixes: its storage link was receive-saturated
+again at 2.4 Gbit/s right after the restart, and NFS had stalled for 34
+minutes (23:17–23:51Z) beforehand.
 
 Measuring v0.38.5 on nuc3 turned up a second permanent loop. Every Runner
 delivery that shipped a scene sample (`sample-<release>.mkv`) failed on every
