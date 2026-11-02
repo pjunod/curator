@@ -45,7 +45,7 @@ advances it with its own writes. The initial revision was global, deliberately
 conservative: an unrelated library edit required a fresh recovery preview, and
 recovery took every title's import authority.
 
-**Amended (v0.38.9, migration 0069):** the lease is per title. Triggers keep
+**Amended (v0.38.10, migration 0070):** the lease is per title. Triggers keep
 `lifecycle_item_revision` (one row per media item: the item, its copies,
 seasons, episodes, files and file-episode links, moves counting for both
 titles) and `lifecycle_shared_revision` (quality profiles, root folders,

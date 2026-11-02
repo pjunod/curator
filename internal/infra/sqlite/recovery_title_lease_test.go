@@ -137,7 +137,7 @@ func TestLegacyRecoveriesNeedAFreshPreviewAfterUpgrade(t *testing.T) {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		t.Fatal(err)
 	}
-	if err := goose.DownToContext(ctx, db.W, "migrations", 68); err != nil {
+	if err := goose.DownToContext(ctx, db.W, "migrations", 69); err != nil {
 		t.Fatal(err)
 	}
 	for _, row := range [][2]string{{"legacy-queued", "queued"}, {"legacy-importing", "importing"}, {"legacy-receipt", "receipt_pending"}} {
