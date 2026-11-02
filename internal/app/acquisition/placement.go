@@ -166,6 +166,33 @@ func fileDigestSnapshot(ctx context.Context, path string) (string, int64, string
 	if err := rejectSymlinks(path, false); err != nil {
 		return "", 0, "", err
 	}
+	// Concurrent digests of one unchanged file share a single read (see
+	// verify_reads.go). The key is the generation this caller sees now; the
+	// shared result must end at that same generation, as a private read would.
+	pre, err := os.Lstat(path)
+	if err != nil || !pre.Mode().IsRegular() || deliveryFileGeneration(pre) == "" {
+		return readFileDigestSnapshot(ctx, path)
+	}
+	want := deliveryFileGeneration(pre)
+	// Foreground and background readers share only among themselves: a
+	// lock holder joining a background read would wait at background pace.
+	class := "bg"
+	if foregroundVerification(ctx) {
+		class = "fg"
+	}
+	digest, n, generation, err := joinDigest(ctx, class+"\x00"+path+"\x00"+want, func() (string, int64, string, error) {
+		return readFileDigestSnapshot(ctx, path)
+	})
+	if err != nil {
+		return "", 0, "", err
+	}
+	if generation != want {
+		return "", 0, "", fmt.Errorf("file changed during verification: %s", path)
+	}
+	return digest, n, generation, nil
+}
+
+func readFileDigestSnapshot(ctx context.Context, path string) (string, int64, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", 0, "", err
@@ -180,7 +207,7 @@ func fileDigestSnapshot(ctx context.Context, path string) (string, int64, string
 	}
 	beforeGeneration := deliveryFileGeneration(before)
 	h := sha256.New()
-	n, err := io.Copy(h, &contextReader{ctx: ctx, r: f})
+	n, err := io.Copy(h, newVerifyReader(ctx, f))
 	if err != nil {
 		return "", 0, "", err
 	}
@@ -445,7 +472,7 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		}
 	}
 	// Hashing, backup creation, and payload staging happen outside the global
-	// storage authority lock. importTargetMu still reserves this destination.
+	// storage authority lock. The item's import target lock still reserves it.
 	if err = s.preparePlacementPublication(ctx, &p); err != nil {
 		return 0, err
 	}
@@ -941,13 +968,9 @@ func syncOpenedDirectory(root *os.Root) error {
 	return dir.Sync()
 }
 func (s *Service) reconcilePlacements(ctx context.Context) {
-	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "reconcilePlacements")
-	if admissionErr != nil {
-		return
-	}
-	defer releaseWork()
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+ ctx,releaseWork,admissionErr:=ports.EnterWork(ctx,s.admission,"reconcilePlacements");if admissionErr!=nil{return};defer releaseWork()
+ ctx,releaseTargets,err:=s.lockAllImportTargets(ctx,0)
+ if err!=nil{s.log.Error("placement reconciliation could not take the library","err",err);return};defer releaseTargets()
 	rows, err := s.db.PendingPlacements(ctx)
 	if err != nil {
 		s.log.Error("placement reconciliation unavailable", "err", err)

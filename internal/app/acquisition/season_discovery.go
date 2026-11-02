@@ -942,17 +942,18 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	}
 	// The import lock serializes live file reread and durable admission with
 	// publication/fallback. Conditional revision catches non-import edits.
-	s.importTargetMu.Lock()
-	_, _, _, fresh, _, err := s.seasonSnapshot(ctx, p)
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, item.ID)
+	defer releaseTarget() // idempotent; released explicitly below
+	_, _, _, fresh, _, err := s.seasonSnapshot(targetCtx, p)
 	if err == nil && len(fresh) != len(targets) {
 		err = fmt.Errorf("season targets changed")
 	}
 	var id int64
 	if err == nil {
 		raw, _ := json.Marshal(decisionFacts)
-		id, err = s.db.AdmitAcquisitionPlan(ctx, sqlite.AcquisitionPlan{MediaItemID: item.ID, CopyID: p.CopyID, Season: p.Season, SnapshotFingerprint: p.Fingerprint, Decision: raw}, p.Revision, intents)
+		id, err = s.db.AdmitAcquisitionPlan(targetCtx, sqlite.AcquisitionPlan{MediaItemID: item.ID, CopyID: p.CopyID, Season: p.Season, SnapshotFingerprint: p.Fingerprint, Decision: raw}, p.Revision, intents)
 	}
-	s.importTargetMu.Unlock()
+	releaseTarget()
 	if err != nil {
 		return err
 	}

@@ -264,11 +264,9 @@ func (s *Service) importDownload(ctx context.Context, dl sqlite.Download, savePa
 func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, savePath string, selected []string, manual bool) (ImportResult, error) {
  var controlErr error
  ctx,controlErr=s.ensureImportContext(ctx,dl);if controlErr!=nil{return ImportResult{},controlErr}
-	if ctx.Value(targetHeldKey{}) != true {
-		s.importTargetMu.Lock()
-		defer s.importTargetMu.Unlock()
-		ctx = context.WithValue(ctx, targetHeldKey{}, true)
-	}
+ var releaseTarget func()
+ ctx,releaseTarget=s.lockImportTarget(ctx,dl.MediaItemID)
+ defer releaseTarget()
 
 	// A queued job may carry older custody than an operator acknowledgment.
 	// Re-read every persisted row under the publication/admission lock.
@@ -279,6 +277,11 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		}
 		if fresh.Superseded || strings.HasPrefix(fresh.ParkedReason, "operator cancellation") {
 			return ImportResult{}, fmt.Errorf("original custody was cancelled or superseded; automatic publication prohibited")
+		}
+		// The lock taken above is this title's; a row that now names another
+		// title is not covered by it.
+		if fresh.MediaItemID != dl.MediaItemID {
+			return ImportResult{}, fmt.Errorf("download changed title while queued; re-queue the import")
 		}
 		dl = fresh
 	}
@@ -684,8 +687,7 @@ func selectedFiles(root string, selected []string, isMedia func(string) bool) ([
 			return nil, fmt.Errorf("selected file is outside %s: %s", root, raw)
 		}
 		info, err := os.Stat(p)
-		if err != nil || info.IsDir() || !isMedia(p) ||
-			strings.Contains(strings.ToLower(filepath.Base(p)), "sample") {
+		if err != nil || info.IsDir() || !isMedia(p) || isReleaseSample(p) {
 			return nil, fmt.Errorf("selected file is not importable: %s", raw)
 		}
 		if !seen[p] {
@@ -843,14 +845,35 @@ func collectFiles(savePath string, isMedia func(string) bool) ([]string, error) 
 		if err != nil || d.IsDir() || !isMedia(path) {
 			return err
 		}
-		// Skip samples.
-		if strings.Contains(strings.ToLower(filepath.Base(path)), "sample") {
+		if isReleaseSample(path) {
 			return nil
 		}
 		out = append(out, path)
 		return nil
 	})
 	return out, err
+}
+
+// isReleaseSample reports whether a media file is a release's sample clip:
+// "sample" in its name, or a file inside the release's Sample/ folder.
+//
+// Every path that chooses media for the library asks this one question: the
+// completed-folder scan, the manual-import browser, the Runner delivery
+// selection, and the trust-boundary check on an explicit selection. They used
+// to carry their own copies of it, and the delivery selection had none, so a
+// release that shipped its sample was handed to a validator that refuses
+// samples and failed every attempt, forever.
+//
+// The name test is deliberately broad: it errs toward skipping a real file
+// whose title contains the word (recoverable by renaming) over placing a
+// forty-megabyte clip as the episode (silent, and it blocks the real file as
+// "does not improve on" what is already there).
+func isReleaseSample(path string) bool {
+	if strings.Contains(strings.ToLower(filepath.Base(path)), "sample") {
+		return true
+	}
+	parent := strings.ToLower(filepath.Base(filepath.Dir(path)))
+	return parent == "sample" || parent == "samples"
 }
 
 // importScope pins an import to one copy of the item: its id (0 =

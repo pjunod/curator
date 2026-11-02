@@ -91,11 +91,11 @@ func TestQueueManualImportRejectsFileGenerationChangedWhileWaitingForAdmission(t
 		t.Fatal(err)
 	}
 
-	svc.importTargetMu.Lock()
+	svc.importTargets.all.Lock()
 	locked := true
 	defer func() {
 		if locked {
-			svc.importTargetMu.Unlock()
+			svc.importTargets.all.Unlock()
 		}
 	}()
 	type admissionResult struct {
@@ -108,7 +108,7 @@ func TestQueueManualImportRejectsFileGenerationChangedWhileWaitingForAdmission(t
 		result <- admissionResult{id: id, err: err}
 	}()
 	if !waitForQueueManualImportAdmissionLockWait() {
-		svc.importTargetMu.Unlock()
+		svc.importTargets.all.Unlock()
 		locked = false
 		select {
 		case <-result:
@@ -120,28 +120,28 @@ func TestQueueManualImportRejectsFileGenerationChangedWhileWaitingForAdmission(t
 
 	held := selected + ".reviewed-original"
 	if err := os.Rename(selected, held); err != nil {
-		svc.importTargetMu.Unlock()
+		svc.importTargets.all.Unlock()
 		locked = false
 		t.Fatal(err)
 	}
 	replacementBytes := []byte("replacement selected episode")
 	if err := os.WriteFile(selected, replacementBytes, 0o644); err != nil {
-		svc.importTargetMu.Unlock()
+		svc.importTargets.all.Unlock()
 		locked = false
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(selected, time.Now().Add(2*time.Second), time.Now().Add(2*time.Second)); err != nil {
-		svc.importTargetMu.Unlock()
+		svc.importTargets.all.Unlock()
 		locked = false
 		t.Fatal(err)
 	}
 	newInfo, err := os.Lstat(selected)
 	if err != nil || deliveryFileGeneration(newInfo) == originalGeneration {
-		svc.importTargetMu.Unlock()
+		svc.importTargets.all.Unlock()
 		locked = false
 		t.Fatalf("fixture did not create a new selected-file generation: old=%q new=%q err=%v", originalGeneration, deliveryFileGeneration(newInfo), err)
 	}
-	svc.importTargetMu.Unlock()
+	svc.importTargets.all.Unlock()
 	locked = false
 	var admitted admissionResult
 	select {
@@ -186,7 +186,7 @@ func waitForQueueManualImportAdmissionLockWait() bool {
 	for time.Now().Before(deadline) {
 		n := runtime.Stack(stack, true)
 		for _, goroutine := range strings.Split(string(stack[:n]), "\n\n") {
-			if strings.Contains(goroutine, "QueueManualImport") && strings.Contains(goroutine, "sync.(*Mutex).Lock") {
+			if strings.Contains(goroutine, "QueueManualImport") && (strings.Contains(goroutine, "sync.(*Mutex).Lock") || strings.Contains(goroutine, "sync.(*RWMutex).RLock")) {
 				return true
 			}
 		}

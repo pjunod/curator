@@ -14,10 +14,26 @@ import (
 // storage. A cached path alone is not authority: repeat ownership, live-work,
 // mount identity and recursive metadata checks before the rooted deletion.
 func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint string) error {
+	// An operator is waiting on this request: its verification reads are
+	// foreground and are not held to the background budget.
+	ctx = withForegroundVerification(ctx)
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	// Path-addressed: the payload's owners are not known yet, so this takes
+	// the whole library, waiting briefly rather than hanging the request
+	// behind a long placement.
+	// The hourly partial-payload sweep holds completedMu and a download lock
+	// here, so it must not sit polling: it tries briefly and comes back next
+	// hour. An operator's request waits a little longer.
+	wait := 15 * time.Second
+	if ctx.Value(partialCleanupIDKey{}) != nil {
+		wait = 250 * time.Millisecond
+	}
+	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, wait)
+	if err != nil {
+		return err
+	}
+	defer releaseTargets()
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
 	defer releaseStorage()
 	if fingerprint == "" || !s.ownsDownloadPath(ctx, path) {
@@ -216,13 +232,22 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 // the retained legacy path fence; it does not invent or infer a Runner
 // manifest for historical files.
 func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerprint string, selections []CompletedFileSelection) error {
+	// An operator is waiting on this request: its verification reads are
+	// foreground and are not held to the background budget.
+	ctx = withForegroundVerification(ctx)
 	if len(selections) == 0 || !filepath.IsAbs(path) || fingerprint == "" {
 		return fmt.Errorf("select exact files from a legacy review entry")
 	}
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
-	s.importTargetMu.Lock()
-	defer s.importTargetMu.Unlock()
+	// Path-addressed: the payload's owners are not known yet, so this takes
+	// the whole library, waiting briefly rather than hanging the request
+	// behind a long placement.
+	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	defer releaseTargets()
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
 	defer releaseStorage()
 	if !s.ownsDownloadPath(ctx, path) {

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1279,8 +1280,10 @@ func TestDeliveryRedundancyRequiresHealthySameCopyQualityEvidence(t *testing.T) 
 		{name: "wrong copy", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, wrongCopy: true},
 		{name: "unhealthy file", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceImplausible},
 		{name: "same-size corruption after indexing", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", tamperTarget: true},
-		{name: "associated copy profile rejects candidate", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", alternateCopyProfile: true},
-		{name: "open review flag blocks redundancy", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", reviewFlag: true},
+		// Identical bytes are redundant whatever the library file's standing: the
+		// library already holds them (Paul, 2026-11-01).
+		{name: "associated copy profile rejects candidate", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", alternateCopyProfile: true, wantRedundant: true},
+		{name: "open review flag does not protect an identical copy", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, targetFixture: "mkv-1080p-h264-ac3.mkv", reviewFlag: true, wantRedundant: true},
 		{name: "missing target", quality: quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, provenance: mediainfo.ProvenanceFilename, removeTarget: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1471,6 +1474,384 @@ func TestObfuscatedDuplicateDeliveryResolvesAsRedundant(t *testing.T) {
 	}
 }
 
+// A scene release ships its sample clip beside the episode. The automatic
+// delivery selection used to offer the sample to a validator that refuses
+// samples, so the whole import failed on every retry and the episode was
+// grabbed again and again (Good.Trouble S02E09: six copies, 239 attempts).
+func TestDeliveryWithSampleImportsTheEpisodeAndRecordsTheSample(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	sample := "sample-" + epRelease + ".mkv"
+	svc, db, dl, cfg, _ := deliveryImportFixtureWithFiles(t, protocol, map[string][]byte{
+		sample:             []byte("sample clip"),
+		epRelease + ".nfo": []byte("nfo"),
+	})
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatalf("a delivery carrying its sample must import the episode, got: %v", err)
+	}
+	receipt, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil || receipt.State != "imported" {
+		t.Fatalf("receipt = %+v err=%v, want imported", receipt, err)
+	}
+	outcomes, err := db.DeliveryFileOutcomes(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]sqlite.DeliveryFileOutcome{}
+	for _, o := range outcomes {
+		byPath[o.Path] = o
+	}
+	if got := byPath[epRelease+".mkv"].Disposition; got != "placed" {
+		t.Fatalf("episode disposition = %q, want placed (%+v)", got, outcomes)
+	}
+	if got := byPath[sample]; got.Disposition != "known_incidental" || !strings.Contains(got.Reason, "sample") {
+		t.Fatalf("sample outcome = %+v, want known_incidental naming the sample", got)
+	}
+}
+
+// A manifest with nothing but a sample has nothing to place. It used to skip
+// the importer and mark the delivery imported with zero files. Runner's
+// acknowledgement is unaffected: the manifest was valid and accepted before
+// the importer judged it.
+func TestDeliveryOfOnlyASampleIsAFailedImportNotASuccess(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	sample := "sample-" + epRelease + ".mkv"
+	svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, sample, []byte("sample clip"), nil)
+	receiptID := receiptIDFor(t, db, dl.ID)
+	err := svc.runDeliveryImport(ctx, dl, cfg, receiptID)
+	if !errors.Is(err, ErrNoFilesImported) {
+		t.Fatalf("sample-only delivery err = %v, want ErrNoFilesImported", err)
+	}
+	receipt, rerr := db.DeliveryReceiptByID(ctx, receiptID)
+	if rerr != nil || receipt.State == "imported" {
+		t.Fatalf("receipt = %+v err=%v, must not be imported", receipt, rerr)
+	}
+	if protocol.accepts != 1 || receipt.AckState != "accepted" {
+		t.Fatalf("accepts=%d ack=%q, want the valid manifest accepted once", protocol.accepts, receipt.AckState)
+	}
+	fresh, gerr := db.GetDownload(ctx, dl.ID)
+	if gerr != nil || fresh.State != "failed" {
+		t.Fatalf("download state = %q err=%v, want failed", fresh.State, gerr)
+	}
+	outcomes, oerr := db.DeliveryFileOutcomes(ctx, receiptID)
+	if oerr != nil || len(outcomes) != 1 || outcomes[0].Disposition != "known_incidental" || !strings.Contains(outcomes[0].Reason, "sample") {
+		t.Fatalf("ledger = %+v err=%v, want the sample recorded as known_incidental", outcomes, oerr)
+	}
+	if got := importFailedRows(t, db); got != 1 {
+		t.Fatalf("import_failed history rows after one attempt = %d, want 1", got)
+	}
+
+	// The retry reaches the same verdict. It is retried, but it is not a new
+	// event: no second history row (and so no second notification).
+	if err := svc.runDeliveryImport(ctx, fresh, cfg, receiptID); !errors.Is(err, ErrNoFilesImported) {
+		t.Fatalf("second attempt err = %v, want ErrNoFilesImported", err)
+	}
+	if got := importFailedRows(t, db); got != 1 {
+		t.Fatalf("import_failed history rows after an identical retry = %d, want 1", got)
+	}
+	receipt, _ = db.DeliveryReceiptByID(ctx, receiptID)
+	if receipt.Attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", receipt.Attempts)
+	}
+}
+
+func importFailedRows(t *testing.T, db *sqlite.DB) int {
+	t.Helper()
+	events, err := db.ListHistory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range events {
+		if e.Type == "import_failed" {
+			n++
+		}
+	}
+	return n
+}
+
+// Resolve lists every manifest file; selecting all of them, sample included,
+// must import the episode rather than reject the batch.
+func TestManualDeliverySelectionIncludingTheSampleImportsTheEpisode(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	sample := "sample-" + epRelease + ".mkv"
+	svc, db, dl, cfg, publication := deliveryImportFixtureWithFiles(t, protocol, map[string][]byte{sample: []byte("sample clip")})
+	receiptID := receiptIDFor(t, db, dl.ID)
+	dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(),
+		Paths: []string{filepath.Join(publication, epRelease+".mkv"), filepath.Join(publication, sample)}})
+	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatalf("select-all including the sample must import the episode, got: %v", err)
+	}
+	outcomes, err := db.DeliveryFileOutcomes(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range outcomes {
+		want := "placed"
+		if o.Path == sample {
+			want = "known_incidental"
+		}
+		if o.Disposition != want {
+			t.Fatalf("%s disposition = %q, want %q (%+v)", o.Path, o.Disposition, want, outcomes)
+		}
+	}
+}
+
+// Receipts that failed before samples were recognized recorded the sample as
+// a file the importer never attempted. The next attempt corrects that.
+func TestDeliveryRetryReclassifiesAnEarlierUnattemptedSample(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	sample := "sample-" + epRelease + ".mkv"
+	svc, db, dl, cfg, _ := deliveryImportFixtureWithFiles(t, protocol, map[string][]byte{sample: []byte("sample clip")})
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatal(err)
+	}
+	// What an attempt before sample recognition left behind.
+	if _, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET disposition='unknown_recoverable',reason='manifest file was not attempted by the importer' WHERE receipt_id=? AND path=?`, receiptID, sample); err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := svc.verifyDeliveryManifest(ctx, cfg, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.recordDeliveryImportOutcomes(ctx, r, files, ImportResult{}); err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, sample)
+	if err != nil || row.Disposition != "known_incidental" || row.CleanupState != "protected" {
+		t.Fatalf("sample row = %+v err=%v, want known_incidental and still protected", row, err)
+	}
+}
+
+func TestReleaseSampleRecognition(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/c/Show.S01E01-GRP/sample-show.s01e01-grp.mkv":   true,
+		"/c/Show.S01E01-GRP/Sample/show.s01e01-grp.mkv":   true,
+		"Samples/grp-show.s01e01.mkv":                     true,
+		"/c/Show.S01E01-GRP/show.s01e01-grp.mkv":          false,
+		"/c/Free.Samples.S01E01-GRP/show.s01e01-grp.mkv":  false,
+		"/c/Show.S01E01.Blood.Sample-GRP/show.s01e01.mkv": false,
+	} {
+		if got := isReleaseSample(path); got != want {
+			t.Errorf("isReleaseSample(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+// Environmental failures keep retrying every five minutes. A settled verdict
+// on the payload waits about as long as it has been blocked, up to an hour,
+// instead of re-reading the payload 288 times a day.
+func TestDeliveryRetryDelayBacksOffOnlySettledFailures(t *testing.T) {
+	for _, c := range []struct {
+		attempts int
+		settled  bool
+		blocked  time.Duration
+		want     time.Duration
+	}{
+		{0, true, 0, 30 * time.Second}, {1, true, time.Hour, 30 * time.Second}, {4, true, time.Hour, 5 * time.Minute},
+		{5, true, 2 * time.Minute, 5 * time.Minute}, {5, true, 20 * time.Minute, 20 * time.Minute},
+		{1206, true, 120 * time.Hour, deliveryRetryCeiling},
+		{5, false, 20 * time.Minute, 5 * time.Minute}, {1206, false, 120 * time.Hour, 5 * time.Minute},
+	} {
+		if got := deliveryRetryDelay(c.attempts, c.settled, c.blocked); got != c.want {
+			t.Errorf("deliveryRetryDelay(%d, %v, %v) = %v, want %v", c.attempts, c.settled, c.blocked, got, c.want)
+		}
+	}
+	if !settledDeliveryFailure(fmt.Errorf("x: %w", ErrNoFilesImported)) {
+		t.Error("no files imported is a settled verdict")
+	}
+	if settledDeliveryFailure(errors.Join(ErrNoFilesImported, ErrImportBlocked)) || settledDeliveryFailure(errors.New("payload missing")) {
+		t.Error("a blocked destination or a missing payload is environmental")
+	}
+}
+
+// While Runner's acknowledgement keeps failing, every attempt rewrites the
+// receipt's error and counts an attempt. Neither may re-announce the same
+// import failure, and the shared schedule must stay at the environmental pace
+// so the acknowledgement (and Runner's source cleanup) is not held for an hour.
+func TestSettledFailureDuringAckOutageNotifiesOnceAndKeepsAckPace(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{failCount: 100}
+	svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, "sample-"+epRelease+".mkv", []byte("sample clip"), nil)
+	receiptID := receiptIDFor(t, db, dl.ID)
+	for i := 0; i < 6; i++ {
+		fresh, err := db.GetDownload(ctx, dl.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = svc.runDeliveryImport(ctx, fresh, cfg, receiptID)
+		// Between import attempts an acknowledgement or verification failure
+		// rewrites the receipt's error. Age the block too, so a settled
+		// backoff would be visible.
+		if _, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET error='Runner acceptance is pending: connection refused',blocked_since=? WHERE id=?`, time.Now().Add(-3*time.Hour).UnixMilli(), receiptID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := importFailedRows(t, db); got != 1 {
+		t.Fatalf("import_failed rows across an acknowledgement outage = %d, want 1", got)
+	}
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil || r.AckState != "pending" {
+		t.Fatalf("receipt = %+v err=%v, want ack still pending", r, err)
+	}
+	if wait := time.Until(r.NextAttemptAt); wait > 5*time.Minute+time.Second {
+		t.Fatalf("next attempt in %v with the acknowledgement pending, want at most 5m", wait)
+	}
+}
+
+// A Resolve re-import of an imported delivery starts its retry pace over: the
+// blocked time on the receipt belongs to failures before the import.
+func TestDeliveryReimportStartsTheRetryPaceOver(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	svc, db, dl, cfg, _ := deliveryImportFixture(t, protocol)
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET attempts=40,blocked_since=? WHERE id=?`, time.Now().Add(-10*time.Hour).UnixMilli(), receiptID); err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil || r.State != "imported" {
+		t.Fatalf("receipt = %+v err=%v, want imported", r, err)
+	}
+	fresh, err := db.GetDownload(ctx, dl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh.State = "awaiting_import"
+	fresh.Handoff = append(fresh.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(), Paths: []string{filepath.Join(r.MappedPath, epRelease+".mkv")}})
+	if err := db.QueueDeliveryReimport(ctx, r, fresh); err != nil {
+		t.Fatal(err)
+	}
+	after, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil || after.Attempts != 0 || after.BlockedSince.UnixMilli() > 0 {
+		t.Fatalf("after re-import: attempts=%d blocked=%v err=%v, want a fresh pace", after.Attempts, after.BlockedSince, err)
+	}
+}
+
+// Field report 2026-11-01: a one-minute fake was imported six times, each
+// copy placed over the last. The five earlier payloads stayed "placed" and
+// retried cleanup hourly forever ("verified library placement is no longer
+// present"), because the surviving library copy was flagged implausible. A
+// superseded placement whose exact bytes are still in the library is
+// redundant, whatever that file's standing.
+func TestSupersededPlacementWithIdenticalLibraryBytesIsCleanedUp(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	svc, db, dl, cfg, publication := deliveryImportFixture(t, protocol)
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, epRelease+".mkv")
+	if err != nil || row.Disposition != "placed" || row.LibraryPath == "" {
+		t.Fatalf("fixture row = %+v err=%v, want placed", row, err)
+	}
+	// A later copy of the same release lands over the placement: same bytes,
+	// new inode.
+	library := row.LibraryPath
+	bytes, err := os.ReadFile(library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(library+".next", bytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(library+".next", library); err != nil {
+		t.Fatal(err)
+	}
+	files, err := db.ListFilesForItem(ctx, dl.MediaItemID)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("library files = %+v err=%v", files, err)
+	}
+	if err := db.SetFileQualityFrom(ctx, files[0].ID, files[0].Quality, mediainfo.ProvenanceImplausible, mediainfo.ConfidenceNone); err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.removeVerifiedDeliveryFile(ctx, r, row); err != nil {
+		t.Fatalf("superseded placement with identical library bytes must be removable, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(publication, epRelease+".mkv")); !os.IsNotExist(err) {
+		t.Fatalf("payload copy still present: %v", err)
+	}
+	if got, err := os.ReadFile(library); err != nil || string(got) != string(bytes) {
+		t.Fatalf("library copy changed: %q err=%v", got, err)
+	}
+
+	// Different bytes at the superseded placement prove nothing.
+	svc2, db2, dl2, cfg2, publication2 := deliveryImportFixture(t, &deliveryImportClient{})
+	receipt2 := receiptIDFor(t, db2, dl2.ID)
+	if err := svc2.runDeliveryImport(ctx, dl2, cfg2, receipt2); err != nil {
+		t.Fatal(err)
+	}
+	row2, err := db2.DeliveryFileOutcomeByPath(ctx, receipt2, epRelease+".mkv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(row2.LibraryPath+".next", []byte("other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(row2.LibraryPath+".next", row2.LibraryPath); err != nil {
+		t.Fatal(err)
+	}
+	r2, err := db2.DeliveryReceiptByID(ctx, receipt2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc2.removeVerifiedDeliveryFile(ctx, r2, row2); err == nil {
+		t.Fatal("cleanup removed a payload whose superseded placement now holds different bytes")
+	}
+	if _, err := os.Stat(filepath.Join(publication2, epRelease+".mkv")); err != nil {
+		t.Fatalf("payload removed without proof: %v", err)
+	}
+}
+
+// Field report: attempts begun by a process that then stopped were shown as
+// "running" for hours. A new process marks them interrupted — still with no
+// finish time and no inferred outcome.
+func TestStartImportersMarksAttemptsOfThePreviousProcessInterrupted(t *testing.T) {
+	ctx := context.Background()
+	svc, db, dl, _, _ := deliveryImportFixture(t, &deliveryImportClient{})
+	receiptID := receiptIDFor(t, db, dl.ID)
+	stale, err := db.BeginDeliveryAttempt(ctx, receiptID, "import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	workerCtx, cancel := context.WithCancel(ctx)
+	svc.StartImporters(workerCtx)
+	defer func() { cancel(); svc.WaitImporters() }()
+	events, err := db.DeliveryAttemptEvents(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.ID == stale.ID && (e.Result != "interrupted" || !e.FinishedAt.IsZero() || e.Error == "") {
+			t.Fatalf("stale attempt = %+v, want interrupted, unfinished, explained", e)
+		}
+	}
+	if len(events) == 0 {
+		t.Fatal("attempt not found")
+	}
+}
+
 func TestTransientDeliveryAckDoesNotBlockImportAndRestartNeedsNoPayload(t *testing.T) {
 	ctx := context.Background()
 	protocol := &deliveryImportClient{failCount: 2}
@@ -1657,5 +2038,49 @@ func TestSafeDeliveryRelativePath(t *testing.T) {
 		if !safeDeliveryRelativePath(path) {
 			t.Errorf("rejected safe manifest path %q", path)
 		}
+	}
+}
+
+// Review finding (probe-confirmed): a library row that aliases the payload's
+// own path made the payload its own redundancy proof, and cleanup deleted
+// the only copy. Evidence inside the publication or a completed root is
+// never library evidence.
+func TestPayloadIsNeverItsOwnRedundancyEvidence(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	svc, db, dl, cfg, publication := deliveryImportFixture(t, protocol)
+	receiptID := receiptIDFor(t, db, dl.ID)
+	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, epRelease+".mkv")
+	if err != nil || row.Disposition != "placed" {
+		t.Fatalf("fixture row = %+v err=%v, want placed", row, err)
+	}
+	payload := filepath.Join(publication, epRelease+".mkv")
+	// The library bytes are gone and the library row now names the payload.
+	if err := os.Remove(row.LibraryPath); err != nil {
+		t.Fatal(err)
+	}
+	files, err := db.ListFilesForItem(ctx, dl.MediaItemID)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("library files = %+v err=%v", files, err)
+	}
+	info, err := os.Lstat(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `UPDATE media_files SET path=?,file_generation=? WHERE id=?`, payload, deliveryFileGeneration(info), files[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.removeVerifiedDeliveryFile(ctx, r, row); err == nil {
+		t.Fatal("cleanup accepted the payload as proof of its own redundancy")
+	}
+	if _, err := os.Stat(payload); err != nil {
+		t.Fatalf("the only copy was deleted: %v", err)
 	}
 }

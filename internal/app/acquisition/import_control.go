@@ -122,8 +122,10 @@ func (s *Service) CancelImportAttempt(ctx context.Context,id int64,expected *sql
 func (s *Service) ReviewImportCancellation(ctx context.Context,key sqlite.ImportAttemptKey,action string,ids []string,acknowledged bool) (sqlite.ImportAttempt,error) {
 	if !acknowledged{return sqlite.ImportAttempt{},fmt.Errorf("explicit fencing and retained-byte review acknowledgement required")}
 	unlock,ok:=s.tryLockDownload(key.DownloadID);if !ok{return sqlite.ImportAttempt{},sqlite.ErrImportPublicationPending};defer unlock()
-	if s.ImportRunning(key.DownloadID) || !s.importTargetMu.TryLock(){return sqlite.ImportAttempt{},sqlite.ErrImportPublicationPending}
-	defer s.importTargetMu.Unlock()
+    dl,err:=s.db.GetDownload(ctx,key.DownloadID);if err!=nil{return sqlite.ImportAttempt{},err}
+    targetCtx,releaseTarget,ok:=s.tryLockImportTarget(ctx,dl.MediaItemID)
+    if s.ImportRunning(key.DownloadID)||!ok{if ok{releaseTarget()};return sqlite.ImportAttempt{},sqlite.ErrImportPublicationPending}
+    defer releaseTarget();ctx=targetCtx
 	switch action {
 	case "retain_uncertain":return s.db.RetainUncertainImport(ctx,key,ids)
 	case "operator_adopted","operator_disposed":
