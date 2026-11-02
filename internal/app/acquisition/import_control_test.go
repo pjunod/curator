@@ -224,3 +224,43 @@ func TestJournaledStageAppliesConfiguredModeUnderRestrictiveUmask(t *testing.T) 
 		t.Fatalf("journaled mode=%v expected=%v", info.Mode().Perm(), fileMode().Perm())
 	}
 }
+
+func TestFailedCancellationPersistenceDoesNotSignalActualWriter(t *testing.T) {
+	svc, db, _ := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	id := grabEpisode(t, svc)
+	dl, e := db.GetDownload(ctx, id)
+	if e != nil {
+		t.Fatal(e)
+	}
+	a, e := db.EnsureImportAttempt(ctx, id, dl.GenerationKey)
+	if e != nil {
+		t.Fatal(e)
+	}
+	writer, cancel := context.WithCancel(withImportAttempt(ctx, a.ImportAttemptKey))
+	defer cancel()
+	svc.importJobs = map[int64]*importTicket{id: {attempt: a.ImportAttemptKey, cancel: cancel}}
+	unlock := svc.lockDownload(id)
+	defer unlock()
+	if _, e = db.W.ExecContext(ctx, `CREATE TRIGGER refuse_cancel BEFORE UPDATE ON import_attempt_controls WHEN NEW.outcome='pending' BEGIN SELECT RAISE(ABORT,'cancellation journal unavailable'); END`); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = svc.CancelImportAttempt(ctx, id, &a.ImportAttemptKey); e == nil {
+		t.Fatal("failed durable cancellation reported success")
+	}
+	if writer.Err() != nil || !svc.ImportRunning(id) {
+		t.Fatal("unpersisted cancellation stopped the actual writer")
+	}
+	current, e := db.GetImportAttempt(ctx, id, dl.GenerationKey)
+	if e != nil || current.Outcome != "" {
+		t.Fatalf("failed request left intent: %+v %v", current, e)
+	}
+	if _, e = db.W.ExecContext(ctx, `DROP TRIGGER refuse_cancel`); e != nil {
+		t.Fatal(e)
+	}
+	result, e := svc.CancelImportAttempt(ctx, id, &a.ImportAttemptKey)
+	if e != nil || result.Status != "cancel_requested" || !errors.Is(writer.Err(), context.Canceled) {
+		t.Fatalf("durable request did not signal writer: %+v %v %v", result, e, writer.Err())
+	}
+	svc.finishCancelledImport(writer, a.ImportAttemptKey)
+}

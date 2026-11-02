@@ -1,6 +1,6 @@
 # NFS shutdown qualification — frozen workload and evidence gates
 
-**Status:** prototype/controller reviewed; scratch collection running; policy/application qualification pending · **Written:** 2026-11-01
+**Status:** protocol frozen; [measured results](NFS_QUALIFICATION_RESULTS.md) recorded for prototype and application scopes · **Written:** 2026-11-01
 
 Companion to [ADR 0025](adr/0025-import-cancellation-and-deployment-drain.md)
 and [implementation status](NFS_SHUTDOWN_IMPLEMENTATION_STATUS.md). Data collection

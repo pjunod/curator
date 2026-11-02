@@ -157,3 +157,89 @@ func TestCleanedDeliverySourceReuseRequiresCurrentPhysicalAndLogicalReceipt(t *t
 		})
 	}
 }
+
+func TestImportContextCannotCrossTerminalOrNewerAttempt(t *testing.T) {
+	for _, state := range []string{"pending", "cancelled", "completed", "stale", "inline-busy", "missing"} {
+		t.Run(state, func(t *testing.T) {
+			svc, db, itemID := setup(t, nil, &fakeClient{})
+			ctx := context.Background()
+			dl := insertImportable(t, db, itemID, "/source/video")
+			a, e := db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+			if e != nil {
+				t.Fatal(e)
+			}
+			expected := a.ImportAttemptKey
+			switch state {
+			case "pending", "cancelled":
+				if _, e = db.RequestImportCancellation(ctx, expected); e != nil {
+					t.Fatal(e)
+				}
+				if state == "cancelled" {
+					if _, e = db.FinalizeImportCancellation(ctx, expected); e != nil {
+						t.Fatal(e)
+					}
+				}
+			case "completed":
+				if e = db.SealImportAttempt(ctx, expected, []sqlite.ImportAttemptFile{{Source: dl.ImportPath, Kind: "media"}}, false); e != nil {
+					t.Fatal(e)
+				}
+				if e = db.ResolveImportFile(ctx, expected, dl.ImportPath, "skipped", ""); e != nil {
+					t.Fatal(e)
+				}
+				if e = db.CompleteImportAttempt(ctx, expected); e != nil {
+					t.Fatal(e)
+				}
+			case "stale":
+				expected.Epoch++
+			case "missing":
+				dl.ID = 999999
+				expected.DownloadID = dl.ID
+			case "inline-busy":
+				svc.importJobs = map[int64]*importTicket{dl.ID: {attempt: expected, cancel: func() {}}}
+			}
+			bound := withImportAttempt(ctx, expected)
+			if state != "inline-busy" {
+				if _, e = svc.ensureImportContext(bound, dl); e == nil {
+					t.Fatal("terminal/stale context admitted")
+				}
+			}
+			if _, release, e := svc.beginInlineImport(ctx, dl, expected); e == nil {
+				release()
+				t.Fatal("terminal/stale/busy inline writer admitted")
+			}
+			if state == "completed" {
+				if result, e := svc.CancelImportAttempt(ctx, dl.ID, &expected); !errors.Is(e, sqlite.ErrImportCompleted) || result.Status != "completed" {
+					t.Fatalf("completed import cancellation %+v %v", result, e)
+				}
+			}
+		})
+	}
+}
+
+func TestImportReviewRejectsUnknownActionAndActualQueuedOwner(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	dl := insertImportable(t, db, itemID, "/source/video")
+	a, e := db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = svc.ReviewImportCancellation(ctx, a.ImportAttemptKey, "invented", nil, true); e == nil {
+		t.Fatal("unknown review action admitted")
+	}
+	svc.importJobs = map[int64]*importTicket{dl.ID: {attempt: a.ImportAttemptKey, cancel: func() {}}}
+	if _, e = svc.ReviewImportCancellation(ctx, a.ImportAttemptKey, "operator_disposed", nil, true); !errors.Is(e, sqlite.ErrImportPublicationPending) {
+		t.Fatal("queued owner bypassed", e)
+	}
+	delete(svc.importJobs, dl.ID)
+	unlock := svc.lockDownload(dl.ID)
+	if _, e = svc.ReviewImportCancellation(ctx, a.ImportAttemptKey, "operator_disposed", nil, true); !errors.Is(e, sqlite.ErrImportPublicationPending) {
+		t.Fatal("canonical owner bypassed", e)
+	}
+	unlock()
+	missing := a.ImportAttemptKey
+	missing.DownloadID = 999999
+	if _, e = svc.ReviewImportCancellation(ctx, missing, "operator_disposed", nil, true); !errors.Is(e, sqlite.ErrNotFound) {
+		t.Fatal(e)
+	}
+}

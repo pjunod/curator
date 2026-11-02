@@ -275,3 +275,77 @@ func TestImportReviewRollbackDoesNotPartiallyReleaseCustody(t *testing.T) {
 		})
 	}
 }
+
+func TestImportCancellationNeverReopensUnresolvedPublication(t *testing.T) {
+	db, dl, a := importControlFixture(t)
+	ctx := context.Background()
+	p := controlPlacement(dl, a, "immutable", "/source/video", "/library/video")
+	mustSeal(t, db, a, p.Source)
+	if e := db.PreparePlacement(ctx, p); e != nil {
+		t.Fatal(e)
+	}
+	if e := db.AuthorizeImportPlacement(ctx, p); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := db.BeginImportRetry(ctx, dl.ID, dl.GenerationKey); !errors.Is(e, ErrImportPublicationPending) {
+		t.Fatal("pending publication retried", e)
+	}
+	// A grant is immutable even when another worker reuses its publication ID.
+	pub, e := placementPublication(p)
+	if e != nil {
+		t.Fatal(e)
+	}
+	tx, e := db.W.BeginTx(ctx, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	changed := pub
+	changed.Payload += " "
+	if e = authorizeImportPublication(ctx, tx, changed); !errors.Is(e, ErrImportAttemptChanged) {
+		_ = tx.Rollback()
+		t.Fatal("grant rebound", e)
+	}
+	if e = commitImportPublication(ctx, tx, changed); !errors.Is(e, ErrImportAttemptChanged) {
+		_ = tx.Rollback()
+		t.Fatal("result rebound", e)
+	}
+	missing := pub
+	missing.ID = "missing"
+	if e = commitImportPublication(ctx, tx, missing); !errors.Is(e, ErrImportAttemptChanged) {
+		_ = tx.Rollback()
+		t.Fatal("missing grant committed", e)
+	}
+	if e = tx.Rollback(); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = db.RequestImportCancellation(ctx, a.ImportAttemptKey); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = db.RetainUncertainImport(ctx, a.ImportAttemptKey, []string{pub.ID, pub.ID}); !errors.Is(e, ErrImportAttemptChanged) {
+		t.Fatal("duplicate review ids admitted", e)
+	}
+	if _, e = db.RetainUncertainImport(ctx, a.ImportAttemptKey, []string{pub.ID, "extra"}); !errors.Is(e, ErrImportAttemptChanged) {
+		t.Fatal("extra review id admitted", e)
+	}
+	if e = db.ResolveRetainedImportTargets(ctx, a.ImportAttemptKey, []string{pub.ID}, "operator_disposed"); !errors.Is(e, ErrImportPublicationPending) {
+		t.Fatal("pending grant released", e)
+	}
+	if _, e = db.RetainUncertainImport(ctx, a.ImportAttemptKey, []string{pub.ID}); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.RecordImportStage(ctx, a.ImportAttemptKey, p.Source, p.Target, p.Temporary); !errors.Is(e, ErrImportCancelled) {
+		t.Fatal("cancelled attempt created stage", e)
+	}
+	if e = db.ResolveImportFile(ctx, a.ImportAttemptKey, p.Source, "committed", p.ID); !errors.Is(e, ErrImportCancelled) {
+		t.Fatal("cancelled attempt resolved file", e)
+	}
+	if e = db.SealImportAttempt(ctx, a.ImportAttemptKey, nil, false); !errors.Is(e, ErrImportCancelled) {
+		t.Fatal("cancelled plan resealed", e)
+	}
+	if e = db.ResolveRetainedImportTargets(ctx, a.ImportAttemptKey, []string{"stage:" + p.ID}, "operator_adopted"); !errors.Is(e, ErrImportReviewRequired) {
+		t.Fatal("stage adopted as library", e)
+	}
+	if e = db.ResolveRetainedImportTargets(ctx, a.ImportAttemptKey, []string{"stage:missing"}, "operator_disposed"); !errors.Is(e, ErrImportAttemptChanged) {
+		t.Fatal("missing stage released", e)
+	}
+}

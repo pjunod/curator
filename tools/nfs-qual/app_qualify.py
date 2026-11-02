@@ -298,8 +298,8 @@ class Campaign:
   if sampler.is_alive():raise RuntimeError('sampler still owns metadata work; stop campaign')
   record['phase']='completed';self.checkpoint()
  def run(self):
-  for shape in ('unlimited','512MiB'):
-   for kind in ('drain-resume','cancel-restart','two-writer','direct-term'):
+  for shape in self.args.shapes:
+   for kind in self.args.scenarios:
     try:self.scenario(shape,kind)
     except Exception as error:
      if hasattr(self,'sampling'):
@@ -320,4 +320,6 @@ class Campaign:
 if __name__=='__main__':
  p=argparse.ArgumentParser(description=__doc__)
  for name in ('results','prototype-manifest','source-parent','target-parent','app','helper','image','deploy','build-receipt'):p.add_argument('--'+name,required=True)
+ p.add_argument('--shapes',nargs='+',choices=('unlimited','512MiB'),default=['unlimited','512MiB'])
+ p.add_argument('--scenarios',nargs='+',choices=('drain-resume','cancel-restart','two-writer','direct-term'),default=['drain-resume','cancel-restart','two-writer','direct-term'])
  args=p.parse_args();campaign=Campaign(args);campaign.run()

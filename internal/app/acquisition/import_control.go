@@ -143,9 +143,6 @@ func (s *Service) CancelImportAttempt(ctx context.Context, id int64, expected *s
 	s.importMu.Lock()
 	ticket := s.importJobs[id]
 	s.importMu.Unlock()
-	if ticket != nil && ticket.attempt == a.ImportAttemptKey {
-		ticket.cancel()
-	}
 	if ticket == nil && dl.State != "importing" && dl.State != "downloaded" && dl.State != "awaiting_import" && (dl.State != "failed" || (dl.ImportPath == "" && dl.SavePath == "")) {
 		return result, fmt.Errorf("download is not importing")
 	}
@@ -163,7 +160,7 @@ func (s *Service) CancelImportAttempt(ctx context.Context, id int64, expected *s
 		return result, sqlite.ErrImportCompleted
 	}
 	// Registration rechecks durable intent while holding importMu. Together
-	// with this second signal, a request cannot miss a ticket created between
+	// with this post-commit signal, a request cannot miss a ticket created between
 	// its initial observation and the durable commit.
 	s.importMu.Lock()
 	current := s.importJobs[id]
