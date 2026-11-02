@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -125,28 +126,69 @@ func TestAbandonDeliveryDeleteUsesCurrentTitleAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, sameTitle := range []bool{false, true} {
-		id := "other-title-cancel"
-		heldItem := dl.MediaItemID + 1000
-		if sameTitle {
-			id = "same-title-cancel"
-			heldItem = dl.MediaItemID
-		}
+	for _, scope := range []string{"unrelated", "title", "download", "storage", "whole_library"} {
+		id := scope + "-cancel"
 		batch := sqlite.ExplicitDeliveryDeleteBatch{ID: id, ReceiptID: r.ID, PayloadPath: publication, InventoryFingerprint: entry.Fingerprint, PublicationDirectoryIdentity: deliveryDirectoryObjectIdentity(parent), StorageIdentity: storage, GenerationKey: dl.GenerationKey, RequestToken: r.Delivery.RequestToken, PublicationGeneration: r.Delivery.PublicationGeneration, Files: []sqlite.ExplicitDeliveryDeleteFile{{Path: verified[0].relative, ReviewedPath: verified[0].absolute, SnapshotIdentity: completedReviewFileIdentity(verified[0].absolute, fileInfo), ParentIdentity: deliveryDirectoryObjectIdentity(parent)}}}
 		if err := db.PrepareExplicitDeliveryDeleteBatch(ctx, batch); err != nil {
 			t.Fatal(err)
 		}
-		_, release := svc.lockImportTarget(ctx, heldItem)
+		var rawRelease func()
+		switch scope {
+		case "download":
+			rawRelease = svc.lockDownload(dl.ID)
+		case "storage":
+			_, rawRelease = svc.lockStorageDecision(ctx)
+		case "whole_library":
+			_, rawRelease, err = svc.lockAllImportTargets(ctx, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+		case "title":
+			_, rawRelease = svc.lockImportTarget(ctx, dl.MediaItemID)
+		default:
+			_, rawRelease = svc.lockImportTarget(ctx, dl.MediaItemID+1000)
+		}
+		var once sync.Once
+		release := func() { once.Do(rawRelease) }
 		done := make(chan error, 1)
 		go func() { done <- svc.AbandonDeliveryDeleteRequest(ctx, r.ID, id) }()
-		if sameTitle {
+		if scope != "unrelated" {
 			select {
 			case err := <-done:
+				if err == nil {
+					release()
+					t.Fatalf("busy %s cancellation unexpectedly succeeded", scope)
+				}
+				if (scope == "title" || scope == "whole_library") && !errors.Is(err, ErrImportTargetsBusy) {
+					release()
+					t.Fatalf("busy publication = %v", err)
+				}
+			case <-time.After(time.Second):
 				release()
-				t.Fatalf("cancellation crossed its own title publication: %v", err)
-			case <-time.After(40 * time.Millisecond):
+				t.Fatal("cancellation pinned completed work behind a busy title")
+			}
+			if !svc.completedMu.TryLock() {
+				release()
+				t.Fatal("busy cancellation leaked completed-inventory lock")
+			}
+			svc.completedMu.Unlock()
+			// A still-busy import must not block unrelated completed scanning.
+			if scope == "title" || scope == "download" {
+				scanned := make(chan error, 1)
+				go func() { scanned <- svc.ScanCompleted(ctx) }()
+				select {
+				case err := <-scanned:
+					if err != nil {
+						release()
+						t.Fatal(err)
+					}
+				case <-time.After(time.Second):
+					release()
+					t.Fatal("busy cancellation leaked the completed-inventory lock")
+				}
 			}
 			release()
+			go func() { done <- svc.AbandonDeliveryDeleteRequest(ctx, r.ID, id) }()
 		}
 		select {
 		case err := <-done:
@@ -207,4 +249,42 @@ func TestStorageDecisionReleaseIsIdempotentAndPanicSafe(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("panic leaked admission authority")
 	}
+}
+
+func TestTryImportTargetRespectsCurrentScope(t *testing.T) {
+	svc := &Service{}
+	ctx, release := svc.lockImportTarget(context.Background(), 7)
+	_, nested, ok := svc.tryLockImportTarget(ctx, 7)
+	if !ok {
+		t.Fatal("held title not recognized")
+	}
+	nested()
+	_, _, ok = svc.tryLockImportTarget(ctx, 8)
+	if ok {
+		release()
+		t.Fatal("nested different title acquired")
+	}
+	_, _, ok = svc.tryLockImportTarget(context.Background(), 7)
+	if ok {
+		release()
+		t.Fatal("busy title acquired")
+	}
+	_, other, ok := svc.tryLockImportTarget(context.Background(), 8)
+	if !ok {
+		release()
+		t.Fatal("unrelated title blocked")
+	}
+	other()
+	other()
+	release()
+	_, expired, ok := svc.tryLockImportTarget(ctx, 7)
+	if !ok {
+		t.Fatal("expired context did not reacquire")
+	}
+	expired()
+	_, all, err := svc.lockAllImportTargets(context.Background(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all()
 }

@@ -1375,7 +1375,9 @@ Download-scope review accepts files from the selected source only.
 
 The lifecycle detail shows pending file-deletion requests. **Cancel deletion
 request** stops its remaining work and preserves completed file outcomes and
-History. Review the current files before approving another selection. If a file
+History. If an import or another storage action is active, cancellation reports
+busy immediately; retry after that action finishes. Other completed-folder
+scans and actions remain available. Review the current files before approving another selection. If a file
 is already absent on replay, History records confirmed absence; it does not claim
 that the retry deleted those bytes. A missing or superseded library placement
 protects the retained payload for review instead of retrying cleanup indefinitely.

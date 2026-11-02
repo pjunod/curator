@@ -418,16 +418,21 @@ func (s *Service) QueueDeliveryImport(ctx context.Context, receiptID int64, path
 // AbandonDeliveryDeleteRequest serializes with selected-file mutation and import
 // so a late worker cannot revive the cancelled selection.
 func (s *Service) AbandonDeliveryDeleteRequest(ctx context.Context, receiptID int64, batchID string) error {
-	s.completedMu.Lock()
+	if !s.completedMu.TryLock() {
+		return fmt.Errorf("completed inventory is busy; retry cancelling this deletion request shortly")
+	}
 	defer s.completedMu.Unlock()
 	r, err := s.deliveryReceiptForAction(ctx, receiptID)
 	if err != nil {
 		return err
 	}
-	unlock := s.lockDownload(r.DownloadID)
+	unlock, locked := s.tryLockDownload(r.DownloadID)
+	if !locked {
+		return fmt.Errorf("delivery mutation is active; retry cancelling this deletion request after it finishes")
+	}
 	defer unlock()
-	// The receipt can have changed while this download's mutation lock was
-	// queued. Pin its current title before taking publication authority.
+	// Pin the current title after taking this download's mutation lock; no
+	// long-running import may hold the completed-inventory mutex via this action.
 	current, err := s.deliveryReceiptForAction(ctx, receiptID)
 	if err != nil {
 		return err
@@ -436,9 +441,15 @@ func (s *Service) AbandonDeliveryDeleteRequest(ctx context.Context, receiptID in
 		return sqlite.ErrDeliveryReceiptStale
 	}
 	r = current
-	ctx, releaseTarget := s.lockImportTarget(ctx, r.MediaItemID)
+	ctx, releaseTarget, locked := s.tryLockImportTarget(ctx, r.MediaItemID)
+	if !locked {
+		return ErrImportTargetsBusy
+	}
 	defer releaseTarget()
-	ctx, release := s.lockStorageDecision(ctx)
+	ctx, release, locked := s.tryLockStorageDecision(ctx)
+	if !locked {
+		return fmt.Errorf("storage decision is busy; retry cancelling this deletion request shortly")
+	}
 	defer release()
 	current, err = s.deliveryReceiptForAction(ctx, receiptID)
 	if err != nil {
