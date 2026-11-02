@@ -1,5 +1,34 @@
 # Monarr — Project Status
 
+## Main repaired after #82 — 2026-11-02 · v0.38.8 (unreleased)
+
+**Status:** branch `codex/main-ci-repair` — independent review running; PR
+next. PR #82 (`codex/lifecycle-remaining-fixes`) merged with CI red, so
+nothing could merge cleanly. nuc3 still runs 0.38.7 and was never affected.
+
+What was broken, and the fix — each traced to its #82 change:
+
+| Area | Broken by #82 | Fix |
+|---|---|---|
+| Generated code | sqlc models not regenerated for #82's columns | regenerated |
+| Migration tests (3) | fixtures written with today's query layer against old schemas; a dropped column that now carries an index | fixtures created at the latest schema and stepped down; the index dropped with its column |
+| Runner delivery pages | streaming reader lost the Runner's status messages (401/429 text) and which step failed (read, close, size, framing); validation reasons and the exact row-limit error dropped | page fetch and request path share one bounded reader and status mapper |
+| Lifecycle retry routes | a not-ready receipt answered 404 instead of the documented 409 | each route picks its not-found status |
+| Legacy completed deletes | every nested legacy payload refused with "legacy review fence is unavailable" (top-level entry matched against the exact payload path) | fence derived from durable records the way the scan classifies it |
+| Cleanup after a lost placement | row marked `protected`, which nothing revisits | due retry again; each retry re-proves the placement before unlinking |
+| Manual grab with a search token | a live token for a different release refused as expired | only a missing or expired token is refused; a foreign one is a manual override |
+| Phone layout | the fixed tab bar covered the lifecycle Retry buttons (focus/scroll treated them as visible) | shell reserves its measured bars as scroll padding |
+| e2e | spec clicked a heading #82 renamed | follows the new label |
+
+**Validation:** `make lint` 0 · `make test` all 50 packages (non-root) ·
+`make test-web` 131 · `make test-e2e` 208. Work split across three agents on
+the full model (adapter/API, acquisition, web/e2e), merged and checked here.
+
+**Noted, not changed:** `QueueManualImport`'s legacy-review path still matches
+the inventory entry exactly (`manualimport.go`), the same shape as the delete
+bug; it predates #82 and nothing covers it. WebKit was not run for the
+scroll-padding change (CI runs Chromium).
+
 ## Samples, settled retries, identical bytes, storage stalls, per-title lock — 2026-11-01 · v0.38.7
 
 **Status:** done. [PR #80](https://github.com/pjunod/curator/pull/80)
