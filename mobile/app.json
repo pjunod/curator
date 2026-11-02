@@ -28,7 +28,7 @@
     },
     "android": {
       "package": "com.pjunod.monarr",
-      "versionCode": 31,
+      "versionCode": 33,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
