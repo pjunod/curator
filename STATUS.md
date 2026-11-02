@@ -2,10 +2,12 @@
 
 ## Samples, settled retries, identical bytes, storage stalls, per-title lock — 2026-11-01 · v0.38.7
 
-**Status:** branch `codex/delivery-sample-files` — five adversarial reviews
-addressed (below). Full gate green on the tree before the final-review fixes
-(lint 0 · `make test` all packages, as non-root · web 124 · e2e 192); lint,
-the acquisition package and e2e rerun on the final tree; then PR, CI, merge. Rebased onto main after #77 and #78
+**Status:** [PR #80](https://github.com/pjunod/curator/pull/80) — five
+adversarial reviews addressed (below). Full gate green on the tree before the
+final-review fixes (lint 0 · `make test` all packages, as non-root · web 124 ·
+e2e 192). The final-review fixes invalidated lint, the acquisition and api
+packages and e2e; all four were rerun green on the final tree (lint 0 ·
+acquisition ok · api ok · e2e 192 passed). CI, merge and deploy follow. Rebased onto main after #77 and #78
 took 0.38.6 (no code overlap); this is 0.38.7. nuc3 runs 0.38.6 (ecee8fe)
 since 00:05Z, without these fixes: its storage link was receive-saturated
 again at 2.4 Gbit/s right after the restart, and NFS had stalled for 34
