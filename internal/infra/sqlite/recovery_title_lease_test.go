@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pressly/goose/v3"
+
 	"github.com/pjunod/monarr/internal/domain"
 )
 
@@ -87,6 +89,25 @@ func TestRecoveryLeaseIsScopedToItsTitle(t *testing.T) {
 			exec(`UPDATE quality_profiles SET name=name||'' WHERE id=(SELECT min(id) FROM quality_profiles)`)
 		}},
 		{"a root folder", func() { exec(`INSERT INTO root_folders(path,added_at) VALUES(?,?)`, t.TempDir(), now) }},
+		{"its own copy", func() {
+			exec(`INSERT INTO media_copies(media_item_id,name,quality_profile_id,added_at) VALUES(?,'4K',1,?)`, mine, now)
+		}},
+		{"its own season", func() { exec(`INSERT INTO seasons(media_item_id,number) VALUES(?,2)`, mine) }},
+		{"its own episode being deleted", func() {
+			ep := exec(`INSERT INTO episodes(media_item_id,season_number,episode_number) VALUES(?,9,9)`, mine)
+			acceptCurrentRecoveryLease(t, db, id)
+			exec(`DELETE FROM episodes WHERE id=?`, ep)
+		}},
+		{"its own file linked to another title's episode", func() {
+			f := exec(`INSERT INTO media_files(media_item_id,path,size,added_at) VALUES(?,?,?,?)`, mine, "/library/recovered/odd.mkv", 1, now)
+			acceptCurrentRecoveryLease(t, db, id)
+			exec(`INSERT INTO media_file_episodes(media_file_id,episode_id) VALUES(?,?)`, f, otherEpisode)
+		}},
+		{"a custom format", func() { exec(`INSERT INTO custom_formats(name,pattern,score) VALUES('x','x',1)`) }},
+		{"a download client's path mappings", func() {
+			exec(`INSERT INTO download_clients(type,name,url,added_at) VALUES('nzbd','runner','http://runner',?)`, now)
+		}},
+		{"the title being deleted", func() { exec(`DELETE FROM media_items WHERE id=?`, mine) }},
 	}
 	for _, step := range steps {
 		acceptCurrentRecoveryLease(t, db, id)
@@ -100,16 +121,46 @@ func TestRecoveryLeaseIsScopedToItsTitle(t *testing.T) {
 	}
 }
 
-// An import accepted by an older binary carries only the library-wide
-// revision; it must be previewed again, never run unleased.
-func TestLegacyRecoveryRevisionIsNeverCurrent(t *testing.T) {
+// A recovery an older binary accepted carries only the library-wide
+// revision. The upgrade sends ones not yet past placement back to review,
+// and a lease that was never accepted (zero, as such a row loads) is never
+// current, even for a title untouched since the upgrade.
+func TestLegacyRecoveriesNeedAFreshPreviewAfterUpgrade(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
 	item, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Legacy", Path: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES('legacy','importing',json_object('request',json_object('media_item_id',?),'accepted_revision',(SELECT revision FROM lifecycle_library_revision WHERE id=1)),0)`, item); err != nil {
+	goose.SetBaseFS(migrationsFS)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.DownToContext(ctx, db.W, "migrations", 68); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range [][2]string{{"legacy-queued", "queued"}, {"legacy-importing", "importing"}, {"legacy-receipt", "receipt_pending"}} {
+		if _, err := db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES(?,?,json_object('request',json_object('media_item_id',?),'accepted_revision',(SELECT revision FROM lifecycle_library_revision WHERE id=1)),0)`, row[0], row[1], item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"legacy-queued": "review", "legacy-importing": "review", "legacy-receipt": "receipt_pending"}
+	for id, state := range want {
+		var got, message string
+		if err := db.R.QueryRowContext(ctx, `SELECT state,IFNULL(json_extract(data,'$.error'),'') FROM recovery_imports WHERE id=?`, id).Scan(&got, &message); err != nil {
+			t.Fatal(err)
+		}
+		if got != state || (state == "review" && message == "") {
+			t.Fatalf("%s after upgrade: state=%s error=%q, want %s", id, got, message, state)
+		}
+	}
+	// Loaded into the new struct and written back, a legacy row's lease is
+	// zero. The shared revision starts above zero, so that is never current.
+	if _, err := db.W.ExecContext(ctx, `UPDATE recovery_imports SET state='importing',data=json_set(data,'$.accepted_lease',json_object('item',0,'shared',0)) WHERE id='legacy-queued'`); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := db.W.BeginTx(ctx, nil)
@@ -117,7 +168,40 @@ func TestLegacyRecoveryRevisionIsNeverCurrent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err = checkRecoveryRevision(ctx, tx, "legacy"); err == nil {
-		t.Fatal("a library-wide revision from an older binary was accepted as a title lease")
+	if err = checkRecoveryRevision(ctx, tx, "legacy-queued"); err == nil {
+		t.Fatal("a zero lease was accepted as current")
+	}
+}
+
+// The lease covers one title; a file row at the destination that belongs to
+// anything else is outside it, and committing would hand it to this title.
+func TestRecoveryPlacementRefusesADestinationOwnedElsewhere(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	mine, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Recovered", Path: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Neighbour", Path: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const target = "/library/shared/name.mkv"
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO media_files(media_item_id,path,size,added_at) VALUES(?,?,?,?)`, other, target, 1, time.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO recovery_imports(id,state,data,updated_at) VALUES('foreign','importing',?,0)`, leasedRecoveryData(t, db, mine)); err != nil {
+		t.Fatal(err)
+	}
+	p := Placement{ID: "foreign-placement", ItemID: mine, Target: target, Size: 1, SHA256: "digest", RecoveryImport: "foreign", RecoveryFile: "file", State: "prepared"}
+	if err := db.PreparePlacement(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CommitPlacement(ctx, p); err == nil {
+		t.Fatal("a recovery placement took over another title's file row")
+	}
+	var owner int64
+	if err := db.R.QueryRowContext(ctx, `SELECT media_item_id FROM media_files WHERE path=?`, target).Scan(&owner); err != nil || owner != other {
+		t.Fatalf("file row owner=%d err=%v, want %d", owner, err, other)
 	}
 }

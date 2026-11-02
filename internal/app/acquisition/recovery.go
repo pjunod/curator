@@ -1235,10 +1235,20 @@ func (s *Service) ackRecoveryCancel(ctx context.Context, r RecoveryImport) {
 		}
 		return
 	}
-	// Its prepared placements are all for its own title.
-	targetCtx, releaseTargets := s.lockImportTarget(ctx, r.Request.MediaItemID)
-	err = s.rollbackRecoveryPlacements(targetCtx, r.ID)
-	releaseTargets()
+	// Its prepared placements are all for its own title. A busy title leaves
+	// the cancellation pending for the next sweep rather than holding the
+	// sweep (and every other recovery) until that title's import finishes.
+	targetCtx, releaseTargets, lockErr := s.waitImportTarget(ctx, r.Request.MediaItemID, 5*time.Second)
+	if errors.Is(lockErr, ErrImportTargetBusy) {
+		s.log.Info("recovery cancellation waiting for its title's import in progress", "id", r.ID, "item", r.Request.MediaItemID)
+		return
+	}
+	if lockErr != nil {
+		err = lockErr
+	} else {
+		err = s.rollbackRecoveryPlacements(targetCtx, r.ID)
+		releaseTargets()
+	}
 	if err != nil {
 		r.State, r.Error = "cancel_pending", "Cancellation reconciliation: "+err.Error()
 		_ = s.saveRecoveryImport(ctx, r)

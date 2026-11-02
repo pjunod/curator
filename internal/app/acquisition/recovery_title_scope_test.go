@@ -85,3 +85,41 @@ func TestRecoveryWaitsOnlyForItsOwnTitle(t *testing.T) {
 		t.Fatalf("released title locks were retained: %d", len(s.importTargets.items))
 	}
 }
+
+// Acknowledging a cancellation needs the recovery's title. While that title
+// is importing, the sweep leaves the cancellation pending and moves on
+// instead of blocking every other recovery until the import finishes.
+func TestRecoveryCancellationDoesNotHoldTheSweepOnABusyTitle(t *testing.T) {
+	svc, _, req, _ := recoveryFixture(t)
+	ctx := context.Background()
+	preview, err := svc.PreviewRecovery(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := svc.QueueRecovery(ctx, preview.Request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CancelRecoveryImport(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, release := svc.lockImportTarget(ctx, req.MediaItemID)
+	done := make(chan struct{})
+	go func() { svc.recoverySweep(ctx); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		release()
+		t.Fatal("the recovery sweep blocked on a busy title's cancellation")
+	}
+	pending, err := svc.RecoveryImport(ctx, job.ID)
+	if err != nil || pending.State != "cancel_pending" {
+		t.Fatalf("cancellation while busy: state=%s err=%v, want cancel_pending", pending.State, err)
+	}
+	release()
+	svc.recoverySweep(ctx)
+	done2, err := svc.RecoveryImport(ctx, job.ID)
+	if err != nil || done2.State != "cancelled" {
+		t.Fatalf("cancellation after the title freed: state=%s error=%q err=%v, want cancelled", done2.State, done2.Error, err)
+	}
+}

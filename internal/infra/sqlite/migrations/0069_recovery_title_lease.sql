@@ -6,18 +6,24 @@
 --
 -- The lease is now scoped to what a recovery actually depends on: its own
 -- title (the item, its copies, seasons, episodes, files and their episode
--- links) plus the settings every placement reads (quality profiles, root
--- folders, custom formats). lifecycle_library_revision keeps advancing as
--- before for acquisition plans, which fence library-wide policy.
+-- links) plus the settings every recovery reads (quality profiles, root
+-- folders, custom formats, download clients and their path mappings).
+-- lifecycle_library_revision keeps advancing as before for acquisition
+-- plans, which fence library-wide policy.
 --
 -- An item's row is created by its first change; a missing row reads as 0.
--- Rows are never deleted, so a revision never repeats for an id.
+-- Rows are never deleted, so a revision never repeats for an id. The shared
+-- revision starts at 1, so a zero lease (a row written before this migration
+-- and loaded into the new struct) can never be current.
+--
+-- A later migration that rebuilds any of these tables must recreate its
+-- lifecycle_item_* / lifecycle_shared_* triggers.
 CREATE TABLE lifecycle_item_revision (
  media_item_id INTEGER PRIMARY KEY,
  revision INTEGER NOT NULL
 ) STRICT;
 CREATE TABLE lifecycle_shared_revision (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL) STRICT;
-INSERT INTO lifecycle_shared_revision VALUES(1,0);
+INSERT INTO lifecycle_shared_revision VALUES(1,1);
 
 -- +goose StatementBegin
 CREATE TRIGGER lifecycle_item_media_items_insert AFTER INSERT ON media_items
@@ -100,21 +106,28 @@ CREATE TRIGGER lifecycle_item_media_files_delete AFTER DELETE ON media_files
 BEGIN INSERT INTO lifecycle_item_revision(media_item_id,revision) SELECT OLD.media_item_id,1 WHERE OLD.media_item_id IS NOT NULL ON CONFLICT(media_item_id) DO UPDATE SET revision=revision+1; END;
 -- +goose StatementEnd
 
--- An episode link belongs to the title of its episode.
+-- An episode link belongs to the title of its episode and to the title of
+-- its file; normally one title, both when the data disagrees.
 -- +goose StatementBegin
 CREATE TRIGGER lifecycle_item_media_file_episodes_insert AFTER INSERT ON media_file_episodes
-BEGIN INSERT INTO lifecycle_item_revision(media_item_id,revision) SELECT media_item_id,1 FROM episodes WHERE id=NEW.episode_id ON CONFLICT(media_item_id) DO UPDATE SET revision=revision+1; END;
+BEGIN INSERT INTO lifecycle_item_revision(media_item_id,revision)
+ SELECT media_item_id,1 FROM episodes WHERE id=NEW.episode_id
+ UNION SELECT media_item_id,1 FROM media_files WHERE id=NEW.media_file_id AND media_item_id IS NOT NULL
+ ON CONFLICT(media_item_id) DO UPDATE SET revision=revision+1; END;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE TRIGGER lifecycle_item_media_file_episodes_update AFTER UPDATE ON media_file_episodes
-BEGIN
- INSERT INTO lifecycle_item_revision(media_item_id,revision) SELECT media_item_id,1 FROM episodes WHERE id=OLD.episode_id ON CONFLICT(media_item_id) DO UPDATE SET revision=revision+1;
- INSERT INTO lifecycle_item_revision(media_item_id,revision) SELECT e.media_item_id,1 FROM episodes e WHERE e.id=NEW.episode_id AND e.media_item_id IS NOT (SELECT media_item_id FROM episodes WHERE id=OLD.episode_id) ON CONFLICT(media_item_id) DO UPDATE SET revision=revision+1;
-END;
+BEGIN INSERT INTO lifecycle_item_revision(media_item_id,revision)
+ SELECT media_item_id,1 FROM episodes WHERE id IN (OLD.episode_id,NEW.episode_id)
+ UNION SELECT media_item_id,1 FROM media_files WHERE id IN (OLD.media_file_id,NEW.media_file_id) AND media_item_id IS NOT NULL
+ ON CONFLICT(media_item_id) DO UPDATE SET revision=revision+1; END;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE TRIGGER lifecycle_item_media_file_episodes_delete AFTER DELETE ON media_file_episodes
-BEGIN INSERT INTO lifecycle_item_revision(media_item_id,revision) SELECT media_item_id,1 FROM episodes WHERE id=OLD.episode_id ON CONFLICT(media_item_id) DO UPDATE SET revision=revision+1; END;
+BEGIN INSERT INTO lifecycle_item_revision(media_item_id,revision)
+ SELECT media_item_id,1 FROM episodes WHERE id=OLD.episode_id
+ UNION SELECT media_item_id,1 FROM media_files WHERE id=OLD.media_file_id AND media_item_id IS NOT NULL
+ ON CONFLICT(media_item_id) DO UPDATE SET revision=revision+1; END;
 -- +goose StatementEnd
 
 -- Settings every placement reads advance every title's lease.
@@ -155,7 +168,31 @@ CREATE TRIGGER lifecycle_shared_custom_formats_delete AFTER DELETE ON custom_for
 BEGIN UPDATE lifecycle_shared_revision SET revision=revision+1 WHERE id=1; END;
 -- +goose StatementEnd
 
+-- +goose StatementBegin
+CREATE TRIGGER lifecycle_shared_download_clients_insert AFTER INSERT ON download_clients
+BEGIN UPDATE lifecycle_shared_revision SET revision=revision+1 WHERE id=1; END;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE TRIGGER lifecycle_shared_download_clients_update AFTER UPDATE ON download_clients
+BEGIN UPDATE lifecycle_shared_revision SET revision=revision+1 WHERE id=1; END;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE TRIGGER lifecycle_shared_download_clients_delete AFTER DELETE ON download_clients
+BEGIN UPDATE lifecycle_shared_revision SET revision=revision+1 WHERE id=1; END;
+-- +goose StatementEnd
+
+-- Recoveries an older binary accepted carry only the library-wide revision,
+-- which says nothing about the new leases. Ones not yet past placement go
+-- back to review for a fresh preview; receipt_pending and later are past
+-- the lease and are left alone.
+UPDATE recovery_imports SET state='review',
+ data=json_set(data,'$.error','Recovery needs a new preview after an upgrade')
+ WHERE state IN ('queued','importing') AND json_extract(data,'$.accepted_lease') IS NULL;
+
 -- +goose Down
+DROP TRIGGER lifecycle_shared_download_clients_delete;
+DROP TRIGGER lifecycle_shared_download_clients_update;
+DROP TRIGGER lifecycle_shared_download_clients_insert;
 DROP TRIGGER lifecycle_shared_custom_formats_delete;
 DROP TRIGGER lifecycle_shared_custom_formats_update;
 DROP TRIGGER lifecycle_shared_custom_formats_insert;

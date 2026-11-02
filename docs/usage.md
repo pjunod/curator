@@ -1278,8 +1278,9 @@ Recovery inspection uses only Curator's bounded native parser. The UI reports
 bad source. Review episode mappings and concrete destinations before importing.
 A recovery is tied to the title it imports into. Changing that title — an
 ordinary import of it, a metadata or episode edit, a file added or removed —
-or changing quality profiles, root folders or custom formats requires a fresh
-preview. Other titles keep importing while a recovery runs and do not affect
+or changing quality profiles, root folders, custom formats or download
+clients requires a fresh preview; recoveries queued before upgrading to 0.38.9
+return to review for one. Other titles keep importing while a recovery runs and do not affect
 it. If the title is being imported when the recovery starts, the recovery shows
 "Waiting for this title's import in progress to finish." and fails at once,
 asking for a new preview, if that import changes the title.

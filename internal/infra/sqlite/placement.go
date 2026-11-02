@@ -248,6 +248,16 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 		if err = checkRecoveryRevision(ctx, tx, p.RecoveryImport); err != nil {
 			return 0, err
 		}
+		// The lease and the import authority cover the recovery's own title.
+		// A file row at its destination owned by anything else is outside both:
+		// the upsert below would hand it to this title.
+		var foreign bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM media_files WHERE path=? AND media_item_id IS NOT ?)`, p.Target, p.ItemID).Scan(&foreign); err != nil {
+			return 0, err
+		}
+		if foreign {
+			return 0, fmt.Errorf("recovery destination %s is recorded for another title; a fresh preview is required", p.Target)
+		}
 	}
 	if p.ReplacementOperationID != "" {
 		var intent, scope, rawEpisodes string

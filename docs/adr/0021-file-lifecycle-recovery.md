@@ -49,11 +49,16 @@ recovery took every title's import authority.
 `lifecycle_item_revision` (one row per media item: the item, its copies,
 seasons, episodes, files and file-episode links, moves counting for both
 titles) and `lifecycle_shared_revision` (quality profiles, root folders,
-custom formats). A recovery accepts both for its target title and takes only
-that title's import authority, so other titles import and publish while it
-runs. An import accepted under the old global revision is never current and
-needs a fresh preview. `lifecycle_library_revision` is unchanged and still
-fences retained acquisition plans.
+custom formats, download clients). A recovery accepts both for its target
+title and takes only that title's import authority, so other titles import
+and publish while it runs. Its placement also refuses a destination whose
+file row belongs to anything but its title, since that row is outside its
+lease. The upgrade sends recoveries accepted under the old global revision
+and not yet past placement back to review; the shared revision starts at 1,
+so a lease that was never accepted cannot be current. A cancellation whose
+title is busy stays pending for the next sweep instead of holding the sweep.
+`lifecycle_library_revision` is unchanged and still fences retained
+acquisition plans.
 
 A persisted import and receipt outbox survive browser closure and daemon restart.
 Final delivery acknowledgement and local completion commit in one transaction.
