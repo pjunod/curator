@@ -141,7 +141,7 @@ export function MoreScreen({
         ) : null}
 
         <SectionTitle>Administration</SectionTitle>
-        <Text style={[styles.adminCopy, { color: theme.muted }]}>Indexer, download client, root folder, and security configuration stay in the full web interface.</Text>
+        <Text style={[styles.adminCopy, { color: theme.muted }]}>Indexer, download client, root folder, and security configuration stay in the full web interface. Runner has separate Usenet and native torrent client choices there.</Text>
         <View style={styles.actions}>
           <Button label="Open web interface" onPress={() => void Linking.openURL(connection.baseUrl)} />
           <Button secondary label="Change server" onPress={confirmDisconnect} />

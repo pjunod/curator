@@ -38,8 +38,9 @@ import (
 
 // Client speaks nzbd's native API at {url}/api/v1.
 type Client struct {
-	cfg  ports.ClientConfig
-	http *http.Client
+	cfg           ports.ClientConfig
+	http          *http.Client
+	nativeTorrent bool
 }
 
 // New returns a Client.
@@ -110,12 +111,24 @@ func parseRetryAfter(raw string, now time.Time) time.Time {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, out any) error {
+	return c.doBody(ctx, method, path, nil, out)
+}
+func (c *Client) doBody(ctx context.Context, method, path string, body io.Reader, out any) error {
+	return c.doBodyPolicy(ctx, method, path, body, out, false)
+}
+
+// Only admission may accept 202 as a durable pending job handle. Cleanup and
+// removal still require an actual completed response.
+func (c *Client) doBodyPolicy(ctx context.Context, method, path string, body io.Reader, out any, admission bool) error {
 	req, err := http.NewRequestWithContext(ctx, method,
-		strings.TrimRight(c.cfg.URL, "/")+path, nil)
+		strings.TrimRight(c.cfg.URL, "/")+path, body)
 	if err != nil {
 		return err
 	}
 	c.authorize(req)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("X-Nzbd-Client", clientHeader())
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -138,7 +151,7 @@ func (c *Client) do(ctx context.Context, method, path string, out any) error {
 		return apiError(resp, "unexpected response")
 	}
 	// Accepted is pending, not a receipt that the bytes have gone.
-	if resp.StatusCode == http.StatusAccepted {
+	if resp.StatusCode == http.StatusAccepted && !admission {
 		return apiError(resp, "operation pending; retry later")
 	}
 	if out != nil {
@@ -168,6 +181,9 @@ func (c *Client) AddTagged(ctx context.Context, downloadURL, category, name, tra
 // AddWithOptions implements ports.ConfiguredAdder and puts Monarr's release
 // metadata and effective scheduler priority on the job at admission time.
 func (c *Client) AddWithOptions(ctx context.Context, downloadURL, category string, options ports.AddOptions) (ports.Handle, error) {
+	if c.nativeTorrent {
+		return c.addNativeTorrent(ctx, downloadURL, category, options)
+	}
 	q := url.Values{}
 	q.Set("url", downloadURL)
 	q.Set("priority", strconv.Itoa(options.Priority))
@@ -221,6 +237,8 @@ const ManualAdditionalParam = "monarr-manual-additional"
 
 // job is one row of `GET /api/v1/jobs`.
 type job struct {
+	Kind            string                 `json:"kind"`
+	TorrentRole     string                 `json:"torrent_role"`
 	ID              int64                  `json:"id"`
 	Name            string                 `json:"name"`
 	Status          json.RawMessage        `json:"status"`
@@ -315,13 +333,15 @@ func (j job) state() (ports.DownloadState, string, string) {
 
 // historyEntry is one row of `GET /api/v1/history`.
 type historyEntry struct {
-	Control  *ports.DownloadControl `json:"control"`
-	Job      int64                  `json:"job"`
-	Name     string                 `json:"name"`
-	Status   string                 `json:"status"`
-	FinalDir string                 `json:"final_dir"`
-	Seq      int64                  `json:"seq"`
-	Params   [][2]string            `json:"params"`
+	Kind        string                 `json:"kind"`
+	TorrentRole string                 `json:"torrent_role"`
+	Control     *ports.DownloadControl `json:"control"`
+	Job         int64                  `json:"job"`
+	Name        string                 `json:"name"`
+	Status      string                 `json:"status"`
+	FinalDir    string                 `json:"final_dir"`
+	Seq         int64                  `json:"seq"`
+	Params      [][2]string            `json:"params"`
 }
 
 // Statuses implements ports.DownloadClient: the live queue plus recent
@@ -343,9 +363,15 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 	out := make([]ports.DownloadStatus, 0, len(queue.Jobs)+len(hist.Entries))
 	historical := make(map[int64]int, len(hist.Entries))
 	for i, h := range hist.Entries {
+		if !c.acceptsTorrentRole(h.Kind, h.TorrentRole) {
+			continue
+		}
 		historical[h.Job] = i
 	}
 	for _, j := range queue.Jobs {
+		if !c.acceptsTorrentRole(j.Kind, j.TorrentRole) {
+			continue
+		}
 		// PP finalization writes history before setting ready on the live job.
 		// During that overlap the history row is the only observation carrying
 		// final_dir, so do not let the pathless queue copy win matchStatus's
@@ -378,6 +404,9 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 	// back to release-title matching; history-first ordering can otherwise
 	// bind a new download to an older job with the same release title.
 	for _, h := range hist.Entries {
+		if !c.acceptsTorrentRole(h.Kind, h.TorrentRole) {
+			continue
+		}
 		out = append(out, statusOfHistory(h))
 	}
 	return out, nil
@@ -504,11 +533,32 @@ type statusDto struct {
 	HealthAbort    bool     `json:"health_abort"`
 }
 
+// SupportsDeliveryV1 negotiates the explicit status capability without reading
+// any retained publication manifests.
+func (c *Client) SupportsDeliveryV1(ctx context.Context) (bool, error) {
+	st, err := c.status(ctx)
+	if err != nil {
+		return false, err
+	}
+	if err := c.requireNativeTorrentCapabilities(st); err != nil {
+		return false, err
+	}
+	for _, capability := range st.Capabilities {
+		if capability == "deliveries-v1" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // SupportsRequestTokenIdempotency implements the independently negotiated
 // Runner Add replay contract advertised by /api/v1/status.
 func (c *Client) SupportsRequestTokenIdempotency(ctx context.Context) (bool, error) {
 	st, err := c.status(ctx)
 	if err != nil {
+		return false, err
+	}
+	if err := c.requireNativeTorrentCapabilities(st); err != nil {
 		return false, err
 	}
 	for _, capability := range st.Capabilities {
@@ -542,8 +592,11 @@ func (c *Client) GetRequestAdmission(ctx context.Context, transferToken string) 
 
 // Test implements ports.DownloadClient.
 func (c *Client) Test(ctx context.Context) error {
-	_, err := c.status(ctx)
-	return err
+	st, err := c.status(ctx)
+	if err != nil {
+		return err
+	}
+	return c.requireNativeTorrentCapabilities(st)
 }
 
 // Capacity implements ports.CapacityReporter: why nzbd is not downloading,
@@ -559,14 +612,15 @@ func (c *Client) Capacity(ctx context.Context) (ports.Capacity, error) {
 	if err != nil {
 		return ports.Capacity{}, err
 	}
-	return ports.Capacity{
-		Version:        st.Version,
-		DiskLow:        st.DiskLow,
-		QuotaReached:   st.QuotaReached,
-		BlockedServers: len(st.BlockedServers),
-		HealthAbort:    st.HealthAbort,
-		Paused:         st.DownloadPaused,
-	}, nil
+	if c.nativeTorrent {
+		if err := c.requireNativeTorrentCapabilities(st); err != nil {
+			return ports.Capacity{}, err
+		}
+		// NNTP provider quota, blocked news servers and article health are
+		// independent of native torrent acquisition capacity.
+		return ports.Capacity{Version: st.Version, DiskLow: st.DiskLow, Paused: st.DownloadPaused}, nil
+	}
+	return ports.Capacity{Version: st.Version, DiskLow: st.DiskLow, QuotaReached: st.QuotaReached, BlockedServers: len(st.BlockedServers), HealthAbort: st.HealthAbort, Paused: st.DownloadPaused}, nil
 }
 
 func (c *Client) status(ctx context.Context) (statusDto, error) {

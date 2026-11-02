@@ -1230,9 +1230,11 @@ replaced. A file selected by an in-progress replacement is left to it. A release
 never imported: the episode beside it imports normally and the sample is
 recorded as a known incidental file, including when Resolve's selection
 includes it. A manifest that holds only a sample (or only sidecars) is a
-failed import rather than an empty one marked imported; Runner still has its
-acknowledgement, because the manifest itself was valid. Runner handles its own
-processing source and reports that cleanup separately.
+failed import rather than an empty one marked imported. Valid manifest
+acceptance proceeds independently of that media verdict; the failure does not
+revoke an acceptance already recorded. Runner handles its own processing source
+after safe publication and durable notification, and reports that cleanup
+separately from Curator's acknowledgement and import.
 
 Activity and each completed-folder entry expose the durable lifecycle trace.
 Retry handoff, Runner source cleanup, and Curator publication cleanup
@@ -1352,6 +1354,139 @@ absence evidence; its uncertainty remains reserved instead of silently retrying.
 After checking the client, explicitly acknowledge possible duplicates to release
 that reservation. The original identity remains superseded and cannot publish
 later. This action does not add a replacement; use a deliberate Search afterward.
+
+## Download lifecycle decisions and review
+
+Runner admission reads the `deliveries-v1` status capability independently of
+retained publications. Curator persists that choice before submitting a download.
+Malformed or oversized discovery entries remain at Runner and produce a
+`delivery_discovery_rejected` History event; later supported deliveries continue.
+A rejection grants no acceptance or cleanup authority.
+
+Release Search evidence expires after ten minutes. Refresh the search if Curator
+reports expired evidence. A failed manual submission retries the same request;
+a successful submission followed by another deliberate grab creates a new request.
+You can remove a pending manual request before it dispatches.
+
+A replacement owns the download admitted for its operation. While that operation
+is open, automatic acquisition excludes its original release for the selected
+item, copy and episodes. This exclusion does not globally blacklist the source.
+Download-scope review accepts files from the selected source only.
+
+The lifecycle detail shows pending file-deletion requests. **Cancel deletion
+request** stops its remaining work and preserves completed file outcomes and
+History. If an import or another storage action is active, cancellation reports
+busy immediately; retry after that action finishes. Other completed-folder
+scans and actions remain available. Review the current files before approving another selection. If a file
+is already absent on replay, History records confirmed absence; it does not claim
+that the retry deleted those bytes. A missing or superseded library placement
+protects the retained payload for review instead of retrying cleanup indefinitely.
+
+Historical acquisitions may finish importing automatically only when their
+persisted trace proves they were still grabbed or downloading before the original
+upgrade cutover. Ambiguous traces and completed or failed backlog remain held for
+explicit review. Import permission never removes the legacy cleanup fence.
+
+If an automatic submission remains uncertain for thirty minutes on a client
+without request-token idempotency, Activity and History request operator review.
+Curator preserves the reservation and does not replay an Add that could duplicate
+an already accepted download. Ordinary manual import also respects historical
+review fences when you select a parent or child of the recorded payload folder.
+
+### Review intentional replacement of download storage
+
+Activity → Download storage shows the expected and observed mount when storage
+changes. Returning the expected mount recovers automatically. For an intentional
+replacement, open **Review changed storage…** to compare both identities and the
+counts of existing payloads and pre-change requests, including work still in
+flight. Refresh the review if custody changes before acceptance.
+
+**Accept replacement storage** verifies future work in that root. Existing
+payload paths and acquisition generations stay fenced for fresh review in that
+root; unrelated roots keep their own custody rules. Acceptance grants no cleanup
+permission over old bytes. Active imports must finish or be cancelled first.
+A mount change or interrupted inventory scan continues to block operations until
+the configured storage is verified again.
+
+Linux uses a filesystem UUID from `/dev/disk/by-uuid` when available. An existing
+raw device observation strengthens automatically only when the current raw mount
+still exactly matches it. A missing or changed raw source needs review. When no
+stable UUID is available, the comparison explicitly labels the device-path
+fallback; network storage keeps its server/export identity.
+
+### Read the joined lifecycle trace
+
+Runner lifecycle history joins download and processing steps, publication and
+handoff, Curator import, completed-file cleanup, and processing-source cleanup.
+Measured times stay separate for different machines and restarts. Overlapping
+completed steps count once within their recorded timing reference. Processing
+details expand major steps and do not add their duration a second time. Missing,
+running and interrupted durations stay explicitly unknown. The immutable Runner
+snapshot ends at publication; consumer acceptance and later handoff retries have
+their own receipt observations. Historical POST details retain measured durations
+with origin unrecorded when their original machine/session cannot be proved.
+Bounded history says **at least N omitted** and labels totals as a **recorded
+subset**; omission counts are conservative lower bounds, never an exact lifetime
+total.
+
+The lifecycle API projects each Curator file ledger with the same camel-case
+fields the UI reads (`path`, `disposition`, `cleanupState`, `cleanupError` and
+retry timing). A placement may be complete while its exact publication file
+still reports a cleanup permission error; the error stays visible until the
+separate cleanup obligation completes.
+
+Clustered publications show each processing-source copy's node, cleanup status,
+retry attempts and reason. Retry controls show their pending state and visible
+result. Background status refresh preserves focus and scroll position. Reporting
+and file deletion show results in a dialog that remains visible after the file
+row or review form changes.
+
+### Runner native torrent acquisitions
+
+Add **Runner · native torrent** (`runner-torrent`) as an explicit torrent client
+in Settings → Download clients, including from the phone web interface. The
+native phone app's Administration link opens this same configuration. The
+existing **Runner · Usenet** (`nzbd`) client keeps its Usenet meaning, and ordinary
+qBittorrent clients keep their own adapter.
+
+Native mode requires Runner's advertised `native-torrent-deliveries-v1` and
+`deliveries-v1` capabilities. An unsupported server gives an actionable error
+before admission; there is no compatibility-API fallback. Each Curator request
+uses Runner's JSON `/api/v1/jobs` source admission (`source.type` is
+`torrent_url` for an HTTP torrent URL or `magnet` for a magnet URI), with its
+persisted transfer token, delivery intent, priority and explicit additional-copy
+intent. Replaying
+a request keeps that token; a fresh Grab uses a fresh request.
+
+The returned handle names the managed acquisition child. Its separately owned
+publication goes through the existing Delivery acceptance, per-file placement
+and cleanup ledger. The seed donor keeps its backend association and seeding
+policy. Curator does not change seed limits or delete donor data by labeling an
+acquisition complete. Queue/history observations select explicit acquisition
+roles, and native capacity reporting excludes NNTP provider quota/health limits.
+Existing Runner custody checks apply to both native client modes. A downgrade
+refuses while a `runner-torrent` client remains configured.
+
+Use two separate client entries when one Runner serves both protocols. Curator
+keeps queue/history views separate, including legacy Usenet title fallback.
+Shared collection rows are skipped for a mode only when the other configured
+native client has an exact durable job, request-token and Runner-installation
+admission match. Unknown, unpinned or ambiguous ownership remains visible for
+review. An unaccepted, unassociated view discovered before that admission was
+pinned is retained as **owned by other client**, with the owner named and all
+mutation controls disabled. Accepted or otherwise proven custody is never
+superseded. This comparison grants no import or cleanup authority to either
+client.
+
+```mermaid
+flowchart LR
+    request[Curator request · fresh token] --> child[Private acquisition child · own job ID]
+    seed[Seed donor · own backend and policy] -->|verified payload copy| child
+    child --> post[Runner POST]
+    post --> delivery[Immutable Delivery publication]
+    delivery --> library[Curator placement and receipt]
+    seed --> seeding[Seeding follows donor policy]
+```
 
 ## Server shutdown and event streams
 

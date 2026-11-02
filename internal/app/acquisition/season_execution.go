@@ -148,6 +148,45 @@ func (s *Service) dispatchPlannedDownload(ctx context.Context, plan sqlite.Acqui
 	if currentPlan.State != "admitted" && currentPlan.State != "dispatching" && currentPlan.State != "active" {
 		return false, nil
 	}
+	targetCtx, releaseTarget := s.lockImportTarget(ctx, fresh.MediaItemID)
+	defer releaseTarget()
+	decisionCtx, releaseDecision := s.lockStorageDecision(targetCtx)
+	defer releaseDecision()
+	// The title lock was chosen from the pre-wait row. It cannot authorize
+	// a reassociated title, generation, or a plan cancelled while waiting.
+	targeted, targetErr := s.db.GetDownload(decisionCtx, fresh.ID)
+	if targetErr != nil || targeted.MediaItemID != fresh.MediaItemID || targeted.GenerationKey != fresh.GenerationKey || targeted.Transfer != fresh.Transfer || targeted.PlanID != plan.ID {
+		releaseDecision()
+		releaseTarget()
+		if targetErr != nil {
+			return false, targetErr
+		}
+		return false, fmt.Errorf("planned download title or generation changed while awaiting publication authority")
+	}
+	if targeted.Superseded || targeted.ParkedAt.UnixMilli() != 0 || targeted.State != "planned" || targeted.SubmissionPhase != "pending" {
+		releaseDecision()
+		releaseTarget()
+		return false, nil
+	}
+	fresh = targeted
+	item, scopeErr := s.db.GetMediaItemFull(decisionCtx, fresh.MediaItemID)
+	if scopeErr == nil {
+		scopeErr = s.checkReplacementSourceExclusion(decisionCtx, item, grabRequestForDownload(fresh))
+	}
+	if scopeErr != nil {
+		releaseDecision()
+		releaseTarget()
+		_ = s.db.RejectDownloadSubmission(ctx, fresh.ID, fresh.GenerationKey, fresh.Transfer, "original source excluded by open replacement operation")
+		return false, scopeErr
+	}
+	if deliveryExpected {
+		scopeErr = s.db.EnableRunnerDeliveryV1(decisionCtx, cfg.ID)
+	}
+	releaseDecision()
+	releaseTarget()
+	if scopeErr != nil {
+		return false, scopeErr
+	}
 	pinned, err := s.db.SetPlannedSubmissionCapabilities(ctx, fresh.ID, deliveryExpected, requestTokenIdempotent, exactTransferCorrelation)
 	if err != nil {
 		return false, err

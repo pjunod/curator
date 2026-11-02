@@ -163,12 +163,13 @@ func (e DownloadClientConfigMode) Valid() bool {
 
 // Defines values for DownloadClientConfigType.
 const (
-	DownloadClientConfigTypeDeluge       DownloadClientConfigType = "deluge"
-	DownloadClientConfigTypeNzbd         DownloadClientConfigType = "nzbd"
-	DownloadClientConfigTypeNzbget       DownloadClientConfigType = "nzbget"
-	DownloadClientConfigTypeQbittorrent  DownloadClientConfigType = "qbittorrent"
-	DownloadClientConfigTypeSabnzbd      DownloadClientConfigType = "sabnzbd"
-	DownloadClientConfigTypeTransmission DownloadClientConfigType = "transmission"
+	DownloadClientConfigTypeDeluge        DownloadClientConfigType = "deluge"
+	DownloadClientConfigTypeNzbd          DownloadClientConfigType = "nzbd"
+	DownloadClientConfigTypeNzbget        DownloadClientConfigType = "nzbget"
+	DownloadClientConfigTypeQbittorrent   DownloadClientConfigType = "qbittorrent"
+	DownloadClientConfigTypeRunnerTorrent DownloadClientConfigType = "runner-torrent"
+	DownloadClientConfigTypeSabnzbd       DownloadClientConfigType = "sabnzbd"
+	DownloadClientConfigTypeTransmission  DownloadClientConfigType = "transmission"
 )
 
 // Valid indicates whether the value is a known member of the DownloadClientConfigType enum.
@@ -181,6 +182,8 @@ func (e DownloadClientConfigType) Valid() bool {
 	case DownloadClientConfigTypeNzbget:
 		return true
 	case DownloadClientConfigTypeQbittorrent:
+		return true
+	case DownloadClientConfigTypeRunnerTorrent:
 		return true
 	case DownloadClientConfigTypeSabnzbd:
 		return true
@@ -211,12 +214,13 @@ func (e DownloadClientInputMode) Valid() bool {
 
 // Defines values for DownloadClientInputType.
 const (
-	DownloadClientInputTypeDeluge       DownloadClientInputType = "deluge"
-	DownloadClientInputTypeNzbd         DownloadClientInputType = "nzbd"
-	DownloadClientInputTypeNzbget       DownloadClientInputType = "nzbget"
-	DownloadClientInputTypeQbittorrent  DownloadClientInputType = "qbittorrent"
-	DownloadClientInputTypeSabnzbd      DownloadClientInputType = "sabnzbd"
-	DownloadClientInputTypeTransmission DownloadClientInputType = "transmission"
+	DownloadClientInputTypeDeluge        DownloadClientInputType = "deluge"
+	DownloadClientInputTypeNzbd          DownloadClientInputType = "nzbd"
+	DownloadClientInputTypeNzbget        DownloadClientInputType = "nzbget"
+	DownloadClientInputTypeQbittorrent   DownloadClientInputType = "qbittorrent"
+	DownloadClientInputTypeRunnerTorrent DownloadClientInputType = "runner-torrent"
+	DownloadClientInputTypeSabnzbd       DownloadClientInputType = "sabnzbd"
+	DownloadClientInputTypeTransmission  DownloadClientInputType = "transmission"
 )
 
 // Valid indicates whether the value is a known member of the DownloadClientInputType enum.
@@ -229,6 +233,8 @@ func (e DownloadClientInputType) Valid() bool {
 	case DownloadClientInputTypeNzbget:
 		return true
 	case DownloadClientInputTypeQbittorrent:
+		return true
+	case DownloadClientInputTypeRunnerTorrent:
 		return true
 	case DownloadClientInputTypeSabnzbd:
 		return true
@@ -1568,13 +1574,15 @@ type CompletedReviewFile struct {
 
 // CompletedRoot defines model for CompletedRoot.
 type CompletedRoot struct {
-	Bytes          int64            `json:"bytes"`
-	CheckedAt      time.Time        `json:"checkedAt"`
-	Entries        []CompletedEntry `json:"entries"`
-	Error          string           `json:"error"`
-	LastCompleteAt time.Time        `json:"lastCompleteAt"`
-	Path           string           `json:"path"`
-	RootIdentity   string           `json:"rootIdentity"`
+	Bytes                   int64            `json:"bytes"`
+	CheckedAt               time.Time        `json:"checkedAt"`
+	Entries                 []CompletedEntry `json:"entries"`
+	Error                   string           `json:"error"`
+	LastCompleteAt          time.Time        `json:"lastCompleteAt"`
+	ObservedStorageIdentity *string          `json:"observedStorageIdentity,omitempty"`
+	Path                    string           `json:"path"`
+	RootIdentity            string           `json:"rootIdentity"`
+	StorageIdentity         *string          `json:"storageIdentity,omitempty"`
 }
 
 // Connection defines model for Connection.
@@ -1710,29 +1718,46 @@ type DeliveryLifecycleReceipt struct {
 	GenerationKey                 *string                  `json:"generationKey,omitempty"`
 	JobId                         *string                  `json:"jobId,omitempty"`
 	KeepSourceOnFailure           *bool                    `json:"keepSourceOnFailure,omitempty"`
-	ManifestDigest                string                   `json:"manifestDigest"`
-	ManifestFiles                 []struct {
+
+	// LifecycleTiming Immutable version-1 intervals. Only completed monotonic endpoints in one node boot clock contribute to a known-work union.
+	LifecycleTiming *map[string]interface{} `json:"lifecycleTiming,omitempty"`
+	ManifestDigest  string                  `json:"manifestDigest"`
+	ManifestFiles   []struct {
 		Path      string `json:"path"`
 		Sha256    string `json:"sha256"`
 		SizeBytes int64  `json:"sizeBytes"`
 	} `json:"manifestFiles"`
-	MappedPath                 *string                   `json:"mappedPath,omitempty"`
-	MediaItemId                *int64                    `json:"mediaItemId,omitempty"`
-	NextAttemptAt              *time.Time                `json:"nextAttemptAt,omitempty"`
-	PublicationGeneration      string                    `json:"publicationGeneration"`
-	PublicationPath            *string                   `json:"publicationPath,omitempty"`
-	ReadyAt                    *time.Time                `json:"readyAt,omitempty"`
-	ReceiptId                  int64                     `json:"receiptId"`
-	RequestToken               *string                   `json:"requestToken,omitempty"`
-	RunnerInstanceId           *string                   `json:"runnerInstanceId,omitempty"`
-	SourceCleanup              *map[string]interface{}   `json:"sourceCleanup,omitempty"`
-	SourceCleanupAttempts      *int                      `json:"sourceCleanupAttempts,omitempty"`
-	SourceCleanupBlockedSince  *time.Time                `json:"sourceCleanupBlockedSince,omitempty"`
-	SourceCleanupError         *string                   `json:"sourceCleanupError,omitempty"`
-	SourceCleanupNextAttemptAt *time.Time                `json:"sourceCleanupNextAttemptAt,omitempty"`
-	SourceFileOutcomes         *[]map[string]interface{} `json:"sourceFileOutcomes,omitempty"`
-	State                      string                    `json:"state"`
-	TerminalOutcome            *string                   `json:"terminalOutcome,omitempty"`
+	MappedPath    *string    `json:"mappedPath,omitempty"`
+	MediaItemId   *int64     `json:"mediaItemId,omitempty"`
+	NextAttemptAt *time.Time `json:"nextAttemptAt,omitempty"`
+
+	// OwnedByClientId Read-only duplicate view owned by another configured Runner client.
+	OwnedByClientId       *int64 `json:"ownedByClientId,omitempty"`
+	PendingDeleteRequests *[]struct {
+		Error *string  `json:"error,omitempty"`
+		Id    string   `json:"id"`
+		Paths []string `json:"paths"`
+	} `json:"pendingDeleteRequests,omitempty"`
+	PublicationGeneration string     `json:"publicationGeneration"`
+	PublicationPath       *string    `json:"publicationPath,omitempty"`
+	ReadyAt               *time.Time `json:"readyAt,omitempty"`
+	ReceiptId             int64      `json:"receiptId"`
+	RequestToken          *string    `json:"requestToken,omitempty"`
+	RunnerInstanceId      *string    `json:"runnerInstanceId,omitempty"`
+
+	// RunnerStages Immutable POST substages from one Runner node clock; excluded from aggregate major-stage totals.
+	RunnerStages               *map[string]interface{} `json:"runnerStages,omitempty"`
+	SourceCleanup              *map[string]interface{} `json:"sourceCleanup,omitempty"`
+	SourceCleanupAttempts      *int                    `json:"sourceCleanupAttempts,omitempty"`
+	SourceCleanupBlockedSince  *time.Time              `json:"sourceCleanupBlockedSince,omitempty"`
+	SourceCleanupError         *string                 `json:"sourceCleanupError,omitempty"`
+	SourceCleanupNextAttemptAt *time.Time              `json:"sourceCleanupNextAttemptAt,omitempty"`
+
+	// SourceCopies Mutable per-copy processing-source cleanup obligations; no local deletion authority.
+	SourceCopies       *[]map[string]interface{} `json:"sourceCopies,omitempty"`
+	SourceFileOutcomes *[]map[string]interface{} `json:"sourceFileOutcomes,omitempty"`
+	State              string                    `json:"state"`
+	TerminalOutcome    *string                   `json:"terminalOutcome,omitempty"`
 }
 
 // DirEntry defines model for DirEntry.
@@ -3089,6 +3114,28 @@ type SettingsUpdate struct {
 	TraktClientId *string `json:"traktClientId,omitempty"`
 }
 
+// StorageChangeRequest defines model for StorageChangeRequest.
+type StorageChangeRequest struct {
+	ExpectedIdentity string  `json:"expectedIdentity"`
+	ObservedIdentity string  `json:"observedIdentity"`
+	ReviewToken      *string `json:"reviewToken,omitempty"`
+	Root             string  `json:"root"`
+}
+
+// StorageChangeReview defines model for StorageChangeReview.
+type StorageChangeReview struct {
+	ActiveImports       int     `json:"activeImports"`
+	ExistingPayloads    int     `json:"existingPayloads"`
+	ExistingRequests    int     `json:"existingRequests"`
+	ExpectedDescription string  `json:"expectedDescription"`
+	ExpectedIdentity    string  `json:"expectedIdentity"`
+	InFlightRequests    int     `json:"inFlightRequests"`
+	ObservedDescription string  `json:"observedDescription"`
+	ObservedIdentity    string  `json:"observedIdentity"`
+	ReviewToken         *string `json:"reviewToken,omitempty"`
+	Root                string  `json:"root"`
+}
+
 // SystemStatus defines model for SystemStatus.
 type SystemStatus struct {
 	// AppName Example: Monarr
@@ -3571,6 +3618,12 @@ type ResolveDeliveryImportJSONRequestBody = ResolveDeliveryImportRequest
 // DeleteCompletedEntryJSONRequestBody defines body for DeleteCompletedEntry for application/json ContentType.
 type DeleteCompletedEntryJSONRequestBody DeleteCompletedEntryJSONBody
 
+// AcceptCompletedStorageChangeJSONRequestBody defines body for AcceptCompletedStorageChange for application/json ContentType.
+type AcceptCompletedStorageChangeJSONRequestBody = StorageChangeRequest
+
+// PreviewCompletedStorageChangeJSONRequestBody defines body for PreviewCompletedStorageChange for application/json ContentType.
+type PreviewCompletedStorageChangeJSONRequestBody = StorageChangeRequest
+
 // GrabReleaseJSONRequestBody defines body for GrabRelease for application/json ContentType.
 type GrabReleaseJSONRequestBody = GrabRequest
 
@@ -3744,6 +3797,9 @@ type ServerInterface interface {
 	// GetDeliveryLifecycleReceipt Read one durable Runner handoff and cleanup receipt
 	// (GET /downloads/deliveries/{receiptId})
 	GetDeliveryLifecycleReceipt(w http.ResponseWriter, r *http.Request, receiptId int64)
+	// AbandonDeliveryDeleteRequest Cancel remaining work in an exact reviewed deletion request
+	// (POST /downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon)
+	AbandonDeliveryDeleteRequest(w http.ResponseWriter, r *http.Request, receiptId int64, batchId string)
 	// ResolveDeliveryImport Import an explicitly selected subset of an accepted Runner manifest
 	// (POST /downloads/deliveries/{receiptId}/import)
 	ResolveDeliveryImport(w http.ResponseWriter, r *http.Request, receiptId int64)
@@ -3762,6 +3818,12 @@ type ServerInterface interface {
 	// DeleteCompletedEntry Explicitly delete an unchanged entry from Curator-owned download storage
 	// (DELETE /downloads/inventory/entry)
 	DeleteCompletedEntry(w http.ResponseWriter, r *http.Request)
+	// AcceptCompletedStorageChange Accept intentionally changed storage while fencing existing custody for review
+	// (POST /downloads/inventory/storage-change/accept)
+	AcceptCompletedStorageChange(w http.ResponseWriter, r *http.Request)
+	// PreviewCompletedStorageChange Review expected and observed storage and the exact affected custody
+	// (POST /downloads/inventory/storage-change/preview)
+	PreviewCompletedStorageChange(w http.ResponseWriter, r *http.Request)
 	// StreamEvents Server-sent events
 	// (GET /events)
 	StreamEvents(w http.ResponseWriter, r *http.Request)
@@ -4551,6 +4613,41 @@ func (siw *ServerInterfaceWrapper) GetDeliveryLifecycleReceipt(w http.ResponseWr
 	handler.ServeHTTP(w, r)
 }
 
+// AbandonDeliveryDeleteRequest operation middleware
+func (siw *ServerInterfaceWrapper) AbandonDeliveryDeleteRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "receiptId" -------------
+	var receiptId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "receiptId", r.PathValue("receiptId"), &receiptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "receiptId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "batchId" -------------
+	var batchId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "batchId", r.PathValue("batchId"), &batchId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "batchId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AbandonDeliveryDeleteRequest(w, r, receiptId, batchId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ResolveDeliveryImport operation middleware
 func (siw *ServerInterfaceWrapper) ResolveDeliveryImport(w http.ResponseWriter, r *http.Request) {
 
@@ -4674,6 +4771,34 @@ func (siw *ServerInterfaceWrapper) DeleteCompletedEntry(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteCompletedEntry(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptCompletedStorageChange operation middleware
+func (siw *ServerInterfaceWrapper) AcceptCompletedStorageChange(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptCompletedStorageChange(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewCompletedStorageChange operation middleware
+func (siw *ServerInterfaceWrapper) PreviewCompletedStorageChange(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewCompletedStorageChange(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7608,6 +7733,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-handoff", wrapper.RetryDeliveryHandoff)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-runner-cleanup", wrapper.RetryRunnerDeliveryCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-curator-cleanup", wrapper.RetryCuratorDeliveryCleanup)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon", wrapper.AbandonDeliveryDeleteRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/preview", wrapper.PreviewCompletedStorageChange)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/accept", wrapper.AcceptCompletedStorageChange)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloads/inventory/entry", wrapper.DeleteCompletedEntry)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/downloads/inventory", wrapper.GetCompletedInventory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/status", wrapper.GetSystemStatus)

@@ -154,3 +154,50 @@ func (s *Service) lockAllImportTargets(ctx context.Context, wait time.Duration) 
 		})
 	}, nil
 }
+
+// tryLockImportTarget is for short operator decisions that already hold the
+// completed-inventory lock. Busy publication must not pin that global lock.
+func (s *Service) tryLockImportTarget(ctx context.Context, item int64) (context.Context, func(), bool) {
+	if h, ok := heldTarget(ctx); ok {
+		if h.covers(item) {
+			return ctx, func() {}, true
+		}
+		return ctx, func() {}, false
+	}
+	if item < 0 {
+		item = 0
+	}
+	t := &s.importTargets
+	if !t.all.TryRLock() {
+		return ctx, func() {}, false
+	}
+	t.mu.Lock()
+	if t.items == nil {
+		t.items = map[int64]*importTargetLock{}
+	}
+	l := t.items[item]
+	if l == nil {
+		l = &importTargetLock{}
+		t.items[item] = l
+	}
+	l.refs++
+	t.mu.Unlock()
+	releaseRef := func() {
+		t.mu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(t.items, item)
+		}
+		t.mu.Unlock()
+		t.all.RUnlock()
+	}
+	if !l.mu.TryLock() {
+		releaseRef()
+		return ctx, func() {}, false
+	}
+	var once sync.Once
+	active := &atomic.Bool{}
+	active.Store(true)
+	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{item: item, active: active}), func() {
+		once.Do(func() { active.Store(false); l.mu.Unlock(); releaseRef() })
+	}, true
+}

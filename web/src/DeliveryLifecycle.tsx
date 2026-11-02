@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   getDeliveryLifecycle,
+  abandonDeliveryDeleteRequest,
   retryCuratorDeliveryCleanup,
   retryDeliveryHandoff,
   retryRunnerDeliveryCleanup,
@@ -9,11 +10,18 @@ import {
   type DeliveryLifecycleReceipt,
 } from './api'
 import { fmtBytes, fmtRelative } from './api'
+import { LifecycleTimeline } from './JoinedLifecycleTimeline'
+import { ActionNotice } from './ActionDialog'
 
-const elapsed = (value?: string) => value ? fmtRelative(value) : 'not recorded'
+const elapsed = (value?: string) => value && !value.startsWith('0001') && Number.isFinite(new Date(value).getTime()) ? fmtRelative(value) : 'not recorded'
 const pending = (value?: string) => !!value && !value.startsWith('0001') && new Date(value).getTime() > Date.now()
-const runnerTime = (value: unknown) => typeof value === 'number' && value > 0 ? fmtRelative(new Date(value * 1000).toISOString()) : 'not recorded'
-const runnerMillisTime = (value: unknown) => typeof value === 'number' && value > 0 ? fmtRelative(new Date(value).toISOString()) : 'not recorded'
+const runnerDate = (value: unknown, scale: number) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
+  const date = new Date(value * scale)
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined
+}
+const runnerTime = (value: unknown) => { const date = runnerDate(value, 1000); return date ? fmtRelative(date) : 'not recorded' }
+const runnerMillisTime = (value: unknown) => { const date = runnerDate(value, 1); return date ? fmtRelative(date) : 'not recorded' }
 const span = (milliseconds: number) => {
   if (!Number.isFinite(milliseconds) || milliseconds < 0) return 'unknown'
   const seconds = Math.floor(milliseconds / 1000)
@@ -29,9 +37,10 @@ const completedFolder = (receipt: DeliveryLifecycleReceipt) => {
   const path = completedPath(receipt).replace(/[\\/]+$/, '')
   return path.split(/[\\/]/).at(-1) || 'folder unknown'
 }
+const runnerTimestamp = (value: unknown) => runnerDate(value, 1000)
 const cleanupStatus = (status: string, error?: string, blocked?: string, next?: string) => {
   if (status === 'removed' || status === 'succeeded') return 'Complete'
-  if (status === 'retry' || error) return `Retry pending · blocked ${elapsed(blocked)}${pending(next) ? ` · next ${fmtRelative(next!)}` : ''}`
+  if (status === 'retry' || error) return `Retry pending${knownTimestamp(blocked) ? ` · blocked ${elapsed(blocked)}` : ''}${pending(next) ? ` · next ${fmtRelative(next!)}` : ''}`
   return status.replaceAll('_', ' ')
 }
 
@@ -43,6 +52,7 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
     void qc.invalidateQueries({ queryKey: ['completed-inventory'] })
     void qc.invalidateQueries({ queryKey: ['queue'] })
   }
+  const abandon = useMutation({ mutationFn: (requestId: string) => abandonDeliveryDeleteRequest(receipt.receiptId, requestId), onSettled: invalidate })
   const handoff = useMutation({ mutationFn: () => retryDeliveryHandoff(receipt.receiptId), onSettled: invalidate })
   const runnerCleanup = useMutation({ mutationFn: () => retryRunnerDeliveryCleanup(receipt.receiptId), onSettled: invalidate })
   const curatorCleanup = useMutation({ mutationFn: () => retryCuratorDeliveryCleanup(receipt.receiptId), onSettled: invalidate })
@@ -50,8 +60,9 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
   const blocked = [receipt.blockedSince, receipt.sourceCleanupBlockedSince, receipt.directoryCleanupBlockedSince,
     ...receipt.curatorFiles.map((file) => file.cleanupBlockedSince)].filter((value) => value && !value.startsWith('0001')) as string[]
   const longestBlock = blocked.map((value) => new Date(value).getTime()).filter(Number.isFinite).sort()[0]
-  const warning = longestBlock !== undefined && Date.now() - longestBlock >= 30 * 60 * 1000
-  const busy = handoff.isPending || runnerCleanup.isPending || curatorCleanup.isPending || importSelected.isPending
+  const sourceBlockedAt = typeof receipt.sourceCleanup?.blockedSince === 'number' && receipt.sourceCleanup.blockedSince > 0 ? receipt.sourceCleanup.blockedSince * 1000 : undefined
+  const warning = (longestBlock !== undefined && Date.now() - longestBlock >= 30 * 60 * 1000) || (sourceBlockedAt !== undefined && Date.now() - sourceBlockedAt >= 30 * 60 * 1000)
+  const busy = handoff.isPending || runnerCleanup.isPending || curatorCleanup.isPending || importSelected.isPending || abandon.isPending
   const runnerSource = receipt.sourceCleanup ?? {}
   const runnerSourceState = typeof runnerSource.status === 'string' ? runnerSource.status : 'unknown'
   const acknowledgement = receipt.acceptance.replaceAll('_', ' ')
@@ -62,7 +73,14 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
       <p><strong>Completed folder:</strong> <span className="mono">{completedPath(receipt) || 'path unknown'}</span></p>
       <p><strong>Publication:</strong> {receipt.terminalOutcome || 'outcome not reported'} · {receipt.state.replaceAll('_', ' ')} · acknowledgement: {acknowledgement} · ready {elapsed(receipt.readyAt)}</p>
       <p className="muted">Resolved library target: item {receipt.mediaItemId ?? 'unknown'} · copy {receipt.copyId ?? 0} · download {receipt.downloadId}</p>
-      <p><strong>Attempts:</strong> {receipt.attempts} · blocked {elapsed(receipt.blockedSince)}{pending(receipt.nextAttemptAt) ? ` · next handoff ${fmtRelative(receipt.nextAttemptAt!)}` : ''}</p>
+      {receipt.pendingDeleteRequests?.map((request) => <div key={request.id}>
+        <p>Pending deletion: {request.paths.join(', ')}{request.error ? ` · ${request.error}` : ''}</p>
+        <button disabled={abandon.isPending} onClick={() => abandon.mutate(request.id)}>Cancel deletion request</button>
+      </div>)}
+      {abandon.isSuccess && <ActionNotice revision={abandon.submittedAt}>Deletion request cancelled. Review the current files before another action.</ActionNotice>}
+      {abandon.isError && <ActionNotice warning revision={abandon.submittedAt}>{(abandon.error as Error).message}</ActionNotice>}
+      <p><strong>Attempts:</strong> {receipt.attempts} {knownTimestamp(receipt.blockedSince) ? `· blocked ${elapsed(receipt.blockedSince)}` : ''}{pending(receipt.nextAttemptAt) ? ` · next handoff ${fmtRelative(receipt.nextAttemptAt!)}` : ''}</p>
+      <LifecycleTimeline receipt={receipt} />
       <details className="delivery-attempt-history"><summary>Curator attempt history ({receipt.attemptHistory?.length ?? 0})</summary>
         {receipt.attemptHistory?.length ? <ol>{receipt.attemptHistory.map((event, index) => {
           const previous = [...receipt.attemptHistory.slice(0, index)].reverse().find((item) => item.stage === event.stage && knownTimestamp(item.finishedAt))
@@ -76,15 +94,15 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
           </li>
         })}</ol> : <p className="muted">No Curator attempt history was recorded before this version. Historical durations are unknown.</p>}
       </details>
-      {receipt.error && <p className="error-text">{receipt.error}</p>}
+      {receipt.error && <p className={receipt.ownedByClientId ? "muted" : "error-text"}>{receipt.error}</p>}
       {warning && <p className="warning-text" role="status">This lifecycle has been blocked for at least 30 minutes. Review the cause and retry when the underlying issue is corrected.</p>}
-      {receipt.failureStage && <p><strong>Runner stage:</strong> {receipt.failureStage}{receipt.failureCause ? ` · ${receipt.failureCause}` : ''} {receipt.keepSourceOnFailure ? '· source kept on failure' : ''}</p>}
-      <p><strong>Runner source cleanup:</strong> {cleanupStatus(runnerSourceState, receipt.sourceCleanupError, receipt.sourceCleanupBlockedSince, receipt.sourceCleanupNextAttemptAt)} · {Number(runnerSource.attempts ?? receipt.sourceCleanupAttempts)} attempts
+      {receipt.failureStage && <p><strong>Runner stage:</strong> {receipt.failureStage}{receipt.failureCause ? ` · ${receipt.failureCause}` : ''} {receipt.keepSourceOnFailure ? '· Keep was enabled at failure' : ''}</p>}
+      <p><strong>Runner source cleanup:</strong> {cleanupStatus(runnerSourceState, runnerSource.error ?? undefined, runnerTimestamp(runnerSource.blockedSince), runnerTimestamp(runnerSource.nextRetryAt))} · {Number(runnerSource.attempts ?? 0)} attempts
         {runnerSource.startedAt ? ` · started ${runnerTime(runnerSource.startedAt)}` : ''}{runnerSource.lastAttemptAt ? ` · last attempt ${runnerTime(runnerSource.lastAttemptAt)}` : ''}{runnerSource.completedAt ? ` · completed ${runnerTime(runnerSource.completedAt)}` : ''}{runnerSource.nextRetryAt ? ` · Runner next ${runnerTime(runnerSource.nextRetryAt)}` : ''}
       </p>
       {receipt.sourceCleanupAttempts > 0 && <p className="muted">Curator status refresh: {receipt.sourceCleanupAttempts} attempts{receipt.sourceCleanupBlockedSince ? ` · blocked ${elapsed(receipt.sourceCleanupBlockedSince)}` : ''}{pending(receipt.sourceCleanupNextAttemptAt) ? ` · next ${fmtRelative(receipt.sourceCleanupNextAttemptAt!)}` : ''}</p>}
       {receipt.sourceCleanupError && <p className="error-text">{receipt.sourceCleanupError}</p>}
-      <details><summary>Runner source cleanup attempts ({runnerSource.attemptHistory?.length ?? 0})</summary>
+      <details><summary>Recorded cleanup attempt details ({runnerSource.attemptHistory?.length ?? 0})</summary>
         {runnerSource.attemptHistory?.length ? <ol>{runnerSource.attemptHistory.map((event) => <li key={event.attempt}>
           Attempt {event.attempt} · {event.outcome} · started {runnerMillisTime(event.startedAtMs)} · wait {span(event.waitMs)}
           {typeof event.workMs === 'number' ? ` · work ${span(event.workMs)}` : ' · work duration not recorded'}
@@ -97,13 +115,13 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
       {runnerSource.warning === true && <p className="warning-text">Runner reports that source cleanup needs attention.</p>}
       <p><strong>Curator publication cleanup:</strong> {cleanupStatus(receipt.directoryCleanupState, receipt.directoryCleanupError, receipt.directoryCleanupBlockedSince, receipt.directoryCleanupNextAttemptAt)} · {receipt.directoryCleanupAttempts} attempts</p>
       {receipt.directoryCleanupError && <p className="error-text">{receipt.directoryCleanupError}</p>}
-      <div className="row-actions">
-        {receipt.state !== 'conflict' && <button disabled={busy} onClick={() => handoff.mutate()}>Retry handoff</button>}
-        <button disabled={busy} onClick={() => runnerCleanup.mutate()}>Retry Runner source cleanup</button>
-        <button disabled={busy || receipt.state === 'conflict'} onClick={() => curatorCleanup.mutate()}>Retry Curator cleanup</button>
-      </div>
-      {(handoff.error || runnerCleanup.error || curatorCleanup.error) && <p role="alert" className="error-text">{(handoff.error || runnerCleanup.error || curatorCleanup.error)?.message}</p>}
-      {(handoff.isSuccess || runnerCleanup.isSuccess || curatorCleanup.isSuccess) && <p role="status" className="muted">Retry queued. The durable receipt remains visible until its obligation is complete.</p>}
+      {!receipt.ownedByClientId && <div className="row-actions">
+        {receipt.state !== 'conflict' && <button aria-disabled={busy} onClick={() => { if (!busy) handoff.mutate() }}>{handoff.isPending ? 'Retrying handoff…' : 'Retry handoff'}</button>}
+        <button aria-disabled={busy} onClick={() => { if (!busy) runnerCleanup.mutate() }}>{runnerCleanup.isPending ? 'Retrying Runner source cleanup…' : 'Retry Runner source cleanup'}</button>
+        <button aria-disabled={busy || receipt.state === 'conflict'} onClick={() => { if (!busy && receipt.state !== 'conflict') curatorCleanup.mutate() }}>{curatorCleanup.isPending ? 'Retrying Curator cleanup…' : 'Retry Curator cleanup'}</button>
+      </div>}
+      {(handoff.error || runnerCleanup.error || curatorCleanup.error) && <ActionNotice warning revision={Math.max(handoff.submittedAt, runnerCleanup.submittedAt, curatorCleanup.submittedAt)}>{(handoff.error || runnerCleanup.error || curatorCleanup.error)?.message}</ActionNotice>}
+      {(handoff.isSuccess || runnerCleanup.isSuccess || curatorCleanup.isSuccess) && <ActionNotice revision={Math.max(handoff.submittedAt, runnerCleanup.submittedAt, curatorCleanup.submittedAt)}>Retry queued. The durable receipt remains visible until its obligation is complete.</ActionNotice>}
       <details><summary>Transfer and publication identity</summary>
         <dl><dt>Delivery</dt><dd className="mono">{receipt.deliveryId}</dd><dt>Runner instance</dt><dd className="mono">{receipt.runnerInstanceId || 'unknown'}</dd>
           <dt>Publication generation</dt><dd className="mono">{receipt.publicationGeneration}</dd><dt>Manifest digest</dt><dd className="mono">{receipt.manifestDigest}</dd>
@@ -118,16 +136,16 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
           const resolved = row && ['placed', 'redundant', 'disposable_selected_scope'].includes(row.disposition)
           const removed = row?.cleanupState === 'removed'
           return <li key={file.path}>
-            {!resolved && !removed && <label><input type="checkbox" aria-label={`Select ${file.path} for import`} checked={selectedPaths.includes(file.path)} onChange={(event) => setSelectedPaths((previous) => event.target.checked ? [...previous, file.path] : previous.filter((path) => path !== file.path))} /> </label>}
+            {!receipt.ownedByClientId && !resolved && !removed && <label><input type="checkbox" aria-label={`Select ${file.path} for import`} checked={selectedPaths.includes(file.path)} onChange={(event) => setSelectedPaths((previous) => event.target.checked ? [...previous, file.path] : previous.filter((path) => path !== file.path))} /> </label>}
             <strong className="mono">{file.path}</strong> · {fmtBytes(file.sizeBytes)}
             <div>Curator: {row ? `${row.disposition.replaceAll('_', ' ')} · ${cleanupStatus(row.cleanupState, row.cleanupError, row.cleanupBlockedSince, row.cleanupNextAttemptAt)} · ${row.cleanupAttempts} attempts` : 'not yet resolved'}</div>
             {row?.reason && <div className="muted">{row.reason}</div>}{row?.cleanupError && <div className="error-text">{row.cleanupError}</div>}
             {source && <div className="muted">Runner source: {source.classification} · {source.outcome}{source.repairDependency ? ' · retained as a repair input' : ''} · cleanup {source.sourceCleanupStatus}{source.reason ? ` · ${source.reason}` : ''}</div>}
           </li>
         })}</ul>
-        <button disabled={busy || selectedPaths.length === 0 || receipt.state === 'conflict'} onClick={() => importSelected.mutate()}>Queue import selected ({selectedPaths.length})</button>
-        {importSelected.error && <p role="alert" className="error-text">{importSelected.error.message}</p>}
-        {importSelected.isSuccess && <p role="status" className="muted">Selected manifest files queued for verification and import.</p>}
+        {!receipt.ownedByClientId && <button disabled={busy || selectedPaths.length === 0 || receipt.state === 'conflict'} onClick={() => importSelected.mutate()}>Queue import selected ({selectedPaths.length})</button>}
+        {importSelected.error && <ActionNotice warning revision={importSelected.submittedAt}>{importSelected.error.message}</ActionNotice>}
+        {importSelected.isSuccess && <ActionNotice revision={importSelected.submittedAt}>Selected manifest files queued for verification and import.</ActionNotice>}
       </details>
       {receipt.sourceCleanup && <details><summary>Runner cleanup trace</summary><pre>{JSON.stringify(receipt.sourceCleanup, null, 2)}</pre></details>}
     </div>

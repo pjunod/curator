@@ -36,14 +36,12 @@ test('open lifecycle archive refreshes asynchronous retry results and stops poll
   const retryButton = trace.getByRole('button', { name: 'Retry Runner source cleanup' })
   await retryButton.click()
   await expect(trace.getByRole('status')).toContainText('Retry queued')
-  const traceSummary = trace.locator(':scope > summary')
-  // The mutation disables its own trigger while pending. Move focus to the
-  // stable trace disclosure after that user action, then prove background
-  // polling leaves both focus and viewport position alone.
-  await traceSummary.focus()
+  // The actual retry trigger keeps focus through pending and settled state.
+  // No test-side refocus may conceal focus theft by a background refresh.
+  await expect(retryButton).toBeFocused()
   const beforeRefresh = await page.evaluate(() => ({ scrollY: window.scrollY, activeText: document.activeElement?.textContent?.trim() }))
   await expect(trace.getByText(/Runner source cleanup: Complete/)).toBeVisible({ timeout: 9_000 })
-  await expect(traceSummary).toBeFocused()
+  await expect(retryButton).toBeFocused()
   expect(await page.evaluate(() => window.scrollY)).toBe(beforeRefresh.scrollY)
   expect(await page.evaluate(() => document.activeElement?.textContent?.trim())).toBe(beforeRefresh.activeText)
   expect(listRequests).toBeGreaterThanOrEqual(3)

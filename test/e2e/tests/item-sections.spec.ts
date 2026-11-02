@@ -80,6 +80,11 @@ for (const width of [390, 1280]) {
       const dialog = page.getByRole('dialog', { name: 'Delete library file' })
       await expect(dialog.getByRole('button', { name: 'Delete file', exact: true })).toBeVisible()
       await dialog.getByRole('button', { name: 'Delete file', exact: true }).click()
+      const result = page.getByRole('dialog', { name: 'File deletion result' })
+      await expect(result.getByRole('status')).toContainText('File removed')
+      await expect(result.getByRole('status')).toBeInViewport({ ratio: 1 })
+      await result.getByRole('button', { name: 'Close', exact: true }).click()
+      await expect(fileSummary).toBeFocused()
     }
     await deleteFile()
     await expect(fileSummary).toHaveText('Files (50)')

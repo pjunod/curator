@@ -92,6 +92,11 @@ func ProtocolOfClient(clientType string) string {
 	return "torrent"
 }
 
+// IsNativeRunnerClient keeps Runner custody guards independent of its protocol.
+func IsNativeRunnerClient(clientType string) bool {
+	return clientType == "nzbd" || clientType == "runner-torrent"
+}
+
 // Handle identifies an item inside a download client (torrent hash, nzo id).
 type Handle string
 

@@ -24,26 +24,29 @@ const (
 )
 
 type runnerDeliveryWire struct {
-	ProtocolVersion       int                       `json:"protocolVersion"`
-	Sequence              uint64                    `json:"sequence"`
-	DeliveryID            string                    `json:"deliveryId"`
-	PublicationGeneration string                    `json:"publicationGeneration"`
-	SourceArtifactID      string                    `json:"sourceArtifactId,omitempty"`
-	SourceGeneration      string                    `json:"sourceGeneration,omitempty"`
-	ArtifactID            string                    `json:"artifactId"`
-	JobID                 uint32                    `json:"jobId"`
-	RequestToken          string                    `json:"requestToken"`
-	RunnerInstanceID      string                    `json:"runnerInstanceId"`
-	PublicationPath       string                    `json:"publicationPath"`
-	ManifestDigest        string                    `json:"manifestDigest"`
-	Files                 []ports.RunnerFile        `json:"files"`
-	TerminalOutcome       string                    `json:"terminalOutcome,omitempty"`
-	FailureStage          string                    `json:"failureStage,omitempty"`
-	FailureCause          string                    `json:"failureCause,omitempty"`
-	KeepSourceOnFailure   bool                      `json:"keepSourceOnFailure,omitempty"`
-	FileOutcomes          []ports.RunnerFileOutcome `json:"fileOutcomes,omitempty"`
-	ReadyAt               json.Number               `json:"readyAt"`
-	SourceCleanup         json.RawMessage           `json:"sourceCleanup,omitempty"`
+	LifecycleTiming       *ports.RunnerLifecycleTiming `json:"lifecycleTiming,omitempty"`
+	RunnerStages          *ports.RunnerStages          `json:"runnerStages,omitempty"`
+	SourceCopies          []ports.RunnerSourceCopy     `json:"sourceCopies,omitempty"`
+	ProtocolVersion       int                          `json:"protocolVersion"`
+	Sequence              uint64                       `json:"sequence"`
+	DeliveryID            string                       `json:"deliveryId"`
+	PublicationGeneration string                       `json:"publicationGeneration"`
+	SourceArtifactID      string                       `json:"sourceArtifactId,omitempty"`
+	SourceGeneration      string                       `json:"sourceGeneration,omitempty"`
+	ArtifactID            string                       `json:"artifactId"`
+	JobID                 uint32                       `json:"jobId"`
+	RequestToken          string                       `json:"requestToken"`
+	RunnerInstanceID      string                       `json:"runnerInstanceId"`
+	PublicationPath       string                       `json:"publicationPath"`
+	ManifestDigest        string                       `json:"manifestDigest"`
+	Files                 []ports.RunnerFile           `json:"files"`
+	TerminalOutcome       string                       `json:"terminalOutcome,omitempty"`
+	FailureStage          string                       `json:"failureStage,omitempty"`
+	FailureCause          string                       `json:"failureCause,omitempty"`
+	KeepSourceOnFailure   bool                         `json:"keepSourceOnFailure,omitempty"`
+	FileOutcomes          []ports.RunnerFileOutcome    `json:"fileOutcomes,omitempty"`
+	ReadyAt               json.Number                  `json:"readyAt"`
+	SourceCleanup         json.RawMessage              `json:"sourceCleanup,omitempty"`
 }
 
 type runnerDeliveryPageWire struct {
@@ -89,25 +92,11 @@ func (c *Client) ListDeliveries(ctx context.Context, after uint64, limit int) (p
 		return ports.RunnerDeliveryPage{}, fmt.Errorf("nzbd: delivery page limit must be between 1 and %d", maxDeliveryPage)
 	}
 	path := "/api/v1/deliveries?after=" + strconv.FormatUint(after, 10) + "&limit=" + strconv.Itoa(limit)
-	var wire runnerDeliveryPageWire
-	if err := c.deliveryRequest(ctx, http.MethodGet, path, nil, &wire); err != nil {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.cfg.URL, "/")+path, nil)
+	if err != nil {
 		return ports.RunnerDeliveryPage{}, err
 	}
-	if wire.ProtocolVersion != 1 {
-		return ports.RunnerDeliveryPage{}, fmt.Errorf("nzbd: unsupported delivery protocol version %d", wire.ProtocolVersion)
-	}
-	if len(wire.Deliveries) > limit {
-		return ports.RunnerDeliveryPage{}, fmt.Errorf("nzbd: delivery page returned %d rows for limit %d", len(wire.Deliveries), limit)
-	}
-	page := ports.RunnerDeliveryPage{ProtocolVersion: wire.ProtocolVersion, NextCursor: wire.NextCursor, Deliveries: make([]ports.RunnerDelivery, 0, len(wire.Deliveries))}
-	for _, d := range wire.Deliveries {
-		converted, err := convertRunnerDelivery(d)
-		if err != nil {
-			return ports.RunnerDeliveryPage{}, err
-		}
-		page.Deliveries = append(page.Deliveries, converted)
-	}
-	return page, nil
+	return c.listDeliveryPage(req, limit)
 }
 
 // GetDelivery refreshes durable mutable progress for a delivery that has
@@ -160,7 +149,10 @@ func convertRunnerDelivery(d runnerDeliveryWire) (ports.RunnerDelivery, error) {
 	}
 	whole := int64(seconds)
 	nanos := int64((seconds - float64(whole)) * float64(time.Second))
-	return ports.RunnerDelivery{ProtocolVersion: 1, Sequence: d.Sequence, DeliveryID: d.DeliveryID, PublicationGeneration: d.PublicationGeneration, SourceArtifactID: d.SourceArtifactID, SourceGeneration: d.SourceGeneration, ArtifactID: d.ArtifactID, JobID: strconv.FormatUint(uint64(d.JobID), 10), RequestToken: d.RequestToken, RunnerInstanceID: d.RunnerInstanceID, PublicationPath: d.PublicationPath, ManifestDigest: d.ManifestDigest, Files: d.Files, TerminalOutcome: d.TerminalOutcome, FailureStage: d.FailureStage, FailureCause: d.FailureCause, KeepSourceOnFailure: d.KeepSourceOnFailure, FileOutcomes: d.FileOutcomes, ReadyAt: time.Unix(whole, nanos).UTC(), SourceCleanup: d.SourceCleanup}, nil
+	if err := validateRunnerEvidence(d.RunnerStages, d.SourceCopies, d.LifecycleTiming); err != nil {
+		return ports.RunnerDelivery{}, err
+	}
+	return ports.RunnerDelivery{RunnerStages: d.RunnerStages, SourceCopies: d.SourceCopies, LifecycleTiming: d.LifecycleTiming, ProtocolVersion: 1, Sequence: d.Sequence, DeliveryID: d.DeliveryID, PublicationGeneration: d.PublicationGeneration, SourceArtifactID: d.SourceArtifactID, SourceGeneration: d.SourceGeneration, ArtifactID: d.ArtifactID, JobID: strconv.FormatUint(uint64(d.JobID), 10), RequestToken: d.RequestToken, RunnerInstanceID: d.RunnerInstanceID, PublicationPath: d.PublicationPath, ManifestDigest: d.ManifestDigest, Files: d.Files, TerminalOutcome: d.TerminalOutcome, FailureStage: d.FailureStage, FailureCause: d.FailureCause, KeepSourceOnFailure: d.KeepSourceOnFailure, FileOutcomes: d.FileOutcomes, ReadyAt: time.Unix(whole, nanos).UTC(), SourceCleanup: d.SourceCleanup}, nil
 }
 
 // AcceptDelivery implements ports.DeliveryProtocol. Repeating the same
@@ -230,6 +222,60 @@ func (c *Client) deliveryRequest(ctx context.Context, method, path string, body 
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
 			return fmt.Errorf("nzbd: bad delivery response: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateRunnerEvidence(stages *ports.RunnerStages, copies []ports.RunnerSourceCopy, timing *ports.RunnerLifecycleTiming) error {
+	if timing != nil {
+		if timing.Version != 1 || len(timing.Intervals) > 128 {
+			return fmt.Errorf("nzbd: invalid lifecycle timing snapshot")
+		}
+		if len(timing.OmittedIntervals) > 5 {
+			return fmt.Errorf("nzbd: invalid omitted timing counters")
+		}
+		for stage := range timing.OmittedIntervals {
+			switch stage {
+			case "queue", "url_fetch", "download", "post_processing", "handoff":
+			default:
+				return fmt.Errorf("nzbd: unknown omitted timing stage")
+			}
+		}
+		for _, interval := range timing.Intervals {
+			if interval.NodeID == "" || len(interval.NodeID) > maxDeliveryIdentityBytes || interval.ClockDomain == "" || len(interval.ClockDomain) > maxDeliveryIdentityBytes || interval.Stage == "" || len(interval.Stage) > 128 || interval.StartUnixMS < 0 || len(interval.State) > 128 {
+				return fmt.Errorf("nzbd: malformed lifecycle timing interval")
+			}
+			for _, value := range []*int64{interval.EndUnixMS, interval.StartMonotonicMS, interval.EndMonotonicMS, interval.DurationMS} {
+				if value != nil && *value < 0 {
+					return fmt.Errorf("nzbd: negative lifecycle timing measurement")
+				}
+			}
+			if interval.StartMonotonicMS != nil && interval.EndMonotonicMS != nil && *interval.EndMonotonicMS < *interval.StartMonotonicMS {
+				return fmt.Errorf("nzbd: reversed monotonic timing interval")
+			}
+			if interval.State == "completed" && interval.DurationMS != nil && interval.StartMonotonicMS != nil && interval.EndMonotonicMS != nil && *interval.DurationMS != *interval.EndMonotonicMS-*interval.StartMonotonicMS {
+				return fmt.Errorf("nzbd: lifecycle timing duration does not match monotonic endpoints")
+			}
+		}
+	}
+
+	if stages != nil {
+		if stages.NodeID == "" || stages.ClockDomain == "" || len(stages.NodeID) > maxDeliveryIdentityBytes || len(stages.ClockDomain) > maxDeliveryIdentityBytes || len(stages.Spans) > 128 {
+			return fmt.Errorf("nzbd: invalid or oversized Runner stage snapshot")
+		}
+		for _, span := range stages.Spans {
+			if span.Stage == "" || len(span.Stage) > 128 || span.StartedAtUnix < 0 || (span.Milliseconds != nil && *span.Milliseconds < 0) {
+				return fmt.Errorf("nzbd: malformed Runner stage span")
+			}
+		}
+	}
+	if len(copies) > 64 {
+		return fmt.Errorf("nzbd: too many Runner source copy obligations")
+	}
+	for _, copy := range copies {
+		if copy.ID == "" || len(copy.ID) > maxDeliveryIdentityBytes || len(copy.OwnerNode) > maxDeliveryIdentityBytes || len(copy.Status) > 128 || len(copy.Error) > maxDeliveryPathBytes || (copy.NextRetryAt != nil && *copy.NextRetryAt < 0) {
+			return fmt.Errorf("nzbd: invalid Runner source copy obligation")
 		}
 	}
 	return nil

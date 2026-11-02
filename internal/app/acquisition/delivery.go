@@ -64,7 +64,7 @@ func (s *Service) discoverRunnerDeliveries(ctx context.Context, cfg ports.Client
 			s.log.Warn("delivery discovery failed", "client", cfg.Name, "err", err)
 			break
 		}
-		if page.ProtocolVersion != 1 || len(page.Deliveries) > deliveryPageSize {
+		if page.ProtocolVersion != 1 || len(page.Deliveries)+len(page.Rejected) > deliveryPageSize {
 			s.log.Warn("delivery discovery returned invalid page", "client", cfg.Name)
 			break
 		}
@@ -72,7 +72,25 @@ func (s *Service) discoverRunnerDeliveries(ctx context.Context, cfg ports.Client
 		if err := s.db.EnableRunnerDeliveryV1(ctx, cfg.ID); err != nil {
 			s.log.Warn("Runner delivery capability could not be persisted", "client", cfg.Name, "err", err)
 		}
+		for _, rejected := range page.Rejected {
+			if rejected.Sequence <= after || rejected.Sequence > page.NextCursor {
+				s.log.Warn("invalid rejected delivery sequence", "client", cfg.Name)
+				return
+			}
+			if err := s.db.RecordDeliveryDiscoveryRejection(ctx, cfg.ID, rejected); err != nil {
+				s.log.Warn("delivery rejection journal write failed", "client", cfg.Name, "err", err)
+				return
+			}
+		}
 		for _, delivery := range page.Deliveries {
+			otherMode, err := s.db.ReconcileOtherRunnerModeView(ctx, cfg, delivery)
+			if err != nil {
+				s.log.Warn("delivery client association lookup failed", "client", cfg.Name, "err", err)
+				return
+			}
+			if otherMode {
+				continue
+			}
 			mapped := ""
 			if filepath.IsAbs(delivery.PublicationPath) {
 				mapped = ports.MapRemotePath(cfg.PathMappings, delivery.PublicationPath)
@@ -195,7 +213,7 @@ func (s *Service) refreshOneDeliverySourceCleanup(ctx context.Context, lookup po
 	if deliverySourceCleanupTerminal(fresh.SourceCleanup) {
 		retryAfter = 24 * time.Hour
 	}
-	return s.db.RefreshDeliverySourceCleanup(ctx, r.ID, fresh.SourceCleanup, fresh.FileOutcomes, retryAfter)
+	return s.db.RefreshDeliverySourceCleanup(ctx, r.ID, fresh.SourceCleanup, fresh.FileOutcomes, retryAfter, fresh.SourceCopies)
 }
 
 func deliverySourceCleanupTerminal(raw json.RawMessage) bool {
@@ -239,6 +257,12 @@ func deliverySourceCleanupTerminal(raw json.RawMessage) bool {
 }
 
 func sameDeliveryImmutable(a, b ports.RunnerDelivery) bool {
+	if !ports.SameRunnerLifecycleTiming(a.LifecycleTiming, b.LifecycleTiming) {
+		return false
+	}
+	if !ports.SameRunnerStages(a.RunnerStages, b.RunnerStages) {
+		return false
+	}
 	if a.Sequence != b.Sequence || a.DeliveryID != b.DeliveryID || a.PublicationGeneration != b.PublicationGeneration ||
 		a.SourceArtifactID != b.SourceArtifactID || a.SourceGeneration != b.SourceGeneration ||
 		a.ManifestDigest != b.ManifestDigest || a.ArtifactID != b.ArtifactID || a.JobID != b.JobID ||
@@ -287,7 +311,7 @@ func (s *Service) runnerDeliveryEnabled(ctx context.Context, cfg ports.ClientCon
 	enabled, err := s.db.RunnerDeliveryV1Enabled(ctx, cfg.ID)
 	if err != nil {
 		s.log.Warn("Runner delivery capability lookup failed", "client", cfg.Name, "err", err)
-		return cfg.Type == "nzbd"
+		return ports.IsNativeRunnerClient(cfg.Type)
 	}
 	if enabled {
 		s.rememberRunnerDelivery(cfg.ID)
@@ -427,8 +451,9 @@ func (s *Service) deliveryRetryAs(ctx context.Context, r *sqlite.DeliveryReceipt
 	if len(cause) > 0 {
 		providerDeadline = submissionRetryDeadline(cause[0])
 	}
-	// A pending Runner acknowledgement shares this schedule, and Runner's
-	// source cleanup waits on it: keep the environmental pace until it lands.
+	// A pending Runner acknowledgement shares this schedule: keep Curator's
+	// environmental retry pace until the acknowledgement lands. Runner may
+	// independently clean its source after safe publication and notification.
 	settled = settled && r.AckState != "pending"
 	r.NextAttemptAt = time.Now().Add(deliveryRetryDelay(r.Attempts, settled, time.Since(r.BlockedSince)))
 	if providerDeadline.After(r.NextAttemptAt) {
@@ -1012,6 +1037,9 @@ func (s *Service) verifyDeliveryManifest(ctx context.Context, cfg ports.ClientCo
 	}
 	if digest != v.ManifestDigest {
 		return nil, fmt.Errorf("runner manifest digest does not match its file list")
+	}
+	if err := s.db.ReconcileDeliveryPlacements(ctx, r.ID); err != nil {
+		return nil, err
 	}
 	ledgerRows, err := s.db.DeliveryFileOutcomes(ctx, r.ID)
 	if err != nil {

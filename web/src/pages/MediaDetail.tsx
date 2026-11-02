@@ -863,7 +863,7 @@ function ProvenanceBadge({ f }: { f: MediaFileInfo }) {
   )
 }
 
-function FileActions({ item, file, onDone }: { item: MediaItemDetail; file: MediaFileInfo; onDone: () => void }) {
+function FileActions({ item, file, onDone, onDeleted }: { item: MediaItemDetail; file: MediaFileInfo; onDone: () => void; onDeleted: (message: string) => void }) {
   const qc = useQueryClient()
   const [dialog, setDialog] = useState<'delete' | 'report' | 'replace_bad' | 'replace_quality' | null>(null)
   const [reason, setReason] = useState('Reported by user')
@@ -872,7 +872,6 @@ function FileActions({ item, file, onDone }: { item: MediaItemDetail; file: Medi
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([])
   const [observationIds, setObservationIds] = useState<Record<number, string>>({})
   const [operation, setOperation] = useState<{ operationId: string; state: string } | null>(null)
-  const [feedback, setFeedback] = useState('')
   const [focusRevision, setFocusRevision] = useState(0)
   const generation = file.fileGeneration ?? ''
   const scopeFiles = item.files.filter((candidate) => {
@@ -911,7 +910,7 @@ function FileActions({ item, file, onDone }: { item: MediaItemDetail; file: Medi
   }, [scopeFiles, observationQueriesByFileID, item.id])
   const remove = useMutation({
     mutationFn: () => removeLibraryFile(item.id, file.id, { fromDisk: true }),
-    onSuccess: (result) => { setDialog(null); setFeedback(result.note ?? 'File removed.'); onDone() },
+    onSuccess: (result) => { setDialog(null); onDeleted(result.note ?? 'File removed.'); onDone() },
   })
   const observe = useMutation({
     mutationFn: async () => Promise.all(scopeFiles.map((candidate) => {
@@ -930,7 +929,7 @@ function FileActions({ item, file, onDone }: { item: MediaItemDetail; file: Medi
   })
   const report = useMutation({
     mutationFn: () => reportLibraryFile(item.id, file.id, { fileGeneration: generation, reasonCode, reason: reason.trim() }),
-    onSuccess: () => { setDialog(null); setFeedback('Report saved for review. No file or acquisition state changed.'); onDone(); void qc.invalidateQueries({ queryKey: ['library-lifecycle-review', item.id] }) },
+    onSuccess: () => { setFocusRevision((revision) => revision + 1); onDone(); void qc.invalidateQueries({ queryKey: ['library-lifecycle-review', item.id] }) },
   })
   const replace = useMutation({
     mutationFn: () => createReplacementOperation(item.id, {
@@ -965,7 +964,7 @@ function FileActions({ item, file, onDone }: { item: MediaItemDetail; file: Medi
     focusActionTrigger(event)
     setDialog(kind); setReason(kind === 'replace_quality' ? 'Upgrade quality' : 'Reported by user')
     setReasonCode(kind === 'replace_quality' ? 'quality_preference' : 'user_reported_bad')
-    setBlacklist(null); setSelectedEpisodes([]); setObservationIds({}); setOperation(null); setFeedback('')
+    setBlacklist(null); setSelectedEpisodes([]); setObservationIds({}); setOperation(null)
     observe.reset(); replace.reset(); report.reset()
   }
   const refreshObservation = () => {
@@ -990,14 +989,13 @@ function FileActions({ item, file, onDone }: { item: MediaItemDetail; file: Medi
       <button onClick={(event) => begin('replace_quality', event)}>Replace quality</button>
       <button onClick={(event) => { focusActionTrigger(event); setDialog('delete') }}>Delete…</button>
     </div>
-    {feedback && <div className="muted">{feedback}</div>}
     {dialog && <ActionDialog title={dialog === 'report' ? 'Report library file' : dialog === 'delete' ? 'Delete library file' : operation ? 'Replacement started' : 'Review replacement'} onClose={() => setDialog(null)}>
       <p className="mono">{name}</p>
       {dialog === 'delete' ? <>
         <p>Delete this file from disk and from the library?</p>
         <div className="row-actions"><button className="btn-danger" disabled={remove.isPending} onClick={() => remove.mutate()}>{remove.isPending ? 'Deleting…' : 'Delete file'}</button><button onClick={() => setDialog(null)}>Cancel</button></div>
         {remove.isError && <p className="error-text">{(remove.error as Error).message}</p>}
-      </> : dialog === 'report' ? <>
+      </> : dialog === 'report' ? report.isSuccess ? <><ActionNotice>Report saved for review.</ActionNotice><button onClick={() => setDialog(null)}>Done</button></> : <>
         <p className="muted">A report creates a review flag only. It does not change quality, remove this file, or start a download.</p>
         <label>Reason code<select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}><option value="user_reported_bad">User reported a problem</option><option value="corrupt_media">Corrupt media</option><option value="wrong_content">Wrong content</option><option value="incomplete_media">Incomplete media</option></select></label>
         <label className="replacement-reason-field">What did you notice?<textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label>
@@ -1084,6 +1082,8 @@ function LifecycleReviewPanel({ item }: { item: MediaItemDetail }) {
 // Keep pagination local to the item. Refreshes preserve the viewer's page;
 // shrinking the list clamps it, and switching items remounts this panel.
 function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: () => void }) {
+  const [deletedNotice, setDeletedNotice] = useState('')
+  const filesSummary = useRef<HTMLElement>(null)
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(25)
   const [navigation, setNavigation] = useState(0)
@@ -1104,9 +1104,10 @@ function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: 
 
   return (
     <section className="panel item-files">
+      {deletedNotice && <ActionDialog title="File deletion result" returnFocus={filesSummary} onClose={() => setDeletedNotice('')}><p role="status">{deletedNotice}</p></ActionDialog>}
       <LifecycleReviewPanel item={m} />
       <details>
-        <summary className="item-section-summary"><h2>Files <span className="muted">({m.files.length})</span></h2></summary>
+        <summary ref={filesSummary} className="item-section-summary"><h2>Files <span className="muted">({m.files.length})</span></h2></summary>
         {m.files.length === 0 ? (
           <p className="muted">
             No files on disk yet. Run a disk scan from the Library page once the folder has
@@ -1171,6 +1172,7 @@ function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: 
                           item={m}
                           file={f}
                           onDone={onChanged}
+                          onDeleted={setDeletedNotice}
                         />
                       </td>
                     </tr>

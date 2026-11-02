@@ -46,6 +46,12 @@ func deliveryDirectoryObjectIdentity(info os.FileInfo) string {
 // root. Device numbers and mount IDs are intentionally omitted because both
 // can change during an ordinary remount.
 func expectedStorageIdentity(path string) (string, error) {
+	return storageIdentityWithSource(path, true)
+}
+func legacyStorageIdentity(path string) (string, error) {
+	return storageIdentityWithSource(path, false)
+}
+func storageIdentityWithSource(path string, strengthen bool) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("expected storage is unavailable at %s: %w", path, err)
@@ -73,6 +79,9 @@ func expectedStorageIdentity(path string) (string, error) {
 	closeErr := f.Close()
 	if err != nil || closeErr != nil {
 		return "", errors.Join(err, closeErr)
+	}
+	if strengthen {
+		mount.source = stableBlockStorageSource(mount.source, "/dev/disk/by-uuid")
 	}
 	return mount.identity(), nil
 }
@@ -183,4 +192,36 @@ func unescapeMountInfo(value string) string {
 		b.WriteByte(value[i])
 	}
 	return b.String()
+}
+
+// UUID aliases identify block filesystems across ordinary /dev/sdX renumbering.
+// Network filesystems retain their server/export identity. If aliases are absent
+// or ambiguous, preserve the observable source rather than guessing a UUID.
+func stableBlockStorageSource(source, uuidDirectory string) string {
+	if !strings.HasPrefix(source, "/dev/") {
+		return source
+	}
+	device, err := os.Stat(source)
+	if err != nil || (device.Mode()&os.ModeDevice == 0 || device.Mode()&os.ModeCharDevice != 0) {
+		return source
+	}
+	entries, err := os.ReadDir(uuidDirectory)
+	if err != nil {
+		return source
+	}
+	match := ""
+	for _, entry := range entries {
+		candidate, err := os.Stat(filepath.Join(uuidDirectory, entry.Name()))
+		if err != nil || !os.SameFile(device, candidate) {
+			continue
+		}
+		if match != "" {
+			return source
+		}
+		match = entry.Name()
+	}
+	if match == "" {
+		return source
+	}
+	return "UUID=" + match
 }

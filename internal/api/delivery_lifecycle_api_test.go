@@ -135,6 +135,47 @@ func TestDeliveryLifecycleHTTPPagesFiltersAndReadsDurableReceipt(t *testing.T) {
 	}
 }
 
+func TestDeliveryLifecycleFileLedgerUsesPublicFieldNamesOnListAndDetail(t *testing.T) {
+	e := newAPIEnv(t)
+	clientID := acqAddClient(t, e, "qbittorrent")
+	itemID := e.addMovie(t)
+	downloadID := acqGrab(t, e, itemID)
+	r := apiDeliveryReceipt(t, e, clientID, downloadID, "file-casing")
+	path := r.Delivery.Files[0].Path
+	ctx := context.Background()
+	if err := e.db.EnsureDeliveryFileOutcomes(ctx, r.ID, []sqlite.DeliveryManifestFile{{Path: path, SizeBytes: 17, SHA256: "proof-hash", FileGeneration: "proof-generation"}}, map[string]bool{path: true}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.UpdateDeliveryFileDisposition(ctx, r.ID, path, "placed", "verified placement", "/library/movie.mkv"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.SetDeliveryFileCleanup(ctx, r.ID, path, "retry", "permission denied in fixture"); err != nil {
+		t.Fatal(err)
+	}
+	for _, endpoint := range []string{fmt.Sprintf("/api/v1/downloads/deliveries/%d", r.ID), fmt.Sprintf("/api/v1/downloads/deliveries?downloadId=%d", downloadID)} {
+		var raw map[string]json.RawMessage
+		e.get(t, endpoint).expect(t, http.StatusOK).into(t, &raw)
+		if strings.Contains(endpoint, "?") {
+			var rows []map[string]json.RawMessage
+			if err := json.Unmarshal(raw["items"], &rows); err != nil || len(rows) != 1 {
+				t.Fatalf("rows=%v err=%v", rows, err)
+			}
+			raw = rows[0]
+		}
+		var files []map[string]any
+		if err := json.Unmarshal(raw["curatorFiles"], &files); err != nil || len(files) != 1 {
+			t.Fatalf("files=%v err=%v", files, err)
+		}
+		f := files[0]
+		if f["path"] != path || f["cleanupState"] != "retry" || f["cleanupError"] != "permission denied in fixture" || f["disposition"] != "placed" || f["fileGeneration"] != "proof-generation" {
+			t.Fatalf("public file ledger = %#v", f)
+		}
+		if _, leaked := f["CleanupState"]; leaked {
+			t.Fatal("database field names leaked through API")
+		}
+	}
+}
+
 func TestDeliveryLifecycleHTTPRejectsBadLimitsMissingReceiptsAndInvalidResolvePath(t *testing.T) {
 	e := newAPIEnv(t)
 	clientID := acqAddClient(t, e, "qbittorrent")
@@ -331,4 +372,33 @@ func TestDeliveryLifecycleResolveQueuesOnlySelectedDurableManifestPath(t *testin
 	}
 	// The activity row records a bounded handoff, not a synchronous claim that
 	// import completed successfully; the real worker will stamp its outcome.
+}
+
+func TestOtherRunnerClientReceiptIsReadOnlyThroughHTTP(t *testing.T) {
+	e := newAPIEnv(t)
+	clientID := acqAddClient(t, e, "qbittorrent")
+	downloadID := acqGrab(t, e, e.addMovie(t))
+	r := apiDeliveryReceipt(t, e, clientID, downloadID, "duplicate-other-client")
+	if _, err := e.db.W.ExecContext(t.Context(), `UPDATE runner_delivery_receipts SET owned_by_client_id=987,state='conflict',error='Owned by Runner client Usenet (ID 987)' WHERE id=?`, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	base := fmt.Sprintf("/api/v1/downloads/deliveries/%d", r.ID)
+	var detail apigen.DeliveryLifecycleReceipt
+	e.get(t, base).expect(t, http.StatusOK).into(t, &detail)
+	if detail.State != "owned_by_other_client" || detail.OwnedByClientId == nil || *detail.OwnedByClientId != 987 {
+		t.Fatalf("read-only projection=%+v", detail)
+	}
+	for _, action := range []struct{ path, body string }{
+		{"retry-handoff", `{}`}, {"retry-runner-cleanup", `{}`}, {"retry-curator-cleanup", `{}`},
+		{"import", `{"paths":["Season 01/épisode.mkv"]}`}, {"delete-batches/stale/abandon", `{}`},
+	} {
+		response := e.post(t, base+"/"+action.path, action.body).expect(t, http.StatusConflict)
+		if !strings.Contains(response.Body.String(), "another configured Runner client") || !strings.Contains(response.Body.String(), "987") {
+			t.Fatalf("missing owning-client reason: %s", response.Body.String())
+		}
+	}
+	after, err := e.db.DeliveryReceiptByID(t.Context(), r.ID)
+	if err != nil || after.OwnedByClientID != 987 || after.State != "conflict" || after.AckState != r.AckState || after.DownloadID != r.DownloadID {
+		t.Fatalf("refused actions changed receipt: %+v %v", after, err)
+	}
 }

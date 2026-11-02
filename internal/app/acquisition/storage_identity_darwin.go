@@ -66,3 +66,5 @@ func statfsString(value []int8) string {
 	}
 	return string(bytes)
 }
+
+func legacyStorageIdentity(path string) (string, error) { return expectedStorageIdentity(path) }

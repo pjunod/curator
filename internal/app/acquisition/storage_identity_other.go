@@ -16,3 +16,5 @@ func deliveryDirectoryObjectIdentity(os.FileInfo) string { return "" }
 func expectedStorageIdentity(path string) (string, error) {
 	return "", fmt.Errorf("storage verification is unavailable on this platform for %s", path)
 }
+
+func legacyStorageIdentity(path string) (string, error) { return expectedStorageIdentity(path) }

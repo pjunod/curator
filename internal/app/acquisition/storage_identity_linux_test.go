@@ -94,3 +94,25 @@ func TestExpectedStorageIdentityRequiresAnExistingDirectory(t *testing.T) {
 		t.Fatal("absent root resolved to its ancestor mount")
 	}
 }
+
+func TestLegacyMountObservationCanStrengthenOnlyItsCurrentRawIdentity(t *testing.T) {
+	fixture := "36 25 8:1 / /mnt/library rw - ext4 /dev/sda1 rw\n"
+	mount, err := storageMountForPath(strings.NewReader(fixture), "/mnt/library/movie")
+	if err != nil {
+		t.Fatal(err)
+	}
+	strong := mount
+	strong.source = "UUID=filesystem-one"
+	prior := observeLegacyStorageIdentity
+	defer func() { observeLegacyStorageIdentity = prior }()
+	observeLegacyStorageIdentity = func(string) (string, error) { return mount.identity(), nil }
+	if !canStrengthenStorageIdentity("/mnt/library", mount.identity(), strong.identity()) {
+		t.Fatal("exact current legacy mount could not strengthen to UUID")
+	}
+	changed := mount
+	changed.source = "/dev/sdb1"
+	observeLegacyStorageIdentity = func(string) (string, error) { return changed.identity(), nil }
+	if canStrengthenStorageIdentity("/mnt/library", mount.identity(), strong.identity()) {
+		t.Fatal("reassigned source inherited historical device-path trust")
+	}
+}

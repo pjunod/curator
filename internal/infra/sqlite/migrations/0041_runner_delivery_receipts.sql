@@ -65,3 +65,13 @@ BEGIN
     SELECT RAISE(ABORT, 'download has unresolved Runner delivery custody');
 END;
 -- +goose StatementEnd
+
+-- +goose Down
+CREATE TEMP TABLE runner_delivery_downgrade_guard(ok INTEGER CHECK(ok=1));
+INSERT INTO runner_delivery_downgrade_guard
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM runner_delivery_receipts) THEN 0 ELSE 1 END;
+DROP TRIGGER prevent_download_delete_with_runner_delivery;
+DROP TABLE runner_client_instances;
+DROP TABLE runner_delivery_cursors;
+DROP TABLE runner_delivery_receipts;
+DROP TABLE runner_delivery_downgrade_guard;
