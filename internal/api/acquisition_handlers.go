@@ -34,6 +34,8 @@ func (s *Server) acqErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, acquisition.ErrNoClient):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, acquisition.ErrCandidateExpired):
+		writeCodedError(w, http.StatusConflict, "candidate_expired", err.Error())
 	case errors.Is(err, acquisition.ErrNoLibraryFolder):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, acquisition.ErrReplacementInvalid):

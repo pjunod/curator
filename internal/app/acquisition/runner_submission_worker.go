@@ -61,6 +61,9 @@ func (s *Service) processRunnerSubmissionRetries(ctx context.Context) {
 	}
 	defer releaseWork()
 	now := time.Now()
+	if err := s.db.FlagUnsafeAutomaticSubmissions(ctx, now); err != nil {
+		s.log.Warn("automatic uncertain submission warning could not be saved", "err", err)
+	}
 	retries, err := s.db.ListRunnerSubmissionRetries(ctx, now, 16)
 	if err != nil {
 		s.log.Warn("Runner submission retry scan failed", "err", err)

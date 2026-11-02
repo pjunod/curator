@@ -8,7 +8,7 @@ incident/proposal reviews. A code review is not runtime qualification of NFS.
 
 | Item | State |
 |---|---|
-| Source baseline | Completion clone incorporates main at `2c367c5`, branch `codex/nfs-completion` |
+| Source baseline | Completion clone incorporates main at `f67e111`, branch `codex/nfs-completion` |
 | SSE cancellation and write deadlines | Implemented; responsive/backpressure/HTTP2 tests passed in the full Go gate |
 | Listener failure cancels/drains workers | Implemented; occupied-port regression written; passed in the full Go gate |
 | HTTP/background-search ownership and truthful goodbye | Implemented; handler/background join tests written; passed in the full Go gate |
@@ -94,3 +94,11 @@ in-viewport action errors, retained-stage UI reachability, automatic source
 custody checks (including bind aliases), and sidecar stage/target identity.
 All eight are repaired with regression coverage. The focused final re-review
 cleared source for full application gates; it did not run tests or qualify NFS.
+
+PR [#83](https://github.com/pjunod/curator/pull/83) is open. Source review cleared
+and final gates began; web126 and deployment-tool7 tests passed. Go integration
+failures exposed selected-delivery epoch reopening and stale fixture assumptions;
+those were repaired and separately reviewed. Browser installation was missing
+and is now present. Main subsequently added migrations63–68 through PR82, so the
+completion migration is69 and version0.38.9; latest main is incorporated before
+repeating invalidated gates. No failing check is represented as passing.

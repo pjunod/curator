@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, type ReactNode, type SyntheticEvent } from 'react'
+import { useId, useLayoutEffect, useRef, type ReactNode, type SyntheticEvent, type RefObject } from 'react'
 
 // Safari does not focus buttons on pointer activation. Remember the actual
 // opener through focus before mounting a dialog so dismissal returns to it.
@@ -7,8 +7,9 @@ export function focusActionTrigger(event: SyntheticEvent<HTMLElement>) {
 }
 
 /** User-opened work belongs in the viewport, regardless of the trigger's position. */
-export function ActionDialog({ title, className = '', onClose, children }: {
+export function ActionDialog({ title, className = '', onClose, children, returnFocus }: {
   title: string
+  returnFocus?: RefObject<HTMLElement | null>
   className?: string
   onClose: () => void
   children: ReactNode
@@ -28,9 +29,10 @@ export function ActionDialog({ title, className = '', onClose, children }: {
     return () => {
       node.close()
       document.body.style.overflow = previousOverflow
-      if (trigger?.isConnected) trigger.focus({ preventScroll: true })
+      const target = trigger?.isConnected ? trigger : returnFocus?.current
+      if (target?.isConnected) target.focus({ preventScroll: true })
     }
-  }, [])
+  }, [returnFocus])
 
   return (
     <dialog ref={dialog} className="action-dialog" aria-labelledby={titleId}

@@ -184,7 +184,8 @@ sync pushes them in.
 | Deluge | torrent | web password only |
 | SABnzbd | usenet | API key (in the password field) |
 | NZBGet | usenet | username + password (defaults `nzbget`/`tegbzn6789`); **leave both blank if you've disabled auth** (empty `ControlPassword`) |
-| nzbd (native) | usenet | a token in the password field with the username blank, or username + password |
+| Runner · Usenet (`nzbd`) | usenet | a token in the password field with the username blank, or username + password |
+| Runner · native torrent (`runner-torrent`) | torrent | a token in the password field with the username blank, or username + password |
 
 Blank credentials mean "send no auth at all" — valid whenever the client
 itself doesn't require it.
@@ -195,10 +196,10 @@ enabled torrent client, usenet to the first enabled usenet client. The
 queue is polled every 30 s; completed items import automatically unless the
 client requires approval (below).
 
-### nzbd, natively (`nzbd` vs `NZBGet`)
+### Runner, natively (`nzbd` vs `NZBGet`)
 
 [nzbd](https://github.com/pjunod/nzbd) speaks NZBGet's API, so it works as
-an `NZBGet` client and always has. The `nzbd (native)` type talks to its
+an `NZBGet` client and always has. The **Runner · Usenet** (`nzbd`) type talks to its
 own `/api/v1` instead, which buys three things the compat API cannot
 express:
 
@@ -211,15 +212,40 @@ express:
   repair takes.
 - **Live updates** (below), which need an event stream compat does not have.
 
-Everything else behaves identically, and switching an existing client's
-type is safe: in-flight downloads reconcile by handle either way.
+The native Usenet and NZBGet compatibility types reconcile existing Usenet
+downloads by handle. Native torrent acquisition is a separate client type;
+add it as its own configuration rather than changing an existing client's
+protocol.
+
+### Native Runner torrent acquisition
+
+Choose **Runner · native torrent**, enter the Runner server URL (default port
+`6789`) and its credentials, then **Test** before saving. Runner must advertise
+both `native-torrent-deliveries-v1` and `deliveries-v1`; an unsupported server
+shows an actionable error. This mode uses native JSON job admission and the
+same durable Delivery handoff as native Usenet. It does not use a qBittorrent
+compatibility endpoint.
+
+Runner keeps its torrent seed job separate from each acquisition child. The
+child makes a private processing copy, passes it through post-processing and
+publishes its own Delivery. Seed ratio, seed time and backend controls belong
+to the donor job. Curator controls only the child and its admitted payload.
+An explicit **Download another copy** request creates a fresh acquisition;
+retrying an uncertain admission reuses its existing request token.
+
+For a server serving both protocols, add **Runner · Usenet** and **Runner ·
+native torrent** as two clients. Protocol routing and exact request identities
+keep their jobs separate. If the other mode saw a publication before ownership
+was pinned, its retained view says which client owns it and offers no import,
+cleanup or retry actions. Accepted or otherwise proven custody is never
+superseded. See the [native torrent lifecycle diagram](usage.md#runner-native-torrent-acquisitions)
+for the seed, child, publication and library boundaries.
 
 ### Live updates (per client, default off)
 
 **Live updates** holds the client's event stream open, so a finished
 download is imported the moment post-processing ends instead of up to 30
-seconds later. Only the native `nzbd` type can stream today; the checkbox
-only appears for it.
+seconds later. Both native Runner types can stream; the checkbox appears for those types.
 
 **Push never replaces the poll.** The 30 s sweep keeps running underneath,
 and it is what notices a stream that died quietly. So the worst case for a
@@ -614,10 +640,11 @@ Placement copies are not limited — they are the import itself (small
 sidecar copies are verified as they copy, so they count). Concurrent checks
 of the same unchanged file share one read.
 
-Reads something is waiting on — an import's checks while it holds its
-title, an operator's **Delete files…** request — have their own budget of
-the same size. While one is running, background checks (duplicate proofs,
-verification before an import) slow to a tenth of the budget, so a waiting
+Reads something is waiting on — an import attempt's checks, checks under a
+title's publication lock, an operator's **Delete files…** request — have their
+own budget of the same size. While one is running, background checks (scheduled
+duplicate proofs and inventory verification) slow to a tenth of the budget, so
+a waiting
 import or request is never starved by work that is not.
 
 ```bash
@@ -1018,6 +1045,23 @@ without re-entering credentials. Changes retain the rolling usage ledger, so
 turning a limit back on counts calls made while it was off. The dialog shows
 saving errors in place and returns focus to the initiating button.
 
+### Runner lifecycle capability and historical custody
+
+Curator negotiates Runner's `deliveries-v1` capability through status and saves
+that decision before download admission. An unavailable status endpoint reports an
+error; a Runner without the advertised capability uses the legacy import path.
+Changing retained Delivery manifests cannot change this negotiated contract.
+
+The legacy review cohort keeps its cleanup fence after upgrade. Historical trace
+evidence may permit an acquisition that was still in flight at cutover to finish
+importing, but it grants no automatic deletion authority over old payloads.
+
+Intentional download-storage replacement is reviewed from Activity → Download
+storage. The action compares the exact expected and observed identities and
+previews affected custody. It applies only to the selected root and cannot grant
+old acquisitions cleanup authority on the replacement volume. Ordinary return of
+the expected storage still recovers automatically without changing settings.
+
 ## Deployment maintenance
 
 Deployment drain is an operational native API control, separate from terminal
@@ -1027,3 +1071,4 @@ DELETE resumes only the matching owner and generation before terminal shutdown.
 Existing native API authentication applies. No storage setting makes hard NFS
 interruptible. Follow the [deployment drain runbook](NFS_DEPLOYMENT_DRAIN.md);
 its stop wait requires measured qualification for the deployment shape.
+

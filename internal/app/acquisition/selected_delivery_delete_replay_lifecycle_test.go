@@ -364,7 +364,7 @@ func TestSelectedDeliveryDeleteHistoryFailureIsIdempotentAfterOutcomeCommit(t *t
 		t.Fatalf("idempotent replay touched the already-removed path: %v", err)
 	}
 	var historyCount int
-	if err := db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM history_events WHERE type='delivery_file_deleted'`).Scan(&historyCount); err != nil {
+	if err := db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM history_events WHERE type='delivery_file_absence_confirmed'`).Scan(&historyCount); err != nil {
 		t.Fatal(err)
 	}
 	if historyCount != 1 {
@@ -431,7 +431,7 @@ func TestExplicitDeliveryDeleteBatchResumesFromLocalWorkerAfterRestartAndClientO
 		t.Fatalf("offline local worker did not finish the persisted delete batch: recorded=%d err=%v", recorded, err)
 	}
 	var historyCount int
-	if err := reopened.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM history_events WHERE type='delivery_file_deleted' AND media_item_id=?`, receipt.MediaItemID).Scan(&historyCount); err != nil || historyCount != 1 {
+	if err := reopened.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM history_events WHERE type='delivery_file_absence_confirmed' AND media_item_id=?`, receipt.MediaItemID).Scan(&historyCount); err != nil || historyCount != 1 {
 		t.Fatalf("replayed deletion did not write exactly one event for the library item: count=%d err=%v", historyCount, err)
 	}
 	if got, err := os.ReadFile(filepath.Join(publication, "keep.txt")); err != nil || string(got) != "unselected sibling" {
@@ -812,3 +812,63 @@ func completedSelectionForPath(t *testing.T, entry *CompletedEntry, path string)
 }
 
 func containsText(haystack, needle string) bool { return strings.Contains(haystack, needle) }
+
+func TestFailedUnlinkThenExternalRemovalRecordsOnlyConfirmedAbsence(t *testing.T) {
+	ctx := context.Background()
+	protocol := &deliveryImportClient{}
+	svc, db, dl, cfg, publication := deliveryImportFixtureWithFiles(t, protocol, map[string][]byte{"keep.txt": []byte("retained sibling")})
+	receipts, err := db.DeliveryReceiptsForClient(ctx, dl.ClientID, 1)
+	if err != nil || len(receipts) != 1 {
+		t.Fatalf("receipts=%+v err=%v", receipts, err)
+	}
+	receipt := receipts[0]
+	if _, err := svc.verifyDeliveryManifest(ctx, cfg, receipt); err != nil {
+		t.Fatal(err)
+	}
+	receipt.ConsumerReceiptID = "failed-unlink-external-removal"
+	receipt.NextAttemptAt = time.Now()
+	if err := db.PrepareDeliveryAcceptance(ctx, receipt); err != nil {
+		t.Fatal(err)
+	}
+	dl.ImportPath, dl.State = publication, "downloaded"
+	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entry := completedEntryForPath(t, svc, publication)
+	path := filepath.Join(publication, epRelease+".mkv")
+	selection := completedSelectionForPath(t, entry, path)
+	svc.explicitDeliveryUnlink = func(*os.Root, string) error { return errors.New("injected unlink refusal") }
+	if err := svc.DeleteSelectedDeliveryFiles(ctx, entry.Path, entry.Fingerprint, []CompletedFileSelection{selection}); err == nil || !strings.Contains(err.Error(), "injected unlink refusal") {
+		t.Fatalf("did not reach failed unlink: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("refused unlink removed source: %v", err)
+	}
+	var attempted bool
+	if err := db.R.QueryRowContext(ctx, `SELECT unlink_started FROM runner_delivery_explicit_delete_files WHERE path=?`, epRelease+".mkv").Scan(&attempted); err != nil || !attempted {
+		t.Fatalf("missing durable prior attempt: %v %v", attempted, err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	} // unrelated external actor
+	svc.explicitDeliveryUnlink = nil
+	if err := svc.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteSelectedDeliveryFiles(ctx, entry.Path, entry.Fingerprint, []CompletedFileSelection{selection}); err != nil {
+		t.Fatal(err)
+	}
+	var deleted, absent int
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM history_events WHERE type='delivery_file_deleted'`).Scan(&deleted); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM history_events WHERE type='delivery_file_absence_confirmed' AND json_extract(data,'$.priorUnlinkAttempt')=1`).Scan(&absent); err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 || absent != 1 {
+		t.Fatalf("external removal misattributed: deleted=%d absence=%d", deleted, absent)
+	}
+}

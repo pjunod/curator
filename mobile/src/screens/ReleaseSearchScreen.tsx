@@ -117,6 +117,9 @@ function ReleaseSearchBody({
         requestId,
         downloadAnyway,
       })
+      // A completed Add is one request. A subsequent deliberate tap owns a
+      // fresh request; failed or uncertain attempts retain their retry ID.
+      requestIds.current.delete(action)
       setGrabbed(grabbedMessage(candidate.title))
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'blacklist_confirmation_required' && !downloadAnyway) {

@@ -21,11 +21,27 @@ func (s *Service) lockStorageDecision(ctx context.Context) (context.Context, fun
 		return ctx, func() {}
 	}
 	s.storageDecisionMu.Lock()
+	return s.storageDecisionContext(ctx)
+}
+
+func (s *Service) tryLockStorageDecision(ctx context.Context) (context.Context, func(), bool) {
+	if lease, ok := ctx.Value(storageDecisionKey{}).(*storageDecisionLease); ok && lease != nil && lease.owner == s && lease.active.Load() {
+		return ctx, func() {}, true
+	}
+	if !s.storageDecisionMu.TryLock() {
+		return ctx, func() {}, false
+	}
+	locked, release := s.storageDecisionContext(ctx)
+	return locked, release, true
+}
+
+func (s *Service) storageDecisionContext(ctx context.Context) (context.Context, func()) {
 	lease := &storageDecisionLease{owner: s}
 	lease.active.Store(true)
 	locked := context.WithValue(ctx, storageDecisionKey{}, lease)
 	return locked, func() {
-		lease.active.Store(false)
-		s.storageDecisionMu.Unlock()
+		if lease.active.Swap(false) {
+			s.storageDecisionMu.Unlock()
+		}
 	}
 }

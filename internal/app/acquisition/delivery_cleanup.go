@@ -59,15 +59,6 @@ func (s *Service) recordDeliveryImportOutcomes(ctx context.Context, r sqlite.Del
 		} else if targetPath, _, ok := s.deliveryRedundantLibraryProof(ctx, r, f, ""); ok {
 			disposition, reason, libraryPath = "redundant", "same-copy library file at "+targetPath+" holds these exact bytes or is a verified file this release does not improve on", targetPath
 		}
-		if err := s.db.UpdateDeliveryFileDisposition(ctx, r.ID, f.relative, disposition, reason, libraryPath); err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		if disposition == "placed" || disposition == "redundant" || disposition == "disposable_selected_scope" {
-			if err := s.db.SetDeliveryFileCleanup(ctx, r.ID, f.relative, "pending", ""); err != nil {
-				errs = append(errs, err)
-			}
-		}
 		sourceGeneration := outcome.SourceGeneration
 		if sourceGeneration == "" {
 			sourceGeneration = r.GenerationKey
@@ -82,13 +73,13 @@ func (s *Service) recordDeliveryImportOutcomes(ctx context.Context, r sqlite.Del
 				libraryIdentity = deliveryFileGeneration(info)
 			}
 		}
-		if err := s.db.RecordDeliveryFileImport(ctx, sqlite.DeliveryFileImport{
+		if err := s.db.CommitDeliveryFileOutcome(ctx, sqlite.DeliveryFileImport{
 			ReceiptID: r.ID, Path: f.relative, SourceGeneration: sourceGeneration,
 			SourceTransfer: r.Delivery.RequestToken, SourcePayloadGeneration: sourcePayloadGeneration,
 			ReplacementOperationID: outcome.ReplacementOperationID,
 			ReplacementDisposition: outcome.ReplacementDisposition, PlacementID: outcome.PlacementID,
-			LibraryFileGeneration: outcome.FileGeneration, LibraryFileIdentity: libraryIdentity, LibraryPath: outcome.Path,
-		}); err != nil {
+			LibraryFileGeneration: outcome.FileGeneration, LibraryFileIdentity: libraryIdentity, LibraryPath: libraryPath,
+		}, disposition, reason, libraryPath); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -1304,7 +1295,11 @@ func (s *Service) cleanupDeliveryFiles(ctx context.Context, r sqlite.DeliveryRec
 			if finishErr := s.db.FinishDeliveryAttempt(ctx, event.ID, "failed", err.Error()); finishErr != nil {
 				s.log.Error("delivery file cleanup attempt history could not be finished", "receipt", r.ID, "path", row.Path, "err", finishErr)
 			}
-			_ = s.db.SetDeliveryFileCleanup(ctx, r.ID, row.Path, "retry", err.Error())
+			state := "retry"
+			if errors.Is(err, errDeliveryPlacementLost) {
+				state = "protected"
+			}
+			_ = s.db.SetDeliveryFileCleanup(ctx, r.ID, row.Path, state, err.Error())
 			continue
 		}
 		if err := s.db.FinishDeliveryAttempt(ctx, event.ID, "succeeded", ""); err != nil {
@@ -1372,6 +1367,13 @@ func (s *Service) DeleteSelectedDeliveryFiles(ctx context.Context, payloadPath, 
 	batchID, batchIDErr := explicitDeliveryDeleteBatchID(payloadPath, fingerprint, selections)
 	if batchIDErr != nil {
 		return batchIDErr
+	}
+	if prior, err := s.db.ExplicitDeliveryDeleteBatch(ctx, batchID); err == nil && !prior.AbandonedAt.IsZero() {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return err
+		}
+		batchID = fmt.Sprintf("%s-%x", batchID, nonce)
 	}
 	return s.deleteSelectedDeliveryFilesForBatch(ctx, batchID, payloadPath, fingerprint, selections)
 }
@@ -1464,6 +1466,9 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, batchID
 		return batchErr
 	}
 	hasBatch := batchErr == nil
+	if hasBatch && !existingBatch.AbandonedAt.IsZero() {
+		return fmt.Errorf("deletion request was cancelled; review the current files before another action")
+	}
 	if !s.ownsDownloadPath(ctx, payloadPath) {
 		return fmt.Errorf("select an entry inside Curator-owned download storage")
 	}
@@ -1565,6 +1570,11 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, batchID
 			}
 		}
 	}
+	if len(receipts) == 1 {
+		if err := deliveryReceiptActionGuard(receipts[0]); err != nil {
+			return err
+		}
+	}
 	if len(receipts) != 1 || (receipts[0].AckState != "accepted" && (receipts[0].AckState != "pending" || receipts[0].ConsumerReceiptID == "")) || receipts[0].State == "conflict" || receipts[0].State == "importing" {
 		return fmt.Errorf("delivery has no locally prepared acceptance, is importing, or is ambiguous; selected-file deletion requires one stable manifest")
 	}
@@ -1574,14 +1584,20 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, batchID
 		r.PublicationDirectoryIdentity != existingBatch.PublicationDirectoryIdentity) {
 		return fmt.Errorf("delivery identity differs from the persisted explicit deletion review")
 	}
+	if err := deliveryReceiptActionGuard(r); err != nil {
+		return err
+	}
 	if r.DownloadID > 0 {
 		// Import workers serialize on this per-download lock from queue pickup
 		// through placement. Holding it across verification and unlink closes
 		// the race where an import starts after the initial state check.
 		unlockDownload := s.lockDownload(r.DownloadID)
 		defer unlockDownload()
-		current, err := s.db.DeliveryReceiptByID(ctx, r.ID)
-		if err != nil || (current.AckState != "accepted" && (current.AckState != "pending" || current.ConsumerReceiptID == "")) || current.State == "conflict" || current.State == "importing" {
+		current, err := s.deliveryReceiptForAction(ctx, r.ID)
+		if err != nil {
+			return err
+		}
+		if (current.AckState != "accepted" && (current.AckState != "pending" || current.ConsumerReceiptID == "")) || current.State == "conflict" || current.State == "importing" {
 			return fmt.Errorf("delivery became active or ambiguous; selected-file deletion requires a locally prepared manifest")
 		}
 		r = current
@@ -1820,10 +1836,13 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, batchID
 			if err := parent.Close(); err != nil {
 				return err
 			}
-			if err := s.db.CompleteExplicitDeliveryFileDelete(decisionCtx, batchID, r.ID, file.relative, "delivery_file_deleted", r.MediaItemID, filepath.Base(file.selection.Path), map[string]any{
+			// An attempt marker cannot prove that Remove succeeded. A crash after
+			// unlink and a later external removal are indistinguishable here.
+			eventType := "delivery_file_absence_confirmed"
+			if err := s.db.CompleteExplicitDeliveryFileDelete(decisionCtx, batchID, r.ID, file.relative, eventType, r.MediaItemID, filepath.Base(file.selection.Path), map[string]any{
 				"receiptId": r.ID, "downloadId": r.DownloadID, "deliveryId": r.Delivery.DeliveryID, "publicationGeneration": r.Delivery.PublicationGeneration,
 				"manifestPath": file.relative, "manifestSHA256": file.ledger.SHA256, "manifestSizeBytes": file.ledger.SizeBytes,
-				"reviewedFileGeneration": file.selection.SnapshotIdentity, "replayedAfterUnlink": true,
+				"reviewedFileGeneration": file.selection.SnapshotIdentity, "absenceConfirmedOnReplay": true, "priorUnlinkAttempt": persistedFile.UnlinkStarted,
 			}); err != nil {
 				return err
 			}
@@ -1841,7 +1860,11 @@ func (s *Service) deleteSelectedDeliveryFilesLocked(ctx context.Context, batchID
 			_ = parent.Close()
 			return fmt.Errorf("selected file is marked removed but its reviewed bytes reappeared: %s", file.relative)
 		}
-		if err := parent.Remove(name); err != nil {
+		if err := s.db.BeginExplicitDeliveryFileUnlink(decisionCtx, batchID, file.relative); err != nil {
+			_ = parent.Close()
+			return err
+		}
+		if err := s.unlinkExplicitDeliveryFile(parent, name); err != nil {
 			_ = parent.Close()
 			return err
 		}
@@ -1922,7 +1945,7 @@ func (s *Service) removeVerifiedDeliveryFile(ctx context.Context, r sqlite.Deliv
 			}
 		}
 		if !ok {
-			return fmt.Errorf("verified library placement is no longer present")
+			return fmt.Errorf("%w; payload retained for explicit review", errDeliveryPlacementLost)
 		}
 	case "disposable_selected_scope":
 		var ok bool
@@ -2340,4 +2363,13 @@ func deliveryRootReadDir(root *os.Root, name string) ([]os.DirEntry, error) {
 		return nil, closeErr
 	}
 	return entries, nil
+}
+
+var errDeliveryPlacementLost = errors.New("verified library placement is no longer present")
+
+func (s *Service) unlinkExplicitDeliveryFile(parent *os.Root, name string) error {
+	if s.explicitDeliveryUnlink != nil {
+		return s.explicitDeliveryUnlink(parent, name)
+	}
+	return parent.Remove(name)
 }

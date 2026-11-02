@@ -56,3 +56,37 @@ func (s *Server) DeleteCompletedEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (s *Server) PreviewCompletedStorageChange(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Acquisition == nil {
+		writeError(w, http.StatusServiceUnavailable, "download storage unavailable")
+		return
+	}
+	var request acquisition.StorageChangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid storage review request")
+		return
+	}
+	review, err := s.deps.Acquisition.PreviewCompletedStorageChange(r.Context(), request)
+	if err != nil {
+		s.deliveryLifecycleError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, review)
+}
+func (s *Server) AcceptCompletedStorageChange(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Acquisition == nil {
+		writeError(w, http.StatusServiceUnavailable, "download storage unavailable")
+		return
+	}
+	var request acquisition.StorageChangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid storage review request")
+		return
+	}
+	if err := s.deps.Acquisition.AcceptCompletedStorageChange(r.Context(), request); err != nil {
+		s.deliveryLifecycleError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

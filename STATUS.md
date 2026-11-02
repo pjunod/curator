@@ -2,16 +2,50 @@
 
 ## Samples, settled retries, identical bytes, storage stalls, per-title lock — 2026-11-01 · v0.38.7
 
-**Status:** [PR #80](https://github.com/pjunod/curator/pull/80) — five
-adversarial reviews addressed (below). Full gate green on the tree before the
-final-review fixes (lint 0 · `make test` all packages, as non-root · web 124 ·
-e2e 192). The final-review fixes invalidated lint, the acquisition and api
-packages and e2e; all four were rerun green on the final tree (lint 0 ·
-acquisition ok · api ok · e2e 192 passed). CI, merge and deploy follow. Main went red under #79 (iOS build 33 for TestFlight left Android `versionCode` at 31; the mobile test keeps them equal): this branch merges main and sets `versionCode` 33. Rebased onto main after #77 and #78
-took 0.38.6 (no code overlap); this is 0.38.7. nuc3 runs 0.38.6 (ecee8fe)
-since 00:05Z, without these fixes: its storage link was receive-saturated
-again at 2.4 Gbit/s right after the restart, and NFS had stalled for 34
-minutes (23:17–23:51Z) beforehand.
+**Status:** done. [PR #80](https://github.com/pjunod/curator/pull/80)
+merged as `2c367c5`, tagged `v0.38.7`, and deployed to nuc3. Five
+adversarial reviews were addressed (below).
+
+**Validation.** The full gate was green on the tree before the final-review
+fixes (lint 0 · `make test` all packages, as non-root · web 124 · e2e 192).
+The final-review fixes invalidated lint, the acquisition and api packages and
+e2e; all four were rerun green on the final tree. All seven CI checks were
+green on `19c4418`.
+
+**Main went red under #79.** iOS build 33 for TestFlight left the Android
+`versionCode` at 31, and the mobile test keeps the two equal. #80 merged main
+and set `versionCode` to 33. The branch was rebased onto main after #77 and
+#78 took 0.38.6 (no code overlap), which is why this is 0.38.7.
+
+**Deploy.** Ansible's `media/deploy.yml -e sync=false -e only=monarr --limit
+nuc3`, run on nuc3 itself with `-c local` under tmux. Its result line:
+`nuc3/monarr: redeployed at v0.38.7 (/opt/noirr/curator/deploy)`.
+`/api/v1/system/status` reports 0.38.7 @ `2c367c5`, schema 62. The
+inventory still pointed at `/opt/noirr/monarr`, a path nuc3 no longer has, so
+a monarr deploy would have stopped at "missing checkout".
+[ansible #24](https://github.com/pjunod/ansible/pull/24) (merged) points it at
+`/opt/noirr/curator`. The repo's `media deploy` workflow cannot be used yet:
+`MEDIA_DEPLOY_SSH_KEY` is not set on pjunod/ansible.
+
+**Live check after the deploy (02:00Z):**
+
+| Check | Result |
+|---|---|
+| Storage link | 333–1,085 Mbit/s receive during imports, against 2.4 Gbit/s saturated on 0.38.6. No NFS "not responding" since the deploy; the last stall was 23:17–23:51Z. |
+| Maschile Plurale, Quem Ama Cuida | Imported: receipt 158 and the S01E124–E140 receipts. |
+| Sample deliveries | Good.Trouble and wtFOCK episodes importing one after another: 144 → 152 receipts imported in the first 16 minutes, and the rest are draining on the 5-minute lease. |
+| Good.Trouble S02E06 AVON copies | All six payloads `removed`; five of them removed in 02:03–02:05Z. |
+| Settled failures | Just Friends (2018) WEBRip (does not improve on the WEB-DL) and Them S01E02 (cut short) are on the long backoff, with one warning each. |
+| The Craft (1996) 2160p REMUX | 68 GB placement running on one worker; the other worker keeps importing, so other titles no longer wait behind it. |
+
+**For Paul:**
+- `gha-m6-monarr-01` is offline, so `gha-nynuc-monarr-01` runs every Curator
+  job one after another. #80's seven checks waited about an hour behind #79's.
+- The macOS runner inventory in pjunod/ansible still pins Xcode 26.6 (label
+  `xcode-26`). Runners for that version no longer exist; Apple jobs need 27.2.
+- Commit identity is still his name plus Co-Authored-By and Claude-Session
+  trailers, as he asked. A session hook asks for Claude <noreply@anthropic.com>
+  instead. His call.
 
 Measuring v0.38.5 on nuc3 turned up a second permanent loop. Every Runner
 delivery that shipped a scene sample (`sample-<release>.mkv`) failed on every

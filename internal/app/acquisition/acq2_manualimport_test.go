@@ -583,3 +583,36 @@ func TestQueuedManualImportReturnsBeforeCopyAndPersistsTheSelection(t *testing.T
 
 var _ = sqlite.Download{}
 var _ ports.Release
+
+func TestOrdinaryManualImportCannotBypassLegacyFenceThroughParentOrChild(t *testing.T) {
+	for _, scope := range []string{"ancestor", "child"} {
+		t.Run(scope, func(t *testing.T) {
+			svc, db, item := setup(t, nil, &fakeClient{})
+			ctx := context.Background()
+			root := t.TempDir()
+			payload := filepath.Join(root, "legacy")
+			child := filepath.Join(payload, "Season 01")
+			if err := os.MkdirAll(child, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(child, epRelease+".mkv")
+			if err := os.WriteFile(file, []byte("retained legacy bytes"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('historical-generation',?)`, payload); err != nil {
+				t.Fatal(err)
+			}
+			path := child
+			if scope == "ancestor" {
+				path = root
+			}
+			if _, err := svc.QueueManualImport(ctx, ManualImportRequest{Path: path, Paths: []string{file}, MediaItemID: item}); err == nil || !strings.Contains(err.Error(), "explicit legacy review") {
+				t.Fatalf("%s bypassed legacy review: %v", scope, err)
+			}
+			bytes, err := os.ReadFile(file)
+			if err != nil || string(bytes) != "retained legacy bytes" {
+				t.Fatalf("legacy bytes changed: %q %v", bytes, err)
+			}
+		})
+	}
+}

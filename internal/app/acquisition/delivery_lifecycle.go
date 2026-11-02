@@ -13,6 +13,10 @@ import (
 )
 
 type DeliveryLifecycleReceipt struct {
+	OwnedByClientID               int64                        `json:"ownedByClientId,omitempty"`
+	LifecycleTiming               *ports.RunnerLifecycleTiming `json:"lifecycleTiming,omitempty"`
+	RunnerStages                  *ports.RunnerStages          `json:"runnerStages,omitempty"`
+	SourceCopies                  []ports.RunnerSourceCopy     `json:"sourceCopies,omitempty"`
 	ReceiptID                     int64                        `json:"receiptId"`
 	ClientID                      int64                        `json:"clientId"`
 	DownloadID                    int64                        `json:"downloadId"`
@@ -51,8 +55,29 @@ type DeliveryLifecycleReceipt struct {
 	DirectoryCleanupBlockedSince  time.Time                    `json:"directoryCleanupBlockedSince,omitempty"`
 	DirectoryCleanupNextAttemptAt time.Time                    `json:"directoryCleanupNextAttemptAt,omitempty"`
 	DirectoryCleanupError         string                       `json:"directoryCleanupError,omitempty"`
-	CuratorFiles                  []sqlite.DeliveryFileOutcome `json:"curatorFiles"`
+	CuratorFiles                  []DeliveryLifecycleFile      `json:"curatorFiles"`
+	PendingDeleteRequests         []DeliveryDeleteRequest      `json:"pendingDeleteRequests,omitempty"`
 	AttemptHistory                []DeliveryLifecycleAttempt   `json:"attemptHistory"`
+}
+
+// DeliveryLifecycleFile is the public projection of the persisted file ledger.
+// Keep API casing explicit rather than exposing database struct field names.
+type DeliveryLifecycleFile struct {
+	ReceiptID            int64     `json:"receiptId"`
+	Path                 string    `json:"path"`
+	SizeBytes            int64     `json:"sizeBytes"`
+	SHA256               string    `json:"sha256"`
+	FileGeneration       string    `json:"fileGeneration"`
+	Disposition          string    `json:"disposition"`
+	CleanupState         string    `json:"cleanupState"`
+	Reason               string    `json:"reason"`
+	LibraryPath          string    `json:"libraryPath"`
+	ManualAdditional     bool      `json:"manualAdditional"`
+	CleanupError         string    `json:"cleanupError"`
+	CleanupAttempts      int       `json:"cleanupAttempts"`
+	CleanupBlockedSince  time.Time `json:"cleanupBlockedSince"`
+	CleanupNextAttemptAt time.Time `json:"cleanupNextAttemptAt"`
+	UpdatedAt            time.Time `json:"updatedAt"`
 }
 
 type DeliveryLifecycleAttempt struct {
@@ -113,7 +138,26 @@ func (s *Service) deliveryLifecycleReceipt(ctx context.Context, r sqlite.Deliver
 	for _, event := range events {
 		attempts = append(attempts, DeliveryLifecycleAttempt{ID: event.ID, Stage: event.Stage, Attempt: event.Attempt, StartedAt: event.StartedAt, FinishedAt: event.FinishedAt, Result: event.Result, Error: event.Error})
 	}
-	return DeliveryLifecycleReceipt{
+	batches, err := s.db.ExplicitDeliveryDeleteBatchesPending(ctx, r.ID, 100)
+	if err != nil {
+		return DeliveryLifecycleReceipt{}, err
+	}
+	pending := make([]DeliveryDeleteRequest, 0, len(batches))
+	for _, b := range batches {
+		paths := []string{}
+		for _, f := range b.Files {
+			if !f.HistoryRecorded {
+				paths = append(paths, f.Path)
+			}
+		}
+		pending = append(pending, DeliveryDeleteRequest{ID: b.ID, Paths: paths, Error: b.RetryError})
+	}
+	viewState := r.State
+	if r.OwnedByClientID > 0 {
+		viewState = "owned_by_other_client"
+	}
+	return DeliveryLifecycleReceipt{OwnedByClientID: r.OwnedByClientID,
+		PendingDeleteRequests: pending, RunnerStages: r.Delivery.RunnerStages, SourceCopies: r.Delivery.SourceCopies, LifecycleTiming: r.Delivery.LifecycleTiming,
 		ReceiptID: r.ID, ClientID: r.ClientID, DownloadID: r.DownloadID, GenerationKey: r.GenerationKey,
 		MediaItemID: r.MediaItemID, CopyID: r.CopyID, DeliveryID: r.Delivery.DeliveryID,
 		PublicationGeneration: r.Delivery.PublicationGeneration, ManifestDigest: r.Delivery.ManifestDigest,
@@ -121,14 +165,14 @@ func (s *Service) deliveryLifecycleReceipt(ctx context.Context, r sqlite.Deliver
 		PublicationPath: r.Delivery.PublicationPath, MappedPath: r.MappedPath, ReadyAt: r.ReadyAt,
 		TerminalOutcome: r.Delivery.TerminalOutcome, FailureStage: r.Delivery.FailureStage,
 		FailureCause: r.Delivery.FailureCause, KeepSourceOnFailure: r.Delivery.KeepSourceOnFailure,
-		State: r.State, Acceptance: r.AckState, ConsumerReceiptID: r.ConsumerReceiptID,
+		State: viewState, Acceptance: r.AckState, ConsumerReceiptID: r.ConsumerReceiptID,
 		Attempts: r.Attempts, BlockedSince: r.BlockedSince, NextAttemptAt: r.NextAttemptAt, Error: r.Error,
 		ManifestFiles: r.Delivery.Files, SourceFileOutcomes: r.Delivery.FileOutcomes, SourceCleanup: r.Delivery.SourceCleanup,
 		SourceCleanupAttempts: details.SourceAttempts, SourceCleanupBlockedSince: details.SourceBlockedSince,
 		SourceCleanupNextAttemptAt: details.SourceNext, SourceCleanupError: details.SourceError,
 		DirectoryCleanupState: details.DirectoryState, DirectoryCleanupAttempts: details.DirectoryAttempts,
 		DirectoryCleanupBlockedSince: details.DirectoryBlockedSince, DirectoryCleanupNextAttemptAt: details.DirectoryNext,
-		DirectoryCleanupError: details.DirectoryError, CuratorFiles: files, AttemptHistory: attempts,
+		DirectoryCleanupError: details.DirectoryError, CuratorFiles: lifecycleFileProjection(files), AttemptHistory: attempts,
 	}, nil
 }
 
@@ -141,7 +185,7 @@ func (s *Service) DeliveryLifecycleByID(ctx context.Context, receiptID int64) (D
 }
 
 func (s *Service) RetryDeliveryHandoff(ctx context.Context, receiptID int64) error {
-	r, err := s.db.DeliveryReceiptByID(ctx, receiptID)
+	r, err := s.deliveryReceiptForAction(ctx, receiptID)
 	if err != nil {
 		return err
 	}
@@ -174,7 +218,7 @@ func (s *Service) RetryRunnerSourceCleanup(ctx context.Context, receiptID int64)
 	// explicit POST has recorded a provider Retry-After boundary.
 	unlockSource := s.lockDeliverySourceControl(receiptID)
 	defer unlockSource()
-	r, err := s.db.DeliveryReceiptByID(ctx, receiptID)
+	r, err := s.deliveryReceiptForAction(ctx, receiptID)
 	if err != nil {
 		return err
 	}
@@ -187,7 +231,7 @@ func (s *Service) RetryRunnerSourceCleanup(ctx context.Context, receiptID int64)
 		// Reload both identity and due time after acquiring the per-download
 		// lock. A second click may have waited behind a POST that recorded a
 		// new Retry-After deadline.
-		fresh, loadErr := s.db.DeliveryReceiptByID(ctx, receiptID)
+		fresh, loadErr := s.deliveryReceiptForAction(ctx, receiptID)
 		if loadErr != nil {
 			return loadErr
 		}
@@ -232,14 +276,14 @@ func (s *Service) RetryRunnerSourceCleanup(ctx context.Context, receiptID int64)
 	if deliverySourceCleanupTerminal(fresh.SourceCleanup) {
 		retryAfter = 24 * time.Hour
 	}
-	if err := s.db.RefreshDeliverySourceCleanup(ctx, receiptID, fresh.SourceCleanup, fresh.FileOutcomes, retryAfter); err != nil {
+	if err := s.db.RefreshDeliverySourceCleanup(ctx, receiptID, fresh.SourceCleanup, fresh.FileOutcomes, retryAfter, fresh.SourceCopies); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (s *Service) RetryCuratorDeliveryCleanup(ctx context.Context, receiptID int64) error {
-	r, err := s.db.DeliveryReceiptByID(ctx, receiptID)
+	r, err := s.deliveryReceiptForAction(ctx, receiptID)
 	if err != nil {
 		return err
 	}
@@ -265,7 +309,7 @@ func (s *Service) QueueDeliveryImport(ctx context.Context, receiptID int64, path
 	if len(paths) == 0 || len(paths) > 10000 {
 		return fmt.Errorf("select between 1 and 10000 manifest files")
 	}
-	r, err := s.db.DeliveryReceiptByID(ctx, receiptID)
+	r, err := s.deliveryReceiptForAction(ctx, receiptID)
 	if err != nil {
 		return err
 	}
@@ -280,7 +324,7 @@ func (s *Service) QueueDeliveryImport(ctx context.Context, receiptID int64, path
 	// Resolve can wait behind an importer or reconciliation worker. Re-read
 	// the receipt after taking that serialization lock so a stale pre-lock
 	// snapshot cannot reopen a receipt that has since changed identity/state.
-	current, err := s.db.DeliveryReceiptByID(ctx, receiptID)
+	current, err := s.deliveryReceiptForAction(ctx, receiptID)
 	if err != nil {
 		return err
 	}
@@ -372,4 +416,84 @@ func (s *Service) QueueDeliveryImport(ctx context.Context, receiptID int64, path
 		return fmt.Errorf("import worker is unavailable or full; retry the selected import")
 	}
 	return nil
+}
+
+// AbandonDeliveryDeleteRequest serializes with selected-file mutation and import
+// so a late worker cannot revive the cancelled selection.
+func (s *Service) AbandonDeliveryDeleteRequest(ctx context.Context, receiptID int64, batchID string) error {
+	if !s.completedMu.TryLock() {
+		return fmt.Errorf("completed inventory is busy; retry cancelling this deletion request shortly")
+	}
+	defer s.completedMu.Unlock()
+	r, err := s.deliveryReceiptForAction(ctx, receiptID)
+	if err != nil {
+		return err
+	}
+	unlock, locked := s.tryLockDownload(r.DownloadID)
+	if !locked {
+		return fmt.Errorf("delivery mutation is active; retry cancelling this deletion request after it finishes")
+	}
+	defer unlock()
+	// Pin the current title after taking this download's mutation lock; no
+	// long-running import may hold the completed-inventory mutex via this action.
+	current, err := s.deliveryReceiptForAction(ctx, receiptID)
+	if err != nil {
+		return err
+	}
+	if current.DownloadID != r.DownloadID || current.GenerationKey != r.GenerationKey {
+		return sqlite.ErrDeliveryReceiptStale
+	}
+	r = current
+	ctx, releaseTarget, locked := s.tryLockImportTarget(ctx, r.MediaItemID)
+	if !locked {
+		return ErrImportTargetsBusy
+	}
+	defer releaseTarget()
+	ctx, release, locked := s.tryLockStorageDecision(ctx)
+	if !locked {
+		return fmt.Errorf("storage decision is busy; retry cancelling this deletion request shortly")
+	}
+	defer release()
+	current, err = s.deliveryReceiptForAction(ctx, receiptID)
+	if err != nil {
+		return err
+	}
+	if current.MediaItemID != r.MediaItemID || current.DownloadID != r.DownloadID || current.GenerationKey != r.GenerationKey {
+		return sqlite.ErrDeliveryReceiptStale
+	}
+	if current.State == "importing" || s.ImportRunning(current.DownloadID) {
+		return fmt.Errorf("delivery import is active; wait for it to finish before cancelling deletion")
+	}
+	return s.db.AbandonExplicitDeliveryDelete(ctx, receiptID, batchID)
+}
+
+type DeliveryDeleteRequest struct {
+	ID    string   `json:"id"`
+	Paths []string `json:"paths"`
+	Error string   `json:"error,omitempty"`
+}
+
+func lifecycleFileProjection(files []sqlite.DeliveryFileOutcome) []DeliveryLifecycleFile {
+	out := make([]DeliveryLifecycleFile, 0, len(files))
+	for _, file := range files {
+		out = append(out, DeliveryLifecycleFile(file))
+	}
+	return out
+}
+
+func deliveryReceiptActionGuard(receipt sqlite.DeliveryReceipt) error {
+	if receipt.OwnedByClientID > 0 {
+		return fmt.Errorf("publication belongs to another configured Runner client (ID %d): %s", receipt.OwnedByClientID, receipt.Error)
+	}
+	return nil
+}
+func (s *Service) deliveryReceiptForAction(ctx context.Context, id int64) (sqlite.DeliveryReceipt, error) {
+	receipt, err := s.db.DeliveryReceiptByID(ctx, id)
+	if err != nil {
+		return sqlite.DeliveryReceipt{}, err
+	}
+	if err := deliveryReceiptActionGuard(receipt); err != nil {
+		return sqlite.DeliveryReceipt{}, err
+	}
+	return receipt, nil
 }

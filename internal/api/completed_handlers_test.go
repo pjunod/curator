@@ -88,3 +88,63 @@ func TestStorageDeletionAPIRequiresCurrentReview(t *testing.T) {
 		t.Fatal("missing service accepted deletion")
 	}
 }
+
+func TestStorageChangePreviewAndAcceptanceUseRealHTTPAndAtomicReview(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	if err := e.acq.SetCompletedRoots(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "pre-change-payload.mkv")
+	if err := os.WriteFile(file, []byte("review required bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.acq.ScanCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := e.acq.CompletedInventory(ctx)
+	if err != nil || len(inventory.Roots) != 1 {
+		t.Fatalf("inventory=%+v %v", inventory, err)
+	}
+	cached := inventory.Roots[0]
+	observed := cached.StorageIdentity
+	// Seed a historical expected source while retaining the actual live observer.
+	// The HTTP endpoints and SQLite transaction remain the real product paths.
+	cached.StorageIdentity = "nfs4\x00previous-server:/exports\x00/"
+	cached.ObservedStorageIdentity = observed
+	cached.Error = "storage source changed"
+	raw, err := json.Marshal(cached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.SaveCompletedScan(ctx, cached.Path, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	request := acquisition.StorageChangeRequest{Root: cached.Path, ExpectedIdentity: cached.StorageIdentity, ObservedIdentity: observed}
+	body, _ := json.Marshal(request)
+	e.post(t, "/api/v1/downloads/inventory/storage-change/accept", string(body)).expect(t, http.StatusConflict)
+	result := e.post(t, "/api/v1/downloads/inventory/storage-change/preview", string(body)).expect(t, http.StatusOK)
+	var review acquisition.StorageChangeReview
+	if err := json.Unmarshal(result.Body.Bytes(), &review); err != nil {
+		t.Fatal(err)
+	}
+	if review.ReviewToken == "" || review.ExistingPayloads != 1 {
+		t.Fatalf("HTTP omitted exact impact review: %+v", review)
+	}
+	body, _ = json.Marshal(review.StorageChangeRequest)
+	e.post(t, "/api/v1/downloads/inventory/storage-change/accept", string(body)).expect(t, http.StatusNoContent)
+	e.post(t, "/api/v1/downloads/inventory/storage-change/accept", string(body)).expect(t, http.StatusConflict)
+	held, err := e.db.LegacyCleanupReviewPath(ctx, file)
+	if err != nil || !held {
+		t.Fatalf("acceptance granted existing payload authority: %v %v", held, err)
+	}
+	actual, err := os.ReadFile(file)
+	if err != nil || string(actual) != "review required bytes" {
+		t.Fatalf("acceptance mutated existing payload: %q %v", actual, err)
+	}
+	var audits int
+	if err := e.db.R.QueryRowContext(ctx, `SELECT count(*) FROM history_events WHERE type='storage_change_accepted'`).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("acceptance audit=%d %v", audits, err)
+	}
+}

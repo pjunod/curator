@@ -11,6 +11,7 @@ const CLIENT_DEFAULT_PORTS: Record<DownloadClientInput['type'], string> = {
   sabnzbd: '8080',
   nzbget: '6789',
   nzbd: '6789',
+  'runner-torrent': '6789',
 }
 import {
   composeHostPort,
@@ -75,7 +76,7 @@ function isUsenetClient(type: string): boolean {
 }
 
 function isNativeRunnerClient(type: string): boolean {
-  return type === 'nzbd'
+  return type === 'nzbd' || type === 'runner-torrent'
 }
 
 export function AcquisitionSettings() {
@@ -340,7 +341,8 @@ export function AcquisitionSettings() {
             <option value="deluge">Deluge</option>
             <option value="sabnzbd">SABnzbd</option>
             <option value="nzbget">NZBGet</option>
-            <option value="nzbd">nzbd (native)</option>
+            <option value="nzbd">Runner · Usenet</option>
+            <option value="runner-torrent">Runner · native torrent</option>
           </select>
           <input placeholder="Name" value={cli.name} onChange={(e) => setCli({ ...cli, name: e.target.value })} />
           <input
@@ -357,7 +359,7 @@ export function AcquisitionSettings() {
           />
           {cli.type === 'sabnzbd' ? (
             <input type="password" placeholder="API key" value={cli.password} onChange={(e) => setCli({ ...cli, password: e.target.value })} />
-          ) : cli.type === 'nzbd' ? (
+          ) : isNativeRunnerClient(cli.type) ? (
             // nzbd takes either a token or a username/password on the same
             // header. Leave the username blank and the password field is
             // read as a token, which is the credential its docs hand out.
@@ -400,7 +402,7 @@ export function AcquisitionSettings() {
             Require approval
           </label>
           {isNativeRunnerClient(cli.type) ? (
-            <p className="muted">Curator cleans verified imported files from Runner deliveries and keeps unresolved payload files available in Resolve.</p>
+            <p className="muted">Curator cleans verified imported files from Runner deliveries and keeps unresolved payload files available in Resolve.{cli.type === 'runner-torrent' ? ' Native torrent acquisitions use a separate managed copy; the seed source keeps its own policy. The server must advertise native-torrent-deliveries-v1.' : ''}</p>
           ) : (
             <label
               className="approval-toggle"
@@ -414,7 +416,7 @@ export function AcquisitionSettings() {
               Clean up after import
             </label>
           )}
-          {cli.type === 'nzbd' && (
+          {isNativeRunnerClient(cli.type) && (
             <label
               className="approval-toggle"
               title="Live: hold nzbd's event stream open so a finished download is imported the moment it finishes, instead of up to 30s later. The 30s poll keeps running either way — this only removes the wait."

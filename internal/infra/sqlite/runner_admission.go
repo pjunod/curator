@@ -352,3 +352,26 @@ func (d *DB) BindRunnerAdmission(ctx context.Context, downloadID int64, generati
 	}
 	return tx.Commit()
 }
+
+// FlagUnsafeAutomaticSubmissions makes prolonged non-idempotent uncertainty
+// visible without replaying Add. Absence cannot prove that the client refused it.
+func (d *DB) FlagUnsafeAutomaticSubmissions(ctx context.Context, now time.Time) error {
+	const warning = "Automatic download submission has been uncertain for at least 30 minutes; this client has no negotiated request-token idempotency. Review the client before starting another request; automatic replay is unsafe."
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	selection := `SELECT id FROM downloads WHERE request_token_idempotent=0 AND intent!='manual_additional'
+ AND submission_phase IN ('submitting','uncertain') AND state NOT IN ('failed','imported')
+ AND parked_at=0 AND parked_reason='' AND superseded=0 AND updated_at<=? AND error!=? ORDER BY id LIMIT 16`
+	if _, err := tx.ExecContext(ctx, `INSERT INTO history_events(ts,type,media_item_id,release_title,data)
+ SELECT ?,'submission_review_required',media_item_id,release_title,json_object('downloadId',id,'generationKey',generation_key,'reason',?)
+ FROM downloads WHERE id IN (`+selection+`)`, now.UnixMilli(), warning, now.Add(-30*time.Minute).UnixMilli(), warning); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE downloads SET error=? WHERE id IN (`+selection+`)`, warning, now.Add(-30*time.Minute).UnixMilli(), warning); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

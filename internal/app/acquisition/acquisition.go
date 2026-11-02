@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -129,8 +130,9 @@ func (ImportFailed) EventType() string { return "import.failed" }
 
 // Service wires storage, adapters (via factories), and the bus.
 type Service struct {
-	completedMu       sync.Mutex
-	storageDecisionMu sync.Mutex
+	explicitDeliveryUnlink func(*os.Root, string) error // injected filesystem boundary for deterministic recovery tests
+	completedMu            sync.Mutex
+	storageDecisionMu      sync.Mutex
 	// Publication authority, per media item (import_targets.go). Shared by
 	// ordinary and recovery imports, including crash reconciliation.
 	importTargets     importTargets
@@ -722,6 +724,7 @@ type GrabRequest struct {
 	RequestID              string
 	AllowBlacklisted       bool
 	ReplacementOperationID string
+	ReservedEpisodeIDs     []int64 // server-derived acquisition scope, never read from HTTP
 }
 
 const (
@@ -834,6 +837,14 @@ func (s *Service) retryAutomaticSubmission(ctx context.Context, dl sqlite.Downlo
 			return fmt.Errorf("source release is blocklisted; automatic submission was stopped")
 		}
 	}
+	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
+	if err != nil {
+		return err
+	}
+	if err := s.checkReplacementSourceExclusion(ctx, item, grabRequestForDownload(dl)); err != nil {
+		_ = s.db.RejectDownloadSubmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer, "original source excluded by open replacement operation")
+		return err
+	}
 	client := s.newClient(cfg)
 	if client == nil {
 		return fmt.Errorf("download client is unavailable")
@@ -861,21 +872,34 @@ func (s *Service) retryAutomaticSubmission(ctx context.Context, dl sqlite.Downlo
 }
 
 func negotiateRunnerDelivery(ctx context.Context, c ports.DownloadClient) (bool, bool, error) {
-	protocol, ok := c.(ports.DeliveryProtocol)
+	_, ok := c.(ports.DeliveryProtocol)
 	if !ok {
 		return false, false, nil
 	}
-	page, err := protocol.ListDeliveries(ctx, 0, 1)
-	if err != nil {
-		var status ports.HTTPStatusCoder
-		if errors.As(err, &status) && status.HTTPStatusCode() == http.StatusNotFound {
+	// Real Runner adapters negotiate from status. The fallback preserves the
+	// optional protocol contract of other adapters that expose only discovery.
+	if capability, ok := c.(ports.DeliveryCapabilityProtocol); ok {
+		supported, err := capability.SupportsDeliveryV1(ctx)
+		if err != nil {
+			return false, false, fmt.Errorf("negotiate Runner delivery capability: %w", err)
+		}
+		if !supported {
 			return false, false, nil
 		}
-		return false, false, fmt.Errorf("negotiate Runner delivery protocol: %w", err)
+	} else {
+		page, err := c.(ports.DeliveryProtocol).ListDeliveries(ctx, 0, 1)
+		if err != nil {
+			var status ports.HTTPStatusCoder
+			if errors.As(err, &status) && status.HTTPStatusCode() == http.StatusNotFound {
+				return false, false, nil
+			}
+			return false, false, fmt.Errorf("negotiate Runner delivery protocol: %w", err)
+		}
+		if page.ProtocolVersion != 1 {
+			return false, false, fmt.Errorf("unsupported Runner delivery protocol version %d", page.ProtocolVersion)
+		}
 	}
-	if page.ProtocolVersion != 1 {
-		return false, false, fmt.Errorf("unsupported Runner delivery protocol version %d", page.ProtocolVersion)
-	}
+	var err error
 	idempotent := false
 	if tokenProtocol, ok := c.(ports.RequestTokenIdempotency); ok {
 		idempotent, err = tokenProtocol.SupportsRequestTokenIdempotency(ctx)
@@ -1142,6 +1166,10 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 			evidence = domain.MatchEvidence{Version: 1, Method: "manual_override", Code: "manual_override",
 				Reason: "Manually grabbed after rejection: " + verified.Reason, OriginalTitle: req.Title, ParsedTitle: p.Title}
 		}
+	} else if req.CandidateToken != "" {
+		// An expired token cannot silently strip the GUID used by blacklist and
+		// source attribution checks. Refresh search to obtain current evidence.
+		return 0, ErrCandidateExpired
 	}
 	dest := item.Path
 	rootFolderID := item.RootFolderID
@@ -1219,6 +1247,11 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 		exactTransferCorrelation = true
 	}
 	if deliveryExpected {
+		// Persist before admission: a restart between Add and discovery must not
+		// allow legacy import of a publication whose custody requires Delivery.
+		if err := s.db.EnableRunnerDeliveryV1(ctx, cfg.ID); err != nil {
+			return 0, err
+		}
 		s.rememberRunnerDelivery(cfg.ID)
 	}
 
@@ -1231,6 +1264,15 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 		if existing := s.alreadyInFlight(ctx, req); existing != 0 {
 			s.log.Info("grab: already in flight; not grabbing it again",
 				"release", req.Title, "download", existing)
+			if req.ReplacementOperationID != "" {
+				existingRow, err := s.db.GetDownload(ctx, existing)
+				if err != nil {
+					return 0, err
+				}
+				if existingRow.ReplacementOperationID != req.ReplacementOperationID {
+					return 0, sqlite.ErrReplacementScopeConflict
+				}
+			}
 			return existing, nil
 		}
 		// Its bytes already arrived here and failed to import. The payload is
@@ -1273,11 +1315,16 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 	// a download running in a client that Monarr has no record of, which
 	// is the worse of the two failures by a distance.
 	targetCtx, releaseTarget := s.lockImportTarget(ctx, req.MediaItemID)
-	// Idempotent: the explicit releases below run first; this only matters
-	// if the admission panics.
 	defer releaseTarget()
 	allocationCtx, releaseStorageAllocation := s.lockStorageDecision(targetCtx)
 	releaseAllocation := func() { releaseStorageAllocation(); releaseTarget() }
+	defer releaseAllocation()
+	if !manual {
+		if err := s.checkReplacementSourceExclusion(allocationCtx, item, req); err != nil {
+			releaseAllocation()
+			return 0, err
+		}
+	}
 	active, activeErr := s.db.ListDownloadReservations(allocationCtx)
 	if activeErr != nil {
 		releaseAllocation()
@@ -1300,6 +1347,9 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 		}
 		if normalizeRelease(row.ReleaseTitle) == normalizeRelease(req.Title) || overlap || heldWantOverlap(row, item.ID, req.CopyID, wants) {
 			releaseAllocation()
+			if req.ReplacementOperationID != "" && row.ReplacementOperationID != req.ReplacementOperationID {
+				return 0, sqlite.ErrReplacementScopeConflict
+			}
 			return row.ID, nil
 		}
 	}
@@ -1781,7 +1831,7 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		s.handleRemoved(ctx, dl, st.Progress, st.Message, source)
 	case ports.StateCompleted:
 		mappedPath := ports.MapRemotePath(cfg.PathMappings, st.SavePath)
-		legacyReview, reviewErr := s.db.LegacyCleanupReview(ctx, dl.GenerationKey, mappedPath)
+		legacyReview, reviewErr := s.db.LegacyAutomaticImportReview(ctx, dl.GenerationKey, mappedPath)
 		if reviewErr != nil || legacyReview {
 			if reviewErr != nil {
 				s.log.Warn("legacy completion review lookup failed; holding import", "download", dl.ID, "err", reviewErr)
@@ -1799,6 +1849,19 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		}
 		if dl.DeliveryExpected && s.runnerDeliveryEnabled(ctx, cfg) {
 			return
+		}
+		// Older binaries parked this proven in-flight acquisition for cohort
+		// review. Resume only that recorded hold; normal manual approval remains.
+		if dl.State == "awaiting_import" && !cfg.ManualApproval {
+			cohort, err := s.db.LegacyCleanupReview(ctx, dl.GenerationKey, mappedPath)
+			if err == nil && cohort && len(dl.Handoff) > 0 && dl.Handoff[len(dl.Handoff)-1].Step == stepAwaiting &&
+				dl.Handoff[len(dl.Handoff)-1].Detail == "held for explicit review of pre-existing download custody" {
+				dl.SavePath, dl.ImportPath = st.SavePath, mappedPath
+				s.advance(ctx, &dl, "downloaded", 1, "", stepImportRecovered, "historical evidence proves acquisition was in flight at upgrade; resuming import only")
+				releaseStorageBeforeDispatch()
+				s.enqueueImport(ctx, dl, cfg)
+				return
+			}
 		}
 		// 'downloaded' and 'importing' are NOT terminal, but they mean
 		// someone is already on it; only 'grabbed'/'downloading' should
@@ -2059,11 +2122,17 @@ func (s *Service) downloadMutex(id int64) *sync.Mutex {
 	return m
 }
 
-func (s *Service) lockDownload(id int64) func() { m := s.downloadMutex(id); m.Lock(); return m.Unlock }
+func (s *Service) lockDownload(id int64) func() {
+	m := s.downloadMutex(id)
+	m.Lock()
+	return m.Unlock
+
+}
+
 func (s *Service) tryLockDownload(id int64) (func(), bool) {
 	m := s.downloadMutex(id)
 	if !m.TryLock() {
-		return nil, false
+		return func() {}, false
 	}
 	return m.Unlock, true
 }
@@ -2336,7 +2405,7 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 	if err != nil {
 		return err
 	}
-	if dl.PlanID != 0 || dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "submitted" {
+	if dl.PlanID != 0 || dl.SubmissionPhase == "pending" || dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "submitted" {
 		unlock := s.lockDownload(id)
 		defer unlock()
 		dl, err = s.db.GetDownload(ctx, id)
@@ -2390,3 +2459,5 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 	}
 	return s.db.DeleteDownload(ctx, id)
 }
+
+var ErrCandidateExpired = errors.New("release search evidence expired or changed; search again before grabbing")

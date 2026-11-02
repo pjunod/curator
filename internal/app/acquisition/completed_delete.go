@@ -253,6 +253,11 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 	if !s.ownsDownloadPath(ctx, path) {
 		return fmt.Errorf("select an entry inside Curator-owned download storage")
 	}
+	// Refresh association and storage facts while holding the same mutation
+	// locks as import and cleanup. Cached inventory alone is not deletion authority.
+	if err := s.scanCompletedLocked(ctx); err != nil {
+		return err
+	}
 	inventory, err := s.CompletedInventory(ctx)
 	if err != nil {
 		return err
@@ -275,7 +280,7 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 			return fmt.Errorf("inventory is incomplete; scan again before deleting selected files")
 		}
 	}
-	legacy, err := s.db.LegacyCleanupReview(ctx, "", path)
+	legacy, err := s.db.LegacyCleanupReviewPath(ctx, path)
 	if err != nil || !legacy {
 		return fmt.Errorf("legacy review fence is unavailable; refusing deletion")
 	}
@@ -413,6 +418,15 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 		if current.Mode()&os.ModeSymlink != 0 || !current.Mode().IsRegular() || !os.SameFile(file.info, current) || completedReviewFileIdentity(file.selection.Path, current) != file.selection.SnapshotIdentity {
 			_ = parent.Close()
 			return fmt.Errorf("selected legacy file changed before deletion: %s", file.rel)
+		}
+		legacy, fenceErr := s.db.LegacyCleanupReviewPath(ctx, path)
+		if fenceErr != nil || !legacy {
+			_ = parent.Close()
+			return fmt.Errorf("legacy review fence changed before deletion")
+		}
+		if err := s.rejectReferencedPayload(ctx, file.selection.Path, roots); err != nil {
+			_ = parent.Close()
+			return err
 		}
 		if err := parent.Remove(name); err != nil {
 			_ = parent.Close()

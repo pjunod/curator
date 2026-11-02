@@ -1427,3 +1427,23 @@ func TestAcqReservationReviewRetainsOriginalAndExposesSelection(t *testing.T) {
 		t.Fatalf("review erased custody identity: %+v", original)
 	}
 }
+
+func TestAcqNativeRunnerTorrentClientTypeRoundTrip(t *testing.T) {
+	e := newAPIEnv(t)
+	var created apigen.DownloadClientConfig
+	e.post(t, "/api/v1/downloadclients", `{"type":"runner-torrent","name":"Runner native torrent","url":"runner.invalid","mode":"push","password":"fixture-token"}`).expect(t, http.StatusCreated).into(t, &created)
+	if string(created.Type) != "runner-torrent" || created.Url != "http://runner.invalid:6789" || created.Mode == nil || *created.Mode != "push" {
+		t.Fatalf("native client=%+v", created)
+	}
+	if created.RemoveCompleted == nil || *created.RemoveCompleted {
+		t.Fatal("native type inherited Usenet whole-client deletion default")
+	}
+	if created.Password == nil || *created.Password == "fixture-token" {
+		t.Fatal("native credential was not masked")
+	}
+	var clients []apigen.DownloadClientConfig
+	e.get(t, "/api/v1/downloadclients").expect(t, http.StatusOK).into(t, &clients)
+	if len(clients) != 1 || clients[0].Type != created.Type {
+		t.Fatalf("clients=%+v", clients)
+	}
+}

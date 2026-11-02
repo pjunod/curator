@@ -178,3 +178,18 @@ func TestRetryDeliverySourceCleanupUsesEmptyJSONPost(t *testing.T) {
 		t.Fatal("Runner source cleanup retry request was not sent")
 	}
 }
+
+func TestLifecycleOmissionCountersAreBoundedAndImmutableEvidence(t *testing.T) {
+	left := &ports.RunnerLifecycleTiming{Version: 1, OmittedIntervals: map[string]uint32{"queue": 2}}
+	right := &ports.RunnerLifecycleTiming{Version: 1, OmittedIntervals: map[string]uint32{"queue": 3}}
+	if ports.SameRunnerLifecycleTiming(left, right) {
+		t.Fatal("changed omission evidence compared equal")
+	}
+	if err := validateRunnerEvidence(nil, nil, left); err != nil {
+		t.Fatal(err)
+	}
+	left.OmittedIntervals["made_up"] = 1
+	if err := validateRunnerEvidence(nil, nil, left); err == nil {
+		t.Fatal("unknown omission stage accepted")
+	}
+}

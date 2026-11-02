@@ -117,7 +117,7 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	if imp == "" {
 		imp = dl.SavePath
 	}
-	legacyReview, reviewErr := s.db.LegacyCleanupReview(ctx, dl.GenerationKey, imp)
+	legacyReview, reviewErr := s.db.LegacyAutomaticImportReview(ctx, dl.GenerationKey, imp)
 	legacyReviewApproved := false
 	var legacyApproval *sqlite.HandoffEntry
 	var reviewedSnapshots map[string]string

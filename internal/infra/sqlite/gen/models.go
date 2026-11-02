@@ -280,6 +280,12 @@ type LegacyCleanupReview struct {
 	Path          string
 }
 
+type LegacyInflightImportEvidence struct {
+	GenerationKey string
+	CutoverMs     int64
+	Evidence      string
+}
+
 type LibraryReviewFlag struct {
 	ID             int64
 	MediaItemID    int64
@@ -638,6 +644,14 @@ type RunnerDeliveryCursor struct {
 	UpdatedAt     int64
 }
 
+type RunnerDeliveryDiscoveryRejection struct {
+	ClientID   int64
+	Sequence   int64
+	DeliveryID string
+	Reason     string
+	UpdatedAt  int64
+}
+
 type RunnerDeliveryExplicitDeleteBatch struct {
 	BatchID                      string
 	ReceiptID                    int64
@@ -653,6 +667,7 @@ type RunnerDeliveryExplicitDeleteBatch struct {
 	RetryBlockedSince            int64
 	RetryError                   string
 	CreatedAt                    int64
+	AbandonedAt                  int64
 }
 
 type RunnerDeliveryExplicitDeleteFile struct {
@@ -663,6 +678,7 @@ type RunnerDeliveryExplicitDeleteFile struct {
 	ParentIdentity   string
 	HistoryRecorded  int64
 	CompletedAt      int64
+	UnlinkStarted    int64
 }
 
 type RunnerDeliveryFileImport struct {
@@ -744,6 +760,10 @@ type RunnerDeliveryReceipt struct {
 	FileOutcomesJson              string
 	PublicationDirectoryIdentity  string
 	ProviderRetryAfter            int64
+	LifecycleTimingJson           string
+	RunnerStagesJson              string
+	SourceCopiesJson              string
+	OwnedByClientID               int64
 }
 
 type RunnerDeliverySourceRefresh struct {
@@ -771,6 +791,20 @@ type Season struct {
 	MediaItemID int64
 	Number      int64
 	Monitored   int64
+}
+
+type StorageChangeAcceptance struct {
+	ReviewToken         string
+	Root                string
+	ExpectedIdentity    string
+	ObservedIdentity    string
+	AffectedGenerations int64
+	AcceptedAt          int64
+}
+
+type StorageChangeReviewFence struct {
+	GenerationKey string
+	Root          string
 }
 
 type WantedSearchRun struct {

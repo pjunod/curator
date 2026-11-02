@@ -488,8 +488,13 @@ func (d *DB) TransitionReplacementOperation(ctx context.Context, id, state, deta
 	now := time.Now()
 	var attempts int
 	var blockedSince int64
-	if err = tx.QueryRowContext(ctx, `SELECT retry_attempts,blocked_since FROM replacement_operations WHERE operation_id=?`, id).Scan(&attempts, &blockedSince); err != nil {
+	var currentState string
+	if err = tx.QueryRowContext(ctx, `SELECT retry_attempts,blocked_since,state FROM replacement_operations WHERE operation_id=?`, id).Scan(&attempts, &blockedSince, &currentState); err != nil {
 		return err
+	}
+	// A delayed failure or progress callback cannot reopen settled work.
+	if currentState == "complete" || currentState == "cancelled" || currentState == "failed" {
+		return nil
 	}
 	next := int64(0)
 	switch state {
@@ -790,4 +795,24 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ReplacementSourceExclusions is unbounded and independent of retry due time:
+// an open operation excludes its original release for its selected scope even
+// while its worker is waiting for the next indexer search.
+func (d *DB) ReplacementSourceExclusions(ctx context.Context, itemID, copyID int64) ([]ReplacementOperation, error) {
+	rows, err := d.R.QueryContext(ctx, replacementSelect+` WHERE media_item_id=? AND copy_id=? AND state IN ('accepted','removing','cleanup_blocked','searching','waiting_for_release','replacing')`, itemID, copyID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ReplacementOperation
+	for rows.Next() {
+		op, err := scanReplacementOperation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, op)
+	}
+	return out, rows.Err()
 }

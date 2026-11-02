@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
-import { deleteCompletedEntry, fmtBytes, getCompletedInventory, getSettings, getTasks, runTask, updateSettings } from './api'
-import type { CompletedEntry, CompletedRoot, CompletedReviewFile } from './api'
+import { acceptCompletedStorageChange, previewCompletedStorageChange, deleteCompletedEntry, fmtBytes, getCompletedInventory, getSettings, getTasks, runTask, updateSettings } from './api'
+import type { CompletedEntry, CompletedRoot, CompletedReviewFile, StorageChangeReview } from './api'
 import { clampPage, Pager, PageSizePicker, sliceForPage } from './Pager'
 import { DeliveryLifecycleForDownload } from './DeliveryLifecycle'
+import { ActionDialog, ActionNotice, focusActionTrigger } from './ActionDialog'
 import './CompletedFolders.css'
 
 type StorageRow = { root: CompletedRoot; entry: CompletedEntry }
@@ -43,6 +44,10 @@ async function deleteStorageRows(qc: QueryClient, rows: StorageRow[], filesByKey
 
 export function CompletedFolders({ onImport }: { onImport: (path: string, mode?: 'legacy' | 'delivery', downloadId?: number) => void }) {
   const qc = useQueryClient()
+  const storageHeading = useRef<HTMLHeadingElement>(null)
+  const [storageReview, setStorageReview] = useState<CompletedRoot | null>(null)
+  const previewStorage = useMutation({ mutationFn: (root: CompletedRoot) => previewCompletedStorageChange({ root: root.path, expectedIdentity: root.storageIdentity!, observedIdentity: root.observedStorageIdentity! }) })
+  const acceptStorage = useMutation({ mutationFn: (review: StorageChangeReview) => acceptCompletedStorageChange(review), onSuccess: () => { void qc.invalidateQueries({ queryKey: ['completed-inventory'] }); setStorageReview(null) } })
   const inventory = useQuery({
     queryKey: ['completed-inventory'], queryFn: getCompletedInventory, refetchInterval: 5_000,
   })
@@ -139,7 +144,7 @@ export function CompletedFolders({ onImport }: { onImport: (path: string, mode?:
 
   return <section className="panel download-storage" aria-label="Download storage">
     <div className="storage-heading">
-      <div><h2>Download storage</h2><p className="muted">Review leftover downloads and manage files on disk.</p></div>
+      <div><h2 ref={storageHeading} tabIndex={-1}>Download storage</h2><p className="muted">Review leftover downloads and manage files on disk.</p></div>
       <div className="storage-actions">
         <button disabled={scan.isPending || !!scanning || busy} onClick={() => scan.mutate()}>{scanning ? 'Scanning storage…' : 'Scan download storage'}</button>
         <button disabled={cleanup.isPending || busy} onClick={() => cleanup.mutate()}>Retry imported cleanup</button>
@@ -158,11 +163,30 @@ export function CompletedFolders({ onImport }: { onImport: (path: string, mode?:
     {cleanup.isSuccess && <p role="status" className="muted">Imported cleanup queued. A subsequent inventory scan will show the result.</p>}
     {(inventory.error || scan.error || cleanup.error) && <p role="alert" className="error-text">{(inventory.error || scan.error || cleanup.error)?.message}</p>}
     {data?.roots.length === 0 && <p className="muted">No scan yet. Configure download storage folders in Settings if needed.</p>}
+    {acceptStorage.isSuccess && <ActionNotice>Replacement storage accepted. Existing payloads and pre-change requests require fresh review; new requests can use the verified storage while existing path review fences still apply.</ActionNotice>}
+    {storageReview && <ActionDialog title="Review changed download storage" returnFocus={storageHeading} onClose={() => setStorageReview(null)}>
+      <p className="mono">{storageReview.path}</p>
+      <p>Returning the expected mount recovers automatically. Accept only an intentional replacement of this storage.</p>
+      {previewStorage.isPending && <p role="status">Checking the current storage and affected requests…</p>}
+      {previewStorage.isError && <ActionNotice warning>{(previewStorage.error as Error).message}</ActionNotice>}
+      {previewStorage.data && <>
+        <p><strong>Expected:</strong> {previewStorage.data.expectedDescription}</p><p><strong>Observed:</strong> {previewStorage.data.observedDescription}</p>
+        <p>This root has {previewStorage.data.existingPayloads} previously recorded payloads and {previewStorage.data.existingRequests} pre-change requests ({previewStorage.data.inFlightRequests} still in flight). These require fresh review after acceptance. Other roots keep their own custody rules.</p>
+        <p>Acceptance permits future requests to use this storage. It does not approve cleanup of existing payloads.</p>
+        {previewStorage.data.activeImports > 0 && <p role="alert">{previewStorage.data.activeImports} imports are active. Wait for them to finish or cancel them, then refresh this review.</p>}
+      </>}
+      <div className="row-actions">
+        {previewStorage.data && <button disabled={acceptStorage.isPending || previewStorage.isPending || previewStorage.data.activeImports > 0} onClick={() => acceptStorage.mutate(previewStorage.data!)}>{acceptStorage.isPending ? 'Accepting…' : 'Accept replacement storage'}</button>}
+        <button disabled={previewStorage.isPending} onClick={() => { acceptStorage.reset(); previewStorage.mutate(storageReview) }}>Refresh review</button>
+      </div>
+      {acceptStorage.isError && <ActionNotice warning>{(acceptStorage.error as Error).message}</ActionNotice>}
+    </ActionDialog>}
     <div className="storage-roots">{data?.roots.map((root) => <div key={root.path}>
       <div className="storage-root-line"><span className="mono">{root.path}</span><span>{fmtBytes(root.bytes)}</span><span className="muted">
         {root.lastCompleteAt.startsWith('0001') ? 'No complete scan' : `Last complete scan: ${new Date(root.lastCompleteAt).toLocaleString()}`}
       </span></div>
       {root.error && <p className="error-text" role="alert">Scan incomplete: {root.error}. Showing stale or partial results. Scan again before managing these files.</p>}
+      {root.storageIdentity && root.observedStorageIdentity && root.storageIdentity !== root.observedStorageIdentity && <button onClick={(event) => { focusActionTrigger(event); acceptStorage.reset(); previewStorage.reset(); setStorageReview(root); previewStorage.mutate(root) }}>Review changed storage…</button>}
     </div>)}</div>
     {busy && <p role="status">Deleting {deletion?.progress} of {deletion?.total} entries… You can navigate within the app. Keep this tab open until deletion finishes.</p>}
     {result && <div role="status" className={result.errors.length ? 'error-text' : 'muted'}>

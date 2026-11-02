@@ -93,6 +93,47 @@ paths:
         "202": { description: Curator cleanup retry queued. }
         "409": { description: Cleanup is not eligible to retry. }
 
+  /downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon:
+    post:
+      operationId: abandonDeliveryDeleteRequest
+      summary: Cancel remaining work in an exact reviewed deletion request
+      parameters:
+        - { name: receiptId, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: batchId, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 256 } }
+      responses:
+        "204": { description: Remaining deletion cancelled; completed outcomes and history preserved. }
+        "404": { description: Delivery receipt or deletion request not found. }
+        "409": { description: Delivery work is active or deletion identity changed. }
+
+  /downloads/inventory/storage-change/preview:
+    post:
+      operationId: previewCompletedStorageChange
+      summary: Review expected and observed storage and the exact affected custody
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StorageChangeRequest' }
+      responses:
+        "200":
+          description: Exact root comparison and affected historical custody counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageChangeReview' }
+        "409": { description: Storage comparison is stale or unavailable. }
+  /downloads/inventory/storage-change/accept:
+    post:
+      operationId: acceptCompletedStorageChange
+      summary: Accept intentionally changed storage while fencing existing custody for review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StorageChangeRequest' }
+      responses:
+        "204": { description: New storage accepted and old custody fenced atomically; inventory scan requested. }
+        "409": { description: Review or observed storage changed, or imports are active. }
+
   /downloads/inventory/entry:
     delete:
       operationId: deleteCompletedEntry
@@ -1624,6 +1665,11 @@ paths:
             schema:
               $ref: "#/components/schemas/GrabRequest"
       responses:
+        "409":
+          description: Request identity conflicts, request was retained, candidate evidence expired, or blacklist confirmation is required.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "201":
           description: Queued; returns the download row id.
           content:
@@ -2511,6 +2557,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/ReplacementRequest" }
       responses:
+        "200": { description: Existing request replayed with its original identity. }
         "202":
           description: Durable replacement operation accepted.
           content:
@@ -3261,6 +3308,18 @@ components:
       type: object
       required: [receiptId, clientId, downloadId, deliveryId, publicationGeneration, manifestDigest, state, acceptance, manifestFiles, curatorFiles, attemptHistory]
       properties:
+        runnerStages:
+          type: object
+          description: Immutable POST substages from one Runner node clock; excluded from aggregate major-stage totals.
+          additionalProperties: true
+        lifecycleTiming:
+          type: object
+          description: Immutable version-1 intervals. Only completed monotonic endpoints in one node boot clock contribute to a known-work union.
+          additionalProperties: true
+        sourceCopies:
+          type: array
+          description: Mutable per-copy processing-source cleanup obligations; no local deletion authority.
+          items: { type: object, additionalProperties: true }
         receiptId: { type: integer, format: int64 }
         clientId: { type: integer, format: int64 }
         downloadId: { type: integer, format: int64 }
@@ -3297,6 +3356,15 @@ components:
               sizeBytes: { type: integer, format: int64 }
               sha256: { type: string }
         sourceFileOutcomes: { type: array, items: { type: object, additionalProperties: true } }
+        pendingDeleteRequests:
+          type: array
+          items:
+            type: object
+            required: [id, paths]
+            properties:
+              id: { type: string }
+              paths: { type: array, items: { type: string } }
+              error: { type: string }
         attemptHistory:
           type: array
           items:
@@ -3320,6 +3388,7 @@ components:
         directoryCleanupBlockedSince: { type: string, format: date-time }
         directoryCleanupNextAttemptAt: { type: string, format: date-time }
         directoryCleanupError: { type: string }
+        ownedByClientId: { type: integer, format: int64, description: Read-only duplicate view owned by another configured Runner client. }
         curatorFiles: { type: array, items: { type: object, additionalProperties: true } }
     SystemStatus:
       type: object
@@ -4557,7 +4626,7 @@ components:
       type: object
       required: [type, name, url]
       properties:
-        type: { type: string, enum: [qbittorrent, sabnzbd, transmission, deluge, nzbget, nzbd] }
+        type: { type: string, enum: [qbittorrent, sabnzbd, transmission, deluge, nzbget, nzbd, runner-torrent] }
         name: { type: string }
         url: { type: string }
         username: { type: string }
@@ -5658,6 +5727,26 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CompletedRoot'
+    StorageChangeRequest:
+      type: object
+      required: [root, expectedIdentity, observedIdentity]
+      properties:
+        root: { type: string }
+        expectedIdentity: { type: string }
+        observedIdentity: { type: string }
+        reviewToken: { type: string }
+    StorageChangeReview:
+      allOf:
+        - { $ref: '#/components/schemas/StorageChangeRequest' }
+        - type: object
+          required: [expectedDescription, observedDescription, existingPayloads, existingRequests, inFlightRequests, activeImports]
+          properties:
+            expectedDescription: { type: string }
+            observedDescription: { type: string }
+            existingPayloads: { type: integer }
+            existingRequests: { type: integer }
+            inFlightRequests: { type: integer }
+            activeImports: { type: integer }
     CompletedRoot:
       type: object
       required: [path, rootIdentity, checkedAt, lastCompleteAt, error, entries, bytes]
@@ -5668,6 +5757,8 @@ components:
         lastCompleteAt: { type: string, format: date-time }
         error: { type: string }
         bytes: { type: integer, format: int64 }
+        storageIdentity: { type: string }
+        observedStorageIdentity: { type: string }
         entries:
           type: array
           items:

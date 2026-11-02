@@ -155,15 +155,21 @@ func (s *Service) lockAllImportTargets(ctx context.Context, wait time.Duration) 
 	}, nil
 }
 
-// tryLockImportTarget is the nonblocking control-plane form: cancellation
-// review must not wait behind a title's NFS syscall or a global recovery lease.
+// tryLockImportTarget is for short operator decisions that already hold the
+// completed-inventory lock. Busy publication must not pin that global lock.
 func (s *Service) tryLockImportTarget(ctx context.Context, item int64) (context.Context, func(), bool) {
-	if h, ok := heldTarget(ctx); ok && h.covers(item) {
-		return ctx, func() {}, true
+	if h, ok := heldTarget(ctx); ok {
+		if h.covers(item) {
+			return ctx, func() {}, true
+		}
+		return ctx, func() {}, false
+	}
+	if item < 0 {
+		item = 0
 	}
 	t := &s.importTargets
 	if !t.all.TryRLock() {
-		return ctx, nil, false
+		return ctx, func() {}, false
 	}
 	t.mu.Lock()
 	if t.items == nil {
@@ -175,30 +181,23 @@ func (s *Service) tryLockImportTarget(ctx context.Context, item int64) (context.
 		t.items[item] = l
 	}
 	l.refs++
-	if !l.mu.TryLock() {
-		l.refs--
-		if l.refs == 0 {
+	t.mu.Unlock()
+	releaseRef := func() {
+		t.mu.Lock()
+		if l.refs--; l.refs == 0 {
 			delete(t.items, item)
 		}
 		t.mu.Unlock()
 		t.all.RUnlock()
-		return ctx, nil, false
 	}
-	t.mu.Unlock()
+	if !l.mu.TryLock() {
+		releaseRef()
+		return ctx, func() {}, false
+	}
 	var once sync.Once
 	active := &atomic.Bool{}
 	active.Store(true)
 	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{item: item, active: active}), func() {
-		once.Do(func() {
-			active.Store(false)
-			l.mu.Unlock()
-			t.mu.Lock()
-			l.refs--
-			if l.refs == 0 {
-				delete(t.items, item)
-			}
-			t.mu.Unlock()
-			t.all.RUnlock()
-		})
+		once.Do(func() { active.Store(false); l.mu.Unlock(); releaseRef() })
 	}, true
 }

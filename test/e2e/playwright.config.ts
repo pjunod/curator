@@ -41,6 +41,11 @@ export default defineConfig({
     // at an iPhone viewport, run AFTER (it reads state the suite builds).
     { name: 'desktop', testIgnore: /mobile\.spec\.ts/ },
     {
+      name: 'lifecycle-phone',
+      testMatch: /(?:lifecycle-workflows|delivery-lifecycle-polling)\.spec\.ts/,
+      use: { ...devices['iPhone 13'], browserName: 'chromium', launchOptions: process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {} },
+    },
+    {
       name: 'mobile',
       testMatch: /mobile\.spec\.ts/,
       dependencies: ['desktop'],

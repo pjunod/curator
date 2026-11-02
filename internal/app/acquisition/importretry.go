@@ -67,7 +67,7 @@ func (s *Service) RetryBlockedImports(ctx context.Context) error {
 		if path == "" {
 			path = dl.SavePath
 		}
-		legacy, reviewErr := s.db.LegacyCleanupReview(ctx, dl.GenerationKey, path)
+		legacy, reviewErr := s.db.LegacyAutomaticImportReview(ctx, dl.GenerationKey, path)
 		if reviewErr != nil || legacy {
 			// Keep the migration-era cohort out of even automatic state
 			// transitions until its path and copy have been reviewed.
@@ -90,7 +90,7 @@ func (s *Service) RetryBlockedImports(ctx context.Context) error {
 		if path == "" {
 			path = row.SavePath
 		}
-		legacy, reviewErr = s.db.LegacyCleanupReview(decisionCtx, row.GenerationKey, path)
+		legacy, reviewErr = s.db.LegacyAutomaticImportReview(decisionCtx, row.GenerationKey, path)
 		if reviewErr != nil || legacy {
 			releaseStorage()
 			continue

@@ -816,7 +816,7 @@ export interface PathMapping {
 }
 
 export interface DownloadClientInput {
-  type: 'qbittorrent' | 'sabnzbd' | 'transmission' | 'deluge' | 'nzbget' | 'nzbd'
+  type: 'qbittorrent' | 'sabnzbd' | 'transmission' | 'deluge' | 'nzbget' | 'nzbd' | 'runner-torrent'
   name: string
   url: string
   username?: string
@@ -1623,6 +1623,8 @@ export interface CompletedReviewFile {
   snapshotIdentity: string
 }
 export interface CompletedRoot {
+  storageIdentity?: string
+  observedStorageIdentity?: string
   path: string
   checkedAt: string
   lastCompleteAt: string
@@ -1677,7 +1679,20 @@ export interface CuratorDeliveryFileOutcome {
   cleanupNextAttemptAt?: string
   libraryPath?: string
 }
+export interface RunnerLifecycleInterval {
+ stage: string; nodeId: string; clockDomain: string; startUnixMs: number; endUnixMs?: number
+ startMonotonicMs?: number; endMonotonicMs?: number; durationMs?: number
+ state: 'completed' | 'interrupted' | 'running' | 'unknown'; observations?: number
+}
+export interface RunnerLifecycleTiming { version: number; intervals: RunnerLifecycleInterval[]; omittedIntervals?: Record<string, number> }
+export interface RunnerStages { nodeId: string; clockDomain: string; spans: Array<{ stage: string; started_at_unix: number; ms?: number }> }
+export interface RunnerSourceCopy { id: string; ownerNode: string; status: string; error?: string; attempts: number; nextRetryAt?: number }
 export interface DeliveryLifecycleReceipt {
+  ownedByClientId?: number
+  lifecycleTiming?: RunnerLifecycleTiming
+  runnerStages?: RunnerStages
+  sourceCopies?: RunnerSourceCopy[]
+  pendingDeleteRequests?: Array<{ id: string; paths: string[]; error?: string }>
   receiptId: number
   clientId: number
   downloadId: number
@@ -1755,3 +1770,11 @@ export interface SeasonSelection {
 }
 
 export const resolveQueueReservation = (id: number) => send<void>('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})
+
+export const abandonDeliveryDeleteRequest = (receiptId: number, requestId: string) =>
+ send('POST', `/downloads/deliveries/${receiptId}/delete-batches/${encodeURIComponent(requestId)}/abandon`)
+
+export interface StorageChangeRequest { root: string; expectedIdentity: string; observedIdentity: string; reviewToken?: string }
+export interface StorageChangeReview extends StorageChangeRequest { expectedDescription: string; observedDescription: string; existingPayloads: number; existingRequests: number; inFlightRequests: number; activeImports: number }
+export const previewCompletedStorageChange = (request: StorageChangeRequest) => send<StorageChangeReview>('POST', '/downloads/inventory/storage-change/preview', request)
+export const acceptCompletedStorageChange = (request: StorageChangeRequest) => send('POST', '/downloads/inventory/storage-change/accept', request)

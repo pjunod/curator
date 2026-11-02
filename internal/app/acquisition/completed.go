@@ -66,14 +66,15 @@ type CompletedFileSelection struct {
 }
 
 type CompletedRoot struct {
-	RootIdentity    string           `json:"rootIdentity"`
-	StorageIdentity string           `json:"storageIdentity,omitempty"`
-	Path            string           `json:"path"`
-	CheckedAt       time.Time        `json:"checkedAt"`
-	LastCompleteAt  time.Time        `json:"lastCompleteAt"`
-	Error           string           `json:"error"`
-	Entries         []CompletedEntry `json:"entries"`
-	Bytes           int64            `json:"bytes"`
+	RootIdentity            string           `json:"rootIdentity"`
+	StorageIdentity         string           `json:"storageIdentity,omitempty"`
+	ObservedStorageIdentity string           `json:"observedStorageIdentity,omitempty"`
+	Path                    string           `json:"path"`
+	CheckedAt               time.Time        `json:"checkedAt"`
+	LastCompleteAt          time.Time        `json:"lastCompleteAt"`
+	Error                   string           `json:"error"`
+	Entries                 []CompletedEntry `json:"entries"`
+	Bytes                   int64            `json:"bytes"`
 }
 
 type CompletedInventory struct {
@@ -225,6 +226,10 @@ func (s *Service) CompletedInventory(ctx context.Context) (CompletedInventory, e
 func (s *Service) ScanCompleted(ctx context.Context) error {
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
+	return s.scanCompletedLocked(ctx)
+}
+
+func (s *Service) scanCompletedLocked(ctx context.Context) error {
 	receipts, err := s.db.CompletedReceipts(ctx)
 	if err != nil {
 		return err
@@ -280,8 +285,9 @@ func (s *Service) ScanCompleted(ctx context.Context) error {
 				root.Error = identityErr.Error()
 			} else {
 				root.StorageIdentity = observed
-				if old, ok := previous[path]; ok && old.StorageIdentity != "" && old.StorageIdentity != observed {
-					root.Error = "expected storage changed; restore the configured storage before scanning or cleaning files"
+				root.ObservedStorageIdentity = observed
+				if old, ok := previous[path]; ok && old.StorageIdentity != "" && old.StorageIdentity != observed && !canStrengthenStorageIdentity(path, old.StorageIdentity, observed) {
+					root.Error = fmt.Sprintf("expected storage changed: expected %s; observed %s. Restore the expected storage for automatic recovery, or review this intentional change", displayStorageIdentity(old.StorageIdentity), displayStorageIdentity(observed))
 				}
 			}
 		}
@@ -636,8 +642,8 @@ func (s *Service) checkStorageIdentity(ctx context.Context, path string) error {
 		if err != nil {
 			return fmt.Errorf("storage verification is unavailable for %s: %w; cleanup will retry automatically", configuredRoot, err)
 		}
-		if observed != root.StorageIdentity {
-			return fmt.Errorf("expected storage changed at %s; restore the configured storage and automatic verification will resume", configuredRoot)
+		if observed != root.StorageIdentity && !canStrengthenStorageIdentity(root.Path, root.StorageIdentity, observed) {
+			return fmt.Errorf("expected storage changed at %s: expected %s; observed %s; restore the configured storage and automatic verification will resume", configuredRoot, displayStorageIdentity(root.StorageIdentity), displayStorageIdentity(observed))
 		}
 	}
 	if !matched {

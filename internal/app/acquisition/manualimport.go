@@ -398,7 +398,7 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 			}
 		}
 	} else {
-		legacy, reviewErr := s.db.LegacyCleanupReviewPath(ctx, req.Path)
+		legacy, reviewErr := s.legacyReviewPathOverlap(ctx, req.Path)
 		if reviewErr != nil || legacy {
 			unlockAdmission()
 			if reviewErr != nil {
@@ -534,4 +534,21 @@ func hasLegacyReviewReceipt(receipts []sqlite.CompletedReceipt) bool {
 		}
 	}
 	return false
+}
+
+// An ancestor/child selection must not route around the immutable cohort path.
+// Explicit review still binds the exact inventory entry and selected snapshots.
+func (s *Service) legacyReviewPathOverlap(ctx context.Context, path string) (bool, error) {
+	paths, err := s.db.LegacyCleanupReviewPaths(ctx)
+	if err != nil {
+		return true, err
+	}
+	current := canonicalCompletedPath(path)
+	for _, legacy := range paths {
+		legacy = canonicalCompletedPath(legacy)
+		if within(current, legacy) || within(legacy, current) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

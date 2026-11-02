@@ -22,6 +22,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/infra/probe"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 type RecoverySettings struct {
@@ -139,7 +140,7 @@ func (s *Service) recoveryClient(ctx context.Context, id int64) (*runner.Client,
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Type != "nzbd" {
+	if !ports.IsNativeRunnerClient(cfg.Type) {
 		return nil, fmt.Errorf("recovery requires a native Runner client")
 	}
 	return runner.New(cfg), nil
@@ -151,7 +152,7 @@ func (s *Service) RunnerRecoveries(ctx context.Context) ([]RunnerRecovery, error
 	}
 	var out []RunnerRecovery
 	for _, cfg := range clients {
-		if cfg.Type != "nzbd" {
+		if !ports.IsNativeRunnerClient(cfg.Type) {
 			continue
 		}
 		for offset := 0; offset < 10000; offset += 100 {
