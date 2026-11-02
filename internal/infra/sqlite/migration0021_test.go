@@ -136,6 +136,10 @@ func TestStartupRefusesADatabaseMissingAColumnTheCodeWritesTo(t *testing.T) {
 	}
 	// Simulate the next collision: a column the query layer needs, gone,
 	// with the version table insisting everything is applied.
+	// The column carries an index (0068); a lost column loses it too.
+	if _, err := db.W.ExecContext(ctx, `DROP INDEX downloads_runner_mode_admission`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.W.ExecContext(ctx,
 		`ALTER TABLE downloads DROP COLUMN transfer`); err != nil {
 		t.Fatal(err)

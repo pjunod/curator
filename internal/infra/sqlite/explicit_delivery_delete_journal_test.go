@@ -166,6 +166,10 @@ func TestExplicitDeliveryDeleteHistoryFailureRollsBackAndCanRetry(t *testing.T) 
 	}
 }
 
+// openAtExplicitDeleteMigration opens a current database. The journal is
+// written through the current query layer, which reads columns later
+// migrations add, so the fixtures are created at the latest version and the
+// tests step down to migration 61 themselves.
 func openAtExplicitDeleteMigration(t *testing.T) (*DB, context.Context) {
 	t.Helper()
 	ctx := context.Background()
@@ -173,12 +177,12 @@ func openAtExplicitDeleteMigration(t *testing.T) (*DB, context.Context) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
 	goose.SetBaseFS(migrationsFS)
 	goose.SetLogger(goose.NopLogger())
 	if err := goose.SetDialect("sqlite3"); err != nil {
-		t.Fatal(err)
-	}
-	if err := goose.UpToContext(ctx, db.W, "migrations", 61); err != nil {
 		t.Fatal(err)
 	}
 	return db, ctx
@@ -204,8 +208,14 @@ func TestExplicitDeliveryDeleteJournalMigrationDownRequiresEmptyJournal(t *testi
 	if err := db.PrepareExplicitDeliveryDeleteBatch(ctx, batch); err != nil {
 		t.Fatal(err)
 	}
+	if err := goose.DownToContext(ctx, db.W, "migrations", 61); err != nil {
+		t.Fatalf("later migrations refused to step down to 61: %v", err)
+	}
 	if err := goose.DownToContext(ctx, db.W, "migrations", 60); err == nil {
 		t.Fatal("migration down discarded an active reviewed deletion journal")
+	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
 	}
 	stored, err := db.ExplicitDeliveryDeleteBatch(ctx, batch.ID)
 	if err != nil || stored.ReceiptID != receipt.ID || len(stored.Files) != 1 || stored.Files[0].HistoryRecorded {

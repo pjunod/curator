@@ -55,6 +55,11 @@ func TestDeliveryTimingImmutableAndPerCopyCleanupMutableAcrossRestart(t *testing
 	if err := goose.DownToContext(ctx, reopened.W, "migrations", 66); err == nil {
 		t.Fatal("downgrade discarded durable stage/copy evidence")
 	}
+	// The refused step leaves the later migrations it already reverted down;
+	// the next start migrates them back up.
+	if err := reopened.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
 	*v.LifecycleTiming.Intervals[0].DurationMS = 41
 	conflict, err := reopened.SaveDiscoveredDelivery(ctx, r.ClientID, v, r.MappedPath)
 	if err != nil || conflict.State != "conflict" {
