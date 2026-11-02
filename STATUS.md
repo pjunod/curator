@@ -2,8 +2,9 @@
 
 ## Lifecycle follow-ups after #83 — 2026-11-02 · v0.38.11
 
-**Status:** draft PR stacked on #87 (owner: Claude for Paul). Adversarial
-review in progress; full gate after its fixes; merge after #87.
+**Status:** [PR #88](https://github.com/pjunod/curator/pull/88), draft,
+stacked on #87 (owner: Claude for Paul). Review addressed; full gate next;
+merge after #87.
 
 #83 repaired main's CI differently from the closed #86. Four of #86's fixes
 were still needed; each was confirmed by a test that fails on main first.
@@ -20,8 +21,27 @@ were still needed; each was confirmed by a test that fails on main first.
 - The phone tab bar no longer covers lifecycle action buttons or their results
   (`web/src/viewportChrome.ts`; e2e checks `clearOfShell` on phone).
 
+**Review (independent agent):**
+- Fixed (confirmed by probe): a deleted title or season folder was judged
+  "unreadable" because its own parent was missing, so cleanup retried forever
+  under a message blaming storage. Unreadable is now judged against the
+  registered library root: a readable root with the folder gone is a
+  definitive loss (`protected`); a missing, unreadable or empty root (an
+  unmounted mount point) retries. The exact-copy fallback now runs before the
+  retry decision.
+- Fixed: sidecars get the same transient/definitive split (database, digest
+  and storage read failures retry).
+- Fixed: a page too slow to read within the client timeout still falls back
+  to the single-row retry, so discovery keeps advancing.
+- Fixed: an unreadable error body is joined to the status error rather than
+  flattened, so a cancellation stays visible to `errors.Is`.
+- Accepted: the per-file fence recheck reloads records before each unlink,
+  like the existing `rejectReferencedPayload`; freshness is the point.
+  Selections are small. A one-off double scroll reservation on first mount
+  of a notice is cosmetic.
+
 Decision for Paul to look over: a changed library placement stays `protected`
-(#82's choice); only an unreadable library retries.
+(#82's choice); only unreadable library storage retries.
 
 ## Recovery takes only its own title — 2026-11-02 · v0.38.10
 

@@ -372,11 +372,13 @@ func (c *Client) listDeliveryPage(req *http.Request, limit int) (ports.RunnerDel
 	if closeErr != nil {
 		closeErr = fmt.Errorf("nzbd: close delivery response: %w", closeErr)
 	}
-	// Only a page-content problem (oversize, malformed, protocol violation)
-	// falls back to one row at a time. A transport failure reading or closing
-	// the body is not a page too large to read: a smaller page would only
-	// repeat it.
-	if parseErr != nil && body.err == nil && closeErr == nil && limit > 1 && req.Context().Err() == nil {
+	// A page-content problem (oversize, malformed, protocol violation) or a
+	// page too slow to read within the client timeout falls back to one row
+	// at a time, which is what lets discovery advance past it. Any other
+	// transport failure reading or closing the body is not about the page's
+	// size: a smaller page would only repeat it.
+	transportFailure := body.err != nil && !isTimeout(body.err)
+	if parseErr != nil && !transportFailure && closeErr == nil && limit > 1 && req.Context().Err() == nil {
 		retry := req.Clone(req.Context())
 		query := retry.URL.Query()
 		query.Set("limit", "1")
@@ -400,6 +402,11 @@ func (c *Client) listDeliveryPage(req *http.Request, limit int) (ports.RunnerDel
 type deliveryTransportBody struct {
 	r   io.Reader
 	err error
+}
+
+func isTimeout(err error) bool {
+	var timeout interface{ Timeout() bool }
+	return errors.As(err, &timeout) && timeout.Timeout()
 }
 
 func (b *deliveryTransportBody) Read(p []byte) (int, error) {

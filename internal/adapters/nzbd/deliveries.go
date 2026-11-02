@@ -206,11 +206,13 @@ func (c *Client) deliveryRequest(ctx context.Context, method, path string, body 
 			bodyErr = fmt.Errorf("exceeds 8 MiB")
 		}
 		if bodyErr != nil {
-			message := "unexpected delivery response; body unreadable: " + bodyErr.Error()
+			message := "unexpected delivery response; body unreadable"
 			if resp.StatusCode == http.StatusUnauthorized {
-				message = "authentication rejected; body unreadable: " + bodyErr.Error()
+				message = "authentication rejected; body unreadable"
 			}
-			return apiError(resp, message)
+			// Joined, not flattened into text, so a cancellation or deadline
+			// while reading stays recognisable to errors.Is.
+			return errors.Join(apiError(resp, message), fmt.Errorf("nzbd: read delivery error body: %w", bodyErr))
 		}
 	}
 	if err != nil {

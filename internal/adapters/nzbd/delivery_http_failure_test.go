@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -291,7 +293,7 @@ func TestDeliveryStatusSurvivesAnUnreadableErrorBody(t *testing.T) {
 					if !errors.As(err, &apiErr) || apiErr.HTTPStatusCode() != status {
 						t.Fatalf("error = %T %v, want APIError with status %d", err, err, status)
 					}
-					if body.name == "read" && !strings.Contains(err.Error(), body.want) {
+					if body.name == "read" && (!strings.Contains(err.Error(), body.want) || !errors.Is(err, readFailure)) {
 						t.Fatalf("error %v dropped the body failure %q", err, body.want)
 					}
 					if deadline := apiErr.RetryDeadline(); deadline.Before(time.Now().Add(40 * time.Second)) {
@@ -322,6 +324,11 @@ func TestDeliveryPageTransportFailureDoesNotRetrySingleRow(t *testing.T) {
 		{name: "close failure", body: func() *controlledResponseBody {
 			return &controlledResponseBody{reader: strings.NewReader(`{"protocolVersion":1,"deliveries":[`), closeErr: closeFailure}
 		}, wantCalls: 1, wantCause: closeFailure},
+		// A page too slow to read within the client timeout falls back to one
+		// row at a time, like a page too large to parse.
+		{name: "timeout mid page", body: func() *controlledResponseBody {
+			return &controlledResponseBody{reader: io.MultiReader(strings.NewReader(`{"protocolVersion":1,"deliveries":[`), &controlledResponseBody{readErr: fmt.Errorf("read: %w", os.ErrDeadlineExceeded)})}
+		}, wantCalls: 2},
 		// Page-content problems still fall back to one row at a time.
 		{name: "malformed page", body: func() *controlledResponseBody { return &controlledResponseBody{reader: strings.NewReader("{")} }, wantCalls: 2},
 	} {
