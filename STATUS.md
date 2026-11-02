@@ -1,10 +1,55 @@
 # Monarr — Project Status
 
+## Lifecycle follow-ups after #83 — 2026-11-02 · v0.38.11
+
+**Status:** [PR #88](https://github.com/pjunod/curator/pull/88), ready, on
+`main` after #87 (owner: Claude for Paul). Review addressed; full local gate
+green (`make lint` 0 · `make test` 53 packages ok · `make test-web` 133 ·
+`make test-e2e` 212). CI, merge and deploy to nuc3 next.
+
+#83 repaired main's CI differently from the closed #86. Four of #86's fixes
+were still needed; each was confirmed by a test that fails on main first.
+
+- Legacy cleanup review fences per file: the most specific record holding a
+  file decides, so an ordinary sibling download is not deleted through a
+  legacy fence.
+- Delivery cleanup distinguishes a library it cannot read (retry, with "library
+  placement could not be read; cleanup will retry") from a placement that
+  changed (protected, as before). Size and generation checks run before hashing.
+- nzbd delivery adapter keeps the HTTP status and Retry-After when an error
+  body cannot be read, closed, or is oversized; a transport failure while
+  reading a page no longer triggers the single-row retry.
+- The phone tab bar no longer covers lifecycle action buttons or their results
+  (`web/src/viewportChrome.ts`; e2e checks `clearOfShell` on phone).
+
+**Review (independent agent):**
+- Fixed (confirmed by probe): a deleted title or season folder was judged
+  "unreadable" because its own parent was missing, so cleanup retried forever
+  under a message blaming storage. Unreadable is now judged against the
+  registered library root: a readable root with the folder gone is a
+  definitive loss (`protected`); a missing, unreadable or empty root (an
+  unmounted mount point) retries. The exact-copy fallback now runs before the
+  retry decision.
+- Fixed: sidecars get the same transient/definitive split (database, digest
+  and storage read failures retry).
+- Fixed: a page too slow to read within the client timeout still falls back
+  to the single-row retry, so discovery keeps advancing.
+- Fixed: an unreadable error body is joined to the status error rather than
+  flattened, so a cancellation stays visible to `errors.Is`.
+- Accepted: the per-file fence recheck reloads records before each unlink,
+  like the existing `rejectReferencedPayload`; freshness is the point.
+  Selections are small. A one-off double scroll reservation on first mount
+  of a notice is cosmetic.
+
+Decision for Paul to look over: a changed library placement stays `protected`
+(#82's choice); only unreadable library storage retries.
+
 ## Recovery takes only its own title — 2026-11-02 · v0.38.10
 
-**Status:** [PR #87](https://github.com/pjunod/curator/pull/87) — adversarial
-review addressed; rebased onto main after #83 (which also took migration 0069
-and 0.38.9, so this is migration 0070 and 0.38.10); CI, merge and deploy next.
+**Status:** merged ([PR #87](https://github.com/pjunod/curator/pull/87),
+fb24a61) and deployed to nuc3 2026-11-02: `/api/v1/system/status` reports
+0.38.10, commit fb24a61, schema 70. No recovery rows existed, so none returned
+to review. Rebased onto main after #83, which took migration 0069 and 0.38.9.
 
 Asked by Paul: "fix the recovery scope". A Runner recovery import was leased
 against `lifecycle_library_revision`, which every title's edit advances, so a

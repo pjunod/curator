@@ -12,6 +12,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { GlobalSearch } from './globalsearch'
 import { useIsMobile } from './useIsMobile'
+import { useViewportChromeScrollPadding } from './viewportChrome'
 import { Dashboard } from './pages/Dashboard'
 import { SystemPage } from './pages/System'
 import { LibraryPage } from './pages/Library'
@@ -175,6 +176,7 @@ function Layout() {
   const health = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
   const overall = health.data?.overall ?? 'ok'
   const isMobile = useIsMobile()
+  useViewportChromeScrollPadding(isMobile ? 'phone' : 'desktop')
 
   if (isMobile) {
     return (

@@ -950,3 +950,57 @@ func TestCompletedSelectedScanHonorsCancellation(t *testing.T) {
 		t.Fatalf("canceled scan returned %v", err)
 	}
 }
+
+// Review finding: an inventory entry is a top-level folder that can hold a
+// fenced historical payload beside an ordinary download. The fence decides
+// each selected file, so the ordinary sibling is never deletable through the
+// legacy path even when its download has finished or failed.
+func TestLegacyReviewDeleteRefusesAnOrdinarySiblingDownload(t *testing.T) {
+	for _, state := range []string{"imported", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			svc, db, item, root := completedFixture(t)
+			ctx := context.Background()
+			legacyPayload := filepath.Join(root, "category", "legacy")
+			freshPayload := filepath.Join(root, "category", "fresh")
+			legacyFile := filepath.Join(legacyPayload, "old.mkv")
+			freshFile := filepath.Join(freshPayload, "new.mkv")
+			writeCompleted(t, legacyFile, 17)
+			writeCompleted(t, freshFile, 17)
+			legacy := insertImportable(t, db, item, legacyPayload)
+			if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, legacy.GenerationKey, legacyPayload); err != nil {
+				t.Fatal(err)
+			}
+			fresh := insertImportable(t, db, item, freshPayload)
+			if _, err := db.W.ExecContext(ctx, `UPDATE downloads SET state=? WHERE id=?`, state, fresh.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.ScanCompleted(ctx); err != nil {
+				t.Fatal(err)
+			}
+			entry := inventoryRoot(t, svc, root).Entries[0]
+			pick := func(path string) []CompletedFileSelection {
+				for _, file := range entry.ReviewFiles {
+					if canonicalCompletedPath(file.Path) == canonicalCompletedPath(path) {
+						return []CompletedFileSelection{{Path: file.Path, SnapshotIdentity: file.SnapshotIdentity}}
+					}
+				}
+				return nil
+			}
+			if selection := pick(freshFile); selection != nil {
+				if err := svc.DeleteSelectedLegacyFiles(ctx, entry.Path, entry.Fingerprint, selection); err == nil {
+					t.Fatal("an ordinary sibling download was deleted through the legacy fence")
+				}
+			}
+			if _, err := os.Stat(freshFile); err != nil {
+				t.Fatalf("ordinary sibling download was removed: %v", err)
+			}
+			selection := pick(legacyFile)
+			if selection == nil {
+				t.Fatalf("legacy file missing from review inventory: %+v", entry.ReviewFiles)
+			}
+			if err := svc.DeleteSelectedLegacyFiles(ctx, entry.Path, entry.Fingerprint, selection); err != nil {
+				t.Fatalf("fenced legacy file was refused: %v", err)
+			}
+		})
+	}
+}

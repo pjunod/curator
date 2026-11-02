@@ -192,6 +192,29 @@ func (c *Client) deliveryRequest(ctx context.Context, method, path string, body 
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
 	closeErr := resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// The status stands even when the body could not be read, closed or
+		// bounded: callers branch on it (404 means unsupported, 429 and 503
+		// carry a retry deadline), so a body failure only adds detail.
+		var bodyErr error
+		switch {
+		case err != nil:
+			bodyErr = err
+		case closeErr != nil:
+			bodyErr = fmt.Errorf("close: %w", closeErr)
+		case len(raw) > 8<<20:
+			bodyErr = fmt.Errorf("exceeds 8 MiB")
+		}
+		if bodyErr != nil {
+			message := "unexpected delivery response; body unreadable"
+			if resp.StatusCode == http.StatusUnauthorized {
+				message = "authentication rejected; body unreadable"
+			}
+			// Joined, not flattened into text, so a cancellation or deadline
+			// while reading stays recognisable to errors.Is.
+			return errors.Join(apiError(resp, message), fmt.Errorf("nzbd: read delivery error body: %w", bodyErr))
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("nzbd: read delivery response: %w", err)
 	}
