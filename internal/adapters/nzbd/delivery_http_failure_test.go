@@ -127,7 +127,7 @@ func TestDeliveryResponseReadCloseAndSizeFailuresAreReturned(t *testing.T) {
 	}{
 		{name: "read failure", body: &controlledResponseBody{readErr: readFailure}, want: "read delivery response", wantCause: readFailure},
 		{name: "close failure", body: &controlledResponseBody{reader: strings.NewReader("{}"), closeErr: closeFailure}, want: "close delivery response", wantCause: closeFailure},
-		{name: "oversized response", body: &controlledResponseBody{reader: strings.NewReader(strings.Repeat("x", (8<<20)+1))}, want: "exceeds 8 MiB"},
+		{name: "oversized response", body: &controlledResponseBody{reader: strings.NewReader(`{"protocolVersion":1,"deliveries":[],"padding":"` + strings.Repeat("x", (16<<20)+1) + `"}`)}, want: "exceeds 16 MiB"},
 		{name: "invalid JSON", body: &controlledResponseBody{reader: strings.NewReader("{")}, want: "bad delivery response"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,9 +157,9 @@ func TestDeliveryListRejectsIncompleteOrMalformedPages(t *testing.T) {
 		limit int
 		want  string
 	}{
-		{name: "no delivery identity", body: `{"protocolVersion":1,"deliveries":[{"protocolVersion":1,"deliveryId":"","publicationGeneration":"g1","files":[{"path":"x","sizeBytes":1,"sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"}],"readyAt":1}]}`, limit: 1, want: "size limits"},
-		{name: "negative file size", body: `{"protocolVersion":1,"deliveries":[{"protocolVersion":1,"deliveryId":"d1","publicationGeneration":"g1","files":[{"path":"x","sizeBytes":-1,"sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"}],"readyAt":1}]}`, limit: 1, want: "malformed file entry"},
-		{name: "invalid ready timestamp", body: `{"protocolVersion":1,"deliveries":[{"protocolVersion":1,"deliveryId":"d1","publicationGeneration":"g1","files":[{"path":"x","sizeBytes":1,"sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"}],"readyAt":1e9999}]}`, limit: 1, want: "malformed readyAt"},
+		{name: "no delivery identity", body: `{"protocolVersion":1,"deliveries":[{"protocolVersion":1,"deliveryId":"","publicationGeneration":"g1","files":[{"path":"x","sizeBytes":1,"sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"}],"readyAt":1}]}`, limit: 1, want: "no journal sequence"},
+		{name: "negative file size", body: `{"protocolVersion":1,"deliveries":[{"protocolVersion":1,"deliveryId":"d1","publicationGeneration":"g1","files":[{"path":"x","sizeBytes":-1,"sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"}],"readyAt":1}]}`, limit: 1, want: "no journal sequence"},
+		{name: "invalid ready timestamp", body: `{"protocolVersion":1,"deliveries":[{"protocolVersion":1,"deliveryId":"d1","publicationGeneration":"g1","files":[{"path":"x","sizeBytes":1,"sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"}],"readyAt":1e9999}]}`, limit: 1, want: "no journal sequence"},
 		{name: "server exceeds requested page", body: `{"protocolVersion":1,"deliveries":[` + valid + `,` + valid + `],"nextCursor":2}`, limit: 1, want: "returned 2 rows for limit 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

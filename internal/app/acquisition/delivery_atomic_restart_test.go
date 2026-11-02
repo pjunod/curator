@@ -104,6 +104,10 @@ func TestHistoricalPlacedRowWithoutProvenanceRepairsAndCleansExactSource(t *test
 	if _, err := db.W.ExecContext(ctx, `UPDATE downloads SET state='downloaded' WHERE id=?`, dl.ID); err != nil {
 		t.Fatal(err)
 	}
+	// This fixture represents a version predating durable import controls.
+	if _, err := db.W.ExecContext(ctx, `DELETE FROM import_attempt_controls WHERE download_id=?`, dl.ID); err != nil {
+		t.Fatal(err)
+	}
 	dir := filepath.Dir(db.Path)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)

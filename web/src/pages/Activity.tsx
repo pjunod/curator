@@ -1,5 +1,5 @@
 import { ActionDialog, focusActionTrigger } from '../ActionDialog'
-import { useState } from 'react'
+import { useState,useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
@@ -248,6 +248,8 @@ const GROUPS = [
 ]
 
 export function ActivityPage() {
+ const actionTrigger=useRef<HTMLElement|null>(null)
+ const rememberAction=()=>{actionTrigger.current=document.activeElement instanceof HTMLElement?document.activeElement:null}
   const qc = useQueryClient()
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [manual, setManual] = useState<Partial<ManualImportRequest> | null>(null)
@@ -343,8 +345,8 @@ export function ActivityPage() {
     open: expanded.has(d.id),
     busy,
     onToggle: () => toggle(d.id),
-    onImport: () => doImport.mutate(d.id),
-    onCancelImport: () => {if(d.importControl)cancelImport.mutate({id:d.id,identity:d.importControl});else setActionErr('Refresh Activity before cancelling this import.')},
+    onImport: () => {rememberAction();doImport.mutate(d.id)},
+    onCancelImport: () => {rememberAction();if(d.importControl)cancelImport.mutate({id:d.id,identity:d.importControl});else setActionErr('Refresh Activity before cancelling this import.')},
     onBlocklist: () => doBlocklist.mutate(d.id),
     onRemove: () => remove.mutate(d.id),
     onManual: () =>
@@ -394,7 +396,7 @@ export function ActivityPage() {
         <ResolvePanel key={manual.path ?? 'resolve'} embedded initialMode={resolveMode} prefill={manual} onDone={() => { setManual(null); invalidate() }} />
       </ActionDialog>}
 
-      {actionErr && <ActionDialog title="Activity action failed" onClose={()=>setActionErr('')}><p role="alert">{actionErr}</p></ActionDialog>}
+      {actionErr && <ActionDialog returnFocus={actionTrigger} title="Activity action failed" onClose={()=>setActionErr('')}><p role="alert">{actionErr}</p></ActionDialog>}
 
       <CompletedFolders onImport={(path, mode, downloadId) => { setResolveMode(mode === 'legacy' ? 'legacy' : mode === 'delivery' ? 'delivery' : 'files'); setManual({ path, downloadId }) }} />
 

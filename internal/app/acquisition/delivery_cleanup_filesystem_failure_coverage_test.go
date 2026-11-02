@@ -24,7 +24,6 @@ func TestAcceptedSidecarInterruptedCopyKeepsSourceAndRetriesStageAfterRestart(t 
 	caption := []byte("accepted caption remains recoverable after cancellation")
 	ctx, svc, db, _, _, receipt, media, sidecar, _ := prepareSidecarMedia(t, caption)
 	target := acceptedSidecarTarget(t, media.Path, media.SourcePath, sidecar.relative)
-	stage := expectedCaptionStagePath(target)
 
 	copyCtx := cancelOnceStageContext{Context: ctx, stagePath: filepath.Join(filepath.Dir(target), ".monarr-caption-*.stage")}
 	err := svc.copyAcceptedSidecar(copyCtx, receipt, sidecar, media.Path, target)
@@ -35,7 +34,7 @@ func TestAcceptedSidecarInterruptedCopyKeepsSourceAndRetriesStageAfterRestart(t 
 	if len(matches) != 1 {
 		t.Fatalf("expected one retained stage: %v", matches)
 	}
-	stage = matches[0]
+	stage := matches[0]
 	stageInfo, err := os.Lstat(stage)
 	if err != nil || !stageInfo.Mode().IsRegular() || stageInfo.Size() != 0 {
 		t.Fatalf("interrupted stage was not left in a deterministic recoverable state: info=%v err=%v", stageInfo, err)

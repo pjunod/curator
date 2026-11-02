@@ -918,7 +918,7 @@ export interface ImportAttemptIdentity { generationKey: string; epoch: string }
 export interface ImportAttemptStatus extends ImportAttemptIdentity { outcome: ''|'pending'|'cancelled'|'completed'; pendingPublications: number; retainedPublications: number; heldStages: number }
 export interface ImportReview { attempt: ImportAttemptStatus; writerActive: boolean; publications: {id:string;epoch:string;source:string;target:string;outcome:string;resolution:string}[]; stages: {id:string;source:string;target:string;stage:string;state:string}[] }
 export const getImportReview = (id:number) => get<ImportReview>(`/queue/${id}/import-review`)
-export const resolveImportReview = (id:number, identity:ImportAttemptIdentity, action:string, ids:string[],acknowledged:boolean) => send('POST',`/queue/${id}/import-review`,{...identity,action,ids,acknowledged})
+export const resolveImportReview = (id:number, identity:ImportAttemptIdentity, action:string, ids:string[],acknowledged:boolean) => send('POST',`/queue/${id}/import-review`,{generationKey:identity.generationKey,epoch:identity.epoch,action,ids,acknowledged})
 
 export interface QueueItem {
  importControl?: ImportAttemptStatus
@@ -1068,7 +1068,7 @@ export const removeQueueItem = (id: number, fromClient: boolean) =>
   send('DELETE', `/queue/${id}?fromClient=${fromClient}`)
 export const resumeQueueItem = (id: number) => send('POST', `/queue/${id}/resume`)
 export const importQueueItem = (id: number) => send('POST', `/queue/${id}/import`)
-export const cancelQueueImport = (id: number, identity: ImportAttemptIdentity) => send('POST', `/queue/${id}/cancel-import`,identity)
+export const cancelQueueImport = (id: number, identity: ImportAttemptIdentity) => send('POST', `/queue/${id}/cancel-import`,{generationKey:identity.generationKey,epoch:identity.epoch})
 export const blocklistQueueItem = (id: number) => send('POST', `/queue/${id}/blocklist`)
 
 export interface RemoveFileResult {

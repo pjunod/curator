@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -187,10 +188,22 @@ func openAtExplicitDeleteMigration(t *testing.T) (*DB, context.Context) {
 func TestExplicitDeliveryDeleteJournalMigrationDownRequiresEmptyJournal(t *testing.T) {
 	db, ctx := openAtExplicitDeleteMigration(t)
 	defer func() { _ = db.Close() }()
-	receipt, err := db.SaveDiscoveredDelivery(ctx, 81, coverageDelivery("explicit-delete-migration"), "/mounted/release")
+	// Build the receipt with the historical schema under test; the current
+	// persistence helper also writes columns introduced after migration61.
+	delivery := coverageDelivery("explicit-delete-migration")
+	files, err := json.Marshal(delivery.Files)
 	if err != nil {
 		t.Fatal(err)
 	}
+	result, err := db.W.ExecContext(ctx, `INSERT INTO runner_delivery_receipts(client_id,delivery_id,sequence,publication_generation,manifest_digest,artifact_id,job_id,request_token,ready_at,publication_path,mapped_path,files_json,created_at,updated_at) VALUES(81,?,?,?,?,?,?,?,?,?,?,?,0,0)`, delivery.DeliveryID, delivery.Sequence, delivery.PublicationGeneration, delivery.ManifestDigest, delivery.ArtifactID, delivery.JobID, delivery.RequestToken, delivery.ReadyAt.UnixMilli(), delivery.PublicationPath, "/mounted/release", string(files))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := DeliveryReceipt{ID: id, Delivery: delivery, MappedPath: "/mounted/release"}
 	manifest := receipt.Delivery.Files[0]
 	if err := db.EnsureExplicitDeliveryFileOutcome(ctx, receipt.ID, DeliveryManifestFile{Path: manifest.Path, SizeBytes: manifest.SizeBytes, SHA256: manifest.SHA256, FileGeneration: "migration-file-generation"}); err != nil {
 		t.Fatal(err)
@@ -207,9 +220,18 @@ func TestExplicitDeliveryDeleteJournalMigrationDownRequiresEmptyJournal(t *testi
 	if err := goose.DownToContext(ctx, db.W, "migrations", 60); err == nil {
 		t.Fatal("migration down discarded an active reviewed deletion journal")
 	}
-	stored, err := db.ExplicitDeliveryDeleteBatch(ctx, batch.ID)
-	if err != nil || stored.ReceiptID != receipt.ID || len(stored.Files) != 1 || stored.Files[0].HistoryRecorded {
-		t.Fatalf("refused migration down changed journal data: batch=%+v err=%v", stored, err)
+	// Query the historical schema directly; the current helper additionally
+	// reads abandonment fields introduced by migration65.
+	var storedReceipt int64
+	var filesCount, historyRecorded int
+	if err := db.R.QueryRowContext(ctx, `SELECT receipt_id FROM runner_delivery_explicit_delete_batches WHERE batch_id=?`, batch.ID).Scan(&storedReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*),max(history_recorded) FROM runner_delivery_explicit_delete_files WHERE batch_id=?`, batch.ID).Scan(&filesCount, &historyRecorded); err != nil {
+		t.Fatal(err)
+	}
+	if storedReceipt != receipt.ID || filesCount != 1 || historyRecorded != 0 {
+		t.Fatalf("refused migration down changed journal: receipt=%d files=%d history=%d", storedReceipt, filesCount, historyRecorded)
 	}
 }
 
