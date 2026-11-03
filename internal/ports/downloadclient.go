@@ -180,6 +180,11 @@ type DownloadStatus struct {
 	// copy — a punishment for an operator action, applied silently and
 	// permanently.
 	Blameless bool
+	// FetchedKnown marks a StateFailed whose Progress is the share of the
+	// release the client actually fetched, measured from its own record.
+	// Without it a failure's progress is a stale or default value, and the
+	// re-grab budget, which counts bytes, must treat it as a full download.
+	FetchedKnown bool
 }
 
 // DownloadClient adds and tracks downloads (blueprint §5 ports).

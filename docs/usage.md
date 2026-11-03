@@ -765,7 +765,10 @@ it is a loop with your bandwidth as its budget. The budget counts what was
 actually downloaded, not attempts: a post that fails health before any of it
 arrives (typically one taken down) costs nothing, so the next post is tried
 straight away. A failure whose download size is unknown counts as a whole
-release. The cap applies to every automatic search — the RSS sync,
+release, and so does one whose fetched share nothing measured. "Bytes" means
+the share of each release fetched, whatever its size. Failures that cost no
+bytes still spend an indexer grab each, so twenty of them inside the window
+also stop automatic re-grabs. The cap applies to every automatic search — the RSS sync,
 Auto search, the backlog pass and the re-search after a failure. A manual
 grab is never capped.
 

@@ -360,6 +360,9 @@ func TestRegrabBudgetCountsBytesNotAttempts(t *testing.T) {
 	if capped, failed := svc.regrabCapped(ctx, w); capped {
 		t.Fatalf("%d failures that fetched nothing exhausted the budget", failed)
 	}
+	if _, err := db.W.ExecContext(ctx, `DELETE FROM downloads`); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < reGrabLimit-1; i++ {
 		fail("Costly.Post."+strings.Repeat("y", i+1), 3<<30, 1)
 	}
@@ -369,6 +372,43 @@ func TestRegrabBudgetCountsBytesNotAttempts(t *testing.T) {
 	fail("Costly.Post.last", 3<<30, 1)
 	if capped, failed := svc.regrabCapped(ctx, w); !capped {
 		t.Fatalf("not capped after %d releases of bytes across %d failures", reGrabLimit, failed)
+	}
+}
+
+// Review finding: failures that cost no bytes still spend an indexer grab and
+// a Runner submission each, so they need a ceiling of their own.
+func TestZeroCostFailuresStillHitTheAttemptCeiling(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setupUsenet(t, client)
+	ctx := context.Background()
+	clients, err := db.ListDownloadClients(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := svc.wantableFromID(ctx, "episode:1:1:1")
+	if err != nil {
+		t.Skipf("fixture has no such wantable: %v", err)
+	}
+	for i := 0; i < reGrabAttemptCeiling; i++ {
+		if capped, _ := svc.regrabCapped(ctx, w); capped {
+			t.Fatalf("capped after only %d zero-cost failures", i)
+		}
+		id, err := db.InsertDownload(ctx, sqlite.Download{MediaItemID: itemID, WantableIDs: []string{"episode:1:1:1"},
+			ReleaseTitle: "Dead." + strings.Repeat("z", i+1), Protocol: "usenet", ClientID: clients[0].ID, State: "grabbed", Size: 3 << 30})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := db.GetDownload(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row.State, row.Progress = "failed", 0
+		if err := db.UpdateDownloadHandoff(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if capped, failed := svc.regrabCapped(ctx, w); !capped {
+		t.Fatalf("%d zero-cost failures did not reach the attempt ceiling", failed)
 	}
 }
 

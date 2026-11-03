@@ -1907,6 +1907,11 @@ func (s *Service) authoritativeRunnerObservation(ctx context.Context, dl sqlite.
 	if !ok {
 		return st, false
 	}
+	if st.State == "" {
+		// A receipt-only sweep observed nothing about progress; keep the
+		// row's own value rather than writing zero over it in a hold.
+		st.Progress = dl.Progress
+	}
 	if dl.Transfer == "" {
 		_ = s.db.ParkDownload(ctx, dl.ID, "Runner outcome requires the persisted transfer token; automatic handling held")
 		return st, true
@@ -2008,6 +2013,12 @@ func (s *Service) authoritativeRunnerObservation(ctx context.Context, dl sqlite.
 		if runnerDeletedNeedsCustodyReview(admission) {
 			_ = s.db.ParkDownload(ctx, dl.ID, "Runner queue entry is gone but source custody is unresolved; explicit review required")
 			return st, true
+		}
+		if !st.FetchedKnown {
+			// Settled from the receipt alone (the history row aged out or the
+			// queue only said "failed"): nothing measured what was fetched,
+			// so the re-grab budget must count this attempt in full.
+			st.Progress = 1
 		}
 		st.State = ports.StateFailed
 		if admission.Outcome == "deleted" && admission.CustodyState == "deleted_by_runner" {
@@ -2253,11 +2264,16 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 		_ = s.enqueueSeason(ctx, dl.MediaItemID, dl.CopyID, dl.Season, seasonTriggerFailedAcquisition, true)
 		// The season comparison leaves a capped episode out without a word;
 		// say so here, where the failure that spent the budget is known.
+		// Only on the failure that crossed the line, so a capped season does
+		// not write a row per episode for every later failure.
 		for _, idStr := range dl.WantableIDs {
 			if w, e := s.wantableFromID(ctx, idStr); e == nil {
-				if capped, failed := s.regrabCapped(ctx, w); capped {
+				capped, spent, failed := s.regrabSpend(ctx, w, 0)
+				before, _, _ := s.regrabSpend(ctx, w, dl.ID)
+				if capped && !before {
 					_ = s.db.AddHistory(ctx, HistoryRegrabCapped, dl.MediaItemID, dl.ReleaseTitle,
-						map[string]any{"wantable": idStr, "failed": failed, "window_hours": int(reGrabWindow.Hours())})
+						map[string]any{"wantable": idStr, "failed": failed, "releases_spent": spent,
+							"window_hours": int(reGrabWindow.Hours())})
 				}
 			}
 		}

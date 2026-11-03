@@ -18,6 +18,14 @@ held them until the window rolled. Paul chose "count bytes, not attempts".
   failure with zero articles costs nothing.
 - The season failure path now records `regrab_capped` in history when an
   episode is capped; it used to stop silently.
+- Review (Sonnet): fixed — a failure settled from the Runner receipt alone
+  (history aged out) carried progress 0 and would have counted a 100 GB unpack
+  failure as free; unmeasured failures now count in full via
+  `DownloadStatus.FetchedKnown`. A pushed `job_pp_finished` failure carries no
+  article counts, so the adapter completes it from the history row. A ceiling
+  of 20 failures per window bounds zero-cost retries (each still spends an
+  indexer grab). `regrab_capped` is recorded once, on the failure that crosses
+  the line.
 
 ## Failed downloads no longer freeze behind Runner — 2026-11-02 · v0.38.12
 

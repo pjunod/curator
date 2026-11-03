@@ -49,6 +49,10 @@ const (
 	reGrabLimit = 3
 	// reGrabWindow is the rolling window the limit applies over.
 	reGrabWindow = 12 * time.Hour
+	// reGrabAttemptCeiling bounds failures that cost no bytes. Each still
+	// spends an indexer grab and a Runner submission, so a want whose every
+	// post is dead stops after this many inside the window.
+	reGrabAttemptCeiling = 20
 )
 
 // HistoryRegrabCapped records a re-search that did NOT happen, because a
@@ -174,15 +178,23 @@ func normalizeRelease(s string) string {
 // counter column: the rows ARE the record, and a count derived from them
 // cannot drift from what actually happened.
 func (s *Service) regrabCapped(ctx context.Context, w domain.Wantable) (bool, int) {
+	capped, _, failed := s.regrabSpend(ctx, w, 0)
+	return capped, failed
+}
+
+// regrabSpend reports whether the want is capped, the releases' worth of
+// bytes its failed grabs fetched in the window, and how many there were,
+// leaving out the download row `exclude` (0 for none).
+func (s *Service) regrabSpend(ctx context.Context, w domain.Wantable, exclude int64) (bool, float64, int) {
 	rows, err := s.db.RecentFailedDownloads(ctx, time.Now().Add(-reGrabWindow))
 	if err != nil {
-		return false, 0
+		return false, 0, 0
 	}
 	id := string(w.ID())
 	cutoff := time.Now().Add(-reGrabWindow)
 	spent, failed := 0.0, 0
 	for _, dl := range rows {
-		if dl.State != "failed" || dl.AddedAt.Before(cutoff) {
+		if dl.ID == exclude || dl.State != "failed" || dl.AddedAt.Before(cutoff) {
 			continue
 		}
 		if wantableOnRow(dl, id) {
@@ -190,7 +202,7 @@ func (s *Service) regrabCapped(ctx context.Context, w domain.Wantable) (bool, in
 			spent += releasesFetched(dl)
 		}
 	}
-	return spent >= reGrabLimit, failed
+	return spent >= reGrabLimit || failed >= reGrabAttemptCeiling, spent, failed
 }
 
 // releasesFetched is the share of one release a failed grab actually

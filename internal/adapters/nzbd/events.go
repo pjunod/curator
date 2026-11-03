@@ -127,6 +127,7 @@ func (c *Client) stream(ctx context.Context, lastID string, out chan<- ports.Cli
 					lastID = id
 				}
 				for _, ev := range translate(name, data.String(), id) {
+					ev = c.withFetched(ctx, ev)
 					select {
 					case out <- ev:
 					case <-ctx.Done():
