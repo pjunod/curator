@@ -1,5 +1,32 @@
 # Monarr — Project Status
 
+## The re-grab budget counts bytes, not attempts — 2026-11-03 · v0.38.13
+
+**Status:** in progress on `codex/regrab-cap-bytes`.
+
+After v0.38.12 went live, Dexter: Resurrection kept re-planning correctly:
+each round picked new posts, failures settled in seconds and the next round
+excluded them. S01E01–E06 then stopped: every 2160p post tried had failed
+health (taken down), and the cap of three failed grabs per episode per 12 h
+held them until the window rolled. Paul chose "count bytes, not attempts".
+
+- Runner's history record carries `success_articles` / `total_articles`;
+  the nzbd adapter now reports that fraction as a failed row's progress
+  (it reported 1 for every finished row, failed or not).
+- `regrabCapped` sums the share of a release each failed grab fetched and
+  caps at three releases' worth; a size-less row counts in full. A health
+  failure with zero articles costs nothing.
+- The season failure path now records `regrab_capped` in history when an
+  episode is capped; it used to stop silently.
+- Review (Sonnet): fixed — a failure settled from the Runner receipt alone
+  (history aged out) carried progress 0 and would have counted a 100 GB unpack
+  failure as free; unmeasured failures now count in full via
+  `DownloadStatus.FetchedKnown`. A pushed `job_pp_finished` failure carries no
+  article counts, so the adapter completes it from the history row. A ceiling
+  of 20 failures per window bounds zero-cost retries (each still spends an
+  indexer grab). `regrab_capped` is recorded once, on the failure that crosses
+  the line.
+
 ## Failed downloads no longer freeze behind Runner — 2026-11-02 · v0.38.12
 
 **Status:** in progress on `codex/runner-failure-handoff` with the paired

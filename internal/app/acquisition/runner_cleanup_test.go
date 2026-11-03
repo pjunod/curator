@@ -380,6 +380,11 @@ func TestRefreshQueueUsesDurableRunnerReceiptAfterHistoryDisappears(t *testing.T
 	if settled.State != "failed" || client.lookups != 1 {
 		t.Fatalf("durable receipt was not reconciled after history disappeared: state=%s lookups=%d", settled.State, client.lookups)
 	}
+	// Nothing measured what was fetched, so the re-grab budget must count it
+	// in full rather than as free (review finding 2026-11-03).
+	if settled.Progress != 1 {
+		t.Fatalf("receipt-only failure recorded progress %v, want 1", settled.Progress)
+	}
 }
 
 func TestRunnerDeletedCustodyReviewAllowsExplicitKeep(t *testing.T) {

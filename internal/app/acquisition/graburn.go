@@ -49,6 +49,10 @@ const (
 	reGrabLimit = 3
 	// reGrabWindow is the rolling window the limit applies over.
 	reGrabWindow = 12 * time.Hour
+	// reGrabAttemptCeiling bounds failures that cost no bytes. Each still
+	// spends an indexer grab and a Runner submission, so a want whose every
+	// post is dead stops after this many inside the window.
+	reGrabAttemptCeiling = 20
 )
 
 // HistoryRegrabCapped records a re-search that did NOT happen, because a
@@ -174,22 +178,50 @@ func normalizeRelease(s string) string {
 // counter column: the rows ARE the record, and a count derived from them
 // cannot drift from what actually happened.
 func (s *Service) regrabCapped(ctx context.Context, w domain.Wantable) (bool, int) {
+	capped, _, failed := s.regrabSpend(ctx, w, 0)
+	return capped, failed
+}
+
+// regrabSpend reports whether the want is capped, the releases' worth of
+// bytes its failed grabs fetched in the window, and how many there were,
+// leaving out the download row `exclude` (0 for none).
+func (s *Service) regrabSpend(ctx context.Context, w domain.Wantable, exclude int64) (bool, float64, int) {
 	rows, err := s.db.RecentFailedDownloads(ctx, time.Now().Add(-reGrabWindow))
 	if err != nil {
-		return false, 0
+		return false, 0, 0
 	}
 	id := string(w.ID())
 	cutoff := time.Now().Add(-reGrabWindow)
-	spent := 0
+	spent, failed := 0.0, 0
 	for _, dl := range rows {
-		if dl.State != "failed" || dl.AddedAt.Before(cutoff) {
+		if dl.ID == exclude || dl.State != "failed" || dl.AddedAt.Before(cutoff) {
 			continue
 		}
 		if wantableOnRow(dl, id) {
-			spent++
+			failed++
+			spent += releasesFetched(dl)
 		}
 	}
-	return spent >= reGrabLimit, spent
+	return spent >= reGrabLimit || failed >= reGrabAttemptCeiling, spent, failed
+}
+
+// releasesFetched is the share of one release a failed grab actually
+// downloaded. The budget exists to stop failing grabs burning bandwidth and
+// disk (the 336 GB loop of 2026-07-31), so it counts bytes rather than
+// attempts: a post that failed health before any article arrived costs
+// nothing and does not stop the next one (field report 2026-11-02, Paul:
+// "count bytes, not attempts"). A row whose size is unknown counts in full.
+func releasesFetched(dl sqlite.Download) float64 {
+	if dl.Size <= 0 {
+		return 1
+	}
+	switch {
+	case dl.Progress < 0:
+		return 0
+	case dl.Progress > 1:
+		return 1
+	}
+	return dl.Progress
 }
 
 // wantableOnRow reports whether a download row was grabbed for this

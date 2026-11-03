@@ -568,3 +568,54 @@ func TestRemoveDoesNotBypassQueueRefusal(t *testing.T) {
 		})
 	}
 }
+
+// Field report 2026-11-02: every failed history row reported progress 1, so
+// a post that failed health before a single article arrived looked like a
+// full download to the re-grab budget, which counts bytes.
+func TestFailedHistoryReportsTheFractionActuallyFetched(t *testing.T) {
+	nothing := statusOfHistory(historyEntry{Job: 2211, Status: "FAILURE/HEALTH",
+		Record: &historyRecord{TotalArticles: 4683, SuccessArticles: 0}})
+	if nothing.State != ports.StateFailed || nothing.Progress != 0 || !nothing.FetchedKnown {
+		t.Fatalf("health failure with no articles = %+v, want failed at 0", nothing)
+	}
+	most := statusOfHistory(historyEntry{Job: 12, Status: "UNPACK_FAILURE",
+		Record: &historyRecord{TotalArticles: 1000, SuccessArticles: 950}})
+	if most.Progress != 0.95 {
+		t.Fatalf("unpack failure after fetching 95%% reported %v", most.Progress)
+	}
+	unknown := statusOfHistory(historyEntry{Job: 11, Status: "FAILURE/HEALTH"})
+	if unknown.Progress != 1 {
+		t.Fatalf("a failure without a record must not claim it cost nothing: %v", unknown.Progress)
+	}
+	ok := statusOfHistory(historyEntry{Job: 10, Status: "SUCCESS", FinalDir: "/done",
+		Record: &historyRecord{TotalArticles: 8432, SuccessArticles: 8020}})
+	if ok.Progress != 1 {
+		t.Fatalf("a completed job is complete whatever PAR spared: %v", ok.Progress)
+	}
+}
+
+// Review finding: job_pp_finished carries no article counts, so a failure
+// that arrived by push reported a full download whenever it beat the poll.
+func TestPushedFailureIsCompletedWithWhatRunnerFetched(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/history" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"entries":[{"job":2211,"status":"FAILURE/HEALTH","record":{"total_articles":4683,"success_articles":0}}]}`))
+	}))
+	defer srv.Close()
+	c := New(ports.ClientConfig{URL: srv.URL})
+	evs := translate("job_pp_finished", `{"job":2211,"name":"Dead.Post","pp_status":"FAILURE/HEALTH"}`, "9")
+	if len(evs) != 1 || evs[0].Kind != ports.EventFailed || evs[0].Status.FetchedKnown {
+		t.Fatalf("pushed failure = %+v, want an unmeasured failure", evs)
+	}
+	ev := c.withFetched(context.Background(), evs[0])
+	if !ev.Status.FetchedKnown || ev.Status.Progress != 0 {
+		t.Fatalf("pushed failure not completed from the history record: %+v", ev.Status)
+	}
+	other := translate("job_pp_finished", `{"job":99,"name":"Gone","pp_status":"FAILURE/HEALTH"}`, "10")[0]
+	if got := c.withFetched(context.Background(), other); got.Status.FetchedKnown || got.Status.Progress != 1 {
+		t.Fatalf("a failure with no history record must count in full: %+v", got.Status)
+	}
+}

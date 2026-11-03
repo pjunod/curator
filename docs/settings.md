@@ -416,7 +416,9 @@ the outside, like a quiet evening.
 
 Event types: `grabbed`, `failed`, `imported`, `import_failed`,
 `import_blocked` (ran out of disk part-way), `import_retried`,
-`regrab_capped` (a replacement search that was deliberately not made),
+`regrab_capped` (a replacement search that was deliberately not made:
+three releases' worth of bytes, or twenty failures, spent on one want inside
+twelve hours),
 `short_delivery`, `payload_removed`, `quality_mismatch`,
 `implausible_file`, `language_mismatch` (a placed file measured to carry
 none of the profile's required audio languages; the release is
