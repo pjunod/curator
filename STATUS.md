@@ -2,7 +2,7 @@
 
 ## The re-grab budget counts bytes, not attempts — 2026-11-03 · v0.38.13
 
-**Status:** in progress on `codex/regrab-cap-bytes`.
+**Status:** merged as #90 (`e62d19f`), deployed to nuc3 2026-11-03 00:48Z.
 
 After v0.38.12 went live, Dexter: Resurrection kept re-planning correctly:
 each round picked new posts, failures settled in seconds and the next round
@@ -27,10 +27,36 @@ held them until the window rolled. Paul chose "count bytes, not attempts".
   indexer grab). `regrab_capped` is recorded once, on the failure that crosses
   the line.
 
+Validation: `go test ./...` locally green except
+`TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired`, which
+fails only as root (chmod 0500 doesn't bind root). CI on main `e62d19f`:
+Lint, Docker, Compat and Tests (End-to-end, Mobile, Go race shards 0–7)
+green. The
+branch's own PR runs were cancelled after merge; main ran the identical tree
+(`4033dd0`).
+
+Live outcome:
+
+- The 32 failed Dexter rows stored before the deploy carried progress 1 under
+  the old adapter. Runner's history showed `success_articles=0` for every one,
+  so only those rows were set to progress 0 (DB backed up first to
+  `~/work/claude-runner-failure-20261102/db/pre-progress-fix.db` on nuc3).
+- Rounds 3–8 (plans 127–133) ran unattended: about forty-five more 2160p S01
+  posts failed health with zero articles, each blocklisted within seconds at
+  zero budget cost. By 02:10Z S01E03, E05, E06, E07 and E08 had imported, E09
+  was downloading, and the loop was still working E01, E02, E04 and E10.
+  S02E01 imported earlier.
+
+Cleanup: remote branches for Runner #266, Curator #89/#90 and ansible #27
+deleted; cloud clones removed.
+
+Open follow-up: `settleSeasonPlan`'s `INSERT OR IGNORE` successor is dropped
+while the season job is running; the job's own retry covers it today.
+
 ## Failed downloads no longer freeze behind Runner — 2026-11-02 · v0.38.12
 
-**Status:** in progress on `codex/runner-failure-handoff` with the paired
-Runner change (pjunod/nzbd `codex/empty-failed-source`).
+**Status:** merged as #89 (`a9b0bdb`) with the paired Runner change
+(pjunod/runner #266); both deployed to nuc3 2026-11-02.
 
 Field report (Paul, 2026-11-02): "dexter resurrection already failed all of
 the initially tried downloads, but curator is just sitting there like it
