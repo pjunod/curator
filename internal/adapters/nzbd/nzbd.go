@@ -342,6 +342,30 @@ type historyEntry struct {
 	FinalDir    string                 `json:"final_dir"`
 	Seq         int64                  `json:"seq"`
 	Params      [][2]string            `json:"params"`
+	// Record carries the article counts Runner kept for the finished job:
+	// how much of it was actually fetched.
+	Record *historyRecord `json:"record"`
+}
+
+type historyRecord struct {
+	TotalArticles   int64 `json:"total_articles"`
+	SuccessArticles int64 `json:"success_articles"`
+}
+
+// fetchedFraction is the share of the job's articles Runner actually
+// fetched, or ok=false when the record does not say.
+func (h historyEntry) fetchedFraction() (float64, bool) {
+	if h.Record == nil || h.Record.TotalArticles <= 0 {
+		return 0, false
+	}
+	f := float64(h.Record.SuccessArticles) / float64(h.Record.TotalArticles)
+	if f < 0 {
+		f = 0
+	}
+	if f > 1 {
+		f = 1
+	}
+	return f, true
 }
 
 // Statuses implements ports.DownloadClient: the live queue plus recent
@@ -453,6 +477,12 @@ func statusOfHistory(h historyEntry) ports.DownloadStatus {
 	default:
 		st.State = ports.StateFailed
 		st.Message = h.Status
+		// A failure is not a finished transfer. Report what was actually
+		// fetched: a release that failed health before a single article
+		// arrived cost nothing, and the re-grab budget counts bytes.
+		if fetched, ok := h.fetchedFraction(); ok {
+			st.Progress = fetched
+		}
 		for _, param := range h.Params {
 			if param[0] == "Failure:Files" && strings.TrimSpace(param[1]) != "" {
 				st.Message += "; files: " + param[1]

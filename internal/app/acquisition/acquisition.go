@@ -2251,6 +2251,16 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 			_, _ = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET replan_pending=1 WHERE id=?`, dl.PlanID)
 		}
 		_ = s.enqueueSeason(ctx, dl.MediaItemID, dl.CopyID, dl.Season, seasonTriggerFailedAcquisition, true)
+		// The season comparison leaves a capped episode out without a word;
+		// say so here, where the failure that spent the budget is known.
+		for _, idStr := range dl.WantableIDs {
+			if w, e := s.wantableFromID(ctx, idStr); e == nil {
+				if capped, failed := s.regrabCapped(ctx, w); capped {
+					_ = s.db.AddHistory(ctx, HistoryRegrabCapped, dl.MediaItemID, dl.ReleaseTitle,
+						map[string]any{"wantable": idStr, "failed": failed, "window_hours": int(reGrabWindow.Hours())})
+				}
+			}
+		}
 		return
 	}
 	// Automatic re-search: try to replace the failed grab right away.

@@ -321,6 +321,57 @@ func TestRegrabIsCappedPerWindow(t *testing.T) {
 	}
 }
 
+// Field report 2026-11-02 (Paul: "count bytes, not attempts"): eleven posts
+// failed health with zero articles fetched, and the attempt-counting cap
+// stopped the season after three rounds that cost nothing.
+func TestRegrabBudgetCountsBytesNotAttempts(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setupUsenet(t, client)
+	ctx := context.Background()
+	clients, err := db.ListDownloadClients(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := svc.wantableFromID(ctx, "episode:1:1:1")
+	if err != nil {
+		t.Skipf("fixture has no such wantable: %v", err)
+	}
+	fail := func(title string, size int64, fetched float64) {
+		t.Helper()
+		id, err := db.InsertDownload(ctx, sqlite.Download{
+			MediaItemID: itemID, WantableIDs: []string{"episode:1:1:1"}, ReleaseTitle: title,
+			Protocol: "usenet", ClientID: clients[0].ID, State: "grabbed", Size: size,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := db.GetDownload(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row.State, row.Progress = "failed", fetched
+		if err := db.UpdateDownloadHandoff(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2*reGrabLimit; i++ {
+		fail("Dead.Post."+strings.Repeat("x", i+1), 3<<30, 0)
+	}
+	if capped, failed := svc.regrabCapped(ctx, w); capped {
+		t.Fatalf("%d failures that fetched nothing exhausted the budget", failed)
+	}
+	for i := 0; i < reGrabLimit-1; i++ {
+		fail("Costly.Post."+strings.Repeat("y", i+1), 3<<30, 1)
+	}
+	if capped, _ := svc.regrabCapped(ctx, w); capped {
+		t.Fatal("capped before three releases' worth of bytes were spent")
+	}
+	fail("Costly.Post.last", 3<<30, 1)
+	if capped, failed := svc.regrabCapped(ctx, w); !capped {
+		t.Fatalf("not capped after %d releases of bytes across %d failures", reGrabLimit, failed)
+	}
+}
+
 // M4: the timeline monarr always recorded and never showed.
 func TestHistoryIsReadable(t *testing.T) {
 	client := &fakeClient{}

@@ -180,16 +180,36 @@ func (s *Service) regrabCapped(ctx context.Context, w domain.Wantable) (bool, in
 	}
 	id := string(w.ID())
 	cutoff := time.Now().Add(-reGrabWindow)
-	spent := 0
+	spent, failed := 0.0, 0
 	for _, dl := range rows {
 		if dl.State != "failed" || dl.AddedAt.Before(cutoff) {
 			continue
 		}
 		if wantableOnRow(dl, id) {
-			spent++
+			failed++
+			spent += releasesFetched(dl)
 		}
 	}
-	return spent >= reGrabLimit, spent
+	return spent >= reGrabLimit, failed
+}
+
+// releasesFetched is the share of one release a failed grab actually
+// downloaded. The budget exists to stop failing grabs burning bandwidth and
+// disk (the 336 GB loop of 2026-07-31), so it counts bytes rather than
+// attempts: a post that failed health before any article arrived costs
+// nothing and does not stop the next one (field report 2026-11-02, Paul:
+// "count bytes, not attempts"). A row whose size is unknown counts in full.
+func releasesFetched(dl sqlite.Download) float64 {
+	if dl.Size <= 0 {
+		return 1
+	}
+	switch {
+	case dl.Progress < 0:
+		return 0
+	case dl.Progress > 1:
+		return 1
+	}
+	return dl.Progress
 }
 
 // wantableOnRow reports whether a download row was grabbed for this

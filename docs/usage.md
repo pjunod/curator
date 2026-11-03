@@ -758,10 +758,14 @@ may complete it. A manual grab is never refused for this.
 
 Replacement is bounded too. When a download fails, Monarr searches for a
 replacement immediately — that is what you want the first time and the second
-time. After **three failed grabs for the same want inside twelve hours** it
-stops, records `regrab_capped`, and leaves the item wanted. Five releases of
-one movie in ten hours is not persistence; it is a loop with your bandwidth
-as its budget. The cap applies to every automatic search — the RSS sync,
+time. After **three releases' worth of bytes spent on failed grabs for the
+same want inside twelve hours** it stops, records `regrab_capped`, and leaves
+the item wanted. Five releases of one movie in ten hours is not persistence;
+it is a loop with your bandwidth as its budget. The budget counts what was
+actually downloaded, not attempts: a post that fails health before any of it
+arrives (typically one taken down) costs nothing, so the next post is tried
+straight away. A failure whose download size is unknown counts as a whole
+release. The cap applies to every automatic search — the RSS sync,
 Auto search, the backlog pass and the re-search after a failure. A manual
 grab is never capped.
 

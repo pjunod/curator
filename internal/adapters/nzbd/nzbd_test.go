@@ -568,3 +568,28 @@ func TestRemoveDoesNotBypassQueueRefusal(t *testing.T) {
 		})
 	}
 }
+
+// Field report 2026-11-02: every failed history row reported progress 1, so
+// a post that failed health before a single article arrived looked like a
+// full download to the re-grab budget, which counts bytes.
+func TestFailedHistoryReportsTheFractionActuallyFetched(t *testing.T) {
+	nothing := statusOfHistory(historyEntry{Job: 2211, Status: "FAILURE/HEALTH",
+		Record: &historyRecord{TotalArticles: 4683, SuccessArticles: 0}})
+	if nothing.State != ports.StateFailed || nothing.Progress != 0 {
+		t.Fatalf("health failure with no articles = %+v, want failed at 0", nothing)
+	}
+	most := statusOfHistory(historyEntry{Job: 12, Status: "UNPACK_FAILURE",
+		Record: &historyRecord{TotalArticles: 1000, SuccessArticles: 950}})
+	if most.Progress != 0.95 {
+		t.Fatalf("unpack failure after fetching 95%% reported %v", most.Progress)
+	}
+	unknown := statusOfHistory(historyEntry{Job: 11, Status: "FAILURE/HEALTH"})
+	if unknown.Progress != 1 {
+		t.Fatalf("a failure without a record must not claim it cost nothing: %v", unknown.Progress)
+	}
+	ok := statusOfHistory(historyEntry{Job: 10, Status: "SUCCESS", FinalDir: "/done",
+		Record: &historyRecord{TotalArticles: 8432, SuccessArticles: 8020}})
+	if ok.Progress != 1 {
+		t.Fatalf("a completed job is complete whatever PAR spared: %v", ok.Progress)
+	}
+}
