@@ -135,7 +135,19 @@ func (c *Client) doBodyPolicy(ctx context.Context, method, path string, body io.
 		return fmt.Errorf("nzbd: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if stream, ok := out.(statusStream); ok && resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.StatusCode != http.StatusAccepted {
+		if err := stream.readStatusJSON(resp.Body); err != nil {
+			return fmt.Errorf("nzbd: bad response from %s: %w", path, err)
+		}
+		return nil
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
+	if readErr != nil {
+		return fmt.Errorf("nzbd: read response from %s: %w", path, readErr)
+	}
+	if len(raw) > 8<<20 {
+		return fmt.Errorf("nzbd: response from %s exceeds 8 MiB", path)
+	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return apiError(resp, "authentication rejected")
 	}
@@ -366,9 +378,7 @@ func (c *Client) withFetched(ctx context.Context, ev ports.ClientEvent) ports.Cl
 	}
 	lookup, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	var hist struct {
-		Entries []historyEntry `json:"entries"`
-	}
+	var hist statusHistory
 	if c.do(lookup, http.MethodGet, "/api/v1/history?limit=100", &hist) != nil {
 		return ev
 	}
@@ -404,15 +414,11 @@ func (h historyEntry) fetchedFraction() (float64, bool) {
 // history, which is where a finished job lives (nzbd retires completed
 // jobs out of the queue, NZBGet-style).
 func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
-	var queue struct {
-		Jobs []job `json:"jobs"`
-	}
+	var queue statusQueue
 	if err := c.do(ctx, http.MethodGet, "/api/v1/jobs", &queue); err != nil {
 		return nil, err
 	}
-	var hist struct {
-		Entries []historyEntry `json:"entries"`
-	}
+	var hist statusHistory
 	if err := c.do(ctx, http.MethodGet, "/api/v1/history?limit=100", &hist); err != nil {
 		return nil, err
 	}

@@ -47,8 +47,10 @@ func (s *Service) acceptDownloadControl(ctx context.Context, dl *sqlite.Download
 			}
 		}
 		if prior.Held() && !next.Held() {
+			// Runner owns release for every cause. A newer same-instance
+			// transition resolves that hold; the cause names why it stopped,
+			// not a second Curator permission to ignore the release.
 			if next.Version != 1 || next.Lifecycle != "running" ||
-				(prior.Cause != "capacity" && prior.Cause != "quota") ||
 				next.Cause != prior.Cause || next.Stage != prior.Stage {
 				return false
 			}

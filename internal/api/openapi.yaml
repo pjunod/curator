@@ -5671,7 +5671,7 @@ components:
             What is happening to this job RIGHT NOW, finer-grained than
             `state` and present only while something is moving: downloading |
             par_rename | par_verify | par_repair | rar_rename | unpack |
-            cleanup | move | post_unpack_rename | script | importing |
+            cleanup | move | post_unpack_rename | publication_verify | script | importing |
             notifying. The post-processing names are the download client's
             own spellings. Absent means nothing is in flight for this row.
         stageSince: { type: string, format: date-time }

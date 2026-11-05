@@ -644,6 +644,18 @@ available in **Resolve**. Runner acceptance and Curator file cleanup retry
 independently. The legacy cleanup switch does not disable verified cleanup for
 new Runner deliveries.
 
+When you retry a held job in Runner, Curator clears its cached hold only after
+Runner supplies a newer control revision from the same instance, with the same
+cause and stage. This applies to post-processing, storage and missing-tool holds
+as well as capacity and quota. A missed release event is recovered from the
+current queue or terminal history; an old snapshot or bare SUCCESS never clears
+the hold. The existing delivery manifest still controls import and acceptance.
+Runner queue and history polls stream status metadata and discard large recovery
+records and internal file proofs. A large job record does not truncate the poll;
+transport truncation or invalid status metadata remains an explicit error.
+Final source checks appear as **Verifying publication**, separately from filename
+restoration, so whole-file verification is not reported as rename time.
+
 Older Runner history rows are not adopted or cleaned merely because Runner now
 supports delivery receipts. They remain in the legacy review cohort until
 explicitly resolved, so a newly observed history row cannot silently authorize

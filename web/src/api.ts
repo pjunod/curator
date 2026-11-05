@@ -1415,6 +1415,7 @@ export type Stage =
   | 'cleanup'
   | 'move'
   | 'post_unpack_rename'
+  | 'publication_verify'
   | 'script'
   | 'importing'
   | 'notifying'
