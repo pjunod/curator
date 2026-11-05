@@ -242,3 +242,15 @@ test('held transfers survive reload and resume the same job without import or re
   expect(imports).toBe(0)
   await expect(page.getByText('Waiting for storage capacity', { exact: true })).toBeVisible()
 })
+
+test('publication verification has its own Activity section instead of renaming', async ({ page }) => {
+  await page.route(/\/api\/v1\/queue(?:\?.*)?$/, route => route.fulfill({ json: [{
+    id: 992, mediaItemId: 1, title: 'Verified.Movie', state: 'downloading',
+    progress: 1, total: 9000, protocol: 'usenet', stage: 'publication_verify',
+    stagePeer: 'Runner', stageSince: new Date().toISOString(),
+  }] }))
+  await page.route('**/api/v1/system/transfers', route => route.fulfill({ json: [] }))
+  await page.goto('/activity')
+  await expect(page.getByRole('row', { name: /^Verifying publication/ })).toBeVisible()
+  await expect(page.getByRole('row', { name: /^Renaming/ })).toHaveCount(0)
+})

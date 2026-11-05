@@ -2678,7 +2678,7 @@ type QueueItem struct {
 	// Selection Recorded public selection facts; absent for legacy or manual rows. Contains no transport URLs.
 	Selection *map[string]interface{} `json:"selection,omitempty"`
 
-	// Stage What is happening to this job RIGHT NOW, finer-grained than `state` and present only while something is moving: downloading | par_rename | par_verify | par_repair | rar_rename | unpack | cleanup | move | post_unpack_rename | script | importing | notifying. The post-processing names are the download client's own spellings. Absent means nothing is in flight for this row.
+	// Stage What is happening to this job RIGHT NOW, finer-grained than `state` and present only while something is moving: downloading | par_rename | par_verify | par_repair | rar_rename | unpack | cleanup | move | post_unpack_rename | publication_verify | script | importing | notifying. The post-processing names are the download client's own spellings. Absent means nothing is in flight for this row.
 	Stage *string `json:"stage,omitempty"`
 
 	// StageDetail One line describing the current stage, in the client's words.
