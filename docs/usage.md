@@ -1222,7 +1222,7 @@ hours of measured time at each seam (the design is
 
 | Tile | Starts | Ends |
 |---|---|---|
-| Failure to next grab | a download failed and a replacement search was attempted | the replacement was submitted (a series: a season job was queued). Until pipeline M2 this measures the immediate re-search only: a replacement found by a later scheduled search is not timed, and the open timing drops out of "waiting" after 24 hours |
+| Failure to next grab | the replacement grab worker attempted the first search for a failure | the replacement was submitted, or a season job was queued for an episode with no single release. A failure with nothing better to grab records nothing |
 | Download done to imported | the finished payload is handed to import (for a client with manual approval: when you approve it) | the library import completed |
 | Imported to visible in Cinema | the import completed | Cinema reports the files placed — **not measured yet, needs M5**; the tile says so and shows no numbers |
 
@@ -1238,16 +1238,47 @@ plus `monarr_pipeline_overdue_rows` and `monarr_runner_fact_mismatch_total`
 ignored).
 
 **The `pipeline:overdue` health check** (System → Health, and `GET
-/api/v1/health`) turns to a warning and names the downloads Curator has not
-heard about from the download client for longer than their state allows:
-grabbed 10 minutes, downloading 30 minutes (torrents 24 hours), downloaded or
-importing 6 hours. A download waiting for your approval (`awaiting_import`) is
-never overdue; it shows its age in Activity instead. Until the deadline column
-from pipeline M2 exists this is a "gone silent" test, not a "stuck" test: a
-download that is held or stalled inside the client is still reported on every
-poll, so it is **not** caught here — it shows in Activity with the client's
-status. The warning says so. Open the named download in Activity to see its
-handoff trace. The tiles are read from `GET /api/v1/system/pipeline`.
+/api/v1/health`) turns to a warning and names the rows past their state's
+deadline. A deadline is written when a row enters a state (not on every
+poll), so a job held or stalled inside Runner — still listed every poll — is
+caught once its deadline passes: submitting 10 minutes of Runner answering
+"no such token", downloading 30 minutes without progress (torrents 24
+hours), held at Runner's own deadline plus 5 minutes, downloaded/importing 6
+hours, and a publication not imported within 6 hours. A download waiting for
+your approval (`awaiting_import`) has no deadline; it shows its age in
+Activity instead. Open the named row in Activity to see its handoff trace.
+The tiles are read from `GET /api/v1/system/pipeline`.
+
+### Held, provisional and publications in Activity
+
+- **Held by Runner** is its own section. The row says what Runner is waiting
+  on (a disk, a mount, a password) and how long Runner gives it before it
+  ends the job itself. Past that deadline the row reads **Held (stale)**:
+  Runner has not reported since, and Curator is reconciling — it never fails
+  the job on its own.
+- **Provisional** on a failed row means the conclusion is Curator's, not
+  Runner's: the submission never landed (`submit`), the job vanished from
+  every Runner feed (`lost`), or the row was parked by an older build
+  (`parked: …`). If Runner later reports the transfer, the row re-opens by
+  itself.
+- Expand a row to see its **publications** — one per Runner generation (the
+  finished payload, a salvage of a failed one) — and what became of each
+  file: *placed* (with the library path), *discarded* (superseded by the
+  attempt Curator chose, a duplicate of what the library has, or a release
+  sample), or *unresolved* (an obfuscated name with no episode, a subtitle
+  with no parent, a file Curator cannot rank against another attempt).
+  Unresolved files are kept and offer **Place**, **Discard** and **Keep**; a
+  publication with unresolved media shows *import failed* until each is
+  decided. *historical* marks a publication that existed before this
+  version: it imports normally, and nothing deletes it until its review is
+  approved.
+- The mobile app (0.28.0) labels the same rows *held by Runner*, *held
+  (stale)* and *failed (provisional)*; a hold's message is shown in grey, not
+  as an error. Resolving publication files is web-only.
+- A failed download starts its replacement within seconds (the next grab is
+  written with the failure itself). It does not wait for Runner to clean up
+  the failed bytes, and it blocklists the release only when Runner says the
+  release was at fault.
 
 ## Notifications
 

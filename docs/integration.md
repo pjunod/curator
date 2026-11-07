@@ -16,6 +16,74 @@ tying a grab to a playable file. When something in the chain is broken, Monarr
 is where you look first — not because it is the likely culprit, but because it
 is the only vantage point that sees both directions.
 
+## Pipeline contract v2 in Curator (M2, v0.39.0)
+
+What changed for Runner clients, in the order a download meets it (the design
+is [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) section 3; the decision record is
+[ADR 0026](adr/0026-pipeline-contract-v2.md)):
+
+- **Facts, one reducer.** Every observation of a Runner job — an SSE event,
+  a queue row, a history row, a `/deliveries` row, a request receipt — is a
+  *fact* (`admitted`, `status`, `terminal`, `publication_ready`, `gone`), and
+  one function applies them all. A fact is admitted only when its `transfer`
+  token equals the row's; a mismatch (a job id reused after a Runner state
+  wipe) is dropped and counted as `monarr_runner_fact_mismatch_total`. An
+  event without a token falls back to the job handle.
+- **A terminal is recorded once.** `downloads.runner_outcome` is set by one
+  guarded write; in the same transaction Curator writes the work it implies:
+  a `publications` row for `completed`, a `replacement_grabs` row for a
+  failure that re-grabs, the blocklist entry when `blames_release`, the
+  history row. A replay from the other feed is a no-op. A status never moves
+  a terminal row; a terminal ends a hold unconditionally.
+- **Curator's own terminals are provisional**: `failed{submit}` (ten minutes
+  of Runner positively answering "no such token" — an unreachable Runner does
+  not count), `failed{lost}` (ten minutes of successful polls with the job in
+  no feed and no receipt) and rows migrated from the old parks
+  (`failed{parked: …}`). Any later Runner fact re-opens them. Curator never
+  writes `hold_expired`: a hold past Runner's `deadline_in_s` plus five
+  minutes (24 hours when an older Runner sends none) is shown as
+  **held (stale)** and reconciled through the request receipt.
+- **The history cursor** (`runner_history_cursors`: incarnation, since_seq)
+  is advanced only by the poll's ordered reader, after its page commits.
+  `GET /api/v1/history?since_seq=&limit=100` replaces the old `limit=100`
+  re-read. A changed incarnation, a cursor below `retained_min_seq` or no
+  stored cursor at all (the first M2 start) looks every outstanding transfer
+  up via `GET /request-admissions/<token>` and sets the cursor to Runner's
+  head. Events never move the cursor.
+- **`/deliveries` is read with `include_accepted=true`**, only to raise
+  facts: a `completed` row the stream missed, a `salvage` row (or any row for
+  a download Runner finally failed) as `publication_ready`. Curator no longer
+  acknowledges deliveries; the lease/verify/ack/import cycle is gone.
+- **Publications are the import unit**, one per Runner generation, each with
+  its own state (`discovered → importing → imported | import_failed`) and a
+  per-file outcome: `placed`, `discarded{superseded|duplicate|rejected}`, or
+  `unresolved` (retained, decided in Activity). The manifest comes from the
+  publication's `.runner-manifest.json`, else from Runner's v1 delivery
+  record (the **v1 adapter**); a directory with neither waits and is checked
+  again each poll; six hours in `discovered`/`importing` is
+  `import_failed{stalled}`. The digest is verified once, at import, when the
+  publication was copied across volumes.
+- **Which attempt wins a destination** is Curator's own record
+  (`wantable_attempts`: the download it last chose for each wantable), never
+  generation ids or arrival time. A file from another attempt is
+  `discarded{superseded}` when the library already holds the current
+  attempt's file, otherwise `unresolved`; no record is `unresolved`.
+- **Failure is the next grab.** The replacement grab worker (every 5 s)
+  executes `replacement_grabs`: a movie or book is searched; an episode is
+  searched for a single-episode release, never a pack; an episode with no
+  single release goes to the season planner. `cancelled`, `lost` and
+  `fetch{indexer_unavailable}` write no grab; only `blames_release` failures
+  blocklist and spend fetched bytes against the re-grab budget. A
+  `ReplacementOperation` advances with the failed bytes retained.
+- **The historical cohort.** Every v1 receipt (accepted or not) and every
+  completed directory present at the first M2 start is a `historical`
+  publication. It imports like any other; nothing deletes it until its M7
+  review batch is approved.
+
+What Curator no longer does with Runner: acknowledge deliveries, pace receipt
+lookups per row, park on receipt shapes, refuse controls by revision, wait for
+Runner's cleanup before re-grabbing, or ask Runner to clean its source.
+
 ## The pipeline
 
 ```
@@ -206,11 +274,14 @@ library rescan.
 (`download_clients.mode = 'push'`), Monarr holds nzbd's SSE stream open and
 imports the moment post-processing finishes, instead of up to 30 s later.
 
-**What Monarr acts on.** Six event names out of the eleven nzbd emits:
-`job_pp_stage` (step trace), `job_pp_finished` (completed/failed, carrying
-`final_dir`), `job_deleted` (failed — *"removed in nzbd"*), `reset` and
-`lagged` (both → immediate full queue refresh), `tick` (progress). Everything
-else is dropped. `job_finished` is **deliberately ignored**: it fires when the
+**What Monarr acts on.** Each event becomes a fact for the reducer (see
+*Pipeline contract v2 in Curator* above): `job_pp_finished` (the terminal:
+the typed `outcome`/`reason`/`blames_release`/`salvage`, or for an older
+Runner the `pp_status` string), `job_status_changed` and `job_control_changed`
+(status and holds), `job_publication_ready` (a salvage), `job_pp_stage` and
+`tick` (progress), `reset` and `lagged` (immediate poll). `job_deleted` carries
+no transfer token and is advisory: the cancellation arrives as a terminal from
+Runner's own record. Everything else is dropped. `job_finished` is **deliberately ignored**: it fires when the
 download ends, before repair and extraction, and importing then would import a
 directory that is not finished.
 

@@ -212,6 +212,16 @@ express:
   repair takes.
 - **Live updates** (below), which need an event stream compat does not have.
 
+Since v0.39.0 a native Runner client is driven by pipeline contract v2 (see
+[integration.md](integration.md), *Pipeline contract v2 in Curator*): Runner's
+terminal facts, publications imported file by file, and a failure's
+replacement grab written with the failure itself. **There is nothing new to
+configure** — no setting enables or tunes it. The deadlines it uses (10
+minutes to confirm a submission, 30 minutes without progress, a hold's own
+deadline plus 5 minutes, 6 hours to import a publication) are the contract's
+and are not settings. *Manual approval* on the client is honoured: a
+completed publication waits in *Awaiting approval* until you import it.
+
 The native Usenet and NZBGet compatibility types reconcile existing Usenet
 downloads by handle. Native torrent acquisition is a separate client type;
 add it as its own configuration rather than changing an existing client's
