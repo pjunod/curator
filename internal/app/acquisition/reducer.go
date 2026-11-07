@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -936,9 +935,6 @@ func (s *Service) handleRunnerEvent(ctx context.Context, cfg ports.ClientConfig,
 		s.log.Warn("subscribe: fact not applied", "download", dl.ID, "source", f.Source, "err", err)
 	}
 }
-
-// timingKey is the pipeline_timings key of a row.
-func timingKey(dl sqlite.Download) string { return pipeline.Key(dl.Transfer, dl.ID) }
 
 // operatorCancelled reports a row a person stopped: the legacy operator
 // fence, or a recorded cancelled terminal. Neither is re-grabbed or

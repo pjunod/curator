@@ -22,6 +22,7 @@ func TestDeliveryResolveRejectsMixedManifestSelectionWithoutPartialAdmission(t *
 	itemID := e.addMovie(t)
 	downloadID := acqGrab(t, e, itemID)
 	r := apiDeliveryReceipt(t, e, clientID, downloadID, "delivery-api-atomic-selection")
+	apiHistoricalPublication(t, e, r)
 	selected := "Season 01/épisode.mkv"
 	payload := []byte("accepted manifest payload is unchanged by a rejected mixed selection")
 	manifestPath := filepath.Join(r.MappedPath, filepath.FromSlash(selected))

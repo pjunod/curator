@@ -578,4 +578,3 @@ func TestFailedHistoryReportsTheFractionActuallyFetched(t *testing.T) {
 		t.Fatalf("a completed job is complete whatever PAR spared: %v", ok.Progress)
 	}
 }
-

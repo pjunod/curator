@@ -7,62 +7,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
-
-type advancingDeliveryClient struct {
-	fakeClient
-	after []uint64
-}
-
-func (c *advancingDeliveryClient) ListDeliveries(_ context.Context, after uint64, _ int) (ports.RunnerDeliveryPage, error) {
-	c.after = append(c.after, after)
-	return ports.RunnerDeliveryPage{ProtocolVersion: 1, NextCursor: 5}, nil
-}
-func (c *advancingDeliveryClient) AcceptDelivery(context.Context, string, ports.RunnerDeliveryAcceptance) error {
-	return nil
-}
-
-func receiptIDFor(t *testing.T, db *sqlite.DB, downloadID int64) int64 {
-	t.Helper()
-	receipts, _, err := db.DeliveryReceiptPageForDownload(context.Background(), downloadID, 0, 10)
-	if err != nil || len(receipts) != 1 {
-		t.Fatalf("receipt for download %d: %+v err=%v", downloadID, receipts, err)
-	}
-	return receipts[0].ID
-}
-
-type serializedAckDeliveryClient struct {
-	deliveryImportClient
-	count   atomic.Int32
-	block   atomic.Bool
-	once    sync.Once
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (c *serializedAckDeliveryClient) AcceptDelivery(ctx context.Context, id string, acceptance ports.RunnerDeliveryAcceptance) error {
-	n := c.count.Add(1)
-	if n <= 2 {
-		return errors.New("initial acknowledgement outage")
-	}
-	if c.block.Load() {
-		c.once.Do(func() { close(c.entered) })
-		select {
-		case <-c.release:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	return nil
-}
 
 func TestEmptyPublicationCleanupIsBoundToAcceptedDirectoryAcrossRetries(t *testing.T) {
 	ctx := context.Background()
@@ -195,11 +145,6 @@ func (c *deliveryImportClient) RetryDeliverySourceCleanup(context.Context, strin
 	return c.lookup, c.sourceCleanupErr
 }
 
-type deliveryRetryAfterError struct{ deadline time.Time }
-
-func (e deliveryRetryAfterError) Error() string            { return "Runner temporarily unavailable" }
-func (e deliveryRetryAfterError) RetryDeadline() time.Time { return e.deadline }
-
 func (c *deliveryImportClient) GetDelivery(context.Context, string) (ports.RunnerDelivery, error) {
 	c.getDeliveryCalls++
 	return c.lookup, nil
@@ -208,21 +153,6 @@ func (c *deliveryImportClient) GetDelivery(context.Context, string) (ports.Runne
 func sha256Hex(content []byte) string {
 	h := sha256.Sum256(content)
 	return hex.EncodeToString(h[:])
-}
-
-func importFailedRows(t *testing.T, db *sqlite.DB) int {
-	t.Helper()
-	events, err := db.ListHistory(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	n := 0
-	for _, e := range events {
-		if e.Type == "import_failed" {
-			n++
-		}
-	}
-	return n
 }
 
 func TestReleaseSampleRecognition(t *testing.T) {

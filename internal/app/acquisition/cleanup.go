@@ -122,7 +122,8 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 		unlock := func() { releaseStorage(); unlockDownload() }
 		dl, err := s.db.GetDownload(ctx, candidate.ID)
 		if err != nil || candidate.GenerationKey == "" || dl.GenerationKey != candidate.GenerationKey ||
-			dl.DeliveryExpected || dl.State != "imported" || dl.PayloadRemoved || !dl.AddedAt.Equal(candidate.AddedAt) {
+			dl.DeliveryExpected || dl.State != "imported" || dl.PayloadRemoved || !dl.AddedAt.Equal(candidate.AddedAt) ||
+			s.publicationManaged(ctx, dl.ID, dl.ImportPath) {
 			unlock()
 			continue
 		}
@@ -262,6 +263,12 @@ func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
 // delivery-managed generation. Those files are removed only from the accepted
 // manifest ledger, which preserves unresolved siblings and Activity history.
 func (s *Service) deliveryExpectedDownload(ctx context.Context, dl downloadRef) bool {
+	// A publication's files leave only by their recorded per-file outcome
+	// (pipeline v2, contract section 3.4), and the historical cohort not at
+	// all until its review approves it: no whole-directory cleanup, ever.
+	if s.publicationManaged(ctx, dl.ID, dl.ImportPath) {
+		return true
+	}
 	if dl.ID <= 0 {
 		return false
 	}

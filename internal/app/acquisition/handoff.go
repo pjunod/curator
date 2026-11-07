@@ -285,6 +285,30 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	// A row with a publication imports that publication (pipeline v2): an
+	// approval (ManualApproval) or a retry after import_failed.
+	if pubs, e := s.db.ListPublicationsForDownload(ctx, id); e == nil && len(pubs) > 0 {
+		for _, p := range pubs {
+			if p.State != "discovered" && p.State != "importing" && p.State != "import_failed" {
+				continue
+			}
+			if p.State != "discovered" {
+				if e := s.db.SetPublicationState(ctx, p.ID, "discovered", ""); e != nil {
+					return e
+				}
+			}
+			var cfg ports.ClientConfig
+			if dl.ClientID != 0 {
+				if cfg, err = s.db.GetDownloadClient(ctx, dl.ClientID); err != nil {
+					return err
+				}
+			}
+			if !s.enqueueImportJobFor(ctx, dl, cfg, importJob{publicationID: p.ID, approved: true}, true) {
+				return fmt.Errorf("import queue is full; durable retry remains recorded")
+			}
+			return nil
+		}
+	}
 	if s.importCh == nil {
 		bound, finish, e := s.beginInlineImport(ctx, dl, a.ImportAttemptKey)
 		if e != nil {

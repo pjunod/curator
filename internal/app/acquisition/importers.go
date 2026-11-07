@@ -65,8 +65,8 @@ type importJob struct {
 	// person approved it (ManualApproval, Resolve).
 	publicationID int64
 	approved      bool
-	cleanupCancel       context.CancelFunc
-	lockHeld            bool
+	cleanupCancel context.CancelFunc
+	lockHeld      bool
 }
 
 // importTicket is the durable row's in-memory place in the worker queue.
@@ -210,7 +210,6 @@ func (s *Service) SetRegistry(r *transfers.Registry) { s.registry = r }
 func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig) bool {
 	return s.enqueueImportJob(ctx, dl, cfg, 0, true)
 }
-
 
 func (s *Service) queueDeliveryCleanup(ctx context.Context, cfg ports.ClientConfig, receipt sqlite.DeliveryReceipt) bool {
 	s.importMu.Lock()

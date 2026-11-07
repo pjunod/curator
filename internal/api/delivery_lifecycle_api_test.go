@@ -28,13 +28,6 @@ type apiDeliveryProtocolClient struct {
 	sourceRetryErr error
 }
 
-type apiDeliveryRetryDeadlineError struct{ deadline time.Time }
-
-func (e apiDeliveryRetryDeadlineError) Error() string {
-	return "Runner cleanup service is temporarily unavailable"
-}
-func (e apiDeliveryRetryDeadlineError) RetryDeadline() time.Time { return e.deadline }
-
 func (c *apiDeliveryProtocolClient) ListDeliveries(context.Context, uint64, int) (ports.RunnerDeliveryPage, error) {
 	return ports.RunnerDeliveryPage{ProtocolVersion: 1}, nil
 }
@@ -92,6 +85,21 @@ func apiDeliveryReceipt(t *testing.T, e *apiEnv, clientID, downloadID int64, del
 		t.Fatal(err)
 	}
 	return persisted
+}
+
+// apiHistoricalPublication gives a receipt the historical publication
+// migration 0072 creates for every v1 receipt at cutover; since pipeline v2 a
+// receipt is only ever acted on through it.
+func apiHistoricalPublication(t *testing.T, e *apiEnv, r sqlite.DeliveryReceipt) int64 {
+	t.Helper()
+	id, err := e.db.InsertPublication(context.Background(), sqlite.PublicationWrite{
+		DownloadID: r.DownloadID, Generation: r.Delivery.PublicationGeneration, Kind: "completed",
+		Path: r.MappedPath, RemotePath: r.Delivery.PublicationPath, Source: "v1_record", Cohort: "historical",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func TestDeliveryLifecycleHTTPPagesFiltersAndReadsDurableReceipt(t *testing.T) {
@@ -233,26 +241,19 @@ func TestDeliveryLifecycleRetryRoutesReturnConflictsForUnreadyOrUnsupportedWork(
 	}
 }
 
-func TestDeliveryLifecycleRetryHandoffAndRunnerCleanupReturnAcceptedAfterProtocolCall(t *testing.T) {
+// Since pipeline v2 a handoff retry imports the receipt's historical
+// publication without acknowledging anything to Runner, Curator no longer asks
+// Runner to clean its source, and a historical publication is never cleaned up
+// before its review is approved.
+func TestDeliveryLifecycleRetryHandoffImportsHistoricalPublicationAndRefusesRunnerCleanup(t *testing.T) {
 	e := newAPIEnv(t)
 	clientID := acqAddClient(t, e, "qbittorrent")
 	itemID := e.addMovie(t)
 	firstDownload := acqGrab(t, e, itemID)
 	secondDownload := gapGrabTitled(t, e, itemID, "Fight.Club.1999.1080p.WEB-DL.x264-CLEANUP")
 	handoff := apiDeliveryReceipt(t, e, clientID, firstDownload, "delivery-api-retry-handoff")
+	apiHistoricalPublication(t, e, handoff)
 	cleanup := apiDeliveryReceipt(t, e, clientID, secondDownload, "delivery-api-retry-source")
-	if err := e.db.PrepareDeliveryAcceptance(context.Background(), sqlite.DeliveryReceipt{
-		ID: cleanup.ID, ConsumerReceiptID: "curator-accepted-source-retry", NextAttemptAt: time.Now(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	prepared, err := e.db.DeliveryReceiptByID(context.Background(), cleanup.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.db.SetDeliveryAccepted(context.Background(), prepared); err != nil {
-		t.Fatal(err)
-	}
 
 	protocol := &apiDeliveryProtocolClient{fakeClient: fakeClient{}, delivery: cleanup.Delivery, sourceProgress: `{"status":"succeeded"}`}
 	service := acquisition.New(e.db, e.bus, nil, nil, func(ports.ClientConfig) ports.DownloadClient { return protocol })
@@ -262,69 +263,13 @@ func TestDeliveryLifecycleRetryHandoffAndRunnerCleanupReturnAcceptedAfterProtoco
 
 	e.post(t, fmt.Sprintf("/api/v1/downloads/deliveries/%d/retry-handoff", handoff.ID), `{}`).expect(t, http.StatusAccepted)
 	if protocol.accepted != 0 {
-		t.Fatalf("handoff retry acknowledged an unimported delivery unexpectedly: %d", protocol.accepted)
+		t.Fatalf("handoff retry acknowledged a delivery: %d", protocol.accepted)
 	}
-	e.post(t, fmt.Sprintf("/api/v1/downloads/deliveries/%d/retry-runner-cleanup", cleanup.ID), `{}`).expect(t, http.StatusAccepted)
-	if protocol.sourceRetries != 1 {
-		t.Fatalf("Runner source-cleanup endpoint made %d protocol calls, want 1", protocol.sourceRetries)
+	e.post(t, fmt.Sprintf("/api/v1/downloads/deliveries/%d/retry-runner-cleanup", cleanup.ID), `{}`).expect(t, http.StatusConflict)
+	if protocol.sourceRetries != 0 {
+		t.Fatalf("Runner source-cleanup endpoint made %d protocol calls, want none", protocol.sourceRetries)
 	}
-	var detail apigen.DeliveryLifecycleReceipt
-	e.get(t, fmt.Sprintf("/api/v1/downloads/deliveries/%d", cleanup.ID)).expect(t, http.StatusOK).into(t, &detail)
-	if detail.SourceCleanup == nil || (*detail.SourceCleanup)["status"] != "succeeded" {
-		t.Fatalf("cleanup retry progress was not refreshed in the durable receipt: %+v", detail.SourceCleanup)
-	}
-	workerCtx, cancel := context.WithCancel(context.Background())
-	service.StartImporters(workerCtx)
-	t.Cleanup(func() { cancel(); service.WaitImporters() })
-	e.post(t, fmt.Sprintf("/api/v1/downloads/deliveries/%d/retry-curator-cleanup", handoff.ID), `{}`).expect(t, http.StatusAccepted)
-}
-
-func TestDeliveryLifecycleRunnerCleanupHTTPPersistsFailureAndHonorsRetryAfter(t *testing.T) {
-	e := newAPIEnv(t)
-	clientID := acqAddClient(t, e, "qbittorrent")
-	itemID := e.addMovie(t)
-	downloadID := acqGrab(t, e, itemID)
-	r := apiDeliveryReceipt(t, e, clientID, downloadID, "delivery-api-retry-deadline")
-	if err := e.db.PrepareDeliveryAcceptance(context.Background(), sqlite.DeliveryReceipt{
-		ID: r.ID, ConsumerReceiptID: "curator-receipt-retry-deadline", NextAttemptAt: time.Now(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	prepared, err := e.db.DeliveryReceiptByID(context.Background(), r.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.db.SetDeliveryAccepted(context.Background(), prepared); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	protocol := &apiDeliveryProtocolClient{fakeClient: fakeClient{}, delivery: r.Delivery, sourceRetryErr: apiDeliveryRetryDeadlineError{deadline}}
-	service := acquisition.New(e.db, e.bus, nil, nil, func(ports.ClientConfig) ports.DownloadClient { return protocol })
-	e.srv.deps.Acquisition = service
-	e.acq = service
-	e.h = e.srv.Handler()
-
-	base := fmt.Sprintf("/api/v1/downloads/deliveries/%d", r.ID)
-	e.post(t, base+"/retry-runner-cleanup", `{}`).expect(t, http.StatusConflict)
-	if protocol.sourceRetries != 1 {
-		t.Fatalf("first cleanup retry made %d calls, want exactly one", protocol.sourceRetries)
-	}
-	var detail apigen.DeliveryLifecycleReceipt
-	e.get(t, base).expect(t, http.StatusOK).into(t, &detail)
-	if detail.SourceCleanupAttempts == nil || *detail.SourceCleanupAttempts != 1 || detail.SourceCleanupError == nil || *detail.SourceCleanupError != protocol.sourceRetryErr.Error() {
-		t.Fatalf("failed cleanup attempt was not durably exposed: attempts=%v error=%v", detail.SourceCleanupAttempts, detail.SourceCleanupError)
-	}
-	if detail.SourceCleanupNextAttemptAt == nil || detail.SourceCleanupNextAttemptAt.Before(deadline) {
-		t.Fatalf("persisted retry deadline %v precedes provider Retry-After %s", detail.SourceCleanupNextAttemptAt, deadline)
-	}
-
-	// An explicit second click must not retry ahead of Runner's deadline. This
-	// verifies the HTTP route reads the durable deadline instead of relying on
-	// an in-process timer or client-side button state.
-	e.post(t, base+"/retry-runner-cleanup", `{}`).expect(t, http.StatusConflict)
-	if protocol.sourceRetries != 1 {
-		t.Fatalf("retry before Retry-After deadline reached Runner %d times", protocol.sourceRetries)
-	}
+	e.post(t, fmt.Sprintf("/api/v1/downloads/deliveries/%d/retry-curator-cleanup", handoff.ID), `{}`).expect(t, http.StatusConflict)
 }
 
 func TestDeliveryLifecycleResolveQueuesOnlySelectedDurableManifestPath(t *testing.T) {
@@ -336,6 +281,7 @@ func TestDeliveryLifecycleResolveQueuesOnlySelectedDurableManifestPath(t *testin
 	itemID := e.addMovie(t)
 	downloadID := acqGrab(t, e, itemID)
 	r := apiDeliveryReceipt(t, e, clientID, downloadID, "delivery-api-selected-resolve")
+	apiHistoricalPublication(t, e, r)
 	selected := "Season 01/épisode.mkv"
 	if err := os.MkdirAll(filepath.Join(r.MappedPath, "Season 01"), 0o700); err != nil {
 		t.Fatal(err)

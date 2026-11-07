@@ -1876,6 +1876,43 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /queue/{id}/publications/{publicationId}/files/resolve:
+    post:
+      operationId: resolvePublicationFile
+      summary: Decide an unresolved publication file - place it, discard it, or keep it for later
+      description: >
+        Pipeline contract v2 (section 3.4). A publication file the importer could
+        not place (an obfuscated name with no episode mapping, a sidecar with no
+        parent, a file whose precedence is ambiguous) stays unresolved, retained
+        and shown in Resolve. place imports exactly that file; discard records
+        discarded{rejected} (the file is deleted only by M4's per-file cleanup,
+        never by this call); keep records that a person looked and wants it left.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: publicationId, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, action]
+              properties:
+                path: { type: string, description: The file's path relative to the publication. }
+                action: { type: string, description: "place | discard | keep" }
+      responses:
+        "204": { description: Recorded; a place is queued for import. }
+        "400":
+          description: Not an unresolved file of this publication, or an unknown action.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown row or publication.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /queue/{id}/cancel-import:
     post:
       operationId: cancelQueueImport
@@ -5676,12 +5713,43 @@ components:
         state:
           type: string
           description: >
-            planned | grabbed | downloading | downloaded | awaiting_import | importing
-            | imported | failed.
+            planned | grabbed | submitting | downloading | held | downloaded |
+            awaiting_import | importing | imported | notified | failed.
+            `downloaded` means the download completed (pipeline contract v2).
         planId: { type: integer, format: int64 }
         planState: { type: string }
         submissionPhase: { type: string, enum: [pending, submitting, submitted, uncertain, rejected] }
-        parkedReason: { type: string }
+        parkedReason:
+          type: string
+          description: >
+            Deprecated. A legacy (non-Runner) client's operator fence; Runner rows
+            are never parked (pipeline contract v2). Removed in M4.
+        runnerOutcome:
+          type: string
+          description: The recorded terminal - completed | failed | cancelled - or absent while open.
+        runnerReason:
+          type: string
+          description: >
+            Why it failed: health | fetch | par | unpack | script | publish | io |
+            identity | hold_expired (Runner's), or submit | lost | parked (Curator's,
+            always provisional).
+        fetchCause: { type: string, description: "fetch failures: gone | indexer_unavailable." }
+        blamesRelease: { type: boolean, description: Whether the failure blocklisted the release. }
+        provisional:
+          type: boolean
+          description: The terminal is Curator's own and any later Runner fact re-opens it.
+        deadlineAt:
+          type: string
+          format: date-time
+          description: When this state becomes overdue (contract section 3.5). Absent when it has none.
+        stale:
+          type: boolean
+          description: A held row past its deadline - Runner has not reported since; never a Curator failure.
+        heldReason: { type: string, description: Runner's hold message while held. }
+        publications:
+          type: array
+          description: The publications (one per Runner generation) and what became of each file.
+          items: { $ref: "#/components/schemas/QueuePublication" }
         selection:
           type: object
           additionalProperties: true
@@ -5751,6 +5819,34 @@ components:
           description: The download → import handoff, step by step.
           items: { $ref: "#/components/schemas/HandoffEntry" }
         addedAt: { type: string, format: date-time }
+
+    QueuePublication:
+      type: object
+      required: [id, kind, state, cohort, path, files]
+      properties:
+        id: { type: integer, format: int64 }
+        generation: { type: string }
+        kind: { type: string, description: "completed | salvage" }
+        state: { type: string, description: "discovered | importing | imported | import_failed | notified | removed" }
+        cohort:
+          type: string
+          description: live | historical. historical publications are never deleted automatically until their review batch is approved.
+        path: { type: string }
+        manifestSource: { type: string, description: "file | v1_record | none" }
+        error: { type: string }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/QueuePublicationFile" }
+    QueuePublicationFile:
+      type: object
+      required: [path, outcome]
+      properties:
+        path: { type: string }
+        bytes: { type: integer, format: int64 }
+        outcome: { type: string, description: "pending | placed | discarded | unresolved" }
+        discardReason: { type: string, description: "superseded | duplicate | rejected, when discarded" }
+        reason: { type: string }
+        libraryPath: { type: string }
 
     HandoffEntry:
       type: object

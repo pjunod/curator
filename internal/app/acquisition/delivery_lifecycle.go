@@ -194,13 +194,13 @@ func (s *Service) RetryDeliveryHandoff(ctx context.Context, receiptID int64) err
 	if r.State == "conflict" {
 		return fmt.Errorf("delivery identity conflicts with its saved receipt")
 	}
-	return s.retryReceiptPublication(ctx, r, nil)
+	return s.retryReceiptPublication(ctx, r, nil, 0)
 }
 
 // ErrRunnerOwnsSource refuses a request that would have Curator ask Runner to
 // delete under /processing (contract section 7: no Curator-to-Runner cleanup
 // commands). Runner retires its own source.
-var ErrRunnerOwnsSource = errors.New("Runner owns and retires its processing source; Curator no longer asks it to clean up")
+var ErrRunnerOwnsSource = errors.New("the processing source is Runner's to retire; Curator no longer asks Runner to clean it up")
 
 // RetryRunnerSourceCleanup is refused: see ErrRunnerOwnsSource.
 func (s *Service) RetryRunnerSourceCleanup(ctx context.Context, receiptID int64) error {
@@ -299,7 +299,7 @@ func (s *Service) QueueDeliveryImport(ctx context.Context, receiptID int64, path
 	if len(selected) == 0 {
 		return fmt.Errorf("no manifest files were selected")
 	}
-	return s.retryReceiptPublication(ctx, r, selected)
+	return s.retryReceiptPublication(ctx, r, selected, r.DownloadID)
 }
 
 // ErrHistoricalCohort refuses an automatic-style deletion of a publication
@@ -314,8 +314,10 @@ func receiptPublicationPath(r sqlite.DeliveryReceipt) string {
 }
 
 // retryReceiptPublication imports the publication a receipt migrated into:
-// all of it, or exactly the selected files (a Resolve selection).
-func (s *Service) retryReceiptPublication(ctx context.Context, r sqlite.DeliveryReceipt, selected []string) error {
+// all of it, or exactly the selected files (a Resolve selection). held is the
+// download whose lock the caller already holds (0 for none); the per-download
+// lock is not re-entrant.
+func (s *Service) retryReceiptPublication(ctx context.Context, r sqlite.DeliveryReceipt, selected []string, held int64) error {
 	pub, ok, err := s.db.PublicationByPath(ctx, receiptPublicationPath(r))
 	if err != nil {
 		return err
@@ -323,8 +325,10 @@ func (s *Service) retryReceiptPublication(ctx context.Context, r sqlite.Delivery
 	if !ok || pub.DownloadID == 0 {
 		return fmt.Errorf("this delivery has no publication with a download row to import into")
 	}
-	unlock := s.lockDownload(pub.DownloadID)
-	defer unlock()
+	if pub.DownloadID != held {
+		unlock := s.lockDownload(pub.DownloadID)
+		defer unlock()
+	}
 	if s.ImportRunning(pub.DownloadID) {
 		return fmt.Errorf("an import is already running for this delivery")
 	}

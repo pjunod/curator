@@ -542,7 +542,6 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 
 		outcome := FileOutcome{Name: filepath.Base(src), SourcePath: src, Quality: q.Display(),
 			ReplacementOperationID: scope.ReplacementOperationID, SourceGeneration: scope.SourceGeneration,
-			SourceFileGeneration:    acceptedSourceGeneration(ctx, src),
 			SourcePayloadGeneration: acceptedPublicationGeneration(ctx)}
 
 		if prior, reused, reuseErr := s.reuseCommittedImport(ctx, dl, item, scope, src); reuseErr != nil {

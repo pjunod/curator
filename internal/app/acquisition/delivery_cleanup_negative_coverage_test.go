@@ -1,12 +1,10 @@
 package acquisition
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -63,15 +61,6 @@ func TestAnchoredDeliveryPathReadersRejectTraversalAndSymlinkComponents(t *testi
 			t.Errorf("unsafe/non-file path %q unexpectedly opened", rel)
 		}
 	}
-}
-
-func mustDeliveryOutcome(t *testing.T, db *sqlite.DB, receiptID int64, path string) sqlite.DeliveryFileOutcome {
-	t.Helper()
-	row, err := db.DeliveryFileOutcomeByPath(context.Background(), receiptID, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return row
 }
 
 var _ ports.DeliveryProtocol = (*deliveryImportClient)(nil)

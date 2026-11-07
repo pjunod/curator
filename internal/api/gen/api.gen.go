@@ -2693,6 +2693,9 @@ type QualityProfile struct {
 type QueueItem struct {
 	AddedAt time.Time `json:"addedAt"`
 
+	// BlamesRelease Whether the failure blocklisted the release.
+	BlamesRelease *bool `json:"blamesRelease,omitempty"`
+
 	// Bytes Bytes moved at the current stage. Absent when the stage cannot measure itself.
 	Bytes *int64 `json:"bytes,omitempty"`
 
@@ -2704,11 +2707,20 @@ type QueueItem struct {
 	Control *map[string]interface{} `json:"control,omitempty"`
 
 	// CopyId The media copy this grab targets; 0 = the primary copy.
-	CopyId *int64  `json:"copyId,omitempty"`
-	Error  *string `json:"error,omitempty"`
+	CopyId *int64 `json:"copyId,omitempty"`
+
+	// DeadlineAt When this state becomes overdue (contract section 3.5). Absent when it has none.
+	DeadlineAt *time.Time `json:"deadlineAt,omitempty"`
+	Error      *string    `json:"error,omitempty"`
+
+	// FetchCause fetch failures: gone | indexer_unavailable.
+	FetchCause *string `json:"fetchCause,omitempty"`
 
 	// Handoff The download → import handoff, step by step.
-	Handoff            *[]HandoffEntry      `json:"handoff,omitempty"`
+	Handoff *[]HandoffEntry `json:"handoff,omitempty"`
+
+	// HeldReason Runner's hold message while held.
+	HeldReason         *string              `json:"heldReason,omitempty"`
 	Id                 int64                `json:"id"`
 	ImportBlockedSince *time.Time           `json:"importBlockedSince,omitempty"`
 	ImportControl      *ImportAttemptStatus `json:"importControl,omitempty"`
@@ -2719,15 +2731,29 @@ type QueueItem struct {
 	ImportRetryAttempts *int       `json:"importRetryAttempts,omitempty"`
 
 	// ImportState The in-memory importer state. `queued` means the job was accepted and is waiting for one of the bounded import workers; `running` means a worker owns it. Absent means no importer owns this row.
-	ImportState  *QueueItemImportState `json:"importState,omitempty"`
-	Match        *MatchEvidence        `json:"match,omitempty"`
-	MediaItemId  int64                 `json:"mediaItemId"`
-	ParkedReason *string               `json:"parkedReason,omitempty"`
-	PlanId       *int64                `json:"planId,omitempty"`
-	PlanState    *string               `json:"planState,omitempty"`
-	Progress     float32               `json:"progress"`
-	Protocol     string                `json:"protocol"`
-	Quality      string                `json:"quality"`
+	ImportState *QueueItemImportState `json:"importState,omitempty"`
+	Match       *MatchEvidence        `json:"match,omitempty"`
+	MediaItemId int64                 `json:"mediaItemId"`
+
+	// ParkedReason Deprecated. A legacy (non-Runner) client's operator fence; Runner rows are never parked (pipeline contract v2). Removed in M4.
+	ParkedReason *string `json:"parkedReason,omitempty"`
+	PlanId       *int64  `json:"planId,omitempty"`
+	PlanState    *string `json:"planState,omitempty"`
+	Progress     float32 `json:"progress"`
+	Protocol     string  `json:"protocol"`
+
+	// Provisional The terminal is Curator's own and any later Runner fact re-opens it.
+	Provisional *bool `json:"provisional,omitempty"`
+
+	// Publications The publications (one per Runner generation) and what became of each file.
+	Publications *[]QueuePublication `json:"publications,omitempty"`
+	Quality      string              `json:"quality"`
+
+	// RunnerOutcome The recorded terminal - completed | failed | cancelled - or absent while open.
+	RunnerOutcome *string `json:"runnerOutcome,omitempty"`
+
+	// RunnerReason Why it failed: health | fetch | par | unpack | script | publish | io | identity | hold_expired (Runner's), or submit | lost | parked (Curator's, always provisional).
+	RunnerReason *string `json:"runnerReason,omitempty"`
 
 	// SavePath The completed-download path the client reported.
 	SavePath *string `json:"savePath,omitempty"`
@@ -2745,7 +2771,10 @@ type QueueItem struct {
 	StagePeer  *string    `json:"stagePeer,omitempty"`
 	StageSince *time.Time `json:"stageSince,omitempty"`
 
-	// State planned | grabbed | downloading | downloaded | awaiting_import | importing | imported | failed.
+	// Stale A held row past its deadline - Runner has not reported since; never a Curator failure.
+	Stale *bool `json:"stale,omitempty"`
+
+	// State planned | grabbed | submitting | downloading | held | downloaded | awaiting_import | importing | imported | notified | failed. `downloaded` means the download completed (pipeline contract v2).
 	State           string                    `json:"state"`
 	SubmissionPhase *QueueItemSubmissionPhase `json:"submissionPhase,omitempty"`
 	Title           string                    `json:"title"`
@@ -2759,6 +2788,40 @@ type QueueItemImportState string
 
 // QueueItemSubmissionPhase defines model for QueueItem.SubmissionPhase.
 type QueueItemSubmissionPhase string
+
+// QueuePublication defines model for QueuePublication.
+type QueuePublication struct {
+	// Cohort live | historical. historical publications are never deleted automatically until their review batch is approved.
+	Cohort     string                 `json:"cohort"`
+	Error      *string                `json:"error,omitempty"`
+	Files      []QueuePublicationFile `json:"files"`
+	Generation *string                `json:"generation,omitempty"`
+	Id         int64                  `json:"id"`
+
+	// Kind completed | salvage
+	Kind string `json:"kind"`
+
+	// ManifestSource file | v1_record | none
+	ManifestSource *string `json:"manifestSource,omitempty"`
+	Path           string  `json:"path"`
+
+	// State discovered | importing | imported | import_failed | notified | removed
+	State string `json:"state"`
+}
+
+// QueuePublicationFile defines model for QueuePublicationFile.
+type QueuePublicationFile struct {
+	Bytes *int64 `json:"bytes,omitempty"`
+
+	// DiscardReason superseded | duplicate | rejected, when discarded
+	DiscardReason *string `json:"discardReason,omitempty"`
+	LibraryPath   *string `json:"libraryPath,omitempty"`
+
+	// Outcome pending | placed | discarded | unresolved
+	Outcome string  `json:"outcome"`
+	Path    string  `json:"path"`
+	Reason  *string `json:"reason,omitempty"`
+}
 
 // QueueSummary defines model for QueueSummary.
 type QueueSummary struct {
@@ -3715,6 +3778,15 @@ type RemoveQueueItemParams struct {
 	FromClient *bool `form:"fromClient,omitempty" json:"fromClient,omitempty"`
 }
 
+// ResolvePublicationFileJSONBody defines parameters for ResolvePublicationFile.
+type ResolvePublicationFileJSONBody struct {
+	// Action place | discard | keep
+	Action string `json:"action"`
+
+	// Path The file's path relative to the publication.
+	Path string `json:"path"`
+}
+
 // ResolveQueueReservationJSONBody defines parameters for ResolveQueueReservation.
 type ResolveQueueReservationJSONBody struct {
 	AcknowledgeDuplicateRisk bool `json:"acknowledgeDuplicateRisk"`
@@ -3879,6 +3951,9 @@ type UpdateProfileJSONRequestBody = ProfileInput
 
 // CancelQueueImportJSONRequestBody defines body for CancelQueueImport for application/json ContentType.
 type CancelQueueImportJSONRequestBody = ImportAttemptIdentity
+
+// ResolvePublicationFileJSONRequestBody defines body for ResolvePublicationFile for application/json ContentType.
+type ResolvePublicationFileJSONRequestBody ResolvePublicationFileJSONBody
 
 // ResolveQueueReservationJSONRequestBody defines body for ResolveQueueReservation for application/json ContentType.
 type ResolveQueueReservationJSONRequestBody ResolveQueueReservationJSONBody
@@ -4272,6 +4347,9 @@ type ServerInterface interface {
 	// ResolveImportReview Record explicit fencing or retained-byte disposition
 	// (POST /queue/{id}/import-review)
 	ResolveImportReview(w http.ResponseWriter, r *http.Request, id int64)
+	// ResolvePublicationFile Decide an unresolved publication file - place it, discard it, or keep it for later
+	// (POST /queue/{id}/publications/{publicationId}/files/resolve)
+	ResolvePublicationFile(w http.ResponseWriter, r *http.Request, id int64, publicationId int64)
 	// ResolveQueueReservation Acknowledge duplicate risk and release uncertain or cancelled episode custody
 	// (POST /queue/{id}/resolve-reservation)
 	ResolveQueueReservation(w http.ResponseWriter, r *http.Request, id int64)
@@ -7383,6 +7461,41 @@ func (siw *ServerInterfaceWrapper) ResolveImportReview(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// ResolvePublicationFile operation middleware
+func (siw *ServerInterfaceWrapper) ResolvePublicationFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "publicationId" -------------
+	var publicationId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publicationId", r.PathValue("publicationId"), &publicationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publicationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolvePublicationFile(w, r, id, publicationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ResolveQueueReservation operation middleware
 func (siw *ServerInterfaceWrapper) ResolveQueueReservation(w http.ResponseWriter, r *http.Request) {
 
@@ -8099,6 +8212,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resolve-reservation", wrapper.ResolveQueueReservation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resume", wrapper.ResumeQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/publications/{publicationId}/files/resolve", wrapper.ResolvePublicationFile)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/cancel-import", wrapper.CancelQueueImport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue/{id}/import-review", wrapper.GetImportReview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import-review", wrapper.ResolveImportReview)

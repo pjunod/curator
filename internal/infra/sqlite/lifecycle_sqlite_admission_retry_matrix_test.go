@@ -229,7 +229,6 @@ func TestRunnerSubmissionRetryDeadlineAndWarningRemainBoundToLiveGeneration(t *t
 	}
 }
 
-
 func TestProtectedDeliveryFileRetryBackoffAndExplicitRemovalAreSeparate(t *testing.T) {
 	db, ctx, receipt, batch := explicitDeleteFixture(t)
 	defer func() { _ = db.Close() }()

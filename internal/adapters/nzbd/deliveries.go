@@ -82,7 +82,7 @@ func (w runnerRequestAdmissionWire) portValue() ports.RequestAdmission {
 		FailureStage: w.FailureStage, FailureCause: w.FailureCause,
 		CustodyState: w.CustodyState, KeepSourceOnFailure: w.KeepSourceOnFailure,
 		SourceCleanupStatus: w.SourceCleanupStatus,
-		FailureReason: w.FailureReason, FetchCause: w.FetchCause, BlamesRelease: w.BlamesRelease, Salvage: w.Salvage,
+		FailureReason:       w.FailureReason, FetchCause: w.FetchCause, BlamesRelease: w.BlamesRelease, Salvage: w.Salvage,
 	}
 }
 

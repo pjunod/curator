@@ -202,6 +202,43 @@ BEGIN
     SELECT RAISE(ABORT, 'runner_outcome is immutable');
 END;
 
+-- deadline_at is written on every state entry (contract section 3.5). A
+-- writer that knows better (the reducer: a hold's own deadline) sets it in the
+-- same UPDATE; otherwise these triggers give the state its default, and a
+-- download whose progress moves gets its allowance again.
+CREATE TRIGGER downloads_deadline_on_insert AFTER INSERT ON downloads
+WHEN NEW.deadline_at = 0 AND NEW.state IN ('grabbed','submitting','downloading','downloaded','importing')
+BEGIN
+    UPDATE downloads SET deadline_at = CAST(strftime('%s','now') AS INTEGER) * 1000 + CASE NEW.state
+        WHEN 'downloading' THEN CASE WHEN NEW.protocol = 'torrent' THEN 86400000 ELSE 1800000 END
+        WHEN 'downloaded' THEN 21600000 WHEN 'importing' THEN 21600000
+        ELSE 600000 END,
+        state_entered_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+     WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER downloads_deadline_on_state AFTER UPDATE OF state ON downloads
+WHEN NEW.state != OLD.state AND NEW.deadline_at = OLD.deadline_at
+BEGIN
+    UPDATE downloads SET deadline_at = CASE
+        WHEN NEW.state IN ('grabbed','submitting') THEN CAST(strftime('%s','now') AS INTEGER) * 1000 + 600000
+        WHEN NEW.state = 'downloading' THEN CAST(strftime('%s','now') AS INTEGER) * 1000 +
+             CASE WHEN NEW.protocol = 'torrent' THEN 86400000 ELSE 1800000 END
+        WHEN NEW.state = 'held' THEN CAST(strftime('%s','now') AS INTEGER) * 1000 + 86400000
+        WHEN NEW.state IN ('downloaded','importing') THEN CAST(strftime('%s','now') AS INTEGER) * 1000 + 21600000
+        ELSE 0 END,
+        state_entered_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+     WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER downloads_deadline_on_progress AFTER UPDATE OF progress ON downloads
+WHEN NEW.state = 'downloading' AND OLD.state = 'downloading' AND NEW.progress != OLD.progress AND NEW.deadline_at = OLD.deadline_at
+BEGIN
+    UPDATE downloads SET deadline_at = CAST(strftime('%s','now') AS INTEGER) * 1000 +
+        CASE WHEN NEW.protocol = 'torrent' THEN 86400000 ELSE 1800000 END
+     WHERE id = NEW.id;
+END;
+
 -- 2. publications: the import unit, one per Runner generation, plus the
 --    historical directories that exist at cutover (contract section 3.4).
 CREATE TABLE publications (
@@ -337,7 +374,11 @@ UPDATE downloads SET state = 'submitting',
  WHERE state = 'grabbed' AND submission_phase IN ('submitting','uncertain') AND request_token_idempotent = 1;
 UPDATE downloads SET deadline_at = CAST(strftime('%s','now') AS INTEGER) * 1000 +
         CASE WHEN protocol = 'torrent' THEN 86400000 ELSE 1800000 END
- WHERE state = 'downloading';
+ WHERE state = 'downloading' AND deadline_at = 0;
+UPDATE downloads SET deadline_at = CAST(strftime('%s','now') AS INTEGER) * 1000 + 600000
+ WHERE state = 'grabbed' AND deadline_at = 0;
+UPDATE downloads SET deadline_at = CAST(strftime('%s','now') AS INTEGER) * 1000 + 21600000
+ WHERE state IN ('downloaded','importing') AND deadline_at = 0;
 
 -- Every local v1 receipt becomes a historical publication with the per-file
 -- outcomes it had reached, matched to its download or not (contract section 6).
@@ -345,7 +386,7 @@ INSERT OR IGNORE INTO publications (download_id, generation, kind, path, remote_
                                     cross_volume, state, cohort, discovered_at, deadline_at, updated_at)
 SELECT CASE WHEN r.download_id != 0 AND EXISTS (SELECT 1 FROM downloads d WHERE d.id = r.download_id) THEN r.download_id END,
        r.publication_generation,
-       CASE WHEN r.publication_generation = '' THEN 'completed' ELSE 'completed' END,
+       'completed',
        CASE WHEN r.mapped_path != '' THEN r.mapped_path ELSE r.publication_path END,
        r.publication_path,
        json_object('generation', r.publication_generation,

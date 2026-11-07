@@ -293,7 +293,6 @@ func TestCreateReplacementOperationRollsBackWhenFileSnapshotInsertFails(t *testi
 	}
 }
 
-
 func TestBindRunnerAdmissionRollsBackInstallationPinWhenDownloadBindingFails(t *testing.T) {
 	ctx := context.Background()
 	db, _ := openLifecycleCoverageDB(t)

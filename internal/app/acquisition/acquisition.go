@@ -174,14 +174,6 @@ type Service struct {
 	// is bounded by the queue, so it is not swept.
 	reconcileMu sync.Mutex
 	reconciling map[int64]*sync.Mutex
-	// Acceptance attempts may be reached from the queue scheduler and from
-	// import workers that already own a download lock. Serialize by receipt in
-	// a separate lock domain so either path rechecks the persisted deadline
-	// immediately before dispatch without recursive download locking.
-	deliveryAckMu       sync.Mutex
-	deliveryAckLocks    map[int64]*sync.Mutex
-	deliverySourceMu    sync.Mutex
-	deliverySourceLocks map[int64]*sync.Mutex
 
 	// Live state of each push subscription, for the UI.
 	linksMu sync.Mutex
@@ -193,9 +185,6 @@ type Service struct {
 	// and reachability alone would call it healthy forever.
 	contactMu sync.Mutex
 	contacts  map[int64]health.Contact
-
-	deliveryCapabilityMu sync.RWMutex
-	deliveryCapabilities map[int64]bool
 
 	// The data plane: import workers and the in-flight registry. See
 	// importers.go for why they are not on the poll goroutine.
@@ -220,7 +209,6 @@ type Service struct {
 	grabKickOnce sync.Once
 	grabWorker   atomic.Bool
 }
-
 
 // New returns a Service.
 func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, ni IndexerFactory, nc ClientFactory) *Service {
@@ -1938,53 +1926,6 @@ func (s *Service) tryLockDownload(id int64) (func(), bool) {
 	m := s.downloadMutex(id)
 	if !m.TryLock() {
 		return func() {}, false
-	}
-	return m.Unlock, true
-}
-
-func (s *Service) lockDeliveryAcknowledgement(receiptID int64) func() {
-	s.deliveryAckMu.Lock()
-	if s.deliveryAckLocks == nil {
-		s.deliveryAckLocks = map[int64]*sync.Mutex{}
-	}
-	m, ok := s.deliveryAckLocks[receiptID]
-	if !ok {
-		m = &sync.Mutex{}
-		s.deliveryAckLocks[receiptID] = m
-	}
-	s.deliveryAckMu.Unlock()
-	m.Lock()
-	return m.Unlock
-}
-
-func (s *Service) lockDeliverySourceControl(receiptID int64) func() {
-	s.deliverySourceMu.Lock()
-	if s.deliverySourceLocks == nil {
-		s.deliverySourceLocks = map[int64]*sync.Mutex{}
-	}
-	m, ok := s.deliverySourceLocks[receiptID]
-	if !ok {
-		m = &sync.Mutex{}
-		s.deliverySourceLocks[receiptID] = m
-	}
-	s.deliverySourceMu.Unlock()
-	m.Lock()
-	return m.Unlock
-}
-
-func (s *Service) tryLockDeliverySourceControl(receiptID int64) (func(), bool) {
-	s.deliverySourceMu.Lock()
-	if s.deliverySourceLocks == nil {
-		s.deliverySourceLocks = map[int64]*sync.Mutex{}
-	}
-	m, ok := s.deliverySourceLocks[receiptID]
-	if !ok {
-		m = &sync.Mutex{}
-		s.deliverySourceLocks[receiptID] = m
-	}
-	s.deliverySourceMu.Unlock()
-	if !m.TryLock() {
-		return nil, false
 	}
 	return m.Unlock, true
 }

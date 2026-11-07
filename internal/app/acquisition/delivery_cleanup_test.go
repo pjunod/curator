@@ -8,7 +8,6 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
-	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 func TestReplacementPackFileWithSelectedSiblingOrUnknownEpisodeIsNotDisposableExcess(t *testing.T) {
@@ -42,13 +41,4 @@ func TestReplacementPackFileWithSelectedSiblingOrUnknownEpisodeIsNotDisposableEx
 			}
 		})
 	}
-}
-
-func mustDeliveryReceipt(t *testing.T, db *sqlite.DB, receiptID int64) sqlite.DeliveryReceipt {
-	t.Helper()
-	r, err := db.DeliveryReceiptByID(context.Background(), receiptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r
 }

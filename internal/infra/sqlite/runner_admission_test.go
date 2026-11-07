@@ -108,4 +108,3 @@ func TestAutomaticSubmissionRetryLimitExcludesOlderManualRows(t *testing.T) {
 		t.Fatalf("automatic retry due=%v err=%v", due, err)
 	}
 }
-

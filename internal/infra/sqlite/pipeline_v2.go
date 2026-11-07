@@ -832,7 +832,7 @@ func (d *DB) ClaimReplacementGrab(ctx context.Context, downloadID int64, now tim
 	return n == 1, err
 }
 
-// SettleReplacementGrab records the grab's result ('' with nextAt re-queues).
+// SettleReplacementGrab records the grab's result (” with nextAt re-queues).
 func (d *DB) SettleReplacementGrab(ctx context.Context, downloadID int64, result string, nextAt time.Time) error {
 	_, err := d.W.ExecContext(ctx, `UPDATE replacement_grabs SET result=?, next_at=? WHERE download_id=?`, result, unixMilliOrZero(nextAt), downloadID)
 	return err
@@ -907,7 +907,7 @@ func (d *DB) OverdueDownloads(ctx context.Context, now time.Time, limit int) ([]
 // CountOverdueDownloads counts what OverdueDownloads lists.
 func (d *DB) CountOverdueDownloads(ctx context.Context, now time.Time) (int, error) {
 	var n int
-	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM downloads WHERE state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<?`, now.UnixMilli()).Scan(&n)
+	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM downloads WHERE state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<? AND superseded=0 AND parked_at=0`, now.UnixMilli()).Scan(&n)
 	return n, err
 }
 

@@ -157,7 +157,7 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	if err != nil {
 		return err
 	}
-	if pub.DownloadID != dl.ID || (pub.State != "discovered" && pub.State != "importing" && !(approved && pub.State == "import_failed")) {
+	if pub.DownloadID != dl.ID || (pub.State != "discovered" && pub.State != "importing" && (!approved || pub.State != "import_failed")) {
 		return nil
 	}
 	m, ok, err := s.publicationManifest(ctx, cfg, pub)
@@ -171,6 +171,19 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 			s.log.Info("publication has no manifest yet; checking again on the next poll", "publication", pub.ID, "path", pub.Path)
 		}
 		return nil
+	}
+	// The publication must sit under a configured completed root on the
+	// storage that root was recorded on: an unmounted share is an empty
+	// directory, not a missing payload.
+	if roots, err := s.completedRoots(ctx, nil); err == nil {
+		if _, _, err := deliveryRootAndRelative(pub.Path, roots); err != nil {
+			s.failPublication(ctx, &dl, pub, err.Error())
+			return err
+		}
+	}
+	if err := s.checkStorageIdentity(ctx, pub.Path); err != nil {
+		_ = s.db.SetPublicationState(ctx, pub.ID, "discovered", err.Error())
+		return err
 	}
 	files := make([]sqlite.PublicationFile, 0, len(m.Files))
 	for _, f := range m.Files {
@@ -209,12 +222,22 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	}
 	// What to place: the media of the item's kind, not samples; or exactly
 	// what a person selected in Resolve.
+	// A file an earlier attempt (or a migrated v1 receipt) already resolved is
+	// not offered again: only the rest is imported (plan M2 test (n)).
+	resolved := map[string]bool{}
+	if rows, err := s.db.ListPublicationFiles(ctx, pub.ID); err == nil {
+		for _, r := range rows {
+			if r.Outcome == "placed" || r.Outcome == "discarded" {
+				resolved[r.Path] = true
+			}
+		}
+	}
 	var selected []string
 	byAbs := map[string]ports.ManifestFile{}
 	for _, f := range m.Files {
 		abs := filepath.Clean(filepath.Join(pub.Path, filepath.FromSlash(f.Path)))
 		byAbs[abs] = f
-		if deliveryImportablePath(item.Kind, f.Path) && !isReleaseSample(f.Path) {
+		if deliveryImportablePath(item.Kind, f.Path) && !isReleaseSample(f.Path) && !resolved[f.Path] {
 			selected = append(selected, abs)
 		}
 	}
@@ -233,6 +256,10 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		}
 	}
 	if len(selected) == 0 {
+		if len(resolved) > 0 {
+			// Everything importable is already resolved: settle it.
+			return s.completePublication(ctx, dl, cfg, item, pub, m, nil, ImportResult{}, &precedence{dl: dl, decided: map[string]precedenceVerdict{}})
+		}
 		s.failPublication(ctx, &dl, pub, "the publication holds no importable media (samples and sidecars only)")
 		return ErrNoFilesImported
 	}
@@ -241,6 +268,9 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		return err
 	}
 	ictx = context.WithValue(ictx, publicationImportKey{}, true)
+	// Placements record which Runner generation they came from, so a resumed
+	// import reuses only its own publication's committed placements.
+	ictx = withAcceptedPublicationGeneration(ictx, pub.Generation)
 	prec := &precedence{dl: dl, decided: map[string]precedenceVerdict{}}
 	if !manual {
 		ictx = context.WithValue(ictx, precedenceKey{}, prec)
@@ -296,6 +326,14 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 	for _, f := range result.Files {
 		outcomes[filepath.Clean(f.SourcePath)] = f
 	}
+	// A file this attempt did not select keeps the outcome an earlier
+	// attempt (or a person in Resolve) already recorded for it.
+	prior := map[string]sqlite.PublicationFile{}
+	if rows, err := s.db.ListPublicationFiles(ctx, pub.ID); err == nil {
+		for _, r := range rows {
+			prior[r.Path] = r
+		}
+	}
 	selectedSet := map[string]bool{}
 	for _, p := range selected {
 		selectedSet[p] = true
@@ -310,7 +348,13 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		verdict := prec.decided[abs]
 		pf.WantableID = verdict.wantable
 		o, attempted := outcomes[abs]
+		before, known := prior[f.Path]
 		switch {
+		case !selectedSet[abs] && known && before.Outcome != "pending":
+			pf = before
+			if pf.Outcome == "unresolved" && deliveryImportablePath(item.Kind, f.Path) && !isReleaseSample(f.Path) {
+				unresolved++
+			}
 		case !selectedSet[abs]:
 			switch {
 			case isReleaseSample(f.Path):
@@ -518,10 +562,10 @@ func (s *Service) checkPrecedence(ctx context.Context, item domain.MediaItem, co
 			cur = a
 		}
 	}
-	switch {
-	case cur.DownloadID == p.dl.ID:
+	switch cur.DownloadID {
+	case p.dl.ID:
 		return nil
-	case cur.DownloadID == 0:
+	case 0:
 		verdict.kind, verdict.reason = "unresolved", "no acquisition record for "+primary
 	default:
 		other, err := s.db.GetDownload(ctx, cur.DownloadID)
@@ -643,4 +687,109 @@ func (s *Service) publicationManaged(ctx context.Context, downloadID int64, path
 		}
 	}
 	return false
+}
+
+// ResolvePublicationFile is a person's decision on one unresolved file:
+// place it (import exactly that file), discard it (discarded{rejected}; the
+// bytes leave only through the per-file cleanup), or keep it as it is.
+func (s *Service) ResolvePublicationFile(ctx context.Context, downloadID, publicationID int64, relPath, action string) error {
+	pub, err := s.db.GetPublication(ctx, publicationID)
+	if err != nil {
+		return err
+	}
+	if pub.DownloadID != downloadID {
+		return ErrNotFound
+	}
+	files, err := s.db.ListPublicationFiles(ctx, pub.ID)
+	if err != nil {
+		return err
+	}
+	var file *sqlite.PublicationFile
+	for i := range files {
+		if files[i].Path == relPath {
+			file = &files[i]
+		}
+	}
+	if file == nil || (file.Outcome != "unresolved" && file.Outcome != "pending") {
+		return fmt.Errorf("%w: %q is not an unresolved file of this publication", ErrInvalidResolution, relPath)
+	}
+	unlock := s.lockDownload(downloadID)
+	defer unlock()
+	dl, err := s.db.GetDownload(ctx, downloadID)
+	if err != nil {
+		return err
+	}
+	switch action {
+	case "place":
+		item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
+		if err != nil {
+			return err
+		}
+		if !deliveryImportablePath(item.Kind, relPath) {
+			return fmt.Errorf("%w: only media of this item's kind can be placed; keep or discard %q", ErrInvalidResolution, relPath)
+		}
+		abs := filepath.Clean(filepath.Join(pub.Path, filepath.FromSlash(relPath)))
+		dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(),
+			Detail: "operator placed " + relPath + " from Resolve", Paths: []string{abs}})
+		if err := s.db.UpdateDownloadHandoff(ctx, dl); err != nil {
+			return err
+		}
+		if err := s.db.SetPublicationState(ctx, pub.ID, "discovered", ""); err != nil {
+			return err
+		}
+		var cfg ports.ClientConfig
+		if dl.ClientID != 0 {
+			if cfg, err = s.db.GetDownloadClient(ctx, dl.ClientID); err != nil {
+				return err
+			}
+		}
+		if !s.enqueuePublicationImportApproved(ctx, dl, cfg, pub.ID, true) {
+			return fmt.Errorf("import worker is unavailable or full; retry")
+		}
+		return nil
+	case "discard":
+		file.Outcome, file.DiscardReason, file.Reason = "discarded", "rejected", "discarded by an operator in Resolve"
+	case "keep":
+		file.Reason = "kept by an operator in Resolve"
+	default:
+		return fmt.Errorf("%w: unknown action %q", ErrInvalidResolution, action)
+	}
+	if err := s.db.SetPublicationFileOutcome(ctx, *file); err != nil {
+		return err
+	}
+	_ = s.db.AddHistory(ctx, "publication_file_resolved", dl.MediaItemID, dl.ReleaseTitle,
+		map[string]any{"publication": pub.Path, "file": relPath, "action": action})
+	return s.settleResolvedPublication(ctx, dl, pub)
+}
+
+// ErrInvalidResolution refuses a Resolve decision that does not apply.
+var ErrInvalidResolution = errors.New("invalid resolution")
+
+// settleResolvedPublication marks an import_failed publication imported once
+// no media file of it is left unresolved, and its completed row with it.
+func (s *Service) settleResolvedPublication(ctx context.Context, dl sqlite.Download, pub sqlite.Publication) error {
+	if pub.State != "import_failed" {
+		return nil
+	}
+	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
+	if err != nil {
+		return err
+	}
+	files, err := s.db.ListPublicationFiles(ctx, pub.ID)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if (f.Outcome == "unresolved" && f.Reason != "kept by an operator in Resolve" || f.Outcome == "pending") &&
+			deliveryImportablePath(item.Kind, f.Path) && !isReleaseSample(f.Path) {
+			return nil
+		}
+	}
+	if err := s.db.SetPublicationState(ctx, pub.ID, "imported", ""); err != nil {
+		return err
+	}
+	if pub.Kind == "completed" && dl.State == "failed" && dl.RunnerOutcome == ports.OutcomeCompleted {
+		s.advance(ctx, &dl, "imported", 1, "", stepImported, "every file of publication "+filepath.Base(pub.Path)+" is resolved")
+	}
+	return nil
 }
