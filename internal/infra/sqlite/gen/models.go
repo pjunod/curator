@@ -477,6 +477,16 @@ type NotifierDelivery struct {
 	UpdatedAt  int64
 }
 
+type PipelineTiming struct {
+	ID         int64
+	Transfer   string
+	DownloadID int64
+	Kind       string
+	StartedAt  int64
+	EndedAt    int64
+	Note       string
+}
+
 type PlurxWatched struct {
 	ID          int64
 	MediaItemID int64
