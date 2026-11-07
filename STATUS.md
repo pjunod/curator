@@ -1,5 +1,108 @@
 # Monarr — Project Status
 
+## Pipeline contract v2, M2: Curator reducer, publications, replacement grabs — 2026-11-07 · v0.39.0 (mobile 0.28.0)
+
+**Status:** branch `claude/pipeline-v2-m2-curator` (stacked on
+`claude/pipeline-v2-m0-curator`, M0 merged through 8c8af17) · owner: Claude
+(Opus builder) · pushed, **no PR** (by instruction), not merged, not deployed.
+Decision record: [ADR 0026](docs/adr/0026-pipeline-contract-v2.md).
+
+Built (plan M2.1-9, IMPL_CURATOR section 5):
+
+- **Migration 0072**: rebuilds `downloads` with `submitting`, `held`,
+  `notified` and the reducer columns (`runner_outcome` + reason/seq/cause/
+  blames/salvage/fetched, `provisional`, `deadline_at`, `state_entered_at`),
+  an immutability trigger on a final `runner_outcome`, and deadline triggers
+  on insert/state change/progress; new `publications`, `publication_files`,
+  `replacement_grabs`, `wantable_attempts` (+ triggers recording the current
+  attempt on every insert), `runner_history_cursors`. Data: parked and
+  superseded live rows become `failed` provisional (`parked: <reason>`); held
+  control rows become `held`; every v1 receipt becomes a `historical`
+  publication with the per-file outcomes it reached; terminal rows keep a
+  `runner_outcome`. Child tables survive the rebuild; a down migration exists.
+- **Reducer** (`reducer.go`): facts from SSE, queue, ordered history
+  (`since_seq`, cursor per incarnation, owned by the poll), `/deliveries`
+  (`include_accepted=true`) and request receipts; transfer-token match
+  (mismatch counted once per row/token); terminal recorded once with its
+  publication / replacement grab / blocklist / history in one transaction;
+  provisional `submit`/`lost` re-opened by any Runner fact; `held (stale)`
+  instead of a Curator `hold_expired`; continuity loss reconciles every
+  outstanding transfer by token.
+- **v1 adapter / publications** (`publications.go`): manifest from
+  `.runner-manifest.json`, else the v1 record; per-file outcomes
+  (`placed`, `discarded{superseded|duplicate|rejected}`, `unresolved`);
+  precedence by `wantable_attempts`; outbox rows written in the completing
+  transaction; manual approval honoured; Resolve (Place/Discard/Keep) via
+  `POST /queue/{id}/publications/{publicationId}/files/resolve`; historical
+  cohort frozen once at first start.
+- **Failure is the next grab**: `replacement_grabs` worker (5 s + kick):
+  movie/book search, episode single-release search (never a pack), season
+  planner only for episodes with no single release; only `blames_release`
+  blocklists and spends bytes; `failure_to_next_grab` ends when the worker
+  submits. Legacy clients' failures use the same worker.
+- nzbd adapter: failed maps to `failed`; facts on every event; history by
+  `(incarnation, since_seq)`.
+- `pipeline:overdue` judges `deadline_at` (health.go comment, warning text,
+  usage.md wording updated per the M0 review hand-off).
+- Activity (web): Held by Runner section, stale/provisional lines,
+  publication file list with Resolve. Mobile 0.28.0: badge labels for held,
+  held (stale), failed (provisional); a hold's message is not shown as an
+  error.
+
+Deleted (non-test, non-generated lines, vs the merged M0 head 8c8af17):
+3,078 removed, 5,016 added (604 of the added are migration 0072).
+Largest: `delivery.go` -1,369 (receipt discovery, lease/verify/ack/import
+scheduling, manifest re-verification), `delivery_cleanup.go` -614 (receipt
+outcome recording, sidecar staging, automatic cleanup scheduling and retry
+worker), `acquisition.go` -476 (`authoritativeRunnerObservation`, custody
+waits, admission-poll permits, ack/source locks), `delivery_lifecycle.go`
+-124, `runner_admission.go` -100 (admission-poll pacing), `nzbd.go` -70,
+`health.go` -63, `replacement_worker.go` -48 (cleanup gate),
+`download_control.go` -46 (control refusal matrix). Tests: -9,676 / +1,333
+(v1 delivery/receipt/park/admission-pacing tests deleted with their
+behaviour).
+
+Verified: `go build ./...`; `go vet` on touched packages; `go test` on
+acquisition, api, sqlite, nzbd, notify, pipeline, ports, cmd: all pass except
+the pre-existing root-only failure below; `make lint` (0 issues);
+web `tsc --noEmit` and `vitest run src/api.test.ts`; mobile `tsc --noEmit`
+and `vitest run src/queueState.test.ts src/device-build-script.test.ts`.
+
+Could not verify: `make test` (and its 86.0 coverage floor, at risk after
+deleting ~9.7k test lines), `make test-web`, `make test-e2e` were not run
+(fast lane only, by instruction); no browser check of the Activity changes
+(viewport rule in CLAUDE.md section 5 unverified for Resolve); no run against
+a real Runner (contract v2 fields are produced by Runner M1+; an older Runner
+exercises only the legacy mappings); migration 0072 not run on a copy of
+production data; not deployed to nuc3 or devices.
+`TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired` fails
+here because the sandbox runs as root (chmod 0500 does not block writes); it
+fails identically on the M0 branch.
+
+Decisions for Paul:
+
+- Legacy `ParkDownload` stays for non-Runner clients (season planner's
+  uncertain-submission fence and the torrent stall watchdog,
+  `season_stall.go`, which is not runner-only); IMPL section 10 lists parks as
+  deleted. Columns retire in M4.
+- Live publications are never deleted in M2 (per-file cleanup is M4);
+  historical ones not until their M7 review. Curator-cleanup on a historical
+  receipt is refused (409); Runner source cleanup is refused (409,
+  contract section 7).
+- Sidecars are left `unresolved` (no automatic sidecar import yet).
+- `submitting` is used only on the Runner grab path; `ListActiveDownloads`
+  still excludes imported rows.
+- Publication imports need the completed root's storage identity (an
+  inventory scan) as before.
+- Extra columns beyond IMPL: `publication_files.wantable_id`,
+  `publications.remote_path`.
+- `failure_to_next_grab` starts at the first search attempted (M0 semantics)
+  rather than at terminal receipt.
+- Placements made by a publication import record its Runner generation, so a
+  resumed import only reuses its own publication's committed placements.
+- Receipt "retry handoff" and Resolve now import the receipt's historical
+  publication; a receipt without one (impossible after cutover) is refused.
+
 ## Pipeline contract v2, M0: contract, timings, overdue check — 2026-11-07 · v0.38.15
 
 **Status:** [PR #94](https://github.com/pjunod/curator/pull/94) on
