@@ -703,7 +703,9 @@ func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportW
 		}
 	}
 	for _, t := range w.TimingEnds {
-		if _, err := tx.ExecContext(ctx, `UPDATE pipeline_timings SET ended_at=? WHERE kind=? AND transfer=? AND ended_at=0 AND ?>=started_at`, now, t.Kind, t.Transfer, now); err != nil {
+		// Same semantics as EndPipelineTiming: an end before the start (a
+		// backwards clock step) closes the sample at duration 0.
+		if _, err := tx.ExecContext(ctx, `UPDATE pipeline_timings SET ended_at=MAX(?,started_at) WHERE kind=? AND transfer=? AND ended_at=0`, now, t.Kind, t.Transfer); err != nil {
 			return err
 		}
 	}
