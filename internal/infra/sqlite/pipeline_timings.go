@@ -22,11 +22,12 @@ func (d *DB) StartPipelineTiming(ctx context.Context, kind, transfer string, dow
 }
 
 // EndPipelineTiming closes an open timing. A timing that was never started,
-// or is already closed, is left alone.
+// or is already closed, is left alone. An end before the start (a backwards
+// clock step) closes the sample at duration 0.
 func (d *DB) EndPipelineTiming(ctx context.Context, kind, transfer string, endedAt int64) error {
 	_, err := d.W.ExecContext(ctx,
 		`UPDATE pipeline_timings SET ended_at=MAX(?,started_at) WHERE kind=? AND transfer=? AND ended_at=0`,
-		endedAt, kind, transfer, endedAt)
+		endedAt, kind, transfer)
 	return err
 }
 
