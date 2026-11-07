@@ -158,12 +158,24 @@ BEGIN
     SELECT RAISE(ABORT, 'download generation key is immutable');
 END;
 
+-- The one post-insert UPDATE of a new row: its generation key and, unless
+-- the writer set them, its state's deadline (contract section 3.5). Kept in
+-- one trigger on purpose: a second AFTER INSERT trigger updating the row could
+-- fire completed_receipt_update before the generation key exists.
 CREATE TRIGGER download_generation_insert AFTER INSERT ON downloads
 BEGIN
     UPDATE downloads
        SET generation_key = CASE WHEN NEW.generation_key = ''
                                  THEN lower(hex(randomblob(16)))
-                                 ELSE NEW.generation_key END
+                                 ELSE NEW.generation_key END,
+           deadline_at = CASE
+               WHEN NEW.deadline_at != 0 OR NEW.state NOT IN ('grabbed','submitting','downloading','downloaded','importing') THEN NEW.deadline_at
+               ELSE CAST(strftime('%s','now') AS INTEGER) * 1000 + CASE NEW.state
+                   WHEN 'downloading' THEN CASE WHEN NEW.protocol = 'torrent' THEN 86400000 ELSE 1800000 END
+                   WHEN 'downloaded' THEN 21600000 WHEN 'importing' THEN 21600000
+                   ELSE 600000 END END,
+           state_entered_at = CASE WHEN NEW.state_entered_at != 0 THEN NEW.state_entered_at
+                                   ELSE CAST(strftime('%s','now') AS INTEGER) * 1000 END
      WHERE id = NEW.id;
     INSERT INTO completed_receipts
         (download_id, added_at, path, client_id, title, state, protocol,
@@ -204,19 +216,9 @@ END;
 
 -- deadline_at is written on every state entry (contract section 3.5). A
 -- writer that knows better (the reducer: a hold's own deadline) sets it in the
--- same UPDATE; otherwise these triggers give the state its default, and a
--- download whose progress moves gets its allowance again.
-CREATE TRIGGER downloads_deadline_on_insert AFTER INSERT ON downloads
-WHEN NEW.deadline_at = 0 AND NEW.state IN ('grabbed','submitting','downloading','downloaded','importing')
-BEGIN
-    UPDATE downloads SET deadline_at = CAST(strftime('%s','now') AS INTEGER) * 1000 + CASE NEW.state
-        WHEN 'downloading' THEN CASE WHEN NEW.protocol = 'torrent' THEN 86400000 ELSE 1800000 END
-        WHEN 'downloaded' THEN 21600000 WHEN 'importing' THEN 21600000
-        ELSE 600000 END,
-        state_entered_at = CAST(strftime('%s','now') AS INTEGER) * 1000
-     WHERE id = NEW.id;
-END;
-
+-- same UPDATE; otherwise these triggers (and download_generation_insert, for
+-- a new row) give the state its default, and a download whose progress moves
+-- gets its allowance again.
 CREATE TRIGGER downloads_deadline_on_state AFTER UPDATE OF state ON downloads
 WHEN NEW.state != OLD.state AND NEW.deadline_at = OLD.deadline_at
 BEGIN

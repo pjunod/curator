@@ -141,6 +141,18 @@ func TestMigration0072(t *testing.T) {
 	if _, ok := attempts["episode:1:1:1"]; ok {
 		t.Fatal("a failed (parked) row was seeded as current")
 	}
+	// A row inserted after the migration gets its state's deadline and exactly
+	// one completed receipt, carrying its generation key: the deadline is set
+	// by the same post-insert UPDATE that assigns the key.
+	exec(`INSERT INTO downloads(id,media_item_id,protocol,release_title,state,import_path,added_at,updated_at) VALUES(20,1,'usenet','fresh','downloading','/completed/fresh',20,20)`)
+	if dl := get(20); dl.DeadlineAt.IsZero() || dl.GenerationKey == "" {
+		t.Fatalf("fresh row deadline %v generation %q", dl.DeadlineAt, dl.GenerationKey)
+	}
+	var receipts, blank int
+	_ = db.R.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(generation_key=''),0) FROM completed_receipts WHERE download_id=20`).Scan(&receipts, &blank)
+	if receipts != 1 || blank != 0 {
+		t.Fatalf("fresh row has %d completed receipts (%d without a generation key), want one with its key", receipts, blank)
+	}
 	// A provisional terminal may be re-opened; a final one may not change.
 	if _, err := db.W.ExecContext(ctx, `UPDATE downloads SET runner_outcome='' WHERE id=1`); err != nil {
 		t.Fatalf("provisional terminal could not re-open: %v", err)
