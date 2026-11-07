@@ -16,6 +16,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/filename"
 	"github.com/pjunod/monarr/internal/domain/language"
@@ -682,6 +683,9 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	_ = s.db.AddHistory(ctx, "imported", item.ID, dl.ReleaseTitle,
 		map[string]any{"files": result.Imported, "upgrade": result.Upgraded})
 	s.publish(importedEvent(item, dl, result))
+	// import_to_cinema_visible starts here and has no end until pipeline M5
+	// reads Cinema's result back; until then it is reported as not measured.
+	s.timings.Start(ctx, pipeline.ImportToCinemaVisible, pipeline.Key(dl.Transfer, dl.ID), dl.ID)
 	s.log.Info("imported", "item", item.Title, "files", result.Imported,
 		"skipped", len(result.Skipped()))
 	return result, nil

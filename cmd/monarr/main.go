@@ -51,6 +51,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/app/maintenance"
 	appnotify "github.com/pjunod/monarr/internal/app/notify"
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/app/recommendation"
 	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/buildinfo"
@@ -210,6 +211,9 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	clientFactory := downloadClientForConfig
 	acq := acquisition.New(db, b, log, indexerFactory, clientFactory)
 	acq.SetAdmission(admission)
+	// Pipeline seam timings and the overdue check (pipeline contract v2, M0).
+	pipe := pipeline.New(db)
+	acq.SetTimings(pipe)
 	// The data plane gets its own registry and its own workers. Cancel ctx to
 	// stop them; WaitImporters drains, in the same shape the jobs queue uses.
 	inflight := transfers.New()
@@ -348,6 +352,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// and a different one from a client that stopped answering; each now has
 	// its own line, and neither can mask the other.
 	reg.Register("completed-folders", acq.CompletedHealth)
+	reg.Register("pipeline:overdue", pipe.OverdueCheck)
 	reg.Register("imports", func(ctx context.Context) health.Result {
 		age, running := acq.StalledImports()
 		switch {
@@ -604,6 +609,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		DB:                  db,
 		Library:             lib,
 		Acquisition:         acq,
+		Pipeline:            pipe,
 		Discover:            browse,
 		Recommendations:     recommendations,
 		RecommendationModel: encoder,

@@ -18,9 +18,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/decision"
@@ -193,6 +195,12 @@ type Service struct {
 	// importers.go for why they are not on the poll goroutine.
 	importerFields
 	admission ports.WorkAdmission
+
+	// timings records how long the pipeline's seams take (pipeline M0); nil
+	// records nothing. factMismatches counts runner statuses that carried a
+	// transfer token other than the row's own.
+	timings        *pipeline.Timings
+	factMismatches atomic.Int64
 }
 
 type runnerAdmissionPollPermitKey struct{}
@@ -207,6 +215,27 @@ func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, ni IndexerFactory, nc Clie
 
 // noteContact records the outcome of one exchange with a client.
 func (s *Service) SetAdmission(a ports.WorkAdmission) { s.admission = a }
+
+// SetTimings attaches the pipeline timing recorder. Call before Run.
+func (s *Service) SetTimings(t *pipeline.Timings) { s.timings = t }
+
+// FactMismatches is the number of runner statuses seen carrying a transfer
+// token that is not the download row's own (monarr_runner_fact_mismatch_total).
+func (s *Service) FactMismatches() int64 { return s.factMismatches.Load() }
+
+// noteFactMismatch counts statuses that name this row's handle under another
+// transfer token. Such a status is never applied to the row.
+func (s *Service) noteFactMismatch(dl sqlite.Download, statuses []ports.DownloadStatus) {
+	if dl.Handle == "" || dl.Transfer == "" {
+		return
+	}
+	for _, st := range statuses {
+		if string(st.Handle) == dl.Handle && st.Transfer != "" && st.Transfer != dl.Transfer {
+			s.factMismatches.Add(1)
+			return
+		}
+	}
+}
 
 func (s *Service) noteContact(clientID int64, err error) {
 	s.contactMu.Lock()
@@ -1601,6 +1630,7 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			}
 			st, ok := matchStatus(dl, statuses)
 			if !ok {
+				s.noteFactMismatch(dl, statuses)
 				if dl.ExactTransferCorrelation && dl.SubmissionPhase == "submitted" && dl.Handle == "" && dl.State == "grabbed" && time.Since(dl.UpdatedAt) >= manualAdmissionBlockedWarning {
 					warning := "Accepted download has not appeared with its exact transfer token for at least 30 minutes; review the client before retrying."
 					_ = s.db.SetExactTransferCorrelationWarning(ctx, dl.ID, dl.GenerationKey, dl.Transfer, warning)
@@ -2257,11 +2287,18 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 		return
 	}
 
+	// failure_to_next_grab (pipeline M0): the clock starts where a replacement
+	// is actually attempted and stops when it has been submitted (movie/book)
+	// or handed to the season planner (series).
+	timingKey := pipeline.Key(dl.Transfer, dl.ID)
 	if item, e := s.db.GetMediaItemFull(ctx, dl.MediaItemID); e == nil && item.Kind == domain.KindSeries {
 		if dl.PlanID != 0 {
 			_, _ = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET replan_pending=1 WHERE id=?`, dl.PlanID)
 		}
-		_ = s.enqueueSeason(ctx, dl.MediaItemID, dl.CopyID, dl.Season, seasonTriggerFailedAcquisition, true)
+		s.timings.Start(ctx, pipeline.FailureToNextGrab, timingKey, dl.ID)
+		if err := s.enqueueSeason(ctx, dl.MediaItemID, dl.CopyID, dl.Season, seasonTriggerFailedAcquisition, true); err == nil {
+			s.timings.End(ctx, pipeline.FailureToNextGrab, timingKey)
+		}
 		// The season comparison leaves a capped episode out without a word;
 		// say so here, where the failure that spent the budget is known.
 		// Only on the failure that crossed the line, so a capped season does
@@ -2284,6 +2321,7 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 	if err != nil || len(enabled) == 0 {
 		return
 	}
+	s.timings.Start(ctx, pipeline.FailureToNextGrab, timingKey, dl.ID)
 	for _, idStr := range dl.WantableIDs {
 		w, err := s.wantableFromID(ctx, idStr)
 		if err != nil {
@@ -2301,8 +2339,11 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 					"window_hours": int(reGrabWindow.Hours())})
 			continue
 		}
-		if _, err := s.searchAndGrabBest(ctx, w, enabled); err != nil {
+		tally, err := s.searchAndGrabBest(ctx, w, enabled)
+		if err != nil {
 			s.log.Warn("re-search failed", "wantable", idStr, "err", err)
+		} else if tally.Grabbed != "" {
+			s.timings.End(ctx, pipeline.FailureToNextGrab, timingKey)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -67,6 +68,9 @@ func (s *Service) recordDownloaded(ctx context.Context, dl *sqlite.Download, cfg
 	// "(poll)" is how an operator sees that push is actually working —
 	// otherwise a dead subscription and a healthy one produce identical
 	// traces, just 30 seconds apart, and nobody notices for weeks.
+	// runner_done_to_import (pipeline M0) starts the first time the client is
+	// seen to have finished this row; a repeat observation does not move it.
+	s.timings.Start(ctx, pipeline.RunnerDoneToImport, pipeline.Key(dl.Transfer, dl.ID), dl.ID)
 	s.advance(ctx, dl, "downloaded", 1, "", stepDownloaded, traced(detail, source))
 }
 
@@ -215,6 +219,7 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	} else {
 		s.advance(ctx, &dl, "imported", 1, "", stepImported, detail)
 	}
+	s.timings.End(ctx, pipeline.RunnerDoneToImport, pipeline.Key(dl.Transfer, dl.ID))
 	// The library has the files now, so the client's copy is just occupying a
 	// disk. Inline rather than left to the hourly sweep: a night of 60 GB
 	// remuxes is several hundred gigabytes of "we will get to it".
