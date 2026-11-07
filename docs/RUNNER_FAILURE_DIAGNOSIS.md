@@ -1,6 +1,6 @@
 # Runner failures — Monster downloads and retained media
 
-**Status:** diagnosed, not fixed or deployed · **Inspected:** 2026-09-30
+**Status:** fixed in Runner PR #247 (merged 2026-10-01, `a461515`); the text below is the original diagnosis, kept as evidence · **Inspected:** 2026-09-30
 
 Companion to [usage](usage.md#completed-folders--accounting-survives-an-empty-queue).
 The [root-cause and fix plan](RUNNER_FAILURE_FIX_PLAN.md) turns this evidence

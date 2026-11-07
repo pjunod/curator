@@ -1,6 +1,6 @@
 # Download failures — root causes and proposed recovery fixes
 
-**Status:** adversarially reviewed proposal, not implemented or deployed · **Written:** 2026-09-30
+**Status:** implemented in Runner PR #247 (merged 2026-10-01, `a461515`); the text below is the original reviewed proposal · **Written:** 2026-09-30
 
 This is the implementation proposal for the Monster failures and retained
 download backlog. Read [the incident evidence](RUNNER_FAILURE_DIAGNOSIS.md)

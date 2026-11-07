@@ -1,5 +1,10 @@
 # Integration — Monarr's seams with nzbd and plurx, and how to prove they work
 
+> **Being replaced by** [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) (pipeline contract v2,
+> 2026-11-07). The contract wins wherever it disagrees with this page; the seams
+> described below are rewritten milestone by milestone and this page is retired
+> when the last one lands.
+
 Companion to [plan-integration.md](plan-integration.md) (the master plan and
 why each seam exists) and [settings.md](settings.md) (every field) — this is
 *what each seam does, where you look at it, and the exact command that proves
