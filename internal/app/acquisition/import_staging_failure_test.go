@@ -3,10 +3,11 @@ package acquisition
 import (
 	"context"
 	"errors"
-	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 func TestJournaledStageFailuresKeepOwnedBytesForReview(t *testing.T) {

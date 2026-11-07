@@ -242,7 +242,7 @@ func (s *Service) processReplacementOperation(ctx context.Context, op sqlite.Rep
 	}
 	for _, dl := range rows {
 		switch dl.State {
-		case "grabbed", "downloading", "downloaded", "awaiting_import", "importing":
+		case "grabbed", "submitting", "downloading", "held", "downloaded", "awaiting_import", "importing":
 			return s.db.TransitionReplacementOperation(ctx, op.ID, "replacing", "replacement download is still active")
 		case "failed":
 			blocked, reason, cleanupErr := s.replacementAttemptCleanupBlock(ctx, dl)
@@ -428,52 +428,10 @@ func (s *Service) finalReplacementPlacementCheck(ctx context.Context, op sqlite.
 // closed. A removed payload and committed usable replacement are handled by
 // their own durable receipts before this gate.
 func (s *Service) replacementAttemptCleanupBlock(ctx context.Context, dl sqlite.Download) (bool, string, error) {
-	if !dl.CleanupPending && (!dl.DeliveryExpected || dl.PayloadRemoved) {
-		return false, "", nil
-	}
-	if dl.Transfer == "" {
-		return true, "failed replacement attempt has no exact Runner transfer token", nil
-	}
-	cfg, err := s.db.GetDownloadClient(ctx, dl.ClientID)
-	if err != nil {
-		return true, "could not verify Runner cleanup or Keep decision: " + err.Error(), nil
-	}
-	client, ok := s.newClient(cfg).(ports.RequestAdmissionProtocol)
-	if !ok {
-		return true, "failed replacement attempt has no authoritative Runner admission endpoint", nil
-	}
-	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	admission, found, err := client.GetRequestAdmission(lookupCtx, dl.Transfer)
-	cancel()
-	if err != nil || !found {
-		if err == nil {
-			err = fmt.Errorf("admission receipt is unavailable")
-		}
-		return true, "could not verify current Runner cleanup or Keep decision: " + err.Error(), nil
-	}
-	if admission.ProtocolVersion != 1 || admission.RequestToken != dl.Transfer || admission.JobID == "" ||
-		(admission.RunnerInstanceID != dl.RunnerInstanceID && dl.RunnerInstanceID != "") ||
-		(admission.Generation != dl.RunnerAdmissionGeneration && dl.RunnerAdmissionGeneration != "") {
-		return true, "Runner admission no longer matches the pinned failed attempt", nil
-	}
-	if err = s.db.BindRunnerAdmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer, admission.RunnerInstanceID, admission.Generation); err != nil {
-		return true, "Runner admission identity changed; failed attempt remains protected", nil
-	}
-	if admission.JobID != dl.Handle {
-		return true, "Runner admission job handle changed; failed attempt remains protected", nil
-	}
-	// Keep is a live Runner decision. The immutable publication receipt may
-	// capture an earlier value, so only this exact admission response can grant
-	// the exception that retains the old bytes while allowing replacement.
-	if admission.KeepSourceOnFailure || admission.CustodyState == "kept_by_user" {
-		return false, "", nil
-	}
-	if admission.CustodyState == "curator" {
-		return true, "Runner transferred the failed payload to Curator; selected import and cleanup must settle first", nil
-	}
-	if runnerFailureNeedsCleanupBeforeReplacement(admission) {
-		return true, "failed replacement attempt still has required payload cleanup pending", nil
-	}
+	// Pipeline v2 (contract section 3.3, item 4): no custody wait. Runner's
+	// disposal of a failed attempt's bytes is Runner's; the next attempt
+	// publishes under a different job id and cannot collide, so the operation
+	// advances with the failed bytes retained.
 	return false, "", nil
 }
 
@@ -959,7 +917,7 @@ func (s *Service) searchAndAdmitReplacement(ctx context.Context, op sqlite.Repla
 	}
 	failed := make([]sqlite.Download, 0)
 	for _, row := range rows {
-		if row.State == "failed" && !row.CleanupPending && (!row.DeliveryExpected || row.PayloadRemoved) {
+		if row.State == "failed" {
 			failed = append(failed, row)
 		}
 	}

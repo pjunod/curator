@@ -204,6 +204,14 @@ func (s *Service) notInFlight(ctx context.Context, wanted []domain.Wantable) []d
 		return wanted
 	}
 	inFlight := map[string]bool{}
+	// A failed download's replacement grab that has not run yet owns its
+	// wantables: the wanted pass must not grab them a second time. The grab
+	// worker's own search excludes its row's grab.
+	if pending, err := s.db.PendingReplacementWantablesExcept(ctx, replacementGrabOwner(ctx)); err == nil {
+		for id := range pending {
+			inFlight[id] = true
+		}
+	}
 	for _, dl := range active {
 		if dl.State == "failed" && dl.CleanupPending {
 			continue

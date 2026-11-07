@@ -139,8 +139,11 @@ func TestStartupRefusesADatabaseMissingAColumnTheCodeWritesTo(t *testing.T) {
 	// Migration68 added an index referencing this column. Remove that
 	// dependent object so this fixture still models a missing column rather
 	// than SQLite correctly refusing invalid DDL.
-	if _, err := db.W.ExecContext(ctx, `DROP INDEX downloads_runner_mode_admission`); err != nil {
-		t.Fatal(err)
+	// Migration 72 added another (downloads_client_transfer).
+	for _, index := range []string{"downloads_runner_mode_admission", "downloads_client_transfer"} {
+		if _, err := db.W.ExecContext(ctx, `DROP INDEX `+index); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := db.W.ExecContext(ctx,
 		`ALTER TABLE downloads DROP COLUMN transfer`); err != nil {

@@ -123,6 +123,17 @@ type Download struct {
 	RunnerSubmissionBlockedAt     int64
 	ProviderRetryAfter            int64
 	ExactTransferCorrelation      int64
+	RunnerOutcome                 string
+	RunnerOutcomeAt               int64
+	RunnerOutcomeSeq              int64
+	RunnerOutcomeReason           string
+	RunnerFetchCause              string
+	RunnerBlamesRelease           int64
+	RunnerSalvage                 string
+	RunnerFetchedJson             string
+	Provisional                   int64
+	DeadlineAt                    int64
+	StateEnteredAt                int64
 }
 
 type DownloadClient struct {
@@ -477,6 +488,16 @@ type NotifierDelivery struct {
 	UpdatedAt  int64
 }
 
+type PipelineTiming struct {
+	ID         int64
+	Transfer   string
+	DownloadID int64
+	Kind       string
+	StartedAt  int64
+	EndedAt    int64
+	Note       string
+}
+
 type PlurxWatched struct {
 	ID          int64
 	MediaItemID int64
@@ -485,6 +506,40 @@ type PlurxWatched struct {
 	Episode     int64
 	WatchedAt   int64
 	CreatedAt   int64
+}
+
+type Publication struct {
+	ID                int64
+	DownloadID        sql.NullInt64
+	Generation        string
+	Kind              string
+	Path              string
+	RemotePath        string
+	ManifestJson      string
+	ManifestSource    string
+	CrossVolume       int64
+	State             string
+	Cohort            string
+	CleanupApprovedAt int64
+	Error             string
+	DiscoveredAt      int64
+	DeadlineAt        int64
+	UpdatedAt         int64
+}
+
+type PublicationFile struct {
+	PublicationID int64
+	Path          string
+	Bytes         int64
+	Sha256        string
+	WantableID    string
+	Outcome       string
+	DiscardReason string
+	LibraryPath   string
+	PlacedSha256  string
+	Reason        string
+	RemovedAt     int64
+	UpdatedAt     int64
 }
 
 type QualityProfile struct {
@@ -550,6 +605,16 @@ type ReplacementFileObservation struct {
 	CreatedAt            int64
 	UpdatedAt            int64
 	FilesystemGeneration string
+}
+
+type ReplacementGrab struct {
+	DownloadID  int64
+	WantableIds string
+	CreatedAt   int64
+	AttemptedAt int64
+	Attempts    int64
+	Result      string
+	NextAt      int64
 }
 
 type ReplacementOperation struct {
@@ -786,6 +851,15 @@ type RunnerDeliverySourceRefresh struct {
 	ProviderRetryAfter int64
 }
 
+type RunnerHistoryCursor struct {
+	ClientID       int64
+	Incarnation    string
+	SinceSeq       int64
+	HeadSeq        int64
+	RetainedMinSeq int64
+	UpdatedAt      int64
+}
+
 type ScheduledTask struct {
 	Name            string
 	IntervalSeconds int64
@@ -815,6 +889,13 @@ type StorageChangeAcceptance struct {
 type StorageChangeReviewFence struct {
 	GenerationKey string
 	Root          string
+}
+
+type WantableAttempt struct {
+	WantableID string
+	DownloadID int64
+	DecidedAt  int64
+	DecidedBy  string
 }
 
 type WantedSearchRun struct {

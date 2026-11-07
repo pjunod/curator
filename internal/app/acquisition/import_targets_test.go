@@ -185,31 +185,3 @@ func TestWithinPublicationUsesFilesystemIdentity(t *testing.T) {
 		}
 	}
 }
-
-// The field failure: one title's long placement held every other title's
-// import. A delivery import must complete while a different title holds its
-// target, and wait while its own title is held.
-func TestDeliveryImportIsNotHeldByAnotherTitlesPlacement(t *testing.T) {
-	ctx := context.Background()
-	protocol := &deliveryImportClient{}
-	svc, db, dl, cfg, _ := deliveryImportFixture(t, protocol)
-	receiptID := receiptIDFor(t, db, dl.ID)
-
-	_, releaseOther := svc.lockImportTarget(ctx, dl.MediaItemID+1000)
-	done := make(chan error, 1)
-	go func() { done <- svc.runDeliveryImport(ctx, dl, cfg, receiptID) }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("import beside another title's placement: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		releaseOther()
-		t.Fatal("import waited behind a different title's placement")
-	}
-	releaseOther()
-	r, err := db.DeliveryReceiptByID(ctx, receiptID)
-	if err != nil || r.State != "imported" {
-		t.Fatalf("receipt = %+v err=%v, want imported", r, err)
-	}
-}

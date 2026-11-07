@@ -278,7 +278,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		if err != nil {
 			return ImportResult{}, err
 		}
-		if fresh.Superseded || strings.HasPrefix(fresh.ParkedReason, "operator cancellation") {
+		if fresh.Superseded || operatorCancelled(&fresh) {
 			return ImportResult{}, fmt.Errorf("original custody was cancelled or superseded; automatic publication prohibited")
 		}
 		// The lock taken above is this title's; a row that now names another
@@ -679,6 +679,11 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		return result, fmt.Errorf("%w from %s — %s", ErrNoFilesImported, savePath, result.reasons(5))
 	}
 
+	if publicationImport(ctx) {
+		// A publication import writes its history and its notification in
+		// its own completing transaction (pipeline v2, contract section 3.4).
+		return result, nil
+	}
 	_ = s.db.AddHistory(ctx, "imported", item.ID, dl.ReleaseTitle,
 		map[string]any{"files": result.Imported, "upgrade": result.Upgraded})
 	s.publish(importedEvent(item, dl, result))
@@ -957,6 +962,9 @@ func importLanguages(releaseTitle, src string) []string {
 
 func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
 	scope.Manual = manual
+	if err := s.checkPrecedence(ctx, item, scope.CopyID, src, 0, nil, nil); err != nil {
+		return placement{}, err
+	}
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return placement{}, err
@@ -1046,6 +1054,9 @@ func (s *Service) planBookImport(ctx context.Context, item domain.MediaItem, sco
 
 func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, manual bool, part, total int, plan *bookImportPlan) (placement, error) {
 	scope.Manual = manual
+	if err := s.checkPrecedence(ctx, item, scope.CopyID, src, 0, nil, nil); err != nil {
+		return placement{}, err
+	}
 	if plan != nil {
 		scope.DeferCleanup = true
 		base := naming.BookFileName(item.Author, item.Title)
@@ -1120,6 +1131,21 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		return placement{}, importPolicyRefusalf("cannot determine episodes from %q", filepath.Base(src))
 	}
 
+	// Precedence first (pipeline v2, contract section 3.4): a file that is
+	// not the current attempt's for its episodes is superseded or unresolved
+	// whatever its quality would say.
+	if _, ok := ctx.Value(precedenceKey{}).(*precedence); ok {
+		var known []int64
+		for _, epNum := range eps {
+			if id, err := s.db.GetEpisodeID(ctx, item.ID, season, epNum); err == nil {
+				known = append(known, id)
+			}
+		}
+		if err := s.checkPrecedence(ctx, item, scope.CopyID, src, season, eps, known); err != nil {
+			return placement{}, err
+		}
+	}
+
 	// Resolve episode ids + titles; per-file upgrade check against the
 	// WORST current quality among covered episodes.
 	var epIDs []int64
@@ -1191,6 +1217,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	if len(epIDs) == 0 {
 		return placement{}, importPolicyRefusalf("no known episodes for S%02d %v", season, eps)
 	}
+
 	upgrade := !manual && worst != nil
 	if !missing && worst != nil {
 		langs := importLanguages(releaseTitle, src)

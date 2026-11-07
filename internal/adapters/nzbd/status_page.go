@@ -17,27 +17,48 @@ type statusQueue struct {
 	Jobs []job `json:"jobs"`
 }
 type statusHistory struct {
-	Entries []historyEntry `json:"entries"`
+	Entries        []historyEntry `json:"entries"`
+	Incarnation    string         `json:"incarnation"`
+	HeadSeq        int64          `json:"head_seq"`
+	RetainedMinSeq int64          `json:"retained_min_seq"`
 }
 type statusStream interface{ readStatusJSON(io.Reader) error }
 
 func (p *statusQueue) readStatusJSON(body io.Reader) error {
-	rows, err := readStatusPage[job](body, "jobs", 10000)
+	rows, _, err := readStatusPage[job](body, "jobs", 10000)
 	p.Jobs = rows
 	return err
 }
 func (p *statusHistory) readStatusJSON(body io.Reader) error {
-	rows, err := readStatusPage[historyEntry](body, "entries", 100)
+	rows, meta, err := readStatusPage[historyEntry](body, "entries", 100)
 	p.Entries = rows
+	if err == nil {
+		// The history continuity fields (contract section 2.5); absent on a
+		// Runner older than contract v2, which reads as incarnation "".
+		for key, dst := range map[string]any{"incarnation": &p.Incarnation, "head_seq": &p.HeadSeq, "retained_min_seq": &p.RetainedMinSeq} {
+			if raw, ok := meta[key]; ok && string(raw) != "null" {
+				if e := json.Unmarshal(raw, dst); e != nil {
+					return fmt.Errorf("status response %s: %w", key, e)
+				}
+			}
+		}
+	}
 	return err
 }
 
-func readStatusPage[T any](body io.Reader, collection string, limit int) ([]T, error) {
+// statusPageMeta are the top-level scalar fields a status page may carry
+// beside its collection.
+var statusPageMeta = map[string]bool{"incarnation": true, "head_seq": true, "retained_min_seq": true}
+
+func readStatusPage[T any](body io.Reader, collection string, limit int) ([]T, map[string]json.RawMessage, error) {
 	r := bufio.NewReader(body)
 	rows := []T{}
 	remaining := statusMetadataBudget
 	found := false
-	_, err := statusObject(r, func(name string) (json.RawMessage, error) {
+	meta, err := statusObject(r, func(name string) (json.RawMessage, error) {
+		if statusPageMeta[name] {
+			return statusValue(r)
+		}
 		if name != collection {
 			return discardStatusValue(r)
 		}
@@ -65,7 +86,10 @@ func readStatusPage[T any](body io.Reader, collection string, limit int) ([]T, e
 						return nil, err
 					}
 					return json.Marshal(counts)
-				case "kind", "torrent_role", "id", "job", "name", "status", "size_bytes", "downloaded_bytes", "pp_done", "ready", "stages", "control", "final_dir", "seq":
+				case "kind", "torrent_role", "id", "job", "name", "status", "size_bytes", "downloaded_bytes", "pp_done", "ready", "stages", "control", "final_dir", "seq",
+					// pipeline contract v2: the projected status and the typed terminal.
+					"status_projected", "transfer", "outcome", "reason", "fetch_cause", "stage", "message", "blames_release",
+					"salvage", "keep_on_failure", "fetched", "publication":
 					return statusValue(r)
 				default:
 					return discardStatusValue(r)
@@ -91,18 +115,18 @@ func readStatusPage[T any](body io.Reader, collection string, limit int) ([]T, e
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("status response has no %s array", collection)
+		return nil, nil, fmt.Errorf("status response has no %s array", collection)
 	}
 	if _, err := jsonNext(r); err != io.EOF {
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return nil, fmt.Errorf("trailing data after status response")
+		return nil, nil, fmt.Errorf("trailing data after status response")
 	}
-	return rows, nil
+	return rows, meta, nil
 }
 
 func statusValue(r *bufio.Reader) (json.RawMessage, error) {
@@ -233,6 +257,14 @@ func statusArray(r *bufio.Reader, limit int, element func() error) error {
 	}
 }
 
+// keptStatusParams are the history/queue params Curator reads; the rest are
+// drained unread.
+var keptStatusParams = map[string]bool{
+	TransferParam: true, "*Control:v1": true, "Failure:Files": true,
+	"Delivery:Path": true, "Delivery:Generation": true, "Delivery:ManifestDigest": true,
+	"Failure:Reason": true, "Failure:FetchCause": true, "Failure:BlamesRelease": true, "Failure:Salvage": true,
+}
+
 func statusParams(r *bufio.Reader) (json.RawMessage, error) {
 	pairs := [][2]string{}
 	seen := map[string]bool{}
@@ -251,7 +283,7 @@ func statusParams(r *bufio.Reader) (json.RawMessage, error) {
 		if err := jsonPunctuation(r, ','); err != nil {
 			return err
 		}
-		keep := name == TransferParam || name == "*Control:v1" || name == "Failure:Files"
+		keep := keptStatusParams[name]
 		if keep {
 			if seen[name] {
 				return fmt.Errorf("duplicate status parameter %s", name)

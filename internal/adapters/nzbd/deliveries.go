@@ -47,6 +47,7 @@ type runnerDeliveryWire struct {
 	FileOutcomes          []ports.RunnerFileOutcome    `json:"fileOutcomes,omitempty"`
 	ReadyAt               json.Number                  `json:"readyAt"`
 	SourceCleanup         json.RawMessage              `json:"sourceCleanup,omitempty"`
+	Kind                  string                       `json:"kind,omitempty"`
 }
 
 type runnerRequestAdmissionWire struct {
@@ -65,6 +66,10 @@ type runnerRequestAdmissionWire struct {
 	CustodyState        string `json:"custodyState,omitempty"`
 	KeepSourceOnFailure bool   `json:"keepSourceOnFailure,omitempty"`
 	SourceCleanupStatus string `json:"sourceCleanupStatus,omitempty"`
+	FailureReason       string `json:"failureReason,omitempty"`
+	FetchCause          string `json:"fetchCause,omitempty"`
+	BlamesRelease       *bool  `json:"blamesRelease,omitempty"`
+	Salvage             string `json:"salvage,omitempty"`
 }
 
 func (w runnerRequestAdmissionWire) portValue() ports.RequestAdmission {
@@ -77,6 +82,7 @@ func (w runnerRequestAdmissionWire) portValue() ports.RequestAdmission {
 		FailureStage: w.FailureStage, FailureCause: w.FailureCause,
 		CustodyState: w.CustodyState, KeepSourceOnFailure: w.KeepSourceOnFailure,
 		SourceCleanupStatus: w.SourceCleanupStatus,
+		FailureReason: w.FailureReason, FetchCause: w.FetchCause, BlamesRelease: w.BlamesRelease, Salvage: w.Salvage,
 	}
 }
 
@@ -146,7 +152,7 @@ func convertRunnerDelivery(d runnerDeliveryWire) (ports.RunnerDelivery, error) {
 	if err := validateRunnerEvidence(d.RunnerStages, d.SourceCopies, d.LifecycleTiming); err != nil {
 		return ports.RunnerDelivery{}, err
 	}
-	return ports.RunnerDelivery{RunnerStages: d.RunnerStages, SourceCopies: d.SourceCopies, LifecycleTiming: d.LifecycleTiming, ProtocolVersion: 1, Sequence: d.Sequence, DeliveryID: d.DeliveryID, PublicationGeneration: d.PublicationGeneration, SourceArtifactID: d.SourceArtifactID, SourceGeneration: d.SourceGeneration, ArtifactID: d.ArtifactID, JobID: strconv.FormatUint(uint64(d.JobID), 10), RequestToken: d.RequestToken, RunnerInstanceID: d.RunnerInstanceID, PublicationPath: d.PublicationPath, ManifestDigest: d.ManifestDigest, Files: d.Files, TerminalOutcome: d.TerminalOutcome, FailureStage: d.FailureStage, FailureCause: d.FailureCause, KeepSourceOnFailure: d.KeepSourceOnFailure, FileOutcomes: d.FileOutcomes, ReadyAt: time.Unix(whole, nanos).UTC(), SourceCleanup: d.SourceCleanup}, nil
+	return ports.RunnerDelivery{RunnerStages: d.RunnerStages, SourceCopies: d.SourceCopies, LifecycleTiming: d.LifecycleTiming, ProtocolVersion: 1, Sequence: d.Sequence, DeliveryID: d.DeliveryID, PublicationGeneration: d.PublicationGeneration, SourceArtifactID: d.SourceArtifactID, SourceGeneration: d.SourceGeneration, ArtifactID: d.ArtifactID, JobID: strconv.FormatUint(uint64(d.JobID), 10), RequestToken: d.RequestToken, RunnerInstanceID: d.RunnerInstanceID, PublicationPath: d.PublicationPath, ManifestDigest: d.ManifestDigest, Files: d.Files, TerminalOutcome: d.TerminalOutcome, FailureStage: d.FailureStage, FailureCause: d.FailureCause, KeepSourceOnFailure: d.KeepSourceOnFailure, FileOutcomes: d.FileOutcomes, ReadyAt: time.Unix(whole, nanos).UTC(), SourceCleanup: d.SourceCleanup, Kind: d.Kind}, nil
 }
 
 // AcceptDelivery implements ports.DeliveryProtocol. Repeating the same

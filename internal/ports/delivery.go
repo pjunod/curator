@@ -54,6 +54,8 @@ type RunnerDelivery struct {
 	FileOutcomes          []RunnerFileOutcome    `json:"fileOutcomes,omitempty"`
 	ReadyAt               time.Time              `json:"readyAt"`
 	SourceCleanup         json.RawMessage        `json:"sourceCleanup,omitempty"`
+	// Kind is completed or salvage (Runner M1a); empty from an older Runner.
+	Kind string `json:"kind,omitempty"`
 }
 
 // RunnerDeliveryPage is one bounded response from Runner's pending-delivery
@@ -111,6 +113,13 @@ type RequestAdmission struct {
 	CustodyState        string `json:"custodyState,omitempty"`
 	KeepSourceOnFailure bool   `json:"keepSourceOnFailure,omitempty"`
 	SourceCleanupStatus string `json:"sourceCleanupStatus,omitempty"`
+	// Typed terminal fields (contract section 2.5; Runner M1a writes them as
+	// Failure:* params). Empty from an older Runner, whose TerminalOutcome is
+	// then read by the legacy string rule.
+	FailureReason string `json:"failureReason,omitempty"`
+	FetchCause    string `json:"fetchCause,omitempty"`
+	BlamesRelease *bool  `json:"blamesRelease,omitempty"`
+	Salvage       string `json:"salvage,omitempty"`
 }
 
 // RequestAdmissionProtocol looks up the receipt for a stable transfer token.

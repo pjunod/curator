@@ -4,63 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
-	"math/big"
 )
 
-// acceptDownloadControl runs under the same storage/row locks as acquisition
-// decisions. Absence is legacy, never evidence that a persisted hold resolved.
-func (s *Service) acceptDownloadControl(ctx context.Context, dl *sqlite.Download, st *ports.DownloadStatus) bool {
-	var prior *ports.DownloadControl
-	if dl.RunnerControl != "" {
-		if err := json.Unmarshal([]byte(dl.RunnerControl), &prior); err != nil {
-			return false
-		}
-	}
+// storeControl keeps the newest Runner control for display (pipeline contract
+// v2, section 3.2). It is not a gate: the refusal matrix that compared
+// revisions and instances is gone, because the transfer token now identifies
+// the job and a terminal ends a hold unconditionally. A held control still
+// reads as queued, so the row stays out of the import path while it lasts.
+func (s *Service) storeControl(ctx context.Context, dl *sqlite.Download, st *ports.DownloadStatus) bool {
 	next := st.Control
 	if next == nil {
-		return !prior.Held()
+		return true
 	}
-	// No blanket resurrection of historical terminal rows.
 	if dl.State == "failed" || dl.State == "imported" {
 		return false
-	}
-	revision, ok := new(big.Int).SetString(next.Revision, 10)
-	if !ok || revision.Sign() <= 0 || len(next.Revision) > 20 || next.Instance == "" {
-		return false
-	}
-	if prior != nil {
-		if prior.Instance != next.Instance {
-			// Continuity loss requires explicit reconciliation; retain custody.
-			return false
-		}
-		previous, valid := new(big.Int).SetString(prior.Revision, 10)
-		if !valid || revision.Cmp(previous) < 0 {
-			return false
-		}
-		if revision.Cmp(previous) == 0 {
-			// Revisions order control transitions, not transfer/stage snapshots.
-			// Equal revisions must describe precisely the same running control.
-			if prior.Held() || *prior != *next {
-				return false
-			}
-		}
-		if prior.Held() && !next.Held() {
-			// Runner owns release for every cause. A newer same-instance
-			// transition resolves that hold; the cause names why it stopped,
-			// not a second Curator permission to ignore the release.
-			if next.Version != 1 || next.Lifecycle != "running" ||
-				next.Cause != prior.Cause || next.Stage != prior.Stage {
-				return false
-			}
-		}
 	}
 	if next.Held() {
 		st.State = ports.StateQueued
 		st.Stage = next.Stage
 		st.Message = next.Message
-		dl.State = "downloading" // remains in every existing active-row query
 		dl.Error = next.Message
 	}
 	raw, err := json.Marshal(next)
@@ -70,7 +35,7 @@ func (s *Service) acceptDownloadControl(ctx context.Context, dl *sqlite.Download
 	dl.RunnerControl = string(raw)
 	dl.Progress = st.Progress
 	if err := s.db.UpdateDownloadControl(ctx, *dl); err != nil {
-		s.log.Warn("control persistence failed; keeping acquisition suppressed", "download", dl.ID, "err", err)
+		s.log.Warn("control persistence failed", "download", dl.ID, "err", err)
 		return false
 	}
 	return true
@@ -106,9 +71,11 @@ func (s *Service) ResumeHeldDownload(ctx context.Context, id int64) error {
 		return err
 	}
 	var control *ports.DownloadControl
-	if json.Unmarshal([]byte(dl.RunnerControl), &control) != nil || !control.Held() || control.RetryPolicy != "resume_same_job" {
-		return fmt.Errorf("this transfer requires custody review")
+	if json.Unmarshal([]byte(dl.RunnerControl), &control) != nil || !control.Held() {
+		return fmt.Errorf("this transfer is not held")
 	}
+	// Whether a hold can be resumed is Runner's to say: it answers 409 when a
+	// resume is refused, and that answer reaches the caller unchanged.
 	cfg, err := s.db.GetDownloadClient(ctx, dl.ClientID)
 	if err != nil {
 		return err

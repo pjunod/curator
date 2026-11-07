@@ -55,7 +55,7 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 		// from reserving protected siblings. Legacy season rows remain conservative.
 		for _, want := range dl.WantableIDs {
 			var n int
-			err = tx.QueryRowContext(ctx, `SELECT count(*) FROM downloads WHERE media_item_id=? AND COALESCE(copy_id,0)=? AND superseded=0 AND (state IN ('planned','grabbed','downloading','downloaded','awaiting_import','importing') OR submission_phase IN ('submitting','uncertain') OR parked_at>0) AND EXISTS(SELECT 1 FROM json_each(wantables) WHERE value=? OR value=?)`, dl.MediaItemID, dl.CopyID, want, seasonIdentity(dl.MediaItemID, dl.CopyID, dl.Season)).Scan(&n)
+			err = tx.QueryRowContext(ctx, `SELECT count(*) FROM downloads WHERE media_item_id=? AND COALESCE(copy_id,0)=? AND superseded=0 AND (state IN ('planned','grabbed','submitting','downloading','held','downloaded','awaiting_import','importing') OR submission_phase IN ('submitting','uncertain') OR parked_at>0) AND EXISTS(SELECT 1 FROM json_each(wantables) WHERE value=? OR value=?)`, dl.MediaItemID, dl.CopyID, want, seasonIdentity(dl.MediaItemID, dl.CopyID, dl.Season)).Scan(&n)
 			if err != nil {
 				return 0, err
 			}
@@ -65,7 +65,7 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 		}
 		for _, ep := range dl.ReservedEpisodes {
 			var n int
-			err = tx.QueryRowContext(ctx, `SELECT count(*) FROM downloads WHERE media_item_id=? AND COALESCE(copy_id,0)=? AND superseded=0 AND (state IN ('planned','grabbed','downloading','downloaded','awaiting_import','importing') OR submission_phase IN ('submitting','uncertain') OR parked_at>0) AND EXISTS(SELECT 1 FROM json_each(reserved_episodes) WHERE value=?)`, dl.MediaItemID, dl.CopyID, ep).Scan(&n)
+			err = tx.QueryRowContext(ctx, `SELECT count(*) FROM downloads WHERE media_item_id=? AND COALESCE(copy_id,0)=? AND superseded=0 AND (state IN ('planned','grabbed','submitting','downloading','held','downloaded','awaiting_import','importing') OR submission_phase IN ('submitting','uncertain') OR parked_at>0) AND EXISTS(SELECT 1 FROM json_each(reserved_episodes) WHERE value=?)`, dl.MediaItemID, dl.CopyID, ep).Scan(&n)
 			if err != nil {
 				return 0, err
 			}

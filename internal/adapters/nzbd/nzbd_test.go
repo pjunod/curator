@@ -254,97 +254,82 @@ func TestAuthorizationPrefersATokenAndFallsBackToBasic(t *testing.T) {
 	}
 }
 
-func TestStatusesMapsQueueAndHistory(t *testing.T) {
-	srv := fake(t, nil, nil)
+// Statuses is the live queue only (pipeline contract v2, section 2.5):
+// terminals come from the ordered history reader, never from re-reading the
+// last hundred history rows.
+func TestStatusesMapsQueueOnly(t *testing.T) {
+	rec := &recorder{}
+	srv := fake(t, rec, nil)
 	got, err := client(t, srv, "", "tok").Statuses(context.Background())
 	if err != nil {
 		t.Fatalf("Statuses: %v", err)
+	}
+	if rec.path != "/api/v1/jobs" {
+		t.Fatalf("last request %s, want only the queue", rec.path)
 	}
 	by := map[ports.Handle]ports.DownloadStatus{}
 	for _, s := range got {
 		by[s.Handle] = s
 	}
-	if len(by) != 9 {
-		t.Fatalf("got %d unique statuses, want 5 live + 4 historical", len(by))
+	if len(by) != 6 {
+		t.Fatalf("got %d statuses, want the 6 live jobs", len(by))
 	}
-
-	// A queued job, with progress from the byte counters.
-	if s := by["1"]; s.State != ports.StateQueued || s.Progress != 0.25 {
-		t.Errorf("job 1 = %+v, want queued at 0.25", s)
+	if s := by["1"]; s.State != ports.StateQueued || s.Progress != 0.25 || s.Transfer != "t-42-a3f9c1" {
+		t.Errorf("job 1 = %+v, want queued at 0.25 with its exact token", s)
 	}
-	if s := by["1"]; s.Transfer != "t-42-a3f9c1" {
-		t.Errorf("job 1 transfer = %q, want exact request token", s.Transfer)
-	}
-
-	// Post-processing is NOT completion. A job mid-unpack whose files are
-	// reported importable is how an import finds a half-unpacked folder,
-	// so both PP shapes must stay 'downloading' — and say which stage, so
-	// "stuck" reads as "verifying since four minutes ago".
+	// Post-processing is NOT completion.
 	if s := by["2"]; s.State != ports.StateDownloading || !strings.Contains(s.Message, "par verify") {
 		t.Errorf("job 2 (mid-PP) = %+v, want downloading naming the stage", s)
 	}
 	if s := by["3"]; s.State != ports.StateDownloading {
 		t.Errorf("job 3 (post_queued) = %+v, want downloading", s)
 	}
-	// Delayed PAR recovery used to produce this contradictory wire shape:
-	// top-level completed, ready false, and an open verification span. The
-	// open stage is the real activity and download completion is not import
-	// permission.
-	if s := by["4"]; s.State != ports.StateDownloading || s.Stage != "par_verify" ||
-		!strings.Contains(s.Message, "par verify") {
+	if s := by["4"]; s.State != ports.StateDownloading || s.Stage != "par_verify" {
 		t.Errorf("job 4 (delayed PAR recovery) = %+v, want active verification", s)
 	}
-	if s := by["5"]; s.State != ports.StateDownloading ||
-		!strings.Contains(s.Message, "download complete") {
+	if s := by["5"]; s.State != ports.StateDownloading || !strings.Contains(s.Message, "download complete") {
 		t.Errorf("job 5 (download phase complete) = %+v, want to wait for PP", s)
 	}
-
-	// History: success carries the final directory, which is the whole
-	// point — it is where the import will look.
-	if s := by["10"]; s.State != ports.StateCompleted || s.SavePath != "/downloads/complete/Show.S01E00" {
-		t.Errorf("job 10 = %+v, want completed with its final_dir", s)
-	}
-	if s := by["11"]; s.State != ports.StateFailed || s.Message != "FAILURE/HEALTH" {
-		t.Errorf("job 11 = %+v, want failed carrying nzbd's own reason", s)
-	}
-	if s := by["12"]; s.State != ports.StateFailed || s.Message != "UNPACK_FAILURE" {
-		t.Errorf("job 12 = %+v, want failed carrying nzbd's own reason", s)
-	}
-	// Deleted-by-hand is not a failure at all.
-	//
-	// It was reported as one (blameless, so at least not blocklisted) until
-	// the blameless flag turned out to guard only half the consequence: the
-	// failure path also re-searches, so deleting a job in nzbd made Monarr
-	// grab another copy of the same release seconds later. StateRemoved is
-	// the state that carries the operator's actual meaning — stop, and do
-	// not go and find me another one.
-	if s := by["13"]; s.State != ports.StateRemoved || !strings.Contains(s.Message, "removed in nzbd") {
-		t.Errorf("job 13 = %+v, want removed, saying a human removed it", s)
-	}
-	if s := by["13"]; s.State == ports.StateFailed {
-		t.Error("a deletion reported as a failure will be re-searched and replaced")
+	// A ready queue row is still not a completion: the terminal is history's.
+	if s := by["10"]; s.State == ports.StateCompleted {
+		t.Errorf("job 10 = %+v; the queue never declares completion", s)
 	}
 }
 
-func TestStatusesPreferAnUnrelatedLiveJobOverSameTitleHistory(t *testing.T) {
-	srv := fake(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
-		switch r.URL.Path {
-		case "/api/v1/jobs":
-			_, _ = w.Write([]byte(`{"jobs":[{"id":20,"name":"Same.Release","status":"queued"}]}`))
-			return true
-		case "/api/v1/history":
-			_, _ = w.Write([]byte(`{"entries":[{"job":10,"name":"Same.Release","status":"SUCCESS","final_dir":"/old/Same.Release"}]}`))
-			return true
-		default:
-			return false
-		}
-	})
-	got, err := client(t, srv, "", "tok").Statuses(context.Background())
-	if err != nil {
-		t.Fatal(err)
+// The ordered history reader maps every terminal by the legacy string rule
+// when Runner sends no typed fields (an old Runner, contract section 6).
+func TestHistorySinceMapsLegacyTerminals(t *testing.T) {
+	rec := &recorder{}
+	srv := fake(t, rec, nil)
+	facts, next, lost, err := client(t, srv, "", "tok").HistorySince(context.Background(), ports.HistoryCursor{SinceSeq: 6}, 100)
+	if err != nil || lost {
+		t.Fatalf("HistorySince: lost=%v err=%v", lost, err)
 	}
-	if len(got) != 2 || got[0].Handle != "20" || got[1].Handle != "10" {
-		t.Fatalf("status order = %+v, want live job before same-title history", got)
+	if rec.query.Get("since_seq") != "6" || rec.query.Get("limit") != "100" {
+		t.Fatalf("query = %v, want since_seq=6&limit=100", rec.query)
+	}
+	if next.SinceSeq != 10 || next.Incarnation != "" {
+		t.Fatalf("next cursor = %+v, want last seq of the page and no incarnation", next)
+	}
+	by := map[ports.Handle]ports.RunnerTerminal{}
+	for _, f := range facts {
+		if f.Kind != ports.FactTerminal || f.Terminal == nil {
+			t.Fatalf("history produced a non-terminal fact %+v", f)
+		}
+		by[f.Handle] = *f.Terminal
+	}
+	if tm := by["10"]; tm.Outcome != ports.OutcomeCompleted || tm.Publication == nil || tm.Publication.Path != "/downloads/complete/Show.S01E00" {
+		t.Errorf("job 10 = %+v, want completed with its publication path", tm)
+	}
+	if tm := by["11"]; tm.Outcome != ports.OutcomeFailed || tm.Reason != ports.ReasonHealth || !tm.BlamesRelease {
+		t.Errorf("job 11 = %+v, want failed/health blaming the release", tm)
+	}
+	if tm := by["12"]; tm.Outcome != ports.OutcomeFailed || tm.Reason != ports.ReasonUnpack {
+		t.Errorf("job 12 = %+v, want failed/unpack", tm)
+	}
+	// Deleted-by-hand is cancelled: never re-grabbed, never blocklisted.
+	if tm := by["13"]; tm.Outcome != ports.OutcomeCancelled || tm.BlamesRelease {
+		t.Errorf("job 13 = %+v, want cancelled", tm)
 	}
 }
 
@@ -594,28 +579,3 @@ func TestFailedHistoryReportsTheFractionActuallyFetched(t *testing.T) {
 	}
 }
 
-// Review finding: job_pp_finished carries no article counts, so a failure
-// that arrived by push reported a full download whenever it beat the poll.
-func TestPushedFailureIsCompletedWithWhatRunnerFetched(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/history" {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write([]byte(`{"entries":[{"job":2211,"status":"FAILURE/HEALTH","record":{"total_articles":4683,"success_articles":0}}]}`))
-	}))
-	defer srv.Close()
-	c := New(ports.ClientConfig{URL: srv.URL})
-	evs := translate("job_pp_finished", `{"job":2211,"name":"Dead.Post","pp_status":"FAILURE/HEALTH"}`, "9")
-	if len(evs) != 1 || evs[0].Kind != ports.EventFailed || evs[0].Status.FetchedKnown {
-		t.Fatalf("pushed failure = %+v, want an unmeasured failure", evs)
-	}
-	ev := c.withFetched(context.Background(), evs[0])
-	if !ev.Status.FetchedKnown || ev.Status.Progress != 0 {
-		t.Fatalf("pushed failure not completed from the history record: %+v", ev.Status)
-	}
-	other := translate("job_pp_finished", `{"job":99,"name":"Gone","pp_status":"FAILURE/HEALTH"}`, "10")[0]
-	if got := c.withFetched(context.Background(), other); got.Status.FetchedKnown || got.Status.Progress != 1 {
-		t.Fatalf("a failure with no history record must count in full: %+v", got.Status)
-	}
-}

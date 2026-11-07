@@ -112,6 +112,12 @@ type (
 		// Transfer is the id that names this transfer end to end
 		// (contract §3.1), so one grep spans every application it crossed.
 		Transfer string `json:"transfer,omitempty"`
+		// PublicationID is the publication this import came from (pipeline
+		// v2); Outboxed says its durable notifications were already written
+		// in the import's own transaction, so the dispatcher must not queue
+		// them again.
+		PublicationID int64 `json:"publicationId,omitempty"`
+		Outboxed      bool  `json:"outboxed,omitempty"`
 	}
 	// ImportFailed is published when a completed download cannot import.
 	ImportFailed struct {
@@ -202,9 +208,19 @@ type Service struct {
 	timings        *pipeline.Timings
 	factMismatches atomic.Int64
 	mismatchSeen   sync.Map // mismatchKey -> struct{}; one count per download and foreign token
+
+	// The reducer's in-memory clocks (pipeline v2): when a row was first
+	// absent from a successful poll (gone grace) and first answered "no such
+	// token" (submitting). A restart restarts them, which only waits longer.
+	absentSince   sync.Map // download id -> time.Time
+	notFoundSince sync.Map // download id -> time.Time
+	// grabKick wakes the replacement grab worker; nil until it starts, and
+	// then a failure's grab runs inline (tests, tools).
+	grabKick     chan struct{}
+	grabKickOnce sync.Once
+	grabWorker   atomic.Bool
 }
 
-type runnerAdmissionPollPermitKey struct{}
 
 // New returns a Service.
 func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, ni IndexerFactory, nc ClientFactory) *Service {
@@ -1290,7 +1306,6 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 		if err := s.db.EnableRunnerDeliveryV1(ctx, cfg.ID); err != nil {
 			return 0, err
 		}
-		s.rememberRunnerDelivery(cfg.ID)
 	}
 
 	// Already grabbed and still moving? Two automation passes that overlap,
@@ -1413,6 +1428,12 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 			return 0, err
 		}
 		download.SubmissionPhase = "submitting"
+		if requestTokenIdempotent {
+			// Runner rows are submitting until Runner confirms the token
+			// landed (contract section 3.1); the reducer owns them from here.
+			download.State = "submitting"
+			download.DeadlineAt = time.Now().Add(sqlite.DeadlineSubmitting)
+		}
 	}
 	var inserted sqlite.Download
 	if manual {
@@ -1455,6 +1476,9 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 	// where someone starts reading when a transfer goes wrong.
 	dl := sqlite.Download{ID: id, GenerationKey: inserted.GenerationKey, MediaItemID: item.ID, ReleaseTitle: req.Title,
 		State: "grabbed", Transfer: transfer, Indexer: req.Indexer, Protocol: req.Protocol, ClientID: cfg.ID}
+	if inserted.State == "submitting" {
+		dl.State = "submitting"
+	}
 	if manual {
 		dl.Intent = GrabIntentManualAdditional
 		dl.RequestID = req.RequestID
@@ -1472,7 +1496,7 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 		return id, fmt.Errorf("automatic submission was cancelled before client admission")
 	}
 	inserted = fresh
-	s.advance(ctx, &dl, "grabbed", 0, "", stepGrabbed, "sent to "+clientLabel(*cfg)+" as "+transfer)
+	s.advance(ctx, &dl, dl.State, 0, "", stepGrabbed, "sent to "+clientLabel(*cfg)+" as "+transfer)
 	handle, err := addToClient(
 		ctx, client, req.DownloadURL, cfg.Category, req.Title, transfer, priority, inserted.DeliveryExpected, false,
 	)
@@ -1484,7 +1508,7 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 			return id, err
 		}
 		_ = s.db.SetSubmissionPhase(context.WithoutCancel(ctx), id, "uncertain")
-		_ = s.db.UpdateDownloadState(context.WithoutCancel(ctx), id, "grabbed", 0, "submission uncertain; reconciling before retry")
+		_ = s.db.UpdateDownloadState(context.WithoutCancel(ctx), id, dl.State, 0, "submission uncertain; reconciling before retry")
 		_, _ = s.db.ScheduleRunnerSubmissionRetry(context.WithoutCancel(ctx), id, inserted.GenerationKey, time.Now(), err.Error(), submissionRetryDeadline(err))
 		return id, err
 	}
@@ -1498,7 +1522,7 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 	}
 	if commitErr != nil {
 		_ = s.db.SetSubmissionPhase(context.WithoutCancel(ctx), id, "uncertain")
-		_ = s.db.UpdateDownloadState(context.WithoutCancel(ctx), id, "grabbed", 0, "client accepted the request but its exact handle could not be committed; reconciling by transfer token")
+		_ = s.db.UpdateDownloadState(context.WithoutCancel(ctx), id, dl.State, 0, "client accepted the request but its exact handle could not be committed; reconciling by transfer token")
 		return id, fmt.Errorf("client accepted the request but submission receipt could not be saved: %w", commitErr)
 	}
 	if handle == "" {
@@ -1556,11 +1580,12 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			continue
 		}
 		client := s.newClient(cfg)
-		// Durable Runner publications are discovered independently of the
-		// client's ordinary history/status response. The optional capability
-		// prevents legacy completion history from importing a native Runner job
-		// before its exact immutable manifest is durably accepted.
-		s.discoverRunnerDeliveries(ctx, cfg, client)
+		// Runner clients are on the pipeline v2 reducer: the poll only
+		// reconciles what the event stream may have missed (contract 3.2).
+		if feeds, ok := runnerFeedsOf(client); ok {
+			s.reconcileRunnerClient(ctx, cfg, client, feeds, byClient[cfg.ID])
+			continue
+		}
 		var statuses []ports.DownloadStatus
 		var err error
 		complete := false
@@ -1582,61 +1607,10 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 		}
 		if err != nil {
 			s.log.Warn("queue: client poll failed", "client", cfg.Name, "err", err)
-		}
-		// Receipt reads can outlive queue/history removal, but a large backlog
-		// of missing rows must not serialize one HTTP timeout per download on
-		// this control loop. Persist each row's next due time and admit at most
-		// two exact-token lookups per client refresh. Due rows beyond the cap
-		// remain eligible next sweep after earlier claims move forward.
-		admissionPollAllowed := make(map[int64]bool)
-		admissionPollCount := 0
-		pollOrder, orderErr := s.db.RunnerAdmissionPollOrder(ctx, cfg.ID)
-		if orderErr != nil {
-			s.log.Warn("queue: could not order Runner receipt lookups", "client", cfg.Name, "err", orderErr)
-		}
-		pollRank := make(map[int64]int, len(pollOrder))
-		for rank, id := range pollOrder {
-			pollRank[id] = rank
-		}
-		pollRows := append([]sqlite.Download(nil), byClient[cfg.ID]...)
-		sort.SliceStable(pollRows, func(i, j int) bool {
-			ri, iok := pollRank[pollRows[i].ID]
-			rj, jok := pollRank[pollRows[j].ID]
-			if iok != jok {
-				return iok
-			}
-			if !iok {
-				return false
-			}
-			return ri < rj
-		})
-		for _, dl := range pollRows {
-			if admissionPollCount >= 2 {
-				break
-			}
-			if !dl.RequestTokenIdempotent || dl.GenerationKey == "" || s.ImportRunning(dl.ID) {
-				continue
-			}
-			_, visible := matchStatus(dl, statuses)
-			st, _ := matchStatus(dl, statuses)
-			if visible && st.State != ports.StateFailed && st.State != ports.StateRemoved && st.State != ports.StateCompleted {
-				continue
-			}
-			claimed, claimErr := s.db.ClaimRunnerAdmissionPoll(ctx, dl.ID, dl.GenerationKey, time.Now())
-			if claimErr != nil {
-				s.log.Warn("queue: could not claim Runner receipt lookup", "download", dl.ID, "err", claimErr)
-				continue
-			}
-			if claimed {
-				admissionPollAllowed[dl.ID] = true
-				admissionPollCount++
-			}
+			continue
 		}
 		seen := make(map[int64]bool, len(byClient[cfg.ID]))
 		for _, dl := range byClient[cfg.ID] {
-			if err != nil {
-				break
-			}
 			st, ok := matchStatus(dl, statuses)
 			if !ok {
 				s.noteFactMismatch(dl, statuses)
@@ -1647,9 +1621,6 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 				continue // not visible yet (magnet resolving, etc.)
 			}
 			seen[dl.ID] = true
-			if dl.RequestTokenIdempotent && (st.State == ports.StateFailed || st.State == ports.StateRemoved || st.State == ports.StateCompleted) && !admissionPollAllowed[dl.ID] {
-				continue
-			}
 			// An importer owns this row's per-download lock for the whole
 			// placement. Waiting for that lock here would put a multi-gigabyte
 			// file copy back onto the queue-refresh goroutine, freezing every
@@ -1659,40 +1630,13 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 			if s.ImportRunning(dl.ID) {
 				continue
 			}
-			pollCtx := ctx
-			if admissionPollAllowed[dl.ID] {
-				pollCtx = context.WithValue(ctx, runnerAdmissionPollPermitKey{}, dl.ID)
-			}
-			s.reconcileDownload(pollCtx, dl, cfg, st, "poll")
-		}
-		// Runner request receipts survive queue/history removal. Poll only
-		// those exact-token admissions that vanished from ordinary inventory;
-		// legacy clients retain their established reconciliation path.
-		for _, dl := range byClient[cfg.ID] {
-			if seen[dl.ID] || !dl.RequestTokenIdempotent || !admissionPollAllowed[dl.ID] || s.ImportRunning(dl.ID) {
-				continue
-			}
-			pollCtx := context.WithValue(ctx, runnerAdmissionPollPermitKey{}, dl.ID)
-			s.reconcileDownload(pollCtx, dl, cfg, ports.DownloadStatus{}, "admission")
-		}
-		if err != nil {
-			continue
+			s.reconcileDownload(ctx, dl, cfg, st, "poll")
 		}
 		// Anything this client no longer mentions is not moving, whatever the
-		// in-flight view still believes.
-		//
-		// The view is fed by observations, and an observation that never
-		// arrives cannot end anything. Deleting a job in nzbd is exactly that
-		// shape: the job stops being reported, so the last thing Monarr ever
-		// heard about it was "downloading", and it sat on the panel forever
-		// claiming to be in progress. A live view that can only ever be added
-		// to is a leak with a progress bar.
-		//
-		// So the sweep reconciles rather than reacts. It is the safety net,
-		// not the mechanism — the event stream ends these within a second
-		// (see EventRemoved); this catches whatever the stream missed, and
-		// covers clients that cannot push at all. Only runs when the client
-		// actually answered, so an outage never mass-clears the panel.
+		// in-flight view still believes. The event stream ends these within a
+		// second; this catches whatever the stream missed, and covers clients
+		// that cannot push at all. Only runs when the client actually
+		// answered, so an outage never mass-clears the panel.
 		s.endUnseenTransfers(byClient[cfg.ID], seen)
 	}
 	return nil
@@ -1713,9 +1657,6 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus, source string) {
 	unlock := s.lockDownload(dl.ID)
 	defer unlock()
-	// Resolve Runner's network receipt before entering the global storage
-	// decision lock. Per-download serialization prevents duplicate lookups;
-	// generation/transfer are rechecked after the HTTP call below.
 	observed := dl
 	if fresh, err := s.db.GetDownload(ctx, dl.ID); err != nil {
 		return
@@ -1724,28 +1665,6 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 			return
 		}
 		dl = fresh
-	}
-	if dl.RequestTokenIdempotent && (source == "admission" || st.State == ports.StateFailed || st.State == ports.StateRemoved || st.State == ports.StateCompleted) {
-		if authoritative, hold := s.authoritativeRunnerObservation(ctx, dl, cfg, st); hold {
-			// A hold defers what Curator does next; it does not make the
-			// client's work current again. Runner reported a terminal outcome,
-			// so nothing of this job is in flight there. Returning before the
-			// in-flight view heard it left held failures under "Downloading"
-			// with an empty bar for as long as the hold lasted (field report
-			// 2026-11-02, eleven FAILURE/HEALTH rows).
-			switch st.State {
-			case ports.StateFailed, ports.StateRemoved, ports.StateCompleted:
-				s.watchDownloading(dl, st, "")
-			}
-			return
-		} else {
-			st = authoritative
-		}
-	}
-	if source == "admission" && st.State == "" {
-		// The exact Runner receipt still describes a nonterminal request. It
-		// settles no state until the job reappears or its durable outcome ends.
-		return
 	}
 	dispatchCtx := ctx
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
@@ -1771,7 +1690,7 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		dl = fresh
 	}
 
-	if strings.HasPrefix(dl.ParkedReason, "operator cancellation") {
+	if operatorCancelled(&dl) {
 		return
 	}
 	if dl.Superseded {
@@ -1798,7 +1717,7 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		dl.Handle = string(st.Handle)
 	}
 
-	if !s.acceptDownloadControl(ctx, &dl, &st) {
+	if !s.storeControl(ctx, &dl, &st) {
 		return
 	}
 
@@ -1896,9 +1815,6 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 			}
 			return
 		}
-		if dl.DeliveryExpected && s.runnerDeliveryEnabled(ctx, cfg) {
-			return
-		}
 		// Older binaries parked this proven in-flight acquisition for cohort
 		// review. Resume only that recorded hold; normal manual approval remains.
 		if dl.State == "awaiting_import" && !cfg.ManualApproval {
@@ -1937,173 +1853,6 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 	}
 }
 
-// authoritativeRunnerObservation consults Runner's durable request receipt for
-// jobs admitted with request-token idempotency. Native queue/history status can
-// disappear or collapse a fetch failure into a generic failed state; only the
-// exact transfer token can settle that observation.
-func (s *Service) authoritativeRunnerObservation(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus) (ports.DownloadStatus, bool) {
-	client, ok := s.newClient(cfg).(ports.RequestAdmissionProtocol)
-	if !ok {
-		return st, false
-	}
-	if st.State == "" {
-		// A receipt-only sweep observed nothing about progress; keep the
-		// row's own value rather than writing zero over it in a hold.
-		st.Progress = dl.Progress
-	}
-	if dl.Transfer == "" {
-		_ = s.db.ParkDownload(ctx, dl.ID, "Runner outcome requires the persisted transfer token; automatic handling held")
-		return st, true
-	}
-	if permit, ok := ctx.Value(runnerAdmissionPollPermitKey{}).(int64); !ok || permit != dl.ID {
-		claimed, claimErr := s.db.ClaimRunnerAdmissionPoll(ctx, dl.ID, dl.GenerationKey, time.Now())
-		if claimErr != nil {
-			s.log.Warn("could not claim Runner admission receipt lookup", "download", dl.ID, "err", claimErr)
-			return st, true
-		}
-		if !claimed {
-			return st, true
-		}
-	}
-	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	admission, found, err := client.GetRequestAdmission(lookupCtx, dl.Transfer)
-	cancel()
-	if recordErr := s.db.RecordRunnerAdmissionPollResult(ctx, dl.ID, dl.GenerationKey, found, err, time.Now()); recordErr != nil {
-		s.log.Warn("could not record Runner admission receipt lookup", "download", dl.ID, "err", recordErr)
-	}
-	if err != nil {
-		if dl.Intent != GrabIntentManualAdditional && dl.RequestTokenIdempotent &&
-			(dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "uncertain") {
-			_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "Runner admission lookup failed; exact automatic submission replay is queued")
-			return st, true
-		}
-		if dl.Intent == GrabIntentManualAdditional || st.State == ports.StateFailed || st.State == ports.StateRemoved {
-			_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "waiting for authoritative Runner outcome: "+err.Error())
-			return st, true
-		}
-		return st, false
-	}
-	if !found {
-		if dl.Intent != GrabIntentManualAdditional && dl.RequestTokenIdempotent &&
-			(dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "uncertain") {
-			_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "Runner has no admission receipt yet; exact automatic submission replay is queued")
-			return st, true
-		}
-		if dl.Intent == GrabIntentManualAdditional || st.State == ports.StateFailed || st.State == ports.StateRemoved {
-			_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "waiting for authoritative Runner request admission receipt")
-			return st, true
-		}
-		return st, false
-	}
-	// The user may have removed the Activity row or replaced its request
-	// generation while the network lookup was in flight. A receipt never
-	// authorizes state changes against a stale row.
-	fresh, freshErr := s.db.GetDownload(ctx, dl.ID)
-	if freshErr != nil || fresh.GenerationKey != dl.GenerationKey || fresh.Transfer != dl.Transfer || fresh.ClientID != dl.ClientID {
-		return st, true
-	}
-	dl = fresh
-	if admission.ProtocolVersion != 1 || admission.RequestToken != dl.Transfer {
-		_ = s.db.ParkDownload(ctx, dl.ID, "Runner admission identity mismatch; automatic handling held for review")
-		return st, true
-	}
-	if err := s.db.BindRunnerAdmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer,
-		admission.RunnerInstanceID, admission.Generation); err != nil {
-		_ = s.db.ParkDownload(ctx, dl.ID, "Runner installation or admission generation changed; automatic handling held for review")
-		return st, true
-	}
-	if admission.JobID != "" && dl.Handle != "" && admission.JobID != dl.Handle {
-		_ = s.db.ParkDownload(ctx, dl.ID, "Runner admission job handle conflicts with the persisted download; review required")
-		return st, true
-	}
-	if admission.JobID == "" {
-		_ = s.db.ParkDownload(ctx, dl.ID, "Runner admission has no exact job handle; review required")
-		return st, true
-	}
-	if dl.Handle == "" {
-		if err := s.db.RecordDownloadSubmission(ctx, dl.ID, dl.GenerationKey, dl.Transfer, admission.JobID); err != nil {
-			_ = s.db.ParkDownload(ctx, dl.ID, "Runner job handle could not be committed to the exact download generation; review required")
-			return st, true
-		}
-		dl.Handle = admission.JobID
-	}
-	if admission.Outcome == "failed" || admission.Outcome == "deleted" {
-		if admission.CustodyState == "curator" && admission.PublicationPath != "" && dl.DeliveryExpected {
-			// Delivery discovery/import owns the retained verified publication.
-			// Do not fail the whole pack or trigger a fresh acquisition here.
-			return st, true
-		}
-		if admission.CustodyState == "curator" {
-			_ = s.db.ParkDownload(ctx, dl.ID, "Runner transferred payload custody without an expected delivery protocol; explicit review required")
-			return st, true
-		}
-		if admission.Outcome == "failed" && dl.Intent != GrabIntentManualAdditional &&
-			runnerFailureNeedsCleanupBeforeReplacement(admission) {
-			reason := "Runner retains source files or Keep was selected; automatic replacement is held"
-			if admission.FailureStage != "" {
-				reason += " at " + admission.FailureStage
-			}
-			if admission.FailureCause != "" {
-				reason += ": " + admission.FailureCause
-			}
-			_ = s.db.UpdateDownloadState(ctx, dl.ID, "awaiting_import", st.Progress, reason+"; replacement held until cleanup is settled")
-			return st, true
-		}
-		if runnerDeletedNeedsCustodyReview(admission) {
-			_ = s.db.ParkDownload(ctx, dl.ID, "Runner queue entry is gone but source custody is unresolved; explicit review required")
-			return st, true
-		}
-		if !st.FetchedKnown {
-			// Settled from the receipt alone (the history row aged out or the
-			// queue only said "failed"): nothing measured what was fetched,
-			// so the re-grab budget must count this attempt in full.
-			st.Progress = 1
-		}
-		st.State = ports.StateFailed
-		if admission.Outcome == "deleted" && admission.CustodyState == "deleted_by_runner" {
-			st.State = ports.StateRemoved
-		}
-		st.Message = strings.TrimSpace(strings.Join([]string{admission.TerminalOutcome, admission.FailureStage, admission.FailureCause,
-			"custody=" + admission.CustodyState, "sourceCleanup=" + admission.SourceCleanupStatus}, ": "))
-		if st.Message == "" {
-			st.Message = "Runner request ended: " + admission.Outcome
-		}
-		return st, false
-	}
-	if admission.Outcome == "completed" && admission.PublicationPath != "" {
-		if dl.DeliveryExpected {
-			return st, true
-		}
-		st.State = ports.StateCompleted
-		st.Handle = ports.Handle(admission.JobID)
-		st.Transfer = admission.RequestToken
-		st.SavePath = admission.PublicationPath
-		return st, false
-	}
-	if st.State == ports.StateFailed || st.State == ports.StateRemoved {
-		_ = s.db.UpdateDownloadState(ctx, dl.ID, dl.State, st.Progress, "waiting for Runner terminal outcome; reported state is "+admission.Outcome)
-		return st, true
-	}
-	return st, false
-}
-
-// runnerFailureNeedsCleanupBeforeReplacement only blocks an automatic retry
-// while Runner still owns unresolved bytes. An explicit Keep is a settled
-// custody decision: preserve those bytes and continue with the selected
-// replacement, rather than requiring the user to delete something they chose
-// to keep. A manual additional-copy attempt has its own terminal policy.
-func runnerFailureNeedsCleanupBeforeReplacement(admission ports.RequestAdmission) bool {
-	if admission.KeepSourceOnFailure || admission.CustodyState == "kept_by_user" {
-		return false
-	}
-	return admission.CustodyState == "runner_owned" && admission.SourceCleanupStatus != "removed"
-}
-
-func runnerDeletedNeedsCustodyReview(admission ports.RequestAdmission) bool {
-	return admission.Outcome == "deleted" && admission.CustodyState != "deleted_by_runner" &&
-		!admission.KeepSourceOnFailure && admission.CustodyState != "kept_by_user"
-}
-
 // traced names the channel that delivered an observation. "completed
 // (event 12)" versus "completed (poll)" is the difference between knowing
 // push is working and assuming it is.
@@ -2134,18 +1883,14 @@ func (s *Service) handleRemoved(ctx context.Context, dl sqlite.Download, progres
 	if reason == "" {
 		reason = "removed in the download client"
 	}
-	if dl.PlanID != 0 {
-		// Persist the operator fence; failure fallback and automatic retry must
-		// never reinterpret a deliberate removal as a failed release.
-		_ = s.db.ParkDownload(ctx, dl.ID, "operator cancellation; deliberate Search required")
-		_, _ = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET state='cancel_requested' WHERE id=? AND state IN ('admitted','dispatching','active')`, dl.PlanID)
+	cfg, _ := s.db.GetDownloadClient(ctx, dl.ClientID)
+	dl.Progress = progress
+	if _, err := s.recordTerminal(ctx, dl, cfg, ports.RunnerTerminal{Outcome: ports.OutcomeCancelled, Message: reason, Salvage: "none"}, source, 0, false); err != nil {
+		s.log.Warn("removal could not be recorded", "download", dl.ID, "err", err)
+		return
 	}
-	s.advance(ctx, &dl, "failed", progress, reason, stepFailed, traced(reason, source))
-	_ = s.db.AddHistory(ctx, "failed", dl.MediaItemID, dl.ReleaseTitle,
-		map[string]any{"reason": reason, "removed": true})
 	s.log.Info("download removed in the client; not blocklisted and not replaced",
 		"release", dl.ReleaseTitle, "reason", reason, "source", source)
-	s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: reason})
 }
 
 // endUnseenTransfers retires in-flight rows for downloads the client did not
@@ -2244,124 +1989,24 @@ func (s *Service) tryLockDeliverySourceControl(receiptID int64) (func(), bool) {
 	return m.Unlock, true
 }
 
-// handleFailure marks a download failed, blocklists the release so it is
-// never re-grabbed, and immediately re-searches for the affected wantables
-// (blueprint §5.1 "failed-download handling").
+// handleFailure is a legacy (non-Runner) client's failure, reduced exactly
+// as a Runner terminal is (contract section 3.3): recorded once with its
+// blocklist and its replacement grab in one transaction; the grab worker
+// performs the grab. A blameless failure blocklists nothing and still
+// replaces; a refused submission replaces nothing.
 func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progress float64, reason string, blameless bool) {
-	s.advance(ctx, &dl, "failed", progress, reason, stepFailed, "download failed: "+reason)
-	_ = s.db.AddHistory(ctx, "failed", dl.MediaItemID, dl.ReleaseTitle,
-		map[string]any{"reason": reason})
+	cfg, _ := s.db.GetDownloadClient(ctx, dl.ClientID)
+	t := ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: "client", Message: reason, BlamesRelease: !blameless, Salvage: "none"}
+	if _, err := s.recordTerminalWith(ctx, dl, cfg, t, "poll", 0, false, progress); err != nil {
+		s.log.Warn("failure could not be recorded", "download", dl.ID, "err", err)
+		return
+	}
 	if dl.SubmissionPhase == "rejected" {
-		// A definite client refusal (including an immutable-token conflict) did
-		// not admit this request. Do not turn the refusal into a release
-		// blacklist or launch a replacement behind the user's back.
 		s.log.Warn("client permanently rejected the submission; no replacement was started", "release", dl.ReleaseTitle, "reason", reason)
-		s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: reason})
-		return
-	}
-	if blameless {
-		// The download stopped, but not because the release is bad. Banning
-		// it would burn a good copy and send the re-search after a worse one.
-		s.log.Warn("download failed; NOT blocklisted (the release is not at fault)",
-			"release", dl.ReleaseTitle, "reason", reason)
+	} else if blameless {
+		s.log.Warn("download failed; NOT blocklisted (the release is not at fault)", "release", dl.ReleaseTitle, "reason", reason)
 	} else {
-		var err error
-		if dl.SourceGUID != "" && dl.SourceIndexerID != 0 {
-			err = s.db.AddReleaseIdentityBlocklist(ctx, dl.MediaItemID, dl.SourceIndexerID, dl.SourceGUID, reason)
-		} else {
-			// Legacy clients may not expose stable release identity. Keep their
-			// existing title/indexer blocklist semantics explicit at this edge.
-			err = s.db.AddBlocklist(ctx, dl.MediaItemID, dl.ReleaseTitle, dl.Indexer, reason)
-		}
-		if err != nil {
-			s.log.Warn("blocklist: insert failed", "release", dl.ReleaseTitle, "err", err)
-		} else {
-			s.log.Warn("download failed; blocklisted", "release", dl.ReleaseTitle, "reason", reason)
-		}
-	}
-	s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: reason})
-	if dl.Intent == GrabIntentManualAdditional {
-		// A manual additional copy is a deliberate one-shot acquisition. A
-		// permanent failure stays visible and blocklisted, but never starts an
-		// automatic replacement behind the user's back.
-		return
-	}
-	if dl.ReplacementOperationID != "" {
-		// The reviewed operation owns the selected copy/episode scope. Its
-		// worker waits for durable payload cleanup before choosing another
-		// release; a global planner search here would lose that scope.
-		if err := s.db.TransitionReplacementOperation(ctx, dl.ReplacementOperationID, "replacing", "replacement attempt failed; waiting for payload cleanup before retry"); err != nil {
-			s.log.Warn("replacement operation retry scheduling failed", "operation", dl.ReplacementOperationID, "err", err)
-		}
-		return
-	}
-
-	// failure_to_next_grab (pipeline M0): the clock starts where a replacement
-	// is actually attempted and stops when it has been submitted (movie/book)
-	// or handed to the season planner (series).
-	timingKey := pipeline.Key(dl.Transfer, dl.ID)
-	if item, e := s.db.GetMediaItemFull(ctx, dl.MediaItemID); e == nil && item.Kind == domain.KindSeries {
-		if dl.PlanID != 0 {
-			_, _ = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET replan_pending=1 WHERE id=?`, dl.PlanID)
-		}
-		// Only a season job actually queued ends the timing; nothing-to-do and
-		// a recent comparison leave nothing to wait for, so the timing is
-		// dropped rather than left open.
-		s.timings.Start(ctx, pipeline.FailureToNextGrab, timingKey, dl.ID)
-		if status, err := s.enqueueSeasonStatus(ctx, dl.MediaItemID, dl.CopyID, dl.Season, seasonTriggerFailedAcquisition, true); err == nil && status == seasonQueued {
-			s.timings.End(ctx, pipeline.FailureToNextGrab, timingKey)
-		} else {
-			s.timings.Discard(ctx, pipeline.FailureToNextGrab, timingKey)
-		}
-		// The season comparison leaves a capped episode out without a word;
-		// say so here, where the failure that spent the budget is known.
-		// Only on the failure that crossed the line, so a capped season does
-		// not write a row per episode for every later failure.
-		for _, idStr := range dl.WantableIDs {
-			if w, e := s.wantableFromID(ctx, idStr); e == nil {
-				capped, spent, failed := s.regrabSpend(ctx, w, 0)
-				before, _, _ := s.regrabSpend(ctx, w, dl.ID)
-				if capped && !before {
-					_ = s.db.AddHistory(ctx, HistoryRegrabCapped, dl.MediaItemID, dl.ReleaseTitle,
-						map[string]any{"wantable": idStr, "failed": failed, "releases_spent": spent,
-							"window_hours": int(reGrabWindow.Hours())})
-				}
-			}
-		}
-		return
-	}
-	// Automatic re-search: try to replace the failed grab right away.
-	enabled, err := s.enabledIndexers(ctx)
-	if err != nil || len(enabled) == 0 {
-		return
-	}
-	for _, idStr := range dl.WantableIDs {
-		w, err := s.wantableFromID(ctx, idStr)
-		if err != nil {
-			continue
-		}
-		// Bounded. Five grabs of one movie in ten hours is not persistence,
-		// it is a loop with a budget, and the budget is the operator's
-		// bandwidth and disk. Once the window's grabs are spent the want
-		// stays wanted — a person can still grab by hand — and it says so.
-		if capped, spent := s.regrabCapped(ctx, w); capped {
-			s.log.Warn("re-search stopped: too many failed grabs for this want recently",
-				"wantable", idStr, "failed", spent, "window", reGrabWindow)
-			_ = s.db.AddHistory(ctx, HistoryRegrabCapped, dl.MediaItemID, dl.ReleaseTitle,
-				map[string]any{"wantable": idStr, "failed": spent,
-					"window_hours": int(reGrabWindow.Hours())})
-			continue
-		}
-		// The clock starts at the first search actually attempted (first start
-		// wins), so a failure whose wantables are all capped or gone records
-		// nothing.
-		s.timings.Start(ctx, pipeline.FailureToNextGrab, timingKey, dl.ID)
-		tally, err := s.searchAndGrabBest(ctx, w, enabled)
-		if err != nil {
-			s.log.Warn("re-search failed", "wantable", idStr, "err", err)
-		} else if tally.Grabbed != "" {
-			s.timings.End(ctx, pipeline.FailureToNextGrab, timingKey)
-		}
+		s.log.Warn("download failed; blocklisted", "release", dl.ReleaseTitle, "reason", reason)
 	}
 }
 

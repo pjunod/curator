@@ -43,8 +43,9 @@ INSERT INTO downloads (
     quality, size, client_id, handle, state, match_evidence, added_at, updated_at,
     generation_key, intent, request_id, request_fingerprint, blacklist_override,
     delivery_expected, request_token_idempotent, replacement_operation_id, source_guid, source_indexer_id,
-    transfer, submission_phase, execution_payload, exact_transfer_correlation
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
+    transfer, submission_phase, execution_payload, exact_transfer_correlation,
+    deadline_at, state_entered_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id;
 
 -- name: GetDownloadByRequestID :one
 SELECT * FROM downloads WHERE request_id = ?;
@@ -53,7 +54,7 @@ SELECT * FROM downloads WHERE request_id = ?;
 -- Work that is still moving. Deliberately excludes 'imported' and 'failed':
 -- both are terminal, and a terminal row must never suppress a fresh search.
 SELECT * FROM downloads
-WHERE state IN ('grabbed', 'downloading', 'downloaded', 'awaiting_import', 'importing')
+WHERE state IN ('grabbed', 'submitting', 'downloading', 'held', 'downloaded', 'awaiting_import', 'importing')
 ORDER BY added_at DESC;
 
 -- name: ListRecentDownloads :many
@@ -232,7 +233,7 @@ SELECT * FROM downloads WHERE plan_id=? ORDER BY id;
 
 -- name: ListDownloadReservations :many
 SELECT * FROM downloads WHERE superseded=0 AND
-(state IN ('planned','grabbed','downloading','downloaded','awaiting_import','importing')
+(state IN ('planned','grabbed','submitting','downloading','held','downloaded','awaiting_import','importing')
  OR submission_phase IN ('submitting','uncertain') OR parked_at>0 OR cleanup_pending=1)
 ORDER BY id;
 

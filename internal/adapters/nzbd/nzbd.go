@@ -261,6 +261,10 @@ type job struct {
 	Stages          []stageSpan            `json:"stages"`
 	Control         *ports.DownloadControl `json:"control"`
 	Params          [][2]string            `json:"params"`
+	// StatusProjected is Runner's own projection of the job's status
+	// (contract section 2.3): "held" for a job on hold, whatever the
+	// persisted status says. Empty from an older Runner.
+	StatusProjected string `json:"status_projected"`
 }
 
 type stageSpan struct {
@@ -280,7 +284,10 @@ func (j job) downloadComplete() bool {
 // `{"post":{"stage":"unpack"}}` while post-processing runs, so this
 // decodes both shapes rather than assuming either.
 func (j job) state() (ports.DownloadState, string, string) {
-	if j.Control.Held() {
+	if j.StatusProjected == "held" || j.Control.Held() {
+		if j.Control == nil {
+			return ports.StateQueued, "held by Runner", ""
+		}
 		return ports.StateQueued, j.Control.Message, j.Control.Stage
 	}
 
@@ -321,9 +328,10 @@ func (j job) state() (ports.DownloadState, string, string) {
 			}
 			return ports.StateDownloading, "download complete; waiting for post-processing", ""
 		case "failed":
-			// A coarse queue failure precedes authoritative terminal history.
-			// Never replace while its cause/retained custody is unresolved.
-			return ports.StateQueued, "waiting for authoritative failure outcome", ""
+			// The job failed. The terminal itself, with its reason and blame,
+			// arrives on job_pp_finished or the ordered history reader; the
+			// queue only says so (contract section 3.2).
+			return ports.StateFailed, "failed (awaiting history)", ""
 		case "deleted":
 			return ports.StateRemoved, "removed in nzbd", ""
 		default:
@@ -357,41 +365,13 @@ type historyEntry struct {
 	// Record carries the article counts Runner kept for the finished job:
 	// how much of it was actually fetched.
 	Record *historyRecord `json:"record"`
+	// The typed terminal (contract section 2.1), on a Runner with M1a.
+	terminalWire
 }
 
 type historyRecord struct {
 	TotalArticles   int64 `json:"total_articles"`
 	SuccessArticles int64 `json:"success_articles"`
-}
-
-// withFetched completes a pushed failure with what Runner actually fetched.
-// job_pp_finished carries no article counts, so a failure that arrived by
-// push reported a full download whenever it beat the poll; the history row
-// written before the event holds the record.
-func (c *Client) withFetched(ctx context.Context, ev ports.ClientEvent) ports.ClientEvent {
-	if ev.Kind != ports.EventFailed || ev.Status.FetchedKnown {
-		return ev
-	}
-	job, err := strconv.ParseInt(string(ev.Handle), 10, 64)
-	if err != nil {
-		return ev
-	}
-	lookup, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	var hist statusHistory
-	if c.do(lookup, http.MethodGet, "/api/v1/history?limit=100", &hist) != nil {
-		return ev
-	}
-	for _, h := range hist.Entries {
-		if h.Job != job {
-			continue
-		}
-		if fetched, ok := h.fetchedFraction(); ok {
-			ev.Status.Progress, ev.Status.FetchedKnown = fetched, true
-		}
-		break
-	}
-	return ev
 }
 
 // fetchedFraction is the share of the job's articles Runner actually
@@ -410,40 +390,17 @@ func (h historyEntry) fetchedFraction() (float64, bool) {
 	return f, true
 }
 
-// Statuses implements ports.DownloadClient: the live queue plus recent
-// history, which is where a finished job lives (nzbd retires completed
-// jobs out of the queue, NZBGet-style).
+// Statuses implements ports.DownloadClient: the live queue only. Terminals
+// come from the ordered history reader (HistorySince) and the event stream,
+// never from re-reading the last hundred history rows (contract section 2.5).
 func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 	var queue statusQueue
 	if err := c.do(ctx, http.MethodGet, "/api/v1/jobs", &queue); err != nil {
 		return nil, err
 	}
-	var hist statusHistory
-	if err := c.do(ctx, http.MethodGet, "/api/v1/history?limit=100", &hist); err != nil {
-		return nil, err
-	}
-	out := make([]ports.DownloadStatus, 0, len(queue.Jobs)+len(hist.Entries))
-	historical := make(map[int64]int, len(hist.Entries))
-	for i, h := range hist.Entries {
-		if !c.acceptsTorrentRole(h.Kind, h.TorrentRole) {
-			continue
-		}
-		historical[h.Job] = i
-	}
+	out := make([]ports.DownloadStatus, 0, len(queue.Jobs))
 	for _, j := range queue.Jobs {
 		if !c.acceptsTorrentRole(j.Kind, j.TorrentRole) {
-			continue
-		}
-		// PP finalization writes history before setting ready on the live job.
-		// During that overlap the history row is the only observation carrying
-		// final_dir, so do not let the pathless queue copy win matchStatus's
-		// first-match rule.
-		if i, ok := historical[j.ID]; ok && !j.Control.Held() {
-			// Preserve an observed queue resolution when an older history
-			// shape has no control. A bare legacy SUCCESS never clears a hold.
-			if historyControl(hist.Entries[i]) == nil {
-				hist.Entries[i].Control = j.Control
-			}
 			continue
 		}
 		st, msg, stage := j.state()
@@ -461,15 +418,6 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 			Message:  msg,
 			Stage:    stage,
 		})
-	}
-	// Unrelated live rows must precede history. A failed handle write falls
-	// back to release-title matching; history-first ordering can otherwise
-	// bind a new download to an older job with the same release title.
-	for _, h := range hist.Entries {
-		if !c.acceptsTorrentRole(h.Kind, h.TorrentRole) {
-			continue
-		}
-		out = append(out, statusOfHistory(h))
 	}
 	return out, nil
 }

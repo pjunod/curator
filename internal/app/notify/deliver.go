@@ -44,7 +44,7 @@ const deliveryBatch = 20
 // Only the ones whose message IS the work. A chat notifier's retry would
 // mean a Discord message arriving two minutes late with no way to tell it
 // from a fresh one, which is worse than not arriving.
-func queued(cfg ports.NotifierConfig) bool { return cfg.Type == "plurx" }
+func queued(cfg ports.NotifierConfig) bool { return ports.QueuedNotifier(cfg) }
 
 // enqueue records a delivery to be made by the worker.
 func (d *Dispatcher) enqueue(ctx context.Context, cfg ports.NotifierConfig, n ports.Notification) {

@@ -438,6 +438,22 @@ type Download struct {
 	SourceIndexerID           int64
 	RunnerInstanceID          string
 	RunnerAdmissionGeneration string
+
+	// The reducer's columns (pipeline contract v2, section 3.2). RunnerOutcome
+	// is the recorded terminal; Provisional marks one Curator authored that a
+	// later Runner fact may re-open. DeadlineAt is when the row's current state
+	// becomes overdue (0 = no deadline).
+	RunnerOutcome       string
+	RunnerOutcomeAt     time.Time
+	RunnerOutcomeSeq    int64
+	RunnerOutcomeReason string
+	RunnerFetchCause    string
+	RunnerBlamesRelease bool
+	RunnerSalvage       string
+	RunnerFetchedJSON   string
+	Provisional         bool
+	DeadlineAt          time.Time
+	StateEnteredAt      time.Time
 }
 
 type ManualGrabRequest struct {
@@ -478,10 +494,22 @@ func downloadFromRow(r sqlitegen.Download) Download {
 		Handoff: handoff, MatchEvidence: evidence, RunnerControl: r.RunnerControl,
 		AddedAt: time.UnixMilli(r.AddedAt), UpdatedAt: time.UnixMilli(r.UpdatedAt),
 	}
+	dl.RunnerOutcome, dl.RunnerOutcomeSeq, dl.RunnerOutcomeReason = r.RunnerOutcome, r.RunnerOutcomeSeq, r.RunnerOutcomeReason
+	dl.RunnerFetchCause, dl.RunnerBlamesRelease, dl.RunnerSalvage = r.RunnerFetchCause, r.RunnerBlamesRelease != 0, r.RunnerSalvage
+	dl.RunnerFetchedJSON, dl.Provisional = r.RunnerFetchedJson, r.Provisional != 0
+	dl.RunnerOutcomeAt, dl.DeadlineAt, dl.StateEnteredAt = msTime(r.RunnerOutcomeAt), msTime(r.DeadlineAt), msTime(r.StateEnteredAt)
 	if r.CopyID.Valid {
 		dl.CopyID = r.CopyID.Int64
 	}
 	return dl
+}
+
+// msTime is a Unix-millisecond column as a time, with 0 as the zero time.
+func msTime(ms int64) time.Time {
+	if ms == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms)
 }
 
 // InsertDownload records a grab.
@@ -551,6 +579,7 @@ func downloadInsertParams(dl Download) (sqlitegen.InsertDownloadParams, error) {
 		ExactTransferCorrelation: boolInt(dl.ExactTransferCorrelation),
 		ReplacementOperationID:   dl.ReplacementOperationID, SourceGuid: dl.SourceGUID, SourceIndexerID: dl.SourceIndexerID,
 		Transfer: dl.Transfer, SubmissionPhase: submissionPhase, ExecutionPayload: dl.ExecutionPayload,
+		DeadlineAt: unixMilliOrZero(dl.DeadlineAt), StateEnteredAt: now,
 	}
 	if dl.CopyID != 0 {
 		p.CopyID = sql.NullInt64{Int64: dl.CopyID, Valid: true}

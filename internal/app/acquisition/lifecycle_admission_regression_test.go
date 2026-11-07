@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/ports"

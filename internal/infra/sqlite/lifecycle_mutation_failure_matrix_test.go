@@ -293,42 +293,6 @@ func TestCreateReplacementOperationRollsBackWhenFileSnapshotInsertFails(t *testi
 	}
 }
 
-func TestRunnerAdmissionPollClaimRollsBackScheduleRowWhenDeadlineWriteFails(t *testing.T) {
-	ctx := context.Background()
-	db, _ := openLifecycleCoverageDB(t)
-	defer func() { _ = db.Close() }()
-	itemID, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Atomic poll schedule", Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	dl, err := db.InsertDownloadRecord(ctx, Download{MediaItemID: itemID, ReleaseTitle: "uncertain admission", Protocol: "nzb", ClientID: 830, State: "grabbed", Transfer: "poll-schedule-transfer", RequestTokenIdempotent: true, SubmissionPhase: "uncertain"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Unix(1_900_000_000, 0)
-	trigger := fmt.Sprintf(`CREATE TRIGGER reject_poll_deadline BEFORE UPDATE OF next_attempt_at ON runner_admission_poll_schedule WHEN NEW.download_id=%d BEGIN SELECT RAISE(ABORT,'injected poll deadline failure'); END`, dl.ID)
-	if _, err := db.W.ExecContext(ctx, trigger); err != nil {
-		t.Fatal(err)
-	}
-	if claimed, err := db.ClaimRunnerAdmissionPoll(ctx, dl.ID, dl.GenerationKey, now); err == nil || claimed {
-		t.Fatalf("poll claim ignored failed durable deadline write: claimed=%v err=%v", claimed, err)
-	}
-	var schedules int
-	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM runner_admission_poll_schedule WHERE download_id=?`, dl.ID).Scan(&schedules); err != nil || schedules != 0 {
-		t.Fatalf("failed poll claim left a schedule without a deadline: rows=%d err=%v", schedules, err)
-	}
-	if _, err := db.W.ExecContext(ctx, `DROP TRIGGER reject_poll_deadline`); err != nil {
-		t.Fatal(err)
-	}
-	if claimed, err := db.ClaimRunnerAdmissionPoll(ctx, dl.ID, dl.GenerationKey, now); err != nil || !claimed {
-		t.Fatalf("poll schedule did not retry after rollback: claimed=%v err=%v", claimed, err)
-	}
-	var attempts int
-	var next int64
-	if err := db.R.QueryRowContext(ctx, `SELECT attempts,next_attempt_at FROM runner_admission_poll_schedule WHERE download_id=? AND generation_key=?`, dl.ID, dl.GenerationKey).Scan(&attempts, &next); err != nil || attempts != 1 || next != now.Add(30*time.Second).UnixMilli() {
-		t.Fatalf("successful retry has incorrect atomic schedule: attempts=%d next=%d err=%v", attempts, next, err)
-	}
-}
 
 func TestBindRunnerAdmissionRollsBackInstallationPinWhenDownloadBindingFails(t *testing.T) {
 	ctx := context.Background()

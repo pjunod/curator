@@ -3,9 +3,9 @@ package acquisition
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -184,6 +184,8 @@ func (s *Service) DeliveryLifecycleByID(ctx context.Context, receiptID int64) (D
 	return s.deliveryLifecycleReceipt(ctx, r)
 }
 
+// RetryDeliveryHandoff re-offers the publication a v1 receipt migrated into
+// (pipeline v2: the receipt no longer drives an import of its own).
 func (s *Service) RetryDeliveryHandoff(ctx context.Context, receiptID int64) error {
 	r, err := s.deliveryReceiptForAction(ctx, receiptID)
 	if err != nil {
@@ -192,94 +194,20 @@ func (s *Service) RetryDeliveryHandoff(ctx context.Context, receiptID int64) err
 	if r.State == "conflict" {
 		return fmt.Errorf("delivery identity conflicts with its saved receipt")
 	}
-	if r.DownloadID > 0 {
-		unlock := s.lockDownload(r.DownloadID)
-		defer unlock()
-	}
-	cfg, err := s.db.GetDownloadClient(ctx, r.ClientID)
-	if err != nil {
-		return err
-	}
-	client := s.newClient(cfg)
-	protocol, ok := client.(ports.DeliveryProtocol)
-	if !ok {
-		return fmt.Errorf("download client no longer supports Runner delivery handoff")
-	}
-	if err := s.db.ForceDeliveryRetryNow(ctx, receiptID); err != nil {
-		return err
-	}
-	s.scheduleDeliveryReceipts(ctx, cfg, protocol)
-	return nil
+	return s.retryReceiptPublication(ctx, r, nil)
 }
 
+// ErrRunnerOwnsSource refuses a request that would have Curator ask Runner to
+// delete under /processing (contract section 7: no Curator-to-Runner cleanup
+// commands). Runner retires its own source.
+var ErrRunnerOwnsSource = errors.New("Runner owns and retires its processing source; Curator no longer asks it to clean up")
+
+// RetryRunnerSourceCleanup is refused: see ErrRunnerOwnsSource.
 func (s *Service) RetryRunnerSourceCleanup(ctx context.Context, receiptID int64) error {
-	// Use the same per-receipt control lock as the automatic GET refresher.
-	// This prevents a list-selected, delayed refresh from issuing after this
-	// explicit POST has recorded a provider Retry-After boundary.
-	unlockSource := s.lockDeliverySourceControl(receiptID)
-	defer unlockSource()
-	r, err := s.deliveryReceiptForAction(ctx, receiptID)
-	if err != nil {
+	if _, err := s.deliveryReceiptForAction(ctx, receiptID); err != nil {
 		return err
 	}
-	if r.State == "conflict" || (r.AckState != "accepted" && (r.AckState != "pending" || r.ConsumerReceiptID == "")) {
-		return fmt.Errorf("runner source cleanup requires a locally prepared, non-conflicting delivery")
-	}
-	if r.DownloadID > 0 {
-		unlock := s.lockDownload(r.DownloadID)
-		defer unlock()
-		// Reload both identity and due time after acquiring the per-download
-		// lock. A second click may have waited behind a POST that recorded a
-		// new Retry-After deadline.
-		fresh, loadErr := s.deliveryReceiptForAction(ctx, receiptID)
-		if loadErr != nil {
-			return loadErr
-		}
-		if fresh.DownloadID != r.DownloadID || fresh.GenerationKey != r.GenerationKey || fresh.Delivery.DeliveryID != r.Delivery.DeliveryID || fresh.Delivery.RequestToken != r.Delivery.RequestToken {
-			return sqlite.ErrDeliveryReceiptStale
-		}
-		if fresh.State == "conflict" || (fresh.AckState != "accepted" && (fresh.AckState != "pending" || fresh.ConsumerReceiptID == "")) {
-			return fmt.Errorf("runner source cleanup requires a locally prepared, non-conflicting delivery")
-		}
-		r = fresh
-	}
-	// Explicit retry may bypass Curator's ordinary refresh cadence, but it
-	// must honor an authoritative Retry-After supplied by Runner.
-	retryDue, err := s.db.DeliverySourceProviderRetryAfter(ctx, receiptID)
-	if err != nil {
-		return err
-	}
-	if retryDue.After(time.Now()) {
-		return fmt.Errorf("runner source-cleanup retry is due after %s", retryDue.UTC().Format(time.RFC3339))
-	}
-	cfg, err := s.db.GetDownloadClient(ctx, r.ClientID)
-	if err != nil {
-		return err
-	}
-	client := s.newClient(cfg)
-	retry, ok := client.(ports.DeliverySourceCleanupRetryProtocol)
-	if !ok {
-		return fmt.Errorf("download client cannot retry Runner source cleanup")
-	}
-	fresh, err := retry.RetryDeliverySourceCleanup(ctx, r.Delivery.DeliveryID)
-	if err != nil {
-		if statusErr := s.db.FailDeliverySourceRefresh(context.WithoutCancel(ctx), receiptID, err.Error(), submissionRetryDeadline(err)); statusErr != nil {
-			s.log.Warn("Runner source-cleanup retry deadline could not be persisted", "receipt", receiptID, "err", statusErr)
-		}
-		return err
-	}
-	if !sameDeliveryImmutable(r.Delivery, fresh) {
-		_ = s.db.SetDeliveryConflict(ctx, receiptID, "Runner delivery changed during source-cleanup retry")
-		return fmt.Errorf("runner delivery identity changed during source-cleanup retry")
-	}
-	retryAfter := 5 * time.Minute
-	if deliverySourceCleanupTerminal(fresh.SourceCleanup) {
-		retryAfter = 24 * time.Hour
-	}
-	if err := s.db.RefreshDeliverySourceCleanup(ctx, receiptID, fresh.SourceCleanup, fresh.FileOutcomes, retryAfter, fresh.SourceCopies); err != nil {
-		return err
-	}
-	return nil
+	return ErrRunnerOwnsSource
 }
 
 func (s *Service) RetryCuratorDeliveryCleanup(ctx context.Context, receiptID int64) error {
@@ -289,6 +217,13 @@ func (s *Service) RetryCuratorDeliveryCleanup(ctx context.Context, receiptID int
 	}
 	if r.State == "conflict" {
 		return fmt.Errorf("delivery identity conflicts with its saved receipt")
+	}
+	// A migrated v1 receipt is the historical cohort: no deletion touches it
+	// until the M7 review approves its publication (contract section 3.4).
+	if pub, ok, err := s.db.PublicationByPath(ctx, receiptPublicationPath(r)); err != nil {
+		return err
+	} else if ok && pub.Cohort == "historical" && pub.CleanupApprovedAt.IsZero() {
+		return ErrHistoricalCohort
 	}
 	if err := s.db.ForceDeliveryCleanupRetryNow(ctx, receiptID); err != nil {
 		return err
@@ -364,55 +299,58 @@ func (s *Service) QueueDeliveryImport(ctx context.Context, receiptID int64, path
 	if len(selected) == 0 {
 		return fmt.Errorf("no manifest files were selected")
 	}
-	if r.State == "imported" {
-		if r.AckState != "accepted" && (r.AckState != "pending" || r.ConsumerReceiptID == "") {
-			return fmt.Errorf("an imported delivery must have a locally prepared Runner acceptance before selected re-import")
-		}
-		rows, err := s.db.DeliveryFileOutcomes(ctx, receiptID)
-		if err != nil {
-			return err
-		}
-		byPath := make(map[string]sqlite.DeliveryFileOutcome, len(rows))
-		for _, row := range rows {
-			byPath[row.Path] = row
-		}
-		unresolved := false
-		for _, absolute := range selected {
-			relative, err := filepath.Rel(r.MappedPath, absolute)
-			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-				return fmt.Errorf("selected path is outside the accepted publication")
-			}
-			row, ok := byPath[filepath.ToSlash(relative)]
-			if !ok || (row.CleanupState != "removed" && row.Disposition != "placed" && row.Disposition != "redundant" && row.Disposition != "disposable_selected_scope") {
-				unresolved = true
-			}
-		}
-		if !unresolved {
-			return fmt.Errorf("all selected manifest files already have durable outcomes")
-		}
+	return s.retryReceiptPublication(ctx, r, selected)
+}
+
+// ErrHistoricalCohort refuses an automatic-style deletion of a publication
+// frozen at the pipeline v2 cutover, until the M7 review approves it.
+var ErrHistoricalCohort = errors.New("this publication is in the historical cohort; nothing deletes it until its review batch is approved")
+
+func receiptPublicationPath(r sqlite.DeliveryReceipt) string {
+	if r.MappedPath != "" {
+		return filepath.Clean(r.MappedPath)
 	}
-	dl.ImportPath, dl.SavePath = r.MappedPath, r.Delivery.PublicationPath
-	// Reopening an imported receipt must also reopen its download state. The
-	// importer deliberately skips terminal imported rows during recovery.
-	dl.State = "awaiting_import"
-	dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(), Detail: fmt.Sprintf("operator selected %d accepted manifest file(s)", len(selected)), Paths: selected})
-	a, err := s.db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+	return filepath.Clean(r.Delivery.PublicationPath)
+}
+
+// retryReceiptPublication imports the publication a receipt migrated into:
+// all of it, or exactly the selected files (a Resolve selection).
+func (s *Service) retryReceiptPublication(ctx context.Context, r sqlite.DeliveryReceipt, selected []string) error {
+	pub, ok, err := s.db.PublicationByPath(ctx, receiptPublicationPath(r))
 	if err != nil {
 		return err
 	}
-	if a.Outcome == "pending" {
-		if _, err = s.db.FinalizeImportCancellation(ctx, a.ImportAttemptKey); err != nil {
-			return err
-		}
+	if !ok || pub.DownloadID == 0 {
+		return fmt.Errorf("this delivery has no publication with a download row to import into")
 	}
-	if err = s.db.QueueDeliveryReimport(ctx, r, dl); err != nil {
-		return err
+	unlock := s.lockDownload(pub.DownloadID)
+	defer unlock()
+	if s.ImportRunning(pub.DownloadID) {
+		return fmt.Errorf("an import is already running for this delivery")
 	}
-	cfg, err := s.db.GetDownloadClient(ctx, r.ClientID)
+	dl, err := s.db.GetDownload(ctx, pub.DownloadID)
 	if err != nil {
 		return err
 	}
-	if !s.enqueueDeliveryImport(ctx, dl, cfg, r.ID) {
+	if len(selected) > 0 {
+		dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(),
+			Detail: fmt.Sprintf("operator selected %d publication file(s)", len(selected)), Paths: selected})
+		if err := s.db.UpdateDownloadHandoff(ctx, dl); err != nil {
+			return err
+		}
+	}
+	if pub.State != "discovered" {
+		if err := s.db.SetPublicationState(ctx, pub.ID, "discovered", ""); err != nil {
+			return err
+		}
+	}
+	var cfg ports.ClientConfig
+	if dl.ClientID != 0 {
+		if cfg, err = s.db.GetDownloadClient(ctx, dl.ClientID); err != nil {
+			return err
+		}
+	}
+	if !s.enqueuePublicationImportApproved(ctx, dl, cfg, pub.ID, true) {
 		return fmt.Errorf("import worker is unavailable or full; retry the selected import")
 	}
 	return nil

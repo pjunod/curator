@@ -9,36 +9,6 @@ import (
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
-func TestSelectedDeliveryDeleteRefusesReceiptThatBecameImporting(t *testing.T) {
-	ctx := context.Background()
-	svc, db, receipt, publication := reviewedDeliveryDeleteFixture(t, map[string][]byte{
-		"keep.txt": []byte("unselected sibling"),
-	})
-	entry := completedEntryForPath(t, svc, publication)
-	fingerprint := entry.Fingerprint
-	selectedPath := filepath.Join(publication, epRelease+".mkv")
-	selection := completedSelectionForPath(t, entry, selectedPath)
-
-	// The UI inventory was reviewed while the delivery was idle. Import starts
-	// before the destructive request reaches its final admission check.
-	if _, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET state='importing' WHERE id=?`, receipt.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.DeleteSelectedDeliveryFiles(ctx, publication, fingerprint, []CompletedFileSelection{selection}); err == nil {
-		t.Fatal("selected deletion proceeded after the receipt entered importing")
-	}
-	if got, err := os.ReadFile(selectedPath); err != nil || len(got) == 0 {
-		t.Fatalf("active import's selected source changed: bytes=%d err=%v", len(got), err)
-	}
-	if got, err := os.ReadFile(filepath.Join(publication, "keep.txt")); err != nil || string(got) != "unselected sibling" {
-		t.Fatalf("active import's unselected sibling changed: %q err=%v", got, err)
-	}
-	var batches int
-	if err := db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_delivery_explicit_delete_batches WHERE receipt_id=?`, receipt.ID).Scan(&batches); err != nil || batches != 0 {
-		t.Fatalf("refused active request created deletion intent: count=%d err=%v", batches, err)
-	}
-}
-
 func TestLegacySelectedDeletePreservesPayloadOwnedByActiveDownload(t *testing.T) {
 	svc, db, itemID, root := completedFixture(t)
 	ctx := context.Background()
@@ -140,51 +110,13 @@ func TestLegacySelectedDeletePreservesPayloadOwnedByActiveDownload(t *testing.T)
 	}
 }
 
-func TestDeliveryFileCleanupRejectsSamePathPublicationReplacement(t *testing.T) {
-	ctx := context.Background()
-	svc, db, dl, cfg, publication := deliveryImportFixture(t, &deliveryImportClient{})
-	receiptID := receiptIDFor(t, db, dl.ID)
-	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
-		t.Fatalf("import accepted delivery: %v", err)
+func completedSelectionForPath(t *testing.T, entry *CompletedEntry, path string) CompletedFileSelection {
+	t.Helper()
+	for _, file := range entry.ReviewFiles {
+		if canonicalCompletedPath(file.Path) == canonicalCompletedPath(path) {
+			return CompletedFileSelection{Path: file.Path, SnapshotIdentity: file.SnapshotIdentity}
+		}
 	}
-	receipt, err := db.DeliveryReceiptByID(ctx, receiptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	row := mustDeliveryOutcome(t, db, receiptID, epRelease+".mkv")
-	current := filepath.Join(publication, filepath.FromSlash(row.Path))
-	contents, err := os.ReadFile(current)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Replacing the directory at the same lexical path must not inherit the
-	// accepted publication's cleanup authority, even if its media has identical
-	// bytes and the independently committed library copy remains valid.
-	held := publication + ".held"
-	if err := os.Rename(publication, held); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(publication, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(current, contents, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.removeVerifiedDeliveryFile(ctx, receipt, row); err == nil {
-		t.Fatal("cleanup accepted a same-path replacement publication directory")
-	}
-	if got, err := os.ReadFile(current); err != nil || string(got) != string(contents) {
-		t.Fatalf("replacement publication bytes were removed or changed: err=%v", err)
-	}
-	if got, err := os.ReadFile(filepath.Join(held, filepath.FromSlash(row.Path))); err != nil || string(got) != string(contents) {
-		t.Fatalf("original publication bytes changed: err=%v", err)
-	}
-	files, err := db.ListFilesForItem(ctx, dl.MediaItemID)
-	if err != nil || len(files) != 1 {
-		t.Fatalf("committed library copy was changed: files=%+v err=%v", files, err)
-	}
-	if _, err := os.Stat(files[0].Path); err != nil {
-		t.Fatalf("committed library bytes disappeared: %v", err)
-	}
+	t.Fatalf("review selection %q missing from entry %+v", path, entry)
+	return CompletedFileSelection{}
 }

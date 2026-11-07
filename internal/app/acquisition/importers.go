@@ -61,6 +61,10 @@ type importJob struct {
 	ticket              *importTicket
 	deliveryReceiptID   int64
 	deliveryCleanupOnly bool
+	// publicationID imports one publication (pipeline v2); approved says a
+	// person approved it (ManualApproval, Resolve).
+	publicationID int64
+	approved      bool
 	cleanupCancel       context.CancelFunc
 	lockHeld            bool
 }
@@ -142,7 +146,7 @@ func (s *Service) StartImporters(ctx context.Context) {
 		s.startManualAdmissionWorker(ctx)
 		s.startAutomaticAdmissionWorker(ctx)
 		s.startReplacementWorker(ctx)
-		s.startDeliveryFileCleanupRetryWorker(ctx)
+		s.startReplacementGrabWorker(ctx)
 	})
 }
 
@@ -207,11 +211,6 @@ func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg por
 	return s.enqueueImportJob(ctx, dl, cfg, 0, true)
 }
 
-// enqueueDeliveryImport uses the ordinary bounded workers, but never falls
-// back to doing manifest hashing or import work on the queue-refresh goroutine.
-func (s *Service) enqueueDeliveryImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, receiptID int64) bool {
-	return s.enqueueImportJob(ctx, dl, cfg, receiptID, false)
-}
 
 func (s *Service) queueDeliveryCleanup(ctx context.Context, cfg ports.ClientConfig, receipt sqlite.DeliveryReceipt) bool {
 	s.importMu.Lock()
@@ -243,6 +242,12 @@ func (s *Service) queueDeliveryCleanup(ctx context.Context, cfg ports.ClientConf
 }
 
 func (s *Service) enqueueImportJob(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, receiptID int64, inline bool) bool {
+	return s.enqueueImportJobFor(ctx, dl, cfg, importJob{deliveryReceiptID: receiptID}, inline)
+}
+
+// enqueueImportJobFor queues one import job; spec carries its kind.
+func (s *Service) enqueueImportJobFor(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, spec importJob, inline bool) bool {
+	receiptID := spec.deliveryReceiptID
 	inlineRun := s.importCh == nil
 	if inlineRun && !inline {
 		return false
@@ -284,7 +289,8 @@ func (s *Service) enqueueImportJob(ctx context.Context, dl sqlite.Download, cfg 
 		ticket = &importTicket{cancel: cancel, queued: !inlineRun, attempt: key}
 		s.importJobs[dl.ID] = ticket
 	}
-	job := importJob{dl: dl, cfg: cfg, ctx: jobCtx, executionCancel: cancel, ticket: ticket, deliveryReceiptID: receiptID, lockHeld: inlineRun}
+	job := importJob{dl: dl, cfg: cfg, ctx: jobCtx, executionCancel: cancel, ticket: ticket, deliveryReceiptID: receiptID, lockHeld: inlineRun,
+		publicationID: spec.publicationID, approved: spec.approved}
 	if inlineRun {
 		s.importMu.Unlock()
 		defer cancel()
@@ -382,12 +388,7 @@ func (s *Service) runImportOwned(ctx context.Context, job importJob) {
 		if err != nil {
 			return
 		}
-		if fresh.State == "imported" {
-			if job.deliveryReceiptID != 0 {
-				if s.completeDeliveryAcceptance(ctx, job.cfg, job.deliveryReceiptID) == nil {
-					s.markDeliveryImported(ctx, job.deliveryReceiptID)
-				}
-			}
+		if fresh.State == "imported" && job.publicationID == 0 {
 			return
 		}
 		bound, controlErr := s.ensureImportContext(ctx, fresh)
@@ -395,7 +396,9 @@ func (s *Service) runImportOwned(ctx context.Context, job importJob) {
 			return
 		}
 		ctx = bound
-		if ctx.Err() != nil || persistedDownloadHeld(fresh.RunnerControl) {
+		// A recorded terminal ends a hold unconditionally (contract 3.2): the
+		// last control stored before it does not gate a publication import.
+		if ctx.Err() != nil || (job.publicationID == 0 && persistedDownloadHeld(fresh.RunnerControl)) {
 			return
 		}
 		// The normal path persisted these before enqueue. Keeping a non-empty
@@ -427,8 +430,10 @@ func (s *Service) runImportOwned(ctx context.Context, job importJob) {
 		Detail:     "placing files in the library",
 	})
 	defer h.End()
-	if job.deliveryReceiptID != 0 {
-		_ = s.runDeliveryImport(transfers.WithHandle(ctx, h), job.dl, job.cfg, job.deliveryReceiptID)
+	if job.publicationID != 0 {
+		if err := s.runPublicationImport(transfers.WithHandle(ctx, h), job.dl, job.cfg, job.publicationID, job.approved); err != nil {
+			s.log.Debug("publication import ended without importing", "download", job.dl.ID, "publication", job.publicationID, "err", err)
+		}
 		return
 	}
 	_ = s.runImport(transfers.WithHandle(ctx, h), job.dl)
