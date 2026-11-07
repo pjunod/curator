@@ -363,6 +363,8 @@ cannot grant this replay authority.
 
 ### 4.1 Communication — durable facts instead of a fragile notification
 
+**Status:** superseded 2026-11-07 by [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) (§3 runner facts, §3.4 publications). Kept as history.
+
 Reuse the existing transfer identifier and journals. The minimum shared facts
 are request/attempt ID, purpose, payload generation, published path, file list,
 integrity evidence, and each side's progress/result. Each fact names its owner.
@@ -402,6 +404,8 @@ An accepted handoff remains recognized after Curator has imported and deleted
 the source: late notifications cannot recreate finished work.
 
 ### 4.2 Handoff and cleanup are independently retryable steps
+
+**Status:** superseded 2026-11-07 by [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) (§3.4 publications and per-file outcomes). Kept as history.
 
 **User direction, 2026-10-22:** show handoff and cleanup as explicit steps,
 including their time spent, and make both retryable.

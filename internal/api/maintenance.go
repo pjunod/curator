@@ -44,6 +44,7 @@ var maintenanceReads = map[string]bool{
 	"GET /api/v1/notifiers":                                true,
 	"GET /api/v1/notifiers/{id}/deliveries":                true,
 	"GET /api/v1/system/transfers":                         true,
+	"GET /api/v1/system/pipeline":                          true,
 	"GET /api/v1/system/connections":                       true,
 	"GET /api/v1/system/backups":                           true,
 	"GET /api/v1/calendar":                                 true,

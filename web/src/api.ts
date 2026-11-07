@@ -1438,6 +1438,55 @@ export interface Transfer {
 export const getTransfers = () => get<Transfer[]>('/system/transfers')
 
 export const getConnections = () => get<Connections>('/system/connections')
+
+/** One seam between Runner, Curator and Cinema (GET /system/pipeline). */
+export interface PipelineTiming {
+  kind: 'failure_to_next_grab' | 'runner_done_to_import' | 'import_to_cinema_visible'
+  /** False while nothing can finish this timing yet. */
+  measured: boolean
+  note?: string
+  /** Timings that finished inside the window. */
+  samples: number
+  /** Started inside the window and not finished; never folded into p50/p95. */
+  waiting: number
+  p50Seconds?: number
+  p95Seconds?: number
+}
+
+export interface PipelineSummary {
+  windowHours: number
+  /** Downloads older than their state's allowance (the pipeline:overdue check). */
+  overdueRows: number
+  timings: PipelineTiming[]
+}
+
+export const getPipeline = () => get<PipelineSummary>('/system/pipeline')
+
+const PIPELINE_TITLE: Record<PipelineTiming['kind'], string> = {
+  failure_to_next_grab: 'Failure to next grab',
+  runner_done_to_import: 'Download done to imported',
+  import_to_cinema_visible: 'Imported to visible in Cinema',
+}
+
+/** What one System tile shows. Unmeasured and empty are different things. */
+export function pipelineTile(t: PipelineTiming): {
+  title: string
+  value: string
+  detail: string
+} {
+  const title = PIPELINE_TITLE[t.kind] ?? t.kind
+  const waiting = t.waiting > 0 ? `${t.waiting} waiting` : 'none waiting'
+  if (!t.measured) return { title, value: t.note ?? 'not measured', detail: '' }
+  if (t.samples === 0 || t.p50Seconds === undefined || t.p95Seconds === undefined) {
+    return { title, value: 'no data yet', detail: waiting }
+  }
+  const secs = (v: number) => (v < 1 ? '<1s' : fmtDuration(v))
+  return {
+    title,
+    value: `p50 ${secs(t.p50Seconds)} · p95 ${secs(t.p95Seconds)}`,
+    detail: `${t.samples} in last 24 h · ${waiting}`,
+  }
+}
 export const getBackups = () => get<BackupInfo[]>('/system/backups')
 
 // ---- Phase 5: depth ----

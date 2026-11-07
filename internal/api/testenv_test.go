@@ -13,6 +13,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/discover"
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/app/library"
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/scheduler"
@@ -191,6 +192,7 @@ func newAPIEnv(t *testing.T) *apiEnv {
 		DB:             fakeDB{v: 2},
 		Library:        lib,
 		Acquisition:    acq,
+		Pipeline:       pipeline.New(db),
 		Discover:       discover.New(nil, nil),
 		Store:          db,
 		Settings:       db,

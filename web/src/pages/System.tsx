@@ -9,6 +9,8 @@ import {
   getBackups,
   getConnections,
   getHealth,
+  getPipeline,
+  pipelineTile,
   getTasks,
   runTask,
 } from '../api'
@@ -70,6 +72,11 @@ function ConnectionsCard() {
     refetchInterval: 10_000,
   })
   const rows = q.data?.connections ?? []
+  const pipe = useQuery({
+    queryKey: ['pipeline'],
+    queryFn: getPipeline,
+    refetchInterval: 30_000,
+  })
 
   return (
     <section className="panel">
@@ -82,6 +89,27 @@ function ConnectionsCard() {
           ? `Last probed ${fmtRelative(new Date(q.data.checkedAt).toISOString())}.`
           : 'Not probed yet — the health check runs every minute.'}
       </p>
+      {pipe.data && (
+        <div className="pipeline-tiles" aria-label="Pipeline timings, last 24 hours">
+          {pipe.data.timings.map((t) => {
+            const tile = pipelineTile(t)
+            return (
+              <div key={t.kind} className="pipeline-tile">
+                <div className="muted">{tile.title}</div>
+                <strong>{tile.value}</strong>
+                {tile.detail && <div className="muted">{tile.detail}</div>}
+              </div>
+            )
+          })}
+          {pipe.data.overdueRows > 0 && (
+            <p className="pipeline-overdue">
+              <span className="pill pill-warning">{pipe.data.overdueRows} overdue</span>{' '}
+              download(s) have outlived their state&apos;s allowance — see the
+              pipeline:overdue health check for which.
+            </p>
+          )}
+        </div>
+      )}
       {rows.length === 0 ? (
         <p className="muted">
           No download clients or media servers configured yet (Settings).

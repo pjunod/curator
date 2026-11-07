@@ -54,6 +54,7 @@ test.describe('API', () => {
       'imports',
       'library-folders',
       'metadata-provider',
+      'pipeline:overdue',
       'web-ui',
     ]
     const names: string[] = body.checks.map((c: { name: string }) => c.name)

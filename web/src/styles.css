@@ -400,6 +400,31 @@ tr:last-child td {
   color: var(--warning);
 }
 
+.pipeline-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+
+.pipeline-tile {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--bg);
+}
+
+.pipeline-tile strong {
+  display: block;
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.pipeline-overdue {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .pill-error {
   background: color-mix(in srgb, var(--error) 18%, transparent);
   color: var(--error);

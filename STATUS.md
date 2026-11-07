@@ -1,5 +1,57 @@
 # Monarr — Project Status
 
+## Pipeline contract v2, M0: contract, timings, overdue check — 2026-11-07 · v0.38.15
+
+**Status:** [PR #94](https://github.com/pjunod/curator/pull/94) on
+`claude/pipeline-v2-m0-curator` · owner: Claude (Opus orchestrator) · two
+adversarial reviews addressed (Sonnet agent: 7 findings; Fable: 2 blocking +
+4) · not merged, not deployed.
+
+First curator milestone of the pipeline rewrite
+([PIPELINE_CONTRACT.md](docs/PIPELINE_CONTRACT.md) is now in the repo).
+Measurement only; no behaviour on the download path changes.
+
+- Docs: contract added; "Being replaced by" banner on `integration.md`;
+  `plan-integration.md` section 3 and `DOWNLOAD_LIFECYCLE_PROPOSAL.md`
+  sections 4.1-4.2 marked superseded; the stale "not fixed or deployed" status
+  lines in `RUNNER_FAILURE_DIAGNOSIS.md`, `RUNNER_FAILURE_FIX_PLAN.md` and
+  `RUNNER_FAILURE_BUILD_STATUS.md` now say Runner PR #247 fixed it; `usage.md`
+  has a "Pipeline" section.
+- Migration 0071 `pipeline_timings`; new package `internal/app/pipeline`
+  (timings, histograms, `pipeline:overdue`). Recording points on the old
+  paths: `failure_to_next_grab` (handleFailure), `runner_done_to_import`
+  (started when the import is queued, or at approval for a held row, ended at imported); `import_to_cinema_visible` is not started at all until M5.
+- `/metrics`: three histogram families, `monarr_pipeline_waiting`,
+  `monarr_pipeline_overdue_rows`, `monarr_runner_fact_mismatch_total`.
+- `GET /api/v1/system/pipeline` (`pipelineSummary`) and three tiles on System
+  -> Connections.
+- Deleted: nothing.
+
+Could not verify: the System tiles in a browser (no component test harness in
+this repo; the tile text is a unit-tested pure function); full suites, e2e and
+coverage floor were not run (fast lane only, by instruction).
+
+Decisions for Paul: overdue judges `updated_at` against fixed per-state
+allowances until M2 adds `deadline_at`. Because `updated_at` is rewritten on
+every poll the client still lists the row, the M0 check catches downloads
+Curator has stopped hearing about, not jobs held or stalled inside the
+client; the code, the warning and `usage.md` say exactly that (Fable review
+finding 1, option b — keeps the download path untouched in M0). A failed
+metrics query omits that series rather than writing zeros
+(`monarr_pipeline_scrape_errors_total` counts it). `failure_to_next_grab`
+times the immediate re-search only until M2's reducer ends it from
+`replacement_grabs`. Timings only
+start when they can end, so none is left open forever: `import_to_cinema_visible`
+is NOT started in M0 (deviation from IMPL section 4: M5 starts and ends it; the
+tile reads "not measured - needs M5" with no waiting count), a series failure
+ends only when a season job was queued (otherwise the timing is dropped), and
+`failure_to_next_grab` starts at the first search actually attempted. "Waiting"
+counts open timings started in the last 24 h. No pruning: closed rows are about
+three per download and pruning would make histogram counts go down. The
+`notify.Dispatcher` is not handed the recorder (M5 wires it). Parked and
+superseded downloads are never overdue. `/metrics` reads one aggregate per
+kind (index on kind, ended_at), and the overdue gauge is a COUNT.
+
 ## The re-grab budget counts bytes, not attempts — 2026-11-03 · v0.38.13
 
 **Status:** merged as #90 (`e62d19f`), deployed to nuc3 2026-11-03 00:48Z.

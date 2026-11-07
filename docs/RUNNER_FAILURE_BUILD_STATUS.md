@@ -1,6 +1,6 @@
 # Runner failure build — implementation and evidence ledger
 
-**Status:** implemented with passing local gates; release qualification pending · **Updated:** 2026-09-30
+**Status:** implemented with passing local gates and merged as Runner PR #247 (2026-10-01, `a461515`); native-mount qualification not claimed · **Updated:** 2026-09-30
 
 Companion to [the build contract](RUNNER_FAILURE_BUILD.md). This ledger records
 implementation and tests, separately from deployment and native-mount evidence.

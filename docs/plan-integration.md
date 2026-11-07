@@ -180,6 +180,8 @@ they are sketched separately in §11.)
 
 ## 3. The contract
 
+**Status:** superseded 2026-11-07 by [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) (pipeline contract v2). Kept as history; do not build from this section.
+
 Everything below is normative for all three repos. Payload field names
 are exact. Copies of the relevant slices live in the per-repo plans;
 if a conflict is found, this file wins and the per-repo copy is the bug.
