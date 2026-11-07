@@ -11,7 +11,9 @@
 -- ended_at = 0 means "still waiting"; those rows are reported as a separate
 -- count and never silently dropped from the picture. The transfer column is
 -- the row's transfer token, or "download-<id>" for a row that never had one.
--- One row per (kind, transfer): the first start wins.
+-- One row per (kind, transfer): the first start wins. Closed rows are kept
+-- (about three per download): pruning would make the exported histogram
+-- counts go down, which Prometheus treats as a counter reset.
 CREATE TABLE pipeline_timings (
     id          INTEGER PRIMARY KEY,
     transfer    TEXT NOT NULL,
@@ -22,6 +24,7 @@ CREATE TABLE pipeline_timings (
     note        TEXT NOT NULL DEFAULT ''
 ) STRICT;
 CREATE INDEX idx_pipeline_timings_kind_started ON pipeline_timings (kind, started_at DESC);
+CREATE INDEX idx_pipeline_timings_kind_ended ON pipeline_timings (kind, ended_at);
 CREATE UNIQUE INDEX idx_pipeline_timings_kind_transfer ON pipeline_timings (kind, transfer);
 
 -- +goose Down

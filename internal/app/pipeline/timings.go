@@ -64,6 +64,17 @@ func (t *Timings) Start(ctx context.Context, kind, transfer string, downloadID i
 	}
 }
 
+// Discard drops an open timing whose start turned out to have nothing to wait
+// for, so it is not reported as waiting. A closed timing is left alone.
+func (t *Timings) Discard(ctx context.Context, kind, transfer string) {
+	if t == nil || t.db == nil {
+		return
+	}
+	if err := t.db.DiscardPipelineTiming(ctx, kind, transfer); err != nil {
+		t.log.Warn("pipeline timing: discard failed", "kind", kind, "transfer", transfer, "err", err)
+	}
+}
+
 // End closes an open timing; a timing that was never started is ignored.
 func (t *Timings) End(ctx context.Context, kind, transfer string) {
 	if t == nil || t.db == nil {
@@ -155,10 +166,7 @@ func (t *Timings) Summary(ctx context.Context) (Summary, error) {
 		}
 		out.Timings = append(out.Timings, s)
 	}
-	rows, err := t.Overdue(ctx)
-	if err != nil {
-		return out, err
-	}
-	out.OverdueRows = len(rows)
-	return out, nil
+	n, err := t.OverdueCount(ctx)
+	out.OverdueRows = n
+	return out, err
 }

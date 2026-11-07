@@ -1476,7 +1476,7 @@ export function pipelineTile(t: PipelineTiming): {
 } {
   const title = PIPELINE_TITLE[t.kind] ?? t.kind
   const waiting = t.waiting > 0 ? `${t.waiting} waiting` : 'none waiting'
-  if (!t.measured) return { title, value: t.note ?? 'not measured', detail: waiting }
+  if (!t.measured) return { title, value: t.note ?? 'not measured', detail: '' }
   if (t.samples === 0 || t.p50Seconds === undefined || t.p95Seconds === undefined) {
     return { title, value: 'no data yet', detail: waiting }
   }

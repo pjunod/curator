@@ -22,30 +22,30 @@ var helpText = map[string]string{
 func (t *Timings) WriteMetrics(ctx context.Context, w io.Writer) {
 	for _, kind := range Kinds {
 		name := "monarr_" + kind + "_seconds"
-		var ds []int64
+		cum := make([]int64, len(bucketsSeconds))
+		var sumMs, count int64
 		if t != nil && t.db != nil {
-			ds, _ = t.db.PipelineDurationsMs(ctx, kind, 0)
+			bounds := make([]int64, len(bucketsSeconds))
+			for i, le := range bucketsSeconds {
+				bounds[i] = int64(le * 1000)
+			}
+			if c, sm, n, err := t.db.PipelineHistogram(ctx, kind, bounds); err == nil {
+				cum, sumMs, count = c, sm, n
+			}
 		}
 		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s histogram\n", name, helpText[kind], name)
-		var sumMs int64
-		for _, d := range ds {
-			sumMs += d
+		for i, le := range bucketsSeconds {
+			fmt.Fprintf(w, "%s_bucket{le=\"%g\"} %d\n", name, le, cum[i])
 		}
-		for _, le := range bucketsSeconds {
-			n := 0
-			for _, d := range ds {
-				if float64(d)/1000 <= le {
-					n++
-				}
-			}
-			fmt.Fprintf(w, "%s_bucket{le=\"%g\"} %d\n", name, le, n)
-		}
-		fmt.Fprintf(w, "%s_bucket{le=\"+Inf\"} %d\n", name, len(ds))
-		fmt.Fprintf(w, "%s_sum %g\n%s_count %d\n", name, float64(sumMs)/1000, name, len(ds))
+		fmt.Fprintf(w, "%s_bucket{le=\"+Inf\"} %d\n", name, count)
+		fmt.Fprintf(w, "%s_sum %g\n%s_count %d\n", name, float64(sumMs)/1000, name, count)
 	}
 	fmt.Fprintf(w, "# HELP monarr_pipeline_waiting Timings started in the last 24 h that have not finished, by kind.\n# TYPE monarr_pipeline_waiting gauge\n")
 	for _, kind := range Kinds {
-		s, _ := t.Stats(ctx, kind, Window)
-		fmt.Fprintf(w, "monarr_pipeline_waiting{kind=%q} %d\n", kind, s.Waiting)
+		var waiting int
+		if t != nil && t.db != nil {
+			waiting, _, _ = t.db.PipelineWaiting(ctx, kind, t.now().Add(-Window).UnixMilli())
+		}
+		fmt.Fprintf(w, "monarr_pipeline_waiting{kind=%q} %d\n", kind, waiting)
 	}
 }

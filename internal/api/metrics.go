@@ -89,8 +89,8 @@ func (s *Server) metricsHandler() http.Handler {
 		// are written even with no samples so a scrape can alert on absence.
 		s.deps.Pipeline.WriteMetrics(ctx, w)
 		overdue := 0
-		if rows, err := s.deps.Pipeline.Overdue(ctx); err == nil {
-			overdue = len(rows)
+		if n, err := s.deps.Pipeline.OverdueCount(ctx); err == nil {
+			overdue = n
 		}
 		fmt.Fprintf(w, "# HELP monarr_pipeline_overdue_rows Downloads that have outlived their state's allowance; 0 on a healthy system.\n# TYPE monarr_pipeline_overdue_rows gauge\n")
 		fmt.Fprintf(w, "monarr_pipeline_overdue_rows %d\n", overdue)

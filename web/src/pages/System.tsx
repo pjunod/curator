@@ -97,7 +97,7 @@ function ConnectionsCard() {
               <div key={t.kind} className="pipeline-tile">
                 <div className="muted">{tile.title}</div>
                 <strong>{tile.value}</strong>
-                <div className="muted">{tile.detail}</div>
+                {tile.detail && <div className="muted">{tile.detail}</div>}
               </div>
             )
           })}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 // M0 has no deadline_at column yet (M2 adds it), so "overdue" is judged by
@@ -24,8 +25,6 @@ const (
 	overdueNamesInReport = 3
 )
 
-var overdueStates = []string{"grabbed", "downloading", "downloaded", "importing"}
-
 func allowance(state, protocol string) time.Duration {
 	switch state {
 	case "grabbed":
@@ -41,6 +40,15 @@ func allowance(state, protocol string) time.Duration {
 	return 0
 }
 
+func (t *Timings) cutoffs() sqlite.OverdueCutoffs {
+	now := t.now()
+	at := func(d time.Duration) int64 { return now.Add(-d).UnixMilli() }
+	return sqlite.OverdueCutoffs{
+		Grabbed: at(allowGrabbed), Downloading: at(allowDownloading),
+		Torrent: at(allowDownloadingTor), ImportInFlight: at(allowImportInFlight),
+	}
+}
+
 // OverdueRow is one download that has outlived its state's allowance.
 type OverdueRow struct {
 	ID    int64
@@ -50,26 +58,28 @@ type OverdueRow struct {
 	Limit time.Duration
 }
 
-// Overdue lists downloads older than their state's allowance, oldest first.
-func (t *Timings) Overdue(ctx context.Context) ([]OverdueRow, error) {
+// OverdueCount is the number of overdue downloads, one aggregate query.
+func (t *Timings) OverdueCount(ctx context.Context) (int, error) {
+	if t == nil || t.db == nil {
+		return 0, nil
+	}
+	return t.db.OverdueCount(ctx, t.cutoffs())
+}
+
+// Overdue lists up to limit overdue downloads, oldest first.
+func (t *Timings) Overdue(ctx context.Context, limit int) ([]OverdueRow, error) {
 	if t == nil || t.db == nil {
 		return nil, nil
 	}
-	cands, err := t.db.OverdueCandidates(ctx, overdueStates)
+	rows, err := t.db.OverdueRows(ctx, t.cutoffs(), limit)
 	if err != nil {
 		return nil, err
 	}
 	now := t.now()
-	var out []OverdueRow
-	for _, c := range cands {
-		limit := allowance(c.State, c.Protocol)
-		if limit == 0 {
-			continue
-		}
-		age := now.Sub(time.UnixMilli(c.UpdatedAtMs))
-		if age > limit {
-			out = append(out, OverdueRow{ID: c.ID, Title: c.Title, State: c.State, Age: age, Limit: limit})
-		}
+	out := make([]OverdueRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, OverdueRow{ID: r.ID, Title: r.Title, State: r.State,
+			Age: now.Sub(time.UnixMilli(r.UpdatedAtMs)), Limit: allowance(r.State, r.Protocol)})
 	}
 	return out, nil
 }
@@ -77,27 +87,28 @@ func (t *Timings) Overdue(ctx context.Context) ([]OverdueRow, error) {
 // OverdueCheck is the pipeline:overdue health check. It is a warning, never
 // an error, and names the rows so there is something to open.
 func (t *Timings) OverdueCheck(ctx context.Context) health.Result {
-	rows, err := t.Overdue(ctx)
+	total, err := t.OverdueCount(ctx)
 	if err != nil {
 		return health.Errorf("cannot read the download queue: %v", err)
 	}
-	if len(rows) == 0 {
+	if total == 0 {
 		return health.OK()
 	}
+	rows, err := t.Overdue(ctx, overdueNamesInReport)
+	if err != nil {
+		return health.Errorf("cannot read the download queue: %v", err)
+	}
 	names := make([]string, 0, overdueNamesInReport)
-	for i, r := range rows {
-		if i == overdueNamesInReport {
-			break
-		}
+	for _, r := range rows {
 		names = append(names, fmt.Sprintf("#%d %q in %s for %s (allowance %s)",
 			r.ID, r.Title, r.State, r.Age.Truncate(time.Minute), r.Limit))
 	}
 	more := ""
-	if len(rows) > overdueNamesInReport {
-		more = fmt.Sprintf(" and %d more", len(rows)-overdueNamesInReport)
+	if total > len(rows) {
+		more = fmt.Sprintf(" and %d more", total-len(rows))
 	}
 	return health.Warn("%d download(s) have outlived their state's allowance: %s%s. "+
 		"Until the deadline column lands (pipeline M2) this judges the time since the row last changed, "+
 		"against fixed allowances per state: grabbed 10m, downloading 30m (torrents 24h), downloaded/importing 6h",
-		len(rows), strings.Join(names, "; "), more)
+		total, strings.Join(names, "; "), more)
 }

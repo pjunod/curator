@@ -68,10 +68,15 @@ func (s *Service) recordDownloaded(ctx context.Context, dl *sqlite.Download, cfg
 	// "(poll)" is how an operator sees that push is actually working —
 	// otherwise a dead subscription and a healthy one produce identical
 	// traces, just 30 seconds apart, and nobody notices for weeks.
-	// runner_done_to_import (pipeline M0) starts the first time the client is
-	// seen to have finished this row; a repeat observation does not move it.
-	s.timings.Start(ctx, pipeline.RunnerDoneToImport, pipeline.Key(dl.Transfer, dl.ID), dl.ID)
 	s.advance(ctx, dl, "downloaded", 1, "", stepDownloaded, traced(detail, source))
+}
+
+// startRunnerDoneTiming opens runner_done_to_import for a row that is going to
+// be imported without waiting on a person: a row held for approval starts its
+// clock at approval, so an operator's wait does not pollute the seam. The first
+// start wins, so calling it again from a retry or the import itself is safe.
+func (s *Service) startRunnerDoneTiming(ctx context.Context, dl sqlite.Download) {
+	s.timings.Start(ctx, pipeline.RunnerDoneToImport, pipeline.Key(dl.Transfer, dl.ID), dl.ID)
 }
 
 // onDownloaded is the completed-download branch of the poller. It records
@@ -88,6 +93,7 @@ func (s *Service) onDownloaded(ctx context.Context, dl sqlite.Download, cfg port
 		}
 		return
 	}
+	s.startRunnerDoneTiming(ctx, dl)
 	// Handed to the import workers, not run here. This is the control/data
 	// split: deciding is cheap and belongs on the caller's goroutine, moving
 	// bytes is not and does not — a 20 GB import used to hold the queue poll
@@ -117,6 +123,7 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 		}
 		dl.State, dl.Handoff = fresh.State, fresh.Handoff
 	}
+	s.startRunnerDoneTiming(ctx, dl) // no-op when an earlier path already started it
 	imp := dl.ImportPath
 	if imp == "" {
 		imp = dl.SavePath
@@ -260,6 +267,7 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	if dl.State == "imported" {
 		return nil
 	}
+	s.startRunnerDoneTiming(ctx, dl) // approval is when a held row's clock starts
 	if dl.ImportPath == "" && dl.SavePath == "" {
 		return fmt.Errorf("no download path recorded yet — wait for the download to finish")
 	}

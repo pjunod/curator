@@ -201,6 +201,7 @@ type Service struct {
 	// transfer token other than the row's own.
 	timings        *pipeline.Timings
 	factMismatches atomic.Int64
+	mismatchSeen   sync.Map // mismatchKey -> struct{}; one count per download and foreign token
 }
 
 type runnerAdmissionPollPermitKey struct{}
@@ -215,6 +216,11 @@ func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, ni IndexerFactory, nc Clie
 
 // noteContact records the outcome of one exchange with a client.
 func (s *Service) SetAdmission(a ports.WorkAdmission) { s.admission = a }
+
+type mismatchKey struct {
+	download int64
+	token    string
+}
 
 // SetTimings attaches the pipeline timing recorder. Call before Run.
 func (s *Service) SetTimings(t *pipeline.Timings) { s.timings = t }
@@ -231,7 +237,10 @@ func (s *Service) noteFactMismatch(dl sqlite.Download, statuses []ports.Download
 	}
 	for _, st := range statuses {
 		if string(st.Handle) == dl.Handle && st.Transfer != "" && st.Transfer != dl.Transfer {
-			s.factMismatches.Add(1)
+			// A stuck row is polled every cycle; count each foreign token once.
+			if _, seen := s.mismatchSeen.LoadOrStore(mismatchKey{dl.ID, st.Transfer}, struct{}{}); !seen {
+				s.factMismatches.Add(1)
+			}
 			return
 		}
 	}
@@ -2295,9 +2304,14 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 		if dl.PlanID != 0 {
 			_, _ = s.db.W.ExecContext(ctx, `UPDATE acquisition_plans SET replan_pending=1 WHERE id=?`, dl.PlanID)
 		}
+		// Only a season job actually queued ends the timing; nothing-to-do and
+		// a recent comparison leave nothing to wait for, so the timing is
+		// dropped rather than left open.
 		s.timings.Start(ctx, pipeline.FailureToNextGrab, timingKey, dl.ID)
-		if err := s.enqueueSeason(ctx, dl.MediaItemID, dl.CopyID, dl.Season, seasonTriggerFailedAcquisition, true); err == nil {
+		if status, err := s.enqueueSeasonStatus(ctx, dl.MediaItemID, dl.CopyID, dl.Season, seasonTriggerFailedAcquisition, true); err == nil && status == seasonQueued {
 			s.timings.End(ctx, pipeline.FailureToNextGrab, timingKey)
+		} else {
+			s.timings.Discard(ctx, pipeline.FailureToNextGrab, timingKey)
 		}
 		// The season comparison leaves a capped episode out without a word;
 		// say so here, where the failure that spent the budget is known.
@@ -2321,7 +2335,6 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 	if err != nil || len(enabled) == 0 {
 		return
 	}
-	s.timings.Start(ctx, pipeline.FailureToNextGrab, timingKey, dl.ID)
 	for _, idStr := range dl.WantableIDs {
 		w, err := s.wantableFromID(ctx, idStr)
 		if err != nil {
@@ -2339,6 +2352,10 @@ func (s *Service) handleFailure(ctx context.Context, dl sqlite.Download, progres
 					"window_hours": int(reGrabWindow.Hours())})
 			continue
 		}
+		// The clock starts at the first search actually attempted (first start
+		// wins), so a failure whose wantables are all capped or gone records
+		// nothing.
+		s.timings.Start(ctx, pipeline.FailureToNextGrab, timingKey, dl.ID)
 		tally, err := s.searchAndGrabBest(ctx, w, enabled)
 		if err != nil {
 			s.log.Warn("re-search failed", "wantable", idStr, "err", err)

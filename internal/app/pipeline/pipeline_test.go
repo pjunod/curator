@@ -86,7 +86,7 @@ func TestNilTimingsIsInert(t *testing.T) {
 	ctx := context.Background()
 	p.Start(ctx, FailureToNextGrab, "x", 1)
 	p.End(ctx, FailureToNextGrab, "x")
-	if rows, err := p.Overdue(ctx); err != nil || rows != nil {
+	if rows, err := p.Overdue(ctx, 10); err != nil || rows != nil {
 		t.Fatalf("nil Overdue = %v %v", rows, err)
 	}
 	if r := p.OverdueCheck(ctx); r.Status != health.StatusOK {
@@ -137,7 +137,7 @@ func TestOverdueCheckNamesTheStaleRow(t *testing.T) {
 
 	// 40 minutes on: the usenet downloading row joins; the torrent does not.
 	*clock = time.Now().Add(40 * time.Minute)
-	rows, err := p.Overdue(ctx)
+	rows, err := p.Overdue(ctx, 10)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("overdue = %+v err %v, want the grabbed and the usenet downloading rows", rows, err)
 	}
@@ -168,5 +168,40 @@ func TestWriteMetricsListsHistogramFamilies(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestParkedAndSupersededRowsAreNeverOverdue(t *testing.T) {
+	p, db, clock := fixture(t)
+	ctx := context.Background()
+	parked := addDownload(t, db, "Parked.Movie", "grabbed", "usenet")
+	addDownload(t, db, "Open.Movie", "grabbed", "usenet")
+	// ParkDownload stamps parked_at but leaves updated_at alone.
+	if err := db.ParkDownload(ctx, parked, "operator cancellation"); err != nil {
+		t.Fatal(err)
+	}
+	*clock = time.Now().Add(time.Hour)
+	r := p.OverdueCheck(ctx)
+	if r.Status != health.StatusWarning || strings.Contains(r.Message, "Parked.Movie") || !strings.Contains(r.Message, "Open.Movie") {
+		t.Fatalf("check = %+v, want only the unparked row named", r)
+	}
+	if n, err := p.OverdueCount(ctx); err != nil || n != 1 {
+		t.Fatalf("count = %d err %v, want 1", n, err)
+	}
+}
+
+func TestDiscardDropsOnlyOpenTimings(t *testing.T) {
+	p, _, clock := fixture(t)
+	ctx := context.Background()
+	base := *clock
+	p.Start(ctx, FailureToNextGrab, "open", 1)
+	p.Start(ctx, FailureToNextGrab, "closed", 2)
+	*clock = base.Add(time.Second)
+	p.End(ctx, FailureToNextGrab, "closed")
+	p.Discard(ctx, FailureToNextGrab, "open")
+	p.Discard(ctx, FailureToNextGrab, "closed")
+	s, _ := p.Stats(ctx, FailureToNextGrab, Window)
+	if s.Samples != 1 || s.Waiting != 0 {
+		t.Fatalf("stats = %+v, want the closed timing kept and the open one gone", s)
 	}
 }

@@ -1223,8 +1223,8 @@ hours of measured time at each seam (the design is
 | Tile | Starts | Ends |
 |---|---|---|
 | Failure to next grab | a download failed and a replacement is being looked for | the replacement was submitted (a series: handed to the season planner) |
-| Download done to imported | the client was first seen to have finished the payload | the library import completed |
-| Imported to visible in Cinema | the import completed | Cinema reports the files placed — **not measured yet, needs M5**; the tile shows only how many are waiting |
+| Download done to imported | the finished payload is handed to import (for a client with manual approval: when you approve it) | the library import completed |
+| Imported to visible in Cinema | the import completed | Cinema reports the files placed — **not measured yet, needs M5**; the tile says so and shows no numbers |
 
 Each tile shows p50 and p95 of the timings that finished, how many finished,
 and how many are **waiting** (started in the last 24 h, not finished). Waiting

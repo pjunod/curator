@@ -18,8 +18,7 @@ Measurement only; no behaviour on the download path changes.
 - Migration 0071 `pipeline_timings`; new package `internal/app/pipeline`
   (timings, histograms, `pipeline:overdue`). Recording points on the old
   paths: `failure_to_next_grab` (handleFailure), `runner_done_to_import`
-  (first completed observation to imported), `import_to_cinema_visible`
-  (starts at import, no end until M5).
+  (started when the import is queued, or at approval for a held row, ended at imported); `import_to_cinema_visible` is not started at all until M5.
 - `/metrics`: three histogram families, `monarr_pipeline_waiting`,
   `monarr_pipeline_overdue_rows`, `monarr_runner_fact_mismatch_total`.
 - `GET /api/v1/system/pipeline` (`pipelineSummary`) and three tiles on System
@@ -31,11 +30,17 @@ this repo; the tile text is a unit-tested pure function); full suites, e2e and
 coverage floor were not run (fast lane only, by instruction).
 
 Decisions for Paul: overdue judges `updated_at` against fixed per-state
-allowances until M2 adds `deadline_at`, and says so in its message. A waiting
-timing older than 24 h drops out of the "waiting" count (otherwise
-`import_to_cinema_visible` would grow without bound until M5) but stays in the
-table. The `notify.Dispatcher` is not handed the recorder: the start is taken
-where the import event is published (reliable), and M5 will wire the end.
+allowances until M2 adds `deadline_at`, and says so in its message. Timings only
+start when they can end, so none is left open forever: `import_to_cinema_visible`
+is NOT started in M0 (deviation from IMPL section 4: M5 starts and ends it; the
+tile reads "not measured - needs M5" with no waiting count), a series failure
+ends only when a season job was queued (otherwise the timing is dropped), and
+`failure_to_next_grab` starts at the first search actually attempted. "Waiting"
+counts open timings started in the last 24 h. No pruning: closed rows are about
+three per download and pruning would make histogram counts go down. The
+`notify.Dispatcher` is not handed the recorder (M5 wires it). Parked and
+superseded downloads are never overdue. `/metrics` reads one aggregate per
+kind (index on kind, ended_at), and the overdue gauge is a COUNT.
 
 ## The re-grab budget counts bytes, not attempts — 2026-11-03 · v0.38.13
 
