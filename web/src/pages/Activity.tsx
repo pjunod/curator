@@ -8,6 +8,7 @@ import {
   type CompletedEntry,
   type CompletedRoot,
   type QueueItem,
+  type PublicationFileAction,
   type ScannedFile,
   type Stage,
   blocklistQueueItem,
@@ -29,6 +30,7 @@ import {
   resumeQueueItem,
   manualImport,
   removeQueueItem,
+  resolvePublicationFile,
   resolveQueueReservation,
   scanImportPath,
   runTask,
@@ -46,12 +48,17 @@ const STATE_PILL: Record<string, string> = {
   downloading: 'pill-neutral',
   importing: 'pill-neutral',
   grabbed: 'pill-neutral',
+  submitting: 'pill-neutral',
+  held: 'pill-warning',
+  notified: 'pill-ok',
   planned: 'pill-neutral',
 }
 
 // Friendlier labels for the state pill and the trace steps.
 const STATE_LABEL: Record<string, string> = {
   awaiting_import: 'awaiting approval',
+  downloaded: 'completed',
+  held: 'held',
 }
 
 const STEP_LABEL: Record<string, string> = {
@@ -65,6 +72,9 @@ const STEP_LABEL: Record<string, string> = {
   import_recovered: 'Import recovered',
   imported: 'Imported',
   failed: 'Failed',
+  held: 'Held by Runner',
+  reopened: 'Re-opened',
+  salvage_published: 'Salvage published',
 }
 
 function label(map: Record<string, string>, key: string): string {
@@ -137,8 +147,9 @@ const STAGES: Stage[] = [
 // person would do about them: one needs a decision, one is finished, one went
 // wrong.
 const RESTING = [
-  { key: 'waiting', label: 'Waiting', states: ['planned', 'grabbed', 'downloaded', 'awaiting_import'] },
-  { key: 'done', label: 'Finished', states: ['imported'] },
+  { key: 'held', label: 'Held by Runner', states: ['held'] },
+  { key: 'waiting', label: 'Waiting', states: ['planned', 'grabbed', 'submitting', 'downloaded', 'awaiting_import'] },
+  { key: 'done', label: 'Finished', states: ['imported', 'notified'] },
   { key: 'failed', label: 'Failed', states: ['failed'] },
 ] as const
 
@@ -737,6 +748,8 @@ function RowGroup(props: {
           {d.importBlockedSince && <div className={`queue-row-detail ${Date.now() - new Date(d.importBlockedSince).getTime() >= 30 * 60 * 1000 ? 'warning-text' : 'muted'}`} title={`Import blocked ${fmtRelative(d.importBlockedSince)} · ${d.importRetryAttempts ?? 0} retries · ${d.importRetryAt && new Date(d.importRetryAt).getTime() > Date.now() ? `next retry ${fmtRelative(d.importRetryAt)}` : 'retry due'}`}>
             Import blocked {fmtRelative(d.importBlockedSince)} · {d.importRetryAttempts ?? 0} retries · {d.importRetryAt && new Date(d.importRetryAt).getTime() > Date.now() ? `next retry ${fmtRelative(d.importRetryAt)}` : 'retry due'}
           </div>}
+          {d.state === 'held' && <HeldLine d={d} />}
+          {d.provisional && <div className="muted queue-row-detail" title="Curator's own conclusion; any later fact from Runner re-opens this row">Provisional: {d.runnerReason ?? 'failed'} — re-opens if Runner reports this transfer</div>}
           {d.parkedReason && <div className="muted queue-row-detail" title={`Reserved: ${d.parkedReason}`}>Reserved: {d.parkedReason}</div>}
           {reviewOpen && <ActionDialog title="Review episode reservation" onClose={()=>setReviewOpen(false)}>
             <p>The original submission may still exist or complete later. Releasing custody permits a deliberate Search to acquire another copy. The original row and a persistent possible-duplicate warning remain.</p>
@@ -860,10 +873,93 @@ function RowGroup(props: {
   )
 }
 
+// A held row says what Runner is waiting on and how long it has left; past
+// its deadline it is "held (stale)": Runner has not reported since, and
+// Curator is reconciling, never failing it on its own (contract 3.2).
+function HeldLine({ d }: { d: QueueItem }) {
+  const deadline = d.deadlineAt ? new Date(d.deadlineAt).getTime() : 0
+  const left = deadline ? deadline - Date.now() : 0
+  const text = d.stale
+    ? `Held (stale) — ${d.heldReason || 'Runner has not reported since the hold began'}`
+    : `Held: ${d.heldReason || d.control?.message || 'waiting on Runner'}${deadline ? ` · Runner ends it in ${fmtDuration(left)}` : ''}`
+  return <div className={`queue-row-detail ${d.stale ? 'warning-text' : 'muted'}`} title={text}>{text}</div>
+}
+
+function fmtDuration(ms: number): string {
+  if (ms <= 0) return 'now'
+  const m = Math.round(ms / 60000)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  return h < 48 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`
+}
+
+const OUTCOME_PILL: Record<string, string> = {
+  placed: 'pill-ok',
+  discarded: 'pill-neutral',
+  unresolved: 'pill-warning',
+  pending: 'pill-neutral',
+}
+
+// Publications are the import unit: one per Runner generation, each file with
+// what became of it. An unresolved file is retained and decided here.
+function PublicationList({ d }: { d: QueueItem }) {
+  const qc = useQueryClient()
+  const [done, setDone] = useState<Record<string, string>>({})
+  const act = useMutation({
+    mutationFn: (v: { pub: number; path: string; action: PublicationFileAction }) => resolvePublicationFile(d.id, v.pub, v.path, v.action),
+    onSuccess: (_r, v) => {
+      setDone((prev) => ({ ...prev, [`${v.pub}/${v.path}`]: v.action === 'place' ? 'queued for import' : v.action === 'discard' ? 'discarded' : 'kept' }))
+      void qc.invalidateQueries({ queryKey: ['queue'] })
+    },
+    onError: (e, v) => setDone((prev) => ({ ...prev, [`${v.pub}/${v.path}`]: e instanceof Error ? e.message : String(e) })),
+  })
+  const pubs = d.publications ?? []
+  if (pubs.length === 0) return null
+  return (
+    <div className="handoff-publications">
+      {pubs.map((p) => (
+        <div key={p.id} className="handoff-publication" data-publication={p.id}>
+          <p>
+            <b>{p.kind === 'salvage' ? 'Salvage publication' : 'Publication'}</b>{' '}
+            <span className={`pill ${p.state === 'import_failed' ? 'pill-error' : p.state === 'imported' || p.state === 'notified' ? 'pill-ok' : 'pill-neutral'}`}>{p.state.replace(/_/g, ' ')}</span>{' '}
+            {p.cohort === 'historical' && <span className="pill pill-neutral" title="Frozen at the pipeline v2 cutover: never deleted automatically until its review batch is approved">historical</span>}{' '}
+            <span className="path-chip">{p.path}</span>
+          </p>
+          {p.error && <p className="error-text">{p.error}</p>}
+          <ul className="publication-files">
+            {p.files.map((f) => {
+              const key = `${p.id}/${f.path}`
+              return (
+                <li key={f.path} data-file={f.path}>
+                  <span className={`pill ${OUTCOME_PILL[f.outcome] ?? 'pill-neutral'}`}>{f.outcome}{f.discardReason ? ` · ${f.discardReason}` : ''}</span>{' '}
+                  <span className="mono">{f.path}</span>
+                  {f.libraryPath && <span className="muted"> → {f.libraryPath}</span>}
+                  {f.reason && <span className="muted"> — {f.reason}</span>}
+                  {(f.outcome === 'unresolved' || f.outcome === 'pending') && (
+                    <span className="row-actions publication-file-actions">
+                      {(['place', 'discard', 'keep'] as PublicationFileAction[]).map((a) => (
+                        <button key={a} disabled={act.isPending} onClick={() => act.mutate({ pub: p.id, path: f.path, action: a })}>
+                          {a === 'place' ? 'Place' : a === 'discard' ? 'Discard' : 'Keep'}
+                        </button>
+                      ))}
+                    </span>
+                  )}
+                  {done[key] && <span role="status" className="muted"> {done[key]}</span>}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function HandoffDetail({ d }: { d: QueueItem }) {
   const steps = d.handoff ?? []
   return (
     <div className="handoff">
+      <PublicationList d={d} />
       <DeliveryLifecycleForDownload downloadId={d.id} />
       {d.error && <p className="error-text"><strong>Latest error:</strong> {d.error}</p>}
       {(d.savePath || d.importPath) && (

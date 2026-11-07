@@ -965,7 +965,45 @@ export interface QueueItem {
   bytesPerSecond?: number
   /** Persisted explanation of why this release was accepted. */
   match?: MatchEvidence
+  /** Pipeline contract v2: the recorded terminal (completed | failed | cancelled). */
+  runnerOutcome?: string
+  /** health | fetch | par | unpack | script | publish | io | identity | hold_expired, or Curator's own submit | lost | parked. */
+  runnerReason?: string
+  fetchCause?: string
+  blamesRelease?: boolean
+  /** Curator's own terminal: any later Runner fact re-opens it. */
+  provisional?: boolean
+  /** When the row's current state becomes overdue. */
+  deadlineAt?: string
+  /** A held row past its deadline: Runner has not reported since. Never a Curator failure. */
+  stale?: boolean
+  heldReason?: string
+  publications?: QueuePublication[]
 }
+
+/** One Runner generation and what became of each of its files. */
+export interface QueuePublication {
+  id: number
+  generation?: string
+  kind: string
+  state: string
+  cohort: string
+  path: string
+  manifestSource?: string
+  error?: string
+  files: QueuePublicationFile[]
+}
+
+export interface QueuePublicationFile {
+  path: string
+  bytes?: number
+  outcome: string
+  discardReason?: string
+  reason?: string
+  libraryPath?: string
+}
+
+export type PublicationFileAction = 'place' | 'discard' | 'keep'
 
 export interface ScannedFile {
   path: string
@@ -1818,6 +1856,9 @@ export interface SeasonSelection {
  plan: { Releases: string[]; Unserved: number[]; Cost: { ZeroSeedTorrents:number; UnknownSizes:number; KnownBytes:number; UnknownSeedTorrents:number; RedundantEpisodes:number; Transfers:number } }
  scopes: { IndexerID:number; EpisodeID:number; Complete:boolean; Reasons:string[]; Degraded:boolean }[]
 }
+
+export const resolvePublicationFile = (id: number, publicationId: number, path: string, action: PublicationFileAction) =>
+  send<void>('POST', `/queue/${id}/publications/${publicationId}/files/resolve`, { path, action })
 
 export const resolveQueueReservation = (id: number) => send<void>('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})
 

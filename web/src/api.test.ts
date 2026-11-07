@@ -7,6 +7,7 @@ import {
   fmtRelative,
   getDiscoverItems,
   pipelineTile,
+  resolvePublicationFile,
   searchReleases,
   testIndexer,
 } from './api'
@@ -206,5 +207,25 @@ describe('pipelineTile', () => {
     expect(t.title).toBe('Download done to imported')
     expect(t.value).toBe('p50 42s · p95 1h 1m 1s')
     expect(t.detail).toBe('12 in last 24 h · 1 waiting')
+  })
+})
+
+describe('resolvePublicationFile', () => {
+  it('posts the file and the decision to the publication resolve route', async () => {
+    const orig = globalThis.fetch
+    const calls: { url: string; init?: RequestInit }[] = []
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      return new Response(null, { status: 204 })
+    }) as typeof fetch
+    try {
+      await expect(resolvePublicationFile(7, 3, 'Season 01/x.mkv', 'discard')).resolves.toBeUndefined()
+    } finally {
+      globalThis.fetch = orig
+    }
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toContain('/queue/7/publications/3/files/resolve')
+    expect(calls[0].init?.method).toBe('POST')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ path: 'Season 01/x.mkv', action: 'discard' })
   })
 })
