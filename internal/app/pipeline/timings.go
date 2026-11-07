@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -35,9 +36,10 @@ const Window = 24 * time.Hour
 // Timings records and reads pipeline_timings. A nil *Timings is valid and
 // records nothing, so tests and tools that build a Service without it work.
 type Timings struct {
-	db  *sqlite.DB
-	log *slog.Logger
-	now func() time.Time
+	db           *sqlite.DB
+	log          *slog.Logger
+	now          func() time.Time
+	scrapeErrors atomic.Int64
 }
 
 // New returns a Timings over db.

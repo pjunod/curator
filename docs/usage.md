@@ -1222,7 +1222,7 @@ hours of measured time at each seam (the design is
 
 | Tile | Starts | Ends |
 |---|---|---|
-| Failure to next grab | a download failed and a replacement is being looked for | the replacement was submitted (a series: handed to the season planner) |
+| Failure to next grab | a download failed and a replacement search was attempted | the replacement was submitted (a series: a season job was queued). Until pipeline M2 this measures the immediate re-search only: a replacement found by a later scheduled search is not timed, and the open timing drops out of "waiting" after 24 hours |
 | Download done to imported | the finished payload is handed to import (for a client with manual approval: when you approve it) | the library import completed |
 | Imported to visible in Cinema | the import completed | Cinema reports the files placed — **not measured yet, needs M5**; the tile says so and shows no numbers |
 
@@ -1238,13 +1238,15 @@ plus `monarr_pipeline_overdue_rows` and `monarr_runner_fact_mismatch_total`
 ignored).
 
 **The `pipeline:overdue` health check** (System → Health, and `GET
-/api/v1/health`) turns to a warning and names the downloads that have sat in
-their state without any change for longer than the state allows: grabbed 10
-minutes, downloading 30 minutes (torrents 24 hours), downloaded or importing 6
-hours. A download waiting for your approval (`awaiting_import`) is never
-overdue; it shows its age in Activity instead. Until the deadline column from
-pipeline M2 exists, this is a coarse "nothing has changed for this long" test,
-and the warning says so. Open the named download in Activity to see its
+/api/v1/health`) turns to a warning and names the downloads Curator has not
+heard about from the download client for longer than their state allows:
+grabbed 10 minutes, downloading 30 minutes (torrents 24 hours), downloaded or
+importing 6 hours. A download waiting for your approval (`awaiting_import`) is
+never overdue; it shows its age in Activity instead. Until the deadline column
+from pipeline M2 exists this is a "gone silent" test, not a "stuck" test: a
+download that is held or stalled inside the client is still reported on every
+poll, so it is **not** caught here — it shows in Activity with the client's
+status. The warning says so. Open the named download in Activity to see its
 handoff trace. The tiles are read from `GET /api/v1/system/pipeline`.
 
 ## Notifications

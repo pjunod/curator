@@ -3,6 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -128,8 +129,10 @@ func TestOverdueCheckNamesTheStaleRow(t *testing.T) {
 			t.Errorf("message names %s, which is within its allowance: %s", other, r.Message)
 		}
 	}
-	if !strings.Contains(r.Message, "updated") && !strings.Contains(r.Message, "last changed") {
-		t.Errorf("message must say it judges time since the row last changed: %s", r.Message)
+	// The message must say what the check measures (silence from the client)
+	// and what it does not catch (jobs held inside the client).
+	if !strings.Contains(r.Message, "not heard") || !strings.Contains(r.Message, "held") {
+		t.Errorf("message must say it judges silence from the client and does not catch held jobs: %s", r.Message)
 	}
 	if !strings.Contains(r.Message, "M2") {
 		t.Errorf("message must say the deadline column is not there yet: %s", r.Message)
@@ -203,5 +206,42 @@ func TestDiscardDropsOnlyOpenTimings(t *testing.T) {
 	s, _ := p.Stats(ctx, FailureToNextGrab, Window)
 	if s.Samples != 1 || s.Waiting != 0 {
 		t.Fatalf("stats = %+v, want the closed timing kept and the open one gone", s)
+	}
+}
+
+func TestEndBeforeStartClosesWithZeroDuration(t *testing.T) {
+	p, _, clock := fixture(t)
+	ctx := context.Background()
+	base := *clock
+	p.Start(ctx, RunnerDoneToImport, "t-clock", 1)
+	// The wall clock stepped backwards between start and end: the sample must
+	// still close (duration 0) rather than stay open and count as waiting.
+	*clock = base.Add(-5 * time.Second)
+	p.End(ctx, RunnerDoneToImport, "t-clock")
+	*clock = base.Add(time.Minute)
+	s, err := p.Stats(ctx, RunnerDoneToImport, Window)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Samples != 1 || s.Waiting != 0 {
+		t.Fatalf("stats = %+v, want 1 closed sample and none waiting", s)
+	}
+}
+
+func TestWriteMetricsOmitsSeriesWhenTheQueryFails(t *testing.T) {
+	p, db, _ := fixture(t)
+	ctx := context.Background()
+	// A failed query must not be written as zeros (Prometheus would read a
+	// counter reset); the family is left out and the error counted.
+	db.Close()
+	var buf bytes.Buffer
+	p.WriteMetrics(ctx, &buf)
+	out := buf.String()
+	if strings.Contains(out, "_bucket{") || strings.Contains(out, "monarr_pipeline_waiting{") {
+		t.Fatalf("series written despite failed queries:\n%s", out)
+	}
+	want := fmt.Sprintf("monarr_pipeline_scrape_errors_total %d", 2*len(Kinds))
+	if !strings.Contains(out, want) {
+		t.Fatalf("metrics missing %q:\n%s", want, out)
 	}
 }

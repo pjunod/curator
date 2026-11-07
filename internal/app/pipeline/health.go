@@ -11,15 +11,20 @@ import (
 )
 
 // M0 has no deadline_at column yet (M2 adds it), so "overdue" is judged by
-// how long a row has sat in its state without a write, against these fixed
-// per-state allowances taken from contract section 3.5. A row's updated_at
-// moves on every state or progress change, so a row that is merely slow keeps
-// resetting it; one that has been silent for the whole allowance is stuck.
+// how long a row has gone without a write, against these fixed per-state
+// allowances taken from contract section 3.5. updated_at is rewritten on every
+// poll in which the download client still lists the row (UpdateDownloadState
+// sets it unconditionally), so this detects a download Curator has stopped
+// hearing about — one that vanished from the client's queue, or an import
+// that never finished — NOT a transfer that is stalled or held inside the
+// client: a Runner job held at 0% for days is still reported every poll and
+// is never overdue here. M2's deadline_at, written on state entry, is what
+// catches held and stalled jobs.
 // States not listed (planned, awaiting_import, imported, failed) have no
 // allowance: the first two wait on a person or a plan, the last two are done.
 const (
 	allowGrabbed         = 10 * time.Minute // submitted, not yet visible to the client
-	allowDownloading     = 30 * time.Minute // no progress write
+	allowDownloading     = 30 * time.Minute // client stopped listing it
 	allowDownloadingTor  = 24 * time.Hour   // torrents idle legitimately
 	allowImportInFlight  = 6 * time.Hour    // downloaded / importing
 	overdueNamesInReport = 3
@@ -108,7 +113,8 @@ func (t *Timings) OverdueCheck(ctx context.Context) health.Result {
 		more = fmt.Sprintf(" and %d more", total-len(rows))
 	}
 	return health.Warn("%d download(s) have outlived their state's allowance: %s%s. "+
-		"Until the deadline column lands (pipeline M2) this judges the time since the row last changed, "+
-		"against fixed allowances per state: grabbed 10m, downloading 30m (torrents 24h), downloaded/importing 6h",
+		"Until the deadline column lands (pipeline M2) this means Curator has not heard about the row from the download client "+
+		"for longer than its state allows (grabbed 10m, downloading 30m, torrents 24h, downloaded/importing 6h); "+
+		"a job that is held or stalled inside the client is still reported each poll and is not caught by this check",
 		total, strings.Join(names, "; "), more)
 }

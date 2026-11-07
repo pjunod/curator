@@ -2,8 +2,10 @@
 
 ## Pipeline contract v2, M0: contract, timings, overdue check — 2026-11-07 · v0.38.15
 
-**Status:** built on branch `claude/pipeline-v2-m0-curator`; no PR yet (the
-orchestrator opens it); not merged, not deployed.
+**Status:** [PR #94](https://github.com/pjunod/curator/pull/94) on
+`claude/pipeline-v2-m0-curator` · owner: Claude (Opus orchestrator) · two
+adversarial reviews addressed (Sonnet agent: 7 findings; Fable: 2 blocking +
+4) · not merged, not deployed.
 
 First curator milestone of the pipeline rewrite
 ([PIPELINE_CONTRACT.md](docs/PIPELINE_CONTRACT.md) is now in the repo).
@@ -30,7 +32,15 @@ this repo; the tile text is a unit-tested pure function); full suites, e2e and
 coverage floor were not run (fast lane only, by instruction).
 
 Decisions for Paul: overdue judges `updated_at` against fixed per-state
-allowances until M2 adds `deadline_at`, and says so in its message. Timings only
+allowances until M2 adds `deadline_at`. Because `updated_at` is rewritten on
+every poll the client still lists the row, the M0 check catches downloads
+Curator has stopped hearing about, not jobs held or stalled inside the
+client; the code, the warning and `usage.md` say exactly that (Fable review
+finding 1, option b — keeps the download path untouched in M0). A failed
+metrics query omits that series rather than writing zeros
+(`monarr_pipeline_scrape_errors_total` counts it). `failure_to_next_grab`
+times the immediate re-search only until M2's reducer ends it from
+`replacement_grabs`. Timings only
 start when they can end, so none is left open forever: `import_to_cinema_visible`
 is NOT started in M0 (deviation from IMPL section 4: M5 starts and ends it; the
 tile reads "not measured - needs M5" with no waiting count), a series failure
