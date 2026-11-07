@@ -6,6 +6,7 @@ import {
   fmtInterval,
   fmtRelative,
   getDiscoverItems,
+  pipelineTile,
   searchReleases,
   testIndexer,
 } from './api'
@@ -171,5 +172,39 @@ describe('book edition release search', () => {
     } finally {
       globalThis.fetch = orig
     }
+  })
+})
+
+describe('pipelineTile', () => {
+  it('reports a seam nothing can finish yet as not measured, with its waiting count', () => {
+    const t = pipelineTile({
+      kind: 'import_to_cinema_visible',
+      measured: false,
+      note: 'not measured — needs M5',
+      samples: 0,
+      waiting: 4,
+    })
+    expect(t.value).toBe('not measured — needs M5')
+    expect(t.detail).toBe('4 waiting')
+  })
+
+  it('says no data yet rather than a zero when nothing has finished', () => {
+    const t = pipelineTile({ kind: 'failure_to_next_grab', measured: true, samples: 0, waiting: 0 })
+    expect(t.value).toBe('no data yet')
+    expect(t.detail).toBe('none waiting')
+  })
+
+  it('shows p50 and p95 with the sample count and the waiting count', () => {
+    const t = pipelineTile({
+      kind: 'runner_done_to_import',
+      measured: true,
+      samples: 12,
+      waiting: 1,
+      p50Seconds: 42,
+      p95Seconds: 3661,
+    })
+    expect(t.title).toBe('Download done to imported')
+    expect(t.value).toBe('p50 42s · p95 1h 1m 1s')
+    expect(t.detail).toBe('12 in last 24 h · 1 waiting')
   })
 })

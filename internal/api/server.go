@@ -16,6 +16,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/app/maintenance"
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/app/recommendation"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
@@ -59,6 +60,9 @@ type Deps struct {
 	DB          SchemaVersioner
 	Library     *library.Service
 	Acquisition *acquisition.Service
+	// Pipeline serves the seam timings and the overdue count; nil serves an
+	// empty summary rather than failing.
+	Pipeline *pipeline.Timings
 	// Discover serves the browse rows (ADR 0015); nil returns an empty
 	// catalogue rather than failing, so a test server needs no provider.
 	Discover            *discover.Service

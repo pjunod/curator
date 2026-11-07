@@ -1,5 +1,42 @@
 # Monarr — Project Status
 
+## Pipeline contract v2, M0: contract, timings, overdue check — 2026-11-07 · v0.38.15
+
+**Status:** built on branch `claude/pipeline-v2-m0-curator`; no PR yet (the
+orchestrator opens it); not merged, not deployed.
+
+First curator milestone of the pipeline rewrite
+([PIPELINE_CONTRACT.md](docs/PIPELINE_CONTRACT.md) is now in the repo).
+Measurement only; no behaviour on the download path changes.
+
+- Docs: contract added; "Being replaced by" banner on `integration.md`;
+  `plan-integration.md` section 3 and `DOWNLOAD_LIFECYCLE_PROPOSAL.md`
+  sections 4.1-4.2 marked superseded; the stale "not fixed or deployed" status
+  lines in `RUNNER_FAILURE_DIAGNOSIS.md`, `RUNNER_FAILURE_FIX_PLAN.md` and
+  `RUNNER_FAILURE_BUILD_STATUS.md` now say Runner PR #247 fixed it; `usage.md`
+  has a "Pipeline" section.
+- Migration 0071 `pipeline_timings`; new package `internal/app/pipeline`
+  (timings, histograms, `pipeline:overdue`). Recording points on the old
+  paths: `failure_to_next_grab` (handleFailure), `runner_done_to_import`
+  (first completed observation to imported), `import_to_cinema_visible`
+  (starts at import, no end until M5).
+- `/metrics`: three histogram families, `monarr_pipeline_waiting`,
+  `monarr_pipeline_overdue_rows`, `monarr_runner_fact_mismatch_total`.
+- `GET /api/v1/system/pipeline` (`pipelineSummary`) and three tiles on System
+  -> Connections.
+- Deleted: nothing.
+
+Could not verify: the System tiles in a browser (no component test harness in
+this repo; the tile text is a unit-tested pure function); full suites, e2e and
+coverage floor were not run (fast lane only, by instruction).
+
+Decisions for Paul: overdue judges `updated_at` against fixed per-state
+allowances until M2 adds `deadline_at`, and says so in its message. A waiting
+timing older than 24 h drops out of the "waiting" count (otherwise
+`import_to_cinema_visible` would grow without bound until M5) but stays in the
+table. The `notify.Dispatcher` is not handed the recorder: the start is taken
+where the import event is published (reliable), and M5 will wire the end.
+
 ## The re-grab budget counts bytes, not attempts — 2026-11-03 · v0.38.13
 
 **Status:** merged as #90 (`e62d19f`), deployed to nuc3 2026-11-03 00:48Z.

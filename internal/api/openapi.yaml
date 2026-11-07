@@ -3037,6 +3037,23 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Transfer" }
 
+  /system/pipeline:
+    get:
+      operationId: pipelineSummary
+      summary: How long the pipeline's seams take, and whether anything is overdue
+      description: >
+        Last-24-hour p50/p95 of the three seams between Runner, Curator and
+        Cinema (pipeline contract section 3.5), read from the pipeline_timings
+        table, with the count of timings still waiting and of downloads that
+        have outlived their state's allowance. A seam that is not measured yet
+        says so instead of reporting a number.
+      responses:
+        "200":
+          description: One entry per seam, in pipeline order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineSummary" }
+
   /system/connections:
     get:
       operationId: getConnections
@@ -5205,6 +5222,36 @@ components:
             The plurx username. Per the §11.1 decision the signal is per-user;
             this is plurx's user, not a Monarr account, and Monarr does not
             create one.
+
+    PipelineSummary:
+      type: object
+      required: [windowHours, timings, overdueRows]
+      properties:
+        windowHours: { type: integer, description: The look-back window of every figure here. }
+        overdueRows:
+          type: integer
+          description: Downloads older than their state's allowance (the pipeline:overdue health check).
+        timings:
+          type: array
+          items: { $ref: "#/components/schemas/PipelineTiming" }
+
+    PipelineTiming:
+      type: object
+      required: [kind, measured, samples, waiting]
+      properties:
+        kind:
+          type: string
+          enum: [failure_to_next_grab, runner_done_to_import, import_to_cinema_visible]
+        measured:
+          type: boolean
+          description: False while nothing can end this timing yet (import_to_cinema_visible, until pipeline M5).
+        note: { type: string, description: Why a seam is not measured. }
+        samples: { type: integer, description: Timings that finished inside the window. }
+        waiting:
+          type: integer
+          description: Timings that started inside the window and have not finished. Never folded into the percentiles.
+        p50Seconds: { type: number, format: double, description: Absent when there are no samples. }
+        p95Seconds: { type: number, format: double, description: Absent when there are no samples. }
 
     Transfer:
       type: object

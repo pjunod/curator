@@ -650,6 +650,27 @@ func (e NotifierInputType) Valid() bool {
 	}
 }
 
+// Defines values for PipelineTimingKind.
+const (
+	FailureToNextGrab     PipelineTimingKind = "failure_to_next_grab"
+	ImportToCinemaVisible PipelineTimingKind = "import_to_cinema_visible"
+	RunnerDoneToImport    PipelineTimingKind = "runner_done_to_import"
+)
+
+// Valid indicates whether the value is a known member of the PipelineTimingKind enum.
+func (e PipelineTimingKind) Valid() bool {
+	switch e {
+	case FailureToNextGrab:
+		return true
+	case ImportToCinemaVisible:
+		return true
+	case RunnerDoneToImport:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PlurxWatchedEventKind.
 const (
 	PlurxWatchedEventKindEpisode PlurxWatchedEventKind = "episode"
@@ -2528,6 +2549,42 @@ type PathMapping struct {
 	Remote string `json:"remote"`
 }
 
+// PipelineSummary defines model for PipelineSummary.
+type PipelineSummary struct {
+	// OverdueRows Downloads older than their state's allowance (the pipeline:overdue health check).
+	OverdueRows int              `json:"overdueRows"`
+	Timings     []PipelineTiming `json:"timings"`
+
+	// WindowHours The look-back window of every figure here.
+	WindowHours int `json:"windowHours"`
+}
+
+// PipelineTiming defines model for PipelineTiming.
+type PipelineTiming struct {
+	Kind PipelineTimingKind `json:"kind"`
+
+	// Measured False while nothing can end this timing yet (import_to_cinema_visible, until pipeline M5).
+	Measured bool `json:"measured"`
+
+	// Note Why a seam is not measured.
+	Note *string `json:"note,omitempty"`
+
+	// P50Seconds Absent when there are no samples.
+	P50Seconds *float64 `json:"p50Seconds,omitempty"`
+
+	// P95Seconds Absent when there are no samples.
+	P95Seconds *float64 `json:"p95Seconds,omitempty"`
+
+	// Samples Timings that finished inside the window.
+	Samples int `json:"samples"`
+
+	// Waiting Timings that started inside the window and have not finished. Never folded into the percentiles.
+	Waiting int `json:"waiting"`
+}
+
+// PipelineTimingKind defines model for PipelineTiming.Kind.
+type PipelineTimingKind string
+
 // PlacementSuggestion defines model for PlacementSuggestion.
 type PlacementSuggestion struct {
 	// Path Exact default folder path produced by Monarr's naming rules.
@@ -4260,6 +4317,9 @@ type ServerInterface interface {
 	// BeginDeploymentDrain Pause new work and drain already admitted operations
 	// (POST /system/deployment-drain)
 	BeginDeploymentDrain(w http.ResponseWriter, r *http.Request)
+	// PipelineSummary How long the pipeline's seams take, and whether anything is overdue
+	// (GET /system/pipeline)
+	PipelineSummary(w http.ResponseWriter, r *http.Request)
 	// GetSystemStatus System status
 	// (GET /system/status)
 	GetSystemStatus(w http.ResponseWriter, r *http.Request)
@@ -7605,6 +7665,20 @@ func (siw *ServerInterfaceWrapper) BeginDeploymentDrain(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// PipelineSummary operation middleware
+func (siw *ServerInterfaceWrapper) PipelineSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PipelineSummary(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSystemStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
 
@@ -8078,6 +8152,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/{id}/deliveries/{deliveryId}/retry", wrapper.RetryDelivery)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/webhooks/plurx", wrapper.PlurxWebhook)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/transfers", wrapper.ListTransfers)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/pipeline", wrapper.PipelineSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/connections", wrapper.GetConnections)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/backups", wrapper.ListBackups)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/calendar", wrapper.GetCalendar)

@@ -1213,6 +1213,40 @@ All three ask for an API key: **Access → API access → Reveal**. Anything a
 consumer calls that the shim doesn't implement is logged
 (`compat: unknown v3 request …`) — send that log line in an issue.
 
+## Pipeline
+
+System → Connections shows three tiles above the connection table. They answer
+"is the chain between Runner, Curator and Cinema keeping up?" with the last 24
+hours of measured time at each seam (the design is
+[PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) section 3.5):
+
+| Tile | Starts | Ends |
+|---|---|---|
+| Failure to next grab | a download failed and a replacement is being looked for | the replacement was submitted (a series: handed to the season planner) |
+| Download done to imported | the client was first seen to have finished the payload | the library import completed |
+| Imported to visible in Cinema | the import completed | Cinema reports the files placed — **not measured yet, needs M5**; the tile shows only how many are waiting |
+
+Each tile shows p50 and p95 of the timings that finished, how many finished,
+and how many are **waiting** (started in the last 24 h, not finished). Waiting
+timings are never folded into the percentiles, so a stuck handoff cannot make
+the numbers look better. "No data yet" means nothing has finished in the
+window; it is not a zero. The same data is exported on `/metrics`
+(`MONARR_METRICS=true`) as the histograms `monarr_failure_to_next_grab_seconds`,
+`monarr_runner_done_to_import_seconds` and `monarr_import_to_cinema_visible_seconds`,
+plus `monarr_pipeline_overdue_rows` and `monarr_runner_fact_mismatch_total`
+(runner statuses that named a download under another transfer token and were
+ignored).
+
+**The `pipeline:overdue` health check** (System → Health, and `GET
+/api/v1/health`) turns to a warning and names the downloads that have sat in
+their state without any change for longer than the state allows: grabbed 10
+minutes, downloading 30 minutes (torrents 24 hours), downloaded or importing 6
+hours. A download waiting for your approval (`awaiting_import`) is never
+overdue; it shows its age in Activity instead. Until the deadline column from
+pipeline M2 exists, this is a coarse "nothing has changed for this long" test,
+and the warning says so. Open the named download in Activity to see its
+handoff trace. The tiles are read from `GET /api/v1/system/pipeline`.
+
 ## Notifications
 
 Settings → Notifications. Webhooks and Discord get grab/import/failure
