@@ -57,10 +57,10 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 	}
 	for _, entry := range selected.Entries {
 		if entry.Path == path && entry.DeliveryManaged {
-			return fmt.Errorf("runner payloads require explicit selected-file deletion against the accepted manifest")
+			return fmt.Errorf("a publication's files leave one by one by their recorded outcome; select its unresolved files to discard them")
 		}
 		if entry.Path == path && entry.LegacyReview {
-			return fmt.Errorf("pre-delivery backlog requires exact file review; whole-payload deletion is unavailable")
+			return fmt.Errorf("the storage under this payload changed; select exact files to review, whole-payload deletion is unavailable")
 		}
 	}
 	if err := s.checkStorageIdentity(ctx, path); err != nil {
@@ -96,7 +96,7 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 	if isPartialCleanup {
 		dl, err := s.db.GetDownload(ctx, partialOwner.DownloadID)
 		if err != nil || dl.GenerationKey != partialOwner.GenerationKey || dl.DeliveryExpected {
-			return fmt.Errorf("delivery-managed payloads require manifest-ledger cleanup")
+			return fmt.Errorf("publication-managed payloads leave only through the per-file cleanup")
 		}
 	}
 	for _, dl := range active {
@@ -168,15 +168,20 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 	if match == nil || match.Fingerprint != fingerprint {
 		return fmt.Errorf("files changed since the scan; scan again before deleting")
 	}
-	legacyPaths, err := s.db.LegacyCleanupReviewPaths(ctx)
+	legacyPaths, err := s.db.StorageReviewPaths(ctx)
 	if err != nil {
 		return err
 	}
 	for _, legacyPath := range legacyPaths {
 		legacyPath = storagePath(legacyPath, roots)
 		if within(path, legacyPath) || within(legacyPath, path) {
-			return fmt.Errorf("payload is in the legacy review cohort; review it before deleting")
+			return fmt.Errorf("the storage under this payload changed; review it before deleting")
 		}
+	}
+	if pub, ok, err := s.db.PublicationByPath(ctx, filepath.Clean(path)); err != nil {
+		return err
+	} else if ok && pub.State != "removed" {
+		return fmt.Errorf("a publication's files leave one by one by their recorded outcome; select its unresolved files to discard them")
 	}
 	if isPartialCleanup {
 		// The automatic partial path is authorized only for the exact failed
@@ -188,10 +193,10 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 			storagePath(current.ImportPath, roots) != storagePath(path, roots) {
 			return fmt.Errorf("partial cleanup generation changed; review the payload before deleting")
 		}
-		if s.legacyCleanupReview(ctx, downloadRef{
+		if s.storageReviewHeld(ctx, downloadRef{
 			ID: current.ID, GenerationKey: current.GenerationKey, ImportPath: current.ImportPath,
 		}) {
-			return fmt.Errorf("payload is in the legacy review cohort; review it before deleting")
+			return fmt.Errorf("the storage under this payload changed; review it before deleting")
 		}
 	}
 	rel, err := filepath.Rel(selected.Path, path)
@@ -227,16 +232,17 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 	return s.db.AddHistory(ctx, "download_files_deleted", 0, filepath.Base(path), map[string]any{"path": path, "bytes": match.Bytes})
 }
 
-// DeleteSelectedLegacyFiles is an explicit, per-file approval path for the
-// migration-era review cohort. It relies on a fresh inventory identity and
-// the retained legacy path fence; it does not invent or infer a Runner
-// manifest for historical files.
+// DeleteSelectedLegacyFiles is an explicit, per-file approval path for a
+// payload held for storage-change review (the storage under it changed). It
+// relies on a fresh inventory identity and the storage-change path fence; it
+// does not invent or infer a Runner manifest. (Until M4 it also served the
+// migration-0040 review cohort, which is now part of the historical cohort.)
 func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerprint string, selections []CompletedFileSelection) error {
 	// An operator is waiting on this request: its verification reads are
 	// foreground and are not held to the background budget.
 	ctx = withForegroundVerification(ctx)
 	if len(selections) == 0 || !filepath.IsAbs(path) || fingerprint == "" {
-		return fmt.Errorf("select exact files from a legacy review entry")
+		return fmt.Errorf("select exact files from an entry held for storage review")
 	}
 	s.completedMu.Lock()
 	defer s.completedMu.Unlock()
@@ -273,7 +279,7 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 		}
 	}
 	if selected == nil {
-		return fmt.Errorf("selected entry is not an unchanged legacy review payload")
+		return fmt.Errorf("selected entry is not an unchanged payload held for storage review")
 	}
 	for _, root := range inventory.Roots {
 		if root.Path == rootPath && root.Error != "" {
@@ -491,7 +497,7 @@ func (s *Service) legacyReviewFileFenced(ctx context.Context, file string, roots
 			fenced = false
 		}
 	}
-	paths, err := s.db.LegacyCleanupReviewPaths(ctx)
+	paths, err := s.db.StorageReviewPaths(ctx)
 	if err != nil {
 		return false, err
 	}

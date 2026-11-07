@@ -2234,6 +2234,10 @@ func (s *Server) fillPipelineV2(ctx context.Context, item *apigen.QueueItem, d s
 		deadline := d.DeadlineAt
 		item.DeadlineAt = &deadline
 	}
+	if !d.StateEnteredAt.IsZero() {
+		entered := d.StateEnteredAt
+		item.StateEnteredAt = &entered
+	}
 	if d.State == "held" {
 		reason := d.Error
 		stale := !d.DeadlineAt.IsZero() && time.Now().After(d.DeadlineAt)
@@ -2250,6 +2254,10 @@ func (s *Server) fillPipelineV2(ctx context.Context, item *apigen.QueueItem, d s
 		if errMsg != "" {
 			qp.Error = &errMsg
 		}
+		if !p.CleanupApprovedAt.IsZero() {
+			approved := p.CleanupApprovedAt
+			qp.CleanupApprovedAt = &approved
+		}
 		files, err := s.deps.Store.ListPublicationFiles(ctx, p.ID)
 		if err == nil {
 			for _, f := range files {
@@ -2263,6 +2271,10 @@ func (s *Server) fillPipelineV2(ctx context.Context, item *apigen.QueueItem, d s
 				}
 				if discard != "" {
 					qf.DiscardReason = &discard
+				}
+				if !f.RemovedAt.IsZero() {
+					removed := true
+					qf.Removed = &removed
 				}
 				qp.Files = append(qp.Files, qf)
 			}

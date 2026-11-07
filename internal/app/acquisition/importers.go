@@ -54,13 +54,15 @@ const (
 
 // importJob is one download ready to be moved into the library.
 type importJob struct {
-	executionCancel     context.CancelFunc
-	dl                  sqlite.Download
-	cfg                 ports.ClientConfig
-	ctx                 context.Context
-	ticket              *importTicket
-	deliveryReceiptID   int64
-	deliveryCleanupOnly bool
+	executionCancel   context.CancelFunc
+	dl                sqlite.Download
+	cfg               ports.ClientConfig
+	ctx               context.Context
+	ticket            *importTicket
+	deliveryReceiptID int64
+	// cleanupPublicationID runs the per-file cleanup of one publication on
+	// the cleanup lane instead of importing (contract section 3.4).
+	cleanupPublicationID int64
 	// publicationID imports one publication (pipeline v2); approved says a
 	// person approved it (ManualApproval, Resolve).
 	publicationID int64
@@ -211,32 +213,36 @@ func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg por
 	return s.enqueueImportJob(ctx, dl, cfg, 0, true)
 }
 
-func (s *Service) queueDeliveryCleanup(ctx context.Context, cfg ports.ClientConfig, receipt sqlite.DeliveryReceipt) bool {
+// queuePublicationCleanup offers one publication's per-file cleanup to the
+// cleanup lane, so hashing a placed file never holds an import worker. With
+// no workers running (tests, ManualImport) it reports false and the caller
+// runs the cleanup inline.
+func (s *Service) queuePublicationCleanup(publicationID int64) bool {
 	s.importMu.Lock()
 	if s.cleanupCh == nil || s.importCtx == nil {
 		s.importMu.Unlock()
 		return false
 	}
-	if s.deliveryCleanupJobs == nil {
-		s.deliveryCleanupJobs = map[int64]bool{}
+	if s.publicationCleanupJobs == nil {
+		s.publicationCleanupJobs = map[int64]bool{}
 	}
-	if s.deliveryCleanupJobs[receipt.ID] {
+	if s.publicationCleanupJobs[publicationID] {
 		s.importMu.Unlock()
 		return true
 	}
-	parent := context.WithValue(s.importCtx, storageDecisionKey{}, nil)
-	jobCtx, cancel := newImportExecution(parent)
-	s.deliveryCleanupJobs[receipt.ID] = true
-	job := importJob{cfg: cfg, ctx: jobCtx, deliveryReceiptID: receipt.ID, deliveryCleanupOnly: true, cleanupCancel: cancel}
+	jobCtx, cancel := newImportExecution(s.importCtx)
+	s.publicationCleanupJobs[publicationID] = true
+	job := importJob{ctx: jobCtx, cleanupPublicationID: publicationID, cleanupCancel: cancel}
 	select {
 	case s.cleanupCh <- job:
 		s.importMu.Unlock()
 		return true
 	default:
-		delete(s.deliveryCleanupJobs, receipt.ID)
+		// The lane is full: the hourly sweep reaches this publication.
+		delete(s.publicationCleanupJobs, publicationID)
 		s.importMu.Unlock()
 		cancel()
-		return false
+		return true
 	}
 }
 
@@ -330,24 +336,20 @@ func (s *Service) runImportOwned(ctx context.Context, job importJob) {
 	if job.executionCancel != nil {
 		defer job.executionCancel()
 	}
-	if job.deliveryCleanupOnly {
+	if job.cleanupPublicationID != 0 {
 		defer func() {
 			if job.cleanupCancel != nil {
 				job.cleanupCancel()
 			}
 			s.importMu.Lock()
-			delete(s.deliveryCleanupJobs, job.deliveryReceiptID)
+			delete(s.publicationCleanupJobs, job.cleanupPublicationID)
 			s.importMu.Unlock()
 		}()
 		if ctx.Err() != nil {
 			return
 		}
-		r, err := s.db.DeliveryReceiptByID(ctx, job.deliveryReceiptID)
-		if err == nil {
-			err = s.cleanupDeliveryFiles(ctx, r)
-		}
-		if err != nil {
-			s.log.Warn("completed Runner payload cleanup remains pending", "receipt", job.deliveryReceiptID, "err", err)
+		if _, err := s.cleanupPublication(ctx, job.cleanupPublicationID); err != nil {
+			s.log.Warn("publication cleanup incomplete; the hourly sweep retries", "publication", job.cleanupPublicationID, "err", err)
 		}
 		return
 	}
@@ -471,16 +473,17 @@ func (s *Service) CancelImport(ctx context.Context, id int64) error {
 // importerFields is the state StartImporters needs. Kept beside the workers
 // rather than in the Service literal so the two are read together.
 type importerFields struct {
-	importOnce          sync.Once
-	importRecoverOnce   sync.Once
-	importCh            chan importJob
-	cleanupCh           chan importJob
-	importWG            sync.WaitGroup
-	registry            *transfers.Registry
-	importCtx           context.Context
-	importMu            sync.Mutex
-	importJobs          map[int64]*importTicket
-	deliveryCleanupJobs map[int64]bool
+	importOnce        sync.Once
+	importRecoverOnce sync.Once
+	importCh          chan importJob
+	cleanupCh         chan importJob
+	importWG          sync.WaitGroup
+	registry          *transfers.Registry
+	importCtx         context.Context
+	importMu          sync.Mutex
+	importJobs        map[int64]*importTicket
+	// publicationCleanupJobs dedupes queued per-file cleanups.
+	publicationCleanupJobs map[int64]bool
 }
 
 // watchDownloading keeps the in-flight view honest about the stages Monarr

@@ -10,73 +10,8 @@ import (
 	"testing"
 
 	"github.com/pjunod/monarr/internal/domain/quality"
-	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
-
-func TestEmptyPublicationCleanupIsBoundToAcceptedDirectoryAcrossRetries(t *testing.T) {
-	ctx := context.Background()
-	svc, db, _ := setup(t, nil, &fakeClient{})
-	root := t.TempDir()
-	publication := filepath.Join(root, "Release")
-	if err := os.MkdirAll(filepath.Join(publication, "empty", "nested"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetMeta(ctx, CompletedRootsSetting, root); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.ScanCompleted(ctx); err != nil {
-		t.Fatal(err)
-	}
-	acceptedInfo, err := os.Stat(publication)
-	if err != nil {
-		t.Fatal(err)
-	}
-	acceptedIdentity := deliveryDirectoryObjectIdentity(acceptedInfo)
-	if acceptedIdentity == "" {
-		t.Fatal("platform did not provide a stable directory identity")
-	}
-	receipt := sqlite.DeliveryReceipt{MappedPath: publication, PublicationDirectoryIdentity: acceptedIdentity}
-	// Nested directories emptied by this attempt should not invalidate the
-	// accepted payload root; its name is removed after rechecking the same inode.
-	removed, err := svc.removeEmptyDeliveryDirectories(ctx, receipt)
-	if err != nil || !removed {
-		t.Fatalf("empty nested publication cleanup removed=%v err=%v", removed, err)
-	}
-	if _, err := os.Stat(publication); !os.IsNotExist(err) {
-		t.Fatalf("accepted empty publication was not removed: err=%v", err)
-	}
-
-	// A later empty directory at the same path is unrelated. Even though the
-	// content is empty, a retry must retain it because it lacks the accepted
-	// directory inode identity.
-	oldPath := publication + ".old"
-	if err := os.MkdirAll(publication, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	newInfo, err := os.Stat(publication)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if deliveryDirectoryObjectIdentity(newInfo) == acceptedIdentity {
-		// Keep the old inode allocated if the filesystem rapidly recycled it.
-		if err := os.Rename(publication, oldPath); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Mkdir(publication, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(publication); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.removeEmptyDeliveryDirectories(ctx, receipt); err == nil {
-		t.Fatal("same-path replacement directory inherited cleanup authority")
-	}
-	if info, err := os.Stat(publication); err != nil || !info.IsDir() {
-		t.Fatalf("replacement directory was removed: info=%v err=%v", info, err)
-	}
-}
 
 type deliveryImportClient struct {
 	fakeClient

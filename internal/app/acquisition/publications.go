@@ -361,6 +361,8 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 				pf.Outcome, pf.DiscardReason, pf.Reason = "discarded", "rejected", "release sample"
 			case knownDeliverySidecar(f.Path):
 				pf.Outcome, pf.Reason = "unresolved", "sidecar with no automatic placement; place or discard it in Resolve"
+			case deliveryImportablePath(item.Kind, f.Path):
+				pf.Outcome, pf.Reason = "unresolved", "not selected for import; place or discard it in Resolve"
 			default:
 				pf.Outcome, pf.Reason = "unresolved", "not media of this item's kind"
 			}
@@ -441,6 +443,9 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		if err := s.completeBoundImport(ctx, detail); err != nil {
 			s.log.Warn("import attempt could not be closed", "download", dl.ID, "err", err)
 		}
+		// Every file has an outcome: the evidenced ones can leave now
+		// (contract section 3.4), the rest stay for Resolve.
+		s.afterPublicationImported(ctx, pub.ID)
 	}
 	if event != nil {
 		s.publish(*event)
@@ -759,7 +764,17 @@ func (s *Service) ResolvePublicationFile(ctx context.Context, downloadID, public
 	}
 	_ = s.db.AddHistory(ctx, "publication_file_resolved", dl.MediaItemID, dl.ReleaseTitle,
 		map[string]any{"publication": pub.Path, "file": relPath, "action": action})
-	return s.settleResolvedPublication(ctx, dl, pub)
+	if err := s.settleResolvedPublication(ctx, dl, pub); err != nil {
+		return err
+	}
+	if action == "discard" {
+		// The discarded file leaves through the per-file cleanup, with its
+		// checks; a historical publication waits for its review batch.
+		if _, err := s.cleanupPublicationLocked(withForegroundVerification(ctx), pub.ID); err != nil {
+			s.log.Info("discarded file kept for now; the hourly sweep retries", "publication", pub.ID, "file", relPath, "err", err)
+		}
+	}
+	return nil
 }
 
 // ErrInvalidResolution refuses a Resolve decision that does not apply.

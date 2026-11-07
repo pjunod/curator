@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -72,6 +73,11 @@ func storageReviewFor(fences map[string][]string, generation, path string) bool 
 	}
 	return false
 }
+// StorageChangeReview reports whether a generation's payload at path is held
+// for review because the storage under it changed: a root-scoped fence on the
+// generation, or a path fence on an orphan payload of the replaced volume.
+// This is the storage-identity check every Curator delete path keeps (plan
+// section 4); migration 0073 removed only the 0040 review cohort around it.
 func (d *DB) StorageChangeReview(ctx context.Context, generation, path string) (bool, error) {
 	rows, err := d.R.QueryContext(ctx, `SELECT root FROM storage_change_review_fences WHERE generation_key=?`, generation)
 	if err != nil {
@@ -88,7 +94,90 @@ func (d *DB) StorageChangeReview(ctx context.Context, generation, path string) (
 			return true, nil
 		}
 	}
-	return false, rows.Err()
+	if err := rows.Err(); err != nil {
+		return true, err
+	}
+	if path == "" {
+		return false, nil
+	}
+	return d.StorageReviewPath(ctx, path)
+}
+
+// StorageReviewPath reports whether path overlaps an orphan payload fenced by
+// an accepted storage change (either contains the other).
+func (d *DB) StorageReviewPath(ctx context.Context, path string) (bool, error) {
+	paths, err := d.storageReviewOrphanPaths(ctx)
+	if err != nil {
+		return true, err
+	}
+	path = canonicalStorageReviewPath(path)
+	for _, candidate := range paths {
+		candidate = canonicalStorageReviewPath(candidate)
+		if storageReviewWithin(candidate, path) || storageReviewWithin(path, candidate) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (d *DB) storageReviewOrphanPaths(ctx context.Context) ([]string, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT DISTINCT path FROM storage_change_review_paths WHERE path!='' ORDER BY path`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		out = append(out, path)
+	}
+	return out, rows.Err()
+}
+
+// StorageReviewPaths lists every path held for review by an accepted storage
+// change: the orphan payloads it named, and the receipt paths of the
+// generations it fenced inside the changed root.
+func (d *DB) StorageReviewPaths(ctx context.Context) ([]string, error) {
+	fences, err := d.storageChangeFences(ctx)
+	if err != nil {
+		return nil, err
+	}
+	orphans, err := d.storageReviewOrphanPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
+	unique := map[string]bool{}
+	for _, p := range orphans {
+		unique[p] = true
+	}
+	if len(fences) > 0 {
+		rows, err := d.R.QueryContext(ctx, `SELECT generation_key,path FROM completed_receipts WHERE path!=''`)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var generation, path string
+			if err := rows.Scan(&generation, &path); err != nil {
+				return nil, err
+			}
+			if storageReviewFor(fences, generation, path) {
+				unique[path] = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	out := make([]string, 0, len(unique))
+	for path := range unique {
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // AcceptCompletedStorageChange persists the new observation, root-specific
@@ -122,7 +211,7 @@ func (d *DB) AcceptCompletedStorageChange(ctx context.Context, root, expected, o
 		}
 	}
 	for _, path := range orphanPaths {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, "storage-change:"+reviewToken, path); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, reviewToken, path); err != nil {
 			return err
 		}
 	}

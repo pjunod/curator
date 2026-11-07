@@ -143,28 +143,3 @@ func TestHistoricalPartialDeliveryLedgerReconcilesExactPlacement(t *testing.T) {
 		})
 	}
 }
-
-func TestReconciledPlacementCannotReviveCancelledOrLostPlacementCleanup(t *testing.T) {
-	for _, reason := range []string{"deletion request cancelled; review current files", "verified library placement is no longer present"} {
-		t.Run(reason, func(t *testing.T) {
-			ctx := context.Background()
-			db, r, p := atomicDeliveryFixture(t)
-			if err := db.PreparePlacement(ctx, p); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := db.CommitPlacement(ctx, p); err != nil {
-				t.Fatal(err)
-			}
-			if err := db.SetDeliveryFileCleanup(ctx, r.ID, "movie.mkv", "protected", reason); err != nil {
-				t.Fatal(err)
-			}
-			if err := db.ReconcileDeliveryPlacements(ctx, r.ID); err != nil {
-				t.Fatal(err)
-			}
-			row, err := db.DeliveryFileOutcomeByPath(ctx, r.ID, "movie.mkv")
-			if err != nil || row.CleanupState != "protected" || row.CleanupError != reason {
-				t.Fatalf("reconciliation revived cleanup: %+v %v", row, err)
-			}
-		})
-	}
-}
