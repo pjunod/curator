@@ -301,6 +301,10 @@ export interface QueueItem {
  planState?: string
  submissionPhase?: string
  parkedReason?: string
+ /** Pipeline v2: a hold past Runner's deadline (Curator is reconciling). */
+ stale?: boolean
+ /** Pipeline v2: a failure Curator concluded; a later Runner fact re-opens it. */
+ provisional?: boolean
  selection?: {reason:string;target:string;partial:boolean;trigger:string}
   id: number
   mediaItemId: number

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Alert, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { formatBytes, formatRelative } from '../format'
+import { queueBadge, queueSettled } from '../queueState'
 import { AppScreen, Badge, Button, Chip, Header, InlineError, LoadingState, MessageState, Panel, Wordmark } from '../components/UI'
 import { useTheme } from '../theme'
 import type { QueueItem } from '../types'
@@ -93,13 +94,13 @@ function ActivityRow({ item, onOpen, onResolve }: { item: QueueItem; onOpen: () 
   const fraction = item.total ? (item.bytes ?? 0) / item.total : item.progress || 0
   const progress = Math.max(0, Math.min(100, fraction * 100))
   const importMessage=item.importControl?.outcome==='pending' ? 'Cancelling · waiting for actual writer exit or publication review' : (item.importControl?.retainedPublications||item.importControl?.heldStages) ? 'Cancelled · retained publication requires Library review in the web app' : item.importControl?.outcome==='cancelled' ? 'Cancelled · files retained' : ''
-  const tone = item.error || item.state === 'failed' ? 'error' : item.state === 'imported' ? 'ok' : 'neutral'
+  const badge = queueBadge(item)
   return (
     <Panel style={styles.item}>
       {!!importMessage&&<Text accessibilityRole="text" style={{color:theme.text}}>{importMessage}</Text>}
       <View style={styles.itemHead}>
         <Text numberOfLines={2} onPress={onOpen} style={[styles.itemTitle, { color: theme.text }]}>{item.title}</Text>
-        <Badge label={item.stage || item.state} tone={tone} />
+        <Badge label={badge.label} tone={badge.tone} />
       </View>
       <Text style={[styles.itemMeta, { color: theme.muted }]}>{[item.quality, item.protocol, formatRelative(item.addedAt)].filter(Boolean).join(' · ')}</Text>
       <Button compact secondary label="Why chosen" onPress={()=>Alert.alert('Why chosen', item.selection ? `${item.selection.reason}\nTarget: ${item.selection.target}\nPlan ${item.planId}: ${item.planState}; submission ${item.submissionPhase}${item.parkedReason ? `\nReserved: ${item.parkedReason}` : ''}` : 'Selection reason was not recorded for this legacy or explicit manual grab.')} />
@@ -114,13 +115,13 @@ function ActivityRow({ item, onOpen, onResolve }: { item: QueueItem; onOpen: () 
           <View style={[styles.progress, { backgroundColor: theme.accent, width: `${progress}%` }]} />
         </View>
       ) : null}
-      {item.error ? <Text style={[styles.itemError, { color: theme.error }]}>{item.error}</Text> : null}
+      {item.error ? <Text style={[styles.itemError, { color: item.state === 'held' ? theme.muted : theme.error }]}>{item.error}</Text> : null}
     </Panel>
   )
 }
 
 function filterNeedsProgress(item: QueueItem) {
-  return item.state !== 'imported' && item.state !== 'failed' && item.progress > 0
+  return !queueSettled(item.state) && item.progress > 0
 }
 
 const styles = StyleSheet.create({
