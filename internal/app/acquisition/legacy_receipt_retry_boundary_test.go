@@ -32,7 +32,7 @@ func TestLegacyReceiptFallbackValidatesCachedSnapshotBeforeManualImport(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.SetCompletedRoots(ctx, root); err != nil {

@@ -2816,7 +2816,10 @@ type QueueItem struct {
 	Stale *bool `json:"stale,omitempty"`
 
 	// State planned | grabbed | submitting | downloading | held | downloaded | awaiting_import | importing | imported | notified | failed. `downloaded` means the download completed (pipeline contract v2).
-	State           string                    `json:"state"`
+	State string `json:"state"`
+
+	// StateEnteredAt When the row entered its current state; Activity shows how long an awaiting_import row has waited for a person.
+	StateEnteredAt  *time.Time                `json:"stateEnteredAt,omitempty"`
 	SubmissionPhase *QueueItemSubmissionPhase `json:"submissionPhase,omitempty"`
 	Title           string                    `json:"title"`
 
@@ -2832,6 +2835,9 @@ type QueueItemSubmissionPhase string
 
 // QueuePublication defines model for QueuePublication.
 type QueuePublication struct {
+	// CleanupApprovedAt When a historical publication's review batch was approved; absent until then.
+	CleanupApprovedAt *time.Time `json:"cleanupApprovedAt,omitempty"`
+
 	// Cohort live | historical. historical publications are never deleted automatically until their review batch is approved.
 	Cohort     string                 `json:"cohort"`
 	Error      *string                `json:"error,omitempty"`
@@ -2862,6 +2868,9 @@ type QueuePublicationFile struct {
 	Outcome string  `json:"outcome"`
 	Path    string  `json:"path"`
 	Reason  *string `json:"reason,omitempty"`
+
+	// Removed The file's bytes have left the publication directory (per-file cleanup).
+	Removed *bool `json:"removed,omitempty"`
 }
 
 // QueueSummary defines model for QueueSummary.
@@ -3638,7 +3647,7 @@ type ListDeliveryLifecycleParams struct {
 
 // DeleteCompletedEntryJSONBody defines parameters for DeleteCompletedEntry.
 type DeleteCompletedEntryJSONBody struct {
-	// Files Exact inventory file identities selected for explicit deletion of a delivery-managed or explicitly reviewed legacy payload. Required for these entries; no directory removal is performed.
+	// Files Exact inventory files selected for deletion. For a publication-managed directory each must be an unresolved file of the publication; it is discarded and leaves through the per-file cleanup (digest-checked, storage-checked). For an entry held for storage-change review, the selected current files are deleted. No directory is removed recursively.
 	Files *[]struct {
 		Path             string `json:"path"`
 		SnapshotIdentity string `json:"snapshotIdentity"`
@@ -3646,8 +3655,13 @@ type DeleteCompletedEntryJSONBody struct {
 	Fingerprint string `json:"fingerprint"`
 	Path        string `json:"path"`
 
-	// ReviewLegacy Explicitly approve deletion of only the selected current files from a legacy review entry.
+	// ReviewLegacy Explicitly approve deletion of only the selected current files from an entry held for storage-change review.
 	ReviewLegacy *bool `json:"reviewLegacy,omitempty"`
+}
+
+// ApprovePublicationCleanupJSONBody defines parameters for ApprovePublicationCleanup.
+type ApprovePublicationCleanupJSONBody struct {
+	Ids []int64 `json:"ids"`
 }
 
 // BrowseFilesystemParams defines parameters for BrowseFilesystem.
@@ -3891,6 +3905,9 @@ type AcceptCompletedStorageChangeJSONRequestBody = StorageChangeRequest
 // PreviewCompletedStorageChangeJSONRequestBody defines body for PreviewCompletedStorageChange for application/json ContentType.
 type PreviewCompletedStorageChangeJSONRequestBody = StorageChangeRequest
 
+// ApprovePublicationCleanupJSONRequestBody defines body for ApprovePublicationCleanup for application/json ContentType.
+type ApprovePublicationCleanupJSONRequestBody ApprovePublicationCleanupJSONBody
+
 // GrabReleaseJSONRequestBody defines body for GrabRelease for application/json ContentType.
 type GrabReleaseJSONRequestBody = GrabRequest
 
@@ -4076,9 +4093,6 @@ type ServerInterface interface {
 	// GetDeliveryLifecycleReceipt Read one durable Runner handoff and cleanup receipt
 	// (GET /downloads/deliveries/{receiptId})
 	GetDeliveryLifecycleReceipt(w http.ResponseWriter, r *http.Request, receiptId int64)
-	// AbandonDeliveryDeleteRequest Cancel remaining work in an exact reviewed deletion request
-	// (POST /downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon)
-	AbandonDeliveryDeleteRequest(w http.ResponseWriter, r *http.Request, receiptId int64, batchId string)
 	// ResolveDeliveryImport Import an explicitly selected subset of an accepted Runner manifest
 	// (POST /downloads/deliveries/{receiptId}/import)
 	ResolveDeliveryImport(w http.ResponseWriter, r *http.Request, receiptId int64)
@@ -4103,6 +4117,9 @@ type ServerInterface interface {
 	// PreviewCompletedStorageChange Review expected and observed storage and the exact affected custody
 	// (POST /downloads/inventory/storage-change/preview)
 	PreviewCompletedStorageChange(w http.ResponseWriter, r *http.Request)
+	// ApprovePublicationCleanup Approve a review batch of historical publications for per-file cleanup
+	// (POST /downloads/publications/approve-cleanup)
+	ApprovePublicationCleanup(w http.ResponseWriter, r *http.Request)
 	// StreamEvents Server-sent events
 	// (GET /events)
 	StreamEvents(w http.ResponseWriter, r *http.Request)
@@ -4913,41 +4930,6 @@ func (siw *ServerInterfaceWrapper) GetDeliveryLifecycleReceipt(w http.ResponseWr
 	handler.ServeHTTP(w, r)
 }
 
-// AbandonDeliveryDeleteRequest operation middleware
-func (siw *ServerInterfaceWrapper) AbandonDeliveryDeleteRequest(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "receiptId" -------------
-	var receiptId int64
-
-	err = runtime.BindStyledParameterWithOptions("simple", "receiptId", r.PathValue("receiptId"), &receiptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "receiptId", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "batchId" -------------
-	var batchId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "batchId", r.PathValue("batchId"), &batchId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "batchId", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AbandonDeliveryDeleteRequest(w, r, receiptId, batchId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ResolveDeliveryImport operation middleware
 func (siw *ServerInterfaceWrapper) ResolveDeliveryImport(w http.ResponseWriter, r *http.Request) {
 
@@ -5099,6 +5081,20 @@ func (siw *ServerInterfaceWrapper) PreviewCompletedStorageChange(w http.Response
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PreviewCompletedStorageChange(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApprovePublicationCleanup operation middleware
+func (siw *ServerInterfaceWrapper) ApprovePublicationCleanup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApprovePublicationCleanup(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8176,7 +8172,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-handoff", wrapper.RetryDeliveryHandoff)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-runner-cleanup", wrapper.RetryRunnerDeliveryCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-curator-cleanup", wrapper.RetryCuratorDeliveryCleanup)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon", wrapper.AbandonDeliveryDeleteRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/publications/approve-cleanup", wrapper.ApprovePublicationCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/preview", wrapper.PreviewCompletedStorageChange)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/accept", wrapper.AcceptCompletedStorageChange)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloads/inventory/entry", wrapper.DeleteCompletedEntry)

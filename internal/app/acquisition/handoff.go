@@ -128,7 +128,7 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	if imp == "" {
 		imp = dl.SavePath
 	}
-	legacyReview, reviewErr := s.db.LegacyAutomaticImportReview(ctx, dl.GenerationKey, imp)
+	legacyReview, reviewErr := s.db.StorageChangeReview(ctx, dl.GenerationKey, imp)
 	legacyReviewApproved := false
 	var legacyApproval *sqlite.HandoffEntry
 	var reviewedSnapshots map[string]string
@@ -169,7 +169,7 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 		}
 	}
 	if reviewErr != nil || (legacyReview && !legacyReviewApproved) {
-		reason := "automatic import is held for legacy payload review; select exact files in Resolve"
+		reason := "automatic import is held because the storage under this payload changed; select exact files in Resolve"
 		if reviewErr != nil {
 			reason += ": " + reviewErr.Error()
 		}

@@ -870,21 +870,20 @@ type RunnerHistoryCursor struct {
 // GetHistoryCursor reads a client's history cursor.
 func (d *DB) GetHistoryCursor(ctx context.Context, clientID int64) (RunnerHistoryCursor, error) {
 	c := RunnerHistoryCursor{ClientID: clientID}
-	err := d.R.QueryRowContext(ctx, `SELECT incarnation, since_seq, head_seq, retained_min_seq FROM runner_history_cursors WHERE client_id=?`, clientID).
-		Scan(&c.Incarnation, &c.SinceSeq, &c.HeadSeq, &c.RetainedMinSeq)
+	err := d.R.QueryRowContext(ctx, `SELECT incarnation, since_seq, head_seq, retained_min_seq, history_read FROM runner_history_cursors WHERE client_id=?`, clientID).
+		Scan(&c.Incarnation, &c.SinceSeq, &c.HeadSeq, &c.RetainedMinSeq, &c.Stored)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, nil
 	}
-	c.Stored = err == nil
 	return c, err
 }
 
 // UpsertHistoryCursor stores a client's history cursor. Only the ordered
 // history reader calls it, after the page's terminals are committed.
 func (d *DB) UpsertHistoryCursor(ctx context.Context, c RunnerHistoryCursor) error {
-	_, err := d.W.ExecContext(ctx, `INSERT INTO runner_history_cursors (client_id, incarnation, since_seq, head_seq, retained_min_seq, updated_at) VALUES (?,?,?,?,?,?)
+	_, err := d.W.ExecContext(ctx, `INSERT INTO runner_history_cursors (client_id, incarnation, since_seq, head_seq, retained_min_seq, updated_at, history_read) VALUES (?,?,?,?,?,?,1)
 		ON CONFLICT (client_id) DO UPDATE SET incarnation=excluded.incarnation, since_seq=excluded.since_seq, head_seq=excluded.head_seq,
-			retained_min_seq=excluded.retained_min_seq, updated_at=excluded.updated_at`,
+			retained_min_seq=excluded.retained_min_seq, updated_at=excluded.updated_at, history_read=1`,
 		c.ClientID, c.Incarnation, c.SinceSeq, c.HeadSeq, c.RetainedMinSeq, time.Now().UnixMilli())
 	return err
 }
@@ -931,4 +930,117 @@ func (d *DB) CountHistoricalPublications(ctx context.Context) (int, error) {
 	var n int
 	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE cohort='historical' AND cleanup_approved_at=0 AND state!='removed'`).Scan(&n)
 	return n, err
+}
+
+// ---- per-file cleanup (contract section 3.4; M4) ---------------------------
+
+// PublicationsToSweep lists publications the hourly sweep has work for: a
+// finished import (imported or notified) that automatic deletion may touch
+// (live, or historical with its review batch approved), with a file whose
+// outcome is evidence for deletion and that is still on disk, or with every
+// file gone and the directory perhaps left behind. The oldest-touched come
+// first so a publication that keeps failing cannot starve the rest.
+func (d *DB) PublicationsToSweep(ctx context.Context, limit int) ([]Publication, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified') AND (cohort='live' OR cleanup_approved_at>0)
+		AND (EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0 AND f.outcome IN ('placed','discarded'))
+		     OR NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0))
+		ORDER BY updated_at, id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Publication
+	for rows.Next() {
+		p, err := scanPublication(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// MarkPublicationFileRemoved records that a file's bytes left the
+// publication directory. Only a file that still has its deleting outcome is
+// marked: a concurrent Resolve that changed it wins.
+func (d *DB) MarkPublicationFileRemoved(ctx context.Context, publicationID int64, path, outcome string) error {
+	res, err := d.W.ExecContext(ctx, `UPDATE publication_files SET removed_at=?, updated_at=? WHERE publication_id=? AND path=? AND outcome=? AND removed_at=0`,
+		time.Now().UnixMilli(), time.Now().UnixMilli(), publicationID, path, outcome)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DemotePublicationFile turns a file whose evidence no longer holds (its
+// bytes or its library copy differ from the manifest) into an unresolved one,
+// retained and shown in Resolve, so the sweep stops re-reading it.
+func (d *DB) DemotePublicationFile(ctx context.Context, publicationID int64, path, fromOutcome, reason string) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE publication_files SET outcome='unresolved', discard_reason='', reason=?, updated_at=? WHERE publication_id=? AND path=? AND outcome=? AND removed_at=0`,
+		reason, time.Now().UnixMilli(), publicationID, path, fromOutcome)
+	return err
+}
+
+// SetPublicationError records why a publication's cleanup stopped, leaving
+// its state alone (an imported publication stays imported).
+func (d *DB) SetPublicationError(ctx context.Context, id int64, errMsg string) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET error=?, updated_at=? WHERE id=? AND state!='removed'`, errMsg, time.Now().UnixMilli(), id)
+	return err
+}
+
+// MarkPublicationRemoved ends a publication whose directory is gone. Its
+// completed row's payload is then gone too, which is what lets Activity
+// retention delete the row (and the publication with it) later.
+func (d *DB) MarkPublicationRemoved(ctx context.Context, id int64) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET state='removed', error='', updated_at=? WHERE id=? AND state!='removed'`, now, id); err != nil {
+		return err
+	}
+	var downloadID sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT download_id FROM publications WHERE id=? AND kind='completed'`, id).Scan(&downloadID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if downloadID.Valid {
+		if _, err := tx.ExecContext(ctx, `UPDATE downloads SET payload_removed=1, updated_at=? WHERE id=?`, now, downloadID.Int64); err != nil {
+			return err
+		}
+		// A row Activity already hid loses its last cleanup obligation here.
+		if _, err := d.Write.WithTx(tx).DeleteDismissedImportedDownload(ctx, downloadID.Int64); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ApprovePublicationCleanup is the M7 approval of a review batch: it lets the
+// per-file rule delete the named historical publications' evidenced files.
+// Live publications, and ones already approved, are untouched.
+func (d *DB) ApprovePublicationCleanup(ctx context.Context, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	args := []any{time.Now().UnixMilli()}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	res, err := d.W.ExecContext(ctx, `UPDATE publications SET cleanup_approved_at=? WHERE cohort='historical' AND cleanup_approved_at=0 AND id IN (`+
+		strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// ListPublicationPaths lists every publication still claiming a directory
+// (the completed-storage inventory explains those entries by it).
+func (d *DB) ListPublicationPaths(ctx context.Context) ([]Publication, error) {
+	return d.publicationsWhere(ctx, `state != 'removed'`)
 }

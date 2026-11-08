@@ -123,7 +123,7 @@ func TestLegacyReviewInventoryShowsReadOnlyPerFileProposal(t *testing.T) {
 	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -158,7 +158,7 @@ func TestLegacyReviewCanDeleteOnlyExplicitlySelectedCurrentFiles(t *testing.T) {
 	writeCompleted(t, selectedPath, 17)
 	writeCompleted(t, keepPath, 23)
 	dl := insertImportable(t, db, item, payload)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -197,7 +197,7 @@ func TestLegacyReviewDeleteProtectsLibraryPathButAllowsSeparateDuplicate(t *test
 	writeCompleted(t, protectedPath, 17)
 	writeCompleted(t, duplicatePath, 17)
 	dl := insertImportable(t, db, item, payload)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -241,7 +241,7 @@ func TestLegacyReviewDeleteRejectsStaleSnapshotAfterPathSubstitution(t *testing.
 	path := filepath.Join(payload, "episode.mkv")
 	writeCompleted(t, path, 17)
 	dl := insertImportable(t, db, item, payload)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -516,7 +516,7 @@ func TestReviewedStorageDeletionRechecksNewLegacyCohortAgainstCachedEntry(t *tes
 	if entry.LegacyReview {
 		t.Fatal("fixture unexpectedly started in the legacy review cohort")
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, entry.Path); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, entry.Path); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.DeleteCompletedEntry(ctx, entry.Path, entry.Fingerprint); err == nil {
@@ -967,7 +967,7 @@ func TestLegacyReviewDeleteRefusesAnOrdinarySiblingDownload(t *testing.T) {
 			writeCompleted(t, legacyFile, 17)
 			writeCompleted(t, freshFile, 17)
 			legacy := insertImportable(t, db, item, legacyPayload)
-			if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, legacy.GenerationKey, legacyPayload); err != nil {
+			if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, legacy.GenerationKey, legacyPayload); err != nil {
 				t.Fatal(err)
 			}
 			fresh := insertImportable(t, db, item, freshPayload)

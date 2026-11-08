@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -143,9 +142,8 @@ func (ImportFailed) EventType() string { return "import.failed" }
 
 // Service wires storage, adapters (via factories), and the bus.
 type Service struct {
-	explicitDeliveryUnlink func(*os.Root, string) error // injected filesystem boundary for deterministic recovery tests
-	completedMu            sync.Mutex
-	storageDecisionMu      sync.Mutex
+	completedMu       sync.Mutex
+	storageDecisionMu sync.Mutex
 	// Publication authority, per media item (import_targets.go). Shared by
 	// ordinary and recovery imports, including crash reconciliation.
 	importTargets     importTargets
@@ -1792,10 +1790,10 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 		s.handleRemoved(ctx, dl, st.Progress, st.Message, source)
 	case ports.StateCompleted:
 		mappedPath := ports.MapRemotePath(cfg.PathMappings, st.SavePath)
-		legacyReview, reviewErr := s.db.LegacyAutomaticImportReview(ctx, dl.GenerationKey, mappedPath)
-		if reviewErr != nil || legacyReview {
+		storageReview, reviewErr := s.db.StorageChangeReview(ctx, dl.GenerationKey, mappedPath)
+		if reviewErr != nil || storageReview {
 			if reviewErr != nil {
-				s.log.Warn("legacy completion review lookup failed; holding import", "download", dl.ID, "err", reviewErr)
+				s.log.Warn("storage review lookup failed; holding import", "download", dl.ID, "err", reviewErr)
 			}
 			if dl.State == "grabbed" || dl.State == "downloading" {
 				s.recordDownloaded(ctx, &dl, cfg, st, source)
@@ -1804,22 +1802,20 @@ func (s *Service) reconcileDownload(ctx context.Context, dl sqlite.Download, cfg
 			}
 			if dl.State != "awaiting_import" {
 				s.advance(ctx, &dl, "awaiting_import", 1, "", stepAwaiting,
-					"held for explicit review of pre-existing download custody")
+					"held for review: the storage under this payload changed")
 			}
 			return
 		}
-		// Older binaries parked this proven in-flight acquisition for cohort
-		// review. Resume only that recorded hold; normal manual approval remains.
-		if dl.State == "awaiting_import" && !cfg.ManualApproval {
-			cohort, err := s.db.LegacyCleanupReview(ctx, dl.GenerationKey, mappedPath)
-			if err == nil && cohort && len(dl.Handoff) > 0 && dl.Handoff[len(dl.Handoff)-1].Step == stepAwaiting &&
-				dl.Handoff[len(dl.Handoff)-1].Detail == "held for explicit review of pre-existing download custody" {
-				dl.SavePath, dl.ImportPath = st.SavePath, mappedPath
-				s.advance(ctx, &dl, "downloaded", 1, "", stepImportRecovered, "historical evidence proves acquisition was in flight at upgrade; resuming import only")
-				releaseStorageBeforeDispatch()
-				s.enqueueImport(ctx, dl, cfg)
-				return
-			}
+		// Older binaries held this acquisition for the migration-0040 review
+		// cohort, which M4 removed (its paths are historical publications now).
+		// Resume only that recorded hold; normal manual approval remains.
+		if dl.State == "awaiting_import" && !cfg.ManualApproval && len(dl.Handoff) > 0 && dl.Handoff[len(dl.Handoff)-1].Step == stepAwaiting &&
+			dl.Handoff[len(dl.Handoff)-1].Detail == "held for explicit review of pre-existing download custody" {
+			dl.SavePath, dl.ImportPath = st.SavePath, mappedPath
+			s.advance(ctx, &dl, "downloaded", 1, "", stepImportRecovered, "the pre-delivery review cohort is retired; resuming import only")
+			releaseStorageBeforeDispatch()
+			s.enqueueImport(ctx, dl, cfg)
+			return
 		}
 		// 'downloaded' and 'importing' are NOT terminal, but they mean
 		// someone is already on it; only 'grabbed'/'downloading' should

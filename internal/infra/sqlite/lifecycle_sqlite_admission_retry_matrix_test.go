@@ -229,67 +229,6 @@ func TestRunnerSubmissionRetryDeadlineAndWarningRemainBoundToLiveGeneration(t *t
 	}
 }
 
-func TestProtectedDeliveryFileRetryBackoffAndExplicitRemovalAreSeparate(t *testing.T) {
-	db, ctx, receipt, batch := explicitDeleteFixture(t)
-	defer func() { _ = db.Close() }()
-	manifest := receipt.Delivery.Files[0]
-	file := DeliveryManifestFile{Path: manifest.Path, SizeBytes: manifest.SizeBytes, SHA256: manifest.SHA256, FileGeneration: "journal-file-generation"}
-	if err := db.UpdateDeliveryFileDisposition(ctx, receipt.ID, file.Path, "unknown_recoverable", "complete candidate awaits a concrete handler", ""); err != nil {
-		t.Fatal(err)
-	}
-	for name, args := range map[string]struct {
-		id   int64
-		path string
-	}{
-		"missing receipt": {0, file.Path},
-		"missing path":    {receipt.ID, ""},
-		"missing outcome": {receipt.ID, "other.mkv"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if err := db.ScheduleProtectedDeliveryFileRetry(ctx, args.id, args.path, "recheck later"); err == nil {
-				t.Fatalf("invalid protected-file retry accepted: %+v", args)
-			}
-		})
-	}
-	for attempt, delay := range []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute, 5 * time.Minute} {
-		started := time.Now()
-		if err := db.ScheduleProtectedDeliveryFileRetry(ctx, receipt.ID, file.Path, fmt.Sprintf("recovery evidence wait %d", attempt+1)); err != nil {
-			t.Fatal(err)
-		}
-		outcome, err := db.DeliveryFileOutcomeByPath(ctx, receipt.ID, file.Path)
-		if err != nil || outcome.Disposition != "unknown_recoverable" || outcome.CleanupState != "protected" || outcome.CleanupAttempts != attempt+1 || outcome.CleanupBlockedSince.IsZero() {
-			t.Fatalf("protected retry %d lost retained-source authority: outcome=%+v err=%v", attempt+1, outcome, err)
-		}
-		if remaining := outcome.CleanupNextAttemptAt.Sub(started); remaining < delay-time.Second || remaining > delay+time.Second {
-			t.Fatalf("protected retry %d deadline delta=%v want approximately %v", attempt+1, remaining, delay)
-		}
-	}
-	if err := db.SetDeliveryFileCleanup(ctx, receipt.ID, file.Path, "removed", "stale worker"); !errors.Is(err, ErrDeliveryReceiptStale) {
-		t.Fatalf("ordinary cleanup retired positively recoverable bytes: %v", err)
-	}
-	if err := db.PrepareExplicitDeliveryDeleteBatch(ctx, batch); err != nil {
-		t.Fatalf("exact operator removal intent was not journaled: %v", err)
-	}
-	if err := db.CompleteExplicitDeliveryFileDelete(ctx, batch.ID, receipt.ID, file.Path, "explicit_delivery_file_removed_retry_matrix", 0, "release", map[string]string{"path": file.Path}); err != nil {
-		t.Fatalf("exact operator removal transaction failed: %v", err)
-	}
-	removed, err := db.DeliveryFileOutcomeByPath(ctx, receipt.ID, file.Path)
-	if err != nil || removed.CleanupState != "removed" || removed.CleanupError != "operator explicitly selected this manifest file" {
-		t.Fatalf("operator removal did not settle exact selected file: %+v err=%v", removed, err)
-	}
-	stored, err := db.ExplicitDeliveryDeleteBatch(ctx, batch.ID)
-	if err != nil || len(stored.Files) != 1 || !stored.Files[0].HistoryRecorded || stored.Files[0].CompletedAt.IsZero() {
-		t.Fatalf("operator removal did not persist its exact journal audit: batch=%+v err=%v", stored, err)
-	}
-	var historyCount int
-	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM history_events WHERE type='explicit_delivery_file_removed_retry_matrix'`).Scan(&historyCount); err != nil || historyCount != 1 {
-		t.Fatalf("operator removal history count=%d err=%v, want one", historyCount, err)
-	}
-	if err := db.ScheduleProtectedDeliveryFileRetry(ctx, receipt.ID, file.Path, "stale retry"); !errors.Is(err, ErrDeliveryReceiptStale) {
-		t.Fatalf("retry resurrected an explicitly removed file: %v", err)
-	}
-}
-
 func TestDeliveryReceiptPageRejectsUnboundedOrUnscopedQueries(t *testing.T) {
 	ctx := context.Background()
 	db, _ := openLifecycleCoverageDB(t)

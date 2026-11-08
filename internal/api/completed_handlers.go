@@ -41,7 +41,7 @@ func (s *Server) DeleteCompletedEntry(w http.ResponseWriter, r *http.Request) {
 		if body.ReviewLegacy != nil && *body.ReviewLegacy {
 			err = s.deps.Acquisition.DeleteSelectedLegacyFiles(r.Context(), body.Path, body.Fingerprint, selected)
 		} else {
-			err = s.deps.Acquisition.DeleteSelectedDeliveryFiles(r.Context(), body.Path, body.Fingerprint, selected)
+			err = s.deps.Acquisition.DiscardPublicationFiles(r.Context(), body.Path, selected)
 		}
 		if err != nil {
 			writeError(w, http.StatusConflict, err.Error())
@@ -89,4 +89,23 @@ func (s *Server) AcceptCompletedStorageChange(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ApprovePublicationCleanup is the M7 approval of a historical review batch.
+func (s *Server) ApprovePublicationCleanup(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Acquisition == nil {
+		writeError(w, http.StatusServiceUnavailable, "download storage unavailable")
+		return
+	}
+	var body apigen.ApprovePublicationCleanupJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Ids) == 0 || len(body.Ids) > 1000 {
+		writeError(w, http.StatusBadRequest, "ids: between 1 and 1000 publication ids")
+		return
+	}
+	n, err := s.deps.Acquisition.ApprovePublicationCleanup(r.Context(), body.Ids)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"approved": n})
 }

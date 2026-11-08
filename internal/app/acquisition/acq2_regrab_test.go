@@ -165,7 +165,7 @@ func TestAutomaticImportRetryLeavesLegacyReviewCohortUntouched(t *testing.T) {
 		t.Fatal("expected blocked import")
 	}
 	restore()
-	if _, err := db.R.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.R.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	before, err := db.GetDownload(ctx, dl.ID)

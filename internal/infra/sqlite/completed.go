@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"sort"
 	"time"
 )
 
@@ -31,13 +30,21 @@ func (d *DB) CompletedReceipts(ctx context.Context) ([]CompletedReceipt, error) 
 	if err != nil {
 		return nil, err
 	}
+	orphans, err := d.storageReviewOrphanPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range orphans {
+		orphans[i] = canonicalStorageReviewPath(orphans[i])
+	}
 	rows, err := d.R.QueryContext(ctx, `SELECT r.download_id, r.path, r.client_id,
 		r.title, r.state, r.protocol, r.payload_removed,
 		EXISTS(SELECT 1 FROM downloads d WHERE d.generation_key = r.generation_key),
 		EXISTS(SELECT 1 FROM downloads d WHERE d.generation_key = r.generation_key AND d.activity_dismissed = 1),
 		r.generation_key,
-		EXISTS(SELECT 1 FROM legacy_cleanup_review l WHERE l.generation_key = r.generation_key),
-		EXISTS(SELECT 1 FROM downloads d WHERE d.generation_key=r.generation_key AND d.delivery_expected=1)
+		0,
+		(EXISTS(SELECT 1 FROM downloads d WHERE d.generation_key=r.generation_key AND d.delivery_expected=1)
+		 OR EXISTS(SELECT 1 FROM publications p WHERE p.path = r.path))
 		,coalesce(d.media_item_id,0), coalesce(d.copy_id,0)
 		FROM completed_receipts r LEFT JOIN downloads d ON d.generation_key=r.generation_key
 		ORDER BY r.download_id, r.path, r.generation_key`)
@@ -53,7 +60,18 @@ func (d *DB) CompletedReceipts(ctx context.Context) ([]CompletedReceipt, error) 
 			&r.MediaItemID, &r.CopyID); err != nil {
 			return nil, err
 		}
-		r.LegacyReview = r.LegacyReview || storageReviewFor(fences, r.GenerationKey, r.Path)
+		// Held for review: the storage under the payload changed (a fence on
+		// its generation in that root, or an orphan path fence around it).
+		r.LegacyReview = storageReviewFor(fences, r.GenerationKey, r.Path)
+		if !r.LegacyReview && r.Path != "" {
+			p := canonicalStorageReviewPath(r.Path)
+			for _, o := range orphans {
+				if storageReviewWithin(o, p) {
+					r.LegacyReview = true
+					break
+				}
+			}
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -90,9 +108,7 @@ func (d *DB) ImportedCleanupCandidates(ctx context.Context, limit int64) ([]Down
         LEFT JOIN completed_cleanup_attempts a ON a.download_id = d.id
 		WHERE d.state = 'imported' AND c.remove_completed = 1 AND d.delivery_expected=0
 		AND d.payload_removed = 0
-		AND NOT EXISTS (SELECT 1 FROM legacy_cleanup_review l
-			WHERE l.generation_key=d.generation_key
-			OR (d.import_path != '' AND l.path=d.import_path))
+		AND NOT EXISTS (SELECT 1 FROM publications p WHERE p.download_id=d.id OR (d.import_path != '' AND p.path=d.import_path))
 		ORDER BY coalesce(a.tried_at, 0), d.id LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -122,74 +138,6 @@ func (d *DB) ImportedCleanupCandidates(ctx context.Context, limit int64) ([]Down
 	return out, nil
 }
 
-// LegacyCleanupReview reports whether an acquisition generation or its path
-// belonged to the migration 0040 review cohort. Generation keys survive row
-// updates and Activity deletion; path matches protect orphaned receipt paths.
-func (d *DB) LegacyCleanupReview(ctx context.Context, generationKey, path string) (bool, error) {
-	var review bool
-	if generationKey == "" {
-		return true, nil
-	}
-	err := d.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM legacy_cleanup_review
-		WHERE generation_key=? OR (? != '' AND path=?))`, generationKey, path, path).Scan(&review)
-	if err != nil || review {
-		return review, err
-	}
-	return d.StorageChangeReview(ctx, generationKey, path)
-}
-
-// LegacyCleanupReviewPath reports whether a specific inventory path has an
-// explicit historical review fence. Unlike LegacyCleanupReview with an empty
-// generation key, this never treats an arbitrary caller-supplied path as part
-// of the legacy cohort.
-func (d *DB) LegacyCleanupReviewPath(ctx context.Context, path string) (bool, error) {
-	paths, err := d.LegacyCleanupReviewPaths(ctx)
-	if err != nil {
-		return true, err
-	}
-	path = canonicalStorageReviewPath(path)
-	for _, candidate := range paths {
-		candidate = canonicalStorageReviewPath(candidate)
-		if storageReviewWithin(candidate, path) || storageReviewWithin(path, candidate) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// LegacyCleanupReviewPaths includes exact historical payload paths from a
-// root-scoped storage change, while future paths in the same root stay free.
-func (d *DB) LegacyCleanupReviewPaths(ctx context.Context) ([]string, error) {
-	fences, err := d.storageChangeFences(ctx)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := d.R.QueryContext(ctx, `SELECT '',path FROM legacy_cleanup_review WHERE path!='' UNION ALL SELECT generation_key,path FROM completed_receipts WHERE path!=''`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	unique := map[string]bool{}
-	for rows.Next() {
-		var generation, path string
-		if err := rows.Scan(&generation, &path); err != nil {
-			return nil, err
-		}
-		if generation == "" || storageReviewFor(fences, generation, path) {
-			unique[path] = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(unique))
-	for path := range unique {
-		out = append(out, path)
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
 func (d *DB) TouchPayloadCleanup(ctx context.Context, id int64) error {
 	_, err := d.W.ExecContext(ctx, `INSERT INTO completed_cleanup_attempts(download_id, tried_at) VALUES (?, ?) ON CONFLICT(download_id) DO UPDATE SET tried_at = excluded.tried_at`, id, time.Now().UnixMilli())
 	return err
@@ -198,21 +146,4 @@ func (d *DB) TouchPayloadCleanup(ctx context.Context, id int64) error {
 func (d *DB) ForgetCompletedScan(ctx context.Context, root string) error {
 	_, err := d.W.ExecContext(ctx, `DELETE FROM completed_scans WHERE root = ?`, root)
 	return err
-}
-
-// LegacyAutomaticImportReview preserves historical cleanup fences while
-// permitting only acquisitions proven active at the original migration cutover
-// to finish importing. It grants no deletion or acknowledgement authority.
-func (d *DB) LegacyAutomaticImportReview(ctx context.Context, generationKey, path string) (bool, error) {
-	storageReview, storageErr := d.StorageChangeReview(ctx, generationKey, path)
-	if storageErr != nil || storageReview {
-		return true, storageErr
-	}
-	review, err := d.LegacyCleanupReview(ctx, generationKey, path)
-	if err != nil || !review {
-		return review, err
-	}
-	var proven bool
-	err = d.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM legacy_inflight_import_evidence WHERE generation_key=?)`, generationKey).Scan(&proven)
-	return !proven, err
 }

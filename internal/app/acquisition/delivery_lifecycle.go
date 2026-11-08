@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -56,7 +57,6 @@ type DeliveryLifecycleReceipt struct {
 	DirectoryCleanupNextAttemptAt time.Time                    `json:"directoryCleanupNextAttemptAt,omitempty"`
 	DirectoryCleanupError         string                       `json:"directoryCleanupError,omitempty"`
 	CuratorFiles                  []DeliveryLifecycleFile      `json:"curatorFiles"`
-	PendingDeleteRequests         []DeliveryDeleteRequest      `json:"pendingDeleteRequests,omitempty"`
 	AttemptHistory                []DeliveryLifecycleAttempt   `json:"attemptHistory"`
 }
 
@@ -138,26 +138,12 @@ func (s *Service) deliveryLifecycleReceipt(ctx context.Context, r sqlite.Deliver
 	for _, event := range events {
 		attempts = append(attempts, DeliveryLifecycleAttempt{ID: event.ID, Stage: event.Stage, Attempt: event.Attempt, StartedAt: event.StartedAt, FinishedAt: event.FinishedAt, Result: event.Result, Error: event.Error})
 	}
-	batches, err := s.db.ExplicitDeliveryDeleteBatchesPending(ctx, r.ID, 100)
-	if err != nil {
-		return DeliveryLifecycleReceipt{}, err
-	}
-	pending := make([]DeliveryDeleteRequest, 0, len(batches))
-	for _, b := range batches {
-		paths := []string{}
-		for _, f := range b.Files {
-			if !f.HistoryRecorded {
-				paths = append(paths, f.Path)
-			}
-		}
-		pending = append(pending, DeliveryDeleteRequest{ID: b.ID, Paths: paths, Error: b.RetryError})
-	}
 	viewState := r.State
 	if r.OwnedByClientID > 0 {
 		viewState = "owned_by_other_client"
 	}
 	return DeliveryLifecycleReceipt{OwnedByClientID: r.OwnedByClientID,
-		PendingDeleteRequests: pending, RunnerStages: r.Delivery.RunnerStages, SourceCopies: r.Delivery.SourceCopies, LifecycleTiming: r.Delivery.LifecycleTiming,
+		RunnerStages: r.Delivery.RunnerStages, SourceCopies: r.Delivery.SourceCopies, LifecycleTiming: r.Delivery.LifecycleTiming,
 		ReceiptID: r.ID, ClientID: r.ClientID, DownloadID: r.DownloadID, GenerationKey: r.GenerationKey,
 		MediaItemID: r.MediaItemID, CopyID: r.CopyID, DeliveryID: r.Delivery.DeliveryID,
 		PublicationGeneration: r.Delivery.PublicationGeneration, ManifestDigest: r.Delivery.ManifestDigest,
@@ -218,22 +204,25 @@ func (s *Service) RetryCuratorDeliveryCleanup(ctx context.Context, receiptID int
 	if r.State == "conflict" {
 		return fmt.Errorf("delivery identity conflicts with its saved receipt")
 	}
-	// A migrated v1 receipt is the historical cohort: no deletion touches it
-	// until the M7 review approves its publication (contract section 3.4).
-	if pub, ok, err := s.db.PublicationByPath(ctx, receiptPublicationPath(r)); err != nil {
-		return err
-	} else if ok && pub.Cohort == "historical" && pub.CleanupApprovedAt.IsZero() {
-		return ErrHistoricalCohort
-	}
-	if err := s.db.ForceDeliveryCleanupRetryNow(ctx, receiptID); err != nil {
-		return err
-	}
-	cfg, err := s.db.GetDownloadClient(ctx, r.ClientID)
+	// A v1 receipt is a publication now (migration 0072): its cleanup is the
+	// publication's per-file cleanup, and a historical one waits for its
+	// review batch (contract section 3.4).
+	pub, ok, err := s.db.PublicationByPath(ctx, receiptPublicationPath(r))
 	if err != nil {
 		return err
 	}
-	if !s.queueDeliveryCleanup(ctx, cfg, r) {
-		return fmt.Errorf("cleanup worker is unavailable or busy; retry again shortly")
+	if !ok {
+		return fmt.Errorf("this delivery has no publication to clean up")
+	}
+	if pub.Cohort == "historical" && pub.CleanupApprovedAt.IsZero() {
+		return ErrHistoricalCohort
+	}
+	res, err := s.cleanupPublication(withForegroundVerification(ctx), pub.ID)
+	if err != nil {
+		return err
+	}
+	if len(res.Kept) > 0 {
+		return fmt.Errorf("cleanup kept %d file(s): %s", len(res.Kept), strings.Join(firstN(res.Kept, 3), "; "))
 	}
 	return nil
 }
@@ -358,61 +347,6 @@ func (s *Service) retryReceiptPublication(ctx context.Context, r sqlite.Delivery
 		return fmt.Errorf("import worker is unavailable or full; retry the selected import")
 	}
 	return nil
-}
-
-// AbandonDeliveryDeleteRequest serializes with selected-file mutation and import
-// so a late worker cannot revive the cancelled selection.
-func (s *Service) AbandonDeliveryDeleteRequest(ctx context.Context, receiptID int64, batchID string) error {
-	if !s.completedMu.TryLock() {
-		return fmt.Errorf("completed inventory is busy; retry cancelling this deletion request shortly")
-	}
-	defer s.completedMu.Unlock()
-	r, err := s.deliveryReceiptForAction(ctx, receiptID)
-	if err != nil {
-		return err
-	}
-	unlock, locked := s.tryLockDownload(r.DownloadID)
-	if !locked {
-		return fmt.Errorf("delivery mutation is active; retry cancelling this deletion request after it finishes")
-	}
-	defer unlock()
-	// Pin the current title after taking this download's mutation lock; no
-	// long-running import may hold the completed-inventory mutex via this action.
-	current, err := s.deliveryReceiptForAction(ctx, receiptID)
-	if err != nil {
-		return err
-	}
-	if current.DownloadID != r.DownloadID || current.GenerationKey != r.GenerationKey {
-		return sqlite.ErrDeliveryReceiptStale
-	}
-	r = current
-	ctx, releaseTarget, locked := s.tryLockImportTarget(ctx, r.MediaItemID)
-	if !locked {
-		return ErrImportTargetsBusy
-	}
-	defer releaseTarget()
-	ctx, release, locked := s.tryLockStorageDecision(ctx)
-	if !locked {
-		return fmt.Errorf("storage decision is busy; retry cancelling this deletion request shortly")
-	}
-	defer release()
-	current, err = s.deliveryReceiptForAction(ctx, receiptID)
-	if err != nil {
-		return err
-	}
-	if current.MediaItemID != r.MediaItemID || current.DownloadID != r.DownloadID || current.GenerationKey != r.GenerationKey {
-		return sqlite.ErrDeliveryReceiptStale
-	}
-	if current.State == "importing" || s.ImportRunning(current.DownloadID) {
-		return fmt.Errorf("delivery import is active; wait for it to finish before cancelling deletion")
-	}
-	return s.db.AbandonExplicitDeliveryDelete(ctx, receiptID, batchID)
-}
-
-type DeliveryDeleteRequest struct {
-	ID    string   `json:"id"`
-	Paths []string `json:"paths"`
-	Error string   `json:"error,omitempty"`
 }
 
 func lifecycleFileProjection(files []sqlite.DeliveryFileOutcome) []DeliveryLifecycleFile {

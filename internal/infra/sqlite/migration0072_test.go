@@ -60,7 +60,7 @@ func TestMigration0072(t *testing.T) {
 	var children int
 	_ = db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM import_attempt_controls`).Scan(&children)
 
-	if err := db.Migrate(ctx); err != nil {
+	if err := goose.UpToContext(ctx, db.W, "migrations", 72); err != nil {
 		t.Fatal(err)
 	}
 

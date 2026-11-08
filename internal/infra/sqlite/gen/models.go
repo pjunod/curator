@@ -286,17 +286,6 @@ type Job struct {
 	FinishedAt         int64
 }
 
-type LegacyCleanupReview struct {
-	GenerationKey string
-	Path          string
-}
-
-type LegacyInflightImportEvidence struct {
-	GenerationKey string
-	CutoverMs     int64
-	Evidence      string
-}
-
 type LibraryReviewFlag struct {
 	ID             int64
 	MediaItemID    int64
@@ -697,14 +686,6 @@ type RootFolder struct {
 	Kind    string
 }
 
-type RunnerAdmissionPollSchedule struct {
-	DownloadID    int64
-	GenerationKey string
-	NextAttemptAt int64
-	Attempts      int64
-	LastError     string
-}
-
 type RunnerClientInstance struct {
 	ClientID          int64
 	RunnerInstanceID  string
@@ -723,47 +704,12 @@ type RunnerDeliveryAttemptEvent struct {
 	Error      string
 }
 
-type RunnerDeliveryCursor struct {
-	ClientID      int64
-	AfterSequence int64
-	UpdatedAt     int64
-}
-
 type RunnerDeliveryDiscoveryRejection struct {
 	ClientID   int64
 	Sequence   int64
 	DeliveryID string
 	Reason     string
 	UpdatedAt  int64
-}
-
-type RunnerDeliveryExplicitDeleteBatch struct {
-	BatchID                      string
-	ReceiptID                    int64
-	PayloadPath                  string
-	InventoryFingerprint         string
-	PublicationDirectoryIdentity string
-	StorageIdentity              string
-	GenerationKey                string
-	RequestToken                 string
-	PublicationGeneration        string
-	RetryAttempts                int64
-	RetryNextAttemptAt           int64
-	RetryBlockedSince            int64
-	RetryError                   string
-	CreatedAt                    int64
-	AbandonedAt                  int64
-}
-
-type RunnerDeliveryExplicitDeleteFile struct {
-	BatchID          string
-	Path             string
-	ReviewedPath     string
-	SnapshotIdentity string
-	ParentIdentity   string
-	HistoryRecorded  int64
-	CompletedAt      int64
-	UnlinkStarted    int64
 }
 
 type RunnerDeliveryFileImport struct {
@@ -862,12 +808,14 @@ type RunnerDeliverySourceRefresh struct {
 }
 
 type RunnerHistoryCursor struct {
-	ClientID       int64
-	Incarnation    string
-	SinceSeq       int64
-	HeadSeq        int64
-	RetainedMinSeq int64
-	UpdatedAt      int64
+	ClientID        int64
+	Incarnation     string
+	SinceSeq        int64
+	HeadSeq         int64
+	RetainedMinSeq  int64
+	UpdatedAt       int64
+	DeliveriesAfter int64
+	HistoryRead     int64
 }
 
 type ScheduledTask struct {
@@ -899,6 +847,11 @@ type StorageChangeAcceptance struct {
 type StorageChangeReviewFence struct {
 	GenerationKey string
 	Root          string
+}
+
+type StorageChangeReviewPath struct {
+	ReviewToken string
+	Path        string
 }
 
 type WantableAttempt struct {

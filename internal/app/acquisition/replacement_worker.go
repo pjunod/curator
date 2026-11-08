@@ -362,14 +362,6 @@ func (s *Service) inspectReplacementCoverage(ctx context.Context, op sqlite.Repl
 	return proof, nil
 }
 
-func (s *Service) replacementHasCurrentCommittedPlacement(ctx context.Context, op sqlite.ReplacementOperation) (bool, error) {
-	if covered, err := s.db.ReplacementHasCommittedCoverage(ctx, op); err != nil || !covered {
-		return false, err
-	}
-	_, err := s.inspectReplacementCoverage(ctx, op)
-	return err == nil, err
-}
-
 func (s *Service) finalReplacementPlacementCheck(ctx context.Context, op sqlite.ReplacementOperation) error {
 	proof, ok := ctx.Value(replacementPlacementProofKey{}).(map[int64]replacementPlacementSnapshot)
 	if !ok || len(proof) == 0 {

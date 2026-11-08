@@ -221,6 +221,10 @@ minutes to confirm a submission, 30 minutes without progress, a hold's own
 deadline plus 5 minutes, 6 hours to import a publication) are the contract's
 and are not settings. *Manual approval* on the client is honoured: a
 completed publication waits in *Awaiting approval* until you import it.
+Since v0.40.0 a publication's files are also cleaned up one by one by their
+recorded outcome (placed with a matching digest, or discarded); **Clean up
+after import** does not apply to Runner publications and nothing new is
+configured.
 
 The native Usenet and NZBGet compatibility types reconcile existing Usenet
 downloads by handle. Native torrent acquisition is a separate client type;
@@ -958,14 +962,12 @@ Off by default.
 
 ## Runner delivery ownership
 
-New native Runner downloads opt into the additive delivery protocol at
-admission. Curator durably records the immutable manifest and matching request
-generation before acknowledging it. Imports and completed-payload cleanup use
-that manifest: Curator removes only verified files with a committed placement,
-same-copy redundancy proof, or completed replacement scope. Recoverable,
-unselected, and unknown siblings remain available in Resolve. This per-file
-cleanup is required for new Runner deliveries and is not controlled by the
-legacy **Clean up after import** setting used for other clients.
+Native Runner downloads are imported and cleaned up by publication (pipeline
+contract v2): a file of the publication is removed only when it was placed and
+the library copy still matches its manifest digest, or when it was discarded;
+unresolved files remain available in Resolve. This per-file cleanup always
+applies to Runner publications and is not controlled by the legacy **Clean up
+after import** setting used for other clients.
 
 Runner retains ownership of its separate processing source and reports its
 cleanup status. Curator does not use Runner's whole-job delete operation to
