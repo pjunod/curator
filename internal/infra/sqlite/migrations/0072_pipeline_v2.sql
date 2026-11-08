@@ -92,7 +92,10 @@ CREATE TABLE downloads_v2 (
     runner_fetched_json TEXT NOT NULL DEFAULT '{}',
     provisional INTEGER NOT NULL DEFAULT 0 CHECK (provisional IN (0,1)),
     deadline_at INTEGER NOT NULL DEFAULT 0,
-    state_entered_at INTEGER NOT NULL DEFAULT 0
+    state_entered_at INTEGER NOT NULL DEFAULT 0,
+    -- the last post-processing stage Runner reported: a stage change is
+    -- movement for the downloading deadline, a repeated stage is not
+    runner_stage TEXT NOT NULL DEFAULT ''
 ) STRICT;
 
 INSERT INTO downloads_v2 (

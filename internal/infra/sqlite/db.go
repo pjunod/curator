@@ -120,7 +120,7 @@ var requiredColumns = []struct{ table, column string }{
 	{"media_identity_sources", "countries"},
 	{"media_files", "audio_languages"},
 	{"pipeline_timings", "started_at"},
-	{"downloads", "runner_outcome"}, {"downloads", "provisional"}, {"downloads", "deadline_at"},
+	{"downloads", "runner_outcome"}, {"downloads", "provisional"}, {"downloads", "deadline_at"}, {"downloads", "runner_stage"},
 	{"publications", "cohort"}, {"publication_files", "outcome"}, {"replacement_grabs", "next_at"},
 	{"wantable_attempts", "download_id"}, {"runner_history_cursors", "incarnation"},
 }

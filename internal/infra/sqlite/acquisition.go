@@ -454,6 +454,7 @@ type Download struct {
 	Provisional         bool
 	DeadlineAt          time.Time
 	StateEnteredAt      time.Time
+	RunnerStage         string // last post-processing stage Runner reported
 }
 
 type ManualGrabRequest struct {
@@ -498,6 +499,7 @@ func downloadFromRow(r sqlitegen.Download) Download {
 	dl.RunnerFetchCause, dl.RunnerBlamesRelease, dl.RunnerSalvage = r.RunnerFetchCause, r.RunnerBlamesRelease != 0, r.RunnerSalvage
 	dl.RunnerFetchedJSON, dl.Provisional = r.RunnerFetchedJson, r.Provisional != 0
 	dl.RunnerOutcomeAt, dl.DeadlineAt, dl.StateEnteredAt = msTime(r.RunnerOutcomeAt), msTime(r.DeadlineAt), msTime(r.StateEnteredAt)
+	dl.RunnerStage = r.RunnerStage
 	if r.CopyID.Valid {
 		dl.CopyID = r.CopyID.Int64
 	}

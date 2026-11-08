@@ -1242,8 +1242,9 @@ ignored).
 deadline. A deadline is written when a row enters a state (not on every
 poll), so a job held or stalled inside Runner — still listed every poll — is
 caught once its deadline passes: submitting 10 minutes of Runner answering
-"no such token", downloading 30 minutes without progress (torrents 24
-hours), held at Runner's own deadline plus 5 minutes, downloaded/importing 6
+"no such token", downloading 30 minutes without progress or a new
+post-processing stage (torrents 24 hours; a job stuck in one stage, such as
+unpack, is not progress), held at Runner's own deadline plus 5 minutes, downloaded/importing 6
 hours, and a publication not imported within 6 hours. A download waiting for
 your approval (`awaiting_import`) has no deadline; it shows its age in
 Activity instead. Open the named row in Activity to see its handoff trace.

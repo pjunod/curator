@@ -318,6 +318,7 @@ type RunnerStatusWrite struct {
 	Progress   float64
 	Error      string
 	Control    string // newest control, for display only ('' keeps the stored one)
+	Stage      string // post-processing stage ('' keeps the stored one)
 	DeadlineAt time.Time
 	Handoff    *HandoffEntry
 }
@@ -336,11 +337,12 @@ func (d *DB) UpdateRunnerStatus(ctx context.Context, w RunnerStatusWrite) (bool,
 		state_entered_at=CASE WHEN state!=? THEN ? ELSE state_entered_at END,
 		state=?, progress=?, error=?,
 		runner_control=CASE WHEN ?!='' THEN ? ELSE runner_control END,
+		runner_stage=CASE WHEN ?!='' THEN ? ELSE runner_stage END,
 		deadline_at=?,
 		handoff_log=CASE WHEN ?='null' THEN handoff_log ELSE json_insert(handoff_log,'$[#]',json(?)) END,
 		updated_at=?
 		WHERE id=? AND transfer=? AND runner_outcome='' AND state IN ('grabbed','submitting','downloading','held')`,
-		w.State, now, w.State, w.Progress, w.Error, w.Control, w.Control, unixMilliOrZero(w.DeadlineAt), entry, entry, now, w.DownloadID, w.Transfer)
+		w.State, now, w.State, w.Progress, w.Error, w.Control, w.Control, w.Stage, w.Stage, unixMilliOrZero(w.DeadlineAt), entry, entry, now, w.DownloadID, w.Transfer)
 	if err != nil {
 		return false, err
 	}

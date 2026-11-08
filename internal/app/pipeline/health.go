@@ -14,7 +14,8 @@ import (
 // six hours. deadline_at is written on state entry, not on every poll, so a
 // job that is held or stalled inside Runner — still listed every poll — is
 // overdue once its state's deadline passes: submitting 10 min of "no such
-// token", downloading 30 min without progress (torrents 24 h), held at
+// token", downloading 30 min without progress or a new post-processing
+// stage (a stage reported again is not movement; torrents 24 h), held at
 // Runner's own deadline plus 5 min ("held (stale)"), downloaded/importing
 // 6 h. planned, awaiting_import (a person's to decide), imported, notified
 // and failed have none.
