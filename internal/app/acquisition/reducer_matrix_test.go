@@ -151,10 +151,14 @@ func TestStatusFactMatrix(t *testing.T) {
 		check     func(t *testing.T, before, got sqlite.Download)
 	}{
 		{name: "removed in the queue is not a terminal",
-			status:    func(dl sqlite.Download) ports.DownloadStatus { return ports.DownloadStatus{Transfer: dl.Transfer, State: ports.StateRemoved} },
+			status: func(dl sqlite.Download) ports.DownloadStatus {
+				return ports.DownloadStatus{Transfer: dl.Transfer, State: ports.StateRemoved}
+			},
 			wantState: "downloading"},
 		{name: "completed in the queue waits for Runner's record",
-			status:    func(dl sqlite.Download) ports.DownloadStatus { return ports.DownloadStatus{Transfer: dl.Transfer, State: ports.StateCompleted} },
+			status: func(dl sqlite.Download) ports.DownloadStatus {
+				return ports.DownloadStatus{Transfer: dl.Transfer, State: ports.StateCompleted}
+			},
 			wantState: "downloading",
 			check: func(t *testing.T, _, got sqlite.Download) {
 				if got.RunnerOutcome != "" {
@@ -176,7 +180,9 @@ func TestStatusFactMatrix(t *testing.T) {
 				st := ports.DownloadStatus{Transfer: dl.Transfer, State: ports.StateDownloading, Progress: 0.6}
 				f.observe(dl, ports.RunnerFact{Kind: ports.FactStatus, Transfer: dl.Transfer, Status: &st, Source: "poll"})
 			},
-			status:    func(dl sqlite.Download) ports.DownloadStatus { return ports.DownloadStatus{Transfer: dl.Transfer, State: ports.StateDownloading} },
+			status: func(dl sqlite.Download) ports.DownloadStatus {
+				return ports.DownloadStatus{Transfer: dl.Transfer, State: ports.StateDownloading}
+			},
 			wantState: "downloading",
 			check: func(t *testing.T, _, got sqlite.Download) {
 				if got.Progress != 0.6 {
@@ -330,7 +336,9 @@ func TestTerminalShapeMatrix(t *testing.T) {
 		check   func(t *testing.T, f *v2Fixture, dl sqlite.Download)
 	}{
 		{name: "a completion without its publication waits for the path",
-			t: func(*v2Fixture) ports.RunnerTerminal { return ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Salvage: "none"} },
+			t: func(*v2Fixture) ports.RunnerTerminal {
+				return ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Salvage: "none"}
+			},
 			check: func(t *testing.T, f *v2Fixture, dl sqlite.Download) {
 				if dl.RunnerOutcome != "" || dl.State != "downloading" || f.count(`SELECT COUNT(*) FROM publications`) != 0 {
 					t.Fatalf("row = %s/%s, want nothing recorded", dl.State, dl.RunnerOutcome)
@@ -379,7 +387,9 @@ func TestTerminalShapeMatrix(t *testing.T) {
 				}
 			}},
 		{name: "a failure with no words says failed and counts in full",
-			t: func(*v2Fixture) ports.RunnerTerminal { return ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Salvage: "none"} },
+			t: func(*v2Fixture) ports.RunnerTerminal {
+				return ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Salvage: "none"}
+			},
 			check: func(t *testing.T, f *v2Fixture, dl sqlite.Download) {
 				if dl.Error != "failed" || dl.Progress != 1 {
 					t.Fatalf("error %q progress %.2f, want failed and 1", dl.Error, dl.Progress)
