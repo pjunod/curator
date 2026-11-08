@@ -293,7 +293,9 @@ func statusChangedFact(data []byte, seq uint64) (ports.ClientEvent, bool) {
 	st := ports.DownloadStatus{Handle: handleOf(f.Job), Transfer: f.Transfer, Control: f.Control, Stage: f.Stage, State: ports.StateDownloading}
 	switch f.Status {
 	case "held":
-		st.State = ports.StateQueued
+		// held is Runner's operational state, with or without a control
+		// object (contract section 2.4 makes control optional).
+		st.State, st.OperationalState = ports.StateQueued, "held"
 		if f.Control != nil {
 			st.Message = f.Control.Message
 			if st.Stage == "" {
