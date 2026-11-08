@@ -40,15 +40,6 @@ func TestEnsureDeliveryManifestRollsBackEarlierRowsOnImmutableConflict(t *testin
 	}
 }
 
-func currentReceiptDirectoryState(t *testing.T, ctx context.Context, db *DB, receiptID int64) string {
-	t.Helper()
-	var state string
-	if err := db.R.QueryRowContext(ctx, `SELECT directory_cleanup_state FROM runner_delivery_receipts WHERE id=?`, receiptID).Scan(&state); err != nil {
-		t.Fatal(err)
-	}
-	return state
-}
-
 func TestQueueDeliveryReimportRollsBackDownloadWhenReceiptIdentityChanges(t *testing.T) {
 	ctx := context.Background()
 	db, _ := openLifecycleCoverageDB(t)

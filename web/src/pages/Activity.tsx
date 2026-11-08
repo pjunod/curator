@@ -39,6 +39,7 @@ import { PathInput } from '../PathInput'
 import { CompletedFolders } from '../CompletedFolders'
 import { DeliveryLifecycleArchive, DeliveryLifecycleForDownload } from '../DeliveryLifecycle'
 import '../LegacyReview.css'
+import { awaitingText, fmtDuration } from '../queueTime'
 
 const STATE_PILL: Record<string, string> = {
   imported: 'pill-ok',
@@ -749,6 +750,7 @@ function RowGroup(props: {
             Import blocked {fmtRelative(d.importBlockedSince)} · {d.importRetryAttempts ?? 0} retries · {d.importRetryAt && new Date(d.importRetryAt).getTime() > Date.now() ? `next retry ${fmtRelative(d.importRetryAt)}` : 'retry due'}
           </div>}
           {d.state === 'held' && <HeldLine d={d} />}
+          {d.state === 'awaiting_import' && <AwaitingLine d={d} />}
           {d.provisional && <div className="muted queue-row-detail" title="Curator's own conclusion; any later fact from Runner re-opens this row">Provisional: {d.runnerReason ?? 'failed'} — re-opens if Runner reports this transfer</div>}
           {d.parkedReason && <div className="muted queue-row-detail" title={`Reserved: ${d.parkedReason}`}>Reserved: {d.parkedReason}</div>}
           {reviewOpen && <ActionDialog title="Review episode reservation" onClose={()=>setReviewOpen(false)}>
@@ -885,13 +887,11 @@ function HeldLine({ d }: { d: QueueItem }) {
   return <div className={`queue-row-detail ${d.stale ? 'warning-text' : 'muted'}`} title={text}>{text}</div>
 }
 
-function fmtDuration(ms: number): string {
-  if (ms <= 0) return 'now'
-  const m = Math.round(ms / 60000)
-  if (m < 60) return `${m}m`
-  const h = Math.floor(m / 60)
-  return h < 48 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`
+function AwaitingLine({ d }: { d: QueueItem }) {
+  const text = awaitingText(d.stateEnteredAt)
+  return <div className="queue-row-detail muted" title={text}>{text}</div>
 }
+
 
 const OUTCOME_PILL: Record<string, string> = {
   placed: 'pill-ok',
@@ -922,7 +922,7 @@ function PublicationList({ d }: { d: QueueItem }) {
           <p>
             <b>{p.kind === 'salvage' ? 'Salvage publication' : 'Publication'}</b>{' '}
             <span className={`pill ${p.state === 'import_failed' ? 'pill-error' : p.state === 'imported' || p.state === 'notified' ? 'pill-ok' : 'pill-neutral'}`}>{p.state.replace(/_/g, ' ')}</span>{' '}
-            {p.cohort === 'historical' && <span className="pill pill-neutral" title="Frozen at the pipeline v2 cutover: never deleted automatically until its review batch is approved">historical</span>}{' '}
+            {p.cohort === 'historical' && <span className="pill pill-neutral" title="Frozen at the pipeline v2 cutover: never deleted automatically until its review batch is approved">{p.cleanupApprovedAt ? 'historical · cleanup approved' : 'historical'}</span>}{' '}
             <span className="path-chip">{p.path}</span>
           </p>
           {p.error && <p className="error-text">{p.error}</p>}
@@ -935,6 +935,7 @@ function PublicationList({ d }: { d: QueueItem }) {
                   <span className="mono">{f.path}</span>
                   {f.libraryPath && <span className="muted"> → {f.libraryPath}</span>}
                   {f.reason && <span className="muted"> — {f.reason}</span>}
+                  {f.removed && <span className="muted"> · removed from the publication</span>}
                   {(f.outcome === 'unresolved' || f.outcome === 'pending') && (
                     <span className="row-actions publication-file-actions">
                       {(['place', 'discard', 'keep'] as PublicationFileAction[]).map((a) => (

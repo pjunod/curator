@@ -73,6 +73,7 @@ func storageReviewFor(fences map[string][]string, generation, path string) bool 
 	}
 	return false
 }
+
 // StorageChangeReview reports whether a generation's payload at path is held
 // for review because the storage under it changed: a root-scoped fence on the
 // generation, or a path fence on an orphan payload of the replaced volume.

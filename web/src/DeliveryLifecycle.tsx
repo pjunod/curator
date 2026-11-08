@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   getDeliveryLifecycle,
-  abandonDeliveryDeleteRequest,
   retryCuratorDeliveryCleanup,
   retryDeliveryHandoff,
   retryRunnerDeliveryCleanup,
@@ -52,7 +51,6 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
     void qc.invalidateQueries({ queryKey: ['completed-inventory'] })
     void qc.invalidateQueries({ queryKey: ['queue'] })
   }
-  const abandon = useMutation({ mutationFn: (requestId: string) => abandonDeliveryDeleteRequest(receipt.receiptId, requestId), onSettled: invalidate })
   const handoff = useMutation({ mutationFn: () => retryDeliveryHandoff(receipt.receiptId), onSettled: invalidate })
   const runnerCleanup = useMutation({ mutationFn: () => retryRunnerDeliveryCleanup(receipt.receiptId), onSettled: invalidate })
   const curatorCleanup = useMutation({ mutationFn: () => retryCuratorDeliveryCleanup(receipt.receiptId), onSettled: invalidate })
@@ -62,7 +60,7 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
   const longestBlock = blocked.map((value) => new Date(value).getTime()).filter(Number.isFinite).sort()[0]
   const sourceBlockedAt = typeof receipt.sourceCleanup?.blockedSince === 'number' && receipt.sourceCleanup.blockedSince > 0 ? receipt.sourceCleanup.blockedSince * 1000 : undefined
   const warning = (longestBlock !== undefined && Date.now() - longestBlock >= 30 * 60 * 1000) || (sourceBlockedAt !== undefined && Date.now() - sourceBlockedAt >= 30 * 60 * 1000)
-  const busy = handoff.isPending || runnerCleanup.isPending || curatorCleanup.isPending || importSelected.isPending || abandon.isPending
+  const busy = handoff.isPending || runnerCleanup.isPending || curatorCleanup.isPending || importSelected.isPending
   const runnerSource = receipt.sourceCleanup ?? {}
   const runnerSourceState = typeof runnerSource.status === 'string' ? runnerSource.status : 'unknown'
   const acknowledgement = receipt.acceptance.replaceAll('_', ' ')
@@ -73,12 +71,6 @@ export function DeliveryLifecycleTrace({ receipt }: { receipt: DeliveryLifecycle
       <p><strong>Completed folder:</strong> <span className="mono">{completedPath(receipt) || 'path unknown'}</span></p>
       <p><strong>Publication:</strong> {receipt.terminalOutcome || 'outcome not reported'} · {receipt.state.replaceAll('_', ' ')} · acknowledgement: {acknowledgement} · ready {elapsed(receipt.readyAt)}</p>
       <p className="muted">Resolved library target: item {receipt.mediaItemId ?? 'unknown'} · copy {receipt.copyId ?? 0} · download {receipt.downloadId}</p>
-      {receipt.pendingDeleteRequests?.map((request) => <div key={request.id}>
-        <p>Pending deletion: {request.paths.join(', ')}{request.error ? ` · ${request.error}` : ''}</p>
-        <button disabled={abandon.isPending} onClick={() => abandon.mutate(request.id)}>Cancel deletion request</button>
-      </div>)}
-      {abandon.isSuccess && <ActionNotice revision={abandon.submittedAt}>Deletion request cancelled. Review the current files before another action.</ActionNotice>}
-      {abandon.isError && <ActionNotice warning revision={abandon.submittedAt}>{(abandon.error as Error).message}</ActionNotice>}
       <p><strong>Attempts:</strong> {receipt.attempts} {knownTimestamp(receipt.blockedSince) ? `· blocked ${elapsed(receipt.blockedSince)}` : ''}{pending(receipt.nextAttemptAt) ? ` · next handoff ${fmtRelative(receipt.nextAttemptAt!)}` : ''}</p>
       <LifecycleTimeline receipt={receipt} />
       <details className="delivery-attempt-history"><summary>Curator attempt history ({receipt.attemptHistory?.length ?? 0})</summary>

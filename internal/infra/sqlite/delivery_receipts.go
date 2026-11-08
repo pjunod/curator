@@ -67,16 +67,6 @@ type DeliveryManifestFile struct {
 	FileGeneration string
 }
 
-
-
-
-
-
-
-
-
-
-
 // DeliveryFileImport is immutable provenance for one attempt to place a
 // manifest entry in the library. Multiple rows may refer to one manifest
 // path when a later Resolve operation places that source again.
@@ -678,7 +668,6 @@ func (d *DB) ForceDeliveryRetryNow(ctx context.Context, receiptID int64) error {
 	return requireDeliveryTransition(res, err)
 }
 
-
 // EnsureDeliveryFileOutcomes journals every immutable manifest entry before
 // import begins. Existing rows are checked rather than rewritten, so a
 // changed manifest cannot silently replace the cleanup audit.
@@ -718,7 +707,6 @@ func (d *DB) EnsureDeliveryFileOutcomes(ctx context.Context, receiptID int64, fi
 	return tx.Commit()
 }
 
-
 // UpdateDeliveryFileDisposition changes only import rationale. It preserves
 // cleanup state, including an already committed unlink.
 func (d *DB) UpdateDeliveryFileDisposition(ctx context.Context, receiptID int64, path, disposition, reason, libraryPath string) error {
@@ -748,10 +736,6 @@ func (d *DB) UpdateDeliveryFileDisposition(ctx context.Context, receiptID int64,
 	}
 	return nil
 }
-
-
-
-
 
 func scanDeliveryFileOutcome(row interface{ Scan(...any) error }, out *DeliveryFileOutcome) error {
 	var updated int64
@@ -837,7 +821,6 @@ func (d *DB) DeliveryFileImports(ctx context.Context, receiptID int64) ([]Delive
 	}
 	return out, rows.Err()
 }
-
 
 func (d *DB) DeliveryReceiptsNeedingSourceRefresh(ctx context.Context, clientID int64, limit int) ([]DeliveryReceipt, error) {
 	rows, err := d.R.QueryContext(ctx, `SELECT r.id,r.client_id,r.sequence,r.delivery_id,r.publication_generation,r.source_artifact_id,r.source_generation,r.manifest_digest,r.artifact_id,r.job_id,r.request_token,r.runner_instance_id,r.ready_at,r.publication_path,r.mapped_path,r.files_json,r.source_cleanup_json,r.terminal_outcome,r.failure_stage,r.failure_cause,r.keep_source_on_failure,r.file_outcomes_json,r.state,r.ack_state,r.consumer_receipt_id,r.download_id,r.generation_key,r.download_handle,r.media_item_id,r.copy_id,r.error,r.attempts,r.blocked_since,r.next_attempt_at,r.publication_directory_identity,r.runner_stages_json,r.source_copies_json,r.lifecycle_timing_json,r.owned_by_client_id
@@ -1151,8 +1134,6 @@ func (d *DB) ReconcileDeliveryPlacements(ctx context.Context, receiptID int64) e
 	}
 	return tx.Commit()
 }
-
-
 
 // DeliveryBelongsToOtherRunnerMode suppresses a duplicate view only when an
 // exact durable admission proves this publication belongs to the other native

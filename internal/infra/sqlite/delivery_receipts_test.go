@@ -193,9 +193,8 @@ func TestDeliveryReceiptIsImmutableAndClientPinnedToRunnerInstance(t *testing.T)
 	if err != nil || pendingAck.State != "imported" || pendingAck.AckState != "pending" || pendingAck.Attempts != 2 || pendingAck.Error != "ack pending" {
 		t.Fatalf("local import regressed pending acknowledgement: %+v err=%v", pendingAck, err)
 	}
-	if _, err := db.W.ExecContext(ctx, `DELETE FROM downloads WHERE id=91`); err == nil {
-		t.Fatal("delivery with pending acknowledgement was deletable")
-	}
+	// Migration 0073 dropped the receipt-bound delete trigger: a row's cleanup
+	// evidence is its publications now (TestClearImportedDismissesRowWithLivePublicationAcrossRestart).
 	if err := db.SetDeliveryAccepted(ctx, pendingAck); err != nil {
 		t.Fatal(err)
 	}

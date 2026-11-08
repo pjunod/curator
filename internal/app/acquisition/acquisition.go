@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -138,9 +137,8 @@ func (ImportFailed) EventType() string { return "import.failed" }
 
 // Service wires storage, adapters (via factories), and the bus.
 type Service struct {
-	explicitDeliveryUnlink func(*os.Root, string) error // injected filesystem boundary for deterministic recovery tests
-	completedMu            sync.Mutex
-	storageDecisionMu      sync.Mutex
+	completedMu       sync.Mutex
+	storageDecisionMu sync.Mutex
 	// Publication authority, per media item (import_targets.go). Shared by
 	// ordinary and recovery imports, including crash reconciliation.
 	importTargets     importTargets

@@ -285,4 +285,3 @@ func TestReplacedManifestGenerationDeletesNothing(t *testing.T) {
 		t.Fatalf("publication = %s %q: a replaced directory was cleaned", p.State, p.Error)
 	}
 }
-

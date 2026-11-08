@@ -2,7 +2,6 @@ package acquisition
 
 import (
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -16,14 +15,6 @@ func deliveryImportablePath(kind domain.MediaKind, name string) bool {
 		return filename.IsBook(name)
 	}
 	return filename.IsVideo(name)
-}
-
-type verifiedDeliveryFile struct {
-	relative, absolute string
-	size               int64
-	digest             string
-	generation         string
-	info               os.FileInfo
 }
 
 func safeDeliveryRelativePath(p string) bool {
