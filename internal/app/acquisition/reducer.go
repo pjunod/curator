@@ -800,7 +800,7 @@ func admissionTerminal(adm ports.RequestAdmission) (ports.RunnerTerminal, bool) 
 		} else {
 			// A receipt that names no typed reason: the bytes are intact
 			// but unexplained, so it parks like any other io failure.
-			t = ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: ports.ReasonIO, Message: strings.TrimSpace(adm.TerminalOutcome + ": " + adm.FailureCause)}
+			t = ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: ports.ReasonIO, Message: strings.Join(nonEmpty(adm.TerminalOutcome, adm.FailureCause), ": ")}
 		}
 		if t.Salvage == "" {
 			t.Salvage = "none"
@@ -991,4 +991,15 @@ func (s *Service) handleRunnerEvent(ctx context.Context, cfg ports.ClientConfig,
 // published automatically.
 func operatorCancelled(dl *sqlite.Download) bool {
 	return strings.HasPrefix(dl.ParkedReason, "operator cancellation") || dl.RunnerOutcome == ports.OutcomeCancelled
+}
+
+// nonEmpty drops the empty strings, so a joined message has no dangling ": ".
+func nonEmpty(parts ...string) []string {
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

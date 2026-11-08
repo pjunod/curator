@@ -789,7 +789,6 @@ func TestHistoricalPartiallyPlacedPublicationImportsTheRest(t *testing.T) {
 	}
 	pub := f.publish("Test.Show.S01.job-55.runner-v1gen", "v1gen", map[string]string{"Test.Show.S01E01.mkv": "e1", "Test.Show.S01E02.mkv": "e2"})
 	raw, _ := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
-	_ = os.Remove(filepath.Join(pub.Path, ports.ManifestFileName))
 	id, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{DownloadID: dl.ID, Generation: "v1gen", Kind: "completed", Path: pub.Path,
 		ManifestJSON: string(raw), Source: "v1_record", Cohort: "historical"})
 	if err != nil {
