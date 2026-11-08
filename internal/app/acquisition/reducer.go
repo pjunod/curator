@@ -530,6 +530,28 @@ func (s *Service) kickPublicationImports(ctx context.Context, dl sqlite.Download
 
 // ---- the poll: reconcile only (contract section 3.2, IMPL section 5.5) ----
 
+// withOutstandingRunnerRows adds a Runner client's provisional terminals
+// (failed{submit|lost|parked}, which ListActiveDownloads leaves out) to the
+// poll's rows, so a job Runner still lists re-opens them from the poll and
+// not only from an event (review #8).
+func (s *Service) withOutstandingRunnerRows(ctx context.Context, clientID int64, rows []sqlite.Download) []sqlite.Download {
+	outstanding, err := s.db.OutstandingRunnerDownloads(ctx, clientID)
+	if err != nil {
+		s.log.Warn("queue: outstanding Runner rows unreadable", "client", clientID, "err", err)
+		return rows
+	}
+	have := make(map[int64]bool, len(rows))
+	for _, dl := range rows {
+		have[dl.ID] = true
+	}
+	for _, dl := range outstanding {
+		if !have[dl.ID] {
+			rows = append(rows, dl)
+		}
+	}
+	return rows
+}
+
 // goneGrace is how long a job must be absent from every Runner feed, over
 // successful polls only, before Curator gives up on it (provisionally).
 const goneGrace = 10 * time.Minute

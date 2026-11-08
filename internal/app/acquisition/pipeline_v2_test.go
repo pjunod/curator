@@ -1065,3 +1065,22 @@ func TestStaleHoldIsSweptPastManyOtherOverdueRows(t *testing.T) {
 		t.Fatalf("stale hold behind 70 overdue rows = %q, want swept", got.Error)
 	}
 }
+
+// (review #8) A provisional row is in the poll's rows: a migrated parked
+// failure whose job Runner still lists re-opens from the queue poll alone,
+// with no event.
+func TestProvisionalRowReopensFromThePoll(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET state='failed', runner_outcome='failed', runner_outcome_reason='parked',
+		provisional=1, error='parked: Runner retains source files' WHERE id=?`, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.runner.statuses = []ports.DownloadStatus{{Handle: ports.Handle(dl.Handle), Transfer: dl.Transfer, State: ports.StateDownloading, Progress: 0.4}}
+	if err := f.svc.RefreshQueue(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.row(dl.ID); got.State != "downloading" || got.Provisional || got.RunnerOutcome != "" || got.Progress != 0.4 {
+		t.Fatalf("row = %s/%s provisional=%v progress %.2f, want re-opened downloading", got.State, got.RunnerOutcome, got.Provisional, got.Progress)
+	}
+}

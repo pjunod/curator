@@ -1575,7 +1575,7 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 		// Runner clients are on the pipeline v2 reducer: the poll only
 		// reconciles what the event stream may have missed (contract 3.2).
 		if feeds, ok := runnerFeedsOf(client); ok {
-			s.reconcileRunnerClient(ctx, cfg, client, feeds, byClient[cfg.ID])
+			s.reconcileRunnerClient(ctx, cfg, client, feeds, s.withOutstandingRunnerRows(ctx, cfg.ID, byClient[cfg.ID]))
 			continue
 		}
 		var statuses []ports.DownloadStatus
