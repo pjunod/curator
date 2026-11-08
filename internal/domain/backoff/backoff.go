@@ -45,3 +45,12 @@ func (l Ladder) After(tries int) time.Duration {
 	}
 	return l[tries]
 }
+
+// Max is the last rung: the longest wait the ladder ever produces. Zero for an
+// empty ladder, matching After.
+func (l Ladder) Max() time.Duration {
+	if len(l) == 0 {
+		return 0
+	}
+	return l[len(l)-1]
+}
