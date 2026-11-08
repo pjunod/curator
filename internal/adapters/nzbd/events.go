@@ -191,6 +191,9 @@ func translate(name, data, id string) []ports.ClientEvent {
 			state = ports.StateQueued
 		}
 		st := ports.DownloadStatus{Handle: handleOf(f.Job), State: state, Control: f.Control, Message: f.Control.Message, Stage: f.Control.Stage}
+		if f.Control.Held() {
+			st.OperationalState = "held"
+		}
 		return []ports.ClientEvent{{Handle: handleOf(f.Job), Kind: ports.EventProgress, Seq: seq, Status: st, Fact: statusFact(st, seq)}}
 
 	case "job_status_changed":

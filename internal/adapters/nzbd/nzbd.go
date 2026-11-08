@@ -404,19 +404,24 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 			continue
 		}
 		st, msg, stage := j.state()
+		operational := ""
+		if j.StatusProjected == "held" || j.Control.Held() {
+			operational = "held"
+		}
 		progress := 0.0
 		if j.SizeBytes > 0 {
 			progress = float64(j.DownloadedBytes) / float64(j.SizeBytes)
 		}
 		out = append(out, ports.DownloadStatus{
-			Control:  j.Control,
-			Handle:   ports.Handle(strconv.FormatInt(j.ID, 10)),
-			Name:     j.Name,
-			Transfer: paramValue(j.Params, TransferParam),
-			State:    st,
-			Progress: progress,
-			Message:  msg,
-			Stage:    stage,
+			Control:          j.Control,
+			Handle:           ports.Handle(strconv.FormatInt(j.ID, 10)),
+			Name:             j.Name,
+			Transfer:         paramValue(j.Params, TransferParam),
+			State:            st,
+			Progress:         progress,
+			Message:          msg,
+			Stage:            stage,
+			OperationalState: operational,
 		})
 	}
 	return out, nil

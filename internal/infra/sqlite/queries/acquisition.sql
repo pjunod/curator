@@ -116,6 +116,9 @@ SELECT COUNT(*) FROM history_events;
 -- name: GetDownload :one
 SELECT * FROM downloads WHERE id = ?;
 
+-- name: ListDownloadsByIDs :many
+SELECT * FROM downloads WHERE id IN (sqlc.slice('ids')) ORDER BY id;
+
 -- name: UpdateDownloadState :exec
 UPDATE downloads SET state = ?, progress = ?, error = ?, updated_at = ?
 WHERE id = ?;

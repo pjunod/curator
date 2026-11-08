@@ -20,10 +20,16 @@ func autoSetup(t *testing.T, releases []ports.Release, client *fakeClient) (*Ser
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	ctx := context.Background()
-	if err := db.Migrate(ctx); err != nil {
+	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	return autoSetupOn(t, db, releases, client)
+}
+
+// autoSetupOn builds the autoSetup scenario on an already migrated database.
+func autoSetupOn(t *testing.T, db *sqlite.DB, releases []ports.Release, client *fakeClient) (*Service, *sqlite.DB, int64) {
+	t.Helper()
+	ctx := context.Background()
 	b := bus.New(nil)
 	t.Cleanup(b.Close)
 	svc := New(db, b, nil,

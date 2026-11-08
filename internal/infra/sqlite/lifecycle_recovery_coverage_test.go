@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"testing"
 	"time"
 
@@ -39,14 +38,11 @@ func TestDeliveryAttemptJournalKeepsInterruptedAndFinishedAttemptsAcrossRestart(
 	ctx := context.Background()
 	db, dir := openLifecycleCoverageDB(t)
 	defer func() { _ = db.Close() }()
-	receipt, err := db.SaveDiscoveredDelivery(ctx, 3, coverageDelivery("attempt-journal"), "/mounted/release")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.BeginDeliveryAttempt(ctx, 0, "import"); err == nil {
+	receipt := seedLegacyReceipt(t, db, 3, coverageDelivery("attempt-journal"), "/mounted/release")
+	if _, err := db.BeginDeliveryAttempt(ctx, 0, "import"); err == nil {
 		t.Fatal("attempt without a receipt was admitted")
 	}
-	if _, err = db.BeginDeliveryAttempt(ctx, receipt.ID, " "); err == nil {
+	if _, err := db.BeginDeliveryAttempt(ctx, receipt.ID, " "); err == nil {
 		t.Fatal("attempt without a stage was admitted")
 	}
 	first, err := db.BeginDeliveryAttempt(ctx, receipt.ID, "import")
@@ -91,82 +87,6 @@ func TestDeliveryAttemptJournalKeepsInterruptedAndFinishedAttemptsAcrossRestart(
 	third, err := db.BeginDeliveryAttempt(ctx, receipt.ID, "import")
 	if err != nil || third.Attempt != 3 {
 		t.Fatalf("attempt sequence did not continue after reopen: %+v err=%v", third, err)
-	}
-}
-
-func TestQueueDeliveryReimportAtomicallyPersistsExactSelectionWithAckPending(t *testing.T) {
-	ctx := context.Background()
-	db, dir := openLifecycleCoverageDB(t)
-	defer func() { _ = db.Close() }()
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO media_items(id,kind,title,sort_title,quality_profile_id,added_at,updated_at)
-		VALUES(91,'movie','Lifecycle Movie','lifecycle movie',1,1,1)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO downloads(id,media_item_id,release_title,client_id,protocol,handle,transfer,state,added_at,updated_at,generation_key,import_path)
-		VALUES(91,91,'Lifecycle Movie 2024 1080p WEB-DL',3,'usenet','17',?,'imported',1,1,'download-generation','/mounted/release')`, coverageDelivery("unused").RequestToken); err != nil {
-		t.Fatal(err)
-	}
-	delivery := coverageDelivery("reimport-transaction")
-	receipt, err := db.SaveDiscoveredDelivery(ctx, 3, delivery, "/mounted/release")
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt.DownloadID, receipt.GenerationKey, receipt.DownloadHandle, receipt.MediaItemID = 91, "download-generation", "17", 91
-	if err = db.AssociateDelivery(ctx, receipt); err != nil {
-		t.Fatal(err)
-	}
-	receipt.ConsumerReceiptID = "consumer-receipt"
-	if err = db.PrepareDeliveryAcceptance(ctx, receipt); err != nil {
-		t.Fatal(err)
-	}
-	if err = db.SetDeliveryImported(ctx, receipt.ID); err != nil {
-		t.Fatal(err)
-	}
-	expected, err := db.DeliveryReceiptByID(ctx, receipt.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dl, err := db.GetDownload(ctx, 91)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dl.State, dl.Handoff = "importing", []HandoffEntry{{Step: "manual_import_queued", At: time.Now().UnixMilli(), Paths: []string{"Movie.mkv"}}}
-
-	wrong := expected
-	wrong.GenerationKey = "stale-generation"
-	if err = db.QueueDeliveryReimport(ctx, wrong, dl); !errors.Is(err, ErrDeliveryReceiptStale) {
-		t.Fatalf("stale generation reimport error=%v", err)
-	}
-	unchanged, err := db.GetDownload(ctx, dl.ID)
-	if err != nil || unchanged.State != "imported" || len(unchanged.Handoff) != 0 {
-		t.Fatalf("failed transaction partially rewrote download: %+v err=%v", unchanged, err)
-	}
-	unchangedReceipt, err := db.DeliveryReceiptByID(ctx, receipt.ID)
-	if err != nil || unchangedReceipt.State != "imported" || unchangedReceipt.AckState != "pending" {
-		t.Fatalf("failed transaction partially reopened receipt: %+v err=%v", unchangedReceipt, err)
-	}
-
-	if err = db.QueueDeliveryReimport(ctx, expected, dl); err != nil {
-		t.Fatal(err)
-	}
-	if err = db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db, err = Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = db.Close() }()
-	if err = db.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	reopenedReceipt, err := db.DeliveryReceiptByID(ctx, receipt.ID)
-	if err != nil || reopenedReceipt.State != "ready" || reopenedReceipt.AckState != "pending" || reopenedReceipt.ConsumerReceiptID != "consumer-receipt" {
-		t.Fatalf("reopened receipt lost selected retry or ACK obligation: %+v err=%v", reopenedReceipt, err)
-	}
-	reopenedDownload, err := db.GetDownload(ctx, dl.ID)
-	if err != nil || reopenedDownload.State != "importing" || len(reopenedDownload.Handoff) != 1 || !reflect.DeepEqual(reopenedDownload.Handoff[0].Paths, []string{"Movie.mkv"}) {
-		t.Fatalf("reopened download lost exact selection: %+v err=%v", reopenedDownload, err)
 	}
 }
 

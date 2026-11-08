@@ -134,6 +134,7 @@ type Download struct {
 	Provisional                   int64
 	DeadlineAt                    int64
 	StateEnteredAt                int64
+	RunnerStage                   string
 }
 
 type DownloadClient struct {
@@ -524,6 +525,7 @@ type Publication struct {
 	DiscoveredAt      int64
 	DeadlineAt        int64
 	UpdatedAt         int64
+	CleanupPausedAt   int64
 }
 
 type PublicationFile struct {

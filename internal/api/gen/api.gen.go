@@ -755,6 +755,24 @@ func (e QueueItemSubmissionPhase) Valid() bool {
 	}
 }
 
+// Defines values for QueuePublicationCleanupState.
+const (
+	QueuePublicationCleanupStateQueued  QueuePublicationCleanupState = "queued"
+	QueuePublicationCleanupStateRunning QueuePublicationCleanupState = "running"
+)
+
+// Valid indicates whether the value is a known member of the QueuePublicationCleanupState enum.
+func (e QueuePublicationCleanupState) Valid() bool {
+	switch e {
+	case QueuePublicationCleanupStateQueued:
+		return true
+	case QueuePublicationCleanupStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RecommendationFiltersTheme.
 const (
 	ComingOfAge      RecommendationFiltersTheme = "coming_of_age"
@@ -1135,9 +1153,10 @@ func (e TitleAliasScope) Valid() bool {
 
 // Defines values for TransferStage.
 const (
-	TransferStageDownloading TransferStage = "downloading"
-	TransferStageImporting   TransferStage = "importing"
-	TransferStageNotifying   TransferStage = "notifying"
+	TransferStageDownloading        TransferStage = "downloading"
+	TransferStageImporting          TransferStage = "importing"
+	TransferStageNotifying          TransferStage = "notifying"
+	TransferStagePublicationCleanup TransferStage = "publication_cleanup"
 )
 
 // Valid indicates whether the value is a known member of the TransferStage enum.
@@ -1148,6 +1167,8 @@ func (e TransferStage) Valid() bool {
 	case TransferStageImporting:
 		return true
 	case TransferStageNotifying:
+		return true
+	case TransferStagePublicationCleanup:
 		return true
 	default:
 		return false
@@ -1358,6 +1379,24 @@ func (e WantedSearchScopeScope) Valid() bool {
 	case WantedSearchScopeScopeReason:
 		return true
 	case WantedSearchScopeScopeTarget:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetPublicationCleanupJSONBodyAction.
+const (
+	Pause  SetPublicationCleanupJSONBodyAction = "pause"
+	Resume SetPublicationCleanupJSONBodyAction = "resume"
+)
+
+// Valid indicates whether the value is a known member of the SetPublicationCleanupJSONBodyAction enum.
+func (e SetPublicationCleanupJSONBodyAction) Valid() bool {
+	switch e {
+	case Pause:
+		return true
+	case Resume:
 		return true
 	default:
 		return false
@@ -1583,22 +1622,25 @@ type ClearedCount struct {
 type CompletedEntry struct {
 	Bytes int64 `json:"bytes"`
 
-	// DeliveryManaged Runner payload governed by its accepted per-file manifest.
+	// DeliveryManaged A publication claims this directory; its files leave only by their recorded per-file outcome.
 	DeliveryManaged *bool `json:"deliveryManaged,omitempty"`
 	Files           int   `json:"files"`
 
 	// Fingerprint Recursive metadata and filesystem identity token for reviewed deletion.
 	Fingerprint string `json:"fingerprint"`
 
-	// LegacyReview Pre-delivery legacy item held for read-only review.
+	// LegacyReview Payload held for review because the storage under it was replaced.
 	LegacyReview *bool              `json:"legacyReview,omitempty"`
 	Path         string             `json:"path"`
 	Reason       string             `json:"reason"`
 	Receipts     []CompletedReceipt `json:"receipts"`
 
-	// ReviewFiles Current file metadata snapshots for review and exact selected-file operations; the accepted delivery manifest remains the deletion authority.
+	// ReviewFiles Current file metadata snapshots for exact selected-file operations. For a publication, only its unresolved files an operator may discard; the manifest digest remains the deletion authority.
 	ReviewFiles *[]CompletedReviewFile `json:"reviewFiles,omitempty"`
 	Status      string                 `json:"status"`
+
+	// WholeDeletable A publication's directory with no manifest evidence left in it (every manifest file removed, or an approved directory with none): an operator may delete it whole.
+	WholeDeletable *bool `json:"wholeDeletable,omitempty"`
 }
 
 // CompletedInventory defines model for CompletedInventory.
@@ -2838,6 +2880,15 @@ type QueuePublication struct {
 	// CleanupApprovedAt When a historical publication's review batch was approved; absent until then.
 	CleanupApprovedAt *time.Time `json:"cleanupApprovedAt,omitempty"`
 
+	// CleanupPausedAt When an operator paused this publication's automatic cleanup; absent when it runs.
+	CleanupPausedAt *time.Time `json:"cleanupPausedAt,omitempty"`
+
+	// CleanupReason Why the queued or running pass runs (after its import
+	CleanupReason *string `json:"cleanupReason,omitempty"`
+
+	// CleanupState A per-file cleanup pass waiting on or running in the cleanup lane; absent when none.
+	CleanupState *QueuePublicationCleanupState `json:"cleanupState,omitempty"`
+
 	// Cohort live | historical. historical publications are never deleted automatically until their review batch is approved.
 	Cohort     string                 `json:"cohort"`
 	Error      *string                `json:"error,omitempty"`
@@ -2855,6 +2906,9 @@ type QueuePublication struct {
 	// State discovered | importing | imported | import_failed | notified | removed
 	State string `json:"state"`
 }
+
+// QueuePublicationCleanupState A per-file cleanup pass waiting on or running in the cleanup lane; absent when none.
+type QueuePublicationCleanupState string
 
 // QueuePublicationFile defines model for QueuePublicationFile.
 type QueuePublicationFile struct {
@@ -3454,7 +3508,7 @@ type Transfer struct {
 	// Peer The application on the other side. Absent for `importing` — Monarr is moving its own files, and naming a peer would invent a seam that does not exist.
 	Peer *string `json:"peer,omitempty"`
 
-	// Stage Which seam this is at. `downloading` is nzbd's work that Monarr is watching; `importing` is Monarr moving bytes itself; `notifying` is telling plurx, including the waits between retries.
+	// Stage Which seam this is at. `downloading` is nzbd's work that Monarr is watching; `importing` is Monarr moving bytes itself; `notifying` is telling plurx, including the waits between retries; `publication_cleanup` is Curator verifying and removing a publication's evidenced files (detail says why it runs; a download-less publication reports a negative downloadId, minus its publication id).
 	Stage     TransferStage `json:"stage"`
 	StartedAt time.Time     `json:"startedAt"`
 	Title     string        `json:"title"`
@@ -3464,7 +3518,7 @@ type Transfer struct {
 	Transfer *string `json:"transfer,omitempty"`
 }
 
-// TransferStage Which seam this is at. `downloading` is nzbd's work that Monarr is watching; `importing` is Monarr moving bytes itself; `notifying` is telling plurx, including the waits between retries.
+// TransferStage Which seam this is at. `downloading` is nzbd's work that Monarr is watching; `importing` is Monarr moving bytes itself; `notifying` is telling plurx, including the waits between retries; `publication_cleanup` is Curator verifying and removing a publication's evidenced files (detail says why it runs; a download-less publication reports a negative downloadId, minus its publication id).
 type TransferStage string
 
 // UnmatchedDir defines model for UnmatchedDir.
@@ -3663,6 +3717,14 @@ type DeleteCompletedEntryJSONBody struct {
 type ApprovePublicationCleanupJSONBody struct {
 	Ids []int64 `json:"ids"`
 }
+
+// SetPublicationCleanupJSONBody defines parameters for SetPublicationCleanup.
+type SetPublicationCleanupJSONBody struct {
+	Action SetPublicationCleanupJSONBodyAction `json:"action"`
+}
+
+// SetPublicationCleanupJSONBodyAction defines parameters for SetPublicationCleanup.
+type SetPublicationCleanupJSONBodyAction string
 
 // BrowseFilesystemParams defines parameters for BrowseFilesystem.
 type BrowseFilesystemParams struct {
@@ -3908,6 +3970,9 @@ type PreviewCompletedStorageChangeJSONRequestBody = StorageChangeRequest
 // ApprovePublicationCleanupJSONRequestBody defines body for ApprovePublicationCleanup for application/json ContentType.
 type ApprovePublicationCleanupJSONRequestBody ApprovePublicationCleanupJSONBody
 
+// SetPublicationCleanupJSONRequestBody defines body for SetPublicationCleanup for application/json ContentType.
+type SetPublicationCleanupJSONRequestBody SetPublicationCleanupJSONBody
+
 // GrabReleaseJSONRequestBody defines body for GrabRelease for application/json ContentType.
 type GrabReleaseJSONRequestBody = GrabRequest
 
@@ -4120,6 +4185,9 @@ type ServerInterface interface {
 	// ApprovePublicationCleanup Approve a review batch of historical publications for per-file cleanup
 	// (POST /downloads/publications/approve-cleanup)
 	ApprovePublicationCleanup(w http.ResponseWriter, r *http.Request)
+	// SetPublicationCleanup Pause or resume a publication's automatic per-file cleanup
+	// (POST /downloads/publications/{publicationId}/cleanup)
+	SetPublicationCleanup(w http.ResponseWriter, r *http.Request, publicationId int64)
 	// StreamEvents Server-sent events
 	// (GET /events)
 	StreamEvents(w http.ResponseWriter, r *http.Request)
@@ -5095,6 +5163,32 @@ func (siw *ServerInterfaceWrapper) ApprovePublicationCleanup(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ApprovePublicationCleanup(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetPublicationCleanup operation middleware
+func (siw *ServerInterfaceWrapper) SetPublicationCleanup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publicationId" -------------
+	var publicationId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publicationId", r.PathValue("publicationId"), &publicationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publicationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetPublicationCleanup(w, r, publicationId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8172,6 +8266,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-handoff", wrapper.RetryDeliveryHandoff)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-runner-cleanup", wrapper.RetryRunnerDeliveryCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-curator-cleanup", wrapper.RetryCuratorDeliveryCleanup)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/publications/{publicationId}/cleanup", wrapper.SetPublicationCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/publications/approve-cleanup", wrapper.ApprovePublicationCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/preview", wrapper.PreviewCompletedStorageChange)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/accept", wrapper.AcceptCompletedStorageChange)

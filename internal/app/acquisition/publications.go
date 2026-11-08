@@ -129,10 +129,12 @@ func (s *Service) enqueuePublicationImportApproved(ctx context.Context, dl sqlit
 	if s.ImportRunning(dl.ID) {
 		return false
 	}
-	if a, err := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey); err == nil && a.Outcome == "completed" {
+	if a, err := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey); err == nil && (a.Outcome == "completed" || approved) {
 		// A row that already imported one publication (a salvage arriving
 		// after the completed one, or the reverse) imports the next in a
-		// fresh attempt epoch.
+		// fresh attempt epoch. So does a person's Resolve selection: it is an
+		// explicit retry, and the epoch that left the file unresolved may
+		// still hold that file's stage.
 		if _, err := s.db.BeginImportRetry(ctx, dl.ID, dl.GenerationKey); err != nil {
 			s.log.Debug("publication import could not open a new attempt", "download", dl.ID, "err", err)
 			return false
@@ -156,7 +158,7 @@ var manifestNotice sync.Map // publication id -> time.Time
 
 // runPublicationImport imports one publication file by file and records the
 // outcome of every file (contract section 3.4).
-func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, pubID int64, approved bool) error {
+func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, pubID int64, approved bool) (err error) {
 	pub, err := s.db.GetPublication(ctx, pubID)
 	if err != nil {
 		return err
@@ -220,6 +222,19 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	if err := s.db.SetPublicationState(ctx, pub.ID, "importing", ""); err != nil {
 		return err
 	}
+	// Any error that leaves the publication in importing (a persistence
+	// outage after files were placed, say) puts it back to discovered with
+	// the error, so the poll offers it again; placements already committed
+	// are reused, and its six-hour deadline is what ends it.
+	defer func() {
+		if err == nil {
+			return
+		}
+		bg := context.WithoutCancel(ctx)
+		if cur, gerr := s.db.GetPublication(bg, pub.ID); gerr == nil && cur.State == "importing" {
+			_ = s.db.SetPublicationState(bg, pub.ID, "discovered", err.Error())
+		}
+	}()
 	if pub.Kind == "completed" && dl.State != "importing" {
 		dl.ImportPath, dl.SavePath = pub.Path, pub.RemotePath
 		s.advance(ctx, &dl, "importing", 1, "", stepImporting, "importing publication "+filepath.Base(pub.Path))
@@ -447,7 +462,13 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		return err
 	}
 	if w.State == "imported" {
-		if err := s.completeBoundImport(ctx, detail); err != nil {
+		// Only a completed publication decides the row: a salvage imports
+		// under a row that stays failed (contract section 3.1).
+		closeAttempt := func() error { return s.completeBoundImport(ctx, detail) }
+		if pub.Kind != "completed" {
+			closeAttempt = func() error { return s.settleBoundImport(ctx) }
+		}
+		if err := closeAttempt(); err != nil {
 			s.log.Warn("import attempt could not be closed", "download", dl.ID, "err", err)
 		}
 		// Every file has an outcome: the evidenced ones can leave now
@@ -750,6 +771,10 @@ func wantableKeys(item domain.MediaItem, copyID int64, season int, episodes []in
 // the backlog.
 const historicalMinAge = 10 * time.Minute
 
+// historicalNoManifestReason explains a frozen directory with no manifest and
+// no download row (the same text migration 0073 writes).
+const historicalNoManifestReason = "frozen at the pipeline v2 cutover with no manifest and no download row: Curator cannot import or clean it file by file; the M7 review decides it, and once approved it can be deleted whole from Storage"
+
 // MarkHistoricalCohort records, once, at the first M2 start, every directory
 // under the completed roots that no publication claims, as a historical
 // publication no automatic deletion touches until the M7 review approves it.
@@ -785,7 +810,13 @@ func (s *Service) MarkHistoricalCohort(ctx context.Context) (int, error) {
 			if err != nil || time.Since(info.ModTime()) < historicalMinAge {
 				continue
 			}
-			if _, err := s.db.InsertPublication(ctx, sqlite.PublicationWrite{Kind: "completed", Path: path, Cohort: "historical", Source: "none"}); err != nil {
+			id, err := s.db.InsertPublication(ctx, sqlite.PublicationWrite{Kind: "completed", Path: path, Cohort: "historical", Source: "none"})
+			if err != nil {
+				return n, err
+			}
+			// No manifest and no row: nothing can import it, so it is not
+			// "discovered" (M4 review finding 3); the M7 review decides it.
+			if err := s.db.SetPublicationState(ctx, id, "import_failed", historicalNoManifestReason); err != nil {
 				return n, err
 			}
 			n++
@@ -812,12 +843,38 @@ func (s *Service) publicationManaged(ctx context.Context, downloadID int64, path
 		}
 	}
 	if path != "" {
-		_, ok, err := s.db.PublicationByPath(ctx, filepath.Clean(path))
+		_, ok, err := s.publicationClaiming(ctx, path)
 		if err != nil || ok {
 			return true
 		}
 	}
 	return false
+}
+
+// publicationClaiming finds the publication that claims path: its own
+// directory, a directory containing it, or one inside it (compared on
+// storage paths, so aliases of the completed roots match).
+func (s *Service) publicationClaiming(ctx context.Context, path string) (sqlite.Publication, bool, error) {
+	path = filepath.Clean(path)
+	if p, ok, err := s.db.PublicationByPath(ctx, path); err != nil || (ok && p.State != "removed") {
+		return p, ok, err
+	}
+	pubs, err := s.db.ListPublicationPaths(ctx)
+	if err != nil {
+		return sqlite.Publication{}, false, err
+	}
+	roots, err := s.completedRoots(ctx, nil)
+	if err != nil {
+		return sqlite.Publication{}, false, err
+	}
+	target := storagePath(path, roots)
+	for _, p := range pubs {
+		dir := storagePath(filepath.Clean(p.Path), roots)
+		if dir == target || within(dir, target) || within(target, dir) {
+			return p, true, nil
+		}
+	}
+	return sqlite.Publication{}, false, nil
 }
 
 // ResolvePublicationFile is a person's decision on one unresolved file:
@@ -895,13 +952,28 @@ func (s *Service) ResolvePublicationFile(ctx context.Context, downloadID, public
 	}
 	if action == "discard" {
 		// The discarded file leaves through the per-file cleanup, with its
-		// checks; a historical publication waits for its review batch.
-		if _, err := s.cleanupPublicationLocked(withForegroundVerification(ctx), pub.ID); err != nil {
-			s.log.Info("discarded file kept for now; the hourly sweep retries", "publication", pub.ID, "file", relPath, "err", err)
+		// checks; a historical publication waits for its review batch. Say
+		// so when it stayed: "discarded" must not read as "deleted".
+		res, err := s.cleanupPublicationLocked(withOperatorCleanup(ctx, "operator discard in Resolve"), pub.ID)
+		if err != nil {
+			return fmt.Errorf("%w; the file stays for now: %w", ErrDiscardedButKept, err)
+		}
+		for _, k := range res.Kept {
+			if strings.HasPrefix(k, relPath+": ") {
+				return fmt.Errorf("%w: %s", ErrDiscardedButKept, k)
+			}
+		}
+		if res.Skipped != "" {
+			return fmt.Errorf("%w; deletion waits: %s", ErrDiscardedButKept, res.Skipped)
 		}
 	}
 	return nil
 }
+
+// ErrDiscardedButKept says a Discard was recorded but the bytes stayed (the
+// per-file evidence did not hold, or deletion has to wait): the file is not
+// deleted, and the reason says why.
+var ErrDiscardedButKept = errors.New("discarded, but kept")
 
 // ErrInvalidResolution refuses a Resolve decision that does not apply.
 var ErrInvalidResolution = errors.New("invalid resolution")

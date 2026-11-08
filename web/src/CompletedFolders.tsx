@@ -12,7 +12,11 @@ type StorageRow = { root: CompletedRoot; entry: CompletedEntry }
 const rowKey = ({ root, entry }: StorageRow) => JSON.stringify([root.path, entry.path])
 const isLegacyReview = ({ entry }: StorageRow) => entry.legacyReview || entry.receipts.some((receipt) => receipt.legacyReview)
 const isDeliveryManaged = ({ entry }: StorageRow) => !!entry.deliveryManaged || entry.receipts.some((receipt) => receipt.deliveryManaged)
-const canDelete = (row: StorageRow) => !row.root.error && !isLegacyReview(row) && !isDeliveryManaged(row) && !['active', 'awaiting_import', 'storage'].includes(row.entry.status)
+// A publication directory with no manifest evidence left in it (strays only,
+// or an approved directory without a manifest) is deleted whole; any other
+// publication directory only discards its unresolved files.
+const isWholeDeletable = ({ entry }: StorageRow) => !!entry.wholeDeletable
+const canDelete = (row: StorageRow) => !row.root.error && ((!isLegacyReview(row) && !isDeliveryManaged(row)) || isWholeDeletable(row)) && !['active', 'awaiting_import', 'storage'].includes(row.entry.status)
 const canImport = ({ root, entry }: StorageRow) => !root.error && !['active', 'symlink', 'retained', 'storage'].includes(entry.status)
 const statusLabel = (status: string) => status.replace(/_/g, ' ')
 
@@ -133,14 +137,14 @@ export function CompletedFolders({ onImport }: { onImport: (path: string, mode?:
   const selectedBytes = selectedRows.reduce((sum, { entry }) => sum + entry.bytes, 0)
   const confirmBytes = confirm?.reduce((sum, { entry }) => sum + entry.bytes, 0) ?? 0
   const confirmFiles = confirm?.reduce((sum, { entry }) => sum + entry.files, 0) ?? 0
-  const deliveryConfirm = confirm?.length === 1 && isDeliveryManaged(confirm[0]) ? confirm[0] : null
-  const legacyConfirm = confirm?.length === 1 && isLegacyReview(confirm[0]) ? confirm[0] : null
+  const deliveryConfirm = confirm?.length === 1 && isDeliveryManaged(confirm[0]) && !isWholeDeletable(confirm[0]) ? confirm[0] : null
+  const legacyConfirm = confirm?.length === 1 && isLegacyReview(confirm[0]) && !isDeliveryManaged(confirm[0]) ? confirm[0] : null
   const selectedFileEntry = deliveryConfirm ?? legacyConfirm
   const selectedDeliveryFiles = deliveryConfirm?.entry.reviewFiles?.filter((file) => deliveryFileSelection[file.path] === file.snapshotIdentity) ?? []
   const selectedLegacyFiles = legacyConfirm?.entry.reviewFiles?.filter((file) => legacyFileSelection[file.path] === file.snapshotIdentity) ?? []
   const selectedExplicitFiles = deliveryConfirm ? selectedDeliveryFiles : selectedLegacyFiles
   const confirmationChanged = !busy && confirm?.some((row) => !entries.some((current) => rowKey(current) === rowKey(row) &&
-    (isDeliveryManaged(row) ? isDeliveryManaged(current) && !current.root.error : isLegacyReview(row) ? isLegacyReview(current) && !current.root.error : canDelete(current)) && current.entry.fingerprint === row.entry.fingerprint))
+    (isWholeDeletable(row) ? canDelete(current) : isDeliveryManaged(row) ? isDeliveryManaged(current) && !current.root.error : isLegacyReview(row) ? isLegacyReview(current) && !current.root.error : canDelete(current)) && current.entry.fingerprint === row.entry.fingerprint))
 
   return <section className="panel download-storage" aria-label="Download storage">
     <div className="storage-heading">
@@ -198,9 +202,9 @@ export function CompletedFolders({ onImport }: { onImport: (path: string, mode?:
       setConfirm(null)
     }}>
     {confirm && <>
-      <h3 id="storage-confirm-title">{deliveryConfirm ? 'Delete selected delivery files permanently?' : `Delete ${confirm.length} ${confirm.length === 1 ? 'entry' : 'entries'} permanently?`}</h3>
+      <h3 id="storage-confirm-title">{deliveryConfirm ? 'Discard selected publication files permanently?' : `Delete ${confirm.length} ${confirm.length === 1 ? 'entry' : 'entries'} permanently?`}</h3>
       {selectedFileEntry ? <>
-        <p>{deliveryConfirm ? 'Choose exact files from this accepted Runner manifest.' : 'Choose exact current files to discard from this legacy review entry. No manifest or ownership is inferred.'} Unselected siblings and directories remain untouched.</p>
+        <p>{deliveryConfirm ? 'Choose unresolved files of this publication to discard. Each is deleted only after its bytes still match the manifest digest; placed files leave automatically.' : 'Choose exact current files to discard from this entry held for storage review. No manifest or ownership is inferred.'} Unselected siblings and directories remain untouched.</p>
         <p className="mono">{selectedFileEntry.entry.path}</p>
         <div className="storage-file-selection">{selectedFileEntry.entry.reviewFiles?.map((file) => {
           const selection = deliveryConfirm ? deliveryFileSelection : legacyFileSelection
@@ -270,8 +274,8 @@ export function CompletedFolders({ onImport }: { onImport: (path: string, mode?:
             <div className="storage-entry-status"><span className={`pill ${entry.status === 'failed' ? 'pill-error' : ''}`}>{statusLabel(entry.status)}</span><p className="muted">{entry.reason}</p></div>
             <div className="storage-entry-actions">
               <button disabled={!canImport(row) || busy} onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onImport(entry.path, isLegacyReview(row) ? 'legacy' : isDeliveryManaged(row) ? 'delivery' : undefined, entry.receipts.find((receipt) => receipt.deliveryManaged)?.downloadId) }}>{isLegacyReview(row) ? 'Review legacy batch' : isDeliveryManaged(row) ? 'Resolve handoff' : 'Resolve files'}</button>
-              {isDeliveryManaged(row) ? <button disabled={!!root.error || !entry.reviewFiles?.length || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => { setDeliveryFileSelection({}); openConfirmation([row], event.currentTarget) }}>Delete selected files…</button>
-                : isLegacyReview(row) ? <button disabled={!!root.error || !entry.reviewFiles?.length || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => { setLegacyFileSelection({}); openConfirmation([row], event.currentTarget) }}>Delete selected files…</button>
+              {isDeliveryManaged(row) && !isWholeDeletable(row) ? <button disabled={!!root.error || !entry.reviewFiles?.length || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => { setDeliveryFileSelection({}); openConfirmation([row], event.currentTarget) }}>Delete selected files…</button>
+                : isLegacyReview(row) && !isDeliveryManaged(row) ? <button disabled={!!root.error || !entry.reviewFiles?.length || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => { setLegacyFileSelection({}); openConfirmation([row], event.currentTarget) }}>Delete selected files…</button>
                 : <button disabled={!canDelete(row) || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => openConfirmation([row], event.currentTarget)}>Delete files…</button>}
             </div>
           </article>

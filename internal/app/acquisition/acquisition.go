@@ -204,7 +204,11 @@ type Service struct {
 	// The reducer's in-memory clocks (pipeline v2): when a row was first
 	// absent from a successful poll (gone grace) and first answered "no such
 	// token" (submitting). A restart restarts them, which only waits longer.
-	absentSince   sync.Map // download id -> time.Time
+	absentSince sync.Map // download id -> time.Time
+	// queueTokens is each Runner client's handle -> transfer token map from
+	// its last successful queue poll: the only evidence that lets a fact
+	// carrying a handle but no token reach a row (review #3).
+	queueTokens   sync.Map // client id -> map[string]string
 	notFoundSince sync.Map // download id -> time.Time
 	// grabKick wakes the replacement grab worker; nil until it starts, and
 	// then a failure's grab runs inline (tests, tools).
@@ -1574,7 +1578,7 @@ func (s *Service) RefreshQueue(ctx context.Context) error {
 		// Runner clients are on the pipeline v2 reducer: the poll only
 		// reconciles what the event stream may have missed (contract 3.2).
 		if feeds, ok := runnerFeedsOf(client); ok {
-			s.reconcileRunnerClient(ctx, cfg, client, feeds, byClient[cfg.ID])
+			s.reconcileRunnerClient(ctx, cfg, client, feeds, s.withOutstandingRunnerRows(ctx, cfg.ID, byClient[cfg.ID]))
 			continue
 		}
 		var statuses []ports.DownloadStatus
@@ -2086,6 +2090,13 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 	if err != nil {
 		return err
 	}
+	if dl.Transfer != "" && dl.SubmissionPhase != "pending" && dl.State != "planned" {
+		if cfg, cerr := s.db.GetDownloadClient(ctx, dl.ClientID); cerr == nil {
+			if client := s.newClient(cfg); isRunnerClient(client) {
+				return s.cancelRunnerDownload(ctx, dl.ID, cfg, client, fromClient)
+			}
+		}
+	}
 	if dl.PlanID != 0 || dl.SubmissionPhase == "pending" || dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "submitted" {
 		unlock := s.lockDownload(id)
 		defer unlock()
@@ -2139,6 +2150,33 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 		}
 	}
 	return s.db.DeleteDownload(ctx, id)
+}
+
+// cancelRunnerDownload is an operator's cancel of a Runner row (IMPL section
+// 5.5): Runner is asked to cancel the job when the operator chose that, and
+// the row records a cancelled terminal (never re-grabbed, never
+// blocklisted; the plan is asked to stop in the same write). A Runner row is
+// never parked.
+func (s *Service) cancelRunnerDownload(ctx context.Context, id int64, cfg ports.ClientConfig, client ports.DownloadClient, fromClient bool) error {
+	unlock := s.lockDownload(id)
+	defer unlock()
+	dl, err := s.db.GetDownload(ctx, id)
+	if err != nil {
+		return err
+	}
+	if fromClient && dl.Handle != "" && (dl.RunnerOutcome == "" || dl.Provisional) {
+		if err := client.Remove(ctx, ports.Handle(dl.Handle), false); err != nil {
+			return err
+		}
+	}
+	if dl.RunnerOutcome == "" || dl.Provisional {
+		if _, err := s.recordTerminal(ctx, dl, cfg, ports.RunnerTerminal{Outcome: ports.OutcomeCancelled,
+			Message: "cancelled in Curator by the operator", Salvage: "none"}, "operator", 0, false); err != nil {
+			return err
+		}
+	}
+	_, err = s.db.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1, updated_at=? WHERE id=? AND generation_key=?`, time.Now().UnixMilli(), id, dl.GenerationKey)
+	return err
 }
 
 var ErrCandidateExpired = errors.New("release search evidence expired or changed; search again before grabbing")

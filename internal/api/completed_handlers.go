@@ -109,3 +109,21 @@ func (s *Server) ApprovePublicationCleanup(w http.ResponseWriter, r *http.Reques
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"approved": n})
 }
+
+// SetPublicationCleanup pauses or resumes a publication's automatic cleanup.
+func (s *Server) SetPublicationCleanup(w http.ResponseWriter, r *http.Request, publicationId int64) {
+	if s.deps.Acquisition == nil {
+		writeError(w, http.StatusServiceUnavailable, "download storage unavailable")
+		return
+	}
+	var body apigen.SetPublicationCleanupJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || (body.Action != "pause" && body.Action != "resume") {
+		writeError(w, http.StatusBadRequest, "action: pause or resume")
+		return
+	}
+	if err := s.deps.Acquisition.PausePublicationCleanup(r.Context(), publicationId, body.Action == "pause"); err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

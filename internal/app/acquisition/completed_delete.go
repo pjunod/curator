@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 // DeleteCompletedEntry is an explicit operator decision about Curator-owned
@@ -55,11 +57,20 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 	if selected == nil || selected.Error != "" {
 		return fmt.Errorf("inventory changed or is incomplete; scan again before deleting")
 	}
+	// A publication's directory is deleted whole only when nothing in it is
+	// evidence any more: every manifest file has already left (strays such as
+	// .DS_Store keep the rmdir from finishing), or it is an approved
+	// historical directory with no manifest at all. Anything else leaves file
+	// by file; a directory containing a publication, or inside one, never.
+	wholePublication, err := s.publicationWholeDeletable(ctx, path)
+	if err != nil {
+		return err
+	}
 	for _, entry := range selected.Entries {
-		if entry.Path == path && entry.DeliveryManaged {
+		if entry.Path == path && entry.DeliveryManaged && wholePublication == nil {
 			return fmt.Errorf("a publication's files leave one by one by their recorded outcome; select its unresolved files to discard them")
 		}
-		if entry.Path == path && entry.LegacyReview {
+		if entry.Path == path && entry.LegacyReview && wholePublication == nil {
 			return fmt.Errorf("the storage under this payload changed; select exact files to review, whole-payload deletion is unavailable")
 		}
 	}
@@ -174,14 +185,22 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 	}
 	for _, legacyPath := range legacyPaths {
 		legacyPath = storagePath(legacyPath, roots)
-		if within(path, legacyPath) || within(legacyPath, path) {
+		// The operator's confirmed delete of a publication with no evidence
+		// left in it is the review the storage fence asks for.
+		if wholePublication == nil && (within(path, legacyPath) || within(legacyPath, path)) {
 			return fmt.Errorf("the storage under this payload changed; review it before deleting")
 		}
 	}
-	if pub, ok, err := s.db.PublicationByPath(ctx, filepath.Clean(path)); err != nil {
+	if again, err := s.publicationWholeDeletable(ctx, path); err != nil {
 		return err
-	} else if ok && pub.State != "removed" {
-		return fmt.Errorf("a publication's files leave one by one by their recorded outcome; select its unresolved files to discard them")
+	} else if again == nil {
+		if _, claimed, err := s.publicationClaiming(ctx, path); err != nil {
+			return err
+		} else if claimed {
+			return fmt.Errorf("a publication's files leave one by one by their recorded outcome; select its unresolved files to discard them")
+		}
+	} else if isPartialCleanup {
+		return fmt.Errorf("publication-managed payloads leave only through the per-file cleanup")
 	}
 	if isPartialCleanup {
 		// The automatic partial path is authorized only for the exact failed
@@ -229,7 +248,37 @@ func (s *Service) DeleteCompletedEntry(ctx context.Context, path, fingerprint st
 	if err := s.db.SaveCompletedScan(ctx, selected.Path, string(raw)); err != nil {
 		return err
 	}
+	if wholePublication != nil {
+		if err := s.finishRemovedPublication(ctx, *wholePublication, 0, match.Bytes, "deleted whole by an operator in Storage (no manifest evidence left in it)"); err != nil {
+			return err
+		}
+	}
 	return s.db.AddHistory(ctx, "download_files_deleted", 0, filepath.Base(path), map[string]any{"path": path, "bytes": match.Bytes})
+}
+
+// publicationWholeDeletable returns the publication claiming exactly dir when
+// an operator may delete it whole: every manifest file already removed, or no
+// manifest files at all and approved (historical) or live. nil otherwise —
+// including when dir merely contains, or lies inside, a publication.
+func (s *Service) publicationWholeDeletable(ctx context.Context, dir string) (*sqlite.Publication, error) {
+	pub, ok, err := s.publicationClaiming(ctx, dir)
+	if err != nil || !ok || filepath.Clean(pub.Path) != filepath.Clean(dir) {
+		return nil, err
+	}
+	if pub.State == "discovered" || pub.State == "importing" || pub.State == "removed" {
+		return nil, nil
+	}
+	if pub.Cohort == "historical" && pub.CleanupApprovedAt.IsZero() {
+		return nil, ErrHistoricalCohort
+	}
+	files, err := s.db.ListPublicationFiles(ctx, pub.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !allFilesRemoved(files) {
+		return nil, nil
+	}
+	return &pub, nil
 }
 
 // DeleteSelectedLegacyFiles is an explicit, per-file approval path for a
@@ -280,6 +329,13 @@ func (s *Service) DeleteSelectedLegacyFiles(ctx context.Context, path, fingerpri
 	}
 	if selected == nil {
 		return fmt.Errorf("selected entry is not an unchanged payload held for storage review")
+	}
+	// Storage review never reaches into a publication: its files leave only
+	// by their recorded outcome, through the per-file cleanup.
+	if _, claimed, err := s.publicationClaiming(ctx, path); err != nil {
+		return err
+	} else if claimed {
+		return fmt.Errorf("a publication's files leave one by one by their recorded outcome; discard its unresolved files in Resolve or Storage")
 	}
 	for _, root := range inventory.Roots {
 		if root.Path == rootPath && root.Error != "" {

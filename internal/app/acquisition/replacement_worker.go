@@ -245,13 +245,10 @@ func (s *Service) processReplacementOperation(ctx context.Context, op sqlite.Rep
 		case "grabbed", "submitting", "downloading", "held", "downloaded", "awaiting_import", "importing":
 			return s.db.TransitionReplacementOperation(ctx, op.ID, "replacing", "replacement download is still active")
 		case "failed":
-			blocked, reason, cleanupErr := s.replacementAttemptCleanupBlock(ctx, dl)
-			if cleanupErr != nil {
-				return cleanupErr
-			}
-			if blocked {
-				return s.db.TransitionReplacementOperation(ctx, op.ID, "cleanup_blocked", reason)
-			}
+			// Pipeline v2 (contract section 3.3, item 4): no custody wait. Runner's
+			// disposal of a failed attempt's bytes is Runner's; the next attempt
+			// publishes under a different job id and cannot collide, so the
+			// operation advances with the failed bytes retained.
 		case "imported":
 			// A successful first file in a multi-episode request does not finish
 			// the whole operation. Exact committed placement receipts below
@@ -411,20 +408,6 @@ func (s *Service) finalReplacementPlacementCheck(ctx context.Context, op sqlite.
 		}
 	}
 	return nil
-}
-
-// replacementAttemptCleanupBlock reconciles the mutable download flag with the
-// durable Runner delivery decision. An explicit Keep is a settled exception:
-// it retains the failed bytes while allowing the replacement to proceed.
-// Without a matching delivery receipt, cleanup remains unresolved and fails
-// closed. A removed payload and committed usable replacement are handled by
-// their own durable receipts before this gate.
-func (s *Service) replacementAttemptCleanupBlock(ctx context.Context, dl sqlite.Download) (bool, string, error) {
-	// Pipeline v2 (contract section 3.3, item 4): no custody wait. Runner's
-	// disposal of a failed attempt's bytes is Runner's; the next attempt
-	// publishes under a different job id and cannot collide, so the operation
-	// advances with the failed bytes retained.
-	return false, "", nil
 }
 
 func (s *Service) removeBadReplacementSources(ctx context.Context, op sqlite.ReplacementOperation) error {

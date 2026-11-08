@@ -993,6 +993,9 @@ export interface QueuePublication {
   manifestSource?: string
   error?: string
   cleanupApprovedAt?: string
+  cleanupPausedAt?: string
+  cleanupState?: 'queued' | 'running'
+  cleanupReason?: string
   files: QueuePublicationFile[]
 }
 
@@ -1489,6 +1492,7 @@ export type Stage =
   | 'script'
   | 'importing'
   | 'notifying'
+  | 'publication_cleanup'
 
 export interface Transfer {
   downloadId: number
@@ -1732,6 +1736,7 @@ export interface CompletedEntry {
   reason: string
   legacyReview?: boolean
   deliveryManaged?: boolean
+  wholeDeletable?: boolean
   reviewFiles?: CompletedReviewFile[]
   receipts: CompletedReceipt[]
 }
@@ -1890,6 +1895,9 @@ export interface SeasonSelection {
 
 export const resolvePublicationFile = (id: number, publicationId: number, path: string, action: PublicationFileAction) =>
   send<void>('POST', `/queue/${id}/publications/${publicationId}/files/resolve`, { path, action })
+
+export const setPublicationCleanup = (publicationId: number, action: 'pause' | 'resume') =>
+  send<void>('POST', `/downloads/publications/${publicationId}/cleanup`, { action })
 
 export const resolveQueueReservation = (id: number) => send<void>('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})
 

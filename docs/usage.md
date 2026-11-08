@@ -647,14 +647,26 @@ same disk; if the storage changed (an unmounted share), nothing is deleted
 and the publication says why. Cleanup runs right after the import and again
 every hour. If the library copy changed (for example a different file of the
 same size is there now), the publication's file is kept as *unresolved* and
-the reason is shown, because it may be the only good copy. The **Clean up
-after import** switch does not apply to Runner publications.
+the reason is shown, because it may be the only good copy. If you replaced
+the download storage and accepted it, publications that were on the old disk
+are held: nothing is deleted from them automatically until you discard their
+files yourself. The **Clean up after import** switch does not apply to Runner
+publications.
+
+While a cleanup pass runs or waits, the publication in Activity says so and
+why (*after its import*, *hourly sweep*) with **Pause cleanup**; a paused
+publication is left alone until you **Resume cleanup**. A folder whose
+manifest files are all gone but that still holds something Curator did not
+put there (a `.DS_Store`) shows **Delete files…** in Download storage to
+remove it whole.
 
 *Historical* publications — payloads that existed before v0.39.0, including
 the older pre-delivery review backlog — import normally but are never deleted,
 automatically or by **Delete selected files…**, until their review batch is
 approved (`POST /api/v1/downloads/publications/approve-cleanup` with the
 publication ids; the same per-file rule then removes only what has evidence).
+A historical folder with no manifest at all is shown as *import failed* with
+the reason; once approved, delete it whole from Download storage.
 
 When you retry a held job in Runner, Curator clears its cached hold only after
 Runner supplies a newer control revision from the same instance, with the same
@@ -1233,8 +1245,8 @@ hours of measured time at each seam (the design is
 
 | Tile | Starts | Ends |
 |---|---|---|
-| Failure to next grab | the replacement grab worker attempted the first search for a failure | the replacement was submitted, or a season job was queued for an episode with no single release. A failure with nothing better to grab records nothing |
-| Download done to imported | the finished payload is handed to import (for a client with manual approval: when you approve it) | the library import completed |
+| Failure to next grab | Runner's failure is recorded and a replacement is due (the same transaction) | the replacement was submitted, or a season job was queued for an episode with no single release. A failure with nothing better to grab is dropped, not counted |
+| Download done to imported | Runner's completed terminal is recorded (for a client with manual approval: when you approve it), so a publication waiting for its manifest is measured | the library import completed |
 | Imported to visible in Cinema | the publication was imported and Cinema was given at least one sub-delivery | the last sub-delivery of the import is **visible**: Cinema reported every expected file placed with the bytes and mtime the import left. An older Cinema that does not report results is left out rather than counted as waiting |
 
 Each tile shows p50 and p95 of the timings that finished, how many finished,
@@ -1253,8 +1265,9 @@ ignored).
 deadline. A deadline is written when a row enters a state (not on every
 poll), so a job held or stalled inside Runner — still listed every poll — is
 caught once its deadline passes: submitting 10 minutes of Runner answering
-"no such token", downloading 30 minutes without progress (torrents 24
-hours), held at Runner's own deadline plus 5 minutes, downloaded/importing 6
+"no such token", downloading 30 minutes without progress or a new
+post-processing stage (torrents 24 hours; a job stuck in one stage, such as
+unpack, is not progress), held at Runner's own deadline plus 5 minutes, downloaded/importing 6
 hours, and a publication not imported within 6 hours. A download waiting for
 your approval (`awaiting_import`) has no deadline; it shows its age in
 Activity instead. Open the named row in Activity to see its handoff trace.

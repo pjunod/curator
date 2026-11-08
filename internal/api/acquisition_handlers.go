@@ -51,6 +51,10 @@ func (s *Server) acqErr(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusConflict, "blacklist_confirmation_required", err.Error())
 	case errors.Is(err, sqlite.ErrManualGrabRequestRetained):
 		writeCodedError(w, http.StatusConflict, "request_retained", "this manual request has already completed and its Activity row was dismissed; use a new requestId for a new action")
+	case errors.Is(err, acquisition.ErrDiscardedButKept):
+		writeCodedError(w, http.StatusConflict, "discarded_kept", err.Error())
+	case errors.Is(err, acquisition.ErrHistoricalCohort):
+		writeCodedError(w, http.StatusConflict, "historical_cohort", err.Error())
 	case errors.Is(err, acquisition.ErrNotFound), errors.Is(err, sqlite.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
 	default:
@@ -856,6 +860,17 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 		s.acqErr(w, err)
 		return
 	}
+	var pubIDs []int64
+	for _, ps := range publications {
+		for _, p := range ps {
+			pubIDs = append(pubIDs, p.ID)
+		}
+	}
+	publicationFiles, err := s.deps.Store.ListPublicationFilesFor(r.Context(), pubIDs)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
 	for _, d := range rows {
 		copyID, clientID := d.CopyID, d.ClientID
 		save, imp := d.SavePath, d.ImportPath
@@ -877,7 +892,7 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 		phase, parked := apigen.QueueItemSubmissionPhase(d.SubmissionPhase), d.ParkedReason
 		item.SubmissionPhase = &phase
 		item.ParkedReason = &parked
-		s.fillPipelineV2(r.Context(), &item, d, publications[d.ID])
+		s.fillPipelineV2(&item, d, publications[d.ID], publicationFiles)
 		if d.PlanID != 0 {
 			item.PlanId = &d.PlanID
 			if plan, e := s.deps.Store.GetAcquisitionPlan(r.Context(), d.PlanID); e == nil {
@@ -2280,7 +2295,7 @@ func (s *Server) ResolveQueueReservation(w http.ResponseWriter, r *http.Request,
 // fillPipelineV2 carries the reducer's view of a row (pipeline contract v2):
 // the recorded terminal, whether it is provisional, the state's deadline, the
 // hold, and every publication with its per-file outcomes.
-func (s *Server) fillPipelineV2(ctx context.Context, item *apigen.QueueItem, d sqlite.Download, pubs []sqlite.Publication) {
+func (s *Server) fillPipelineV2(item *apigen.QueueItem, d sqlite.Download, pubs []sqlite.Publication, publicationFiles map[int64][]sqlite.PublicationFile) {
 	if d.RunnerOutcome != "" {
 		outcome, reason := d.RunnerOutcome, d.RunnerOutcomeReason
 		blames, provisional := d.RunnerBlamesRelease, d.Provisional
@@ -2319,26 +2334,33 @@ func (s *Server) fillPipelineV2(ctx context.Context, item *apigen.QueueItem, d s
 			approved := p.CleanupApprovedAt
 			qp.CleanupApprovedAt = &approved
 		}
-		files, err := s.deps.Store.ListPublicationFiles(ctx, p.ID)
-		if err == nil {
-			for _, f := range files {
-				bytes, reason, lib, discard := f.Bytes, f.Reason, f.LibraryPath, f.DiscardReason
-				qf := apigen.QueuePublicationFile{Path: f.Path, Outcome: f.Outcome, Bytes: &bytes}
-				if reason != "" {
-					qf.Reason = &reason
-				}
-				if lib != "" {
-					qf.LibraryPath = &lib
-				}
-				if discard != "" {
-					qf.DiscardReason = &discard
-				}
-				if !f.RemovedAt.IsZero() {
-					removed := true
-					qf.Removed = &removed
-				}
-				qp.Files = append(qp.Files, qf)
+		if !p.CleanupPausedAt.IsZero() {
+			paused := p.CleanupPausedAt
+			qp.CleanupPausedAt = &paused
+		}
+		if s.deps.Acquisition != nil {
+			if state, why := s.deps.Acquisition.PublicationCleanupState(p.ID); state != "" {
+				st := apigen.QueuePublicationCleanupState(state)
+				qp.CleanupState, qp.CleanupReason = &st, &why
 			}
+		}
+		for _, f := range publicationFiles[p.ID] {
+			bytes, reason, lib, discard := f.Bytes, f.Reason, f.LibraryPath, f.DiscardReason
+			qf := apigen.QueuePublicationFile{Path: f.Path, Outcome: f.Outcome, Bytes: &bytes}
+			if reason != "" {
+				qf.Reason = &reason
+			}
+			if lib != "" {
+				qf.LibraryPath = &lib
+			}
+			if discard != "" {
+				qf.DiscardReason = &discard
+			}
+			if !f.RemovedAt.IsZero() {
+				removed := true
+				qf.Removed = &removed
+			}
+			qp.Files = append(qp.Files, qf)
 		}
 		list = append(list, qp)
 	}

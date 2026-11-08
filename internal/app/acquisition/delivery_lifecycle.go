@@ -217,7 +217,7 @@ func (s *Service) RetryCuratorDeliveryCleanup(ctx context.Context, receiptID int
 	if pub.Cohort == "historical" && pub.CleanupApprovedAt.IsZero() {
 		return ErrHistoricalCohort
 	}
-	res, err := s.cleanupPublication(withForegroundVerification(ctx), pub.ID)
+	res, err := s.cleanupPublication(withOperatorCleanup(ctx, "receipt cleanup retry"), pub.ID)
 	if err != nil {
 		return err
 	}

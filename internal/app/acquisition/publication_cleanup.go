@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
+	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -59,28 +61,41 @@ func (s *Service) cleanupPublication(ctx context.Context, publicationID int64) (
 // afterPublicationImported starts the cleanup an import has just made due.
 // The caller holds the download lock, so the inline fallback runs here.
 func (s *Service) afterPublicationImported(ctx context.Context, publicationID int64) {
-	if s.queuePublicationCleanup(publicationID) {
+	if s.queuePublicationCleanup(publicationID, "after its import") {
 		return
 	}
-	if _, err := s.cleanupPublicationLocked(context.WithoutCancel(ctx), publicationID); err != nil {
+	ctx = withCleanupReason(context.WithoutCancel(ctx), "after its import")
+	if _, err := s.cleanupPublicationLocked(ctx, publicationID); err != nil {
 		s.log.Info("publication cleanup incomplete; the hourly sweep retries", "publication", publicationID, "err", err)
 	}
 }
 
 // sweepPublications is the hourly pass: the same rule, for publications
 // whose import finished and that still have evidenced files on disk (or an
-// empty directory left behind).
+// empty directory left behind). Each pass goes onto the cleanup lane, where
+// it is tracked (System → In flight, the publication in Activity) and an
+// operator can pause it.
 func (s *Service) sweepPublications(ctx context.Context) error {
+	if !perFileCleanupSupported {
+		unsupportedCleanupNotice.Do(func() {
+			s.log.Warn("per-file publication cleanup is unavailable on this platform (no inode identity to bind a verified file to its unlink); publications are kept")
+		})
+		return nil
+	}
 	pubs, err := s.db.PublicationsToSweep(ctx, publicationSweepBatch)
 	if err != nil {
 		return err
 	}
-	removed, dirs := 0, 0
+	removed, dirs, queued := 0, 0, 0
 	for _, pub := range pubs {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		res, err := s.cleanupPublication(ctx, pub.ID)
+		if s.queuePublicationCleanup(pub.ID, "hourly sweep") {
+			queued++
+			continue
+		}
+		res, err := s.cleanupPublication(withCleanupReason(ctx, "hourly sweep"), pub.ID)
 		if err != nil {
 			s.log.Info("publication cleanup stopped", "publication", pub.ID, "path", pub.Path, "err", err)
 		}
@@ -89,8 +104,157 @@ func (s *Service) sweepPublications(ctx context.Context) error {
 			dirs++
 		}
 	}
-	if removed > 0 || dirs > 0 {
-		s.log.Info("cleanup: swept publications", "files_removed", removed, "directories_removed", dirs, "of", len(pubs))
+	if removed > 0 || dirs > 0 || queued > 0 {
+		s.log.Info("cleanup: swept publications", "queued", queued, "files_removed", removed, "directories_removed", dirs, "of", len(pubs))
+	}
+	return nil
+}
+
+var unsupportedCleanupNotice sync.Once
+
+// errPerFileCleanupUnsupported stops a pass where a verified file cannot be
+// bound to its unlink (no inode generation on this platform).
+var errPerFileCleanupUnsupported = errors.New("per-file cleanup is unavailable on this platform (no inode identity); nothing deleted")
+
+// cleanupReasonKey says why a pass runs (shown while it is in flight), and
+// operatorCleanupKey that a person asked for it: an operator's explicit
+// action passes the storage-change review fence and a pause; automatic
+// passes do not.
+type cleanupReasonKey struct{}
+type operatorCleanupKey struct{}
+
+func withCleanupReason(ctx context.Context, reason string) context.Context {
+	return context.WithValue(ctx, cleanupReasonKey{}, reason)
+}
+
+func withOperatorCleanup(ctx context.Context, reason string) context.Context {
+	return context.WithValue(withCleanupReason(withForegroundVerification(ctx), reason), operatorCleanupKey{}, true)
+}
+
+func cleanupReason(ctx context.Context) string {
+	if r, ok := ctx.Value(cleanupReasonKey{}).(string); ok && r != "" {
+		return r
+	}
+	return "cleanup"
+}
+
+func operatorCleanup(ctx context.Context) bool {
+	v, _ := ctx.Value(operatorCleanupKey{}).(bool)
+	return v
+}
+
+// cleanupGate is checked at the start of a pass, before every unlink and
+// before the rmdir: the root's live storage identity against the recorded
+// one, then the storage-change review fences — an accepted replacement
+// volume records the identity it now has, so the first check passes there,
+// and the fence is what keeps automatic deletion off what was on it.
+func (s *Service) cleanupGate(ctx context.Context, pub sqlite.Publication) error {
+	if !perFileCleanupSupported {
+		return errPerFileCleanupUnsupported
+	}
+	if err := s.checkStorageIdentity(ctx, pub.Path); err != nil {
+		return fmt.Errorf("storage identity check failed; nothing deleted: %w", err)
+	}
+	held, err := s.publicationStorageReview(ctx, pub)
+	if err != nil {
+		return fmt.Errorf("storage review lookup failed; nothing deleted: %w", err)
+	}
+	if held && !operatorCleanup(ctx) {
+		return fmt.Errorf("the storage under this publication was replaced and it is held for review; nothing is deleted automatically (discarding its files in Resolve or Storage is the review)")
+	}
+	return nil
+}
+
+// publicationStorageReview reports a storage-change fence on the
+// publication: its row's generation fenced in the changed root, or an orphan
+// path fence around (or inside) its directory.
+func (s *Service) publicationStorageReview(ctx context.Context, pub sqlite.Publication) (bool, error) {
+	if pub.DownloadID != 0 {
+		dl, err := s.db.GetDownload(ctx, pub.DownloadID)
+		if err != nil {
+			return true, err
+		}
+		return s.db.StorageChangeReview(ctx, dl.GenerationKey, pub.Path)
+	}
+	return s.db.StorageReviewPath(ctx, pub.Path)
+}
+
+// publicationCleanupRun is one queued or running pass, so it is visible and
+// can be stopped.
+type publicationCleanupRun struct {
+	state  string // queued | running
+	reason string
+	cancel context.CancelFunc
+}
+
+// PublicationCleanupState reports a queued or running pass for Activity.
+func (s *Service) PublicationCleanupState(publicationID int64) (state, reason string) {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	if r := s.publicationCleanups[publicationID]; r != nil {
+		return r.state, r.reason
+	}
+	return "", ""
+}
+
+// beginPublicationCleanup registers a running pass: in the in-flight
+// registry (what it is and why it runs) and in the run table (so a pause
+// cancels it). The returned context ends with the pass.
+func (s *Service) beginPublicationCleanup(ctx context.Context, pub sqlite.Publication) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	reason := cleanupReason(ctx)
+	s.importMu.Lock()
+	if s.publicationCleanups == nil {
+		s.publicationCleanups = map[int64]*publicationCleanupRun{}
+	}
+	if queued := s.publicationCleanups[pub.ID]; queued != nil && queued.cancel != nil {
+		// The queued job that started this pass: a pause must reach both.
+		outer := queued.cancel
+		inner := cancel
+		cancel = func() { inner(); outer() }
+	}
+	run := &publicationCleanupRun{state: "running", reason: reason, cancel: cancel}
+	s.publicationCleanups[pub.ID] = run
+	s.importMu.Unlock()
+	key := pub.DownloadID
+	if key == 0 {
+		key = -pub.ID // a download-less publication still needs its own row
+	}
+	h := s.registry.Begin(transfers.Transfer{DownloadID: key, Title: filepath.Base(pub.Path), Stage: transfers.StagePublicationCleanup,
+		Detail: "verifying and removing evidenced files (" + reason + ")"})
+	return ctx, func() {
+		h.End()
+		cancel()
+		s.importMu.Lock()
+		if s.publicationCleanups[pub.ID] == run {
+			delete(s.publicationCleanups, pub.ID)
+		}
+		s.importMu.Unlock()
+	}
+}
+
+// PausePublicationCleanup stops a publication's automatic cleanup until it
+// is resumed: a running or queued pass is cancelled (files already removed
+// stay removed; nothing half-done is left, each unlink is one step), and the
+// sweep skips it. Resume clears the pause and queues a pass now.
+func (s *Service) PausePublicationCleanup(ctx context.Context, publicationID int64, paused bool) error {
+	if err := s.db.SetPublicationCleanupPaused(ctx, publicationID, paused); err != nil {
+		return err
+	}
+	if paused {
+		s.importMu.Lock()
+		if r := s.publicationCleanups[publicationID]; r != nil && r.cancel != nil {
+			r.cancel()
+		}
+		s.importMu.Unlock()
+		_ = s.db.AddHistory(ctx, "publication_cleanup_paused", 0, fmt.Sprintf("publication %d", publicationID), map[string]any{"publication": publicationID})
+		return nil
+	}
+	_ = s.db.AddHistory(ctx, "publication_cleanup_resumed", 0, fmt.Sprintf("publication %d", publicationID), map[string]any{"publication": publicationID})
+	if !s.queuePublicationCleanup(publicationID, "resumed by an operator") {
+		if _, err := s.cleanupPublication(withOperatorCleanup(ctx, "resumed by an operator"), publicationID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -115,14 +279,21 @@ func (s *Service) cleanupPublicationLocked(ctx context.Context, publicationID in
 		res.Skipped = ErrHistoricalCohort.Error()
 		return res, nil
 	}
+	if !pub.CleanupPausedAt.IsZero() && !operatorCleanup(ctx) {
+		res.Skipped = "cleanup is paused by an operator"
+		return res, nil
+	}
 	root := filepath.Clean(pub.Path)
 	if !filepath.IsAbs(root) || filepath.Dir(root) == root {
 		return res, s.stopCleanup(ctx, pub, fmt.Errorf("publication path %q is not an absolute directory", pub.Path))
 	}
+	ctx, end := s.beginPublicationCleanup(ctx, pub)
+	defer end()
 	// Storage first: an unmounted share is an empty directory, not a payload
-	// that is gone, and nothing below a root whose identity changed is read.
-	if err := s.checkStorageIdentity(ctx, root); err != nil {
-		return res, s.stopCleanup(ctx, pub, fmt.Errorf("storage identity check failed; nothing deleted: %w", err))
+	// that is gone, and nothing below a root whose identity changed (or that
+	// an accepted storage change fenced) is read.
+	if err := s.cleanupGate(ctx, pub); err != nil {
+		return res, s.stopCleanup(ctx, pub, err)
 	}
 	info, err := os.Lstat(root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -134,13 +305,13 @@ func (s *Service) cleanupPublicationLocked(ctx context.Context, publicationID in
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return res, s.stopCleanup(ctx, pub, fmt.Errorf("publication path is not a plain directory"))
 	}
-	manifest, err := s.cleanupManifest(pub)
-	if err != nil {
-		return res, s.stopCleanup(ctx, pub, err)
-	}
 	files, err := s.db.ListPublicationFiles(ctx, pub.ID)
 	if err != nil {
 		return res, err
+	}
+	manifest, err := s.cleanupManifest(pub, allFilesRemoved(files))
+	if err != nil {
+		return res, s.stopCleanup(ctx, pub, err)
 	}
 	var item int64
 	if pub.DownloadID != 0 {
@@ -178,15 +349,17 @@ func (s *Service) cleanupPublicationLocked(ctx context.Context, publicationID in
 	if err != nil {
 		return res, err
 	}
-	for _, f := range files {
-		if f.RemovedAt.IsZero() {
-			// An unresolved, pending or kept file is still here: so is the
-			// directory.
-			if res.Removed > 0 {
-				s.recordPublicationFilesRemoved(ctx, pub, res.Removed, bytes)
-			}
-			return res, nil
+	if !allFilesRemoved(files) {
+		// An unresolved, pending or kept file is still here: so is the
+		// directory.
+		if res.Removed > 0 {
+			s.recordPublicationFilesRemoved(ctx, pub, res.Removed, bytes)
 		}
+		if len(res.Kept) == 0 {
+			// Nothing stopped this pass: an earlier stop no longer applies.
+			_ = s.db.ClearPublicationCleanupError(ctx, pub.ID)
+		}
+		return res, nil
 	}
 	removedDir, err := s.removeEmptyPublicationDirectory(ctx, pub, item)
 	if err != nil {
@@ -199,10 +372,24 @@ func (s *Service) cleanupPublicationLocked(ctx context.Context, publicationID in
 	return res, s.finishRemovedPublication(ctx, pub, res.Removed, bytes, "every file resolved and removed")
 }
 
+// allFilesRemoved reports that every manifest file of the publication has
+// left the directory (vacuously true for a publication with none).
+func allFilesRemoved(files []sqlite.PublicationFile) bool {
+	for _, f := range files {
+		if f.RemovedAt.IsZero() {
+			return false
+		}
+	}
+	return true
+}
+
 // cleanupManifest re-reads what the directory says it is now and requires the
 // publication's generation. A directory whose manifest names another
-// generation was replaced; nothing in it is ours to delete.
-func (s *Service) cleanupManifest(pub sqlite.Publication) (map[string]ports.ManifestFile, error) {
+// generation was replaced; nothing in it is ours to delete. Once every file
+// has been removed the manifest may be gone too (an earlier pass removed it
+// and the rmdir failed on a stray): the stored manifest is then enough, as
+// only the directory is left to remove.
+func (s *Service) cleanupManifest(pub sqlite.Publication, allRemoved bool) (map[string]ports.ManifestFile, error) {
 	var m ports.Manifest
 	raw, err := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
 	switch {
@@ -214,7 +401,7 @@ func (s *Service) cleanupManifest(pub sqlite.Publication) (map[string]ports.Mani
 			return nil, fmt.Errorf("the directory's manifest names generation %q, not this publication's %q; nothing deleted", m.Generation, pub.Generation)
 		}
 	case errors.Is(err, os.ErrNotExist):
-		if pub.ManifestSource == "file" {
+		if pub.ManifestSource == "file" && !allRemoved {
 			return nil, fmt.Errorf("the directory's %s is missing; nothing deleted", ports.ManifestFileName)
 		}
 		// A v1 delivery record (or no manifest at all, for a directory the
@@ -310,10 +497,11 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 	defer releaseTarget()
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
 	defer releaseStorage()
-	if err := s.checkStorageIdentity(ctx, pub.Path); err != nil {
-		return "", fmt.Errorf("storage identity check failed; nothing deleted: %w", err)
+	publicationUnlinkHook(pub, f.Path)
+	if err := s.cleanupGate(ctx, pub); err != nil {
+		return "", err
 	}
-	if _, err := s.cleanupManifest(pub); err != nil {
+	if _, err := s.cleanupManifest(pub, false); err != nil {
 		return "", err
 	}
 	name := filepath.Base(rel)
@@ -395,10 +583,10 @@ func (s *Service) removeEmptyPublicationDirectory(ctx context.Context, pub sqlit
 	defer releaseTarget()
 	ctx, releaseStorage := s.lockStorageDecision(ctx)
 	defer releaseStorage()
-	if err := s.checkStorageIdentity(ctx, pub.Path); err != nil {
-		return false, fmt.Errorf("storage identity check failed; nothing deleted: %w", err)
+	if err := s.cleanupGate(ctx, pub); err != nil {
+		return false, err
 	}
-	if _, err := s.cleanupManifest(pub); err != nil {
+	if _, err := s.cleanupManifest(pub, true); err != nil {
 		return false, err
 	}
 	if err := base.Remove(ports.ManifestFileName); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -415,6 +603,10 @@ func (s *Service) removeEmptyPublicationDirectory(ctx context.Context, pub sqlit
 	}
 	return true, nil
 }
+
+// publicationUnlinkHook runs inside the destructive step, before its
+// re-checks; tests use it to change the world between hash and unlink.
+var publicationUnlinkHook = func(sqlite.Publication, string) {}
 
 // stopCleanup records why a pass deleted nothing more and returns the error.
 func (s *Service) stopCleanup(ctx context.Context, pub sqlite.Publication, err error) error {
@@ -467,8 +659,8 @@ func (s *Service) ApprovePublicationCleanup(ctx context.Context, ids []int64) (i
 	}
 	_ = s.db.AddHistory(ctx, "publication_cleanup_approved", 0, fmt.Sprintf("%d publication(s)", n), map[string]any{"ids": ids, "approved": n})
 	for _, id := range ids {
-		if !s.queuePublicationCleanup(id) {
-			if _, err := s.cleanupPublication(ctx, id); err != nil {
+		if !s.queuePublicationCleanup(id, "review batch approved") {
+			if _, err := s.cleanupPublication(withCleanupReason(ctx, "review batch approved"), id); err != nil {
 				s.log.Info("approved publication cleanup incomplete; the hourly sweep retries", "publication", id, "err", err)
 			}
 		}
@@ -483,7 +675,7 @@ func (s *Service) ApprovePublicationCleanup(ctx context.Context, ids []int64) (i
 // per-file cleanup, with the same checks. A historical publication waits for
 // its review batch, as automatic deletion does.
 func (s *Service) DiscardPublicationFiles(ctx context.Context, dir string, selections []CompletedFileSelection) error {
-	ctx = withForegroundVerification(ctx)
+	ctx = withOperatorCleanup(ctx, "operator discard in Storage")
 	if len(selections) == 0 {
 		return fmt.Errorf("select one or more files to delete")
 	}

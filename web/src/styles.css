@@ -3170,6 +3170,57 @@ a.pill-info:hover {
   word-break: break-word;
 }
 
+/* Pipeline v2 publications in a download's handoff detail: one block per
+   Runner generation, one line per file with its outcome and, for an
+   unresolved file, its Resolve actions (the result shows inline). */
+.handoff-publications {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.handoff-publication {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--bg-raised);
+}
+.handoff-publication > p {
+  margin: 0 0 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.publication-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.publication-files > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  word-break: break-word;
+}
+.publication-file-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.publication-file-actions button {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+.warning-text {
+  color: var(--warning);
+}
+
 .manual-import h2 {
   margin-top: 0;
 }

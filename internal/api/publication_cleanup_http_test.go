@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -38,5 +39,25 @@ func TestApprovePublicationCleanupHTTP(t *testing.T) {
 	rr = e.post(t, "/api/v1/downloads/publications/approve-cleanup", string(body)).expect(t, http.StatusOK)
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil || out.Approved != 0 {
 		t.Fatalf("re-approval = %+v", out)
+	}
+}
+
+// An operator can pause and resume a publication's automatic cleanup.
+func TestSetPublicationCleanupHTTP(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := t.Context()
+	id, err := e.db.InsertPublication(ctx, sqlite.PublicationWrite{Kind: "completed", Path: "/completed/pausable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.post(t, fmt.Sprintf("/api/v1/downloads/publications/%d/cleanup", id), `{"action":"stop"}`).expect(t, http.StatusBadRequest)
+	e.post(t, "/api/v1/downloads/publications/999999/cleanup", `{"action":"pause"}`).expect(t, http.StatusNotFound)
+	e.post(t, fmt.Sprintf("/api/v1/downloads/publications/%d/cleanup", id), `{"action":"pause"}`).expect(t, http.StatusNoContent)
+	if p, _ := e.db.GetPublication(ctx, id); p.CleanupPausedAt.IsZero() {
+		t.Fatal("not paused")
+	}
+	e.post(t, fmt.Sprintf("/api/v1/downloads/publications/%d/cleanup", id), `{"action":"resume"}`).expect(t, http.StatusNoContent)
+	if p, _ := e.db.GetPublication(ctx, id); !p.CleanupPausedAt.IsZero() {
+		t.Fatal("not resumed")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -90,19 +91,27 @@ func (d *DB) downloadsWhere(ctx context.Context, where string, args ...any) ([]D
 		}
 		ids = append(ids, id)
 	}
+	// Close does not report an iteration failure; without Err a read that
+	// fails mid-scan would return a truncated list as if it were complete.
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	// One batched read per chunk, not a GetDownload per row.
 	out := make([]Download, 0, len(ids))
-	for _, id := range ids {
-		dl, err := d.GetDownload(ctx, id)
-		if errors.Is(err, ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
+	for len(ids) > 0 {
+		chunk := ids[:min(len(ids), 500)]
+		ids = ids[len(chunk):]
+		rows, err := d.Read.ListDownloadsByIDs(ctx, chunk)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, dl)
+		for _, r := range rows {
+			out = append(out, downloadFromRow(r))
+		}
 	}
 	return out, nil
 }
@@ -178,6 +187,16 @@ type RunnerTerminalWrite struct {
 	ReplacementGrab *ReplacementGrabWrite
 	History         []HistoryWrite
 	TimingStarts    []TimingStart
+	// IndexerOutage records fetch{indexer_unavailable}: the source indexer
+	// is deferred until the later of its own retry_at and this time, and the
+	// row carries that as provider_retry_after (IMPL section 5.6 item 3).
+	IndexerOutage *IndexerOutageWrite
+}
+
+// IndexerOutageWrite defers an indexer Runner could not fetch from.
+type IndexerOutageWrite struct {
+	IndexerID int64 // 0: the row names no indexer; only the row is marked
+	Until     time.Time
 }
 
 // RecordRunnerTerminal applies the once-guard (an open or provisional
@@ -232,6 +251,20 @@ func (d *DB) RecordRunnerTerminal(ctx context.Context, w RunnerTerminalWrite) (b
 		return false, err
 	}
 	q := d.Write.WithTx(tx)
+	if o := w.IndexerOutage; o != nil {
+		until := o.Until.UnixMilli()
+		if o.IndexerID > 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE indexers SET retry_at=MAX(retry_at,?) WHERE id=?`, until, o.IndexerID); err != nil {
+				return false, err
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT MAX(retry_at,?) FROM indexers WHERE id=?`, until, o.IndexerID).Scan(&until); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return false, err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE downloads SET provider_retry_after=MAX(provider_retry_after,?) WHERE id=?`, until, w.DownloadID); err != nil {
+			return false, err
+		}
+	}
 	if w.ReplanPlanID != 0 {
 		if _, err := tx.ExecContext(ctx, `UPDATE acquisition_plans SET replan_pending=1 WHERE id=?`, w.ReplanPlanID); err != nil {
 			return false, err
@@ -253,7 +286,18 @@ func (d *DB) RecordRunnerTerminal(ctx context.Context, w RunnerTerminalWrite) (b
 		}
 	}
 	if p := w.Publication; p != nil {
-		if _, err := insertPublicationTx(ctx, tx, *p, now); err != nil {
+		var claimed *PublicationPathClaimedError
+		if _, err := insertPublicationTx(ctx, tx, *p, now); errors.As(err, &claimed) {
+			// Another download's publication owns the directory: this row's
+			// import fails here, visibly, instead of waiting at downloaded
+			// with no publication and no deadline.
+			reason := "publication import_failed: " + claimed.Error()
+			fail, _ := json.Marshal(HandoffEntry{Step: "failed", At: now, Detail: reason})
+			if _, err := tx.ExecContext(ctx, `UPDATE downloads SET state='failed', error=?, deadline_at=0, state_entered_at=?,
+				handoff_log=json_insert(handoff_log,'$[#]',json(?)) WHERE id=?`, reason, now, string(fail), w.DownloadID); err != nil {
+				return false, err
+			}
+		} else if err != nil {
 			return false, err
 		}
 	}
@@ -318,6 +362,7 @@ type RunnerStatusWrite struct {
 	Progress   float64
 	Error      string
 	Control    string // newest control, for display only ('' keeps the stored one)
+	Stage      string // post-processing stage ('' keeps the stored one)
 	DeadlineAt time.Time
 	Handoff    *HandoffEntry
 }
@@ -336,11 +381,12 @@ func (d *DB) UpdateRunnerStatus(ctx context.Context, w RunnerStatusWrite) (bool,
 		state_entered_at=CASE WHEN state!=? THEN ? ELSE state_entered_at END,
 		state=?, progress=?, error=?,
 		runner_control=CASE WHEN ?!='' THEN ? ELSE runner_control END,
+		runner_stage=CASE WHEN ?!='' THEN ? ELSE runner_stage END,
 		deadline_at=?,
 		handoff_log=CASE WHEN ?='null' THEN handoff_log ELSE json_insert(handoff_log,'$[#]',json(?)) END,
 		updated_at=?
 		WHERE id=? AND transfer=? AND runner_outcome='' AND state IN ('grabbed','submitting','downloading','held')`,
-		w.State, now, w.State, w.Progress, w.Error, w.Control, w.Control, unixMilliOrZero(w.DeadlineAt), entry, entry, now, w.DownloadID, w.Transfer)
+		w.State, now, w.State, w.Progress, w.Error, w.Control, w.Control, w.Stage, w.Stage, unixMilliOrZero(w.DeadlineAt), entry, entry, now, w.DownloadID, w.Transfer)
 	if err != nil {
 		return false, err
 	}
@@ -372,6 +418,7 @@ type Publication struct {
 	State             string
 	Cohort            string
 	CleanupApprovedAt time.Time
+	CleanupPausedAt   time.Time
 	Error             string
 	DiscoveredAt      time.Time
 	DeadlineAt        time.Time
@@ -393,13 +440,14 @@ type PublicationFile struct {
 	RemovedAt     time.Time
 }
 
-const publicationColumns = `id, COALESCE(download_id,0), generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, cleanup_approved_at, error, discovered_at, deadline_at, updated_at`
+const publicationColumns = `id, COALESCE(download_id,0), generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, cleanup_approved_at, error, discovered_at, deadline_at, updated_at, cleanup_paused_at`
 
 func scanPublication(row interface{ Scan(...any) error }) (Publication, error) {
 	var p Publication
 	var cross int64
-	var approved, discovered, deadline, updated int64
-	err := row.Scan(&p.ID, &p.DownloadID, &p.Generation, &p.Kind, &p.Path, &p.RemotePath, &p.ManifestJSON, &p.ManifestSource, &cross, &p.State, &p.Cohort, &approved, &p.Error, &discovered, &deadline, &updated)
+	var approved, discovered, deadline, updated, paused int64
+	err := row.Scan(&p.ID, &p.DownloadID, &p.Generation, &p.Kind, &p.Path, &p.RemotePath, &p.ManifestJSON, &p.ManifestSource, &cross, &p.State, &p.Cohort, &approved, &p.Error, &discovered, &deadline, &updated, &paused)
+	p.CleanupPausedAt = msTime(paused)
 	p.CrossVolume = cross != 0
 	p.CleanupApprovedAt, p.DiscoveredAt, p.DeadlineAt, p.UpdatedAt = msTime(approved), msTime(discovered), msTime(deadline), msTime(updated)
 	return p, err
@@ -425,14 +473,50 @@ func insertPublicationTx(ctx context.Context, tx *sql.Tx, p PublicationWrite, no
 	}
 	// One publication per directory and per (download, generation), ever: a
 	// replayed fact finds the row it already made.
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO publications (download_id, generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, discovered_at, deadline_at, updated_at)
+	res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO publications (download_id, generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, discovered_at, deadline_at, updated_at)
 		VALUES (?,?,?,?,?,?,?,?,'discovered',?,?,?,?)`,
-		download, p.Generation, p.Kind, p.Path, p.RemotePath, p.ManifestJSON, p.Source, cross, p.Cohort, now, now+DeadlinePublication.Milliseconds(), now); err != nil {
+		download, p.Generation, p.Kind, p.Path, p.RemotePath, p.ManifestJSON, p.Source, cross, p.Cohort, now, now+DeadlinePublication.Milliseconds(), now)
+	if err != nil {
+		return 0, err
+	}
+	inserted, err := res.RowsAffected()
+	if err != nil {
 		return 0, err
 	}
 	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE path=?`, p.Path).Scan(&id)
-	return id, err
+	var owner sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT id, download_id FROM publications WHERE path=?`, p.Path).Scan(&id, &owner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) && inserted == 0 && p.DownloadID != 0 {
+			// Ignored on (download, generation) under another path (a
+			// changed path mapping): a replay of the publication it made.
+			err = tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE download_id=? AND generation=?`, p.DownloadID, p.Generation).Scan(&id)
+		}
+		return id, err
+	}
+	if inserted == 0 && p.DownloadID != 0 {
+		switch {
+		case !owner.Valid:
+			// A historical directory with no row, marked at cutover: this
+			// download is what produced it.
+			if _, err := tx.ExecContext(ctx, `UPDATE publications SET download_id=?, updated_at=? WHERE id=? AND download_id IS NULL`, p.DownloadID, now, id); err != nil {
+				return 0, err
+			}
+		case owner.Int64 != p.DownloadID:
+			return 0, &PublicationPathClaimedError{Path: p.Path, Owner: owner.Int64}
+		}
+	}
+	return id, nil
+}
+
+// PublicationPathClaimedError is a publication whose directory another
+// download's publication already owns.
+type PublicationPathClaimedError struct {
+	Path  string
+	Owner int64
+}
+
+func (e *PublicationPathClaimedError) Error() string {
+	return fmt.Sprintf("%s is already the publication of download %d", e.Path, e.Owner)
 }
 
 // InsertPublication records a publication (salvage, a late one, or a
@@ -512,9 +596,11 @@ func (d *DB) ListPublicationsForDownloads(ctx context.Context, ids []int64) (map
 
 // ImportablePublications lists the publications of one client's rows that
 // are still waiting to import: the poll offers them again, so a directory
-// without a manifest yet is re-checked rather than forgotten.
+// whose manifest lands later imports then. importing is included: a crash
+// mid-import leaves the state behind, and the caller skips a row whose
+// import is queued or running (ImportRunning), so only an orphan re-runs.
 func (d *DB) ImportablePublications(ctx context.Context, clientID int64) ([]Publication, error) {
-	return d.publicationsWhere(ctx, `state='discovered' AND download_id IN (SELECT id FROM downloads WHERE client_id=?)`, clientID)
+	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND download_id IN (SELECT id FROM downloads WHERE client_id=?)`, clientID)
 }
 
 // OverduePublications lists publications still in discovered/importing past
@@ -579,7 +665,32 @@ func (d *DB) SeedPublicationFiles(ctx context.Context, publicationID int64, file
 
 // ListPublicationFiles lists one publication's files.
 func (d *DB) ListPublicationFiles(ctx context.Context, publicationID int64) ([]PublicationFile, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT publication_id, path, bytes, sha256, wantable_id, outcome, discard_reason, library_path, placed_sha256, reason, removed_at FROM publication_files WHERE publication_id=? ORDER BY path`, publicationID)
+	return d.publicationFilesWhere(ctx, `publication_id=?`, publicationID)
+}
+
+// ListPublicationFilesFor reads the files of many publications in one query,
+// keyed by publication (Activity lists a page of rows at once).
+func (d *DB) ListPublicationFilesFor(ctx context.Context, publicationIDs []int64) (map[int64][]PublicationFile, error) {
+	out := map[int64][]PublicationFile{}
+	if len(publicationIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(publicationIDs))
+	for i, id := range publicationIDs {
+		args[i] = id
+	}
+	files, err := d.publicationFilesWhere(ctx, `publication_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(publicationIDs)), ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		out[f.PublicationID] = append(out[f.PublicationID], f)
+	}
+	return out, nil
+}
+
+func (d *DB) publicationFilesWhere(ctx context.Context, where string, args ...any) ([]PublicationFile, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT publication_id, path, bytes, sha256, wantable_id, outcome, discard_reason, library_path, placed_sha256, reason, removed_at FROM publication_files WHERE `+where+` ORDER BY publication_id, path`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -605,7 +716,11 @@ func (d *DB) SetPublicationFileOutcome(ctx context.Context, f PublicationFile) e
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n != 1 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
 		return ErrNotFound
 	}
 	return nil
@@ -890,17 +1005,16 @@ func (d *DB) UpsertHistoryCursor(ctx context.Context, c RunnerHistoryCursor) err
 
 // ---- deadlines --------------------------------------------------------------
 
-// OverdueDownloads lists rows past their state's deadline: the contract
-// section 3.5 predicate (non-terminal state, deadline_at set and past).
-func (d *DB) OverdueDownloads(ctx context.Context, now time.Time, limit int) ([]Download, error) {
-	rows, err := d.downloadsWhere(ctx, `state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<?`, now.UnixMilli())
-	if err != nil || limit <= 0 || len(rows) <= limit {
-		return rows, err
-	}
-	return rows[:limit], nil
+// OverdueHeldDownloads lists one client's held rows past their deadline: the
+// held (stale) sweep's own query, so other clients' or states' overdue rows
+// can never crowd it out.
+func (d *DB) OverdueHeldDownloads(ctx context.Context, clientID int64, now time.Time) ([]Download, error) {
+	return d.downloadsWhere(ctx, `client_id=? AND state='held' AND runner_outcome='' AND deadline_at>0 AND deadline_at<?`, clientID, now.UnixMilli())
 }
 
-// CountOverdueDownloads counts what OverdueDownloads lists.
+// CountOverdueDownloads counts the rows past their state's deadline: the
+// contract section 3.5 predicate (non-terminal state, deadline_at set and
+// past), legacy parked and superseded rows excepted.
 func (d *DB) CountOverdueDownloads(ctx context.Context, now time.Time) (int, error) {
 	var n int
 	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM downloads WHERE state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<? AND superseded=0 AND parked_at=0`, now.UnixMilli()).Scan(&n)
@@ -941,7 +1055,7 @@ func (d *DB) CountHistoricalPublications(ctx context.Context) (int, error) {
 // file gone and the directory perhaps left behind. The oldest-touched come
 // first so a publication that keeps failing cannot starve the rest.
 func (d *DB) PublicationsToSweep(ctx context.Context, limit int) ([]Publication, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified') AND (cohort='live' OR cleanup_approved_at>0)
+	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified') AND (cohort='live' OR cleanup_approved_at>0) AND cleanup_paused_at=0
 		AND (EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0 AND f.outcome IN ('placed','discarded'))
 		     OR NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0))
 		ORDER BY updated_at, id LIMIT ?`, limit)
@@ -982,6 +1096,31 @@ func (d *DB) DemotePublicationFile(ctx context.Context, publicationID int64, pat
 	_, err := d.W.ExecContext(ctx, `UPDATE publication_files SET outcome='unresolved', discard_reason='', reason=?, updated_at=? WHERE publication_id=? AND path=? AND outcome=? AND removed_at=0`,
 		reason, time.Now().UnixMilli(), publicationID, path, fromOutcome)
 	return err
+}
+
+// ClearPublicationCleanupError forgets why an earlier cleanup pass stopped,
+// once a pass gets through with nothing stopped. An import's own reasons
+// (import_failed) are not cleanup's to clear.
+func (d *DB) ClearPublicationCleanupError(ctx context.Context, id int64) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET error='', updated_at=? WHERE id=? AND (error LIKE 'cleanup stopped:%' OR error LIKE 'cleanup kept %')`, time.Now().UnixMilli(), id)
+	return err
+}
+
+// SetPublicationCleanupPaused pauses (or resumes) a publication's automatic
+// cleanup: the sweep and the post-import pass skip a paused publication.
+func (d *DB) SetPublicationCleanupPaused(ctx context.Context, id int64, paused bool) error {
+	at := int64(0)
+	if paused {
+		at = time.Now().UnixMilli()
+	}
+	res, err := d.W.ExecContext(ctx, `UPDATE publications SET cleanup_paused_at=?, updated_at=? WHERE id=? AND state!='removed'`, at, time.Now().UnixMilli(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetPublicationError records why a publication's cleanup stopped, leaving
@@ -1043,4 +1182,45 @@ func (d *DB) ApprovePublicationCleanup(ctx context.Context, ids []int64) (int64,
 // (the completed-storage inventory explains those entries by it).
 func (d *DB) ListPublicationPaths(ctx context.Context) ([]Publication, error) {
 	return d.publicationsWhere(ctx, `state != 'removed'`)
+}
+
+// PublicationStorageFacts is what the completed-storage inventory needs to
+// offer the right action on a publication's directory: how many manifest
+// files are still on disk per publication, and which absolute file paths an
+// operator may discard (unresolved or never imported, not yet removed, on a
+// publication automatic deletion may touch).
+func (d *DB) PublicationStorageFacts(ctx context.Context) (map[int64]int, map[string]bool, error) {
+	unremoved := map[int64]int{}
+	rows, err := d.R.QueryContext(ctx, `SELECT publication_id, COUNT(*) FROM publication_files WHERE removed_at=0 GROUP BY publication_id`)
+	if err != nil {
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			_ = rows.Close()
+			return nil, nil, err
+		}
+		unremoved[id] = n
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, err
+	}
+	discardable := map[string]bool{}
+	rows, err = d.R.QueryContext(ctx, `SELECT p.path, f.path FROM publication_files f JOIN publications p ON p.id=f.publication_id
+		WHERE f.removed_at=0 AND f.outcome IN ('unresolved','pending') AND p.state NOT IN ('removed','discovered','importing')
+		  AND (p.cohort='live' OR p.cleanup_approved_at>0)`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var dir, rel string
+		if err := rows.Scan(&dir, &rel); err != nil {
+			return nil, nil, err
+		}
+		discardable[filepath.Join(dir, filepath.FromSlash(rel))] = true
+	}
+	return unremoved, discardable, rows.Err()
 }

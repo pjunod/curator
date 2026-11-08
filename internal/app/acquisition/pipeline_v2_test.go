@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -137,6 +138,12 @@ func setupV2(t *testing.T, releases []ports.Release) *v2Fixture {
 	t.Helper()
 	runner := newFakeRunner()
 	svc, db, item := setup(t, releases, &runner.fakeClient)
+	return setupV2On(t, runner, svc, db, item)
+}
+
+// setupV2On finishes the v2 fixture on a setup scenario.
+func setupV2On(t *testing.T, runner *fakeRunner, svc *Service, db *sqlite.DB, item int64) *v2Fixture {
+	t.Helper()
 	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return runner }
 	ctx := context.Background()
 	root := t.TempDir()
@@ -487,9 +494,23 @@ func TestIoFailureDoesNotBlocklistButGrabs(t *testing.T) {
 func TestIndexerUnavailableRequeuesWithoutGrab(t *testing.T) {
 	f := setupV2(t, []ports.Release{rel("Test.Show.S01E01.1080p.WEB-DL.x264-OTHER", 10)})
 	dl := f.grab(1, epOne)
+	if f.count(`SELECT COUNT(*) FROM indexers`) == 0 {
+		t.Fatal("fixture has no indexer")
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET source_indexer_id=(SELECT MIN(id) FROM indexers) WHERE id=?`, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	dl = f.row(dl.ID)
 	tm := failed(ports.ReasonFetch, false)
 	tm.FetchCause = ports.FetchCauseIndexerUnavailable
 	f.observe(dl, terminalFact(dl, tm, "event 1"))
+	// The outage defers the indexer (the request-budget gate the wanted pass
+	// honours) and the row carries the same provider_retry_after.
+	soon := time.Now().Add(10 * time.Minute).UnixMilli()
+	if n := f.count(`SELECT COUNT(*) FROM downloads d JOIN indexers i ON i.id=d.source_indexer_id
+		WHERE d.id=? AND d.provider_retry_after>? AND i.retry_at=d.provider_retry_after`, dl.ID, soon); n != 1 {
+		t.Fatal("fetch{indexer_unavailable} wrote no provider_retry_after / indexer retry_at")
+	}
 	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs`); n != 0 || len(mustBlocklist(t, f)) != 0 {
 		t.Fatalf("grabs=%d blocklist=%v, want neither", n, mustBlocklist(t, f))
 	}
@@ -888,5 +909,370 @@ func TestHistoricalCohortIsMarkedOnce(t *testing.T) {
 	_ = os.Chtimes(fresh, past, past)
 	if n, _ := f.svc.MarkHistoricalCohort(f.ctx); n != 0 {
 		t.Fatalf("second start marked %d", n)
+	}
+}
+
+// (review #1) A persistence outage after files were placed leaves the
+// publication offerable again, not stranded in importing: the next poll
+// completes it from the committed placements, with one library file.
+func TestPersistenceOutageMidImportRetriesFromDiscovered(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-101.runner-out", "out", map[string]string{epOne + ".mkv": "video"})
+	if _, err := f.db.W.ExecContext(f.ctx, `CREATE TRIGGER outage BEFORE UPDATE OF state ON publications WHEN NEW.state='imported'
+		BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path)
+	if p.State != "discovered" || !strings.Contains(p.Error, "disk I/O error") {
+		t.Fatalf("publication after the outage = %s %q, want discovered with the error", p.State, p.Error)
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `DROP TRIGGER outage`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.RefreshQueue(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	p, _, _ = f.db.PublicationByPath(f.ctx, pub.Path)
+	// Imported, then removed by the per-file cleanup (M4) as every file had
+	// evidence.
+	if got := f.row(dl.ID); got.State != "imported" || p.State != "removed" {
+		t.Fatalf("after recovery row %s (%s), publication %s, want the row imported and the publication imported and cleaned up", got.State, got.Error, p.State)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM media_files WHERE media_item_id=?`, f.item); n != 1 {
+		t.Fatalf("library files = %d, want one (the retry reused the placement)", n)
+	}
+}
+
+// (review #2) A job reporting the same post-processing stage poll after poll
+// is not moving: its downloading deadline stays where it was, so a stalled
+// unpack goes overdue. A new stage is movement.
+func TestRepeatedStageDoesNotMoveTheDeadline(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	status := func(stage string) {
+		st := ports.DownloadStatus{Handle: ports.Handle(dl.Handle), Transfer: dl.Transfer, State: ports.StateDownloading, Progress: 1, Stage: stage}
+		f.observe(f.row(dl.ID), ports.RunnerFact{Kind: ports.FactStatus, Transfer: dl.Transfer, Status: &st, Source: "poll"})
+	}
+	status("unpack")
+	if got := f.row(dl.ID); got.RunnerStage != "unpack" || got.DeadlineAt.Before(time.Now()) {
+		t.Fatalf("first unpack: stage %q deadline %s, want stored and in the future", got.RunnerStage, got.DeadlineAt)
+	}
+	past := time.Now().Add(-time.Minute).UnixMilli()
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET deadline_at=? WHERE id=?`, past, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	status("unpack")
+	status("") // a tick carries no stage and keeps the stored one
+	status("unpack")
+	if got := f.row(dl.ID); got.DeadlineAt.UnixMilli() != past {
+		t.Fatalf("a repeated stage moved the deadline to %s", got.DeadlineAt)
+	}
+	if n, err := f.db.CountOverdueDownloads(f.ctx, time.Now()); err != nil || n != 1 {
+		t.Fatalf("overdue = %d (%v), want the stalled unpack", n, err)
+	}
+	status("repair")
+	if got := f.row(dl.ID); !got.DeadlineAt.After(time.Now()) || got.RunnerStage != "repair" {
+		t.Fatalf("a new stage: stage %q deadline %s, want moved", got.RunnerStage, got.DeadlineAt)
+	}
+}
+
+// (review #3) A fact carrying a job handle but no transfer token (a hold
+// from job_control_changed) reaches a tokened row only when the queue names
+// that handle as the row's token. After a Runner state wipe the same job id
+// belongs to a new transfer: the hold is dropped and counted.
+func TestHandleOnlyFactNeedsTheQueueToken(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	hold := func() {
+		st := ports.DownloadStatus{Handle: ports.Handle(dl.Handle), State: ports.StateQueued, OperationalState: "held", Message: "waiting for disk"}
+		f.svc.handleRunnerEvent(f.ctx, f.cfg, ports.ClientEvent{Kind: ports.EventStage, Fact: &ports.RunnerFact{Kind: ports.FactStatus,
+			Handle: ports.Handle(dl.Handle), Status: &st, Source: "event 9"}}, map[int64]float64{}, new(time.Time))
+	}
+	// No queue poll yet: nothing vouches for the handle.
+	hold()
+	if got := f.row(dl.ID); got.State != "downloading" {
+		t.Fatalf("an unvouched handle-only fact moved the row to %s", got.State)
+	}
+	// The queue says job 101 is another transfer now (a reused job id).
+	f.svc.queueTokens.Store(f.cfg.ID, map[string]string{dl.Handle: "t-new-after-wipe"})
+	before := f.svc.FactMismatches()
+	hold()
+	if got := f.row(dl.ID); got.State != "downloading" {
+		t.Fatalf("a reused job id's hold landed on the old row: %s", got.State)
+	}
+	if f.svc.FactMismatches() != before+1 {
+		t.Fatalf("mismatches = %d, want +1", f.svc.FactMismatches())
+	}
+	// The queue names the row's own token for the handle: the hold applies.
+	f.svc.queueTokens.Store(f.cfg.ID, map[string]string{dl.Handle: dl.Transfer})
+	hold()
+	if got := f.row(dl.ID); got.State != "held" || got.Error != "waiting for disk" {
+		t.Fatalf("a vouched handle-only hold = %s %q, want held", got.State, got.Error)
+	}
+}
+
+// (review #5) Both timings start when Runner's terminal is recorded: a
+// completion whose manifest has not landed is already being timed, and a
+// failure's clock runs before the grab worker's first search.
+func TestTimingsStartAtTerminalReceipt(t *testing.T) {
+	f := setupV2(t, []ports.Release{rel("Test.Show.S01E02.1080p.WEB-DL.x264-OTHER", 10)})
+	f.svc.SetTimings(pipeline.New(f.db))
+	open := func(kind string, dl sqlite.Download) int {
+		return f.count(`SELECT COUNT(*) FROM pipeline_timings WHERE kind=? AND transfer=? AND ended_at=0`, kind, dl.Transfer)
+	}
+	done := f.grab(1, epOne)
+	dir := filepath.Join(f.root, "Test.Show.S01E01.job-101.runner-tim")
+	writeCompleted(t, filepath.Join(dir, epOne+".mkv"), 5) // no manifest yet
+	pub := ports.RunnerPublication{Path: dir, Generation: "tim", Kind: "completed"}
+	f.observe(done, terminalFact(done, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	if n := open("runner_done_to_import", done); n != 1 {
+		t.Fatalf("runner_done_to_import open = %d, want started at the terminal while the manifest is missing", n)
+	}
+	failedRow := f.grab(2, epTwo)
+	f.deferGrabs()
+	f.observe(failedRow, terminalFact(failedRow, failed(ports.ReasonHealth, true), "event 2"))
+	if n := open("failure_to_next_grab", failedRow); n != 1 {
+		t.Fatalf("failure_to_next_grab open = %d, want started with the failure", n)
+	}
+	f.svc.RunReplacementGrabs(f.ctx)
+	if n := f.count(`SELECT COUNT(*) FROM pipeline_timings WHERE kind='failure_to_next_grab' AND transfer=? AND ended_at>0`, failedRow.Transfer); n != 1 {
+		g, _, _ := f.db.GetReplacementGrab(f.ctx, failedRow.ID)
+		t.Fatalf("the grab worker did not end failure_to_next_grab on submit (grab %+v)", g)
+	}
+	// An indexer outage writes no grab, so no clock.
+	other := f.grab(1, "Test.Show.S01E01.720p.WEB-DL.x264-ALT")
+	tm := failed(ports.ReasonFetch, false)
+	tm.FetchCause = ports.FetchCauseIndexerUnavailable
+	f.observe(other, terminalFact(other, tm, "event 3"))
+	if n := f.count(`SELECT COUNT(*) FROM pipeline_timings WHERE kind='failure_to_next_grab' AND transfer=?`, other.Transfer); n != 0 {
+		t.Fatal("an indexer outage started failure_to_next_grab")
+	}
+}
+
+// (review #6) The held (stale) sweep reads its own query: seventy other
+// overdue rows (another state, ahead of it by id) cannot crowd a stale hold
+// out of the sweep.
+func TestStaleHoldIsSweptPastManyOtherOverdueRows(t *testing.T) {
+	f := setupV2(t, nil)
+	past := time.Now().Add(-time.Hour).UnixMilli()
+	for i := 0; i < 70; i++ {
+		if _, err := f.db.W.ExecContext(f.ctx, `INSERT INTO downloads(media_item_id,protocol,release_title,state,client_id,transfer,deadline_at,added_at,updated_at)
+			VALUES(?,'torrent',?,'downloading',1,?,?,1,1)`, f.item, fmt.Sprintf("other-%d", i), fmt.Sprintf("t-other-%d", i), past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dl := f.grab(1, epOne)
+	control := &ports.DownloadControl{Version: 1, Revision: "3", Lifecycle: "held", Message: "mount gone"}
+	st := ports.DownloadStatus{Handle: ports.Handle(dl.Handle), Transfer: dl.Transfer, State: ports.StateQueued, Control: control}
+	f.observe(dl, ports.RunnerFact{Kind: ports.FactStatus, Transfer: dl.Transfer, Status: &st, Source: "event 1"})
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET deadline_at=? WHERE id=?`, past, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.sweepDeadlines(f.ctx, f.cfg, f.runner)
+	if got := f.row(dl.ID); !strings.HasPrefix(got.Error, "held (stale)") {
+		t.Fatalf("stale hold behind 70 overdue rows = %q, want swept", got.Error)
+	}
+}
+
+// (review #8) A provisional row is in the poll's rows: a migrated parked
+// failure whose job Runner still lists re-opens from the queue poll alone,
+// with no event.
+func TestProvisionalRowReopensFromThePoll(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET state='failed', runner_outcome='failed', runner_outcome_reason='parked',
+		provisional=1, error='parked: Runner retains source files' WHERE id=?`, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.runner.statuses = []ports.DownloadStatus{{Handle: ports.Handle(dl.Handle), Transfer: dl.Transfer, State: ports.StateDownloading, Progress: 0.4}}
+	if err := f.svc.RefreshQueue(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.row(dl.ID); got.State != "downloading" || got.Provisional || got.RunnerOutcome != "" || got.Progress != 0.4 {
+		t.Fatalf("row = %s/%s provisional=%v progress %.2f, want re-opened downloading", got.State, got.RunnerOutcome, got.Provisional, got.Progress)
+	}
+}
+
+// (review #10) A completed terminal whose directory is already another
+// download's publication fails that row's import visibly, instead of leaving
+// it downloaded with no publication and no deadline. A historical directory
+// with no row is adopted by the download that produced it.
+func TestPublicationPathCollisionFailsTheImport(t *testing.T) {
+	f := setupV2(t, nil)
+	first := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-101.runner-col", "col", map[string]string{epOne + ".mkv": "video"})
+	f.observe(first, terminalFact(first, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	second := f.grab(2, epTwo)
+	f.observe(second, terminalFact(second, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 2"))
+	got := f.row(second.ID)
+	if got.State != "failed" || got.RunnerOutcome != "completed" || !strings.Contains(got.Error, fmt.Sprintf("publication of download %d", first.ID)) {
+		t.Fatalf("colliding row = %s/%s %q, want its import failed naming the owner", got.State, got.RunnerOutcome, got.Error)
+	}
+	if p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path); p.DownloadID != first.ID {
+		t.Fatalf("publication owner = %d, want unchanged %d", p.DownloadID, first.ID)
+	}
+
+	third := f.grab(3, "Test.Show.S01E03.1080p.WEB-DL.x264-GRP")
+	hist := f.publish("Test.Show.S01E03.job-103.runner-hist3", "hist3", map[string]string{"Test.Show.S01E03.1080p.WEB-DL.x264-GRP.mkv": "video"})
+	if _, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{Kind: "completed", Path: hist.Path, Cohort: "historical", Source: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	f.observe(third, terminalFact(third, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &hist, Salvage: "none"}, "event 3"))
+	p, _, _ := f.db.PublicationByPath(f.ctx, hist.Path)
+	if p.DownloadID != third.ID || p.Cohort != "historical" {
+		t.Fatalf("historical directory = %+v, want adopted by download %d and still historical", p, third.ID)
+	}
+}
+
+// (review #11) An operator removing a Runner row records a cancelled
+// terminal: never a park, never a re-grab or a blocklist; Runner is asked to
+// cancel the job; the row stays (dismissed) for its token.
+func TestRemovingARunnerRowCancelsItNeverParks(t *testing.T) {
+	f := setupV2(t, []ports.Release{rel("Test.Show.S01E01.1080p.WEB-DL.x264-OTHER", 10)})
+	dl := f.grab(1, epOne)
+	if err := f.svc.RemoveDownload(f.ctx, dl.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	got := f.row(dl.ID)
+	if got.State != "failed" || got.RunnerOutcome != ports.OutcomeCancelled || got.Provisional || got.ParkedReason != "" ||
+		f.count(`SELECT parked_at FROM downloads WHERE id=?`, dl.ID) != 0 {
+		t.Fatalf("removed row = %s/%s provisional=%v parked %q, want a final cancelled terminal and no park", got.State, got.RunnerOutcome, got.Provisional, got.ParkedReason)
+	}
+	f.runner.mu.Lock()
+	removed := len(f.runner.removed)
+	f.runner.mu.Unlock()
+	if removed != 1 {
+		t.Fatalf("Runner remove calls = %d, want the job cancelled", removed)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs`); n != 0 || len(mustBlocklist(t, f)) != 0 {
+		t.Fatal("an operator cancel re-grabbed or blocklisted")
+	}
+	if n := f.count(`SELECT COUNT(*) FROM downloads WHERE id=? AND activity_dismissed=1`, dl.ID); n != 1 {
+		t.Fatal("the cancelled row is not dismissed from Activity")
+	}
+}
+
+// (review #13: half-placed restart) A crash mid-import leaves the
+// publication importing with one file already placed. After restart the
+// poll re-offers it (no import is running for it) and only the rest is
+// imported.
+func TestCrashMidImportResumesOnlyTheRest(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(0, seasonPack)
+	pub := f.publish("Test.Show.S01.job-101.runner-half", "half", map[string]string{"Test.Show.S01E01.mkv": "e1", "Test.Show.S01E02.mkv": "e2"})
+	// What the crash leaves: the terminal recorded, the publication
+	// importing, E01's outcome written, E02 not reached.
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET state='importing', runner_outcome='completed', import_path=?, save_path=? WHERE id=?`, pub.Path, pub.Path, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
+	id, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{DownloadID: dl.ID, Generation: "half", Kind: "completed", Path: pub.Path,
+		ManifestJSON: string(raw), Source: "file", Cohort: "live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m ports.Manifest
+	_ = json.Unmarshal(raw, &m)
+	var seed []sqlite.PublicationFile
+	for _, file := range m.Files {
+		seed = append(seed, sqlite.PublicationFile{Path: file.Path, Bytes: file.Bytes, SHA256: file.SHA256})
+	}
+	_ = f.db.SeedPublicationFiles(f.ctx, id, seed)
+	_ = f.db.SetPublicationFileOutcome(f.ctx, sqlite.PublicationFile{PublicationID: id, Path: "Test.Show.S01E01.mkv", Outcome: "placed", LibraryPath: "/library/e1.mkv"})
+	_ = f.db.SetPublicationState(f.ctx, id, "importing", "")
+	if err := f.svc.RefreshQueue(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := f.db.GetPublication(f.ctx, id)
+	files, _ := f.db.ListPublicationFiles(f.ctx, id)
+	got := map[string]sqlite.PublicationFile{}
+	for _, file := range files {
+		got[file.Path] = file
+	}
+	if p.State != "imported" || got["Test.Show.S01E02.mkv"].Outcome != "placed" {
+		t.Fatalf("after restart publication %s, E02 %+v (%s): want the orphaned import resumed", p.State, got["Test.Show.S01E02.mkv"], f.row(dl.ID).Error)
+	}
+	if got["Test.Show.S01E01.mkv"].LibraryPath != "/library/e1.mkv" {
+		t.Fatalf("E01 was re-imported: %+v", got["Test.Show.S01E01.mkv"])
+	}
+}
+
+// (review #13: manifest boundary) What a manifest may say before anything
+// is imported from it.
+func TestManifestShapeBoundary(t *testing.T) {
+	good := []ports.ManifestFile{{Path: "Season 01/a.mkv", Bytes: 3, SHA256: strings.Repeat("a", 64)}}
+	digest, _ := ports.ManifestDigest(good)
+	if err := verifyManifestShape(ports.Manifest{Generation: "g", Files: good, Digest: digest}, "g"); err != nil {
+		t.Fatalf("a good manifest was refused: %v", err)
+	}
+	cases := map[string]ports.Manifest{
+		"no files":            {Generation: "g"},
+		"generation mismatch": {Generation: "other", Files: good},
+		"parent escape":       {Files: []ports.ManifestFile{{Path: "../a.mkv"}}},
+		"absolute":            {Files: []ports.ManifestFile{{Path: "/etc/a.mkv"}}},
+		"backslash":           {Files: []ports.ManifestFile{{Path: `a\b.mkv`}}},
+		"empty segment":       {Files: []ports.ManifestFile{{Path: "a//b.mkv"}}},
+		"dot segment":         {Files: []ports.ManifestFile{{Path: "./a.mkv"}}},
+		"empty path":          {Files: []ports.ManifestFile{{Path: ""}}},
+		"negative size":       {Files: []ports.ManifestFile{{Path: "a.mkv", Bytes: -1}}},
+		"digest mismatch":     {Files: good, Digest: strings.Repeat("0", 64)},
+	}
+	for name, m := range cases {
+		if err := verifyManifestShape(m, "g"); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// End to end: a manifest naming a path outside its publication fails
+	// the publication and places nothing.
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	dir := filepath.Join(f.root, "Test.Show.S01E01.job-101.runner-esc")
+	writeCompleted(t, filepath.Join(dir, epOne+".mkv"), 5)
+	bad := ports.Manifest{Generation: "esc", Files: []ports.ManifestFile{{Path: "../" + epOne + ".mkv", Bytes: 5}}}
+	rawBad, _ := json.Marshal(bad)
+	if err := os.WriteFile(filepath.Join(dir, ports.ManifestFileName), rawBad, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pub := ports.RunnerPublication{Path: dir, Generation: "esc", Kind: "completed"}
+	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	p, _, _ := f.db.PublicationByPath(f.ctx, dir)
+	if p.State != "import_failed" || !strings.Contains(p.Error, "manifest refused") || f.count(`SELECT COUNT(*) FROM media_files`) != 0 {
+		t.Fatalf("escaping manifest: publication %s %q, library files %d", p.State, p.Error, f.count(`SELECT COUNT(*) FROM media_files`))
+	}
+}
+
+// (review #13: sidecar conflict) A sidecar is never placed automatically:
+// the media imports, the sidecar is retained unresolved, and Resolve can
+// discard it but not place it as media.
+func TestSidecarIsUnresolvedNeverPlaced(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-101.runner-srt", "srt", map[string]string{epOne + ".mkv": "video", epOne + ".en.srt": "subs"})
+	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path)
+	files, _ := f.db.ListPublicationFiles(f.ctx, p.ID)
+	got := map[string]sqlite.PublicationFile{}
+	for _, file := range files {
+		got[file.Path] = file
+	}
+	if f.row(dl.ID).State != "imported" || p.State != "imported" || got[epOne+".mkv"].Outcome != "placed" {
+		t.Fatalf("media did not import: row %s publication %s files %+v", f.row(dl.ID).State, p.State, got)
+	}
+	if srt := got[epOne+".en.srt"]; srt.Outcome != "unresolved" || srt.LibraryPath != "" {
+		t.Fatalf("sidecar = %+v, want retained unresolved, not placed", srt)
+	}
+	if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, epOne+".en.srt", "place"); err == nil {
+		t.Fatal("a sidecar was placed as media")
+	}
+	if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, epOne+".en.srt", "discard"); err != nil {
+		t.Fatal(err)
+	}
+	files, _ = f.db.ListPublicationFiles(f.ctx, p.ID)
+	for _, file := range files {
+		if file.Path == epOne+".en.srt" && (file.Outcome != "discarded" || file.DiscardReason != "rejected") {
+			t.Fatalf("discarded sidecar = %+v", file)
+		}
 	}
 }

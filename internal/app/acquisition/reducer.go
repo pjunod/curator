@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -33,6 +34,13 @@ func runnerFeedsOf(c ports.DownloadClient) (ports.RunnerFeeds, bool) {
 	return f, ok
 }
 
+// isRunnerClient reports a client on the reducer. Curator never parks or
+// stall-retires a Runner row: the legacy park and stall paths check this.
+func isRunnerClient(c ports.DownloadClient) bool {
+	_, ok := runnerFeedsOf(c)
+	return ok
+}
+
 // Handoff steps the reducer adds to the trace.
 const (
 	stepHeld        = "held"
@@ -46,6 +54,22 @@ const HistoryRunnerFactMismatch = "runner_fact_mismatch"
 
 // observe applies one fact to one row.
 func (s *Service) observe(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, f ports.RunnerFact) error {
+	if f.Transfer == "" && dl.Transfer != "" {
+		// A fact naming only a job handle (job_control_changed, job_pp_stage)
+		// reaches a tokened row only when the queue says that handle is this
+		// row's token: after a Runner state wipe job ids are reused, and a
+		// handle alone would land a new job's facts on an old row.
+		token, known := s.queueToken(cfg.ID, string(f.Handle))
+		if token != dl.Transfer {
+			if known {
+				s.countFactMismatch(dl.ID, token)
+			}
+			s.log.Debug("runner fact dropped: no token, and the queue does not name this row's token for its handle",
+				"download", dl.ID, "handle", f.Handle, "queue_token", token, "source", f.Source)
+			return nil
+		}
+		f.Transfer = token
+	}
 	if f.Transfer != "" && dl.Transfer != "" && f.Transfer != dl.Transfer {
 		s.countFactMismatch(dl.ID, f.Transfer)
 		s.log.Debug("runner fact dropped: transfer token does not match the row", "download", dl.ID, "fact", f.Transfer, "source", f.Source)
@@ -189,7 +213,7 @@ func (s *Service) applyStatus(ctx context.Context, dl sqlite.Download, cfg ports
 		}
 	}
 	now := time.Now()
-	w := sqlite.RunnerStatusWrite{DownloadID: dl.ID, Transfer: dl.Transfer, Progress: st.Progress}
+	w := sqlite.RunnerStatusWrite{DownloadID: dl.ID, Transfer: dl.Transfer, Progress: st.Progress, Stage: st.Stage}
 	if st.Progress == 0 && dl.Progress > 0 {
 		w.Progress = dl.Progress
 	}
@@ -226,7 +250,10 @@ func (s *Service) applyStatus(ctx context.Context, dl sqlite.Download, cfg ports
 			w.Error = st.Message
 		}
 		w.DeadlineAt = dl.DeadlineAt
-		moved := w.Progress != dl.Progress || dl.State != "downloading" || dl.DeadlineAt.IsZero() || st.Stage != ""
+		// Movement is progress, a state change or a NEW post-processing
+		// stage; a job reporting the same stage poll after poll is not
+		// moving, so a stalled unpack goes overdue (review #2).
+		moved := w.Progress != dl.Progress || dl.State != "downloading" || dl.DeadlineAt.IsZero() || (st.Stage != "" && st.Stage != dl.RunnerStage)
 		if moved {
 			w.DeadlineAt = s.downloadingDeadline(dl)
 		}
@@ -292,6 +319,12 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 			detail += fmt.Sprintf(" (mapped to %s)", mapped)
 		}
 		w.Handoff = &sqlite.HandoffEntry{Step: stepDownloaded, At: now.UnixMilli(), Detail: traced(detail, source)}
+		// The import clock starts when Runner's terminal arrives, in the same
+		// transaction (a publication waiting hours for its manifest is
+		// measured); a row held for approval starts it at approval instead.
+		if !cfg.ManualApproval && s.timings != nil {
+			w.TimingStarts = append(w.TimingStarts, sqlite.TimingStart{Kind: pipeline.RunnerDoneToImport, Transfer: pipeline.Key(dl.Transfer, dl.ID), DownloadID: dl.ID})
+		}
 	case ports.OutcomeCancelled:
 		w.State = "failed"
 		w.Error = "cancelled in " + clientLabel(cfg)
@@ -339,8 +372,18 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 			w.Blocklist = &sqlite.BlocklistWrite{MediaItemID: dl.MediaItemID, SourceIndexerID: dl.SourceIndexerID,
 				SourceGUID: dl.SourceGUID, Title: dl.ReleaseTitle, Indexer: dl.Indexer, Reason: msg}
 		}
+		if t.Reason == ports.ReasonFetch && t.FetchCause == ports.FetchCauseIndexerUnavailable && !provisional {
+			// The indexer is down, not the release: defer it (the existing
+			// request-budget gate) instead of grabbing an alternative from it.
+			w.IndexerOutage = &sqlite.IndexerOutageWrite{IndexerID: dl.SourceIndexerID, Until: now.Add(indexerOutageRetry)}
+		}
 		if wants, why := s.replacementDue(dl, t, provisional); len(wants) > 0 {
 			w.ReplacementGrab = &sqlite.ReplacementGrabWrite{WantableIDs: wants}
+			// failure_to_next_grab starts with the failure itself; the grab
+			// worker ends it on submit or discards it with nothing to grab.
+			if s.timings != nil {
+				w.TimingStarts = append(w.TimingStarts, sqlite.TimingStart{Kind: pipeline.FailureToNextGrab, Transfer: pipeline.Key(dl.Transfer, dl.ID), DownloadID: dl.ID})
+			}
 			if dl.PlanID != 0 {
 				w.ReplanPlanID = dl.PlanID
 			}
@@ -384,6 +427,11 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 	}
 	return true, nil
 }
+
+// indexerOutageRetry is how long an indexer Runner could not fetch from is
+// deferred when it named no retry_at of its own: Runner had already
+// exhausted its own retries against it.
+const indexerOutageRetry = 15 * time.Minute
 
 // HistoryNoReplacement explains why a failure starts no next grab.
 const HistoryNoReplacement = "no_replacement"
@@ -489,6 +537,28 @@ func (s *Service) kickPublicationImports(ctx context.Context, dl sqlite.Download
 
 // ---- the poll: reconcile only (contract section 3.2, IMPL section 5.5) ----
 
+// withOutstandingRunnerRows adds a Runner client's provisional terminals
+// (failed{submit|lost|parked}, which ListActiveDownloads leaves out) to the
+// poll's rows, so a job Runner still lists re-opens them from the poll and
+// not only from an event (review #8).
+func (s *Service) withOutstandingRunnerRows(ctx context.Context, clientID int64, rows []sqlite.Download) []sqlite.Download {
+	outstanding, err := s.db.OutstandingRunnerDownloads(ctx, clientID)
+	if err != nil {
+		s.log.Warn("queue: outstanding Runner rows unreadable", "client", clientID, "err", err)
+		return rows
+	}
+	have := make(map[int64]bool, len(rows))
+	for _, dl := range rows {
+		have[dl.ID] = true
+	}
+	for _, dl := range outstanding {
+		if !have[dl.ID] {
+			rows = append(rows, dl)
+		}
+	}
+	return rows
+}
+
 // goneGrace is how long a job must be absent from every Runner feed, over
 // successful polls only, before Curator gives up on it (provisionally).
 const goneGrace = 10 * time.Minute
@@ -510,14 +580,19 @@ func (s *Service) reconcileRunnerClient(ctx context.Context, cfg ports.ClientCon
 	seen := map[int64]bool{}
 	byTransfer := map[string]ports.DownloadStatus{}
 	byHandle := map[string]ports.DownloadStatus{}
+	tokens := map[string]string{}
 	for _, st := range statuses {
 		if st.Transfer != "" {
 			byTransfer[st.Transfer] = st
 		}
 		if st.Handle != "" {
 			byHandle[string(st.Handle)] = st
+			if st.Transfer != "" {
+				tokens[string(st.Handle)] = st.Transfer
+			}
 		}
 	}
+	s.queueTokens.Store(cfg.ID, tokens)
 	for _, dl := range rows {
 		if s.ImportRunning(dl.ID) {
 			seen[dl.ID] = true
@@ -618,6 +693,20 @@ func (s *Service) pollHistory(ctx context.Context, cfg ports.ClientConfig, feeds
 			return
 		}
 	}
+}
+
+// queueToken is the transfer token the client's last queue poll gave a job
+// handle, and whether the queue named that handle at all.
+func (s *Service) queueToken(clientID int64, handle string) (string, bool) {
+	if handle == "" {
+		return "", false
+	}
+	v, ok := s.queueTokens.Load(clientID)
+	if !ok {
+		return "", false
+	}
+	token, known := v.(map[string]string)[handle]
+	return token, known
 }
 
 // applyFeedFact routes a feed fact to its row by token. A fact for a
@@ -841,14 +930,11 @@ func (s *Service) confirmAdmissions(ctx context.Context, cfg ports.ClientConfig,
 // import_failed{stalled}. Neither is a Runner terminal.
 func (s *Service) sweepDeadlines(ctx context.Context, cfg ports.ClientConfig, feeds ports.RequestAdmissionProtocol) {
 	now := time.Now()
-	rows, err := s.db.OverdueDownloads(ctx, now, 64)
+	rows, err := s.db.OverdueHeldDownloads(ctx, cfg.ID, now)
 	if err != nil {
 		return
 	}
 	for _, dl := range rows {
-		if dl.ClientID != cfg.ID || dl.State != "held" {
-			continue
-		}
 		stale := "held (stale): Runner has not reported since " + dl.UpdatedAt.Format(time.RFC3339)
 		if !strings.HasPrefix(dl.Error, "held (stale)") {
 			if err := s.db.MarkHeldStale(ctx, dl.ID, stale); err == nil {

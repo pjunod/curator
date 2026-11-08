@@ -2,11 +2,16 @@
 
 ## Pipeline contract v2, M5 (curator part): outbox sub-deliveries and read-back — 2026-11-07 · v0.41.0
 
-**Status:** branch `claude/pipeline-v2-m5-curator` (stacked on
-`claude/pipeline-v2-m2-curator` at 6e5fe39; migration **0074**, M4 holds 0073)
-· owner: Claude (Opus builder) · pushed, **no PR** (by instruction), not
-reviewed, not merged, not deployed. Built to contract section 4 / section 6,
-not to cinema's code (cinema M5 is Forgejo #1404-1409, under review).
+**Status:** [PR #97](https://github.com/pjunod/curator/pull/97) on
+`claude/pipeline-v2-m5-curator` (main merged in after M2 + M4 landed as #95;
+migration **0074**, M4 holds 0073) · owner: Claude (Opus orchestrator) ·
+approved by Fable, gate running, not merged, not deployed. Built to contract
+section 4 / section 6 and checked against cinema's real handlers (Forgejo
+#1404-1409).
+
+M6 follow-up: the `measured` field of `GET /system/pipeline` is now always
+true (every seam has an end), so the web `measured: false` tile branch and the
+OpenAPI "until pipeline M5" note are dead; M6 deletes them.
 
 Built (plan M5 curator items 1-4, IMPL_CURATOR section 7):
 
@@ -114,6 +119,72 @@ over a day — `curl -s -H "X-Api-Key: $KEY" $MONARR/api/v1/system/pipeline` —
 with the waiting count beside it; the delivery log shows `visible → plurx item
 <id>` on new imports; `SELECT status, count(*) FROM notifier_deliveries WHERE
 idempotency_key != '' GROUP BY 1` has no growing `pending` tail.
+## Pipeline contract v2, M2 + M4 land together: coverage floor — 2026-11-08 · v0.40.0
+
+**Status:** [PR #95](https://github.com/pjunod/curator/pull/95) on
+`claude/pipeline-v2-m2-curator` · owner: Claude (Opus orchestrator) ·
+M2 and M4 both approved by Fable (#95, #96); not merged, not deployed.
+
+**Why M4 lands with M2:** #95 failed CI only on the coverage floor
+(82.9% against `COVERAGE_MIN` 86.0%; all 1796 tests passed). Most of the gap
+was the v1 receipt cleanup M2 left live (`delivery_cleanup.go`, 974 uncovered
+statements), which M4 deletes. Testing code that the next milestone deletes
+would be wasted work, so M4 (#96) is merged into this branch and the two ship
+as one PR at M4's version, 0.40.0. Decision taken for Paul by the
+orchestrator.
+
+Merged in order (merge commits, no rebase):
+
+1. `claude/pipeline-v2-m2-cov-a`: acquisition tests (reducer fact x state
+   matrix, publication import paths, grab admission and removal, replacement
+   grab worker and operation steps, v1 receipt lifecycle after the cutover);
+   `replacementAttemptCleanupBlock` removed (a stub that never blocked).
+2. `claude/pipeline-v2-m2-cov-b`: the 29 receipt-store writes M2 left without
+   callers deleted from `delivery_receipts.go` (-676); storage-fault matrices
+   for the reducer, publication, replacement and acquisition stores and the
+   recovery worker (template-copied databases, run in parallel).
+3. `claude/pipeline-v2-m4-curator` (#96): see the M4 entry below.
+
+Defects fixed by the coverage work (7):
+
+| # | Where | Defect | Fix |
+|---|---|---|---|
+| 1 | `completePublication` | A salvage import moved its failed row to `imported` (contract 3.1) | Settles its attempt with `SettleImportAttempt`; the row stays failed |
+| 2 | Resolve placement | Placing an unresolved file re-ran the import in its old attempt epoch and failed on "existing stage retained" | A Resolve selection opens a fresh attempt epoch, like ImportNow |
+| 3 | `downloadsWhere` | A read failing mid-scan returned a truncated list as complete (continuity-loss reconcile, held sweep) | Checks `rows.Err` |
+| 4 | `SetPublicationFileOutcome` | Discarded the RowsAffected error and reported not-found for a write that landed | Returns the error |
+| 5 | `buildWanted` / `Wanted` | One read failure hid a title from RSS, backlog and Wanted for the rest of the day (cached as fresh) | Fails the walk; nothing cached. `WantedList` fails on an unreadable profile list |
+| 6 | `CreateReplacement` | A storage error re-checking the review was reported as `ErrReplacementStale` | Only a missing observation or a missing/conflicting pin is stale |
+| 7 | `DeleteProfile` | A failed read of the kind defaults counted as "not a default", so a kind's default could be deleted | Any read error other than unset fails the delete |
+
+Integration (merge of M4): conflicts in `acquisition_handlers.go` (M2's
+batched `publicationFiles` loop with M4's cleanup state, pause and `removed`),
+`Activity.tsx` (M2's focus move with M4's "discarded and removed"),
+`delivery_receipts.go` (only what both sides kept survives) and eight test
+files (tests of code M4 deleted stay deleted). Adapted to M4: the cov-a receipt
+lifecycle tests seed legacy receipts with SQL (cov-b deleted the writers) and
+drop the abandon-route test; six v2 import tests expected `imported` where
+M4's cleanup now ends a fully evidenced live publication `removed`. sqlc
+output regenerated (`publications.cleanup_paused_at`).
+
+Coverage: projected **87.65%** against the 86.0% floor (CI's method: `-coverpkg=./...`,
+blocks merged across profiles, `/gen/` excluded). Measured on this branch for
+the three packages the work changed, with every other package at main's
+numbers (87.61% with M2 head's numbers instead):
+
+| Package | main | #95 at ae07935 | now |
+|---|---|---|---|
+| `internal/app/acquisition` | 82.5% (10519/12747) | 75.5% (9303/12320) | 85.6% (10041/11728) |
+| `internal/infra/sqlite` | 85.7% (4368/5096) | 83.3% (4547/5457) | 88.1% (4333/4916) |
+| `internal/api` | 89.2% (2519/2824) | 88.8% (2562/2886) | 88.2% (2576/2920) |
+
+Measured without `-race` (coverage blocks are the same; the race build of the
+sqlite package did not finish in 40 minutes on the shared 2-CPU workspace).
+Full runs of the three packages on the final head: acquisition and sqlite pass;
+api passes except `TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired`,
+which relies on a read-only directory and fails only as root (it passes run as
+an unprivileged user; unchanged from main). CI's floor is the check of record.
+
 ## Pipeline contract v2, M4: per-file cleanup, dead v1 mechanisms removed — 2026-11-07 · v0.40.0
 
 **Status:** branch `claude/pipeline-v2-m4-curator` (stacked on
@@ -121,6 +192,23 @@ idempotency_key != '' GROUP BY 1` has no growing `pending` tail.
 pushed, **no PR** (by instruction), not reviewed, not merged, not deployed.
 Decision record: [ADR 0026](docs/adr/0026-pipeline-contract-v2.md) addendum
 (items 9-12); ADR 0021 marked partly superseded.
+
+Review r1 (Fable, [PR #96](https://github.com/pjunod/curator/pull/96), changes
+requested) — every finding fixed on this branch:
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | Storage-change fence not on the per-file path; storage-review delete could unlink inside a publication | `cleanupGate` (live identity, then `StorageChangeReview`/`StorageReviewPath`) at pass start, before every unlink and before the rmdir; automatic passes stop, an operator's own discard is the review. Inventory classifies every publication-claimed entry regardless of the review flag; `DeleteSelectedLegacyFiles` refuses a publication path. Tests: path fence, generation fence, inventory + refused delete |
+| 2 | Stray after manifest unlink strands the publication | With every manifest file removed the stored manifest suffices; Storage deletes such a publication whole (`wholeDeletable`, identity + ownership checks). Test with `.DS_Store`, manifest gone too |
+| 3 | Folded 0040 cohort undeletable, shown as awaiting import | 0073 (and the M2 cutover marking) records manifest-less, row-less directories as `import_failed` with the reason; approved, Storage deletes them whole. Test |
+| 4 | Stale `publications.error` | Cleared when a pass ends with nothing stopped (only cleanup's own messages). Test |
+| 5 | Sweep hashing inline, unattributable | The sweep only queues passes on the cleanup lane; each pass is in the in-flight registry (`publication_cleanup`, with why) and on the publication in Activity with Pause/Resume (`POST /downloads/publications/{id}/cleanup`, `publications.cleanup_paused_at`). Test |
+| 6 | Resolve Discard hid a kept file | `ErrDiscardedButKept` (409 `discarded_kept`) with the reason; Activity shows it. Test |
+| 7 | Exact path lookups | `publicationClaiming`: same, containing or contained directory (storage paths); used by the legacy cleanup fence, Storage deletes and the inventory. Test |
+| 8 | Other platforms re-hash forever | `perFileCleanupSupported` is false there: the sweep logs once and refuses, the pass stops |
+| 9 | Preflight refusal had no operator path | integration.md: roll back to v0.39.x, finish or cancel the named requests, upgrade again |
+| 10 | Docs/UI literals | integration.md storage-check wording fixed; Storage offers only discardable (unresolved) publication files, with corrected text |
+| tests | crash between unlink and record; pre-unlink generation re-check; hard-linked placement; digest-less manifest; fences | added (fence and pre-unlink tests mutation-checked) |
 
 Built (plan M4.1-3, IMPL_CURATOR section 6):
 
@@ -235,29 +323,36 @@ Decisions for Paul:
 
 ## Pipeline contract v2, M2: Curator reducer, publications, replacement grabs — 2026-11-07 · v0.39.0 (mobile 0.28.0)
 
-**Status:** branch `claude/pipeline-v2-m2-curator` (stacked on
-`claude/pipeline-v2-m0-curator`, M0 merged through 8c8af17) · owner: Claude
-(Opus builder) · pushed, **no PR** (by instruction), not merged, not deployed.
-Decision record: [ADR 0026](docs/adr/0026-pipeline-contract-v2.md).
+**Status:** draft [PR #95](https://github.com/pjunod/curator/pull/95) on
+`claude/pipeline-v2-m2-curator` (main merged at c606856) · owner: Claude
+(Opus builder) · Fable review r1 (3 blocking, 5 should-fix, 6 minor): all
+addressed, re-review accepted them; not merged (after Runner #281), not
+deployed. Decision record: [ADR 0026](docs/adr/0026-pipeline-contract-v2.md).
 
 Built (plan M2.1-9, IMPL_CURATOR section 5):
 
 - **Migration 0072**: rebuilds `downloads` with `submitting`, `held`,
   `notified` and the reducer columns (`runner_outcome` + reason/seq/cause/
-  blames/salvage/fetched, `provisional`, `deadline_at`, `state_entered_at`),
+  blames/salvage/fetched, `provisional`, `deadline_at`, `state_entered_at`,
+  `runner_stage`),
   an immutability trigger on a final `runner_outcome`, and deadline triggers
   on insert/state change/progress; new `publications`, `publication_files`,
   `replacement_grabs`, `wantable_attempts` (+ triggers recording the current
   attempt on every insert), `runner_history_cursors`. Data: parked and
   superseded live rows become `failed` provisional (`parked: <reason>`); held
   control rows become `held`; every v1 receipt becomes a `historical`
-  publication with the per-file outcomes it reached; terminal rows keep a
+  publication with the per-file outcomes it reached (the newest receipt wins
+  a shared path; each file takes its newest outcome); terminal rows keep a
   `runner_outcome`. Child tables survive the rebuild; a down migration exists.
 - **Reducer** (`reducer.go`): facts from SSE, queue, ordered history
   (`since_seq`, cursor per incarnation, owned by the poll), `/deliveries`
   (`include_accepted=true`) and request receipts; transfer-token match
-  (mismatch counted once per row/token); terminal recorded once with its
-  publication / replacement grab / blocklist / history in one transaction;
+  (mismatch counted once per row/token); a fact with only a handle reaches a
+  tokened row only when the last queue poll names that handle as the row's
+  token; terminal recorded once with its publication / replacement grab /
+  blocklist / history / seam timings in one transaction; a downloading
+  deadline moves on progress, a state change or a NEW post-processing stage
+  only; provisional rows are in the poll's rows;
   provisional `submit`/`lost` re-opened by any Runner fact; `held (stale)`
   instead of a Curator `hold_expired`; continuity loss reconciles every
   outstanding transfer by token.
@@ -271,14 +366,18 @@ Built (plan M2.1-9, IMPL_CURATOR section 5):
 - **Failure is the next grab**: `replacement_grabs` worker (5 s + kick):
   movie/book search, episode single-release search (never a pack), season
   planner only for episodes with no single release; only `blames_release`
-  blocklists and spends bytes; `failure_to_next_grab` ends when the worker
-  submits. Legacy clients' failures use the same worker.
+  blocklists and spends bytes; `failure_to_next_grab` starts with the
+  failure and ends when the worker submits. `fetch{indexer_unavailable}`
+  writes no grab and defers the source indexer (its `retry_at`, at least 15
+  min) with the same time as the row's `provider_retry_after`. Legacy
+  clients' failures use the same worker.
 - nzbd adapter: failed maps to `failed`; facts on every event; history by
   `(incarnation, since_seq)`.
 - `pipeline:overdue` judges `deadline_at` (health.go comment, warning text,
   usage.md wording updated per the M0 review hand-off).
 - Activity (web): Held by Runner section, stale/provisional lines,
-  publication file list with Resolve. Mobile 0.28.0: badge labels for held,
+  publication file list with Resolve (styled; the result is shown inline,
+  on screen, and takes focus); e2e `pipeline-v2-activity.spec.ts`. Mobile 0.28.0: badge labels for held,
   held (stale), failed (provisional); a hold's message is not shown as an
   error.
 
@@ -299,12 +398,14 @@ Verified: `go build ./...`; `go vet` on touched packages; `go test` on
 acquisition, api, sqlite, nzbd, notify, pipeline, ports, cmd: all pass except
 the pre-existing root-only failure below; `make lint` (0 issues);
 web `tsc --noEmit` and `vitest run src/api.test.ts`; mobile `tsc --noEmit`
-and `vitest run src/queueState.test.ts src/device-build-script.test.ts`.
+and `vitest run src/queueState.test.ts src/device-build-script.test.ts`;
+the one new e2e spec, `npx playwright test tests/pipeline-v2-activity.spec.ts`
+(4 passed: desktop and phone geometry, result in the viewport and focused).
 
 Could not verify: `make test` (and its 86.0 coverage floor, at risk after
-deleting ~9.7k test lines), `make test-web`, `make test-e2e` were not run
-(fast lane only, by instruction); no browser check of the Activity changes
-(viewport rule in CLAUDE.md section 5 unverified for Resolve); no run against
+deleting ~9.7k test lines; the review's #13 tests were added to protect it),
+`make test-web`, the rest of `make test-e2e` were not run (fast lane only,
+by instruction); no run against
 a real Runner (contract v2 fields are produced by Runner M1+; an older Runner
 exercises only the legacy mappings); migration 0072 not run on a copy of
 production data; not deployed to nuc3 or devices.
@@ -314,10 +415,12 @@ fails identically on the M0 branch.
 
 Decisions for Paul:
 
-- Legacy `ParkDownload` stays for non-Runner clients (season planner's
+- Legacy `ParkDownload` stays for non-Runner clients only (season planner's
   uncertain-submission fence and the torrent stall watchdog,
-  `season_stall.go`, which is not runner-only); IMPL section 10 lists parks as
-  deleted. Columns retire in M4.
+  `season_stall.go`); IMPL section 10 lists parks as deleted. **Curator never
+  parks or stall-retires a Runner row**: both paths return for Runner clients
+  explicitly, and an operator's remove of a Runner row records a final
+  `cancelled` terminal (IMPL section 5.5). Columns retire in M4.
 - Live publications are never deleted in M2 (per-file cleanup is M4);
   historical ones not until their M7 review. Curator-cleanup on a historical
   receipt is refused (409); Runner source cleanup is refused (409,
@@ -329,8 +432,16 @@ Decisions for Paul:
   inventory scan) as before.
 - Extra columns beyond IMPL: `publication_files.wantable_id`,
   `publications.remote_path`.
-- `failure_to_next_grab` starts at the first search attempted (M0 semantics)
-  rather than at terminal receipt.
+- Both seam timings start at terminal receipt (review #5, reversing the
+  earlier start-at-first-search): `runner_done_to_import` at a completed
+  terminal (at approval for a manual-approval client), `failure_to_next_grab`
+  when a replacement grab is written; nothing to grab discards it.
+- An indexer outage (`fetch{indexer_unavailable}`) defers the indexer for at
+  least 15 minutes when it named no `retry_at` of its own (Runner has
+  already exhausted its retries against it).
+- **Same-day deploy window with a pre-M1a Runner:** pushed failures carry no
+  `fetched` measure (the old `withFetched` guess is gone), so each counts its
+  full size against the re-grab bytes budget until Runner M1a is deployed.
 - Placements made by a publication import record its Runner generation, so a
   resumed import only reuses its own publication's committed placements.
 - Receipt "retry handoff" and Resolve now import the receipt's historical

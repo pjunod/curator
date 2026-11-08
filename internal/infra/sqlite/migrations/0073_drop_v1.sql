@@ -33,8 +33,8 @@ SELECT substr(generation_key, length('storage-change:') + 1), path
 --    covers the cohort's generation-only entries too, through the path their
 --    download row carries now. A review fence is replaced; nothing is freed.
 INSERT OR IGNORE INTO publications (download_id, generation, kind, path, manifest_json, manifest_source, cross_volume, state, cohort, error, discovered_at, deadline_at, updated_at)
-SELECT NULL, '', 'completed', p.path, '{}', 'none', 0, 'discovered', 'historical',
-       'pre-delivery acquisition (migration 0040 review cohort); awaiting the M7 review',
+SELECT NULL, '', 'completed', p.path, '{}', 'none', 0, 'import_failed', 'historical',
+       'pre-delivery acquisition (migration 0040 review cohort): no manifest and no download row, so Curator cannot import or clean it file by file; the M7 review decides it, and once approved it can be deleted whole from Storage',
        CAST(strftime('%s','now') AS INTEGER) * 1000, 0, CAST(strftime('%s','now') AS INTEGER) * 1000
   FROM (
         SELECT l.path AS path FROM legacy_cleanup_review l
@@ -45,6 +45,18 @@ SELECT NULL, '', 'completed', p.path, '{}', 'none', 0, 'discovered', 'historical
          WHERE d.import_path != '' AND l.generation_key NOT LIKE 'storage-change:%'
        ) p
  WHERE NOT EXISTS (SELECT 1 FROM publications q WHERE q.path = p.path);
+
+-- The same holds for every directory the M2 cutover froze without a
+-- manifest or a row: nothing can import it, so it is not "discovered".
+UPDATE publications
+   SET state = 'import_failed',
+       error = 'frozen at the pipeline v2 cutover with no manifest and no download row: Curator cannot import or clean it file by file; the M7 review decides it, and once approved it can be deleted whole from Storage',
+       updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+ WHERE download_id IS NULL AND manifest_source = 'none' AND state = 'discovered';
+
+-- An operator can pause a publication's automatic cleanup (attributable and
+-- stoppable in the product, like any work that spends disk time).
+ALTER TABLE publications ADD COLUMN cleanup_paused_at INTEGER NOT NULL DEFAULT 0;
 
 DROP TRIGGER IF EXISTS legacy_inflight_import_evidence_immutable;
 DROP TABLE legacy_inflight_import_evidence;
@@ -76,6 +88,7 @@ DROP TABLE runner_delivery_explicit_delete_files;
 DROP TABLE runner_delivery_explicit_delete_batches;
 
 -- +goose Down
+ALTER TABLE publications DROP COLUMN cleanup_paused_at;
 -- The dropped mechanisms are not restored: their tables come back empty so an
 -- older build starts, and the folded cohort stays historical (safe: it only
 -- prevents deletion).
@@ -136,6 +149,7 @@ SELECT 'storage-change:' || review_token, path FROM storage_change_review_paths;
 INSERT OR IGNORE INTO legacy_cleanup_review (generation_key, path)
 SELECT 'm4-historical:' || id, path FROM publications
  WHERE cohort = 'historical' AND error LIKE 'pre-delivery acquisition (migration 0040 review cohort)%';
+UPDATE publications SET state = 'discovered' WHERE download_id IS NULL AND manifest_source = 'none' AND state = 'import_failed';
 -- +goose StatementBegin
 CREATE TRIGGER prevent_download_delete_with_runner_delivery
 BEFORE DELETE ON downloads

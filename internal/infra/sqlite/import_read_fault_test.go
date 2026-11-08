@@ -20,12 +20,6 @@ func TestImportRecoveryRejectsIncompatibleStoredReceipts(t *testing.T) {
 			if _, _, err := db.DeliveryReceiptPage(t.Context(), 0, 100); err == nil {
 				t.Fatal("incompatible receipt disappeared from recovery page")
 			}
-			if _, err := db.DeliveryReceiptsForClient(t.Context(), r.ClientID, 100); err == nil {
-				t.Fatal("incompatible receipt disappeared from recovery inventory")
-			}
-			if _, err := db.DeliveryReceiptsNeedingSourceRefresh(t.Context(), r.ClientID, 100); err == nil {
-				t.Fatal("incompatible receipt authorized source refresh")
-			}
 			if after := importDurableSnapshot(t, db); after != before {
 				t.Fatal("failed decode mutated custody")
 			}
