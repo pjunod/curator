@@ -287,13 +287,7 @@ func writeImportState(ctx context.Context, tx *sql.Tx, key ImportAttemptKey, sta
 }
 
 func completeImportAttempt(ctx context.Context, tx *sql.Tx, a ImportAttempt, details ...string) error {
-	if a.PendingPublications > 0 {
-		return ErrImportPublicationPending
-	}
-	if a.Outcome == "cancelled" {
-		return ErrImportCancelled
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE import_attempt_controls SET outcome='completed',finalized_at=? WHERE download_id=? AND generation_key=? AND attempt_epoch=?`, time.Now().UnixMilli(), a.DownloadID, a.GenerationKey, a.Epoch); err != nil {
+	if err := finalizeImportAttempt(ctx, tx, a); err != nil {
 		return err
 	}
 	detail := "selected import work completed; committed library files retained"
@@ -398,6 +392,45 @@ func (d *DB) CompleteImportAttempt(ctx context.Context, key ImportAttemptKey, de
 		return ErrImportPlanChanged
 	}
 	if err = completeImportAttempt(ctx, tx, a, details...); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// finalizeImportAttempt marks an attempt completed without touching the
+// download row.
+func finalizeImportAttempt(ctx context.Context, tx *sql.Tx, a ImportAttempt) error {
+	if a.PendingPublications > 0 {
+		return ErrImportPublicationPending
+	}
+	if a.Outcome == "cancelled" {
+		return ErrImportCancelled
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE import_attempt_controls SET outcome='completed',finalized_at=? WHERE download_id=? AND generation_key=? AND attempt_epoch=?`, time.Now().UnixMilli(), a.DownloadID, a.GenerationKey, a.Epoch)
+	return err
+}
+
+// SettleImportAttempt is CompleteImportAttempt for an import that does not
+// decide the download row's state: a salvage publication imports under a row
+// that stays failed (pipeline contract v2, section 3.1).
+func (d *DB) SettleImportAttempt(ctx context.Context, key ImportAttemptKey) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	a, err := guardImportAttempt(ctx, tx, key)
+	if err != nil {
+		return err
+	}
+	var pending int
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM import_attempt_files WHERE download_id=? AND generation_key=? AND attempt_epoch=? AND outcome='pending'`, key.DownloadID, key.GenerationKey, key.Epoch).Scan(&pending); err != nil {
+		return err
+	}
+	if !a.PlanSealed || pending > 0 {
+		return ErrImportPlanChanged
+	}
+	if err = finalizeImportAttempt(ctx, tx, a); err != nil {
 		return err
 	}
 	return tx.Commit()

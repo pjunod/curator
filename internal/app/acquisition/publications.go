@@ -451,7 +451,13 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		return err
 	}
 	if w.State == "imported" {
-		if err := s.completeBoundImport(ctx, detail); err != nil {
+		// Only a completed publication decides the row: a salvage imports
+		// under a row that stays failed (contract section 3.1).
+		closeAttempt := func() error { return s.completeBoundImport(ctx, detail) }
+		if pub.Kind != "completed" {
+			closeAttempt = func() error { return s.settleBoundImport(ctx) }
+		}
+		if err := closeAttempt(); err != nil {
 			s.log.Warn("import attempt could not be closed", "download", dl.ID, "err", err)
 		}
 	}
