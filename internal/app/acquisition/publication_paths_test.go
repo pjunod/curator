@@ -317,19 +317,24 @@ func TestPublicationFileOutcomes(t *testing.T) {
 	})
 }
 
-// The plurx outbox row is written in the import's own transaction, and only
-// for enabled, import-subscribed, queued notifiers.
+// The outbox rows are written in the import's own transaction, and only for
+// enabled, import-subscribed notifiers: the Cinema one and the chat one (M5
+// gives chat notifiers a row each, attempted once), not the disabled one or
+// the one that listens to grabs only.
 func TestImportWritesTheOutboxInItsTransaction(t *testing.T) {
 	f := setupV2(t, nil)
+	ids := map[string]int64{}
 	for _, n := range []ports.NotifierConfig{
 		{Type: "plurx", Name: "cinema", OnImport: true, Enabled: true, Settings: map[string]string{"url": "http://plurx"}},
 		{Type: "plurx", Name: "off", OnImport: true, Enabled: false, Settings: map[string]string{"url": "http://plurx"}},
 		{Type: "plurx", Name: "grab-only", OnGrab: true, Enabled: true, Settings: map[string]string{"url": "http://plurx"}},
 		{Type: "webhook", Name: "chat", OnImport: true, Enabled: true, Settings: map[string]string{"url": "http://hook"}},
 	} {
-		if _, err := f.db.AddNotifier(f.ctx, n); err != nil {
+		saved, err := f.db.AddNotifier(f.ctx, n)
+		if err != nil {
 			t.Fatal(err)
 		}
+		ids[n.Name] = saved
 	}
 	dl := f.grab(1, epOne)
 	pub := f.publish("Test.Show.S01E01.job-101.runner-obx", "obx", map[string]string{epOne + ".mkv": "video"})
@@ -337,8 +342,13 @@ func TestImportWritesTheOutboxInItsTransaction(t *testing.T) {
 	if f.row(dl.ID).State != "imported" {
 		t.Fatalf("row = %s", f.row(dl.ID).State)
 	}
-	if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=?`, dl.ID); n != 1 {
-		t.Fatalf("outbox rows = %d, want one, for the enabled plurx notifier only", n)
+	if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=?`, dl.ID); n != 2 {
+		t.Fatalf("outbox rows = %d, want two: the enabled Cinema notifier and the enabled chat notifier", n)
+	}
+	for _, name := range []string{"cinema", "chat"} {
+		if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=? AND notifier_id=?`, dl.ID, ids[name]); n != 1 {
+			t.Errorf("notifier %s has %d rows, want one", name, n)
+		}
 	}
 }
 
