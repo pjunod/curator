@@ -635,14 +635,26 @@ clients default on; torrent clients default off because they may still be
 seeding. Curator verifies guarded local removal when a client no longer has
 the job. This setting never grants deletion authority inside a library root.
 
-Native Runner deliveries use a durable receipt and per-file cleanup ledger.
-Curator validates the accepted manifest, imports the selected files, and
-removes only files whose import, same-copy redundancy, or completed replacement
-scope has been recorded and rechecked. It does not treat the completed payload
-as one disposable directory: unresolved or recoverable siblings remain
-available in **Resolve**. Runner acceptance and Curator file cleanup retry
-independently. The legacy cleanup switch does not disable verified cleanup for
-new Runner deliveries.
+Native Runner downloads are cleaned up **per file**, by what became of each
+file of the publication (Activity → expand the row). A file leaves when it was
+*placed* and the library copy still has exactly its bytes (checked by digest,
+never by size), or when it was *discarded* (superseded, a duplicate, a sample,
+or discarded by you). *Unresolved* files stay, and so does the folder, until
+you **Place**, **Discard** or **Keep** them. Before each deletion Curator
+re-checks that the folder is still the same publication, that the file is
+still the one its manifest names, and that the download storage is still the
+same disk; if the storage changed (an unmounted share), nothing is deleted
+and the publication says why. Cleanup runs right after the import and again
+every hour. If the library copy changed (for example a different file of the
+same size is there now), the publication's file is kept as *unresolved* and
+the reason is shown, because it may be the only good copy. The **Clean up
+after import** switch does not apply to Runner publications.
+
+*Historical* publications — payloads that existed before v0.39.0, including
+the older pre-delivery review backlog — import normally but are never deleted,
+automatically or by **Delete selected files…**, until their review batch is
+approved (`POST /api/v1/downloads/publications/approve-cleanup` with the
+publication ids; the same per-file rule then removes only what has evidence).
 
 When you retry a held job in Runner, Curator clears its cached hold only after
 Runner supplies a newer control revision from the same instance, with the same
@@ -657,9 +669,8 @@ Final source checks appear as **Verifying publication**, separately from filenam
 restoration, so whole-file verification is not reported as rename time.
 
 Older Runner history rows are not adopted or cleaned merely because Runner now
-supports delivery receipts. They remain in the legacy review cohort until
-explicitly resolved, so a newly observed history row cannot silently authorize
-import or deletion for a current library copy.
+supports delivery receipts: their folders are historical publications, so a
+newly observed history row cannot silently authorize deletion.
 
 ### Completed folders — accounting survives an empty queue
 
@@ -913,8 +924,8 @@ What happens now:
 The retry is deliberately narrow. Only environmental failures repeat — a full
 disk, a read-only mount, a mount that vanished. An import that failed because
 Monarr could not parse the payload stays failed for a person to resolve.
-Migration-era Runner rows are checked against the durable legacy review cohort
-before an automatic retry can change their state.
+A payload held for review because its download storage was replaced is
+skipped: an automatic retry never changes its state.
 
 ## Reading the quality row
 
@@ -1261,6 +1272,8 @@ The tiles are read from `GET /api/v1/system/pipeline`.
   every Runner feed (`lost`), or the row was parked by an older build
   (`parked: …`). If Runner later reports the transfer, the row re-opens by
   itself.
+- **Awaiting approval** rows (a client with manual approval) show how long
+  they have waited for you: it is the one state with no deadline.
 - Expand a row to see its **publications** — one per Runner generation (the
   finished payload, a salvage of a failed one) — and what became of each
   file: *placed* (with the library path), *discarded* (superseded by the
@@ -1269,9 +1282,10 @@ The tiles are read from `GET /api/v1/system/pipeline`.
   with no parent, a file Curator cannot rank against another attempt).
   Unresolved files are kept and offer **Place**, **Discard** and **Keep**; a
   publication with unresolved media shows *import failed* until each is
-  decided. *historical* marks a publication that existed before this
-  version: it imports normally, and nothing deletes it until its review is
-  approved.
+  decided. A file whose bytes have left the folder says *removed from the
+  publication*. *historical* marks a publication that existed before v0.39.0:
+  it imports normally, and nothing deletes it until its review is approved
+  (*historical · cleanup approved* afterwards).
 - The mobile app (0.28.0) labels the same rows *held by Runner*, *held
   (stale)* and *failed (provisional)*; a hold's message is shown in grey, not
   as an error. Resolving publication files is web-only.
@@ -1317,32 +1331,22 @@ once plurx is healthy again.
 
 ## Runner payload cleanup
 
-Native Runner downloads have separate publication and processing-source
-ownership. Curator accepts the immutable publication manifest, then records
-per-file import and cleanup outcomes. It removes only files with committed
-placement, same-copy redundancy evidence, or an approved replacement scope;
-unknown and recoverable siblings stay in Resolve. A payload file whose exact
-bytes the library already holds for the same episodes, in the same format, is
-redundant even when that library file is flagged or of unverified quality —
-including a copy whose own placement a later copy of the same release
-replaced. A file selected by an in-progress replacement is left to it. A release's sample clip is
-never imported: the episode beside it imports normally and the sample is
-recorded as a known incidental file, including when Resolve's selection
-includes it. A manifest that holds only a sample (or only sidecars) is a
-failed import rather than an empty one marked imported. Valid manifest
-acceptance proceeds independently of that media verdict; the failure does not
-revoke an acceptance already recorded. Runner handles its own processing source
-after safe publication and durable notification, and reports that cleanup
-separately from Curator's acknowledgement and import.
+Runner owns its processing source and retires it itself; Curator never asks it
+to. Curator owns each publication folder under the completed root and removes
+it file by file, as described in [Cleaning up after a download](#cleaning-up-after-a-download):
+only *placed* files whose library copy still matches the manifest digest and
+*discarded* files leave, after the generation, the file and the storage are
+re-checked; the folder goes when only its manifest is left. A release's sample
+clip is never imported and is discarded. A manifest that holds only a sample
+(or only sidecars) is a failed import rather than an empty one marked imported.
 
-Activity and each completed-folder entry expose the durable lifecycle trace.
-Retry handoff, Runner source cleanup, and Curator publication cleanup
-independently; these actions do not redownload the release. The trace shows
-attempts, last and next attempt times, the blocking reason, and a warning after
-30 minutes. **Delete files…** is an explicit per-file discard for a verified
-accepted publication and leaves unselected siblings in place. Older Runner
-history rows remain in review until explicitly resolved; title or path matches
-do not establish ownership.
+Each completed-folder entry that a publication claims says which state holds
+it (historical, awaiting import, failed, cleanup pending) and why anything is
+still there. **Delete selected files…** on such an entry discards only its
+unresolved files and removes them through the same checks. The v1 receipt
+trace still shows the old Runner handoff; its **Retry Curator cleanup** runs
+the publication's per-file cleanup. Title or path matches never establish
+ownership.
 
 ## Recover media retained by Runner
 
@@ -1478,24 +1482,18 @@ is open, automatic acquisition excludes its original release for the selected
 item, copy and episodes. This exclusion does not globally blacklist the source.
 Download-scope review accepts files from the selected source only.
 
-The lifecycle detail shows pending file-deletion requests. **Cancel deletion
-request** stops its remaining work and preserves completed file outcomes and
-History. If an import or another storage action is active, cancellation reports
-busy immediately; retry after that action finishes. Other completed-folder
-scans and actions remain available. Review the current files before approving another selection. If a file
-is already absent on replay, History records confirmed absence; it does not claim
-that the retry deleted those bytes. A missing or superseded library placement
-protects the retained payload for review instead of retrying cleanup indefinitely.
-A library Curator cannot read at that moment (a permissions or mount problem) is
-not treated as a lost placement: cleanup waits and retries, and the trace shows
-"library placement could not be read; cleanup will retry".
+A publication file whose library copy is missing or changed is kept as
+*unresolved* with the reason instead of being retried forever. A library or
+download storage Curator cannot read at that moment (a permissions or mount
+problem) is not treated as lost evidence: cleanup waits and retries hourly, and
+the publication shows the reason.
 
-Historical acquisitions may finish importing automatically only when their
-persisted trace proves they were still grabbed or downloading before the original
-upgrade cutover. Ambiguous traces and completed or failed backlog remain held for
-explicit review. Import permission never removes the legacy cleanup fence. The fence applies per file: the most specific
-record holding a file decides, so a legacy review fence on a folder does not
-expose, or protect, an ordinary download inside or beside it.
+A payload whose download storage was intentionally replaced (below) is held for
+review: it does not import automatically and is not cleaned up until you
+select its files. The hold applies per file: the most specific record holding a
+file decides, so a hold on a folder does not expose, or protect, an ordinary
+download inside or beside it. (The older pre-delivery review cohort is now part
+of the historical publications.)
 
 If an automatic submission remains uncertain for thirty minutes on a client
 without request-token idempotency, Activity and History request operator review.

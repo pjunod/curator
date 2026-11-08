@@ -1,5 +1,124 @@
 # Monarr — Project Status
 
+## Pipeline contract v2, M4: per-file cleanup, dead v1 mechanisms removed — 2026-11-07 · v0.40.0
+
+**Status:** branch `claude/pipeline-v2-m4-curator` (stacked on
+`claude/pipeline-v2-m2-curator` @ 6e5fe39) · owner: Claude (Opus builder) ·
+pushed, **no PR** (by instruction), not reviewed, not merged, not deployed.
+Decision record: [ADR 0026](docs/adr/0026-pipeline-contract-v2.md) addendum
+(items 9-12); ADR 0021 marked partly superseded.
+
+Built (plan M4.1-3, IMPL_CURATOR section 6):
+
+- **Per-file, evidence-bound cleanup** (`publication_cleanup.go`): a
+  publication file leaves only when `placed` (placement recorded the manifest
+  SHA-256 and the library file still has it: same inode, else re-hashed) or
+  `discarded`; only on `live` publications or `historical` ones with
+  `cleanup_approved_at`; `unresolved`/`pending` never. Before each unlink:
+  generation (the directory's manifest, or the stored v1 manifest), file
+  identity (size + digest vs manifest, then an unchanged inode generation
+  since hashing, checked under the import-target and storage-decision locks),
+  storage identity of the completed root (`checkStorageIdentity`, twice).
+  Directory `rmdir`ed when only the manifest remains. Never size-only: a
+  manifest entry without a digest is kept. Evidence that no longer holds
+  demotes the file to `unresolved` (Resolve shows why; the sweep stops
+  re-reading it).
+- **One implementation** for: the post-import cleanup (cleanup lane, inline
+  when no workers), the hourly sweep (`CleanupPayloads` →
+  `sweepPublications`), Resolve → Discard, Storage → Delete selected files on
+  a publication directory (`DiscardPublicationFiles`: unresolved files only,
+  same checks — the operator "delete this leftover"), receipt "Retry Curator
+  cleanup", and the M7 approval (`POST /downloads/publications/approve-cleanup`).
+- `awaiting_import` shows its age in Activity (`stateEnteredAt` on the queue
+  item; `web/src/queueTime.ts`); publication files show *removed*; approved
+  historical publications are labelled.
+- **Migration 0073** (count check in Go before it runs: refuses, naming the
+  batch ids, while an operator's v1 explicit deletion request is unfinished):
+  storage-change path fences → `storage_change_review_paths`; the 0040 review
+  cohort folded into historical publications, then `legacy_cleanup_review`
+  and `legacy_inflight_import_evidence` dropped; deliveries cursor →
+  `runner_history_cursors.deliveries_after` (+ `history_read`, so a row made
+  only for that cursor still starts with continuity reconciliation);
+  `runner_delivery_cursors`, `runner_admission_poll_schedule`,
+  `runner_delivery_explicit_delete_{batches,files}` and the receipt delete
+  trigger dropped. Down migration recreates empty tables and keeps the folded
+  cohort fenced.
+
+Deleted, each verified first (callers grepped):
+
+- `delivery_cleanup.go` (-1,850): receipt-bound cleanup ledger, explicit
+  deletion batches, redundancy proofs; five helpers still used elsewhere moved
+  to `delivery_fs.go` (+137). The abandon route, its handler and its web
+  button; `queueDeliveryCleanup`; 18 receipt-cleanup DB methods.
+- `completed_delete.go` receipt coupling: whole-entry delete and the partial
+  sweep refuse publication directories; the storage-review per-file delete
+  stays (now the only "review" fence: storage change).
+- `retention.go` overlap: Clear / retention / dismissed-row deletion test
+  `publications.state != 'removed'` instead of v1 receipts (a publication
+  cascades with its row, so such a row is hidden, never deleted); removing a
+  publication marks its row's payload removed.
+- `season_cleanup.go`: verified **not** a duplicate — it serves only
+  non-Runner torrent partials (`delivery_expected=0`, set by
+  `season_stall.go`); kept, with the 0040 fence replaced by the
+  storage-review and publication fences.
+- 0040 review cohort: `LegacyCleanupReview`, `LegacyAutomaticImportReview`,
+  in-flight evidence; callers now use `StorageChangeReview` (kept).
+- Code the removals left unreferenced: `verifiedDeliveryFile`,
+  `replacementHasCurrentCommittedPlacement`, `tryLockStorageDecision`, the
+  `explicitDeliveryUnlink` test hook. Left for M6: the dead v1 receipt
+  *writers* in `delivery_receipts.go` (M2 left them; tests use them as
+  fixtures; the tables stay read-only one more release).
+
+Non-test line delta of `internal/app/acquisition/` since M2's head (6e5fe39):
+**+874 / -2,104**. Whole branch, non-test non-generated Go+SQL+TS: +1,389 /
+-2,822. Tests: +466 / -1,369 (tests of the removed ledger, batches and 0040
+cohort deleted; storage-change and review tests converted to the new fences).
+
+Tests added: `TestCompletedPublicationIsRemovedPerFileWithoutRunner` (c),
+`TestPartiallySelectedSeasonPack` (d, incl. the operator discard),
+`TestStorageIdentityChangeDeletesNothing` (e), `TestSameSizeDifferentContentIsNotDeleted`
+(f), `TestHistoricalCohortWaitsForApproval` (g),
+`TestReplacedManifestGenerationDeletesNothing`,
+`TestMigration0073RefusesWithLiveDependents`, `TestApprovePublicationCleanupHTTP`,
+retention tests rewritten on publications, `queueTime.test.ts`.
+
+Verified (fast lane): `go build ./...`; `go vet ./...`; `go test` of
+`internal/app/acquisition`, `internal/infra/sqlite`, `internal/api` (all pass
+except the known root-only `TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired`);
+web `tsc --noEmit`, `vitest run src/queueTime.test.ts src/api.test.ts`;
+`make lint`.
+
+Could not verify: `make test` / coverage floor, `make test-web`,
+`make test-e2e` (fast lane only, by instruction); no browser check of the
+Activity/Storage changes; no run against a real Runner M3 manifest or nuc3
+data; migration 0073 not run on a copy of production.
+
+Decisions for Paul:
+
+- **Columns not dropped** (plan M4.3 lists them): `parked_reason`,
+  `parked_at`, `superseded`, `delivery_expected`, `request_token_idempotent`,
+  `exact_transfer_correlation`. The count check is not only rows: M2 kept live
+  code on every one (season planner fences and operator cancellation for all
+  clients, the Runner `monarr-delivery` request parameter and native-torrent
+  precondition, the submission retry, qBittorrent tag correlation). Dropping
+  them is a redesign of those paths, so it needs scheduling, not a migration.
+- A manifest entry with no SHA-256 is **kept** (IMPL allows skipping the hash
+  with a log line; the M4 brief says never size-only).
+- Non-Runner clients keep their whole-payload cleanup (no manifest exists);
+  it never touches a directory a publication claims. IMPL section 10 says
+  cleanupPublication is the only unlink under a completed root; the other
+  remaining ones are this legacy-client path and the operator's Storage
+  actions (refused on publication directories).
+- Operator discards of a historical publication wait for its review batch
+  (consistent with M2's 409 on receipt cleanup).
+- The 0040 cohort is folded into the historical cohort rather than freed,
+  so dropping its fence frees nothing (contract section 7: no backlog
+  mutation).
+- An approval endpoint exists for M7 (`approve-cleanup`); no UI for it.
+- Docs: plan section 7 names `integration.md` sections 4-5; this repo's
+  numbered sections 4-5 are the plurx scan and delivery queue, so the cleanup
+  text went into *Pipeline contract v2 in Curator* as a new subsection.
+
 ## Pipeline contract v2, M2: Curator reducer, publications, replacement grabs — 2026-11-07 · v0.39.0 (mobile 0.28.0)
 
 **Status:** branch `claude/pipeline-v2-m2-curator` (stacked on
