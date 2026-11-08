@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/backoff"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -246,9 +247,7 @@ func (d *DB) ScheduleManualAdmissionRetry(ctx context.Context, id int64, now tim
 	if err := d.R.QueryRowContext(ctx, `SELECT manual_retry_attempts FROM downloads WHERE id=? AND intent='manual_additional'`, id).Scan(&attempts); err != nil {
 		return err
 	}
-	backoff := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
-	delay := backoff[min(attempts, len(backoff)-1)]
-	next := now.Add(delay)
+	next := now.Add(backoff.Retry.After(attempts))
 	providerAt := int64(0)
 	if len(providerDeadline) > 0 && providerDeadline[0].After(now) {
 		providerAt = providerDeadline[0].UnixMilli()
