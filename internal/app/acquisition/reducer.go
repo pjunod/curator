@@ -46,6 +46,22 @@ const HistoryRunnerFactMismatch = "runner_fact_mismatch"
 
 // observe applies one fact to one row.
 func (s *Service) observe(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, f ports.RunnerFact) error {
+	if f.Transfer == "" && dl.Transfer != "" {
+		// A fact naming only a job handle (job_control_changed, job_pp_stage)
+		// reaches a tokened row only when the queue says that handle is this
+		// row's token: after a Runner state wipe job ids are reused, and a
+		// handle alone would land a new job's facts on an old row.
+		token, known := s.queueToken(cfg.ID, string(f.Handle))
+		if token != dl.Transfer {
+			if known {
+				s.countFactMismatch(dl.ID, token)
+			}
+			s.log.Debug("runner fact dropped: no token, and the queue does not name this row's token for its handle",
+				"download", dl.ID, "handle", f.Handle, "queue_token", token, "source", f.Source)
+			return nil
+		}
+		f.Transfer = token
+	}
 	if f.Transfer != "" && dl.Transfer != "" && f.Transfer != dl.Transfer {
 		s.countFactMismatch(dl.ID, f.Transfer)
 		s.log.Debug("runner fact dropped: transfer token does not match the row", "download", dl.ID, "fact", f.Transfer, "source", f.Source)
@@ -189,7 +205,7 @@ func (s *Service) applyStatus(ctx context.Context, dl sqlite.Download, cfg ports
 		}
 	}
 	now := time.Now()
-	w := sqlite.RunnerStatusWrite{DownloadID: dl.ID, Transfer: dl.Transfer, Progress: st.Progress}
+	w := sqlite.RunnerStatusWrite{DownloadID: dl.ID, Transfer: dl.Transfer, Progress: st.Progress, Stage: st.Stage}
 	if st.Progress == 0 && dl.Progress > 0 {
 		w.Progress = dl.Progress
 	}
@@ -226,7 +242,10 @@ func (s *Service) applyStatus(ctx context.Context, dl sqlite.Download, cfg ports
 			w.Error = st.Message
 		}
 		w.DeadlineAt = dl.DeadlineAt
-		moved := w.Progress != dl.Progress || dl.State != "downloading" || dl.DeadlineAt.IsZero() || st.Stage != ""
+		// Movement is progress, a state change or a NEW post-processing
+		// stage; a job reporting the same stage poll after poll is not
+		// moving, so a stalled unpack goes overdue (review #2).
+		moved := w.Progress != dl.Progress || dl.State != "downloading" || dl.DeadlineAt.IsZero() || (st.Stage != "" && st.Stage != dl.RunnerStage)
 		if moved {
 			w.DeadlineAt = s.downloadingDeadline(dl)
 		}
@@ -510,14 +529,19 @@ func (s *Service) reconcileRunnerClient(ctx context.Context, cfg ports.ClientCon
 	seen := map[int64]bool{}
 	byTransfer := map[string]ports.DownloadStatus{}
 	byHandle := map[string]ports.DownloadStatus{}
+	tokens := map[string]string{}
 	for _, st := range statuses {
 		if st.Transfer != "" {
 			byTransfer[st.Transfer] = st
 		}
 		if st.Handle != "" {
 			byHandle[string(st.Handle)] = st
+			if st.Transfer != "" {
+				tokens[string(st.Handle)] = st.Transfer
+			}
 		}
 	}
+	s.queueTokens.Store(cfg.ID, tokens)
 	for _, dl := range rows {
 		if s.ImportRunning(dl.ID) {
 			seen[dl.ID] = true
@@ -618,6 +642,20 @@ func (s *Service) pollHistory(ctx context.Context, cfg ports.ClientConfig, feeds
 			return
 		}
 	}
+}
+
+// queueToken is the transfer token the client's last queue poll gave a job
+// handle, and whether the queue named that handle at all.
+func (s *Service) queueToken(clientID int64, handle string) (string, bool) {
+	if handle == "" {
+		return "", false
+	}
+	v, ok := s.queueTokens.Load(clientID)
+	if !ok {
+		return "", false
+	}
+	token, known := v.(map[string]string)[handle]
+	return token, known
 }
 
 // applyFeedFact routes a feed fact to its row by token. A fact for a

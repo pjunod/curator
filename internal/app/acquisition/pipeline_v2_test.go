@@ -888,3 +888,102 @@ func TestHistoricalCohortIsMarkedOnce(t *testing.T) {
 		t.Fatalf("second start marked %d", n)
 	}
 }
+
+// (review #1) A persistence outage after files were placed leaves the
+// publication offerable again, not stranded in importing: the next poll
+// completes it from the committed placements, with one library file.
+func TestPersistenceOutageMidImportRetriesFromDiscovered(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-101.runner-out", "out", map[string]string{epOne + ".mkv": "video"})
+	if _, err := f.db.W.ExecContext(f.ctx, `CREATE TRIGGER outage BEFORE UPDATE OF state ON publications WHEN NEW.state='imported'
+		BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path)
+	if p.State != "discovered" || !strings.Contains(p.Error, "disk I/O error") {
+		t.Fatalf("publication after the outage = %s %q, want discovered with the error", p.State, p.Error)
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `DROP TRIGGER outage`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.RefreshQueue(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	p, _, _ = f.db.PublicationByPath(f.ctx, pub.Path)
+	if got := f.row(dl.ID); got.State != "imported" || p.State != "imported" {
+		t.Fatalf("after recovery row %s (%s), publication %s, want both imported", got.State, got.Error, p.State)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM media_files WHERE media_item_id=?`, f.item); n != 1 {
+		t.Fatalf("library files = %d, want one (the retry reused the placement)", n)
+	}
+}
+
+// (review #2) A job reporting the same post-processing stage poll after poll
+// is not moving: its downloading deadline stays where it was, so a stalled
+// unpack goes overdue. A new stage is movement.
+func TestRepeatedStageDoesNotMoveTheDeadline(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	status := func(stage string) {
+		st := ports.DownloadStatus{Handle: ports.Handle(dl.Handle), Transfer: dl.Transfer, State: ports.StateDownloading, Progress: 1, Stage: stage}
+		f.observe(f.row(dl.ID), ports.RunnerFact{Kind: ports.FactStatus, Transfer: dl.Transfer, Status: &st, Source: "poll"})
+	}
+	status("unpack")
+	if got := f.row(dl.ID); got.RunnerStage != "unpack" || got.DeadlineAt.Before(time.Now()) {
+		t.Fatalf("first unpack: stage %q deadline %s, want stored and in the future", got.RunnerStage, got.DeadlineAt)
+	}
+	past := time.Now().Add(-time.Minute).UnixMilli()
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET deadline_at=? WHERE id=?`, past, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	status("unpack")
+	status("") // a tick carries no stage and keeps the stored one
+	status("unpack")
+	if got := f.row(dl.ID); got.DeadlineAt.UnixMilli() != past {
+		t.Fatalf("a repeated stage moved the deadline to %s", got.DeadlineAt)
+	}
+	if n, err := f.db.CountOverdueDownloads(f.ctx, time.Now()); err != nil || n != 1 {
+		t.Fatalf("overdue = %d (%v), want the stalled unpack", n, err)
+	}
+	status("repair")
+	if got := f.row(dl.ID); !got.DeadlineAt.After(time.Now()) || got.RunnerStage != "repair" {
+		t.Fatalf("a new stage: stage %q deadline %s, want moved", got.RunnerStage, got.DeadlineAt)
+	}
+}
+
+// (review #3) A fact carrying a job handle but no transfer token (a hold
+// from job_control_changed) reaches a tokened row only when the queue names
+// that handle as the row's token. After a Runner state wipe the same job id
+// belongs to a new transfer: the hold is dropped and counted.
+func TestHandleOnlyFactNeedsTheQueueToken(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	hold := func() {
+		st := ports.DownloadStatus{Handle: ports.Handle(dl.Handle), State: ports.StateQueued, OperationalState: "held", Message: "waiting for disk"}
+		f.svc.handleRunnerEvent(f.ctx, f.cfg, ports.ClientEvent{Kind: ports.EventStage, Fact: &ports.RunnerFact{Kind: ports.FactStatus,
+			Handle: ports.Handle(dl.Handle), Status: &st, Source: "event 9"}}, map[int64]float64{}, new(time.Time))
+	}
+	// No queue poll yet: nothing vouches for the handle.
+	hold()
+	if got := f.row(dl.ID); got.State != "downloading" {
+		t.Fatalf("an unvouched handle-only fact moved the row to %s", got.State)
+	}
+	// The queue says job 101 is another transfer now (a reused job id).
+	f.svc.queueTokens.Store(f.cfg.ID, map[string]string{dl.Handle: "t-new-after-wipe"})
+	before := f.svc.FactMismatches()
+	hold()
+	if got := f.row(dl.ID); got.State != "downloading" {
+		t.Fatalf("a reused job id's hold landed on the old row: %s", got.State)
+	}
+	if f.svc.FactMismatches() != before+1 {
+		t.Fatalf("mismatches = %d, want +1", f.svc.FactMismatches())
+	}
+	// The queue names the row's own token for the handle: the hold applies.
+	f.svc.queueTokens.Store(f.cfg.ID, map[string]string{dl.Handle: dl.Transfer})
+	hold()
+	if got := f.row(dl.ID); got.State != "held" || got.Error != "waiting for disk" {
+		t.Fatalf("a vouched handle-only hold = %s %q, want held", got.State, got.Error)
+	}
+}
