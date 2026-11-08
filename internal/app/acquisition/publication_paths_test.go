@@ -182,8 +182,10 @@ func TestCrossVolumeCopyIsVerified(t *testing.T) {
 			f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
 			p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path)
 			if tc.want == "" {
-				if p.State != "imported" || !p.CrossVolume {
-					t.Fatalf("publication = %s %q cross=%v, want imported", p.State, p.Error, p.CrossVolume)
+				// The verified copy is placement evidence, so the per-file
+				// cleanup (M4) removes the publication once it imports.
+				if p.State != "removed" || !p.CrossVolume || f.count(`SELECT COUNT(*) FROM media_files`) != 1 {
+					t.Fatalf("publication = %s %q cross=%v, want imported and cleaned up with the library copy kept", p.State, p.Error, p.CrossVolume)
 				}
 				return
 			}
@@ -237,8 +239,9 @@ func TestManualApprovalHoldsThePublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ = f.db.GetPublication(f.ctx, p.ID)
-	if got := f.row(dl.ID); got.State != "imported" || p.State != "imported" {
-		t.Fatalf("after approval row %s publication %s (%s), want imported", got.State, p.State, got.Error)
+	// Imported, then removed by the per-file cleanup (M4).
+	if got := f.row(dl.ID); got.State != "imported" || p.State != "removed" {
+		t.Fatalf("after approval row %s publication %s (%s), want imported and the publication cleaned up", got.State, p.State, got.Error)
 	}
 }
 
@@ -303,8 +306,10 @@ func TestPublicationFileOutcomes(t *testing.T) {
 		if len(files) != 1 || files[0].Outcome != "discarded" || files[0].DiscardReason != "duplicate" {
 			t.Fatalf("files = %+v, want discarded{duplicate}", files)
 		}
-		if p.State != "imported" || f.row(second.ID).State != "imported" {
-			t.Fatalf("publication %s row %s, want settled with nothing placed", p.State, f.row(second.ID).State)
+		// A discarded file is cleanup evidence too (M4): the settled
+		// publication is removed.
+		if p.State != "removed" || f.row(second.ID).State != "imported" {
+			t.Fatalf("publication %s row %s, want settled with nothing placed and cleaned up", p.State, f.row(second.ID).State)
 		}
 		if last := f.row(second.ID).Handoff; !strings.Contains(last[len(last)-1].Detail, "nothing placed") {
 			t.Fatalf("handoff = %+v, want the nothing-placed detail", last[len(last)-1])

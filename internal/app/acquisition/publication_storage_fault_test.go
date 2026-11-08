@@ -51,9 +51,15 @@ func TestPublicationImportStorageFaultsNeverDuplicateOrOrphan(t *testing.T) {
 					t.Fatalf("after failure (err=%v): %d publications, %d files, %d placement receipts, %d imported events", faulted, publications, files, receipts, imported)
 				}
 				switch {
-				case got.State == "imported" && p.State == "imported":
+				case got.State == "imported" && (p.State == "imported" || p.State == "removed"):
+					// Removed is the per-file cleanup (M4) finishing after the
+					// import; a fault inside that cleanup leaves the
+					// publication imported for the next pass.
 					if files != 1 || imported != 1 {
 						t.Fatalf("imported with %d files and %d imported events", files, imported)
+					}
+					if !sf.fired.Load() && p.State != "removed" {
+						t.Fatalf("unfaulted import left the publication %s (%s), want it cleaned up", p.State, p.Error)
 					}
 				case got.State == "failed" && p.State == "import_failed" && sf.fired.Load():
 					// A failure inside placement ends the import visibly, with

@@ -616,8 +616,9 @@ func TestDeliveriesCompletionOfAFailedRowIsASalvage(t *testing.T) {
 	f.observe(failedRow, terminalFact(failedRow, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "deliveries 4"))
 	got := f.row(dl.ID)
 	p, ok, _ := f.db.PublicationByPath(f.ctx, pub.Path)
-	if !ok || p.Kind != "salvage" || p.State != "imported" {
-		t.Fatalf("publication = %+v, want an imported salvage", p)
+	// Imported, then removed by the per-file cleanup (M4).
+	if !ok || p.Kind != "salvage" || p.State != "removed" {
+		t.Fatalf("publication = %+v, want a salvage imported and cleaned up", p)
 	}
 	if got.State != "failed" || got.RunnerOutcome != "failed" {
 		t.Fatalf("row = %s/%s, want still failed for re-grab purposes", got.State, got.RunnerOutcome)

@@ -935,8 +935,10 @@ func TestPersistenceOutageMidImportRetriesFromDiscovered(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _, _ = f.db.PublicationByPath(f.ctx, pub.Path)
-	if got := f.row(dl.ID); got.State != "imported" || p.State != "imported" {
-		t.Fatalf("after recovery row %s (%s), publication %s, want both imported", got.State, got.Error, p.State)
+	// Imported, then removed by the per-file cleanup (M4) as every file had
+	// evidence.
+	if got := f.row(dl.ID); got.State != "imported" || p.State != "removed" {
+		t.Fatalf("after recovery row %s (%s), publication %s, want the row imported and the publication imported and cleaned up", got.State, got.Error, p.State)
 	}
 	if n := f.count(`SELECT COUNT(*) FROM media_files WHERE media_item_id=?`, f.item); n != 1 {
 		t.Fatalf("library files = %d, want one (the retry reused the placement)", n)
