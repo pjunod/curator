@@ -111,7 +111,8 @@ func TestTailEveryEventReachesOnlyItsSubscribers(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // let the subscriptions attach
 
 	b.Publish(acquisition.ReleaseGrabbed{Title: "X.2024.1080p", Indexer: "nzbs", Protocol: "usenet"})
-	b.Publish(acquisition.ImportCompleted{Release: "X.2024.1080p", Files: 1})
+	queueImport(t, db, ctx, acquisition.ImportCompleted{Release: "X.2024.1080p", Files: 1})
+	d.deliverDue(ctx)
 	b.Publish(acquisition.ImportFailed{Release: "X.2024.1080p", Reason: "unpack failed"})
 	b.Publish(health.Changed{Overall: "degraded"})
 
@@ -157,10 +158,11 @@ func TestTailOneBrokenNotifierDoesNotSuppressTheRest(t *testing.T) {
 
 	// A transfer id on the event: the failure log is the only place it gets
 	// to say WHICH handoff broke, so the notification has to carry it.
-	b.Publish(acquisition.ImportCompleted{
+	queueImport(t, db, ctx, acquisition.ImportCompleted{
 		Release: "X.2024.1080p", Files: 1, Transfer: "t-42-a3f9c1",
 		Paths: []string{"/media/movies/X (2024)/X.mkv"},
 	})
+	d.deliverDue(ctx)
 
 	waitUntil(t, "the healthy notifier to be reached", func() bool {
 		return len(targets["healthy"].got()) == 1
@@ -170,7 +172,7 @@ func TestTailOneBrokenNotifierDoesNotSuppressTheRest(t *testing.T) {
 	}
 }
 
-// The import event carries the same facts twice on purpose: a sentence for
+// The import notification carries the same facts twice on purpose: a sentence for
 // the notifiers that render text, and the structured half for the ones that
 // act on it. A media server told "something changed" pays a full library
 // sweep; told "this directory is tmdb 949" it does one folder.
@@ -192,9 +194,8 @@ func TestTailAnImportCarriesBothItsSentenceAndItsFacts(t *testing.T) {
 		mu.Unlock()
 	}}
 	d := New(db, b, nil, func(ports.NotifierConfig) ports.Notifier { return target })
-	go d.Run(ctx)
-	time.Sleep(50 * time.Millisecond)
-	b.Publish(importEvent(42))
+	queueImport(t, db, ctx, importEvent(42))
+	d.deliverDue(ctx)
 
 	waitUntil(t, "the import notification", func() bool { return len(target.got()) == 1 })
 	mu.Lock()
@@ -285,13 +286,10 @@ func TestTailADeliveryIsVisibleOnTheInFlightViewWhileItRuns(t *testing.T) {
 		}
 		mu.Unlock()
 	}}
-	db, b, d, ctx := queueFixture(t, target)
+	db, _, d, ctx := queueFixture(t, target)
 	d = d.WithRegistry(reg)
 
-	go d.Run(ctx)
-	time.Sleep(50 * time.Millisecond)
-	b.Publish(importEvent(42))
-	waitForQueue(t, db, ctx)
+	queueImport(t, db, ctx, importEvent(42))
 
 	d.deliverDue(ctx)
 
@@ -324,13 +322,10 @@ func TestTailARetryOnTheInFlightViewSaysWhichAttemptItIs(t *testing.T) {
 		}
 		mu.Unlock()
 	}}
-	db, b, d, ctx := queueFixture(t, target)
+	db, _, d, ctx := queueFixture(t, target)
 	d = d.WithRegistry(reg)
 
-	go d.Run(ctx)
-	time.Sleep(50 * time.Millisecond)
-	b.Publish(importEvent(42))
-	waitForQueue(t, db, ctx)
+	queueImport(t, db, ctx, importEvent(42))
 
 	d.deliverDue(ctx)
 	rows, _ := db.ListDeliveries(ctx, 1, 10)
@@ -361,9 +356,7 @@ func TestTailADeliveryToADeletedNotifierIsSettledNotRetried(t *testing.T) {
 
 	// Queue against an id that does not exist — the state left behind when
 	// somebody removes a notifier between the import and the delivery.
-	if _, err := db.EnqueueDelivery(ctx, 9999, 0, "import", `{"event":"import"}`); err != nil {
-		t.Fatal(err)
-	}
+	enqueueRaw(t, db, ctx, 9999, `{"event":"import"}`)
 	d.deliverDue(ctx)
 
 	rows, err := db.ListDeliveries(ctx, 9999, 10)
@@ -391,9 +384,7 @@ func TestTailAnUnreadablePayloadIsPermanent(t *testing.T) {
 	target := &sink{}
 	db, _, d, ctx := queueFixture(t, target)
 
-	if _, err := db.EnqueueDelivery(ctx, 1, 0, "import", `{"event":`); err != nil {
-		t.Fatal(err)
-	}
+	enqueueRaw(t, db, ctx, 1, `{"event":`)
 	d.deliverDue(ctx)
 
 	rows, _ := db.ListDeliveries(ctx, 1, 10)
@@ -415,9 +406,7 @@ func TestTailRunDeliveriesDrainsTheQueueOnItsOwnTimer(t *testing.T) {
 	target := &sink{result: "scanned → plurx item 1201"}
 	db, _, d, ctx := queueFixture(t, target)
 
-	if _, err := db.EnqueueDelivery(ctx, 1, 0, "import", `{"event":"import"}`); err != nil {
-		t.Fatal(err)
-	}
+	enqueueRaw(t, db, ctx, 1, `{"event":"import"}`)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan struct{})
@@ -442,9 +431,7 @@ func TestTailACancelledContextStopsTheDrain(t *testing.T) {
 	target := &sink{}
 	db, _, d, ctx := queueFixture(t, target)
 	for i := 0; i < 3; i++ {
-		if _, err := db.EnqueueDelivery(ctx, 1, 0, "import", `{"event":"import"}`); err != nil {
-			t.Fatal(err)
-		}
+		enqueueRaw(t, db, ctx, 1, `{"event":"import"}`)
 	}
 	dead, cancel := context.WithCancel(ctx)
 	cancel()
@@ -462,9 +449,7 @@ func TestTailADeliveryWithNoDownloadWritesNoTrace(t *testing.T) {
 	target := &sink{err: errors.New("connection refused"), permanent: true}
 	db, _, d, ctx := queueFixture(t, target)
 
-	if _, err := db.EnqueueDelivery(ctx, 1, 0, "import", `{"event":"import"}`); err != nil {
-		t.Fatal(err)
-	}
+	enqueueRaw(t, db, ctx, 1, `{"event":"import"}`)
 	d.deliverDue(ctx) // must not panic or write a step for download 0
 
 	rows, _ := db.ListDeliveries(ctx, 1, 10)
@@ -478,7 +463,7 @@ func TestTailADeliveryWithNoDownloadWritesNoTrace(t *testing.T) {
 // entry has to answer that without a second lookup.
 func TestTailASuccessfulDeliveryRecordsPlurxsAnswerOnTheTrace(t *testing.T) {
 	target := &sink{result: "scanned → plurx item 1201"}
-	db, b, d, ctx := queueFixture(t, target)
+	db, _, d, ctx := queueFixture(t, target)
 
 	item, err := db.CreateMediaItem(ctx, tailMovie())
 	if err != nil {
@@ -490,10 +475,7 @@ func TestTailASuccessfulDeliveryRecordsPlurxsAnswerOnTheTrace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go d.Run(ctx)
-	time.Sleep(50 * time.Millisecond)
-	b.Publish(importEvent(dl))
-	waitForQueue(t, db, ctx)
+	queueImport(t, db, ctx, importEvent(dl))
 	d.deliverDue(ctx)
 
 	trace, err := db.GetDownload(ctx, dl)
@@ -517,7 +499,7 @@ func TestTailASuccessfulDeliveryRecordsPlurxsAnswerOnTheTrace(t *testing.T) {
 // "nobody ever told plurx", and only one of them is a problem.
 func TestTailASilentSuccessStillWritesATrace(t *testing.T) {
 	target := &sink{} // no Delivery() result
-	db, b, d, ctx := queueFixture(t, target)
+	db, _, d, ctx := queueFixture(t, target)
 
 	item, err := db.CreateMediaItem(ctx, tailMovie())
 	if err != nil {
@@ -529,10 +511,7 @@ func TestTailASilentSuccessStillWritesATrace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go d.Run(ctx)
-	time.Sleep(50 * time.Millisecond)
-	b.Publish(importEvent(dl))
-	waitForQueue(t, db, ctx)
+	queueImport(t, db, ctx, importEvent(dl))
 	d.deliverDue(ctx)
 
 	trace, err := db.GetDownload(ctx, dl)
@@ -545,7 +524,7 @@ func TestTailASilentSuccessStillWritesATrace(t *testing.T) {
 			detail = h.Detail
 		}
 	}
-	if detail != "plurx notified" {
+	if detail != "plurx notified — /media/movies/Heat (1995)" {
 		t.Errorf("trace detail = %q, want a plain confirmation", detail)
 	}
 }
@@ -571,5 +550,14 @@ func TestTailAnUnreadableStoreIsLoggedNotFatal(t *testing.T) {
 
 	if len(target.got()) != 0 {
 		t.Error("notifications were sent from a store that could not be read")
+	}
+}
+
+// enqueueRaw writes one outbox row as an older build would have: no key, no
+// directory, whatever payload it carried.
+func enqueueRaw(t *testing.T, db *sqlite.DB, ctx context.Context, notifierID int64, payload string) {
+	t.Helper()
+	if err := db.EnqueueDeliveries(ctx, []sqlite.OutboxWrite{{NotifierID: notifierID, Event: "import", Payload: payload}}); err != nil {
+		t.Fatal(err)
 	}
 }

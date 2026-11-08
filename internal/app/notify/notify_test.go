@@ -68,8 +68,8 @@ func TestDispatcherRoutesByFlags(t *testing.T) {
 
 	// A grab: hook has OnGrab=false; plex is refresh-only (import events only).
 	b.Publish(acquisition.ReleaseGrabbed{Title: "X.2024.1080p"})
-	// An import: both fire.
-	b.Publish(acquisition.ImportCompleted{
+	// An import: both fire, from the rows the import wrote.
+	queueImport(t, db, ctx, acquisition.ImportCompleted{
 		MediaItemID: 84, Release: "The.Dispossessed.EPUB", Files: 1,
 		MediaItemKind: "book", Title: "The Dispossessed",
 		BookTitle: "The Dispossessed", BookAuthor: "Ursula K. Le Guin",
@@ -78,6 +78,7 @@ func TestDispatcherRoutesByFlags(t *testing.T) {
 		BookEditionID: "curator:item:84:ebook",
 		BookCoverURL:  "https://covers.openlibrary.org/b/id/123-L.jpg",
 	})
+	d.deliverDue(ctx)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -189,27 +190,16 @@ func TestAPlurxNotificationIsQueuedAndThenDelivered(t *testing.T) {
 
 	go d.Run(ctx)
 	time.Sleep(50 * time.Millisecond)
+	// The bus carries the import as a live signal only; nobody is told
+	// from it (contract section 4.1).
 	b.Publish(importEvent(0))
-
-	// It is a row before it is an attempt.
-	var queuedRow sqlite.Delivery
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		rows, err := db.ListDeliveries(ctx, 1, 10)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(rows) == 1 {
-			queuedRow = rows[0]
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	if rows, _ := db.ListDeliveries(ctx, 1, 10); len(rows) != 0 || target.attempts() != 0 {
+		t.Fatalf("the bus event queued %d rows / sent %d — notifications come from the import's own rows", len(rows), target.attempts())
 	}
-	if queuedRow.ID == 0 {
-		t.Fatal("the import was never queued — nothing would survive a restart")
-	}
-	if target.attempts() != 0 {
-		t.Error("the dispatcher sent inline; the queue is meant to own delivery")
+	queueImport(t, db, ctx, importEvent(0))
+	if rows, _ := db.ListDeliveries(ctx, 1, 10); len(rows) != 1 || rows[0].Directory != "/media/movies/Heat (1995)" || rows[0].IdempotencyKey == "" {
+		t.Fatalf("rows = %+v, want one sub-delivery for the one directory", rows)
 	}
 
 	d.deliverDue(ctx)
@@ -232,15 +222,13 @@ func TestAPlurxNotificationIsQueuedAndThenDelivered(t *testing.T) {
 	}
 }
 
-// A delivery that ran out its schedule is not gone: putting it back on the
-// queue makes the worker send it again with the schedule starting over, and
-// a plurx that is healthy by then gets the scan it missed. The 2026-09-28
-// wedge — plurx refusing every scan for a day — left a column of failed
-// rows that were all fine to send once it was fixed, and that is the case
-// this exists for.
+// A delivery that failed permanently is not gone: once the cause is fixed
+// (a key given its scope, a root mounted where Cinema looks), putting it back
+// on the queue makes the worker send it again with the schedule starting
+// over and a fresh attempt, and Cinema scans afresh.
 func TestAFailedDeliveryCanBeRequeuedAndThenDelivered(t *testing.T) {
-	target := &sink{err: errors.New("plurx returned 503: the durable queue refused this request")}
-	db, b, d, ctx := queueFixture(t, target)
+	target := &sink{err: errors.New("the key is valid but lacks the scan:trigger scope (403)"), permanent: true}
+	db, _, d, ctx := queueFixture(t, target)
 	item, err := db.CreateMediaItem(ctx, domain.MediaItem{
 		Kind: domain.KindMovie, Title: "Heat", Year: 1995, Monitored: true,
 	})
@@ -255,22 +243,16 @@ func TestAFailedDeliveryCanBeRequeuedAndThenDelivered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	go d.Run(ctx)
-	time.Sleep(50 * time.Millisecond)
-	b.Publish(importEvent(dl))
-	waitForQueue(t, db, ctx)
+	queueImport(t, db, ctx, importEvent(dl))
+	d.deliverDue(ctx)
 	rows, _ := db.ListDeliveries(ctx, 1, 10)
-	for i := 0; i <= len(deliveryBackoff); i++ {
-		forceDue(t, db, ctx, rows[0].ID)
-		d.deliverDue(ctx)
-		rows, _ = db.ListDeliveries(ctx, 1, 10)
-	}
 	if rows[0].Status != "failed" {
-		t.Fatalf("status = %q after exhausting the schedule, want failed", rows[0].Status)
+		t.Fatalf("status = %q after a permanent failure, want failed", rows[0].Status)
 	}
 	exhausted := target.attempts()
+	firstAttempt := rows[0].Attempt
 
-	// plurx is healthy again; the operator presses Retry.
+	// The key gains its scope; the operator presses Retry.
 	target.mu.Lock()
 	target.err, target.result = nil, "scanned → plurx item 1201"
 	target.mu.Unlock()
@@ -291,6 +273,9 @@ func TestAFailedDeliveryCanBeRequeuedAndThenDelivered(t *testing.T) {
 	}
 	if rows[0].LastError == "" {
 		t.Error("the reason it failed must stay readable until the next attempt replaces it")
+	}
+	if rows[0].Attempt != firstAttempt+1 {
+		t.Errorf("attempt = %d after Retry, want %d: the same key, a fresh scan", rows[0].Attempt, firstAttempt+1)
 	}
 
 	d.deliverDue(ctx)
@@ -324,18 +309,20 @@ func TestAFailedDeliveryCanBeRequeuedAndThenDelivered(t *testing.T) {
 			steps = append(steps, h.Detail)
 		}
 	}
-	if len(steps) != 2 || !strings.Contains(steps[0], "failed after 4 attempt") ||
+	if len(steps) != 2 || !strings.Contains(steps[0], "failed after 1 attempt") ||
 		!strings.Contains(steps[1], "scanned → plurx item 1201") {
 		t.Errorf("notify_plurx steps = %q, want the failure and then the delivery", steps)
 	}
 }
 
-// A dead plurx is retried on a schedule that outlives the process, and
-// eventually gives up and says so on the download's own trace — which is
-// where §8 sends somebody asking "imported, but not in plurx".
-func TestADeadPlurxIsRetriedThenRecordedOnTheTrace(t *testing.T) {
+// A dead plurx is retried on a schedule that outlives the process and never
+// ends for a transient failure (contract section 4.1): 5 s, 30 s, 2 m, 5 m,
+// 15 m, 1 h, then hourly. A missed scan is a file that never appears in the
+// library, so giving up is not an outcome; the delivery log shows it as a
+// warning after half an hour instead.
+func TestADeadPlurxIsRetriedWithoutEnd(t *testing.T) {
 	target := &sink{err: errors.New("connection refused")}
-	db, b, d, ctx := queueFixture(t, target)
+	db, _, d, ctx := queueFixture(t, target)
 
 	item, err := db.CreateMediaItem(ctx, domain.MediaItem{
 		Kind: domain.KindMovie, Title: "Heat", Year: 1995, Monitored: true,
@@ -350,55 +337,37 @@ func TestADeadPlurxIsRetriedThenRecordedOnTheTrace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	queueImport(t, db, ctx, importEvent(dl))
 
-	go d.Run(ctx)
-	time.Sleep(50 * time.Millisecond)
-	b.Publish(importEvent(dl))
-	waitForQueue(t, db, ctx)
-
-	// Attempt 1 fails and schedules a retry rather than giving up.
-	d.deliverDue(ctx)
-	rows, _ := db.ListDeliveries(ctx, 1, 10)
-	if rows[0].Status != "pending" {
-		t.Fatalf("status after one failure = %q, want pending", rows[0].Status)
-	}
-	if rows[0].NextAt <= time.Now().UnixMilli() {
-		t.Error("the retry is due immediately — the backoff is not being applied")
-	}
-	if rows[0].LastError == "" {
-		t.Error("a pending retry must say what went wrong so far")
-	}
-
-	// Run the schedule out. Each pass is forced due, standing in for the
-	// wall-clock wait the worker would do.
-	for i := 0; i < len(deliveryBackoff); i++ {
-		forceDue(t, db, ctx, rows[0].ID)
+	want := []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute, 5 * time.Minute,
+		15 * time.Minute, time.Hour, time.Hour, time.Hour, time.Hour, time.Hour}
+	var rows []sqlite.Delivery
+	for i, gap := range want {
+		before := time.Now()
+		if i > 0 {
+			forceDue(t, db, ctx, rows[0].ID)
+		}
 		d.deliverDue(ctx)
 		rows, _ = db.ListDeliveries(ctx, 1, 10)
+		if rows[0].Status != "pending" {
+			t.Fatalf("try %d: status = %q, want pending — a transient failure never ends a delivery", i+1, rows[0].Status)
+		}
+		got := time.UnixMilli(rows[0].NextAt).Sub(before)
+		if got < gap-time.Second || got > gap+2*time.Second {
+			t.Errorf("try %d: next try in %v, want %v", i+1, got, gap)
+		}
+		if rows[0].LastError == "" {
+			t.Error("a pending retry must say what went wrong so far")
+		}
 	}
-	if rows[0].Status != "failed" {
-		t.Fatalf("status = %q after exhausting the schedule, want failed", rows[0].Status)
-	}
-	if want := len(deliveryBackoff) + 1; int(rows[0].Attempts) != want {
-		t.Errorf("attempts = %d, want %d (the first try plus %d retries)",
-			rows[0].Attempts, want, len(deliveryBackoff))
-	}
-
 	trace, err := db.GetDownload(ctx, dl)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var step sqlite.HandoffEntry
 	for _, h := range trace.Handoff {
 		if h.Step == "notify_plurx" {
-			step = h
+			t.Errorf("a delivery still being retried wrote a final trace step: %q", h.Detail)
 		}
-	}
-	if step.Step == "" {
-		t.Fatal("no notify_plurx step — the trace is where §8 sends people for exactly this")
-	}
-	if !strings.Contains(step.Detail, "connection refused") {
-		t.Errorf("the trace must say why, got %q", step.Detail)
 	}
 	if trace.State != "imported" {
 		t.Errorf("state = %q — a late notification must not move the download backwards", trace.State)
@@ -409,12 +378,8 @@ func TestADeadPlurxIsRetriedThenRecordedOnTheTrace(t *testing.T) {
 // moment somebody reads the reason.
 func TestAPermanentFailureIsNotRetried(t *testing.T) {
 	target := &sink{err: errors.New("lacks the scan:trigger scope"), permanent: true}
-	db, b, d, ctx := queueFixture(t, target)
-
-	go d.Run(ctx)
-	time.Sleep(50 * time.Millisecond)
-	b.Publish(importEvent(0))
-	waitForQueue(t, db, ctx)
+	db, _, d, ctx := queueFixture(t, target)
+	queueImport(t, db, ctx, importEvent(0))
 
 	d.deliverDue(ctx)
 	rows, _ := db.ListDeliveries(ctx, 1, 10)
@@ -426,20 +391,21 @@ func TestAPermanentFailureIsNotRetried(t *testing.T) {
 	}
 }
 
-func waitForQueue(t *testing.T, db *sqlite.DB, ctx context.Context) {
+// queueImport writes the outbox rows an import writes, for the notifiers
+// configured now — the only way an import reaches a notifier.
+func queueImport(t *testing.T, db *sqlite.DB, ctx context.Context, e acquisition.ImportCompleted) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		rows, err := db.ListDeliveries(ctx, 1, 10)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(rows) > 0 {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	notifiers, err := db.ListNotifiers(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatal("nothing was queued")
+	rows, _, err := acquisition.ImportOutbox(notifiers, e, "gen-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnqueueDeliveries(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // forceDue brings a scheduled retry forward, so a test exercises the
@@ -455,7 +421,7 @@ func forceDue(t *testing.T, db *sqlite.DB, ctx context.Context, id int64) {
 			continue
 		}
 		r.NextAt = time.Now().Add(-time.Second).UnixMilli()
-		if err := db.SettleDelivery(ctx, r); err != nil {
+		if err := db.SettleDelivery(ctx, r, sqlite.DeliveryTiming{}); err != nil {
 			t.Fatal(err)
 		}
 	}

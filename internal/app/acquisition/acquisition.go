@@ -63,7 +63,11 @@ type (
 		Indexer     string `json:"indexer"`
 		Protocol    string `json:"protocol"`
 	}
-	// ImportCompleted is published after files land in the library.
+	// ImportCompleted is published after files land in the library, as a
+	// live signal (the UI's event stream). It is NOT how anybody is told:
+	// every notification of an import is a notifier_deliveries row written
+	// in the import's own transaction (pipeline contract v2 section 4.1),
+	// because the bus drops events for a subscriber whose buffer is full.
 	//
 	// It carries the paths and the ids because of who reads it. A
 	// notification only needs a sentence; a media server needs to know
@@ -71,8 +75,8 @@ type (
 	// changed, go and look" costs a full library sweep and can still match
 	// the wrong film from a folder name — telling it "this directory is
 	// tmdb 949" costs one folder and cannot be mismatched. None of it can
-	// be reconstructed downstream: the bus event is the only source the
-	// notifier gets, so what is not on here cannot be sent (plan §5.4).
+	// be reconstructed downstream: what is not on here cannot be put in the
+	// outbox rows built from it (plan §5.4).
 	ImportCompleted struct {
 		MediaItemID int64  `json:"mediaItemId"`
 		Release     string `json:"release"`
@@ -113,11 +117,12 @@ type (
 		// (contract §3.1), so one grep spans every application it crossed.
 		Transfer string `json:"transfer,omitempty"`
 		// PublicationID is the publication this import came from (pipeline
-		// v2); Outboxed says its durable notifications were already written
-		// in the import's own transaction, so the dispatcher must not queue
-		// them again.
+		// v2), 0 for an import that did not come from one.
 		PublicationID int64 `json:"publicationId,omitempty"`
-		Outboxed      bool  `json:"outboxed,omitempty"`
+		// Expected are the placed media files per directory of Dirs, with
+		// the size and nanosecond mtime they had once placed: what Cinema
+		// must report placed before the import counts as visible there.
+		Expected map[string][]ports.ExpectedFile `json:"expected,omitempty"`
 	}
 	// ImportFailed is published when a completed download cannot import.
 	ImportFailed struct {

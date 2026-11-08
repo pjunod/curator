@@ -1180,10 +1180,14 @@ func TestAcqFailedDeliveriesCanBeRetried(t *testing.T) {
 
 	settle := func(status string) sqlite.Delivery {
 		t.Helper()
-		d, err := e.db.EnqueueDelivery(ctx, created.Id, 0, "import", `{}`)
-		if err != nil {
+		if err := e.db.EnqueueDeliveries(ctx, []sqlite.OutboxWrite{{NotifierID: created.Id, Event: "import", Payload: `{}`}}); err != nil {
 			t.Fatal(err)
 		}
+		rows, err := e.db.ListDeliveries(ctx, created.Id, 1)
+		if err != nil || len(rows) != 1 {
+			t.Fatal(rows, err)
+		}
+		d := rows[0]
 		d.Attempts, d.Status = 4, status
 		// A partial delivery carries both: what landed, and what did not.
 		d.LastError = "plurx: 1 of 2 directories not indexed: plurx returned 503: the durable queue refused this request"
@@ -1191,7 +1195,7 @@ func TestAcqFailedDeliveriesCanBeRetried(t *testing.T) {
 		if status == "ok" {
 			d.LastError = ""
 		}
-		if err := e.db.SettleDelivery(ctx, d); err != nil {
+		if err := e.db.SettleDelivery(ctx, d, sqlite.DeliveryTiming{}); err != nil {
 			t.Fatal(err)
 		}
 		return d

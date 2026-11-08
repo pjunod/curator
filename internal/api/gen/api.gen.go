@@ -1730,21 +1730,49 @@ type DefaultProfilesUpdate struct {
 
 // Delivery defines model for Delivery.
 type Delivery struct {
-	Attempts   int64   `json:"attempts"`
-	CreatedAt  int64   `json:"createdAt"`
-	DownloadId *int64  `json:"downloadId,omitempty"`
-	Event      string  `json:"event"`
-	Id         int64   `json:"id"`
-	LastError  *string `json:"lastError,omitempty"`
+	// Attempt The attempt Cinema sees as the suffix of the request key. Reused after an ambiguous outcome, advanced after a confirmed retryable result and by Retry.
+	Attempt   *int64 `json:"attempt,omitempty"`
+	Attempts  int64  `json:"attempts"`
+	CreatedAt int64  `json:"createdAt"`
+
+	// Directory The one directory this sub-delivery tells Cinema about (pipeline contract v2 section 4.1). Absent on a chat notifier's row.
+	Directory     *string         `json:"directory,omitempty"`
+	DownloadId    *int64          `json:"downloadId,omitempty"`
+	Event         string          `json:"event"`
+	ExpectedFiles *[]ExpectedFile `json:"expectedFiles,omitempty"`
+	Id            int64           `json:"id"`
+
+	// ItemIds The Cinema item ids reported for this directory.
+	ItemIds   *[]int64 `json:"itemIds,omitempty"`
+	LastError *string  `json:"lastError,omitempty"`
 
 	// NextAt When a pending retry becomes due (epoch ms).
-	NextAt     *int64 `json:"nextAt,omitempty"`
-	NotifierId int64  `json:"notifierId"`
+	NextAt        *int64 `json:"nextAt,omitempty"`
+	NotifierId    int64  `json:"notifierId"`
+	PublicationId *int64 `json:"publicationId,omitempty"`
+
+	// RemoteRequestId Cinema's request id after it queued the scan.
+	RemoteRequestId *string `json:"remoteRequestId,omitempty"`
+
+	// RemoteState queued, running, done or failed, as Cinema last reported the request.
+	RemoteState *string `json:"remoteState,omitempty"`
+
+	// RequestKey The request key the current attempt is sent with, "<transfer>/<generation>/<dir-hash>/<attempt>".
+	RequestKey *string `json:"requestKey,omitempty"`
 
 	// Result What the far side answered on success, e.g. "scanned → plurx item 1201".
 	Result    *string        `json:"result,omitempty"`
 	Status    DeliveryStatus `json:"status"`
 	UpdatedAt int64          `json:"updatedAt"`
+
+	// VisibleAt When Cinema reported every expected file placed with matching bytes and mtime (epoch ms).
+	VisibleAt *int64 `json:"visibleAt,omitempty"`
+
+	// WaitingOn What Cinema says the queued request is waiting on (full_scan:<library>, heavy_lane:<holder>, root_unreadable:<path>, queue_position:<n>).
+	WaitingOn *string `json:"waitingOn,omitempty"`
+
+	// Warning Still pending 30 minutes after it was written — shown with waitingOn or the reason a file is not placed. Never given up on.
+	Warning *bool `json:"warning,omitempty"`
 }
 
 // DeliveryStatus defines model for Delivery.Status.
@@ -1954,6 +1982,13 @@ type Error struct {
 	// Code Stable machine-readable classification when available.
 	Code    *string `json:"code,omitempty"`
 	Message string  `json:"message"`
+}
+
+// ExpectedFile defines model for ExpectedFile.
+type ExpectedFile struct {
+	Bytes   int64  `json:"bytes"`
+	MtimeNs int64  `json:"mtimeNs"`
+	Path    string `json:"path"`
 }
 
 // ExternalIds defines model for ExternalIds.
@@ -2539,6 +2574,12 @@ type NotifierInput struct {
 
 // NotifierInputType defines model for NotifierInput.Type.
 type NotifierInputType string
+
+// NotifierTestResult defines model for NotifierTestResult.
+type NotifierTestResult struct {
+	// Message A pass that still has something to say, e.g. that checking the library paths needs a newer Cinema.
+	Message *string `json:"message,omitempty"`
+}
 
 // PathMapping defines model for PathMapping.
 type PathMapping struct {

@@ -19,6 +19,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/acquisition"
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/app/library"
+	appnotify "github.com/pjunod/monarr/internal/app/notify"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/downloadpriority"
 	"github.com/pjunod/monarr/internal/domain/format"
@@ -1475,11 +1476,44 @@ func (s *Server) TestNotifier(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unknown notifier type")
 		return
 	}
-	if err := s.deps.NotifierFactory(notifierFromInput(body)).Test(r.Context()); err != nil {
+	s.runNotifierTest(w, r, s.deps.NotifierFactory(notifierFromInput(body)))
+}
+
+// runNotifierTest runs a notifier's Test and writes the answer. A notifier
+// that can check paths (Cinema, contract section 4.3) is handed the library
+// roots Curator places files under, so a root it cannot see fails the Test
+// here instead of one import at a time.
+func (s *Server) runNotifierTest(w http.ResponseWriter, r *http.Request, n ports.Notifier) {
+	var note string
+	var err error
+	if pt, ok := n.(ports.PathTester); ok {
+		var roots []string
+		if s.deps.Store != nil {
+			folders, ferr := s.deps.Store.ListRootFolders(r.Context())
+			if ferr != nil {
+				s.acqErr(w, ferr)
+				return
+			}
+			for _, f := range folders {
+				roots = append(roots, f.Path)
+			}
+		}
+		if len(roots) > 0 {
+			note, err = pt.TestPaths(r.Context(), roots)
+		} else {
+			err = n.Test(r.Context())
+			if err == nil {
+				note = "connected; no library roots are configured to check"
+			}
+		}
+	} else {
+		err = n.Test(r.Context())
+	}
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	writeJSON(w, http.StatusOK, apigen.NotifierTestResult{Message: ptrIfText(note)})
 }
 
 // TestNotifierByID implements POST /notifiers/{id}/test — the same probe,
@@ -1495,11 +1529,7 @@ func (s *Server) TestNotifierByID(w http.ResponseWriter, r *http.Request, id int
 		s.acqErr(w, err)
 		return
 	}
-	if err := s.deps.NotifierFactory(cfg).Test(r.Context()); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusOK)
+	s.runNotifierTest(w, r, s.deps.NotifierFactory(cfg))
 }
 
 // UpdateNotifier implements PUT /notifiers/{id}.
@@ -1600,7 +1630,7 @@ func (s *Server) retryableNotifier(w http.ResponseWriter, r *http.Request, id in
 }
 
 func deliveryDTO(d sqlite.Delivery) apigen.Delivery {
-	return apigen.Delivery{
+	out := apigen.Delivery{
 		Id: d.ID, NotifierId: d.NotifierID, DownloadId: ptrIfSet(d.DownloadID),
 		Event: d.Event, Attempts: d.Attempts,
 		LastError: ptrIfText(d.LastError), Result: ptrIfText(d.Result),
@@ -1608,6 +1638,37 @@ func deliveryDTO(d sqlite.Delivery) apigen.Delivery {
 		NextAt:    ptrIfSet(d.NextAt),
 		CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
+	if d.IdempotencyKey == "" {
+		return out
+	}
+	// A sub-delivery: one directory, read back from Cinema.
+	attempt := d.Attempt
+	out.Attempt = &attempt
+	out.Directory = ptrIfText(d.Directory)
+	out.PublicationId = ptrIfSet(d.PublicationID)
+	out.RequestKey = ptrIfText(d.RequestKey())
+	out.RemoteRequestId = ptrIfText(d.RemoteRequestID)
+	out.RemoteState = ptrIfText(d.RemoteState)
+	out.WaitingOn = ptrIfText(d.WaitingOn)
+	out.VisibleAt = ptrIfSet(d.VisibleAt)
+	if len(d.ItemIDs) > 0 {
+		ids := append([]int64(nil), d.ItemIDs...)
+		out.ItemIds = &ids
+	}
+	if len(d.ExpectedFiles) > 0 {
+		files := make([]apigen.ExpectedFile, 0, len(d.ExpectedFiles))
+		for _, f := range d.ExpectedFiles {
+			files = append(files, apigen.ExpectedFile{Path: f.Path, Bytes: f.Bytes, MtimeNs: f.MtimeNs})
+		}
+		out.ExpectedFiles = &files
+	}
+	// Surfaced, never given up on: still not visible half an hour after
+	// the import wrote it.
+	if d.Status == "pending" && time.Since(time.UnixMilli(d.CreatedAt)) >= appnotify.WarningAfter {
+		warn := true
+		out.Warning = &warn
+	}
+	return out
 }
 
 func ptrIfSet(v int64) *int64 {

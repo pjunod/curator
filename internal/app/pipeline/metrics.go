@@ -12,7 +12,7 @@ var bucketsSeconds = []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600}
 var helpText = map[string]string{
 	FailureToNextGrab:     "Seconds from a download failing to its replacement grab being submitted.",
 	RunnerDoneToImport:    "Seconds from the client reporting the payload finished to the library import completing.",
-	ImportToCinemaVisible: "Seconds from an import completing to Cinema reporting the files placed (measured from pipeline M5).",
+	ImportToCinemaVisible: "Seconds from an import completing to Cinema reporting every expected file placed.",
 }
 
 // WriteMetrics writes the three duration histograms and the waiting gauges

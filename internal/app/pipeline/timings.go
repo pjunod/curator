@@ -149,15 +149,6 @@ type Summary struct {
 	OverdueRows int
 }
 
-// MeasuredBy names the milestone that starts measuring a kind, or "" when it
-// is measured today.
-func MeasuredBy(kind string) string {
-	if kind == ImportToCinemaVisible {
-		return "M5"
-	}
-	return ""
-}
-
 // Summary assembles the three tiles and the overdue count.
 func (t *Timings) Summary(ctx context.Context) (Summary, error) {
 	var out Summary

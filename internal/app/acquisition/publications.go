@@ -2,6 +2,9 @@ package acquisition
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -423,16 +426,19 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 	var event *ImportCompleted
 	if placed > 0 {
 		e := importedEvent(item, dl, result)
-		e.Outboxed = true
 		e.PublicationID = pub.ID
 		event = &e
 		w.History = append(w.History, sqlite.HistoryWrite{Type: "imported", MediaItemID: item.ID, ReleaseTitle: dl.ReleaseTitle,
 			Data: map[string]any{"files": result.Imported, "upgrade": result.Upgraded, "publication": pub.Path, "kind": pub.Kind}})
-		outbox, err := s.importOutbox(ctx, e)
+		generation := pub.Generation
+		if generation == "" {
+			generation = fmt.Sprintf("publication-%d", pub.ID)
+		}
+		outbox, starts, err := s.importOutbox(ctx, e, generation)
 		if err != nil {
 			return err
 		}
-		w.Outbox = outbox
+		w.Outbox, w.TimingStarts = outbox, starts
 	}
 	if err := s.db.CompletePublicationImport(ctx, w); err != nil {
 		return err
@@ -460,28 +466,97 @@ func duplicateRefusal(reason string) bool {
 		strings.Contains(reason, "already present")
 }
 
-// importOutbox builds the durable notification rows for an import, for the
-// notifiers whose message is the work (today: plurx), written in the
-// publication's completing transaction. The bus still carries the event to
-// chat-shaped notifiers; Outboxed tells the dispatcher not to queue it twice.
-func (s *Service) importOutbox(ctx context.Context, e ImportCompleted) ([]sqlite.OutboxWrite, error) {
+// importOutbox builds every notification an import sends, as outbox rows the
+// caller writes in the import's own transaction (contract section 4.1): there
+// is no bus hop to drop one.
+//
+// A notifier whose message is the work (Cinema) gets one sub-delivery per
+// directory, keyed <transfer>/<generation>/<dir-hash> and carrying the media
+// files placed under that directory; each is delivered, retried and read back
+// on its own. Every other notifier gets one row, attempted once. The
+// import_to_cinema_visible timing starts here when there is a sub-delivery to
+// end it.
+func (s *Service) importOutbox(ctx context.Context, e ImportCompleted, generation string) ([]sqlite.OutboxWrite, []sqlite.TimingStart, error) {
 	notifiers, err := s.db.ListNotifiers(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	n := ImportNotification(e)
-	payload, err := json.Marshal(n)
+	return ImportOutbox(notifiers, e, generation)
+}
+
+// ImportOutbox is importOutbox over a given notifier list: the rows an
+// import with this generation writes.
+func ImportOutbox(notifiers []ports.NotifierConfig, e ImportCompleted, generation string) ([]sqlite.OutboxWrite, []sqlite.TimingStart, error) {
+	whole := ImportNotification(e)
+	wholePayload, err := json.Marshal(whole)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	transfer := pipeline.Key(e.Transfer, e.DownloadID)
 	var out []sqlite.OutboxWrite
+	subs := false
 	for _, cfg := range notifiers {
-		if !cfg.Enabled || !cfg.OnImport || !ports.QueuedNotifier(cfg) {
+		if !cfg.Enabled || !cfg.OnImport {
 			continue
 		}
-		out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, Event: "import", Payload: string(payload)})
+		if !ports.QueuedNotifier(cfg) {
+			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, PublicationID: e.PublicationID,
+				Event: "import", Payload: string(wholePayload)})
+			continue
+		}
+		for _, dir := range e.Dirs {
+			n := subDeliveryNotification(whole, dir, e.Expected[dir])
+			payload, err := json.Marshal(n)
+			if err != nil {
+				return nil, nil, err
+			}
+			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, PublicationID: e.PublicationID,
+				Directory: dir, IdempotencyKey: SubDeliveryKey(transfer, generation, dir), ExpectedFiles: e.Expected[dir],
+				Event: "import", Payload: string(payload)})
+			subs = true
+		}
 	}
-	return out, nil
+	var starts []sqlite.TimingStart
+	if subs && e.DownloadID != 0 {
+		starts = append(starts, sqlite.TimingStart{Kind: pipeline.ImportToCinemaVisible, Transfer: transfer, DownloadID: e.DownloadID})
+	}
+	return out, starts, nil
+}
+
+// subDeliveryNotification narrows an import's notification to one directory.
+func subDeliveryNotification(whole ports.Notification, dir string, expected []ports.ExpectedFile) ports.Notification {
+	n := whole
+	info := *whole.Import
+	info.Dirs = []string{dir}
+	info.Paths = nil
+	for _, p := range whole.Import.Paths {
+		if filepath.Dir(p) == dir {
+			info.Paths = append(info.Paths, p)
+		}
+	}
+	info.ExpectedFiles = nil
+	if len(expected) > 0 {
+		info.ExpectedFiles = map[string][]ports.ExpectedFile{dir: expected}
+	}
+	n.Import = &info
+	return n
+}
+
+// SubDeliveryKey is a sub-delivery's idempotency key (contract section 4.1):
+// <transfer>/<generation>/<first 16 hex of sha256(directory)>. Cinema sees it
+// with the attempt appended.
+func SubDeliveryKey(transfer, generation, dir string) string {
+	sum := sha256.Sum256([]byte(dir))
+	return fmt.Sprintf("%s/%s/%s", transfer, generation, hex.EncodeToString(sum[:])[:16])
+}
+
+// legacyGeneration names an import that did not come from a publication: a
+// legacy client's payload or a manual import has no generation, and the same
+// row can be imported twice, so each import gets its own.
+func legacyGeneration() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return "import-" + hex.EncodeToString(b[:])
 }
 
 // ImportNotification is the notification an import sends: one shape for the
@@ -503,6 +578,7 @@ func ImportNotification(e ImportCompleted) ports.Notification {
 		Import: &ports.ImportInfo{
 			MediaItemID: e.MediaItemID, DownloadID: e.DownloadID, Paths: e.Paths, Dirs: e.Dirs,
 			Kind: e.MediaItemKind, Title: e.Title, Book: book, TmdbID: e.TmdbID, ImdbID: e.ImdbID, Transfer: e.Transfer,
+			PublicationID: e.PublicationID, ExpectedFiles: e.Expected,
 		},
 	}
 }
