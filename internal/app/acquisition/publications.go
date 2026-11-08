@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -510,13 +511,14 @@ func ImportOutbox(notifiers []ports.NotifierConfig, e ImportCompleted, generatio
 			continue
 		}
 		for _, dir := range e.Dirs {
-			n := subDeliveryNotification(whole, dir, e.Expected[dir])
+			expected := CapExpected(e.Expected[dir])
+			n := subDeliveryNotification(whole, dir, expected)
 			payload, err := json.Marshal(n)
 			if err != nil {
 				return nil, nil, err
 			}
 			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, PublicationID: e.PublicationID,
-				Directory: dir, IdempotencyKey: SubDeliveryKey(transfer, generation, dir), ExpectedFiles: e.Expected[dir],
+				Directory: dir, IdempotencyKey: SubDeliveryKey(transfer, generation, dir), ExpectedFiles: expected,
 				Event: "import", Payload: string(payload)})
 			subs = true
 		}
@@ -545,6 +547,54 @@ func subDeliveryNotification(whole ports.Notification, dir string, expected []po
 	}
 	n.Import = &info
 	return n
+}
+
+// CapExpected keeps the expected files Cinema will accept in one request:
+// at most ports.MaxExpectedFiles, within ports.MaxExpectedFileBytes as JSON.
+// Cinema refuses a request over either with a 400, which retrying cannot fix,
+// so a directory never scanned would be the price of naming every file. Over
+// the limit, the largest files win (the episodes, not the extras), then the
+// newest; the delivery log says how many of the directory's files that
+// verified. Order is by path, as the files were given.
+func CapExpected(files []ports.ExpectedFile) []ports.ExpectedFile {
+	if len(files) <= ports.MaxExpectedFiles && expectedJSONSize(files) <= ports.MaxExpectedFileBytes {
+		return files
+	}
+	ranked := append([]ports.ExpectedFile(nil), files...)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].Bytes != ranked[j].Bytes {
+			return ranked[i].Bytes > ranked[j].Bytes
+		}
+		if ranked[i].MtimeNs != ranked[j].MtimeNs {
+			return ranked[i].MtimeNs > ranked[j].MtimeNs
+		}
+		return ranked[i].Path < ranked[j].Path
+	})
+	var out []ports.ExpectedFile
+	size := 2 // the brackets
+	for _, f := range ranked {
+		if len(out) == ports.MaxExpectedFiles {
+			break
+		}
+		n := expectedJSONSize([]ports.ExpectedFile{f}) - 2
+		if len(out) > 0 {
+			n++ // the comma
+		}
+		if size+n > ports.MaxExpectedFileBytes {
+			continue
+		}
+		out, size = append(out, f), size+n
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
+func expectedJSONSize(files []ports.ExpectedFile) int {
+	if files == nil {
+		files = []ports.ExpectedFile{}
+	}
+	raw, _ := json.Marshal(files)
+	return len(raw)
 }
 
 // SubDeliveryKey is a sub-delivery's idempotency key (contract section 4.1):

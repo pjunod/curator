@@ -1,6 +1,8 @@
 package acquisition
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -78,5 +80,28 @@ func TestSubDeliveryKeyIsPerDirectory(t *testing.T) {
 	b := SubDeliveryKey("t-1-x", "g", "/media/tv/Show/Season 02")
 	if a == b || a != SubDeliveryKey("t-1-x", "g", "/media/tv/Show/Season 01") {
 		t.Errorf("keys %q %q", a, b)
+	}
+}
+
+// Cinema refuses more than 64 expected files, or more than 16 KiB of them,
+// with a 400 retrying cannot fix: the cap keeps the largest within both.
+func TestCapExpectedKeepsWhatCinemaAccepts(t *testing.T) {
+	long := "/media/audiobooks/" + strings.Repeat("a", 280)
+	var files []ports.ExpectedFile
+	for i := 0; i < 80; i++ {
+		files = append(files, ports.ExpectedFile{Path: fmt.Sprintf("%s/%03d.mp3", long, i), Bytes: int64(i), MtimeNs: 1794076138123456789})
+	}
+	kept := CapExpected(files)
+	raw, _ := json.Marshal(kept)
+	if len(kept) == 0 || len(kept) > ports.MaxExpectedFiles || len(raw) > ports.MaxExpectedFileBytes {
+		t.Fatalf("kept %d files, %d bytes", len(kept), len(raw))
+	}
+	for _, f := range kept {
+		if f.Bytes < int64(80-len(kept)) {
+			t.Errorf("kept %d-byte %s over a larger one", f.Bytes, f.Path)
+		}
+	}
+	if small := files[:3]; len(CapExpected(small)) != 3 {
+		t.Error("a directory within the limits keeps every file")
 	}
 }

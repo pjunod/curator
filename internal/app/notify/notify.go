@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/pjunod/monarr/internal/app/acquisition"
@@ -41,6 +42,12 @@ type Dispatcher struct {
 	// tests shorten both.
 	now         func() time.Time
 	sendTimeout time.Duration
+
+	// The delivery lanes: rows in flight, and how many per notifier.
+	mu      sync.Mutex
+	running map[int64]bool
+	lanes   map[int64]int
+	wg      sync.WaitGroup
 }
 
 // WithRegistry reports deliveries on the in-flight data-plane view.
@@ -54,7 +61,8 @@ func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, f Factory) *Dispatcher {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Dispatcher{db: db, bus: b, log: log, new: f, now: time.Now, sendTimeout: sendTimeout}
+	return &Dispatcher{db: db, bus: b, log: log, new: f, now: time.Now, sendTimeout: sendTimeout,
+		running: map[int64]bool{}, lanes: map[int64]int{}}
 }
 
 // Run subscribes and dispatches until ctx ends. Call in a goroutine.

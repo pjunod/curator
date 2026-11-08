@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,13 @@ func newOutboxEnv(t *testing.T) *outboxEnv {
 	b := bus.New(nil)
 	t.Cleanup(b.Close)
 	e := &outboxEnv{t: t, ctx: ctx, db: db, cinema: cinema, root: root, clock: time.Now()}
-	e.d = New(db, b, nil, adapters.New)
+	e.d = New(db, b, nil, func(cfg ports.NotifierConfig) ports.Notifier {
+		n := adapters.New(cfg)
+		if p, ok := n.(*adapters.Plurx); ok {
+			p.Wait = 100 * time.Millisecond // inside the test's 300 ms deadline
+		}
+		return n
+	})
 	e.d.now = func() time.Time { return e.clock }
 	e.d.sendTimeout = 300 * time.Millisecond
 	item, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindSeries, Title: "Test Show", Year: 2020, Monitored: true})
@@ -272,7 +279,13 @@ func TestThreeSlowDirectoriesDoNotStarve(t *testing.T) {
 		e.place("Show/Season 02/b.mkv", "b"),
 		e.place("Show/Season 03/c.mkv", "c"),
 	)
+	began := time.Now()
 	e.pass()
+	// Side by side, each under its own 300 ms deadline: one pass takes about
+	// one deadline, not three in a row.
+	if took := time.Since(began); took > 750*time.Millisecond {
+		t.Errorf("first pass took %v: the three slow directories were posted one after another", took)
+	}
 	if posts := e.cinema.Posts(); len(posts) != 3 {
 		t.Fatalf("first pass posted %v, want each directory once under its own deadline", posts)
 	}
@@ -334,22 +347,28 @@ func TestSkippedFileWarnsThenFreshScanAfterRestore(t *testing.T) {
 // cached record is not visible; the re-probe that reports the new mtime_ns is.
 func TestSamePathReplacementNeedsMtimeMatch(t *testing.T) {
 	e := newOutboxEnv(t)
-	p := e.place("Heat (1995)/Heat.mkv", "AAAA")
+	p := e.place("Heat (1995)/Heat.mkv", "BBBB")
 	second := time.Unix(1794076138, 0)
-	if err := os.Chtimes(p, second, second.Add(100)); err != nil {
-		t.Fatal(err)
-	}
-	old, _ := os.Stat(p)
-	e.place("Heat (1995)/Heat.mkv", "BBBB")
 	if err := os.Chtimes(p, second, second.Add(900)); err != nil {
 		t.Fatal(err)
 	}
-	now, _ := os.Stat(p)
-	if old.Size() != now.Size() || old.ModTime().Unix() != now.ModTime().Unix() || old.ModTime().UnixNano() == now.ModTime().UnixNano() {
-		t.Skipf("this filesystem cannot hold two mtimes in one second (%v, %v)", old.ModTime(), now.ModTime())
+	now, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The old file Cinema still has on record: same path, same size, the
+	// same whole second, and a different mtime_ns. Derived from what the
+	// filesystem actually holds, so it is the same second at any mtime
+	// resolution.
+	stale := now.ModTime().UnixNano() - 1
+	if now.ModTime().Nanosecond() == 0 {
+		stale = now.ModTime().UnixNano() + 1
+	}
+	if stale/1e9 != now.ModTime().Unix() {
+		t.Fatalf("fixture: stale mtime %d is not in second %d", stale, now.ModTime().Unix())
 	}
 	e.cinema.Set(func(c *cinematest.Cinema) {
-		c.Cached = map[string]ports.PlacedReport{p: {Path: p, State: "placed", ItemID: 1201, Bytes: old.Size(), MtimeNs: old.ModTime().UnixNano()}}
+		c.Cached = map[string]ports.PlacedReport{p: {Path: p, State: "placed", ItemID: 1201, Bytes: now.Size(), MtimeNs: stale}}
 	})
 	e.imported(p)
 	e.pass()
@@ -422,12 +441,13 @@ func TestQueuedRequestIsPolledUntilVisible(t *testing.T) {
 	e.imported(e.place("Heat (1995)/Heat.mkv", "heat"))
 	e.pass()
 	r := e.rows()[0]
-	if r.Status != "pending" || r.RemoteRequestID == "" || r.RemoteState != "queued" {
+	// remote_state is what a READ said; the 202 leaves it empty.
+	if r.Status != "pending" || r.RemoteRequestID == "" || r.RemoteState != "" {
 		t.Fatalf("after 202 = %+v", r)
 	}
 	e.runFor(35 * time.Minute)
 	r = e.rows()[0]
-	if r.WaitingOn != "full_scan:3" || !strings.Contains(r.Result, "waiting on full_scan:3") || r.Status != "pending" {
+	if r.RemoteState != "queued" || r.WaitingOn != "full_scan:3" || !strings.Contains(r.Result, "waiting on full_scan:3") || r.Status != "pending" {
 		t.Fatalf("while queued = %s waiting %q result %q", r.Status, r.WaitingOn, r.Result)
 	}
 	if polls := e.cinema.Polls(); len(polls) < 4 {
@@ -495,4 +515,125 @@ func TestReimportedDirectoryTakesANewAttempt(t *testing.T) {
 	}
 	e.runFor(time.Minute)
 	e.requireVisible(e.rows()[0])
+}
+
+// Cinema answers a request whose scan failed with a bare 500 — inside
+// wait_ms and on every replay of its key. That is a confirmed retryable
+// result: the next try is a new attempt, not the same failure replayed
+// hourly forever.
+func TestFailedRequestAnsweredWith500TakesANewAttempt(t *testing.T) {
+	e := newOutboxEnv(t)
+	p := e.place("Heat (1995)/Heat.mkv", "heat")
+	e.cinema.Set(func(c *cinematest.Cinema) { c.Fail = map[string]string{filepath.Dir(p): "ffprobe: Invalid data found"} })
+	e.imported(p)
+	e.pass()
+	r := e.rows()[0]
+	if r.Status != "pending" || r.Attempt != 2 || !strings.Contains(r.LastError, "could not complete the scan") {
+		t.Fatalf("after a failed scan = %s attempt %d (%s)", r.Status, r.Attempt, r.LastError)
+	}
+	e.cinema.Set(func(c *cinematest.Cinema) { c.Fail = nil })
+	e.runFor(time.Minute)
+	e.requireVisible(e.rows()[0])
+	if posts := e.cinema.Posts(); len(posts) != 2 || posts[0] == posts[1] {
+		t.Errorf("posts = %v, want attempt 1 then attempt 2", posts)
+	}
+}
+
+// A directory with more files than Cinema accepts in one request sends the
+// largest 64 and says how many it verified — instead of a 400 that would
+// fail the directory without it ever being scanned.
+func TestMoreThan64FilesAreCappedAndSaySo(t *testing.T) {
+	e := newOutboxEnv(t)
+	var paths []string
+	for i := 1; i <= 91; i++ {
+		body := strings.Repeat("x", i) // file 91 is the largest
+		paths = append(paths, e.place(fmt.Sprintf("Audiobook/Track %02d.mp3", i), body))
+	}
+	e.imported(paths...)
+	r := e.rows()[0]
+	if len(r.ExpectedFiles) != ports.MaxExpectedFiles {
+		t.Fatalf("expected files = %d, want %d", len(r.ExpectedFiles), ports.MaxExpectedFiles)
+	}
+	for _, f := range r.ExpectedFiles {
+		if f.Bytes < 91-63 {
+			t.Errorf("kept %s (%d bytes); the largest files win", f.Path, f.Bytes)
+		}
+	}
+	e.runFor(time.Minute)
+	r = e.rows()[0]
+	e.requireVisible(r)
+	if !strings.HasSuffix(r.Result, "(verified 64 of 91 files)") {
+		t.Errorf("result = %q, want the overflow named", r.Result)
+	}
+}
+
+// A current Cinema answers a read of an id it no longer knows with 403. Once
+// a read of this request has answered, a 403 is a lost request — posted
+// again as a new attempt — not an older Cinema that never reports.
+func TestLostRequestOnPollIsPostedAgain(t *testing.T) {
+	e := newOutboxEnv(t)
+	e.cinema.Set(func(c *cinematest.Cinema) { c.Queue, c.WaitingOn = true, "full_scan:3" })
+	e.imported(e.place("Heat (1995)/Heat.mkv", "heat"))
+	e.pass() // 202
+	e.runFor(10 * time.Second)
+	if r := e.rows()[0]; r.RemoteState != "queued" {
+		t.Fatalf("after a read = %+v", r)
+	}
+	e.cinema.Forget()
+	e.cinema.Set(func(c *cinematest.Cinema) { c.Queue = false })
+	e.runFor(time.Hour)
+	r := e.rows()[0]
+	e.requireVisible(r)
+	if r.Attempt != 2 {
+		t.Errorf("attempt = %d, want 2: a lost request is a fresh scan", r.Attempt)
+	}
+	if posts := e.cinema.Posts(); len(posts) != 2 {
+		t.Errorf("posts = %v, want the original and one fresh attempt", posts)
+	}
+}
+
+// A 503 names how long to stay away (Retry-After: 60); the next try is not
+// sooner than that, whatever the schedule says.
+func TestRetryAfterIsHonoured(t *testing.T) {
+	e := newOutboxEnv(t)
+	e.cinema.Set(func(c *cinematest.Cinema) { c.Unreadable = true })
+	e.imported(e.place("Heat (1995)/Heat.mkv", "heat"))
+	before := e.clock
+	e.pass()
+	r := e.rows()[0]
+	if wait := time.UnixMilli(r.NextAt).Sub(before); wait < 59*time.Second {
+		t.Errorf("next try in %v, want at least the 60 s Cinema asked for (the schedule says 5 s)", wait)
+	}
+}
+
+// A sub-delivery that fails permanently is never visible, so it is not a
+// sample of how long visible takes: its timing is dropped, whatever order
+// the import's directories settle in.
+func TestPermanentSubDeliveryDropsTheTiming(t *testing.T) {
+	e := newOutboxEnv(t)
+	outside := filepath.Join(t.TempDir(), "Elsewhere", "b.mkv")
+	if err := os.MkdirAll(filepath.Dir(outside), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.imported(e.place("Show/Season 01/a.mkv", "a"), outside)
+	e.runFor(time.Hour)
+	if open, closed := e.timing(); open != 0 || closed != 0 {
+		t.Errorf("timing open %d closed %d, want dropped", open, closed)
+	}
+}
+
+// wait_ms: a scan that finishes inside the wait is answered 200 with the
+// per-file report in the same request — no 202, no poll.
+func TestWaitAnswersWithTheResultInOneRequest(t *testing.T) {
+	e := newOutboxEnv(t)
+	e.cinema.Set(func(c *cinematest.Cinema) { c.Queue, c.FinishAfter = true, 50*time.Millisecond })
+	e.imported(e.place("Heat (1995)/Heat.mkv", "heat"))
+	e.pass()
+	e.requireVisible(e.rows()[0])
+	if polls := e.cinema.Polls(); len(polls) != 0 {
+		t.Errorf("polls = %v, want none: the wait answered", polls)
+	}
 }

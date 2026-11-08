@@ -561,3 +561,49 @@ func enqueueRaw(t *testing.T, db *sqlite.DB, ctx context.Context, notifierID int
 		t.Fatal(err)
 	}
 }
+
+// A chat notifier's import row carries its own identity: the in-flight view
+// names it and the download's trace gets notify_<type>, never a false
+// "plurx notified" (review #97 finding 5).
+func TestTailAChatRowSpeaksForItsOwnNotifier(t *testing.T) {
+	db, ctx := tailDB(t)
+	b := bus.New(nil)
+	t.Cleanup(b.Close)
+	if _, err := db.AddNotifier(ctx, ports.NotifierConfig{Type: "discord", Name: "chat", OnImport: true, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	item, err := db.CreateMediaItem(ctx, tailMovie())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dl, err := db.InsertDownload(ctx, sqlite.Download{MediaItemID: item, ReleaseTitle: "Heat.1995.1080p", State: "imported"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := transfers.New()
+	var peer string
+	target := &flaky{seen: func(ports.Notification) {
+		if tr, ok := reg.Stage(dl); ok {
+			peer = tr.Peer
+		}
+	}}
+	d := New(db, b, nil, func(ports.NotifierConfig) ports.Notifier { return target }).WithRegistry(reg)
+	queueImport(t, db, ctx, importEvent(dl))
+	d.deliverDue(ctx)
+	if peer != "discord" {
+		t.Errorf("in-flight peer = %q, want discord", peer)
+	}
+	trace, err := db.GetDownload(ctx, dl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steps []string
+	for _, h := range trace.Handoff {
+		if strings.HasPrefix(h.Step, "notify_") {
+			steps = append(steps, h.Step+": "+h.Detail)
+		}
+	}
+	if len(steps) != 1 || steps[0] != "notify_discord: discord notified" {
+		t.Errorf("trace = %q, want one notify_discord step", steps)
+	}
+}
