@@ -317,19 +317,23 @@ func TestPublicationFileOutcomes(t *testing.T) {
 	})
 }
 
-// The plurx outbox row is written in the import's own transaction, and only
-// for enabled, import-subscribed, queued notifiers.
+// The import's outbox rows are written in its own transaction, only for
+// enabled, import-subscribed notifiers: a queued notifier (plurx) gets a keyed
+// sub-delivery per directory, any other one a single one-shot row.
 func TestImportWritesTheOutboxInItsTransaction(t *testing.T) {
 	f := setupV2(t, nil)
+	ids := map[string]int64{}
 	for _, n := range []ports.NotifierConfig{
 		{Type: "plurx", Name: "cinema", OnImport: true, Enabled: true, Settings: map[string]string{"url": "http://plurx"}},
 		{Type: "plurx", Name: "off", OnImport: true, Enabled: false, Settings: map[string]string{"url": "http://plurx"}},
 		{Type: "plurx", Name: "grab-only", OnGrab: true, Enabled: true, Settings: map[string]string{"url": "http://plurx"}},
 		{Type: "webhook", Name: "chat", OnImport: true, Enabled: true, Settings: map[string]string{"url": "http://hook"}},
 	} {
-		if _, err := f.db.AddNotifier(f.ctx, n); err != nil {
+		id, err := f.db.AddNotifier(f.ctx, n)
+		if err != nil {
 			t.Fatal(err)
 		}
+		ids[n.Name] = id
 	}
 	dl := f.grab(1, epOne)
 	pub := f.publish("Test.Show.S01E01.job-101.runner-obx", "obx", map[string]string{epOne + ".mkv": "video"})
@@ -337,8 +341,17 @@ func TestImportWritesTheOutboxInItsTransaction(t *testing.T) {
 	if f.row(dl.ID).State != "imported" {
 		t.Fatalf("row = %s", f.row(dl.ID).State)
 	}
-	if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=?`, dl.ID); n != 1 {
-		t.Fatalf("outbox rows = %d, want one, for the enabled plurx notifier only", n)
+	if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=?`, dl.ID); n != 2 {
+		t.Fatalf("outbox rows = %d, want two: the plurx sub-delivery and the webhook's one-shot row", n)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=? AND notifier_id=? AND idempotency_key != ''`, dl.ID, ids["cinema"]); n != 1 {
+		t.Fatalf("plurx keyed sub-deliveries = %d, want one for the one directory", n)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=? AND notifier_id=? AND idempotency_key = ''`, dl.ID, ids["chat"]); n != 1 {
+		t.Fatalf("webhook one-shot rows = %d, want one, unkeyed", n)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=? AND notifier_id IN (?, ?)`, dl.ID, ids["off"], ids["grab-only"]); n != 0 {
+		t.Fatalf("rows for the disabled or grab-only notifier = %d, want none", n)
 	}
 }
 
