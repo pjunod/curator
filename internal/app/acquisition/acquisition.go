@@ -2089,6 +2089,13 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 	if err != nil {
 		return err
 	}
+	if dl.Transfer != "" && dl.SubmissionPhase != "pending" && dl.State != "planned" {
+		if cfg, cerr := s.db.GetDownloadClient(ctx, dl.ClientID); cerr == nil {
+			if client := s.newClient(cfg); isRunnerClient(client) {
+				return s.cancelRunnerDownload(ctx, dl.ID, cfg, client, fromClient)
+			}
+		}
+	}
 	if dl.PlanID != 0 || dl.SubmissionPhase == "pending" || dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" || dl.SubmissionPhase == "submitted" {
 		unlock := s.lockDownload(id)
 		defer unlock()
@@ -2142,6 +2149,33 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 		}
 	}
 	return s.db.DeleteDownload(ctx, id)
+}
+
+// cancelRunnerDownload is an operator's cancel of a Runner row (IMPL section
+// 5.5): Runner is asked to cancel the job when the operator chose that, and
+// the row records a cancelled terminal (never re-grabbed, never
+// blocklisted; the plan is asked to stop in the same write). A Runner row is
+// never parked.
+func (s *Service) cancelRunnerDownload(ctx context.Context, id int64, cfg ports.ClientConfig, client ports.DownloadClient, fromClient bool) error {
+	unlock := s.lockDownload(id)
+	defer unlock()
+	dl, err := s.db.GetDownload(ctx, id)
+	if err != nil {
+		return err
+	}
+	if fromClient && dl.Handle != "" && (dl.RunnerOutcome == "" || dl.Provisional) {
+		if err := client.Remove(ctx, ports.Handle(dl.Handle), false); err != nil {
+			return err
+		}
+	}
+	if dl.RunnerOutcome == "" || dl.Provisional {
+		if _, err := s.recordTerminal(ctx, dl, cfg, ports.RunnerTerminal{Outcome: ports.OutcomeCancelled,
+			Message: "cancelled in Curator by the operator", Salvage: "none"}, "operator", 0, false); err != nil {
+			return err
+		}
+	}
+	_, err = s.db.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1, updated_at=? WHERE id=? AND generation_key=?`, time.Now().UnixMilli(), id, dl.GenerationKey)
+	return err
 }
 
 var ErrCandidateExpired = errors.New("release search evidence expired or changed; search again before grabbing")

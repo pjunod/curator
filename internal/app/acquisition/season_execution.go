@@ -397,6 +397,11 @@ func (s *Service) observeUncertain(ctx context.Context, dl sqlite.Download, cfg 
 	if dl.Intent == GrabIntentManualAdditional || dl.ExactTransferCorrelation || dl.RequestTokenIdempotent || dl.DeliveryExpected {
 		return
 	}
+	// A Runner row's submission is confirmed by its request receipt
+	// (confirmAdmissions), never by inventory guessing, and never parked.
+	if isRunnerClient(s.newClient(cfg)) {
+		return
+	}
 	now := time.Now()
 	var ob executionObservation
 	_ = json.Unmarshal([]byte(dl.Observation), &ob)

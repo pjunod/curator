@@ -1115,3 +1115,31 @@ func TestPublicationPathCollisionFailsTheImport(t *testing.T) {
 		t.Fatalf("historical directory = %+v, want adopted by download %d and still historical", p, third.ID)
 	}
 }
+
+// (review #11) An operator removing a Runner row records a cancelled
+// terminal: never a park, never a re-grab or a blocklist; Runner is asked to
+// cancel the job; the row stays (dismissed) for its token.
+func TestRemovingARunnerRowCancelsItNeverParks(t *testing.T) {
+	f := setupV2(t, []ports.Release{rel("Test.Show.S01E01.1080p.WEB-DL.x264-OTHER", 10)})
+	dl := f.grab(1, epOne)
+	if err := f.svc.RemoveDownload(f.ctx, dl.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	got := f.row(dl.ID)
+	if got.State != "failed" || got.RunnerOutcome != ports.OutcomeCancelled || got.Provisional || got.ParkedReason != "" ||
+		f.count(`SELECT parked_at FROM downloads WHERE id=?`, dl.ID) != 0 {
+		t.Fatalf("removed row = %s/%s provisional=%v parked %q, want a final cancelled terminal and no park", got.State, got.RunnerOutcome, got.Provisional, got.ParkedReason)
+	}
+	f.runner.mu.Lock()
+	removed := len(f.runner.removed)
+	f.runner.mu.Unlock()
+	if removed != 1 {
+		t.Fatalf("Runner remove calls = %d, want the job cancelled", removed)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs`); n != 0 || len(mustBlocklist(t, f)) != 0 {
+		t.Fatal("an operator cancel re-grabbed or blocklisted")
+	}
+	if n := f.count(`SELECT COUNT(*) FROM downloads WHERE id=? AND activity_dismissed=1`, dl.ID); n != 1 {
+		t.Fatal("the cancelled row is not dismissed from Activity")
+	}
+}

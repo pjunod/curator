@@ -34,6 +34,13 @@ func runnerFeedsOf(c ports.DownloadClient) (ports.RunnerFeeds, bool) {
 	return f, ok
 }
 
+// isRunnerClient reports a client on the reducer. Curator never parks or
+// stall-retires a Runner row: the legacy park and stall paths check this.
+func isRunnerClient(c ports.DownloadClient) bool {
+	_, ok := runnerFeedsOf(c)
+	return ok
+}
+
 // Handoff steps the reducer adds to the trace.
 const (
 	stepHeld        = "held"
