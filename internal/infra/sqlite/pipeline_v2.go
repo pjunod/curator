@@ -587,9 +587,11 @@ func (d *DB) ListPublicationsForDownloads(ctx context.Context, ids []int64) (map
 
 // ImportablePublications lists the publications of one client's rows that
 // are still waiting to import: the poll offers them again, so a directory
-// without a manifest yet is re-checked rather than forgotten.
+// whose manifest lands later imports then. importing is included: a crash
+// mid-import leaves the state behind, and the caller skips a row whose
+// import is queued or running (ImportRunning), so only an orphan re-runs.
 func (d *DB) ImportablePublications(ctx context.Context, clientID int64) ([]Publication, error) {
-	return d.publicationsWhere(ctx, `state='discovered' AND download_id IN (SELECT id FROM downloads WHERE client_id=?)`, clientID)
+	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND download_id IN (SELECT id FROM downloads WHERE client_id=?)`, clientID)
 }
 
 // OverduePublications lists publications still in discovered/importing past

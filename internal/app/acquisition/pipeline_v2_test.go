@@ -1143,3 +1143,126 @@ func TestRemovingARunnerRowCancelsItNeverParks(t *testing.T) {
 		t.Fatal("the cancelled row is not dismissed from Activity")
 	}
 }
+
+// (review #13: half-placed restart) A crash mid-import leaves the
+// publication importing with one file already placed. After restart the
+// poll re-offers it (no import is running for it) and only the rest is
+// imported.
+func TestCrashMidImportResumesOnlyTheRest(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(0, seasonPack)
+	pub := f.publish("Test.Show.S01.job-101.runner-half", "half", map[string]string{"Test.Show.S01E01.mkv": "e1", "Test.Show.S01E02.mkv": "e2"})
+	// What the crash leaves: the terminal recorded, the publication
+	// importing, E01's outcome written, E02 not reached.
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET state='importing', runner_outcome='completed', import_path=?, save_path=? WHERE id=?`, pub.Path, pub.Path, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
+	id, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{DownloadID: dl.ID, Generation: "half", Kind: "completed", Path: pub.Path,
+		ManifestJSON: string(raw), Source: "file", Cohort: "live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m ports.Manifest
+	_ = json.Unmarshal(raw, &m)
+	var seed []sqlite.PublicationFile
+	for _, file := range m.Files {
+		seed = append(seed, sqlite.PublicationFile{Path: file.Path, Bytes: file.Bytes, SHA256: file.SHA256})
+	}
+	_ = f.db.SeedPublicationFiles(f.ctx, id, seed)
+	_ = f.db.SetPublicationFileOutcome(f.ctx, sqlite.PublicationFile{PublicationID: id, Path: "Test.Show.S01E01.mkv", Outcome: "placed", LibraryPath: "/library/e1.mkv"})
+	_ = f.db.SetPublicationState(f.ctx, id, "importing", "")
+	if err := f.svc.RefreshQueue(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := f.db.GetPublication(f.ctx, id)
+	files, _ := f.db.ListPublicationFiles(f.ctx, id)
+	got := map[string]sqlite.PublicationFile{}
+	for _, file := range files {
+		got[file.Path] = file
+	}
+	if p.State != "imported" || got["Test.Show.S01E02.mkv"].Outcome != "placed" {
+		t.Fatalf("after restart publication %s, E02 %+v (%s): want the orphaned import resumed", p.State, got["Test.Show.S01E02.mkv"], f.row(dl.ID).Error)
+	}
+	if got["Test.Show.S01E01.mkv"].LibraryPath != "/library/e1.mkv" {
+		t.Fatalf("E01 was re-imported: %+v", got["Test.Show.S01E01.mkv"])
+	}
+}
+
+// (review #13: manifest boundary) What a manifest may say before anything
+// is imported from it.
+func TestManifestShapeBoundary(t *testing.T) {
+	good := []ports.ManifestFile{{Path: "Season 01/a.mkv", Bytes: 3, SHA256: strings.Repeat("a", 64)}}
+	digest, _ := ports.ManifestDigest(good)
+	if err := verifyManifestShape(ports.Manifest{Generation: "g", Files: good, Digest: digest}, "g"); err != nil {
+		t.Fatalf("a good manifest was refused: %v", err)
+	}
+	cases := map[string]ports.Manifest{
+		"no files":            {Generation: "g"},
+		"generation mismatch": {Generation: "other", Files: good},
+		"parent escape":       {Files: []ports.ManifestFile{{Path: "../a.mkv"}}},
+		"absolute":            {Files: []ports.ManifestFile{{Path: "/etc/a.mkv"}}},
+		"backslash":           {Files: []ports.ManifestFile{{Path: `a\b.mkv`}}},
+		"empty segment":       {Files: []ports.ManifestFile{{Path: "a//b.mkv"}}},
+		"dot segment":         {Files: []ports.ManifestFile{{Path: "./a.mkv"}}},
+		"empty path":          {Files: []ports.ManifestFile{{Path: ""}}},
+		"negative size":       {Files: []ports.ManifestFile{{Path: "a.mkv", Bytes: -1}}},
+		"digest mismatch":     {Files: good, Digest: strings.Repeat("0", 64)},
+	}
+	for name, m := range cases {
+		if err := verifyManifestShape(m, "g"); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// End to end: a manifest naming a path outside its publication fails
+	// the publication and places nothing.
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	dir := filepath.Join(f.root, "Test.Show.S01E01.job-101.runner-esc")
+	writeCompleted(t, filepath.Join(dir, epOne+".mkv"), 5)
+	bad := ports.Manifest{Generation: "esc", Files: []ports.ManifestFile{{Path: "../" + epOne + ".mkv", Bytes: 5}}}
+	rawBad, _ := json.Marshal(bad)
+	if err := os.WriteFile(filepath.Join(dir, ports.ManifestFileName), rawBad, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pub := ports.RunnerPublication{Path: dir, Generation: "esc", Kind: "completed"}
+	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	p, _, _ := f.db.PublicationByPath(f.ctx, dir)
+	if p.State != "import_failed" || !strings.Contains(p.Error, "manifest refused") || f.count(`SELECT COUNT(*) FROM media_files`) != 0 {
+		t.Fatalf("escaping manifest: publication %s %q, library files %d", p.State, p.Error, f.count(`SELECT COUNT(*) FROM media_files`))
+	}
+}
+
+// (review #13: sidecar conflict) A sidecar is never placed automatically:
+// the media imports, the sidecar is retained unresolved, and Resolve can
+// discard it but not place it as media.
+func TestSidecarIsUnresolvedNeverPlaced(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-101.runner-srt", "srt", map[string]string{epOne + ".mkv": "video", epOne + ".en.srt": "subs"})
+	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path)
+	files, _ := f.db.ListPublicationFiles(f.ctx, p.ID)
+	got := map[string]sqlite.PublicationFile{}
+	for _, file := range files {
+		got[file.Path] = file
+	}
+	if f.row(dl.ID).State != "imported" || p.State != "imported" || got[epOne+".mkv"].Outcome != "placed" {
+		t.Fatalf("media did not import: row %s publication %s files %+v", f.row(dl.ID).State, p.State, got)
+	}
+	if srt := got[epOne+".en.srt"]; srt.Outcome != "unresolved" || srt.LibraryPath != "" {
+		t.Fatalf("sidecar = %+v, want retained unresolved, not placed", srt)
+	}
+	if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, epOne+".en.srt", "place"); err == nil {
+		t.Fatal("a sidecar was placed as media")
+	}
+	if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, epOne+".en.srt", "discard"); err != nil {
+		t.Fatal(err)
+	}
+	files, _ = f.db.ListPublicationFiles(f.ctx, p.ID)
+	for _, file := range files {
+		if file.Path == epOne+".en.srt" && (file.Outcome != "discarded" || file.DiscardReason != "rejected") {
+			t.Fatalf("discarded sidecar = %+v", file)
+		}
+	}
+}
