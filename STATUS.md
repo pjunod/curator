@@ -57,10 +57,18 @@ Not removed on purpose: `RemoveFileRequest.Blocklist`/`Search` (marked
 Deprecated in Go): they are the old remove endpoint's wire shape and are
 rejected explicitly, not dead code from M2/M4/M5.
 
+Found while verifying: `TestImportWritesTheOutboxInItsTransaction` fails on
+#97's head (`b2afde9`, checked on a detached worktree): it predates M5, which
+gives a chat notifier its own outbox row, so it saw two rows where it wanted
+one. Fixed here (it names both rows and checks the disabled and grab-only
+notifiers get none); #97's own gate will hit it.
+
 Verified (fast lane): `go build ./...`; `go vet` and `go test` of
 `internal/domain/backoff`, `internal/docs`, `internal/app/notify`,
 `internal/app/acquisition`, `internal/app/pipeline`, `internal/infra/sqlite`,
 `internal/api`; `gofmt -l`; web `tsc --noEmit` and `vitest run src/api.test.ts`.
+All pass except `TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired`
+(the known root-only failure: the sandbox user is root).
 Not run (by instruction): `make test`, `make test-web`, `make test-e2e`, the
 coverage floor.
 
