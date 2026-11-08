@@ -486,9 +486,23 @@ func TestIoFailureDoesNotBlocklistButGrabs(t *testing.T) {
 func TestIndexerUnavailableRequeuesWithoutGrab(t *testing.T) {
 	f := setupV2(t, []ports.Release{rel("Test.Show.S01E01.1080p.WEB-DL.x264-OTHER", 10)})
 	dl := f.grab(1, epOne)
+	if f.count(`SELECT COUNT(*) FROM indexers`) == 0 {
+		t.Fatal("fixture has no indexer")
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET source_indexer_id=(SELECT MIN(id) FROM indexers) WHERE id=?`, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	dl = f.row(dl.ID)
 	tm := failed(ports.ReasonFetch, false)
 	tm.FetchCause = ports.FetchCauseIndexerUnavailable
 	f.observe(dl, terminalFact(dl, tm, "event 1"))
+	// The outage defers the indexer (the request-budget gate the wanted pass
+	// honours) and the row carries the same provider_retry_after.
+	soon := time.Now().Add(10 * time.Minute).UnixMilli()
+	if n := f.count(`SELECT COUNT(*) FROM downloads d JOIN indexers i ON i.id=d.source_indexer_id
+		WHERE d.id=? AND d.provider_retry_after>? AND i.retry_at=d.provider_retry_after`, dl.ID, soon); n != 1 {
+		t.Fatal("fetch{indexer_unavailable} wrote no provider_retry_after / indexer retry_at")
+	}
 	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs`); n != 0 || len(mustBlocklist(t, f)) != 0 {
 		t.Fatalf("grabs=%d blocklist=%v, want neither", n, mustBlocklist(t, f))
 	}

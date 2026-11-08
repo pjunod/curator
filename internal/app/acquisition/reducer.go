@@ -365,6 +365,11 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 			w.Blocklist = &sqlite.BlocklistWrite{MediaItemID: dl.MediaItemID, SourceIndexerID: dl.SourceIndexerID,
 				SourceGUID: dl.SourceGUID, Title: dl.ReleaseTitle, Indexer: dl.Indexer, Reason: msg}
 		}
+		if t.Reason == ports.ReasonFetch && t.FetchCause == ports.FetchCauseIndexerUnavailable && !provisional {
+			// The indexer is down, not the release: defer it (the existing
+			// request-budget gate) instead of grabbing an alternative from it.
+			w.IndexerOutage = &sqlite.IndexerOutageWrite{IndexerID: dl.SourceIndexerID, Until: now.Add(indexerOutageRetry)}
+		}
 		if wants, why := s.replacementDue(dl, t, provisional); len(wants) > 0 {
 			w.ReplacementGrab = &sqlite.ReplacementGrabWrite{WantableIDs: wants}
 			// failure_to_next_grab starts with the failure itself; the grab
@@ -415,6 +420,11 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 	}
 	return true, nil
 }
+
+// indexerOutageRetry is how long an indexer Runner could not fetch from is
+// deferred when it named no retry_at of its own: Runner had already
+// exhausted its own retries against it.
+const indexerOutageRetry = 15 * time.Minute
 
 // HistoryNoReplacement explains why a failure starts no next grab.
 const HistoryNoReplacement = "no_replacement"

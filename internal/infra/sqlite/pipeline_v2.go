@@ -180,6 +180,16 @@ type RunnerTerminalWrite struct {
 	ReplacementGrab *ReplacementGrabWrite
 	History         []HistoryWrite
 	TimingStarts    []TimingStart
+	// IndexerOutage records fetch{indexer_unavailable}: the source indexer
+	// is deferred until the later of its own retry_at and this time, and the
+	// row carries that as provider_retry_after (IMPL section 5.6 item 3).
+	IndexerOutage *IndexerOutageWrite
+}
+
+// IndexerOutageWrite defers an indexer Runner could not fetch from.
+type IndexerOutageWrite struct {
+	IndexerID int64 // 0: the row names no indexer; only the row is marked
+	Until     time.Time
 }
 
 // RecordRunnerTerminal applies the once-guard (an open or provisional
@@ -234,6 +244,20 @@ func (d *DB) RecordRunnerTerminal(ctx context.Context, w RunnerTerminalWrite) (b
 		return false, err
 	}
 	q := d.Write.WithTx(tx)
+	if o := w.IndexerOutage; o != nil {
+		until := o.Until.UnixMilli()
+		if o.IndexerID > 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE indexers SET retry_at=MAX(retry_at,?) WHERE id=?`, until, o.IndexerID); err != nil {
+				return false, err
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT MAX(retry_at,?) FROM indexers WHERE id=?`, until, o.IndexerID).Scan(&until); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return false, err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE downloads SET provider_retry_after=MAX(provider_retry_after,?) WHERE id=?`, until, w.DownloadID); err != nil {
+			return false, err
+		}
+	}
 	if w.ReplanPlanID != 0 {
 		if _, err := tx.ExecContext(ctx, `UPDATE acquisition_plans SET replan_pending=1 WHERE id=?`, w.ReplanPlanID); err != nil {
 			return false, err
