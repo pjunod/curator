@@ -57,11 +57,9 @@ Not removed on purpose: `RemoveFileRequest.Blocklist`/`Search` (marked
 Deprecated in Go): they are the old remove endpoint's wire shape and are
 rejected explicitly, not dead code from M2/M4/M5.
 
-Found while verifying: `TestImportWritesTheOutboxInItsTransaction` fails on
-#97's head (`b2afde9`, checked on a detached worktree): it predates M5, which
-gives a chat notifier its own outbox row, so it saw two rows where it wanted
-one. Fixed here (it names both rows and checks the disabled and grab-only
-notifiers get none); #97's own gate will hit it.
+`TestImportWritesTheOutboxInItsTransaction` predated M5 (which gives a chat
+notifier its own one-shot outbox row); it was fixed on #97 itself (`e9f7aca`)
+and arrives here by the merge of that branch.
 
 Verified (fast lane): `go build ./...`; `go vet` and `go test` of
 `internal/domain/backoff`, `internal/docs`, `internal/app/notify`,
@@ -1553,7 +1551,7 @@ the symptom).
 - [x] Compat `/qualityprofile` synthesized from targets — fake-consumer suite green untouched (plan §6.4, M5)
 - [x] Post-import verification: `quality_mismatch` history event (log-only); docs updated (usage/settings/architecture); ADRs 0013/0014 → Accepted (M6)
 
-## Phase 7 — The nzbd integration (plan: `docs/plan-integration.md`)
+## Phase 7 — The nzbd integration (plan: `docs/archive/plan-integration.md`)
 
 Making the three apps behave like one pipeline: events instead of timers at
 every seam, and one id that names a transfer from grab to playable. nzbd's
@@ -1733,7 +1731,7 @@ rar/par overhead. Upstream of monarr — nzbd or the provider — and still open
       cosmetic: on a large backlog the order decides what gets searched at
       all. A stable partition, not a score — the signal is "somebody watched
       this", and a numeric intensity would be precision nobody could check
-- [x] Decisions recorded in `docs/plan-integration.md` §11.1: per-user with
+- [x] Decisions recorded in `docs/archive/plan-integration.md` §11.1: per-user with
       usernames (overriding the sketch's aggregate), and **no deletion path
       on either side**
 - [ ] Show it on the item page — the data is stored and read, but not yet

@@ -729,8 +729,6 @@ broken.
 
 ---
 
----
-
 ## 7. plurx watch webhook — the only inbound push Monarr accepts
 
 **What it does.** plurx tells Monarr what was watched, and by whom. Monarr
