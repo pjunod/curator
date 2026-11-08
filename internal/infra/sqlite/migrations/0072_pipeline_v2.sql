@@ -406,7 +406,9 @@ SELECT CASE WHEN r.download_id != 0 AND EXISTS (SELECT 1 FROM downloads d WHERE 
        'historical', r.ready_at, 0, CAST(strftime('%s','now') AS INTEGER) * 1000
   FROM runner_delivery_receipts r
  WHERE json_valid(r.files_json)
- ORDER BY r.id;
+ -- Two receipts sharing a path: the newest wins (INSERT OR IGNORE keeps the
+ -- first row inserted, so insert newest first).
+ ORDER BY r.id DESC;
 
 INSERT OR IGNORE INTO publication_files (publication_id, path, bytes, sha256, updated_at)
 SELECT p.id, json_extract(f.value, '$.path'), COALESCE(json_extract(f.value, '$.bytes'), 0),
@@ -414,24 +416,27 @@ SELECT p.id, json_extract(f.value, '$.path'), COALESCE(json_extract(f.value, '$.
   FROM publications p, json_each(json_extract(p.manifest_json, '$.files')) f
  WHERE p.manifest_source = 'v1_record' AND json_extract(f.value, '$.path') IS NOT NULL;
 
+-- Each file takes the newest outcome any receipt for its path recorded.
+-- PRAGMA foreign_key_check after the rebuild is asserted by TestMigration0072
+-- rather than here (inside goose's run it would only return rows).
 UPDATE publication_files SET
     outcome = CASE (SELECT o.disposition FROM runner_delivery_file_outcomes o
                       JOIN runner_delivery_receipts r ON r.id = o.receipt_id
                      WHERE (CASE WHEN r.mapped_path != '' THEN r.mapped_path ELSE r.publication_path END) =
                            (SELECT path FROM publications WHERE id = publication_files.publication_id)
-                       AND o.path = publication_files.path)
+                       AND o.path = publication_files.path ORDER BY o.updated_at DESC, o.receipt_id DESC LIMIT 1)
               WHEN 'placed' THEN 'placed' WHEN 'redundant' THEN 'discarded' ELSE 'pending' END,
     library_path = COALESCE((SELECT o.library_path FROM runner_delivery_file_outcomes o
                       JOIN runner_delivery_receipts r ON r.id = o.receipt_id
                      WHERE (CASE WHEN r.mapped_path != '' THEN r.mapped_path ELSE r.publication_path END) =
                            (SELECT path FROM publications WHERE id = publication_files.publication_id)
-                       AND o.path = publication_files.path), ''),
+                       AND o.path = publication_files.path ORDER BY o.updated_at DESC, o.receipt_id DESC LIMIT 1), ''),
     removed_at = COALESCE((SELECT CASE WHEN o.cleanup_state = 'removed' THEN o.updated_at ELSE 0 END
                       FROM runner_delivery_file_outcomes o
                       JOIN runner_delivery_receipts r ON r.id = o.receipt_id
                      WHERE (CASE WHEN r.mapped_path != '' THEN r.mapped_path ELSE r.publication_path END) =
                            (SELECT path FROM publications WHERE id = publication_files.publication_id)
-                       AND o.path = publication_files.path), 0);
+                       AND o.path = publication_files.path ORDER BY o.updated_at DESC, o.receipt_id DESC LIMIT 1), 0);
 UPDATE publication_files SET placed_sha256 = sha256 WHERE outcome = 'placed';
 UPDATE publication_files SET discard_reason = 'duplicate' WHERE outcome = 'discarded';
 

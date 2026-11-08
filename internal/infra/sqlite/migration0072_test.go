@@ -57,6 +57,12 @@ func TestMigration0072(t *testing.T) {
 	exec(`INSERT INTO runner_delivery_file_outcomes(receipt_id,path,size_bytes,sha256,disposition,library_path,updated_at) VALUES(1,'S01E01.mkv',5,'aa','placed','/lib/e1.mkv',1)`)
 	exec(`INSERT INTO runner_delivery_receipts(id,client_id,delivery_id,sequence,publication_generation,manifest_digest,artifact_id,job_id,ready_at,publication_path,files_json,state,ack_state,download_id,created_at,updated_at)
 		VALUES(2,1,'d-2',8,'gen2','dig2','b','34',101,'/runner/pub2','[{"path":"x.mkv","sizeBytes":1,"sha256":"cc"}]','unresolved','not_accepted',0,1,1)`)
+	// A newer receipt for the same path (a re-published generation): it wins
+	// the publication, and each file takes the newest outcome recorded.
+	exec(`INSERT INTO runner_delivery_receipts(id,client_id,delivery_id,sequence,publication_generation,manifest_digest,artifact_id,job_id,ready_at,publication_path,mapped_path,files_json,state,ack_state,download_id,created_at,updated_at)
+		VALUES(3,1,'d-3',9,'gen3','dig3','c','33',102,'/runner/pub1b','/local/pub1',?,'importing','accepted',3,2,2)`, files)
+	exec(`INSERT INTO runner_delivery_file_outcomes(receipt_id,path,size_bytes,sha256,disposition,library_path,updated_at) VALUES(3,'S01E01.mkv',5,'aa','pending','',0)`)
+	exec(`INSERT INTO runner_delivery_file_outcomes(receipt_id,path,size_bytes,sha256,disposition,library_path,updated_at) VALUES(3,'S01E02.mkv',6,'bb','placed','/lib/e2.mkv',5)`)
 	var children int
 	_ = db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM import_attempt_controls`).Scan(&children)
 
@@ -111,7 +117,8 @@ func TestMigration0072(t *testing.T) {
 	}
 
 	p, ok, err := db.PublicationByPath(ctx, "/local/pub1")
-	if err != nil || !ok || p.DownloadID != 3 || p.Cohort != "historical" || p.State != "discovered" || p.ManifestSource != "v1_record" || p.RemotePath != "/runner/pub1" {
+	if err != nil || !ok || p.DownloadID != 3 || p.Cohort != "historical" || p.State != "discovered" || p.ManifestSource != "v1_record" ||
+		p.RemotePath != "/runner/pub1b" || p.Generation != "gen3" {
 		t.Fatalf("receipt 1 publication = %+v ok=%v err=%v", p, ok, err)
 	}
 	pf, err := db.ListPublicationFiles(ctx, p.ID)
@@ -119,10 +126,10 @@ func TestMigration0072(t *testing.T) {
 		t.Fatalf("files = %+v err %v", pf, err)
 	}
 	if pf[0].Path != "S01E01.mkv" || pf[0].Outcome != "placed" || pf[0].LibraryPath != "/lib/e1.mkv" || pf[0].PlacedSHA256 != "aa" {
-		t.Fatalf("placed file = %+v", pf[0])
+		t.Fatalf("E01 = %+v, want the newer placed outcome over the later receipt's older pending one", pf[0])
 	}
-	if pf[1].Outcome != "pending" {
-		t.Fatalf("unplaced file = %+v, want pending", pf[1])
+	if pf[1].Outcome != "placed" || pf[1].LibraryPath != "/lib/e2.mkv" {
+		t.Fatalf("E02 = %+v, want the newest receipt's placed outcome", pf[1])
 	}
 	p2, ok, _ := db.PublicationByPath(ctx, "/runner/pub2")
 	if !ok || p2.DownloadID != 0 || p2.Cohort != "historical" {
