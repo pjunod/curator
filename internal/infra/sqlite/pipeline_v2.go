@@ -279,7 +279,18 @@ func (d *DB) RecordRunnerTerminal(ctx context.Context, w RunnerTerminalWrite) (b
 		}
 	}
 	if p := w.Publication; p != nil {
-		if _, err := insertPublicationTx(ctx, tx, *p, now); err != nil {
+		var claimed *PublicationPathClaimedError
+		if _, err := insertPublicationTx(ctx, tx, *p, now); errors.As(err, &claimed) {
+			// Another download's publication owns the directory: this row's
+			// import fails here, visibly, instead of waiting at downloaded
+			// with no publication and no deadline.
+			reason := "publication import_failed: " + claimed.Error()
+			fail, _ := json.Marshal(HandoffEntry{Step: "failed", At: now, Detail: reason})
+			if _, err := tx.ExecContext(ctx, `UPDATE downloads SET state='failed', error=?, deadline_at=0, state_entered_at=?,
+				handoff_log=json_insert(handoff_log,'$[#]',json(?)) WHERE id=?`, reason, now, string(fail), w.DownloadID); err != nil {
+				return false, err
+			}
+		} else if err != nil {
 			return false, err
 		}
 	}
@@ -453,14 +464,50 @@ func insertPublicationTx(ctx context.Context, tx *sql.Tx, p PublicationWrite, no
 	}
 	// One publication per directory and per (download, generation), ever: a
 	// replayed fact finds the row it already made.
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO publications (download_id, generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, discovered_at, deadline_at, updated_at)
+	res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO publications (download_id, generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, discovered_at, deadline_at, updated_at)
 		VALUES (?,?,?,?,?,?,?,?,'discovered',?,?,?,?)`,
-		download, p.Generation, p.Kind, p.Path, p.RemotePath, p.ManifestJSON, p.Source, cross, p.Cohort, now, now+DeadlinePublication.Milliseconds(), now); err != nil {
+		download, p.Generation, p.Kind, p.Path, p.RemotePath, p.ManifestJSON, p.Source, cross, p.Cohort, now, now+DeadlinePublication.Milliseconds(), now)
+	if err != nil {
+		return 0, err
+	}
+	inserted, err := res.RowsAffected()
+	if err != nil {
 		return 0, err
 	}
 	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE path=?`, p.Path).Scan(&id)
-	return id, err
+	var owner sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT id, download_id FROM publications WHERE path=?`, p.Path).Scan(&id, &owner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) && inserted == 0 && p.DownloadID != 0 {
+			// Ignored on (download, generation) under another path (a
+			// changed path mapping): a replay of the publication it made.
+			err = tx.QueryRowContext(ctx, `SELECT id FROM publications WHERE download_id=? AND generation=?`, p.DownloadID, p.Generation).Scan(&id)
+		}
+		return id, err
+	}
+	if inserted == 0 && p.DownloadID != 0 {
+		switch {
+		case !owner.Valid:
+			// A historical directory with no row, marked at cutover: this
+			// download is what produced it.
+			if _, err := tx.ExecContext(ctx, `UPDATE publications SET download_id=?, updated_at=? WHERE id=? AND download_id IS NULL`, p.DownloadID, now, id); err != nil {
+				return 0, err
+			}
+		case owner.Int64 != p.DownloadID:
+			return 0, &PublicationPathClaimedError{Path: p.Path, Owner: owner.Int64}
+		}
+	}
+	return id, nil
+}
+
+// PublicationPathClaimedError is a publication whose directory another
+// download's publication already owns.
+type PublicationPathClaimedError struct {
+	Path  string
+	Owner int64
+}
+
+func (e *PublicationPathClaimedError) Error() string {
+	return fmt.Sprintf("%s is already the publication of download %d", e.Path, e.Owner)
 }
 
 // InsertPublication records a publication (salvage, a late one, or a

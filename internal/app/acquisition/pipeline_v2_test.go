@@ -1084,3 +1084,34 @@ func TestProvisionalRowReopensFromThePoll(t *testing.T) {
 		t.Fatalf("row = %s/%s provisional=%v progress %.2f, want re-opened downloading", got.State, got.RunnerOutcome, got.Provisional, got.Progress)
 	}
 }
+
+// (review #10) A completed terminal whose directory is already another
+// download's publication fails that row's import visibly, instead of leaving
+// it downloaded with no publication and no deadline. A historical directory
+// with no row is adopted by the download that produced it.
+func TestPublicationPathCollisionFailsTheImport(t *testing.T) {
+	f := setupV2(t, nil)
+	first := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-101.runner-col", "col", map[string]string{epOne + ".mkv": "video"})
+	f.observe(first, terminalFact(first, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	second := f.grab(2, epTwo)
+	f.observe(second, terminalFact(second, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 2"))
+	got := f.row(second.ID)
+	if got.State != "failed" || got.RunnerOutcome != "completed" || !strings.Contains(got.Error, fmt.Sprintf("publication of download %d", first.ID)) {
+		t.Fatalf("colliding row = %s/%s %q, want its import failed naming the owner", got.State, got.RunnerOutcome, got.Error)
+	}
+	if p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path); p.DownloadID != first.ID {
+		t.Fatalf("publication owner = %d, want unchanged %d", p.DownloadID, first.ID)
+	}
+
+	third := f.grab(3, "Test.Show.S01E03.1080p.WEB-DL.x264-GRP")
+	hist := f.publish("Test.Show.S01E03.job-103.runner-hist3", "hist3", map[string]string{"Test.Show.S01E03.1080p.WEB-DL.x264-GRP.mkv": "video"})
+	if _, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{Kind: "completed", Path: hist.Path, Cohort: "historical", Source: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	f.observe(third, terminalFact(third, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &hist, Salvage: "none"}, "event 3"))
+	p, _, _ := f.db.PublicationByPath(f.ctx, hist.Path)
+	if p.DownloadID != third.ID || p.Cohort != "historical" {
+		t.Fatalf("historical directory = %+v, want adopted by download %d and still historical", p, third.ID)
+	}
+}
