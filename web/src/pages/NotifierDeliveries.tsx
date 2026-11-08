@@ -21,7 +21,9 @@ function ago(ms: number): string {
 function inFuture(ms: number): string {
   const secs = Math.max(0, Math.round((ms - Date.now()) / 1000))
   if (secs < 60) return `in ${secs}s`
-  if (secs < 3600) return `in ${Math.round(secs / 60)}m`
+  // By minutes as shown: 59 min 59 s reads "in 1h", never "in 60m".
+  const mins = Math.round(secs / 60)
+  if (mins < 60) return `in ${mins}m`
   return `in ${Math.round(secs / 3600)}h`
 }
 

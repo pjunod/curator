@@ -48,6 +48,7 @@ for (const width of [390, 1280]) {
     const note = row.getByText('✓ connected; checking the library paths needs a newer cinema')
     await expect(note).toBeVisible()
     await expect.poll(() => onScreen(note)).toBe(true)
+    await expect(note).toBeFocused()
 
     await row.getByRole('button', { name: 'Delivery log' }).click()
     const log = page.getByTestId('delivery-log')

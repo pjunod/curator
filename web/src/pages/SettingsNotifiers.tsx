@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Notifier, NotifierInput, NotifierType } from '../api'
 import {
@@ -60,8 +60,29 @@ function RowTest({ id }: { id: number }) {
       >
         {run.isPending ? 'Testing…' : 'Test'}
       </button>
-      {msg && <div className={msg.startsWith('✓') ? 'ok-text' : 'error-text'}>{msg}</div>}
+      {msg && <TestResult text={msg} className={msg.startsWith('✓') ? 'ok-text' : 'error-text'} />}
     </>
+  )
+}
+
+// TestResult is a Test's answer, revealed where it lands (CLAUDE.md section
+// 5). The notifier table scrolls sideways inside its panel on a phone, so the
+// row's actions column — and the answer under its Test button — can sit past
+// the panel's visible edge: scroll every scrolling ancestor until it is in
+// view (the root's scroll padding keeps it clear of the fixed bars) and move
+// focus to it, so keyboard and screen-reader users land on it too.
+function TestResult({ text, className }: { text: string; className: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+    el.focus({ preventScroll: true })
+  }, [text])
+  return (
+    <div ref={ref} role="status" tabIndex={-1} className={className}>
+      {text}
+    </div>
   )
 }
 
@@ -247,7 +268,7 @@ export function NotifierSettings() {
         >
           Add
         </button>
-        {testResult && <span className="muted">{testResult}</span>}
+        {testResult && <TestResult text={testResult} className="muted" />}
       </div>
       {add.isError && <div className="banner warning">{String((add.error as Error).message)}</div>}
     </section>
