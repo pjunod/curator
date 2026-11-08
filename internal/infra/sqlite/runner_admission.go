@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/pjunod/monarr/internal/domain/backoff"
 )
 
 // RecordDownloadSubmission atomically binds the exact client handle and the
@@ -143,12 +145,7 @@ func (d *DB) ScheduleRunnerSubmissionRetry(ctx context.Context, downloadID int64
 	if blocked == 0 {
 		blocked = now.UnixMilli()
 	}
-	backoff := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
-	index := retry.Attempts
-	if index >= len(backoff) {
-		index = len(backoff) - 1
-	}
-	next := now.Add(backoff[index])
+	next := now.Add(backoff.Retry.After(retry.Attempts))
 	providerAt := int64(0)
 	if len(providerDeadline) > 0 && providerDeadline[0].After(now) {
 		providerAt = providerDeadline[0].UnixMilli()

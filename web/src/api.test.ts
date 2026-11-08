@@ -177,20 +177,8 @@ describe('book edition release search', () => {
 })
 
 describe('pipelineTile', () => {
-  it('reports a seam nothing starts yet as not measured, with no waiting count', () => {
-    const t = pipelineTile({
-      kind: 'import_to_cinema_visible',
-      measured: false,
-      note: 'not measured — needs M5',
-      samples: 0,
-      waiting: 0,
-    })
-    expect(t.value).toBe('not measured — needs M5')
-    expect(t.detail).toBe('')
-  })
-
   it('says no data yet rather than a zero when nothing has finished', () => {
-    const t = pipelineTile({ kind: 'failure_to_next_grab', measured: true, samples: 0, waiting: 0 })
+    const t = pipelineTile({ kind: 'failure_to_next_grab', samples: 0, waiting: 0 })
     expect(t.value).toBe('no data yet')
     expect(t.detail).toBe('none waiting')
   })
@@ -198,7 +186,6 @@ describe('pipelineTile', () => {
   it('shows p50 and p95 with the sample count and the waiting count', () => {
     const t = pipelineTile({
       kind: 'runner_done_to_import',
-      measured: true,
       samples: 12,
       waiting: 1,
       p50Seconds: 42,

@@ -11,6 +11,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/app/transfers"
+	"github.com/pjunod/monarr/internal/domain/backoff"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -25,29 +26,14 @@ import (
 // Cinema's rows are sub-deliveries, one per directory of an import, and for
 // them the message IS the work: a missed scan is a file that never appears in
 // the library. Each is delivered on its own, under its own deadline, retried
-// on the schedule below WITHOUT END for anything transient, and read back:
-// it is done only when Cinema reports every expected file placed with the
-// bytes and mtime the import left it with.
-var deliveryBackoff = []time.Duration{
-	5 * time.Second,
-	30 * time.Second,
-	2 * time.Minute,
-	5 * time.Minute,
-	15 * time.Minute,
-	time.Hour,
-}
+// on backoff.Outbox (see backoffAfter) WITHOUT END for anything transient,
+// and read back: it is done only when Cinema reports every expected file
+// placed with the bytes and mtime the import left it with.
 
 // backoffAfter is the wait before the next try of a row that has been tried
-// `attempts` times: the schedule, then hourly for as long as it takes.
+// `attempts` times: the outbox ladder, then hourly for as long as it takes.
 func backoffAfter(attempts int64) time.Duration {
-	i := int(attempts) - 1
-	if i < 0 {
-		i = 0
-	}
-	if i >= len(deliveryBackoff) {
-		return deliveryBackoff[len(deliveryBackoff)-1]
-	}
-	return deliveryBackoff[i]
+	return backoff.Outbox.After(int(attempts) - 1)
 }
 
 // WarningAfter is how long a sub-delivery may stay pending before it is shown

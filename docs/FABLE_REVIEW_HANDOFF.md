@@ -3,7 +3,7 @@
 **Status:** archived review brief; user waived Fable review on 2026-10-23
 **Written:** 2026-10-22 · **Updated:** 2026-10-23
 
-Read [the approved operating proposal](DOWNLOAD_LIFECYCLE_PROPOSAL.md) first,
+Read [the approved operating proposal](archive/DOWNLOAD_LIFECYCLE_PROPOSAL.md) first,
 then [implementation status](DOWNLOAD_LIFECYCLE_STATUS.md) and
 [Cinema's HTTP integration contract](BAD_DOWNLOAD_API.md). Review both services
 and their shared ownership boundary independently. On 2026-10-23 the user waived

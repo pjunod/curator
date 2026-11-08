@@ -1,5 +1,7 @@
 # Download failures — root causes and proposed recovery fixes
 
+> Archived 2026-11-08. Implemented in Runner PR #247 and superseded by [PIPELINE_CONTRACT.md](../PIPELINE_CONTRACT.md). Kept as history.
+
 **Status:** implemented in Runner PR #247 (merged 2026-10-01, `a461515`); the text below is the original reviewed proposal · **Written:** 2026-09-30
 
 This is the implementation proposal for the Monster failures and retained
@@ -7,7 +9,7 @@ download backlog. Read [the incident evidence](RUNNER_FAILURE_DIAGNOSIS.md)
 for the original observations and [the adversarial review](RUNNER_FAILURE_REVIEW.md)
 for challenges and their dispositions. Work through the milestones in §8;
 do not run a backlog mutation before its ownership and integrity checks pass.
-The existing [recovery contract](adr/0021-file-lifecycle-recovery.md) remains
+The existing [recovery contract](../adr/0021-file-lifecycle-recovery.md) remains
 the authority for library placement and receipts.
 The [build handoff](RUNNER_FAILURE_BUILD.md) specifies the implementation
 sequence, code seams, compatibility contract, and verification deliverables.
@@ -39,9 +41,9 @@ while retaining its child entries and byte accounting. It saves paths from
 newly received failure reports and displays Runner's `Failure:Files` detail.
 It was prepared and verified as `0.34.4`; unrelated concurrent work has since
 advanced the shared tree's version. This investigation did not deploy it. See
-[inventory code](../internal/app/acquisition/completed.go),
-[failure handling](../internal/app/acquisition/acquisition.go), and
-[Runner adapter](../internal/adapters/nzbd/nzbd.go).
+[inventory code](../../internal/app/acquisition/completed.go),
+[failure handling](../../internal/app/acquisition/acquisition.go), and
+[Runner adapter](../../internal/adapters/nzbd/nzbd.go).
 
 That patch does **not** backfill old failures, make retained media valid,
 repair Runner, or prevent every early failure/regrab race. All changes in
@@ -232,7 +234,7 @@ pending reconciliation record; a timeout is not permission to regrab.
 ### 4.2 Compatibility and acquisition suppression
 
 The adapter's existing `GET /api/v1/jobs` representation contains `status`,
-`pp_done`, and `ready`; see [the actual fields](../internal/adapters/nzbd/nzbd.go).
+`pp_done`, and `ready`; see [the actual fields](../../internal/adapters/nzbd/nzbd.go).
 Map a held job to an already supported **nonterminal** status for old clients,
 and emit no failed completion event or failed history row for that hold.
 Choose and test the exact legacy status against both clients before shipping;
@@ -333,7 +335,7 @@ processes can consume it, so reservations do not replace runtime error handling.
 If extraction size is unknown, allow one bounded attempt with monitoring,
 then hold on resource exhaustion rather than looping. Recovery placement
 continues to reserve the full copy plus 1 GiB per destination volume as
-specified by [ADR 0021](adr/0021-file-lifecycle-recovery.md).
+specified by [ADR 0021](../adr/0021-file-lifecycle-recovery.md).
 
 Persist the hold against the actual filesystem identity, operation stage,
 observed cause, and quota context where known. An unchanged or unknown

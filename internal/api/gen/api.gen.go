@@ -2646,12 +2646,6 @@ type PipelineSummary struct {
 type PipelineTiming struct {
 	Kind PipelineTimingKind `json:"kind"`
 
-	// Measured False while nothing can end this timing yet (import_to_cinema_visible, until pipeline M5).
-	Measured bool `json:"measured"`
-
-	// Note Why a seam is not measured.
-	Note *string `json:"note,omitempty"`
-
 	// P50Seconds Absent when there are no samples.
 	P50Seconds *float64 `json:"p50Seconds,omitempty"`
 
@@ -2818,7 +2812,7 @@ type QueueItem struct {
 	Match       *MatchEvidence        `json:"match,omitempty"`
 	MediaItemId int64                 `json:"mediaItemId"`
 
-	// ParkedReason Deprecated. A legacy (non-Runner) client's operator fence; Runner rows are never parked (pipeline contract v2). Removed in M4.
+	// ParkedReason Why a legacy (non-Runner) client's row, or a season episode held in custody, is reserved. Runner rows are never parked (pipeline contract v2).
 	ParkedReason *string `json:"parkedReason,omitempty"`
 	PlanId       *int64  `json:"planId,omitempty"`
 	PlanState    *string `json:"planState,omitempty"`

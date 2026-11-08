@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain/backoff"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
@@ -125,14 +126,7 @@ func importRetryDelay(attempts int) time.Duration {
 	if importRetryBackoff == 0 { // test seam; production leaves the default intact.
 		return 0
 	}
-	delays := [...]time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
-	if attempts < 0 {
-		attempts = 0
-	}
-	if attempts >= len(delays) {
-		return delays[len(delays)-1]
-	}
-	return delays[attempts]
+	return backoff.Retry.After(attempts)
 }
 
 // ImportRetryStatus is the durable Activity-facing retry view. The trace

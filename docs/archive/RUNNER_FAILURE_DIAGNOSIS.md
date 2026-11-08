@@ -1,8 +1,10 @@
 # Runner failures — Monster downloads and retained media
 
+> Archived 2026-11-08. Incident evidence for Runner PR #247; current failure handling is [integration.md](../integration.md) section 4. Kept as history.
+
 **Status:** fixed in Runner PR #247 (merged 2026-10-01, `a461515`); the text below is the original diagnosis, kept as evidence · **Inspected:** 2026-09-30
 
-Companion to [usage](usage.md#completed-folders--accounting-survives-an-empty-queue).
+Companion to [usage](../usage.md#completed-folders--accounting-survives-an-empty-queue).
 The [root-cause and fix plan](RUNNER_FAILURE_FIX_PLAN.md) turns this evidence
 into proposed changes, milestones, and recovery gates; its
 [adversarial review](RUNNER_FAILURE_REVIEW.md) records additional source hazards.

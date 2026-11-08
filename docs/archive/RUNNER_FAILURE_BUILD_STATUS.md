@@ -1,5 +1,7 @@
 # Runner failure build — implementation and evidence ledger
 
+> Archived 2026-11-08. The ledger of Runner PR #247; current failure handling is [integration.md](../integration.md) section 4. Kept as history.
+
 **Status:** implemented with passing local gates and merged as Runner PR #247 (2026-10-01, `a461515`); native-mount qualification not claimed · **Updated:** 2026-09-30
 
 Companion to [the build contract](RUNNER_FAILURE_BUILD.md). This ledger records

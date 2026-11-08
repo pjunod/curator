@@ -242,6 +242,8 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
 - **[Mobile app](mobile/README.md)** — run, verify, build, and submit the native iOS and
   Android companion.
 - **[Settings reference](docs/settings.md)** — every field in the Settings and System pages.
+- **[Documentation index](docs/README.md)** — every file under `docs/`, grouped; a test keeps
+  it complete and every relative link resolving.
 - **[Integration](docs/integration.md)** — every seam with nzbd and plurx: what each does, the
   wire format, where you watch it in the UI, and the command that proves it works.
 - **[Deployment](docs/deployment.md)** — storage rules for the SQLite database (why the live
@@ -257,11 +259,11 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
   validation, and delivery of the scan feedback fix.
 - **[Release identity status](docs/RELEASE_IDENTITY_STATUS.md)** — live implementation,
   review, validation, and delivery state for that plan.
-- **[Download failure fix plan](docs/RUNNER_FAILURE_FIX_PLAN.md)** — Monster root
+- **[Download failure fix plan](docs/archive/RUNNER_FAILURE_FIX_PLAN.md)** — Monster root
   causes, Runner/Curator fixes, and retained-media recovery gates;
-  [incident evidence](docs/RUNNER_FAILURE_DIAGNOSIS.md) and
-  [adversarial review](docs/RUNNER_FAILURE_REVIEW.md) separate observations from
-  the proposed implementation. The [build handoff](docs/RUNNER_FAILURE_BUILD.md)
+  [incident evidence](docs/archive/RUNNER_FAILURE_DIAGNOSIS.md) and
+  [adversarial review](docs/archive/RUNNER_FAILURE_REVIEW.md) separate observations from
+  the proposed implementation. The [build handoff](docs/archive/RUNNER_FAILURE_BUILD.md)
   gives the cross-repository sequence, interface contract, and acceptance tests.
 - **[Wanted groups plan](docs/plan-wanted-groups.md)** — retained design for expandable
   titles, individual target searches, and bulk searches across every page.
@@ -371,7 +373,7 @@ and verification.
 
 Runner recovery placement and cleanup are documented in [ADR 0020](docs/adr/0021-file-lifecycle-recovery.md) and the [recovery usage guide](docs/usage.md#recover-media-retained-by-runner).
 
-The [approved download lifecycle proposal](docs/DOWNLOAD_LIFECYCLE_PROPOSAL.md)
+The [approved download lifecycle proposal](docs/archive/DOWNLOAD_LIFECYCLE_PROPOSAL.md)
 records Runner/Curator ownership, failure retention, handoff, cleanup, replacement,
 and the reviewed interface scope. [Implementation status](docs/DOWNLOAD_LIFECYCLE_STATUS.md)
 tracks building, review, validation, and delivery. The [Cinema replacement API

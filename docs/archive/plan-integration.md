@@ -1,5 +1,7 @@
 # Plan — tightening the nzbd ↔ monarr ↔ plurx pipeline
 
+> Archived 2026-11-08. Its contract (section 3) is superseded by [PIPELINE_CONTRACT.md](../PIPELINE_CONTRACT.md); the seams as shipped are in [integration.md](../integration.md). Kept as history; do not build from it.
+
 **Status:** ready to build · **Written:** 2026-07-26 ·
 **Companions:** `nzbd/docs/INTEGRATION_PLAN.md`, `plurx/docs/INTEGRATION-PLAN.md`
 
@@ -180,7 +182,7 @@ they are sketched separately in §11.)
 
 ## 3. The contract
 
-**Status:** superseded 2026-11-07 by [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) (pipeline contract v2). Kept as history; do not build from this section.
+**Status:** superseded 2026-11-07 by [PIPELINE_CONTRACT.md](../PIPELINE_CONTRACT.md) (pipeline contract v2). Kept as history; do not build from this section.
 
 Everything below is normative for all three repos. Payload field names
 are exact. Copies of the relevant slices live in the per-repo plans;

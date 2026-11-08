@@ -213,7 +213,7 @@ express:
 - **Live updates** (below), which need an event stream compat does not have.
 
 Since v0.39.0 a native Runner client is driven by pipeline contract v2 (see
-[integration.md](integration.md), *Pipeline contract v2 in Curator*): Runner's
+[integration.md](integration.md#4-facts-terminals-and-the-next-grab)): Runner's
 terminal facts, publications imported file by file, and a failure's
 replacement grab written with the failure itself. **There is nothing new to
 configure** — no setting enables or tunes it. The deadlines it uses (10

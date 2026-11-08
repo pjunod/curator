@@ -5333,15 +5333,11 @@ components:
 
     PipelineTiming:
       type: object
-      required: [kind, measured, samples, waiting]
+      required: [kind, samples, waiting]
       properties:
         kind:
           type: string
           enum: [failure_to_next_grab, runner_done_to_import, import_to_cinema_visible]
-        measured:
-          type: boolean
-          description: False while nothing can end this timing yet (import_to_cinema_visible, until pipeline M5).
-        note: { type: string, description: Why a seam is not measured. }
         samples: { type: integer, description: Timings that finished inside the window. }
         waiting:
           type: integer
@@ -5837,8 +5833,8 @@ components:
         parkedReason:
           type: string
           description: >
-            Deprecated. A legacy (non-Runner) client's operator fence; Runner rows
-            are never parked (pipeline contract v2). Removed in M4.
+            Why a legacy (non-Runner) client's row, or a season episode held in
+            custody, is reserved. Runner rows are never parked (pipeline contract v2).
         runnerOutcome:
           type: string
           description: The recorded terminal - completed | failed | cancelled - or absent while open.
