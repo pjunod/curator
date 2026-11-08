@@ -93,16 +93,18 @@ func (d *DB) downloadsWhere(ctx context.Context, where string, args ...any) ([]D
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	// One batched read per chunk, not a GetDownload per row.
 	out := make([]Download, 0, len(ids))
-	for _, id := range ids {
-		dl, err := d.GetDownload(ctx, id)
-		if errors.Is(err, ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
+	for len(ids) > 0 {
+		chunk := ids[:min(len(ids), 500)]
+		ids = ids[len(chunk):]
+		rows, err := d.Read.ListDownloadsByIDs(ctx, chunk)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, dl)
+		for _, r := range rows {
+			out = append(out, downloadFromRow(r))
+		}
 	}
 	return out, nil
 }
@@ -898,17 +900,16 @@ func (d *DB) UpsertHistoryCursor(ctx context.Context, c RunnerHistoryCursor) err
 
 // ---- deadlines --------------------------------------------------------------
 
-// OverdueDownloads lists rows past their state's deadline: the contract
-// section 3.5 predicate (non-terminal state, deadline_at set and past).
-func (d *DB) OverdueDownloads(ctx context.Context, now time.Time, limit int) ([]Download, error) {
-	rows, err := d.downloadsWhere(ctx, `state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<?`, now.UnixMilli())
-	if err != nil || limit <= 0 || len(rows) <= limit {
-		return rows, err
-	}
-	return rows[:limit], nil
+// OverdueHeldDownloads lists one client's held rows past their deadline: the
+// held (stale) sweep's own query, so other clients' or states' overdue rows
+// can never crowd it out.
+func (d *DB) OverdueHeldDownloads(ctx context.Context, clientID int64, now time.Time) ([]Download, error) {
+	return d.downloadsWhere(ctx, `client_id=? AND state='held' AND runner_outcome='' AND deadline_at>0 AND deadline_at<?`, clientID, now.UnixMilli())
 }
 
-// CountOverdueDownloads counts what OverdueDownloads lists.
+// CountOverdueDownloads counts the rows past their state's deadline: the
+// contract section 3.5 predicate (non-terminal state, deadline_at set and
+// past), legacy parked and superseded rows excepted.
 func (d *DB) CountOverdueDownloads(ctx context.Context, now time.Time) (int, error) {
 	var n int
 	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM downloads WHERE state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<? AND superseded=0 AND parked_at=0`, now.UnixMilli()).Scan(&n)

@@ -891,14 +891,11 @@ func (s *Service) confirmAdmissions(ctx context.Context, cfg ports.ClientConfig,
 // import_failed{stalled}. Neither is a Runner terminal.
 func (s *Service) sweepDeadlines(ctx context.Context, cfg ports.ClientConfig, feeds ports.RequestAdmissionProtocol) {
 	now := time.Now()
-	rows, err := s.db.OverdueDownloads(ctx, now, 64)
+	rows, err := s.db.OverdueHeldDownloads(ctx, cfg.ID, now)
 	if err != nil {
 		return
 	}
 	for _, dl := range rows {
-		if dl.ClientID != cfg.ID || dl.State != "held" {
-			continue
-		}
 		stale := "held (stale): Runner has not reported since " + dl.UpdatedAt.Format(time.RFC3339)
 		if !strings.HasPrefix(dl.Error, "held (stale)") {
 			if err := s.db.MarkHeldStale(ctx, dl.ID, stale); err == nil {

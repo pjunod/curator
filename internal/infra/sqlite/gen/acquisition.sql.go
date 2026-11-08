@@ -8,6 +8,7 @@ package sqlitegen
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 const countDownloadsByState = `-- name: CountDownloadsByState :many
@@ -847,6 +848,111 @@ ORDER BY id
 
 func (q *Queries) ListDownloadReservations(ctx context.Context) ([]Download, error) {
 	rows, err := q.db.QueryContext(ctx, listDownloadReservations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Download
+	for rows.Next() {
+		var i Download
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.CopyID,
+			&i.Wantables,
+			&i.Season,
+			&i.ReleaseTitle,
+			&i.Indexer,
+			&i.Protocol,
+			&i.Quality,
+			&i.Size,
+			&i.ClientID,
+			&i.Handle,
+			&i.State,
+			&i.Progress,
+			&i.Error,
+			&i.SavePath,
+			&i.ImportPath,
+			&i.HandoffLog,
+			&i.AddedAt,
+			&i.Transfer,
+			&i.PayloadRemoved,
+			&i.MatchEvidence,
+			&i.RunnerControl,
+			&i.PlanID,
+			&i.CandidateKey,
+			&i.SubmissionPhase,
+			&i.ExecutionPayload,
+			&i.ReservedEpisodes,
+			&i.ParkedReason,
+			&i.ParkedAt,
+			&i.Superseded,
+			&i.Observation,
+			&i.CleanupPending,
+			&i.UpdatedAt,
+			&i.ActivityDismissed,
+			&i.GenerationKey,
+			&i.Intent,
+			&i.RequestID,
+			&i.RequestFingerprint,
+			&i.BlacklistOverride,
+			&i.DeliveryExpected,
+			&i.RequestTokenIdempotent,
+			&i.ManualRetryAt,
+			&i.ManualRetryAttempts,
+			&i.ManualBlockedAt,
+			&i.ReplacementOperationID,
+			&i.SourceGuid,
+			&i.SourceIndexerID,
+			&i.RunnerInstanceID,
+			&i.RunnerAdmissionGeneration,
+			&i.RunnerSubmissionRetryAt,
+			&i.RunnerSubmissionRetryAttempts,
+			&i.RunnerSubmissionBlockedAt,
+			&i.ProviderRetryAfter,
+			&i.ExactTransferCorrelation,
+			&i.RunnerOutcome,
+			&i.RunnerOutcomeAt,
+			&i.RunnerOutcomeSeq,
+			&i.RunnerOutcomeReason,
+			&i.RunnerFetchCause,
+			&i.RunnerBlamesRelease,
+			&i.RunnerSalvage,
+			&i.RunnerFetchedJson,
+			&i.Provisional,
+			&i.DeadlineAt,
+			&i.StateEnteredAt,
+			&i.RunnerStage,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDownloadsByIDs = `-- name: ListDownloadsByIDs :many
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads WHERE id IN (/*SLICE:ids*/?) ORDER BY id
+`
+
+func (q *Queries) ListDownloadsByIDs(ctx context.Context, ids []int64) ([]Download, error) {
+	query := listDownloadsByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}

@@ -1026,3 +1026,28 @@ func TestTimingsStartAtTerminalReceipt(t *testing.T) {
 		t.Fatal("an indexer outage started failure_to_next_grab")
 	}
 }
+
+// (review #6) The held (stale) sweep reads its own query: seventy other
+// overdue rows (another state, ahead of it by id) cannot crowd a stale hold
+// out of the sweep.
+func TestStaleHoldIsSweptPastManyOtherOverdueRows(t *testing.T) {
+	f := setupV2(t, nil)
+	past := time.Now().Add(-time.Hour).UnixMilli()
+	for i := 0; i < 70; i++ {
+		if _, err := f.db.W.ExecContext(f.ctx, `INSERT INTO downloads(media_item_id,protocol,release_title,state,client_id,transfer,deadline_at,added_at,updated_at)
+			VALUES(?,'torrent',?,'downloading',1,?,?,1,1)`, f.item, fmt.Sprintf("other-%d", i), fmt.Sprintf("t-other-%d", i), past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dl := f.grab(1, epOne)
+	control := &ports.DownloadControl{Version: 1, Revision: "3", Lifecycle: "held", Message: "mount gone"}
+	st := ports.DownloadStatus{Handle: ports.Handle(dl.Handle), Transfer: dl.Transfer, State: ports.StateQueued, Control: control}
+	f.observe(dl, ports.RunnerFact{Kind: ports.FactStatus, Transfer: dl.Transfer, Status: &st, Source: "event 1"})
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET deadline_at=? WHERE id=?`, past, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.sweepDeadlines(f.ctx, f.cfg, f.runner)
+	if got := f.row(dl.ID); !strings.HasPrefix(got.Error, "held (stale)") {
+		t.Fatalf("stale hold behind 70 overdue rows = %q, want swept", got.Error)
+	}
+}
