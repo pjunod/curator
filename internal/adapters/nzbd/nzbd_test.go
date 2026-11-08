@@ -45,14 +45,14 @@ const (
 
 	historyJSON = `{"entries":[
       {"can_requeue":false,"category":"tv","completed_at_unix":1785099832,"dupe_key":"",
-       "dupe_score":0,"final_dir":"/downloads/complete/Show.S01E00","first_seen_at_unix":null,
+       "dupe_score":0,"first_seen_at_unix":null,
        "health":1000,"hidden":false,"job":10,"last_seen_at_unix":null,"name":"Show.S01E00",
        "params":[["monarr-transfer","t-40-aaaaaa"]],"picked_up_by":null,"removed_at_unix":null,
-       "seen_count":0,"seq":7,"size":1000,"status":"SUCCESS"},
-      {"job":11,"name":"Bad.Release","status":"FAILURE/HEALTH","final_dir":null,"seq":8},
-      {"job":12,"name":"Unpacked.Badly","status":"UNPACK_FAILURE",
-       "final_dir":"/downloads/complete/Unpacked.Badly","seq":9},
-      {"job":13,"name":"Removed.By.Hand","status":"DELETED","final_dir":null,"seq":10}
+       "seen_count":0,"seq":7,"size":1000,"outcome":"completed",
+       "publication":{"path":"/downloads/complete/Show.S01E00","generation":"g10","manifest_digest":"d10","files":1}},
+      {"job":11,"name":"Bad.Release","seq":8,"outcome":"failed","reason":"health","stage":"health","blames_release":true,"message":"FAILURE/HEALTH"},
+      {"job":12,"name":"Unpacked.Badly","seq":9,"outcome":"failed","reason":"unpack","stage":"unpack","blames_release":true,"message":"UNPACK_FAILURE"},
+      {"job":13,"name":"Removed.By.Hand","seq":10,"outcome":"cancelled"}
     ]}`
 
 	statusJSON = `{"version":"0.1.0+g1bddcf0","built":"2026-07-26 20:23 UTC","up_since_unix":1785099779,
@@ -296,9 +296,9 @@ func TestStatusesMapsQueueOnly(t *testing.T) {
 	}
 }
 
-// The ordered history reader maps every terminal by the legacy string rule
-// when Runner sends no typed fields (an old Runner, contract section 6).
-func TestHistorySinceMapsLegacyTerminals(t *testing.T) {
+// The ordered history reader maps every row by Runner's typed terminal. A row
+// without one (the v1 status string alone) yields no fact.
+func TestHistorySinceMapsTypedTerminals(t *testing.T) {
 	rec := &recorder{}
 	srv := fake(t, rec, nil)
 	facts, next, lost, err := client(t, srv, "", "tok").HistorySince(context.Background(), ports.HistoryCursor{SinceSeq: 6}, 100)
@@ -348,25 +348,20 @@ func TestNullFinalDirIsNotAnError(t *testing.T) {
 	}
 }
 
-// A malformed SUCCESS response without final_dir is not permission to import
-// from an empty path. A subsequent valid form completes normally.
-func TestSuccessWithoutFinalDirWaitsForThePath(t *testing.T) {
-	early := statusOfHistory(historyEntry{
-		Job: 14, Name: "Still.Post.Processing", Status: "SUCCESS",
+// A history row with no typed terminal (only the v1 status and final_dir) is
+// not a terminal; a completed row without its publication is not one either.
+func TestHistoryRowWithoutATypedTerminalMakesNoFact(t *testing.T) {
+	srv := fake(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v1/history" {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"entries":[{"job":14,"seq":1,"status":"SUCCESS","final_dir":"/done"},{"job":15,"seq":2,"outcome":"completed"}]}`))
+		return true
 	})
-	if early.State != ports.StateDownloading {
-		t.Fatalf("early state = %q, want downloading until final_dir exists", early.State)
-	}
-	if early.SavePath != "" || !strings.Contains(early.Message, "waiting for final path") {
-		t.Errorf("early status = %+v, want an explicit wait with no path", early)
-	}
-
-	ready := statusOfHistory(historyEntry{
-		Job: 14, Name: "Still.Post.Processing", Status: "SUCCESS",
-		FinalDir: "/downloads/complete/Still.Post.Processing",
-	})
-	if ready.State != ports.StateCompleted || ready.SavePath == "" {
-		t.Errorf("ready status = %+v, want completed with final_dir", ready)
+	facts, next, _, err := client(t, srv, "", "t").HistorySince(context.Background(), ports.HistoryCursor{}, 100)
+	if err != nil || len(facts) != 0 || next.SinceSeq != 2 {
+		t.Fatalf("facts=%+v next=%+v err=%v, want none and the cursor past both rows", facts, next, err)
 	}
 }
 
@@ -554,27 +549,26 @@ func TestRemoveDoesNotBypassQueueRefusal(t *testing.T) {
 	}
 }
 
-// Field report 2026-11-02: every failed history row reported progress 1, so
-// a post that failed health before a single article arrived looked like a
-// full download to the re-grab budget, which counts bytes.
-func TestFailedHistoryReportsTheFractionActuallyFetched(t *testing.T) {
-	nothing := statusOfHistory(historyEntry{Job: 2211, Status: "FAILURE/HEALTH",
-		Record: &historyRecord{TotalArticles: 4683, SuccessArticles: 0}})
+// Field report 2026-11-02: every failed terminal reported progress 1, so a
+// post that failed health before a single article arrived looked like a full
+// download to the re-grab budget, which counts bytes.
+func TestFailedTerminalReportsTheFractionActuallyFetched(t *testing.T) {
+	failed := func(reason string, f ports.Fetched) ports.DownloadStatus {
+		return statusOfTerminal(1, "x", nil, nil, ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: reason, Fetched: f})
+	}
+	nothing := failed(ports.ReasonHealth, ports.Fetched{TotalArticles: 4683, SuccessArticles: 0})
 	if nothing.State != ports.StateFailed || nothing.Progress != 0 || !nothing.FetchedKnown {
 		t.Fatalf("health failure with no articles = %+v, want failed at 0", nothing)
 	}
-	most := statusOfHistory(historyEntry{Job: 12, Status: "UNPACK_FAILURE",
-		Record: &historyRecord{TotalArticles: 1000, SuccessArticles: 950}})
-	if most.Progress != 0.95 {
+	if most := failed(ports.ReasonUnpack, ports.Fetched{TotalArticles: 1000, SuccessArticles: 950}); most.Progress != 0.95 {
 		t.Fatalf("unpack failure after fetching 95%% reported %v", most.Progress)
 	}
-	unknown := statusOfHistory(historyEntry{Job: 11, Status: "FAILURE/HEALTH"})
-	if unknown.Progress != 1 {
+	if unknown := failed(ports.ReasonHealth, ports.Fetched{}); unknown.Progress != 1 {
 		t.Fatalf("a failure without a record must not claim it cost nothing: %v", unknown.Progress)
 	}
-	ok := statusOfHistory(historyEntry{Job: 10, Status: "SUCCESS", FinalDir: "/done",
-		Record: &historyRecord{TotalArticles: 8432, SuccessArticles: 8020}})
-	if ok.Progress != 1 {
-		t.Fatalf("a completed job is complete whatever PAR spared: %v", ok.Progress)
+	done := statusOfTerminal(10, "x", nil, nil, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted,
+		Publication: &ports.RunnerPublication{Path: "/done"}, Fetched: ports.Fetched{TotalArticles: 8432, SuccessArticles: 8020}})
+	if done.Progress != 1 || done.SavePath != "/done" {
+		t.Fatalf("a completed job is complete whatever PAR spared: %+v", done)
 	}
 }

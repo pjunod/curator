@@ -20,7 +20,7 @@ func TestStatusPollStreamsLargeRecoveryRecordsAndInternalProofs(t *testing.T) {
 		case "/api/v1/jobs":
 			_, _ = fmt.Fprintf(w, `{"jobs":[{"id":901,"status":"downloading","params":[["*File:proof:1",%q],["monarr-transfer","t-901"]]}]}`, large)
 		case "/api/v1/history":
-			_, _ = fmt.Fprintf(w, `{"entries":[{"job":902,"record":{"files":[{"segments":%q}],"total_articles":10,"success_articles":7},"params":[["*File:proof:2",%q],["*Control:v1",%q],["monarr-transfer","t-902"],["Failure:Files","retained"]],"status":"FAILURE/HEALTH"},{"job":903,"status":"SUCCESS","final_dir":"/working/complete","params":null}]}`, large, large, control)
+			_, _ = fmt.Fprintf(w, `{"entries":[{"job":902,"record":{"files":[{"segments":%q}],"total_articles":10,"success_articles":7},"params":[["*File:proof:2",%q],["*Control:v1",%q],["monarr-transfer","t-902"],["Failure:Files","retained"]],"outcome":"failed","reason":"health","message":"FAILURE/HEALTH: retained"},{"job":903,"outcome":"completed","publication":{"path":"/working/complete","generation":"g","manifest_digest":"d","files":1},"params":null}]}`, large, large, control)
 		default:
 			http.NotFound(w, r)
 		}

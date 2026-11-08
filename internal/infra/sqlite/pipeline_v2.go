@@ -142,7 +142,7 @@ type PublicationWrite struct {
 	Path         string // Curator's view (mapped)
 	RemotePath   string // Runner's view
 	ManifestJSON string // '' when no manifest body is known yet
-	Source       string // file | v1_record | none
+	Source       string // file | none
 	CrossVolume  bool
 	Cohort       string
 }
@@ -614,18 +614,6 @@ func (d *DB) CountOverduePublications(ctx context.Context, now time.Time) (int, 
 	var n int
 	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE state IN ('discovered','importing') AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?`, now.UnixMilli()).Scan(&n)
 	return n, err
-}
-
-// AttachPublicationManifest fills in a manifest a publication did not have
-// yet (the v1 record arriving on the deliveries feed after the event).
-func (d *DB) AttachPublicationManifest(ctx context.Context, id int64, manifestJSON, source string, crossVolume bool) error {
-	cross := 0
-	if crossVolume {
-		cross = 1
-	}
-	_, err := d.W.ExecContext(ctx, `UPDATE publications SET manifest_json=?, manifest_source=?, cross_volume=?, updated_at=? WHERE id=? AND manifest_source='none' AND state IN ('discovered','importing')`,
-		manifestJSON, source, cross, time.Now().UnixMilli(), id)
-	return err
 }
 
 // SetPublicationState moves a publication and records why.

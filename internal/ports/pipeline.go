@@ -9,7 +9,6 @@ import (
 	"io"
 	"sort"
 	"strconv"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -104,8 +103,6 @@ type RunnerTerminal struct {
 	KeepOnFailure bool
 	Fetched       Fetched
 	Publication   *RunnerPublication
-	// The legacy history strings, kept for one release (contract section 6).
-	LegacyPPStatus, LegacyFinalDir string
 }
 
 // RunnerPublication names one published generation.
@@ -116,9 +113,6 @@ type RunnerPublication struct {
 	Files          int
 	CrossVolume    bool
 	Kind           string // completed | salvage
-	// Manifest is attached when the feed carried the manifest body (the v1
-	// delivery record); nil when only the event's summary is known.
-	Manifest *Manifest
 }
 
 // Manifest is an immutable file list with sizes and digests.
@@ -127,11 +121,8 @@ type Manifest struct {
 	Files       []ManifestFile `json:"files"`
 	Digest      string         `json:"digest"`
 	CrossVolume bool           `json:"cross_volume,omitempty"`
-	// Source is where the manifest came from: file (.runner-manifest.json)
-	// or v1_record (Runner's v1 delivery record).
+	// Source is where the manifest came from: file (.runner-manifest.json).
 	Source string `json:"-"`
-	// DeliveryID is the v1 record's id, for a later lookup.
-	DeliveryID string `json:"delivery_id,omitempty"`
 }
 
 // ManifestFile is one file in a manifest.
@@ -169,15 +160,6 @@ func ManifestDigest(files []ManifestFile) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// ManifestFromRunnerFiles converts a v1 delivery record's file list.
-func ManifestFromRunnerFiles(generation, digest, deliveryID string, files []RunnerFile) Manifest {
-	m := Manifest{Generation: generation, Digest: digest, Source: "v1_record", DeliveryID: deliveryID}
-	for _, f := range files {
-		m.Files = append(m.Files, ManifestFile{Path: f.Path, Bytes: f.SizeBytes, SHA256: f.SHA256})
-	}
-	return m
-}
-
 // HistoryCursor is the ordered history reader's position (contract 2.5).
 type HistoryCursor struct {
 	Incarnation    string
@@ -206,34 +188,4 @@ type RunnerFeeds interface {
 	HistoryReader
 	DeliveriesReader
 	RequestAdmissionProtocol
-}
-
-// LegacyTerminal maps a legacy history status string (an old Runner, or a
-// receipt without typed fields) to a terminal: SUCCESS* completed, DELETED*
-// cancelled, everything else failed with the reason its string names.
-// blamesRelease is today's rule: a failure blames the release unless the
-// caller knows it is blameless.
-func LegacyTerminal(status string, blameless bool) RunnerTerminal {
-	switch {
-	case strings.HasPrefix(status, "SUCCESS"):
-		return RunnerTerminal{Outcome: OutcomeCompleted, Salvage: "none", LegacyPPStatus: status}
-	case strings.HasPrefix(status, "DELETED"):
-		return RunnerTerminal{Outcome: OutcomeCancelled, Salvage: "none", LegacyPPStatus: status, Message: "removed in Runner"}
-	}
-	t := RunnerTerminal{Outcome: OutcomeFailed, Salvage: "none", BlamesRelease: !blameless, LegacyPPStatus: status, Message: status}
-	switch {
-	case strings.HasPrefix(status, "FAILURE/HEALTH"):
-		t.Reason, t.Stage = ReasonHealth, "health"
-	case strings.HasPrefix(status, "FAILURE/FETCH"):
-		t.Reason, t.Stage = ReasonFetch, "fetch"
-	case strings.HasPrefix(status, "PAR_FAILURE"):
-		t.Reason, t.Stage = ReasonPar, "par_repair"
-	case strings.HasPrefix(status, "UNPACK_FAILURE"):
-		t.Reason, t.Stage = ReasonUnpack, "unpack"
-	case strings.HasPrefix(status, "SCRIPT_FAILURE"):
-		t.Reason, t.Stage = ReasonScript, "script"
-	default:
-		t.Reason = ReasonIO
-	}
-	return t
 }

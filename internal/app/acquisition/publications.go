@@ -26,53 +26,27 @@ import (
 // lifecycle and a per-file outcome. A download row may have several (the
 // completed one, a salvage, a late one).
 
-// publicationManifest is the v1 adapter (contract section 6): the manifest
-// from the publication's own .runner-manifest.json when it has one, else from
-// Runner's v1 delivery record (stored on the publication when the deliveries
-// feed carried it, or looked up by its delivery id). A directory with neither
-// is not a publication yet: ok=false, and the next poll checks again.
-func (s *Service) publicationManifest(ctx context.Context, cfg ports.ClientConfig, pub sqlite.Publication) (ports.Manifest, bool, error) {
-	if raw, err := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName)); err == nil {
-		var m ports.Manifest
-		if err := json.Unmarshal(raw, &m); err != nil {
-			return m, false, fmt.Errorf("%s is not a manifest: %w", ports.ManifestFileName, err)
-		}
-		m.Source = "file"
-		if err := verifyManifestShape(m, pub.Generation); err != nil {
-			return m, false, err
-		}
-		return m, true, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+// publicationManifest reads the manifest from the publication's own
+// .runner-manifest.json, the commit marker of a publication directory. A
+// directory without one is not a publication yet: ok=false, and the next poll
+// checks again.
+func (s *Service) publicationManifest(pub sqlite.Publication) (ports.Manifest, bool, error) {
+	raw, err := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
+	if errors.Is(err, os.ErrNotExist) {
+		return ports.Manifest{}, false, nil
+	}
+	if err != nil {
 		return ports.Manifest{}, false, err
 	}
-	if pub.ManifestSource == "v1_record" || pub.ManifestSource == "file" {
-		var m ports.Manifest
-		if err := json.Unmarshal([]byte(pub.ManifestJSON), &m); err == nil && len(m.Files) > 0 {
-			m.Source = "v1_record"
-			if err := verifyManifestShape(m, pub.Generation); err != nil {
-				return m, false, err
-			}
-			return m, true, nil
-		}
+	var m ports.Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return m, false, fmt.Errorf("%s is not a manifest: %w", ports.ManifestFileName, err)
 	}
-	// The record may exist on Runner without having reached the feed cache:
-	// look it up by the delivery id the stored manifest names, when it does.
-	var stored ports.Manifest
-	_ = json.Unmarshal([]byte(pub.ManifestJSON), &stored)
-	if stored.DeliveryID != "" {
-		if lookup, ok := s.newClient(cfg).(ports.DeliveryLookupProtocol); ok {
-			d, err := lookup.GetDelivery(ctx, stored.DeliveryID)
-			if err != nil {
-				return ports.Manifest{}, false, err
-			}
-			m := ports.ManifestFromRunnerFiles(d.PublicationGeneration, d.ManifestDigest, d.DeliveryID, d.Files)
-			if err := verifyManifestShape(m, pub.Generation); err != nil {
-				return m, false, err
-			}
-			return m, true, nil
-		}
+	m.Source = "file"
+	if err := verifyManifestShape(m, pub.Generation); err != nil {
+		return m, false, err
 	}
-	return ports.Manifest{}, false, nil
+	return m, true, nil
 }
 
 // verifyManifestShape checks what a manifest says about itself, cheaply: a
@@ -166,7 +140,7 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	if pub.DownloadID != dl.ID || (pub.State != "discovered" && pub.State != "importing" && (!approved || pub.State != "import_failed")) {
 		return nil
 	}
-	m, ok, err := s.publicationManifest(ctx, cfg, pub)
+	m, ok, err := s.publicationManifest(pub)
 	if err != nil {
 		s.failPublication(ctx, &dl, pub, "manifest refused: "+err.Error())
 		return err

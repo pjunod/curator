@@ -358,36 +358,18 @@ type historyEntry struct {
 	Control     *ports.DownloadControl `json:"control"`
 	Job         int64                  `json:"job"`
 	Name        string                 `json:"name"`
-	Status      string                 `json:"status"`
-	FinalDir    string                 `json:"final_dir"`
 	Seq         int64                  `json:"seq"`
 	Params      [][2]string            `json:"params"`
 	// Record carries the article counts Runner kept for the finished job:
 	// how much of it was actually fetched.
 	Record *historyRecord `json:"record"`
-	// The typed terminal (contract section 2.1), on a Runner with M1a.
+	// The typed terminal (contract section 2.1).
 	terminalWire
 }
 
 type historyRecord struct {
 	TotalArticles   int64 `json:"total_articles"`
 	SuccessArticles int64 `json:"success_articles"`
-}
-
-// fetchedFraction is the share of the job's articles Runner actually
-// fetched, or ok=false when the record does not say.
-func (h historyEntry) fetchedFraction() (float64, bool) {
-	if h.Record == nil || h.Record.TotalArticles <= 0 {
-		return 0, false
-	}
-	f := float64(h.Record.SuccessArticles) / float64(h.Record.TotalArticles)
-	if f < 0 {
-		f = 0
-	}
-	if f > 1 {
-		f = 1
-	}
-	return f, true
 }
 
 // Statuses implements ports.DownloadClient: the live queue only. Terminals
@@ -427,58 +409,43 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 	return out, nil
 }
 
-// statusOfHistory maps one history row onto Monarr's lifecycle.
-//
-// The status string is nzbd's verbatim: `SUCCESS` for a clean
-// post-processing run, `PAR_FAILURE`/`UNPACK_FAILURE`/`SCRIPT_FAILURE`
-// for a failed one, and the pre-PP terminals `FAILURE/HEALTH` and
-// `FAILURE/FETCH` for downloads that never reached post-processing. They
-// all share a SUCCESS/FAILURE prefix, so matching the prefix is stable
-// against nzbd adding a new terminal reason — matching the exact strings
-// would not be.
-func statusOfHistory(h historyEntry) ports.DownloadStatus {
+// statusOfTerminal maps a finished job's typed terminal onto Monarr's
+// lifecycle for the event stream's progress view. The reducer decides from
+// the terminal fact itself; this is only what the live row shows meanwhile.
+func statusOfTerminal(job int64, name string, params [][2]string, control *ports.DownloadControl, t ports.RunnerTerminal) ports.DownloadStatus {
 	st := ports.DownloadStatus{
-		Control:  historyControl(h),
-		Handle:   ports.Handle(strconv.FormatInt(h.Job, 10)),
-		Name:     h.Name,
-		Transfer: paramValue(h.Params, TransferParam),
+		Control:  historyControl(control, params),
+		Handle:   ports.Handle(strconv.FormatInt(job, 10)),
+		Name:     name,
+		Transfer: paramValue(params, TransferParam),
 		Progress: 1,
-		SavePath: h.FinalDir,
 	}
-	switch {
-	case strings.HasPrefix(h.Status, "SUCCESS") && strings.TrimSpace(h.FinalDir) == "":
-		// SUCCESS without a final path violates nzbd's handoff contract. Keep
-		// the row active instead of turning a malformed response into an import
-		// from the process working directory.
-		st.State = ports.StateDownloading
-		st.Message = "post-processing: waiting for final path"
-	case strings.HasPrefix(h.Status, "SUCCESS"):
+	switch t.Outcome {
+	case ports.OutcomeCompleted:
 		st.State = ports.StateCompleted
-	case h.Status == "DELETED" || strings.HasPrefix(h.Status, "DELETED"):
-		// Someone removed the job in nzbd.
-		//
-		// This was StateFailed+Blameless, which fixed the blocklist and left
-		// the louder half in place: the failure path also runs an automatic
-		// re-search, so deleting a job in nzbd made Monarr grab another copy
-		// of the same film within seconds. Blameless was never going to stop
-		// that — it only ever guarded the blocklist.
+		if t.Publication != nil {
+			st.SavePath = t.Publication.Path
+		}
+	case ports.OutcomeCancelled:
+		// Someone removed the job in Runner: never re-grabbed, never blocklisted.
 		st.State = ports.StateRemoved
 		st.Message = "removed in nzbd"
 		st.Blameless = true
 	default:
 		st.State = ports.StateFailed
-		st.Message = h.Status
+		st.Message = t.Message
+		if st.Message == "" {
+			st.Message = t.Reason
+		}
 		// A failure is not a finished transfer. Report what was actually
 		// fetched: a release that failed health before a single article
 		// arrived cost nothing, and the re-grab budget counts bytes.
-		if fetched, ok := h.fetchedFraction(); ok {
-			st.Progress, st.FetchedKnown = fetched, true
+		if t.Fetched.TotalArticles > 0 {
+			f := float64(t.Fetched.SuccessArticles) / float64(t.Fetched.TotalArticles)
+			st.Progress, st.FetchedKnown = min(max(f, 0), 1), true
 		}
-		for _, param := range h.Params {
-			if param[0] == "Failure:Files" && strings.TrimSpace(param[1]) != "" {
-				st.Message += "; files: " + param[1]
-				break
-			}
+		if files := paramValue(params, "Failure:Files"); strings.TrimSpace(files) != "" {
+			st.Message += "; files: " + files
 		}
 	}
 	return st
@@ -493,11 +460,11 @@ func paramValue(params [][2]string, key string) string {
 	return ""
 }
 
-func historyControl(h historyEntry) *ports.DownloadControl {
-	if h.Control != nil {
-		return h.Control
+func historyControl(control *ports.DownloadControl, params [][2]string) *ports.DownloadControl {
+	if control != nil {
+		return control
 	}
-	for _, param := range h.Params {
+	for _, param := range params {
 		if param[0] == "*Control:v1" {
 			var control ports.DownloadControl
 			if json.Unmarshal([]byte(param[1]), &control) == nil {

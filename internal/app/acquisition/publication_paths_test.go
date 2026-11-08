@@ -18,25 +18,6 @@ import (
 // manifest comes from, what refuses it, the per-file outcomes, the outbox
 // written with the import, the historical cohort and Resolve.
 
-// lookupRunner is a Runner that also answers a v1 delivery-record lookup.
-type lookupRunner struct {
-	*fakeRunner
-	delivery ports.RunnerDelivery
-	err      error
-	calls    int
-}
-
-func (l *lookupRunner) GetDelivery(_ context.Context, id string) (ports.RunnerDelivery, error) {
-	l.calls++
-	if l.err != nil {
-		return ports.RunnerDelivery{}, l.err
-	}
-	if id != l.delivery.DeliveryID {
-		return ports.RunnerDelivery{}, errors.New("no such delivery")
-	}
-	return l.delivery, nil
-}
-
 // completedAt observes a completed terminal for a publication at dir.
 func (f *v2Fixture) completedAt(dl sqlite.Download, dir, generation string) sqlite.Publication {
 	f.t.Helper()
@@ -86,78 +67,6 @@ func TestPublicationManifestRefusals(t *testing.T) {
 			}
 		})
 	}
-}
-
-// A publication with no manifest file but a stored v1 record that names its
-// delivery is looked up on Runner; the record decides the import.
-func TestV1RecordLookedUpByDeliveryID(t *testing.T) {
-	setupLookup := func(t *testing.T) (*v2Fixture, *lookupRunner, sqlite.Download, string) {
-		f := setupV2(t, nil)
-		lr := &lookupRunner{fakeRunner: f.runner}
-		f.svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return lr }
-		dl := f.grab(1, epOne)
-		pub := f.publish("Test.Show.S01E01.job-101.runner-lkp", "lkp", map[string]string{epOne + ".mkv": "video"})
-		m := mustReadManifest(t, pub.Path)
-		_ = os.Remove(filepath.Join(pub.Path, ports.ManifestFileName))
-		lr.delivery = ports.RunnerDelivery{DeliveryID: "d-77", PublicationGeneration: "lkp", ManifestDigest: m.Digest}
-		for _, file := range m.Files {
-			lr.delivery.Files = append(lr.delivery.Files, ports.RunnerFile{Path: file.Path, SizeBytes: file.Bytes, SHA256: file.SHA256})
-		}
-		// What the deliveries cache stored: the delivery id, no files yet.
-		if _, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{DownloadID: dl.ID, Generation: "lkp", Kind: "completed", Path: pub.Path,
-			ManifestJSON: `{"generation":"lkp","delivery_id":"d-77"}`, Source: "v1_record", Cohort: "live"}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET state='downloaded', runner_outcome='completed', import_path=?, save_path=? WHERE id=?`, pub.Path, pub.Path, dl.ID); err != nil {
-			t.Fatal(err)
-		}
-		return f, lr, dl, pub.Path
-	}
-	t.Run("the record imports", func(t *testing.T) {
-		f, lr, dl, path := setupLookup(t)
-		if err := f.svc.RefreshQueue(f.ctx); err != nil {
-			t.Fatal(err)
-		}
-		p, _, _ := f.db.PublicationByPath(f.ctx, path)
-		if lr.calls == 0 || p.State != "imported" || f.row(dl.ID).State != "imported" {
-			t.Fatalf("lookups=%d publication %s %q row %s, want imported from Runner's record", lr.calls, p.State, p.Error, f.row(dl.ID).State)
-		}
-	})
-	t.Run("an unreachable Runner leaves it to retry", func(t *testing.T) {
-		f, lr, dl, path := setupLookup(t)
-		lr.err = errors.New("runner unreachable")
-		if err := f.svc.RefreshQueue(f.ctx); err != nil {
-			t.Fatal(err)
-		}
-		p, _, _ := f.db.PublicationByPath(f.ctx, path)
-		if p.State != "import_failed" || !strings.Contains(p.Error, "runner unreachable") || f.row(dl.ID).State == "imported" {
-			t.Fatalf("publication = %s %q, want the lookup failure recorded", p.State, p.Error)
-		}
-	})
-	t.Run("a record for another generation is refused", func(t *testing.T) {
-		f, lr, _, path := setupLookup(t)
-		lr.delivery.PublicationGeneration = "other"
-		if err := f.svc.RefreshQueue(f.ctx); err != nil {
-			t.Fatal(err)
-		}
-		p, _, _ := f.db.PublicationByPath(f.ctx, path)
-		if p.State != "import_failed" || !strings.Contains(p.Error, "does not match publication generation") {
-			t.Fatalf("publication = %s %q, want the record refused", p.State, p.Error)
-		}
-	})
-	t.Run("a stored record of the wrong generation is refused", func(t *testing.T) {
-		f := setupV2(t, nil)
-		dl := f.grab(1, epOne)
-		dir := filepath.Join(f.root, "Test.Show.S01E01.job-101.runner-v1x")
-		writeCompleted(t, filepath.Join(dir, epOne+".mkv"), 5)
-		m := ports.Manifest{Generation: "other", Files: []ports.ManifestFile{{Path: epOne + ".mkv", Bytes: 5}}, Source: "v1_record"}
-		pub := ports.RunnerPublication{Path: dir, Generation: "v1x", Kind: "completed", Manifest: &m}
-		f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "deliveries 1"))
-		p, _, _ := f.db.PublicationByPath(f.ctx, dir)
-		if p.State != "import_failed" || !strings.Contains(p.Error, "manifest refused") {
-			t.Fatalf("publication = %s %q, want the stored record refused", p.State, p.Error)
-		}
-	})
 }
 
 // A cross-volume publication is re-hashed once against its manifest.

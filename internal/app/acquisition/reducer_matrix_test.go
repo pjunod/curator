@@ -49,7 +49,7 @@ func TestAdmissionReceiptAsFacts(t *testing.T) {
 		{name: "legacy string failure with its cause",
 			adm: ports.RequestAdmission{Outcome: "failed", TerminalOutcome: "UNPACK_FAILURE", FailureCause: "crc"}, terminal: true,
 			want: ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: ports.ReasonUnpack, Stage: "unpack", Message: "UNPACK_FAILURE: crc",
-				BlamesRelease: true, Salvage: "none", LegacyPPStatus: "UNPACK_FAILURE"}},
+				BlamesRelease: true, Salvage: "none"}},
 		{name: "a failed receipt saying SUCCESS is an io failure, never a completion",
 			adm: ports.RequestAdmission{Outcome: "failed", TerminalOutcome: "SUCCESS"}, terminal: true,
 			want: ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: ports.ReasonIO, Message: "SUCCESS", Salvage: "none"}},
@@ -627,8 +627,6 @@ func TestDeliveriesCompletionOfAFailedRowIsASalvage(t *testing.T) {
 		t.Fatal("salvage history not recorded")
 	}
 	// The same salvage again is a no-op: one publication, one history row.
-	m := ports.Manifest{Generation: "salv"}
-	pub.Manifest = &m
 	f.observe(got, ports.RunnerFact{Kind: ports.FactPublicationReady, Transfer: dl.Transfer, Publication: &pub, Source: "event 9"})
 	if f.count(`SELECT COUNT(*) FROM publications`) != 1 || f.count(`SELECT COUNT(*) FROM history_events WHERE type=?`, stepSalvage) != 1 {
 		t.Fatal("a replayed salvage made a second publication")
@@ -638,33 +636,6 @@ func TestDeliveriesCompletionOfAFailedRowIsASalvage(t *testing.T) {
 	f.observe(got, ports.RunnerFact{Kind: ports.FactPublicationReady, Transfer: dl.Transfer, Publication: &empty, Source: "event 10"})
 	if f.count(`SELECT COUNT(*) FROM publications`) != 1 {
 		t.Fatal("a pathless salvage made a publication")
-	}
-}
-
-// A v1 record arriving after a manifest-less publication was recorded is
-// attached to it, once, and only to its own download's publication.
-func TestManifestIsAttachedToAManifestlessPublication(t *testing.T) {
-	f := setupV2(t, nil)
-	dl := f.grab(1, epOne)
-	pub := f.publish("Test.Show.S01E01.job-101.runner-att", "att", map[string]string{epOne + ".mkv": "video"})
-	raw := mustReadManifest(t, pub.Path)
-	if _, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{DownloadID: dl.ID, Generation: "att", Kind: "completed", Path: pub.Path, Cohort: "live", Source: "none"}); err != nil {
-		t.Fatal(err)
-	}
-	f.svc.attachManifest(f.ctx, dl.ID+1, pub.Path, raw) // another download's: ignored
-	p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path)
-	if p.ManifestSource != "none" {
-		t.Fatalf("a foreign download attached a manifest: %s", p.ManifestSource)
-	}
-	f.svc.attachManifest(f.ctx, dl.ID, pub.Path, raw)
-	p, _, _ = f.db.PublicationByPath(f.ctx, pub.Path)
-	if p.ManifestSource != "v1_record" || !strings.Contains(p.ManifestJSON, "att") {
-		t.Fatalf("publication = %s %q, want the v1 record attached", p.ManifestSource, p.ManifestJSON)
-	}
-	raw.Source = "file"
-	f.svc.attachManifest(f.ctx, dl.ID, pub.Path, raw)
-	if p, _, _ = f.db.PublicationByPath(f.ctx, pub.Path); p.ManifestSource != "v1_record" {
-		t.Fatal("a second manifest replaced the first")
 	}
 }
 
