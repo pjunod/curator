@@ -9,6 +9,7 @@ import {
   type CompletedRoot,
   type QueueItem,
   type PublicationFileAction,
+  type QueuePublication,
   type ScannedFile,
   type Stage,
   blocklistQueueItem,
@@ -31,6 +32,7 @@ import {
   manualImport,
   removeQueueItem,
   resolvePublicationFile,
+  setPublicationCleanup,
   resolveQueueReservation,
   scanImportPath,
   runTask,
@@ -107,6 +109,7 @@ const STAGE_LABEL: Record<Stage, string> = {
   script: 'Running scripts',
   importing: 'Copying to library',
   notifying: 'Notifying',
+  publication_cleanup: 'Cleaning up publication',
 }
 
 const STAGE_TITLE: Record<Stage, string> = {
@@ -123,6 +126,7 @@ const STAGE_TITLE: Record<Stage, string> = {
   script: 'The download client is running its post-processing scripts',
   importing: 'Curator is copying the files into your library. This is the one stage Curator does itself',
   notifying: 'Curator is telling the media server an import landed',
+  publication_cleanup: 'Curator is verifying the publication files against their manifest digests and removing the ones with evidence; unresolved files stay',
 }
 
 // Sections, in the order a job passes through them. Rendered only when
@@ -142,6 +146,7 @@ const STAGES: Stage[] = [
   'script',
   'importing',
   'notifying',
+  'publication_cleanup',
 ]
 
 // Rows with nothing in flight still have to go somewhere, grouped by what a
@@ -908,7 +913,7 @@ function PublicationList({ d }: { d: QueueItem }) {
   const act = useMutation({
     mutationFn: (v: { pub: number; path: string; action: PublicationFileAction }) => resolvePublicationFile(d.id, v.pub, v.path, v.action),
     onSuccess: (_r, v) => {
-      setDone((prev) => ({ ...prev, [`${v.pub}/${v.path}`]: v.action === 'place' ? 'queued for import' : v.action === 'discard' ? 'discarded' : 'kept' }))
+      setDone((prev) => ({ ...prev, [`${v.pub}/${v.path}`]: v.action === 'place' ? 'queued for import' : v.action === 'discard' ? 'discarded and removed' : 'kept' }))
       void qc.invalidateQueries({ queryKey: ['queue'] })
     },
     onError: (e, v) => setDone((prev) => ({ ...prev, [`${v.pub}/${v.path}`]: e instanceof Error ? e.message : String(e) })),
@@ -926,6 +931,7 @@ function PublicationList({ d }: { d: QueueItem }) {
             <span className="path-chip">{p.path}</span>
           </p>
           {p.error && <p className="error-text">{p.error}</p>}
+          <PublicationCleanupLine pub={p} />
           <ul className="publication-files">
             {p.files.map((f) => {
               const key = `${p.id}/${f.path}`
@@ -953,6 +959,29 @@ function PublicationList({ d }: { d: QueueItem }) {
         </div>
       ))}
     </div>
+  )
+}
+
+// What the per-file cleanup is doing to a publication, why, and a way to
+// stop it (Paul's rule for anything that spends disk time on his server).
+function PublicationCleanupLine({ pub }: { pub: QueuePublication }) {
+  const qc = useQueryClient()
+  const [note, setNote] = useState('')
+  const act = useMutation({
+    mutationFn: (action: 'pause' | 'resume') => setPublicationCleanup(pub.id, action),
+    onSuccess: (_r, action) => { setNote(action === 'pause' ? 'Cleanup paused' : 'Cleanup resumed and queued'); void qc.invalidateQueries({ queryKey: ['queue'] }) },
+    onError: (e) => setNote(e instanceof Error ? e.message : String(e)),
+  })
+  if (pub.state === 'removed') return null
+  const paused = !!pub.cleanupPausedAt
+  const running = pub.cleanupState
+  if (!paused && !running) return null
+  return (
+    <p className="muted publication-cleanup" data-cleanup={paused ? 'paused' : running}>
+      {paused ? 'Automatic cleanup paused.' : `Cleanup ${running === 'running' ? 'running' : 'queued'}${pub.cleanupReason ? ` (${pub.cleanupReason})` : ''}: verifying files against the manifest before removing them.`}{' '}
+      <button disabled={act.isPending} onClick={() => act.mutate(paused ? 'resume' : 'pause')}>{paused ? 'Resume cleanup' : 'Pause cleanup'}</button>
+      {note && <span role="status"> {note}</span>}
+    </p>
   )
 }
 
