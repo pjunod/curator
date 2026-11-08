@@ -7,6 +7,7 @@ import {
   getNotifiers,
   testNotifier,
   testNotifierByID,
+  testPassed,
   updateNotifier,
 } from '../api'
 import { NotifierDeliveries } from './NotifierDeliveries'
@@ -45,7 +46,7 @@ function RowTest({ id }: { id: number }) {
   const [msg, setMsg] = useState('')
   const run = useMutation({
     mutationFn: () => testNotifierByID(id),
-    onSuccess: () => setMsg('✓ delivered'),
+    onSuccess: (r) => setMsg(testPassed(r)),
     onError: (e: Error) => setMsg(`✗ ${e.message}`),
   })
   return (
@@ -118,7 +119,7 @@ export function NotifierSettings() {
   })
   const test = useMutation({
     mutationFn: () => testNotifier(input()),
-    onSuccess: () => setTestResult('✓ delivered'),
+    onSuccess: (r) => setTestResult(testPassed(r)),
     onError: (e) => setTestResult(`✗ ${(e as Error).message}`),
   })
   const del = useMutation({
