@@ -9,6 +9,7 @@ import {
   type CompletedRoot,
   type QueueItem,
   type PublicationFileAction,
+  type QueuePublication,
   type ScannedFile,
   type Stage,
   blocklistQueueItem,
@@ -31,6 +32,7 @@ import {
   manualImport,
   removeQueueItem,
   resolvePublicationFile,
+  setPublicationCleanup,
   resolveQueueReservation,
   scanImportPath,
   runTask,
@@ -39,6 +41,7 @@ import { PathInput } from '../PathInput'
 import { CompletedFolders } from '../CompletedFolders'
 import { DeliveryLifecycleArchive, DeliveryLifecycleForDownload } from '../DeliveryLifecycle'
 import '../LegacyReview.css'
+import { awaitingText, fmtDuration } from '../queueTime'
 
 const STATE_PILL: Record<string, string> = {
   imported: 'pill-ok',
@@ -106,6 +109,7 @@ const STAGE_LABEL: Record<Stage, string> = {
   script: 'Running scripts',
   importing: 'Copying to library',
   notifying: 'Notifying',
+  publication_cleanup: 'Cleaning up publication',
 }
 
 const STAGE_TITLE: Record<Stage, string> = {
@@ -122,6 +126,7 @@ const STAGE_TITLE: Record<Stage, string> = {
   script: 'The download client is running its post-processing scripts',
   importing: 'Curator is copying the files into your library. This is the one stage Curator does itself',
   notifying: 'Curator is telling the media server an import landed',
+  publication_cleanup: 'Curator is verifying the publication files against their manifest digests and removing the ones with evidence; unresolved files stay',
 }
 
 // Sections, in the order a job passes through them. Rendered only when
@@ -141,6 +146,7 @@ const STAGES: Stage[] = [
   'script',
   'importing',
   'notifying',
+  'publication_cleanup',
 ]
 
 // Rows with nothing in flight still have to go somewhere, grouped by what a
@@ -749,6 +755,7 @@ function RowGroup(props: {
             Import blocked {fmtRelative(d.importBlockedSince)} · {d.importRetryAttempts ?? 0} retries · {d.importRetryAt && new Date(d.importRetryAt).getTime() > Date.now() ? `next retry ${fmtRelative(d.importRetryAt)}` : 'retry due'}
           </div>}
           {d.state === 'held' && <HeldLine d={d} />}
+          {d.state === 'awaiting_import' && <AwaitingLine d={d} />}
           {d.provisional && <div className="muted queue-row-detail" title="Curator's own conclusion; any later fact from Runner re-opens this row">Provisional: {d.runnerReason ?? 'failed'} — re-opens if Runner reports this transfer</div>}
           {d.parkedReason && <div className="muted queue-row-detail" title={`Reserved: ${d.parkedReason}`}>Reserved: {d.parkedReason}</div>}
           {reviewOpen && <ActionDialog title="Review episode reservation" onClose={()=>setReviewOpen(false)}>
@@ -885,13 +892,11 @@ function HeldLine({ d }: { d: QueueItem }) {
   return <div className={`queue-row-detail ${d.stale ? 'warning-text' : 'muted'}`} title={text}>{text}</div>
 }
 
-function fmtDuration(ms: number): string {
-  if (ms <= 0) return 'now'
-  const m = Math.round(ms / 60000)
-  if (m < 60) return `${m}m`
-  const h = Math.floor(m / 60)
-  return h < 48 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`
+function AwaitingLine({ d }: { d: QueueItem }) {
+  const text = awaitingText(d.stateEnteredAt)
+  return <div className="queue-row-detail muted" title={text}>{text}</div>
 }
+
 
 const OUTCOME_PILL: Record<string, string> = {
   placed: 'pill-ok',
@@ -917,7 +922,7 @@ function PublicationList({ d }: { d: QueueItem }) {
     mutationFn: (v: { pub: number; path: string; action: PublicationFileAction }) => resolvePublicationFile(d.id, v.pub, v.path, v.action),
     onSuccess: (_r, v) => {
       const key = `${v.pub}/${v.path}`
-      setDone((prev) => ({ ...prev, [key]: v.action === 'place' ? 'queued for import' : v.action === 'discard' ? 'discarded' : 'kept' }))
+      setDone((prev) => ({ ...prev, [key]: v.action === 'place' ? 'queued for import' : v.action === 'discard' ? 'discarded and removed' : 'kept' }))
       setFocusKey(key)
       void qc.invalidateQueries({ queryKey: ['queue'] })
     },
@@ -936,10 +941,11 @@ function PublicationList({ d }: { d: QueueItem }) {
           <p>
             <b>{p.kind === 'salvage' ? 'Salvage publication' : 'Publication'}</b>{' '}
             <span className={`pill ${p.state === 'import_failed' ? 'pill-error' : p.state === 'imported' || p.state === 'notified' ? 'pill-ok' : 'pill-neutral'}`}>{p.state.replace(/_/g, ' ')}</span>{' '}
-            {p.cohort === 'historical' && <span className="pill pill-neutral" title="Frozen at the pipeline v2 cutover: never deleted automatically until its review batch is approved">historical</span>}{' '}
+            {p.cohort === 'historical' && <span className="pill pill-neutral" title="Frozen at the pipeline v2 cutover: never deleted automatically until its review batch is approved">{p.cleanupApprovedAt ? 'historical · cleanup approved' : 'historical'}</span>}{' '}
             <span className="path-chip">{p.path}</span>
           </p>
           {p.error && <p className="error-text">{p.error}</p>}
+          <PublicationCleanupLine pub={p} />
           <ul className="publication-files">
             {p.files.map((f) => {
               const key = `${p.id}/${f.path}`
@@ -949,6 +955,7 @@ function PublicationList({ d }: { d: QueueItem }) {
                   <span className="mono">{f.path}</span>
                   {f.libraryPath && <span className="muted"> → {f.libraryPath}</span>}
                   {f.reason && <span className="muted"> — {f.reason}</span>}
+                  {f.removed && <span className="muted"> · removed from the publication</span>}
                   {(f.outcome === 'unresolved' || f.outcome === 'pending') && (
                     <span className="row-actions publication-file-actions">
                       {(['place', 'discard', 'keep'] as PublicationFileAction[]).map((a) => (
@@ -966,6 +973,29 @@ function PublicationList({ d }: { d: QueueItem }) {
         </div>
       ))}
     </div>
+  )
+}
+
+// What the per-file cleanup is doing to a publication, why, and a way to
+// stop it (Paul's rule for anything that spends disk time on his server).
+function PublicationCleanupLine({ pub }: { pub: QueuePublication }) {
+  const qc = useQueryClient()
+  const [note, setNote] = useState('')
+  const act = useMutation({
+    mutationFn: (action: 'pause' | 'resume') => setPublicationCleanup(pub.id, action),
+    onSuccess: (_r, action) => { setNote(action === 'pause' ? 'Cleanup paused' : 'Cleanup resumed and queued'); void qc.invalidateQueries({ queryKey: ['queue'] }) },
+    onError: (e) => setNote(e instanceof Error ? e.message : String(e)),
+  })
+  if (pub.state === 'removed') return null
+  const paused = !!pub.cleanupPausedAt
+  const running = pub.cleanupState
+  if (!paused && !running) return null
+  return (
+    <p className="muted publication-cleanup" data-cleanup={paused ? 'paused' : running}>
+      {paused ? 'Automatic cleanup paused.' : `Cleanup ${running === 'running' ? 'running' : 'queued'}${pub.cleanupReason ? ` (${pub.cleanupReason})` : ''}: verifying files against the manifest before removing them.`}{' '}
+      <button disabled={act.isPending} onClick={() => act.mutate(paused ? 'resume' : 'pause')}>{paused ? 'Resume cleanup' : 'Pause cleanup'}</button>
+      {note && <span role="status"> {note}</span>}
+    </p>
   )
 }
 

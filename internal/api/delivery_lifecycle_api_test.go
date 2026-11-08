@@ -108,21 +108,6 @@ func insertLegacyDeliveryReceipt(t *testing.T, db *sqlite.DB, clientID int64, v 
 	return r
 }
 
-// insertLegacyDeliveryFileOutcome journals one manifest entry as v1
-// acceptance did: selected entries are pending, others unselected.
-func insertLegacyDeliveryFileOutcome(t *testing.T, db *sqlite.DB, receiptID int64, f sqlite.DeliveryManifestFile, selected bool) {
-	t.Helper()
-	disposition := "pending"
-	if !selected {
-		disposition = "unselected_recoverable"
-	}
-	if _, err := db.W.ExecContext(context.Background(), `INSERT INTO runner_delivery_file_outcomes
-		(receipt_id,path,size_bytes,sha256,file_generation,disposition,cleanup_state,manual_additional,updated_at)
-		VALUES(?,?,?,?,?,?,'protected',0,?)`, receiptID, f.Path, f.SizeBytes, f.SHA256, f.FileGeneration, disposition, time.Now().UnixMilli()); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // apiHistoricalPublication gives a receipt the historical publication
 // migration 0072 creates for every v1 receipt at cutover; since pipeline v2 a
 // receipt is only ever acted on through it.
@@ -176,45 +161,6 @@ func TestDeliveryLifecycleHTTPPagesFiltersAndReadsDurableReceipt(t *testing.T) {
 	var attempts []json.RawMessage
 	if err := json.Unmarshal(raw["attemptHistory"], &attempts); err != nil || attempts == nil {
 		t.Fatalf("attemptHistory must be an array on the wire; raw=%s err=%v", raw["attemptHistory"], err)
-	}
-}
-
-func TestDeliveryLifecycleFileLedgerUsesPublicFieldNamesOnListAndDetail(t *testing.T) {
-	e := newAPIEnv(t)
-	clientID := acqAddClient(t, e, "qbittorrent")
-	itemID := e.addMovie(t)
-	downloadID := acqGrab(t, e, itemID)
-	r := apiDeliveryReceipt(t, e, clientID, downloadID, "file-casing")
-	path := r.Delivery.Files[0].Path
-	ctx := context.Background()
-	insertLegacyDeliveryFileOutcome(t, e.db, r.ID, sqlite.DeliveryManifestFile{Path: path, SizeBytes: 17, SHA256: "proof-hash", FileGeneration: "proof-generation"}, true)
-	if err := e.db.UpdateDeliveryFileDisposition(ctx, r.ID, path, "placed", "verified placement", "/library/movie.mkv"); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.db.SetDeliveryFileCleanup(ctx, r.ID, path, "retry", "permission denied in fixture"); err != nil {
-		t.Fatal(err)
-	}
-	for _, endpoint := range []string{fmt.Sprintf("/api/v1/downloads/deliveries/%d", r.ID), fmt.Sprintf("/api/v1/downloads/deliveries?downloadId=%d", downloadID)} {
-		var raw map[string]json.RawMessage
-		e.get(t, endpoint).expect(t, http.StatusOK).into(t, &raw)
-		if strings.Contains(endpoint, "?") {
-			var rows []map[string]json.RawMessage
-			if err := json.Unmarshal(raw["items"], &rows); err != nil || len(rows) != 1 {
-				t.Fatalf("rows=%v err=%v", rows, err)
-			}
-			raw = rows[0]
-		}
-		var files []map[string]any
-		if err := json.Unmarshal(raw["curatorFiles"], &files); err != nil || len(files) != 1 {
-			t.Fatalf("files=%v err=%v", files, err)
-		}
-		f := files[0]
-		if f["path"] != path || f["cleanupState"] != "retry" || f["cleanupError"] != "permission denied in fixture" || f["disposition"] != "placed" || f["fileGeneration"] != "proof-generation" {
-			t.Fatalf("public file ledger = %#v", f)
-		}
-		if _, leaked := f["CleanupState"]; leaked {
-			t.Fatal("database field names leaked through API")
-		}
 	}
 }
 
@@ -362,7 +308,7 @@ func TestOtherRunnerClientReceiptIsReadOnlyThroughHTTP(t *testing.T) {
 	}
 	for _, action := range []struct{ path, body string }{
 		{"retry-handoff", `{}`}, {"retry-runner-cleanup", `{}`}, {"retry-curator-cleanup", `{}`},
-		{"import", `{"paths":["Season 01/épisode.mkv"]}`}, {"delete-batches/stale/abandon", `{}`},
+		{"import", `{"paths":["Season 01/épisode.mkv"]}`},
 	} {
 		response := e.post(t, base+"/"+action.path, action.body).expect(t, http.StatusConflict)
 		if !strings.Contains(response.Body.String(), "another configured Runner client") || !strings.Contains(response.Body.String(), "987") {

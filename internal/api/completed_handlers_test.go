@@ -135,7 +135,7 @@ func TestStorageChangePreviewAndAcceptanceUseRealHTTPAndAtomicReview(t *testing.
 	body, _ = json.Marshal(review.StorageChangeRequest)
 	e.post(t, "/api/v1/downloads/inventory/storage-change/accept", string(body)).expect(t, http.StatusNoContent)
 	e.post(t, "/api/v1/downloads/inventory/storage-change/accept", string(body)).expect(t, http.StatusConflict)
-	held, err := e.db.LegacyCleanupReviewPath(ctx, file)
+	held, err := e.db.StorageReviewPath(ctx, file)
 	if err != nil || !held {
 		t.Fatalf("acceptance granted existing payload authority: %v %v", held, err)
 	}

@@ -975,6 +975,7 @@ export interface QueueItem {
   provisional?: boolean
   /** When the row's current state becomes overdue. */
   deadlineAt?: string
+  stateEnteredAt?: string
   /** A held row past its deadline: Runner has not reported since. Never a Curator failure. */
   stale?: boolean
   heldReason?: string
@@ -991,6 +992,10 @@ export interface QueuePublication {
   path: string
   manifestSource?: string
   error?: string
+  cleanupApprovedAt?: string
+  cleanupPausedAt?: string
+  cleanupState?: 'queued' | 'running'
+  cleanupReason?: string
   files: QueuePublicationFile[]
 }
 
@@ -1001,6 +1006,7 @@ export interface QueuePublicationFile {
   discardReason?: string
   reason?: string
   libraryPath?: string
+  removed?: boolean
 }
 
 export type PublicationFileAction = 'place' | 'discard' | 'keep'
@@ -1457,6 +1463,7 @@ export type Stage =
   | 'script'
   | 'importing'
   | 'notifying'
+  | 'publication_cleanup'
 
 export interface Transfer {
   downloadId: number
@@ -1700,6 +1707,7 @@ export interface CompletedEntry {
   reason: string
   legacyReview?: boolean
   deliveryManaged?: boolean
+  wholeDeletable?: boolean
   reviewFiles?: CompletedReviewFile[]
   receipts: CompletedReceipt[]
 }
@@ -1780,7 +1788,6 @@ export interface DeliveryLifecycleReceipt {
   lifecycleTiming?: RunnerLifecycleTiming
   runnerStages?: RunnerStages
   sourceCopies?: RunnerSourceCopy[]
-  pendingDeleteRequests?: Array<{ id: string; paths: string[]; error?: string }>
   receiptId: number
   clientId: number
   downloadId: number
@@ -1860,10 +1867,11 @@ export interface SeasonSelection {
 export const resolvePublicationFile = (id: number, publicationId: number, path: string, action: PublicationFileAction) =>
   send<void>('POST', `/queue/${id}/publications/${publicationId}/files/resolve`, { path, action })
 
+export const setPublicationCleanup = (publicationId: number, action: 'pause' | 'resume') =>
+  send<void>('POST', `/downloads/publications/${publicationId}/cleanup`, { action })
+
 export const resolveQueueReservation = (id: number) => send<void>('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})
 
-export const abandonDeliveryDeleteRequest = (receiptId: number, requestId: string) =>
- send('POST', `/downloads/deliveries/${receiptId}/delete-batches/${encodeURIComponent(requestId)}/abandon`)
 
 export interface StorageChangeRequest { root: string; expectedIdentity: string; observedIdentity: string; reviewToken?: string }
 export interface StorageChangeReview extends StorageChangeRequest { expectedDescription: string; observedDescription: string; existingPayloads: number; existingRequests: number; inFlightRequests: number; activeImports: number }

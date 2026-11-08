@@ -336,8 +336,10 @@ func TestTerminalCompletesHeldRowWithOlderRevision(t *testing.T) {
 		t.Fatalf("row = %s/%s (%s), want completed and imported", done.State, done.RunnerOutcome, done.Error)
 	}
 	pubs, _ := f.db.ListPublicationsForDownload(f.ctx, dl.ID)
-	if len(pubs) != 1 || pubs[0].State != "imported" || pubs[0].Cohort != "live" {
-		t.Fatalf("publications = %+v, want one live imported", pubs)
+	// Imported, then removed by the per-file cleanup (M4) as every file had
+	// evidence.
+	if len(pubs) != 1 || pubs[0].State != "removed" || pubs[0].Cohort != "live" {
+		t.Fatalf("publications = %+v, want one live publication, imported and cleaned up", pubs)
 	}
 }
 

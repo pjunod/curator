@@ -66,7 +66,7 @@ func TestMigration0072(t *testing.T) {
 	var children int
 	_ = db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM import_attempt_controls`).Scan(&children)
 
-	if err := db.Migrate(ctx); err != nil {
+	if err := goose.UpToContext(ctx, db.W, "migrations", 72); err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,6 +89,11 @@ func TestMigration0072(t *testing.T) {
 	}
 	_ = fk.Close()
 
+	// The rest reads through the current query layer, which needs the
+	// whole schema (0073 adds columns it scans).
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
 	get := func(id int64) Download {
 		t.Helper()
 		dl, err := db.GetDownload(ctx, id)

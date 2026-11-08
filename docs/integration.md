@@ -84,6 +84,82 @@ What Curator no longer does with Runner: acknowledge deliveries, pace receipt
 lookups per row, park on receipt shapes, refuse controls by revision, wait for
 Runner's cleanup before re-grabbing, or ask Runner to clean its source.
 
+### Per-file cleanup and the historical cohort (M4, v0.40.0)
+
+Contract section 3.4; [ADR 0026](adr/0026-pipeline-contract-v2.md) addendum.
+
+- **One rule, one implementation.** Curator deletes a publication file only
+  when its recorded outcome is evidence: `placed` — the placement recorded
+  the manifest's SHA-256 *and* the library file still has it (the same inode,
+  or re-hashed) — or `discarded{superseded|duplicate|rejected}`. `unresolved`
+  and `pending` files are never touched. Size is never evidence; a manifest
+  entry without a digest is kept.
+- **Re-checked before every unlink**, in order: the generation (the
+  directory's `.runner-manifest.json` — or, for a v1 record, the stored
+  manifest — must name the publication's generation), the file identity
+  (size and digest against the manifest, then an unchanged inode generation
+  since the hash), and the **storage** of the completed root: its live
+  identity against the one the inventory scan recorded (a changed identity is
+  an unmounted share), then the storage-change review fences — after an
+  accepted replacement volume the recorded identity matches the new one, and
+  the fence on what was on the old volume is what keeps automatic deletion
+  off it (an operator's own discard is the review it asks for). The unlink
+  goes through a directory handle that refuses symlinks. The directory is
+  `rmdir`ed when only the manifest is left; a stray Curator cannot account
+  for (`.DS_Store`, an NFS silly-rename) keeps it, and once every manifest
+  file is gone Storage offers **Delete files…** on it whole (identity and
+  ownership checks still apply). The publication is then `removed` and its
+  row's payload is gone.
+- **Attributable and stoppable**: every pass runs on the cleanup lane (the
+  sweep only queues them), shows in `GET /api/v1/system/transfers` as stage
+  `publication_cleanup` with why it runs, and on the publication in Activity
+  (*Cleanup queued/running (hourly sweep)*) with **Pause cleanup**
+  (`POST /api/v1/downloads/publications/{id}/cleanup {"action":"pause"}`);
+  a pause cancels the pass and keeps the sweep off the publication until
+  **Resume cleanup**.
+- **Who runs it**: the cleanup lane right after an import, the hourly sweep
+  (publications `imported`/`notified` with evidenced files still on disk),
+  Resolve → **Discard**, Download storage → **Delete selected files…** on a
+  publication directory (only its unresolved files; they become
+  `discarded{rejected}`), and the receipt action **Retry Curator cleanup**.
+  None of them asks Runner for anything.
+- **Evidence that no longer holds** (the library file now differs, the
+  publication file differs from its manifest, the library file is gone) turns
+  the file into `unresolved` with the reason, shown in Resolve; the sweep does
+  not re-read it. A transient problem (storage, a read error, a file changing
+  while hashed) leaves the file as it is and records the reason on the
+  publication; the next pass retries.
+- **The historical cohort** — every v1 receipt and every completed directory
+  present at the first M2 start, plus (migration 0073) every path of the old
+  migration-0040 review cohort — is never touched by automatic deletion nor
+  by an operator discard until its review batch is approved:
+  `POST /api/v1/downloads/publications/approve-cleanup {"ids": [...]}` sets
+  `cleanup_approved_at` (M7) and the same per-file rule then applies.
+- **Activity retention and Clear** hide a row whose publication still has
+  files on disk instead of deleting it (a publication cascades with its row);
+  the row goes once its publications are removed.
+- **Removed**: the receipt-bound cleanup ledger and its explicit deletion
+  batches (`runner_delivery_explicit_delete_*`, the abandon route), the
+  migration-0040 review cohort (`legacy_cleanup_review`,
+  `legacy_inflight_import_evidence`; storage-change path fences moved to
+  `storage_change_review_paths`), `runner_delivery_cursors` (the deliveries
+  cursor is `runner_history_cursors.deliveries_after`), and
+  `runner_admission_poll_schedule`.
+- **If the upgrade refuses to start** with `migration 0073 refused: live v1
+  dependents: N pending explicit deletion request(s) (<batch ids>)`, nothing
+  has been changed (the check runs before any migration). Roll back: deploy
+  the previous Curator build (v0.39.x), open Activity → the delivery's
+  lifecycle trace, and let each named request finish or **Cancel deletion
+  request**; then deploy v0.40.0 again. `SELECT batch_id FROM
+  runner_delivery_explicit_delete_batches WHERE abandoned_at=0` on the
+  database lists them.
+- Directories the cutover froze with no manifest and no download row are
+  `import_failed` with that explanation (nothing can import them); once their
+  review batch is approved, Storage deletes them whole.
+- **Non-Runner clients** keep their whole-payload cleanup (the client's own
+  delete, then the guarded local fallback) — they have no manifest. It never
+  touches a directory a publication claims.
+
 ## The pipeline
 
 ```

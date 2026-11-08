@@ -10,71 +10,6 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 )
 
-func TestRemovedDeliveryFileAndDirectoryRetryObligationCommitAtomically(t *testing.T) {
-	ctx := context.Background()
-	db, _ := openLifecycleCoverageDB(t)
-	defer func() { _ = db.Close() }()
-	receipt := seedLegacyReceipt(t, db, 15, coverageDelivery("atomic-cleanup-stamp"), "/mounted/release")
-	file := DeliveryManifestFile{Path: "Movie.mkv", SizeBytes: 5, SHA256: coverageDelivery("hash").Files[0].SHA256, FileGeneration: "payload-file-generation"}
-	seedLegacyFileOutcomes(t, db, receipt.ID, []DeliveryManifestFile{file}, nil)
-	if err := db.UpdateDeliveryFileDisposition(ctx, receipt.ID, file.Path, "placed", "committed placement", "/library/Movie.mkv"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetDeliveryFileCleanup(ctx, receipt.ID, file.Path, "pending", ""); err != nil {
-		t.Fatalf("queue file cleanup before worker attempt: %v", err)
-	}
-	if _, err := db.W.ExecContext(ctx, `CREATE TRIGGER reject_directory_pending BEFORE UPDATE OF directory_cleanup_state ON runner_delivery_receipts WHEN NEW.directory_cleanup_state='pending' BEGIN SELECT RAISE(ABORT,'injected directory obligation failure'); END`); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetDeliveryFileCleanup(ctx, receipt.ID, file.Path, "removed", ""); err == nil {
-		t.Fatal("file removal receipt committed despite failure to persist the directory cleanup obligation")
-	}
-	row, err := db.DeliveryFileOutcomeByPath(ctx, receipt.ID, file.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	currentReceipt, err := db.DeliveryReceiptByID(ctx, receipt.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if row.CleanupState != "pending" || currentReceiptDirectoryState(t, ctx, db, receipt.ID) != "protected" {
-		t.Fatalf("failed cross-row cleanup commit left a stranded state: file=%+v receipt=%+v", row, currentReceipt)
-	}
-	if _, err := db.W.ExecContext(ctx, `DROP TRIGGER reject_directory_pending`); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetDeliveryFileCleanup(ctx, receipt.ID, file.Path, "removed", ""); err != nil {
-		t.Fatal(err)
-	}
-	row, err = db.DeliveryFileOutcomeByPath(ctx, receipt.ID, file.Path)
-	if err != nil || row.CleanupState != "removed" || currentReceiptDirectoryState(t, ctx, db, receipt.ID) != "pending" {
-		t.Fatalf("file removal and directory obligation were not committed together: file=%+v err=%v", row, err)
-	}
-	if err := db.SetDeliveryDirectoryCleanup(ctx, receipt.ID, "pending", "empty-directory cleanup is in progress"); err != nil {
-		t.Fatalf("persist pre-removal directory obligation: %v", err)
-	}
-	// A retry after an older split write must also re-arm the directory step
-	// even when the per-file outcome already says removed.
-	if _, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET directory_cleanup_state='protected' WHERE id=?`, receipt.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetDeliveryFileCleanup(ctx, receipt.ID, file.Path, "removed", ""); err != nil {
-		t.Fatal(err)
-	}
-	if state := currentReceiptDirectoryState(t, ctx, db, receipt.ID); state != "pending" {
-		t.Fatalf("removed-file replay failed to re-arm directory cleanup: state=%q", state)
-	}
-}
-
-func currentReceiptDirectoryState(t *testing.T, ctx context.Context, db *DB, receiptID int64) string {
-	t.Helper()
-	var state string
-	if err := db.R.QueryRowContext(ctx, `SELECT directory_cleanup_state FROM runner_delivery_receipts WHERE id=?`, receiptID).Scan(&state); err != nil {
-		t.Fatal(err)
-	}
-	return state
-}
-
 func TestManualSubmissionAcknowledgementRejectsStaleGenerationAndTransfer(t *testing.T) {
 	ctx := context.Background()
 	db, _ := openLifecycleCoverageDB(t)
@@ -220,48 +155,5 @@ func TestReplacementEpisodeDetachRollsBackIfRemovalJournalCannotCommit(t *testin
 	}
 	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM media_file_episodes WHERE media_file_id=? AND episode_id=?`, file.MediaFileID, episodeID).Scan(&episodeLinks); err != nil || episodeLinks != 0 {
 		t.Fatalf("valid exact-generation detach was not committed: links=%d err=%v", episodeLinks, err)
-	}
-}
-
-func TestDeliveryRetryTraceDetailsSurviveDatabaseRestart(t *testing.T) {
-	ctx := context.Background()
-	db, dir := openLifecycleCoverageDB(t)
-	receipt := seedLegacyReceipt(t, db, 13, coverageDelivery("trace-retry-details"), "/mounted/release")
-	if err := db.SetDeliveryDirectoryCleanup(ctx, receipt.ID, "retry", "payload directory is busy"); err != nil {
-		t.Fatal(err)
-	}
-	providerDeadline := time.Now().Add(20 * time.Minute).Truncate(time.Millisecond)
-	// The v1 source-refresh journal row a pre-M2 curator left behind.
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO runner_delivery_source_refresh(receipt_id,attempts,blocked_since,next_attempt_at,last_error,provider_retry_after,updated_at) VALUES(?,1,?,?,?,?,?)`,
-		receipt.ID, time.Now().UnixMilli(), providerDeadline.UnixMilli(), "Runner temporarily unavailable", providerDeadline.UnixMilli(), time.Now().UnixMilli()); err != nil {
-		t.Fatal(err)
-	}
-	before, err := db.DeliveryRetryDetails(ctx, receipt.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if before.DirectoryState != "retry" || before.DirectoryError != "payload directory is busy" || before.DirectoryAttempts != 1 || before.DirectoryBlockedSince.IsZero() || before.DirectoryNext.Before(time.Now().Add(20*time.Second)) {
-		t.Fatalf("directory retry trace lacks durable retry evidence: %+v", before)
-	}
-	if before.SourceError != "Runner temporarily unavailable" || before.SourceAttempts != 1 || before.SourceBlockedSince.IsZero() || before.SourceNext.Before(providerDeadline) {
-		t.Fatalf("Runner source retry trace lacks provider deadline evidence: %+v", before)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = reopened.Close() }()
-	if err := reopened.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	after, err := reopened.DeliveryRetryDetails(ctx, receipt.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.DirectoryState != before.DirectoryState || after.DirectoryError != before.DirectoryError || after.DirectoryAttempts != before.DirectoryAttempts || !after.DirectoryBlockedSince.Equal(before.DirectoryBlockedSince) || !after.DirectoryNext.Equal(before.DirectoryNext) || after.SourceError != before.SourceError || after.SourceAttempts != before.SourceAttempts || !after.SourceBlockedSince.Equal(before.SourceBlockedSince) || !after.SourceNext.Equal(before.SourceNext) {
-		t.Fatalf("restart changed independently persisted retry trace: before=%+v after=%+v", before, after)
 	}
 }

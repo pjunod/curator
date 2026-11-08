@@ -1,6 +1,7 @@
 package acquisition
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -41,22 +42,37 @@ func migratedReceipt(t *testing.T, accept bool) *v1Receipt {
 	for _, file := range m.Files {
 		v.Files = append(v.Files, ports.RunnerFile{Path: file.Path, SizeBytes: file.Bytes, SHA256: file.SHA256})
 	}
-	r, err := f.db.SaveDiscoveredDelivery(f.ctx, dl.ClientID, v, pub.Path)
+	// Nothing in production writes runner_delivery_receipts since M2, so the
+	// receipt is written as a pre-M2 curator left it: discovered, associated
+	// with its download and (when accepted) acknowledged to Runner.
+	ack, consumer := "pending", ""
+	if accept {
+		ack, consumer = "accepted", "consumer-1"
+	}
+	files, err := json.Marshal(v.Files)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.DownloadID, r.GenerationKey, r.DownloadHandle, r.MediaItemID, r.CopyID = dl.ID, dl.GenerationKey, dl.Handle, dl.MediaItemID, dl.CopyID
-	if err := f.db.AssociateDelivery(f.ctx, r); err != nil {
+	now := time.Now().UnixMilli()
+	res, err := f.db.W.ExecContext(f.ctx, `INSERT INTO runner_delivery_receipts
+		(client_id, delivery_id, sequence, publication_generation, source_artifact_id, source_generation, manifest_digest,
+		artifact_id, job_id, request_token, runner_instance_id, ready_at, publication_path, mapped_path, files_json,
+		source_cleanup_json, file_outcomes_json, state, ack_state, consumer_receipt_id, download_id, generation_key,
+		download_handle, media_item_id, copy_id, error, created_at, updated_at, runner_stages_json, source_copies_json, lifecycle_timing_json)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'null','null','unresolved',?,?,?,?,?,?,?,'',?,?,'null','null','null')`,
+		dl.ClientID, v.DeliveryID, v.Sequence, v.PublicationGeneration, v.SourceArtifactID, v.SourceGeneration, v.ManifestDigest,
+		v.ArtifactID, v.JobID, v.RequestToken, v.RunnerInstanceID, v.ReadyAt.UnixMilli(), v.PublicationPath, pub.Path, string(files),
+		ack, consumer, dl.ID, dl.GenerationKey, dl.Handle, dl.MediaItemID, dl.CopyID, now, now)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if accept {
-		r.ConsumerReceiptID = "consumer-1"
-		if err := f.db.PrepareDeliveryAcceptance(f.ctx, r); err != nil {
-			t.Fatal(err)
-		}
-		if err := f.db.SetDeliveryAccepted(f.ctx, r); err != nil {
-			t.Fatal(err)
-		}
+	receiptID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := f.db.DeliveryReceiptByID(f.ctx, receiptID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if r, err = f.db.DeliveryReceiptByID(f.ctx, r.ID); err != nil {
 		t.Fatal(err)
@@ -90,8 +106,10 @@ func TestDeliveryLifecycleProjection(t *testing.T) {
 	if _, err := f.db.BeginDeliveryAttempt(f.ctx, v.receipt.ID, "import"); err != nil {
 		t.Fatal(err)
 	}
-	manifest := []sqlite.DeliveryManifestFile{{Path: "Test.Show.S01E01.mkv", SizeBytes: 2}}
-	if err := f.db.EnsureDeliveryFileOutcomes(f.ctx, v.receipt.ID, manifest, nil, false); err != nil {
+	// The file journal row a v1 import wrote before it placed anything.
+	if _, err := f.db.W.ExecContext(f.ctx, `INSERT INTO runner_delivery_file_outcomes
+		(receipt_id,path,size_bytes,sha256,file_generation,disposition,cleanup_state,updated_at)
+		VALUES(?,'Test.Show.S01E01.mkv',2,'','g1','pending','protected',?)`, v.receipt.ID, time.Now().UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	all, err := f.svc.DeliveryLifecycle(f.ctx, 0, 0, 10)
@@ -138,7 +156,7 @@ func TestReceiptCleanupIsRefusedAfterCutover(t *testing.T) {
 			t.Fatalf("a historical file was touched: %v", err)
 		}
 	}
-	if err := f.db.SetDeliveryConflict(f.ctx, v.receipt.ID, "identity changed"); err != nil {
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE runner_delivery_receipts SET state='conflict', error='identity changed' WHERE id=?`, v.receipt.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.svc.RetryCuratorDeliveryCleanup(f.ctx, v.receipt.ID); err == nil || !strings.Contains(err.Error(), "conflicts") {
@@ -182,10 +200,11 @@ func TestReceiptWithoutAPublicationCannotImport(t *testing.T) {
 	if err := f.svc.RetryDeliveryHandoff(f.ctx, v.receipt.ID); err == nil || !strings.Contains(err.Error(), "no publication") {
 		t.Fatalf("err = %v, want no publication", err)
 	}
-	// With no publication there is no historical fence, and no cleanup
-	// worker runs in this process: the retry is refused, nothing deleted.
-	if err := f.svc.RetryCuratorDeliveryCleanup(f.ctx, v.receipt.ID); err == nil || !strings.Contains(err.Error(), "cleanup worker is unavailable") {
-		t.Fatalf("err = %v, want the worker unavailable", err)
+	// Cleanup is the publication's per-file cleanup (M4): with no
+	// publication there is nothing to clean, so the retry is refused and
+	// nothing is deleted.
+	if err := f.svc.RetryCuratorDeliveryCleanup(f.ctx, v.receipt.ID); err == nil || !strings.Contains(err.Error(), "no publication to clean up") {
+		t.Fatalf("err = %v, want no publication to clean up", err)
 	}
 	if _, err := os.Stat(filepath.Join(v.dir, "Test.Show.S01E01.mkv")); err != nil {
 		t.Fatal("a payload file was deleted")
@@ -246,29 +265,4 @@ func TestQueueDeliveryImportSelection(t *testing.T) {
 			t.Fatalf("outcomes = %v (%s), want only the selected E02 placed", got, f.row(v.dl.ID).Error)
 		}
 	})
-}
-
-// Cancelling an explicit deletion request: busy work is refused rather than
-// waited on, and an unknown request is not found.
-func TestAbandonDeliveryDeleteRequest(t *testing.T) {
-	v := migratedReceipt(t, true)
-	f := v.f
-	f.svc.completedMu.Lock()
-	err := f.svc.AbandonDeliveryDeleteRequest(f.ctx, v.receipt.ID, "batch-1")
-	f.svc.completedMu.Unlock()
-	if err == nil || !strings.Contains(err.Error(), "busy") {
-		t.Fatalf("err = %v, want busy", err)
-	}
-	unlock := f.svc.lockDownload(v.dl.ID)
-	err = f.svc.AbandonDeliveryDeleteRequest(f.ctx, v.receipt.ID, "batch-1")
-	unlock()
-	if err == nil || !strings.Contains(err.Error(), "mutation is active") {
-		t.Fatalf("err = %v, want the active mutation refused", err)
-	}
-	if err := f.svc.AbandonDeliveryDeleteRequest(f.ctx, v.receipt.ID, "batch-1"); err == nil {
-		t.Fatal("an unknown deletion request was abandoned")
-	}
-	if err := f.svc.AbandonDeliveryDeleteRequest(f.ctx, v.receipt.ID+50, "batch-1"); err == nil {
-		t.Fatal("an unknown receipt's request was abandoned")
-	}
 }

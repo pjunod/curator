@@ -77,3 +77,33 @@ grabs to exactly those seams.
   publications stay on disk until per-file cleanup lands.
 - Legacy (non-Runner) clients keep parked rows for the season planner's
   uncertain-submission fence; M4 retires the columns.
+
+## Addendum — M4, per-file cleanup (v0.40.0, 2026-11-07)
+
+9. **Cleanup is per file and evidence-bound** (contract section 3.4). One
+   implementation (`cleanupPublication`) serves the post-import cleanup, the
+   hourly sweep, Resolve and Storage discards and the receipt retry. A file
+   leaves only when it is `placed` with the manifest digest recorded and the
+   library copy still matching it, or `discarded`; before each unlink the
+   generation, the file identity and the completed root's storage identity
+   are re-checked; the directory is removed when only the manifest is left.
+   Evidence that no longer holds demotes the file to `unresolved`.
+10. **The historical cohort waits for its review**: automatic deletion and
+    operator discards refuse it until `cleanup_approved_at` is set (the M7
+    approval, `POST /downloads/publications/approve-cleanup`).
+11. **The migration-0040 review cohort is folded into the historical cohort**
+    and its tables dropped; the storage-change fences it carried for orphan
+    paths moved to `storage_change_review_paths`. The storage-identity checks
+    are unchanged on every delete path.
+12. **Not dropped in M4**: `downloads.parked_reason`, `parked_at`,
+    `superseded`, `delivery_expected`, `request_token_idempotent`,
+    `exact_transfer_correlation`. M2 kept live code on each (season planner
+    fences and operator cancellation for every client, the Runner delivery
+    request parameter and native-torrent precondition, the submission retry,
+    qBittorrent tag correlation); dropping them is a redesign of those paths,
+    not a cleanup, and is left for Paul to schedule.
+
+Consequences: the receipt-bound cleanup ledger, explicit deletion batches and
+their abandon action are gone; Activity retention hides rather than deletes a
+row whose publication still has files on disk; non-Runner clients keep their
+whole-payload cleanup, which never touches a publication directory.

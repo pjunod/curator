@@ -1091,7 +1091,7 @@ func (d *DB) ClearFailedDownloads(ctx context.Context) (int64, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := d.Write.WithTx(tx)
-	dismissed, err := q.DismissFailedDownloadsWithPendingRunnerReceipt(ctx)
+	dismissed, err := q.DismissFailedDownloadsWithLivePublication(ctx)
 	if err != nil {
 		return 0, err
 	}

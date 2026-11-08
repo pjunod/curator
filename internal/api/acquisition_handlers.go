@@ -50,6 +50,10 @@ func (s *Server) acqErr(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusConflict, "blacklist_confirmation_required", err.Error())
 	case errors.Is(err, sqlite.ErrManualGrabRequestRetained):
 		writeCodedError(w, http.StatusConflict, "request_retained", "this manual request has already completed and its Activity row was dismissed; use a new requestId for a new action")
+	case errors.Is(err, acquisition.ErrDiscardedButKept):
+		writeCodedError(w, http.StatusConflict, "discarded_kept", err.Error())
+	case errors.Is(err, acquisition.ErrHistoricalCohort):
+		writeCodedError(w, http.StatusConflict, "historical_cohort", err.Error())
 	case errors.Is(err, acquisition.ErrNotFound), errors.Is(err, sqlite.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
 	default:
@@ -2245,6 +2249,10 @@ func (s *Server) fillPipelineV2(item *apigen.QueueItem, d sqlite.Download, pubs 
 		deadline := d.DeadlineAt
 		item.DeadlineAt = &deadline
 	}
+	if !d.StateEnteredAt.IsZero() {
+		entered := d.StateEnteredAt
+		item.StateEnteredAt = &entered
+	}
 	if d.State == "held" {
 		reason := d.Error
 		stale := !d.DeadlineAt.IsZero() && time.Now().After(d.DeadlineAt)
@@ -2261,6 +2269,20 @@ func (s *Server) fillPipelineV2(item *apigen.QueueItem, d sqlite.Download, pubs 
 		if errMsg != "" {
 			qp.Error = &errMsg
 		}
+		if !p.CleanupApprovedAt.IsZero() {
+			approved := p.CleanupApprovedAt
+			qp.CleanupApprovedAt = &approved
+		}
+		if !p.CleanupPausedAt.IsZero() {
+			paused := p.CleanupPausedAt
+			qp.CleanupPausedAt = &paused
+		}
+		if s.deps.Acquisition != nil {
+			if state, why := s.deps.Acquisition.PublicationCleanupState(p.ID); state != "" {
+				st := apigen.QueuePublicationCleanupState(state)
+				qp.CleanupState, qp.CleanupReason = &st, &why
+			}
+		}
 		for _, f := range publicationFiles[p.ID] {
 			bytes, reason, lib, discard := f.Bytes, f.Reason, f.LibraryPath, f.DiscardReason
 			qf := apigen.QueuePublicationFile{Path: f.Path, Outcome: f.Outcome, Bytes: &bytes}
@@ -2272,6 +2294,10 @@ func (s *Server) fillPipelineV2(item *apigen.QueueItem, d sqlite.Download, pubs 
 			}
 			if discard != "" {
 				qf.DiscardReason = &discard
+			}
+			if !f.RemovedAt.IsZero() {
+				removed := true
+				qf.Removed = &removed
 			}
 			qp.Files = append(qp.Files, qf)
 		}

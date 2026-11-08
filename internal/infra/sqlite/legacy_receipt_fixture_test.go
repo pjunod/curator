@@ -11,8 +11,8 @@ import (
 
 // Pipeline contract v2 (M2) removed the v1 Runner delivery import path, so
 // nothing in production writes runner_delivery_receipts any more. The rows
-// still exist in upgraded databases until M4 drops the tables, and the
-// lifecycle readers and explicit-delete journal still act on them. These
+// still exist in upgraded databases, read-only, until M6 drops the tables
+// (migration 0073), and the lifecycle readers still act on them. These
 // fixtures write those legacy rows directly, exactly as a pre-M2 curator left
 // them, so the surviving readers are tested against real stored state.
 
@@ -53,30 +53,6 @@ func seedLegacyReceipt(t testing.TB, d *DB, clientID int64, v ports.RunnerDelive
 		t.Fatal(err)
 	}
 	return r
-}
-
-// seedLegacyAssociation binds a legacy receipt to its download, as the v1
-// resolver did once it matched the Runner job.
-func seedLegacyAssociation(t testing.TB, d *DB, r DeliveryReceipt) DeliveryReceipt {
-	t.Helper()
-	if _, err := d.W.ExecContext(context.Background(), `UPDATE runner_delivery_receipts SET mapped_path=?,download_id=?,generation_key=?,download_handle=?,media_item_id=?,copy_id=? WHERE id=?`,
-		r.MappedPath, r.DownloadID, r.GenerationKey, r.DownloadHandle, r.MediaItemID, r.CopyID, r.ID); err != nil {
-		t.Fatal(err)
-	}
-	got, err := d.DeliveryReceiptByID(context.Background(), r.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return got
-}
-
-// seedLegacyReceiptState sets the receipt and acknowledgement state a v1
-// import left behind (for example imported with a pending Runner ack).
-func seedLegacyReceiptState(t testing.TB, d *DB, id int64, state, ackState, consumerReceiptID string) {
-	t.Helper()
-	if _, err := d.W.ExecContext(context.Background(), `UPDATE runner_delivery_receipts SET state=?,ack_state=?,consumer_receipt_id=? WHERE id=?`, state, ackState, consumerReceiptID, id); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // seedLegacyFileOutcomes journals manifest entries the way v1 acceptance did.

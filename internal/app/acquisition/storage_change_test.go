@@ -72,9 +72,6 @@ func TestStorageChangeAcceptanceFencesOnlyOldCustodyInSelectedRoot(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_inflight_import_evidence(generation_key,cutover_ms,evidence) VALUES(?,1,'historical import permission')`, pending.GenerationKey); err != nil {
-		t.Fatal(err)
-	}
 	request := storageChangeRequest(t, svc, root)
 	review, err := svc.PreviewCompletedStorageChange(ctx, request)
 	if err != nil {
@@ -89,11 +86,11 @@ func TestStorageChangeAcceptanceFencesOnlyOldCustodyInSelectedRoot(t *testing.T)
 	if err := svc.checkStorageIdentity(ctx, root); err != nil {
 		t.Fatalf("accepted storage not available to future work: %v", err)
 	}
-	held, err := db.LegacyAutomaticImportReview(ctx, pending.GenerationKey, filepath.Join(root, "finished-later"))
+	held, err := db.StorageChangeReview(ctx, pending.GenerationKey, filepath.Join(root, "finished-later"))
 	if err != nil || !held {
 		t.Fatalf("old in-flight custody inherited new trust: %v %v", held, err)
 	}
-	held, err = db.LegacyCleanupReview(ctx, pending.GenerationKey, filepath.Join(rootB, "finished-elsewhere"))
+	held, err = db.StorageChangeReview(ctx, pending.GenerationKey, filepath.Join(rootB, "finished-elsewhere"))
 	if err != nil || held {
 		t.Fatalf("acceptance fenced unrelated root: %v %v", held, err)
 	}
@@ -101,7 +98,7 @@ func TestStorageChangeAcceptanceFencesOnlyOldCustodyInSelectedRoot(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	held, err = db.LegacyCleanupReview(ctx, fresh.GenerationKey, filepath.Join(root, "fresh-publication"))
+	held, err = db.StorageChangeReview(ctx, fresh.GenerationKey, filepath.Join(root, "fresh-publication"))
 	if err != nil || held {
 		t.Fatalf("future acquisition inherited old fence: %v %v", held, err)
 	}

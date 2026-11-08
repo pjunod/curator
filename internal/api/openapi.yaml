@@ -93,17 +93,65 @@ paths:
         "202": { description: Curator cleanup retry queued. }
         "409": { description: Cleanup is not eligible to retry. }
 
-  /downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon:
+  /downloads/publications/{publicationId}/cleanup:
     post:
-      operationId: abandonDeliveryDeleteRequest
-      summary: Cancel remaining work in an exact reviewed deletion request
+      operationId: setPublicationCleanup
+      summary: Pause or resume a publication's automatic per-file cleanup
+      description: >
+        pause cancels a queued or running pass (each unlink is one step, so
+        nothing is left half-done) and keeps the hourly sweep and the
+        post-import pass off it; resume clears the pause and queues a pass.
+        An operator's explicit discard still runs while paused.
       parameters:
-        - { name: receiptId, in: path, required: true, schema: { type: integer, format: int64 } }
-        - { name: batchId, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: publicationId, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [pause, resume] }
       responses:
-        "204": { description: Remaining deletion cancelled; completed outcomes and history preserved. }
-        "404": { description: Delivery receipt or deletion request not found. }
-        "409": { description: Delivery work is active or deletion identity changed. }
+        "204": { description: Paused, or resumed and queued. }
+        "400": { description: Unknown action. }
+        "404": { description: No such publication, or it is already removed. }
+
+  /downloads/publications/approve-cleanup:
+    post:
+      operationId: approvePublicationCleanup
+      summary: Approve a review batch of historical publications for per-file cleanup
+      description: >
+        The M7 approval (pipeline contract v2, section 3.4). Sets
+        cleanupApprovedAt on each named historical publication; the per-file
+        rule then deletes only evidenced files (placed with a matching digest,
+        or discarded) and keeps everything else. Live publications need no
+        approval and are left unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: How many publications this call approved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [approved]
+                properties:
+                  approved: { type: integer, format: int64 }
+        "400": { description: No ids. }
 
   /downloads/inventory/storage-change/preview:
     post:
@@ -148,10 +196,15 @@ paths:
               properties:
                 path: { type: string }
                 fingerprint: { type: string }
-                reviewLegacy: { type: boolean, description: Explicitly approve deletion of only the selected current files from a legacy review entry. }
+                reviewLegacy: { type: boolean, description: Explicitly approve deletion of only the selected current files from an entry held for storage-change review. }
                 files:
                   type: array
-                  description: Exact inventory file identities selected for explicit deletion of a delivery-managed or explicitly reviewed legacy payload. Required for these entries; no directory removal is performed.
+                  description: >
+                    Exact inventory files selected for deletion. For a publication-managed
+                    directory each must be an unresolved file of the publication; it is
+                    discarded and leaves through the per-file cleanup (digest-checked,
+                    storage-checked). For an entry held for storage-change review, the
+                    selected current files are deleted. No directory is removed recursively.
                   items:
                     type: object
                     required: [path, snapshotIdentity]
@@ -5306,11 +5359,15 @@ components:
         title: { type: string }
         stage:
           type: string
-          enum: [downloading, importing, notifying]
+          enum: [downloading, importing, notifying, publication_cleanup]
           description: >
             Which seam this is at. `downloading` is nzbd's work that Monarr is
             watching; `importing` is Monarr moving bytes itself; `notifying`
-            is telling plurx, including the waits between retries.
+            is telling plurx, including the waits between retries;
+            `publication_cleanup` is Curator verifying and removing a
+            publication's evidenced files (detail says why it runs; a
+            download-less publication reports a negative downloadId, minus its
+            publication id).
         peer:
           type: string
           description: >
@@ -5742,6 +5799,10 @@ components:
           type: string
           format: date-time
           description: When this state becomes overdue (contract section 3.5). Absent when it has none.
+        stateEnteredAt:
+          type: string
+          format: date-time
+          description: When the row entered its current state; Activity shows how long an awaiting_import row has waited for a person.
         stale:
           type: boolean
           description: A held row past its deadline - Runner has not reported since; never a Curator failure.
@@ -5825,6 +5886,19 @@ components:
       required: [id, kind, state, cohort, path, files]
       properties:
         id: { type: integer, format: int64 }
+        cleanupApprovedAt:
+          type: string
+          format: date-time
+          description: When a historical publication's review batch was approved; absent until then.
+        cleanupPausedAt:
+          type: string
+          format: date-time
+          description: When an operator paused this publication's automatic cleanup; absent when it runs.
+        cleanupState:
+          type: string
+          enum: [queued, running]
+          description: A per-file cleanup pass waiting on or running in the cleanup lane; absent when none.
+        cleanupReason: { type: string, description: Why the queued or running pass runs (after its import, hourly sweep, an operator action). }
         generation: { type: string }
         kind: { type: string, description: "completed | salvage" }
         state: { type: string, description: "discovered | importing | imported | import_failed | notified | removed" }
@@ -5847,6 +5921,7 @@ components:
         discardReason: { type: string, description: "superseded | duplicate | rejected, when discarded" }
         reason: { type: string }
         libraryPath: { type: string }
+        removed: { type: boolean, description: The file's bytes have left the publication directory (per-file cleanup). }
 
     HandoffEntry:
       type: object
@@ -5916,11 +5991,12 @@ components:
         files: { type: integer }
         status: { type: string }
         reason: { type: string }
-        legacyReview: { type: boolean, description: Pre-delivery legacy item held for read-only review. }
-        deliveryManaged: { type: boolean, description: Runner payload governed by its accepted per-file manifest. }
+        legacyReview: { type: boolean, description: Payload held for review because the storage under it was replaced. }
+        deliveryManaged: { type: boolean, description: A publication claims this directory; its files leave only by their recorded per-file outcome. }
+        wholeDeletable: { type: boolean, description: "A publication's directory with no manifest evidence left in it (every manifest file removed, or an approved directory with none): an operator may delete it whole." }
         reviewFiles:
           type: array
-          description: Current file metadata snapshots for review and exact selected-file operations; the accepted delivery manifest remains the deletion authority.
+          description: Current file metadata snapshots for exact selected-file operations. For a publication, only its unresolved files an operator may discard; the manifest digest remains the deletion authority.
           items:
             $ref: '#/components/schemas/CompletedReviewFile'
         receipts:

@@ -61,6 +61,11 @@ const (
 	// StageNotifying — telling plurx an import landed, including the waits
 	// between retries.
 	StageNotifying = "notifying"
+	// StagePublicationCleanup — Curator verifying and removing a
+	// publication's evidenced files (pipeline contract v2, section 3.4).
+	// Not exclusive: it runs after the import and alongside a notify, and a
+	// download-less historical publication has no other stage.
+	StagePublicationCleanup = "publication_cleanup"
 )
 
 // pipeline is every exclusive stage, in the order a job passes through them.
@@ -87,7 +92,7 @@ func Order(stage string) int {
 			return i
 		}
 	}
-	if stage == StageNotifying {
+	if stage == StageNotifying || stage == StagePublicationCleanup {
 		return len(pipeline)
 	}
 	return len(pipeline) + 1
