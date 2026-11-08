@@ -1,5 +1,71 @@
 # Monarr — Project Status
 
+## Pipeline contract v2, M2 + M4 land together: coverage floor — 2026-11-08 · v0.40.0
+
+**Status:** [PR #95](https://github.com/pjunod/curator/pull/95) on
+`claude/pipeline-v2-m2-curator` · owner: Claude (Opus orchestrator) ·
+M2 and M4 both approved by Fable (#95, #96); not merged, not deployed.
+
+**Why M4 lands with M2:** #95 failed CI only on the coverage floor
+(82.9% against `COVERAGE_MIN` 86.0%; all 1796 tests passed). Most of the gap
+was the v1 receipt cleanup M2 left live (`delivery_cleanup.go`, 974 uncovered
+statements), which M4 deletes. Testing code that the next milestone deletes
+would be wasted work, so M4 (#96) is merged into this branch and the two ship
+as one PR at M4's version, 0.40.0. Decision taken for Paul by the
+orchestrator.
+
+Merged in order (merge commits, no rebase):
+
+1. `claude/pipeline-v2-m2-cov-a`: acquisition tests (reducer fact x state
+   matrix, publication import paths, grab admission and removal, replacement
+   grab worker and operation steps, v1 receipt lifecycle after the cutover);
+   `replacementAttemptCleanupBlock` removed (a stub that never blocked).
+2. `claude/pipeline-v2-m2-cov-b`: the 29 receipt-store writes M2 left without
+   callers deleted from `delivery_receipts.go` (-676); storage-fault matrices
+   for the reducer, publication, replacement and acquisition stores and the
+   recovery worker (template-copied databases, run in parallel).
+3. `claude/pipeline-v2-m4-curator` (#96): see the M4 entry below.
+
+Defects fixed by the coverage work (7):
+
+| # | Where | Defect | Fix |
+|---|---|---|---|
+| 1 | `completePublication` | A salvage import moved its failed row to `imported` (contract 3.1) | Settles its attempt with `SettleImportAttempt`; the row stays failed |
+| 2 | Resolve placement | Placing an unresolved file re-ran the import in its old attempt epoch and failed on "existing stage retained" | A Resolve selection opens a fresh attempt epoch, like ImportNow |
+| 3 | `downloadsWhere` | A read failing mid-scan returned a truncated list as complete (continuity-loss reconcile, held sweep) | Checks `rows.Err` |
+| 4 | `SetPublicationFileOutcome` | Discarded the RowsAffected error and reported not-found for a write that landed | Returns the error |
+| 5 | `buildWanted` / `Wanted` | One read failure hid a title from RSS, backlog and Wanted for the rest of the day (cached as fresh) | Fails the walk; nothing cached. `WantedList` fails on an unreadable profile list |
+| 6 | `CreateReplacement` | A storage error re-checking the review was reported as `ErrReplacementStale` | Only a missing observation or a missing/conflicting pin is stale |
+| 7 | `DeleteProfile` | A failed read of the kind defaults counted as "not a default", so a kind's default could be deleted | Any read error other than unset fails the delete |
+
+Integration (merge of M4): conflicts in `acquisition_handlers.go` (M2's
+batched `publicationFiles` loop with M4's cleanup state, pause and `removed`),
+`Activity.tsx` (M2's focus move with M4's "discarded and removed"),
+`delivery_receipts.go` (only what both sides kept survives) and eight test
+files (tests of code M4 deleted stay deleted). Adapted to M4: the cov-a receipt
+lifecycle tests seed legacy receipts with SQL (cov-b deleted the writers) and
+drop the abandon-route test; six v2 import tests expected `imported` where
+M4's cleanup now ends a fully evidenced live publication `removed`. sqlc
+output regenerated (`publications.cleanup_paused_at`).
+
+Coverage: projected **87.65%** against the 86.0% floor (CI's method: `-coverpkg=./...`,
+blocks merged across profiles, `/gen/` excluded). Measured on this branch for
+the three packages the work changed, with every other package at main's
+numbers (87.61% with M2 head's numbers instead):
+
+| Package | main | #95 at ae07935 | now |
+|---|---|---|---|
+| `internal/app/acquisition` | 82.5% (10519/12747) | 75.5% (9303/12320) | 85.6% (10041/11728) |
+| `internal/infra/sqlite` | 85.7% (4368/5096) | 83.3% (4547/5457) | 88.1% (4333/4916) |
+| `internal/api` | 89.2% (2519/2824) | 88.8% (2562/2886) | 88.2% (2576/2920) |
+
+Measured without `-race` (coverage blocks are the same; the race build of the
+sqlite package did not finish in 40 minutes on the shared 2-CPU workspace).
+Full runs of the three packages on the final head: acquisition and sqlite pass;
+api passes except `TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired`,
+which relies on a read-only directory and fails only as root (it passes run as
+an unprivileged user; unchanged from main). CI's floor is the check of record.
+
 ## Pipeline contract v2, M4: per-file cleanup, dead v1 mechanisms removed — 2026-11-07 · v0.40.0
 
 **Status:** branch `claude/pipeline-v2-m4-curator` (stacked on
