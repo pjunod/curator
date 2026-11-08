@@ -123,6 +123,7 @@ var requiredColumns = []struct{ table, column string }{
 	{"downloads", "runner_outcome"}, {"downloads", "provisional"}, {"downloads", "deadline_at"},
 	{"publications", "cohort"}, {"publication_files", "outcome"}, {"replacement_grabs", "next_at"},
 	{"wantable_attempts", "download_id"}, {"runner_history_cursors", "incarnation"},
+	{"notifier_deliveries", "idempotency_key"}, {"notifier_deliveries", "attempt"}, {"notifier_deliveries", "visible_at"},
 }
 
 // verifySchema refuses to start on a database that goose considers migrated

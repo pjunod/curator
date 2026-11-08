@@ -81,12 +81,6 @@ UPDATE notifiers
        on_failed = ?, on_health = ?, enabled = ?
  WHERE id = ?;
 
--- name: EnqueueDelivery :one
-INSERT INTO notifier_deliveries
-    (notifier_id, download_id, event, payload, next_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING *;
-
 -- name: DueDeliveries :many
 SELECT * FROM notifier_deliveries
  WHERE status = 'pending' AND next_at <= ?
@@ -96,7 +90,8 @@ SELECT * FROM notifier_deliveries
 -- name: SettleDelivery :exec
 UPDATE notifier_deliveries
    SET attempts = ?, last_error = ?, result = ?, status = ?, next_at = ?,
-       updated_at = ?
+       attempt = ?, remote_request_id = ?, remote_state = ?, waiting_on = ?,
+       visible_at = ?, item_ids_json = ?, updated_at = ?
  WHERE id = ?;
 
 -- name: ListDeliveries :many
@@ -105,15 +100,20 @@ SELECT * FROM notifier_deliveries
  ORDER BY id DESC
  LIMIT ?;
 
+-- A retry keeps the sub-delivery's key and advances its attempt: the
+-- operator retries because something changed, so Cinema must scan afresh
+-- rather than replay the answer it gave the last attempt.
 -- name: RetryDelivery :one
 UPDATE notifier_deliveries
-   SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?
+   SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
+       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = ''
  WHERE id = ? AND notifier_id = ? AND status = 'failed'
 RETURNING *;
 
 -- name: RetryFailedDeliveries :execrows
 UPDATE notifier_deliveries
-   SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?
+   SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
+       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = ''
  WHERE notifier_id = ? AND status = 'failed';
 
 -- name: DeleteDeliveriesForNotifier :exec
