@@ -138,6 +138,12 @@ func setupV2(t *testing.T, releases []ports.Release) *v2Fixture {
 	t.Helper()
 	runner := newFakeRunner()
 	svc, db, item := setup(t, releases, &runner.fakeClient)
+	return setupV2On(t, runner, svc, db, item)
+}
+
+// setupV2On finishes the v2 fixture on a setup scenario.
+func setupV2On(t *testing.T, runner *fakeRunner, svc *Service, db *sqlite.DB, item int64) *v2Fixture {
+	t.Helper()
 	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return runner }
 	ctx := context.Background()
 	root := t.TempDir()

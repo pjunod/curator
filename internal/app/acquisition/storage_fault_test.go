@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -216,59 +215,23 @@ func eachStorageFault(t *testing.T, run func(t *testing.T, f *storageFault)) {
 	}
 }
 
-// migratedTemplate is one migrated database file, copied for each fault
-// point instead of migrating a fresh database every time (the migrations are
-// most of a fixture's cost, and a matrix builds hundreds of fixtures).
-var migratedTemplate struct {
-	once sync.Once
-	dir  string
-	err  error
-}
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if migratedTemplate.dir != "" {
-		_ = os.RemoveAll(migratedTemplate.dir)
-	}
-	os.Exit(code)
-}
-
-// migratedTestDB opens a private copy of the migrated template.
+// migratedTestDB opens a private copy of the package's migrated schema
+// template (acquisition_test.go), as setup does, without migrating again:
+// goose keeps global state that parallel fault points would race on.
 func migratedTestDB(t *testing.T) *sqlite.DB {
 	t.Helper()
-	migratedTemplate.once.Do(func() {
-		dir, err := os.MkdirTemp("", "acquisition-migrated-")
-		if err != nil {
-			migratedTemplate.err = err
-			return
-		}
-		migratedTemplate.dir = dir
-		db, err := sqlite.Open(dir)
-		if err == nil {
-			err = db.Migrate(context.Background())
-			if closeErr := db.Close(); err == nil {
-				err = closeErr
-			}
-		}
-		migratedTemplate.err = err
-	})
-	if migratedTemplate.err != nil {
-		t.Fatal(migratedTemplate.err)
-	}
-	raw, err := os.ReadFile(filepath.Join(migratedTemplate.dir, sqlite.FileName))
+	schema, err := migratedAcquisitionSchema()
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, sqlite.FileName), raw, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, sqlite.FileName), schema, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	db, err := sqlite.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The copy is already migrated; Migrate is not run again because goose
-	// keeps global state that parallel fault points would race on.
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
