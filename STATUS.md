@@ -1,5 +1,103 @@
 # Monarr — Project Status
 
+## Pipeline contract v2, M5 (curator part): outbox sub-deliveries and read-back — 2026-11-07 · v0.41.0
+
+**Status:** branch `claude/pipeline-v2-m5-curator` (stacked on
+`claude/pipeline-v2-m2-curator` at 6e5fe39; migration **0074**, M4 holds 0073)
+· owner: Claude (Opus builder) · pushed, **no PR** (by instruction), not
+reviewed, not merged, not deployed. Built to contract section 4 / section 6,
+not to cinema's code (cinema M5 is Forgejo #1404-1409, under review).
+
+Built (plan M5 curator items 1-4, IMPL_CURATOR section 7):
+
+- **Outbox, not bus.** Every notification of an import is a
+  `notifier_deliveries` row written in the import's own transaction
+  (`CompletePublicationImport`, or `RecordImported` for a legacy client /
+  manual import). The dispatcher's `Subscribe[ImportCompleted]` (32 slots,
+  drop on full) and its `enqueue` are deleted; `ImportCompleted` stays on the
+  bus as the SSE live signal only. Chat notifiers and Plex/Jellyfin get one
+  row each, attempted once.
+- **Migration 0074**: `publication_id`, `directory`, `idempotency_key`,
+  `attempt`, `expected_files_json`, `remote_request_id`, `remote_state`,
+  `waiting_on`, `visible_at`, `item_ids_json`; unique
+  `(notifier_id, idempotency_key)`. One sub-delivery per (notifier,
+  publication, directory), key `<transfer>/<generation>/<sha256(dir)[:16]>`,
+  expected files `(path, bytes, mtime_ns)` stat'ed after placement. A
+  re-import of the same directory refreshes the row and advances its attempt.
+- **Dispatcher**: per-sub-delivery 20 s deadline; schedule `5s, 30s, 2m, 5m,
+  15m, 1h`, then hourly, no end for transient; permanent only on 401/403 (POST),
+  400, 422 `path_outside_roots` (or an old 422 with `roots`). Ambiguous
+  outcomes (timeout, connection error, 429, 5xx) reuse the attempt; confirmed
+  retryable ones (`503 path_unreadable`, a `failed` or vanished request, an
+  expected file not placed) advance it. Visible only when every expected file
+  is `placed` with equal bytes and mtime_ns → `visible → plurx item <ids>`;
+  else `warning: expected <path> not placed (<reason>)`. A 202 is polled with
+  `GET /scan/requests/{id}`; `waiting_on` stored and shown. Old cinema: 403 on
+  the poll, or a 200 without `files` → `ok`, `queued (cinema does not report
+  results)`, timing discarded.
+- **plurx.go**: `SendScan` (request_key/<attempt>, expected_files, wait_ms
+  10000), `ReadResult`, typed `NotifyError` classification; the permanent-429
+  default is deleted. `TestPaths`: `probe_paths` = Settings → Library roots,
+  fails with Curator's path beside Cinema's roots; a 422 without `roots` (the
+  old extractor) falls back to the legacy probe with the note "checking the
+  library paths needs a newer cinema".
+- **`import_to_cinema_visible`** starts in the publication's `imported`
+  transaction (only when a Cinema sub-delivery is written) and ends when the
+  import's last pending sub-delivery becomes visible (same transaction as the
+  settle). `pipeline.MeasuredBy` and the "not measured — needs M5" tile note
+  are deleted.
+- **API/web**: `Delivery` gains `directory, attempt, requestKey,
+  remoteRequestId, remoteState, waitingOn, visibleAt, itemIds, expectedFiles,
+  warning` (pending 30 min after it was written); Test answers
+  `{message}`. Delivery log: Directory column with the attempt, `visible` and
+  `warning` pills, Cinema's exact `waiting_on`/skip text. Retry keeps the key
+  and advances the attempt.
+- **Docs**: integration.md (new M5 section, seams 4 and 5), usage.md (Pipeline
+  tile, notifications), settings.md (Test, failure table, queue), architecture.md
+  (event table).
+
+Deleted (non-test): the bus import hop in `notify.go` (subscription, `Outboxed`
+plumbing, `dispatchImport`, `enqueue`), the `5s/30s/2m`-then-fail schedule and
+its exhaustion branch, the permanent default (incl. 429) in `plurx.go post`,
+`EnqueueDelivery` (sqlc query + Go), `pipeline.MeasuredBy`.
+
+Tests (fast lane): `internal/app/notify/outbox_test.go` against a fake Cinema
+(`internal/adapters/notify/cinematest`, new and old handler behaviour) with the
+real adapter and a hand-moved clock: outage 10 min → three directories
+visible with item ids, no retry; lost response → same key, one request; three
+slow directories each with their own deadline, never re-posted after visible;
+skip → warning → attempt 2 → visible; same-path replacement with equal size
+and whole-second mtime → visible only when mtime_ns matches; 503 → visible;
+outside root → failed once; queued → polled with waiting_on → visible; old
+cinema 403 / 200-without-files → ok. `plurx_v2_test.go` (wire, classification,
+ReadResult, TestPaths incl. `TestOldCinema422WithoutRootsFallsBack`,
+`Test429IsTransient`), `outbox_import_test.go` (completing tx writes the
+sub-delivery, key, expected files, timing start), `sub_deliveries_test.go`.
+
+Not verified: `make test`/`test-web`/`test-e2e` (not run, by rule); the compat
+test runs against a faithful fake of the old handler (path required by the
+extractor, 403 on status read), not the Rust handler itself; no e2e spec
+(`notifier-deliveries-v2.spec.ts`) was written — it could not be run here, so
+the delivery-log layout is unchecked in a browser. Pre-existing failure on the
+M2 base, not touched here: `internal/api`
+`TestQueueImportHTTPRecoversFailedImportAfterPayloadPathIsRepaired` (204, want
+400; fails identically at 6e5fe39).
+
+Decisions for Paul: chat-notifier imports also moved to the outbox (one
+attempt each) rather than losing them when the bus subscription went;
+`ImportCompleted` kept on the bus for the SSE stream; `warning` derived as
+"pending 30 min after the row was written"; a permanently failed
+sub-delivery leaves its timing open (it is genuinely not visible) while an
+old cinema's unreportable one is discarded; a vanished request (404 on the
+poll) and other 422s are retried (literal reading of "permanent only on");
+VERSION 0.41.0 assuming M4 takes 0.40.0.
+
+Post-deploy (after merge, with cinema M5): `import_to_cinema_visible` p95 < 2 min
+over a day — `curl -s -H "X-Api-Key: $KEY" $MONARR/api/v1/system/pipeline` —
+with the waiting count beside it; the delivery log shows `visible → plurx item
+<id>` on new imports; `SELECT status, count(*) FROM notifier_deliveries WHERE
+idempotency_key != '' GROUP BY 1` has no growing `pending` tail.
+
 ## Pipeline contract v2, M2: Curator reducer, publications, replacement grabs — 2026-11-07 · v0.39.0 (mobile 0.28.0)
 
 **Status:** branch `claude/pipeline-v2-m2-curator` (stacked on

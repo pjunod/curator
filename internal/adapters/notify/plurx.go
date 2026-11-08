@@ -194,19 +194,19 @@ func (p *Plurx) ReadResult(ctx context.Context, requestID string) (ports.NotifyR
 	if err != nil {
 		return ports.NotifyResult{}, err
 	}
-	switch {
-	case status == http.StatusOK:
+	switch status {
+	case http.StatusOK:
 		return parseAnswer(raw)
-	case status == http.StatusForbidden:
+	case http.StatusForbidden:
 		// An older Cinema lets only status:read keys read requests: the
 		// scan was accepted, its result will never be reported (contract
 		// section 6).
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryUnsupported, Status: status,
 			Msg: "cinema does not let this key read its requests (403): " + summarize(raw)}
-	case status == http.StatusUnauthorized:
+	case http.StatusUnauthorized:
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNever, Status: status,
 			Msg: "plurx rejected the key (401) while reading request " + requestID + ": " + summarize(raw)}
-	case status == http.StatusNotFound:
+	case http.StatusNotFound:
 		// Cinema no longer has it (pruned, or another node): post again,
 		// as a new attempt, so the answer is a fresh scan.
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNewAttempt, Status: status,
