@@ -774,7 +774,13 @@ Each request carries a key per directory and attempt, so a response lost on
 the way back never makes plurx scan twice, and the files the import placed
 there with their size and nanosecond mtime. plurx re-checks exactly those
 files and reports each; the directory is **visible** only when every one came
-back placed as the import left it.
+back placed as the import left it. plurx checks at most 64 files a request:
+a bigger directory sends its largest, newest 64, and the log says how many of
+the directory's files that verified (`verified 64 of 91 files`).
+
+Every notifier has a **Delivery log** now, chat ones included: a Discord or
+webhook that refused an import says so there, on its own row, and on the
+download's trace as `notify_<type>`.
 
 **Delivery log** on the notifier row shows every directory: `visible →
 plurx item 1201`, `queued in cinema, waiting on <what plurx is waiting on>`

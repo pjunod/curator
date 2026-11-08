@@ -186,11 +186,12 @@ export function NotifierSettings() {
                     <>
                       <RowTest id={n.id} />
                       <button onClick={() => startEdit(n)}>Edit</button>
-                      {MEDIA_SERVER.includes(n.type) && (
-                        <button onClick={() => setShowLog(showLog === n.id ? null : n.id)}>
-                          {showLog === n.id ? 'Hide log' : 'Delivery log'}
-                        </button>
-                      )}
+                      {/* Every notifier's imports are rows now, so every
+                          notifier has a log: a Discord that refused an
+                          import says so here. */}
+                      <button onClick={() => setShowLog(showLog === n.id ? null : n.id)}>
+                        {showLog === n.id ? 'Hide log' : 'Delivery log'}
+                      </button>
                       <button onClick={() => del.mutate(n.id)}>Remove</button>
                     </>
                   )}

@@ -92,6 +92,23 @@ old cinema's unreportable one is discarded; a vanished request (404 on the
 poll) and other 422s are retried (literal reading of "permanent only on");
 VERSION 0.41.0 assuming M4 takes 0.40.0.
 
+Review r1 (Fable, `reviews/curator-97-fable-r1.md`, changes requested) —
+all eleven findings and the cinematest divergences fixed; table in the
+report on PR #97. Two cinema facts taken from the review, not read from
+source (Forgejo is unreachable from the build workspace): the byte cap on
+expected files is assumed to be the 16 KiB of the stored JSON
+(`scan_request_v2`'s CHECK), and a failed request's typed body is assumed to
+carry `code`.
+
+**Before deploy (finding 9, a contract question if it fails):** on nuc3,
+for one file Curator placed, compare the nanosecond
+mtimes host-side (`stat -c '%y' <host path>`) and inside the plurx container
+(`docker exec plurx stat -c '%y' <container path>`). If the fractional
+seconds differ (e.g. CIFS 100 ns vs ext4 ns), every file would be reported
+`placed` with a mismatched `mtime_ns` and re-scanned hourly forever: stop and
+take it to Paul — the comparison stays exact equality until the contract
+says otherwise.
+
 Post-deploy (after merge, with cinema M5): `import_to_cinema_visible` p95 < 2 min
 over a day — `curl -s -H "X-Api-Key: $KEY" $MONARR/api/v1/system/pipeline` —
 with the waiting count beside it; the delivery log shows `visible → plurx item

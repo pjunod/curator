@@ -128,6 +128,7 @@ export function NotifierDeliveries({ id }: { id: number }) {
         )}
         {error && <span className="error-text">✗ {error.message}</span>}
       </div>
+      <div className="delivery-log-wrap" data-testid="delivery-log">
       <table>
         <thead>
           <tr>
@@ -169,6 +170,7 @@ export function NotifierDeliveries({ id }: { id: number }) {
           })}
         </tbody>
       </table>
+      </div>
     </>
   )
 }

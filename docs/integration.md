@@ -103,18 +103,26 @@ look at it):
   publication, directory)`, keyed `<transfer>/<generation>/<dir-hash>`
   (the first 16 hex of sha256 of the directory), carrying the media files the
   import placed under that directory with their `bytes` and `mtime_ns` as they
-  stood once placed. Each row has its own 20 s deadline per attempt: three
-  slow directories cannot starve each other, and a slow third one never makes
-  the first two be posted again. Importing the same directory of the same
-  publication again refreshes the row and advances its attempt.
+  stood once placed. Cinema takes at most 64 expected files (and 16 KiB of
+  them) a request, so a bigger directory sends its largest, newest 64 and the
+  log says `(verified 64 of 91 files)`. Each row has its own 20 s deadline per
+  attempt, and each notifier is its own lane of up to four deliveries in
+  flight: three slow directories are posted side by side, none starves the
+  others, a slow third one never makes the first two be posted again, and a
+  Discord timing out never holds Cinema's rows behind it. Importing the same
+  directory of the same publication again refreshes the row and advances its
+  attempt.
 - **The request.** `POST /api/v1/scan` carries, beside the unchanged body,
   `request_key: "<key>/<attempt>"`, `expected_files` and `wait_ms: 10000`.
   Cinema answers a repeated key with the same request and result, so a lost
   response does not create a second scan. The attempt is **reused** after an
-  ambiguous outcome (a timeout, a connection error, no response, 429, a 5xx)
-  and **advanced** after a confirmed retryable result (an expected file not
-  placed, `503 path_unreadable`, a `failed` request), so the retry gets a
-  fresh scan instead of the cached answer.
+  ambiguous outcome (a timeout, a connection error, no response, 429, a 502 or
+  504, a plain 503) and **advanced** after a confirmed retryable result (an
+  expected file not placed, `503 path_unreadable`, a `failed` request — which
+  Cinema answers with a 500, first time and on every replay of its key — or a
+  request Cinema no longer knows), so the retry gets a fresh scan instead of
+  the cached answer. A `Retry-After` on a 503 is honoured: the next try is no
+  sooner.
 - **Reading the answer.** `200 scanned` is classified at once; `202 queued`
   is polled with `GET /api/v1/scan/requests/{id}` (the creating key may read
   its own requests) on the same schedule. A sub-delivery is **visible** only
@@ -129,13 +137,20 @@ look at it):
   written is shown as a **warning** with Cinema's `waiting_on`, never failed.
 - **An older Cinema** ignores the new fields, answers 202, and refuses the
   status read to a `scan:trigger` key (403): the row is done, reading
-  `queued (cinema does not report results)`. A 200 without a per-file report
+  `queued (cinema does not report results)`. A current Cinema also answers
+  403 for a request id it no longer knows; once a read of the request has
+  answered, a later 403 is that — a lost request — and is posted again as a
+  new attempt. A 200 without a per-file report
   is done the same way, with the item ids it did report.
 - **`import_to_cinema_visible`** starts when the publication is imported (in
   the same transaction, when a Cinema notifier gets a sub-delivery) and ends
   when the last sub-delivery of the import becomes visible. An import Cinema
-  cannot report on (an older Cinema) is dropped from the measurement rather
-  than left waiting.
+  cannot report on (an older Cinema), or with a sub-delivery that failed
+  permanently, is dropped from the measurement rather than left waiting.
+- **Chat notifiers speak for themselves.** Their rows show in their own
+  delivery log (every notifier type has one now), name their own type on the
+  in-flight view, and write `notify_<type>` on the download's trace;
+  `notify_plurx` is Cinema's alone.
 - **The Test checks paths.** A plurx notifier's **Test** sends the library
   roots (Settings → Library) as `probe_paths`; a root Cinema cannot see fails
   the Test with Curator's path beside Cinema's roots. An older Cinema rejects
@@ -568,8 +583,8 @@ delivery queue that lives in memory is a queue that silently loses everything
 on the one event you most want it to survive.
 
 **Where you see it.** Settings → **Notifications** → per-row **Delivery log**
-(media-server types only — `plex`, `jellyfin`, `plurx`; it is an inline
-expander on `/settings`, not a page of its own). Columns `When` / `Event` /
+(every notifier type; it is an inline expander on `/settings`, not a page of
+its own, and scrolls sideways inside its own box on a phone). Columns `When` / `Event` /
 `Directory` (with `attempt N` once a fresh scan was needed) / `Status` /
 `Detail`, plus a **Retry** button on failed rows, polled every 5 s. **Retry
 all failed** above the table requeues every failed row of the notifier — the
