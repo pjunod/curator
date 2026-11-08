@@ -8,6 +8,23 @@ pushed, **no PR** (by instruction), not reviewed, not merged, not deployed.
 Decision record: [ADR 0026](docs/adr/0026-pipeline-contract-v2.md) addendum
 (items 9-12); ADR 0021 marked partly superseded.
 
+Review r1 (Fable, [PR #96](https://github.com/pjunod/curator/pull/96), changes
+requested) — every finding fixed on this branch:
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | Storage-change fence not on the per-file path; storage-review delete could unlink inside a publication | `cleanupGate` (live identity, then `StorageChangeReview`/`StorageReviewPath`) at pass start, before every unlink and before the rmdir; automatic passes stop, an operator's own discard is the review. Inventory classifies every publication-claimed entry regardless of the review flag; `DeleteSelectedLegacyFiles` refuses a publication path. Tests: path fence, generation fence, inventory + refused delete |
+| 2 | Stray after manifest unlink strands the publication | With every manifest file removed the stored manifest suffices; Storage deletes such a publication whole (`wholeDeletable`, identity + ownership checks). Test with `.DS_Store`, manifest gone too |
+| 3 | Folded 0040 cohort undeletable, shown as awaiting import | 0073 (and the M2 cutover marking) records manifest-less, row-less directories as `import_failed` with the reason; approved, Storage deletes them whole. Test |
+| 4 | Stale `publications.error` | Cleared when a pass ends with nothing stopped (only cleanup's own messages). Test |
+| 5 | Sweep hashing inline, unattributable | The sweep only queues passes on the cleanup lane; each pass is in the in-flight registry (`publication_cleanup`, with why) and on the publication in Activity with Pause/Resume (`POST /downloads/publications/{id}/cleanup`, `publications.cleanup_paused_at`). Test |
+| 6 | Resolve Discard hid a kept file | `ErrDiscardedButKept` (409 `discarded_kept`) with the reason; Activity shows it. Test |
+| 7 | Exact path lookups | `publicationClaiming`: same, containing or contained directory (storage paths); used by the legacy cleanup fence, Storage deletes and the inventory. Test |
+| 8 | Other platforms re-hash forever | `perFileCleanupSupported` is false there: the sweep logs once and refuses, the pass stops |
+| 9 | Preflight refusal had no operator path | integration.md: roll back to v0.39.x, finish or cancel the named requests, upgrade again |
+| 10 | Docs/UI literals | integration.md storage-check wording fixed; Storage offers only discardable (unresolved) publication files, with corrected text |
+| tests | crash between unlink and record; pre-unlink generation re-check; hard-linked placement; digest-less manifest; fences | added (fence and pre-unlink tests mutation-checked) |
+
 Built (plan M4.1-3, IMPL_CURATOR section 6):
 
 - **Per-file, evidence-bound cleanup** (`publication_cleanup.go`): a

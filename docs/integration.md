@@ -98,12 +98,25 @@ Contract section 3.4; [ADR 0026](adr/0026-pipeline-contract-v2.md) addendum.
   directory's `.runner-manifest.json` — or, for a v1 record, the stored
   manifest — must name the publication's generation), the file identity
   (size and digest against the manifest, then an unchanged inode generation
-  since the hash), and the **storage identity** of the completed root (the
-  check `pipeline:overdue` and the inventory use; a changed identity is an
-  unmounted share and nothing under it is deleted). The unlink goes through a
-  directory handle that refuses symlinks. The directory is `rmdir`ed when only
-  the manifest is left; anything else keeps it. The publication is then
-  `removed` and its row's payload is gone.
+  since the hash), and the **storage** of the completed root: its live
+  identity against the one the inventory scan recorded (a changed identity is
+  an unmounted share), then the storage-change review fences — after an
+  accepted replacement volume the recorded identity matches the new one, and
+  the fence on what was on the old volume is what keeps automatic deletion
+  off it (an operator's own discard is the review it asks for). The unlink
+  goes through a directory handle that refuses symlinks. The directory is
+  `rmdir`ed when only the manifest is left; a stray Curator cannot account
+  for (`.DS_Store`, an NFS silly-rename) keeps it, and once every manifest
+  file is gone Storage offers **Delete files…** on it whole (identity and
+  ownership checks still apply). The publication is then `removed` and its
+  row's payload is gone.
+- **Attributable and stoppable**: every pass runs on the cleanup lane (the
+  sweep only queues them), shows in `GET /api/v1/system/transfers` as stage
+  `publication_cleanup` with why it runs, and on the publication in Activity
+  (*Cleanup queued/running (hourly sweep)*) with **Pause cleanup**
+  (`POST /api/v1/downloads/publications/{id}/cleanup {"action":"pause"}`);
+  a pause cancels the pass and keeps the sweep off the publication until
+  **Resume cleanup**.
 - **Who runs it**: the cleanup lane right after an import, the hourly sweep
   (publications `imported`/`notified` with evidenced files still on disk),
   Resolve → **Discard**, Download storage → **Delete selected files…** on a
@@ -131,8 +144,18 @@ Contract section 3.4; [ADR 0026](adr/0026-pipeline-contract-v2.md) addendum.
   `legacy_inflight_import_evidence`; storage-change path fences moved to
   `storage_change_review_paths`), `runner_delivery_cursors` (the deliveries
   cursor is `runner_history_cursors.deliveries_after`), and
-  `runner_admission_poll_schedule`. Migration 0073 refuses to run while an
-  operator's v1 deletion request is unfinished and names it.
+  `runner_admission_poll_schedule`.
+- **If the upgrade refuses to start** with `migration 0073 refused: live v1
+  dependents: N pending explicit deletion request(s) (<batch ids>)`, nothing
+  has been changed (the check runs before any migration). Roll back: deploy
+  the previous Curator build (v0.39.x), open Activity → the delivery's
+  lifecycle trace, and let each named request finish or **Cancel deletion
+  request**; then deploy v0.40.0 again. `SELECT batch_id FROM
+  runner_delivery_explicit_delete_batches WHERE abandoned_at=0` on the
+  database lists them.
+- Directories the cutover froze with no manifest and no download row are
+  `import_failed` with that explanation (nothing can import them); once their
+  review batch is approved, Storage deletes them whole.
 - **Non-Runner clients** keep their whole-payload cleanup (the client's own
   delete, then the guarded local fallback) — they have no manifest. It never
   touches a directory a publication claims.

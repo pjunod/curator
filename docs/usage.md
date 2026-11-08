@@ -647,14 +647,26 @@ same disk; if the storage changed (an unmounted share), nothing is deleted
 and the publication says why. Cleanup runs right after the import and again
 every hour. If the library copy changed (for example a different file of the
 same size is there now), the publication's file is kept as *unresolved* and
-the reason is shown, because it may be the only good copy. The **Clean up
-after import** switch does not apply to Runner publications.
+the reason is shown, because it may be the only good copy. If you replaced
+the download storage and accepted it, publications that were on the old disk
+are held: nothing is deleted from them automatically until you discard their
+files yourself. The **Clean up after import** switch does not apply to Runner
+publications.
+
+While a cleanup pass runs or waits, the publication in Activity says so and
+why (*after its import*, *hourly sweep*) with **Pause cleanup**; a paused
+publication is left alone until you **Resume cleanup**. A folder whose
+manifest files are all gone but that still holds something Curator did not
+put there (a `.DS_Store`) shows **Delete files…** in Download storage to
+remove it whole.
 
 *Historical* publications — payloads that existed before v0.39.0, including
 the older pre-delivery review backlog — import normally but are never deleted,
 automatically or by **Delete selected files…**, until their review batch is
 approved (`POST /api/v1/downloads/publications/approve-cleanup` with the
 publication ids; the same per-file rule then removes only what has evidence).
+A historical folder with no manifest at all is shown as *import failed* with
+the reason; once approved, delete it whole from Download storage.
 
 When you retry a held job in Runner, Curator clears its cached hold only after
 Runner supplies a newer control revision from the same instance, with the same
