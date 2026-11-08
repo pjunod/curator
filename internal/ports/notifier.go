@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrNotifyPermanent marks a delivery failure that retrying cannot fix: a
@@ -85,6 +86,18 @@ type ImportInfo struct {
 	// matching bytes and mtime_ns (contract section 4.2).
 	ExpectedFiles map[string][]ExpectedFile `json:"expectedFiles,omitempty"`
 }
+
+// Cinema's limits on a request's expected files (plurx
+// scan_request_v2.rs: MAX_EXPECTED_FILES, and the 16 KiB the stored list
+// may take). A request over either is refused with a 400, which retrying
+// cannot fix — so a directory with more files than that sends the largest,
+// newest ones and says how many of the total it verified.
+const (
+	MaxExpectedFiles     = 64
+	MaxExpectedFileBytes = 16384
+	// MaxRequestKeyBytes is the longest request_key Cinema accepts.
+	MaxRequestKeyBytes = 256
+)
 
 // ExpectedFile is one media file an import placed, as it stood once placed.
 type ExpectedFile struct {
@@ -208,6 +221,9 @@ type NotifyError struct {
 	Status int    // HTTP status, 0 when there was no response
 	Code   string // the far side's error code, when it sent one
 	Msg    string
+	// RetryAfter is how long the far side asked to be left alone (a 503's
+	// Retry-After); 0 when it did not say. The next try is no sooner.
+	RetryAfter time.Duration
 }
 
 func (e *NotifyError) Error() string { return e.Msg }

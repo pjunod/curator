@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -32,6 +33,9 @@ import (
 type Plurx struct {
 	URL    string
 	APIKey string
+	// Wait is how long Cinema may hold a sub-delivery for its result
+	// (wait_ms); 0 means the default, 10 s.
+	Wait time.Duration
 
 	// delivery accumulates what plurx said about the last Send. A notifier
 	// is built fresh per dispatch (see notify.New), so this is per-event
@@ -175,22 +179,25 @@ func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, ke
 		req.RequestKey = key
 		req.ExpectedFiles = info.ExpectedFiles[dir]
 		req.WaitMs = waitMs
+		if p.Wait > 0 {
+			req.WaitMs = int(p.Wait / time.Millisecond)
+		}
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNever, Msg: err.Error()}
 	}
-	status, raw, err := p.do(ctx, http.MethodPost, "/api/v1/scan", body)
+	status, raw, header, err := p.do(ctx, http.MethodPost, "/api/v1/scan", body)
 	if err != nil {
 		return ports.NotifyResult{}, err
 	}
-	return classifyScan(dir, status, raw)
+	return classifyScan(dir, status, raw, header, key != "")
 }
 
 // ReadResult implements ports.ResultReader: GET /api/v1/scan/requests/{id},
 // which a scan:trigger key may read for the requests it created.
 func (p *Plurx) ReadResult(ctx context.Context, requestID string) (ports.NotifyResult, error) {
-	status, raw, err := p.do(ctx, http.MethodGet, "/api/v1/scan/requests/"+url.PathEscape(requestID), nil)
+	status, raw, _, err := p.do(ctx, http.MethodGet, "/api/v1/scan/requests/"+url.PathEscape(requestID), nil)
 	if err != nil {
 		return ports.NotifyResult{}, err
 	}
@@ -198,17 +205,21 @@ func (p *Plurx) ReadResult(ctx context.Context, requestID string) (ports.NotifyR
 	case http.StatusOK:
 		return parseAnswer(raw)
 	case http.StatusForbidden:
-		// An older Cinema lets only status:read keys read requests: the
-		// scan was accepted, its result will never be reported (contract
-		// section 6).
+		// Either an older Cinema, which lets only status:read keys read
+		// requests (the scan was accepted, its result will never be
+		// reported, contract section 6), or a current one that no longer
+		// knows this id (its creator lookup finds nobody). Only the caller
+		// can tell them apart — by whether a read of this request has
+		// answered before.
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryUnsupported, Status: status,
 			Msg: "cinema does not let this key read its requests (403): " + summarize(raw)}
 	case http.StatusUnauthorized:
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNever, Status: status,
 			Msg: "plurx rejected the key (401) while reading request " + requestID + ": " + summarize(raw)}
 	case http.StatusNotFound:
-		// Cinema no longer has it (pruned, or another node): post again,
-		// as a new attempt, so the answer is a fresh scan.
+		// Cinema answers an unknown id with 403 (above); a 404 is a server
+		// in front of it, or one built differently, saying the same thing.
+		// Post again as a new attempt, so the answer is a fresh scan.
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNewAttempt, Status: status,
 			Msg: "cinema no longer knows request " + requestID}
 	}
@@ -219,14 +230,14 @@ func (p *Plurx) ReadResult(ctx context.Context, requestID string) (ports.NotifyR
 // do sends one request. A transport failure (no response, a timeout, a reset
 // after send) is ambiguous: the request may have landed, so the next try
 // reuses its key.
-func (p *Plurx) do(ctx context.Context, method, path string, body []byte) (int, []byte, error) {
+func (p *Plurx) do(ctx context.Context, method, path string, body []byte) (int, []byte, http.Header, error) {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(p.URL, "/")+path, rd)
 	if err != nil {
-		return 0, nil, &ports.NotifyError{Retry: ports.RetryNever, Msg: err.Error()}
+		return 0, nil, nil, &ports.NotifyError{Retry: ports.RetryNever, Msg: err.Error()}
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -234,21 +245,30 @@ func (p *Plurx) do(ctx context.Context, method, path string, body []byte) (int, 
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return 0, nil, &ports.NotifyError{Retry: ports.RetrySameAttempt, Msg: fmt.Sprintf("cannot reach plurx: %s", err)}
+		return 0, nil, nil, &ports.NotifyError{Retry: ports.RetrySameAttempt, Msg: fmt.Sprintf("cannot reach plurx: %s", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
-	return resp.StatusCode, raw, nil
+	return resp.StatusCode, raw, resp.Header, nil
 }
 
 // classifyScan reads POST /api/v1/scan's answer (contract section 4.1):
 // permanent only on 401/403, 400 and 422 path_outside_roots; 503
 // path_unreadable is a confirmed retryable result; 429, other 5xx and
 // anything unrecognised are transient on the same key.
-func classifyScan(dir string, status int, raw []byte) (ports.NotifyResult, error) {
+//
+// keyed says the POST carried a request_key. Cinema answers a request whose
+// scan FAILED with a 500 — inside wait_ms, and on every replay of that key —
+// so a 500 to a keyed POST is a confirmed retryable result: the next try
+// needs a new attempt, or it would replay the same failure hourly forever.
+// Advancing is cheap: Cinema coalesces duplicate targeted work per library.
+func classifyScan(dir string, status int, raw []byte, header http.Header, keyed bool) (ports.NotifyResult, error) {
 	var body struct {
-		Code  string    `json:"code"`
-		Roots *[]string `json:"roots"`
+		Status        string    `json:"status"`
+		Code          string    `json:"code"`
+		Error         string    `json:"error"`
+		Roots         *[]string `json:"roots"`
+		RetryAfterSec int       `json:"retry_after_s"`
 	}
 	_ = json.Unmarshal(raw, &body)
 	never := func(msg string) error {
@@ -274,12 +294,41 @@ func classifyScan(dir string, status int, raw []byte) (ports.NotifyResult, error
 		// The share under the root is not readable right now (unmounted,
 		// EIO): a retry after it comes back must scan afresh.
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNewAttempt, Status: status, Code: body.Code,
-			Msg: "cinema cannot read " + dir + " right now: " + summarize(raw)}
+			RetryAfter: retryAfter(header, body.RetryAfterSec),
+			Msg:        "cinema cannot read " + dir + " right now: " + summarize(raw)}
+	case keyed && (status == http.StatusInternalServerError || body.Status == "failed"):
+		msg := "cinema could not complete the scan"
+		if body.Code != "" {
+			msg += " (" + body.Code + ")"
+		}
+		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNewAttempt, Status: status, Code: body.Code,
+			Msg: fmt.Sprintf("%s: plurx returned %d: %s", msg, status, summarize(raw))}
 	}
-	// 429 is plurx asking for room, 5xx the server having a moment; neither
-	// is a reason to drop the scan.
+	// 429 is plurx asking for room, 502/504 a gateway that may or may not
+	// have passed the request on, another 503 a queue refusing it before it
+	// was recorded; none is a reason to drop the scan or to start a new one.
 	return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetrySameAttempt, Status: status, Code: body.Code,
-		Msg: fmt.Sprintf("plurx returned %d: %s", status, summarize(raw))}
+		RetryAfter: retryAfter(header, body.RetryAfterSec),
+		Msg:        fmt.Sprintf("plurx returned %d: %s", status, summarize(raw))}
+}
+
+// retryAfter reads how long the far side asked to be left alone: the
+// Retry-After header in seconds, else the body's retry_after_s. Capped at an
+// hour, the schedule's own ceiling.
+func retryAfter(header http.Header, bodySec int) time.Duration {
+	sec := bodySec
+	if v := strings.TrimSpace(header.Get("Retry-After")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			sec = n
+		}
+	}
+	if sec <= 0 {
+		return 0
+	}
+	if d := time.Duration(sec) * time.Second; d < time.Hour {
+		return d
+	}
+	return time.Hour
 }
 
 // parseAnswer reads a scan answer or a request record: status, request id,
@@ -292,15 +341,15 @@ func parseAnswer(raw []byte) (ports.NotifyResult, error) {
 		Items     []struct {
 			ItemID int64 `json:"item_id"`
 		} `json:"items"`
-		Files     *[]ports.PlacedReport `json:"files"`
-		Error     json.RawMessage       `json:"error"`
-		ErrorCode string                `json:"error_code"`
+		Files *[]ports.PlacedReport `json:"files"`
+		Error json.RawMessage       `json:"error"`
+		Code  string                `json:"code"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetrySameAttempt,
 			Msg: "plurx answered with something that is not JSON: " + summarize(raw)}
 	}
-	res := ports.NotifyResult{RequestID: body.RequestID, WaitingOn: body.WaitingOn, ErrCode: body.ErrorCode}
+	res := ports.NotifyResult{RequestID: body.RequestID, WaitingOn: body.WaitingOn, ErrCode: body.Code}
 	switch body.Status {
 	case "scanned", "done":
 		res.State = "done"
@@ -388,14 +437,14 @@ func (p *Plurx) Test(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	status, raw, err := p.do(ctx, http.MethodPost, "/api/v1/scan", body)
+	status, raw, header, err := p.do(ctx, http.MethodPost, "/api/v1/scan", body)
 	if err != nil {
 		return err
 	}
 	if status == http.StatusUnprocessableEntity {
 		return nil // the handler spoke: URL, key and scope all work
 	}
-	if _, err := classifyScan("/monarr/connection-test", status, raw); err != nil {
+	if _, err := classifyScan("/monarr/connection-test", status, raw, header, false); err != nil {
 		return err
 	}
 	return nil // it somehow matched a root; the connection works either way
@@ -418,7 +467,7 @@ func (p *Plurx) TestPaths(ctx context.Context, roots []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	status, raw, err := p.do(ctx, http.MethodPost, "/api/v1/scan", body)
+	status, raw, header, err := p.do(ctx, http.MethodPost, "/api/v1/scan", body)
 	if err != nil {
 		return "", err
 	}
@@ -442,7 +491,7 @@ func (p *Plurx) TestPaths(ctx context.Context, roots []string) (string, error) {
 	case status == http.StatusOK:
 		return "connected; cinema did not report on the library paths", nil
 	}
-	_, err = classifyScan("probe_paths", status, raw)
+	_, err = classifyScan("probe_paths", status, raw, header, false)
 	if err == nil {
 		err = fmt.Errorf("plurx returned %d to the path check: %s", status, summarize(raw))
 	}

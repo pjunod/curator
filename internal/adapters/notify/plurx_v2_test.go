@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pjunod/monarr/internal/adapters/notify/cinematest"
 	"github.com/pjunod/monarr/internal/ports"
@@ -116,7 +117,13 @@ func TestPlurxClassifiesTheTypedPathOutcomes(t *testing.T) {
 		{"an unreadable root needs a fresh attempt", http.StatusServiceUnavailable,
 			`{"code":"path_unreadable","error":"library root could not be read: ENOTCONN","root":"/20t/tv","retry_after_s":60}`, ports.RetryNewAttempt},
 		{"an old cinema's plain 503 is the same attempt again", http.StatusServiceUnavailable, `queue refused`, ports.RetrySameAttempt},
-		{"a 500 is the same attempt again", http.StatusInternalServerError, ``, ports.RetrySameAttempt},
+		// Cinema answers a FAILED request with a bare 500, first time and on
+		// every replay of its key: a fresh attempt, or the failure replays
+		// forever (review #97 finding 2).
+		{"a 500 to a keyed request is a new attempt", http.StatusInternalServerError, `{"error":"ffprobe failed"}`, ports.RetryNewAttempt},
+		{"a typed failed body is a new attempt", http.StatusInternalServerError,
+			`{"status":"failed","request_id":"sr-1","error":"ffprobe failed","code":"probe_failed"}`, ports.RetryNewAttempt},
+		{"a 502 from a gateway is the same attempt again", http.StatusBadGateway, ``, ports.RetrySameAttempt},
 		{"a 401 is permanent", http.StatusUnauthorized, ``, ports.RetryNever},
 		{"a 403 on the POST is permanent", http.StatusForbidden, ``, ports.RetryNever},
 		{"a 400 is permanent", http.StatusBadRequest, `{"code":"path_required"}`, ports.RetryNever},
@@ -160,7 +167,7 @@ func TestPlurxReadResultReadsTheCreatingKeysRequest(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "sr-queued"):
 			_, _ = w.Write([]byte(`{"request_id":"sr-queued","status":"queued","waiting_on":"full_scan:3","files":[],"error":null}`))
 		case strings.HasSuffix(r.URL.Path, "sr-failed"):
-			_, _ = w.Write([]byte(`{"request_id":"sr-failed","status":"failed","error":"path_unreadable: ENOTCONN","error_code":"path_unreadable"}`))
+			_, _ = w.Write([]byte(`{"request_id":"sr-failed","status":"failed","error":"path_unreadable: ENOTCONN","code":"path_unreadable"}`))
 		case strings.HasSuffix(r.URL.Path, "sr-old"):
 			_, _ = w.Write([]byte(`{"request_id":"sr-old","status":"done","items":[{"item_id":7}],"report":{}}`))
 		case strings.HasSuffix(r.URL.Path, "sr-gone"):
@@ -270,5 +277,50 @@ func TestPlurxSendScanNeedsOneDirectoryAndConfig(t *testing.T) {
 	n.Import.Dirs = []string{"/a", "/b"}
 	if _, err := scanner(t, "http://x").SendScan(context.Background(), n); retryOf(t, err) != ports.RetryNever {
 		t.Errorf("two directories = %v", err)
+	}
+}
+
+// A 503 says how long to stay away; the error carries it so the schedule
+// does not knock sooner.
+func TestPlurxReadsRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"code":"path_unreadable","error":"ENOTCONN","retry_after_s":60}`))
+	}))
+	defer srv.Close()
+	_, err := scanner(t, srv.URL).SendScan(context.Background(), subDelivery("/x"))
+	var ne *ports.NotifyError
+	if !errors.As(err, &ne) || ne.RetryAfter != 60*time.Second || ne.Retry != ports.RetryNewAttempt {
+		t.Fatalf("= %+v, want a new attempt no sooner than 60 s", err)
+	}
+}
+
+// The fake refuses what the real handler refuses, so a request curator would
+// get a 400 for cannot pass a test by accident.
+func TestFakeCinemaRefusesWhatTheRealHandlerRefuses(t *testing.T) {
+	root := t.TempDir()
+	cinema := cinematest.New(root)
+	defer cinema.Close()
+	p := scanner(t, cinema.URL())
+	many := make([]ports.ExpectedFile, ports.MaxExpectedFiles+1)
+	for i := range many {
+		many[i] = ports.ExpectedFile{Path: filepath.Join(root, "f"), Bytes: 1}
+	}
+	n := subDelivery(root, many...)
+	if _, err := p.SendScan(context.Background(), n); retryOf(t, err) != ports.RetryNever || !strings.Contains(err.Error(), "400") {
+		t.Errorf("65 expected files = %v, want the 400", err)
+	}
+	n = subDelivery(root)
+	n.IdempotencyKey = strings.Repeat("k", ports.MaxRequestKeyBytes+1)
+	if _, err := p.SendScan(context.Background(), n); retryOf(t, err) != ports.RetryNever {
+		t.Errorf("long key = %v, want the 400", err)
+	}
+	if _, err := p.SendScan(context.Background(), subDelivery("relative/dir")); retryOf(t, err) != ports.RetryNever {
+		t.Errorf("relative path = %v, want the 400", err)
+	}
+	limited := New(ports.NotifierConfig{Type: "plurx", Settings: map[string]string{"url": cinema.URL(), "apiKey": "plx_status"}}).(*Plurx)
+	if _, err := limited.SendScan(context.Background(), subDelivery(root)); retryOf(t, err) != ports.RetryNever || !strings.Contains(err.Error(), "403") {
+		t.Errorf("key without scan:trigger = %v, want the 403", err)
 	}
 }

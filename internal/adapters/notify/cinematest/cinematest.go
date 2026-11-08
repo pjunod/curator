@@ -7,6 +7,12 @@
 //
 // It reads the real filesystem: an expected file is reported placed with the
 // bytes and mtime_ns it has on disk now, unless the test says otherwise.
+//
+// Keys: "plx_secret" holds scan:trigger; "plx_status" is a real key without
+// it (403 on POST); anything else is unknown (401). The limits are the real
+// handler's: at most ports.MaxExpectedFiles expected files within
+// ports.MaxExpectedFileBytes, a request_key of at most
+// ports.MaxRequestKeyBytes, absolute paths — anything else is a 400.
 package cinematest
 
 import (
@@ -29,9 +35,11 @@ type Request struct {
 	Key           string // request_key, "" from an old client
 	Path          string
 	Expected      []ports.ExpectedFile
-	State         string // queued | done
+	State         string // queued | running | done | failed
+	Error         string // a failed request's error
 	Files         []ports.PlacedReport
 	ProbeAttempts int
+	done          chan struct{}
 }
 
 // Cinema is the fake. Zero-value fields are the plain behaviour; set them
@@ -60,6 +68,15 @@ type Cinema struct {
 	// Delay holds the answer to the n-th POST (1-based) carrying key after
 	// recording it — a response that arrives after the caller gave up.
 	Delay func(key string, n int) time.Duration
+	// FinishAfter, with Queue, finishes a queued request on its own after
+	// this long, so a POST's wait_ms can see it finish (200 after the wait).
+	FinishAfter time.Duration
+	// Running reports queued requests as running.
+	Running bool
+	// Fail makes the targeted scan of a path fail with this error: the
+	// request is failed, and the real handler answers it — first time and
+	// every replay of its key — with a bare 500.
+	Fail map[string]string
 
 	posts    []string // request_key (or path) of every POST, in order
 	polls    []string
@@ -146,6 +163,14 @@ func (c *Cinema) Release() {
 	}
 }
 
+// Forget drops every request, as a restart with a pruned store would: a read
+// of one of them is now an unknown id.
+func (c *Cinema) Forget() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.requests, c.byKey = nil, map[string]*Request{}
+}
+
 type body struct {
 	Path          *string              `json:"path"`
 	RequestKey    string               `json:"request_key"`
@@ -168,12 +193,17 @@ func (c *Cinema) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		panic(http.ErrAbortHandler)
 	}
-	if r.Header.Get("Authorization") != "Bearer plx_secret" {
-		w.WriteHeader(http.StatusUnauthorized)
+	auth := r.Header.Get("Authorization")
+	if auth != "Bearer plx_secret" && auth != "Bearer plx_status" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unknown key"})
 		return
 	}
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/scan":
+		if auth != "Bearer plx_secret" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "key lacks the scan:trigger scope"})
+			return
+		}
 		c.scan(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/scan/requests/"):
 		c.status(w, strings.TrimPrefix(r.URL.Path, "/api/v1/scan/requests/"))
@@ -210,7 +240,11 @@ func (c *Cinema) scan(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Clean(*b.Path)
 	key := b.RequestKey
 	if c.Old {
-		key = "" // ignored
+		key = "" // ignored (expected_files too; kept here only to list the items it scans)
+	} else if code := invalid(*b.Path, b); code != "" {
+		c.mu.Unlock()
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": code, "error": "invalid scan request: " + code})
+		return
 	}
 	tag := key
 	if tag == "" {
@@ -226,10 +260,9 @@ func (c *Cinema) scan(w http.ResponseWriter, r *http.Request) {
 	// Idempotency first: a repeated key is the same request and result.
 	if req, ok := c.byKey[key]; ok && key != "" {
 		delay := c.delay(key, n)
-		ans, status := c.answer(req)
 		c.mu.Unlock()
 		hold(r, delay)
-		writeJSON(w, status, ans)
+		c.respond(w, req)
 		return
 	}
 	if !c.under(path) {
@@ -243,23 +276,77 @@ func (c *Cinema) scan(w http.ResponseWriter, r *http.Request) {
 	}
 	if c.Unreadable && !c.Old {
 		c.mu.Unlock()
+		w.Header().Set("Retry-After", "60")
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"code": "path_unreadable",
 			"error": "library root could not be read: ENOTCONN", "path": path, "retry_after_s": 60})
 		return
 	}
 	c.nextID++
-	req := &Request{ID: fmt.Sprintf("sr-%d", c.nextID), Key: key, Path: path, Expected: b.ExpectedFiles, State: "queued"}
+	req := &Request{ID: fmt.Sprintf("sr-%d", c.nextID), Key: key, Path: path, Expected: b.ExpectedFiles, State: "queued",
+		done: make(chan struct{})}
 	c.requests = append(c.requests, req)
 	if key != "" {
 		c.byKey[key] = req
 	}
-	if !c.Queue {
+	switch {
+	case !c.Queue:
 		c.finish(req)
+	case c.FinishAfter > 0:
+		time.AfterFunc(c.FinishAfter, func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if req.State == "queued" {
+				c.finish(req)
+			}
+		})
 	}
 	delay := c.delay(key, n)
+	c.mu.Unlock()
+	// wait_ms: hold the answer until the scan finishes, up to 15 s.
+	if wait := time.Duration(b.WaitMs) * time.Millisecond; wait > 0 && !c.Old {
+		if wait > 15*time.Second {
+			wait = 15 * time.Second
+		}
+		select {
+		case <-req.done:
+		case <-time.After(wait):
+		case <-r.Context().Done():
+		}
+	}
+	hold(r, delay)
+	c.respond(w, req)
+}
+
+// invalid is the real handler's 400s: a relative path, an oversized key, too
+// many or too large expected files, a relative expected path.
+func invalid(path string, b body) string {
+	if !filepath.IsAbs(path) {
+		return "path_not_absolute"
+	}
+	if len(b.RequestKey) > ports.MaxRequestKeyBytes {
+		return "request_key_too_long"
+	}
+	if len(b.ExpectedFiles) > ports.MaxExpectedFiles {
+		return "too_many_expected_files"
+	}
+	if raw, _ := json.Marshal(b.ExpectedFiles); len(raw) > ports.MaxExpectedFileBytes {
+		return "expected_files_too_large"
+	}
+	for _, e := range b.ExpectedFiles {
+		if !filepath.IsAbs(e.Path) {
+			return "expected_path_not_absolute"
+		}
+	}
+	return ""
+}
+
+// respond writes a request's answer as the real handler does: 200 with the
+// per-file report when done, 202 while queued or running, and a bare 500 for
+// a failed request — on its first answer and on every replay of its key.
+func (c *Cinema) respond(w http.ResponseWriter, req *Request) {
+	c.mu.Lock()
 	ans, status := c.answer(req)
 	c.mu.Unlock()
-	hold(r, delay)
 	writeJSON(w, status, ans)
 }
 
@@ -283,9 +370,22 @@ func hold(r *http.Request, d time.Duration) {
 
 // finish runs the targeted scan: re-probe every expected file.
 func (c *Cinema) finish(req *Request) {
-	req.State = "done"
+	defer func() {
+		if req.done != nil {
+			select {
+			case <-req.done:
+			default:
+				close(req.done)
+			}
+		}
+	}()
 	req.ProbeAttempts++
 	req.Files = nil
+	if msg, ok := c.Fail[req.Path]; ok {
+		req.State, req.Error = "failed", msg
+		return
+	}
+	req.State = "done"
 	for _, e := range req.Expected {
 		if reason, ok := c.Skip[e.Path]; ok {
 			req.Files = append(req.Files, ports.PlacedReport{Path: e.Path, State: "skipped", Reason: reason})
@@ -317,6 +417,9 @@ func (c *Cinema) items(req *Request) []map[string]any {
 
 // answer is the POST's answer for a request.
 func (c *Cinema) answer(req *Request) (map[string]any, int) {
+	if req.State == "failed" && !c.Old {
+		return map[string]any{"error": req.Error}, http.StatusInternalServerError
+	}
 	if req.State != "done" {
 		ans := map[string]any{"status": "queued", "request_id": req.ID}
 		return ans, http.StatusAccepted
@@ -342,14 +445,23 @@ func (c *Cinema) status(w http.ResponseWriter, id string) {
 			continue
 		}
 		rec := map[string]any{"request_id": r.ID, "status": r.State, "path": r.Path, "files": r.Files, "items": c.items(r), "error": nil}
-		if r.State != "done" {
+		switch r.State {
+		case "queued":
+			if c.Running {
+				rec["status"] = "running"
+			}
 			rec["waiting_on"] = c.WaitingOn
+			rec["files"] = []ports.PlacedReport{}
+		case "failed":
+			rec["error"], rec["code"] = r.Error, "scan_failed"
 			rec["files"] = []ports.PlacedReport{}
 		}
 		writeJSON(w, http.StatusOK, rec)
 		return
 	}
-	writeJSON(w, http.StatusNotFound, map[string]any{"error": "scan request not found"})
+	// The creator lookup finds nobody for an unknown id: the real handler
+	// answers Forbidden, not Not Found.
+	writeJSON(w, http.StatusForbidden, map[string]any{"error": "scan request not readable by this key"})
 }
 
 func (c *Cinema) under(path string) bool {
