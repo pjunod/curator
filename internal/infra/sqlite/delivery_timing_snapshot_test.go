@@ -2,17 +2,15 @@ package sqlite
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/pjunod/monarr/internal/ports"
 	"github.com/pressly/goose/v3"
 )
 
 func timingNumber(value int64) *int64 { return &value }
-func TestDeliveryTimingImmutableAndPerCopyCleanupMutableAcrossRestart(t *testing.T) {
+func TestLegacyDeliveryTimingEvidenceSurvivesRestartAndBlocksDowngrade(t *testing.T) {
 	ctx := context.Background()
 	db, r, _ := atomicDeliveryFixture(t)
 	v := r.Delivery
@@ -21,18 +19,8 @@ func TestDeliveryTimingImmutableAndPerCopyCleanupMutableAcrossRestart(t *testing
 	v.RunnerStages = &ports.RunnerStages{NodeID: "worker", ClockDomain: "worker:post", Spans: []ports.RunnerStageSpan{{Stage: "unpack", StartedAtUnix: 1700000000, Milliseconds: timingNumber(20)}}}
 	v.LifecycleTiming = &ports.RunnerLifecycleTiming{Version: 1, Intervals: []ports.RunnerLifecycleInterval{{Stage: "post_processing", NodeID: "worker", ClockDomain: "worker:boot-1", StartUnixMS: 1700000000000, StartMonotonicMS: timingNumber(10), EndMonotonicMS: timingNumber(50), DurationMS: timingNumber(40), State: "completed"}}}
 	v.LifecycleTiming.OmittedIntervals = map[string]uint32{"queue": 2}
-	v.SourceCopies = []ports.RunnerSourceCopy{{ID: "worker-copy", OwnerNode: "worker", Status: "pending"}}
-	saved, err := db.SaveDiscoveredDelivery(ctx, r.ClientID, v, r.MappedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	v.SourceCopies[0].Status = "removed"
-	if _, err := db.SaveDiscoveredDelivery(ctx, r.ClientID, v, r.MappedPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.RefreshDeliverySourceCleanup(ctx, saved.ID, json.RawMessage(`{"status":"succeeded"}`), nil, time.Hour, v.SourceCopies); err != nil {
-		t.Fatal(err)
-	}
+	v.SourceCopies = []ports.RunnerSourceCopy{{ID: "worker-copy", OwnerNode: "worker", Status: "removed"}}
+	saved := seedLegacyReceipt(t, db, r.ClientID, v, r.MappedPath)
 	dir := filepath.Dir(db.Path)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -49,7 +37,7 @@ func TestDeliveryTimingImmutableAndPerCopyCleanupMutableAcrossRestart(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if actual.State == "conflict" || !ports.SameRunnerStages(actual.Delivery.RunnerStages, v.RunnerStages) || !ports.SameRunnerLifecycleTiming(actual.Delivery.LifecycleTiming, v.LifecycleTiming) || len(actual.Delivery.SourceCopies) != 1 || actual.Delivery.SourceCopies[0].Status != "removed" {
+	if !ports.SameRunnerStages(actual.Delivery.RunnerStages, v.RunnerStages) || !ports.SameRunnerLifecycleTiming(actual.Delivery.LifecycleTiming, v.LifecycleTiming) || len(actual.Delivery.SourceCopies) != 1 || actual.Delivery.SourceCopies[0].Status != "removed" {
 		t.Fatalf("timing/copy refresh lost evidence: %+v", actual.Delivery)
 	}
 	if err := goose.DownToContext(ctx, reopened.W, "migrations", 66); err == nil {
@@ -61,9 +49,7 @@ func TestDeliveryTimingImmutableAndPerCopyCleanupMutableAcrossRestart(t *testing
 	if err := reopened.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	*v.LifecycleTiming.Intervals[0].DurationMS = 41
-	conflict, err := reopened.SaveDiscoveredDelivery(ctx, r.ClientID, v, r.MappedPath)
-	if err != nil || conflict.State != "conflict" {
-		t.Fatalf("changed immutable timing accepted: %+v %v", conflict, err)
+	if again, err := reopened.DeliveryReceiptByID(ctx, saved.ID); err != nil || !ports.SameRunnerLifecycleTiming(again.Delivery.LifecycleTiming, v.LifecycleTiming) {
+		t.Fatalf("refused downgrade lost timing evidence: %+v err=%v", again.Delivery.LifecycleTiming, err)
 	}
 }

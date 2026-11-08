@@ -9,9 +9,7 @@ import (
 func TestAbandonDeleteRequestRetainsCompletedHistoryAndCannotRevive(t *testing.T) {
 	ctx := context.Background()
 	db, r, p := atomicDeliveryFixture(t)
-	if err := db.EnsureDeliveryFileOutcomes(ctx, r.ID, []DeliveryManifestFile{{Path: "done.mkv", SizeBytes: 1, SHA256: "other-digest", FileGeneration: "other-stat"}}, nil, false); err != nil {
-		t.Fatal(err)
-	}
+	seedLegacyFileOutcomes(t, db, r.ID, []DeliveryManifestFile{{Path: "done.mkv", SizeBytes: 1, SHA256: "other-digest", FileGeneration: "other-stat"}}, nil)
 	batch := ExplicitDeliveryDeleteBatch{ID: "delete-request", ReceiptID: r.ID, PayloadPath: r.MappedPath, InventoryFingerprint: "review", PublicationDirectoryIdentity: "directory", StorageIdentity: "storage", GenerationKey: p.SourceGeneration, RequestToken: p.SourceTransfer, PublicationGeneration: p.SourcePayloadGeneration, Files: []ExplicitDeliveryDeleteFile{
 		{Path: "movie.mkv", ReviewedPath: p.Source, SnapshotIdentity: "source-stat", ParentIdentity: "parent"},
 		{Path: "done.mkv", ReviewedPath: r.MappedPath + "/done.mkv", SnapshotIdentity: "other-stat", ParentIdentity: "parent"},

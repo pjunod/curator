@@ -16,10 +16,7 @@ func explicitDeleteFixture(t *testing.T) (*DB, context.Context, DeliveryReceipt,
 	t.Helper()
 	ctx := context.Background()
 	db, _ := openLifecycleCoverageDB(t)
-	receipt, err := db.SaveDiscoveredDelivery(ctx, 81, coverageDelivery("explicit-delete-journal"), "/mounted/release")
-	if err != nil {
-		t.Fatal(err)
-	}
+	receipt := seedLegacyReceipt(t, db, 81, coverageDelivery("explicit-delete-journal"), "/mounted/release")
 	manifest := receipt.Delivery.Files[0]
 	file := DeliveryManifestFile{Path: manifest.Path, SizeBytes: manifest.SizeBytes, SHA256: manifest.SHA256, FileGeneration: "journal-file-generation"}
 	if err := db.EnsureExplicitDeliveryFileOutcome(ctx, receipt.ID, file); err != nil {

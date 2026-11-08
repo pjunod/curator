@@ -71,20 +71,56 @@ func apiDeliveryReceipt(t *testing.T, e *apiEnv, clientID, downloadID int64, del
 		Files:           []ports.RunnerFile{{Path: "Season 01/épisode.mkv", SizeBytes: int64(len(data)), SHA256: hex.EncodeToString(digest[:])}},
 		TerminalOutcome: "SUCCESS", ReadyAt: time.Now().UTC(),
 	}
-	r, err := e.db.SaveDiscoveredDelivery(ctx, clientID, delivery, filepath.Join(t.TempDir(), "completed", deliveryID))
+	return insertLegacyDeliveryReceipt(t, e.db, clientID, delivery, filepath.Join(t.TempDir(), "completed", deliveryID), dl)
+}
+
+// insertLegacyDeliveryReceipt writes a v1 Runner delivery receipt the way a
+// pre-M2 curator stored it. Pipeline contract v2 removed the v1 import path,
+// so only upgraded databases still hold these rows (until M4 drops them); the
+// lifecycle readers that act on them are what these tests exercise.
+func insertLegacyDeliveryReceipt(t *testing.T, db *sqlite.DB, clientID int64, v ports.RunnerDelivery, mappedPath string, dl sqlite.Download) sqlite.DeliveryReceipt {
+	t.Helper()
+	files, err := json.Marshal(v.Files)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.DownloadID, r.GenerationKey, r.DownloadHandle = dl.ID, dl.GenerationKey, dl.Handle
-	r.MediaItemID, r.CopyID = dl.MediaItemID, dl.CopyID
-	if err := e.db.AssociateDelivery(ctx, r); err != nil {
-		t.Fatal(err)
-	}
-	persisted, err := e.db.DeliveryReceiptByID(ctx, r.ID)
+	now := time.Now().UnixMilli()
+	res, err := db.W.ExecContext(context.Background(), `INSERT INTO runner_delivery_receipts
+		(client_id, delivery_id, sequence, publication_generation, source_artifact_id, source_generation, manifest_digest,
+		artifact_id, job_id, request_token, runner_instance_id, ready_at, publication_path, mapped_path, files_json,
+		source_cleanup_json, terminal_outcome, file_outcomes_json, state, error, download_id, generation_key, download_handle,
+		media_item_id, copy_id, created_at, updated_at, runner_stages_json, source_copies_json, lifecycle_timing_json)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'null',?,'null','unresolved','',?,?,?,?,?,?,?,'null','null','null')`,
+		clientID, v.DeliveryID, v.Sequence, v.PublicationGeneration, v.SourceArtifactID, v.SourceGeneration, v.ManifestDigest,
+		v.ArtifactID, v.JobID, v.RequestToken, v.RunnerInstanceID, v.ReadyAt.UnixMilli(), v.PublicationPath, mappedPath, string(files),
+		v.TerminalOutcome, dl.ID, dl.GenerationKey, dl.Handle, dl.MediaItemID, dl.CopyID, now, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return persisted
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.DeliveryReceiptByID(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// insertLegacyDeliveryFileOutcome journals one manifest entry as v1
+// acceptance did: selected entries are pending, others unselected.
+func insertLegacyDeliveryFileOutcome(t *testing.T, db *sqlite.DB, receiptID int64, f sqlite.DeliveryManifestFile, selected bool) {
+	t.Helper()
+	disposition := "pending"
+	if !selected {
+		disposition = "unselected_recoverable"
+	}
+	if _, err := db.W.ExecContext(context.Background(), `INSERT INTO runner_delivery_file_outcomes
+		(receipt_id,path,size_bytes,sha256,file_generation,disposition,cleanup_state,manual_additional,updated_at)
+		VALUES(?,?,?,?,?,?,'protected',0,?)`, receiptID, f.Path, f.SizeBytes, f.SHA256, f.FileGeneration, disposition, time.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // apiHistoricalPublication gives a receipt the historical publication
@@ -151,9 +187,7 @@ func TestDeliveryLifecycleFileLedgerUsesPublicFieldNamesOnListAndDetail(t *testi
 	r := apiDeliveryReceipt(t, e, clientID, downloadID, "file-casing")
 	path := r.Delivery.Files[0].Path
 	ctx := context.Background()
-	if err := e.db.EnsureDeliveryFileOutcomes(ctx, r.ID, []sqlite.DeliveryManifestFile{{Path: path, SizeBytes: 17, SHA256: "proof-hash", FileGeneration: "proof-generation"}}, map[string]bool{path: true}, false); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacyDeliveryFileOutcome(t, e.db, r.ID, sqlite.DeliveryManifestFile{Path: path, SizeBytes: 17, SHA256: "proof-hash", FileGeneration: "proof-generation"}, true)
 	if err := e.db.UpdateDeliveryFileDisposition(ctx, r.ID, path, "placed", "verified placement", "/library/movie.mkv"); err != nil {
 		t.Fatal(err)
 	}
@@ -289,16 +323,8 @@ func TestDeliveryLifecycleResolveQueuesOnlySelectedDurableManifestPath(t *testin
 	if err := os.WriteFile(filepath.Join(r.MappedPath, filepath.FromSlash(selected)), []byte("verified episode payload"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.db.PrepareDeliveryAcceptance(ctx, sqlite.DeliveryReceipt{
-		ID: r.ID, ConsumerReceiptID: "curator-receipt-selected", NextAttemptAt: time.Now(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	prepared, err := e.db.DeliveryReceiptByID(ctx, r.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.db.SetDeliveryAccepted(ctx, prepared); err != nil {
+	// The Runner acknowledged this legacy receipt before the v2 upgrade.
+	if _, err := e.db.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET state='ready',ack_state='accepted',consumer_receipt_id=? WHERE id=?`, "curator-receipt-selected", r.ID); err != nil {
 		t.Fatal(err)
 	}
 	response := e.post(t, fmt.Sprintf("/api/v1/downloads/deliveries/%d/import", r.ID), fmt.Sprintf(`{"paths":[%q]}`, selected)).expect(t, http.StatusAccepted)
