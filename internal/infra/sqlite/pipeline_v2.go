@@ -654,7 +654,32 @@ func (d *DB) SeedPublicationFiles(ctx context.Context, publicationID int64, file
 
 // ListPublicationFiles lists one publication's files.
 func (d *DB) ListPublicationFiles(ctx context.Context, publicationID int64) ([]PublicationFile, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT publication_id, path, bytes, sha256, wantable_id, outcome, discard_reason, library_path, placed_sha256, reason, removed_at FROM publication_files WHERE publication_id=? ORDER BY path`, publicationID)
+	return d.publicationFilesWhere(ctx, `publication_id=?`, publicationID)
+}
+
+// ListPublicationFilesFor reads the files of many publications in one query,
+// keyed by publication (Activity lists a page of rows at once).
+func (d *DB) ListPublicationFilesFor(ctx context.Context, publicationIDs []int64) (map[int64][]PublicationFile, error) {
+	out := map[int64][]PublicationFile{}
+	if len(publicationIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(publicationIDs))
+	for i, id := range publicationIDs {
+		args[i] = id
+	}
+	files, err := d.publicationFilesWhere(ctx, `publication_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(publicationIDs)), ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		out[f.PublicationID] = append(out[f.PublicationID], f)
+	}
+	return out, nil
+}
+
+func (d *DB) publicationFilesWhere(ctx context.Context, where string, args ...any) ([]PublicationFile, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT publication_id, path, bytes, sha256, wantable_id, outcome, discard_reason, library_path, placed_sha256, reason, removed_at FROM publication_files WHERE `+where+` ORDER BY publication_id, path`, args...)
 	if err != nil {
 		return nil, err
 	}
