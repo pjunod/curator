@@ -177,3 +177,43 @@ func fastRecoveryFixture(t *testing.T) (*Service, *sqlite.DB, RecoveryRequest, *
 	svc, db, itemID := autoSetupOn(t, migratedTestDB(t), nil, &fakeClient{})
 	return recoveryFixtureOn(t, svc, db, itemID, "Recovered.2024.1080p.WEB-DL.mkv", false)
 }
+
+// A cancelled recovery is reconciled with Runner and finished by the sweep.
+// Whatever storage call of that sweep fails, the next sweeps finish it
+// cancelled, with nothing placed in the library and no receipt sent.
+func TestRecoveryCancelStorageFaultsStillFinishCancelled(t *testing.T) {
+	ctx := context.Background()
+	for _, write := range []bool{true, false} {
+		t.Run(fmt.Sprintf("write=%t", write), func(t *testing.T) {
+			eachStorageFault(t, func(t *testing.T, f *storageFault) {
+				svc, db, req, receipts := fastRecoveryFixture(t)
+				preview, err := svc.PreviewRecovery(ctx, req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				job, err := svc.QueueRecovery(ctx, preview.Request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := svc.CancelRecoveryImport(ctx, job.ID); err != nil {
+					t.Fatal(err)
+				}
+				withStorageFault(t, db, write, f, func() { svc.recoverySweep(ctx) })
+				for i := 0; i < 3; i++ {
+					svc.recoverySweep(ctx)
+				}
+				final, err := svc.RecoveryImport(ctx, job.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				files, err := db.ListFilesForItem(ctx, req.MediaItemID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if final.State != "cancelled" || len(files) != 0 || receipts.Load() != 0 {
+					t.Fatalf("after failure: state %q (%s), %d library files, %d receipts", final.State, final.Error, len(files), receipts.Load())
+				}
+			})
+		})
+	}
+}
