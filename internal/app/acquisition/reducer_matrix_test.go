@@ -22,8 +22,7 @@ import (
 func boolPtr(b bool) *bool { return &b }
 
 // A request receipt is read as facts: admitted, and the terminal the receipt
-// records, typed when Runner M1a wrote the fields and by the legacy string
-// rule otherwise.
+// records, typed, or an io failure when the receipt names no typed reason.
 func TestAdmissionReceiptAsFacts(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -46,10 +45,9 @@ func TestAdmissionReceiptAsFacts(t *testing.T) {
 		{name: "typed failure without salvage says none",
 			adm: ports.RequestAdmission{Outcome: "failed", FailureReason: ports.ReasonIO}, terminal: true,
 			want: ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: ports.ReasonIO, Salvage: "none"}},
-		{name: "legacy string failure with its cause",
+		{name: "an untyped failure string is an io failure that keeps its words",
 			adm: ports.RequestAdmission{Outcome: "failed", TerminalOutcome: "UNPACK_FAILURE", FailureCause: "crc"}, terminal: true,
-			want: ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: ports.ReasonUnpack, Stage: "unpack", Message: "UNPACK_FAILURE: crc",
-				BlamesRelease: true, Salvage: "none"}},
+			want: ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: ports.ReasonIO, Message: "UNPACK_FAILURE: crc", Salvage: "none"}},
 		{name: "a failed receipt saying SUCCESS is an io failure, never a completion",
 			adm: ports.RequestAdmission{Outcome: "failed", TerminalOutcome: "SUCCESS"}, terminal: true,
 			want: ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: ports.ReasonIO, Message: "SUCCESS", Salvage: "none"}},
