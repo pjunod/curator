@@ -160,8 +160,7 @@ func TestReplacementPlacementCommitsAfterApprovedRemovalAndReplaysExactly(t *tes
 }
 
 func TestReplacementPlacementCommitStorageFailuresRollBack(t *testing.T) {
-	completed := false
-	for point := 1; point <= 80 && !completed; point++ {
+	eachWriteFault(t, func(t *testing.T, fault *importFaultDriver) {
 		f := newReplacementStoreFixture(t)
 		if err := f.db.DeleteReplacementFileRecord(t.Context(), f.op.ID, f.file); err != nil {
 			t.Fatal(err)
@@ -171,24 +170,7 @@ func TestReplacementPlacementCommitStorageFailuresRollBack(t *testing.T) {
 			t.Fatal(err)
 		}
 		before := pipelineSnapshot(t, f.db)
-		fault := &importFaultDriver{at: point}
 		err := withFaultyConn(t, f.db, true, fault, func() error { _, e := f.db.CommitPlacement(t.Context(), p); return e })
-		after := pipelineSnapshot(t, f.db)
-		if !fault.fired {
-			if err != nil || after == before {
-				t.Fatalf("unfaulted commit: err=%v changed=%v", err, after != before)
-			}
-			completed = true
-			continue
-		}
-		if !errors.Is(err, errImportStorageFault) {
-			t.Fatalf("storage failure %d surfaced as %v", point, err)
-		}
-		if after != before {
-			t.Fatalf("storage failure %d left a partial replacement commit", point)
-		}
-	}
-	if !completed {
-		t.Fatal("commit never completed without an injected failure")
-	}
+		requireWriteFaultOutcome(t, fault, true, err, before, pipelineSnapshot(t, f.db))
+	})
 }

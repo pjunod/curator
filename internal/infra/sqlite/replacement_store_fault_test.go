@@ -24,7 +24,7 @@ type replacementStoreFixture struct {
 func newReplacementStoreFixture(t *testing.T) replacementStoreFixture {
 	t.Helper()
 	ctx := context.Background()
-	db := openTestDB(t)
+	db := openMigratedCopy(t)
 	for _, q := range []string{
 		`INSERT INTO media_items(id,kind,title,sort_title,quality_profile_id,added_at,updated_at) VALUES(88,'series','Replaced Show','replaced show',1,1,1)`,
 		`INSERT INTO episodes(id,media_item_id,season_number,episode_number) VALUES(881,88,1,1),(882,88,1,2)`,
@@ -137,33 +137,12 @@ func TestReplacementStoreWriteFailuresAreReportedAndAtomic(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			completed := false
-			for point := 1; point <= 40 && !completed; point++ {
+			eachWriteFault(t, func(t *testing.T, fault *importFaultDriver) {
 				f := newReplacementStoreFixture(t)
 				before := pipelineSnapshot(t, f.db)
-				fault := &importFaultDriver{at: point}
 				err := withFaultyConn(t, f.db, true, fault, func() error { return c.run(f) })
-				after := pipelineSnapshot(t, f.db)
-				if !fault.fired {
-					if err != nil {
-						t.Fatalf("unfaulted %s failed: %v", name, err)
-					}
-					if after == before {
-						t.Fatalf("unfaulted %s changed nothing", name)
-					}
-					completed = true
-					continue
-				}
-				if !errors.Is(err, errImportStorageFault) {
-					t.Fatalf("storage failure %d of %s surfaced as %v, not the failure", point, name, err)
-				}
-				if c.atomic && after != before {
-					t.Fatalf("storage failure %d of %s left a partial write", point, name)
-				}
-			}
-			if !completed {
-				t.Fatalf("%s never completed without an injected failure", name)
-			}
+				requireWriteFaultOutcome(t, fault, c.atomic, err, before, pipelineSnapshot(t, f.db))
+			})
 		})
 	}
 }

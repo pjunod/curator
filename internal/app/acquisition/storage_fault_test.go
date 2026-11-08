@@ -267,9 +267,8 @@ func migratedTestDB(t *testing.T) *sqlite.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The copy is already migrated; Migrate is not run again because goose
+	// keeps global state that parallel fault points would race on.
 	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Migrate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	return db
 }
