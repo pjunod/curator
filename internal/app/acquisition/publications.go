@@ -152,7 +152,7 @@ var manifestNotice sync.Map // publication id -> time.Time
 
 // runPublicationImport imports one publication file by file and records the
 // outcome of every file (contract section 3.4).
-func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, pubID int64, approved bool) error {
+func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, pubID int64, approved bool) (err error) {
 	pub, err := s.db.GetPublication(ctx, pubID)
 	if err != nil {
 		return err
@@ -216,6 +216,19 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	if err := s.db.SetPublicationState(ctx, pub.ID, "importing", ""); err != nil {
 		return err
 	}
+	// Any error that leaves the publication in importing (a persistence
+	// outage after files were placed, say) puts it back to discovered with
+	// the error, so the poll offers it again; placements already committed
+	// are reused, and its six-hour deadline is what ends it.
+	defer func() {
+		if err == nil {
+			return
+		}
+		bg := context.WithoutCancel(ctx)
+		if cur, gerr := s.db.GetPublication(bg, pub.ID); gerr == nil && cur.State == "importing" {
+			_ = s.db.SetPublicationState(bg, pub.ID, "discovered", err.Error())
+		}
+	}()
 	if pub.Kind == "completed" && dl.State != "importing" {
 		dl.ImportPath, dl.SavePath = pub.Path, pub.RemotePath
 		s.advance(ctx, &dl, "importing", 1, "", stepImporting, "importing publication "+filepath.Base(pub.Path))
