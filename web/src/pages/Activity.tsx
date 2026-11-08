@@ -1,5 +1,5 @@
 import { ActionDialog, focusActionTrigger } from '../ActionDialog'
-import { useState,useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
@@ -905,13 +905,27 @@ const OUTCOME_PILL: Record<string, string> = {
 function PublicationList({ d }: { d: QueueItem }) {
   const qc = useQueryClient()
   const [done, setDone] = useState<Record<string, string>>({})
+  // The decided file's buttons go away with its outcome, so the result
+  // takes keyboard focus (CLAUDE.md section 5) instead of leaving it on a
+  // removed button.
+  const [focusKey, setFocusKey] = useState<string | null>(null)
+  const results = useRef<Record<string, HTMLSpanElement | null>>({})
+  useEffect(() => {
+    if (focusKey) results.current[focusKey]?.focus()
+  }, [focusKey, done])
   const act = useMutation({
     mutationFn: (v: { pub: number; path: string; action: PublicationFileAction }) => resolvePublicationFile(d.id, v.pub, v.path, v.action),
     onSuccess: (_r, v) => {
-      setDone((prev) => ({ ...prev, [`${v.pub}/${v.path}`]: v.action === 'place' ? 'queued for import' : v.action === 'discard' ? 'discarded' : 'kept' }))
+      const key = `${v.pub}/${v.path}`
+      setDone((prev) => ({ ...prev, [key]: v.action === 'place' ? 'queued for import' : v.action === 'discard' ? 'discarded' : 'kept' }))
+      setFocusKey(key)
       void qc.invalidateQueries({ queryKey: ['queue'] })
     },
-    onError: (e, v) => setDone((prev) => ({ ...prev, [`${v.pub}/${v.path}`]: e instanceof Error ? e.message : String(e) })),
+    onError: (e, v) => {
+      const key = `${v.pub}/${v.path}`
+      setDone((prev) => ({ ...prev, [key]: e instanceof Error ? e.message : String(e) }))
+      setFocusKey(key)
+    },
   })
   const pubs = d.publications ?? []
   if (pubs.length === 0) return null
@@ -944,7 +958,7 @@ function PublicationList({ d }: { d: QueueItem }) {
                       ))}
                     </span>
                   )}
-                  {done[key] && <span role="status" className="muted"> {done[key]}</span>}
+                  {done[key] && <span role="status" tabIndex={-1} ref={(el) => { results.current[key] = el }} className="muted publication-file-result"> {done[key]}</span>}
                 </li>
               )
             })}
