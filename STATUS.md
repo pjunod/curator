@@ -2,12 +2,21 @@
 
 ## Pipeline contract v2, M6a (curator part): one retry ladder, dead fields out, docs rewritten — 2026-11-08 · v0.42.0
 
-**Status:** branch `claude/pipeline-v2-m6a-curator`, stacked on
-`claude/pipeline-v2-m5-curator` (#97, `b2afde9`), so it merges **right after
-#97** · owner: Claude (Sonnet builder) · pushed, **no PR** (by instruction), not
-reviewed, not merged, not deployed. Nothing here depends on a Runner release.
-M6b (`claude/pipeline-v2-m6b-curator`, stacked on this) is the deploy-gated
-half and is **not** safe to merge with it.
+**Status:** PR #101 (draft, base `main`; #97 has merged) · owner: Claude
+(Sonnet builder; Opus orchestrator merges) · review: Sonnet review **approve**
+with fixes `b53448e`; Fable adversarial review r1 **request changes**
+(`108cdef`) -> the fixes below; the single gate (`make lint`, `make test`,
+`make test-web`, `make test-e2e`) is **pending** and runs once after the fixes ·
+not merged, not deployed. Nothing here depends on a Runner release. M6b
+(`claude/pipeline-v2-m6b-curator`, stacked on this) is the deploy-gated half
+and is **not** safe to merge with it.
+
+Review r1 fixes: issue #100 folded in (dead `EnsureDeliveryDirectoryIdentity` and
+`UpdateDeliveryFileDisposition` deleted, the `t.Skip` in `publication_paths_test.go`
+is now a `t.Fatalf`, `publications.cleanup_paused_at` in `requiredColumns`); the
+plurx Retry-After cap reads `backoff.Outbox.Max()`; `internal/docs` evaluates the
+code's constants and checks them per section and in the literals table;
+`STATUS.md` links are checked.
 
 Built (plan M6 curator items 2 and 3, IMPL_CURATOR section 8):
 
@@ -22,7 +31,8 @@ Built (plan M6 curator items 2 and 3, IMPL_CURATOR section 8):
   generated code (`make gen-api`), handler, the web `measured: false` tile
   branch and its test, and the "until pipeline M5" note. The `parkedReason`
   description no longer says "Removed in M4" (it was not: season custody and
-  non-Runner clients still use it).
+  non-Runner clients still use it). This is a correction outside the stated M6a scope (the field stays; no wire
+  change), listed here so it is not found by diff.
 - **`docs/integration.md` rewritten** from the contract: the milestone-by-
   milestone sections (M2, M4, M5) and the superseded "Durable job control
   contract (v1)" are folded into numbered seams (facts and terminals, held jobs,
