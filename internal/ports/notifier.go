@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrNotifyPermanent marks a delivery failure that retrying cannot fix: a
@@ -44,6 +45,11 @@ type Notification struct {
 	// difference between one folder indexed correctly and a whole library
 	// swept and then matched by guessing at a filename.
 	Import *ImportInfo `json:"import,omitempty"`
+	// IdempotencyKey is "<sub-delivery key>/<attempt>" (contract section 4.2),
+	// set by the delivery worker on each attempt and never stored in the
+	// payload: Cinema returns the same request for a repeated key, so a lost
+	// response does not create a second scan.
+	IdempotencyKey string `json:"-"`
 }
 
 // ImportInfo is the structured detail behind an import notification.
@@ -70,6 +76,34 @@ type ImportInfo struct {
 	ImdbID string `json:"imdbId,omitempty"`
 	// Transfer names this transfer end to end, across applications.
 	Transfer string `json:"transfer,omitempty"`
+	// PublicationID is the publication this import came from (0 for an
+	// import that did not come from one).
+	PublicationID int64 `json:"publicationId,omitempty"`
+	// ExpectedFiles are the media files the import placed, keyed by their
+	// directory (one of Dirs), with the size and nanosecond mtime they had
+	// once placed. Cinema re-probes exactly these and reports each back; a
+	// sub-delivery is visible only when every one comes back placed with
+	// matching bytes and mtime_ns (contract section 4.2).
+	ExpectedFiles map[string][]ExpectedFile `json:"expectedFiles,omitempty"`
+}
+
+// Cinema's limits on a request's expected files (plurx
+// scan_request_v2.rs: MAX_EXPECTED_FILES, and the 16 KiB the stored list
+// may take). A request over either is refused with a 400, which retrying
+// cannot fix — so a directory with more files than that sends the largest,
+// newest ones and says how many of the total it verified.
+const (
+	MaxExpectedFiles     = 64
+	MaxExpectedFileBytes = 16384
+	// MaxRequestKeyBytes is the longest request_key Cinema accepts.
+	MaxRequestKeyBytes = 256
+)
+
+// ExpectedFile is one media file an import placed, as it stood once placed.
+type ExpectedFile struct {
+	Path    string `json:"path"`
+	Bytes   int64  `json:"bytes"`
+	MtimeNs int64  `json:"mtime_ns"`
 }
 
 // BookImportInfo is the additive Curator → Cinema book handoff contract.
@@ -111,3 +145,90 @@ type DeliveryReporter interface {
 // IS the work (a media server told what to index). A chat notifier's late
 // retry is worse than none.
 func QueuedNotifier(cfg NotifierConfig) bool { return cfg.Type == "plurx" }
+
+// ScanSender is the capability of a notifier that is told one directory at a
+// time and answers with what it made of it (Cinema, contract section 4.2).
+// The delivery worker drives one sub-delivery per call.
+type ScanSender interface {
+	// SendScan posts the notification's single directory with
+	// n.IdempotencyKey, the directory's expected files and a short wait. An
+	// error is a *NotifyError saying whether trying again can help and
+	// whether the next try needs a fresh attempt.
+	SendScan(ctx context.Context, n Notification) (NotifyResult, error)
+}
+
+// ResultReader polls a request the far side queued (Cinema's
+// GET /api/v1/scan/requests/{id}).
+type ResultReader interface {
+	ReadResult(ctx context.Context, remoteRequestID string) (NotifyResult, error)
+}
+
+// PathTester is the capability of a notifier that can check, at setup, that
+// it sees the library roots Curator places files under (contract section
+// 4.3). Note is a pass that still has something to say ("path checking needs
+// a newer cinema").
+type PathTester interface {
+	TestPaths(ctx context.Context, roots []string) (note string, err error)
+}
+
+// NotifyResult is what the far side said about one request.
+type NotifyResult struct {
+	State     string // queued | running | done | failed
+	RequestID string
+	WaitingOn string
+	// Files is the per-file report; FilesReported is false when the far
+	// side sent no per-file report at all (an older Cinema), which is a
+	// different answer from an empty one.
+	Files         []PlacedReport
+	FilesReported bool
+	ItemIDs       []int64
+	Err           string
+	ErrCode       string
+}
+
+// PlacedReport is Cinema's word on one expected file.
+type PlacedReport struct {
+	Path    string `json:"path"`
+	State   string `json:"state"` // placed | skipped | missing
+	Bytes   int64  `json:"bytes,omitempty"`
+	MtimeNs int64  `json:"mtime_ns,omitempty"`
+	ItemID  int64  `json:"item_id,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// NotifyRetry says what a failed request means for the next one.
+type NotifyRetry int
+
+const (
+	// RetrySameAttempt: the outcome is ambiguous or the request was refused
+	// before it was recorded (a timeout, a connection error, 429, 5xx); the
+	// next try reuses the same key, so a request that did land is replayed,
+	// not duplicated.
+	RetrySameAttempt NotifyRetry = iota
+	// RetryNewAttempt: a confirmed retryable result (503 path_unreadable, a
+	// failed or vanished request); the next try needs a fresh scan.
+	RetryNewAttempt
+	// RetryNever: retrying cannot help (401/403, 400, 422 path_outside_roots).
+	RetryNever
+	// RetryUnsupported: the far side does not report results (an older
+	// Cinema refused the status read); the request itself was accepted.
+	RetryUnsupported
+)
+
+// NotifyError is a classified delivery failure.
+type NotifyError struct {
+	Retry  NotifyRetry
+	Status int    // HTTP status, 0 when there was no response
+	Code   string // the far side's error code, when it sent one
+	Msg    string
+	// RetryAfter is how long the far side asked to be left alone (a 503's
+	// Retry-After); 0 when it did not say. The next try is no sooner.
+	RetryAfter time.Duration
+}
+
+func (e *NotifyError) Error() string { return e.Msg }
+
+// Is makes errors.Is(err, ErrNotifyPermanent) true for a RetryNever error.
+func (e *NotifyError) Is(target error) bool {
+	return target == ErrNotifyPermanent && e.Retry == RetryNever
+}

@@ -25,6 +25,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/probe"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // FileOutcome is what happened to one file in an import, including — above
@@ -94,17 +95,27 @@ const HistoryImportBlocked = "import_blocked"
 func importedEvent(item domain.MediaItem, dl sqlite.Download, r ImportResult) ImportCompleted {
 	paths := make([]string, 0, r.Imported)
 	var dirs []string
+	var expected map[string][]ports.ExpectedFile
 	seen := map[string]bool{}
 	for _, f := range r.Files {
 		if !f.Imported || f.Path == "" {
 			continue
 		}
 		paths = append(paths, f.Path)
+		dir := filepath.Dir(f.Path)
+		// What the file is once placed, so Cinema's report can be held to
+		// it: a same-path replacement with the same size differs only here.
+		if fi, err := os.Stat(f.Path); err == nil {
+			if expected == nil {
+				expected = map[string][]ports.ExpectedFile{}
+			}
+			expected[dir] = append(expected[dir], ports.ExpectedFile{Path: f.Path, Bytes: fi.Size(), MtimeNs: fi.ModTime().UnixNano()})
+		}
 		// Unique, in first-seen order. A season pack is one directory and a
 		// dozen files: one request that names the directory beats a dozen
 		// that name the same directory twelve times over, and stable order
 		// keeps the trace readable across runs.
-		if dir := filepath.Dir(f.Path); !seen[dir] {
+		if !seen[dir] {
 			seen[dir] = true
 			dirs = append(dirs, dir)
 		}
@@ -122,6 +133,7 @@ func importedEvent(item domain.MediaItem, dl sqlite.Download, r ImportResult) Im
 		ImdbID:        item.IDs.IMDB,
 		DownloadID:    dl.ID,
 		Transfer:      dl.Transfer,
+		Expected:      expected,
 	}
 	if item.Kind == domain.KindBook {
 		event.BookTitle = curatorBookText(item.Title)
@@ -683,9 +695,22 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		// its own completing transaction (pipeline v2, contract section 3.4).
 		return result, nil
 	}
-	_ = s.db.AddHistory(ctx, "imported", item.ID, dl.ReleaseTitle,
-		map[string]any{"files": result.Imported, "upgrade": result.Upgraded})
-	s.publish(importedEvent(item, dl, result))
+	// The history row and every notification of it in one write: a crash
+	// between them must not leave an import nobody is told about.
+	event := importedEvent(item, dl, result)
+	outbox, starts, err := s.importOutbox(ctx, event, legacyGeneration())
+	if err == nil {
+		err = s.db.RecordImported(ctx, sqlite.HistoryWrite{Type: "imported", MediaItemID: item.ID, ReleaseTitle: dl.ReleaseTitle,
+			Data: map[string]any{"files": result.Imported, "upgrade": result.Upgraded}}, outbox, starts)
+	}
+	if err != nil {
+		// The files are in the library, so the import stands (failing it now
+		// would only make a retry find them already present); what is lost
+		// is the record and the notifications. Said loudly, not swallowed.
+		s.log.Error("import placed files but could not record them or queue their notifications",
+			"item", item.Title, "download", dl.ID, "err", err)
+	}
+	s.publish(event)
 	s.log.Info("imported", "item", item.Title, "files", result.Imported,
 		"skipped", len(result.Skipped()))
 	return result, nil

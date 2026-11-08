@@ -2887,6 +2887,9 @@ paths:
       responses:
         "200":
           description: Delivered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotifierTestResult" }
         "400":
           description: Failed.
           content:
@@ -2959,6 +2962,9 @@ paths:
       responses:
         "200":
           description: Delivered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotifierTestResult" }
         "400":
           description: Failed.
           content:
@@ -5452,6 +5458,58 @@ components:
           description: When a pending retry becomes due (epoch ms).
         createdAt: { type: integer, format: int64 }
         updatedAt: { type: integer, format: int64 }
+        directory:
+          type: string
+          description: >
+            The one directory this sub-delivery tells Cinema about (pipeline
+            contract v2 section 4.1). Absent on a chat notifier's row.
+        publicationId: { type: integer, format: int64 }
+        attempt:
+          type: integer
+          format: int64
+          description: >
+            The attempt Cinema sees as the suffix of the request key. Reused
+            after an ambiguous outcome, advanced after a confirmed retryable
+            result and by Retry.
+        requestKey:
+          type: string
+          description: The request key the current attempt is sent with, "<transfer>/<generation>/<dir-hash>/<attempt>".
+        remoteRequestId: { type: string, description: Cinema's request id after it queued the scan. }
+        remoteState:
+          type: string
+          description: queued, running, done or failed, as Cinema last reported the request.
+        waitingOn:
+          type: string
+          description: What Cinema says the queued request is waiting on (full_scan:<library>, heavy_lane:<holder>, root_unreadable:<path>, queue_position:<n>).
+        visibleAt:
+          type: integer
+          format: int64
+          description: When Cinema reported every expected file placed with matching bytes and mtime (epoch ms).
+        itemIds:
+          type: array
+          items: { type: integer, format: int64 }
+          description: The Cinema item ids reported for this directory.
+        expectedFiles:
+          type: array
+          items: { $ref: "#/components/schemas/ExpectedFile" }
+        warning:
+          type: boolean
+          description: Still pending 30 minutes after it was written — shown with waitingOn or the reason a file is not placed. Never given up on.
+
+    ExpectedFile:
+      type: object
+      required: [path, bytes, mtimeNs]
+      properties:
+        path: { type: string }
+        bytes: { type: integer, format: int64 }
+        mtimeNs: { type: integer, format: int64 }
+
+    NotifierTestResult:
+      type: object
+      properties:
+        message:
+          type: string
+          description: A pass that still has something to say, e.g. that checking the library paths needs a newer Cinema.
 
     BackupInfo:
       type: object

@@ -90,7 +90,7 @@ func TestRunnerDoneToImportIsTimedOnTheOldPath(t *testing.T) {
 	}
 	cinema, _ := pipe.Stats(ctx, pipeline.ImportToCinemaVisible, pipeline.Window)
 	if cinema.Samples != 0 || cinema.Waiting != 0 {
-		t.Errorf("import_to_cinema_visible = %+v, want untouched until M5 can end it", cinema)
+		t.Errorf("import_to_cinema_visible = %+v, want untouched: no Cinema notifier, no sub-delivery to end it", cinema)
 	}
 }
 

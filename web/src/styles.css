@@ -3574,6 +3574,19 @@ a.pill-info:hover {
   overflow-x: auto;
 }
 
+/* The delivery log has six columns, two of them paths; on a phone the table
+   scrolls inside its own box instead of widening the page. */
+.delivery-log-wrap {
+  overflow-x: auto;
+  /* Inside a table cell, 100% is whatever the content asks for; the
+     viewport is the real limit. */
+  max-width: min(100%, calc(100vw - 32px));
+}
+
+.delivery-log-wrap table {
+  min-width: 640px;
+}
+
 /* The release table's problem is one column: a scene name is 90 characters and
    will take every pixel it is offered, which is how the size, age and seeder
    columns ended up squeezed into nothing while the Grab button wrapped. Fixed

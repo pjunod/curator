@@ -726,14 +726,6 @@ func (d *DB) SetPublicationFileOutcome(ctx context.Context, f PublicationFile) e
 	return nil
 }
 
-// OutboxWrite is one notifier_deliveries row written with the import.
-type OutboxWrite struct {
-	NotifierID int64
-	DownloadID int64
-	Event      string
-	Payload    string
-}
-
 // PublicationImportWrite is what one finished publication import records,
 // atomically: every file's outcome, the publication's state, the download
 // row's advance, the history row, the outbox rows and the timing end.
@@ -751,6 +743,9 @@ type PublicationImportWrite struct {
 	History       []HistoryWrite
 	Outbox        []OutboxWrite
 	TimingEnds    []TimingStart
+	// TimingStarts opens timings the import begins (import_to_cinema_visible
+	// starts when the publication is imported).
+	TimingStarts []TimingStart
 	// Supersede marks other publications' files for the same wantables
 	// discarded{superseded}: the current attempt's file is placed.
 	Supersede []SupersedeWrite
@@ -811,11 +806,8 @@ func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportW
 			return err
 		}
 	}
-	for _, o := range w.Outbox {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO notifier_deliveries (notifier_id, download_id, event, payload, next_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?)`,
-			o.NotifierID, o.DownloadID, o.Event, o.Payload, now, now, now); err != nil {
-			return err
-		}
+	if err := insertOutboxTx(ctx, tx, w.Outbox, now); err != nil {
+		return err
 	}
 	for _, t := range w.TimingEnds {
 		// Same semantics as EndPipelineTiming: an end before the start (a
@@ -823,6 +815,9 @@ func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportW
 		if _, err := tx.ExecContext(ctx, `UPDATE pipeline_timings SET ended_at=MAX(?,started_at) WHERE kind=? AND transfer=? AND ended_at=0`, now, t.Kind, t.Transfer); err != nil {
 			return err
 		}
+	}
+	if err := startTimingsTx(ctx, tx, w.TimingStarts, now); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

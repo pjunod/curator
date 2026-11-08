@@ -24,14 +24,11 @@ func (s *Server) PipelineSummary(w http.ResponseWriter, r *http.Request) {
 	for _, k := range sum.Timings {
 		t := apigen.PipelineTiming{
 			Kind:     apigen.PipelineTimingKind(k.Kind),
-			Measured: pipeline.MeasuredBy(k.Kind) == "",
+			Measured: true,
 			Samples:  k.Samples,
 			Waiting:  k.Waiting,
 		}
-		if by := pipeline.MeasuredBy(k.Kind); by != "" {
-			note := "not measured — needs " + by
-			t.Note = &note
-		} else if k.Samples > 0 {
+		if k.Samples > 0 {
 			p50, p95 := k.P50.Seconds(), k.P95.Seconds()
 			t.P50Seconds, t.P95Seconds = &p50, &p95
 		}

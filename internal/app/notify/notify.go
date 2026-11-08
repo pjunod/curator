@@ -1,12 +1,17 @@
-// Package notify is the Phase 3 notification dispatcher: it subscribes to
-// bus events and fans them out to every enabled notifier whose event flags
-// match. Adapters are injected as a factory, like indexers and clients.
+// Package notify is the notification dispatcher. Chat-shaped events (grab,
+// failed, health) come off the bus and go out inline, once. Imports come off
+// the durable outbox (notifier_deliveries), written in the import's own
+// transaction: one row per chat notifier, and one sub-delivery per directory
+// for Cinema, which is retried without end and read back (pipeline contract
+// v2 section 4). Adapters are injected as a factory, like indexers and
+// clients.
 package notify
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/pjunod/monarr/internal/app/acquisition"
@@ -33,6 +38,16 @@ type Dispatcher struct {
 	// but plurx has not been told yet" is a state a person should be able to
 	// SEE, not deduce from a delivery log they had to know to open.
 	inflight *transfers.Registry
+	// now and sendTimeout are the clock and each attempt's deadline;
+	// tests shorten both.
+	now         func() time.Time
+	sendTimeout time.Duration
+
+	// The delivery lanes: rows in flight, and how many per notifier.
+	mu      sync.Mutex
+	running map[int64]bool
+	lanes   map[int64]int
+	wg      sync.WaitGroup
 }
 
 // WithRegistry reports deliveries on the in-flight data-plane view.
@@ -46,15 +61,14 @@ func New(db *sqlite.DB, b *bus.Bus, log *slog.Logger, f Factory) *Dispatcher {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Dispatcher{db: db, bus: b, log: log, new: f}
+	return &Dispatcher{db: db, bus: b, log: log, new: f, now: time.Now, sendTimeout: sendTimeout,
+		running: map[int64]bool{}, lanes: map[int64]int{}}
 }
 
 // Run subscribes and dispatches until ctx ends. Call in a goroutine.
 func (d *Dispatcher) Run(ctx context.Context) {
 	grabs, cancelG := bus.Subscribe[acquisition.ReleaseGrabbed](d.bus, 32)
 	defer cancelG()
-	imports, cancelI := bus.Subscribe[acquisition.ImportCompleted](d.bus, 32)
-	defer cancelI()
 	fails, cancelF := bus.Subscribe[acquisition.ImportFailed](d.bus, 32)
 	defer cancelF()
 	healths, cancelH := bus.Subscribe[health.Changed](d.bus, 32)
@@ -69,12 +83,6 @@ func (d *Dispatcher) Run(ctx context.Context) {
 				Event: "grab", Title: "Release grabbed", Body: e.Title,
 				Fields: map[string]string{"indexer": e.Indexer, "protocol": e.Protocol},
 			})
-		case e := <-imports:
-			// The same event twice, in two registers: a sentence for the
-			// notifiers that render text, and the facts for the ones that act
-			// on it. An import from a publication already wrote its durable
-			// rows in its own transaction (pipeline v2).
-			d.dispatchImport(ctx, acquisition.ImportNotification(e), e.Outboxed)
 		case e := <-fails:
 			d.dispatch(ctx, "failed", ports.Notification{
 				Event: "failed", Title: "Download failed", Body: e.Release,
@@ -111,15 +119,11 @@ func refreshOnly(cfg ports.NotifierConfig) bool {
 	return cfg.Type == "plex" || cfg.Type == "jellyfin" || cfg.Type == "plurx"
 }
 
-func (d *Dispatcher) dispatchImport(ctx context.Context, n ports.Notification, outboxed bool) {
-	d.dispatchFiltered(ctx, "import", n, outboxed)
-}
-
+// dispatch sends a chat-shaped event (grab, failed, health) inline, once, to
+// every notifier that wants it. Imports never come through here: every
+// notification of an import is an outbox row written in the import's own
+// transaction, drained by RunDeliveries (pipeline contract v2 section 4.1).
 func (d *Dispatcher) dispatch(ctx context.Context, event string, n ports.Notification) {
-	d.dispatchFiltered(ctx, event, n, false)
-}
-
-func (d *Dispatcher) dispatchFiltered(ctx context.Context, event string, n ports.Notification, outboxed bool) {
 	configs, err := d.db.ListNotifiers(ctx)
 	if err != nil {
 		d.log.Warn("notify: cannot list notifiers", "err", err)
@@ -129,17 +133,8 @@ func (d *Dispatcher) dispatchFiltered(ctx context.Context, event string, n ports
 		if !cfg.Enabled || !wants(cfg, event) {
 			continue
 		}
-		if refreshOnly(cfg) && event != "import" {
+		if refreshOnly(cfg) {
 			continue // media-server pokes only make sense after imports
-		}
-		// A media server's notification is the work itself, not an
-		// announcement of it, so it goes through the durable queue
-		// (§5.5) instead of being attempted once and forgotten.
-		if queued(cfg) {
-			if !outboxed {
-				d.enqueue(ctx, cfg, n)
-			}
-			continue
 		}
 		target := d.new(cfg)
 		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)

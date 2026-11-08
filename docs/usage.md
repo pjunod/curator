@@ -1247,7 +1247,7 @@ hours of measured time at each seam (the design is
 |---|---|---|
 | Failure to next grab | Runner's failure is recorded and a replacement is due (the same transaction) | the replacement was submitted, or a season job was queued for an episode with no single release. A failure with nothing better to grab is dropped, not counted |
 | Download done to imported | Runner's completed terminal is recorded (for a client with manual approval: when you approve it), so a publication waiting for its manifest is measured | the library import completed |
-| Imported to visible in Cinema | the import completed | Cinema reports the files placed — **not measured yet, needs M5**; the tile says so and shows no numbers |
+| Imported to visible in Cinema | the publication was imported and Cinema was given at least one sub-delivery | the last sub-delivery of the import is **visible**: Cinema reported every expected file placed with the bytes and mtime the import left. An older Cinema that does not report results is left out rather than counted as waiting |
 
 Each tile shows p50 and p95 of the timings that finished, how many finished,
 and how many are **waiting** (started in the last 24 h, not finished). Waiting
@@ -1322,10 +1322,23 @@ Open Library cover URL when available. Exact work ids relate editions; title
 and author do not. The notifier holds a scoped `plx_` key, never a plurx
 admin token. See `docs/settings.md` for setup and failure meanings.
 
-plurx deliveries are queued and retried; the **Delivery log** on the notifier
-row shows each one, and a delivery that ran out its schedule can be sent
-again from there — **Retry** on the row, or **Retry all failed** for the lot
-once plurx is healthy again.
+Every import notification is written with the import itself, so none is lost
+to a restart or a busy moment. plurx gets one **sub-delivery per directory**,
+retried until plurx answers (5 s, 30 s, 2 m, 5 m, 15 m, 1 h, then hourly —
+it never gives up on a temporary failure) and read back: the **Delivery log**
+on the notifier row shows each directory and what plurx said about it —
+`visible → plurx item 1201` once every file the import placed there is in
+plurx, `queued in cinema, waiting on full_scan:3` while plurx is busy, or
+`warning: expected <file> not placed (<plurx's reason>)`. A directory still
+not visible half an hour after the import is marked **warning**; it is still
+being retried. Only a refusal that retrying cannot fix (a rejected key, a
+directory outside plurx's library roots) ends as **failed**; fix the cause,
+then **Retry** on the row, or **Retry all failed** for the lot. An older plurx
+that does not report results shows `queued (cinema does not report results)`.
+
+**Test** on a plurx notifier checks that plurx can see every library root
+(Settings → Library) and names any it cannot, Curator's path beside plurx's
+roots, before the first import finds it.
 
 ## Troubleshooting quick hits
 

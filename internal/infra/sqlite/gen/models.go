@@ -464,18 +464,28 @@ type Notifier struct {
 }
 
 type NotifierDelivery struct {
-	ID         int64
-	NotifierID int64
-	DownloadID int64
-	Event      string
-	Payload    string
-	Attempts   int64
-	LastError  string
-	Result     string
-	Status     string
-	NextAt     int64
-	CreatedAt  int64
-	UpdatedAt  int64
+	ID                int64
+	NotifierID        int64
+	DownloadID        int64
+	Event             string
+	Payload           string
+	Attempts          int64
+	LastError         string
+	Result            string
+	Status            string
+	NextAt            int64
+	CreatedAt         int64
+	UpdatedAt         int64
+	PublicationID     int64
+	Directory         string
+	IdempotencyKey    string
+	Attempt           int64
+	ExpectedFilesJson string
+	RemoteRequestID   string
+	RemoteState       string
+	WaitingOn         string
+	VisibleAt         int64
+	ItemIdsJson       string
 }
 
 type PipelineTiming struct {

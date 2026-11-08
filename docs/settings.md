@@ -734,9 +734,16 @@ every secret in plurx's own settings — to Monarr, and to anything that can
 read Monarr's database. Mint one in plurx (Settings, or the two curl lines in
 plurx's `docs/CHEATSHEET.md`) and paste it here.
 
-**Test** asks plurx to scan a path that cannot be under any library root and
-counts the rejection as a pass: it proves the URL, the key and the scope
-without starting a scan of anything real.
+**Test** sends plurx the library roots from Settings → Library as
+`probe_paths` and asks which it can see: it proves the URL, the key, the scope
+**and the mounts** without starting a scan of anything real. A root plurx
+cannot see fails the Test with both sides named — `cinema cannot see 1 of 2
+library root(s): Curator /data/media/movies ↔ cinema: not under any of its
+library roots (/media/movies, /media/tv)`. An older plurx cannot check paths:
+the Test then asks it to scan a path that cannot be under any library root,
+counts the rejection as a pass, and says `connected; checking the library
+paths needs a newer cinema`. With no library roots configured the Test does
+the same and says so.
 
 What the failures mean:
 
@@ -745,21 +752,43 @@ What the failures mean:
 | `does not have this path under any library root` (with plurx's roots listed) | The two containers disagree about mounts — Monarr says `/data/media/…`, plurx has `/media/…`. Fix the mapping on Monarr's side. |
 | `rejected the key (401)` | Unknown, revoked, or a plurx *user* token — that route does not accept those. |
 | `lacks the scan:trigger scope (403)` | Real key, wrong scopes. Mint a new one; scopes are fixed at creation. |
-| `N of M paths not indexed` | Partial: some files of a season pack landed and some did not. The per-path reasons follow. |
+| `cinema cannot see N of M library root(s): …` | The Test: plurx cannot `stat` a root Curator places files under (not mounted there, or mounted at another path). |
+| `warning: expected <path> not placed (<reason>)` | plurx scanned the directory but did not index that file as the import left it — plurx's own reason follows. Retried with a fresh scan. |
+| `cinema cannot read <dir> right now` | `503 path_unreadable`: the share under plurx's root is not mounted or not readable. Retried with a fresh scan until it is. |
 
-**Deliveries are queued, not fired and forgotten.** A plurx notification is
-written to a row first and delivered by a worker: first attempt immediately,
-then retries at 5 s, 30 s and 2 m before it is marked failed. The row is the
+**Deliveries are queued, not fired and forgotten.** Every notification of
+an import is written in the import's own transaction and delivered by a
+worker. A chat notifier's row (webhook, Discord) and a Plex/Jellyfin poke are
+attempted once. plurx gets **one row per directory** (a sub-delivery), each
+with its own 20 s deadline per attempt, retried at 5 s, 30 s, 2 m, 5 m, 15 m,
+1 h and then hourly **without end** while the failure is one that can pass
+(plurx down, a timeout, 429, a 5xx, an unmounted share). The row is the
 point — the common way to miss a scan is a host reboot where both
 applications come back and monarr's import finishes a few seconds before
 plurx is listening, and an in-memory retry does not survive the restart that
-causes it. Failures that retrying cannot fix (401, 403, 422, a 404 from a
-plurx too old to have the route) stop on the first attempt instead of
-spending the whole schedule postponing the message you need to read.
+causes it. Failures that retrying cannot fix (401, 403, 400, a directory
+outside plurx's library roots) stop on the first attempt instead of
+postponing the message you need to read.
 
-**Delivery log** on the notifier row shows every attempt: what plurx
-answered (`scanned → plurx item 1201`, or `queued as sr-…` when plurx was
-mid-scan), or why it failed and after how many tries. The terminal outcome is
+Each request carries a key per directory and attempt, so a response lost on
+the way back never makes plurx scan twice, and the files the import placed
+there with their size and nanosecond mtime. plurx re-checks exactly those
+files and reports each; the directory is **visible** only when every one came
+back placed as the import left it. plurx checks at most 64 files a request:
+a bigger directory sends its largest, newest 64, and the log says how many of
+the directory's files that verified (`verified 64 of 91 files`).
+
+Every notifier has a **Delivery log** now, chat ones included: a Discord or
+webhook that refused an import says so there, on its own row, and on the
+download's trace as `notify_<type>`.
+
+**Delivery log** on the notifier row shows every directory: `visible →
+plurx item 1201`, `queued in cinema, waiting on <what plurx is waiting on>`
+while plurx is busy, `warning: expected <file> not placed (<reason>)`, or why
+it failed and after how many tries. A directory still not visible half an
+hour after the import is marked **warning** (it is still retried); an older
+plurx that does not report results reads `queued (cinema does not report
+results)`. The terminal outcome is
 also written onto the download's own handoff trace as a `notify_plurx` step —
 which is where *Activity* sends you when something imported but never
 appeared in plurx.
@@ -767,13 +796,11 @@ appeared in plurx.
 **A failed delivery can be retried** from the log: **Retry** on the row, or
 **Retry all failed (N)** above the table for every failed row of the notifier
 at once. The row goes back to pending, due now, with its attempt count reset
-so the full schedule runs again; the reason it failed stays visible until the
-next attempt replaces it. The schedule gives up after two and a half minutes
-because it is tuned for a restart, not for a media server that refuses work
-for a day (plurx's durable queue did exactly that on 2026-09-28, answering
-`500: internal server error` — now `503: the durable queue refused this
-request` — to every scan), and that is the case the button is for: fix the
-far side, then press it once. **Retry all failed** covers the notifier's whole
+so the full schedule runs again and a fresh scan attempt (the same key, the
+next attempt number); the reason it failed stays visible until the next
+attempt replaces it. Only permanent refusals end as failed, so this is the
+button for after you fix one — give the key its scope, mount the share where
+plurx looks — then press it once. **Retry all failed** covers the notifier's whole
 history, not only the 100 rows the log shows, and says how many it requeued;
 rows that failed permanently (a rejected key, a path outside plurx's roots)
 are requeued too and fail again on their first attempt. A disabled notifier

@@ -84,6 +84,79 @@ What Curator no longer does with Runner: acknowledge deliveries, pace receipt
 lookups per row, park on receipt shapes, refuse controls by revision, wait for
 Runner's cleanup before re-grabbing, or ask Runner to clean its source.
 
+## Pipeline contract v2: telling Cinema (M5, v0.41.0)
+
+What changed between an import and Cinema ([PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md)
+section 4; seams [4](#4-plurx-targeted-scan--this-exact-folder-changed) and
+[5](#5-delivery-queue--the-notification-survives-a-restart) below say how to
+look at it):
+
+- **An outbox, not the bus.** Every notification of an import is a
+  `notifier_deliveries` row written in the import's own transaction — the
+  publication's completing transaction, or, for a legacy client or a manual
+  import, the one that writes its `imported` history row. Nothing travels the
+  in-memory bus to be dropped when a subscriber's 32 slots are full.
+  (`ImportCompleted` is still published as the UI's live signal; nobody is
+  notified from it.) A chat notifier (webhook, Discord) and a Plex/Jellyfin
+  poke get one row each, attempted once.
+- **One sub-delivery per directory.** Cinema gets one row per `(notifier,
+  publication, directory)`, keyed `<transfer>/<generation>/<dir-hash>`
+  (the first 16 hex of sha256 of the directory), carrying the media files the
+  import placed under that directory with their `bytes` and `mtime_ns` as they
+  stood once placed. Cinema takes at most 64 expected files (and 16 KiB of
+  them) a request, so a bigger directory sends its largest, newest 64 and the
+  log says `(verified 64 of 91 files)`. Each row has its own 20 s deadline per
+  attempt, and each notifier is its own lane of up to four deliveries in
+  flight: three slow directories are posted side by side, none starves the
+  others, a slow third one never makes the first two be posted again, and a
+  Discord timing out never holds Cinema's rows behind it. Importing the same
+  directory of the same publication again refreshes the row and advances its
+  attempt.
+- **The request.** `POST /api/v1/scan` carries, beside the unchanged body,
+  `request_key: "<key>/<attempt>"`, `expected_files` and `wait_ms: 10000`.
+  Cinema answers a repeated key with the same request and result, so a lost
+  response does not create a second scan. The attempt is **reused** after an
+  ambiguous outcome (a timeout, a connection error, no response, 429, a 502 or
+  504, a plain 503) and **advanced** after a confirmed retryable result (an
+  expected file not placed, `503 path_unreadable`, a `failed` request — which
+  Cinema answers with a 500, first time and on every replay of its key — or a
+  request Cinema no longer knows), so the retry gets a fresh scan instead of
+  the cached answer. A `Retry-After` on a 503 is honoured: the next try is no
+  sooner.
+- **Reading the answer.** `200 scanned` is classified at once; `202 queued`
+  is polled with `GET /api/v1/scan/requests/{id}` (the creating key may read
+  its own requests) on the same schedule. A sub-delivery is **visible** only
+  when every expected file comes back `placed` with the same `bytes` and
+  `mtime_ns`; a same-path replacement with equal size and the same
+  whole-second mtime differs only in `mtime_ns`. Anything else is `warning:
+  expected <path> not placed (<cinema's reason>)` and is retried.
+- **The schedule** is `5s → 30s → 2m → 5m → 15m → 1h`, then hourly, without
+  end for anything transient. Permanent only on `401`/`403` on the POST,
+  `400`, and `422 path_outside_roots` (or an older Cinema's 422 that lists
+  its `roots`). A sub-delivery still not visible 30 minutes after it was
+  written is shown as a **warning** with Cinema's `waiting_on`, never failed.
+- **An older Cinema** ignores the new fields, answers 202, and refuses the
+  status read to a `scan:trigger` key (403): the row is done, reading
+  `queued (cinema does not report results)`. A current Cinema also answers
+  403 for a request id it no longer knows; once a read of the request has
+  answered, a later 403 is that — a lost request — and is posted again as a
+  new attempt. A 200 without a per-file report
+  is done the same way, with the item ids it did report.
+- **`import_to_cinema_visible`** starts when the publication is imported (in
+  the same transaction, when a Cinema notifier gets a sub-delivery) and ends
+  when the last sub-delivery of the import becomes visible. An import Cinema
+  cannot report on (an older Cinema), or with a sub-delivery that failed
+  permanently, is dropped from the measurement rather than left waiting.
+- **Chat notifiers speak for themselves.** Their rows show in their own
+  delivery log (every notifier type has one now), name their own type on the
+  in-flight view, and write `notify_<type>` on the download's trace;
+  `notify_plurx` is Cinema's alone.
+- **The Test checks paths.** A plurx notifier's **Test** sends the library
+  roots (Settings → Library) as `probe_paths`; a root Cinema cannot see fails
+  the Test with Curator's path beside Cinema's roots. An older Cinema rejects
+  that body with its JSON extractor's own 422 (no `roots`), so the Test falls
+  back to the legacy probe and says *checking the library paths needs a newer
+  cinema*.
 ### Per-file cleanup and the historical cohort (M4, v0.40.0)
 
 Contract section 3.4; [ADR 0026](adr/0026-pipeline-contract-v2.md) addendum.
@@ -429,7 +502,11 @@ lands 10 episodes in one folder is one thing that changed, and ten scans of
 the same folder is nine wasted scans.
 
 **Wire.** `POST {plurx}/api/v1/scan` with the scoped key as
-`Authorization: Bearer plx_…` (plurx accepts `X-Api-Key` too), and body:
+`Authorization: Bearer plx_…` (plurx accepts `X-Api-Key` too), one request per
+sub-delivery (one directory), and body — since M5 also carrying
+`"request_key":"<transfer>/<generation>/<dir-hash>/<attempt>"`,
+`"expected_files":[{"path":…,"bytes":…,"mtime_ns":…}]` and `"wait_ms":10000`
+(see [Pipeline contract v2: telling Cinema](#pipeline-contract-v2-telling-cinema-m5-v0410)):
 
 ```json
 // an episode: the SHOW's id, under `series`
@@ -497,40 +574,58 @@ curl -sS -H "Authorization: Bearer $TOKEN" "$PLURX/api/v1/keys"
 type `plurx`. Fields: `plurx server URL`, `Scoped key (plx_…, scan:trigger)`.
 The events column reads `on import (targeted scan)`.
 
-**Where you see it.** The add-notifier form's **Test** button →
-`✓ delivered` / `✗ <msg>`.
+**Where you see it.** The add-notifier form's **Test** button, and the
+per-row **Test** → `✓ delivered`, `✓ <note>` or `✗ <msg>`.
 
-**How to read the Test.** It POSTs a scan for the path
-`/monarr/connection-test`, which cannot resolve under any library root, and
-**counts the resulting rejection as a pass**. That is deliberate: it exercises
-URL, key and scope without kicking off a real scan. A rejection mentioning
-*"under any library root"* means the pairing is correct.
+**How to read the Test.** It POSTs `{"probe_paths": [<every library root>]}`
+and no `path`. Cinema answers which roots it can `stat`; a root it cannot see
+fails the Test with both sides named:
+`✗ cinema cannot see 1 of 2 library root(s): Curator /data/media/movies ↔
+cinema: not under any of its library roots (/media/movies, /media/tv)`. Fix
+the mount mapping before the first import rather than finding it one import
+at a time. Nothing is scanned.
+
+An older Cinema requires `path`, and its JSON extractor rejects the body with
+its own 422 (no `roots` in it). The Test then falls back to the legacy probe —
+a scan for `/monarr/connection-test`, which cannot resolve under any library
+root, counting the handler's *"under any library root"* rejection as the pass
+(URL, key and scope all work) — and reads `✓ connected; checking the library
+paths needs a newer cinema`. With no library roots configured it runs the
+legacy probe and says so.
 
 ---
 
 ## 5. Delivery queue — the notification survives a restart
 
-**What it does.** Notifications are enqueued in SQLite with the retry
-schedule as a column, not as a sleeping goroutine. Backoff is
-`5s → 30s → 2m`. Restart Monarr mid-retry and the retry still happens; a
+**What it does.** Notifications are rows in SQLite, written in the import's
+own transaction, with the retry schedule as a column, not as a sleeping
+goroutine. For Cinema the backoff is `5s → 30s → 2m → 5m → 15m → 1h`, then
+hourly without end for a transient failure; a chat notifier's row is
+attempted once. Restart Monarr mid-retry and the retry still happens; a
 delivery queue that lives in memory is a queue that silently loses everything
 on the one event you most want it to survive.
 
 **Where you see it.** Settings → **Notifications** → per-row **Delivery log**
-(media-server types only — `plex`, `jellyfin`, `plurx`; it is an inline
-expander on `/settings`, not a page of its own). Columns `When` / `Event` /
-`Status` / `Detail`, plus a **Retry** button on failed rows, polled every
-5 s. **Retry all failed** above the table requeues every failed row of the
-notifier — the whole history, not only the 100 rows shown — and reports how
-many it requeued.
+(every notifier type; it is an inline expander on `/settings`, not a page of
+its own, and scrolls sideways inside its own box on a phone). Columns `When` / `Event` /
+`Directory` (with `attempt N` once a fresh scan was needed) / `Status` /
+`Detail`, plus a **Retry** button on failed rows, polled every 5 s. **Retry
+all failed** above the table requeues every failed row of the notifier — the
+whole history, not only the 100 rows shown — and reports how many it
+requeued. Retry keeps a sub-delivery's key and advances its attempt, so
+Cinema scans afresh.
 
 | Status pill | Detail reads |
 |---|---|
-| `ok` | the result, e.g. `scanned → plurx item 1201` |
-| `pending` | `attempt N failed: <error>, retrying in Xm`, or `queued`, or — after a Retry — `retry queued, retrying in Xs — last failure: <error>` |
-| `failed` | the last error |
+| `visible` | `visible → plurx item 1201` — Cinema reported every expected file placed with the bytes and mtime the import left |
+| `ok` | the result: `queued (cinema does not report results)` from an older Cinema, `scanned → plurx item 1201` from a row written before M5, or `delivered` |
+| `pending` | `queued in cinema, waiting on full_scan:3, retrying in 5m` (Cinema's exact `waiting_on`), `warning: expected <path> not placed (<cinema's reason>), retrying in 1h`, `attempt N failed: <error>, retrying in Xm`, or `queued` |
+| `warning` | the same, still not visible 30 minutes after the import — surfaced, still retried |
+| `failed` | the last error: a rejected key, a 400, a directory outside Cinema's roots |
 
-`×N` appears beside the pill when attempts exceeded one.
+`×N` appears beside the pill when attempts exceeded one. The API row carries
+`directory`, `attempt`, `requestKey`, `remoteRequestId`, `remoteState`,
+`waitingOn`, `visibleAt`, `itemIds`, `expectedFiles` and `warning`.
 
 **How to verify.**
 
@@ -539,10 +634,11 @@ curl -sS -H "X-Api-Key: $KEY" "$MONARR/api/v1/notifiers/<id>/deliveries" | pytho
 ```
 
 **How to read it.** `pending` with a climbing attempt count is plurx being
-down — it will drain itself. `failed` does not retry on its own:
-Monarr classifies permanent failures (a rejected key, a 4xx that will never
-become a 2xx) separately from retryable ones, because retrying a wrong API key
-every two minutes forever is not resilience, it is noise. A failed row is
+down or the share unmounted — it will drain itself, however long that takes.
+`failed` does not retry on its own: Monarr classifies permanent failures (a
+rejected key, a 400, `422 path_outside_roots`) separately from retryable ones
+(429, `503 path_unreadable`, a 5xx, a timeout), because retrying a wrong API
+key every hour forever is not resilience, it is noise. A failed row is
 retried when somebody asks — **Retry** on the row, **Retry all failed** for
 the notifier, or `POST /api/v1/notifiers/<id>/deliveries/<deliveryId>/retry`
 and `POST /api/v1/notifiers/<id>/deliveries/retry` — which puts it back to

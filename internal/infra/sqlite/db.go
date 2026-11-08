@@ -126,6 +126,7 @@ var requiredColumns = []struct{ table, column string }{
 	{"downloads", "runner_outcome"}, {"downloads", "provisional"}, {"downloads", "deadline_at"}, {"downloads", "runner_stage"},
 	{"publications", "cohort"}, {"publication_files", "outcome"}, {"replacement_grabs", "next_at"},
 	{"wantable_attempts", "download_id"}, {"runner_history_cursors", "incarnation"},
+	{"notifier_deliveries", "idempotency_key"}, {"notifier_deliveries", "attempt"}, {"notifier_deliveries", "visible_at"},
 	{"runner_history_cursors", "deliveries_after"}, {"runner_history_cursors", "history_read"}, {"storage_change_review_paths", "path"},
 }
 

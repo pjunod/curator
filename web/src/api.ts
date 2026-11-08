@@ -1384,9 +1384,21 @@ export interface BackupInfo {
 
 export const getNotifiers = () => get<Notifier[]>('/notifiers')
 export const addNotifier = (n: NotifierInput) => send<Notifier>('POST', '/notifiers', n)
-export const testNotifier = (n: NotifierInput) => send('POST', '/notifiers/test', n)
+// A pass may still have something to say — e.g. that checking the library
+// paths needs a newer Cinema.
+export interface NotifierTestResult {
+  message?: string
+}
+export const testNotifier = (n: NotifierInput) =>
+  send<NotifierTestResult | undefined>('POST', '/notifiers/test', n)
 // The SAVED config, not the typed one — those diverge the moment anyone edits.
-export const testNotifierByID = (id: number) => send('POST', `/notifiers/${id}/test`)
+export const testNotifierByID = (id: number) =>
+  send<NotifierTestResult | undefined>('POST', `/notifiers/${id}/test`)
+
+// testPassed is the line a passing Test shows.
+export const testPassed = (r: NotifierTestResult | undefined) =>
+  r?.message ? `✓ ${r.message}` : '✓ delivered'
+
 export const deleteNotifier = (id: number) => send('DELETE', `/notifiers/${id}`)
 export const updateNotifier = (id: number, n: NotifierInput) =>
   send<Notifier>('PUT', `/notifiers/${id}`, n)
@@ -1406,6 +1418,23 @@ export interface Delivery {
   nextAt?: number
   createdAt: number
   updatedAt: number
+  // A sub-delivery (Cinema): one directory of one import, read back until
+  // Cinema reports every expected file placed (pipeline contract v2 §4).
+  directory?: string
+  publicationId?: number
+  /** The suffix of the request key; advances when a fresh scan is needed. */
+  attempt?: number
+  requestKey?: string
+  remoteRequestId?: string
+  remoteState?: string
+  /** What Cinema says a queued request is waiting on, e.g. full_scan:3. */
+  waitingOn?: string
+  /** When Cinema reported every expected file placed (epoch ms). */
+  visibleAt?: number
+  itemIds?: number[]
+  expectedFiles?: { path: string; bytes: number; mtimeNs: number }[]
+  /** Still not visible half an hour after the import; never given up on. */
+  warning?: boolean
 }
 
 export const getDeliveries = (id: number) => get<Delivery[]>(`/notifiers/${id}/deliveries`)

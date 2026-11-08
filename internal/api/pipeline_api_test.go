@@ -25,7 +25,7 @@ func TestMetricsListsPipelineFamiliesAndCounters(t *testing.T) {
 	}
 }
 
-func TestPipelineSummaryReportsUnmeasuredSeam(t *testing.T) {
+func TestPipelineSummaryReportsEverySeamMeasured(t *testing.T) {
 	e := newAPIEnv(t)
 	var sum apigen.PipelineSummary
 	e.get(t, "/api/v1/system/pipeline").expect(t, http.StatusOK).into(t, &sum)
@@ -33,8 +33,8 @@ func TestPipelineSummaryReportsUnmeasuredSeam(t *testing.T) {
 		t.Fatalf("summary = %+v, want a 24 h window, no overdue rows, three seams", sum)
 	}
 	last := sum.Timings[2]
-	if last.Kind != apigen.ImportToCinemaVisible || last.Measured || last.Note == nil || !strings.Contains(*last.Note, "M5") {
-		t.Errorf("import_to_cinema_visible = %+v, want unmeasured and naming M5", last)
+	if last.Kind != apigen.ImportToCinemaVisible || !last.Measured || last.Note != nil {
+		t.Errorf("import_to_cinema_visible = %+v, want measured (M5 ends it at visible)", last)
 	}
 	if first := sum.Timings[0]; !first.Measured || first.P50Seconds != nil || first.Samples != 0 {
 		t.Errorf("failure_to_next_grab with no data = %+v, want measured with no percentiles", first)
