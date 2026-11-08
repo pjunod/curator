@@ -144,7 +144,13 @@ func (d *DB) DeleteProfile(ctx context.Context, id int64) error {
 	// A default is a reference too, even though no row points at it. Deleting
 	// it would leave the setting dangling and every future add of that kind
 	// would quietly land back on the built-in.
-	if kinds := d.defaultingKinds(ctx, id); len(kinds) > 0 {
+	// A failed read is not "no default": deleting a default would leave the
+	// setting dangling.
+	kinds, err := d.defaultingKinds(ctx, id)
+	if err != nil {
+		return err
+	}
+	if len(kinds) > 0 {
 		return fmt.Errorf("%w: new %s items use it — pick a different default first",
 			ErrProfileIsDefault, strings.Join(kinds, " and "))
 	}
