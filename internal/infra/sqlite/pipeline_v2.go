@@ -90,6 +90,12 @@ func (d *DB) downloadsWhere(ctx context.Context, where string, args ...any) ([]D
 		}
 		ids = append(ids, id)
 	}
+	// Close does not report an iteration failure; without Err a read that
+	// fails mid-scan would return a truncated list as if it were complete.
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
@@ -707,7 +713,11 @@ func (d *DB) SetPublicationFileOutcome(ctx context.Context, f PublicationFile) e
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n != 1 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
 		return ErrNotFound
 	}
 	return nil

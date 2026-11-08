@@ -160,6 +160,12 @@ func setup(t *testing.T, releases []ports.Release, client *fakeClient) (*Service
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	return setupOn(t, db, releases, client)
+}
+
+// setupOn builds the setup scenario on an already migrated database.
+func setupOn(t *testing.T, db *sqlite.DB, releases []ports.Release, client *fakeClient) (*Service, *sqlite.DB, int64) {
+	t.Helper()
 	b := bus.New(nil)
 	t.Cleanup(b.Close)
 

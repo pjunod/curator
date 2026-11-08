@@ -49,7 +49,7 @@ func TestImportCustodyReadFailuresNeverBecomeEmptySuccess(t *testing.T) {
 	if _, err = db.RequestImportCancellation(ctx, a.ImportAttemptKey); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.RecordDeliveryFileImport(ctx, DeliveryFileImport{ReceiptID: receipt.ID, Path: "movie.mkv", LibraryPath: p.Target}); err != nil {
+	if err = recordDeliveryFileImport(ctx, db.W, DeliveryFileImport{ReceiptID: receipt.ID, Path: "movie.mkv", LibraryPath: p.Target}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.BeginDeliveryAttempt(ctx, receipt.ID, "import"); err != nil {
@@ -77,19 +77,7 @@ func TestImportCustodyReadFailuresNeverBecomeEmptySuccess(t *testing.T) {
 		"delivery-outcomes": func() (int, error) { v, e := db.DeliveryFileOutcomes(ctx, receipt.ID); return len(v), e },
 		"delivery-receipt":  func() (int, error) { _, e := db.DeliveryReceiptByID(ctx, receipt.ID); return 1, e },
 	}
-	calls["delivery-client-recovery"] = func() (int, error) {
-		v, e := db.DeliveryReceiptsForClient(ctx, receipt.ClientID, 100)
-		return len(v), e
-	}
 	calls["delivery-page"] = func() (int, error) { v, _, e := db.DeliveryReceiptPage(ctx, 0, 100); return len(v), e }
-	calls["delivery-cleanup-due"] = func() (int, error) {
-		v, e := db.DeliveryFileCleanupReceipts(ctx, receipt.ClientID, 100)
-		return len(v), e
-	}
-	calls["delivery-source-refresh"] = func() (int, error) {
-		v, e := db.DeliveryReceiptsNeedingSourceRefresh(ctx, receipt.ClientID, 100)
-		return len(v), e
-	}
 	calls["delivery-retry-details"] = func() (int, error) { _, e := db.DeliveryRetryDetails(ctx, receipt.ID); return 1, e }
 	calls["delivery-events"] = func() (int, error) { v, e := db.DeliveryAttemptEvents(ctx, receipt.ID); return len(v), e }
 	calls["delivery-file-proof"] = func() (int, error) { _, e := db.DeliveryFileOutcomeByPath(ctx, receipt.ID, "movie.mkv"); return 1, e }
@@ -152,12 +140,6 @@ func TestImportRecoveryRejectsIncompatibleStoredReceipts(t *testing.T) {
 			}
 			if _, _, err := db.DeliveryReceiptPage(t.Context(), 0, 100); err == nil {
 				t.Fatal("incompatible receipt disappeared from recovery page")
-			}
-			if _, err := db.DeliveryReceiptsForClient(t.Context(), r.ClientID, 100); err == nil {
-				t.Fatal("incompatible receipt disappeared from recovery inventory")
-			}
-			if _, err := db.DeliveryReceiptsNeedingSourceRefresh(t.Context(), r.ClientID, 100); err == nil {
-				t.Fatal("incompatible receipt authorized source refresh")
 			}
 			if after := importDurableSnapshot(t, db); after != before {
 				t.Fatal("failed decode mutated custody")

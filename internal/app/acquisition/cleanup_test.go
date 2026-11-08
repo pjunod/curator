@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -263,13 +264,32 @@ func TestOrdinaryCleanupSweepLeavesMixedRunnerDeliveryManifestAlone(t *testing.T
 	h1 := sha256.Sum256([]byte("media"))
 	h2 := sha256.Sum256([]byte("unresolved sibling"))
 	v := ports.RunnerDelivery{Sequence: 1, DeliveryID: "mixed", PublicationGeneration: "g", ArtifactID: "a", JobID: dl.Handle, RequestToken: dl.Transfer, RunnerInstanceID: "runner", PublicationPath: "/completed/runner-publication", ManifestDigest: "digest", ReadyAt: time.Now(), Files: []ports.RunnerFile{{Path: "Season 01/Test.Show.S01E01.mkv", SizeBytes: 5, SHA256: hex.EncodeToString(h1[:])}, {Path: "Season 01/notes.nfo", SizeBytes: int64(len("unresolved sibling")), SHA256: hex.EncodeToString(h2[:])}}}
-	r, err := db.SaveDiscoveredDelivery(ctx, dl.ClientID, v, payload)
+	// A v1 receipt and manifest journal left by a pre-M2 curator: contract v2
+	// no longer writes these rows, but upgraded databases keep them until M4.
+	files, err := json.Marshal(v.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := db.W.ExecContext(ctx, `INSERT INTO runner_delivery_receipts
+		(client_id,delivery_id,sequence,publication_generation,artifact_id,job_id,request_token,runner_instance_id,ready_at,publication_path,mapped_path,files_json,manifest_digest,source_cleanup_json,file_outcomes_json,state,error,created_at,updated_at,runner_stages_json,source_copies_json,lifecycle_timing_json)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'null','null','unresolved','',1,1,'null','null','null')`,
+		dl.ClientID, v.DeliveryID, v.Sequence, v.PublicationGeneration, v.ArtifactID, v.JobID, v.RequestToken, v.RunnerInstanceID, v.ReadyAt.UnixMilli(), v.PublicationPath, payload, string(files), v.ManifestDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.DeliveryReceiptByID(ctx, receiptID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	manifest := []sqlite.DeliveryManifestFile{{Path: v.Files[0].Path, SizeBytes: v.Files[0].SizeBytes, SHA256: v.Files[0].SHA256}, {Path: v.Files[1].Path, SizeBytes: v.Files[1].SizeBytes, SHA256: v.Files[1].SHA256}}
-	if err := db.EnsureDeliveryFileOutcomes(ctx, r.ID, manifest, nil, false); err != nil {
-		t.Fatal(err)
+	for _, f := range manifest {
+		if _, err := db.W.ExecContext(ctx, `INSERT INTO runner_delivery_file_outcomes(receipt_id,path,size_bytes,sha256,file_generation,disposition,cleanup_state,manual_additional,updated_at) VALUES(?,?,?,?,?,'pending','protected',0,1)`, r.ID, f.Path, f.SizeBytes, f.SHA256, f.FileGeneration); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := db.UpdateDeliveryFileDisposition(ctx, r.ID, manifest[0].Path, "placed", "imported", filepath.Join(t.TempDir(), "library.mkv")); err != nil {
 		t.Fatal(err)

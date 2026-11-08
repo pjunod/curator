@@ -641,11 +641,15 @@ func (s *Service) WantedList(ctx context.Context) ([]WantedSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	profiles := map[int64]quality.Profile{}
-	if ps, err := s.db.ListProfiles(ctx); err == nil {
-		for _, p := range ps {
-			profiles[p.ID] = p
-		}
+	// The profiles say why an upgrade is wanted; a failed read is an error,
+	// not a list that quietly drops the language reason.
+	ps, err := s.db.ListProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	profiles := make(map[int64]quality.Profile, len(ps))
+	for _, p := range ps {
+		profiles[p.ID] = p
 	}
 	out := make([]WantedSummary, 0, len(wanted))
 	for _, w := range wanted {

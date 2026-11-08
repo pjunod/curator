@@ -219,10 +219,7 @@ func TestExplicitDeliveryFileOutcomeRejectsPathAndGenerationReuse(t *testing.T) 
 	ctx := context.Background()
 	db, _ := openLifecycleCoverageDB(t)
 	defer func() { _ = db.Close() }()
-	receipt, err := db.SaveDiscoveredDelivery(ctx, 81, coverageDelivery("explicit-file-authority"), "/mounted/release")
-	if err != nil {
-		t.Fatal(err)
-	}
+	receipt := seedLegacyReceipt(t, db, 81, coverageDelivery("explicit-file-authority"), "/mounted/release")
 	digest := "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
 	for _, invalid := range []DeliveryManifestFile{
 		{Path: "../outside.mkv", SizeBytes: 5, SHA256: digest, FileGeneration: "file-generation"},

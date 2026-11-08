@@ -10,48 +10,13 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 )
 
-func TestEnsureDeliveryManifestRollsBackEarlierRowsOnImmutableConflict(t *testing.T) {
-	ctx := context.Background()
-	db, _ := openLifecycleCoverageDB(t)
-	defer func() { _ = db.Close() }()
-	receipt, err := db.SaveDiscoveredDelivery(ctx, 12, coverageDelivery("manifest-rollback"), "/mounted/release")
-	if err != nil {
-		t.Fatal(err)
-	}
-	original := DeliveryManifestFile{Path: "b.mkv", SizeBytes: 8, SHA256: "bbbb", FileGeneration: "file-gen-b"}
-	if err := db.EnsureDeliveryFileOutcomes(ctx, receipt.ID, []DeliveryManifestFile{original}, nil, false); err != nil {
-		t.Fatal(err)
-	}
-	changed := original
-	changed.FileGeneration = "replacement-file-gen-b"
-	files := []DeliveryManifestFile{
-		{Path: "a.mkv", SizeBytes: 7, SHA256: "aaaa", FileGeneration: "file-gen-a"},
-		changed,
-	}
-	if err := db.EnsureDeliveryFileOutcomes(ctx, receipt.ID, files, nil, false); err == nil {
-		t.Fatal("changed immutable manifest was accepted")
-	}
-	rows, err := db.DeliveryFileOutcomes(ctx, receipt.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || rows[0].Path != original.Path || rows[0].FileGeneration != original.FileGeneration || rows[0].SHA256 != original.SHA256 {
-		t.Fatalf("manifest conflict partially inserted/replaced ledger rows: %+v", rows)
-	}
-}
-
 func TestRemovedDeliveryFileAndDirectoryRetryObligationCommitAtomically(t *testing.T) {
 	ctx := context.Background()
 	db, _ := openLifecycleCoverageDB(t)
 	defer func() { _ = db.Close() }()
-	receipt, err := db.SaveDiscoveredDelivery(ctx, 15, coverageDelivery("atomic-cleanup-stamp"), "/mounted/release")
-	if err != nil {
-		t.Fatal(err)
-	}
+	receipt := seedLegacyReceipt(t, db, 15, coverageDelivery("atomic-cleanup-stamp"), "/mounted/release")
 	file := DeliveryManifestFile{Path: "Movie.mkv", SizeBytes: 5, SHA256: coverageDelivery("hash").Files[0].SHA256, FileGeneration: "payload-file-generation"}
-	if err := db.EnsureDeliveryFileOutcomes(ctx, receipt.ID, []DeliveryManifestFile{file}, nil, false); err != nil {
-		t.Fatal(err)
-	}
+	seedLegacyFileOutcomes(t, db, receipt.ID, []DeliveryManifestFile{file}, nil)
 	if err := db.UpdateDeliveryFileDisposition(ctx, receipt.ID, file.Path, "placed", "committed placement", "/library/Movie.mkv"); err != nil {
 		t.Fatal(err)
 	}
@@ -74,13 +39,6 @@ func TestRemovedDeliveryFileAndDirectoryRetryObligationCommitAtomically(t *testi
 	}
 	if row.CleanupState != "pending" || currentReceiptDirectoryState(t, ctx, db, receipt.ID) != "protected" {
 		t.Fatalf("failed cross-row cleanup commit left a stranded state: file=%+v receipt=%+v", row, currentReceipt)
-	}
-	due, err := db.DeliveryFileCleanupReceipts(ctx, receipt.ClientID, 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(due) != 1 || due[0] != receipt.ID {
-		t.Fatalf("rolled-back cleanup attempt disappeared from due work: got receipt IDs %v", due)
 	}
 	if _, err := db.W.ExecContext(ctx, `DROP TRIGGER reject_directory_pending`); err != nil {
 		t.Fatal(err)
@@ -115,67 +73,6 @@ func currentReceiptDirectoryState(t *testing.T, ctx context.Context, db *DB, rec
 		t.Fatal(err)
 	}
 	return state
-}
-
-func TestQueueDeliveryReimportRollsBackDownloadWhenReceiptIdentityChanges(t *testing.T) {
-	ctx := context.Background()
-	db, _ := openLifecycleCoverageDB(t)
-	defer func() { _ = db.Close() }()
-	itemID, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Reimport rollback", Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	delivery := coverageDelivery("reimport-late-conflict")
-	dl, err := db.InsertDownloadRecord(ctx, Download{MediaItemID: itemID, ClientID: 12, ReleaseTitle: "Reimport rollback", Protocol: "nzb", State: "imported", Handle: delivery.JobID, Transfer: delivery.RequestToken, Intent: "manual_additional", CopyID: 9})
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt, err := db.SaveDiscoveredDelivery(ctx, 12, delivery, "/mounted/release")
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt.DownloadID, receipt.GenerationKey, receipt.DownloadHandle = dl.ID, dl.GenerationKey, dl.Handle
-	receipt.MediaItemID, receipt.CopyID = itemID, 9
-	if err := db.AssociateDelivery(ctx, receipt); err != nil {
-		t.Fatal(err)
-	}
-	receipt.ConsumerReceiptID = "consumer-ack"
-	if err := db.PrepareDeliveryAcceptance(ctx, receipt); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetDeliveryImported(ctx, receipt.ID); err != nil {
-		t.Fatal(err)
-	}
-	expected, err := db.DeliveryReceiptByID(ctx, receipt.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dl, err = db.GetDownload(ctx, dl.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dl.State = "importing"
-	dl.Handoff = []HandoffEntry{{Step: "manual_import_queued", At: time.Now().UnixMilli(), Paths: []string{"Movie.mkv"}}}
-	// The download update is first in QueueDeliveryReimport's transaction. A
-	// receipt-only identity change makes its second guarded update fail; neither
-	// half of the re-open may then remain committed.
-	if _, err := db.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET manifest_digest='changed-after-read' WHERE id=?`, receipt.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueueDeliveryReimport(ctx, expected, dl); !errors.Is(err, ErrDeliveryReceiptStale) {
-		t.Fatalf("reimport with stale receipt generation error=%v", err)
-	}
-	currentDownload, err := db.GetDownload(ctx, dl.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	currentReceipt, err := db.DeliveryReceiptByID(ctx, receipt.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if currentDownload.State != "imported" || len(currentDownload.Handoff) != 0 || currentReceipt.State != "imported" || currentReceipt.AckState != "pending" || currentReceipt.Delivery.ManifestDigest != "changed-after-read" {
-		t.Fatalf("late identity conflict left a partial Resolve mutation: download=%+v receipt=%+v", currentDownload, currentReceipt)
-	}
 }
 
 func TestManualSubmissionAcknowledgementRejectsStaleGenerationAndTransfer(t *testing.T) {
@@ -329,15 +226,14 @@ func TestReplacementEpisodeDetachRollsBackIfRemovalJournalCannotCommit(t *testin
 func TestDeliveryRetryTraceDetailsSurviveDatabaseRestart(t *testing.T) {
 	ctx := context.Background()
 	db, dir := openLifecycleCoverageDB(t)
-	receipt, err := db.SaveDiscoveredDelivery(ctx, 13, coverageDelivery("trace-retry-details"), "/mounted/release")
-	if err != nil {
-		t.Fatal(err)
-	}
+	receipt := seedLegacyReceipt(t, db, 13, coverageDelivery("trace-retry-details"), "/mounted/release")
 	if err := db.SetDeliveryDirectoryCleanup(ctx, receipt.ID, "retry", "payload directory is busy"); err != nil {
 		t.Fatal(err)
 	}
 	providerDeadline := time.Now().Add(20 * time.Minute).Truncate(time.Millisecond)
-	if err := db.FailDeliverySourceRefresh(ctx, receipt.ID, "Runner temporarily unavailable", providerDeadline); err != nil {
+	// The v1 source-refresh journal row a pre-M2 curator left behind.
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO runner_delivery_source_refresh(receipt_id,attempts,blocked_since,next_attempt_at,last_error,provider_retry_after,updated_at) VALUES(?,1,?,?,?,?,?)`,
+		receipt.ID, time.Now().UnixMilli(), providerDeadline.UnixMilli(), "Runner temporarily unavailable", providerDeadline.UnixMilli(), time.Now().UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	before, err := db.DeliveryRetryDetails(ctx, receipt.ID)
