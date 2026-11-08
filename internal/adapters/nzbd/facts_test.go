@@ -94,11 +94,10 @@ func TestPublicationReadyIsASalvage(t *testing.T) {
 	}
 }
 
-// A typed job_pp_finished (Runner M1a) is taken as Runner states it, not
-// re-derived from pp_status.
+// A typed job_pp_finished is taken as Runner states it.
 func TestTypedPPFinishedIsTakenAsStated(t *testing.T) {
 	f, ok := ppFinishedFact([]byte(`{"job":5,"transfer":"t-5","outcome":"failed","reason":"fetch","fetch_cause":"indexer_unavailable",
-		"blames_release":false,"salvage":"none","message":"indexer 503","fetched":{"bytes":100},"pp_status":"FAILURE/FETCH","history_seq":77,"history_incarnation":"inc"}`), 12)
+		"blames_release":false,"salvage":"none","message":"indexer 503","fetched":{"bytes":100},"history_seq":77,"history_incarnation":"inc"}`), 12)
 	if !ok || f.Kind != ports.FactTerminal || f.Terminal == nil {
 		t.Fatalf("pp_finished = %+v ok=%v", f, ok)
 	}
@@ -116,23 +115,23 @@ func TestTypedPPFinishedIsTakenAsStated(t *testing.T) {
 	}
 }
 
-// A deliveries row without a kind (a pre-M1a Runner) is a salvage when its
-// terminal was not a success, a completed terminal otherwise.
-func TestDeliveryKindInference(t *testing.T) {
+// A deliveries row is a salvage only when Runner says so; a row with no kind
+// is a completed terminal (Curator no longer infers one from the v1 outcome).
+func TestDeliveryKind(t *testing.T) {
 	cases := []struct {
 		kind, outcome string
 		want          ports.FactKind
 	}{
 		{"", "SUCCESS", ports.FactTerminal},
 		{"", "", ports.FactTerminal},
-		{"", "FAILURE/HEALTH", ports.FactPublicationReady},
+		{"", "FAILURE/HEALTH", ports.FactTerminal},
 		{"salvage", "SUCCESS", ports.FactPublicationReady},
 		{"completed", "FAILURE/HEALTH", ports.FactTerminal},
 	}
 	for _, c := range cases {
 		f := deliveryFact(ports.RunnerDelivery{Kind: c.kind, TerminalOutcome: c.outcome, RequestToken: "t-1", JobID: "1",
 			PublicationPath: "/completed/p", PublicationGeneration: "g", Sequence: 3})
-		if f.Kind != c.want || f.Transfer != "t-1" || f.Publication == nil || f.Publication.Manifest == nil {
+		if f.Kind != c.want || f.Transfer != "t-1" || f.Publication == nil {
 			t.Errorf("kind %q outcome %q = %s (%+v), want %s", c.kind, c.outcome, f.Kind, f, c.want)
 		}
 		if f.Kind == ports.FactTerminal && (f.Terminal == nil || f.Terminal.Outcome != ports.OutcomeCompleted) {
@@ -150,7 +149,7 @@ func TestHistorySinceContinuityLost(t *testing.T) {
 			return false
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"incarnation":"inc-2","head_seq":50,"retained_min_seq":20,"entries":[{"job":1,"seq":49,"status":"SUCCESS","final_dir":"/c/a"}]}`))
+		_, _ = w.Write([]byte(`{"incarnation":"inc-2","head_seq":50,"retained_min_seq":20,"entries":[{"job":1,"seq":49,"outcome":"completed","publication":{"path":"/c/a","generation":"g","manifest_digest":"d","files":1}}]}`))
 		return true
 	})
 	c := client(t, srv, "", "tok")

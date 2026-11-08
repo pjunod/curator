@@ -232,8 +232,8 @@ imports the moment post-processing finishes, instead of up to 30 s later.
 
 **What Monarr acts on.** Each event becomes a fact for the reducer (see
 [§4](#4-facts-terminals-and-the-next-grab)): `job_pp_finished` (the terminal:
-the typed `outcome`/`reason`/`blames_release`/`salvage`, or for an older
-Runner the `pp_status` string), `job_status_changed` and `job_control_changed`
+the typed `outcome`/`reason`/`blames_release`/`salvage`; the v1 `pp_status`
+and `final_dir` strings are not read), `job_status_changed` and `job_control_changed`
 (status and holds), `job_publication_ready` (a salvage), `job_pp_stage` and
 `tick` (progress), `reset` and `lagged` (immediate poll). `job_deleted` carries
 no transfer token and is advisory: the cancellation arrives as a terminal from
@@ -350,9 +350,8 @@ other client keeps the established path and records its failures the same way.
   its own state (`discovered → importing → imported | import_failed`) and a
   per-file outcome: `placed`, `discarded{superseded|duplicate|rejected}`, or
   `unresolved` (retained, decided in Activity). The manifest comes from the
-  publication's `.runner-manifest.json`, else from Runner's v1 delivery
-  record (the **v1 adapter**); a directory with neither waits and is checked
-  again each poll. A publication has no deadline until its first import
+  publication's `.runner-manifest.json`; a directory without it waits and is
+  checked again each poll. A publication has no deadline until its first import
   starts; six hours from that start (never reset by a retry), with nothing
   running or queued for it, or five attempts that failed on the payload
   (spaced on the retry ladder), end it; so does, at once, a file that does
@@ -427,9 +426,7 @@ second generation and the historical directories all take the same path.
   is `import_failed{stalled}`, and the want is grabbed again. A directory with no manifest yet waits and is
   checked again each poll.
 - **The manifest** is `.runner-manifest.json` in the directory, written last as
-  the commit marker (a directory without it is not a publication), else
-  Runner's v1 delivery record (the **v1 adapter**, `manifest_source =
-  v1_record`) for directories published before the file existed. The digest is
+  the commit marker (a directory without it is not a publication). The digest is
   the deployed shared algorithm (`runner-manifest-v1`: `len:path`, size and
   SHA-256 per bytewise-sorted file, bare hex). The per-file digests are the
   authority for the bytes: each placement compares its copy stream with them.
@@ -521,15 +518,23 @@ second generation and the historical directories all take the same path.
 
 ### If the upgrade refuses to start
 
-Migration 0073 refuses rather than guess, before changing anything, and names
-what blocks it.
+Two migrations refuse rather than guess, and name what blocks them.
 
-The error is `migration 0073 refused: live v1 dependents: N pending explicit
-deletion request(s) (<batch ids>)`. Deploy the previous Curator build
-(v0.39.x), open Activity → the delivery's lifecycle trace, and let each named
-request finish or **Cancel deletion request**; then deploy again. `SELECT
-batch_id FROM runner_delivery_explicit_delete_batches WHERE abandoned_at=0`
-lists them.
+- `migration 0073 refused: live v1 dependents: N pending explicit deletion
+  request(s) (<batch ids>)`: nothing has been changed. Deploy the previous
+  Curator build (v0.39.x), open Activity → the delivery's lifecycle trace, and
+  let each named request finish or **Cancel deletion request**; then deploy
+  again. `SELECT batch_id FROM runner_delivery_explicit_delete_batches WHERE
+  abandoned_at=0` lists them.
+- `migration 0075 refused: publications still on a v1_record manifest: N not
+  yet removed (#id state path; …)`: Curator no longer reads Runner's v1
+  delivery record, so a publication that has only that record has no manifest
+  to import or clean from. Let its import or its review batch finish on the
+  previous build (v0.42.x) until none is left —
+  `SELECT count(*) FROM publications WHERE manifest_source = 'v1_record' AND
+  state NOT IN ('removed')` must be 0 — then deploy again. A database older than
+  0072 stops here too, with 0074 applied, because 0072 makes one such
+  publication per old receipt.
 
 ---
 

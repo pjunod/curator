@@ -233,39 +233,33 @@ func translate(name, data, id string) []ports.ClientEvent {
 
 	case "job_pp_finished":
 		var f struct {
-			Control  *ports.DownloadControl `json:"control"`
-			Job      int64                  `json:"job"`
-			Name     string                 `json:"name"`
-			PpStatus string                 `json:"pp_status"`
-			FinalDir string                 `json:"final_dir"`
-			Params   [][2]string            `json:"params"`
+			Control *ports.DownloadControl `json:"control"`
+			Job     int64                  `json:"job"`
+			Name    string                 `json:"name"`
+			Params  [][2]string            `json:"params"`
 		}
 		if json.Unmarshal([]byte(data), &f) != nil {
 			return nil
 		}
 		// This is the event the whole integration is for: post-processing
-		// is done, the history row is already written, and the path is
-		// attached. It is the difference between importing now and
-		// importing up to 30 seconds from now.
-		st := statusOfHistory(historyEntry{
-			Job: f.Job, Name: f.Name, Status: f.PpStatus, FinalDir: f.FinalDir, Params: f.Params, Control: f.Control,
-		})
+		// is done, the history row is already written, and the publication
+		// is attached. It is the difference between importing now and
+		// importing up to 30 seconds from now. The terminal is the typed
+		// one; an event without it (or a completion without its
+		// publication) is not actionable and the ordered history reader
+		// delivers the terminal instead.
+		fact, ok := ppFinishedFact([]byte(data), seq)
+		if !ok {
+			return nil
+		}
+		st := statusOfTerminal(f.Job, f.Name, f.Params, f.Control, *fact.Terminal)
 		kind := ports.EventCompleted
 		switch st.State {
-		case ports.StateDownloading:
-			// A nominal success without final_dir is not actionable yet and
-			// is not a failure. Keep it live until polling finds the durable
-			// history row with its path.
-			kind = ports.EventProgress
 		case ports.StateCompleted:
 		default:
 			kind = ports.EventFailed
 		}
-		ev := ports.ClientEvent{Handle: st.Handle, Kind: kind, Seq: seq, Status: st}
-		if fact, ok := ppFinishedFact([]byte(data), seq); ok {
-			ev.Fact = &fact
-		}
-		return []ports.ClientEvent{ev}
+		return []ports.ClientEvent{{Handle: st.Handle, Kind: kind, Seq: seq, Status: st, Fact: &fact}}
 
 	case "job_deleted":
 		var f struct {

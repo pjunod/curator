@@ -99,7 +99,7 @@ func TestNativeTorrentStatusesExcludeSeedDonorAndUsenetRows(t *testing.T) {
 			_, _ = w.Write([]byte(`{"jobs":[{"id":1,"name":"donor","torrent_role":"seed","status":"downloading"},{"id":2,"name":"acquisition","torrent_role":"acquisition","status":"downloading","params":[["monarr-transfer","token"]]},{"id":3,"name":"usenet","status":"downloading"}]}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"entries":[{"job":4,"name":"retired child","torrent_role":"acquisition","status":"SUCCESS","final_dir":"/c/child","params":[["monarr-transfer","old-token"]]},{"job":5,"name":"old donor","torrent_role":"seed","status":"SUCCESS"}]}`))
+		_, _ = w.Write([]byte(`{"entries":[{"job":4,"name":"retired child","torrent_role":"acquisition","outcome":"completed","publication":{"path":"/c/child","generation":"g","manifest_digest":"d","files":1},"params":[["monarr-transfer","old-token"]]},{"job":5,"name":"old donor","torrent_role":"seed","outcome":"completed","publication":{"path":"/c/donor","generation":"g","manifest_digest":"d","files":1}}]}`))
 	}))
 	defer server.Close()
 	statuses, err := NewTorrent(ports.ClientConfig{URL: server.URL}).Statuses(t.Context())

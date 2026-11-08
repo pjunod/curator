@@ -20,24 +20,3 @@ func TestManifestDigestGoldenVector(t *testing.T) {
 		t.Fatal("an empty manifest was accepted")
 	}
 }
-
-// An old Runner's history strings map to typed terminals (contract §6).
-func TestLegacyTerminal(t *testing.T) {
-	for status, want := range map[string]RunnerTerminal{
-		"SUCCESS":        {Outcome: OutcomeCompleted},
-		"DELETED":        {Outcome: OutcomeCancelled},
-		"FAILURE/HEALTH": {Outcome: OutcomeFailed, Reason: ReasonHealth, BlamesRelease: true},
-		"FAILURE/FETCH":  {Outcome: OutcomeFailed, Reason: ReasonFetch, BlamesRelease: true},
-		"PAR_FAILURE":    {Outcome: OutcomeFailed, Reason: ReasonPar, BlamesRelease: true},
-		"UNPACK_FAILURE": {Outcome: OutcomeFailed, Reason: ReasonUnpack, BlamesRelease: true},
-		"SCRIPT_FAILURE": {Outcome: OutcomeFailed, Reason: ReasonScript, BlamesRelease: true},
-	} {
-		got := LegacyTerminal(status, false)
-		if got.Outcome != want.Outcome || got.Reason != want.Reason || got.BlamesRelease != want.BlamesRelease || got.Salvage != "none" {
-			t.Errorf("%s = %+v, want %+v", status, got, want)
-		}
-	}
-	if LegacyTerminal("FAILURE/HEALTH", true).BlamesRelease {
-		t.Error("a blameless legacy failure blamed the release")
-	}
-}

@@ -25,18 +25,16 @@ type sseServer struct {
 	connCount int
 }
 
-func TestFailureFileDetailsAgreeBetweenPollAndPush(t *testing.T) {
+func TestFailureFileDetailsSurviveThePushedTerminal(t *testing.T) {
 	note := "checked move pending: Invalid argument"
-	polled := statusOfHistory(historyEntry{Job: 1682, Name: "Season", Status: "UNPACK_FAILURE",
-		FinalDir: "/completed/Season", Params: [][2]string{{"Failure:Files", note}}})
-	events := translate("job_pp_finished", `{"job":1682,"name":"Season","pp_status":"UNPACK_FAILURE","final_dir":"/completed/Season","params":[["Failure:Files","checked move pending: Invalid argument"]]}`, "boot-42")
+	events := translate("job_pp_finished", `{"job":1682,"name":"Season","outcome":"failed","reason":"unpack","stage":"unpack","message":"UNPACK_FAILURE","blames_release":true,"params":[["Failure:Files","checked move pending: Invalid argument"]]}`, "event-1")
 	if len(events) != 1 {
 		t.Fatalf("events = %+v", events)
 	}
 	pushed := events[0]
-	if polled.State != ports.StateFailed || polled.SavePath != "/completed/Season" ||
-		polled.Message != "UNPACK_FAILURE; files: "+note || pushed.Kind != ports.EventFailed || pushed.Status != polled {
-		t.Fatalf("failure detail lost: poll=%+v push=%+v", polled, pushed)
+	if pushed.Status.State != ports.StateFailed || pushed.Kind != ports.EventFailed ||
+		pushed.Status.Message != "UNPACK_FAILURE; files: "+note || pushed.Fact == nil || pushed.Fact.Terminal == nil || pushed.Fact.Terminal.Reason != ports.ReasonUnpack {
+		t.Fatalf("failure detail lost: push=%+v", pushed)
 	}
 }
 
@@ -99,7 +97,7 @@ func recv(t *testing.T, ch <-chan ports.ClientEvent) ports.ClientEvent {
 // that is still being unpacked, or not importing at all.
 func TestPpFinishedBecomesACompletionWithItsPath(t *testing.T) {
 	srv := newSSE(t, []string{
-		frame("17-3", "job_pp_finished", `{"job":7,"name":"Show.S01E01","category":"tv","pp_status":"SUCCESS","final_dir":"/downloads/complete/Show.S01E01","size_bytes":100,"health":1000,"params":[["monarr-transfer","t-42-a3f9c1"]],"history_seq":913,"seq":3}`),
+		frame("17-3", "job_pp_finished", `{"job":7,"name":"Show.S01E01","category":"tv","outcome":"completed","publication":{"path":"/downloads/complete/Show.S01E01","generation":"g1","manifest_digest":"d1","files":1},"size_bytes":100,"health":1000,"params":[["monarr-transfer","t-42-a3f9c1"]],"history_seq":913,"seq":3}`),
 	}, true)
 	c := New(ports.ClientConfig{URL: srv.URL})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -127,18 +125,17 @@ func TestPpFinishedBecomesACompletionWithItsPath(t *testing.T) {
 	}
 }
 
-func TestPpFinishedSuccessWithoutAPathKeepsWaiting(t *testing.T) {
-	srv := newSSE(t, []string{
-		frame("17-1", "job_pp_finished", `{"job":7,"name":"Show","pp_status":"SUCCESS","final_dir":null}`),
-	}, true)
-	c := New(ports.ClientConfig{URL: srv.URL})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ch, _ := c.Subscribe(ctx)
-
-	ev := recv(t, ch)
-	if ev.Kind != ports.EventProgress || ev.Status.State != ports.StateDownloading {
-		t.Fatalf("pathless success = %+v, want a non-terminal wait", ev)
+// Curator reads only the typed terminal. The v1 pp_status/final_dir strings,
+// and a completion that names no publication, are not a terminal: the event
+// is dropped and the ordered history reader supplies the terminal.
+func TestPpFinishedWithoutATypedTerminalIsIgnored(t *testing.T) {
+	for _, data := range []string{
+		`{"job":7,"name":"Show","pp_status":"SUCCESS","final_dir":"/x"}`,
+		`{"job":7,"name":"Show","outcome":"completed"}`,
+	} {
+		if events := translate("job_pp_finished", data, "event-1"); len(events) != 0 {
+			t.Errorf("%s produced %+v, want nothing", data, events)
+		}
 	}
 }
 
@@ -147,9 +144,9 @@ func TestPpFinishedSuccessWithoutAPathKeepsWaiting(t *testing.T) {
 func TestPpFinishedFailureBecomesAFailure(t *testing.T) {
 	srv := newSSE(t, []string{
 		frame("17-4", "job_pp_finished",
-			`{"job":8,"name":"Bad","pp_status":"UNPACK_FAILURE","final_dir":null}`),
+			`{"job":8,"name":"Bad","outcome":"failed","reason":"unpack","message":"UNPACK_FAILURE"}`),
 		frame("17-5", "job_pp_finished",
-			`{"job":9,"name":"Sick","pp_status":"FAILURE/HEALTH","final_dir":null}`),
+			`{"job":9,"name":"Sick","outcome":"failed","reason":"health","message":"FAILURE/HEALTH"}`),
 	}, true)
 	c := New(ports.ClientConfig{URL: srv.URL})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -332,7 +329,7 @@ func TestWrappedDataLinesAreOnePayload(t *testing.T) {
 	srv := newSSE(t, []string{
 		"id: 9-1\nevent: job_pp_finished\n" +
 			`data: {"job":7,"name":"Split",` + "\n" +
-			`data: "pp_status":"SUCCESS","final_dir":"/x"}` + "\n\n",
+			`data: "outcome":"completed","publication":{"path":"/x","generation":"g","manifest_digest":"d","files":1}}` + "\n\n",
 	}, true)
 	c := New(ports.ClientConfig{URL: srv.URL})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -366,13 +363,14 @@ func TestReviewCompletionControlSurvivesPollAndPush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	polled := statusOfHistory(historyEntry{Job: 1, Status: "SUCCESS", FinalDir: "/completed/payload", Params: [][2]string{{"*Control:v1", string(raw)}}})
-	data, err := json.Marshal(map[string]any{"job": 1, "pp_status": "SUCCESS", "final_dir": "/completed/payload", "params": [][2]string{{"*Control:v1", string(raw)}}})
+	data, err := json.Marshal(map[string]any{"job": 1, "outcome": "completed",
+		"publication": map[string]any{"path": "/completed/payload", "generation": "g", "manifest_digest": "d", "files": 1},
+		"params":      [][2]string{{"*Control:v1", string(raw)}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	events := translate("job_pp_finished", string(data), "event-44")
-	if len(events) != 1 || events[0].Kind != ports.EventCompleted || events[0].Status.Control == nil || polled.Control == nil || *events[0].Status.Control != *polled.Control || *polled.Control != control {
-		t.Fatalf("terminal control lost: poll=%+v events=%+v", polled, events)
+	if len(events) != 1 || events[0].Kind != ports.EventCompleted || events[0].Status.Control == nil || *events[0].Status.Control != control {
+		t.Fatalf("terminal control lost: events=%+v", events)
 	}
 }
