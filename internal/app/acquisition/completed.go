@@ -34,16 +34,20 @@ var observeStorageIdentity = expectedStorageIdentity
 // archives, hidden files and symlinks. Bytes are logical file sizes, not a
 // promise of reclaimable disk space (hardlinks and sparse files differ).
 type CompletedEntry struct {
-	Fingerprint     string                    `json:"fingerprint"`
-	Path            string                    `json:"path"`
-	Bytes           int64                     `json:"bytes"`
-	Files           int                       `json:"files"`
-	Status          string                    `json:"status"`
-	Reason          string                    `json:"reason"`
-	LegacyReview    bool                      `json:"legacyReview,omitempty"`
-	DeliveryManaged bool                      `json:"deliveryManaged,omitempty"`
-	ReviewFiles     []CompletedReviewFile     `json:"reviewFiles,omitempty"`
-	Receipts        []sqlite.CompletedReceipt `json:"receipts"`
+	Fingerprint     string `json:"fingerprint"`
+	Path            string `json:"path"`
+	Bytes           int64  `json:"bytes"`
+	Files           int    `json:"files"`
+	Status          string `json:"status"`
+	Reason          string `json:"reason"`
+	LegacyReview    bool   `json:"legacyReview,omitempty"`
+	DeliveryManaged bool   `json:"deliveryManaged,omitempty"`
+	// WholeDeletable: a publication's directory with no manifest evidence
+	// left in it (every manifest file already removed, or an approved
+	// directory with none) — an operator may delete it whole.
+	WholeDeletable bool                      `json:"wholeDeletable,omitempty"`
+	ReviewFiles    []CompletedReviewFile     `json:"reviewFiles,omitempty"`
+	Receipts       []sqlite.CompletedReceipt `json:"receipts"`
 }
 
 // CompletedReviewFile is read-only inventory evidence for a legacy review
@@ -252,6 +256,15 @@ func (s *Service) scanCompletedLocked(ctx context.Context) error {
 			publications[storagePath(filepath.Clean(p.Path), roots)] = p
 		}
 	}
+	unremoved, discardable, err := s.db.PublicationStorageFacts(ctx)
+	if err != nil {
+		return err
+	}
+	for path := range discardable {
+		if canon := storagePath(path, roots); canon != path {
+			discardable[canon] = true
+		}
+	}
 	library, err := s.db.ListRootFolders(ctx)
 	if err != nil {
 		return err
@@ -312,7 +325,7 @@ func (s *Service) scanCompletedLocked(ctx context.Context) error {
 			// Inventory runs in the scheduler, not an HTTP request. Slow network
 			// storage must be allowed to finish; shutdown cancellation and the
 			// entry limit still bound work without discarding progress after 30s.
-			root.Entries, root.Bytes, err = scanCompletedRoot(ctx, path, receipts, remove, scanFences{storageReview: legacyPaths, publications: publications})
+			root.Entries, root.Bytes, err = scanCompletedRoot(ctx, path, receipts, remove, scanFences{storageReview: legacyPaths, publications: publications, unremoved: unremoved, discardable: discardable})
 			if err != nil {
 				root.Error = err.Error()
 			} else if info, err := os.Stat(path); err != nil || operationIdentity == nil || !os.SameFile(operationIdentity, info) {
@@ -361,6 +374,10 @@ func (s *Service) scanCompletedLocked(ctx context.Context) error {
 type scanFences struct {
 	storageReview []string
 	publications  map[string]sqlite.Publication
+	// unremoved counts each publication's manifest files still on disk;
+	// discardable is the files an operator may discard (nil: list them all).
+	unremoved   map[int64]int
+	discardable map[string]bool
 }
 
 func scanCompletedRoot(ctx context.Context, root string, receipts []sqlite.CompletedReceipt, remove map[int64]bool, fences ...scanFences) ([]CompletedEntry, int64, error) {
@@ -447,8 +464,13 @@ func scanCompletedSelection(ctx context.Context, root, selected string, receipts
 				}
 			}
 			classifyCompleted(&e, remove)
-			if pub, ok := fences.publications[top]; ok && !e.LegacyReview {
+			// A publication claims its directory, any directory containing
+			// it and anything inside it: those bytes leave only by the
+			// per-file rule, whatever else fences them.
+			if pub, ok := publicationOverlapping(fences.publications, top); ok {
 				classifyPublication(&e, pub)
+				e.WholeDeletable = filepath.Clean(pub.Path) == filepath.Clean(top) && fences.unremoved != nil && fences.unremoved[pub.ID] == 0 &&
+					pub.State != "discovered" && pub.State != "importing" && (pub.Cohort == "live" || !pub.CleanupApprovedAt.IsZero())
 			}
 			entries = append(entries, e)
 			h := sha256.New()
@@ -479,6 +501,17 @@ func scanCompletedSelection(ctx context.Context, root, selected string, receipts
 	})
 	for i := range entries {
 		entries[i].Fingerprint = hex.EncodeToString(fingerprints[entries[i].Path].Sum(nil))
+		// A publication's directory offers only what may actually be
+		// discarded: its unresolved files (placed ones leave automatically).
+		if entries[i].DeliveryManaged && fences.discardable != nil {
+			kept := entries[i].ReviewFiles[:0]
+			for _, f := range entries[i].ReviewFiles {
+				if fences.discardable[filepath.Clean(f.Path)] && !entries[i].WholeDeletable {
+					kept = append(kept, f)
+				}
+			}
+			entries[i].ReviewFiles = kept
+		}
 	}
 	return entries, total, err
 }
@@ -531,9 +564,15 @@ func classifyCompleted(e *CompletedEntry, remove map[int64]bool) {
 // says which state holds it and why anything is still here.
 func classifyPublication(e *CompletedEntry, pub sqlite.Publication) {
 	e.DeliveryManaged = true
+	if filepath.Clean(e.Path) != filepath.Clean(pub.Path) {
+		e.Status, e.Reason = "retained", "Contains or lies inside publication "+pub.Path+"; its files leave only by their recorded outcome"
+		return
+	}
 	switch {
 	case pub.Cohort == "historical" && pub.CleanupApprovedAt.IsZero():
 		e.Status, e.Reason = "retained", "Historical publication (frozen at the pipeline v2 cutover); nothing deletes it until its review batch is approved"
+	case pub.ManifestSource == "none":
+		e.Status, e.Reason = "retained", "Approved for cleanup, but it has no manifest to remove it file by file; delete it from here"
 	case pub.State == "discovered" || pub.State == "importing":
 		e.Status, e.Reason = "awaiting_import", "Publication is waiting for import"
 	case pub.State == "import_failed":
@@ -541,9 +580,29 @@ func classifyPublication(e *CompletedEntry, pub sqlite.Publication) {
 	default:
 		e.Status, e.Reason = "cleanup_pending", "Publication cleanup is per file; unresolved files remain available in Resolve"
 	}
+	if e.LegacyReview {
+		e.Reason += " — the storage under it was replaced: held for review, nothing is deleted automatically"
+	}
+	if !pub.CleanupPausedAt.IsZero() {
+		e.Reason += " — automatic cleanup paused by an operator"
+	}
 	if pub.Error != "" {
 		e.Reason += " — " + pub.Error
 	}
+}
+
+// publicationOverlapping finds a publication claiming path: the same
+// directory, one containing it, or one inside it.
+func publicationOverlapping(pubs map[string]sqlite.Publication, path string) (sqlite.Publication, bool) {
+	if p, ok := pubs[path]; ok {
+		return p, true
+	}
+	for dir, p := range pubs {
+		if within(dir, path) || within(path, dir) {
+			return p, true
+		}
+	}
+	return sqlite.Publication{}, false
 }
 
 func completedReviewFileIdentity(path string, info os.FileInfo) string {

@@ -83,6 +83,11 @@ func TestMigration0072(t *testing.T) {
 	}
 	_ = fk.Close()
 
+	// The rest reads through the current query layer, which needs the
+	// whole schema (0073 adds columns it scans).
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
 	get := func(id int64) Download {
 		t.Helper()
 		dl, err := db.GetDownload(ctx, id)

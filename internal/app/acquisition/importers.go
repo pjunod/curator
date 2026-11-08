@@ -214,24 +214,26 @@ func (s *Service) enqueueImport(ctx context.Context, dl sqlite.Download, cfg por
 }
 
 // queuePublicationCleanup offers one publication's per-file cleanup to the
-// cleanup lane, so hashing a placed file never holds an import worker. With
-// no workers running (tests, ManualImport) it reports false and the caller
-// runs the cleanup inline.
-func (s *Service) queuePublicationCleanup(publicationID int64) bool {
+// cleanup lane, so hashing a placed file never holds an import worker and the
+// work is visible (queued, then running) and can be paused. With no workers
+// running (tests, ManualImport) it reports false and the caller runs the
+// cleanup inline.
+func (s *Service) queuePublicationCleanup(publicationID int64, reason string) bool {
 	s.importMu.Lock()
 	if s.cleanupCh == nil || s.importCtx == nil {
 		s.importMu.Unlock()
 		return false
 	}
-	if s.publicationCleanupJobs == nil {
-		s.publicationCleanupJobs = map[int64]bool{}
+	if s.publicationCleanups == nil {
+		s.publicationCleanups = map[int64]*publicationCleanupRun{}
 	}
-	if s.publicationCleanupJobs[publicationID] {
+	if s.publicationCleanups[publicationID] != nil {
 		s.importMu.Unlock()
 		return true
 	}
-	jobCtx, cancel := newImportExecution(s.importCtx)
-	s.publicationCleanupJobs[publicationID] = true
+	jobCtx, cancel := newImportExecution(withCleanupReason(s.importCtx, reason))
+	run := &publicationCleanupRun{state: "queued", reason: reason, cancel: cancel}
+	s.publicationCleanups[publicationID] = run
 	job := importJob{ctx: jobCtx, cleanupPublicationID: publicationID, cleanupCancel: cancel}
 	select {
 	case s.cleanupCh <- job:
@@ -239,7 +241,7 @@ func (s *Service) queuePublicationCleanup(publicationID int64) bool {
 		return true
 	default:
 		// The lane is full: the hourly sweep reaches this publication.
-		delete(s.publicationCleanupJobs, publicationID)
+		delete(s.publicationCleanups, publicationID)
 		s.importMu.Unlock()
 		cancel()
 		return true
@@ -342,7 +344,9 @@ func (s *Service) runImportOwned(ctx context.Context, job importJob) {
 				job.cleanupCancel()
 			}
 			s.importMu.Lock()
-			delete(s.publicationCleanupJobs, job.cleanupPublicationID)
+			if r := s.publicationCleanups[job.cleanupPublicationID]; r != nil && r.state == "queued" {
+				delete(s.publicationCleanups, job.cleanupPublicationID)
+			}
 			s.importMu.Unlock()
 		}()
 		if ctx.Err() != nil {
@@ -482,8 +486,8 @@ type importerFields struct {
 	importCtx         context.Context
 	importMu          sync.Mutex
 	importJobs        map[int64]*importTicket
-	// publicationCleanupJobs dedupes queued per-file cleanups.
-	publicationCleanupJobs map[int64]bool
+	// publicationCleanups is every queued or running per-file cleanup pass.
+	publicationCleanups map[int64]*publicationCleanupRun
 }
 
 // watchDownloading keeps the in-flight view honest about the stages Monarr

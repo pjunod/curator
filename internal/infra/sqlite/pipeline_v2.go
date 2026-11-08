@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -372,6 +373,7 @@ type Publication struct {
 	State             string
 	Cohort            string
 	CleanupApprovedAt time.Time
+	CleanupPausedAt   time.Time
 	Error             string
 	DiscoveredAt      time.Time
 	DeadlineAt        time.Time
@@ -393,13 +395,14 @@ type PublicationFile struct {
 	RemovedAt     time.Time
 }
 
-const publicationColumns = `id, COALESCE(download_id,0), generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, cleanup_approved_at, error, discovered_at, deadline_at, updated_at`
+const publicationColumns = `id, COALESCE(download_id,0), generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, cleanup_approved_at, error, discovered_at, deadline_at, updated_at, cleanup_paused_at`
 
 func scanPublication(row interface{ Scan(...any) error }) (Publication, error) {
 	var p Publication
 	var cross int64
-	var approved, discovered, deadline, updated int64
-	err := row.Scan(&p.ID, &p.DownloadID, &p.Generation, &p.Kind, &p.Path, &p.RemotePath, &p.ManifestJSON, &p.ManifestSource, &cross, &p.State, &p.Cohort, &approved, &p.Error, &discovered, &deadline, &updated)
+	var approved, discovered, deadline, updated, paused int64
+	err := row.Scan(&p.ID, &p.DownloadID, &p.Generation, &p.Kind, &p.Path, &p.RemotePath, &p.ManifestJSON, &p.ManifestSource, &cross, &p.State, &p.Cohort, &approved, &p.Error, &discovered, &deadline, &updated, &paused)
+	p.CleanupPausedAt = msTime(paused)
 	p.CrossVolume = cross != 0
 	p.CleanupApprovedAt, p.DiscoveredAt, p.DeadlineAt, p.UpdatedAt = msTime(approved), msTime(discovered), msTime(deadline), msTime(updated)
 	return p, err
@@ -946,7 +949,7 @@ func (d *DB) CountHistoricalPublications(ctx context.Context) (int, error) {
 // file gone and the directory perhaps left behind. The oldest-touched come
 // first so a publication that keeps failing cannot starve the rest.
 func (d *DB) PublicationsToSweep(ctx context.Context, limit int) ([]Publication, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified') AND (cohort='live' OR cleanup_approved_at>0)
+	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified') AND (cohort='live' OR cleanup_approved_at>0) AND cleanup_paused_at=0
 		AND (EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0 AND f.outcome IN ('placed','discarded'))
 		     OR NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0))
 		ORDER BY updated_at, id LIMIT ?`, limit)
@@ -987,6 +990,31 @@ func (d *DB) DemotePublicationFile(ctx context.Context, publicationID int64, pat
 	_, err := d.W.ExecContext(ctx, `UPDATE publication_files SET outcome='unresolved', discard_reason='', reason=?, updated_at=? WHERE publication_id=? AND path=? AND outcome=? AND removed_at=0`,
 		reason, time.Now().UnixMilli(), publicationID, path, fromOutcome)
 	return err
+}
+
+// ClearPublicationCleanupError forgets why an earlier cleanup pass stopped,
+// once a pass gets through with nothing stopped. An import's own reasons
+// (import_failed) are not cleanup's to clear.
+func (d *DB) ClearPublicationCleanupError(ctx context.Context, id int64) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET error='', updated_at=? WHERE id=? AND (error LIKE 'cleanup stopped:%' OR error LIKE 'cleanup kept %')`, time.Now().UnixMilli(), id)
+	return err
+}
+
+// SetPublicationCleanupPaused pauses (or resumes) a publication's automatic
+// cleanup: the sweep and the post-import pass skip a paused publication.
+func (d *DB) SetPublicationCleanupPaused(ctx context.Context, id int64, paused bool) error {
+	at := int64(0)
+	if paused {
+		at = time.Now().UnixMilli()
+	}
+	res, err := d.W.ExecContext(ctx, `UPDATE publications SET cleanup_paused_at=?, updated_at=? WHERE id=? AND state!='removed'`, at, time.Now().UnixMilli(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetPublicationError records why a publication's cleanup stopped, leaving
@@ -1048,4 +1076,45 @@ func (d *DB) ApprovePublicationCleanup(ctx context.Context, ids []int64) (int64,
 // (the completed-storage inventory explains those entries by it).
 func (d *DB) ListPublicationPaths(ctx context.Context) ([]Publication, error) {
 	return d.publicationsWhere(ctx, `state != 'removed'`)
+}
+
+// PublicationStorageFacts is what the completed-storage inventory needs to
+// offer the right action on a publication's directory: how many manifest
+// files are still on disk per publication, and which absolute file paths an
+// operator may discard (unresolved or never imported, not yet removed, on a
+// publication automatic deletion may touch).
+func (d *DB) PublicationStorageFacts(ctx context.Context) (map[int64]int, map[string]bool, error) {
+	unremoved := map[int64]int{}
+	rows, err := d.R.QueryContext(ctx, `SELECT publication_id, COUNT(*) FROM publication_files WHERE removed_at=0 GROUP BY publication_id`)
+	if err != nil {
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			_ = rows.Close()
+			return nil, nil, err
+		}
+		unremoved[id] = n
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, err
+	}
+	discardable := map[string]bool{}
+	rows, err = d.R.QueryContext(ctx, `SELECT p.path, f.path FROM publication_files f JOIN publications p ON p.id=f.publication_id
+		WHERE f.removed_at=0 AND f.outcome IN ('unresolved','pending') AND p.state NOT IN ('removed','discovered','importing')
+		  AND (p.cohort='live' OR p.cleanup_approved_at>0)`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var dir, rel string
+		if err := rows.Scan(&dir, &rel); err != nil {
+			return nil, nil, err
+		}
+		discardable[filepath.Join(dir, filepath.FromSlash(rel))] = true
+	}
+	return unremoved, discardable, rows.Err()
 }

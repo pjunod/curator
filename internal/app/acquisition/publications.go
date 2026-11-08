@@ -624,6 +624,10 @@ func wantableKeys(item domain.MediaItem, copyID int64, season int, episodes []in
 // the backlog.
 const historicalMinAge = 10 * time.Minute
 
+// historicalNoManifestReason explains a frozen directory with no manifest and
+// no download row (the same text migration 0073 writes).
+const historicalNoManifestReason = "frozen at the pipeline v2 cutover with no manifest and no download row: Curator cannot import or clean it file by file; the M7 review decides it, and once approved it can be deleted whole from Storage"
+
 // MarkHistoricalCohort records, once, at the first M2 start, every directory
 // under the completed roots that no publication claims, as a historical
 // publication no automatic deletion touches until the M7 review approves it.
@@ -659,7 +663,13 @@ func (s *Service) MarkHistoricalCohort(ctx context.Context) (int, error) {
 			if err != nil || time.Since(info.ModTime()) < historicalMinAge {
 				continue
 			}
-			if _, err := s.db.InsertPublication(ctx, sqlite.PublicationWrite{Kind: "completed", Path: path, Cohort: "historical", Source: "none"}); err != nil {
+			id, err := s.db.InsertPublication(ctx, sqlite.PublicationWrite{Kind: "completed", Path: path, Cohort: "historical", Source: "none"})
+			if err != nil {
+				return n, err
+			}
+			// No manifest and no row: nothing can import it, so it is not
+			// "discovered" (M4 review finding 3); the M7 review decides it.
+			if err := s.db.SetPublicationState(ctx, id, "import_failed", historicalNoManifestReason); err != nil {
 				return n, err
 			}
 			n++
@@ -686,12 +696,38 @@ func (s *Service) publicationManaged(ctx context.Context, downloadID int64, path
 		}
 	}
 	if path != "" {
-		_, ok, err := s.db.PublicationByPath(ctx, filepath.Clean(path))
+		_, ok, err := s.publicationClaiming(ctx, path)
 		if err != nil || ok {
 			return true
 		}
 	}
 	return false
+}
+
+// publicationClaiming finds the publication that claims path: its own
+// directory, a directory containing it, or one inside it (compared on
+// storage paths, so aliases of the completed roots match).
+func (s *Service) publicationClaiming(ctx context.Context, path string) (sqlite.Publication, bool, error) {
+	path = filepath.Clean(path)
+	if p, ok, err := s.db.PublicationByPath(ctx, path); err != nil || (ok && p.State != "removed") {
+		return p, ok, err
+	}
+	pubs, err := s.db.ListPublicationPaths(ctx)
+	if err != nil {
+		return sqlite.Publication{}, false, err
+	}
+	roots, err := s.completedRoots(ctx, nil)
+	if err != nil {
+		return sqlite.Publication{}, false, err
+	}
+	target := storagePath(path, roots)
+	for _, p := range pubs {
+		dir := storagePath(filepath.Clean(p.Path), roots)
+		if dir == target || within(dir, target) || within(target, dir) {
+			return p, true, nil
+		}
+	}
+	return sqlite.Publication{}, false, nil
 }
 
 // ResolvePublicationFile is a person's decision on one unresolved file:
@@ -769,13 +805,28 @@ func (s *Service) ResolvePublicationFile(ctx context.Context, downloadID, public
 	}
 	if action == "discard" {
 		// The discarded file leaves through the per-file cleanup, with its
-		// checks; a historical publication waits for its review batch.
-		if _, err := s.cleanupPublicationLocked(withForegroundVerification(ctx), pub.ID); err != nil {
-			s.log.Info("discarded file kept for now; the hourly sweep retries", "publication", pub.ID, "file", relPath, "err", err)
+		// checks; a historical publication waits for its review batch. Say
+		// so when it stayed: "discarded" must not read as "deleted".
+		res, err := s.cleanupPublicationLocked(withOperatorCleanup(ctx, "operator discard in Resolve"), pub.ID)
+		if err != nil {
+			return fmt.Errorf("%w; the file stays for now: %w", ErrDiscardedButKept, err)
+		}
+		for _, k := range res.Kept {
+			if strings.HasPrefix(k, relPath+": ") {
+				return fmt.Errorf("%w: %s", ErrDiscardedButKept, k)
+			}
+		}
+		if res.Skipped != "" {
+			return fmt.Errorf("%w; deletion waits: %s", ErrDiscardedButKept, res.Skipped)
 		}
 	}
 	return nil
 }
+
+// ErrDiscardedButKept says a Discard was recorded but the bytes stayed (the
+// per-file evidence did not hold, or deletion has to wait): the file is not
+// deleted, and the reason says why.
+var ErrDiscardedButKept = errors.New("discarded, but kept")
 
 // ErrInvalidResolution refuses a Resolve decision that does not apply.
 var ErrInvalidResolution = errors.New("invalid resolution")
