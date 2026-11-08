@@ -1222,8 +1222,8 @@ hours of measured time at each seam (the design is
 
 | Tile | Starts | Ends |
 |---|---|---|
-| Failure to next grab | the replacement grab worker attempted the first search for a failure | the replacement was submitted, or a season job was queued for an episode with no single release. A failure with nothing better to grab records nothing |
-| Download done to imported | the finished payload is handed to import (for a client with manual approval: when you approve it) | the library import completed |
+| Failure to next grab | Runner's failure is recorded and a replacement is due (the same transaction) | the replacement was submitted, or a season job was queued for an episode with no single release. A failure with nothing better to grab is dropped, not counted |
+| Download done to imported | Runner's completed terminal is recorded (for a client with manual approval: when you approve it), so a publication waiting for its manifest is measured | the library import completed |
 | Imported to visible in Cinema | the import completed | Cinema reports the files placed — **not measured yet, needs M5**; the tile says so and shows no numbers |
 
 Each tile shows p50 and p95 of the timings that finished, how many finished,

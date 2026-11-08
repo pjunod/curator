@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -311,6 +312,12 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 			detail += fmt.Sprintf(" (mapped to %s)", mapped)
 		}
 		w.Handoff = &sqlite.HandoffEntry{Step: stepDownloaded, At: now.UnixMilli(), Detail: traced(detail, source)}
+		// The import clock starts when Runner's terminal arrives, in the same
+		// transaction (a publication waiting hours for its manifest is
+		// measured); a row held for approval starts it at approval instead.
+		if !cfg.ManualApproval && s.timings != nil {
+			w.TimingStarts = append(w.TimingStarts, sqlite.TimingStart{Kind: pipeline.RunnerDoneToImport, Transfer: pipeline.Key(dl.Transfer, dl.ID), DownloadID: dl.ID})
+		}
 	case ports.OutcomeCancelled:
 		w.State = "failed"
 		w.Error = "cancelled in " + clientLabel(cfg)
@@ -360,6 +367,11 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 		}
 		if wants, why := s.replacementDue(dl, t, provisional); len(wants) > 0 {
 			w.ReplacementGrab = &sqlite.ReplacementGrabWrite{WantableIDs: wants}
+			// failure_to_next_grab starts with the failure itself; the grab
+			// worker ends it on submit or discards it with nothing to grab.
+			if s.timings != nil {
+				w.TimingStarts = append(w.TimingStarts, sqlite.TimingStart{Kind: pipeline.FailureToNextGrab, Transfer: pipeline.Key(dl.Transfer, dl.ID), DownloadID: dl.ID})
+			}
 			if dl.PlanID != 0 {
 				w.ReplanPlanID = dl.PlanID
 			}

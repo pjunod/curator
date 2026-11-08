@@ -201,11 +201,11 @@ type Service struct {
 	// The reducer's in-memory clocks (pipeline v2): when a row was first
 	// absent from a successful poll (gone grace) and first answered "no such
 	// token" (submitting). A restart restarts them, which only waits longer.
-	absentSince   sync.Map // download id -> time.Time
+	absentSince sync.Map // download id -> time.Time
 	// queueTokens is each Runner client's handle -> transfer token map from
 	// its last successful queue poll: the only evidence that lets a fact
 	// carrying a handle but no token reach a row (review #3).
-	queueTokens sync.Map // client id -> map[string]string
+	queueTokens   sync.Map // client id -> map[string]string
 	notFoundSince sync.Map // download id -> time.Time
 	// grabKick wakes the replacement grab worker; nil until it starts, and
 	// then a failure's grab runs inline (tests, tools).

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -985,5 +986,43 @@ func TestHandleOnlyFactNeedsTheQueueToken(t *testing.T) {
 	hold()
 	if got := f.row(dl.ID); got.State != "held" || got.Error != "waiting for disk" {
 		t.Fatalf("a vouched handle-only hold = %s %q, want held", got.State, got.Error)
+	}
+}
+
+// (review #5) Both timings start when Runner's terminal is recorded: a
+// completion whose manifest has not landed is already being timed, and a
+// failure's clock runs before the grab worker's first search.
+func TestTimingsStartAtTerminalReceipt(t *testing.T) {
+	f := setupV2(t, []ports.Release{rel("Test.Show.S01E02.1080p.WEB-DL.x264-OTHER", 10)})
+	f.svc.SetTimings(pipeline.New(f.db))
+	open := func(kind string, dl sqlite.Download) int {
+		return f.count(`SELECT COUNT(*) FROM pipeline_timings WHERE kind=? AND transfer=? AND ended_at=0`, kind, dl.Transfer)
+	}
+	done := f.grab(1, epOne)
+	dir := filepath.Join(f.root, "Test.Show.S01E01.job-101.runner-tim")
+	writeCompleted(t, filepath.Join(dir, epOne+".mkv"), 5) // no manifest yet
+	pub := ports.RunnerPublication{Path: dir, Generation: "tim", Kind: "completed"}
+	f.observe(done, terminalFact(done, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	if n := open("runner_done_to_import", done); n != 1 {
+		t.Fatalf("runner_done_to_import open = %d, want started at the terminal while the manifest is missing", n)
+	}
+	failedRow := f.grab(2, epTwo)
+	f.deferGrabs()
+	f.observe(failedRow, terminalFact(failedRow, failed(ports.ReasonHealth, true), "event 2"))
+	if n := open("failure_to_next_grab", failedRow); n != 1 {
+		t.Fatalf("failure_to_next_grab open = %d, want started with the failure", n)
+	}
+	f.svc.RunReplacementGrabs(f.ctx)
+	if n := f.count(`SELECT COUNT(*) FROM pipeline_timings WHERE kind='failure_to_next_grab' AND transfer=? AND ended_at>0`, failedRow.Transfer); n != 1 {
+		g, _, _ := f.db.GetReplacementGrab(f.ctx, failedRow.ID)
+		t.Fatalf("the grab worker did not end failure_to_next_grab on submit (grab %+v)", g)
+	}
+	// An indexer outage writes no grab, so no clock.
+	other := f.grab(1, "Test.Show.S01E01.720p.WEB-DL.x264-ALT")
+	tm := failed(ports.ReasonFetch, false)
+	tm.FetchCause = ports.FetchCauseIndexerUnavailable
+	f.observe(other, terminalFact(other, tm, "event 3"))
+	if n := f.count(`SELECT COUNT(*) FROM pipeline_timings WHERE kind='failure_to_next_grab' AND transfer=?`, other.Transfer); n != 0 {
+		t.Fatal("an indexer outage started failure_to_next_grab")
 	}
 }

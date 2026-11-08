@@ -151,9 +151,6 @@ func (s *Service) runReplacementGrab(ctx context.Context, g sqlite.ReplacementGr
 			if episode {
 				allowed = exactWantedCandidate // a replacement for an episode is never a pack
 			}
-			// The clock starts at the first search actually attempted (M0
-			// semantics: first start wins; nothing to search records nothing).
-			s.timings.Start(ctx, pipeline.FailureToNextGrab, key, dl.ID)
 			tally, err := s.searchAndGrabBestScoped(ctx, target, enabled, allowed, nil)
 			if err != nil {
 				lastErr = err
