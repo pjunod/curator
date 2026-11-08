@@ -1,11 +1,13 @@
 # Download lifecycle — what is broken and how ownership should work
 
+> Archived 2026-11-08. The notification and acknowledgement sections (4.1-4.2) are superseded by [PIPELINE_CONTRACT.md](../PIPELINE_CONTRACT.md); the shipped behavior is in [integration.md](../integration.md) and [usage.md](../usage.md). Kept as history.
+
 **Status:** operating behavior approved; implementation authorized on 2026-10-22;
-see [implementation status](DOWNLOAD_LIFECYCLE_STATUS.md); not deployed  
+see [implementation status](../DOWNLOAD_LIFECYCLE_STATUS.md); not deployed  
 **Inspected:** 2026-10-22 · **Scope:** Runner, Curator, their shared handoff,
 storage cleanup, manual grabs, and search limits
 
-Companion to [the existing recovery ADR](adr/0021-file-lifecycle-recovery.md)
+Companion to [the existing recovery ADR](../adr/0021-file-lifecycle-recovery.md)
 and [the earlier Runner investigation](RUNNER_FAILURE_DIAGNOSIS.md).
 This document proposes replacing parts of those operating rules. It does not
 claim the proposal is current behavior. Resolve the operating contract here
@@ -14,7 +16,7 @@ Section 1.2 records the user-directed requirements. The flows describe the
 proposed design for meeting them; §9 separates remaining engineering
 specification from settled behavior. Implementation is authorized; existing
 backlog mutations still require review and approval of concrete action batches.
-The [replacement API draft](BAD_DOWNLOAD_API.md) supplies the Cinema wire
+The [replacement API draft](../BAD_DOWNLOAD_API.md) supplies the Cinema wire
 contract, while §6.3 describes that operation here in the overall lifecycle.
 
 ## 1. Conclusion — completion currently stops before responsibility ends
@@ -363,7 +365,7 @@ cannot grant this replay authority.
 
 ### 4.1 Communication — durable facts instead of a fragile notification
 
-**Status:** superseded 2026-11-07 by [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) (§3 runner facts, §3.4 publications). Kept as history.
+**Status:** superseded 2026-11-07 by [PIPELINE_CONTRACT.md](../PIPELINE_CONTRACT.md) (§3 runner facts, §3.4 publications). Kept as history.
 
 Reuse the existing transfer identifier and journals. The minimum shared facts
 are request/attempt ID, purpose, payload generation, published path, file list,
@@ -405,7 +407,7 @@ the source: late notifications cannot recreate finished work.
 
 ### 4.2 Handoff and cleanup are independently retryable steps
 
-**Status:** superseded 2026-11-07 by [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) (§3.4 publications and per-file outcomes). Kept as history.
+**Status:** superseded 2026-11-07 by [PIPELINE_CONTRACT.md](../PIPELINE_CONTRACT.md) (§3.4 publications and per-file outcomes). Kept as history.
 
 **User direction, 2026-10-22:** show handoff and cleanup as explicit steps,
 including their time spent, and make both retryable.
@@ -736,7 +738,7 @@ preserving the good episodes. At the time the user requests episode replacement,
 ask whether to also blacklist the source pack. Replacing an episode's quality
 does not imply the pack is corrupt. Runner and Curator implementation are in
 scope; Cinema's integration is separate against the documented API.
-See [the proposed API contract](BAD_DOWNLOAD_API.md) for the integration shape.
+See [the proposed API contract](../BAD_DOWNLOAD_API.md) for the integration shape.
 Neither the endpoint nor this workflow is implemented by this proposal.
 
 **Agreed, 2026-10-22:** remove selected bad media immediately rather than waiting
@@ -1035,8 +1037,8 @@ on the running applications' Classic layout, inspected in the browser.
 | Runner Files table | Replace age-based retention explanations with recoverability, explicit Keep, ownership, and concrete next action |
 
 The original interactive previews are saved with these docs:
-[Runner existing-layout proposal](renderings/download-lifecycle/runner-proposal.html)
-and [Curator existing-layout proposal](renderings/download-lifecycle/curator-proposal.html).
+[Runner existing-layout proposal](../renderings/download-lifecycle/runner-proposal.html)
+and [Curator existing-layout proposal](../renderings/download-lifecycle/curator-proposal.html).
 Open the HTML files in a browser to inspect their simulated controls. They are
 design references; the implementation captures below show the built candidate.
 
@@ -1052,15 +1054,15 @@ browser-test data at 390px and 1280px. They preserve the existing application
 layout. The primary reviewed the captures after the web assets were rebuilt;
 focused browser tests check action visibility, selection scope, keyboard focus
 and dismissal. Full integration validation is tracked separately in
-[implementation status](DOWNLOAD_LIFECYCLE_STATUS.md).
+[implementation status](../DOWNLOAD_LIFECYCLE_STATUS.md).
 
 | Surface | Desktop | Phone |
 |---|---|---|
-| Resolve: review exact files and destination | [1280px](renderings/download-lifecycle/resolve-1280.png) | [390px](renderings/download-lifecycle/resolve-390.png) |
-| Replacement: review scope and choose source blacklist behavior | [1280px](renderings/download-lifecycle/replacement-1280.png) | [390px](renderings/download-lifecycle/replacement-390.png) |
-| Handoff history: identify completed folder and inspect attempts | [1280px](renderings/download-lifecycle/lifecycle-1280.png) | [390px](renderings/download-lifecycle/lifecycle-390.png) |
+| Resolve: review exact files and destination | [1280px](../renderings/download-lifecycle/resolve-1280.png) | [390px](../renderings/download-lifecycle/resolve-390.png) |
+| Replacement: review scope and choose source blacklist behavior | [1280px](../renderings/download-lifecycle/replacement-1280.png) | [390px](../renderings/download-lifecycle/replacement-390.png) |
+| Handoff history: identify completed folder and inspect attempts | [1280px](../renderings/download-lifecycle/lifecycle-1280.png) | [390px](../renderings/download-lifecycle/lifecycle-390.png) |
 
-![Resolve with one episode selected and its sibling preserved](renderings/download-lifecycle/resolve-1280.png)
+![Resolve with one episode selected and its sibling preserved](../renderings/download-lifecycle/resolve-1280.png)
 
 The screenshots do not authorize changes to existing backlog files. Their
 inventories and replacement observations are disposable test fixtures.
@@ -1094,13 +1096,13 @@ Implementation of this consolidated proposal was authorized on 2026-10-22.
 
 | Detail | Agreed mechanism and reference |
 |---|---|
-| Handoff protocol mechanics | Admission negotiates `deliveries-v1`; selected publication commits before an immutable Delivery record and independent source cleanup. Exact identity acceptance and per-file Curator receipts survive restart. See Runner's `docs/CURATOR_DELIVERY.md` and [implementation status](DOWNLOAD_LIFECYCLE_STATUS.md). |
+| Handoff protocol mechanics | Admission negotiates `deliveries-v1`; selected publication commits before an immutable Delivery record and independent source cleanup. Exact identity acceptance and per-file Curator receipts survive restart. See Runner's `docs/CURATOR_DELIVERY.md` and [implementation status](../DOWNLOAD_LIFECYCLE_STATUS.md). |
 | Recoverability | Finalized segment/integrity evidence, verified transform output, and actual PAR damage/block accounting establish recovery paths. Diagnosis caps source entries at 100,000 and parsed PAR metadata at 64 MiB; unknown names receive at most a 4 KiB signature read. I/O errors and exhausted diagnostic budgets block disposal. See Runner's `docs/CURATOR_DELIVERY.md`. |
-| Storage verification mechanism | Persist expected mounted-source identity rather than transient mount/device numbering; retry observations automatically. Missing-file actions require prior trusted library-storage evidence. See [implementation status](DOWNLOAD_LIFECYCLE_STATUS.md). |
-| API mechanics | Existing authenticated client connections negotiate delivery and request-token idempotency capabilities. Immutable provenance is distinct from mutable cleanup status. Exact-generation library observations precede explicit replacement; reports remain review-only. See [Cinema integration contract](BAD_DOWNLOAD_API.md). |
+| Storage verification mechanism | Persist expected mounted-source identity rather than transient mount/device numbering; retry observations automatically. Missing-file actions require prior trusted library-storage evidence. See [implementation status](../DOWNLOAD_LIFECYCLE_STATUS.md). |
+| API mechanics | Existing authenticated client connections negotiate delivery and request-token idempotency capabilities. Immutable provenance is distinct from mutable cleanup status. Exact-generation library observations precede explicit replacement; reports remain review-only. See [Cinema integration contract](../BAD_DOWNLOAD_API.md). |
 
 These mechanisms implement the agreed behavior. Their runtime validation and
-remaining gate findings are recorded in [implementation status](DOWNLOAD_LIFECYCLE_STATUS.md);
+remaining gate findings are recorded in [implementation status](../DOWNLOAD_LIFECYCLE_STATUS.md);
 this proposal is not a claim that a check passed.
 If a technical limitation requires changing settled behavior, bring that specific
 conflict back for review before implementing the change.

@@ -1,5 +1,7 @@
 # Download failure review — adversarial findings and dispositions
 
+> Archived 2026-11-08. Review of the Runner PR #247 proposal; superseded by [PIPELINE_CONTRACT.md](../PIPELINE_CONTRACT.md). Kept as history.
+
 **Status:** revised proposal reviewed · **Reviewed:** 2026-09-30
 
 Companion to the [root-cause and fix plan](RUNNER_FAILURE_FIX_PLAN.md) and

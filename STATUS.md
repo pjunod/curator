@@ -1,5 +1,76 @@
 # Monarr — Project Status
 
+## Pipeline contract v2, M6a (curator part): one retry ladder, dead fields out, docs rewritten — 2026-11-08 · v0.42.0
+
+**Status:** branch `claude/pipeline-v2-m6a-curator`, stacked on
+`claude/pipeline-v2-m5-curator` (#97, `b2afde9`), so it merges **right after
+#97** · owner: Claude (Sonnet builder) · pushed, **no PR** (by instruction), not
+reviewed, not merged, not deployed. Nothing here depends on a Runner release.
+M6b (`claude/pipeline-v2-m6b-curator`, stacked on this) is the deploy-gated
+half and is **not** safe to merge with it.
+
+Built (plan M6 curator items 2 and 3, IMPL_CURATOR section 8):
+
+- **One retry ladder.** `internal/domain/backoff` (`Ladder.After(tries)`,
+  `Retry` and `Outbox`) replaces four private ladders: runner submission and
+  manual admission (`infra/sqlite`), the blocked-import retry
+  (`acquisition/importretry.go`) and the notification outbox
+  (`notify/deliver.go`). A table test keeps each old function verbatim and
+  proves the same sequence over 40 attempts (`TestLaddersMatchTheSchedulesTheyReplaced`).
+  The import-retry test seam (`importRetryBackoff = 0`) is untouched.
+- **`measured` and `note` deleted** from `GET /system/pipeline`: OpenAPI schema,
+  generated code (`make gen-api`), handler, the web `measured: false` tile
+  branch and its test, and the "until pipeline M5" note. The `parkedReason`
+  description no longer says "Removed in M4" (it was not: season custody and
+  non-Runner clients still use it).
+- **`docs/integration.md` rewritten** from the contract: the milestone-by-
+  milestone sections (M2, M4, M5) and the superseded "Durable job control
+  contract (v1)" are folded into numbered seams (facts and terminals, held jobs,
+  publications and per-file cleanup, Cinema sub-deliveries), the transfer token
+  is described as opaque (`t-<id>-<32 hex>`), and a literals table is checked by
+  `internal/docs` (event names, both ladders, deadlines, lane width, scope,
+  timing kinds).
+- **`docs/README.md`** indexes every file under `docs/`; `internal/docs` fails
+  when a file is not listed, an ADR is missing from `docs/adr/README.md`, or any
+  relative link (and heading anchor) in `README.md` or `docs/**/*.md` does not
+  resolve. It found and fixed one anchor that was already broken
+  (`smart-media-discovery-m0c-probe.md`).
+- **Archive**: `plan-integration.md`, `DOWNLOAD_LIFECYCLE_PROPOSAL.md` and the
+  five `RUNNER_FAILURE_*` files moved to `docs/archive/` (`git mv`), each with a
+  one-line pointer; every link the move broke is rewritten (README, five docs,
+  PIPELINE_CONTRACT, status.html). ADR 0026 gains cross-links and an addendum;
+  the ADR index lists 0024 and 0025, which it had missed.
+
+Deleted (non-test, non-generated): the four private ladders, the
+`measured`/`note` code in Go, TypeScript and OpenAPI (generated file -6 lines),
+and from `docs/integration.md` the milestone narratives and the v1 control
+contract (308 lines removed, 381 added: 946 to 1019 lines, because the new
+sections state facts the old page left to the contract).
+
+Moved to M6b (deploy-gated, not done here): the dead v1 receipt writers and
+readers in `infra/sqlite/delivery_receipts.go`, the `translate()` legacy
+branches, and the `v1_record` source. They are read by the v1 adapter and the
+receipt screens until the tables go, so deleting only the writers would leave
+test fixtures with no production code to exercise.
+
+Not removed on purpose: `RemoveFileRequest.Blocklist`/`Search` (marked
+Deprecated in Go): they are the old remove endpoint's wire shape and are
+rejected explicitly, not dead code from M2/M4/M5.
+
+Verified (fast lane): `go build ./...`; `go vet` and `go test` of
+`internal/domain/backoff`, `internal/docs`, `internal/app/notify`,
+`internal/app/acquisition`, `internal/app/pipeline`, `internal/infra/sqlite`,
+`internal/api`; `gofmt -l`; web `tsc --noEmit` and `vitest run src/api.test.ts`.
+Not run (by instruction): `make test`, `make test-web`, `make test-e2e`, the
+coverage floor.
+
+Decisions for Paul: the ladder helper is `internal/domain/backoff`, not
+`internal/app/pipeline/backoff.go` as the plan says: `internal/app/pipeline`
+imports `internal/infra/sqlite`, and the submission and admission deadlines are
+computed inside sqlite, so a pipeline-package helper would be an import cycle.
+Version bumped to 0.42.0 (a removed API field and a new test package are more
+than a patch; M2/M4/M5 each took a minor).
+
 ## Pipeline contract v2, M5 (curator part): outbox sub-deliveries and read-back — 2026-11-07 · v0.41.0
 
 **Status:** [PR #97](https://github.com/pjunod/curator/pull/97) on
@@ -11,7 +82,7 @@ section 4 / section 6 and checked against cinema's real handlers (Forgejo
 
 M6 follow-up: the `measured` field of `GET /system/pipeline` is now always
 true (every seam has an end), so the web `measured: false` tile branch and the
-OpenAPI "until pipeline M5" note are dead; M6 deletes them.
+OpenAPI "until pipeline M5" note are dead; deleted in M6a (v0.42.0).
 
 Built (plan M5 curator items 1-4, IMPL_CURATOR section 7):
 

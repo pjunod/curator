@@ -6,6 +6,13 @@
 and the per-row admission-receipt pacing · **Contract:**
 [PIPELINE_CONTRACT.md](../PIPELINE_CONTRACT.md) section 3
 
+**Read with:** [integration.md](../integration.md) (the operator reference:
+facts and terminals are section 4, publications and cleanup section 5,
+Cinema section 6) · [ADR 0021](0021-file-lifecycle-recovery.md) (partly
+superseded by this record) · [ADR 0025](0025-import-cancellation-and-deployment-drain.md)
+(import cancellation, unchanged) · the superseded plans are kept in
+[../archive/](../archive/) with a pointer to this record.
+
 ## Context
 
 Curator decided a Runner download's fate from three overlapping sources (the
@@ -107,3 +114,23 @@ Consequences: the receipt-bound cleanup ledger, explicit deletion batches and
 their abandon action are gone; Activity retention hides rather than deletes a
 row whose publication still has files on disk; non-Runner clients keep their
 whole-payload cleanup, which never touches a publication directory.
+
+## Addendum — M5 and M6a, the outbox and the deletion pass (v0.41.0, v0.42.0)
+
+13. **The outbox is the only path to Cinema** (contract section 4): one
+    `notifier_deliveries` sub-delivery per (notifier, publication, directory),
+    written in the import's transaction, sent with an attempt-numbered
+    `request_key` and `expected_files`, and done only when Cinema reports every
+    file placed with the recorded bytes and `mtime_ns`. The bus carries no
+    import notification.
+14. **One retry ladder helper** (`internal/domain/backoff`) spaces runner
+    submission, manual admission, the blocked-import retry and the outbox;
+    each caller's schedule is unchanged. It is a domain package because the
+    submission deadlines are computed inside `infra/sqlite`, which
+    `internal/app/pipeline` imports.
+15. **`GET /system/pipeline` no longer has `measured` or `note`**: every seam
+    has an end, so the field could only ever be true.
+16. **The integration page was rewritten from the contract** and the
+    superseded plans moved to `docs/archive/`; `docs/README.md` indexes every
+    file and `internal/docs` fails the build when an index entry or a link
+    goes stale.

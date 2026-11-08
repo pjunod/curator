@@ -23,9 +23,9 @@ func (s *Server) PipelineSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, k := range sum.Timings {
 		t := apigen.PipelineTiming{
-			Kind:     apigen.PipelineTimingKind(k.Kind),
-			Samples:  k.Samples,
-			Waiting:  k.Waiting,
+			Kind:    apigen.PipelineTimingKind(k.Kind),
+			Samples: k.Samples,
+			Waiting: k.Waiting,
 		}
 		if k.Samples > 0 {
 			p50, p95 := k.P50.Seconds(), k.P95.Seconds()

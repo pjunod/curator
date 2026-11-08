@@ -27,8 +27,10 @@ accepted; a change of course gets a new ADR that supersedes the old one.
 | [0020](0020-one-folder-one-item.md) | One folder, one library item: same-named works get `{tmdb-N}` folders | Accepted |
 | [0022](0022-audio-language.md) | Audio language is a profile criterion: a requirement, not a rank | Accepted |
 | [0023](0023-smart-media-discovery.md) | Bounded series recommendations with optional local ranking | Accepted |
+| [0024](0024-season-acquisition.md) | Saturated episode outcomes and season acquisition | Proposed |
+| [0025](0025-import-cancellation-and-deployment-drain.md) | Durable import cancellation and deployment drain | Design reviewed; implementation in progress |
 | [0026](0026-pipeline-contract-v2.md) | Pipeline contract v2: Runner facts, provisional terminals, publications | Accepted |
 
 Context for all of these lives in [../architecture.md](../architecture.md).
 
-- [0021: Durable Runner recovery handoff](0021-file-lifecycle-recovery.md) — placement journal, target revision and receipt-driven cleanup.
+- [0021: Durable Runner recovery handoff](0021-file-lifecycle-recovery.md) — placement journal, target revision and receipt-driven cleanup (partly superseded by [0026](0026-pipeline-contract-v2.md)).

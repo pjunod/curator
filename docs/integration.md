@@ -1,14 +1,19 @@
 # Integration — Monarr's seams with nzbd and plurx, and how to prove they work
 
-> **Being replaced by** [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) (pipeline contract v2,
-> 2026-11-07). The contract wins wherever it disagrees with this page; the seams
-> described below are rewritten milestone by milestone and this page is retired
-> when the last one lands.
+This page is the operator reference for the pipeline: what each seam does,
+where you look at it, and the exact command that proves it. The design it
+implements is [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) (pipeline contract
+v2) and the decision record is [ADR 0026](adr/0026-pipeline-contract-v2.md);
+where this page and the contract disagree about intent the contract wins, and
+where they disagree about a literal the code wins and this page is a bug.
+[settings.md](settings.md) lists every field; [usage.md](usage.md) is the
+walkthrough of the screens. Every other document is listed in
+[README.md](README.md).
 
-Companion to [plan-integration.md](plan-integration.md) (the master plan and
-why each seam exists) and [settings.md](settings.md) (every field) — this is
-*what each seam does, where you look at it, and the exact command that proves
-it*.
+Names: **Runner** is nzbd (the downloader), **Cinema** is plurx (the player),
+**Curator** is Monarr (this application). The code, the API and the screens use
+the product names (`nzbd`, `plurx`, `monarr_*`); the contract and the status
+pages use the role names. They mean the same processes.
 
 Monarr is the **middle** of a three-application pipeline. It is the only one
 that talks to both of the others, and the only one that holds the identifier
@@ -16,222 +21,22 @@ tying a grab to a playable file. When something in the chain is broken, Monarr
 is where you look first — not because it is the likely culprit, but because it
 is the only vantage point that sees both directions.
 
-## Pipeline contract v2 in Curator (M2, v0.39.0)
+## How one download moves
 
-What changed for Runner clients, in the order a download meets it (the design
-is [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) section 3; the decision record is
-[ADR 0026](adr/0026-pipeline-contract-v2.md)):
+| Step | Who owns it | Where you see it | Section |
+|---|---|---|---|
+| Grab: Monarr picks a release, mints a **transfer token**, submits it to Runner | Monarr | Activity row `grabbed`, `submission_phase` | [3](#3-the-transfer-token--one-identifier-grab-to-playable) |
+| Runner downloads, repairs, unpacks; Monarr is told as **facts** (stream) and checks them by polling | Runner states, Monarr records | Activity progress, System → Connections | [2](#2-nzbd-event-stream-and-the-poll--latency-never-correctness), [4](#4-facts-terminals-and-the-next-grab) |
+| A **terminal** (`completed`, `failed{reason}`, `cancelled`) is recorded exactly once | Monarr's reducer | Activity trace; `downloads.runner_outcome` | [4](#4-facts-terminals-and-the-next-grab) |
+| A failure that blames the release is **the next grab** | Monarr | Activity: replacement grab; history `failure_to_next_grab` | [4](#4-facts-terminals-and-the-next-grab) |
+| Completed bytes are a **publication**: a directory plus its manifest, imported per file | Runner publishes, Monarr imports | Activity → publication, Storage | [5](#5-publications-import-and-per-file-cleanup) |
+| Each placed directory becomes a **sub-delivery** to Cinema, read back until every file is visible | Monarr's outbox | Settings → Notifications → Delivery log | [6](#6-telling-cinema--one-verified-delivery-per-directory) |
 
-- **Facts, one reducer.** Every observation of a Runner job — an SSE event,
-  a queue row, a history row, a `/deliveries` row, a request receipt — is a
-  *fact* (`admitted`, `status`, `terminal`, `publication_ready`, `gone`), and
-  one function applies them all. A fact is admitted only when its `transfer`
-  token equals the row's; a mismatch (a job id reused after a Runner state
-  wipe) is dropped and counted as `monarr_runner_fact_mismatch_total`. An
-  event without a token falls back to the job handle.
-- **A terminal is recorded once.** `downloads.runner_outcome` is set by one
-  guarded write; in the same transaction Curator writes the work it implies:
-  a `publications` row for `completed`, a `replacement_grabs` row for a
-  failure that re-grabs, the blocklist entry when `blames_release`, the
-  history row. A replay from the other feed is a no-op. A status never moves
-  a terminal row; a terminal ends a hold unconditionally.
-- **Curator's own terminals are provisional**: `failed{submit}` (ten minutes
-  of Runner positively answering "no such token" — an unreachable Runner does
-  not count), `failed{lost}` (ten minutes of successful polls with the job in
-  no feed and no receipt) and rows migrated from the old parks
-  (`failed{parked: …}`). Any later Runner fact re-opens them. Curator never
-  writes `hold_expired`: a hold past Runner's `deadline_in_s` plus five
-  minutes (24 hours when an older Runner sends none) is shown as
-  **held (stale)** and reconciled through the request receipt.
-- **The history cursor** (`runner_history_cursors`: incarnation, since_seq)
-  is advanced only by the poll's ordered reader, after its page commits.
-  `GET /api/v1/history?since_seq=&limit=100` replaces the old `limit=100`
-  re-read. A changed incarnation, a cursor below `retained_min_seq` or no
-  stored cursor at all (the first M2 start) looks every outstanding transfer
-  up via `GET /request-admissions/<token>` and sets the cursor to Runner's
-  head. Events never move the cursor.
-- **`/deliveries` is read with `include_accepted=true`**, only to raise
-  facts: a `completed` row the stream missed, a `salvage` row (or any row for
-  a download Runner finally failed) as `publication_ready`. Curator no longer
-  acknowledges deliveries; the lease/verify/ack/import cycle is gone.
-- **Publications are the import unit**, one per Runner generation, each with
-  its own state (`discovered → importing → imported | import_failed`) and a
-  per-file outcome: `placed`, `discarded{superseded|duplicate|rejected}`, or
-  `unresolved` (retained, decided in Activity). The manifest comes from the
-  publication's `.runner-manifest.json`, else from Runner's v1 delivery
-  record (the **v1 adapter**); a directory with neither waits and is checked
-  again each poll; six hours in `discovered`/`importing` is
-  `import_failed{stalled}`. The digest is verified once, at import, when the
-  publication was copied across volumes.
-- **Which attempt wins a destination** is Curator's own record
-  (`wantable_attempts`: the download it last chose for each wantable), never
-  generation ids or arrival time. A file from another attempt is
-  `discarded{superseded}` when the library already holds the current
-  attempt's file, otherwise `unresolved`; no record is `unresolved`.
-- **Failure is the next grab.** The replacement grab worker (every 5 s)
-  executes `replacement_grabs`: a movie or book is searched; an episode is
-  searched for a single-episode release, never a pack; an episode with no
-  single release goes to the season planner. `cancelled`, `lost` and
-  `fetch{indexer_unavailable}` write no grab; only `blames_release` failures
-  blocklist and spend fetched bytes against the re-grab budget. A
-  `ReplacementOperation` advances with the failed bytes retained.
-- **The historical cohort.** Every v1 receipt (accepted or not) and every
-  completed directory present at the first M2 start is a `historical`
-  publication. It imports like any other; nothing deletes it until its M7
-  review batch is approved.
+Three timings measure the seams — `failure_to_next_grab`,
+`runner_done_to_import`, `import_to_cinema_visible` — plus an overdue count,
+all on System → Connections (`GET /api/v1/system/pipeline`, see
+[Metrics](#metrics)).
 
-What Curator no longer does with Runner: acknowledge deliveries, pace receipt
-lookups per row, park on receipt shapes, refuse controls by revision, wait for
-Runner's cleanup before re-grabbing, or ask Runner to clean its source.
-
-## Pipeline contract v2: telling Cinema (M5, v0.41.0)
-
-What changed between an import and Cinema ([PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md)
-section 4; seams [4](#4-plurx-targeted-scan--this-exact-folder-changed) and
-[5](#5-delivery-queue--the-notification-survives-a-restart) below say how to
-look at it):
-
-- **An outbox, not the bus.** Every notification of an import is a
-  `notifier_deliveries` row written in the import's own transaction — the
-  publication's completing transaction, or, for a legacy client or a manual
-  import, the one that writes its `imported` history row. Nothing travels the
-  in-memory bus to be dropped when a subscriber's 32 slots are full.
-  (`ImportCompleted` is still published as the UI's live signal; nobody is
-  notified from it.) A chat notifier (webhook, Discord) and a Plex/Jellyfin
-  poke get one row each, attempted once.
-- **One sub-delivery per directory.** Cinema gets one row per `(notifier,
-  publication, directory)`, keyed `<transfer>/<generation>/<dir-hash>`
-  (the first 16 hex of sha256 of the directory), carrying the media files the
-  import placed under that directory with their `bytes` and `mtime_ns` as they
-  stood once placed. Cinema takes at most 64 expected files (and 16 KiB of
-  them) a request, so a bigger directory sends its largest, newest 64 and the
-  log says `(verified 64 of 91 files)`. Each row has its own 20 s deadline per
-  attempt, and each notifier is its own lane of up to four deliveries in
-  flight: three slow directories are posted side by side, none starves the
-  others, a slow third one never makes the first two be posted again, and a
-  Discord timing out never holds Cinema's rows behind it. Importing the same
-  directory of the same publication again refreshes the row and advances its
-  attempt.
-- **The request.** `POST /api/v1/scan` carries, beside the unchanged body,
-  `request_key: "<key>/<attempt>"`, `expected_files` and `wait_ms: 10000`.
-  Cinema answers a repeated key with the same request and result, so a lost
-  response does not create a second scan. The attempt is **reused** after an
-  ambiguous outcome (a timeout, a connection error, no response, 429, a 502 or
-  504, a plain 503) and **advanced** after a confirmed retryable result (an
-  expected file not placed, `503 path_unreadable`, a `failed` request — which
-  Cinema answers with a 500, first time and on every replay of its key — or a
-  request Cinema no longer knows), so the retry gets a fresh scan instead of
-  the cached answer. A `Retry-After` on a 503 is honoured: the next try is no
-  sooner.
-- **Reading the answer.** `200 scanned` is classified at once; `202 queued`
-  is polled with `GET /api/v1/scan/requests/{id}` (the creating key may read
-  its own requests) on the same schedule. A sub-delivery is **visible** only
-  when every expected file comes back `placed` with the same `bytes` and
-  `mtime_ns`; a same-path replacement with equal size and the same
-  whole-second mtime differs only in `mtime_ns`. Anything else is `warning:
-  expected <path> not placed (<cinema's reason>)` and is retried.
-- **The schedule** is `5s → 30s → 2m → 5m → 15m → 1h`, then hourly, without
-  end for anything transient. Permanent only on `401`/`403` on the POST,
-  `400`, and `422 path_outside_roots` (or an older Cinema's 422 that lists
-  its `roots`). A sub-delivery still not visible 30 minutes after it was
-  written is shown as a **warning** with Cinema's `waiting_on`, never failed.
-- **An older Cinema** ignores the new fields, answers 202, and refuses the
-  status read to a `scan:trigger` key (403): the row is done, reading
-  `queued (cinema does not report results)`. A current Cinema also answers
-  403 for a request id it no longer knows; once a read of the request has
-  answered, a later 403 is that — a lost request — and is posted again as a
-  new attempt. A 200 without a per-file report
-  is done the same way, with the item ids it did report.
-- **`import_to_cinema_visible`** starts when the publication is imported (in
-  the same transaction, when a Cinema notifier gets a sub-delivery) and ends
-  when the last sub-delivery of the import becomes visible. An import Cinema
-  cannot report on (an older Cinema), or with a sub-delivery that failed
-  permanently, is dropped from the measurement rather than left waiting.
-- **Chat notifiers speak for themselves.** Their rows show in their own
-  delivery log (every notifier type has one now), name their own type on the
-  in-flight view, and write `notify_<type>` on the download's trace;
-  `notify_plurx` is Cinema's alone.
-- **The Test checks paths.** A plurx notifier's **Test** sends the library
-  roots (Settings → Library) as `probe_paths`; a root Cinema cannot see fails
-  the Test with Curator's path beside Cinema's roots. An older Cinema rejects
-  that body with its JSON extractor's own 422 (no `roots`), so the Test falls
-  back to the legacy probe and says *checking the library paths needs a newer
-  cinema*.
-### Per-file cleanup and the historical cohort (M4, v0.40.0)
-
-Contract section 3.4; [ADR 0026](adr/0026-pipeline-contract-v2.md) addendum.
-
-- **One rule, one implementation.** Curator deletes a publication file only
-  when its recorded outcome is evidence: `placed` — the placement recorded
-  the manifest's SHA-256 *and* the library file still has it (the same inode,
-  or re-hashed) — or `discarded{superseded|duplicate|rejected}`. `unresolved`
-  and `pending` files are never touched. Size is never evidence; a manifest
-  entry without a digest is kept.
-- **Re-checked before every unlink**, in order: the generation (the
-  directory's `.runner-manifest.json` — or, for a v1 record, the stored
-  manifest — must name the publication's generation), the file identity
-  (size and digest against the manifest, then an unchanged inode generation
-  since the hash), and the **storage** of the completed root: its live
-  identity against the one the inventory scan recorded (a changed identity is
-  an unmounted share), then the storage-change review fences — after an
-  accepted replacement volume the recorded identity matches the new one, and
-  the fence on what was on the old volume is what keeps automatic deletion
-  off it (an operator's own discard is the review it asks for). The unlink
-  goes through a directory handle that refuses symlinks. The directory is
-  `rmdir`ed when only the manifest is left; a stray Curator cannot account
-  for (`.DS_Store`, an NFS silly-rename) keeps it, and once every manifest
-  file is gone Storage offers **Delete files…** on it whole (identity and
-  ownership checks still apply). The publication is then `removed` and its
-  row's payload is gone.
-- **Attributable and stoppable**: every pass runs on the cleanup lane (the
-  sweep only queues them), shows in `GET /api/v1/system/transfers` as stage
-  `publication_cleanup` with why it runs, and on the publication in Activity
-  (*Cleanup queued/running (hourly sweep)*) with **Pause cleanup**
-  (`POST /api/v1/downloads/publications/{id}/cleanup {"action":"pause"}`);
-  a pause cancels the pass and keeps the sweep off the publication until
-  **Resume cleanup**.
-- **Who runs it**: the cleanup lane right after an import, the hourly sweep
-  (publications `imported`/`notified` with evidenced files still on disk),
-  Resolve → **Discard**, Download storage → **Delete selected files…** on a
-  publication directory (only its unresolved files; they become
-  `discarded{rejected}`), and the receipt action **Retry Curator cleanup**.
-  None of them asks Runner for anything.
-- **Evidence that no longer holds** (the library file now differs, the
-  publication file differs from its manifest, the library file is gone) turns
-  the file into `unresolved` with the reason, shown in Resolve; the sweep does
-  not re-read it. A transient problem (storage, a read error, a file changing
-  while hashed) leaves the file as it is and records the reason on the
-  publication; the next pass retries.
-- **The historical cohort** — every v1 receipt and every completed directory
-  present at the first M2 start, plus (migration 0073) every path of the old
-  migration-0040 review cohort — is never touched by automatic deletion nor
-  by an operator discard until its review batch is approved:
-  `POST /api/v1/downloads/publications/approve-cleanup {"ids": [...]}` sets
-  `cleanup_approved_at` (M7) and the same per-file rule then applies.
-- **Activity retention and Clear** hide a row whose publication still has
-  files on disk instead of deleting it (a publication cascades with its row);
-  the row goes once its publications are removed.
-- **Removed**: the receipt-bound cleanup ledger and its explicit deletion
-  batches (`runner_delivery_explicit_delete_*`, the abandon route), the
-  migration-0040 review cohort (`legacy_cleanup_review`,
-  `legacy_inflight_import_evidence`; storage-change path fences moved to
-  `storage_change_review_paths`), `runner_delivery_cursors` (the deliveries
-  cursor is `runner_history_cursors.deliveries_after`), and
-  `runner_admission_poll_schedule`.
-- **If the upgrade refuses to start** with `migration 0073 refused: live v1
-  dependents: N pending explicit deletion request(s) (<batch ids>)`, nothing
-  has been changed (the check runs before any migration). Roll back: deploy
-  the previous Curator build (v0.39.x), open Activity → the delivery's
-  lifecycle trace, and let each named request finish or **Cancel deletion
-  request**; then deploy v0.40.0 again. `SELECT batch_id FROM
-  runner_delivery_explicit_delete_batches WHERE abandoned_at=0` on the
-  database lists them.
-- Directories the cutover froze with no manifest and no download row are
-  `import_failed` with that explanation (nothing can import them); once their
-  review batch is approved, Storage deletes them whole.
-- **Non-Runner clients** keep their whole-payload cleanup (the client's own
-  delete, then the guarded local fallback) — they have no manifest. It never
-  touches a directory a publication claims.
 
 ## The pipeline
 
@@ -352,19 +157,21 @@ and published ports mixed up.
 | # | Seam | Direction | Transport | Who starts it |
 |---|---|---|---|---|
 | 1 | nzbd native client | outbound | HTTP `/api/v1/*` | Monarr |
-| 2 | nzbd event stream | outbound (held open) | SSE | Monarr |
-| 3 | The transfer id | outbound, both seams | job param → `correlation_id` | Monarr |
-| 4 | plurx targeted scan | outbound | `POST /api/v1/scan` | Monarr, on import |
-| 5 | Delivery queue | internal, durable | SQLite | Monarr |
-| 6 | plurx watch webhook | **inbound** | `POST /api/v1/webhooks/plurx` | plurx |
-| 7 | Calendar + status reads | **inbound** | `GET /api/v1/calendar`, `/system/status` | plurx |
-| 8 | Connections panel | observation | `GET /api/v1/system/connections` | you |
-| 9 | In-flight transfers | observation | `GET /api/v1/system/transfers` | you |
+| 2 | nzbd event stream and the poll | outbound (held open) | SSE + HTTP | Monarr |
+| 3 | The transfer token | outbound, every seam | job param → `correlation_id` | Monarr |
+| 4 | Facts, terminals and the next grab | internal | SQLite, one transaction per terminal | Monarr |
+| 5 | Publications: import and per-file cleanup | internal, on the shared completed root | filesystem + SQLite | Monarr |
+| 6 | Telling Cinema | outbound | `POST /api/v1/scan` + `GET /api/v1/scan/requests/{id}` | Monarr, on import |
+| 7 | plurx watch webhook | **inbound** | `POST /api/v1/webhooks/plurx` | plurx |
+| 8 | Calendar + status reads | **inbound** | `GET /api/v1/calendar`, `/system/status` | plurx |
+| 9 | Connections panel | observation | `GET /api/v1/system/connections` | you |
+| 10 | In-flight transfers | observation | `GET /api/v1/system/transfers` | you |
 
-Sections 1–5 are things Monarr does. Sections 6–7 are things done to it — and
-they are the half that used to be invisible, which is why §8 exists.
+Sections 1–6 are things Monarr does. Sections 7–8 are things done to it — and
+they are the half that used to be invisible, which is why §9 exists.
 
 ---
+
 
 ## 1. nzbd native client — the rich path, not the compat path
 
@@ -373,7 +180,7 @@ instead of the NZBGet-compatible shim. That buys three things the shim cannot
 carry: job params (§3), a real event stream (§2), and capacity reporting.
 
 **Wire.** `POST /api/v1/jobs` to add · `GET /api/v1/jobs` for the queue ·
-`GET /api/v1/history?limit=100` · `POST /api/v1/jobs/{id}/actions/delete` ·
+`GET /api/v1/history?since_seq=&limit=100` (the ordered reader, §4) · `GET /api/v1/deliveries?after=&include_accepted=true` (publication facts, §5) · `GET /request-admissions/<token>` (the receipt lookup, §4) · `POST /api/v1/jobs/{id}/actions/delete` ·
 `GET /api/v1/status` for the probe. Auth is a single `Authorization` header:
 Bearer when the client has a password and no username, HTTP Basic otherwise.
 Every request carries `X-Nzbd-Client: monarr/<version>`.
@@ -417,14 +224,14 @@ library rescan.
 
 ---
 
-## 2. nzbd event stream — latency, never correctness
+## 2. nzbd event stream and the poll — latency, never correctness
 
 **What it does.** With **Live updates** ticked
 (`download_clients.mode = 'push'`), Monarr holds nzbd's SSE stream open and
 imports the moment post-processing finishes, instead of up to 30 s later.
 
 **What Monarr acts on.** Each event becomes a fact for the reducer (see
-*Pipeline contract v2 in Curator* above): `job_pp_finished` (the terminal:
+[§4](#4-facts-terminals-and-the-next-grab)): `job_pp_finished` (the terminal:
 the typed `outcome`/`reason`/`blames_release`/`salvage`, or for an older
 Runner the `pp_status` string), `job_status_changed` and `job_control_changed`
 (status and holds), `job_publication_ready` (a salvage), `job_pp_stage` and
@@ -455,11 +262,16 @@ for it.
 
 ---
 
-## 3. The transfer id — one identifier, grab to playable
+## 3. The transfer token — one identifier, grab to playable
 
-**What it does.** At grab time Monarr mints `t-<downloadID>-<6 hex>` and
-attaches it to everything downstream, so a single `grep` across three
-applications reconstructs one transfer.
+**What it does.** At grab time Monarr mints a transfer token —
+`t-<downloadID>-<32 hex>`, 16 random bytes, the row id there only so a log line
+is readable (`0` when the row is not committed yet) — and attaches it to
+everything downstream, so a single `grep` across three applications
+reconstructs one transfer. The token is **opaque**: every comparison is exact
+equality, never a parse, so values minted by earlier releases keep working.
+Every fact Runner sends about a job is admitted only when its token equals the
+row's (§4).
 
 **Where it lives.**
 
@@ -493,30 +305,225 @@ Losing the join is a diagnostic cost, not a functional one.
 
 ---
 
-## 4. plurx targeted scan — "this exact folder changed"
+## 4. Facts, terminals and the next grab
+
+The design is [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) section 3; the
+decision record is [ADR 0026](adr/0026-pipeline-contract-v2.md). The code is
+`internal/app/acquisition/reducer.go` (`observe`), `internal/adapters/nzbd/facts.go`
+(wire → fact) and `internal/infra/sqlite/pipeline_v2.go` (the guarded writes).
+Runner clients are on the reducer by capability (`ports.RunnerFeeds`); every
+other client keeps the established path and records its failures the same way.
+
+- **Facts, one reducer.** Every observation of a Runner job — an SSE event,
+  a queue row, a history row, a `/deliveries` row, a request receipt — is a
+  *fact* (`admitted`, `status`, `terminal`, `publication_ready`, `gone`), and
+  one function applies them all. A fact is admitted only when its `transfer`
+  token equals the row's; a mismatch (a job id reused after a Runner state
+  wipe) is dropped and counted as `monarr_runner_fact_mismatch_total`. An
+  event without a token falls back to the job handle.
+- **A terminal is recorded once.** `downloads.runner_outcome` is set by one
+  guarded write; in the same transaction Curator writes the work it implies:
+  a `publications` row for `completed`, a `replacement_grabs` row for a
+  failure that re-grabs, the blocklist entry when `blames_release`, the
+  history row. A replay from the other feed is a no-op. A status never moves
+  a terminal row; a terminal ends a hold unconditionally.
+- **Curator's own terminals are provisional**: `failed{submit}` (ten minutes
+  of Runner positively answering "no such token" — an unreachable Runner does
+  not count), `failed{lost}` (ten minutes of successful polls with the job in
+  no feed and no receipt) and rows migrated from the old parks
+  (`failed{parked: …}`). Any later Runner fact re-opens them. Curator never
+  writes `hold_expired`: a hold past Runner's `deadline_in_s` plus five
+  minutes (24 hours when an older Runner sends none) is shown as
+  **held (stale)** and reconciled through the request receipt.
+- **The history cursor** (`runner_history_cursors`: incarnation, since_seq)
+  is advanced only by the poll's ordered reader, after its page commits.
+  `GET /api/v1/history?since_seq=&limit=100` replaces the old `limit=100`
+  re-read. A changed incarnation, a cursor below `retained_min_seq` or no
+  stored cursor at all (the first start of a build with the reducer) looks every outstanding transfer
+  up via `GET /request-admissions/<token>` and sets the cursor to Runner's
+  head. Events never move the cursor.
+- **`/deliveries` is read with `include_accepted=true`**, only to raise
+  facts: a `completed` row the stream missed, a `salvage` row (or any row for
+  a download Runner finally failed) as `publication_ready`. Curator no longer
+  acknowledges deliveries; the lease/verify/ack/import cycle is gone.
+- **Publications are the import unit**, one per Runner generation, each with
+  its own state (`discovered → importing → imported | import_failed`) and a
+  per-file outcome: `placed`, `discarded{superseded|duplicate|rejected}`, or
+  `unresolved` (retained, decided in Activity). The manifest comes from the
+  publication's `.runner-manifest.json`, else from Runner's v1 delivery
+  record (the **v1 adapter**); a directory with neither waits and is checked
+  again each poll; six hours in `discovered`/`importing` is
+  `import_failed{stalled}`. The digest is verified once, at import, when the
+  publication was copied across volumes.
+- **Which attempt wins a destination** is Curator's own record
+  (`wantable_attempts`: the download it last chose for each wantable), never
+  generation ids or arrival time. A file from another attempt is
+  `discarded{superseded}` when the library already holds the current
+  attempt's file, otherwise `unresolved`; no record is `unresolved`.
+- **Failure is the next grab.** The replacement grab worker (every 5 s)
+  executes `replacement_grabs`: a movie or book is searched; an episode is
+  searched for a single-episode release, never a pack; an episode with no
+  single release goes to the season planner. `cancelled`, `lost` and
+  `fetch{indexer_unavailable}` write no grab; only `blames_release` failures
+  blocklist and spend fetched bytes against the re-grab budget. A
+  `ReplacementOperation` advances with the failed bytes retained. The failure
+  reasons, and which of them blame the release, are Runner's typed terminal
+  (`outcome`, `reason`, `blames_release`, `salvage`, `fetch_cause`): `health`,
+  `fetch`, `par`, `unpack`, `script`, `publish`, `io`, `identity`, `hold_expired`
+  are Runner's; `submit`, `lost` and `parked` are Curator's and always
+  provisional. `publish`, `io` and `identity` park the bytes whatever the
+  client's `failure_action` says; a `fetch` whose cause is
+  `indexer_unavailable` re-queues the same want after 15 minutes.
+- **The historical cohort** is described under §5.
+
+What Curator no longer does with Runner: acknowledge deliveries, pace receipt
+lookups per row, park on receipt shapes, refuse controls by revision, wait for
+Runner's cleanup before re-grabbing, or ask Runner to clean its source.
+
+### Held jobs
+
+A Runner job that needs a person or a resource is **held**: Runner sends
+`job_status_changed` with status `held` (the `control` object — cause, stage,
+message — is optional) and persists the hold before it emits. Curator shows it
+as held with Runner's message and its deadline, never as failed, and a missing
+fact cannot clear it. Resuming goes through `POST /api/v1/queue/{id}/resume`,
+which calls Runner's `POST /api/v1/jobs/{id}/actions/resume`; it does not add
+an NZB. A terminal ends a hold unconditionally. Manual pause intent survives a
+resource release.
+
+---
+
+## 5. Publications: import and per-file cleanup
+
+Contract section 3.4 and section 1. A **publication** is one directory Runner
+published for one generation of one transfer, with a manifest naming its files.
+It is the unit of import, cleanup and notification, so a late salvage, a
+second generation and the historical directories all take the same path.
+
+- **States**: `discovered → importing → imported | import_failed` (and
+  `removed` once every file is gone). Six hours in `discovered`/`importing` is
+  `import_failed{stalled}`. A directory with no manifest yet waits and is
+  checked again each poll.
+- **The manifest** is `.runner-manifest.json` in the directory, written last as
+  the commit marker (a directory without it is not a publication), else
+  Runner's v1 delivery record (the **v1 adapter**, `manifest_source =
+  v1_record`) for directories published before the file existed. The digest is
+  the deployed shared algorithm (`runner-manifest-v1`: `len:path`, size and
+  SHA-256 per bytewise-sorted file, bare hex), verified once at import when the
+  publication was copied across volumes.
+- **Per-file outcome**: `placed{library_path, sha256}`, `discarded{superseded |
+  duplicate | rejected}`, or `unresolved` (retained, decided in Activity →
+  Resolve). Curator never acknowledges a delivery to Runner and never asks
+  Runner to clean its source.
+- **Which attempt wins a destination** is Curator's own record
+  (`wantable_attempts`: the download it last chose for each wantable), never
+  generation ids or arrival time. A file from another attempt is
+  `discarded{superseded}` when the library already holds the current
+  attempt's file, otherwise `unresolved`; no record is `unresolved`.
+- **The historical cohort.** Every v1 receipt (accepted or not) and every
+  completed directory present at the first start of a build with publications
+  is a `historical` publication. It imports like any other; nothing deletes it
+  until its review batch is approved (below).
+
+### Per-file cleanup
+
+- **One rule, one implementation.** Curator deletes a publication file only
+  when its recorded outcome is evidence: `placed` — the placement recorded
+  the manifest's SHA-256 *and* the library file still has it (the same inode,
+  or re-hashed) — or `discarded{superseded|duplicate|rejected}`. `unresolved`
+  and `pending` files are never touched. Size is never evidence; a manifest
+  entry without a digest is kept.
+- **Re-checked before every unlink**, in order: the generation (the
+  directory's `.runner-manifest.json` — or, for a v1 record, the stored
+  manifest — must name the publication's generation), the file identity
+  (size and digest against the manifest, then an unchanged inode generation
+  since the hash), and the **storage** of the completed root: its live
+  identity against the one the inventory scan recorded (a changed identity is
+  an unmounted share), then the storage-change review fences — after an
+  accepted replacement volume the recorded identity matches the new one, and
+  the fence on what was on the old volume is what keeps automatic deletion
+  off it (an operator's own discard is the review it asks for). The unlink
+  goes through a directory handle that refuses symlinks. The directory is
+  `rmdir`ed when only the manifest is left; a stray Curator cannot account
+  for (`.DS_Store`, an NFS silly-rename) keeps it, and once every manifest
+  file is gone Storage offers **Delete files…** on it whole (identity and
+  ownership checks still apply). The publication is then `removed` and its
+  row's payload is gone.
+- **Attributable and stoppable**: every pass runs on the cleanup lane (the
+  sweep only queues them), shows in `GET /api/v1/system/transfers` as stage
+  `publication_cleanup` with why it runs, and on the publication in Activity
+  (*Cleanup queued/running (hourly sweep)*) with **Pause cleanup**
+  (`POST /api/v1/downloads/publications/{id}/cleanup {"action":"pause"}`);
+  a pause cancels the pass and keeps the sweep off the publication until
+  **Resume cleanup**.
+- **Who runs it**: the cleanup lane right after an import, the hourly sweep
+  (publications `imported`/`notified` with evidenced files still on disk),
+  Resolve → **Discard**, Download storage → **Delete selected files…** on a
+  publication directory (only its unresolved files; they become
+  `discarded{rejected}`), and the receipt action **Retry Curator cleanup**.
+  None of them asks Runner for anything.
+- **Evidence that no longer holds** (the library file now differs, the
+  publication file differs from its manifest, the library file is gone) turns
+  the file into `unresolved` with the reason, shown in Resolve; the sweep does
+  not re-read it. A transient problem (storage, a read error, a file changing
+  while hashed) leaves the file as it is and records the reason on the
+  publication; the next pass retries.
+- **The historical cohort** — every v1 receipt and every completed directory
+  present at the first start of a build with publications, plus (migration 0073) every path of the old
+  migration-0040 review cohort — is never touched by automatic deletion nor
+  by an operator discard until its review batch is approved:
+  `POST /api/v1/downloads/publications/approve-cleanup {"ids": [...]}` sets
+  `cleanup_approved_at` and the same per-file rule then applies.
+- **Activity retention and Clear** hide a row whose publication still has
+  files on disk instead of deleting it (a publication cascades with its row);
+  the row goes once its publications are removed.
+- Directories the cutover froze with no manifest and no download row are
+  `import_failed` with that explanation (nothing can import them); once their
+  review batch is approved, Storage deletes them whole.
+- **Non-Runner clients** keep their whole-payload cleanup (the client's own
+  delete, then the guarded local fallback) — they have no manifest. It never
+  touches a directory a publication claims.
+
+### If the upgrade refuses to start
+
+Migration 0073 refuses rather than guess, before changing anything, and names
+what blocks it.
+
+The error is `migration 0073 refused: live v1 dependents: N pending explicit
+deletion request(s) (<batch ids>)`. Deploy the previous Curator build
+(v0.39.x), open Activity → the delivery's lifecycle trace, and let each named
+request finish or **Cancel deletion request**; then deploy again. `SELECT
+batch_id FROM runner_delivery_explicit_delete_batches WHERE abandoned_at=0`
+lists them.
+
+---
+
+## 6. Telling Cinema — one verified delivery per directory
 
 **What it does.** When an import finishes, Monarr tells plurx the exact
 directory to scan, instead of letting plurx discover it on its next scheduled
-sweep. One POST **per directory** — not per file, because a season pack that
-lands 10 episodes in one folder is one thing that changed, and ten scans of
-the same folder is nine wasted scans.
+sweep — and then asks plurx whether the files arrived. One POST **per
+directory** — not per file, because a season pack that lands 10 episodes in one
+folder is one thing that changed, and ten scans of the same folder is nine
+wasted scans. The row that carries it is a **sub-delivery** (below): written in
+the import's own transaction, retried until Cinema reports every file placed.
 
 **Wire.** `POST {plurx}/api/v1/scan` with the scoped key as
 `Authorization: Bearer plx_…` (plurx accepts `X-Api-Key` too), one request per
-sub-delivery (one directory), and body — since M5 also carrying
+sub-delivery (one directory), and body, which also carries
 `"request_key":"<transfer>/<generation>/<dir-hash>/<attempt>"`,
 `"expected_files":[{"path":…,"bytes":…,"mtime_ns":…}]` and `"wait_ms":10000`
-(see [Pipeline contract v2: telling Cinema](#pipeline-contract-v2-telling-cinema-m5-v0410)):
+(how they are used is under *How a sub-delivery is sent and read back*, below):
 
 ```json
 // an episode: the SHOW's id, under `series`
 {"path":"/media/tv/Show/Season 02","hint":"episode","series":{"tmdb":1399},
- "correlation_id":"t-42-a3f9c1","source":"monarr"}
+ "correlation_id":"t-42-<32 hex>","source":"monarr"}
 
 // a movie: its own ids, under `ids`
 {"path":"/media/movies/Some Film (1999)","hint":"movie",
  "ids":{"tmdb":603,"imdb":"tt0133093"},
- "correlation_id":"t-43-b1e207","source":"monarr"}
+ "correlation_id":"t-43-<32 hex>","source":"monarr"}
 
 // a book: exact Curator facts; work_id is the sole edition relationship key
 {"path":"/media/books/Andy Weir/Project Hail Mary","hint":"book",
@@ -524,7 +531,7 @@ sub-delivery (one directory), and body — since M5 also carrying
          "work_id":"curator:openlibrary:OL17091839W",
          "edition_id":"curator:item:84:ebook",
          "cover_url":"https://covers.openlibrary.org/b/id/123-L.jpg"},
- "correlation_id":"t-44-c4d812","source":"monarr"}
+ "correlation_id":"t-44-<32 hex>","source":"monarr"}
 ```
 
 Where the ids go depends on what the path is, and the asymmetry is deliberate:
@@ -542,6 +549,75 @@ Library work uses `curator:openlibrary:<OL…W>`; a manual work falls back to
 `curator:item:<media-item-id>:<ebook|audiobook>`. The cover field is omitted
 unless its parsed host is exactly `covers.openlibrary.org`, with HTTPS, no
 credentials, and no explicit port.
+
+### How a sub-delivery is sent and read back
+
+Contract section 4; the outbox is `internal/app/notify`, the HTTP exchange is
+`internal/adapters/notify/plurx.go`.
+
+- **An outbox, not the bus.** Every notification of an import is a
+  `notifier_deliveries` row written in the import's own transaction — the
+  publication's completing transaction, or, for a legacy client or a manual
+  import, the one that writes its `imported` history row. Nothing travels the
+  in-memory bus to be dropped when a subscriber's 32 slots are full.
+  (`ImportCompleted` is still published as the UI's live signal; nobody is
+  notified from it.) A chat notifier (webhook, Discord) and a Plex/Jellyfin
+  poke get one row each, attempted once.
+- **One sub-delivery per directory.** Cinema gets one row per `(notifier,
+  publication, directory)`, keyed `<transfer>/<generation>/<dir-hash>`
+  (the first 16 hex of sha256 of the directory), carrying the media files the
+  import placed under that directory with their `bytes` and `mtime_ns` as they
+  stood once placed. Cinema takes at most 64 expected files (and 16 KiB of
+  them) a request, so a bigger directory sends its largest, newest 64 and the
+  log says `(verified 64 of 91 files)`. Each row has its own 20 s deadline per
+  attempt, and each notifier is its own lane of up to four deliveries in
+  flight: three slow directories are posted side by side, none starves the
+  others, a slow third one never makes the first two be posted again, and a
+  Discord timing out never holds Cinema's rows behind it. Importing the same
+  directory of the same publication again refreshes the row and advances its
+  attempt.
+- **The request.** `POST /api/v1/scan` carries, beside the unchanged body,
+  `request_key: "<key>/<attempt>"`, `expected_files` and `wait_ms: 10000`.
+  Cinema answers a repeated key with the same request and result, so a lost
+  response does not create a second scan. The attempt is **reused** after an
+  ambiguous outcome (a timeout, a connection error, no response, 429, a 502 or
+  504, a plain 503) and **advanced** after a confirmed retryable result (an
+  expected file not placed, `503 path_unreadable`, a `failed` request — which
+  Cinema answers with a 500, first time and on every replay of its key — or a
+  request Cinema no longer knows), so the retry gets a fresh scan instead of
+  the cached answer. A `Retry-After` on a 503 is honoured: the next try is no
+  sooner.
+- **Reading the answer.** `200 scanned` is classified at once; `202 queued`
+  is polled with `GET /api/v1/scan/requests/{id}` (the creating key may read
+  its own requests) on the same schedule. A sub-delivery is **visible** only
+  when every expected file comes back `placed` with the same `bytes` and
+  `mtime_ns`; a same-path replacement with equal size and the same
+  whole-second mtime differs only in `mtime_ns`. Anything else is `warning:
+  expected <path> not placed (<cinema's reason>)` and is retried.
+- **The schedule** is the outbox ladder in `internal/domain/backoff` —
+  `5s → 30s → 2m → 5m → 15m → 1h`, then hourly, without end for anything
+  transient (the same helper, with its own rungs, spaces Runner submission,
+  manual admission and the blocked-import retry: `30s → 1m → 2m → 5m`, then
+  every 5 minutes). Permanent only on `401`/`403` on the POST,
+  `400`, and `422 path_outside_roots` (or an older Cinema's 422 that lists
+  its `roots`). A sub-delivery still not visible 30 minutes after it was
+  written is shown as a **warning** with Cinema's `waiting_on`, never failed.
+- **An older Cinema** ignores the new fields, answers 202, and refuses the
+  status read to a `scan:trigger` key (403): the row is done, reading
+  `queued (cinema does not report results)`. A current Cinema also answers
+  403 for a request id it no longer knows; once a read of the request has
+  answered, a later 403 is that — a lost request — and is posted again as a
+  new attempt. A 200 without a per-file report
+  is done the same way, with the item ids it did report.
+- **`import_to_cinema_visible`** starts when the publication is imported (in
+  the same transaction, when a Cinema notifier gets a sub-delivery) and ends
+  when the last sub-delivery of the import becomes visible. An import Cinema
+  cannot report on (an older Cinema), or with a sub-delivery that failed
+  permanently, is dropped from the measurement rather than left waiting.
+- **Chat notifiers speak for themselves.** Their rows show in their own
+  delivery log (every notifier type has one now), name their own type on the
+  in-flight view, and write `notify_<type>` on the download's trace;
+  `notify_plurx` is Cinema's alone.
 
 **What Monarr holds.** A **scoped key** (`scan:trigger`), never a plurx admin
 token. A token *is* a user, so an admin token handed to a neighbouring app
@@ -595,13 +671,15 @@ legacy probe and says so.
 
 ---
 
-## 5. Delivery queue — the notification survives a restart
+---
 
-**What it does.** Notifications are rows in SQLite, written in the import's
-own transaction, with the retry schedule as a column, not as a sleeping
-goroutine. For Cinema the backoff is `5s → 30s → 2m → 5m → 15m → 1h`, then
-hourly without end for a transient failure; a chat notifier's row is
-attempted once. Restart Monarr mid-retry and the retry still happens; a
+### The delivery queue — the notification survives a restart
+
+**What it does.** Notifications are `notifier_deliveries` rows in SQLite,
+written in the import's own transaction, with the retry schedule as a column,
+not as a sleeping goroutine. For Cinema the backoff is the outbox ladder above,
+hourly without end for a transient failure; a chat notifier's row is attempted
+once. Restart Monarr mid-retry and the retry still happens; a
 delivery queue that lives in memory is a queue that silently loses everything
 on the one event you most want it to survive.
 
@@ -618,7 +696,7 @@ Cinema scans afresh.
 | Status pill | Detail reads |
 |---|---|
 | `visible` | `visible → plurx item 1201` — Cinema reported every expected file placed with the bytes and mtime the import left |
-| `ok` | the result: `queued (cinema does not report results)` from an older Cinema, `scanned → plurx item 1201` from a row written before M5, or `delivered` |
+| `ok` | the result: `queued (cinema does not report results)` from an older Cinema, `scanned → plurx item 1201` from a row written by an earlier release, or `delivered` |
 | `pending` | `queued in cinema, waiting on full_scan:3, retrying in 5m` (Cinema's exact `waiting_on`), `warning: expected <path> not placed (<cinema's reason>), retrying in 1h`, `attempt N failed: <error>, retrying in Xm`, or `queued` |
 | `warning` | the same, still not visible 30 minutes after the import — surfaced, still retried |
 | `failed` | the last error: a rejected key, a 400, a directory outside Cinema's roots |
@@ -651,7 +729,9 @@ broken.
 
 ---
 
-## 6. plurx watch webhook — the only inbound push Monarr accepts
+---
+
+## 7. plurx watch webhook — the only inbound push Monarr accepts
 
 **What it does.** plurx tells Monarr what was watched, and by whom. Monarr
 **records and displays it**, and uses it to order upgrade work toward actively
@@ -700,7 +780,7 @@ is missing its TMDB/IMDb id, not the webhook is broken.
 
 ---
 
-## 7. Calendar and status reads — plurx as a client of Monarr
+## 8. Calendar and status reads — plurx as a client of Monarr
 
 **What it does.** plurx reads two endpoints: `GET /api/v1/calendar?start=&end=`
 for its home-screen **Coming soon** rail, and `GET /api/v1/system/status` as
@@ -715,7 +795,7 @@ a series whose next episode is airing is already in plurx's library, and its
 poster is already cached there.
 
 **Where you see it.** System → **Connections**, kind `calls Monarr`. The same
-`plurx` row as §6 — the registry is per-caller, not per-endpoint, and `Detail`
+`plurx` row as §7 — the registry is per-caller, not per-endpoint, and `Detail`
 names the last path so you can tell which half is active.
 
 **How it identifies a caller.** The `noteCallers` middleware records only
@@ -732,7 +812,7 @@ it a few minutes — plurx's coming-soon cache is 15 minutes wide.
 
 ---
 
-## 8. Connections panel — the one screen that shows both directions
+## 9. Connections panel — the one screen that shows both directions
 
 **Where.** **System → Connections**. Blurb: *"The other applications Monarr
 talks to — and the ones that talk to it."* Refreshes every 10 s; the
@@ -743,7 +823,7 @@ not probe on request, so `Last probed …` is part of the reading.
 |---|---|
 | `download client` | Monarr polls it |
 | `media server` | Monarr pushes to it |
-| `calls Monarr` | it calls Monarr — inbound, §6 and §7 |
+| `calls Monarr` | it calls Monarr — inbound, §7 and §8 |
 
 | State | Colour | Means |
 |---|---|---|
@@ -764,12 +844,11 @@ buttons live on the Settings pages, next to the config they exercise.
 produced anything for five minutes degrades with the detail *"answering, but
 nothing has come through it for Nm"*. Monarr polls every enabled client every
 30 seconds whether or not it has anything in flight, precisely so that this
-clock means what it says — before 2026-07 the poll skipped idle clients, and
-the result was a permanent ERROR on any instance that had simply finished
-everything. If you are on an older build, read a stale-contact WARNING/ERROR
-as "Monarr has nothing downloading", not as a fault.
+clock means what it says — an idle client is still polled, because a poll that
+skipped idle clients produced a permanent ERROR on any instance that had simply
+finished everything.
 
-## 9. In flight — the data plane, reported separately
+## 10. In flight — the data plane, reported separately
 
 **Where.** **System → In flight**, under Connections. Refreshes every 2
 seconds, because it is the panel that moves.
@@ -797,7 +876,7 @@ the Test button beside it passed, because the probe is a separate call. And
 the import itself was visible nowhere: the only evidence in the whole process
 was the duration column of an unrelated scheduled task.
 
-So since 2026-07: imports run on their own bounded worker pool, the poll
+So imports run on their own bounded worker pool, the poll
 returns in milliseconds whatever the library is doing, and the data plane
 reports itself here. Two workers import; payload cleanup has two workers of
 its own, because cleanup re-reads both copies before deleting one (tens of
@@ -838,7 +917,14 @@ nothing goes `warning` after 5 minutes and `error` after 30.
 `monarr_build_info{version,commit}` · `monarr_media_items{kind}` ·
 `monarr_queue_active` · `monarr_wanted_total` · `monarr_uptime_seconds`.
 
-Per-seam, added 2026-07 with the in-flight view:
+Pipeline timings (contract section 3.5; one histogram per seam over the last 24 h):
+`monarr_failure_to_next_grab_seconds` · `monarr_runner_done_to_import_seconds` ·
+`monarr_import_to_cinema_visible_seconds` · `monarr_pipeline_waiting{kind}` ·
+`monarr_pipeline_overdue_rows` · `monarr_runner_fact_mismatch_total` (facts
+dropped because their transfer token was not the row's) ·
+`monarr_pipeline_scrape_errors_total`.
+
+Per seam, with the in-flight view:
 
 | Metric | Reads |
 |---|---|
@@ -855,6 +941,8 @@ Prometheus from the one vantage point that sees both seams. nzbd has
 
 Still only in JSON: inbound caller counts (`/system/connections`) and
 per-delivery outcomes (the delivery log).
+
+---
 
 ---
 
@@ -879,8 +967,8 @@ PLURX=http://127.0.0.1:32400
    now list `plurx` as `calls Monarr` / `calling`.
 6. **Grab something** and watch it end to end: Activity → the handoff trace
    walks `Grabbed → Downloading → Downloaded → Importing → Imported`, then
-   Settings → Notifications → Delivery log shows `ok` with
-   `scanned → plurx item …`, and the file appears in plurx without you
+   Settings → Notifications → Delivery log shows `visible` with
+   `visible → plurx item …`, and the file appears in plurx without you
    touching a scan button.
 
 If step 6 stalls, the trace tells you which seam: no `Downloaded` is nzbd, no
@@ -892,7 +980,7 @@ notifier not configured at all.
 ## What Monarr deliberately does not do
 
 - **Never holds a plurx admin token.** A scoped `scan:trigger` key only. See
-  §4 for why the distinction is not cosmetic.
+  §6 for why the distinction is not cosmetic.
 - **Never invents provider ids for books.** Book imports reach Cinema with an
   exact path and `hint:"book"`; Cinema's Books library identifies them from
   disk rather than pretending TMDB knows publications.
@@ -904,43 +992,28 @@ notifier not configured at all.
 - **Never lets push become load-bearing.** Every push path has a poll
   underneath it, so an outage in the stream costs latency and nothing else.
 
-## Keeping this honest
+## Literals this page quotes, and who checks them
 
 Every literal in this document — state names, pill text, error strings, wire
 fields, column names — was read out of the code on the branch that ships it.
-When a seam changes, this file changes in the same commit.
+The ones below are checked by `internal/docs` (`go test ./internal/docs`),
+which fails when the page, the code and the table disagree. When a seam
+changes, this file changes in the same commit.
 
-## Durable job control contract (v1)
-
-Runner queue snapshots and `job_control_changed` events carry an additive
-`control` object: integer `version`; decimal-string `revision`; `instance`;
-`lifecycle`; `cause`; `stage`; `retry_policy`; bounded `message`. Optional
-`previous_status` and `manual_pause` preserve Runner resume intent. Version 1
-resource holds use `lifecycle=held`, `cause=capacity|quota` and
-`retry_policy=resume_same_job`. Review holds use `retry_policy=review`. Stage
-names identify the failed operation, including `download_write`, `finalize`,
-`extract`, `par_repair` and existing post-stage strings.
-
-Compatibility projection is `status=paused`, `pp_done=false`, `ready=false`.
-The authoritative control is stored in the Runner queue snapshot under
-`*Control:v1`; it is persisted before events. Monarr stores it atomically with
-active acquisition state. Missing facts cannot clear a held row; unknown
-versions remain nonterminal, stale or conflicting control revisions are rejected,
-and instance changes require explicit reconciliation. Identical running control
-revisions still accept fresh transfer progress and stage observations. The SSE cursor is independent
-of the durable revision. Polling held facts take precedence over older history.
-Terminal history and `job_pp_finished` params retain `*Control:v1`, so a newer
-same-instance resource resolution remains available after queue retirement and
-when the resume event was missed. A queue resolution can fill an older history
-shape while both are visible; bare legacy SUCCESS never clears a stored hold.
-
-`POST /api/v1/queue/{id}/resume` in Monarr calls Runner's existing
-`POST /api/v1/jobs/{id}/actions/resume`; it does not add an NZB. Runner requires
-writer quiescence, capacity reservation and a bounded 64 KiB write/flush probe.
-Attempts and exponential backoff survive restart (eight attempts; initial
-30-second backoff). Quota release is explicitly operator-triggered because
-`statvfs` supplies no authoritative quota headroom. Manual pause and review
-holds survive resource release.
-
-The identical `job-control-v1.json` fixtures preserve a revision larger than
-JavaScript's exact integer range and include an unknown future field.
+| Literal | Value | Source |
+|---|---|---|
+| Runner stream events acted on | `job_pp_finished`, `job_status_changed`, `job_control_changed`, `job_publication_ready`, `job_pp_stage`, `tick`, `reset`, `lagged` | `internal/adapters/nzbd/events.go` |
+| Event deliberately ignored | `job_finished` | `internal/adapters/nzbd/events.go` |
+| Event that is advisory only | `job_deleted` | `internal/adapters/nzbd/events.go` |
+| Submission, manual-admission and import-retry ladder | `30s, 1m, 2m, 5m`, then every 5m | `internal/domain/backoff` |
+| Outbox ladder | `5s, 30s, 2m, 5m, 15m, 1h`, then hourly | `internal/domain/backoff` |
+| Per-attempt deadline of a sub-delivery | 20 s | `internal/app/notify/deliver.go` |
+| Deliveries in flight per notifier | 4 | `internal/app/notify/deliver.go` |
+| Sub-delivery shown as a warning after | 30 minutes | `internal/app/notify/deliver.go` |
+| `failed{lost}` after | 10 minutes of successful polls | `internal/app/acquisition/reducer.go` |
+| Publication `import_failed{stalled}` after | 6 hours | `internal/app/acquisition/reducer.go` |
+| Replacement grab worker tick | 5 s | `internal/app/acquisition/replacement_grab_worker.go` |
+| Indexer-outage re-queue | 15 minutes | `internal/app/acquisition/reducer.go` |
+| Pipeline timing kinds | `failure_to_next_grab`, `runner_done_to_import`, `import_to_cinema_visible` | `internal/api/openapi.yaml` |
+| Cinema scope Monarr holds | `scan:trigger` | `internal/adapters/notify/plurx.go` |
+| Ports | nzbd 6789 · Monarr 7676 · plurx 32400 | `docs/settings.md` |

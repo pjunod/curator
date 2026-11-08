@@ -1,5 +1,7 @@
 # Download failure build — implementation handoff for Runner and Monarr
 
+> Archived 2026-11-08. Implemented in Runner PR #247; the failure model it describes is replaced by [PIPELINE_CONTRACT.md](../PIPELINE_CONTRACT.md) section 2.2. Kept as history.
+
 **Status:** ready for implementation · **Written:** 2026-09-30
 
 Implements the [reviewed fix plan](RUNNER_FAILURE_FIX_PLAN.md), retaining all
@@ -106,8 +108,8 @@ the semantics, and record the final wire schema in both integration docs.
 | Writer | `WriteCmd::Segment { seg_number, offset, data, crc, file_size, server }`; `Finalize { file_size, combined_crc }` in `nzbd-engine/src/writer.rs` | Add metadata/checkpoint control without allowing worker tasks to change authoritative names |
 | Relocation | `Inventory::relocate(&self, job: u32, destination: &Path) -> Result<()>` | Fallback publication needs a returned actual artifact/path; update every caller |
 | Artifacts | `artifacts(id,job,path,state,updated_at,data)` and `operations(id,artifact,state,data)` in `nzbd-state/src/artifacts/mod.rs` | Migrate existing journaled operations; do not create a disconnected second owner |
-| Consumer lifecycle | `DownloadStatus`/`DownloadState` in [downloadclient.go](../internal/ports/downloadclient.go) | `Blameless` is not retry suppression; `StateRemoved` keeps its existing semantics |
-| Consumer active rows | [acquisition query](../internal/infra/sqlite/queries/acquisition.sql) includes grabbed/downloading/downloaded/awaiting_import/importing | Held acquisitions must remain in the active set and survive restart |
+| Consumer lifecycle | `DownloadStatus`/`DownloadState` in [downloadclient.go](../../internal/ports/downloadclient.go) | `Blameless` is not retry suppression; `StateRemoved` keeps its existing semantics |
+| Consumer active rows | [acquisition query](../../internal/infra/sqlite/queries/acquisition.sql) includes grabbed/downloading/downloaded/awaiting_import/importing | Held acquisitions must remain in the active set and survive restart |
 
 ### 3.2 Proposed additive control facts
 
@@ -362,9 +364,9 @@ mandatory release gate, reported pending when unavailable.
 
 ## 8. B5 — complete Monarr behavior and recovery preparation
 
-Preserve the existing changes in [completed.go](../internal/app/acquisition/completed.go),
-[acquisition.go](../internal/app/acquisition/acquisition.go), and
-[the Runner adapter](../internal/adapters/nzbd/nzbd.go). Verify rather than
+Preserve the existing changes in [completed.go](../../internal/app/acquisition/completed.go),
+[acquisition.go](../../internal/app/acquisition/acquisition.go), and
+[the Runner adapter](../../internal/adapters/nzbd/nzbd.go). Verify rather than
 reimplement them. Hidden container rows must leave child accounting intact.
 Failure paths and `Failure:Files` detail must survive both polling and push.
 
@@ -376,7 +378,7 @@ ineligible. Broad parent-path imports protect overlapping active work, while
 cleanup authority remains per-file committed receipts and source identities.
 
 Build dry-run recovery reconciliation using the existing placement and receipt
-coordinator in [ADR 0021](adr/0021-file-lifecycle-recovery.md). Produce a per-file
+coordinator in [ADR 0021](../adr/0021-file-lifecycle-recovery.md). Produce a per-file
 plan with identity, evidence level, intended episode/copy, existing library
 receipt/digest, duplicate relationships, required capacity, and blocked reason.
 Initial observations while work is active are provisional. Mutations would
