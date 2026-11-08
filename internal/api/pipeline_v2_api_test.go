@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
@@ -49,7 +50,13 @@ func TestQueueListsPublicationsAndResolveDecidesAFile(t *testing.T) {
 	}
 
 	endpoint := fmt.Sprintf("/api/v1/queue/%d/publications/%d/files/resolve", downloadID, pubID)
-	e.post(t, endpoint, `{"path":"Movie.nfo","action":"discard"}`).expect(t, http.StatusNoContent)
+	// The discard is recorded; the bytes leave through the per-file cleanup
+	// (M4), which waits while the import still owns a discovered
+	// publication, and Resolve says so rather than reading as deleted.
+	kept := e.post(t, endpoint, `{"path":"Movie.nfo","action":"discard"}`).expect(t, http.StatusConflict)
+	if body := kept.Body.String(); !strings.Contains(body, `"discarded_kept"`) || !strings.Contains(body, "the import owns this publication") {
+		t.Fatalf("discard response = %s, want discarded_kept with the reason", body)
+	}
 	files, _ := e.db.ListPublicationFiles(ctx, pubID)
 	if files[1].Outcome != "discarded" || files[1].DiscardReason != "rejected" {
 		t.Fatalf("discarded file = %+v", files[1])
