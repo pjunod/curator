@@ -3,8 +3,6 @@ package acquisition
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -124,92 +122,4 @@ func TestHeldImportTargetCoversNestedWork(t *testing.T) {
 		inner()
 	}
 	releaseAll()
-}
-
-// The payload guard compares filesystem identity: an alias of the
-// publication (symlink here; a bind mount behaves the same to os.SameFile)
-// is still the publication, a library beside it under the same completed
-// root is not, and a hard-linked placement is a different entry.
-func TestWithinPublicationUsesFilesystemIdentity(t *testing.T) {
-	root := t.TempDir()
-	completed := filepath.Join(root, "completed")
-	pub := filepath.Join(completed, "Show.S01E01-GRP")
-	library := filepath.Join(completed, "library", "Show")
-	for _, d := range []string{pub, library} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	payload := filepath.Join(pub, "show.mkv")
-	if err := os.WriteFile(payload, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	alias := filepath.Join(root, "downloads")
-	if err := os.Symlink(completed, alias); err != nil {
-		t.Fatal(err)
-	}
-	placed := filepath.Join(library, "Show - S01E01.mkv")
-	if err := os.Link(payload, placed); err != nil {
-		t.Fatal(err)
-	}
-	// Final review: a library folder that is a symlink to a subfolder of the
-	// publication. None of its parents is the publication itself.
-	season := filepath.Join(pub, "Season 1")
-	if err := os.MkdirAll(season, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	episode := filepath.Join(season, "show.s01e02.mkv")
-	if err := os.WriteFile(episode, []byte("y"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	linkedSeason := filepath.Join(root, "lib-season")
-	if err := os.Symlink(season, linkedSeason); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range []struct {
-		path, publication, payload string
-		want                       bool
-	}{
-		{payload, pub, payload, true},
-		{payload, pub, "", true},
-		{filepath.Join(alias, "Show.S01E01-GRP", "show.mkv"), pub, payload, true},
-		{placed, pub, payload, false},
-		{placed, payload, payload, false},
-		{payload, payload, payload, true},
-		{filepath.Join(alias, "Show.S01E01-GRP", "show.mkv"), payload, payload, true},
-		{filepath.Join(linkedSeason, "show.s01e02.mkv"), pub, episode, true},
-		{filepath.Join(root, "missing", "x.mkv"), pub, payload, true},
-	} {
-		if got := withinPublication(c.path, c.publication, c.payload); got != c.want {
-			t.Errorf("withinPublication(%q, %q, %q) = %v, want %v", c.path, c.publication, c.payload, got, c.want)
-		}
-	}
-}
-
-// The field failure: one title's long placement held every other title's
-// import. A delivery import must complete while a different title holds its
-// target, and wait while its own title is held.
-func TestDeliveryImportIsNotHeldByAnotherTitlesPlacement(t *testing.T) {
-	ctx := context.Background()
-	protocol := &deliveryImportClient{}
-	svc, db, dl, cfg, _ := deliveryImportFixture(t, protocol)
-	receiptID := receiptIDFor(t, db, dl.ID)
-
-	_, releaseOther := svc.lockImportTarget(ctx, dl.MediaItemID+1000)
-	done := make(chan error, 1)
-	go func() { done <- svc.runDeliveryImport(ctx, dl, cfg, receiptID) }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("import beside another title's placement: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		releaseOther()
-		t.Fatal("import waited behind a different title's placement")
-	}
-	releaseOther()
-	r, err := db.DeliveryReceiptByID(ctx, receiptID)
-	if err != nil || r.State != "imported" {
-		t.Fatalf("receipt = %+v err=%v, want imported", r, err)
-	}
 }

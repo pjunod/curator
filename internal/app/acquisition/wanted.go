@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 // wantedIndex caches "everything the system still wants": monitored
@@ -47,7 +49,10 @@ func (s *Service) Wanted(ctx context.Context) ([]domain.Wantable, error) {
 
 // buildWanted walks the library and collects monitored wantables that are
 // missing or upgradable. Series contribute per-episode wantables (season packs
-// are a search strategy, not a wanted unit).
+// are a search strategy, not a wanted unit). A title or profile removed
+// while the walk runs is skipped; any other read failure fails the walk, so
+// Wanted never caches a list that silently lost titles for the rest of the
+// day.
 func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 	summaries, err := s.db.ListMediaItems(ctx, "")
 	if err != nil {
@@ -59,18 +64,27 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 			continue
 		}
 		item, err := s.db.GetMediaItemFull(ctx, sum.ID)
+		if errors.Is(err, sqlite.ErrNotFound) {
+			continue // removed since the list was read
+		}
 		if err != nil {
-			continue
+			return nil, err
 		}
 		profile, err := s.db.GetProfile(ctx, item.QualityProfileID)
-		if err != nil {
+		if errors.Is(err, sqlite.ErrNotFound) {
 			continue
+		}
+		if err != nil {
+			return nil, err
 		}
 		switch item.Kind {
 		case domain.KindMovie, domain.KindBook:
 			w, err := s.target(ctx, item, 0, 0)
-			if err != nil {
+			if errors.Is(err, sqlite.ErrNotFound) {
 				continue
+			}
+			if err != nil {
+				return nil, err
 			}
 			if wants(profile, w) {
 				out = append(out, w)
@@ -78,7 +92,7 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 		case domain.KindSeries:
 			epStates, err := s.episodeStates(ctx, item, 0)
 			if err != nil {
-				continue
+				return nil, err
 			}
 			out = append(out, s.wantedEpisodes(item, profile, epStates, nil)...)
 		}
@@ -91,14 +105,20 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 				continue
 			}
 			copyProfile, err := s.db.GetProfile(ctx, cp.QualityProfileID)
-			if err != nil {
+			if errors.Is(err, sqlite.ErrNotFound) {
 				continue
+			}
+			if err != nil {
+				return nil, err
 			}
 			switch item.Kind {
 			case domain.KindMovie, domain.KindBook:
 				w, err := s.targetCopy(ctx, item, 0, 0, &cp)
-				if err != nil {
+				if errors.Is(err, sqlite.ErrNotFound) {
 					continue
+				}
+				if err != nil {
+					return nil, err
 				}
 				if wants(copyProfile, w) {
 					out = append(out, w)
@@ -106,7 +126,7 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 			case domain.KindSeries:
 				epStates, err := s.episodeStates(ctx, item, cp.ID)
 				if err != nil {
-					continue
+					return nil, err
 				}
 				out = append(out, s.wantedEpisodes(item, copyProfile, epStates, &cp)...)
 			}
@@ -204,6 +224,14 @@ func (s *Service) notInFlight(ctx context.Context, wanted []domain.Wantable) []d
 		return wanted
 	}
 	inFlight := map[string]bool{}
+	// A failed download's replacement grab that has not run yet owns its
+	// wantables: the wanted pass must not grab them a second time. The grab
+	// worker's own search excludes its row's grab.
+	if pending, err := s.db.PendingReplacementWantablesExcept(ctx, replacementGrabOwner(ctx)); err == nil {
+		for id := range pending {
+			inFlight[id] = true
+		}
+	}
 	for _, dl := range active {
 		if dl.State == "failed" && dl.CleanupPending {
 			continue

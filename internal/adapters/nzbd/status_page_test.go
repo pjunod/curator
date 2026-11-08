@@ -30,20 +30,23 @@ func TestStatusPollStreamsLargeRecoveryRecordsAndInternalProofs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(statuses) != 3 {
-		t.Fatalf("lost rows after large fields: %+v", statuses)
+	if len(statuses) != 1 || statuses[0].Transfer != "t-901" {
+		t.Fatalf("lost the queue row after large fields: %+v", statuses)
 	}
-	var history ports.DownloadStatus
-	for _, status := range statuses {
-		if status.Handle == "902" {
-			history = status
-		}
+	facts, _, _, err := client(t, srv, "", "").HistorySince(context.Background(), ports.HistoryCursor{}, 100)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if history.Transfer != "t-902" || history.Control == nil || history.Control.Revision != "13" || !history.FetchedKnown || history.Progress != 0.7 || !strings.Contains(history.Message, "retained") {
-		t.Fatalf("lost authoritative metadata: %+v", history)
+	if len(facts) != 2 {
+		t.Fatalf("lost history rows after large fields: %+v", facts)
 	}
-	if statuses[2].State != ports.StateCompleted {
-		t.Fatalf("large record hid later completion: %+v", statuses)
+	failed := facts[0].Terminal
+	if facts[0].Transfer != "t-902" || failed.Outcome != ports.OutcomeFailed || failed.Fetched.SuccessArticles != 7 ||
+		failed.Fetched.TotalArticles != 10 || !strings.Contains(failed.Message, "retained") {
+		t.Fatalf("lost authoritative metadata: %+v %+v", facts[0], failed)
+	}
+	if facts[1].Terminal.Outcome != ports.OutcomeCompleted {
+		t.Fatalf("large record hid later completion: %+v", facts[1])
 	}
 }
 

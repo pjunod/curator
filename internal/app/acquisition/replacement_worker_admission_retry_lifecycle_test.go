@@ -39,7 +39,7 @@ func TestReplacementWorkerKeepsLostAddAcknowledgementAsExactRetry(t *testing.T) 
 		t.Fatalf("worker should make one admission attempt and suppress the same candidate's pack fallback: %v", client.added)
 	}
 	rows, err := db.ListReplacementDownloads(ctx, op.ID)
-	if err != nil || len(rows) != 1 || rows[0].State != "grabbed" || rows[0].SubmissionPhase != "uncertain" || rows[0].Transfer == "" || rows[0].ExecutionPayload == "" {
+	if err != nil || len(rows) != 1 || rows[0].State != "submitting" || rows[0].SubmissionPhase != "uncertain" || rows[0].Transfer == "" || rows[0].ExecutionPayload == "" {
 		t.Fatalf("lost Add acknowledgement did not retain one exact replayable attempt: rows=%+v err=%v", rows, err)
 	}
 

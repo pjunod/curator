@@ -16,9 +16,16 @@ func (d *DB) RecordDownloadSubmission(ctx context.Context, downloadID int64, gen
 	if downloadID <= 0 || generationKey == "" || transfer == "" || handle == "" {
 		return fmt.Errorf("download submission receipt requires exact generation, transfer, and handle")
 	}
-	res, err := d.W.ExecContext(ctx, `UPDATE downloads SET handle=?,submission_phase='submitted',runner_submission_retry_at=0,runner_submission_retry_attempts=0,runner_submission_blocked_at=0,updated_at=?
+	// Admission moves a submitting row to downloading (contract section 3.1)
+	// and gives it the downloading deadline; SET expressions read the old row.
+	now := time.Now().UnixMilli()
+	res, err := d.W.ExecContext(ctx, `UPDATE downloads SET handle=?,submission_phase='submitted',runner_submission_retry_at=0,runner_submission_retry_attempts=0,runner_submission_blocked_at=0,
+		deadline_at=CASE WHEN state='submitting' THEN ? ELSE deadline_at END,
+		state_entered_at=CASE WHEN state='submitting' THEN ? ELSE state_entered_at END,
+		state=CASE WHEN state='submitting' THEN 'downloading' ELSE state END,
+		updated_at=?
 		WHERE id=? AND generation_key=? AND transfer=? AND submission_phase IN ('submitting','uncertain','submitted')
-		AND (handle='' OR handle=?)`, handle, time.Now().UnixMilli(), downloadID, generationKey, transfer, handle)
+		AND (handle='' OR handle=?)`, handle, now+DeadlineDownloading.Milliseconds(), now, now, downloadID, generationKey, transfer, handle)
 	if err != nil {
 		return err
 	}
@@ -187,104 +194,6 @@ func (d *DB) UpdateRunnerSubmissionWarning(ctx context.Context, downloadID int64
 }
 
 var ErrRunnerAdmissionIdentityConflict = errors.New("runner admission identity conflicts with the pinned request")
-
-// RunnerAdmissionPollOrder places never-polled and oldest-due request receipts
-// first so a bounded poll batch cannot repeatedly favor the front of the
-// ordinary download list while later rows starve.
-func (d *DB) RunnerAdmissionPollOrder(ctx context.Context, clientID int64) ([]int64, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT d.id FROM downloads d
-		LEFT JOIN runner_admission_poll_schedule s ON s.download_id=d.id AND s.generation_key=d.generation_key
-		WHERE d.client_id=? AND d.request_token_idempotent=1
-		ORDER BY coalesce(s.next_attempt_at,0),coalesce(s.attempts,0),d.added_at,d.id`, clientID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
-// ClaimRunnerAdmissionPoll reserves the next bounded receipt lookup for this
-// exact download generation. Failed lookups use a durable 30s, 1m, 2m, 5m
-// progression; successful reads are paced at five minutes while cleanup and
-// terminal state settle.
-func (d *DB) ClaimRunnerAdmissionPoll(ctx context.Context, downloadID int64, generationKey string, now time.Time) (bool, error) {
-	if downloadID <= 0 || generationKey == "" {
-		return false, fmt.Errorf("runner admission poll requires a download generation")
-	}
-	tx, err := d.W.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO runner_admission_poll_schedule(download_id,generation_key,next_attempt_at,attempts,last_error)
-		SELECT id,?,0,0,'' FROM downloads WHERE id=? AND generation_key=?
-		ON CONFLICT(download_id) DO UPDATE SET generation_key=excluded.generation_key,next_attempt_at=0,attempts=0,last_error=''
-		WHERE runner_admission_poll_schedule.generation_key!=excluded.generation_key`, generationKey, downloadID, generationKey); err != nil {
-		return false, err
-	}
-	var currentGeneration string
-	var nextAttempt int64
-	var attempts int
-	if err = tx.QueryRowContext(ctx, `SELECT generation_key,next_attempt_at,attempts FROM runner_admission_poll_schedule WHERE download_id=?`, downloadID).Scan(&currentGeneration, &nextAttempt, &attempts); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, ErrRunnerAdmissionIdentityConflict
-		}
-		return false, err
-	}
-	if currentGeneration != generationKey {
-		return false, ErrRunnerAdmissionIdentityConflict
-	}
-	if nextAttempt > now.UnixMilli() {
-		return false, tx.Commit()
-	}
-	backoff := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
-	index := attempts
-	if index < 0 {
-		index = 0
-	}
-	if index >= len(backoff) {
-		index = len(backoff) - 1
-	}
-	var result sql.Result
-	result, err = tx.ExecContext(ctx, `UPDATE runner_admission_poll_schedule SET next_attempt_at=?,attempts=attempts+1,last_error='lookup pending'
-		WHERE download_id=? AND generation_key=? AND next_attempt_at<=?`, now.Add(backoff[index]).UnixMilli(), downloadID, generationKey, now.UnixMilli())
-	if err != nil {
-		return false, err
-	}
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if changed == 0 {
-		return false, tx.Commit()
-	}
-	return true, tx.Commit()
-}
-
-func (d *DB) RecordRunnerAdmissionPollResult(ctx context.Context, downloadID int64, generationKey string, found bool, lookupErr error, now time.Time) error {
-	lastError := ""
-	if lookupErr != nil {
-		lastError = lookupErr.Error()
-	} else if !found {
-		lastError = "Runner admission receipt not found yet"
-	}
-	if found && lookupErr == nil {
-		_, err := d.W.ExecContext(ctx, `UPDATE runner_admission_poll_schedule SET next_attempt_at=?,attempts=0,last_error=''
-			WHERE download_id=? AND generation_key=?`, now.Add(5*time.Minute).UnixMilli(), downloadID, generationKey)
-		return err
-	}
-	// Claim already persisted a retry deadline; this only annotates the result.
-	_, err := d.W.ExecContext(ctx, `UPDATE runner_admission_poll_schedule SET last_error=? WHERE download_id=? AND generation_key=?`, lastError, downloadID, generationKey)
-	return err
-}
 
 // BindRunnerAdmission pins the first authoritative receipt to both the
 // immutable download generation/transfer token and the configured Runner

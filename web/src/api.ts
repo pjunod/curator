@@ -965,7 +965,51 @@ export interface QueueItem {
   bytesPerSecond?: number
   /** Persisted explanation of why this release was accepted. */
   match?: MatchEvidence
+  /** Pipeline contract v2: the recorded terminal (completed | failed | cancelled). */
+  runnerOutcome?: string
+  /** health | fetch | par | unpack | script | publish | io | identity | hold_expired, or Curator's own submit | lost | parked. */
+  runnerReason?: string
+  fetchCause?: string
+  blamesRelease?: boolean
+  /** Curator's own terminal: any later Runner fact re-opens it. */
+  provisional?: boolean
+  /** When the row's current state becomes overdue. */
+  deadlineAt?: string
+  stateEnteredAt?: string
+  /** A held row past its deadline: Runner has not reported since. Never a Curator failure. */
+  stale?: boolean
+  heldReason?: string
+  publications?: QueuePublication[]
 }
+
+/** One Runner generation and what became of each of its files. */
+export interface QueuePublication {
+  id: number
+  generation?: string
+  kind: string
+  state: string
+  cohort: string
+  path: string
+  manifestSource?: string
+  error?: string
+  cleanupApprovedAt?: string
+  cleanupPausedAt?: string
+  cleanupState?: 'queued' | 'running'
+  cleanupReason?: string
+  files: QueuePublicationFile[]
+}
+
+export interface QueuePublicationFile {
+  path: string
+  bytes?: number
+  outcome: string
+  discardReason?: string
+  reason?: string
+  libraryPath?: string
+  removed?: boolean
+}
+
+export type PublicationFileAction = 'place' | 'discard' | 'keep'
 
 export interface ScannedFile {
   path: string
@@ -1419,6 +1463,7 @@ export type Stage =
   | 'script'
   | 'importing'
   | 'notifying'
+  | 'publication_cleanup'
 
 export interface Transfer {
   downloadId: number
@@ -1662,6 +1707,7 @@ export interface CompletedEntry {
   reason: string
   legacyReview?: boolean
   deliveryManaged?: boolean
+  wholeDeletable?: boolean
   reviewFiles?: CompletedReviewFile[]
   receipts: CompletedReceipt[]
 }
@@ -1742,7 +1788,6 @@ export interface DeliveryLifecycleReceipt {
   lifecycleTiming?: RunnerLifecycleTiming
   runnerStages?: RunnerStages
   sourceCopies?: RunnerSourceCopy[]
-  pendingDeleteRequests?: Array<{ id: string; paths: string[]; error?: string }>
   receiptId: number
   clientId: number
   downloadId: number
@@ -1819,10 +1864,14 @@ export interface SeasonSelection {
  scopes: { IndexerID:number; EpisodeID:number; Complete:boolean; Reasons:string[]; Degraded:boolean }[]
 }
 
+export const resolvePublicationFile = (id: number, publicationId: number, path: string, action: PublicationFileAction) =>
+  send<void>('POST', `/queue/${id}/publications/${publicationId}/files/resolve`, { path, action })
+
+export const setPublicationCleanup = (publicationId: number, action: 'pause' | 'resume') =>
+  send<void>('POST', `/downloads/publications/${publicationId}/cleanup`, { action })
+
 export const resolveQueueReservation = (id: number) => send<void>('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})
 
-export const abandonDeliveryDeleteRequest = (receiptId: number, requestId: string) =>
- send('POST', `/downloads/deliveries/${receiptId}/delete-batches/${encodeURIComponent(requestId)}/abandon`)
 
 export interface StorageChangeRequest { root: string; expectedIdentity: string; observedIdentity: string; reviewToken?: string }
 export interface StorageChangeReview extends StorageChangeRequest { expectedDescription: string; observedDescription: string; existingPayloads: number; existingRequests: number; inFlightRequests: number; activeImports: number }

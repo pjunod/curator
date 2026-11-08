@@ -89,6 +89,9 @@ func (d *DB) Migrate(ctx context.Context) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("sqlite: setting goose dialect: %w", err)
 	}
+	if err := d.preflightDropV1(ctx); err != nil {
+		return err
+	}
 	if err := goose.UpContext(ctx, d.W, "migrations"); err != nil {
 		return fmt.Errorf("sqlite: migrating: %w", err)
 	}
@@ -120,6 +123,10 @@ var requiredColumns = []struct{ table, column string }{
 	{"media_identity_sources", "countries"},
 	{"media_files", "audio_languages"},
 	{"pipeline_timings", "started_at"},
+	{"downloads", "runner_outcome"}, {"downloads", "provisional"}, {"downloads", "deadline_at"}, {"downloads", "runner_stage"},
+	{"publications", "cohort"}, {"publication_files", "outcome"}, {"replacement_grabs", "next_at"},
+	{"wantable_attempts", "download_id"}, {"runner_history_cursors", "incarnation"},
+	{"runner_history_cursors", "deliveries_after"}, {"runner_history_cursors", "history_read"}, {"storage_change_review_paths", "path"},
 }
 
 // verifySchema refuses to start on a database that goose considers migrated

@@ -129,13 +129,10 @@ func TestOverdueCheckNamesTheStaleRow(t *testing.T) {
 			t.Errorf("message names %s, which is within its allowance: %s", other, r.Message)
 		}
 	}
-	// The message must say what the check measures (silence from the client)
-	// and what it does not catch (jobs held inside the client).
-	if !strings.Contains(r.Message, "not heard") || !strings.Contains(r.Message, "held") {
-		t.Errorf("message must say it judges silence from the client and does not catch held jobs: %s", r.Message)
-	}
-	if !strings.Contains(r.Message, "M2") {
-		t.Errorf("message must say the deadline column is not there yet: %s", r.Message)
+	// The message must say what the check measures: deadlines set on state
+	// entry, including a hold's (pipeline M2).
+	if !strings.Contains(r.Message, "deadline") || !strings.Contains(r.Message, "held") {
+		t.Errorf("message must say it judges state deadlines, held jobs included: %s", r.Message)
 	}
 
 	// 40 minutes on: the usenet downloading row joins; the torrent does not.
@@ -179,7 +176,7 @@ func TestParkedAndSupersededRowsAreNeverOverdue(t *testing.T) {
 	ctx := context.Background()
 	parked := addDownload(t, db, "Parked.Movie", "grabbed", "usenet")
 	addDownload(t, db, "Open.Movie", "grabbed", "usenet")
-	// ParkDownload stamps parked_at but leaves updated_at alone.
+	// A parked legacy row waits on a person and has no deadline.
 	if err := db.ParkDownload(ctx, parked, "operator cancellation"); err != nil {
 		t.Fatal(err)
 	}

@@ -137,6 +137,11 @@ type DownloadControl struct {
 	RetryPolicy string `json:"retry_policy"`
 	Message     string `json:"message"`
 	Instance    string `json:"instance"`
+	// DeadlineInS is the seconds left before Runner ends this hold as
+	// failed/hold_expired (contract section 2.3): relative, because hosts do
+	// not share a clock. Nil from a Runner older than contract v2.
+	DeadlineInS  *int64 `json:"deadline_in_s,omitempty"`
+	DeadlineUnix *int64 `json:"deadline_unix,omitempty"`
 }
 
 func (c *DownloadControl) Held() bool {
@@ -283,6 +288,9 @@ type ClientEvent struct {
 	// Seq is the client's own event cursor, for logs and for saying which
 	// channel delivered a step. Zero when the client does not number.
 	Seq uint64
+	// Fact is the pipeline v2 reading of the event, for clients on the
+	// reducer (RunnerFeeds). Nil from every other client.
+	Fact *RunnerFact
 }
 
 // Subscriber is an OPTIONAL capability: a client that can push state

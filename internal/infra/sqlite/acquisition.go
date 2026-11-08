@@ -144,7 +144,13 @@ func (d *DB) DeleteProfile(ctx context.Context, id int64) error {
 	// A default is a reference too, even though no row points at it. Deleting
 	// it would leave the setting dangling and every future add of that kind
 	// would quietly land back on the built-in.
-	if kinds := d.defaultingKinds(ctx, id); len(kinds) > 0 {
+	// A failed read is not "no default": deleting a default would leave the
+	// setting dangling.
+	kinds, err := d.defaultingKinds(ctx, id)
+	if err != nil {
+		return err
+	}
+	if len(kinds) > 0 {
 		return fmt.Errorf("%w: new %s items use it — pick a different default first",
 			ErrProfileIsDefault, strings.Join(kinds, " and "))
 	}
@@ -438,6 +444,23 @@ type Download struct {
 	SourceIndexerID           int64
 	RunnerInstanceID          string
 	RunnerAdmissionGeneration string
+
+	// The reducer's columns (pipeline contract v2, section 3.2). RunnerOutcome
+	// is the recorded terminal; Provisional marks one Curator authored that a
+	// later Runner fact may re-open. DeadlineAt is when the row's current state
+	// becomes overdue (0 = no deadline).
+	RunnerOutcome       string
+	RunnerOutcomeAt     time.Time
+	RunnerOutcomeSeq    int64
+	RunnerOutcomeReason string
+	RunnerFetchCause    string
+	RunnerBlamesRelease bool
+	RunnerSalvage       string
+	RunnerFetchedJSON   string
+	Provisional         bool
+	DeadlineAt          time.Time
+	StateEnteredAt      time.Time
+	RunnerStage         string // last post-processing stage Runner reported
 }
 
 type ManualGrabRequest struct {
@@ -478,10 +501,23 @@ func downloadFromRow(r sqlitegen.Download) Download {
 		Handoff: handoff, MatchEvidence: evidence, RunnerControl: r.RunnerControl,
 		AddedAt: time.UnixMilli(r.AddedAt), UpdatedAt: time.UnixMilli(r.UpdatedAt),
 	}
+	dl.RunnerOutcome, dl.RunnerOutcomeSeq, dl.RunnerOutcomeReason = r.RunnerOutcome, r.RunnerOutcomeSeq, r.RunnerOutcomeReason
+	dl.RunnerFetchCause, dl.RunnerBlamesRelease, dl.RunnerSalvage = r.RunnerFetchCause, r.RunnerBlamesRelease != 0, r.RunnerSalvage
+	dl.RunnerFetchedJSON, dl.Provisional = r.RunnerFetchedJson, r.Provisional != 0
+	dl.RunnerOutcomeAt, dl.DeadlineAt, dl.StateEnteredAt = msTime(r.RunnerOutcomeAt), msTime(r.DeadlineAt), msTime(r.StateEnteredAt)
+	dl.RunnerStage = r.RunnerStage
 	if r.CopyID.Valid {
 		dl.CopyID = r.CopyID.Int64
 	}
 	return dl
+}
+
+// msTime is a Unix-millisecond column as a time, with 0 as the zero time.
+func msTime(ms int64) time.Time {
+	if ms == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms)
 }
 
 // InsertDownload records a grab.
@@ -551,6 +587,7 @@ func downloadInsertParams(dl Download) (sqlitegen.InsertDownloadParams, error) {
 		ExactTransferCorrelation: boolInt(dl.ExactTransferCorrelation),
 		ReplacementOperationID:   dl.ReplacementOperationID, SourceGuid: dl.SourceGUID, SourceIndexerID: dl.SourceIndexerID,
 		Transfer: dl.Transfer, SubmissionPhase: submissionPhase, ExecutionPayload: dl.ExecutionPayload,
+		DeadlineAt: unixMilliOrZero(dl.DeadlineAt), StateEnteredAt: now,
 	}
 	if dl.CopyID != 0 {
 		p.CopyID = sql.NullInt64{Int64: dl.CopyID, Valid: true}
@@ -1054,7 +1091,7 @@ func (d *DB) ClearFailedDownloads(ctx context.Context) (int64, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := d.Write.WithTx(tx)
-	dismissed, err := q.DismissFailedDownloadsWithPendingRunnerReceipt(ctx)
+	dismissed, err := q.DismissFailedDownloadsWithLivePublication(ctx)
 	if err != nil {
 		return 0, err
 	}

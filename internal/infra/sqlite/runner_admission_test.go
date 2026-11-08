@@ -108,36 +108,3 @@ func TestAutomaticSubmissionRetryLimitExcludesOlderManualRows(t *testing.T) {
 		t.Fatalf("automatic retry due=%v err=%v", due, err)
 	}
 }
-
-func TestRunnerAdmissionPollScheduleIsDurableAndBacksOff(t *testing.T) {
-	ctx := context.Background()
-	db := openTestDB(t)
-	itemID, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Admission schedule", Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	dl, err := db.InsertDownloadRecord(ctx, Download{MediaItemID: itemID, ReleaseTitle: "release", Protocol: "nzb", ClientID: 7, State: "grabbed", Transfer: "token-schedule", RequestTokenIdempotent: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Unix(1_900_000_000, 0)
-	for attempt, interval := range []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute} {
-		claimed, err := db.ClaimRunnerAdmissionPoll(ctx, dl.ID, dl.GenerationKey, now)
-		if err != nil || !claimed {
-			t.Fatalf("attempt %d claimed=%v err=%v", attempt, claimed, err)
-		}
-		if err = db.RecordRunnerAdmissionPollResult(ctx, dl.ID, dl.GenerationKey, false, nil, now); err != nil {
-			t.Fatal(err)
-		}
-		if claimed, err = db.ClaimRunnerAdmissionPoll(ctx, dl.ID, dl.GenerationKey, now.Add(interval-time.Millisecond)); err != nil || claimed {
-			t.Fatalf("attempt %d was claimed before backoff: claimed=%v err=%v", attempt, claimed, err)
-		}
-		now = now.Add(interval)
-	}
-	if err = db.RecordRunnerAdmissionPollResult(ctx, dl.ID, dl.GenerationKey, true, nil, now); err != nil {
-		t.Fatal(err)
-	}
-	if claimed, err := db.ClaimRunnerAdmissionPoll(ctx, dl.ID, dl.GenerationKey, now.Add(5*time.Minute-time.Millisecond)); err != nil || claimed {
-		t.Fatalf("successful lookup was not paced: claimed=%v err=%v", claimed, err)
-	}
-}

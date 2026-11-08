@@ -18,3 +18,8 @@ func expectedStorageIdentity(path string) (string, error) {
 }
 
 func legacyStorageIdentity(path string) (string, error) { return expectedStorageIdentity(path) }
+
+// perFileCleanupSupported says whether this platform can bind a verified
+// publication file to its unlink (an inode generation); without it the
+// per-file cleanup refuses rather than re-hashing forever.
+const perFileCleanupSupported = false

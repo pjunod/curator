@@ -128,7 +128,7 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	if imp == "" {
 		imp = dl.SavePath
 	}
-	legacyReview, reviewErr := s.db.LegacyAutomaticImportReview(ctx, dl.GenerationKey, imp)
+	legacyReview, reviewErr := s.db.StorageChangeReview(ctx, dl.GenerationKey, imp)
 	legacyReviewApproved := false
 	var legacyApproval *sqlite.HandoffEntry
 	var reviewedSnapshots map[string]string
@@ -169,7 +169,7 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 		}
 	}
 	if reviewErr != nil || (legacyReview && !legacyReviewApproved) {
-		reason := "automatic import is held for legacy payload review; select exact files in Resolve"
+		reason := "automatic import is held because the storage under this payload changed; select exact files in Resolve"
 		if reviewErr != nil {
 			reason += ": " + reviewErr.Error()
 		}
@@ -284,6 +284,30 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	dl, err = s.db.GetDownload(ctx, id)
 	if err != nil {
 		return err
+	}
+	// A row with a publication imports that publication (pipeline v2): an
+	// approval (ManualApproval) or a retry after import_failed.
+	if pubs, e := s.db.ListPublicationsForDownload(ctx, id); e == nil && len(pubs) > 0 {
+		for _, p := range pubs {
+			if p.State != "discovered" && p.State != "importing" && p.State != "import_failed" {
+				continue
+			}
+			if p.State != "discovered" {
+				if e := s.db.SetPublicationState(ctx, p.ID, "discovered", ""); e != nil {
+					return e
+				}
+			}
+			var cfg ports.ClientConfig
+			if dl.ClientID != 0 {
+				if cfg, err = s.db.GetDownloadClient(ctx, dl.ClientID); err != nil {
+					return err
+				}
+			}
+			if !s.enqueueImportJobFor(ctx, dl, cfg, importJob{publicationID: p.ID, approved: true}, true) {
+				return fmt.Errorf("import queue is full; durable retry remains recorded")
+			}
+			return nil
+		}
 	}
 	if s.importCh == nil {
 		bound, finish, e := s.beginInlineImport(ctx, dl, a.ImportAttemptKey)

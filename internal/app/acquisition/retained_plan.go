@@ -3,11 +3,12 @@ package acquisition
 import (
 	"context"
 	"fmt"
-	"github.com/pjunod/monarr/internal/domain"
-	"github.com/pjunod/monarr/internal/domain/parser"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/parser"
 )
 
 // RetainedCandidate names externally evidenced bytes, not an import permission.

@@ -199,7 +199,12 @@ func (s *Service) regrabSpend(ctx context.Context, w domain.Wantable, exclude in
 		}
 		if wantableOnRow(dl, id) {
 			failed++
-			spent += releasesFetched(dl)
+			// Bytes count only for failures that blame the release (contract
+			// section 3.3, item 5): a local fault, an operator delete, a lost
+			// or cancelled job costs nothing. The attempt ceiling counts all.
+			if dl.RunnerOutcome == "" || dl.RunnerBlamesRelease {
+				spent += releasesFetched(dl)
+			}
 		}
 	}
 	return spent >= reGrabLimit || failed >= reGrabAttemptCeiling, spent, failed

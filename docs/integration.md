@@ -16,6 +16,150 @@ tying a grab to a playable file. When something in the chain is broken, Monarr
 is where you look first — not because it is the likely culprit, but because it
 is the only vantage point that sees both directions.
 
+## Pipeline contract v2 in Curator (M2, v0.39.0)
+
+What changed for Runner clients, in the order a download meets it (the design
+is [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) section 3; the decision record is
+[ADR 0026](adr/0026-pipeline-contract-v2.md)):
+
+- **Facts, one reducer.** Every observation of a Runner job — an SSE event,
+  a queue row, a history row, a `/deliveries` row, a request receipt — is a
+  *fact* (`admitted`, `status`, `terminal`, `publication_ready`, `gone`), and
+  one function applies them all. A fact is admitted only when its `transfer`
+  token equals the row's; a mismatch (a job id reused after a Runner state
+  wipe) is dropped and counted as `monarr_runner_fact_mismatch_total`. An
+  event without a token falls back to the job handle.
+- **A terminal is recorded once.** `downloads.runner_outcome` is set by one
+  guarded write; in the same transaction Curator writes the work it implies:
+  a `publications` row for `completed`, a `replacement_grabs` row for a
+  failure that re-grabs, the blocklist entry when `blames_release`, the
+  history row. A replay from the other feed is a no-op. A status never moves
+  a terminal row; a terminal ends a hold unconditionally.
+- **Curator's own terminals are provisional**: `failed{submit}` (ten minutes
+  of Runner positively answering "no such token" — an unreachable Runner does
+  not count), `failed{lost}` (ten minutes of successful polls with the job in
+  no feed and no receipt) and rows migrated from the old parks
+  (`failed{parked: …}`). Any later Runner fact re-opens them. Curator never
+  writes `hold_expired`: a hold past Runner's `deadline_in_s` plus five
+  minutes (24 hours when an older Runner sends none) is shown as
+  **held (stale)** and reconciled through the request receipt.
+- **The history cursor** (`runner_history_cursors`: incarnation, since_seq)
+  is advanced only by the poll's ordered reader, after its page commits.
+  `GET /api/v1/history?since_seq=&limit=100` replaces the old `limit=100`
+  re-read. A changed incarnation, a cursor below `retained_min_seq` or no
+  stored cursor at all (the first M2 start) looks every outstanding transfer
+  up via `GET /request-admissions/<token>` and sets the cursor to Runner's
+  head. Events never move the cursor.
+- **`/deliveries` is read with `include_accepted=true`**, only to raise
+  facts: a `completed` row the stream missed, a `salvage` row (or any row for
+  a download Runner finally failed) as `publication_ready`. Curator no longer
+  acknowledges deliveries; the lease/verify/ack/import cycle is gone.
+- **Publications are the import unit**, one per Runner generation, each with
+  its own state (`discovered → importing → imported | import_failed`) and a
+  per-file outcome: `placed`, `discarded{superseded|duplicate|rejected}`, or
+  `unresolved` (retained, decided in Activity). The manifest comes from the
+  publication's `.runner-manifest.json`, else from Runner's v1 delivery
+  record (the **v1 adapter**); a directory with neither waits and is checked
+  again each poll; six hours in `discovered`/`importing` is
+  `import_failed{stalled}`. The digest is verified once, at import, when the
+  publication was copied across volumes.
+- **Which attempt wins a destination** is Curator's own record
+  (`wantable_attempts`: the download it last chose for each wantable), never
+  generation ids or arrival time. A file from another attempt is
+  `discarded{superseded}` when the library already holds the current
+  attempt's file, otherwise `unresolved`; no record is `unresolved`.
+- **Failure is the next grab.** The replacement grab worker (every 5 s)
+  executes `replacement_grabs`: a movie or book is searched; an episode is
+  searched for a single-episode release, never a pack; an episode with no
+  single release goes to the season planner. `cancelled`, `lost` and
+  `fetch{indexer_unavailable}` write no grab; only `blames_release` failures
+  blocklist and spend fetched bytes against the re-grab budget. A
+  `ReplacementOperation` advances with the failed bytes retained.
+- **The historical cohort.** Every v1 receipt (accepted or not) and every
+  completed directory present at the first M2 start is a `historical`
+  publication. It imports like any other; nothing deletes it until its M7
+  review batch is approved.
+
+What Curator no longer does with Runner: acknowledge deliveries, pace receipt
+lookups per row, park on receipt shapes, refuse controls by revision, wait for
+Runner's cleanup before re-grabbing, or ask Runner to clean its source.
+
+### Per-file cleanup and the historical cohort (M4, v0.40.0)
+
+Contract section 3.4; [ADR 0026](adr/0026-pipeline-contract-v2.md) addendum.
+
+- **One rule, one implementation.** Curator deletes a publication file only
+  when its recorded outcome is evidence: `placed` — the placement recorded
+  the manifest's SHA-256 *and* the library file still has it (the same inode,
+  or re-hashed) — or `discarded{superseded|duplicate|rejected}`. `unresolved`
+  and `pending` files are never touched. Size is never evidence; a manifest
+  entry without a digest is kept.
+- **Re-checked before every unlink**, in order: the generation (the
+  directory's `.runner-manifest.json` — or, for a v1 record, the stored
+  manifest — must name the publication's generation), the file identity
+  (size and digest against the manifest, then an unchanged inode generation
+  since the hash), and the **storage** of the completed root: its live
+  identity against the one the inventory scan recorded (a changed identity is
+  an unmounted share), then the storage-change review fences — after an
+  accepted replacement volume the recorded identity matches the new one, and
+  the fence on what was on the old volume is what keeps automatic deletion
+  off it (an operator's own discard is the review it asks for). The unlink
+  goes through a directory handle that refuses symlinks. The directory is
+  `rmdir`ed when only the manifest is left; a stray Curator cannot account
+  for (`.DS_Store`, an NFS silly-rename) keeps it, and once every manifest
+  file is gone Storage offers **Delete files…** on it whole (identity and
+  ownership checks still apply). The publication is then `removed` and its
+  row's payload is gone.
+- **Attributable and stoppable**: every pass runs on the cleanup lane (the
+  sweep only queues them), shows in `GET /api/v1/system/transfers` as stage
+  `publication_cleanup` with why it runs, and on the publication in Activity
+  (*Cleanup queued/running (hourly sweep)*) with **Pause cleanup**
+  (`POST /api/v1/downloads/publications/{id}/cleanup {"action":"pause"}`);
+  a pause cancels the pass and keeps the sweep off the publication until
+  **Resume cleanup**.
+- **Who runs it**: the cleanup lane right after an import, the hourly sweep
+  (publications `imported`/`notified` with evidenced files still on disk),
+  Resolve → **Discard**, Download storage → **Delete selected files…** on a
+  publication directory (only its unresolved files; they become
+  `discarded{rejected}`), and the receipt action **Retry Curator cleanup**.
+  None of them asks Runner for anything.
+- **Evidence that no longer holds** (the library file now differs, the
+  publication file differs from its manifest, the library file is gone) turns
+  the file into `unresolved` with the reason, shown in Resolve; the sweep does
+  not re-read it. A transient problem (storage, a read error, a file changing
+  while hashed) leaves the file as it is and records the reason on the
+  publication; the next pass retries.
+- **The historical cohort** — every v1 receipt and every completed directory
+  present at the first M2 start, plus (migration 0073) every path of the old
+  migration-0040 review cohort — is never touched by automatic deletion nor
+  by an operator discard until its review batch is approved:
+  `POST /api/v1/downloads/publications/approve-cleanup {"ids": [...]}` sets
+  `cleanup_approved_at` (M7) and the same per-file rule then applies.
+- **Activity retention and Clear** hide a row whose publication still has
+  files on disk instead of deleting it (a publication cascades with its row);
+  the row goes once its publications are removed.
+- **Removed**: the receipt-bound cleanup ledger and its explicit deletion
+  batches (`runner_delivery_explicit_delete_*`, the abandon route), the
+  migration-0040 review cohort (`legacy_cleanup_review`,
+  `legacy_inflight_import_evidence`; storage-change path fences moved to
+  `storage_change_review_paths`), `runner_delivery_cursors` (the deliveries
+  cursor is `runner_history_cursors.deliveries_after`), and
+  `runner_admission_poll_schedule`.
+- **If the upgrade refuses to start** with `migration 0073 refused: live v1
+  dependents: N pending explicit deletion request(s) (<batch ids>)`, nothing
+  has been changed (the check runs before any migration). Roll back: deploy
+  the previous Curator build (v0.39.x), open Activity → the delivery's
+  lifecycle trace, and let each named request finish or **Cancel deletion
+  request**; then deploy v0.40.0 again. `SELECT batch_id FROM
+  runner_delivery_explicit_delete_batches WHERE abandoned_at=0` on the
+  database lists them.
+- Directories the cutover froze with no manifest and no download row are
+  `import_failed` with that explanation (nothing can import them); once their
+  review batch is approved, Storage deletes them whole.
+- **Non-Runner clients** keep their whole-payload cleanup (the client's own
+  delete, then the guarded local fallback) — they have no manifest. It never
+  touches a directory a publication claims.
+
 ## The pipeline
 
 ```
@@ -206,11 +350,14 @@ library rescan.
 (`download_clients.mode = 'push'`), Monarr holds nzbd's SSE stream open and
 imports the moment post-processing finishes, instead of up to 30 s later.
 
-**What Monarr acts on.** Six event names out of the eleven nzbd emits:
-`job_pp_stage` (step trace), `job_pp_finished` (completed/failed, carrying
-`final_dir`), `job_deleted` (failed — *"removed in nzbd"*), `reset` and
-`lagged` (both → immediate full queue refresh), `tick` (progress). Everything
-else is dropped. `job_finished` is **deliberately ignored**: it fires when the
+**What Monarr acts on.** Each event becomes a fact for the reducer (see
+*Pipeline contract v2 in Curator* above): `job_pp_finished` (the terminal:
+the typed `outcome`/`reason`/`blames_release`/`salvage`, or for an older
+Runner the `pp_status` string), `job_status_changed` and `job_control_changed`
+(status and holds), `job_publication_ready` (a salvage), `job_pp_stage` and
+`tick` (progress), `reset` and `lagged` (immediate poll). `job_deleted` carries
+no transfer token and is advisory: the cancellation arrives as a terminal from
+Runner's own record. Everything else is dropped. `job_finished` is **deliberately ignored**: it fires when the
 download ends, before repair and extraction, and importing then would import a
 directory that is not finished.
 

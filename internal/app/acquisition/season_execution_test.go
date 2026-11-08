@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pjunod/monarr/internal/domain"
-	"github.com/pjunod/monarr/internal/ports"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/ports"
 
 	"github.com/pjunod/monarr/internal/domain/acquisitionplan"
 	"github.com/pjunod/monarr/internal/infra/sqlite"

@@ -20,9 +20,8 @@ type partialCleanupOwner struct {
 func (s *Service) cleanupPartialPayloads(ctx context.Context) {
 	rows, err := s.db.R.QueryContext(ctx, `SELECT d.id, d.generation_key FROM downloads d
 		WHERE d.cleanup_pending=1 AND d.state='failed' AND d.delivery_expected=0
-		AND NOT EXISTS (SELECT 1 FROM legacy_cleanup_review l
-			WHERE l.generation_key=d.generation_key
-			OR (d.import_path != '' AND l.path=d.import_path))
+		AND NOT EXISTS (SELECT 1 FROM storage_change_review_paths l WHERE d.import_path != '' AND l.path=d.import_path)
+		AND NOT EXISTS (SELECT 1 FROM publications p WHERE p.download_id=d.id OR (d.import_path != '' AND p.path=d.import_path))
 		ORDER BY d.updated_at LIMIT 25`)
 	if err != nil {
 		return
@@ -138,7 +137,7 @@ func (s *Service) settleAbsentPartialPayload(ctx context.Context, candidate part
 	if err != nil || storagePath(current.ImportPath, roots) != storagePath(path, roots) || !s.ownsDownloadPath(decisionCtx, path) {
 		return
 	}
-	if s.legacyCleanupReview(decisionCtx, downloadRef{ID: candidate.DownloadID, GenerationKey: current.GenerationKey, ImportPath: current.ImportPath}) ||
+	if s.storageReviewHeld(decisionCtx, downloadRef{ID: candidate.DownloadID, GenerationKey: current.GenerationKey, ImportPath: current.ImportPath}) ||
 		s.checkStorageIdentity(decisionCtx, path) != nil || !payloadAbsent(path) {
 		return
 	}

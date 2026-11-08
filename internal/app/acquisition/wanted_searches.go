@@ -7,10 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/pjunod/monarr/internal/ports"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/pjunod/monarr/internal/ports"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/parser"

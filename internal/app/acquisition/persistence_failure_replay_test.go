@@ -107,65 +107,6 @@ func TestPublishedPlacementConflictAfterCommitFailurePreservesBothByteSets(t *te
 	}
 }
 
-func TestDeliveryUnlinkBeforeLedgerFailureSettlesAfterDatabaseReopen(t *testing.T) {
-	ctx := context.Background()
-	svc, db, dl, cfg, publication := deliveryImportFixture(t, &deliveryImportClient{})
-	receiptID := receiptIDFor(t, db, dl.ID)
-	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptID); err != nil {
-		t.Fatalf("import accepted payload: %v", err)
-	}
-	r, err := db.DeliveryReceiptByID(ctx, receiptID)
-	if err != nil || r.State != "imported" {
-		t.Fatalf("fixture receipt was not terminal: state=%q err=%v", r.State, err)
-	}
-	row, err := db.DeliveryFileOutcomeByPath(ctx, receiptID, epRelease+".mkv")
-	if err != nil || row.CleanupState == "removed" {
-		t.Fatalf("fixture cleanup obligation was not pending before fault injection: row=%+v err=%v", row, err)
-	}
-	payload := filepath.Join(publication, epRelease+".mkv")
-	if _, err := os.Stat(payload); err != nil {
-		t.Fatalf("fixture payload missing before cleanup fault injection: %v", err)
-	}
-	if _, err := db.W.ExecContext(ctx, `CREATE TRIGGER fail_cleanup_ledger BEFORE UPDATE OF cleanup_state ON runner_delivery_file_outcomes WHEN NEW.cleanup_state='removed' BEGIN SELECT RAISE(ABORT,'simulated cleanup ledger outage'); END`); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.cleanupDeliveryFiles(ctx, r); err == nil || !strings.Contains(err.Error(), "simulated cleanup ledger outage") {
-		t.Fatalf("cleanup ledger trigger did not interrupt after unlink at the intended point: %v", err)
-	}
-	if _, err := os.Stat(payload); !os.IsNotExist(err) {
-		t.Fatalf("cleanup trigger ran before the authorized unlink: %v", err)
-	}
-	row, err = db.DeliveryFileOutcomeByPath(ctx, receiptID, epRelease+".mkv")
-	if err != nil || row.CleanupState == "removed" {
-		t.Fatalf("test did not retain a pending cleanup obligation: row=%+v err=%v", row, err)
-	}
-	files, err := db.ListFilesForItem(ctx, dl.MediaItemID)
-	if err != nil || len(files) != 1 {
-		t.Fatalf("library copy missing before cleanup replay: files=%+v err=%v", files, err)
-	}
-	libraryPath := files[0].Path
-
-	reopened := reopenLifecycleDB(t, db)
-	if _, err := reopened.W.ExecContext(ctx, `DROP TRIGGER fail_cleanup_ledger`); err != nil {
-		t.Fatal(err)
-	}
-	restarted := New(reopened, bus.New(nil), nil, func(ports.IndexerConfig) ports.Indexer { return fakeIndexer{} }, func(ports.ClientConfig) ports.DownloadClient { return &deliveryImportClient{} })
-	r, err = reopened.DeliveryReceiptByID(ctx, receiptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := restarted.cleanupDeliveryFiles(ctx, r); err != nil {
-		t.Fatalf("cleanup replay after reopening: %v", err)
-	}
-	row, err = reopened.DeliveryFileOutcomeByPath(ctx, receiptID, epRelease+".mkv")
-	if err != nil || row.CleanupState != "removed" {
-		t.Fatalf("replayed cleanup did not settle its durable obligation: row=%+v err=%v", row, err)
-	}
-	if _, err := os.Stat(libraryPath); err != nil {
-		t.Fatalf("cleanup replay damaged library media: %v", err)
-	}
-}
-
 func preparePublishedPlacementForReplay(t *testing.T, ctx context.Context, svc *Service, db *sqlite.DB, itemID int64, prior []byte) sqlite.Placement {
 	t.Helper()
 	item, err := db.GetMediaItemFull(ctx, itemID)

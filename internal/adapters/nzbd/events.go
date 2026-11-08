@@ -127,7 +127,6 @@ func (c *Client) stream(ctx context.Context, lastID string, out chan<- ports.Cli
 					lastID = id
 				}
 				for _, ev := range translate(name, data.String(), id) {
-					ev = c.withFetched(ctx, ev)
 					select {
 					case out <- ev:
 					case <-ctx.Done():
@@ -191,8 +190,26 @@ func translate(name, data, id string) []ports.ClientEvent {
 		if f.Control.Held() {
 			state = ports.StateQueued
 		}
-		return []ports.ClientEvent{{Handle: handleOf(f.Job), Kind: ports.EventProgress, Seq: seq,
-			Status: ports.DownloadStatus{Handle: handleOf(f.Job), State: state, Control: f.Control, Message: f.Control.Message, Stage: f.Control.Stage}}}
+		st := ports.DownloadStatus{Handle: handleOf(f.Job), State: state, Control: f.Control, Message: f.Control.Message, Stage: f.Control.Stage}
+		if f.Control.Held() {
+			st.OperationalState = "held"
+		}
+		return []ports.ClientEvent{{Handle: handleOf(f.Job), Kind: ports.EventProgress, Seq: seq, Status: st, Fact: statusFact(st, seq)}}
+
+	case "job_status_changed":
+		ev, ok := statusChangedFact([]byte(data), seq)
+		if !ok {
+			return nil
+		}
+		return []ports.ClientEvent{ev}
+
+	case "job_publication_ready":
+		f, ok := publicationReadyFact([]byte(data), seq)
+		if !ok {
+			return nil
+		}
+		return []ports.ClientEvent{{Handle: f.Handle, Kind: ports.EventStage, Seq: seq, Fact: &f,
+			Status: ports.DownloadStatus{Handle: f.Handle, Transfer: f.Transfer, State: ports.StateFailed}}}
 
 	case "job_pp_stage":
 		var f struct {
@@ -203,15 +220,15 @@ func translate(name, data, id string) []ports.ClientEvent {
 		if json.Unmarshal([]byte(data), &f) != nil {
 			return nil
 		}
+		st := ports.DownloadStatus{
+			Handle: handleOf(f.Job), Name: f.Name,
+			State:   ports.StateDownloading,
+			Message: "post-processing: " + strings.ReplaceAll(f.Stage, "_", " "),
+			Stage:   f.Stage,
+		}
 		return []ports.ClientEvent{{
 			Handle: handleOf(f.Job), Kind: ports.EventStage, Seq: seq,
-			Stage: f.Stage,
-			Status: ports.DownloadStatus{
-				Handle: handleOf(f.Job), Name: f.Name,
-				State:   ports.StateDownloading,
-				Message: "post-processing: " + strings.ReplaceAll(f.Stage, "_", " "),
-				Stage:   f.Stage,
-			},
+			Stage: f.Stage, Status: st, Fact: statusFact(st, seq),
 		}}
 
 	case "job_pp_finished":
@@ -244,7 +261,11 @@ func translate(name, data, id string) []ports.ClientEvent {
 		default:
 			kind = ports.EventFailed
 		}
-		return []ports.ClientEvent{{Handle: st.Handle, Kind: kind, Seq: seq, Status: st}}
+		ev := ports.ClientEvent{Handle: st.Handle, Kind: kind, Seq: seq, Status: st}
+		if fact, ok := ppFinishedFact([]byte(data), seq); ok {
+			ev.Fact = &fact
+		}
+		return []ports.ClientEvent{ev}
 
 	case "job_deleted":
 		var f struct {
@@ -293,13 +314,18 @@ func translate(name, data, id string) []ports.ClientEvent {
 			if j.SizeBytes > 0 {
 				progress = float64(j.DownloadedBytes) / float64(j.SizeBytes)
 			}
+			st := ports.DownloadStatus{
+				Control: j.Control,
+				Handle:  handleOf(j.ID), Name: j.Name, State: state,
+				Transfer: paramValue(j.Params, TransferParam),
+				Progress: progress, Message: msg, Stage: stage,
+			}
+			if state == ports.StateFailed {
+				continue // the terminal arrives on job_pp_finished
+			}
 			evs = append(evs, ports.ClientEvent{
 				Handle: handleOf(j.ID), Kind: ports.EventProgress, Seq: seq,
-				Status: ports.DownloadStatus{
-					Control: j.Control,
-					Handle:  handleOf(j.ID), Name: j.Name, State: state,
-					Progress: progress, Message: msg, Stage: stage,
-				},
+				Status: st, Fact: statusFact(st, seq),
 			})
 		}
 		return evs

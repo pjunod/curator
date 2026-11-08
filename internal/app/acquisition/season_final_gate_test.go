@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/pjunod/monarr/internal/adapters/torznab"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/pjunod/monarr/internal/adapters/torznab"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/quality"

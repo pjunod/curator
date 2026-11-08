@@ -8,13 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/pjunod/monarr/internal/ports"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/pjunod/monarr/internal/ports"
 
 	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/domain"
@@ -28,7 +29,6 @@ type targetHeldKey struct{}
 type recoveryPlacementKey struct{}
 type expectedSourceDigestsKey struct{}
 type reviewedSourceSnapshotsKey struct{}
-type acceptedSourceGenerationsKey struct{}
 type acceptedPublicationGenerationKey struct{}
 type independentPlacementCopyKey struct{}
 
@@ -42,23 +42,6 @@ func withIndependentPlacementCopy(ctx context.Context) context.Context {
 func requiresIndependentPlacementCopy(ctx context.Context) bool {
 	copy, _ := ctx.Value(independentPlacementCopyKey{}).(bool)
 	return copy
-}
-
-// withAcceptedSourceGenerations carries the exact immutable manifest file
-// generation through the shared importer. Keys are canonical absolute paths.
-func withAcceptedSourceGenerations(ctx context.Context, generations map[string]string) context.Context {
-	canonical := make(map[string]string, len(generations))
-	for path, generation := range generations {
-		canonical[filepath.Clean(path)] = generation
-	}
-	return context.WithValue(ctx, acceptedSourceGenerationsKey{}, canonical)
-}
-
-func acceptedSourceGeneration(ctx context.Context, path string) string {
-	if generations, ok := ctx.Value(acceptedSourceGenerationsKey{}).(map[string]string); ok {
-		return generations[filepath.Clean(path)]
-	}
-	return ""
 }
 
 // withAcceptedPublicationGeneration carries the Runner publication identity
@@ -398,7 +381,6 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		}
 		p = sqlite.Placement{DownloadID: scope.DownloadID, ReplacementOperationID: scope.ReplacementOperationID,
 			SourceGeneration: scope.SourceGeneration, SourceTransfer: scope.Transfer,
-			SourceFileGeneration:    acceptedSourceGeneration(ctx, src),
 			SourcePayloadGeneration: acceptedPublicationGeneration(ctx), SourceGUID: scope.SourceGUID, SourceIndexerID: scope.SourceIndexerID,
 			ID: id, Source: src, Target: dest,
 			Temporary: filepath.Join(filepath.Dir(dest), ".monarr-stage-"+id), Backup: filepath.Join(filepath.Dir(dest), ".monarr-prior-"+id),

@@ -186,49 +186,6 @@ func TestManualImportOfOneAnonymousFileAmongSeveralIsNotGuessed(t *testing.T) {
 	}
 }
 
-// The field path: a Runner delivery whose only media file is a hash.
-func TestRunnerDeliveryOfAnObfuscatedEpisodeImports(t *testing.T) {
-	ctx := context.Background()
-	protocol := &deliveryImportClient{}
-	svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, "321d9664e6a50c195e7e830b3f78b487.mkv", []byte("video"), nil)
-	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptIDFor(t, db, dl.ID)); err != nil {
-		t.Fatalf("obfuscated Runner delivery: %v", err)
-	}
-	files, err := db.ListFilesForItem(ctx, dl.MediaItemID)
-	if err != nil || len(files) != 1 {
-		t.Fatalf("placed files = %+v err=%v", files, err)
-	}
-	if !strings.Contains(files[0].Path, "S01E01") {
-		t.Errorf("placed at %q, want the S01E01 slot", files[0].Path)
-	}
-}
-
-// The loop on the field path: two anonymous files cannot be assigned, the
-// import fails, the delivery retries in place — and automation must pass the
-// release over while that payload is here.
-func TestRunnerDeliveryAwaitingImportIsPassedOver(t *testing.T) {
-	ctx := context.Background()
-	protocol := &deliveryImportClient{}
-	svc, db, dl, cfg, publication := deliveryImportFixtureNamed(t, protocol, "321d9664e6a50c195e7e830b3f78b487.mkv", []byte("video"),
-		map[string][]byte{"15713ef716b33f8a63def50814ec76d0.mkv": []byte("other")})
-	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptIDFor(t, db, dl.ID)); err == nil {
-		t.Fatal("two anonymous files must not import")
-	}
-	row, err := db.GetDownload(ctx, dl.ID)
-	if err != nil || row.State != "failed" {
-		t.Fatalf("row = %+v err=%v, want failed", row, err)
-	}
-	if !svc.skipCandidate(ctx, epRelease, "idx") {
-		t.Fatal("a release whose Runner payload is awaiting import is still offered to automation")
-	}
-	if err := os.RemoveAll(publication); err != nil {
-		t.Fatal(err)
-	}
-	if svc.skipCandidate(ctx, epRelease, "idx") {
-		t.Error("a release whose payload is gone must be eligible again")
-	}
-}
-
 // The loop: the bytes are here, the import failed, and automation must not
 // fetch the same bytes again — while a different release stays grabbable.
 func TestAReleaseAwaitingImportIsNotGrabbedAgain(t *testing.T) {

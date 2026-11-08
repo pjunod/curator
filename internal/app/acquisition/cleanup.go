@@ -44,7 +44,7 @@ func (s *Service) removePayload(ctx context.Context, dl downloadRef) bool {
 	if s.deliveryExpectedDownload(ctx, dl) {
 		return false
 	}
-	if s.legacyCleanupReview(ctx, dl) {
+	if s.storageReviewHeld(ctx, dl) {
 		return false
 	}
 	if dl.Handle == "" {
@@ -107,6 +107,9 @@ type downloadRef struct {
 // unresolved siblings. Attempts rotate so a blocked row cannot starve later
 // payloads, and the batch is capped to avoid overwhelming a client.
 func (s *Service) CleanupPayloads(ctx context.Context) error {
+	if err := s.sweepPublications(ctx); err != nil {
+		s.log.Warn("cleanup: publication sweep failed", "err", err)
+	}
 	s.cleanupPartialPayloads(ctx)
 	rows, err := s.db.ImportedCleanupCandidates(ctx, cleanupPerSweep)
 	if err != nil {
@@ -122,7 +125,8 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 		unlock := func() { releaseStorage(); unlockDownload() }
 		dl, err := s.db.GetDownload(ctx, candidate.ID)
 		if err != nil || candidate.GenerationKey == "" || dl.GenerationKey != candidate.GenerationKey ||
-			dl.DeliveryExpected || dl.State != "imported" || dl.PayloadRemoved || !dl.AddedAt.Equal(candidate.AddedAt) {
+			dl.DeliveryExpected || dl.State != "imported" || dl.PayloadRemoved || !dl.AddedAt.Equal(candidate.AddedAt) ||
+			s.publicationManaged(ctx, dl.ID, dl.ImportPath) {
 			unlock()
 			continue
 		}
@@ -206,7 +210,7 @@ func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
 	if s.deliveryExpectedDownload(ctx, dl) {
 		return
 	}
-	if s.legacyCleanupReview(ctx, dl) {
+	if s.storageReviewHeld(ctx, dl) {
 		return
 	}
 	dir := strings.TrimSpace(dl.ImportPath)
@@ -262,6 +266,12 @@ func (s *Service) removeImportedDir(ctx context.Context, dl downloadRef) {
 // delivery-managed generation. Those files are removed only from the accepted
 // manifest ledger, which preserves unresolved siblings and Activity history.
 func (s *Service) deliveryExpectedDownload(ctx context.Context, dl downloadRef) bool {
+	// A publication's files leave only by their recorded per-file outcome
+	// (pipeline v2, contract section 3.4), and the historical cohort not at
+	// all until its review approves it: no whole-directory cleanup, ever.
+	if s.publicationManaged(ctx, dl.ID, dl.ImportPath) {
+		return true
+	}
 	if dl.ID <= 0 {
 		return false
 	}
@@ -275,10 +285,11 @@ func (s *Service) deliveryExpectedDownload(ctx context.Context, dl downloadRef) 
 	return current.DeliveryExpected
 }
 
-// legacyCleanupReview keeps every pre-migration acquisition out of automatic
-// cleanup until a later explicit review workflow authorizes a concrete action.
-// The immutable generation key binds the check when integer IDs are reused.
-func (s *Service) legacyCleanupReview(ctx context.Context, dl downloadRef) bool {
+// storageReviewHeld keeps a payload whose storage changed under it out of
+// automatic cleanup until a person reviews it (the storage-change fences).
+// The immutable generation key binds the check when integer IDs are reused;
+// a ref without one cannot be told apart from a newer row, so it is held.
+func (s *Service) storageReviewHeld(ctx context.Context, dl downloadRef) bool {
 	if dl.ID <= 0 {
 		return dl.Handle != "" || dl.ImportPath != ""
 	}
@@ -287,60 +298,23 @@ func (s *Service) legacyCleanupReview(ctx context.Context, dl downloadRef) bool 
 		s.log.Warn("cleanup: could not resolve download generation", "download", dl.ID, "err", err)
 		return true
 	}
-	// A ref without its immutable generation cannot safely distinguish an old
-	// in-flight operation from a new row reusing the same integer ID/path.
 	if dl.GenerationKey == "" || current.GenerationKey == "" || dl.GenerationKey != current.GenerationKey {
 		return true
 	}
 	for _, path := range []string{current.ImportPath, dl.ImportPath} {
 		if path != "" && !filepath.IsAbs(path) {
-			// A relative path cannot be compared with the durable path cohort.
 			return true
 		}
-	}
-	review, err := s.db.LegacyCleanupReview(ctx, current.GenerationKey, current.ImportPath)
-	if err == nil && !review && dl.ImportPath != current.ImportPath {
-		review, err = s.db.LegacyCleanupReview(ctx, current.GenerationKey, dl.ImportPath)
-	}
-	if err != nil {
-		s.log.Warn("cleanup: could not verify legacy review custody", "download", dl.ID, "err", err)
-		return true
-	}
-	if review {
-		return true
-	}
-	// A reviewed directory protects every nested path and every parent that
-	// could contain it. Normalize filesystem aliases using the configured
-	// completed roots before comparing path boundaries.
-	paths, err := s.db.LegacyCleanupReviewPaths(ctx)
-	if err != nil {
-		s.log.Warn("cleanup: could not load legacy review paths", "download", dl.ID, "err", err)
-		return true
-	}
-	receipts, err := s.db.CompletedReceipts(ctx)
-	if err != nil {
-		s.log.Warn("cleanup: could not resolve legacy review roots", "download", dl.ID, "err", err)
-		return true
-	}
-	roots, err := s.completedRoots(ctx, receipts)
-	if err != nil {
-		s.log.Warn("cleanup: could not resolve legacy review roots", "download", dl.ID, "err", err)
-		return true
-	}
-	targets := []string{current.ImportPath, dl.ImportPath}
-	for _, target := range targets {
-		if target == "" || !filepath.IsAbs(target) {
+		if path == "" {
 			continue
 		}
-		target = storagePath(filepath.Clean(target), roots)
-		for _, reviewed := range paths {
-			if !filepath.IsAbs(reviewed) {
-				continue
-			}
-			reviewed = storagePath(filepath.Clean(reviewed), roots)
-			if within(target, reviewed) || within(reviewed, target) {
-				return true
-			}
+		held, err := s.db.StorageChangeReview(ctx, current.GenerationKey, path)
+		if err != nil {
+			s.log.Warn("cleanup: could not verify storage review", "download", dl.ID, "err", err)
+			return true
+		}
+		if held {
+			return true
 		}
 	}
 	return false

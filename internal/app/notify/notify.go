@@ -70,37 +70,11 @@ func (d *Dispatcher) Run(ctx context.Context) {
 				Fields: map[string]string{"indexer": e.Indexer, "protocol": e.Protocol},
 			})
 		case e := <-imports:
-			var book *ports.BookImportInfo
-			if e.MediaItemKind == "book" && e.BookMedium != "" &&
-				e.BookWorkID != "" && e.BookEditionID != "" {
-				book = &ports.BookImportInfo{
-					Title: e.BookTitle, Author: e.BookAuthor, Medium: e.BookMedium,
-					WorkID: e.BookWorkID, EditionID: e.BookEditionID,
-					CoverURL: e.BookCoverURL,
-				}
-			}
-			d.dispatch(ctx, "import", ports.Notification{
-				Event: "import", Title: "Import completed", Body: e.Release,
-				Fields: map[string]string{
-					"files":   fmt.Sprintf("%d", e.Files),
-					"upgrade": fmt.Sprintf("%v", e.Upgrade),
-				},
-				// The same event twice, in two registers: a sentence for the
-				// notifiers that render text, and the facts for the ones
-				// that act on it.
-				Import: &ports.ImportInfo{
-					MediaItemID: e.MediaItemID,
-					DownloadID:  e.DownloadID,
-					Paths:       e.Paths,
-					Dirs:        e.Dirs,
-					Kind:        e.MediaItemKind,
-					Title:       e.Title,
-					Book:        book,
-					TmdbID:      e.TmdbID,
-					ImdbID:      e.ImdbID,
-					Transfer:    e.Transfer,
-				},
-			})
+			// The same event twice, in two registers: a sentence for the
+			// notifiers that render text, and the facts for the ones that act
+			// on it. An import from a publication already wrote its durable
+			// rows in its own transaction (pipeline v2).
+			d.dispatchImport(ctx, acquisition.ImportNotification(e), e.Outboxed)
 		case e := <-fails:
 			d.dispatch(ctx, "failed", ports.Notification{
 				Event: "failed", Title: "Download failed", Body: e.Release,
@@ -137,7 +111,15 @@ func refreshOnly(cfg ports.NotifierConfig) bool {
 	return cfg.Type == "plex" || cfg.Type == "jellyfin" || cfg.Type == "plurx"
 }
 
+func (d *Dispatcher) dispatchImport(ctx context.Context, n ports.Notification, outboxed bool) {
+	d.dispatchFiltered(ctx, "import", n, outboxed)
+}
+
 func (d *Dispatcher) dispatch(ctx context.Context, event string, n ports.Notification) {
+	d.dispatchFiltered(ctx, event, n, false)
+}
+
+func (d *Dispatcher) dispatchFiltered(ctx context.Context, event string, n ports.Notification, outboxed bool) {
 	configs, err := d.db.ListNotifiers(ctx)
 	if err != nil {
 		d.log.Warn("notify: cannot list notifiers", "err", err)
@@ -154,7 +136,9 @@ func (d *Dispatcher) dispatch(ctx context.Context, event string, n ports.Notific
 		// announcement of it, so it goes through the durable queue
 		// (§5.5) instead of being attempted once and forgotten.
 		if queued(cfg) {
-			d.enqueue(ctx, cfg, n)
+			if !outboxed {
+				d.enqueue(ctx, cfg, n)
+			}
 			continue
 		}
 		target := d.new(cfg)

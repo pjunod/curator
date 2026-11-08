@@ -105,3 +105,9 @@ type DeliveryReporter interface {
 	// nothing to add.
 	Delivery() string
 }
+
+// QueuedNotifier reports whether a notifier's deliveries go through the
+// durable outbox rather than being attempted inline: the ones whose message
+// IS the work (a media server told what to index). A chat notifier's late
+// retry is worse than none.
+func QueuedNotifier(cfg NotifierConfig) bool { return cfg.Type == "plurx" }

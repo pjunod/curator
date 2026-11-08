@@ -92,41 +92,38 @@ func (d *DB) PipelineWaiting(ctx context.Context, kind string, sinceMs int64) (n
 	return n, oldestStart, err
 }
 
-// OverdueCutoffs are the "last changed before" instants (Unix ms) past which a
-// download in each old state is overdue. The allowances behind them live in the
-// pipeline package.
-type OverdueCutoffs struct{ Grabbed, Downloading, Torrent, ImportInFlight int64 }
-
-// OverdueRow is a download that has outlived its state's allowance.
+// OverdueRow is a download or a publication past its deadline.
 type OverdueRow struct {
-	ID          int64
-	Title       string
-	State       string
-	Protocol    string
-	UpdatedAtMs int64
+	ID         int64
+	Title      string
+	State      string
+	Protocol   string
+	DeadlineMs int64
+	// Publication is set for a publication past its six hours; ID is then the
+	// publication's own id.
+	Publication bool
 }
 
-// overdueWhere selects rows still moving through the old state machine that
-// have been silent past their cutoff. Superseded rows and rows parked for an
-// operator are excluded: ParkDownload does not touch updated_at, so a parked
-// row would otherwise warn forever about something already surfaced elsewhere.
-const overdueWhere = `superseded=0 AND parked_at=0 AND (
-	(state='grabbed' AND updated_at<?1) OR
-	(state='downloading' AND protocol!='torrent' AND updated_at<?2) OR
-	(state='downloading' AND protocol='torrent' AND updated_at<?3) OR
-	(state IN ('downloaded','importing') AND updated_at<?4))`
+// The overdue predicate of contract section 3.5: a download in a
+// non-terminal state whose deadline_at (written on every state entry) has
+// passed, plus a publication still discovered/importing past its deadline.
+// A legacy-client row parked or superseded for an operator waits on a person
+// (like awaiting_import) and has no deadline until M4 retires the fence.
+const overdueDownloadsWhere = `state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<?1 AND superseded=0 AND parked_at=0`
+const overduePublicationsWhere = `state IN ('discovered','importing') AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?1`
 
-// OverdueCount counts overdue downloads with one aggregate.
-func (d *DB) OverdueCount(ctx context.Context, c OverdueCutoffs) (n int, err error) {
-	err = d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM downloads WHERE `+overdueWhere,
-		c.Grabbed, c.Downloading, c.Torrent, c.ImportInFlight).Scan(&n)
+// OverdueCount counts overdue downloads and publications.
+func (d *DB) OverdueCount(ctx context.Context, nowMs int64) (n int, err error) {
+	err = d.R.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM downloads WHERE `+overdueDownloadsWhere+`) +
+		(SELECT COUNT(*) FROM publications WHERE `+overduePublicationsWhere+`)`, nowMs).Scan(&n)
 	return n, err
 }
 
-// OverdueRows lists the oldest overdue downloads, at most limit of them.
-func (d *DB) OverdueRows(ctx context.Context, c OverdueCutoffs, limit int) ([]OverdueRow, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT id, release_title, state, protocol, updated_at FROM downloads WHERE `+
-		overdueWhere+` ORDER BY updated_at LIMIT ?5`, c.Grabbed, c.Downloading, c.Torrent, c.ImportInFlight, limit)
+// OverdueRows lists the most overdue rows first, at most limit of them.
+func (d *DB) OverdueRows(ctx context.Context, nowMs int64, limit int) ([]OverdueRow, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT id, release_title, state, protocol, deadline_at, 0 FROM downloads WHERE `+overdueDownloadsWhere+`
+		UNION ALL SELECT id, path, state, kind, deadline_at, 1 FROM publications WHERE `+overduePublicationsWhere+`
+		ORDER BY 5 LIMIT ?2`, nowMs, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -134,9 +131,11 @@ func (d *DB) OverdueRows(ctx context.Context, c OverdueCutoffs, limit int) ([]Ov
 	var out []OverdueRow
 	for rows.Next() {
 		var r OverdueRow
-		if err := rows.Scan(&r.ID, &r.Title, &r.State, &r.Protocol, &r.UpdatedAtMs); err != nil {
+		var pub int
+		if err := rows.Scan(&r.ID, &r.Title, &r.State, &r.Protocol, &r.DeadlineMs, &pub); err != nil {
 			return nil, err
 		}
+		r.Publication = pub == 1
 		out = append(out, r)
 	}
 	return out, rows.Err()

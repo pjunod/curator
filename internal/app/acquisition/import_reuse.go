@@ -21,7 +21,7 @@ func (s *Service) reuseCommittedImport(ctx context.Context, dl sqlite.Download, 
 		return placement{}, false, err
 	}
 	for _, p := range candidates {
-		if p.ItemID != item.ID || p.CopyID != scope.CopyID || p.SourceTransfer != scope.Transfer || p.SourcePayloadGeneration != acceptedPublicationGeneration(ctx) || p.SourceFileGeneration != acceptedSourceGeneration(ctx, src) || p.ReplacementOperationID != scope.ReplacementOperationID || p.PublishedFileGeneration == "" || !within(scope.Dest, p.Target) {
+		if p.ItemID != item.ID || p.CopyID != scope.CopyID || p.SourceTransfer != scope.Transfer || p.SourcePayloadGeneration != acceptedPublicationGeneration(ctx) || p.SourceFileGeneration != "" || p.ReplacementOperationID != scope.ReplacementOperationID || p.PublishedFileGeneration == "" || !within(scope.Dest, p.Target) {
 			continue
 		}
 		digest, size, identity, err := fileDigestSnapshot(ctx, p.Target)

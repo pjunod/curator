@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
@@ -212,9 +211,6 @@ func (s *Service) dispatchPlannedDownload(ctx context.Context, plan sqlite.Acqui
 	if currentPlan.State != "admitted" && currentPlan.State != "dispatching" && currentPlan.State != "active" {
 		return false, nil
 	}
-	if deliveryExpected {
-		s.rememberRunnerDelivery(cfg.ID)
-	}
 	fresh.DeliveryExpected = deliveryExpected
 	fresh.RequestTokenIdempotent = requestTokenIdempotent
 	fresh.ExactTransferCorrelation = exactTransferCorrelation
@@ -401,6 +397,11 @@ func (s *Service) observeUncertain(ctx context.Context, dl sqlite.Download, cfg 
 	if dl.Intent == GrabIntentManualAdditional || dl.ExactTransferCorrelation || dl.RequestTokenIdempotent || dl.DeliveryExpected {
 		return
 	}
+	// A Runner row's submission is confirmed by its request receipt
+	// (confirmAdmissions), never by inventory guessing, and never parked.
+	if isRunnerClient(s.newClient(cfg)) {
+		return
+	}
 	now := time.Now()
 	var ob executionObservation
 	_ = json.Unmarshal([]byte(dl.Observation), &ob)
@@ -439,7 +440,7 @@ func (s *Service) observeUncertain(ctx context.Context, dl sqlite.Download, cfg 
 	if now.Sub(dl.AddedAt) >= 30*time.Minute && ob.Inventories >= 3 && now.Sub(ob.AbsenceSince) >= 30*time.Minute {
 		_ = s.db.ParkDownload(ctx, dl.ID, "submission uncertain; episode reserved while inventories continue")
 	}
-	if !ob.AbsenceSince.IsZero() && now.Sub(ob.AbsenceSince) >= 7*24*time.Hour && dl.PlanID != 0 && !persistedDownloadHeld(dl.RunnerControl) && !strings.HasPrefix(dl.ParkedReason, "operator cancellation") {
+	if !ob.AbsenceSince.IsZero() && now.Sub(ob.AbsenceSince) >= 7*24*time.Hour && dl.PlanID != 0 && !persistedDownloadHeld(dl.RunnerControl) && !operatorCancelled(&dl) {
 		if err = s.releaseUncertainRisk(ctx, dl, ob); err != nil {
 			s.log.Warn("uncertain risk retry pending", "download", dl.ID, "err", err)
 		}
@@ -478,7 +479,7 @@ func (s *Service) releaseUncertainRisk(ctx context.Context, dl sqlite.Download, 
 	return tx.Commit()
 }
 func (s *Service) effectiveImportAllowlist(ctx context.Context, dl sqlite.Download) ([]int64, error) {
-	if strings.HasPrefix(dl.ParkedReason, "operator cancellation") {
+	if operatorCancelled(&dl) {
 		return nil, fmt.Errorf("operator cancellation prohibits automatic publication")
 	}
 	if dl.Superseded {
@@ -522,7 +523,7 @@ func (s *Service) effectiveImportAllowlist(ctx context.Context, dl sqlite.Downlo
 		var failed *sqlite.Download
 		for i := range rows {
 			r := &rows[i]
-			if r.CandidateKey == string(key) && r.State == "failed" && r.SubmissionPhase != "uncertain" && r.SubmissionPhase != "submitting" && !persistedDownloadHeld(r.RunnerControl) && !r.Superseded && !strings.HasPrefix(r.ParkedReason, "operator cancellation") {
+			if r.CandidateKey == string(key) && r.State == "failed" && r.SubmissionPhase != "uncertain" && r.SubmissionPhase != "submitting" && !persistedDownloadHeld(r.RunnerControl) && !r.Superseded && !operatorCancelled(r) {
 				failed = r
 				break
 			}

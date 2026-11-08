@@ -4,11 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 func TestRetainedPlanMixedReleasesPartialAndPendingReceipts(t *testing.T) {

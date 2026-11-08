@@ -218,6 +218,14 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// stop them; WaitImporters drains, in the same shape the jobs queue uses.
 	inflight := transfers.New()
 	acq.SetRegistry(inflight)
+	// Pipeline v2 cutover, once: every completed directory no publication
+	// claims is frozen as the historical cohort before anything can import
+	// or clean (contract section 3.4). A later start does nothing.
+	if n, err := acq.MarkHistoricalCohort(ctx); err != nil {
+		log.Warn("pipeline v2: historical cohort could not be marked; retried at next start", "err", err)
+	} else if n > 0 {
+		log.Info("pipeline v2: historical cohort marked", "directories", n)
+	}
 	acq.StartImporters(ctx)
 	defer func() { cancelRun(); acq.WaitImporters() }()
 
