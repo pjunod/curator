@@ -1,3 +1,21 @@
+# Pipeline v2 M6b — resumed integration, 2026-11-09
+
+**Owner:** Codex integrator · **State:** prepared against main ae26882;
+not ready for merge or deployment · **Version:** 0.44.0 reserved.
+
+Runner 0.8.0 is deployed. Curator runs ae26882 on schema 74. A read-only
+2026-11-09 database snapshot contains 374 non-removed publications whose
+manifest source is `v1_record`; migration 75 correctly refuses this database.
+Keep those files and their adapter until the approved M7 resolution completes.
+
+Current main, including Import Queue, is merged without conflicts. Prior
+M6a fixes are retained. No final review or tests have been run on this
+candidate; run them when the data prerequisite is met, then open the PR.
+
+Decision: retain Activity Deliveries and its receipt tables for now. Rebuild
+its remaining reads on publications in a separate scoped change before
+retiring tables; dropping a working screen is not necessary for this seam.
+
 # Monarr — Project Status
 
 ## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.43.0
