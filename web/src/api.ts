@@ -1902,3 +1902,23 @@ export interface StorageChangeRequest { root: string; expectedIdentity: string; 
 export interface StorageChangeReview extends StorageChangeRequest { expectedDescription: string; observedDescription: string; existingPayloads: number; existingRequests: number; inFlightRequests: number; activeImports: number }
 export const previewCompletedStorageChange = (request: StorageChangeRequest) => send<StorageChangeReview>('POST', '/downloads/inventory/storage-change/preview', request)
 export const acceptCompletedStorageChange = (request: StorageChangeRequest) => send('POST', '/downloads/inventory/storage-change/accept', request)
+
+/** Dedicated, server-paged import activity. History follows Activity retention. */
+export type ImportCategory = 'active' | 'queued' | 'attention' | 'imported'
+export interface ImportActivityItem {
+  download: QueueItem
+  category: ImportCategory
+  title: string
+  kind: string
+  destination: string
+  updatedAt: string
+}
+export interface ImportActivityPage {
+  items: ImportActivityItem[]
+  counts: Record<'all' | ImportCategory, number>
+  total: number
+  hasMore: boolean
+  retentionDays: number
+}
+export const getImportActivity = (filter: 'all' | ImportCategory, q: string, limit: number, offset: number) =>
+  get<ImportActivityPage>(`/imports?${new URLSearchParams({ filter, q, limit: String(limit), offset: String(offset) })}`)

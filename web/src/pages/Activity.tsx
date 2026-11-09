@@ -306,6 +306,7 @@ export function ActivityPage() {
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['queue'] })
+      void qc.invalidateQueries({ queryKey: ['imports'] })
     void qc.invalidateQueries({ queryKey: ['queue-summary'] })
   }
   const remove = useMutation({ mutationFn: (id: number) => removeQueueItem(id, false), onSettled: invalidate })
@@ -407,6 +408,7 @@ export function ActivityPage() {
     <>
       <header className="page-head">
         <h1>Activity</h1>
+        <Link to="/imports">Import queue</Link>
         <button onClick={() => { setResolveMode('files'); setManual(manual ? null : {}) }} aria-expanded={!!manual}>
           {manual ? 'Close Resolve' : 'Resolve'}
         </button>
@@ -716,7 +718,7 @@ function RowGroup(props: {
   const [reviewOpen,setReviewOpen]=useState(false)
   const [acknowledged,setAcknowledged]=useState(false)
   const qc=useQueryClient()
-  const resolve=useMutation({mutationFn:()=>resolveQueueReservation(d.id),onSuccess:()=>{setReviewOpen(false);void qc.invalidateQueries({queryKey:['queue']});void qc.invalidateQueries({queryKey:['queue-summary']})}})
+  const resolve=useMutation({mutationFn:()=>resolveQueueReservation(d.id),onSuccess:()=>{setReviewOpen(false);void qc.invalidateQueries({queryKey:['queue']});void qc.invalidateQueries({queryKey:['imports']});void qc.invalidateQueries({queryKey:['queue-summary']})}})
   const [importReviewOpen,setImportReviewOpen]=useState(false)
   const cancellationPending=d.importControl?.outcome==='pending'
   const publicationReview=!!d.importControl?.retainedPublications||!!d.importControl?.pendingPublications
@@ -907,7 +909,7 @@ const OUTCOME_PILL: Record<string, string> = {
 
 // Publications are the import unit: one per Runner generation, each file with
 // what became of it. An unresolved file is retained and decided here.
-function PublicationList({ d }: { d: QueueItem }) {
+export function PublicationList({ d, readOnly = false }: { d: QueueItem; readOnly?: boolean }) {
   const qc = useQueryClient()
   const [done, setDone] = useState<Record<string, string>>({})
   // The decided file's buttons go away with its outcome, so the result
@@ -925,6 +927,7 @@ function PublicationList({ d }: { d: QueueItem }) {
       setDone((prev) => ({ ...prev, [key]: v.action === 'place' ? 'queued for import' : v.action === 'discard' ? 'discarded and removed' : 'kept' }))
       setFocusKey(key)
       void qc.invalidateQueries({ queryKey: ['queue'] })
+      void qc.invalidateQueries({ queryKey: ['imports'] })
     },
     onError: (e, v) => {
       const key = `${v.pub}/${v.path}`
@@ -945,7 +948,7 @@ function PublicationList({ d }: { d: QueueItem }) {
             <span className="path-chip">{p.path}</span>
           </p>
           {p.error && <p className="error-text">{p.error}</p>}
-          <PublicationCleanupLine pub={p} />
+          {!readOnly && <PublicationCleanupLine pub={p} />}
           <ul className="publication-files">
             {p.files.map((f) => {
               const key = `${p.id}/${f.path}`
@@ -956,7 +959,7 @@ function PublicationList({ d }: { d: QueueItem }) {
                   {f.libraryPath && <span className="muted"> → {f.libraryPath}</span>}
                   {f.reason && <span className="muted"> — {f.reason}</span>}
                   {f.removed && <span className="muted"> · removed from the publication</span>}
-                  {(f.outcome === 'unresolved' || f.outcome === 'pending') && (
+                  {!readOnly && (f.outcome === 'unresolved' || f.outcome === 'pending') && (
                     <span className="row-actions publication-file-actions">
                       {(['place', 'discard', 'keep'] as PublicationFileAction[]).map((a) => (
                         <button key={a} disabled={act.isPending} onClick={() => act.mutate({ pub: p.id, path: f.path, action: a })}>
@@ -983,7 +986,8 @@ function PublicationCleanupLine({ pub }: { pub: QueuePublication }) {
   const [note, setNote] = useState('')
   const act = useMutation({
     mutationFn: (action: 'pause' | 'resume') => setPublicationCleanup(pub.id, action),
-    onSuccess: (_r, action) => { setNote(action === 'pause' ? 'Cleanup paused' : 'Cleanup resumed and queued'); void qc.invalidateQueries({ queryKey: ['queue'] }) },
+    onSuccess: (_r, action) => { setNote(action === 'pause' ? 'Cleanup paused' : 'Cleanup resumed and queued'); void qc.invalidateQueries({ queryKey: ['queue'] })
+      void qc.invalidateQueries({ queryKey: ['imports'] }) },
     onError: (e) => setNote(e instanceof Error ? e.message : String(e)),
   })
   if (pub.state === 'removed') return null
@@ -1267,11 +1271,11 @@ function ManualImportPanel({
   )
 }
 
-function ImportReviewPanel({id}:{id:number}) {
+export function ImportReviewPanel({id}:{id:number}) {
   const qc=useQueryClient()
   const [ack,setAck]=useState(false)
   const review=useQuery({queryKey:['import-review',id],queryFn:()=>getImportReview(id),refetchInterval:4000})
-  const action=useMutation({mutationFn:({action,ids}:{action:string;ids:string[]})=>resolveImportReview(id,review.data!.attempt,action,ids,ack),onSuccess:()=>{setAck(false);void qc.invalidateQueries({queryKey:['import-review',id]});void qc.invalidateQueries({queryKey:['queue']})}})
+  const action=useMutation({mutationFn:({action,ids}:{action:string;ids:string[]})=>resolveImportReview(id,review.data!.attempt,action,ids,ack),onSuccess:()=>{setAck(false);void qc.invalidateQueries({queryKey:['import-review',id]});void qc.invalidateQueries({queryKey:['queue']});void qc.invalidateQueries({queryKey:['imports']})}})
   const data=review.data
   if(review.isLoading)return <p role="status">Loading durable import custody…</p>
   if(review.error)return <p role="alert">{review.error.message}</p>

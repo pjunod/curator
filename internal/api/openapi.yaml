@@ -1856,6 +1856,32 @@ paths:
                 items:
                   $ref: "#/components/schemas/HistoryEvent"
 
+  /imports:
+    get:
+      operationId: listImportActivity
+      summary: Retained import activity, including worker ownership and publication outcomes
+      parameters:
+        - name: filter
+          in: query
+          schema: { type: string, enum: [all, active, queued, attention, imported], default: all }
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: One page of imports. Counts cover the full search, not only this page. History is subject to Activity retention.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportActivityPage' }
+        "400":
+          description: Invalid filter or pagination.
+
   /queue/{id}:
     delete:
       operationId: removeQueueItem
@@ -5809,6 +5835,32 @@ components:
             pendingPublications: { type: integer }
             retainedPublications: { type: integer }
             heldStages: { type: integer }
+
+    ImportActivityPage:
+      type: object
+      required: [items, counts, total, hasMore, retentionDays]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ImportActivityItem' }
+        counts:
+          type: object
+          additionalProperties: { type: integer }
+        total: { type: integer }
+        hasMore: { type: boolean }
+        retentionDays: { type: integer }
+    ImportActivityItem:
+      type: object
+      required: [download, category, title, kind, destination, updatedAt]
+      properties:
+        download:
+          allOf: [{ $ref: '#/components/schemas/QueueItem' }]
+          description: Negative IDs identify read-only unattributed historical publications, never queue mutation targets.
+        category: { type: string, enum: [active, queued, attention, imported] }
+        title: { type: string }
+        kind: { type: string }
+        destination: { type: string }
+        updatedAt: { type: string, format: date-time }
 
     QueueItem:
       type: object
