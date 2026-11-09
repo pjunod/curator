@@ -42,12 +42,21 @@ instruction.
 
 ## Pipeline contract v2, M6a (curator part): one retry ladder, dead fields out, docs rewritten — 2026-11-08 · v0.42.0
 
-**Status:** branch `claude/pipeline-v2-m6a-curator`, stacked on
-`claude/pipeline-v2-m5-curator` (#97, `b2afde9`), so it merges **right after
-#97** · owner: Claude (Sonnet builder) · pushed, **no PR** (by instruction), not
-reviewed, not merged, not deployed. Nothing here depends on a Runner release.
-M6b (`claude/pipeline-v2-m6b-curator`, stacked on this) is the deploy-gated
-half and is **not** safe to merge with it.
+**Status:** PR #101 (draft, base `main`; #97 has merged) · owner: Claude
+(Sonnet builder; Opus orchestrator merges) · review: Sonnet review **approve**
+with fixes `b53448e`; Fable adversarial review r1 **request changes**
+(`108cdef`) -> the fixes below; the single gate (`make lint`, `make test`,
+`make test-web`, `make test-e2e`) is **pending** and runs once after the fixes ·
+not merged, not deployed. Nothing here depends on a Runner release. M6b
+(`claude/pipeline-v2-m6b-curator`, stacked on this) is the deploy-gated half
+and is **not** safe to merge with it.
+
+Review r1 fixes: issue #100 folded in (dead `EnsureDeliveryDirectoryIdentity` and
+`UpdateDeliveryFileDisposition` deleted, the `t.Skip` in `publication_paths_test.go`
+is now a `t.Fatalf`, `publications.cleanup_paused_at` in `requiredColumns`); the
+plurx Retry-After cap reads `backoff.Outbox.Max()`; `internal/docs` evaluates the
+code's constants and checks them per section and in the literals table;
+`STATUS.md` links are checked.
 
 Built (plan M6 curator items 2 and 3, IMPL_CURATOR section 8):
 
@@ -62,7 +71,8 @@ Built (plan M6 curator items 2 and 3, IMPL_CURATOR section 8):
   generated code (`make gen-api`), handler, the web `measured: false` tile
   branch and its test, and the "until pipeline M5" note. The `parkedReason`
   description no longer says "Removed in M4" (it was not: season custody and
-  non-Runner clients still use it).
+  non-Runner clients still use it). This is a correction outside the stated M6a scope (the field stays; no wire
+  change), listed here so it is not found by diff.
 - **`docs/integration.md` rewritten** from the contract: the milestone-by-
   milestone sections (M2, M4, M5) and the superseded "Durable job control
   contract (v1)" are folded into numbered seams (facts and terminals, held jobs,
@@ -97,11 +107,9 @@ Not removed on purpose: `RemoveFileRequest.Blocklist`/`Search` (marked
 Deprecated in Go): they are the old remove endpoint's wire shape and are
 rejected explicitly, not dead code from M2/M4/M5.
 
-Found while verifying: `TestImportWritesTheOutboxInItsTransaction` fails on
-#97's head (`b2afde9`, checked on a detached worktree): it predates M5, which
-gives a chat notifier its own outbox row, so it saw two rows where it wanted
-one. Fixed here (it names both rows and checks the disabled and grab-only
-notifiers get none); #97's own gate will hit it.
+`TestImportWritesTheOutboxInItsTransaction` predated M5 (which gives a chat
+notifier its own one-shot outbox row); it was fixed on #97 itself (`e9f7aca`)
+and arrives here by the merge of that branch.
 
 Verified (fast lane): `go build ./...`; `go vet` and `go test` of
 `internal/domain/backoff`, `internal/docs`, `internal/app/notify`,
@@ -1593,7 +1601,7 @@ the symptom).
 - [x] Compat `/qualityprofile` synthesized from targets — fake-consumer suite green untouched (plan §6.4, M5)
 - [x] Post-import verification: `quality_mismatch` history event (log-only); docs updated (usage/settings/architecture); ADRs 0013/0014 → Accepted (M6)
 
-## Phase 7 — The nzbd integration (plan: `docs/plan-integration.md`)
+## Phase 7 — The nzbd integration (plan: `docs/archive/plan-integration.md`)
 
 Making the three apps behave like one pipeline: events instead of timers at
 every seam, and one id that names a transfer from grab to playable. nzbd's
@@ -1773,7 +1781,7 @@ rar/par overhead. Upstream of monarr — nzbd or the provider — and still open
       cosmetic: on a large backlog the order decides what gets searched at
       all. A stable partition, not a score — the signal is "somebody watched
       this", and a numeric intensity would be precision nobody could check
-- [x] Decisions recorded in `docs/plan-integration.md` §11.1: per-user with
+- [x] Decisions recorded in `docs/archive/plan-integration.md` §11.1: per-user with
       usernames (overriding the sketch's aggregate), and **no deletion path
       on either side**
 - [ ] Show it on the item page — the data is stored and read, but not yet

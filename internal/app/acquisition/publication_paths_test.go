@@ -205,9 +205,7 @@ func TestPublicationFileOutcomes(t *testing.T) {
 		f.completedAt(first, pub.Path, "one")
 		second := f.grab(1, epOne)
 		if second.ID == first.ID {
-			// The in-flight guard returned the same row; a new acquisition of
-			// the same release needs the first to be settled, which it is.
-			t.Skip("grab returned the settled row")
+			t.Fatalf("second grab of %q returned the settled row %d; an imported acquisition must not satisfy the in-flight guard — want a new download row", epOne, first.ID)
 		}
 		again := f.publish("Test.Show.S01E01.job-102.runner-two", "two", map[string]string{epOne + ".mkv": "video"})
 		p := f.completedAt(second, again.Path, "two")

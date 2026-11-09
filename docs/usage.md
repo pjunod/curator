@@ -1654,3 +1654,27 @@ For deployments, pause new mutation/work admission while existing copies finish,
 keep status available, then stop and verify actual exit before replacement. See
 [deployment drain](NFS_DEPLOYMENT_DRAIN.md) for the command, first upgrade and
 pending qualification limits. NAS outages may still block restart.
+
+## Import queue — follow every recorded import
+
+Open **Import queue** in the sidebar, **More → Import queue** on a phone,
+or the link at the top of Activity. The page separates importing work, queued
+work, imports needing attention, and imported history. Search matches library
+titles and release names; counts cover every matching record, with 50 rows per
+page. Activity dismissal does not hide retained import records here. Normal
+Activity retention still expires eligible history; deleted records cannot be
+reconstructed.
+
+**How to read it:** a worker ticket means **Waiting for an import worker**;
+completed work not yet admitted says **Waiting for import admission**. A stale
+`importing` record without a worker is shown as interrupted, not moving. Copy
+bytes and rate appear only when measured by the importer; download percentages
+never stand in for copy progress. Expand **Files & import details** for source,
+destination, publication file outcomes, and the recorded handoff history.
+
+Select eligible failures and use **Retry selected**, or **Retry import** on one
+row. Each retry uses the retained payload through the existing import service;
+it does not request a replacement download. The result dialog records each
+success or rejection separately. Pending cancellation, retained custody, Runner
+holds, and unresolved file outcomes require their existing review or Resolve
+controls before retry. **Cancel import** retains custody until the writer exits.

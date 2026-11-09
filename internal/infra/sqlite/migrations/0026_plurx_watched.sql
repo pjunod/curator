@@ -8,7 +8,7 @@
 -- time, not only at write time. (The first collision, 23, is in the README.)
 --
 -- Per-user, with usernames, by an explicit decision recorded in
--- docs/plan-integration.md §11.1. The sketch was an aggregate any-user
+-- docs/archive/plan-integration.md §11.1. The sketch was an aggregate any-user
 -- signal; per-user was chosen because it is the only shape that can later
 -- mean "everyone who could has watched it", and an aggregate cannot be
 -- refined into a per-user one after the fact.

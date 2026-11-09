@@ -246,36 +246,6 @@ func (d *DB) EnableRunnerDeliveryV1(ctx context.Context, clientID int64) error {
 	return err
 }
 
-// EnsureDeliveryDirectoryIdentity pins the accepted publication directory to
-// its original inode identity. Directory timestamps are mutable during
-// authorized child cleanup, so the caller pairs this with storage-source
-// verification on every cleanup attempt.
-func (d *DB) EnsureDeliveryDirectoryIdentity(ctx context.Context, receiptID int64, identity string) error {
-	if identity == "" {
-		return fmt.Errorf("publication directory identity is unavailable")
-	}
-	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET publication_directory_identity=?,updated_at=?
-		WHERE id=? AND publication_directory_identity=''`, identity, time.Now().UnixMilli(), receiptID)
-	if err != nil {
-		return err
-	}
-	changed, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if changed > 0 {
-		return nil
-	}
-	var persisted string
-	if err := d.R.QueryRowContext(ctx, `SELECT publication_directory_identity FROM runner_delivery_receipts WHERE id=?`, receiptID).Scan(&persisted); err != nil {
-		return err
-	}
-	if persisted != identity {
-		return ErrDeliveryReceiptStale
-	}
-	return nil
-}
-
 func requireDeliveryTransition(res sql.Result, err error) error {
 	if err != nil {
 		return err
@@ -382,36 +352,6 @@ func (d *DB) DeliveryRetryDetails(ctx context.Context, receiptID int64) (Deliver
 		v.SourceNext = time.UnixMilli(sourceNext)
 	}
 	return v, nil
-}
-
-// UpdateDeliveryFileDisposition changes only import rationale. It preserves
-// cleanup state, including an already committed unlink.
-func (d *DB) UpdateDeliveryFileDisposition(ctx context.Context, receiptID int64, path, disposition, reason, libraryPath string) error {
-	if disposition != "placed" && disposition != "redundant" && disposition != "disposable_selected_scope" && disposition != "unselected_recoverable" && disposition != "known_incidental" && disposition != "unknown_recoverable" {
-		return fmt.Errorf("invalid delivery file disposition %q", disposition)
-	}
-	res, err := d.W.ExecContext(ctx, `UPDATE runner_delivery_file_outcomes SET disposition=?,reason=?,library_path=?,updated_at=?
-		WHERE receipt_id=? AND path=? AND (
-			disposition IN ('pending','unknown_recoverable') OR
-			(disposition IN ('unselected_recoverable','known_incidental') AND ? IN ('known_incidental','placed','redundant','disposable_selected_scope'))
-		)`, disposition, reason, libraryPath, time.Now().UnixMilli(), receiptID, path, disposition)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		var count int
-		if err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_delivery_file_outcomes WHERE receipt_id=? AND path=?`, receiptID, path).Scan(&count); err != nil {
-			return err
-		}
-		if count == 0 {
-			return ErrDeliveryReceiptStale
-		}
-	}
-	return nil
 }
 
 func scanDeliveryFileOutcome(row interface{ Scan(...any) error }, out *DeliveryFileOutcome) error {

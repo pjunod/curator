@@ -77,3 +77,21 @@ func TestAfterLiteralSequences(t *testing.T) {
 		t.Errorf("empty ladder = %v, want 0", got)
 	}
 }
+
+func TestMaxIsTheLastRung(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ladder Ladder
+		want   time.Duration
+	}{
+		"retry":  {Retry, 5 * time.Minute},
+		"outbox": {Outbox, time.Hour},
+		"empty":  {Ladder{}, 0},
+	} {
+		if got := tc.ladder.Max(); got != tc.want {
+			t.Errorf("%s Max() = %v, want %v", name, got, tc.want)
+		}
+		if n := len(tc.ladder); n > 0 && tc.ladder.After(n+9) != tc.ladder.Max() {
+			t.Errorf("%s: After past the end must equal Max()", name)
+		}
+	}
+}

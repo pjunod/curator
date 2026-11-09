@@ -1113,3 +1113,10 @@ Existing native API authentication applies. No storage setting makes hard NFS
 interruptible. Follow the [deployment drain runbook](NFS_DEPLOYMENT_DRAIN.md);
 its stop wait requires measured qualification for the deployment shape.
 
+
+## Import Queue history
+
+The Import Queue page follows the existing **Activity retention** setting in
+Settings → Library. Set the window to `0` to disable automatic expiry of future
+eligible records. This does not restore already expired records. Clearing
+Activity does not hide an import receipt while it remains in storage.

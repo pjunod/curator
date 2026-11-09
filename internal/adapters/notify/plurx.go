@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain/backoff"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -314,7 +315,7 @@ func classifyScan(dir string, status int, raw []byte, header http.Header, keyed 
 
 // retryAfter reads how long the far side asked to be left alone: the
 // Retry-After header in seconds, else the body's retry_after_s. Capped at an
-// hour, the schedule's own ceiling.
+// the outbox ladder's last rung (backoff.Outbox.Max), its own ceiling.
 func retryAfter(header http.Header, bodySec int) time.Duration {
 	sec := bodySec
 	if v := strings.TrimSpace(header.Get("Retry-After")); v != "" {
@@ -325,10 +326,10 @@ func retryAfter(header http.Header, bodySec int) time.Duration {
 	if sec <= 0 {
 		return 0
 	}
-	if d := time.Duration(sec) * time.Second; d < time.Hour {
+	if d := time.Duration(sec) * time.Second; d < backoff.Outbox.Max() {
 		return d
 	}
-	return time.Hour
+	return backoff.Outbox.Max()
 }
 
 // parseAnswer reads a scan answer or a request record: status, request id,
