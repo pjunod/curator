@@ -28,6 +28,10 @@ export function ImportQueuePage() {
   const [results, setResults] = useState<ActionResult[] | null>(null)
   const [busy, setBusy] = useState(false)
   const opener = useRef<HTMLElement | null>(null)
+  const heading = useRef<HTMLHeadingElement | null>(null)
+  const restoreTarget = () => {
+    if (!opener.current?.isConnected || opener.current.matches(':disabled')) opener.current = heading.current
+  }
   const query = useQuery({ queryKey: ['imports', filter, search, offset],
     queryFn: () => getImportActivity(filter, search, PAGE, offset), refetchInterval: 4000 })
   useEffect(() => {
@@ -71,7 +75,7 @@ export function ImportQueuePage() {
   }
 
   return <div className="import-queue">
-    <header className="page-head"><div><h1>Import queue</h1><p className="muted">Every recorded import, from completed download to library.</p></div><Link to="/activity">Download activity</Link></header>
+    <header className="page-head"><div><h1 ref={heading} tabIndex={-1}>Import queue</h1><p className="muted">Every recorded import, from completed download to library.</p></div><Link to="/activity">Download activity</Link></header>
     {data && data.counts.attention > 0 && <div className="import-attention-banner"><div><strong>{data.counts.attention} import{data.counts.attention === 1 ? '' : 's'} need attention</strong><p className="muted">Review failed, interrupted, and unresolved work before retrying.</p></div><button onClick={() => selectFilter('attention')}>Review imports</button></div>}
     <nav className="import-filters" aria-label="Import status filters">{FILTERS.map(([key, label]) => <button key={key} aria-pressed={filter === key} onClick={() => selectFilter(key)}>{label} <span>{data?.counts[key] ?? '…'}</span></button>)}</nav>
     <div className="import-toolbar"><label>Filter imports<input type="search" value={search} onChange={e => { setSearch(e.target.value); setOffset(0); setSelected(new Set()) }} placeholder="Title or release name" /></label><span className="muted small">{query.isFetching ? 'Updating…' : query.dataUpdatedAt ? `Updated ${new Date(query.dataUpdatedAt).toLocaleTimeString()}` : ''}</span></div>
@@ -82,16 +86,16 @@ export function ImportQueuePage() {
       const rows = items.filter(i => i.category === key)
       if (!rows.length) return null
       return <section className="import-section" key={key} aria-label={label}>
-        <div className="import-section-head"><h2>{label} <span className="muted">{data?.counts[key]}</span></h2>{key === 'attention' && retryable.length > 0 && <div className="row-actions"><label className="import-selection"><input type="checkbox" aria-label="Select retryable imports on this page" checked={retryable.length > 0 && selectedItems.length === retryable.length} onChange={e => setSelected(new Set(e.target.checked ? retryable.map(i => i.download.id) : []))} />Select page</label><button disabled={busy || selectedItems.length === 0} onClick={e => { remember(e); void act(selectedItems, 'retry') }}>Retry selected ({selectedItems.length})</button></div>}</div>
+        <div className="import-section-head"><h2>{label} <span className="muted">{data?.counts[key]}</span></h2>{key === 'attention' && retryable.length > 0 && <div className="row-actions"><label className="import-selection"><input type="checkbox" aria-label="Select retryable imports on this page" checked={retryable.length > 0 && selectedItems.length === retryable.length} onChange={e => setSelected(new Set(e.target.checked ? retryable.map(i => i.download.id) : []))} />Select page</label><button aria-disabled={busy || selectedItems.length === 0} onClick={e => { if (!busy && selectedItems.length > 0) { remember(e); void act(selectedItems, 'retry') } }}>Retry selected ({selectedItems.length})</button></div>}</div>
         {rows.map(item => <ImportRow key={item.download.id} item={item} busy={busy} selected={selected.has(item.download.id)} onSelect={checked => setSelected(prev => { const next = new Set(prev); if (checked) next.add(item.download.id); else next.delete(item.download.id); return next })}
           onRetry={e => { remember(e); void act([item], 'retry') }} onCancel={e => { remember(e); void act([item], 'cancel') }}
           onReview={e => { remember(e); setReview(item) }} onResolve={e => { remember(e); setResolve(item) }} />)}
       </section>
     })}
     {data && <footer className="import-footer"><div className="row-actions"><button disabled={offset === 0} onClick={() => { setOffset(Math.max(0, offset - PAGE)); setSelected(new Set()) }}>Previous</button><span>{data.total ? `${offset + 1}–${Math.min(offset + PAGE, data.total)} of ${data.total}` : '0 imports'}</span><button disabled={!data.hasMore} onClick={() => { setOffset(offset + PAGE); setSelected(new Set()) }}>Next</button></div><p className="muted small">{data.retentionDays === 0 ? 'All retained import history · automatic expiry disabled.' : `History follows Activity retention: ${data.retentionDays} days. Expired records cannot be reconstructed.`} <Link to="/settings" hash="library">Retention settings</Link></p></footer>}
-    {results && <ActionDialog title="Import action results" returnFocus={opener} onClose={() => { if (!busy) setResults(null) }}><div aria-live="polite">{busy && <p role="status">Submitting imports… {results.length} completed</p>}{results.map(r => <div key={r.id} className="import-action-result"><strong>{r.title}</strong><p className={r.failed ? 'error-text' : 'muted'}>{r.message}</p></div>)}</div></ActionDialog>}
-    {review && <ActionDialog title="Review retained import" returnFocus={opener} onClose={() => { setReview(null); void invalidate() }}><ImportReviewPanel id={review.download.id} /></ActionDialog>}
-    {resolve && <ActionDialog title="Resolve import files" returnFocus={opener} onClose={() => { setResolve(null); void invalidate() }}><ResolvePanel embedded prefill={{ downloadId: resolve.download.id, mediaItemId: resolve.download.mediaItemId, copyId: resolve.download.copyId, path: resolve.download.importPath || resolve.download.savePath }} onDone={() => { setResolve(null); void invalidate() }} /></ActionDialog>}
+    {results && <ActionDialog title="Import action results" returnFocus={opener} onClose={() => { if (!busy) { restoreTarget(); setResults(null) } }}><div aria-live="polite">{busy && <p role="status">Submitting imports… {results.length} completed</p>}{results.map(r => <div key={r.id} className="import-action-result"><strong>{r.title}</strong><p className={r.failed ? 'error-text' : 'muted'}>{r.message}</p></div>)}</div></ActionDialog>}
+    {review && <ActionDialog title="Review retained import" returnFocus={opener} onClose={() => { restoreTarget(); setReview(null); void invalidate() }}><ImportReviewPanel id={review.download.id} /></ActionDialog>}
+    {resolve && <ActionDialog title="Resolve import files" returnFocus={opener} onClose={() => { restoreTarget(); setResolve(null); void invalidate() }}><ResolvePanel embedded prefill={{ downloadId: resolve.download.id, mediaItemId: resolve.download.mediaItemId, copyId: resolve.download.copyId, path: resolve.download.importPath || resolve.download.savePath }} onDone={() => { restoreTarget(); setResolve(null); void invalidate() }} /></ActionDialog>}
   </div>
 }
 

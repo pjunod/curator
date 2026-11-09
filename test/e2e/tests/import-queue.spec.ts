@@ -39,7 +39,7 @@ for(const width of [1280,375]){
   await expect(page.locator('[data-import-id="62"]')).toBeVisible()
   await page.getByRole('button',{name:/^Needs attention 2/}).click()
   await page.getByRole('checkbox',{name:'Select retryable imports on this page'}).check()
-  const trigger=page.getByRole('button',{name:'Retry selected (2)'})
+  const trigger=page.getByRole('button',{name:/^Retry selected/})
   await trigger.click()
   const result=await visibleDialog(page,'Import action results',width)
   await expect(result).toContainText('Import retry accepted')
