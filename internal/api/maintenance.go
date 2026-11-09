@@ -11,6 +11,7 @@ import (
 // Explicit read-only operations. Other GETs may persist previews, provider
 // budgets, discovery state or candidate tokens and participate in the barrier.
 var maintenanceReads = map[string]bool{
+	"GET /api/v1/imports":                                  true,
 	"GET /api/v1/system/status":                            true,
 	"GET /api/v1/system/tasks":                             true,
 	"GET /api/v1/health":                                   true,

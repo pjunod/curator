@@ -305,6 +305,30 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
+// Defines values for ImportActivityItemCategory.
+const (
+	ImportActivityItemCategoryActive    ImportActivityItemCategory = "active"
+	ImportActivityItemCategoryAttention ImportActivityItemCategory = "attention"
+	ImportActivityItemCategoryImported  ImportActivityItemCategory = "imported"
+	ImportActivityItemCategoryQueued    ImportActivityItemCategory = "queued"
+)
+
+// Valid indicates whether the value is a known member of the ImportActivityItemCategory enum.
+func (e ImportActivityItemCategory) Valid() bool {
+	switch e {
+	case ImportActivityItemCategoryActive:
+		return true
+	case ImportActivityItemCategoryAttention:
+		return true
+	case ImportActivityItemCategoryImported:
+		return true
+	case ImportActivityItemCategoryQueued:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ImportAttemptStatusOutcome.
 const (
 	ImportAttemptStatusOutcomeCancelled ImportAttemptStatusOutcome = "cancelled"
@@ -1403,6 +1427,33 @@ func (e SetPublicationCleanupJSONBodyAction) Valid() bool {
 	}
 }
 
+// Defines values for ListImportActivityParamsFilter.
+const (
+	ListImportActivityParamsFilterActive    ListImportActivityParamsFilter = "active"
+	ListImportActivityParamsFilterAll       ListImportActivityParamsFilter = "all"
+	ListImportActivityParamsFilterAttention ListImportActivityParamsFilter = "attention"
+	ListImportActivityParamsFilterImported  ListImportActivityParamsFilter = "imported"
+	ListImportActivityParamsFilterQueued    ListImportActivityParamsFilter = "queued"
+)
+
+// Valid indicates whether the value is a known member of the ListImportActivityParamsFilter enum.
+func (e ListImportActivityParamsFilter) Valid() bool {
+	switch e {
+	case ListImportActivityParamsFilterActive:
+		return true
+	case ListImportActivityParamsFilterAll:
+		return true
+	case ListImportActivityParamsFilterAttention:
+		return true
+	case ListImportActivityParamsFilterImported:
+		return true
+	case ListImportActivityParamsFilterQueued:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListQueueParamsFilter.
 const (
 	ListQueueParamsFilterActive   ListQueueParamsFilter = "active"
@@ -2128,6 +2179,30 @@ type IgnoredPath struct {
 	IgnoredAt time.Time `json:"ignoredAt"`
 	Path      string    `json:"path"`
 	Reason    string    `json:"reason"`
+}
+
+// ImportActivityItem defines model for ImportActivityItem.
+type ImportActivityItem struct {
+	Category    ImportActivityItemCategory `json:"category"`
+	Destination string                     `json:"destination"`
+
+	// Download Negative IDs identify read-only unattributed historical publications, never queue mutation targets.
+	Download  QueueItem `json:"download"`
+	Kind      string    `json:"kind"`
+	Title     string    `json:"title"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// ImportActivityItemCategory defines model for ImportActivityItem.Category.
+type ImportActivityItemCategory string
+
+// ImportActivityPage defines model for ImportActivityPage.
+type ImportActivityPage struct {
+	Counts        map[string]int       `json:"counts"`
+	HasMore       bool                 `json:"hasMore"`
+	Items         []ImportActivityItem `json:"items"`
+	RetentionDays int                  `json:"retentionDays"`
+	Total         int                  `json:"total"`
 }
 
 // ImportAttemptIdentity defines model for ImportAttemptIdentity.
@@ -3742,6 +3817,17 @@ type ScanImportPathParams struct {
 	Path string `form:"path" json:"path"`
 }
 
+// ListImportActivityParams defines parameters for ListImportActivity.
+type ListImportActivityParams struct {
+	Filter *ListImportActivityParamsFilter `form:"filter,omitempty" json:"filter,omitempty"`
+	Q      *string                         `form:"q,omitempty" json:"q,omitempty"`
+	Limit  *int                            `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int                            `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListImportActivityParamsFilter defines parameters for ListImportActivity.
+type ListImportActivityParamsFilter string
+
 // UpdateIndexerBudgetJSONBody defines parameters for UpdateIndexerBudget.
 type UpdateIndexerBudgetJSONBody struct {
 	DailyRequestCap int `json:"dailyRequestCap"`
@@ -4245,6 +4331,9 @@ type ServerInterface interface {
 	// DeleteImportList Remove an import list source
 	// (DELETE /importlists/{id})
 	DeleteImportList(w http.ResponseWriter, r *http.Request, id int64)
+	// ListImportActivity Retained import activity, including worker ownership and publication outcomes
+	// (GET /imports)
+	ListImportActivity(w http.ResponseWriter, r *http.Request, params ListImportActivityParams)
 	// ListIndexers List indexers
 	// (GET /indexers)
 	ListIndexers(w http.ResponseWriter, r *http.Request)
@@ -5608,6 +5697,78 @@ func (siw *ServerInterfaceWrapper) DeleteImportList(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteImportList(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListImportActivity operation middleware
+func (siw *ServerInterfaceWrapper) ListImportActivity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListImportActivityParams
+
+	// ------------- Optional query parameter "filter" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "filter", r.URL.Query(), &params.Filter, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "filter"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "filter", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListImportActivity(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8334,6 +8495,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/finished", wrapper.ClearFinishedQueue)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/failed", wrapper.ClearFailedQueue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/imports", wrapper.ListImportActivity)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resolve-reservation", wrapper.ResolveQueueReservation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resume", wrapper.ResumeQueueItem)

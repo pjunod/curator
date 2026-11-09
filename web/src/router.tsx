@@ -21,6 +21,7 @@ import { DiscoverPage } from './pages/Discover'
 import { MediaDetailPage } from './pages/MediaDetail'
 import { SettingsPage } from './pages/Settings'
 import { AccessPage } from './pages/Access'
+import { ImportQueuePage } from './pages/ImportQueue'
 import { ActivityPage } from './pages/Activity'
 import { CalendarPage } from './pages/Calendar'
 import type { CalendarSearch } from './pages/Calendar'
@@ -142,6 +143,7 @@ function MobileShell(props: { overall: string; version: string; children: React.
           <div className="more-sheet" role="dialog" aria-label="More">
             <GlobalSearch />
             <nav className="sheet-nav">
+              <Link to="/imports" activeProps={{ className: 'active' }}>Import queue</Link>
               <Link to="/discover" activeProps={{ className: 'active' }}>
                 Discover
               </Link>
@@ -212,6 +214,7 @@ function Layout() {
           <Link to="/activity" activeProps={{ className: 'active' }}>
             Activity
           </Link>
+          <Link to="/imports" activeProps={{ className: 'active' }}>Import queue</Link>
           <Link to="/dashboard" activeProps={{ className: 'active' }}>
             Dashboard
           </Link>
@@ -332,6 +335,8 @@ const activityRoute = createRoute({
   component: ActivityPage,
 })
 
+const importsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/imports', component: ImportQueuePage })
+
 const systemRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/system',
@@ -360,6 +365,7 @@ const routeTree = rootRoute.addChildren([
   wantedRoute,
   calendarRoute,
   activityRoute,
+  importsRoute,
   systemRoute,
   settingsRoute,
   accessRoute,

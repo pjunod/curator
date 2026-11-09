@@ -850,15 +850,23 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 		s.acqErr(w, err)
 		return
 	}
+	out, err := s.queueItems(r.Context(), rows)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) queueItems(ctx context.Context, rows []sqlite.Download) ([]apigen.QueueItem, error) {
 	out := make([]apigen.QueueItem, 0, len(rows))
 	ids := make([]int64, 0, len(rows))
 	for _, d := range rows {
 		ids = append(ids, d.ID)
 	}
-	publications, err := s.deps.Store.ListPublicationsForDownloads(r.Context(), ids)
+	publications, err := s.deps.Store.ListPublicationsForDownloads(ctx, ids)
 	if err != nil {
-		s.acqErr(w, err)
-		return
+		return nil, err
 	}
 	var pubIDs []int64
 	for _, ps := range publications {
@@ -866,10 +874,9 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			pubIDs = append(pubIDs, p.ID)
 		}
 	}
-	publicationFiles, err := s.deps.Store.ListPublicationFilesFor(r.Context(), pubIDs)
+	publicationFiles, err := s.deps.Store.ListPublicationFilesFor(ctx, pubIDs)
 	if err != nil {
-		s.acqErr(w, err)
-		return
+		return nil, err
 	}
 	for _, d := range rows {
 		copyID, clientID := d.CopyID, d.ClientID
@@ -895,7 +902,7 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 		s.fillPipelineV2(&item, d, publications[d.ID], publicationFiles)
 		if d.PlanID != 0 {
 			item.PlanId = &d.PlanID
-			if plan, e := s.deps.Store.GetAcquisitionPlan(r.Context(), d.PlanID); e == nil {
+			if plan, e := s.deps.Store.GetAcquisitionPlan(ctx, d.PlanID); e == nil {
 				item.PlanState = &plan.State
 				var facts map[string]interface{}
 				if json.Unmarshal(plan.Decision, &facts) == nil {
@@ -954,7 +961,7 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			since := live.StartedAt
 			item.StageSince = &since
 		}
-		a, e := s.deps.Store.GetImportAttempt(r.Context(), d.ID, d.GenerationKey)
+		a, e := s.deps.Store.GetImportAttempt(ctx, d.ID, d.GenerationKey)
 		if errors.Is(e, sql.ErrNoRows) {
 			a = sqlite.ImportAttempt{ImportAttemptKey: sqlite.ImportAttemptKey{DownloadID: d.ID, GenerationKey: d.GenerationKey}}
 			e = nil
@@ -963,8 +970,7 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			}
 		}
 		if e != nil {
-			s.acqErr(w, e)
-			return
+			return nil, e
 		}
 		status := importStatus(a)
 		item.ImportControl = &status
@@ -986,7 +992,7 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 		}
 		out = append(out, item)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // RemoveQueueItem implements DELETE /queue/{id}.

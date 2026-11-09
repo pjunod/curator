@@ -15,6 +15,7 @@ interface Destination {
 }
 
 const PAGES: Destination[] = [
+  { label: 'Import queue', sub: 'page', to: '/imports', keywords: 'imports import queue copying retry failed history files library' },
   { label: 'Library', sub: 'page', to: '/', keywords: 'library home posters movies series books' },
   { label: 'Add media', sub: 'page', to: '/add', keywords: 'add new search tmdb movie series book' },
   { label: 'Discover', sub: 'page', to: '/discover', keywords: 'discover browse trending popular top rated new releases upcoming anticipated box office trakt what to watch' },
