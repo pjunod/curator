@@ -169,7 +169,7 @@ func TestCrossVolumeCopyIsVerified(t *testing.T) {
 		want    string
 	}{
 		{name: "intact copy imports"},
-		{name: "a changed byte fails it", corrupt: func(p string) { _ = os.WriteFile(p, []byte("vidźo"), 0o644) }, want: "no longer matches its accepted delivery manifest"},
+		{name: "a changed byte fails it", corrupt: func(p string) { _ = os.WriteFile(p, []byte("vidźo"), 0o644) }, want: "does not match its manifest"},
 		{name: "a missing file fails it", corrupt: func(p string) { _ = os.Remove(p) }, want: epOne + ".mkv"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -255,11 +255,21 @@ func TestPublicationFileOutcomes(t *testing.T) {
 		for _, file := range files {
 			out[file.Path] = file.Outcome + "/" + file.DiscardReason
 		}
-		if p.State != "import_failed" || !strings.Contains(p.Error, "no importable media") || f.row(dl.ID).State != "failed" {
-			t.Fatalf("publication = %s %q row %s", p.State, p.Error, f.row(dl.ID).State)
+		// A typed failure that needs no one: the row failed, its want is
+		// grabbed again, and every file was discarded and cleaned up.
+		if f.row(dl.ID).State != "failed" || !strings.Contains(f.row(dl.ID).Error, "nothing importable") {
+			t.Fatalf("row = %s %q, want failed: nothing importable", f.row(dl.ID).State, f.row(dl.ID).Error)
 		}
-		if len(files) != 3 || out["sample/"+epOne+"-sample.mkv"] != "pending/" {
-			t.Fatalf("files = %v, want every manifest file seeded and left for Resolve", out)
+		if n := f.count(`SELECT COUNT(*) FROM replacement_grabs WHERE download_id=?`, dl.ID); n != 1 {
+			t.Fatalf("replacement grabs = %d, want the want grabbed again", n)
+		}
+		if p.State != "removed" || exists(pub.Path) {
+			t.Fatalf("publication = %s %q, want its discarded files cleaned up", p.State, p.Error)
+		}
+		for path, o := range out {
+			if !strings.HasPrefix(o, "discarded/") {
+				t.Fatalf("%s = %s, want discarded (files %v)", path, o, out)
+			}
 		}
 	})
 	t.Run("a non-media file beside the media is discarded, the media placed", func(t *testing.T) {
@@ -441,18 +451,31 @@ func TestHistoricalCohortSkipsWhatItMustNotMark(t *testing.T) {
 // Resolve: decisions that do not apply are refused; place imports exactly
 // the file; keep settles; a person's discard is recorded.
 func TestResolvePublicationFileMatrix(t *testing.T) {
+	// No import leaves a file unresolved any more; Resolve still serves the
+	// rows earlier builds left so (and an operator's own Keep). The fixture
+	// is such a row, written as those builds wrote it.
 	setupUnresolved := func(t *testing.T) (*v2Fixture, sqlite.Download, sqlite.Publication) {
 		f := setupV2(t, nil)
 		dl := f.grab(1, epOne)
-		if _, err := f.db.W.ExecContext(f.ctx, `DELETE FROM wantable_attempts`); err != nil {
+		pub := f.publish("Test.Show.S01E01.job-101.runner-res", "res", map[string]string{epOne + ".mkv": "video", "notes.txt": "n"})
+		for _, q := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO publications(id,download_id,generation,kind,path,manifest_source,state,error,discovered_at,updated_at) VALUES(1,?,'res','completed',?,'file','import_failed','2 file(s) unresolved',1,1)`, []any{dl.ID, pub.Path}},
+			{`INSERT INTO publication_files(publication_id,path,bytes,sha256,outcome,reason,updated_at) VALUES(1,?,5,?,'unresolved','no acquisition record',1)`, []any{epOne + ".mkv", sha256Hex([]byte("video"))}},
+			{`INSERT INTO publication_files(publication_id,path,bytes,sha256,outcome,reason,updated_at) VALUES(1,'notes.txt',1,?,'unresolved','not media of this item''s kind',1)`, []any{sha256Hex([]byte("n"))}},
+			{`UPDATE downloads SET state='failed' WHERE id=?`, []any{dl.ID}},
+		} {
+			if _, err := f.db.W.ExecContext(f.ctx, q.sql, q.args...); err != nil {
+				t.Fatalf("%s: %v", q.sql, err)
+			}
+		}
+		p, err := f.db.GetPublication(f.ctx, 1)
+		if err != nil {
 			t.Fatal(err)
 		}
-		pub := f.publish("Test.Show.S01E01.job-101.runner-res", "res", map[string]string{epOne + ".mkv": "video", "notes.txt": "n"})
-		p := f.completedAt(dl, pub.Path, "res")
-		if p.State != "import_failed" {
-			t.Fatalf("publication = %s, want import_failed with the media unresolved", p.State)
-		}
-		return f, dl, p
+		return f, f.row(dl.ID), p
 	}
 	t.Run("refusals", func(t *testing.T) {
 		f, dl, p := setupUnresolved(t)
@@ -475,20 +498,17 @@ func TestResolvePublicationFileMatrix(t *testing.T) {
 			t.Fatal("an unknown publication was resolved")
 		}
 	})
-	t.Run("the import discards the non-media; the media stays unresolved", func(t *testing.T) {
+	t.Run("discarding the non-media leaves the media unresolved", func(t *testing.T) {
 		f, dl, p := setupUnresolved(t)
-		files, _ := f.db.ListPublicationFiles(f.ctx, p.ID)
-		for _, file := range files {
-			if file.Path == "notes.txt" && (file.Outcome != "discarded" || file.DiscardReason != "rejected") {
-				t.Fatalf("notes.txt = %+v, want discarded{rejected} by the import", file)
-			}
-		}
-		if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, "notes.txt", "discard"); !errors.Is(err, ErrInvalidResolution) {
-			t.Fatalf("discarding an already discarded file: %v, want invalid", err)
+		if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, "notes.txt", "discard"); err != nil {
+			t.Fatal(err)
 		}
 		p, _ = f.db.GetPublication(f.ctx, p.ID)
 		if p.State != "import_failed" || f.row(dl.ID).State != "failed" {
 			t.Fatalf("publication %s row %s, want still unresolved media", p.State, f.row(dl.ID).State)
+		}
+		if f.count(`SELECT COUNT(*) FROM history_events WHERE type='publication_file_resolved'`) != 1 {
+			t.Fatal("the decision was not recorded in history")
 		}
 	})
 	t.Run("placing the media imports exactly that file", func(t *testing.T) {

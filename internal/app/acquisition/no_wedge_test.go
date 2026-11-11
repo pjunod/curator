@@ -2,11 +2,14 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 // Acceptance (Fable plan, Curator B): an import killed mid-copy imports on
@@ -106,5 +109,74 @@ func TestPlacementReconciliationRunsInTheBackgroundPerTitle(t *testing.T) {
 	}
 	if n := f.count(`SELECT COUNT(*) FROM media_files WHERE path=?`, pending[0].Target); n != 1 {
 		t.Fatalf("library rows for the reconciled target = %d, want 1", n)
+	}
+}
+
+// Review: an attempt that keeps failing on the payload does not loop. Past
+// MaxPublicationImportAttempts the publication ends import_failed and its
+// want is grabbed again; no one decides anything.
+func TestRepeatedPayloadFailuresEndInARegrab(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	original := placeFile
+	t.Cleanup(func() { placeFile = original })
+	placeFile = func(context.Context, string, string, func(int64, int64)) error {
+		return errors.New("injected payload failure")
+	}
+	pub := f.publish("Test.Show.S01E01.job-603.runner-loop", "loop", map[string]string{epOne + ".mkv": "video"})
+	f.complete(dl, pub)
+	for i := 0; i < sqlite.MaxPublicationImportAttempts+1; i++ {
+		f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	}
+	p, _ := f.publicationFiles(pub.Path)
+	if p.State != "import_failed" || !strings.Contains(p.Error, "attempts") {
+		t.Fatalf("publication = %s %q, want import_failed after the attempts ran out", p.State, p.Error)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs WHERE download_id=?`, dl.ID); n != 1 || f.row(dl.ID).State != "failed" {
+		t.Fatalf("row %s replacement grabs %d, want failed and grabbed again", f.row(dl.ID).State, n)
+	}
+}
+
+// Review: a publication file that is not the manifest's size is never
+// placed; the publication ends and its want is grabbed again.
+func TestTruncatedPublicationFileIsRefused(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-604.runner-short", "short", map[string]string{epOne + ".mkv": "the whole video"})
+	if err := os.Truncate(filepath.Join(pub.Path, epOne+".mkv"), 3); err != nil {
+		t.Fatal(err)
+	}
+	f.complete(dl, pub)
+	p, _ := f.publicationFiles(pub.Path)
+	if p.State != "import_failed" || !strings.Contains(p.Error, "does not match its manifest") || f.count(`SELECT COUNT(*) FROM media_files`) != 0 {
+		t.Fatalf("publication = %s %q, want refused with nothing placed", p.State, p.Error)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs WHERE download_id=?`, dl.ID); n != 1 {
+		t.Fatalf("replacement grabs = %d", n)
+	}
+}
+
+// Review: a same-filesystem placement links Runner's file and never changes
+// its mode (a chmod of an inode Curator does not own fails, and is Runner's
+// to decide).
+func TestLinkedPlacementNeverChmodsTheSource(t *testing.T) {
+	t.Setenv(FileModeEnv, "0664")
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-605.runner-mode", "mode", map[string]string{epOne + ".mkv": "video"})
+	src := filepath.Join(pub.Path, epOne+".mkv")
+	if err := os.Chmod(src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.Stat(src)
+	f.holdCleanup()
+	f.complete(dl, pub)
+	_, files := f.publicationFiles(pub.Path)
+	lib, err := os.Stat(files[epOne+".mkv"].LibraryPath)
+	if err != nil || !os.SameFile(before, lib) {
+		t.Fatalf("library %v (%v), want the linked source", lib, err)
+	}
+	if lib.Mode().Perm() != 0o600 {
+		t.Fatalf("linked inode mode = %v, want Runner's 0600 untouched", lib.Mode().Perm())
 	}
 }

@@ -966,9 +966,7 @@ func (s *Service) sweepDeadlines(ctx context.Context, cfg ports.ClientConfig, fe
 		if p.Error != "" {
 			reason += " (" + p.Error + ")"
 		}
-		if ok, err := s.db.FailStalledPublication(ctx, p.ID, reason); err == nil && ok && p.Kind == "completed" && dl.State != "imported" && dl.State != "notified" {
-			s.advance(ctx, &dl, "failed", dl.Progress, "publication import_failed: "+reason, stepFailed, "publication "+p.Path+" import_failed: "+reason)
-		}
+		s.endPublicationForRegrab(ctx, &dl, p, reason)
 	}
 }
 

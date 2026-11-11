@@ -164,6 +164,13 @@ func TestSubtitleBaseNameReadsLanguageFromNameThenFolder(t *testing.T) {
 		"Subs/Show.S01E01/Danish.srt":  base + ".da",
 		"Show.S01E01.pt-BR.forced.srt": base + ".pt.forced",
 		"zz_unknownlang.srt":           base,
+		"hi.srt":                       base + ".hi",
+		"Show.S01E01.hi.srt":           base + ".hi",
+		"Show.S01E01.en.hi.srt":        base + ".en.sdh",
+		"Show.S01E01.fr-CA.srt":        base + ".fr",
+		"Movie.Title.Ice.srt":          base, // a title word, not Icelandic
+		"The.English.Patient.srt":      base, // only the last token can be the language
+		"Subs/3_Spanish.srt":           base + ".es",
 	} {
 		if got := subtitleBaseName(rel, video); got != want {
 			t.Errorf("%s -> %q, want %q", rel, got, want)
@@ -205,6 +212,10 @@ func TestUpgradeReplacesThePlacedSubtitlesOfTheOldVideo(t *testing.T) {
 	}
 	wantFile(t, foreign, "not curator's")
 	wantFile(t, newStem+".en.srt", "new english")
+	var outcome string
+	if err := f.db.R.QueryRowContext(f.ctx, `SELECT outcome||'/'||discard_reason FROM publication_files WHERE path=?`, oldRelease+".en.srt").Scan(&outcome); err != nil || outcome != "discarded/superseded" {
+		t.Fatalf("the removed subtitle's record = %q (%v), want discarded/superseded", outcome, err)
+	}
 }
 
 // An upgrade that lands at the same name as the old video replaces the old
@@ -274,5 +285,92 @@ func TestLeftoverSidecarsOfAnImportedPublicationAreDecided(t *testing.T) {
 	}
 	if p.State != "removed" || exists(p.Path) {
 		t.Fatalf("publication = %s (%s), want the directory retired", p.State, p.Error)
+	}
+}
+
+// A subtitle that cannot be read from the publication is discarded with the
+// reason; the import finishes.
+func TestUnreadableSubtitleIsDiscardedNotRetried(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-705.runner-gone", "gone", map[string]string{epOne + ".mkv": "video", epOne + ".en.srt": "english"})
+	if err := os.Remove(filepath.Join(pub.Path, epOne+".en.srt")); err != nil {
+		t.Fatal(err)
+	}
+	f.holdCleanup()
+	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	p, files := f.publicationFiles(pub.Path)
+	if f.row(dl.ID).State != "imported" || files[epOne+".mkv"].Outcome != "placed" {
+		t.Fatalf("row %s publication %s (%s), want imported", f.row(dl.ID).State, p.State, p.Error)
+	}
+	if got := files[epOne+".en.srt"]; got.Outcome != "discarded" || !strings.Contains(got.Reason, "cannot be read") {
+		t.Fatalf("missing subtitle = %+v, want discarded with the reason", got)
+	}
+}
+
+// A subtitle Curator did not place is never overwritten: the new one takes
+// the next free name.
+func TestSubtitleNeverOverwritesAForeignFile(t *testing.T) {
+	f := setupV2(t, nil)
+	item, err := f.db.GetMediaItemFull(f.ctx, f.item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stem := filepath.Join(item.Path, "Season 1", "Test Show - S01E01 - Pilot [WEB-DL 1080p]")
+	if err := os.MkdirAll(filepath.Dir(stem), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stem+".en.srt", []byte("someone else's"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dl := f.grab(1, epOne)
+	_, files := f.importPublication(dl, "Test.Show.S01E01.job-706.runner-foreign", map[string]string{epOne + ".mkv": "video", "Subs/2_English.srt": "ours"})
+	if got := libraryStem(t, files[epOne+".mkv"]); got != stem {
+		t.Fatalf("fixture: video at %s, want %s", got, stem)
+	}
+	wantFile(t, stem+".en.srt", "someone else's")
+	wantFile(t, stem+".en.2.srt", "ours")
+	if got := files["Subs/2_English.srt"]; got.LibraryPath != stem+".en.2.srt" {
+		t.Fatalf("subtitle = %+v", got)
+	}
+}
+
+// A leftover sidecar whose publication's video was deleted since takes no
+// place beside it; one of a publication with no download row is decided
+// too. Neither stays pending.
+func TestLeftoverSidecarsWithoutTheirVideoAreDiscarded(t *testing.T) {
+	f := setupV2(t, nil)
+	f.holdCleanup()
+	dl := f.grab(1, epOne)
+	p, files := f.importPublication(dl, "Test.Show.S01E01.job-707.runner-stale", map[string]string{
+		epOne + ".mkv": "video", epOne + ".en.srt": "english"})
+	stem := libraryStem(t, files[epOne+".mkv"])
+	if err := os.Remove(stem + ".en.srt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(files[epOne+".mkv"].LibraryPath); err != nil { // deleted since
+		t.Fatal(err)
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE publication_files SET outcome='pending', library_path='', placed_sha256='', reason='' WHERE publication_id=? AND path=?`, p.ID, epOne+".en.srt"); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(f.root, "orphan")
+	if err := os.MkdirAll(orphan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `INSERT INTO publications(id,generation,kind,path,state,discovered_at,updated_at) VALUES(900,'o','completed',?,'imported',1,1)`, orphan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `INSERT INTO publication_files(publication_id,path,bytes,sha256,outcome,updated_at) VALUES(900,'x.nfo',1,'d','pending',1)`); err != nil {
+		t.Fatal(err)
+	}
+	f.sweep()
+	_, files = f.publicationFiles(p.Path)
+	if got := files[epOne+".en.srt"]; got.Outcome != "discarded" || exists(stem+".en.srt") {
+		t.Fatalf("subtitle of a deleted video = %+v (placed: %v)", got, exists(stem+".en.srt"))
+	}
+	_, orphanFiles := f.publicationFiles(orphan)
+	if got := orphanFiles["x.nfo"]; got.Outcome != "discarded" {
+		t.Fatalf("a download-less publication's leftover = %+v, want discarded", got)
 	}
 }

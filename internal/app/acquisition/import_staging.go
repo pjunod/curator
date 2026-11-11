@@ -115,8 +115,11 @@ func (s *Service) stageImportPlacement(ctx context.Context, p *sqlite.Placement,
 
 // linkImportStage makes the stage a hard link to the source when both are on
 // one filesystem: placement is then a link and a rename, with no bytes read
-// or written. A link that the filesystem refuses (another volume, a mount
-// that does not support it) is not an error: the caller copies. A recovery
+// or written. The linked inode is Runner's object: it is never chmod'ed
+// (that would fail for a file Curator does not own, and moves ctime on
+// Runner's file). Any problem on this path — the filesystem refuses the
+// link, the link does not name the source, the identity cannot be recorded —
+// is not an error: the link is removed and the caller copies. A recovery
 // import always copies (its sources are an operator's selection, not a
 // payload Curator owns).
 func (s *Service) linkImportStage(ctx context.Context, p *sqlite.Placement) (bool, error) {
@@ -126,36 +129,30 @@ func (s *Service) linkImportStage(ctx context.Context, p *sqlite.Placement) (boo
 	if err := os.Link(p.Source, p.Temporary); err != nil {
 		return false, nil
 	}
+	fallBack := func() (bool, error) {
+		p.TemporaryObjectIdentity = ""
+		return false, discardStage(p.Temporary)
+	}
 	info, err := os.Lstat(p.Temporary)
 	if err != nil {
-		return false, err
+		return fallBack()
 	}
 	src, err := os.Lstat(p.Source)
-	if err != nil || !os.SameFile(src, info) || !info.Mode().IsRegular() {
-		_ = discardStage(p.Temporary)
-		return false, fmt.Errorf("linked stage does not name the source object: %s", p.Source)
-	}
-	if info.Size() != p.Size {
-		// As for a copy: the stage stays as scratch for the next attempt.
-		return false, fmt.Errorf("source size changed during staging")
-	}
-	if err = applyMode(p.Temporary, fileMode()); err != nil {
-		_ = discardStage(p.Temporary)
-		return false, err
+	if err != nil || !os.SameFile(src, info) || !info.Mode().IsRegular() || info.Size() != p.Size {
+		return fallBack()
 	}
 	p.TemporaryObjectIdentity = deliveryFileStableIdentity(info)
 	if p.TemporaryObjectIdentity == "" {
-		_ = discardStage(p.Temporary)
-		return false, fmt.Errorf("stage object identity unavailable")
+		return fallBack()
 	}
 	local, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	err = s.db.UpdatePreparedPlacement(local, *p)
 	cancel()
 	if err != nil {
-		return false, err
+		return fallBack()
 	}
 	if err = syncPublicationDirectory(p.Temporary); err != nil {
-		return false, err
+		return fallBack()
 	}
 	recordStageLinked(ctx)
 	return true, nil

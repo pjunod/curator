@@ -719,8 +719,10 @@ func TestSupersededFileDiscardedByCurrentAttempt(t *testing.T) {
 	}
 }
 
-// (l) A file whose wantable has no acquisition record is unresolved and kept.
-func TestNoAcquisitionRecordIsUnresolved(t *testing.T) {
+// (l, amended 2026-11-11) A file whose wantable has no acquisition record (a
+// legacy row) is not left for a person: the import decides it by quality,
+// as it does any file of the attempt Curator chose.
+func TestNoAcquisitionRecordImportsByQuality(t *testing.T) {
 	f := setupV2(t, nil)
 	dl := f.grab(1, epOne)
 	if _, err := f.db.W.ExecContext(f.ctx, `DELETE FROM wantable_attempts`); err != nil {
@@ -730,18 +732,8 @@ func TestNoAcquisitionRecordIsUnresolved(t *testing.T) {
 	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
 	p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path)
 	files, _ := f.db.ListPublicationFiles(f.ctx, p.ID)
-	if len(files) != 1 || files[0].Outcome != "unresolved" || !strings.Contains(files[0].Reason, "no acquisition record") || p.State != "import_failed" {
-		t.Fatalf("publication %s files %+v, want one unresolved file and import_failed", p.State, files)
-	}
-	if _, err := os.Stat(filepath.Join(pub.Path, epOne+".mkv")); err != nil {
-		t.Fatal("an unresolved file was not retained")
-	}
-	// Resolve: a person places it.
-	if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, epOne+".mkv", "keep"); err != nil {
-		t.Fatal(err)
-	}
-	if got := f.row(dl.ID); got.State != "imported" {
-		t.Fatalf("after keep: %s, want the publication settled", got.State)
+	if len(files) != 1 || files[0].Outcome != "placed" || f.row(dl.ID).State != "imported" {
+		t.Fatalf("publication %s files %+v row %s, want the file placed", p.State, files, f.row(dl.ID).State)
 	}
 }
 
@@ -1191,7 +1183,7 @@ func TestCrashMidImportResumesOnlyTheRest(t *testing.T) {
 	for _, file := range files {
 		got[file.Path] = file
 	}
-	if p.State != "imported" || got["Test.Show.S01E02.mkv"].Outcome != "placed" {
+	if (p.State != "imported" && p.State != "removed") || got["Test.Show.S01E02.mkv"].Outcome != "placed" {
 		t.Fatalf("after restart publication %s, E02 %+v (%s): want the orphaned import resumed", p.State, got["Test.Show.S01E02.mkv"], f.row(dl.ID).Error)
 	}
 	if got["Test.Show.S01E01.mkv"].LibraryPath != "/library/e1.mkv" {

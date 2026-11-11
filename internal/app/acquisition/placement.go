@@ -166,6 +166,23 @@ func recordStageLinked(ctx context.Context) {
 	}
 }
 
+// errPayloadMismatch is a publication file that is not what Runner's
+// manifest says it is (its size, or its digest as copied). The publication
+// cannot be imported; it ends and its want is grabbed again.
+var errPayloadMismatch = errors.New("publication file does not match its manifest")
+
+type expectedSourceSizesKey struct{}
+
+// withExpectedSourceSizes carries the manifest's byte counts, checked by
+// stat before anything is linked or copied.
+func withExpectedSourceSizes(ctx context.Context, sizes map[string]int64) context.Context {
+	canonical := make(map[string]int64, len(sizes))
+	for path, n := range sizes {
+		canonical[filepath.Clean(path)] = n
+	}
+	return context.WithValue(ctx, expectedSourceSizesKey{}, canonical)
+}
+
 // placementSourceDigest is the digest a placement records for its source:
 // the accepted manifest's, without reading the file, when the import carries
 // one; otherwise (another download client, a manual import) one read of the
@@ -182,6 +199,11 @@ func placementSourceDigest(ctx context.Context, src string) (string, int64, erro
 			}
 			if !info.Mode().IsRegular() {
 				return "", 0, fmt.Errorf("not a regular file: %s", src)
+			}
+			if sizes, ok := ctx.Value(expectedSourceSizesKey{}).(map[string]int64); ok {
+				if want, known := sizes[filepath.Clean(src)]; known && want != info.Size() {
+					return "", 0, fmt.Errorf("%w: %s is %d bytes, the manifest says %d", errPayloadMismatch, src, info.Size(), want)
+				}
 			}
 			return digest, info.Size(), nil
 		}
@@ -947,7 +969,7 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 				if sum != p.SHA256 {
 					_ = discardStage(p.Temporary)
 					s.abandonUnpublishedPlacement(ctx, p.ID)
-					return fmt.Errorf("source file no longer matches its accepted delivery manifest: %s", p.Source)
+					return fmt.Errorf("%w: source file no longer matches its accepted delivery manifest: %s", errPayloadMismatch, p.Source)
 				}
 			}
 		case written.sum == "":
@@ -957,7 +979,7 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 			_ = discardStage(p.Temporary)
 			s.abandonUnpublishedPlacement(ctx, p.ID)
 			if manifestConstrained(ctx, p.Source) {
-				return fmt.Errorf("source file no longer matches its accepted delivery manifest: %s", p.Source)
+				return fmt.Errorf("%w: source file no longer matches its accepted delivery manifest: %s", errPayloadMismatch, p.Source)
 			}
 			return fmt.Errorf("copy digest mismatch: %s", p.Source)
 		}

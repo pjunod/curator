@@ -15,25 +15,29 @@ import (
 	"github.com/pjunod/monarr/internal/ports"
 )
 
-// Per-file, evidence-bound cleanup of a publication (pipeline contract v2,
-// section 3.4; plan M4.1). This is the one way Curator deletes bytes from a
-// Runner publication: after an import (on the cleanup lane), from the hourly
-// sweep, and when a person discards a file in Resolve or Storage. A file
-// leaves only when its recorded outcome is evidence for it:
+// Per-file cleanup of a publication (pipeline contract v2, section 3.4;
+// plan M4.1). This is the one way Curator deletes bytes from a Runner
+// publication: after an import (on the cleanup lane), from the hourly sweep,
+// and when a person discards a file in Resolve or Storage. Every file of a
+// finished publication has a final outcome, and none waits for a person:
 //
-//   - placed: the placement recorded the manifest's digest, and the library
-//     file is still the object it published (the same inode as this file, or
-//     the placement journal's recorded size and inode generation; a library
-//     file with no such record is hashed once);
-//   - discarded (superseded, duplicate, rejected).
+//   - placed: the file leaves once its library copy is proven — the same
+//     inode, or the placement journal's recorded size and inode generation
+//     (a library file with no such record is hashed once). A library that
+//     no longer holds it because something newer replaced or removed it
+//     makes it discarded{superseded};
+//   - discarded (superseded, duplicate, rejected): it leaves (a job's
+//     directory is a closed scope);
+//   - pending (left by an earlier build): decided first
+//     (redecideLeftoverSidecars).
 //
-// Nothing is re-hashed when the record holds (hash once: the placement proved
-// the bytes as it copied them). unresolved and pending files are never
-// touched. Before each unlink the publication generation (the manifest in the
-// directory), the file's identity (its size against the manifest, then an
-// unchanged inode generation since it was checked) and the storage identity
-// of the completed root are checked again; a root whose identity changed is
-// an unmounted mount point and nothing under it is deleted. The directory goes
+// Before each unlink the publication generation (the manifest in the
+// directory), an unchanged inode generation since the file was checked and
+// the storage identity of the completed root are checked again; a root whose
+// identity changed is an unmounted mount point and nothing under it is
+// deleted. A library file whose record remains but whose bytes are missing or
+// differ keeps the publication copy (it may be the only good one) and is
+// reported on the publication; the next pass looks again. The directory goes
 // when nothing is left in it but the manifest.
 
 // publicationSweepBatch bounds one hourly pass.
@@ -336,14 +340,12 @@ func (s *Service) cleanupPublicationLocked(ctx context.Context, publicationID in
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		kept, err := s.cleanupPublicationFile(ctx, pub, manifest, f, item)
+		err := s.cleanupPublicationFile(ctx, pub, manifest, f, item)
 		switch {
 		case err != nil:
-			// Transient (unreadable, changed while hashed, storage moved):
+			// Transient (unreadable, changed while checked, storage moved):
 			// kept as it is, tried again by the next pass.
 			res.Kept = append(res.Kept, f.Path+": "+err.Error())
-		case kept != "":
-			res.Kept = append(res.Kept, f.Path+": "+kept)
 		default:
 			res.Removed++
 			bytes += f.Bytes
@@ -431,29 +433,21 @@ func (s *Service) cleanupManifest(pub sqlite.Publication, allRemoved bool) (map[
 	return out, nil
 }
 
-// cleanupPublicationFile verifies one file's evidence and unlinks it. kept
-// names a definitive reason the file stays (it is then unresolved, shown in
-// Resolve, and not re-read by later passes); err is a transient one.
-func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publication, manifest map[string]ports.ManifestFile, f sqlite.PublicationFile, item int64) (kept string, err error) {
-	demote := func(reason string) (string, error) {
-		if err := s.db.DemotePublicationFile(ctx, pub.ID, f.Path, f.Outcome, reason); err != nil {
-			return "", err
-		}
-		return reason, nil
-	}
-	mf, ok := manifest[f.Path]
-	if !ok || !safeDeliveryRelativePath(f.Path) {
-		return demote("kept: the publication's manifest no longer lists this file")
-	}
-	if mf.SHA256 == "" || f.SHA256 == "" || mf.SHA256 != f.SHA256 || mf.Bytes != f.Bytes {
-		return demote("kept: the manifest records no matching digest for this file (size alone is not evidence)")
-	}
-	if f.Outcome == "placed" && (f.PlacedSHA256 != f.SHA256 || f.LibraryPath == "" || !filepath.IsAbs(f.LibraryPath)) {
-		return demote("kept: the placement recorded no matching digest or library path")
+// cleanupPublicationFile decides one file from its recorded outcome and
+// unlinks it. It never leaves a file for a person: a discarded file leaves
+// (the job's directory is a closed scope); a placed file leaves once its
+// library copy is proven, and becomes discarded{superseded} when the library
+// no longer holds it because something newer replaced or removed it. err is
+// transient (storage, a read error, a file changing while checked, a library
+// file whose record remains but whose bytes are missing or differ): the file
+// stays as it is and the next pass tries again.
+func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publication, manifest map[string]ports.ManifestFile, f sqlite.PublicationFile, item int64) error {
+	if _, ok := manifest[f.Path]; !ok || !safeDeliveryRelativePath(f.Path) {
+		return fmt.Errorf("the publication's manifest does not list this file")
 	}
 	base, err := os.OpenRoot(pub.Path)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer func() { _ = base.Close() }()
 	rel := filepath.FromSlash(f.Path)
@@ -461,38 +455,28 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 	if errors.Is(err, os.ErrNotExist) {
 		// The storage under the root is verified and the file is not there:
 		// whoever removed it, it is gone.
-		return "", s.db.MarkPublicationFileRemoved(ctx, pub.ID, f.Path, f.Outcome)
+		return s.db.MarkPublicationFileRemoved(ctx, pub.ID, f.Path, f.Outcome)
 	}
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer func() { _ = parent.Close() }()
-	// The publication file is not read: it is leaving, and what it held is
-	// the manifest's digest, which the placement proved as it copied. Its
-	// size against the manifest and an unchanged generation up to the unlink
-	// are what bind this decision to this object.
+	// The publication file is not read: it is leaving. An unchanged
+	// generation up to the unlink binds this decision to this object.
 	generation := deliveryFileGeneration(named)
 	_ = file.Close()
-	if named.Size() != f.Bytes {
-		return demote(fmt.Sprintf("kept: the file is %d bytes, the manifest says %d", named.Size(), f.Bytes))
-	}
 	var libGeneration string
 	if f.Outcome == "placed" {
-		lib, err := os.Lstat(f.LibraryPath)
-		if errors.Is(err, os.ErrNotExist) {
-			return demote("kept: the library file it was placed as (" + f.LibraryPath + ") is missing")
-		}
+		superseded, why, lib, err := s.placedLibraryState(ctx, f, named)
 		if err != nil {
-			return "", err
+			return err
 		}
-		if !os.SameFile(lib, named) {
-			holds, err := s.libraryCopyHolds(ctx, f, lib)
-			if err != nil {
-				return "", err
+		if superseded {
+			f.Outcome, f.DiscardReason, f.Reason = "discarded", "superseded", why
+			if err := s.db.SetPublicationFileOutcome(ctx, f); err != nil {
+				return err
 			}
-			if !holds {
-				return demote("kept: the library file at " + f.LibraryPath + " differs from the manifest digest; this copy may be the only good one")
-			}
+		} else if lib != nil {
 			libGeneration = deliveryFileGeneration(lib)
 		}
 	}
@@ -504,32 +488,83 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 	defer releaseStorage()
 	publicationUnlinkHook(pub, f.Path)
 	if err := s.cleanupGate(ctx, pub); err != nil {
-		return "", err
+		return err
 	}
 	if _, err := s.cleanupManifest(pub, false); err != nil {
-		return "", err
+		return err
 	}
 	name := filepath.Base(rel)
 	now, err := parent.Lstat(name)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if now.Mode()&os.ModeSymlink != 0 || !now.Mode().IsRegular() || deliveryFileGeneration(now) != generation || generation == "" {
-		return "", fmt.Errorf("the file changed after it was verified")
+		return fmt.Errorf("the file changed after it was verified")
 	}
 	if libGeneration != "" {
 		lib, err := os.Lstat(f.LibraryPath)
 		if err != nil || deliveryFileGeneration(lib) != libGeneration {
-			return "", fmt.Errorf("the library file changed after it was verified")
+			return fmt.Errorf("the library file changed after it was verified")
 		}
 	}
 	if err := parent.Remove(name); err != nil {
-		return "", err
+		return err
 	}
 	_ = syncRootDirectory(parent, ".")
 	// The download lock held by every caller keeps Resolve from changing the
 	// outcome between the verification and this record.
-	return "", s.db.MarkPublicationFileRemoved(ctx, pub.ID, f.Path, f.Outcome)
+	return s.db.MarkPublicationFileRemoved(ctx, pub.ID, f.Path, f.Outcome)
+}
+
+// placedLibraryState decides a placed file's library copy. It holds (lib is
+// returned, unless it is the same inode as the publication file): the
+// publication copy may leave. The library no longer holds it because
+// something newer replaced or removed it — no library row at that path, a
+// newer placement of different bytes there, or a subtitle that is no longer
+// the one Curator placed — superseded: the publication copy is garbage. A
+// library file whose record remains but whose bytes are missing or differ is
+// an error: the publication copy may be the only good one, so it stays and
+// the next pass looks again.
+func (s *Service) placedLibraryState(ctx context.Context, f sqlite.PublicationFile, named os.FileInfo) (superseded bool, why string, lib os.FileInfo, err error) {
+	if f.LibraryPath == "" || !filepath.IsAbs(f.LibraryPath) {
+		return true, "the placement recorded no library path", nil, nil
+	}
+	lib, err = os.Lstat(f.LibraryPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, "", nil, err
+	}
+	if err == nil && os.SameFile(lib, named) {
+		return false, "", nil, nil
+	}
+	if err == nil {
+		holds := false
+		if f.SHA256 == "" {
+			// A historical row whose manifest carried no digest: its review
+			// was approved, and the library file of the recorded size is it.
+			holds = lib.Mode().IsRegular() && lib.Size() == f.Bytes
+		} else if f.PlacedSHA256 == f.SHA256 {
+			if holds, err = s.libraryCopyHolds(ctx, f, lib); err != nil {
+				return false, "", nil, err
+			}
+		}
+		if holds {
+			return false, "", lib, nil
+		}
+	}
+	if isSubtitleFile(f.LibraryPath) {
+		return true, "the subtitle Curator placed at " + f.LibraryPath + " was replaced or removed", nil, nil
+	}
+	var rows int
+	if qerr := s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM media_files WHERE path=?`, f.LibraryPath).Scan(&rows); qerr != nil {
+		return false, "", nil, qerr
+	}
+	if rows == 0 {
+		return true, "the library no longer holds " + f.LibraryPath + " (replaced or removed)", nil, nil
+	}
+	if p, ok, perr := s.db.CommittedPlacementForTarget(ctx, f.LibraryPath, ""); perr == nil && ok && p.SHA256 != f.SHA256 {
+		return true, "a newer placement replaced " + f.LibraryPath, nil, nil
+	}
+	return false, "", nil, fmt.Errorf("the library file at %s is missing or differs from what was placed; the publication copy is kept until it is back", f.LibraryPath)
 }
 
 // libraryCopyHolds decides that the library file a publication file was

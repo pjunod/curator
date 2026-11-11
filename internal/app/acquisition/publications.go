@@ -157,7 +157,7 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	}
 	m, ok, err := s.publicationManifest(ctx, cfg, pub)
 	if err != nil {
-		s.failPublication(ctx, &dl, pub, "manifest refused: "+err.Error())
+		s.endPublicationForRegrab(ctx, &dl, pub, "manifest refused: "+err.Error())
 		return err
 	}
 	if !ok {
@@ -202,8 +202,14 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	if pub.Kind == "completed" {
 		s.startRunnerDoneTiming(ctx, dl)
 	}
-	if err := s.db.StartPublicationImport(ctx, pub.ID); err != nil {
+	failedAttempts, err := s.db.StartPublicationImport(ctx, pub.ID)
+	if err != nil {
 		return err
+	}
+	if failedAttempts >= sqlite.MaxPublicationImportAttempts {
+		reason := fmt.Sprintf("attempts: %d import attempts failed (last: %s)", failedAttempts, orNone(pub.Error))
+		s.endPublicationForRegrab(ctx, &dl, pub, reason)
+		return fmt.Errorf("publication %d: %s", pub.ID, reason)
 	}
 	// Any error that leaves the publication in importing (a persistence
 	// outage after files were placed, say) puts it back to discovered with
@@ -259,17 +265,33 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		}
 	}
 	if len(selected) == 0 {
-		if len(resolved) > 0 {
-			// Everything importable is already resolved: settle it.
-			sidecars, err := s.publicationSidecars(ctx, item, pub, m, ImportResult{})
-			if err != nil {
-				_ = s.db.SetPublicationState(ctx, pub.ID, "discovered", err.Error())
-				return err
-			}
-			return s.completePublication(ctx, dl, cfg, item, pub, m, nil, ImportResult{}, &precedence{dl: dl, decided: map[string]precedenceVerdict{}}, sidecars)
+		// Everything importable is already resolved, or there is nothing to
+		// import (samples and sidecars only): settle it. With nothing in the
+		// library completePublication ends it import_failed and grabs again.
+		sidecars, err := s.publicationSidecars(ctx, item, pub, m, ImportResult{})
+		if err != nil {
+			_ = s.db.SetPublicationState(ctx, pub.ID, "discovered", err.Error())
+			return err
 		}
-		s.failPublication(ctx, &dl, pub, "the publication holds no importable media (samples and sidecars only)")
-		return ErrNoFilesImported
+		return s.completePublication(ctx, dl, cfg, item, pub, m, nil, ImportResult{}, &precedence{dl: dl, decided: map[string]precedenceVerdict{}}, sidecars)
+	}
+	// The files to import must be the ones the manifest names, by stat (a
+	// missing or resized file is a publication that does not match its
+	// manifest: it cannot be imported, and its want is grabbed again).
+	for _, abs := range selected {
+		info, statErr := os.Lstat(abs)
+		switch {
+		case statErr != nil && !errors.Is(statErr, os.ErrNotExist):
+			return statErr
+		case statErr != nil:
+			reason := fmt.Sprintf("%v: %s is missing", errPayloadMismatch, abs)
+			s.endPublicationForRegrab(ctx, &dl, pub, reason)
+			return fmt.Errorf("%w: %s is missing", errPayloadMismatch, abs)
+		case !info.Mode().IsRegular() || info.Size() != byAbs[abs].Bytes:
+			reason := fmt.Sprintf("%v: %s is %d bytes, the manifest says %d", errPayloadMismatch, abs, info.Size(), byAbs[abs].Bytes)
+			s.endPublicationForRegrab(ctx, &dl, pub, reason)
+			return fmt.Errorf("%w: %s", errPayloadMismatch, reason)
+		}
 	}
 	ictx, err := s.ensureImportContext(ctx, dl)
 	if err != nil {
@@ -288,6 +310,11 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		}
 	}
 	ictx = withExpectedSourceDigests(ictx, digests)
+	sizes := make(map[string]int64, len(m.Files))
+	for abs, f := range byAbs {
+		sizes[abs] = f.Bytes
+	}
+	ictx = withExpectedSourceSizes(ictx, sizes)
 	if pub.CrossVolume || m.CrossVolume {
 		ictx = withCrossVolumePublication(ictx)
 	}
@@ -310,8 +337,18 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		s.advance(ctx, &dl, dlStateOr(dl, pub, "downloaded"), dl.Progress, importErr.Error(), stepFailed, importErr.Error())
 		return importErr
 	}
-	if importErr != nil && !errors.Is(importErr, ErrNoFilesImported) && len(result.Files) == 0 {
-		s.failPublication(ctx, &dl, pub, importErr.Error())
+	if importErr != nil && !errors.Is(importErr, ErrNoFilesImported) {
+		if errors.Is(importErr, errPayloadMismatch) {
+			// The bytes are not the ones Runner's manifest names: this
+			// publication cannot be imported; grab again.
+			s.endPublicationForRegrab(ctx, &dl, pub, importErr.Error())
+			return importErr
+		}
+		// An attempt that stopped on the payload: placements already
+		// committed are reused next time; the attempt is counted, and past
+		// MaxPublicationImportAttempts (or the deadline) the want is grabbed
+		// again.
+		_ = s.db.RequeueFailedPublicationAttempt(context.WithoutCancel(ctx), pub.ID, importErr.Error())
 		return importErr
 	}
 	// Subtitles go in with their video, in this import, before Cinema is
@@ -354,6 +391,25 @@ func (s *Service) publicationSidecars(ctx context.Context, item domain.MediaItem
 		}
 	}
 	return s.decidePublicationSidecars(ctx, item, pub, m, placed, done, fresh)
+}
+
+// endPublicationForRegrab ends a publication Curator could not import
+// (stalled, or out of attempts) as import_failed and grabs its wantables
+// again: a typed terminal that needs no one. A salvage publication ends
+// without a grab (its row already failed and was replaced).
+func (s *Service) endPublicationForRegrab(ctx context.Context, dl *sqlite.Download, pub sqlite.Publication, reason string) {
+	ok, err := s.db.EndPublicationForRegrab(context.WithoutCancel(ctx), pub.ID, reason, *dl)
+	if err != nil || !ok {
+		if err != nil {
+			s.log.Warn("publication could not be ended", "publication", pub.ID, "err", err)
+		}
+		return
+	}
+	s.log.Warn("publication import ended; its wantables are grabbed again", "publication", pub.ID, "reason", reason)
+	if pub.Kind == "completed" && dl.State != "imported" && dl.State != "notified" {
+		s.advance(context.WithoutCancel(ctx), dl, "failed", dl.Progress, "publication import_failed: "+reason, stepFailed, "publication "+pub.Path+" import_failed: "+reason+"; grabbing again")
+	}
+	_ = s.db.AddHistory(context.WithoutCancel(ctx), "import_failed", dl.MediaItemID, dl.ReleaseTitle, map[string]any{"reason": reason, "publication": pub.Path, "regrab": pub.Kind == "completed"})
 }
 
 // dlStateOr keeps a salvage's row state; a completed publication's row uses
@@ -399,8 +455,12 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 	}
 	var files []sqlite.PublicationFile
 	var supersede []sqlite.SupersedeWrite
-	placed, unresolved := 0, 0
-	var reasons []string
+	// Every file gets a final outcome here (design principle 6): nothing is
+	// left for a person. held counts the importable media the library now
+	// holds for this publication (placed now or before, or already present
+	// as a duplicate or a newer attempt's file).
+	placed, held := 0, 0
+	var refusals []string
 	for _, f := range m.Files {
 		abs := filepath.Clean(filepath.Join(pub.Path, filepath.FromSlash(f.Path)))
 		pf := sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256}
@@ -409,55 +469,58 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		o, attempted := outcomes[abs]
 		before, known := prior[f.Path]
 		side, isSidecar := sidecars[f.Path]
+		media := deliveryImportablePath(item.Kind, f.Path) && !isReleaseSample(f.Path)
 		switch {
 		case !selectedSet[abs] && isSidecar:
 			// Decided by this import: a subtitle placed with its video, or a
-			// file Curator does not keep (never left for Resolve).
+			// file Curator does not keep.
 			pf.Outcome, pf.DiscardReason, pf.Reason, pf.LibraryPath = side.outcome, side.discardReason, side.reason, side.libraryPath
 			if side.outcome == "placed" {
 				pf.PlacedSHA256 = f.SHA256
 			}
-		case !selectedSet[abs] && known && before.Outcome != "pending":
+		case !selectedSet[abs] && known && (before.Outcome == "placed" || before.Outcome == "discarded"):
 			pf = before
-			if pf.Outcome == "unresolved" && deliveryImportablePath(item.Kind, f.Path) && !isReleaseSample(f.Path) {
-				unresolved++
+			if media && (before.Outcome == "placed" || before.DiscardReason == "duplicate" || before.DiscardReason == "superseded") {
+				held++
 			}
 		case !selectedSet[abs]:
 			switch {
 			case isReleaseSample(f.Path):
 				pf.Outcome, pf.DiscardReason, pf.Reason = "discarded", "rejected", "release sample"
-			case deliveryImportablePath(item.Kind, f.Path):
+			case deliveryImportablePath(item.Kind, f.Path) && prec.recordOnly:
+				// A person chose which files this import places (manual
+				// approval, a manual import): the rest wait for that person,
+				// who asked to decide.
 				pf.Outcome, pf.Reason = "unresolved", "not selected for import; place or discard it in Resolve"
+			case deliveryImportablePath(item.Kind, f.Path):
+				pf.Outcome, pf.DiscardReason, pf.Reason = "discarded", "rejected", "not selected for this import; not kept"
 			default:
 				pf.Outcome, pf.DiscardReason, pf.Reason = "discarded", "rejected", "not media of this item's kind; not kept"
 			}
 		case !attempted:
-			pf.Outcome, pf.Reason = "unresolved", "the importer did not reach this file"
-			unresolved++
+			pf.Outcome, pf.DiscardReason, pf.Reason = "discarded", "rejected", "the import did not place it; not kept"
 		case o.Imported:
 			pf.Outcome, pf.LibraryPath, pf.PlacedSHA256 = "placed", o.Path, f.SHA256
 			placed++
+			held++
 			if verdict.wantable != "" {
 				supersede = append(supersede, sqlite.SupersedeWrite{WantableID: verdict.wantable, LibraryPath: o.Path})
 			}
 		case verdict.kind == "superseded":
 			pf.Outcome, pf.DiscardReason, pf.Reason = "discarded", "superseded", verdict.reason
-		case verdict.kind == "unresolved":
-			pf.Outcome, pf.Reason = "unresolved", verdict.reason
-			unresolved++
-		case o.Retryable:
-			pf.Outcome, pf.Reason = "unresolved", o.Reason
-			unresolved++
+			held++
 		case duplicateRefusal(o.Reason):
 			pf.Outcome, pf.DiscardReason, pf.Reason = "discarded", "duplicate", o.Reason
+			held++
 		default:
-			// The importer could not say where it belongs: an obfuscated name
-			// with no episode mapping, an unknown episode, an allowlist miss.
-			pf.Outcome, pf.Reason = "unresolved", o.Reason
-			unresolved++
-		}
-		if pf.Outcome == "unresolved" && selectedSet[abs] && len(reasons) < 3 {
-			reasons = append(reasons, f.Path+": "+pf.Reason)
+			// The importer could not say where it belongs (an obfuscated name
+			// with no episode mapping, an unknown episode, an allowlist miss):
+			// not kept; if nothing of the publication is in the library, its
+			// want is grabbed again below.
+			pf.Outcome, pf.DiscardReason, pf.Reason = "discarded", "rejected", o.Reason
+			if len(refusals) < 3 {
+				refusals = append(refusals, f.Path+": "+o.Reason)
+			}
 		}
 		files = append(files, pf)
 	}
@@ -467,15 +530,23 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 	if skipped := result.Skipped(); len(skipped) > 0 {
 		detail += fmt.Sprintf("; %d not placed — %s", len(skipped), result.reasons(3))
 	}
-	if unresolved > 0 {
+	if held == 0 {
+		// The publication gave the library nothing: a typed failure whose
+		// next step is the next grab, never a person.
 		w.State = "import_failed"
-		w.Error = fmt.Sprintf("%d file(s) unresolved: %s", unresolved, strings.Join(reasons, "; "))
+		w.Error = "nothing importable"
+		if len(refusals) > 0 {
+			w.Error += ": " + strings.Join(refusals, "; ")
+		} else {
+			w.Error += ": the publication holds no media of this item (samples and sidecars only)"
+		}
 		if pub.Kind == "completed" {
 			w.DownloadState, w.DownloadError = "failed", "publication import_failed: "+w.Error
-			w.Handoff = &sqlite.HandoffEntry{Step: stepFailed, At: now, Detail: detail + "; " + w.Error}
+			w.Handoff = &sqlite.HandoffEntry{Step: stepFailed, At: now, Detail: detail + "; " + w.Error + "; grabbing again"}
+			w.RegrabWantables = dl.WantableIDs
 		}
 		w.History = append(w.History, sqlite.HistoryWrite{Type: "import_failed", MediaItemID: dl.MediaItemID, ReleaseTitle: dl.ReleaseTitle,
-			Data: map[string]any{"reason": w.Error, "publication": pub.Path, "placed": placed}})
+			Data: map[string]any{"reason": w.Error, "publication": pub.Path, "placed": placed, "regrab": pub.Kind == "completed"}})
 	} else {
 		w.State = "imported"
 		if pub.Kind == "completed" {
@@ -517,8 +588,14 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		if err := closeAttempt(); err != nil {
 			s.log.Warn("import attempt could not be closed", "download", dl.ID, "err", err)
 		}
-		// Every file has an outcome: the evidenced ones can leave now
-		// (contract section 3.4), the rest stay for Resolve.
+		// Every file has an outcome: they leave now (contract section 3.4).
+		s.afterPublicationImported(ctx, pub.ID)
+	} else {
+		// A typed failure: the attempt is settled, its want grabbed again in
+		// the same write, and its discarded files leave.
+		if err := s.settleBoundImport(ctx); err != nil {
+			s.log.Warn("import attempt could not be settled", "download", dl.ID, "err", err)
+		}
 		s.afterPublicationImported(ctx, pub.ID)
 	}
 	if event != nil {
@@ -528,7 +605,7 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 	if w.State == "import_failed" {
 		s.publish(ImportFailed{MediaItemID: dl.MediaItemID, Release: dl.ReleaseTitle, Reason: w.Error})
 	}
-	s.log.Info("publication imported", "publication", pub.ID, "kind", pub.Kind, "placed", placed, "unresolved", unresolved, "state", w.State)
+	s.log.Info("publication imported", "publication", pub.ID, "kind", pub.Kind, "placed", placed, "state", w.State)
 	return nil
 }
 
@@ -720,7 +797,7 @@ type precedence struct {
 
 type precedenceVerdict struct {
 	wantable string
-	kind     string // "" (current) | superseded | unresolved
+	kind     string // "" (current) | superseded
 	reason   string
 }
 
@@ -732,8 +809,8 @@ func (e precedenceRefusal) Error() string { return e.verdict.reason }
 // checkPrecedence decides, before a file is placed, whether it is the
 // current attempt's for its wantable — by Curator's own acquisition record,
 // never by generation ids or publication time. A file from another attempt
-// is discarded{superseded} when the library already holds the current
-// attempt's file, else unresolved; no record at all is unresolved.
+// is discarded{superseded}: the current attempt imports, or fails and is
+// grabbed again. With no record at all the import decides by quality.
 func (s *Service) checkPrecedence(ctx context.Context, item domain.MediaItem, copyID int64, src string, season int, episodes []int, episodeIDs []int64) error {
 	p, ok := ctx.Value(precedenceKey{}).(*precedence)
 	if !ok || p == nil {
@@ -761,10 +838,10 @@ func (s *Service) checkPrecedence(ctx context.Context, item domain.MediaItem, co
 		}
 	}
 	switch cur.DownloadID {
-	case p.dl.ID:
+	case p.dl.ID, 0:
+		// This download is the attempt Curator chose, or no attempt is on
+		// record for the want (a legacy row): the import decides by quality.
 		return nil
-	case 0:
-		verdict.kind, verdict.reason = "unresolved", "no acquisition record for "+primary
 	default:
 		other, err := s.db.GetDownload(ctx, cur.DownloadID)
 		holds := false
@@ -777,7 +854,9 @@ func (s *Service) checkPrecedence(ctx context.Context, item domain.MediaItem, co
 		if holds {
 			verdict.kind, verdict.reason = "superseded", fmt.Sprintf("superseded by download %d, whose file is in the library", cur.DownloadID)
 		} else {
-			verdict.kind, verdict.reason = "unresolved", fmt.Sprintf("superseded by download %d which has not imported yet", cur.DownloadID)
+			// The want's current attempt is another download: it imports,
+			// or fails and is grabbed again. This file is not the want's.
+			verdict.kind, verdict.reason = "superseded", fmt.Sprintf("superseded by download %d, the want's current attempt", cur.DownloadID)
 		}
 	}
 	return importPolicyRefusal{precedenceRefusal{verdict}}

@@ -2,7 +2,6 @@ package acquisition
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -205,8 +204,8 @@ func TestStorageIdentityChangeDeletesNothing(t *testing.T) {
 }
 
 // (f) The library destination now holds a same-size file with different
-// content: the publication's copy may be the only good one, so it is kept
-// and shown in Resolve (digest, never size).
+// content while its record remains: the publication's copy may be the only
+// good one, so it is kept and the reason surfaced; each pass looks again.
 func TestSameSizeDifferentContentIsNotDeleted(t *testing.T) {
 	f := setupV2(t, nil)
 	f.holdCleanup()
@@ -231,15 +230,11 @@ func TestSameSizeDifferentContentIsNotDeleted(t *testing.T) {
 	if body, err := os.ReadFile(src); err != nil || string(body) != "the episode" {
 		t.Fatalf("the publication file was deleted or changed: %q %v", body, err)
 	}
-	if g := files[epOne+".mkv"]; g.Outcome != "unresolved" || !strings.Contains(g.Reason, "differs from the manifest digest") {
-		t.Fatalf("file = %+v, want unresolved with the digest reason", g)
+	if g := files[epOne+".mkv"]; g.Outcome != "placed" || !g.RemovedAt.IsZero() {
+		t.Fatalf("file = %+v, want still placed and kept (never deleted on a mismatch)", g)
 	}
-	if p.State == "removed" || !strings.Contains(p.Error, "kept 1 file") {
+	if p.State == "removed" || !strings.Contains(p.Error, "kept 1 file") || !strings.Contains(p.Error, "differs") {
 		t.Fatalf("publication = %s %q, want kept and surfaced", p.State, p.Error)
-	}
-	// It is no longer evidence, so later sweeps do not re-read it.
-	if pubs, _ := f.db.PublicationsToSweep(f.ctx, 10); len(pubs) != 0 {
-		t.Fatalf("the sweep would revisit %d publication(s)", len(pubs))
 	}
 }
 
@@ -430,9 +425,10 @@ func TestHardlinkedPlacementKeepsLibraryBytes(t *testing.T) {
 	}
 }
 
-// A manifest entry without a digest is not evidence (size alone never is):
-// the file is kept and becomes unresolved.
-func TestDigestlessManifestFileIsKept(t *testing.T) {
+// A manifest rewritten without digests does not keep a placed file whose
+// library copy is the placement's own object: the record decides, and the
+// publication copy leaves.
+func TestDigestlessManifestDoesNotStrandAPlacedFile(t *testing.T) {
 	f := setupV2(t, nil)
 	pub := f.importHeld("Test.Show.S01E01.job-306.runner-nodig", "nodig", map[string]string{epOne + ".mkv": "the episode"})
 	raw, _ := json.Marshal(ports.Manifest{Generation: "nodig", Files: []ports.ManifestFile{{Path: epOne + ".mkv", Bytes: int64(len("the episode"))}}})
@@ -440,9 +436,9 @@ func TestDigestlessManifestFileIsKept(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.sweep()
-	_, files := f.publicationFiles(pub.Path)
-	if g := files[epOne+".mkv"]; g.Outcome != "unresolved" || !strings.Contains(g.Reason, "size alone is not evidence") || !exists(filepath.Join(pub.Path, epOne+".mkv")) {
-		t.Fatalf("digest-less file = %+v", g)
+	p, files := f.publicationFiles(pub.Path)
+	if g := files[epOne+".mkv"]; g.Outcome != "placed" || g.RemovedAt.IsZero() || p.State != "removed" {
+		t.Fatalf("publication %s file %+v, want removed with its library copy kept", p.State, g)
 	}
 }
 
@@ -517,10 +513,10 @@ func TestApprovedManifestlessHistoricalDeletesWhole(t *testing.T) {
 	}
 }
 
-// Review findings 4 and 6: a pass that gets through clears an earlier stop;
-// a Discard whose evidence does not hold says the file stayed. A non-media
-// sidecar is discarded by the import itself, never left for Resolve.
-func TestRecoveredPassClearsErrorAndDiscardReportsKept(t *testing.T) {
+// Review finding 4: a pass that gets through clears an earlier stop. A
+// non-media sidecar is discarded by the import itself, and leaves whatever
+// became of its bytes (a job's directory is a closed scope).
+func TestRecoveredPassClearsErrorAndDiscardedFilesLeave(t *testing.T) {
 	f := setupV2(t, nil)
 	pub := f.importHeld("Test.Show.S01E01.job-308.runner-nfo", "nfo", map[string]string{epOne + ".mkv": "the episode", epOne + ".nfo": "info", "notes.txt": "keep me?"})
 	if _, files := f.publicationFiles(pub.Path); files[epOne+".nfo"].Outcome != "discarded" || files[epOne+".nfo"].DiscardReason != "rejected" {
@@ -533,21 +529,18 @@ func TestRecoveredPassClearsErrorAndDiscardReportsKept(t *testing.T) {
 	if p, _ := f.publicationFiles(pub.Path); !strings.Contains(p.Error, "storage identity") {
 		t.Fatalf("error = %q", p.Error)
 	}
-	// The text file grew after the manifest: its size is no longer the
-	// manifest's, so it stays (demoted to unresolved); everything else goes.
 	if err := os.WriteFile(filepath.Join(pub.Path, "notes.txt"), []byte("keep me? edited"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	f.sweep()
 	p, files := f.publicationFiles(pub.Path)
-	if files[epOne+".mkv"].RemovedAt.IsZero() || files[epOne+".nfo"].RemovedAt.IsZero() || files["notes.txt"].Outcome != "unresolved" ||
-		strings.Contains(p.Error, "storage identity") {
-		t.Fatalf("after recovery: error %q files %+v", p.Error, files)
+	for name, file := range files {
+		if file.RemovedAt.IsZero() {
+			t.Errorf("%s = %+v, want removed", name, file)
+		}
 	}
-	// Discarding it records the decision, keeps the file and says so.
-	err := f.svc.ResolvePublicationFile(f.ctx, p.DownloadID, p.ID, "notes.txt", "discard")
-	if !errors.Is(err, ErrDiscardedButKept) || !exists(filepath.Join(pub.Path, "notes.txt")) {
-		t.Fatalf("discard = %v: want ErrDiscardedButKept and the file kept", err)
+	if p.State != "removed" || exists(pub.Path) {
+		t.Fatalf("after recovery: publication %s error %q", p.State, p.Error)
 	}
 }
 

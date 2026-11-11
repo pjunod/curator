@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -109,23 +110,46 @@ func (s *Service) decidePublicationSidecars(ctx context.Context, item domain.Med
 			continue
 		}
 		base := subtitleBaseName(unit[0].Path, video)
-		name := base
-		for n := 2; used[strings.ToLower(filepath.Join(filepath.Dir(video.library), name))]; n++ {
-			name = base + "." + strconv.Itoa(n)
+		dir := filepath.Dir(video.library)
+		var name string
+		var replaced []sqlite.PublicationFile
+		for n := 1; ; n++ {
+			name = base
+			if n > 1 {
+				name = base + "." + strconv.Itoa(n)
+			}
+			if used[strings.ToLower(filepath.Join(dir, name))] {
+				continue
+			}
+			free, rows, err := s.subtitleNameFree(ctx, unit, dir, name, pub.ID)
+			if err != nil {
+				return nil, err
+			}
+			if free {
+				replaced = rows
+				break
+			}
 		}
-		used[strings.ToLower(filepath.Join(filepath.Dir(video.library), name))] = true
+		used[strings.ToLower(filepath.Join(dir, name))] = true
 		for _, f := range unit {
-			dest := filepath.Join(filepath.Dir(video.library), name+strings.ToLower(filepath.Ext(f.Path)))
+			dest := filepath.Join(dir, name+strings.ToLower(filepath.Ext(f.Path)))
 			src := filepath.Join(pub.Path, filepath.FromSlash(f.Path))
 			err := placeSubtitle(ctx, src, dest, f.SHA256)
-			if errors.Is(err, errSubtitleDigest) {
-				out[f.Path] = sidecarDecision{outcome: "discarded", discardReason: "rejected", reason: "subtitle bytes differ from the manifest; not kept"}
+			var refused subtitleRefusal
+			if errors.As(err, &refused) {
+				out[f.Path] = sidecarDecision{outcome: "discarded", discardReason: "rejected", reason: refused.Error() + "; not kept"}
+				s.log.Info("import: subtitle not placed", "publication", pub.ID, "file", f.Path, "why", refused.Error())
 				continue
 			}
 			if err != nil {
 				return nil, fmt.Errorf("place subtitle %s: %w", f.Path, err)
 			}
 			out[f.Path] = sidecarDecision{outcome: "placed", libraryPath: dest}
+		}
+		// The subtitles this replaced under that name were Curator's: their
+		// records say so now.
+		for _, old := range replaced {
+			s.supersedePlacedSubtitle(ctx, old, "replaced by a newer subtitle for this video")
 		}
 	}
 	return out, nil
@@ -194,35 +218,16 @@ func subtitleVideo(rel string, videos []publicationVideo) (publicationVideo, boo
 func subtitleBaseName(rel string, video publicationVideo) string {
 	stem := pathStem(rel)
 	vstem := pathStem(video.rel)
-	nameTokens := subtitleTokens(stem)
-	whole := false
+	tokens := subtitleTokens(stem)
+	afterStem := false
 	if strings.HasPrefix(strings.ToLower(stem), strings.ToLower(vstem)) {
-		nameTokens = subtitleTokens(stem[len(vstem):])
-		whole = true
+		tokens = subtitleTokens(stem[len(vstem):])
+		afterStem = true
 	}
-	lang, forced, sdh := "", false, false
-	for _, t := range nameTokens {
-		switch subtitleFlagOf(t) {
-		case "forced":
-			forced = true
-		case "sdh":
-			sdh = true
-		}
-	}
-	// A name that is only a language ("en.srt", "2_English.srt") or a
-	// remainder after the video's stem may use a two-letter code; anywhere
-	// else only a spelled-out code or name counts, so a title word such as
-	// "It" is never read as Italian.
-	short := whole || len(withoutFlags(nameTokens)) == 1
-	lang = subtitleLanguage(nameTokens, short)
-	if lang == "" {
-		dir := path.Dir(rel)
-		for dir != "." && dir != "/" && lang == "" {
-			if !strings.EqualFold(path.Base(dir), vstem) {
-				tokens := subtitleTokens(path.Base(dir))
-				lang = subtitleLanguage(tokens, len(withoutFlags(tokens)) == 1)
-			}
-			dir = path.Dir(dir)
+	lang, forced, sdh := subtitleTags(tokens, afterStem)
+	for dir := path.Dir(rel); lang == "" && dir != "." && dir != "/"; dir = path.Dir(dir) {
+		if !strings.EqualFold(path.Base(dir), vstem) {
+			lang, _, _ = subtitleTags(subtitleTokens(path.Base(dir)), false)
 		}
 	}
 	base := pathStem(filepath.Base(video.library))
@@ -238,47 +243,86 @@ func subtitleBaseName(rel string, video publicationVideo) string {
 	return base
 }
 
-// subtitleLanguage reads the last language token (languages trail the name:
-// "Show.S01E01.eng.forced").
-func subtitleLanguage(tokens []string, allowShort bool) string {
-	for i := len(tokens) - 1; i >= 0; i-- {
-		t := strings.ToLower(tokens[i])
-		if subtitleFlag(t) || len(t) < 2 || (len(t) == 2 && !allowShort) || !language.Known(t) {
+// subtitleTags reads a subtitle name's tokens. The language is the last
+// token that is not a flag, and only when it is a language: its full English
+// name always; an ISO 639 code (two or three letters, or a tag such as
+// fr-CA, reduced to its language) only after the video's stem or when it is
+// the name's only token — a code-shaped title word ("It", "Ice") elsewhere is
+// not a language. "hi" is SDH beside another language and Hindi alone.
+func subtitleTags(tokens []string, afterStem bool) (lang string, forced, sdh bool) {
+	var rest []string
+	hi := false
+	for _, t := range tokens {
+		switch strings.ToLower(t) {
+		case "forced", "foreign":
+			forced = true
+		case "sdh", "cc":
+			sdh = true
+		case "hi":
+			hi = true
+			rest = append(rest, t)
+		default:
+			rest = append(rest, t)
+		}
+	}
+	codesAllowed := afterStem || len(rest) == 1 || (len(rest) == 2 && hi)
+	// The last token that is not "hi", then "hi" itself as Hindi.
+	for i := len(rest) - 1; i >= 0; i-- {
+		if strings.EqualFold(rest[i], "hi") {
 			continue
 		}
-		if code := language.Canonical(t); code != "" && language.Valid(code) {
-			return code
+		if code := languageOfToken(rest[i], codesAllowed); code != "" {
+			return code, forced, sdh || hi
 		}
+		break
 	}
-	return ""
+	if hi && len(rest) == 1 && codesAllowed {
+		return "hi", forced, sdh
+	}
+	return "", forced, sdh || (hi && len(rest) > 1)
 }
 
-// subtitleFlagOf names the flag a token marks: "forced" (forced or foreign
-// parts only) or "sdh" (hearing impaired: sdh, cc, hi), else "".
-func subtitleFlagOf(t string) string {
-	switch strings.ToLower(t) {
-	case "forced", "foreign":
-		return "forced"
-	case "sdh", "cc", "hi":
-		return "sdh"
+// languageOfToken reads one token as a language: a full English name, or
+// (when codes are allowed) an ISO 639-1/-2 code or a language-region tag.
+func languageOfToken(t string, codesAllowed bool) string {
+	lower := strings.ToLower(t)
+	if code := language.Canonical(lower); code != "" && language.Valid(code) && strings.EqualFold(language.Display(code), lower) {
+		return code
 	}
-	return ""
+	if !codesAllowed {
+		return ""
+	}
+	primary := lower
+	if i := strings.IndexByte(lower, '-'); i > 0 {
+		region := lower[i+1:]
+		if len(region) != 2 && len(region) != 4 {
+			return ""
+		}
+		primary = lower[:i]
+	}
+	if len(primary) != 2 && len(primary) != 3 || !language.Known(primary) {
+		return ""
+	}
+	code := language.Canonical(primary)
+	if !language.Valid(code) || (len(primary) == 2 && code != primary) {
+		return ""
+	}
+	return code
 }
 
-func subtitleFlag(t string) bool { return subtitleFlagOf(t) != "" }
-
-func withoutFlags(tokens []string) []string {
+// subtitleTokens splits a name on everything but letters, digits and
+// hyphens (so "fr-CA" stays one tag), dropping number-only tokens
+// ("2_English" is English).
+func subtitleTokens(s string) []string {
 	var out []string
-	for _, t := range tokens {
-		if !subtitleFlag(t) {
-			out = append(out, t)
+	for _, t := range strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' }) {
+		t = strings.Trim(t, "-")
+		if t == "" || strings.IndexFunc(t, func(r rune) bool { return !unicode.IsDigit(r) }) < 0 {
+			continue
 		}
+		out = append(out, t)
 	}
 	return out
-}
-
-func subtitleTokens(s string) []string {
-	return strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) })
 }
 
 func pathStem(p string) string {
@@ -286,26 +330,32 @@ func pathStem(p string) string {
 	return strings.TrimSuffix(base, path.Ext(base))
 }
 
-var errSubtitleDigest = errors.New("subtitle bytes differ from the manifest")
+// subtitleRefusal is a subtitle that cannot be placed for a reason of its
+// own (missing or unreadable in the publication, a symlink, bytes that are
+// not the manifest's, a library folder that is a symlink): it is discarded
+// with the reason, never retried.
+type subtitleRefusal struct{ why string }
+
+func (r subtitleRefusal) Error() string { return r.why }
 
 // placeSubtitle copies one subtitle into the library: written to a scratch
 // name beside it while its digest is computed, compared with the manifest's,
-// synced, then renamed into place (replacing an older subtitle of the same
-// name; the name carries the video's own stem). The bytes are small; nothing
-// is read back.
+// synced, then renamed into place. The caller chose a name that is free or
+// held by a subtitle Curator placed (subtitleNameFree). The bytes are small;
+// nothing is read back.
 func placeSubtitle(ctx context.Context, src, dest, want string) error {
 	if err := rejectSymlinks(src, false); err != nil {
-		return err
+		return subtitleRefusal{"the subtitle cannot be read from the publication: " + err.Error()}
 	}
 	if err := rejectSymlinks(filepath.Dir(dest), false); err != nil {
-		return err
+		return subtitleRefusal{"the video's library folder cannot take it: " + err.Error()}
 	}
 	if err := rejectSymlinks(dest, true); err != nil {
-		return err
+		return subtitleRefusal{"its library name is not a plain file: " + err.Error()}
 	}
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return subtitleRefusal{"the subtitle cannot be read from the publication: " + err.Error()}
 	}
 	defer func() { _ = in.Close() }()
 	out, err := os.CreateTemp(filepath.Dir(dest), ".monarr-sub-*")
@@ -323,7 +373,7 @@ func placeSubtitle(ctx context.Context, src, dest, want string) error {
 		return fail(err)
 	}
 	if want != "" && hex.EncodeToString(digest.Sum(nil)) != want {
-		return fail(errSubtitleDigest)
+		return fail(subtitleRefusal{"subtitle bytes differ from the manifest"})
 	}
 	if err = out.Sync(); err != nil {
 		return fail(err)
@@ -372,8 +422,65 @@ func (s *Service) removePlacedSubtitles(ctx context.Context, video string, excep
 			continue
 		}
 		_ = syncPath(filepath.Dir(f.LibraryPath))
+		s.supersedePlacedSubtitle(ctx, f, "its video "+filepath.Base(video)+" was replaced")
 		s.log.Info("import: removed the subtitle of a replaced video", "path", f.LibraryPath, "video", video)
 	}
+}
+
+// supersedePlacedSubtitle records that a subtitle Curator placed is no
+// longer in the library because something newer took its place: its
+// publication file is discarded{superseded}, so cleanup retires it instead
+// of finding its library copy gone.
+func (s *Service) supersedePlacedSubtitle(ctx context.Context, f sqlite.PublicationFile, why string) {
+	f.Outcome, f.DiscardReason, f.Reason = "discarded", "superseded", why
+	if err := s.db.SetPublicationFileOutcome(ctx, f); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+		s.log.Warn("import: replaced subtitle's record not updated", "publication", f.PublicationID, "file", f.Path, "err", err)
+	}
+}
+
+// subtitleNameFree reports whether a subtitle unit may take <dir>/<name>.<ext>
+// for each of its files: nothing is there, or what is there is a subtitle
+// Curator placed (its placed record and bytes) — then it is replaced, and the
+// records are returned so they can be marked superseded. A file Curator did
+// not place is never overwritten: the caller takes the next suffix.
+func (s *Service) subtitleNameFree(ctx context.Context, unit []ports.ManifestFile, dir, name string, self int64) (bool, []sqlite.PublicationFile, error) {
+	var replaced []sqlite.PublicationFile
+	for _, f := range unit {
+		dest := filepath.Join(dir, name+strings.ToLower(filepath.Ext(f.Path)))
+		info, err := os.Lstat(dest)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return false, nil, nil
+		}
+		rows, err := s.db.PlacedLibraryFilesWithPrefix(ctx, dest)
+		if err != nil {
+			return false, nil, err
+		}
+		ours := false
+		for _, r := range rows {
+			if r.LibraryPath != dest {
+				continue
+			}
+			if r.PublicationID == self && r.Path == f.Path {
+				ours = true // this import's own earlier attempt
+				break
+			}
+			if digest, _, derr := fileDigest(ctx, dest); derr == nil && digest == r.PlacedSHA256 {
+				ours = true
+				replaced = append(replaced, r)
+				break
+			}
+		}
+		if !ours {
+			return false, nil, nil
+		}
+	}
+	return true, replaced, nil
 }
 
 // redecideLeftoverSidecars decides the sidecars an earlier build left for
@@ -382,7 +489,7 @@ func (s *Service) removePlacedSubtitles(ctx context.Context, video string, excep
 // are discarded. The placed video is not touched. An error leaves them
 // pending for the next pass.
 func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publication) error {
-	if pub.State != "imported" && pub.State != "notified" || pub.DownloadID == 0 {
+	if pub.State != "imported" && pub.State != "notified" && pub.State != "import_failed" {
 		return nil
 	}
 	rows, err := s.db.ListPublicationFiles(ctx, pub.ID)
@@ -392,13 +499,16 @@ func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publi
 	pending := map[string]sqlite.PublicationFile{}
 	done, placed := map[string]bool{}, map[string]string{}
 	var m ports.Manifest
+	var placedRows []sqlite.PublicationFile
 	for _, r := range rows {
 		m.Files = append(m.Files, ports.ManifestFile{Path: r.Path, Bytes: r.Bytes, SHA256: r.SHA256})
 		switch r.Outcome {
 		case "pending":
-			pending[r.Path] = r
+			if r.RemovedAt.IsZero() {
+				pending[r.Path] = r
+			}
 		case "placed":
-			placed[r.Path] = r.LibraryPath
+			placedRows = append(placedRows, r)
 			done[r.Path] = true
 		default:
 			done[r.Path] = true
@@ -407,22 +517,35 @@ func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publi
 	if len(pending) == 0 {
 		return nil
 	}
-	dl, err := s.db.GetDownload(ctx, pub.DownloadID)
-	if err != nil {
-		return err
+	decisions := map[string]sidecarDecision{}
+	if pub.DownloadID != 0 {
+		dl, err := s.db.GetDownload(ctx, pub.DownloadID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, sqlite.ErrNotFound) {
+			return err
+		}
+		if err == nil {
+			item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
+			if err != nil {
+				return err
+			}
+			// Only a video that is still this publication's placement owns
+			// subtitles: one upgraded or deleted since takes none.
+			for _, r := range placedRows {
+				if s.stillPlacedHere(ctx, r) {
+					placed[r.Path] = r.LibraryPath
+				}
+			}
+			if decisions, err = s.decidePublicationSidecars(ctx, item, pub, m, placed, done, nil); err != nil {
+				return err
+			}
+		}
 	}
-	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
-	if err != nil {
-		return err
-	}
-	decisions, err := s.decidePublicationSidecars(ctx, item, pub, m, placed, done, nil)
-	if err != nil {
-		return err
-	}
-	for path, d := range decisions {
-		f, ok := pending[path]
+	for path, f := range pending {
+		d, ok := decisions[path]
 		if !ok {
-			continue
+			// No video to go with, no download row, or not a sidecar: the
+			// publication is a closed scope and this file is not kept.
+			d = sidecarDecision{outcome: "discarded", discardReason: "rejected", reason: "left undecided by an earlier build; not kept"}
 		}
 		f.Outcome, f.DiscardReason, f.Reason, f.LibraryPath = d.outcome, d.discardReason, d.reason, d.libraryPath
 		if d.outcome == "placed" {
@@ -433,4 +556,19 @@ func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publi
 		}
 	}
 	return nil
+}
+
+// stillPlacedHere reports that a placed publication file's library video is
+// still the object its placement published (by the placement journal's
+// record): not upgraded, replaced or deleted since.
+func (s *Service) stillPlacedHere(ctx context.Context, f sqlite.PublicationFile) bool {
+	if f.LibraryPath == "" {
+		return false
+	}
+	info, err := os.Lstat(f.LibraryPath)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != f.Bytes {
+		return false
+	}
+	p, ok, err := s.db.CommittedPlacementForTarget(ctx, f.LibraryPath, "")
+	return err == nil && ok && p.SHA256 == f.SHA256 && sameContentGeneration(p.PublishedFileGeneration, info)
 }

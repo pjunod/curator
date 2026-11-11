@@ -352,9 +352,13 @@ other client keeps the established path and records its failures the same way.
   `unresolved` (retained, decided in Activity). The manifest comes from the
   publication's `.runner-manifest.json`, else from Runner's v1 delivery
   record (the **v1 adapter**); a directory with neither waits and is checked
-  again each poll; six hours from the start of an import attempt, with
-  nothing running or queued for it, is `import_failed{stalled}` (time queued
-  behind other imports does not count). Hash once: the manifest digest is the
+  again each poll. A publication has no deadline until its first import
+  starts; six hours from that start (never reset by a retry), with nothing
+  running or queued for it, or five attempts that failed on the payload,
+  end it `import_failed` with a replacement grab for its wantables. A file
+  that does not match the manifest (missing, resized, different bytes as
+  copied) ends it the same way at once, and so does a publication that gave
+  the library nothing. Hash once: the manifest digest is the
   authority, and the placement proves each file it copies against it in the
   copy stream (nothing is read back; a same-filesystem placement is a hard
   link). When the publication was copied across volumes a linked file is
@@ -405,8 +409,8 @@ It is the unit of import, cleanup and notification, so a late salvage, a
 second generation and the historical directories all take the same path.
 
 - **States**: `discovered → importing → imported | import_failed` (and
-  `removed` once every file is gone). Six hours from the start of an import
-  attempt is `import_failed{stalled}`. A directory with no manifest yet waits and is
+  `removed` once every file is gone). Six hours from the first import start
+  is `import_failed{stalled}`, and the want is grabbed again. A directory with no manifest yet waits and is
   checked again each poll.
 - **The manifest** is `.runner-manifest.json` in the directory, written last as
   the commit marker (a directory without it is not a publication), else
@@ -477,12 +481,14 @@ second generation and the historical directories all take the same path.
   publication directory (only its unresolved files; they become
   `discarded{rejected}`), and the receipt action **Retry Curator cleanup**.
   None of them asks Runner for anything.
-- **Evidence that no longer holds** (the library file now differs, the
-  publication file differs from its manifest, the library file is gone) turns
-  the file into `unresolved` with the reason, shown in Resolve; the sweep does
-  not re-read it. A transient problem (storage, a read error, a file changing
-  while checked) leaves the file as it is and records the reason on the
-  publication; the next pass retries.
+- **Nothing waits for a person.** A placed file whose library copy something
+  newer replaced or removed (no library row at that path, a newer placement
+  there, a subtitle no longer the one Curator placed) becomes
+  `discarded{superseded}` and leaves. A library file whose record remains
+  but whose bytes are missing or differ keeps the publication copy (it may be
+  the only good one): the reason is recorded on the publication and the
+  next pass looks again. Storage problems and a file changing while checked
+  are transient the same way.
 - **The historical cohort** — every v1 receipt and every completed directory
   present at the first start of a build with publications, plus (migration 0073) every path of the old
   migration-0040 review cohort — is never touched by automatic deletion nor

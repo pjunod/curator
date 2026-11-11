@@ -182,3 +182,21 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
 22. **Obfuscated single-episode grabs map by the grab record**: one media
     file (samples excluded) and a grab for one episode name it, unless the
     release title names a different episode.
+23. **Every outcome is final without a person** (adversarial review r1):
+    a file the importer cannot place is `discarded{rejected}` with its
+    reason; a file of another attempt is `discarded{superseded}` (no record
+    at all imports by quality); a publication that gave the library nothing,
+    whose files do not match the manifest (missing, resized, copied bytes
+    differ), whose attempts failed on the payload five times, or that is
+    still unfinished six hours after its first start ends `import_failed`
+    with a replacement grab in the same write (`EndPublicationForRegrab`,
+    `PublicationImportWrite.RegrabWantables`). Per-file cleanup no longer
+    demotes to `unresolved`: a placed file whose library copy was replaced or
+    removed is `discarded{superseded}`; one whose record remains but whose
+    bytes are missing or differ stays, reported, and is checked again.
+    Decision 7's "ambiguity is unresolved" and decision 9's "evidence that no
+    longer holds demotes the file" are superseded; `unresolved` remains only
+    for files a person left undecided in a manual or approval-held import.
+24. **The link path never chmods Runner's inode** and falls back to a copy
+    on any problem. A link moves the source's ctime, so this build needs the
+    Runner build whose identity comparisons drop ctime (Fable plan W1).

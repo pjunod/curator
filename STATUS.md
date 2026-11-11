@@ -46,9 +46,37 @@ Decisions taken without Paul (for review):
   preview (`PreviousSHA256`); a new destination costs nothing.
 - Migration 0076 also requeues "cannot determine episodes" failures (E makes
   most of them importable; one that still is not fails again once, normally).
-- Migration number 0076: 0075 is claimed by `claude/pipeline-v2-m6b-curator`
-  (unmerged). goose refuses a missing lower version on a database already at
-  76, so m6b must be renumbered above 76 if it merges after this.
+- Migration number 0076: `claude/pipeline-v2-m6b-curator` had claimed 0075;
+  it is now 0077 on that branch (`d61ea59`), so the two merge in either order.
+- Manual and approval-held imports keep the files the person did not select
+  as `unresolved` (the person asked to decide); every automatic path decides.
+
+Adversarial review r1 (Fable) — 12 findings, all fixed:
+1-2 a publication has no deadline until its first import starts, the
+deadline is never reset, payload failures are counted
+(`MaxPublicationImportAttempts` = 5), and either limit ends it
+`import_failed` with a replacement grab; 3 an unreadable or symlinked
+subtitle is discarded with its reason; 4 a subtitle never overwrites a file
+Curator did not place (next free suffix); 5 the link path never chmods and
+falls back to a copy on any problem; 6 manifest sizes are checked by stat
+before linking or copying, a mismatch ends the publication for a regrab;
+7 replaced subtitles' rows become `discarded{superseded}`, and no import or
+cleanup path produces `unresolved` any more (only a person's own manual or
+approval-held selection does); 8 leftover sidecars only follow a video that
+is still the publication's placement, and download-less publications
+resolve too; 9 language: `hi` is Hindi alone and SDH beside a language,
+`fr-CA` is one tag, codes only after the video stem or as the only token,
+the last token only; 10 placed-subtitle lookup is a byte range on an
+indexed column; 11 0076 retires (discarded{superseded}) wedged rows whose
+want a later import satisfied and releases the custody rows of requeued
+ones; 12 `claude/pipeline-v2-m6b-curator` renumbered its migration to 0077
+(`d61ea59`).
+
+**Deploy order:** a same-filesystem placement hard-links Runner's file,
+which moves its ctime: deploy this curator only after the Runner build whose
+publication identity comparisons drop ctime (Fable plan W1). Across the
+NFS exports on nuc3 (different filesystems) the placement copies, so the
+current deployment is not affected either way.
 
 Verified (fast lane only, by instruction; Go 1.25.7, 2 CPUs): `gofmt -l`
 clean; `go vet` and pinned `golangci-lint v2.12.2 run` on

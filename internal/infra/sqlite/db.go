@@ -124,7 +124,7 @@ var requiredColumns = []struct{ table, column string }{
 	{"media_files", "audio_languages"},
 	{"pipeline_timings", "started_at"},
 	{"downloads", "runner_outcome"}, {"downloads", "provisional"}, {"downloads", "deadline_at"}, {"downloads", "runner_stage"},
-	{"publications", "cohort"}, {"publications", "cleanup_paused_at"}, {"publication_files", "outcome"}, {"replacement_grabs", "next_at"},
+	{"publications", "cohort"}, {"publications", "cleanup_paused_at"}, {"publications", "import_attempts"}, {"publication_files", "outcome"}, {"replacement_grabs", "next_at"},
 	{"wantable_attempts", "download_id"}, {"runner_history_cursors", "incarnation"},
 	{"notifier_deliveries", "idempotency_key"}, {"notifier_deliveries", "attempt"}, {"notifier_deliveries", "visible_at"},
 	{"runner_history_cursors", "deliveries_after"}, {"runner_history_cursors", "history_read"}, {"storage_change_review_paths", "path"},

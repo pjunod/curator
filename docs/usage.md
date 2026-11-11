@@ -1279,8 +1279,9 @@ caught once its deadline passes: submitting 10 minutes of Runner answering
 "no such token", downloading 30 minutes without progress or a new
 post-processing stage (torrents 24 hours; a job stuck in one stage, such as
 unpack, is not progress), held at Runner's own deadline plus 5 minutes, downloaded/importing 6
-hours, and a publication whose import has not finished within 6 hours of that
-import starting (time spent queued behind other imports does not count). A download waiting for
+hours, and a publication whose import has not finished within 6 hours of its
+first start (time queued behind other imports does not count, and a retry
+does not restart the clock; past it the want is grabbed again). A download waiting for
 your approval (`awaiting_import`) has no deadline; it shows its age in
 Activity instead. Open the named row in Activity to see its handoff trace.
 The tiles are read from `GET /api/v1/system/pipeline`.
@@ -1322,9 +1323,16 @@ The tiles are read from `GET /api/v1/system/pipeline`.
   removed. When an upgrade replaces a video, the subtitles Monarr placed for
   it go with it and the new release's are placed; a subtitle Monarr did not
   place is never deleted.
-  Unresolved files are kept and offer **Place**, **Discard** and **Keep**; a
-  publication with unresolved media shows *import failed* until each is
-  decided. A file whose bytes have left the folder says *removed from the
+  Nothing an automatic import does is left *unresolved*: a file the importer
+  cannot place (an episode it cannot identify, a file of another attempt) is
+  discarded with its reason, and a publication that gave the library nothing
+  ends *import failed* with its want grabbed again. A file that does not
+  match Runner's manifest (missing, resized, different bytes) does the same.
+  An import that keeps failing on its payload is tried five times, and one
+  that has not finished six hours after it first started ends the same way;
+  a full or blocked library only waits. *Unresolved* remains only for files
+  a person left undecided in a manual or approval-held import (and rows
+  older versions left); they offer **Place**, **Discard** and **Keep**. A file whose bytes have left the folder says *removed from the
   publication*. *historical* marks a publication that existed before v0.39.0:
   it imports normally, and nothing deletes it until its review is approved
   (*historical · cleanup approved* afterwards).

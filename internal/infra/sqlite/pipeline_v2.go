@@ -473,9 +473,11 @@ func insertPublicationTx(ctx context.Context, tx *sql.Tx, p PublicationWrite, no
 	}
 	// One publication per directory and per (download, generation), ever: a
 	// replayed fact finds the row it already made.
+	// No deadline until the first import starts (StartPublicationImport):
+	// waiting for a worker or for the manifest is not a stall.
 	res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO publications (download_id, generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, discovered_at, deadline_at, updated_at)
 		VALUES (?,?,?,?,?,?,?,?,'discovered',?,?,?,?)`,
-		download, p.Generation, p.Kind, p.Path, p.RemotePath, p.ManifestJSON, p.Source, cross, p.Cohort, now, now+DeadlinePublication.Milliseconds(), now)
+		download, p.Generation, p.Kind, p.Path, p.RemotePath, p.ManifestJSON, p.Source, cross, p.Cohort, now, 0, now)
 	if err != nil {
 		return 0, err
 	}
@@ -634,25 +636,64 @@ func (d *DB) SetPublicationState(ctx context.Context, id int64, state, errMsg st
 	return err
 }
 
+// MaxPublicationImportAttempts bounds how many import attempts of one
+// publication may fail on the payload (an error that is not the
+// environment's: not a full or blocked library, a cancelled worker or a
+// persistence outage, which the six-hour deadline bounds instead). Past it
+// the publication ends import_failed and its wantables are grabbed again.
+const MaxPublicationImportAttempts = 5
+
 // StartPublicationImport moves a publication to importing and starts its
-// stall deadline: six hours from the start of this import attempt, not from
-// discovery, so time spent waiting behind other imports never counts.
-func (d *DB) StartPublicationImport(ctx context.Context, id int64) error {
+// stall deadline the first time only: six hours from the first import start,
+// never reset by a retry, so a publication that keeps returning to
+// discovered still ends. It returns how many attempts already failed on the
+// payload (RequeueFailedPublicationAttempt).
+func (d *DB) StartPublicationImport(ctx context.Context, id int64) (int, error) {
 	now := time.Now()
-	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='importing', error='', deadline_at=?, updated_at=? WHERE id=?`,
-		now.Add(DeadlinePublication).UnixMilli(), now.UnixMilli(), id)
+	var failed int
+	err := d.W.QueryRowContext(ctx, `UPDATE publications SET state='importing', error='',
+		deadline_at=CASE WHEN deadline_at=0 THEN ? ELSE deadline_at END, updated_at=? WHERE id=? RETURNING import_attempts`,
+		now.Add(DeadlinePublication).UnixMilli(), now.UnixMilli(), id).Scan(&failed)
+	return failed, err
+}
+
+// RequeueFailedPublicationAttempt returns an importing publication to
+// discovered after an attempt that failed on the payload, and counts it.
+func (d *DB) RequeueFailedPublicationAttempt(ctx context.Context, id int64, reason string) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error=?, import_attempts=import_attempts+1, updated_at=? WHERE id=? AND state='importing'`,
+		reason, time.Now().UnixMilli(), id)
 	return err
 }
 
-// FailStalledPublication ends a publication that sat in discovered/importing
-// past its deadline. It is Curator's own work, so nothing re-opens it.
-func (d *DB) FailStalledPublication(ctx context.Context, id int64, reason string) (bool, error) {
-	res, err := d.W.ExecContext(ctx, `UPDATE publications SET state='import_failed', error=?, updated_at=? WHERE id=? AND state IN ('discovered','importing')`, reason, time.Now().UnixMilli(), id)
+// EndPublicationForRegrab ends a publication Curator could not import
+// (stalled past its deadline, or out of attempts): import_failed with the
+// reason and — for a completed publication — a replacement grab for its
+// row's wantables in the same transaction, so the want is searched again
+// with no one deciding anything (the caller fails the row). ok is false when
+// the publication had already moved on.
+func (d *DB) EndPublicationForRegrab(ctx context.Context, id int64, reason string, dl Download) (bool, error) {
+	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
-	n, err := res.RowsAffected()
-	return n == 1, err
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	var kind string
+	if err := tx.QueryRowContext(ctx, `UPDATE publications SET state='import_failed', error=?, updated_at=? WHERE id=? AND state IN ('discovered','importing') RETURNING kind`, reason, now, id).Scan(&kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if kind == "completed" && dl.ID != 0 {
+		if len(dl.WantableIDs) > 0 {
+			raw, _ := json.Marshal(dl.WantableIDs)
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO replacement_grabs (download_id, wantable_ids, created_at, next_at) VALUES (?,?,?,?)`, dl.ID, string(raw), now, now); err != nil {
+				return false, err
+			}
+		}
+	}
+	return true, tx.Commit()
 }
 
 // SeedPublicationFiles records a manifest's files as pending (existing rows
@@ -741,8 +782,25 @@ func (d *DB) SetPublicationFileOutcome(ctx context.Context, f PublicationFile) e
 // record of the subtitles Curator put beside that video. Files Curator did
 // not place have no such row.
 func (d *DB) PlacedLibraryFilesWithPrefix(ctx context.Context, prefix string) ([]PublicationFile, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT publication_id, path, bytes, sha256, library_path, placed_sha256 FROM publication_files
-		WHERE outcome='placed' AND library_path<>'' AND substr(library_path,1,?)=?`, len(prefix), prefix)
+	if prefix == "" {
+		return nil, nil
+	}
+	// A byte range on the indexed column (SQLite compares TEXT bytewise):
+	// every path that starts with prefix, whatever its characters.
+	upper := []byte(prefix)
+	for len(upper) > 0 && upper[len(upper)-1] == 0xff {
+		upper = upper[:len(upper)-1]
+	}
+	var rows *sql.Rows
+	var err error
+	if len(upper) == 0 {
+		rows, err = d.R.QueryContext(ctx, `SELECT publication_id, path, bytes, sha256, library_path, placed_sha256 FROM publication_files
+			WHERE outcome='placed' AND library_path>=?`, prefix)
+	} else {
+		upper[len(upper)-1]++
+		rows, err = d.R.QueryContext(ctx, `SELECT publication_id, path, bytes, sha256, library_path, placed_sha256 FROM publication_files
+			WHERE outcome='placed' AND library_path>=? AND library_path<?`, prefix, string(upper))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -781,6 +839,9 @@ type PublicationImportWrite struct {
 	// Supersede marks other publications' files for the same wantables
 	// discarded{superseded}: the current attempt's file is placed.
 	Supersede []SupersedeWrite
+	// RegrabWantables writes a replacement grab for the row: the publication
+	// placed nothing and the library does not hold it.
+	RegrabWantables []string
 }
 
 // SupersedeWrite names a wantable the current attempt just placed, and where.
@@ -850,6 +911,12 @@ func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportW
 	}
 	if err := startTimingsTx(ctx, tx, w.TimingStarts, now); err != nil {
 		return err
+	}
+	if w.DownloadID != 0 && len(w.RegrabWantables) > 0 {
+		raw, _ := json.Marshal(w.RegrabWantables)
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO replacement_grabs (download_id, wantable_ids, created_at, next_at) VALUES (?,?,?,?)`, w.DownloadID, string(raw), now, now); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -1081,7 +1148,8 @@ func (d *DB) CountHistoricalPublications(ctx context.Context) (int, error) {
 // ---- per-file cleanup (contract section 3.4; M4) ---------------------------
 
 // PublicationsToSweep lists publications the hourly sweep has work for: a
-// finished import (imported or notified) that automatic deletion may touch
+// finished import (imported, notified, or import_failed: a failed one's
+// discarded files are garbage once its want is grabbed again) that automatic deletion may touch
 // (live, or historical with its review batch approved), with a file whose
 // outcome is evidence for deletion and that is still on disk, a file whose
 // outcome is still to be decided (pending: a sidecar an earlier build left
@@ -1089,7 +1157,7 @@ func (d *DB) CountHistoricalPublications(ctx context.Context) (int, error) {
 // file gone and the directory perhaps left behind. The oldest-touched come
 // first so a publication that keeps failing cannot starve the rest.
 func (d *DB) PublicationsToSweep(ctx context.Context, limit int) ([]Publication, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified') AND (cohort='live' OR cleanup_approved_at>0) AND cleanup_paused_at=0
+	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified','import_failed') AND (cohort='live' OR cleanup_approved_at>0) AND cleanup_paused_at=0
 		AND (EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0 AND f.outcome IN ('placed','discarded','pending'))
 		     OR NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0))
 		ORDER BY updated_at, id LIMIT ?`, limit)
@@ -1121,15 +1189,6 @@ func (d *DB) MarkPublicationFileRemoved(ctx context.Context, publicationID int64
 		return ErrNotFound
 	}
 	return nil
-}
-
-// DemotePublicationFile turns a file whose evidence no longer holds (its
-// bytes or its library copy differ from the manifest) into an unresolved one,
-// retained and shown in Resolve, so the sweep stops re-reading it.
-func (d *DB) DemotePublicationFile(ctx context.Context, publicationID int64, path, fromOutcome, reason string) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE publication_files SET outcome='unresolved', discard_reason='', reason=?, updated_at=? WHERE publication_id=? AND path=? AND outcome=? AND removed_at=0`,
-		reason, time.Now().UnixMilli(), publicationID, path, fromOutcome)
-	return err
 }
 
 // ClearPublicationCleanupError forgets why an earlier cleanup pass stopped,
