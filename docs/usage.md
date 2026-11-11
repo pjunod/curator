@@ -1331,9 +1331,13 @@ The tiles are read from `GET /api/v1/system/pipeline`.
   An import that keeps failing on its payload is tried five times (spaced
   out), and one that has not finished six hours after it first started ends
   the same way; what it already placed stays, is recorded and is sent to
-  plurx, and only the rest is grabbed again. A full or blocked library, or
-  completed storage that is unavailable, only waits — the row says why —
-  and nothing of the download is deleted. **Retry import** starts it over. *Unresolved* remains only for files
+  plurx, and only the rest is grabbed again. A full or blocked library,
+  completed storage that is unavailable or outside the configured completed
+  roots, or a publication whose manifest has not appeared after 30 minutes
+  only waits: the publication shows **held** with why and for how long, the
+  System page counts held publications under the pipeline tiles, it is
+  tried again every few minutes and imports by itself once the cause
+  clears, and nothing of the download is deleted. **Retry import** starts it over. *Unresolved* remains only for files
   a person left undecided in a manual or approval-held import (and rows
   older versions left); they offer **Place**, **Discard** and **Keep**. A file whose bytes have left the folder says *removed from the
   publication*. *historical* marks a publication that existed before v0.39.0:

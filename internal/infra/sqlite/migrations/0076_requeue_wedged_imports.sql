@@ -26,8 +26,13 @@ ALTER TABLE publications ADD COLUMN import_attempts INTEGER NOT NULL DEFAULT 0;
 -- the environment holds (a full or blocked library, unavailable storage)
 -- waits and is never ended by its deadline.
 ALTER TABLE publications ADD COLUMN last_stop TEXT NOT NULL DEFAULT '' CHECK (last_stop IN ('', 'payload', 'environment'));
--- A payload-failed attempt is retried no earlier than this (retry ladder).
+-- A payload-failed or held attempt is retried no earlier than this (the
+-- retry ladder).
 ALTER TABLE publications ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0;
+-- When the current environment hold began, and how many attempts it has
+-- held (its backoff).
+ALTER TABLE publications ADD COLUMN hold_since INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE publications ADD COLUMN holds INTEGER NOT NULL DEFAULT 0;
 
 CREATE TEMP TABLE wedged_0076 AS
 SELECT p.id AS publication_id, p.download_id, d.generation_key,
@@ -112,3 +117,5 @@ DROP INDEX IF EXISTS publication_files_placed_library;
 ALTER TABLE publications DROP COLUMN import_attempts;
 ALTER TABLE publications DROP COLUMN last_stop;
 ALTER TABLE publications DROP COLUMN retry_at;
+ALTER TABLE publications DROP COLUMN hold_since;
+ALTER TABLE publications DROP COLUMN holds;

@@ -84,6 +84,19 @@ and regrabs only what is still wanted; 6 a person's retry resets attempts
 and deadline; 7 a file row the manifest does not list is discarded; 8 M6b
 rebased onto this branch (below).
 
+Adversarial re-review r3 (Fable, of `14d12b2`) — 6 findings, all fixed:
+1 the deadline sweep re-reads the publication under the row's lock and
+completion is guarded (`AND state IN (discovered, importing)`,
+`ErrPublicationMoved`); 2 leaving a hold restarts the deadline; 3 holds back
+off on the retry ladder and are recorded once when they begin and once when
+they clear; 4 `endPublication` holds on an unreadable manifest, title or
+placement check instead of ending; 5 holds are exposed (`held`,
+`heldReason`, `heldSince` on the queue publication, shown on the Activity
+row; `heldPublications` on `GET /system/pipeline`, shown on System), and a
+missing manifest becomes a hold after 30 minutes; 6 a publication outside
+the configured completed roots is a hold. Web: `tsc --noEmit` and
+`vitest run src/api.test.ts` (27 pass) for the touched web code.
+
 **Merge order: merge `claude/no-wedge` first, then
 `claude/pipeline-v2-m6b-curator`** (rebased onto this branch; its migration
 is 0077 after this branch's 0076).

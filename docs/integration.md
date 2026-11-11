@@ -360,9 +360,17 @@ other client keeps the established path and records its failures the same way.
   manifest that is malformed. Ending records what it already placed (and
   notifies Cinema), discards the rest, and grabs the still-wanted part of the
   want again. A publication the **environment** holds — a full or blocked
-  library, the completed root's storage unavailable, the manifest unreadable
-  for now — waits with the reason as its error and is never ended by its
-  deadline; the sweep never discards pending media. A person's retry starts a
+  library, the completed root's storage unavailable or outside the
+  configured roots, the manifest unreadable for now or still missing 30
+  minutes after discovery — waits: it is retried on the retry ladder (not
+  every poll), never ended by its deadline (which starts over when the hold
+  ends), and the sweep never discards its pending media. The hold is
+  recorded once when it begins (the download row's `import_held` step and an
+  `import_held` History row) and once when it clears (`import_hold_cleared`);
+  the queue's publication carries `held`, `heldReason` and `heldSince`, and
+  `GET /api/v1/system/pipeline` counts them (`heldPublications`). A
+  completion for a publication that finished, was ended or was held in the
+  meantime writes nothing. A person's retry starts a
   publication over (no attempts, no deadline). A file of another attempt is
   superseded only while that attempt is live or its file is in the library. Hash once: the manifest digest is the
   authority, and the placement proves each file it copies against it in the

@@ -205,7 +205,9 @@ func TestCrossVolumeCopyIsVerified(t *testing.T) {
 
 // A publication outside every completed root is refused, not imported from
 // wherever it happens to be.
-func TestPublicationOutsideTheCompletedRootsFails(t *testing.T) {
+// (amended r3) It is a configuration or mount problem, not the payload's:
+// the publication is held, visibly, until the roots cover it again.
+func TestPublicationOutsideTheCompletedRootsIsHeld(t *testing.T) {
 	f := setupV2(t, nil)
 	dl := f.grab(1, epOne)
 	outside := t.TempDir()
@@ -214,8 +216,11 @@ func TestPublicationOutsideTheCompletedRootsFails(t *testing.T) {
 	f.root = outside
 	f.publish(filepath.Base(dir), "out", map[string]string{epOne + ".mkv": "video"})
 	p := f.completedAt(dl, dir, "out")
-	if p.State != "import_failed" || f.count(`SELECT COUNT(*) FROM media_files`) != 0 {
-		t.Fatalf("publication = %s %q, want refused outside the completed roots", p.State, p.Error)
+	if p.State != "discovered" || !p.Held() || !strings.Contains(p.Error, "outside the configured completed roots") || f.count(`SELECT COUNT(*) FROM media_files`) != 0 {
+		t.Fatalf("publication = %s held=%v %q, want held outside the completed roots", p.State, p.Held(), p.Error)
+	}
+	if row := f.row(dl.ID); !strings.Contains(row.Error, "import held") {
+		t.Fatalf("row = %s %q, want the hold shown on the download", row.State, row.Error)
 	}
 }
 

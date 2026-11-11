@@ -36,6 +36,7 @@ import {
   resolveQueueReservation,
   scanImportPath,
   runTask,
+  publicationHoldText,
 } from '../api'
 import { PathInput } from '../PathInput'
 import { CompletedFolders } from '../CompletedFolders'
@@ -947,7 +948,13 @@ export function PublicationList({ d, readOnly = false }: { d: QueueItem; readOnl
             {p.cohort === 'historical' && <span className="pill pill-neutral" title="Frozen at the pipeline v2 cutover: never deleted automatically until its review batch is approved">{p.cleanupApprovedAt ? 'historical · cleanup approved' : 'historical'}</span>}{' '}
             <span className="path-chip">{p.path}</span>
           </p>
-          {p.error && <p className="error-text">{p.error}</p>}
+          {p.held ? (
+            <p className="muted" data-held>
+              <span className="pill pill-warning">held</span> {publicationHoldText(p)} — it imports by itself once that clears.
+            </p>
+          ) : (
+            p.error && <p className="error-text">{p.error}</p>
+          )}
           {!readOnly && <PublicationCleanupLine pub={p} />}
           <ul className="publication-files">
             {p.files.map((f) => {

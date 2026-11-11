@@ -29,7 +29,7 @@ func TestPipelineSummaryReportsEverySeam(t *testing.T) {
 	e := newAPIEnv(t)
 	var sum apigen.PipelineSummary
 	e.get(t, "/api/v1/system/pipeline").expect(t, http.StatusOK).into(t, &sum)
-	if sum.WindowHours != 24 || sum.OverdueRows != 0 || len(sum.Timings) != 3 {
+	if sum.WindowHours != 24 || sum.OverdueRows != 0 || sum.HeldPublications != 0 || len(sum.Timings) != 3 {
 		t.Fatalf("summary = %+v, want a 24 h window, no overdue rows, three seams", sum)
 	}
 	last := sum.Timings[2]

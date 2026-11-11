@@ -214,3 +214,16 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     file of another attempt is superseded only while that attempt is live or
     its file is in the library; a person's retry resets attempts and
     deadline.
+26. **Holds are visible, recorded once, and backed off** (review r3): an
+    environment hold (`HoldPublicationForEnvironment`; now also a publication
+    outside the configured completed roots and one whose manifest is still
+    missing after 30 minutes) sets `hold_since` and `retry_at` on the retry
+    ladder, records itself once (`import_held`) and its clearing once
+    (`import_hold_cleared`), and restarts the deadline when the next attempt
+    starts. It is exposed as `held`/`heldReason`/`heldSince` on the queue's
+    publications and `heldPublications` on `GET /system/pipeline`.
+    `CompletePublicationImport` completes only a publication still
+    `discovered`/`importing` (`ErrPublicationMoved` otherwise), the deadline
+    sweep re-reads the publication under the row's lock, and
+    `endPublication` holds instead of ending when it cannot read the
+    manifest or check a placement.

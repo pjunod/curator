@@ -424,7 +424,14 @@ type Publication struct {
 	DiscoveredAt      time.Time
 	DeadlineAt        time.Time
 	UpdatedAt         time.Time
+	// LastStop is why the last attempt stopped ('' | payload | environment);
+	// HeldSince is when the environment hold began (zero when not held).
+	LastStop  string
+	HeldSince time.Time
 }
+
+// Held reports a publication the environment is holding (it waits).
+func (p Publication) Held() bool { return p.LastStop == "environment" }
 
 // PublicationFile is one manifest file and what became of it.
 type PublicationFile struct {
@@ -441,14 +448,14 @@ type PublicationFile struct {
 	RemovedAt     time.Time
 }
 
-const publicationColumns = `id, COALESCE(download_id,0), generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, cleanup_approved_at, error, discovered_at, deadline_at, updated_at, cleanup_paused_at`
+const publicationColumns = `id, COALESCE(download_id,0), generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, cleanup_approved_at, error, discovered_at, deadline_at, updated_at, cleanup_paused_at, last_stop, hold_since`
 
 func scanPublication(row interface{ Scan(...any) error }) (Publication, error) {
 	var p Publication
 	var cross int64
-	var approved, discovered, deadline, updated, paused int64
-	err := row.Scan(&p.ID, &p.DownloadID, &p.Generation, &p.Kind, &p.Path, &p.RemotePath, &p.ManifestJSON, &p.ManifestSource, &cross, &p.State, &p.Cohort, &approved, &p.Error, &discovered, &deadline, &updated, &paused)
-	p.CleanupPausedAt = msTime(paused)
+	var approved, discovered, deadline, updated, paused, held int64
+	err := row.Scan(&p.ID, &p.DownloadID, &p.Generation, &p.Kind, &p.Path, &p.RemotePath, &p.ManifestJSON, &p.ManifestSource, &cross, &p.State, &p.Cohort, &approved, &p.Error, &discovered, &deadline, &updated, &paused, &p.LastStop, &held)
+	p.CleanupPausedAt, p.HeldSince = msTime(paused), msTime(held)
 	p.CrossVolume = cross != 0
 	p.CleanupApprovedAt, p.DiscoveredAt, p.DeadlineAt, p.UpdatedAt = msTime(approved), msTime(discovered), msTime(deadline), msTime(updated)
 	return p, err
@@ -645,15 +652,18 @@ func (d *DB) SetPublicationState(ctx context.Context, id int64, state, errMsg st
 const MaxPublicationImportAttempts = 5
 
 // StartPublicationImport moves a publication to importing and starts its
-// stall deadline the first time only: six hours from the first import start,
-// never reset by a retry, so a publication that keeps returning to
-// discovered still ends. It returns how many attempts already failed on the
+// stall deadline the first time (or again after an environment hold): six
+// hours from that start, never reset by an ordinary retry, so a publication
+// that keeps returning to discovered still ends. It returns how many attempts already failed on the
 // payload (RequeueFailedPublicationAttempt).
 func (d *DB) StartPublicationImport(ctx context.Context, id int64) (int, error) {
 	now := time.Now()
 	var failed int
-	err := d.W.QueryRowContext(ctx, `UPDATE publications SET state='importing', error='', last_stop='', retry_at=0,
-		deadline_at=CASE WHEN deadline_at=0 THEN ? ELSE deadline_at END, updated_at=? WHERE id=? RETURNING import_attempts`,
+	// A publication leaving an environment hold starts its deadline over: the
+	// hold was not time spent importing. Its hold stays shown until the
+	// attempt ends some other way.
+	err := d.W.QueryRowContext(ctx, `UPDATE publications SET state='importing', retry_at=0,
+		deadline_at=CASE WHEN deadline_at=0 OR last_stop='environment' THEN ? ELSE deadline_at END, updated_at=? WHERE id=? RETURNING import_attempts`,
 		now.Add(DeadlinePublication).UnixMilli(), now.UnixMilli(), id).Scan(&failed)
 	return failed, err
 }
@@ -665,7 +675,7 @@ func (d *DB) StartPublicationImport(ctx context.Context, id int64) (int, error) 
 func (d *DB) RequeueFailedPublicationAttempt(ctx context.Context, id int64, reason string) error {
 	now := time.Now()
 	var attempts int
-	err := d.W.QueryRowContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='payload', import_attempts=import_attempts+1, updated_at=? WHERE id=? AND state='importing' RETURNING import_attempts`,
+	err := d.W.QueryRowContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='payload', hold_since=0, holds=0, import_attempts=import_attempts+1, updated_at=? WHERE id=? AND state='importing' RETURNING import_attempts`,
 		reason, now.UnixMilli(), id).Scan(&attempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -679,19 +689,56 @@ func (d *DB) RequeueFailedPublicationAttempt(ctx context.Context, id int64, reas
 
 // HoldPublicationForEnvironment returns a publication to discovered because
 // the environment, not the payload, stopped it (a full or blocked library,
-// the completed root's storage unavailable, the manifest unreadable for
-// now). It waits, visibly (the reason is its error), and is never ended by
-// its deadline while that is its last stop.
-func (d *DB) HoldPublicationForEnvironment(ctx context.Context, id int64, reason string) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='environment', updated_at=? WHERE id=? AND state IN ('discovered','importing')`,
+// the completed root's storage unavailable or outside the configured roots,
+// the manifest unreadable or not there yet). It waits, visibly (held, the
+// reason, since when), is never ended by its deadline while that is its last
+// stop, and is offered again on the retry ladder (retry_at), not every poll.
+// started reports that this begins a hold (it was not held before), so the
+// caller records the hold once.
+func (d *DB) HoldPublicationForEnvironment(ctx context.Context, id int64, reason string) (started bool, err error) {
+	now := time.Now()
+	var holds int
+	var was string
+	if err := d.W.QueryRowContext(ctx, `SELECT last_stop FROM publications WHERE id=?`, id).Scan(&was); err != nil {
+		return false, err
+	}
+	err = d.W.QueryRowContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='environment',
+		hold_since=CASE WHEN last_stop='environment' AND hold_since>0 THEN hold_since ELSE ? END, holds=holds+1, updated_at=?
+		WHERE id=? AND state IN ('discovered','importing') RETURNING holds`, reason, now.UnixMilli(), now.UnixMilli(), id).Scan(&holds)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := d.W.ExecContext(ctx, `UPDATE publications SET retry_at=? WHERE id=?`, now.Add(backoff.Retry.After(holds)).UnixMilli(), id); err != nil {
+		return false, err
+	}
+	return was != "environment", nil
+}
+
+// ReturnPublicationUncounted returns an importing publication to discovered
+// after an attempt that stopped for a reason that is neither the payload's
+// nor a known environment hold (a busy database, an I/O error): not counted,
+// bounded by its deadline. A hold it was in is over.
+func (d *DB) ReturnPublicationUncounted(ctx context.Context, id int64, reason string) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='', hold_since=0, holds=0, updated_at=? WHERE id=? AND state IN ('discovered','importing')`,
 		reason, time.Now().UnixMilli(), id)
 	return err
+}
+
+// CountHeldPublications counts the publications the environment is holding
+// (the System page's pipeline tiles).
+func (d *DB) CountHeldPublications(ctx context.Context) (int, error) {
+	var n int
+	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE state IN ('discovered','importing') AND last_stop='environment'`).Scan(&n)
+	return n, err
 }
 
 // ResetPublicationForRetry starts a publication over for a person's explicit
 // retry (Resolve, Retry import): no attempts counted, no deadline yet.
 func (d *DB) ResetPublicationForRetry(ctx context.Context, id int64) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error='', import_attempts=0, deadline_at=0, last_stop='', retry_at=0, updated_at=? WHERE id=?`,
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error='', import_attempts=0, deadline_at=0, last_stop='', hold_since=0, holds=0, retry_at=0, updated_at=? WHERE id=?`,
 		time.Now().UnixMilli(), id)
 	return err
 }
@@ -710,7 +757,7 @@ func (d *DB) EndPublicationForRegrab(ctx context.Context, id int64, reason strin
 	defer func() { _ = tx.Rollback() }()
 	now := time.Now().UnixMilli()
 	var kind string
-	if err := tx.QueryRowContext(ctx, `UPDATE publications SET state='import_failed', error=?, updated_at=? WHERE id=? AND state IN ('discovered','importing') RETURNING kind`, reason, now, id).Scan(&kind); err != nil {
+	if err := tx.QueryRowContext(ctx, `UPDATE publications SET state='import_failed', error=?, last_stop='', hold_since=0, holds=0, updated_at=? WHERE id=? AND state IN ('discovered','importing') RETURNING kind`, reason, now, id).Scan(&kind); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
@@ -881,6 +928,10 @@ type SupersedeWrite struct {
 	LibraryPath string
 }
 
+// ErrPublicationMoved refuses a completion for a publication that is no
+// longer being imported (it finished, was ended, or moved on meanwhile).
+var ErrPublicationMoved = errors.New("the publication is no longer being imported")
+
 // CompletePublicationImport records a finished import in one transaction.
 func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportWrite) error {
 	tx, err := d.W.BeginTx(ctx, nil)
@@ -909,8 +960,19 @@ func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportW
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE publications SET state=?, error=?, updated_at=? WHERE id=?`, w.State, w.Error, now, w.PublicationID); err != nil {
-		return err
+	if w.PublicationID != 0 {
+		// Only an import that owns the publication completes it: one that
+		// finished, was ended or was held in the meantime is not written
+		// again (no second history row, outbox entry or grab).
+		res, err := tx.ExecContext(ctx, `UPDATE publications SET state=?, error=?, last_stop='', hold_since=0, holds=0, retry_at=0, updated_at=? WHERE id=? AND state IN ('discovered','importing')`, w.State, w.Error, now, w.PublicationID)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n != 1 {
+			return ErrPublicationMoved
+		}
 	}
 	if w.DownloadID != 0 && w.DownloadState != "" {
 		entry := "null"

@@ -17,9 +17,10 @@ func (s *Server) PipelineSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := apigen.PipelineSummary{
-		WindowHours: int(pipeline.Window.Hours()),
-		OverdueRows: sum.OverdueRows,
-		Timings:     []apigen.PipelineTiming{},
+		WindowHours:      int(pipeline.Window.Hours()),
+		OverdueRows:      sum.OverdueRows,
+		HeldPublications: sum.HeldPublications,
+		Timings:          []apigen.PipelineTiming{},
 	}
 	for _, k := range sum.Timings {
 		t := apigen.PipelineTiming{

@@ -5347,12 +5347,19 @@ components:
 
     PipelineSummary:
       type: object
-      required: [windowHours, timings, overdueRows]
+      required: [windowHours, timings, overdueRows, heldPublications]
       properties:
         windowHours: { type: integer, description: The look-back window of every figure here. }
         overdueRows:
           type: integer
           description: Downloads older than their state's allowance (the pipeline:overdue health check).
+        heldPublications:
+          type: integer
+          description: >
+            Publications the environment is holding — a full or blocked library,
+            completed storage unavailable or outside the configured roots, a
+            manifest missing or unreadable. They wait (retried on the retry
+            ladder, never ended by their deadline); each row says why.
         timings:
           type: array
           items: { $ref: "#/components/schemas/PipelineTiming" }
@@ -6014,6 +6021,14 @@ components:
         path: { type: string }
         manifestSource: { type: string, description: "file | v1_record | none" }
         error: { type: string }
+        held:
+          type: boolean
+          description: The environment is holding this publication (it waits; heldReason says why).
+        heldReason: { type: string, description: Why it is held, when held. }
+        heldSince:
+          type: string
+          format: date-time
+          description: When the hold began, when held.
         files:
           type: array
           items: { $ref: "#/components/schemas/QueuePublicationFile" }

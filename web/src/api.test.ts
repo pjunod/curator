@@ -7,6 +7,7 @@ import {
   fmtRelative,
   getDiscoverItems,
   pipelineTile,
+  publicationHoldText,
   resolvePublicationFile,
   searchReleases,
   testIndexer,
@@ -214,5 +215,17 @@ describe('resolvePublicationFile', () => {
     expect(calls[0].url).toContain('/queue/7/publications/3/files/resolve')
     expect(calls[0].init?.method).toBe('POST')
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ path: 'Season 01/x.mkv', action: 'discard' })
+  })
+})
+
+describe('publicationHoldText', () => {
+  it('says nothing for a publication that is not held', () => {
+    expect(publicationHoldText({ held: false, heldReason: 'x' })).toBeNull()
+  })
+  it('says why and for how long a held publication waits', () => {
+    const now = new Date('2026-11-11T12:00:00Z')
+    expect(publicationHoldText({ held: true, heldReason: 'library full', heldSince: '2026-11-11T11:15:00Z' }, now)).toBe('Held 45 min: library full')
+    expect(publicationHoldText({ held: true, heldReason: 'storage changed', heldSince: '2026-11-11T02:00:00Z' }, now)).toBe('Held 10 h: storage changed')
+    expect(publicationHoldText({ held: true }, now)).toBe('Held: the environment cannot take it now')
   })
 })

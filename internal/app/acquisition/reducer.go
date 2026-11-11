@@ -966,9 +966,16 @@ func (s *Service) sweepDeadlines(ctx context.Context, cfg ports.ClientConfig, fe
 		if p.Error != "" {
 			reason += " (" + p.Error + ")"
 		}
+		// Decided again under the row's lock, on what the publication is
+		// now: one that finished, was held or started meanwhile is not ended.
 		unlock := s.lockDownload(p.DownloadID)
-		if !s.ImportRunning(p.DownloadID) {
-			s.endPublication(ctx, dl, cfg, p, nil, reason)
+		cur, err := s.db.GetPublication(ctx, p.ID)
+		if err == nil && !s.ImportRunning(p.DownloadID) && (cur.State == "discovered" || cur.State == "importing") &&
+			!cur.Held() && !cur.DeadlineAt.IsZero() && cur.DeadlineAt.Before(now) {
+			if fresh, ferr := s.db.GetDownload(ctx, p.DownloadID); ferr == nil {
+				dl = fresh
+			}
+			s.endPublication(ctx, dl, cfg, cur, nil, reason)
 		}
 		unlock()
 	}

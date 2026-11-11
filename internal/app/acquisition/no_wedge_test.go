@@ -309,3 +309,111 @@ func TestLinkedPlacementNeverChmodsTheSource(t *testing.T) {
 		t.Fatalf("linked inode mode = %v, want Runner's 0600 untouched", lib.Mode().Perm())
 	}
 }
+
+// Review r3 (3): a hold is retried on the ladder, not every poll, and is
+// recorded once when it begins and once when it clears.
+func TestEnvironmentHoldIsRecordedOnceAndBacksOff(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	restore := failPlacement(t, syscall.ENOSPC)
+	pub := f.publish("Test.Show.S01E01.job-611.runner-once", "once", map[string]string{epOne + ".mkv": "video"})
+	f.complete(dl, pub)
+	var retryAt int64
+	_ = f.db.R.QueryRowContext(f.ctx, `SELECT retry_at FROM publications WHERE path=?`, pub.Path).Scan(&retryAt)
+	if retryAt <= time.Now().UnixMilli() {
+		t.Fatal("a hold is offered again on the next poll; want the retry ladder")
+	}
+	for i := 0; i < 3; i++ {
+		f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM history_events WHERE type='import_held'`); n != 1 {
+		t.Fatalf("import_held history rows = %d, want 1", n)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM history_events WHERE type=?`, HistoryImportBlocked); n != 1 {
+		t.Fatalf("import_blocked history rows = %d, want 1", n)
+	}
+	held := 0
+	for _, h := range f.row(dl.ID).Handoff {
+		if h.Step == stepImportHeld {
+			held++
+		}
+	}
+	if held != 1 {
+		t.Fatalf("handoff import_held entries = %d, want 1", held)
+	}
+	restore()
+	f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	if f.row(dl.ID).State != "imported" || f.count(`SELECT COUNT(*) FROM history_events WHERE type='import_hold_cleared'`) != 1 {
+		t.Fatalf("after the hold cleared: row %s, hold_cleared rows %d", f.row(dl.ID).State, f.count(`SELECT COUNT(*) FROM history_events WHERE type='import_hold_cleared'`))
+	}
+}
+
+// Review r3 (1): ending a publication that finished meanwhile writes
+// nothing: no second history row, outbox entry or grab.
+func TestEndingAFinishedPublicationWritesNothing(t *testing.T) {
+	f := setupV2(t, nil)
+	f.holdCleanup()
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-612.runner-race", "race", map[string]string{epOne + ".mkv": "video"})
+	f.complete(dl, pub)
+	p, _ := f.publicationFiles(pub.Path)
+	if p.State != "imported" {
+		t.Fatalf("fixture: %s", p.State)
+	}
+	history := f.count(`SELECT COUNT(*) FROM history_events WHERE type='imported'`)
+	outbox := f.count(`SELECT COUNT(*) FROM notifier_deliveries`)
+	stale := p
+	stale.State = "importing" // what the sweep listed before the import finished
+	f.svc.endPublication(f.ctx, f.row(dl.ID), f.cfg, stale, nil, "stalled")
+	if f.count(`SELECT COUNT(*) FROM history_events WHERE type='imported'`) != history || f.count(`SELECT COUNT(*) FROM notifier_deliveries`) != outbox ||
+		f.count(`SELECT COUNT(*) FROM replacement_grabs`) != 0 {
+		t.Fatal("ending a finished publication wrote a second import, notification or grab")
+	}
+	if got, _ := f.publicationFiles(pub.Path); got.State != "imported" {
+		t.Fatalf("publication = %s", got.State)
+	}
+}
+
+// Review r3 (4): ending without being able to read the manifest holds the
+// publication instead of forgetting what it placed.
+func TestEndingWithAnUnreadableManifestHolds(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-613.runner-endio", "endio", map[string]string{epOne + ".mkv": "video"})
+	restore := failPlacement(t, syscall.ENOSPC)
+	f.complete(dl, pub)
+	restore()
+	manifest := filepath.Join(pub.Path, ports.ManifestFileName)
+	_ = os.Remove(manifest)
+	if err := os.Mkdir(manifest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := f.publicationFiles(pub.Path)
+	f.svc.endPublication(f.ctx, f.row(dl.ID), f.cfg, p, nil, "stalled")
+	p, _ = f.publicationFiles(pub.Path)
+	if p.State != "discovered" || !p.Held() || f.count(`SELECT COUNT(*) FROM replacement_grabs`) != 0 {
+		t.Fatalf("publication = %s held=%v %q, want held, not ended", p.State, p.Held(), p.Error)
+	}
+}
+
+// Review r3 (5): a directory that never gets its manifest becomes a hold,
+// shown like any other, after the grace.
+func TestMissingManifestBecomesAHold(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-614.runner-nomf", "nomf", map[string]string{epOne + ".mkv": "video"})
+	_ = os.Remove(filepath.Join(pub.Path, ports.ManifestFileName))
+	f.complete(dl, pub)
+	p, _ := f.publicationFiles(pub.Path)
+	if p.Held() {
+		t.Fatal("a publication mid-publish was held at once")
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE publications SET discovered_at=? WHERE id=?`, time.Now().Add(-time.Hour).UnixMilli(), p.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	p, _ = f.publicationFiles(pub.Path)
+	if !p.Held() || !strings.Contains(p.Error, "no "+ports.ManifestFileName) {
+		t.Fatalf("publication held=%v %q, want held for its missing manifest", p.Held(), p.Error)
+	}
+}

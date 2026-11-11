@@ -2344,6 +2344,13 @@ func (s *Server) fillPipelineV2(item *apigen.QueueItem, d sqlite.Download, pubs 
 			paused := p.CleanupPausedAt
 			qp.CleanupPausedAt = &paused
 		}
+		if p.Held() {
+			held, reason, since := true, p.Error, p.HeldSince
+			qp.Held, qp.HeldReason = &held, &reason
+			if !since.IsZero() {
+				qp.HeldSince = &since
+			}
+		}
 		if s.deps.Acquisition != nil {
 			if state, why := s.deps.Acquisition.PublicationCleanupState(p.ID); state != "" {
 				st := apigen.QueuePublicationCleanupState(state)

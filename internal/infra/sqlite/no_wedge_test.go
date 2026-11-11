@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -96,5 +97,67 @@ func TestPlacedLibraryFilesWithPrefixMatchesNonASCII(t *testing.T) {
 	rows, err := db.PlacedLibraryFilesWithPrefix(ctx, "/lib/Amélie (2001)/Amélie.")
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("rows = %+v (%v), want the two placed subtitles of that video", rows, err)
+	}
+}
+
+// Review r3 (2): leaving an environment hold starts the deadline over; a
+// hold backs off and counts on the System page.
+func TestHoldRestartsTheDeadlineAndIsCounted(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	id, err := db.InsertPublication(ctx, PublicationWrite{Kind: "salvage", Path: "/completed/h", Generation: "g"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.StartPublicationImport(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	started, err := db.HoldPublicationForEnvironment(ctx, id, "library full")
+	if err != nil || !started {
+		t.Fatalf("hold = %v %v", started, err)
+	}
+	if again, _ := db.HoldPublicationForEnvironment(ctx, id, "library full"); again {
+		t.Fatal("a continuing hold was reported as a new one")
+	}
+	if n, _ := db.CountHeldPublications(ctx); n != 1 {
+		t.Fatalf("held = %d", n)
+	}
+	p, _ := db.GetPublication(ctx, id)
+	if !p.Held() || p.HeldSince.IsZero() || p.Error != "library full" {
+		t.Fatalf("held publication = %+v", p)
+	}
+	if _, err := db.W.ExecContext(ctx, `UPDATE publications SET deadline_at=1 WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.StartPublicationImport(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	p, _ = db.GetPublication(ctx, id)
+	if p.DeadlineAt.Before(time.Now().Add(5 * time.Hour)) {
+		t.Fatalf("deadline after leaving a hold = %v, want started over", p.DeadlineAt)
+	}
+}
+
+// Review r3 (1): a completion for a publication no longer being imported is
+// refused whole.
+func TestCompletingAMovedPublicationIsRefused(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	id, err := db.InsertPublication(ctx, PublicationWrite{Kind: "salvage", Path: "/completed/m2", Generation: "g"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetPublicationState(ctx, id, "imported", ""); err != nil {
+		t.Fatal(err)
+	}
+	err = db.CompletePublicationImport(ctx, PublicationImportWrite{PublicationID: id, State: "imported",
+		History: []HistoryWrite{{Type: "imported"}}})
+	if !errors.Is(err, ErrPublicationMoved) {
+		t.Fatalf("err = %v, want ErrPublicationMoved", err)
+	}
+	var n int
+	_ = db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM history_events WHERE type='imported'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("a refused completion wrote history")
 	}
 }
