@@ -678,7 +678,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	// "no files imported", or a payload whose very first file hit a full
 	// disk reads as an unparseable release and is never retried.
 	if result.Blocked != nil {
-		if !heldPublicationImport(ctx) { // a hold already recorded is not recorded again
+		if !publicationImport(ctx) { // a publication's hold is recorded once, as import_held
 			_ = s.db.AddHistory(ctx, HistoryImportBlocked, item.ID, dl.ReleaseTitle,
 				map[string]any{"placed": result.Imported, "of": len(videos),
 					"reason": result.Blocked.Error()})

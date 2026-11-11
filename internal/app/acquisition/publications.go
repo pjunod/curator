@@ -155,7 +155,6 @@ func publicationImport(ctx context.Context) bool {
 	return v
 }
 
-
 // runPublicationImport imports one publication file by file and records the
 // outcome of every file (contract section 3.4).
 func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, pubID int64, approved bool) (err error) {
@@ -195,7 +194,14 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		// mid-publish. Past noManifestGrace it is a hold, shown like any
 		// other, still checked (on the retry ladder).
 		if time.Since(pub.DiscoveredAt) > noManifestGrace {
-			s.holdPublication(ctx, &dl, pub, fmt.Sprintf("no %s after %s; waiting for Runner to finish publishing", ports.ManifestFileName, noManifestGrace))
+			// A hold for this reason is not forever: Runner that has not
+			// written it in six hours is not going to, and the want is
+			// grabbed again.
+			if pub.Held() && !pub.HeldSince.IsZero() && strings.HasPrefix(pub.Error, noManifestReasonPrefix) && time.Since(pub.HeldSince) > noManifestHoldLimit {
+				s.endPublicationForRegrab(ctx, &dl, pub, fmt.Sprintf("no %s after %s; Runner never finished publishing", ports.ManifestFileName, noManifestHoldLimit))
+				return nil
+			}
+			s.holdPublication(ctx, &dl, pub, fmt.Sprintf("%s%s; waiting for Runner to finish publishing", noManifestReasonPrefix, noManifestGrace))
 		}
 		return nil
 	}
@@ -241,7 +247,7 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		}
 		bg := context.WithoutCancel(ctx)
 		if cur, gerr := s.db.GetPublication(bg, pub.ID); gerr == nil && cur.State == "importing" {
-			_ = s.db.ReturnPublicationUncounted(bg, pub.ID, err.Error())
+			s.returnPublication(bg, &dl, pub, err.Error(), false)
 		}
 	}()
 	if pub.Kind == "completed" && dl.State != "importing" && !pub.Held() {
@@ -344,14 +350,9 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		ictx = context.WithValue(ictx, precedenceKey{}, &precedence{dl: dl, decided: map[string]precedenceVerdict{}, recordOnly: true})
 		prec = ictx.Value(precedenceKey{}).(*precedence)
 	}
-	if pub.Held() {
-		// The hold was recorded when it began: a retry that is blocked again
-		// does not record it again.
-		ictx = context.WithValue(ictx, heldPublicationKey{}, true)
-	}
 	result, importErr := s.importDownloadFiles(ictx, dl, pub.Path, selected, manual)
 	if importErr != nil && (errors.Is(importErr, context.Canceled) || errors.Is(importErr, ErrImportControl)) {
-		_ = s.db.SetPublicationState(context.WithoutCancel(ctx), pub.ID, "discovered", importErr.Error())
+		s.returnPublication(ctx, &dl, pub, importErr.Error(), false)
 		return importErr
 	}
 	if importErr != nil && errors.Is(importErr, ErrImportBlocked) {
@@ -370,11 +371,11 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		case errors.Is(importErr, errPlacementConflict):
 			// The library moved under this placement: counted and spaced on
 			// the retry ladder; committed placements are reused next time.
-			_ = s.db.RequeueFailedPublicationAttempt(context.WithoutCancel(ctx), pub.ID, importErr.Error())
+			s.returnPublication(ctx, &dl, pub, importErr.Error(), true)
 		default:
 			// Anything else (a busy database, an I/O error) is not counted;
 			// the poll offers it again and its deadline bounds it.
-			_ = s.db.ReturnPublicationUncounted(context.WithoutCancel(ctx), pub.ID, importErr.Error())
+			s.returnPublication(ctx, &dl, pub, importErr.Error(), false)
 		}
 		return importErr
 	}
@@ -424,14 +425,12 @@ func (s *Service) publicationSidecars(ctx context.Context, item domain.MediaItem
 // manifest (Runner writes it last) before the wait is a visible hold.
 const noManifestGrace = 30 * time.Minute
 
-// heldPublicationKey marks an import of a publication already held for the
-// environment: a block it meets again is not recorded again.
-type heldPublicationKey struct{}
+// noManifestHoldLimit is how long a publication may be held for its missing
+// manifest before it is ended and its want grabbed again.
+const noManifestHoldLimit = sqlite.DeadlinePublication
 
-func heldPublicationImport(ctx context.Context) bool {
-	v, _ := ctx.Value(heldPublicationKey{}).(bool)
-	return v
-}
+// noManifestReasonPrefix starts the hold reason of a missing manifest.
+var noManifestReasonPrefix = "no " + ports.ManifestFileName + " after "
 
 // stepImportHeld is the handoff step of a publication the environment holds.
 const stepImportHeld = "import_held"
@@ -455,6 +454,35 @@ func (s *Service) holdPublication(ctx context.Context, dl *sqlite.Download, pub 
 		s.advance(bg, dl, dlStateOr(*dl, pub, "downloaded"), dl.Progress, "import held: "+reason, stepImportHeld, "publication "+filepath.Base(pub.Path)+" held: "+reason)
 	}
 	_ = s.db.AddHistory(bg, "import_held", dl.MediaItemID, dl.ReleaseTitle, map[string]any{"publication": pub.Path, "reason": reason})
+}
+
+// returnPublication puts an interrupted import back to discovered (counted on
+// the retry ladder when it failed on the payload, else uncounted). A hold it
+// was in is over: that is recorded once, and the stale "import held:" error
+// leaves the download row.
+func (s *Service) returnPublication(ctx context.Context, dl *sqlite.Download, pub sqlite.Publication, reason string, counted bool) {
+	bg := context.WithoutCancel(ctx)
+	var wasHeld bool
+	var err error
+	if counted {
+		wasHeld, err = s.db.RequeueFailedPublicationAttempt(bg, pub.ID, reason)
+	} else {
+		wasHeld, err = s.db.ReturnPublicationUncounted(bg, pub.ID, reason)
+	}
+	if err != nil {
+		s.log.Warn("publication could not be returned", "publication", pub.ID, "err", err)
+		return
+	}
+	if !wasHeld {
+		return
+	}
+	_ = s.db.AddHistory(bg, "import_hold_cleared", dl.MediaItemID, dl.ReleaseTitle, map[string]any{"publication": pub.Path, "held_since": pub.HeldSince.UnixMilli()})
+	if pub.Kind == "completed" && dl.ID != 0 {
+		if cur, gerr := s.db.GetDownload(bg, dl.ID); gerr == nil && strings.HasPrefix(cur.Error, "import held:") {
+			s.advance(bg, &cur, cur.State, cur.Progress, "", stepImportHeld, "hold ended; retrying: "+reason)
+			dl.Error, dl.Handoff = cur.Error, cur.Handoff
+		}
+	}
 }
 
 // endPublication ends a publication whose import cannot finish (out of
@@ -728,7 +756,7 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		}
 		w.Outbox, w.TimingStarts = outbox, starts
 	}
-	if pub.Held() {
+	if pub.LastStop == "environment" { // as read: held, or retried after a hold
 		w.History = append(w.History, sqlite.HistoryWrite{Type: "import_hold_cleared", MediaItemID: dl.MediaItemID, ReleaseTitle: dl.ReleaseTitle,
 			Data: map[string]any{"publication": pub.Path, "held_since": pub.HeldSince.UnixMilli()}})
 	}

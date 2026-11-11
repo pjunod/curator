@@ -430,8 +430,9 @@ type Publication struct {
 	HeldSince time.Time
 }
 
-// Held reports a publication the environment is holding (it waits).
-func (p Publication) Held() bool { return p.LastStop == "environment" }
+// Held reports a publication the environment is holding (it waits): a
+// publication being imported again after a hold is not.
+func (p Publication) Held() bool { return p.LastStop == "environment" && p.State == "discovered" }
 
 // PublicationFile is one manifest file and what became of it.
 type PublicationFile struct {
@@ -671,20 +672,30 @@ func (d *DB) StartPublicationImport(ctx context.Context, id int64) (int, error) 
 // RequeueFailedPublicationAttempt returns an importing publication to
 // discovered after an attempt that failed on the payload, counts it, and
 // spaces the next attempt on the retry ladder (the poll does not offer it
-// before retry_at).
-func (d *DB) RequeueFailedPublicationAttempt(ctx context.Context, id int64, reason string) error {
+// before retry_at). wasHeld reports that it ended an environment hold.
+func (d *DB) RequeueFailedPublicationAttempt(ctx context.Context, id int64, reason string) (wasHeld bool, err error) {
 	now := time.Now()
-	var attempts int
-	err := d.W.QueryRowContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='payload', hold_since=0, holds=0, import_attempts=import_attempts+1, updated_at=? WHERE id=? AND state='importing' RETURNING import_attempts`,
-		reason, now.UnixMilli(), id).Scan(&attempts)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = d.W.ExecContext(ctx, `UPDATE publications SET retry_at=? WHERE id=?`, now.Add(backoff.Retry.After(attempts)).UnixMilli(), id)
-	return err
+	defer func() { _ = tx.Rollback() }()
+	var was string
+	if err := tx.QueryRowContext(ctx, `SELECT last_stop FROM publications WHERE id=? AND state='importing'`, id).Scan(&was); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	var attempts int
+	if err := tx.QueryRowContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='payload', hold_since=0, holds=0, import_attempts=import_attempts+1, updated_at=? WHERE id=? RETURNING import_attempts`,
+		reason, now.UnixMilli(), id).Scan(&attempts); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET retry_at=? WHERE id=?`, now.Add(backoff.Retry.After(attempts)).UnixMilli(), id); err != nil {
+		return false, err
+	}
+	return was == "environment", tx.Commit()
 }
 
 // HoldPublicationForEnvironment returns a publication to discovered because
@@ -719,19 +730,34 @@ func (d *DB) HoldPublicationForEnvironment(ctx context.Context, id int64, reason
 
 // ReturnPublicationUncounted returns an importing publication to discovered
 // after an attempt that stopped for a reason that is neither the payload's
-// nor a known environment hold (a busy database, an I/O error): not counted,
-// bounded by its deadline. A hold it was in is over.
-func (d *DB) ReturnPublicationUncounted(ctx context.Context, id int64, reason string) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='', hold_since=0, holds=0, updated_at=? WHERE id=? AND state IN ('discovered','importing')`,
-		reason, time.Now().UnixMilli(), id)
-	return err
+// nor a known environment hold (a busy database, an I/O error, a cancelled
+// worker): not counted, bounded by its deadline. A hold it was in is over
+// (wasHeld reports it, so the caller records that once).
+func (d *DB) ReturnPublicationUncounted(ctx context.Context, id int64, reason string) (wasHeld bool, err error) {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var was string
+	if err := tx.QueryRowContext(ctx, `SELECT last_stop FROM publications WHERE id=? AND state IN ('discovered','importing')`, id).Scan(&was); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='', hold_since=0, holds=0, updated_at=? WHERE id=?`,
+		reason, time.Now().UnixMilli(), id); err != nil {
+		return false, err
+	}
+	return was == "environment", tx.Commit()
 }
 
 // CountHeldPublications counts the publications the environment is holding
 // (the System page's pipeline tiles).
 func (d *DB) CountHeldPublications(ctx context.Context) (int, error) {
 	var n int
-	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE state IN ('discovered','importing') AND last_stop='environment'`).Scan(&n)
+	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE state='discovered' AND last_stop='environment'`).Scan(&n)
 	return n, err
 }
 

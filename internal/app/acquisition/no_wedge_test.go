@@ -329,8 +329,8 @@ func TestEnvironmentHoldIsRecordedOnceAndBacksOff(t *testing.T) {
 	if n := f.count(`SELECT COUNT(*) FROM history_events WHERE type='import_held'`); n != 1 {
 		t.Fatalf("import_held history rows = %d, want 1", n)
 	}
-	if n := f.count(`SELECT COUNT(*) FROM history_events WHERE type=?`, HistoryImportBlocked); n != 1 {
-		t.Fatalf("import_blocked history rows = %d, want 1", n)
+	if n := f.count(`SELECT COUNT(*) FROM history_events WHERE type=?`, HistoryImportBlocked); n != 0 {
+		t.Fatalf("import_blocked history rows = %d, want 0: a publication's hold is recorded as import_held only", n)
 	}
 	held := 0
 	for _, h := range f.row(dl.ID).Handoff {
@@ -415,5 +415,95 @@ func TestMissingManifestBecomesAHold(t *testing.T) {
 	p, _ = f.publicationFiles(pub.Path)
 	if !p.Held() || !strings.Contains(p.Error, "no "+ports.ManifestFileName) {
 		t.Fatalf("publication held=%v %q, want held for its missing manifest", p.Held(), p.Error)
+	}
+}
+
+// Follow-up (1): a hold for a missing manifest ends, and the want is grabbed
+// again, after six hours.
+func TestMissingManifestHoldEndsAfterSixHours(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-615.runner-nomf6", "nomf6", map[string]string{epOne + ".mkv": "video"})
+	_ = os.Remove(filepath.Join(pub.Path, ports.ManifestFileName))
+	f.complete(dl, pub)
+	p, _ := f.publicationFiles(pub.Path)
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE publications SET discovered_at=? WHERE id=?`, time.Now().Add(-8*time.Hour).UnixMilli(), p.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	if p, _ = f.publicationFiles(pub.Path); !p.Held() {
+		t.Fatalf("publication %s held=%v, want held", p.State, p.Held())
+	}
+	// Five hours held: still waiting.
+	_, _ = f.db.W.ExecContext(f.ctx, `UPDATE publications SET hold_since=?, retry_at=0 WHERE id=?`, time.Now().Add(-5*time.Hour).UnixMilli(), p.ID)
+	f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	if p, _ = f.publicationFiles(pub.Path); !p.Held() || f.count(`SELECT COUNT(*) FROM replacement_grabs`) != 0 {
+		t.Fatalf("held 5h: publication %s held=%v, want still held", p.State, p.Held())
+	}
+	_, _ = f.db.W.ExecContext(f.ctx, `UPDATE publications SET hold_since=?, retry_at=0 WHERE id=?`, time.Now().Add(-7*time.Hour).UnixMilli(), p.ID)
+	f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	p, _ = f.publicationFiles(pub.Path)
+	if p.State != "import_failed" || f.count(`SELECT COUNT(*) FROM replacement_grabs`) != 1 {
+		t.Fatalf("held 7h: publication %s (%s), grabs %d, want import_failed and a regrab", p.State, p.Error, f.count(`SELECT COUNT(*) FROM replacement_grabs`))
+	}
+}
+
+func (f *v2Fixture) heldByFullLibrary(t *testing.T, name, gen string) (sqlite.Download, ports.RunnerPublication, func()) {
+	t.Helper()
+	dl := f.grab(1, epOne)
+	restore := failPlacement(t, syscall.ENOSPC)
+	pub := f.publish(name, gen, map[string]string{epOne + ".mkv": "video"})
+	f.complete(dl, pub)
+	if p, _ := f.publicationFiles(pub.Path); !p.Held() {
+		t.Fatalf("fixture: publication %s held=%v", p.State, p.Held())
+	}
+	return dl, pub, restore
+}
+
+// Follow-up (4): a hold that ends without completing is recorded once, and
+// the stale error leaves the download row.
+func TestHoldEndingWithoutCompletionIsRecordedOnce(t *testing.T) {
+	for _, counted := range []bool{false, true} {
+		f := setupV2(t, nil)
+		dl, pub, _ := f.heldByFullLibrary(t, "Test.Show.S01E01.job-616.runner-end", "end")
+		if got := f.row(dl.ID); !strings.HasPrefix(got.Error, "import held:") {
+			t.Fatalf("fixture: row error %q", got.Error)
+		}
+		p, _ := f.publicationFiles(pub.Path)
+		if _, err := f.db.StartPublicationImport(f.ctx, p.ID); err != nil {
+			t.Fatal(err)
+		}
+		row := f.row(dl.ID)
+		f.svc.returnPublication(f.ctx, &row, p, "boom", counted)
+		f.svc.returnPublication(f.ctx, &row, p, "boom", counted)
+		if n := f.count(`SELECT COUNT(*) FROM history_events WHERE type='import_hold_cleared'`); n != 1 {
+			t.Fatalf("counted=%v: import_hold_cleared rows = %d, want 1", counted, n)
+		}
+		if got := f.row(dl.ID); strings.HasPrefix(got.Error, "import held:") {
+			t.Fatalf("counted=%v: stale error left on the row: %q", counted, got.Error)
+		}
+		if p, _ = f.publicationFiles(pub.Path); p.Held() || p.State != "discovered" {
+			t.Fatalf("counted=%v: publication %s held=%v", counted, p.State, p.Held())
+		}
+	}
+}
+
+// Follow-up (5): a held publication cancelled mid-retry is not held any more.
+func TestCancelledRetryOfAHeldPublicationEndsTheHold(t *testing.T) {
+	f := setupV2(t, nil)
+	dl, pub, restore := f.heldByFullLibrary(t, "Test.Show.S01E01.job-617.runner-cancel", "cancel")
+	restore()
+	prev := placeFile
+	placeFile = func(context.Context, string, string, func(int64, int64)) error { return context.Canceled }
+	t.Cleanup(func() { placeFile = prev })
+	p, _ := f.publicationFiles(pub.Path)
+	_, _ = f.db.W.ExecContext(f.ctx, `UPDATE publications SET retry_at=0 WHERE id=?`, p.ID)
+	f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	p, _ = f.publicationFiles(pub.Path)
+	if p.State != "discovered" || p.Held() || p.LastStop != "" {
+		t.Fatalf("publication %s held=%v last_stop=%q (%s), want discovered and not held", p.State, p.Held(), p.LastStop, p.Error)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM history_events WHERE type='import_hold_cleared'`); n != 1 {
+		t.Fatalf("import_hold_cleared rows = %d, want 1", n)
 	}
 }

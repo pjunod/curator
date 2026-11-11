@@ -31,7 +31,7 @@ func TestPublicationDeadlineStartsOnceAndAttemptsCount(t *testing.T) {
 	if first.DeadlineAt.Before(time.Now().Add(5*time.Hour)) || first.State != "importing" {
 		t.Fatalf("after start: %s deadline %v", first.State, first.DeadlineAt)
 	}
-	if err := db.RequeueFailedPublicationAttempt(ctx, id, "boom"); err != nil {
+	if _, err := db.RequeueFailedPublicationAttempt(ctx, id, "boom"); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(5 * time.Millisecond)
@@ -159,5 +159,38 @@ func TestCompletingAMovedPublicationIsRefused(t *testing.T) {
 	_ = db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM history_events WHERE type='imported'`).Scan(&n)
 	if n != 0 {
 		t.Fatal("a refused completion wrote history")
+	}
+}
+
+// A publication retried after a hold is importing, not held; ending the hold
+// by a return is reported once.
+func TestHeldIsOnlyWhileDiscovered(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	id, err := db.InsertPublication(ctx, PublicationWrite{Kind: "salvage", Path: "/completed/hd", Generation: "g"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.StartPublicationImport(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.HoldPublicationForEnvironment(ctx, id, "library full"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.StartPublicationImport(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := db.GetPublication(ctx, id)
+	if p.Held() {
+		t.Fatalf("a publication importing again reads held: %+v", p)
+	}
+	if n, _ := db.CountHeldPublications(ctx); n != 0 {
+		t.Fatalf("held count while importing = %d, want 0", n)
+	}
+	if was, err := db.ReturnPublicationUncounted(ctx, id, "x"); err != nil || !was {
+		t.Fatalf("return = %v %v, want it to report the hold ended", was, err)
+	}
+	if was, _ := db.ReturnPublicationUncounted(ctx, id, "x"); was {
+		t.Fatal("a hold was reported ended twice")
 	}
 }
