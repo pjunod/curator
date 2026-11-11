@@ -643,25 +643,26 @@ any item page ignores the cache entirely.
 
 ## Verification read budget (`MONARR_VERIFY_READ_MBPS`)
 
-Curator proves bytes by reading them: a Runner delivery is hashed against its
-manifest before import, a duplicate is hashed against the library file it
-matches before its payload is deleted, and a placement is checked after the
-copy. On network storage every one of those reads crosses the storage link.
+Imports do not verify by reading. A Runner publication's manifest digest is
+the authority for its bytes: the placement hashes its copy as it writes and
+compares that with the manifest, and later decisions (resuming an import,
+reconciling after a restart, cleaning up the publication) are made from the
+identity Curator recorded — size, inode and modification time — not by
+reading the file again. A library file with no such record (a historical or
+v1 import) is hashed once when cleanup needs it.
 
-Verification reads are held to a budget in megabytes per second. The
-default is **100**, about a third of a 2.5 GbE link, so verification never
-crowds out placement writes, Runner, or playback on the same storage. `0`
+What still reads whole files is background proof work: a duplicate is hashed
+against the library file it matches before its payload is deleted, and
+inventory and retained-payload checks. Those reads are held to a budget in
+megabytes per second. The default is **100**, about a third of a 2.5 GbE link,
+so they never crowd out imports, Runner, or playback on the same storage. `0`
 removes the limit; an invalid value keeps the default and logs a warning.
-Placement copies are not limited — they are the import itself (small
-sidecar copies are verified as they copy, so they count). Concurrent checks
-of the same unchanged file share one read.
+Concurrent checks of the same unchanged file share one read.
 
-Reads something is waiting on — an import attempt's checks, checks under a
-title's publication lock, an operator's **Delete files…** request — have their
-own budget of the same size. While one is running, background checks (scheduled
-duplicate proofs and inventory verification) slow to a tenth of the budget, so
-a waiting
-import or request is never starved by work that is not.
+Reads something is waiting on — under a title's import lock, or for an
+operator's **Delete files…** request — are not paced at all; while one is
+running, background checks slow to a tenth of the budget, so the waiting work
+is never starved by work that is not.
 
 ```bash
 # Raise on 10 GbE or local disks; 0 = unlimited.
@@ -672,6 +673,20 @@ Why it exists: on 2026-11-01 verification reads held nuc3's 2.5 GbE link to
 its NAS at line rate for hours, and whenever writes joined that load the NAS
 stopped answering NFS for up to nine minutes, freezing everything on the
 mount.
+
+## Import workers (`MONARR_IMPORT_WORKERS`)
+
+How many imports run at once. Default **4**. Each import is one streaming
+read of the payload and one write into the library; imports of different
+titles hold different locks and run side by side (two imports into the same
+title still take turns, because each decides that title's episodes). Raise it
+on fast local storage; lower it if the library's NAS struggles with parallel
+writes. A value that is not a positive number keeps the default and logs a
+warning. Read at start.
+
+```bash
+MONARR_IMPORT_WORKERS=6
+```
 
 ## Custom formats
 

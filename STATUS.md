@@ -1,5 +1,74 @@
 # Monarr — Project Status
 
+## No wedge: hash once, scratch stages, background reconcile, 4 workers, subtitles — 2026-11-11 · v0.44.0
+
+**Status:** built, awaiting adversarial review · owner: Claude Opus 5.5 session
+· branch `claude/no-wedge` (no PR yet; the orchestrator opens it after review) ·
+plan: Fable 5.2 consult, Curator items A–E, plus Paul's subtitle requirement ·
+not merged, not deployed.
+
+Built:
+
+- **A — hash once.** `placementSourceDigest` takes the manifest digest for a
+  publication's source (publications.go passes `withExpectedSourceDigests`),
+  `stageImportPlacement`/`placeTemp` hash the copy stream, and
+  `preparePlacementPublication` compares that digest instead of re-reading the
+  stage. Same filesystem: the stage is a hard link (`linkImportStage`), no copy.
+  `verifyCrossVolumeCopy` is gone (a linked cross-volume file is hashed once).
+  Resume (`reuseCommittedImport`), crash recovery and `cleanupPlacement` decide
+  by recorded identity (inode, size, mtime; `sameContentGeneration`).
+  Publication cleanup no longer hashes the source or the library copy
+  (`libraryCopyHolds`: placement journal record by stat; hash only without a
+  record). The verify budget paces only background proofs.
+- **B — stages are scratch.** No "existing stage retained / custody review"
+  state: a stage is reused only if the journal recorded it proven, else deleted
+  and re-copied. Stall deadline from import start (`StartPublicationImport`).
+  Migration 0076 requeues `import_failed` rows whose error is a stage/custody,
+  queue-stall, verification-race or obfuscated-name failure; imported,
+  removed and other rows are untouched.
+- **C — reconcile in the background**, per-title import target lock, by stat;
+  unsure rows stay prepared and the next import redoes the copy.
+- **D — 4 import workers** (`MONARR_IMPORT_WORKERS`). Locks stay per title.
+- **E — obfuscated single-episode grabs map by the grab record** (samples do
+  not count as payload media; a contradicting release title maps nothing).
+- **Subtitles** placed with their video in the same import, before the
+  outbox write; other sidecars `discarded{rejected}`, never `unresolved`.
+
+Decisions taken without Paul (for review):
+
+- Locks stay per title, not per destination directory: an import decides a
+  title's episodes once for all its files, and finer locks would race those
+  decisions. With the whole-library lock off the import path, titles already
+  import in parallel.
+- Non-Runner imports (other clients, manual) still hash the source once: the
+  placement journal is keyed by content and they have no manifest.
+- A replacement import still hashes the existing library target once at
+  preview (`PreviousSHA256`); a new destination costs nothing.
+- Migration 0076 also requeues "cannot determine episodes" failures (E makes
+  most of them importable; one that still is not fails again once, normally).
+- Migration number 0076: 0075 is claimed by `claude/pipeline-v2-m6b-curator`
+  (unmerged). goose refuses a missing lower version on a database already at
+  76, so m6b must be renumbered above 76 if it merges after this.
+
+Verified (fast lane only, by instruction; Go 1.25.7, 2 CPUs): `gofmt -l`
+clean; `go vet` and pinned `golangci-lint v2.12.2 run` on
+`internal/app/acquisition`, `internal/infra/sqlite`, `internal/docs` (0
+issues); `go test` of those three packages, whole packages, all pass. New
+acceptance tests: `TestPublicationImportReadsEachByteOnce` (copy to another
+filesystem reads 1.0x and writes once; same filesystem links and reads ~0),
+`TestRetryDiscardsAnInterruptedStage`,
+`TestPlacementReconciliationRunsInTheBackgroundPerTitle`,
+`TestMigration0076RequeuesOnlyWedgedImports`,
+`TestObfuscatedSingleEpisodeGrabImportsByTheGrabRecord`, the subtitle tests
+in `publication_subtitles_test.go`.
+Not run: `make test` (other packages), `make test-web`, `make test-e2e` (web
+untouched; the single gate runs once in CI after review).
+
+Not done here: imported publications that already hold `unresolved` sidecars
+from earlier builds are not re-decided (the migration only requeues
+`import_failed` rows); old subtitles are not removed when a later upgrade
+replaces their video.
+
 ## Pipeline contract v2, M6a (curator part): one retry ladder, dead fields out, docs rewritten — 2026-11-08 · v0.42.0
 
 **Status:** PR #101 (draft, base `main`; #97 has merged) · owner: Claude

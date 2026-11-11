@@ -352,9 +352,13 @@ other client keeps the established path and records its failures the same way.
   `unresolved` (retained, decided in Activity). The manifest comes from the
   publication's `.runner-manifest.json`, else from Runner's v1 delivery
   record (the **v1 adapter**); a directory with neither waits and is checked
-  again each poll; six hours in `discovered`/`importing` is
-  `import_failed{stalled}`. The digest is verified once, at import, when the
-  publication was copied across volumes.
+  again each poll; six hours from the start of an import attempt, with
+  nothing running or queued for it, is `import_failed{stalled}` (time queued
+  behind other imports does not count). Hash once: the manifest digest is the
+  authority, and the placement proves each file it copies against it in the
+  copy stream (nothing is read back; a same-filesystem placement is a hard
+  link). When the publication was copied across volumes a linked file is
+  hashed once, so every placed byte is verified once.
 - **Which attempt wins a destination** is Curator's own record
   (`wantable_attempts`: the download it last chose for each wantable), never
   generation ids or arrival time. A file from another attempt is
@@ -401,19 +405,23 @@ It is the unit of import, cleanup and notification, so a late salvage, a
 second generation and the historical directories all take the same path.
 
 - **States**: `discovered → importing → imported | import_failed` (and
-  `removed` once every file is gone). Six hours in `discovered`/`importing` is
-  `import_failed{stalled}`. A directory with no manifest yet waits and is
+  `removed` once every file is gone). Six hours from the start of an import
+  attempt is `import_failed{stalled}`. A directory with no manifest yet waits and is
   checked again each poll.
 - **The manifest** is `.runner-manifest.json` in the directory, written last as
   the commit marker (a directory without it is not a publication), else
   Runner's v1 delivery record (the **v1 adapter**, `manifest_source =
   v1_record`) for directories published before the file existed. The digest is
   the deployed shared algorithm (`runner-manifest-v1`: `len:path`, size and
-  SHA-256 per bytewise-sorted file, bare hex), verified once at import when the
-  publication was copied across volumes.
+  SHA-256 per bytewise-sorted file, bare hex). The per-file digests are the
+  authority for the bytes: each placement compares its copy stream with them.
 - **Per-file outcome**: `placed{library_path, sha256}`, `discarded{superseded |
   duplicate | rejected}`, or `unresolved` (retained, decided in Activity →
-  Resolve). Curator never acknowledges a delivery to Runner and never asks
+  Resolve). Sidecars are decided by the import: subtitles are placed beside
+  their video (`<video>.<lang>[.forced][.sdh].<ext>`; one video takes every
+  subtitle, a season pack matches by name prefix or folder, an unmatched one
+  is `discarded{rejected}`), and every other non-media file is
+  `discarded{rejected}`. No sidecar is ever `unresolved`. Curator never acknowledges a delivery to Runner and never asks
   Runner to clean its source.
 - **Which attempt wins a destination** is Curator's own record
   (`wantable_attempts`: the download it last chose for each wantable), never
@@ -429,15 +437,18 @@ second generation and the historical directories all take the same path.
 
 - **One rule, one implementation.** Curator deletes a publication file only
   when its recorded outcome is evidence: `placed` — the placement recorded
-  the manifest's SHA-256 *and* the library file still has it (the same inode,
-  or re-hashed) — or `discarded{superseded|duplicate|rejected}`. `unresolved`
-  and `pending` files are never touched. Size is never evidence; a manifest
-  entry without a digest is kept.
+  the manifest's SHA-256 *and* the library file is still the object it
+  published (the same inode, or the placement journal's recorded size and
+  inode generation; a library file with no placement record, such as a
+  historical import or a subtitle, is hashed once) — or
+  `discarded{superseded|duplicate|rejected}`. Nothing is re-hashed when the
+  record holds. `unresolved` and `pending` files are never touched; a
+  manifest entry without a digest is kept.
 - **Re-checked before every unlink**, in order: the generation (the
   directory's `.runner-manifest.json` — or, for a v1 record, the stored
   manifest — must name the publication's generation), the file identity
-  (size and digest against the manifest, then an unchanged inode generation
-  since the hash), and the **storage** of the completed root: its live
+  (its size against the manifest, then an unchanged inode generation since it
+  was checked), and the **storage** of the completed root: its live
   identity against the one the inventory scan recorded (a changed identity is
   an unmounted share), then the storage-change review fences — after an
   accepted replacement volume the recorded identity matches the new one, and
@@ -466,7 +477,7 @@ second generation and the historical directories all take the same path.
   publication file differs from its manifest, the library file is gone) turns
   the file into `unresolved` with the reason, shown in Resolve; the sweep does
   not re-read it. A transient problem (storage, a read error, a file changing
-  while hashed) leaves the file as it is and records the reason on the
+  while checked) leaves the file as it is and records the reason on the
   publication; the next pass retries.
 - **The historical cohort** — every v1 receipt and every completed directory
   present at the first start of a build with publications, plus (migration 0073) every path of the old

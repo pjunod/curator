@@ -134,3 +134,47 @@ whole-payload cleanup, which never touches a publication directory.
     superseded plans moved to `docs/archive/`; `docs/README.md` indexes every
     file and `internal/docs` fails the build when an index entry or a link
     goes stale.
+
+## Addendum — no wedge: hash once, scratch stages, sidecars (v0.44.0, 2026-11-11)
+
+Field data from nuc3 (2026-11-11): ~8 imports in 55 minutes, 12 bytes read per
+byte written, 76 publications failed "existing stage retained; explicit retry
+or custody review required", 10-14 minutes without imports after every
+restart, and publications left in Resolve for their subtitles and `.nfo`s.
+
+17. **Hash once.** The manifest digest is the authority for a publication's
+    bytes. The placement does not read the source to learn it: the stage
+    writer hashes its stream and compares it with the manifest (one read, one
+    write per file); on one filesystem the stage is a hard link and nothing is
+    copied. A cross-volume publication's linked file is hashed once, so
+    "verified once if `cross_volume`" (contract section 2.5) still holds.
+    Resume (`reuseCommittedImport`), crash recovery (`preparePlacementPublication`,
+    `reconcilePlacements`) and per-file cleanup decide by the recorded
+    identity — size, inode and mtime (ctime is not content: a link or chmod
+    moves it) — and hash only when no record exists. Decision 9's "the
+    library copy still matching it" is now "still the object the placement
+    journal recorded". The verification read budget paces only background
+    proofs; reads an import or operator waits on are unpaced.
+18. **A stage is scratch.** A stage left by an interrupted attempt is
+    reused only when the journal recorded it as fully copied and proven;
+    otherwise the next attempt deletes it and copies again. This amends ADR
+    0025 section 1's "held custody survives retry" for media stages of the
+    same epoch: the writer that held it has returned (one import per
+    download) or its process is gone. Revoked authorizations
+    (`retained_for_review`) are unchanged.
+19. **The stall deadline counts from the import's start** (`StartPublicationImport`),
+    not discovery; queued time never fails a publication. Migration 0076
+    requeues every publication that failed only for a retained stage, a
+    queue-time stall or an obfuscated single-episode name.
+20. **Reconciliation does not hold the library.** The placement journal is
+    reconciled in the background after the workers start, each row under its
+    own title's import target lock. A row whose target is not provably its
+    published object stays prepared; the title's next import redoes the copy.
+21. **Sidecars are decided by the import.** Subtitles are placed beside
+    their video in the publication's own import (before the outbox row is
+    written), named `<video stem>.<lang>[.forced][.sdh].<ext>`; every other
+    non-media file is `discarded{rejected}`. Review #13's "a sidecar is never
+    placed automatically" is superseded: no sidecar is `unresolved`.
+22. **Obfuscated single-episode grabs map by the grab record**: one media
+    file (samples excluded) and a grab for one episode name it, unless the
+    release title names a different episode.

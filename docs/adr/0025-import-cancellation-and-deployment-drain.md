@@ -21,7 +21,7 @@ outages. A finite outage deadline is not a requirement or a supported guarantee.
 
 Migration 0069 adds four tables, independently of rewritten handoff JSON:
 
-- `import_attempt_stages`: journaled sidecar stage names created before opening; held custody survives retry until successful publication or explicit operator disposition. Media stages use their existing placement journal and bind the opened object identity before copying. No automatic cross-node stage resume is enabled.
+- `import_attempt_stages`: journaled sidecar stage names created before opening; held custody survives retry until successful publication or explicit operator disposition. Media stages use their existing placement journal and bind the opened object identity before copying. No automatic cross-node stage resume is enabled. *Amended 2026-11-11 ([ADR 0026 addendum, item 18](0026-pipeline-contract-v2.md#addendum--no-wedge-hash-once-scratch-stages-sidecars-v0440-2026-11-11)): a media stage is scratch — a retry of the same placement reuses it only when the journal recorded it as fully copied and proven, and otherwise deletes it and copies again.*
 
 - `import_attempt_controls`: primary key `(download_id,generation_key)`, retained
   nonnegative `attempt_epoch`, outcome `''|pending|cancelled|completed`, nullable

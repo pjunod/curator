@@ -896,7 +896,7 @@ Common reasons, and what they mean:
 |---|---|
 | `… does not improve on the … already here (profile "X")` | Only automation is gated by the profile. A manual import is the override and goes ahead anyway. |
 | `no known episodes for S20 [18 19 20]` | monarr has no episode records for those numbers — refresh the series metadata first. |
-| `cannot determine episodes from "<name>"` | Neither the filename nor the grabbed release identifies the episode. An obfuscated file (a hash such as `321d96….mkv`) imports under its grabbed release automatically when it is the only media file in the payload and the release names the episode it was grabbed for (History records `episode_from_release`). Further copies whose bytes are identical to an episode imported this way are recognised as redundant and cleaned up; a copy with different bytes is kept for review, because its episode is only the indexer's word. A season pack or a payload of several anonymous files cannot be assigned safely: rename each file to carry its `S00E00`, then use **Manual import**. |
+| `cannot determine episodes from "<name>"` | Neither the filename nor the grabbed release identifies the episode. An obfuscated file (a hash such as `321d96….mkv`) imports automatically when it is the only media file in the payload (release samples do not count): a single-episode grab names the episode itself, whatever the release title says; a multi-episode grab needs the release to name episodes covering the grab (History records `episode_from_release`). A release title that names a different episode than the grab maps nothing. Further copies whose bytes are identical to an episode imported this way are recognised as redundant and cleaned up; a copy with different bytes is kept for review, because its episode is only the indexer's word. A season pack or a payload of several anonymous files cannot be assigned safely: rename each file to carry its `S00E00`, then use **Manual import**. |
 | `item has no library folder assigned` | This can remain on older rows created before the add/grab guard. Press **Assign folder**: the form opens with Monarr's default root and exact folder name filled in. Saving queues every affected failed import automatically. New search/add and grab requests are refused before downloading when no destination exists. |
 
 A **manual** import is never blocked by the quality profile: you pointed at
@@ -1188,11 +1188,22 @@ detail. A durable row left behind by a stopped process instead says
 **interrupted · No importer is running**; a full progress bar is not used as
 a substitute for status.
 
-An accepted import waiting behind the two bounded workers sits under
+An accepted import waiting behind the bounded workers (four by default,
+`MONARR_IMPORT_WORKERS`; imports of different titles run side by side) sits under
 **Waiting to copy**, says **queued**, and offers **Cancel import**. It is not
 an interrupted job and pressing Retry again is neither necessary nor
 accepted. The durable handoff trace records `Queued for import` before the
 worker starts.
+
+**Nothing an interrupted import leaves behind needs you.** A restart (or a
+killed copy) leaves a half-written `.monarr-stage-…` file beside the library
+file; the next attempt of that import deletes it and copies again, by itself.
+Imports start as soon as Monarr is up: the placement journal of the previous
+process is reconciled in the background, one title at a time, never by
+holding the whole library. An import of a Runner publication is one read of
+each file and one write (its bytes are checked against Runner's manifest
+while they copy, nothing is read back), and a library on the same filesystem
+as the completed folder gets a hard link instead of a copy.
 
 **Require approval per client** (Settings → Download clients) flips a
 client from hands-free to hold-for-approval: its completed downloads park at
@@ -1268,7 +1279,8 @@ caught once its deadline passes: submitting 10 minutes of Runner answering
 "no such token", downloading 30 minutes without progress or a new
 post-processing stage (torrents 24 hours; a job stuck in one stage, such as
 unpack, is not progress), held at Runner's own deadline plus 5 minutes, downloaded/importing 6
-hours, and a publication not imported within 6 hours. A download waiting for
+hours, and a publication whose import has not finished within 6 hours of that
+import starting (time spent queued behind other imports does not count). A download waiting for
 your approval (`awaiting_import`) has no deadline; it shows its age in
 Activity instead. Open the named row in Activity to see its handoff trace.
 The tiles are read from `GET /api/v1/system/pipeline`.
@@ -1290,9 +1302,21 @@ The tiles are read from `GET /api/v1/system/pipeline`.
 - Expand a row to see its **publications** — one per Runner generation (the
   finished payload, a salvage of a failed one) — and what became of each
   file: *placed* (with the library path), *discarded* (superseded by the
-  attempt Curator chose, a duplicate of what the library has, or a release
-  sample), or *unresolved* (an obfuscated name with no episode, a subtitle
-  with no parent, a file Curator cannot rank against another attempt).
+  attempt Curator chose, a duplicate of what the library has, a release
+  sample, or a file Curator does not keep), or *unresolved* (an obfuscated
+  name with no episode, a file Curator cannot rank against another attempt).
+  **Subtitles are placed with their video** in the same import, before plurx
+  is told: `.srt .ass .ssa .sub .idx .sup .vtt`, renamed
+  `<video>.<lang>[.forced][.sdh].<ext>` with the language read from the
+  subtitle's name or folder (`2_English.srt`, `eng.forced.srt`,
+  `Subs/<episode>/3_Spanish.srt`); an unknown language is
+  `<video>.<ext>`, and a second subtitle of one language gets `.2`. A
+  publication with one video gives it every subtitle; a season pack matches
+  each subtitle to the episode its name or folder names, and one that matches
+  none is discarded (the reason is on the file). An `.idx` and its `.sub` go
+  together. Other sidecars (`.nfo`, images, `.txt`, `.xml`) are discarded
+  automatically — nothing in a publication waits in Resolve because of a
+  sidecar.
   Unresolved files are kept and offer **Place**, **Discard** and **Keep**; a
   publication with unresolved media shows *import failed* until each is
   decided. A file whose bytes have left the folder says *removed from the
