@@ -16,7 +16,8 @@ jobs:
   go-shards:
     name: Go race shard ${{ matrix.shard }}
     runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
-    timeout-minutes: 40
+    # One job carries the whole suite on the lab runner.
+    timeout-minutes: 60
     outputs:
       tested-runner: ${{ runner.environment == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]' }}
       shard-count: ${{ strategy.job-total }}
