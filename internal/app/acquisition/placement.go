@@ -171,6 +171,11 @@ func recordStageLinked(ctx context.Context) {
 // cannot be imported; it ends and its want is grabbed again.
 var errPayloadMismatch = errors.New("publication file does not match its manifest")
 
+// errPlacementConflict is a library that moved under a placement between its
+// preview and its publication (the target or the stage changed): the attempt
+// failed on what it was placing, is counted, and is retried on the ladder.
+var errPlacementConflict = errors.New("the library changed under this placement")
+
 type expectedSourceSizesKey struct{}
 
 // withExpectedSourceSizes carries the manifest's byte counts, checked by
@@ -812,7 +817,7 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 			return err
 		}
 		if !intact {
-			return fmt.Errorf("committed placement bytes or generation changed; a new placement is required")
+			return fmt.Errorf("%w: "+"committed placement bytes or generation changed; a new placement is required", errPlacementConflict)
 		}
 		info, err := os.Lstat(p.Target)
 		if err != nil {
@@ -848,7 +853,7 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 			return s.db.UpdatePreparedPlacement(ctx, *p)
 		}
 		if p.PublishedFileGeneration != "" {
-			return fmt.Errorf("published placement generation changed")
+			return fmt.Errorf("%w: "+"published placement generation changed", errPlacementConflict)
 		}
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return e
@@ -869,7 +874,7 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 	}
 	if targetErr == nil {
 		if currentDigest != p.PreviousSHA256 {
-			return fmt.Errorf("target changed after placement preview: %s", p.Target)
+			return fmt.Errorf("%w: target changed after placement preview: %s", errPlacementConflict, p.Target)
 		}
 		if p.TargetFileGeneration == "" {
 			// Old journals can be upgraded only after the digest proves the
@@ -882,7 +887,7 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 			// same inode, and its post-hash generation still matches the target.
 			backupDigest, _, backupGeneration, backupErr := fileDigestSnapshot(ctx, p.Backup)
 			if backupErr != nil || backupDigest != p.PreviousSHA256 {
-				return fmt.Errorf("target generation changed after placement preview: %s", p.Target)
+				return fmt.Errorf("%w: target generation changed after placement preview: %s", errPlacementConflict, p.Target)
 			}
 			backupInfo, backupErr := os.Stat(p.Backup)
 			targetInfo, targetErr := os.Stat(p.Target)
@@ -893,7 +898,7 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 			p.TargetAfterBackupGen = backupGeneration
 		}
 	} else if p.TargetObserved || p.PreviousSHA256 != "" {
-		return fmt.Errorf("reviewed placement target disappeared before publication")
+		return fmt.Errorf("%w: "+"reviewed placement target disappeared before publication", errPlacementConflict)
 	}
 
 	// The stage is scratch (design principle 6: every state has an automatic
@@ -989,7 +994,7 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 			// Something replaced the stage under its name; it is scratch, and
 			// the next attempt writes it again.
 			_ = discardStage(p.Temporary)
-			return fmt.Errorf("stage pathname no longer identifies the opened object; it is discarded and written again on retry")
+			return fmt.Errorf("%w: "+"stage pathname no longer identifies the opened object; it is discarded and written again on retry", errPlacementConflict)
 		}
 		if p.ImportEpoch == nil {
 			p.TemporaryObjectIdentity = namedIdentity
@@ -1130,23 +1135,23 @@ func (s *Service) publishPlacement(ctx context.Context, p *sqlite.Placement) err
 	if p.PublishedFileGeneration != "" {
 		info, e := root.Lstat(targetName)
 		if e != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || deliveryFileGeneration(info) != p.PublishedFileGeneration {
-			return fmt.Errorf("published placement generation changed")
+			return fmt.Errorf("%w: "+"published placement generation changed", errPlacementConflict)
 		}
 		return syncOpenedDirectory(root)
 	}
 	if p.State == "committed" {
-		return fmt.Errorf("committed target changed; a new preview is required")
+		return fmt.Errorf("%w: "+"committed target changed; a new preview is required", errPlacementConflict)
 	}
 	stagedInfo, err := root.Lstat(temporaryName)
 	if err != nil || stagedInfo.Mode()&os.ModeSymlink != 0 || !stagedInfo.Mode().IsRegular() ||
 		deliveryFileGeneration(stagedInfo) != p.TemporaryFileGeneration || deliveryFileStableIdentity(stagedInfo) != p.TemporaryObjectIdentity {
-		return fmt.Errorf("staging generation changed before publication")
+		return fmt.Errorf("%w: "+"staging generation changed before publication", errPlacementConflict)
 	}
 	if p.TargetObserved {
 		current, e := root.Lstat(targetName)
 		if e != nil || current.Mode()&os.ModeSymlink != 0 || !current.Mode().IsRegular() ||
 			(deliveryFileGeneration(current) != p.TargetAfterBackupGen && deliveryFileGeneration(current) != p.TargetFileGeneration) {
-			return fmt.Errorf("target generation changed before publication")
+			return fmt.Errorf("%w: "+"target generation changed before publication", errPlacementConflict)
 		}
 		backup, backupErr := root.Lstat(backupName)
 		if errors.Is(backupErr, os.ErrNotExist) {
@@ -1176,7 +1181,7 @@ func (s *Service) publishPlacement(ctx context.Context, p *sqlite.Placement) err
 			return fmt.Errorf("rollback link changed before publication")
 		}
 	} else if _, e := root.Lstat(targetName); e == nil || !errors.Is(e, os.ErrNotExist) {
-		return fmt.Errorf("unreviewed target appeared before publication")
+		return fmt.Errorf("%w: "+"unreviewed target appeared before publication", errPlacementConflict)
 	}
 	if err = root.Rename(temporaryName, targetName); err != nil {
 		return err

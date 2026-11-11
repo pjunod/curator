@@ -200,3 +200,17 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
 24. **The link path never chmods Runner's inode** and falls back to a copy
     on any problem. A link moves the source's ctime, so this build needs the
     Runner build whose identity comparisons drop ctime (Fable plan W1).
+25. **Environmental stops wait; endings keep what was placed** (review r2):
+    a publication whose last stop was the environment (`last_stop =
+    environment`: ErrImportBlocked, the completed root's storage identity,
+    a manifest unreadable for now) is never ended by its deadline, and the
+    sweep never discards pending media. Only typed payload failures
+    (`errPlacementConflict`) count toward the attempt cap, spaced on
+    `backoff.Retry` (`retry_at`); a malformed manifest (`errManifestInvalid`)
+    or a file that does not match it ends at once. Ending
+    (`endPublication`) records the publication's committed placements through
+    `completePublication` (history, outbox to Cinema), discards the rest and
+    writes a replacement grab the worker filters by what is still wanted. A
+    file of another attempt is superseded only while that attempt is live or
+    its file is in the library; a person's retry resets attempts and
+    deadline.

@@ -3,13 +3,16 @@ package acquisition
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // Acceptance (Fable plan, Curator B): an import killed mid-copy imports on
@@ -112,28 +115,154 @@ func TestPlacementReconciliationRunsInTheBackgroundPerTitle(t *testing.T) {
 	}
 }
 
-// Review: an attempt that keeps failing on the payload does not loop. Past
-// MaxPublicationImportAttempts the publication ends import_failed and its
-// want is grabbed again; no one decides anything.
+// Review: an attempt that keeps failing on the payload does not loop. Only a
+// typed payload failure is counted, each is spaced on the retry ladder, and
+// past MaxPublicationImportAttempts the publication ends import_failed and
+// its want is grabbed again; an untyped error (a busy database) is not
+// counted.
 func TestRepeatedPayloadFailuresEndInARegrab(t *testing.T) {
 	f := setupV2(t, nil)
 	dl := f.grab(1, epOne)
 	original := placeFile
 	t.Cleanup(func() { placeFile = original })
-	placeFile = func(context.Context, string, string, func(int64, int64)) error {
-		return errors.New("injected payload failure")
-	}
+	failWith := errors.New("injected busy database")
+	placeFile = func(context.Context, string, string, func(int64, int64)) error { return failWith }
 	pub := f.publish("Test.Show.S01E01.job-603.runner-loop", "loop", map[string]string{epOne + ".mkv": "video"})
 	f.complete(dl, pub)
-	for i := 0; i < sqlite.MaxPublicationImportAttempts+1; i++ {
+	for i := 0; i < sqlite.MaxPublicationImportAttempts+2; i++ {
 		f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
 	}
-	p, _ := f.publicationFiles(pub.Path)
-	if p.State != "import_failed" || !strings.Contains(p.Error, "attempts") {
-		t.Fatalf("publication = %s %q, want import_failed after the attempts ran out", p.State, p.Error)
+	if n := f.count(`SELECT import_attempts FROM publications WHERE path=?`, pub.Path); n != 0 {
+		t.Fatalf("an untyped error was counted %d time(s)", n)
 	}
-	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs WHERE download_id=?`, dl.ID); n != 1 || f.row(dl.ID).State != "failed" {
-		t.Fatalf("row %s replacement grabs %d, want failed and grabbed again", f.row(dl.ID).State, n)
+	failWith = fmt.Errorf("%w: injected", errPlacementConflict)
+	f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	var retryAt int64
+	_ = f.db.R.QueryRowContext(f.ctx, `SELECT retry_at FROM publications WHERE path=?`, pub.Path).Scan(&retryAt)
+	if retryAt <= time.Now().UnixMilli() {
+		t.Fatal("a counted attempt was not spaced on the retry ladder")
+	}
+	for i := 0; i < sqlite.MaxPublicationImportAttempts+1; i++ {
+		if _, err := f.db.W.ExecContext(f.ctx, `UPDATE publications SET retry_at=0`); err != nil { // the ladder's wait, elapsed
+			t.Fatal(err)
+		}
+		f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	}
+	// Ended (and its discarded file cleaned up): the row says why.
+	row := f.row(dl.ID)
+	if row.State != "failed" || !strings.Contains(row.Error, "attempts") {
+		t.Fatalf("row = %s %q, want failed after the attempts ran out", row.State, row.Error)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs WHERE download_id=?`, dl.ID); n != 1 {
+		t.Fatalf("replacement grabs %d, want the want grabbed again", n)
+	}
+}
+
+// Review r2 (1): a library that cannot take the files holds the publication;
+// its deadline never ends it, and the sweep never discards its media.
+func TestEnvironmentHoldIsNeverEndedOrDiscarded(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	restore := failPlacement(t, syscall.ENOSPC)
+	pub := f.publish("Test.Show.S01E01.job-606.runner-full", "full", map[string]string{epOne + ".mkv": "video"})
+	f.complete(dl, pub)
+	p, files := f.publicationFiles(pub.Path)
+	if p.State != "discovered" || files[epOne+".mkv"].Outcome != "pending" {
+		t.Fatalf("publication %s file %+v, want held pending", p.State, files[epOne+".mkv"])
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE publications SET deadline_at=1`); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.sweepDeadlines(f.ctx, f.cfg, f.runner)
+	if err := f.svc.CleanupPayloads(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	p, files = f.publicationFiles(pub.Path)
+	if p.State != "discovered" || f.count(`SELECT COUNT(*) FROM replacement_grabs`) != 0 || files[epOne+".mkv"].Outcome != "pending" || !exists(filepath.Join(pub.Path, epOne+".mkv")) {
+		t.Fatalf("held publication: %s %q file %+v", p.State, p.Error, files[epOne+".mkv"])
+	}
+	// The library has room again: the next attempt imports it.
+	restore()
+	f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	if f.row(dl.ID).State != "imported" {
+		t.Fatalf("after the hold cleared: row %s (%s)", f.row(dl.ID).State, f.row(dl.ID).Error)
+	}
+}
+
+// Review r2 (3): a manifest that cannot be read for now (an I/O error, not
+// a malformed manifest) holds the publication instead of ending it.
+func TestUnreadableManifestHoldsThePublication(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-607.runner-eio", "eio", map[string]string{epOne + ".mkv": "video"})
+	manifest := filepath.Join(pub.Path, ports.ManifestFileName)
+	raw, _ := os.ReadFile(manifest)
+	_ = os.Remove(manifest)
+	if err := os.Mkdir(manifest, 0o755); err != nil { // reading it fails, and not with "no such file"
+		t.Fatal(err)
+	}
+	f.complete(dl, pub)
+	p, _ := f.publicationFiles(pub.Path)
+	if p.State != "discovered" || f.count(`SELECT COUNT(*) FROM replacement_grabs`) != 0 {
+		t.Fatalf("publication %s %q, want held for the environment", p.State, p.Error)
+	}
+	_ = os.Remove(manifest)
+	if err := os.WriteFile(manifest, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.kickPublicationImports(f.ctx, f.row(dl.ID), f.cfg)
+	if f.row(dl.ID).State != "imported" {
+		t.Fatalf("after the manifest came back: %s (%s)", f.row(dl.ID).State, f.row(dl.ID).Error)
+	}
+}
+
+// Review r2 (5): a pack that placed some files before its import had to end
+// records them (placed, notified), discards the rest, and grabs the rest of
+// the want again.
+func TestEndedPackRecordsWhatItPlaced(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(0, seasonPack)
+	pub := f.publish("Test.Show.S01.job-608.runner-part", "part", map[string]string{"Test.Show.S01E01.mkv": "one", "Test.Show.S01E02.mkv": "two"})
+	if err := os.WriteFile(filepath.Join(pub.Path, "Test.Show.S01E02.mkv"), []byte("TWO"), 0o644); err != nil { // same size, other bytes
+		t.Fatal(err)
+	}
+	pub.CrossVolume = true // the linked copies are hashed once, so E02 is caught
+	f.complete(dl, pub)
+	p, files := f.publicationFiles(pub.Path)
+	if files["Test.Show.S01E01.mkv"].Outcome != "placed" || files["Test.Show.S01E02.mkv"].Outcome != "discarded" {
+		t.Fatalf("files %+v, want E01 placed and E02 discarded", files)
+	}
+	row := f.row(dl.ID)
+	if last := row.Handoff[len(row.Handoff)-1]; row.State != "imported" || !strings.Contains(last.Detail, "the rest was not imported") {
+		t.Fatalf("row %s (%q), publication %s, want imported with the rest named", row.State, last.Detail, p.State)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs WHERE download_id=?`, dl.ID); n != 1 {
+		t.Fatalf("replacement grabs = %d, want the rest of the want grabbed again", n)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM media_files`); n != 1 {
+		t.Fatalf("library files = %d", n)
+	}
+}
+
+// Review r2 (6): a person's retry starts an ended publication over.
+func TestApprovedRetryResetsAttemptsAndDeadline(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	pub := f.publish("Test.Show.S01E01.job-609.runner-retry", "retry", map[string]string{epOne + ".mkv": "video"})
+	restore := failPlacement(t, syscall.ENOSPC)
+	f.complete(dl, pub)
+	restore()
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE publications SET state='import_failed', import_attempts=?, deadline_at=1, last_stop='payload'`, sqlite.MaxPublicationImportAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET state='failed' WHERE id=?`, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.ImportNow(f.ctx, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if f.row(dl.ID).State != "imported" {
+		t.Fatalf("retry: row %s (%s), want imported", f.row(dl.ID).State, f.row(dl.ID).Error)
 	}
 }
 
@@ -147,9 +276,9 @@ func TestTruncatedPublicationFileIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.complete(dl, pub)
-	p, _ := f.publicationFiles(pub.Path)
-	if p.State != "import_failed" || !strings.Contains(p.Error, "does not match its manifest") || f.count(`SELECT COUNT(*) FROM media_files`) != 0 {
-		t.Fatalf("publication = %s %q, want refused with nothing placed", p.State, p.Error)
+	row := f.row(dl.ID)
+	if row.State != "failed" || !strings.Contains(row.Error, "does not match its manifest") || f.count(`SELECT COUNT(*) FROM media_files`) != 0 {
+		t.Fatalf("row = %s %q, want refused with nothing placed", row.State, row.Error)
 	}
 	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs WHERE download_id=?`, dl.ID); n != 1 {
 		t.Fatalf("replacement grabs = %d", n)

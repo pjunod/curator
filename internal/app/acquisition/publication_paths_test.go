@@ -119,7 +119,7 @@ func TestV1RecordLookedUpByDeliveryID(t *testing.T) {
 			t.Fatal(err)
 		}
 		p, _, _ := f.db.PublicationByPath(f.ctx, path)
-		if lr.calls == 0 || p.State != "imported" || f.row(dl.ID).State != "imported" {
+		if lr.calls == 0 || (p.State != "imported" && p.State != "removed") || f.row(dl.ID).State != "imported" {
 			t.Fatalf("lookups=%d publication %s %q row %s, want imported from Runner's record", lr.calls, p.State, p.Error, f.row(dl.ID).State)
 		}
 	})
@@ -130,8 +130,10 @@ func TestV1RecordLookedUpByDeliveryID(t *testing.T) {
 			t.Fatal(err)
 		}
 		p, _, _ := f.db.PublicationByPath(f.ctx, path)
-		if p.State != "import_failed" || !strings.Contains(p.Error, "runner unreachable") || f.row(dl.ID).State == "imported" {
-			t.Fatalf("publication = %s %q, want the lookup failure recorded", p.State, p.Error)
+		// Runner briefly unreachable is the environment's: the publication
+		// waits, held, with the reason; nothing ends or regrabs.
+		if p.State != "discovered" || !strings.Contains(p.Error, "runner unreachable") || f.row(dl.ID).State == "imported" || f.count(`SELECT COUNT(*) FROM replacement_grabs`) != 0 {
+			t.Fatalf("publication = %s %q, want held for the environment", p.State, p.Error)
 		}
 	})
 	t.Run("a record for another generation is refused", func(t *testing.T) {
@@ -190,8 +192,12 @@ func TestCrossVolumeCopyIsVerified(t *testing.T) {
 				}
 				return
 			}
-			if p.State != "import_failed" || !strings.Contains(p.Error, tc.want) || f.count(`SELECT COUNT(*) FROM media_files`) != 0 {
-				t.Fatalf("publication = %s %q, want import_failed naming %q and nothing placed", p.State, p.Error, tc.want)
+			// Ended with nothing placed: the row failed naming why, the want
+			// is grabbed again, and the publication's files are cleaned up.
+			row := f.row(dl.ID)
+			if row.State != "failed" || !strings.Contains(row.Error, tc.want) || f.count(`SELECT COUNT(*) FROM media_files`) != 0 ||
+				f.count(`SELECT COUNT(*) FROM replacement_grabs WHERE download_id=?`, dl.ID) != 1 {
+				t.Fatalf("publication = %s, row %s %q, want failed naming %q, nothing placed, grabbed again", p.State, row.State, row.Error, tc.want)
 			}
 		})
 	}

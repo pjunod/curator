@@ -1264,3 +1264,21 @@ func TestSubtitleIsPlacedWithItsVideoNeverAsMedia(t *testing.T) {
 		t.Fatal("a subtitle became a media file")
 	}
 }
+
+// Review r2 (2): a file whose want's current attempt is dead (failed, gone)
+// is not superseded by it: the import decides it by quality.
+func TestDeadCurrentAttemptDoesNotSupersede(t *testing.T) {
+	f := setupV2(t, nil)
+	first := f.grab(1, epOne)
+	second := f.grab(1, "Test.Show.S01E01.1080p.WEB-DL.x264-OTHER")
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET state='failed' WHERE id=?`, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	pub := f.publish("Test.Show.S01E01.job-610.runner-dead", "dead", map[string]string{epOne + ".mkv": "video"})
+	f.observe(first, terminalFact(first, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path)
+	files, _ := f.db.ListPublicationFiles(f.ctx, p.ID)
+	if len(files) != 1 || files[0].Outcome != "placed" || f.count(`SELECT COUNT(*) FROM media_files`) != 1 {
+		t.Fatalf("files %+v, want placed: the current attempt is dead", files)
+	}
+}

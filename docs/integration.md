@@ -354,11 +354,17 @@ other client keeps the established path and records its failures the same way.
   record (the **v1 adapter**); a directory with neither waits and is checked
   again each poll. A publication has no deadline until its first import
   starts; six hours from that start (never reset by a retry), with nothing
-  running or queued for it, or five attempts that failed on the payload,
-  end it `import_failed` with a replacement grab for its wantables. A file
-  that does not match the manifest (missing, resized, different bytes as
-  copied) ends it the same way at once, and so does a publication that gave
-  the library nothing. Hash once: the manifest digest is the
+  running or queued for it, or five attempts that failed on the payload
+  (spaced on the retry ladder), end it; so does, at once, a file that does
+  not match the manifest (missing, resized, different bytes as copied) or a
+  manifest that is malformed. Ending records what it already placed (and
+  notifies Cinema), discards the rest, and grabs the still-wanted part of the
+  want again. A publication the **environment** holds — a full or blocked
+  library, the completed root's storage unavailable, the manifest unreadable
+  for now — waits with the reason as its error and is never ended by its
+  deadline; the sweep never discards pending media. A person's retry starts a
+  publication over (no attempts, no deadline). A file of another attempt is
+  superseded only while that attempt is live or its file is in the library. Hash once: the manifest digest is the
   authority, and the placement proves each file it copies against it in the
   copy stream (nothing is read back; a same-filesystem placement is a hard
   link). When the publication was copied across volumes a linked file is

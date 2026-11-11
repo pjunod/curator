@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/pjunod/monarr/internal/domain/backoff"
 	"path/filepath"
 	"strings"
 	"time"
@@ -602,19 +603,19 @@ func (d *DB) ListPublicationsForDownloads(ctx context.Context, ids []int64) (map
 // mid-import leaves the state behind, and the caller skips a row whose
 // import is queued or running (ImportRunning), so only an orphan re-runs.
 func (d *DB) ImportablePublications(ctx context.Context, clientID int64) ([]Publication, error) {
-	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND download_id IN (SELECT id FROM downloads WHERE client_id=?)`, clientID)
+	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND retry_at<=? AND download_id IN (SELECT id FROM downloads WHERE client_id=?)`, time.Now().UnixMilli(), clientID)
 }
 
 // OverduePublications lists publications still in discovered/importing past
-// their deadline.
+// their deadline, except one the environment is holding (it waits).
 func (d *DB) OverduePublications(ctx context.Context, now time.Time) ([]Publication, error) {
-	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?`, now.UnixMilli())
+	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND last_stop<>'environment' AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?`, now.UnixMilli())
 }
 
 // CountOverduePublications counts what OverduePublications lists.
 func (d *DB) CountOverduePublications(ctx context.Context, now time.Time) (int, error) {
 	var n int
-	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE state IN ('discovered','importing') AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?`, now.UnixMilli()).Scan(&n)
+	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE state IN ('discovered','importing') AND last_stop<>'environment' AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?`, now.UnixMilli()).Scan(&n)
 	return n, err
 }
 
@@ -651,17 +652,47 @@ const MaxPublicationImportAttempts = 5
 func (d *DB) StartPublicationImport(ctx context.Context, id int64) (int, error) {
 	now := time.Now()
 	var failed int
-	err := d.W.QueryRowContext(ctx, `UPDATE publications SET state='importing', error='',
+	err := d.W.QueryRowContext(ctx, `UPDATE publications SET state='importing', error='', last_stop='', retry_at=0,
 		deadline_at=CASE WHEN deadline_at=0 THEN ? ELSE deadline_at END, updated_at=? WHERE id=? RETURNING import_attempts`,
 		now.Add(DeadlinePublication).UnixMilli(), now.UnixMilli(), id).Scan(&failed)
 	return failed, err
 }
 
 // RequeueFailedPublicationAttempt returns an importing publication to
-// discovered after an attempt that failed on the payload, and counts it.
+// discovered after an attempt that failed on the payload, counts it, and
+// spaces the next attempt on the retry ladder (the poll does not offer it
+// before retry_at).
 func (d *DB) RequeueFailedPublicationAttempt(ctx context.Context, id int64, reason string) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error=?, import_attempts=import_attempts+1, updated_at=? WHERE id=? AND state='importing'`,
+	now := time.Now()
+	var attempts int
+	err := d.W.QueryRowContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='payload', import_attempts=import_attempts+1, updated_at=? WHERE id=? AND state='importing' RETURNING import_attempts`,
+		reason, now.UnixMilli(), id).Scan(&attempts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = d.W.ExecContext(ctx, `UPDATE publications SET retry_at=? WHERE id=?`, now.Add(backoff.Retry.After(attempts)).UnixMilli(), id)
+	return err
+}
+
+// HoldPublicationForEnvironment returns a publication to discovered because
+// the environment, not the payload, stopped it (a full or blocked library,
+// the completed root's storage unavailable, the manifest unreadable for
+// now). It waits, visibly (the reason is its error), and is never ended by
+// its deadline while that is its last stop.
+func (d *DB) HoldPublicationForEnvironment(ctx context.Context, id int64, reason string) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='environment', updated_at=? WHERE id=? AND state IN ('discovered','importing')`,
 		reason, time.Now().UnixMilli(), id)
+	return err
+}
+
+// ResetPublicationForRetry starts a publication over for a person's explicit
+// retry (Resolve, Retry import): no attempts counted, no deadline yet.
+func (d *DB) ResetPublicationForRetry(ctx context.Context, id int64) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error='', import_attempts=0, deadline_at=0, last_stop='', retry_at=0, updated_at=? WHERE id=?`,
+		time.Now().UnixMilli(), id)
 	return err
 }
 

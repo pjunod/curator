@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/filename"
 	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
@@ -542,6 +543,12 @@ func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publi
 	}
 	for path, f := range pending {
 		d, ok := decisions[path]
+		if isPublicationMedia(path) {
+			// Pending media is never discarded here: only an import decides a
+			// media file (a full or unmounted library must not cost a
+			// download its bytes).
+			continue
+		}
 		if !ok {
 			// No video to go with, no download row, or not a sidecar: the
 			// publication is a closed scope and this file is not kept.
@@ -556,6 +563,12 @@ func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publi
 		}
 	}
 	return nil
+}
+
+// isPublicationMedia reports a path that is media of any kind Curator
+// imports (video or book), whatever the publication's item.
+func isPublicationMedia(path string) bool {
+	return filename.IsVideo(path) || filename.IsBook(path)
 }
 
 // stillPlacedHere reports that a placed publication file's library video is

@@ -442,8 +442,22 @@ func (s *Service) cleanupManifest(pub sqlite.Publication, allRemoved bool) (map[
 // file whose record remains but whose bytes are missing or differ): the file
 // stays as it is and the next pass tries again.
 func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publication, manifest map[string]ports.ManifestFile, f sqlite.PublicationFile, item int64) error {
-	if _, ok := manifest[f.Path]; !ok || !safeDeliveryRelativePath(f.Path) {
-		return fmt.Errorf("the publication's manifest does not list this file")
+	if !safeDeliveryRelativePath(f.Path) {
+		// Not a path inside the publication: nothing to unlink; the row is
+		// settled so the directory is not held by it.
+		f.Outcome, f.DiscardReason, f.Reason = "discarded", "rejected", "not a path inside the publication"
+		if err := s.db.SetPublicationFileOutcome(ctx, f); err != nil {
+			return err
+		}
+		return s.db.MarkPublicationFileRemoved(ctx, pub.ID, f.Path, f.Outcome)
+	}
+	if _, ok := manifest[f.Path]; !ok && f.Outcome != "discarded" {
+		// The manifest (this generation's) no longer lists the file: it is
+		// not this publication's media any more, and leaves as a discard.
+		f.Outcome, f.DiscardReason, f.Reason = "discarded", "rejected", "the publication's manifest does not list it; not kept"
+		if err := s.db.SetPublicationFileOutcome(ctx, f); err != nil {
+			return err
+		}
 	}
 	base, err := os.OpenRoot(pub.Path)
 	if err != nil {

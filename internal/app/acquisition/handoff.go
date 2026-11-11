@@ -292,10 +292,10 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 			if p.State != "discovered" && p.State != "importing" && p.State != "import_failed" {
 				continue
 			}
-			if p.State != "discovered" {
-				if e := s.db.SetPublicationState(ctx, p.ID, "discovered", ""); e != nil {
-					return e
-				}
+			// A person's retry starts the publication over (no counted
+			// attempts, no deadline until it starts).
+			if e := s.db.ResetPublicationForRetry(ctx, p.ID); e != nil {
+				return e
 			}
 			var cfg ports.ClientConfig
 			if dl.ClientID != 0 {

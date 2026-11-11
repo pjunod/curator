@@ -22,6 +22,12 @@
 -- and superseded rows are never re-opened. The download row is moved by the
 -- import itself (importing, then imported or failed) when it runs.
 ALTER TABLE publications ADD COLUMN import_attempts INTEGER NOT NULL DEFAULT 0;
+-- Why the last attempt stopped: '' | payload | environment. A publication
+-- the environment holds (a full or blocked library, unavailable storage)
+-- waits and is never ended by its deadline.
+ALTER TABLE publications ADD COLUMN last_stop TEXT NOT NULL DEFAULT '' CHECK (last_stop IN ('', 'payload', 'environment'));
+-- A payload-failed attempt is retried no earlier than this (retry ladder).
+ALTER TABLE publications ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0;
 
 CREATE TEMP TABLE wedged_0076 AS
 SELECT p.id AS publication_id, p.download_id, d.generation_key,
@@ -104,3 +110,5 @@ CREATE INDEX IF NOT EXISTS publication_files_placed_library ON publication_files
 DROP INDEX IF EXISTS import_placements_target;
 DROP INDEX IF EXISTS publication_files_placed_library;
 ALTER TABLE publications DROP COLUMN import_attempts;
+ALTER TABLE publications DROP COLUMN last_stop;
+ALTER TABLE publications DROP COLUMN retry_at;

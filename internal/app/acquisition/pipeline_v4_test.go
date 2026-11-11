@@ -581,3 +581,22 @@ func TestPublicationClaimsItsChildren(t *testing.T) {
 		t.Fatal("a directory inside a publication was not publication-managed")
 	}
 }
+
+// Review r2 (7): a file row the publication's manifest does not list is
+// discarded and leaves; it never holds the directory.
+func TestUnlistedPublicationFileIsDiscarded(t *testing.T) {
+	f := setupV2(t, nil)
+	pub := f.importHeld("Test.Show.S01E01.job-311.runner-ghost", "ghost", map[string]string{epOne + ".mkv": "the episode"})
+	p, _ := f.publicationFiles(pub.Path)
+	if err := os.WriteFile(filepath.Join(pub.Path, "ghost.txt"), []byte("g"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `INSERT INTO publication_files(publication_id,path,bytes,sha256,outcome,reason,updated_at) VALUES(?,'ghost.txt',1,'d','placed','',1)`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.sweep()
+	p, files := f.publicationFiles(pub.Path)
+	if g := files["ghost.txt"]; g.Outcome != "discarded" || g.RemovedAt.IsZero() || p.State != "removed" || exists(pub.Path) {
+		t.Fatalf("publication %s (%s) ghost %+v, want discarded and the directory removed", p.State, p.Error, g)
+	}
+}

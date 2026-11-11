@@ -966,7 +966,11 @@ func (s *Service) sweepDeadlines(ctx context.Context, cfg ports.ClientConfig, fe
 		if p.Error != "" {
 			reason += " (" + p.Error + ")"
 		}
-		s.endPublicationForRegrab(ctx, &dl, p, reason)
+		unlock := s.lockDownload(p.DownloadID)
+		if !s.ImportRunning(p.DownloadID) {
+			s.endPublication(ctx, dl, cfg, p, nil, reason)
+		}
+		unlock()
 	}
 }
 

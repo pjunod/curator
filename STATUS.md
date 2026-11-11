@@ -72,6 +72,22 @@ want a later import satisfied and releases the custody rows of requeued
 ones; 12 `claude/pipeline-v2-m6b-curator` renumbered its migration to 0077
 (`d61ea59`).
 
+Adversarial re-review r2 (Fable, of `032720d`) — 8 findings, all fixed:
+1 environmental stops (blocked/full library, storage identity, a manifest
+unreadable for now) hold the publication (`last_stop`) and are never ended by
+the deadline; the sweep never discards pending media; 2 supersede only
+against a live attempt or one whose file is in the library; 3 only a
+malformed manifest ends a publication, read errors hold it; 4 only typed
+payload failures count, spaced on the retry ladder (`retry_at`); 5 ending
+records committed placements (history, Cinema outbox), discards the rest
+and regrabs only what is still wanted; 6 a person's retry resets attempts
+and deadline; 7 a file row the manifest does not list is discarded; 8 M6b
+rebased onto this branch (below).
+
+**Merge order: merge `claude/no-wedge` first, then
+`claude/pipeline-v2-m6b-curator`** (rebased onto this branch; its migration
+is 0077 after this branch's 0076).
+
 **Deploy order:** a same-filesystem placement hard-links Runner's file,
 which moves its ctime: deploy this curator only after the Runner build whose
 publication identity comparisons drop ctime (Fable plan W1). Across the
