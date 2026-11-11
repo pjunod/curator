@@ -13,12 +13,8 @@ import (
 func openLifecycleCoverageDB(t *testing.T) (*DB, string) {
 	t.Helper()
 	dir := t.TempDir()
-	db, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = db.Migrate(context.Background()); err != nil {
-		_ = db.Close()
+	db := openMigratedCopyIn(t, dir)
+	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return db, dir

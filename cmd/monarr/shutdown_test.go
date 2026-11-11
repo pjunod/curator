@@ -14,6 +14,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/infra/config"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 )
 
 func TestListenerFailureCancelsAndJoinsWorkersWithoutSignal(t *testing.T) {
@@ -113,7 +114,7 @@ func TestRunShutsDownWithConnectedEventStream(t *testing.T) {
 // on shared runners can spend seconds migrating an empty database.
 func shutdownTestDataDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := sqlitetest.Dir(t)
 	db, err := sqlite.Open(dir)
 	if err != nil {
 		t.Fatal(err)

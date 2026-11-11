@@ -13,8 +13,8 @@ func sqlitegenSetMeta(key, value string) sqlitegen.SetMetaParams {
 	return sqlitegen.SetMetaParams{Key: key, Value: value, UpdatedAt: time.Now().UnixMilli()}
 }
 
-func openTestDB(t *testing.T) *DB {
-	t.Helper()
+func TestMigrateFromScratch(t *testing.T) {
+	// From scratch on purpose: every other test starts from a copy of this.
 	db, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -23,11 +23,6 @@ func openTestDB(t *testing.T) *DB {
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	return db
-}
-
-func TestMigrateFromScratch(t *testing.T) {
-	db := openTestDB(t)
 	v, err := db.SchemaVersion(context.Background())
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)

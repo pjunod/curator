@@ -8,12 +8,13 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 )
 
 func TestMonitoringPoliciesPersistAcrossRefreshAndPause(t *testing.T) {
 	for _, mode := range []string{"all", "latest", "future", "new_seasons", "none"} {
 		t.Run(mode, func(t *testing.T) {
-			db, err := sqlite.Open(t.TempDir())
+			db, err := sqlite.Open(sqlitetest.Dir(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,7 +67,7 @@ func TestMonitoringPoliciesPersistAcrossRefreshAndPause(t *testing.T) {
 }
 
 func TestEditMonitoringReappliesPolicyButRefreshPreservesOverrides(t *testing.T) {
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
