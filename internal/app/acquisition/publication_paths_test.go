@@ -1,7 +1,6 @@
 package acquisition
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"

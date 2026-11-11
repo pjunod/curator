@@ -344,7 +344,16 @@ test-web`, `make test-e2e`.
 > database already at 76. Not rebased onto `claude/no-wedge`; the two merge in
 > either order.
 
-## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.43.0
+> **Rebased 2026-11-11 (Claude Opus 5.5 session) onto `claude/no-wedge`;
+> merge `claude/no-wedge` first, then this branch.** Its migration is
+> `0077_retire_v1_record.sql` (Go precheck `migration0077.go`,
+> `retireV1RecordVersion = 77`), after no-wedge's `0076`; goose refuses a
+> missing lower version, so 0076 must land first. VERSION is 0.45.0 (no-wedge
+> is 0.44.0). The v1 adapter's lookup tests went with the v1_record source;
+> no-wedge's environmental hold for an unreadable manifest now covers only
+> the manifest file.
+
+## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.45.0 (rebased onto no-wedge 2026-11-11)
 
 **Status:** branch `claude/pipeline-v2-m6b-curator`, stacked on
 `claude/pipeline-v2-m6a-curator` · owner: Claude (Sonnet builder) · pushed,
