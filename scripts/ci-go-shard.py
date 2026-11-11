@@ -36,7 +36,16 @@ def shard(index, count, root):
     def owner(name):
         return int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], 'big') % count
     selected = [(package, name) for package, name in tests if owner(name) == index]
-    pattern = '^(?:'+'|'.join(re.escape(name) for name in sorted({name for _, name in selected}))+')$' if selected else '^__NO_GO_TEST_IN_THIS_SHARD__$'
+    if count == 1:
+        # One shard owns the whole inventory. Naming every test would put
+        # ~1900 names in one argument, which Linux caps at 128 KiB per
+        # string; the listing's own prefix selects the same set, and the
+        # execution check below still proves it.
+        pattern = '^(?:Test|Example|Fuzz)'
+    elif selected:
+        pattern = '^(?:'+'|'.join(re.escape(name) for name in sorted({name for _, name in selected}))+')$'
+    else:
+        pattern = '^__NO_GO_TEST_IN_THIS_SHARD__$'
     metadata = {'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'go': subprocess.check_output(['go', 'version'], text=True).strip(), 'goos': subprocess.check_output(['go', 'env', 'GOOS'], text=True).strip(), 'goarch': subprocess.check_output(['go', 'env', 'GOARCH'], text=True).strip(), 'index': index, 'count': count, 'tests': tests, 'selected': selected}
     (root/'plan.json').write_text(json.dumps(metadata, indent=2))
     events = go_events([*common, '-timeout=30m', '-run', pattern, '-coverprofile='+str(root/'coverage.out')], root/'tests.jsonl')
