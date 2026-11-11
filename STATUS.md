@@ -337,6 +337,13 @@ clean; lint 0 issues; `go test ./internal/infra/sqlite/
 ./internal/app/acquisition/` pass. Not run (by instruction): full `make test`, `make
 test-web`, `make test-e2e`.
 
+> **Migration renumbered 2026-11-11 (Claude Opus 5.5 session):** this branch's
+> `0075_retire_v1_record.sql` is now `0077_retire_v1_record.sql` (Go precheck
+> `migration0077.go`, `retireV1RecordVersion = 77`, messages and docs), because
+> `claude/no-wedge` adds `0076`; goose refuses a missing lower version on a
+> database already at 76. Not rebased onto `claude/no-wedge`; the two merge in
+> either order.
+
 ## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.43.0
 
 **Status:** branch `claude/pipeline-v2-m6b-curator`, stacked on
@@ -344,8 +351,8 @@ test-web`, `make test-e2e`.
 **no PR** (by instruction), not reviewed, not merged, not deployed.
 
 **DO NOT MERGE EARLY: merge only after runner M6b is deployed and M7 has
-cleared v1_record publications.** Migration 0075 refuses to start otherwise
-(`migration 0075 refused: publications still on a v1_record manifest`), so an
+cleared v1_record publications.** Migration 0077 refuses to start otherwise
+(`migration 0077 refused: publications still on a v1_record manifest`), so an
 early merge stops the upgrade rather than corrupting anything.
 
 Built (plan M6 curator item 1, IMPL_CURATOR section 9):
@@ -358,7 +365,7 @@ Built (plan M6 curator item 1, IMPL_CURATOR section 9):
   no `kind` is a completed terminal.
 - **`v1_record` manifest source retired.** `publicationManifest` reads only
   `.runner-manifest.json`; `attachManifest`, `AttachPublicationManifest` and
-  the delivery lookup port are gone. Migration 0075 normalises removed
+  the delivery lookup port are gone. Migration 0077 normalises removed
   `v1_record` rows to `none` and, in `Migrate`, refuses (named error, count and
   up to 5 rows) while any non-removed one exists. A database older than 0072
   stops after 0074, because 0072 itself creates `v1_record` rows.

@@ -90,7 +90,7 @@ func TestMigration0072(t *testing.T) {
 	_ = fk.Close()
 
 	// The rest reads through the current query layer, which needs the
-	// whole schema (0073 adds columns it scans). 0075 is not applied: it
+	// whole schema (0073 adds columns it scans). 0078 is not applied: it
 	// refuses while these v1_record publications are not removed.
 	if err := goose.UpToContext(ctx, db.W, "migrations", 74); err != nil {
 		t.Fatal(err)

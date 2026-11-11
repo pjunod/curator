@@ -526,7 +526,7 @@ Two migrations refuse rather than guess, and name what blocks them.
   let each named request finish or **Cancel deletion request**; then deploy
   again. `SELECT batch_id FROM runner_delivery_explicit_delete_batches WHERE
   abandoned_at=0` lists them.
-- `migration 0075 refused: publications still on a v1_record manifest: N not
+- `migration 0078 refused: publications still on a v1_record manifest: N not
   yet removed (#id state path; …)`: Curator no longer reads Runner's v1
   delivery record, so a publication that has only that record has no manifest
   to import or clean from. Let its import or its review batch finish on the

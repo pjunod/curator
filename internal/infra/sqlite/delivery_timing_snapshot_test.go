@@ -21,7 +21,7 @@ func TestLegacyDeliveryTimingEvidenceSurvivesRestartAndBlocksDowngrade(t *testin
 	v.LifecycleTiming.OmittedIntervals = map[string]uint32{"queue": 2}
 	v.SourceCopies = []ports.RunnerSourceCopy{{ID: "worker-copy", OwnerNode: "worker", Status: "removed"}}
 	saved := seedLegacyReceipt(t, db, r.ClientID, v, r.MappedPath)
-	// Migration 0075 refuses while a v1_record publication is live; this test
+	// Migration 0078 refuses while a v1_record publication is live; this test
 	// is about the receipt's timing evidence, so the fixture's are removed.
 	if _, err := db.W.ExecContext(ctx, `UPDATE publications SET state='removed' WHERE manifest_source='v1_record'`); err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestLegacyDeliveryTimingEvidenceSurvivesRestartAndBlocksDowngrade(t *testin
 	// schemas before the timing-evidence guard. Restore the current schema
 	// before invoking the current query layer again.
 	// (To 0074: re-running 0072 makes a v1_record publication from the
-	// receipt, which 0075 refuses while it is live.)
+	// receipt, which 0078 refuses while it is live.)
 	if err := goose.UpToContext(ctx, reopened.W, "migrations", 74); err != nil {
 		t.Fatal(err)
 	}

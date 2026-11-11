@@ -9,11 +9,11 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-// Migration 0075 (pipeline contract v2, M6b): the v1_record manifest source is
+// Migration 0078 (pipeline contract v2, M6b): the v1_record manifest source is
 // retired. The count check refuses while a publication that is not removed
 // still depends on it, naming it; once they are all removed their source is
 // normalised and nothing else moves.
-func TestMigration0075RefusesWhileAPublicationStillNeedsTheV1Record(t *testing.T) {
+func TestMigration0078RefusesWhileAPublicationStillNeedsTheV1Record(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(t.TempDir())
 	if err != nil {
@@ -84,7 +84,7 @@ func TestMigration0075RefusesWhileAPublicationStillNeedsTheV1Record(t *testing.T
 // A database older than 0072 gets its v1_record publications from 0072 itself
 // (one per old receipt); the upgrade stops once they exist rather than
 // stranding them.
-func TestMigration0075RefusesAnUpgradeThatCrossesTheReceiptMigration(t *testing.T) {
+func TestMigration0078RefusesAnUpgradeThatCrossesTheReceiptMigration(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(t.TempDir())
 	if err != nil {

@@ -296,7 +296,7 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     completed row without its publication, is not a terminal. A `/deliveries`
     row with no `kind` is a completed terminal.
 28. **The `v1_record` manifest source is retired.** A publication's manifest is
-    its `.runner-manifest.json`. Migration 0075 refuses while a publication
+    its `.runner-manifest.json`. Migration 0078 refuses while a publication
     that is not `removed` still has `manifest_source = 'v1_record'`, then
     normalises the removed ones. It is merged only after Runner's M6b is
     deployed and the M7 review has resolved the historical cohort.

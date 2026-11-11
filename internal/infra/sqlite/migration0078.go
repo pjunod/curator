@@ -7,16 +7,16 @@ import (
 	"strings"
 )
 
-// retireV1RecordVersion is migration 0075_retire_v1_record.sql.
-const retireV1RecordVersion = 75
+// retireV1RecordVersion is migration 0078_retire_v1_record.sql.
+const retireV1RecordVersion = 78
 
 // publicationsVersion is migration 0072_pipeline_v2.sql, which creates the
 // publications table (and, from the old receipts, v1_record rows in it).
 const publicationsVersion = 72
 
-// ErrLiveV1Records refuses migration 0075 while a publication that is not
+// ErrLiveV1Records refuses migration 0078 while a publication that is not
 // removed still depends on Runner's v1 delivery record for its manifest.
-var ErrLiveV1Records = errors.New("migration 0075 refused: publications still on a v1_record manifest")
+var ErrLiveV1Records = errors.New("migration 0078 refused: publications still on a v1_record manifest")
 
 // preflightRetireV1Record is the count check IMPL_CURATOR section 8 asks for
 // before the v1_record source goes: a publication whose manifest is only the
@@ -45,7 +45,7 @@ func (d *DB) appliedVersion(ctx context.Context) (int64, bool) {
 func (d *DB) refuseLiveV1Records(ctx context.Context) error {
 	rows, err := d.W.QueryContext(ctx, `SELECT id, state, path FROM publications WHERE manifest_source = 'v1_record' AND state NOT IN ('removed') ORDER BY id`)
 	if err != nil {
-		return fmt.Errorf("sqlite: migration 0075 precheck: %w", err)
+		return fmt.Errorf("sqlite: migration 0078 precheck: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var named []string

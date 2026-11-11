@@ -98,7 +98,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 	if v, ok := d.appliedVersion(ctx); ok && v > 0 && v < publicationsVersion {
 		// 0072 creates v1_record publications from the old receipts, so an
 		// upgrade that crosses it is checked as soon as they exist, before
-		// 0075 normalises anything.
+		// 0078 normalises anything.
 		if err := goose.UpToContext(ctx, d.W, "migrations", retireV1RecordVersion-1); err != nil {
 			return fmt.Errorf("sqlite: migrating: %w", err)
 		}
