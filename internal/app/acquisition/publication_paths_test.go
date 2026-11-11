@@ -160,7 +160,8 @@ func TestV1RecordLookedUpByDeliveryID(t *testing.T) {
 	})
 }
 
-// A cross-volume publication is re-hashed once against its manifest.
+// A cross-volume publication is verified once against its manifest, by the
+// placement (in its copy stream, or one read of a same-filesystem link).
 func TestCrossVolumeCopyIsVerified(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -168,8 +169,8 @@ func TestCrossVolumeCopyIsVerified(t *testing.T) {
 		want    string
 	}{
 		{name: "intact copy imports"},
-		{name: "a changed byte fails it", corrupt: func(p string) { _ = os.WriteFile(p, []byte("vidźo"), 0o644) }, want: "does not match its manifest"},
-		{name: "a missing file fails it", corrupt: func(p string) { _ = os.Remove(p) }, want: "no such file"},
+		{name: "a changed byte fails it", corrupt: func(p string) { _ = os.WriteFile(p, []byte("vidźo"), 0o644) }, want: "no longer matches its accepted delivery manifest"},
+		{name: "a missing file fails it", corrupt: func(p string) { _ = os.Remove(p) }, want: epOne + ".mkv"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := setupV2(t, nil)
@@ -193,10 +194,6 @@ func TestCrossVolumeCopyIsVerified(t *testing.T) {
 				t.Fatalf("publication = %s %q, want import_failed naming %q and nothing placed", p.State, p.Error, tc.want)
 			}
 		})
-	}
-	// Files without a digest are not re-hashed.
-	if err := verifyCrossVolumeCopy(context.Background(), t.TempDir(), ports.Manifest{Files: []ports.ManifestFile{{Path: "absent.mkv"}}}); err != nil {
-		t.Fatalf("a digest-less file was hashed: %v", err)
 	}
 }
 

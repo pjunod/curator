@@ -22,16 +22,19 @@ import (
 // leaves only when its recorded outcome is evidence for it:
 //
 //   - placed: the placement recorded the manifest's digest, and the library
-//     file still has that digest now (same inode, or re-hashed);
+//     file is still the object it published (the same inode as this file, or
+//     the placement journal's recorded size and inode generation; a library
+//     file with no such record is hashed once);
 //   - discarded (superseded, duplicate, rejected).
 //
-// unresolved and pending files are never touched. Before each unlink the
-// publication generation (the manifest in the directory), the file's identity
-// (size and digest against the manifest, then an unchanged inode generation
-// since the hash) and the storage identity of the completed root are checked
-// again; a root whose identity changed is an unmounted mount point and
-// nothing under it is deleted. The directory goes when nothing is left in it
-// but the manifest. Size alone is never evidence.
+// Nothing is re-hashed when the record holds (hash once: the placement proved
+// the bytes as it copied them). unresolved and pending files are never
+// touched. Before each unlink the publication generation (the manifest in the
+// directory), the file's identity (its size against the manifest, then an
+// unchanged inode generation since it was checked) and the storage identity
+// of the completed root are checked again; a root whose identity changed is
+// an unmounted mount point and nothing under it is deleted. The directory goes
+// when nothing is left in it but the manifest.
 
 // publicationSweepBatch bounds one hourly pass.
 const publicationSweepBatch = 50
@@ -458,18 +461,14 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 		return "", err
 	}
 	defer func() { _ = parent.Close() }()
+	// The publication file is not read: it is leaving, and what it held is
+	// the manifest's digest, which the placement proved as it copied. Its
+	// size against the manifest and an unchanged generation up to the unlink
+	// are what bind this decision to this object.
 	generation := deliveryFileGeneration(named)
-	if named.Size() != f.Bytes {
-		_ = file.Close()
-		return demote(fmt.Sprintf("kept: the file is %d bytes, the manifest says %d", named.Size(), f.Bytes))
-	}
-	digest, n, err := digestOpenFile(ctx, file)
 	_ = file.Close()
-	if err != nil {
-		return "", err
-	}
-	if n != f.Bytes || digest != f.SHA256 {
-		return demote("kept: the file's content differs from its manifest digest")
+	if named.Size() != f.Bytes {
+		return demote(fmt.Sprintf("kept: the file is %d bytes, the manifest says %d", named.Size(), f.Bytes))
 	}
 	var libGeneration string
 	if f.Outcome == "placed" {
@@ -481,14 +480,14 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 			return "", err
 		}
 		if !os.SameFile(lib, named) {
-			libDigest, libSize, gen, err := fileDigestSnapshot(ctx, f.LibraryPath)
+			holds, err := s.libraryCopyHolds(ctx, f, lib)
 			if err != nil {
 				return "", err
 			}
-			if libSize != f.Bytes || libDigest != f.SHA256 {
+			if !holds {
 				return demote("kept: the library file at " + f.LibraryPath + " differs from the manifest digest; this copy may be the only good one")
 			}
-			libGeneration = gen
+			libGeneration = deliveryFileGeneration(lib)
 		}
 	}
 	// The destructive step: serialized with imports into the same item and
@@ -525,6 +524,30 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 	// The download lock held by every caller keeps Resolve from changing the
 	// outcome between the verification and this record.
 	return "", s.db.MarkPublicationFileRemoved(ctx, pub.ID, f.Path, f.Outcome)
+}
+
+// libraryCopyHolds decides that the library file a publication file was
+// placed as still holds the manifest's bytes. The placement journal recorded
+// the object it published (digest, size, inode generation); a library file
+// that is still that object is proven by stat. Only a library file with no
+// such record (a historical or v1 import, a subtitle) or whose generation
+// moved is hashed, once.
+func (s *Service) libraryCopyHolds(ctx context.Context, f sqlite.PublicationFile, lib os.FileInfo) (bool, error) {
+	if !lib.Mode().IsRegular() || lib.Mode()&os.ModeSymlink != 0 || lib.Size() != f.Bytes {
+		return false, nil
+	}
+	p, ok, err := s.db.CommittedPlacementForTarget(ctx, f.LibraryPath, f.SHA256)
+	if err != nil {
+		return false, err
+	}
+	if ok && p.Size == f.Bytes && sameContentGeneration(p.PublishedFileGeneration, lib) {
+		return true, nil
+	}
+	digest, size, generation, err := fileDigestSnapshot(ctx, f.LibraryPath)
+	if err != nil {
+		return false, err
+	}
+	return size == f.Bytes && digest == f.SHA256 && generation == deliveryFileGeneration(lib), nil
 }
 
 // removeEmptyPublicationDirectory removes the publication's empty

@@ -24,14 +24,18 @@ func (s *Service) reuseCommittedImport(ctx context.Context, dl sqlite.Download, 
 		if p.ItemID != item.ID || p.CopyID != scope.CopyID || p.SourceTransfer != scope.Transfer || p.SourcePayloadGeneration != acceptedPublicationGeneration(ctx) || p.SourceFileGeneration != "" || p.ReplacementOperationID != scope.ReplacementOperationID || p.PublishedFileGeneration == "" || !within(scope.Dest, p.Target) {
 			continue
 		}
-		digest, size, identity, err := fileDigestSnapshot(ctx, p.Target)
+		// The prior target is its own published object (recorded generation,
+		// by stat), and the source still carries the recorded digest — the
+		// manifest's, unread, for a publication; hashed only without one.
+		info, err := os.Lstat(p.Target)
 		if err != nil {
 			return placement{}, false, fmt.Errorf("verify prior import target: %w", err)
 		}
-		if digest != p.SHA256 || size != p.Size || identity != p.PublishedFileGeneration {
+		if !placementPublishedByIdentity(p, info) {
 			return placement{}, false, sqlite.ErrPlacementGenerationChanged
 		}
-		sourceDigest, sourceSize, err := fileDigest(ctx, src)
+		identity := deliveryFileGeneration(info)
+		sourceDigest, sourceSize, err := placementSourceDigest(ctx, src)
 		if errors.Is(err, os.ErrNotExist) && ctx.Value(deliveryAttemptPlanKey{}) == true {
 			if expected, ok := ctx.Value(expectedSourceDigestsKey{}).(map[string]string); ok && expected[filepath.Clean(src)] == p.SHA256 {
 				sourceDigest = p.SHA256
@@ -46,7 +50,7 @@ func (s *Service) reuseCommittedImport(ctx context.Context, dl sqlite.Download, 
 			return placement{}, false, sqlite.ErrPlacementGenerationChanged
 		}
 		decision, release := s.lockStorageDecision(ctx)
-		info, err := os.Lstat(p.Target)
+		info, err = os.Lstat(p.Target)
 		if err == nil && deliveryFileGeneration(info) != identity {
 			err = sqlite.ErrPlacementGenerationChanged
 		}

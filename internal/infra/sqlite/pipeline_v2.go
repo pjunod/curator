@@ -634,6 +634,16 @@ func (d *DB) SetPublicationState(ctx context.Context, id int64, state, errMsg st
 	return err
 }
 
+// StartPublicationImport moves a publication to importing and starts its
+// stall deadline: six hours from the start of this import attempt, not from
+// discovery, so time spent waiting behind other imports never counts.
+func (d *DB) StartPublicationImport(ctx context.Context, id int64) error {
+	now := time.Now()
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='importing', error='', deadline_at=?, updated_at=? WHERE id=?`,
+		now.Add(DeadlinePublication).UnixMilli(), now.UnixMilli(), id)
+	return err
+}
+
 // FailStalledPublication ends a publication that sat in discovered/importing
 // past its deadline. It is Curator's own work, so nothing re-opens it.
 func (d *DB) FailStalledPublication(ctx context.Context, id int64, reason string) (bool, error) {

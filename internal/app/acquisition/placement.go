@@ -30,19 +30,6 @@ type recoveryPlacementKey struct{}
 type expectedSourceDigestsKey struct{}
 type reviewedSourceSnapshotsKey struct{}
 type acceptedPublicationGenerationKey struct{}
-type independentPlacementCopyKey struct{}
-
-// withIndependentPlacementCopy keeps accepted Runner publications immutable.
-// Hard-linking would change the source inode's ctime when the library link is
-// created, invalidating the manifest file generation on retry/cleanup.
-func withIndependentPlacementCopy(ctx context.Context) context.Context {
-	return context.WithValue(ctx, independentPlacementCopyKey{}, true)
-}
-
-func requiresIndependentPlacementCopy(ctx context.Context) bool {
-	copy, _ := ctx.Value(independentPlacementCopyKey{}).(bool)
-	return copy
-}
 
 // withAcceptedPublicationGeneration carries the Runner publication identity
 // separately from per-file stat generations and the Curator download key.
@@ -143,6 +130,149 @@ func rejectSymlinks(path string, missing bool) error {
 func fileDigest(ctx context.Context, path string) (string, int64, error) {
 	digest, size, _, err := fileDigestSnapshot(ctx, path)
 	return digest, size, err
+}
+
+// Hash once (contract section 3.4, field data 2026-11-11). A Runner
+// publication's manifest digest is the authority for its bytes: Curator does
+// not read the source to learn it, and proves the copy against it in the copy
+// stream itself. An import is then one read of the source and one write of
+// the stage; a same-filesystem placement is a link and reads nothing. Every
+// later decision (resume, reconciliation, cleanup) is made from the recorded
+// identity of the file, not by reading it again.
+
+// stageDigest is what the stage writer reports about the bytes it produced:
+// the SHA-256 of the stream it wrote, or that the stage is a link to the
+// source object (no bytes moved). It is scoped to one placeFile call.
+type stageDigestKey struct{}
+type stageDigest struct {
+	sum    string
+	linked bool
+}
+
+func withStageDigest(ctx context.Context) (context.Context, *stageDigest) {
+	d := &stageDigest{}
+	return context.WithValue(ctx, stageDigestKey{}, d), d
+}
+
+func recordStageDigest(ctx context.Context, sum string) {
+	if d, ok := ctx.Value(stageDigestKey{}).(*stageDigest); ok {
+		d.sum, d.linked = sum, false
+	}
+}
+
+func recordStageLinked(ctx context.Context) {
+	if d, ok := ctx.Value(stageDigestKey{}).(*stageDigest); ok {
+		d.sum, d.linked = "", true
+	}
+}
+
+// placementSourceDigest is the digest a placement records for its source:
+// the accepted manifest's, without reading the file, when the import carries
+// one; otherwise (another download client, a manual import) one read of the
+// source, because the placement journal is keyed by content.
+func placementSourceDigest(ctx context.Context, src string) (string, int64, error) {
+	if expected, ok := ctx.Value(expectedSourceDigestsKey{}).(map[string]string); ok {
+		if digest := expected[filepath.Clean(src)]; digest != "" {
+			if err := rejectSymlinks(src, false); err != nil {
+				return "", 0, err
+			}
+			info, err := os.Lstat(src)
+			if err != nil {
+				return "", 0, err
+			}
+			if !info.Mode().IsRegular() {
+				return "", 0, fmt.Errorf("not a regular file: %s", src)
+			}
+			return digest, info.Size(), nil
+		}
+	}
+	return fileDigest(ctx, src)
+}
+
+// crossVolumePublicationKey marks an import of a publication Runner copied
+// across volumes: its bytes are verified once against the manifest. A copy
+// does that in its stream; a same-filesystem link reads the file once.
+type crossVolumePublicationKey struct{}
+
+func withCrossVolumePublication(ctx context.Context) context.Context {
+	return context.WithValue(ctx, crossVolumePublicationKey{}, true)
+}
+
+func crossVolumePublication(ctx context.Context) bool {
+	v, _ := ctx.Value(crossVolumePublicationKey{}).(bool)
+	return v
+}
+
+// manifestConstrained reports whether src's digest came from an accepted
+// manifest (a mismatch is then the payload's, not the copy's).
+func manifestConstrained(ctx context.Context, src string) bool {
+	expected, ok := ctx.Value(expectedSourceDigestsKey{}).(map[string]string)
+	return ok && expected[filepath.Clean(src)] != ""
+}
+
+// sameContentGeneration reports that a recorded file generation still names
+// the same bytes: the same inode, size and mtime. ctime is not content — a
+// link, a chmod or an NFS silly-rename moves it — so it is not compared
+// (design principle 5: identity is digest + inode, size, mtime).
+func sameContentGeneration(recorded string, info os.FileInfo) bool {
+	if recorded == "" || info == nil {
+		return false
+	}
+	current := deliveryFileGeneration(info)
+	if current == "" {
+		return false
+	}
+	return contentPart(recorded) == contentPart(current)
+}
+
+// contentPart drops the trailing ctime field of a generation
+// ("ino:size:mtime_s:mtime_ns:ctime").
+func contentPart(generation string) string {
+	if i := strings.LastIndexByte(generation, ':'); i > 0 {
+		return generation[:i]
+	}
+	return generation
+}
+
+// placementPublishedByIdentity reports that info is this placement's own
+// published object, decided by the identity the journal recorded: the
+// published generation, or the staged object (inode and the content
+// generation recorded after the copy was proven; a rename moves only ctime).
+// Legacy journals that recorded neither are not matched here.
+func placementPublishedByIdentity(p sqlite.Placement, info os.FileInfo) bool {
+	if info == nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() != p.Size {
+		return false
+	}
+	if p.PublishedFileGeneration != "" {
+		return sameContentGeneration(p.PublishedFileGeneration, info)
+	}
+	return p.TemporaryObjectIdentity != "" && p.TemporaryFileGeneration != "" &&
+		deliveryFileStableIdentity(info) == p.TemporaryObjectIdentity && sameContentGeneration(p.TemporaryFileGeneration, info)
+}
+
+// committedPlacementIntact reports whether a committed placement's library
+// file is still the object it published, by stat. A journal from before
+// published generations were recorded is checked by its digest instead.
+// A missing target is (false, nil).
+func committedPlacementIntact(ctx context.Context, p sqlite.Placement) (bool, error) {
+	if p.PublishedFileGeneration == "" {
+		current, _, err := fileDigest(ctx, p.Target)
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return err == nil && current == p.SHA256, err
+	}
+	if err := rejectSymlinks(p.Target, true); err != nil {
+		return false, err
+	}
+	info, err := os.Lstat(p.Target)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return placementPublishedByIdentity(p, info), nil
 }
 
 func fileDigestSnapshot(ctx context.Context, path string) (string, int64, string, error) {
@@ -300,14 +430,9 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 	if err := validateReviewedSourceSnapshot(ctx, src); err != nil {
 		return 0, err
 	}
-	hash, size, err := fileDigest(ctx, src)
+	hash, size, err := placementSourceDigest(ctx, src)
 	if err != nil {
 		return 0, err
-	}
-	if expected, ok := ctx.Value(expectedSourceDigestsKey{}).(map[string]string); ok {
-		if digest, constrained := expected[filepath.Clean(src)]; constrained && digest != hash {
-			return 0, fmt.Errorf("source file no longer matches its accepted delivery manifest: %s", src)
-		}
 	}
 	if err := validateReviewedSourceSnapshot(ctx, src); err != nil {
 		return 0, err
@@ -322,13 +447,13 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 	// A committed ordinary attempt is idempotent while its library result
 	// exists. A deliberate reimport after removal gets a new durable generation.
 	for generation := 0; recovery == nil && err == nil && (p.State == "committed" || p.State == "cleaned"); generation++ {
-		current, _, e := fileDigest(ctx, p.Target)
+		intact, e := committedPlacementIntact(ctx, p)
 		var present int
 		dbErr := s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM media_files WHERE path=? AND media_item_id=?`, p.Target, p.ItemID).Scan(&present)
 		if dbErr != nil {
 			return 0, dbErr
 		}
-		if e == nil && current == p.SHA256 && present > 0 {
+		if e == nil && intact && present > 0 {
 			break
 		}
 		if e != nil && !errors.Is(e, os.ErrNotExist) {
@@ -565,15 +690,29 @@ func (s *Service) cleanupPlacement(ctx context.Context, p sqlite.Placement) erro
 		if expected == "" {
 			continue
 		}
-		got, _, err := fileDigest(ctx, path)
+		info, err := os.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		if got != expected {
-			return fmt.Errorf("cleanup identity mismatch: %s", path)
+		// The rollback link and the stage are this journal's own names; the
+		// identity it recorded for them says which object they are. Only an
+		// object it cannot name is hashed before it is removed.
+		known := info.Mode().IsRegular() && ((path == p.Temporary && p.TemporaryObjectIdentity != "" && deliveryFileStableIdentity(info) == p.TemporaryObjectIdentity) ||
+			(path == p.Backup && (sameContentGeneration(p.TargetAfterBackupGen, info) || sameContentGeneration(p.TargetFileGeneration, info))))
+		if !known {
+			got, _, err := fileDigest(ctx, path)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if got != expected {
+				return fmt.Errorf("cleanup identity mismatch: %s", path)
+			}
 		}
 		if err = os.Remove(path); err != nil {
 			return err
@@ -646,43 +785,63 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 		p.TargetParentIdentity = parentIdentity
 	}
 	if p.State != "prepared" {
-		digest, _, generation, err := fileDigestSnapshot(ctx, p.Target)
+		intact, err := committedPlacementIntact(ctx, *p)
 		if err != nil {
 			return err
 		}
-		if digest != p.SHA256 || (p.PublishedFileGeneration != "" && generation != p.PublishedFileGeneration) {
+		if !intact {
 			return fmt.Errorf("committed placement bytes or generation changed; a new placement is required")
+		}
+		info, err := os.Lstat(p.Target)
+		if err != nil {
+			return err
 		}
 		if err = syncPath(p.Target); err != nil {
 			return err
 		}
-		p.PublishedFileGeneration = generation
+		p.PublishedFileGeneration = deliveryFileGeneration(info)
 		return nil
 	}
 
-	// A crash after rename but before the DB transaction is reconciled only
-	// after a full digest proves that the target contains this intent's bytes.
-	if digest, _, generation, e := fileDigestSnapshot(ctx, p.Target); e == nil && digest == p.SHA256 {
-		if p.PublishedFileGeneration != "" && p.PublishedFileGeneration != generation {
+	// A crash after rename but before the DB transaction: the target is this
+	// intent's own staged object (its recorded inode and content generation),
+	// so its bytes are the ones the copy proved. Only a legacy journal with no
+	// recorded identity needs a digest to say so.
+	if info, e := os.Lstat(p.Target); e == nil {
+		generation := deliveryFileGeneration(info)
+		published := placementPublishedByIdentity(*p, info)
+		if !published && legacyIdentitySnapshot && info.Mode().IsRegular() {
+			digest, _, g, de := fileDigestSnapshot(ctx, p.Target)
+			if de != nil {
+				return de
+			}
+			published = digest == p.SHA256 && publishedPlacementMatchesIntent(*p, info, g, true)
+			generation = g
+		}
+		if published {
+			if e = syncPath(p.Target); e != nil {
+				return e
+			}
+			p.PublishedFileGeneration = generation
+			return s.db.UpdatePreparedPlacement(ctx, *p)
+		}
+		if p.PublishedFileGeneration != "" {
 			return fmt.Errorf("published placement generation changed")
 		}
-		info, statErr := os.Lstat(p.Target)
-		if statErr != nil {
-			return statErr
-		}
-		if !publishedPlacementMatchesIntent(*p, info, generation, legacyIdentitySnapshot) {
-			return fmt.Errorf("published target does not match this placement's recorded identity")
-		}
-		if e = syncPath(p.Target); e != nil {
-			return e
-		}
-		p.PublishedFileGeneration = generation
-		return s.db.UpdatePreparedPlacement(ctx, *p)
-	} else if e != nil && !errors.Is(e, os.ErrNotExist) {
+	} else if !errors.Is(e, os.ErrNotExist) {
 		return e
 	}
 
-	currentDigest, _, currentGeneration, targetErr := fileDigestSnapshot(ctx, p.Target)
+	// The target as the preview recorded it is proven by its generation; it
+	// is hashed only when that generation moved (or was never recorded).
+	var currentDigest, currentGeneration string
+	var targetErr error
+	if info, e := os.Lstat(p.Target); e == nil && info.Mode().IsRegular() && p.TargetFileGeneration != "" &&
+		(deliveryFileGeneration(info) == p.TargetFileGeneration || (p.TargetAfterBackupGen != "" && deliveryFileGeneration(info) == p.TargetAfterBackupGen)) {
+		currentDigest, currentGeneration = p.PreviousSHA256, deliveryFileGeneration(info)
+	} else {
+		currentDigest, _, currentGeneration, targetErr = fileDigestSnapshot(ctx, p.Target)
+	}
 	if targetErr != nil && !errors.Is(targetErr, os.ErrNotExist) {
 		return targetErr
 	}
@@ -715,30 +874,33 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 		return fmt.Errorf("reviewed placement target disappeared before publication")
 	}
 
-	if stagedDigest, _, stagedGeneration, e := fileDigestSnapshot(ctx, p.Temporary); e == nil {
-		if p.ImportEpoch != nil {
-			return fmt.Errorf("existing stage retained; explicit retry or custody review required: %s", p.Temporary)
+	// The stage is scratch (design principle 6: every state has an automatic
+	// exit). It is reused only when this journal recorded it as fully copied
+	// and proven — its inode and content generation — and is otherwise
+	// deleted and written again. The name is this placement's own
+	// (.monarr-stage-<id>, the id binding the import epoch), and the import
+	// that wrote it has returned: one import runs per download, and a
+	// restart ended the process that held it.
+	stageReady := false
+	if stagedInfo, e := os.Lstat(p.Temporary); e == nil {
+		stageReady = stagedInfo.Mode().IsRegular() && stagedInfo.Mode()&os.ModeSymlink == 0 && stagedInfo.Size() == p.Size &&
+			p.TemporaryObjectIdentity != "" && deliveryFileStableIdentity(stagedInfo) == p.TemporaryObjectIdentity &&
+			p.TemporaryFileGeneration != "" && sameContentGeneration(p.TemporaryFileGeneration, stagedInfo)
+		if stageReady {
+			p.TemporaryFileGeneration = deliveryFileGeneration(stagedInfo)
+		} else {
+			if err = discardStage(p.Temporary); err != nil {
+				return err
+			}
+			p.TemporaryFileGeneration, p.TemporaryObjectIdentity = "", ""
 		}
-		if stagedDigest != p.SHA256 {
-			return fmt.Errorf("staging identity mismatch; review %s", p.Temporary)
-		}
-		if p.ImportEpoch != nil && p.TemporaryObjectIdentity == "" {
-			return fmt.Errorf("unbound stage requires explicit custody review: %s", p.Temporary)
-		}
-		stagedInfo, statErr := os.Lstat(p.Temporary)
-		if statErr != nil {
-			return statErr
-		}
-		stagedObjectIdentity := deliveryFileStableIdentity(stagedInfo)
-		if p.TemporaryFileGeneration != "" && p.TemporaryFileGeneration != stagedGeneration {
-			return fmt.Errorf("staging generation changed; review %s", p.Temporary)
-		}
-		if p.TemporaryObjectIdentity != "" && p.TemporaryObjectIdentity != stagedObjectIdentity {
-			return fmt.Errorf("staging object changed; review %s", p.Temporary)
-		}
-		p.TemporaryFileGeneration = stagedGeneration
-		p.TemporaryObjectIdentity = stagedObjectIdentity
-	} else if errors.Is(e, os.ErrNotExist) {
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
+	if !stageReady {
+		// Nothing recorded about an earlier stage describes the one about to
+		// be written.
+		p.TemporaryFileGeneration = ""
 		progress := transfers.Progress(ctx)
 		if recovery, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok && recovery.Progress != nil {
 			previous := progress
@@ -752,9 +914,9 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 		if err = validateReviewedSourceSnapshot(ctx, p.Source); err != nil {
 			return err
 		}
-		stagingCtx := ctx
+		stagingCtx, written := withStageDigest(ctx)
 		if p.ImportEpoch != nil {
-			stagingCtx = context.WithValue(ctx, namedPlacementStageKey{}, namedPlacementStage{source: p.Source, target: p.Temporary, write: func(c context.Context, on func(int64, int64)) error { return s.stageImportPlacement(c, p, on) }})
+			stagingCtx = context.WithValue(stagingCtx, namedPlacementStageKey{}, namedPlacementStage{source: p.Source, target: p.Temporary, write: func(c context.Context, on func(int64, int64)) error { return s.stageImportPlacement(c, p, on) }})
 		}
 		err = placeFile(stagingCtx, p.Source, p.Temporary, progress)
 		if err != nil {
@@ -763,26 +925,53 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 		if err = validateReviewedSourceSnapshot(ctx, p.Source); err != nil {
 			return err
 		}
-		stagedDigest, _, p.TemporaryFileGeneration, err = fileDigestSnapshot(ctx, p.Temporary)
-		if err != nil {
-			return err
-		}
-		if stagedDigest != p.SHA256 {
-			return fmt.Errorf("copy digest mismatch")
-		}
 		stagedInfo, statErr := os.Lstat(p.Temporary)
 		if statErr != nil {
 			return statErr
 		}
+		// The bytes were proven as they were written: the stream's digest
+		// against the recorded one (the manifest's, for a publication). A
+		// link is the source object itself.
+		switch {
+		case written.linked:
+			if stagedInfo.Size() != p.Size {
+				_ = discardStage(p.Temporary)
+				return fmt.Errorf("linked stage size %d differs from the recorded %d: %s", stagedInfo.Size(), p.Size, p.Source)
+			}
+			if crossVolumePublication(ctx) && manifestConstrained(ctx, p.Source) {
+				sum, _, e := fileDigest(ctx, p.Temporary)
+				if e != nil {
+					_ = discardStage(p.Temporary)
+					return e
+				}
+				if sum != p.SHA256 {
+					_ = discardStage(p.Temporary)
+					s.abandonUnpublishedPlacement(ctx, p.ID)
+					return fmt.Errorf("source file no longer matches its accepted delivery manifest: %s", p.Source)
+				}
+			}
+		case written.sum == "":
+			_ = discardStage(p.Temporary)
+			return fmt.Errorf("the stage was written without a digest: %s", p.Temporary)
+		case written.sum != p.SHA256:
+			_ = discardStage(p.Temporary)
+			s.abandonUnpublishedPlacement(ctx, p.ID)
+			if manifestConstrained(ctx, p.Source) {
+				return fmt.Errorf("source file no longer matches its accepted delivery manifest: %s", p.Source)
+			}
+			return fmt.Errorf("copy digest mismatch: %s", p.Source)
+		}
+		p.TemporaryFileGeneration = deliveryFileGeneration(stagedInfo)
 		namedIdentity := deliveryFileStableIdentity(stagedInfo)
 		if p.ImportEpoch != nil && (p.TemporaryObjectIdentity == "" || p.TemporaryObjectIdentity != namedIdentity) {
-			return fmt.Errorf("stage pathname no longer identifies the opened object; custody review required")
+			// Something replaced the stage under its name; it is scratch, and
+			// the next attempt writes it again.
+			_ = discardStage(p.Temporary)
+			return fmt.Errorf("stage pathname no longer identifies the opened object; it is discarded and written again on retry")
 		}
 		if p.ImportEpoch == nil {
 			p.TemporaryObjectIdentity = namedIdentity
 		}
-	} else {
-		return e
 	}
 	if p.TemporaryFileGeneration == "" || p.TemporaryObjectIdentity == "" {
 		return fmt.Errorf("staged file identity is unavailable")
@@ -797,7 +986,15 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 	}
 
 	if p.TargetObserved {
-		backupDigest, _, backupGeneration, backupErr := fileDigestSnapshot(ctx, p.Backup)
+		// The rollback link recorded its generation when it was made; an
+		// unchanged one is that link, unread.
+		var backupDigest, backupGeneration string
+		var backupErr error
+		if info, e := os.Lstat(p.Backup); e == nil && info.Mode().IsRegular() && p.TargetAfterBackupGen != "" && deliveryFileGeneration(info) == p.TargetAfterBackupGen {
+			backupDigest, backupGeneration = p.PreviousSHA256, deliveryFileGeneration(info)
+		} else {
+			backupDigest, _, backupGeneration, backupErr = fileDigestSnapshot(ctx, p.Backup)
+		}
 		if backupErr != nil && !errors.Is(backupErr, os.ErrNotExist) {
 			return backupErr
 		}
@@ -832,6 +1029,28 @@ func (s *Service) preparePlacementPublication(ctx context.Context, p *sqlite.Pla
 		}
 	}
 	return s.db.UpdatePreparedPlacement(ctx, *p)
+}
+
+// abandonUnpublishedPlacement closes the journal of a placement whose bytes
+// were refused before anything was published (the copy did not match the
+// recorded digest): nothing of it is in the library, so it is rolled back
+// rather than left prepared for reconciliation to revisit.
+func (s *Service) abandonUnpublishedPlacement(ctx context.Context, id string) {
+	_, _ = s.db.W.ExecContext(context.WithoutCancel(ctx), `UPDATE import_placements SET state='rolled_back',updated_at=? WHERE id=? AND state='prepared'`, time.Now().UnixMilli(), id)
+}
+
+// discardStage removes a placement's scratch stage and makes the removal
+// durable. A stage that is already gone is fine.
+func discardStage(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if dir := filepath.Dir(path); dir != "" {
+		if _, err := os.Stat(dir); err == nil {
+			return syncPath(dir)
+		}
+	}
+	return nil
 }
 
 // Legacy journals predate the per-object publication identity fields. They may
@@ -979,117 +1198,141 @@ func syncOpenedDirectory(root *os.Root) error {
 	defer func() { _ = dir.Close() }()
 	return dir.Sync()
 }
+
+// reconcilePlacements finishes the placement journal a previous process left
+// behind. It runs in the background after the workers start, so imports begin
+// at once: each row is taken under its own title's import target (the same
+// lock an import of that title holds), never the whole library, and decided by
+// stat against the identity the journal recorded. A row whose target is not
+// provably its published object is left prepared; the title's next import
+// writes the stage again and publishes it (redoing the copy is the answer to
+// any doubt).
 func (s *Service) reconcilePlacements(ctx context.Context) {
 	ctx, releaseWork, admissionErr := ports.EnterWork(ctx, s.admission, "reconcilePlacements")
 	if admissionErr != nil {
 		return
 	}
 	defer releaseWork()
-	ctx, releaseTargets, err := s.lockAllImportTargets(ctx, 0)
-	if err != nil {
-		s.log.Error("placement reconciliation could not take the library", "err", err)
-		return
-	}
-	defer releaseTargets()
 	rows, err := s.db.PendingPlacements(ctx)
 	if err != nil {
 		s.log.Error("placement reconciliation unavailable", "err", err)
 		return
 	}
-	for _, p := range rows {
+	for _, row := range rows {
+		if ctx.Err() != nil {
+			return
+		}
 		// Rotate incomplete work so one damaged placement cannot starve later rows.
-		_, _ = s.db.W.ExecContext(ctx, `UPDATE import_placements SET updated_at=? WHERE id=?`, time.Now().UnixMilli(), p.ID)
-		if p.State == "committed" {
-			if e := s.cleanupPlacement(ctx, p); e != nil {
-				s.log.Warn("placement cleanup pending", "id", p.ID, "err", e)
-			}
-			continue
+		_, _ = s.db.W.ExecContext(ctx, `UPDATE import_placements SET updated_at=? WHERE id=?`, time.Now().UnixMilli(), row.ID)
+		targetCtx, releaseTarget := s.lockImportTarget(ctx, row.ItemID)
+		// Re-read under the lock: an import of this title may have finished
+		// (or moved) the row while this pass waited for it.
+		p, e := s.db.GetPlacement(targetCtx, row.ID)
+		if e == nil && (p.State == "prepared" || p.State == "committed") {
+			s.reconcilePlacement(targetCtx, p)
 		}
-		var recovery RecoveryImport
-		var recoveryObservation string
-		if p.RecoveryImport != "" {
-			r, e := s.RecoveryImport(ctx, p.RecoveryImport)
-			if e != nil {
-				continue
-			}
-			recovery = r
-			if r.State == "cancel_pending" || r.State == "cancelled" {
-				if e = s.rollbackPlacement(ctx, p); e != nil {
-					s.log.Warn("cancelled placement needs reconciliation", "id", p.ID, "err", e)
-				}
-				continue
-			}
-			recoveryObservation, e = s.recoveryFinalObservation(ctx, r)
-			if e != nil {
-				continue
-			}
-			if e = s.validateRecoveryTarget(ctx, r); e != nil {
-				continue
-			}
-		}
-		// Reconcile only already published bytes. An old unplaced intention cannot
-		// replace a newer library file merely because the daemon restarted.
-		got, _, generation, e := fileDigestSnapshot(ctx, p.Target)
-		if e != nil || got != p.SHA256 {
-			continue
-		}
-		info, statErr := os.Lstat(p.Target)
-		if statErr != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() ||
-			!publishedPlacementMatchesIntent(p, info, generation, legacyPlacementIdentitySnapshot(p)) {
-			continue
-		}
-		if e = syncPath(p.Target); e != nil {
-			continue
-		}
-		if p.PublishedFileGeneration == "" {
-			p.PublishedFileGeneration = generation
-			storage, parentIdentity, identityErr := placementParentIdentity(p.Target)
-			if identityErr != nil {
-				continue
-			}
-			if p.StorageIdentity == "" {
-				p.StorageIdentity = storage
-			}
-			if p.StorageRoot == "" {
-				p.StorageRoot = filepath.Dir(p.Target)
-			}
-			if p.StorageRootIdentity == "" {
-				p.StorageRootIdentity = parentIdentity
-			}
-			if p.TargetParentIdentity == "" {
-				p.TargetParentIdentity = parentIdentity
-			}
-			if e = s.db.UpdatePreparedPlacement(ctx, p); e != nil {
-				continue
-			}
-		}
-		decisionCtx, release := s.lockStorageDecision(ctx)
-		if p.RecoveryImport != "" {
-			currentObservation, observeErr := s.recoveryFinalObservation(decisionCtx, recovery)
-			if observeErr != nil || currentObservation != recoveryObservation {
-				release()
-				continue
-			}
-		}
-		current, statErr := os.Lstat(p.Target)
-		storage, parentIdentity, identityErr := placementParentIdentity(p.Target)
-		if statErr != nil || identityErr != nil || !current.Mode().IsRegular() || current.Mode()&os.ModeSymlink != 0 ||
-			deliveryFileGeneration(current) != p.PublishedFileGeneration || storage != p.StorageIdentity ||
-			parentIdentity != p.TargetParentIdentity || parentIdentity != p.StorageRootIdentity {
-			release()
-			continue
-		}
-		if e = syncPublicationDirectory(p.Target); e != nil {
-			release()
-			continue
-		}
-		_, e = s.db.CommitPlacement(decisionCtx, p)
-		release()
-		if e != nil {
-			s.log.Error("placement commit remains pending", "id", p.ID, "err", e)
-		} else if e = s.cleanupPlacement(ctx, p); e != nil {
+		releaseTarget()
+	}
+}
+
+// reconcilePlacement settles one journal row; the caller holds its title.
+func (s *Service) reconcilePlacement(ctx context.Context, p sqlite.Placement) {
+	if p.State == "committed" {
+		if e := s.cleanupPlacement(ctx, p); e != nil {
 			s.log.Warn("placement cleanup pending", "id", p.ID, "err", e)
 		}
+		return
+	}
+	var recovery RecoveryImport
+	var recoveryObservation string
+	if p.RecoveryImport != "" {
+		r, e := s.RecoveryImport(ctx, p.RecoveryImport)
+		if e != nil {
+			return
+		}
+		recovery = r
+		if r.State == "cancel_pending" || r.State == "cancelled" {
+			if e = s.rollbackPlacement(ctx, p); e != nil {
+				s.log.Warn("cancelled placement needs reconciliation", "id", p.ID, "err", e)
+			}
+			return
+		}
+		recoveryObservation, e = s.recoveryFinalObservation(ctx, r)
+		if e != nil {
+			return
+		}
+		if e = s.validateRecoveryTarget(ctx, r); e != nil {
+			return
+		}
+	}
+	// Reconcile only already published bytes. An old unplaced intention cannot
+	// replace a newer library file merely because the daemon restarted.
+	info, statErr := os.Lstat(p.Target)
+	if statErr != nil {
+		return
+	}
+	generation := deliveryFileGeneration(info)
+	if !placementPublishedByIdentity(p, info) {
+		if !legacyPlacementIdentitySnapshot(p) || !info.Mode().IsRegular() {
+			return
+		}
+		// A journal from before stage identities were recorded can only be
+		// matched by its digest.
+		got, _, g, e := fileDigestSnapshot(ctx, p.Target)
+		if e != nil || got != p.SHA256 || !publishedPlacementMatchesIntent(p, info, g, true) {
+			return
+		}
+		generation = g
+	}
+	if e := syncPath(p.Target); e != nil {
+		return
+	}
+	p.PublishedFileGeneration = generation
+	storage, parentIdentity, identityErr := placementParentIdentity(p.Target)
+	if identityErr != nil {
+		return
+	}
+	if p.StorageIdentity == "" {
+		p.StorageIdentity = storage
+	}
+	if p.StorageRoot == "" {
+		p.StorageRoot = filepath.Dir(p.Target)
+	}
+	if p.StorageRootIdentity == "" {
+		p.StorageRootIdentity = parentIdentity
+	}
+	if p.TargetParentIdentity == "" {
+		p.TargetParentIdentity = parentIdentity
+	}
+	if e := s.db.UpdatePreparedPlacement(ctx, p); e != nil {
+		return
+	}
+	decisionCtx, release := s.lockStorageDecision(ctx)
+	if p.RecoveryImport != "" {
+		currentObservation, observeErr := s.recoveryFinalObservation(decisionCtx, recovery)
+		if observeErr != nil || currentObservation != recoveryObservation {
+			release()
+			return
+		}
+	}
+	current, statErr := os.Lstat(p.Target)
+	storage, parentIdentity, identityErr = placementParentIdentity(p.Target)
+	if statErr != nil || identityErr != nil || !current.Mode().IsRegular() || current.Mode()&os.ModeSymlink != 0 ||
+		deliveryFileGeneration(current) != p.PublishedFileGeneration || storage != p.StorageIdentity ||
+		parentIdentity != p.TargetParentIdentity || parentIdentity != p.StorageRootIdentity {
+		release()
+		return
+	}
+	if e := syncPublicationDirectory(p.Target); e != nil {
+		release()
+		return
+	}
+	_, e := s.db.CommitPlacement(decisionCtx, p)
+	release()
+	if e != nil {
+		s.log.Error("placement commit remains pending", "id", p.ID, "err", e)
+	} else if e = s.cleanupPlacement(ctx, p); e != nil {
+		s.log.Warn("placement cleanup pending", "id", p.ID, "err", e)
 	}
 }
 

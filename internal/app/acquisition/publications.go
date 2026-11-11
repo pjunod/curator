@@ -102,23 +102,12 @@ func verifyManifestShape(m ports.Manifest, generation string) error {
 	return nil
 }
 
-// verifyCrossVolumeCopy re-hashes a copied (cross-volume) publication once,
-// at import, against the manifest (contract section 2.5).
-func verifyCrossVolumeCopy(ctx context.Context, root string, m ports.Manifest) error {
-	for _, f := range m.Files {
-		if f.SHA256 == "" {
-			continue
-		}
-		digest, size, err := fileDigest(ctx, filepath.Join(root, filepath.FromSlash(f.Path)))
-		if err != nil {
-			return err
-		}
-		if size != f.Bytes || digest != f.SHA256 {
-			return fmt.Errorf("copied file %s does not match its manifest (size %d/%d)", f.Path, size, f.Bytes)
-		}
-	}
-	return nil
-}
+// A copied (cross-volume) publication is verified against its manifest once,
+// at import (contract section 2.5), and only the files Curator places: the
+// placement copy hashes its stream against the manifest digest, and a
+// same-filesystem link of a cross-volume file is hashed once
+// (withCrossVolumePublication). A file Curator does not place is discarded or
+// left unresolved without being read.
 
 // enqueuePublicationImport offers one publication to the import workers.
 func (s *Service) enqueuePublicationImport(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, pubID int64) bool {
@@ -198,12 +187,6 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	if err := s.db.SeedPublicationFiles(ctx, pub.ID, files); err != nil {
 		return err
 	}
-	if pub.CrossVolume || m.CrossVolume {
-		if err := verifyCrossVolumeCopy(ctx, pub.Path, m); err != nil {
-			s.failPublication(ctx, &dl, pub, err.Error())
-			return err
-		}
-	}
 	// ManualApproval is honoured on this path (contract section 6): the row
 	// waits for a person, and approving it imports this publication.
 	if cfg.ManualApproval && !approved {
@@ -219,13 +202,14 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	if pub.Kind == "completed" {
 		s.startRunnerDoneTiming(ctx, dl)
 	}
-	if err := s.db.SetPublicationState(ctx, pub.ID, "importing", ""); err != nil {
+	if err := s.db.StartPublicationImport(ctx, pub.ID); err != nil {
 		return err
 	}
 	// Any error that leaves the publication in importing (a persistence
 	// outage after files were placed, say) puts it back to discovered with
 	// the error, so the poll offers it again; placements already committed
-	// are reused, and its six-hour deadline is what ends it.
+	// are reused, and its six-hour deadline (from this import's start) is
+	// what ends it.
 	defer func() {
 		if err == nil {
 			return
@@ -290,6 +274,18 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	// Placements record which Runner generation they came from, so a resumed
 	// import reuses only its own publication's committed placements.
 	ictx = withAcceptedPublicationGeneration(ictx, pub.Generation)
+	// Hash once: the manifest digest is the authority for every file's bytes;
+	// the placement proves its copy against it as it writes.
+	digests := make(map[string]string, len(m.Files))
+	for abs, f := range byAbs {
+		if f.SHA256 != "" {
+			digests[abs] = f.SHA256
+		}
+	}
+	ictx = withExpectedSourceDigests(ictx, digests)
+	if pub.CrossVolume || m.CrossVolume {
+		ictx = withCrossVolumePublication(ictx)
+	}
 	prec := &precedence{dl: dl, decided: map[string]precedenceVerdict{}}
 	if !manual {
 		ictx = context.WithValue(ictx, precedenceKey{}, prec)

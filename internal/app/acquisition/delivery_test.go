@@ -105,11 +105,28 @@ func TestReleaseSampleRecognition(t *testing.T) {
 	}
 }
 
+// A placement copy proves its stream against the manifest digest: bytes that
+// changed after Runner's manifest are refused, nothing reaches the library,
+// and the journal is closed. (A same-filesystem placement is a hard link of
+// Runner's own object and trusts the manifest; a cross-volume one is hashed
+// once, TestCrossVolumeCopyIsVerified.) The library is put on another
+// filesystem so the placement copies.
 func TestPlacementRejectsSourceBytesThatChangedAfterManifestVerification(t *testing.T) {
 	svc, db, itemID := setup(t, nil, &fakeClient{})
 	ctx := context.Background()
+	other, err := os.MkdirTemp("/dev/shm", "monarr-library-")
+	if err != nil {
+		t.Skip("no /dev/shm to put the library on another filesystem")
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(other) })
+	if _, err := db.W.ExecContext(ctx, `UPDATE media_items SET path=? WHERE id=?`, filepath.Join(other, "Test Show (2020)"), itemID); err != nil {
+		t.Fatal(err)
+	}
 	item, err := db.GetMediaItemFull(ctx, itemID)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(item.Path, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	src := filepath.Join(t.TempDir(), "accepted.mkv")

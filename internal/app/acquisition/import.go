@@ -2,7 +2,9 @@ package acquisition
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -1422,7 +1424,8 @@ func placeContext(ctx context.Context, src, dest string, onBytes func(done, tota
 	// reported the new release at the old file's size and the user re-grabbed
 	// the same movie over and over watching nothing change.
 	if existing, err := os.Stat(dest); err == nil {
-		if srcInfo, serr := os.Stat(src); serr == nil && os.SameFile(existing, srcInfo) && !requiresIndependentPlacementCopy(ctx) {
+		if srcInfo, serr := os.Stat(src); serr == nil && os.SameFile(existing, srcInfo) {
+			recordStageLinked(ctx)
 			return applyMode(dest, fileMode()) // genuinely the same file
 		}
 		// Fall through and replace it. The write below goes to a temp file and
@@ -1464,12 +1467,12 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 	// between is smaller than the one a fixed name leaves open forever.
 	if reserved, err := os.CreateTemp(dir, ".monarr-link-*"); err == nil {
 		_, recoveryCopy := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext)
-		independentCopy := requiresIndependentPlacementCopy(ctx)
 		link := reserved.Name()
 		_ = reserved.Close()
 		_ = os.Remove(link)
-		if !recoveryCopy && !independentCopy {
+		if !recoveryCopy {
 			if err := os.Link(src, link); err == nil {
+				recordStageLinked(ctx)
 				return link, nil
 			}
 		}
@@ -1496,7 +1499,10 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 		total = fi.Size()
 	}
 	reader := &contextReader{ctx: ctx, r: &countingReader{r: in, total: total, on: onBytes}}
-	if _, err := io.Copy(out, reader); err != nil {
+	// The copy is hashed as it is written: that digest is the proof of the
+	// bytes (no read-back pass).
+	digest := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(out, digest), reader); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return "", err
@@ -1510,6 +1516,7 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 		_ = os.Remove(tmp)
 		return "", err
 	}
+	recordStageDigest(ctx, hex.EncodeToString(digest.Sum(nil)))
 	return tmp, nil
 }
 

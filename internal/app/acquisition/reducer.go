@@ -962,7 +962,7 @@ func (s *Service) sweepDeadlines(ctx context.Context, cfg ports.ClientConfig, fe
 		if err != nil || dl.ClientID != cfg.ID {
 			continue
 		}
-		reason := "stalled: not imported within 6 h of discovery"
+		reason := "stalled: not imported within 6 h of its import starting"
 		if p.Error != "" {
 			reason += " (" + p.Error + ")"
 		}
