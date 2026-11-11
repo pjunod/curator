@@ -19,10 +19,16 @@ jobs:
     timeout-minutes: 40
     outputs:
       tested-runner: ${{ runner.environment == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]' }}
+      shard-count: ${{ strategy.job-total }}
+    # Eight shards only pay off on GitHub-hosted runners, where each is its
+    # own VM. The lab has one runner per repository, so shards there queue
+    # behind each other and each repeats the setup, the test listing and
+    # every test binary's start-up; one job lets `go test` spread all
+    # packages over the machine's cores at once.
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '[0, 1, 2, 3, 4, 5, 6, 7]' || '[0]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,7 +44,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Run exact test partition with race and coverage
-        run: python3 scripts/ci-go-shard.py run --count 8 --index "${{ matrix.shard }}" --root "go-coverage-${{ matrix.shard }}"
+        run: python3 scripts/ci-go-shard.py run --count "${{ strategy.job-total }}" --index "${{ matrix.shard }}" --root "go-coverage-${{ matrix.shard }}"
       - name: Preserve shard evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -99,10 +105,12 @@ jobs:
         run: go vet ./...
 
       - name: go test (race, coverage; includes architecture rules)
+        env:
+          SHARD_COUNT: ${{ needs.go-shards.outputs.shard-count }}
         run: |
           # Verify exact test execution and source/profile provenance for ALL
           # shards before measuring the unchanged coverage population/floor.
-          python3 scripts/ci-go-shard.py merge --count 8 --root go-shards --output coverage.out
+          python3 scripts/ci-go-shard.py merge --count "$SHARD_COUNT" --root go-shards --output coverage.out
           pct="$(sh scripts/coverage-badge.sh coverage.out coverage.svg coverage-hand.out)"
           echo "COVERAGE_PCT=$pct" >> "$GITHUB_ENV"
           {
