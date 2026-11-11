@@ -58,7 +58,7 @@ type publicationVideo struct {
 // holds the paths an earlier attempt already resolved (placed or discarded);
 // they are left as they are. An error is environmental (the library could not
 // take a file): nothing is decided and the import is tried again.
-func (s *Service) decidePublicationSidecars(ctx context.Context, item domain.MediaItem, pub sqlite.Publication, m ports.Manifest, placed map[string]string, done map[string]bool) (map[string]sidecarDecision, error) {
+func (s *Service) decidePublicationSidecars(ctx context.Context, item domain.MediaItem, pub sqlite.Publication, m ports.Manifest, placed map[string]string, done, fresh map[string]bool) (map[string]sidecarDecision, error) {
 	out := map[string]sidecarDecision{}
 	var videos []publicationVideo
 	var subs []ports.ManifestFile
@@ -81,11 +81,19 @@ func (s *Service) decidePublicationSidecars(ctx context.Context, item domain.Med
 			videos = append(videos, publicationVideo{rel: f.Path, library: placed[f.Path]})
 		}
 	}
+	ctx, release := s.lockImportTarget(ctx, item.ID)
+	defer release()
+	// A video this import placed over an earlier one at the same name takes
+	// over its subtitles' names: the subtitles Curator placed for the earlier
+	// file (by their placement record) go first.
+	for _, v := range videos {
+		if fresh[v.rel] && v.library != "" {
+			s.removePlacedSubtitles(ctx, v.library, pub.ID)
+		}
+	}
 	if len(subs) == 0 {
 		return out, nil
 	}
-	ctx, release := s.lockImportTarget(ctx, item.ID)
-	defer release()
 	used := map[string]bool{} // library base names taken by this import
 	for _, unit := range subtitleUnits(subs) {
 		video, ok := subtitleVideo(unit[0].Path, videos)
@@ -333,4 +341,96 @@ func placeSubtitle(ctx context.Context, src, dest, want string) error {
 		return err
 	}
 	return syncPath(filepath.Dir(dest))
+}
+
+// removePlacedSubtitles deletes the subtitles Curator placed beside a library
+// video (its "<stem>." names), when that video is replaced. Only files with a
+// placement record are candidates, and only while they still hold the bytes
+// Curator placed: a subtitle someone else put there, or one changed since,
+// stays. except skips one publication's own subtitles (a re-run of the same
+// import).
+func (s *Service) removePlacedSubtitles(ctx context.Context, video string, except int64) {
+	prefix := strings.TrimSuffix(video, filepath.Ext(video)) + "."
+	rows, err := s.db.PlacedLibraryFilesWithPrefix(ctx, prefix)
+	if err != nil {
+		s.log.Warn("import: placed subtitles of a replaced video could not be listed", "video", video, "err", err)
+		return
+	}
+	for _, f := range rows {
+		if f.PublicationID == except || !isSubtitleFile(f.LibraryPath) || filepath.Dir(f.LibraryPath) != filepath.Dir(video) {
+			continue
+		}
+		info, err := os.Lstat(f.LibraryPath)
+		if err != nil || !info.Mode().IsRegular() || info.Size() != f.Bytes {
+			continue
+		}
+		if digest, _, err := fileDigest(ctx, f.LibraryPath); err != nil || digest != f.PlacedSHA256 {
+			continue
+		}
+		if err := os.Remove(f.LibraryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.log.Warn("import: could not remove a replaced video's subtitle", "path", f.LibraryPath, "err", err)
+			continue
+		}
+		_ = syncPath(filepath.Dir(f.LibraryPath))
+		s.log.Info("import: removed the subtitle of a replaced video", "path", f.LibraryPath, "video", video)
+	}
+}
+
+// redecideLeftoverSidecars decides the sidecars an earlier build left for
+// Resolve in a publication that already imported (migration 0076 made them
+// pending): subtitles go beside the video the publication placed, the rest
+// are discarded. The placed video is not touched. An error leaves them
+// pending for the next pass.
+func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publication) error {
+	if pub.State != "imported" && pub.State != "notified" || pub.DownloadID == 0 {
+		return nil
+	}
+	rows, err := s.db.ListPublicationFiles(ctx, pub.ID)
+	if err != nil {
+		return err
+	}
+	pending := map[string]sqlite.PublicationFile{}
+	done, placed := map[string]bool{}, map[string]string{}
+	var m ports.Manifest
+	for _, r := range rows {
+		m.Files = append(m.Files, ports.ManifestFile{Path: r.Path, Bytes: r.Bytes, SHA256: r.SHA256})
+		switch r.Outcome {
+		case "pending":
+			pending[r.Path] = r
+		case "placed":
+			placed[r.Path] = r.LibraryPath
+			done[r.Path] = true
+		default:
+			done[r.Path] = true
+		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	dl, err := s.db.GetDownload(ctx, pub.DownloadID)
+	if err != nil {
+		return err
+	}
+	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
+	if err != nil {
+		return err
+	}
+	decisions, err := s.decidePublicationSidecars(ctx, item, pub, m, placed, done, nil)
+	if err != nil {
+		return err
+	}
+	for path, d := range decisions {
+		f, ok := pending[path]
+		if !ok {
+			continue
+		}
+		f.Outcome, f.DiscardReason, f.Reason, f.LibraryPath = d.outcome, d.discardReason, d.reason, d.libraryPath
+		if d.outcome == "placed" {
+			f.PlacedSHA256 = f.SHA256
+		}
+		if err := s.db.SetPublicationFileOutcome(ctx, f); err != nil {
+			return err
+		}
+	}
+	return nil
 }

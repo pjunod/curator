@@ -170,3 +170,109 @@ func TestSubtitleBaseNameReadsLanguageFromNameThenFolder(t *testing.T) {
 		}
 	}
 }
+
+// An upgrade that replaces a video takes the subtitles Curator placed for it
+// (by their placement record) with it, and places the new release's own; a
+// subtitle Curator did not place stays.
+func TestUpgradeReplacesThePlacedSubtitlesOfTheOldVideo(t *testing.T) {
+	f := setupV2(t, nil)
+	const oldRelease = "Test.Show.S01E01.720p.HDTV.x264-OLD"
+	first := f.grab(1, oldRelease)
+	_, files := f.importPublication(first, "Test.Show.S01E01.job-701.runner-old", map[string]string{
+		oldRelease + ".mkv": "old video", oldRelease + ".en.srt": "old english"})
+	oldStem := libraryStem(t, files[oldRelease+".mkv"])
+	wantFile(t, oldStem+".en.srt", "old english")
+	foreign := oldStem + ".fr.srt" // put there by someone else
+	if err := os.WriteFile(foreign, []byte("not curator's"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	second := f.grab(1, epOne)
+	_, files = f.importPublication(second, "Test.Show.S01E01.job-702.runner-new", map[string]string{
+		epOne + ".mkv": "new video", "Subs/2_English.srt": "new english"})
+	if f.row(second.ID).State != "imported" {
+		t.Fatalf("upgrade row = %s (%s)", f.row(second.ID).State, f.row(second.ID).Error)
+	}
+	newStem := libraryStem(t, files[epOne+".mkv"])
+	if newStem == oldStem {
+		t.Fatal("fixture: the upgrade landed at the old name")
+	}
+	if exists(oldStem + ".mkv") {
+		t.Fatal("the old video was not replaced")
+	}
+	if exists(oldStem + ".en.srt") {
+		t.Fatal("the replaced video's Curator-placed subtitle was left behind")
+	}
+	wantFile(t, foreign, "not curator's")
+	wantFile(t, newStem+".en.srt", "new english")
+}
+
+// An upgrade that lands at the same name as the old video replaces the old
+// subtitles Curator placed under that name, including languages the new
+// release does not carry.
+func TestInPlaceReplacementRetiresTheOldPlacedSubtitles(t *testing.T) {
+	f := setupV2(t, nil)
+	first := f.grab(1, epOne)
+	_, files := f.importPublication(first, "Test.Show.S01E01.job-703.runner-a", map[string]string{
+		epOne + ".mkv": "video", epOne + ".de.srt": "german"})
+	stem := libraryStem(t, files[epOne+".mkv"])
+	wantFile(t, stem+".de.srt", "german")
+	// The decision that the new placement replaced the old file at this name
+	// is the placement's; here the subtitle step sees a video it placed now.
+	p, _, _ := f.db.PublicationByPath(f.ctx, filepath.Join(f.root, "Test.Show.S01E01.job-703.runner-a"))
+	item, err := f.db.GetMediaItemFull(f.ctx, f.item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := sqlite.Publication{ID: p.ID + 1000, Path: t.TempDir()}
+	if _, err := f.svc.decidePublicationSidecars(f.ctx, item, other, ports.Manifest{Files: []ports.ManifestFile{{Path: epOne + ".mkv"}}},
+		map[string]string{epOne + ".mkv": stem + ".mkv"}, nil, map[string]bool{epOne + ".mkv": true}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(stem + ".de.srt") {
+		t.Fatal("the old release's subtitle survived an in-place replacement")
+	}
+}
+
+// Sidecars an earlier build left for Resolve in an already imported
+// publication (migration 0076 makes them pending) are decided by the cleanup
+// pass: the subtitle goes beside the video already placed, the rest is
+// discarded, the placed video is untouched, and the directory is retired.
+func TestLeftoverSidecarsOfAnImportedPublicationAreDecided(t *testing.T) {
+	f := setupV2(t, nil)
+	f.holdCleanup()
+	dl := f.grab(1, epOne)
+	p, files := f.importPublication(dl, "Test.Show.S01E01.job-704.runner-left", map[string]string{
+		epOne + ".mkv": "video", "Subs/2_English.srt": "english", epOne + ".nfo": "nfo"})
+	stem := libraryStem(t, files[epOne+".mkv"])
+	// What an earlier build recorded: both sidecars unresolved, nothing placed.
+	if err := os.Remove(stem + ".en.srt"); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"Subs/2_English.srt", epOne + ".nfo"} {
+		if _, err := f.db.W.ExecContext(f.ctx, `UPDATE publication_files SET outcome='pending', discard_reason='', library_path='', placed_sha256='', reason='' WHERE publication_id=? AND path=?`, p.ID, rel); err != nil {
+			t.Fatal(err)
+		}
+	}
+	video := files[epOne+".mkv"]
+	before, err := os.Stat(video.LibraryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sweep()
+	p, files = f.publicationFiles(p.Path)
+	if got := files["Subs/2_English.srt"]; got.Outcome != "placed" || got.LibraryPath != stem+".en.srt" {
+		t.Fatalf("leftover subtitle = %+v, want placed beside the video", got)
+	}
+	if got := files[epOne+".nfo"]; got.Outcome != "discarded" || got.DiscardReason != "rejected" {
+		t.Fatalf("leftover nfo = %+v, want discarded", got)
+	}
+	wantFile(t, stem+".en.srt", "english")
+	after, err := os.Stat(video.LibraryPath)
+	if err != nil || !os.SameFile(before, after) || !after.ModTime().Equal(before.ModTime()) {
+		t.Fatal("the placed video was touched")
+	}
+	if p.State != "removed" || exists(p.Path) {
+		t.Fatalf("publication = %s (%s), want the directory retired", p.State, p.Error)
+	}
+}

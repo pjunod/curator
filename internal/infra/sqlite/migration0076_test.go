@@ -52,6 +52,20 @@ func TestMigration0076RequeuesOnlyWedgedImports(t *testing.T) {
 		exec(`INSERT INTO publications(id,download_id,generation,kind,path,state,error,discovered_at,deadline_at,updated_at) VALUES(?,?,?, 'completed', ?, ?, ?, 1, 2, 1)`,
 			i+1, i+1, "gen", "/completed/p"+string(rune('a'+i)), r.state, r.error)
 	}
+	// Sidecars an earlier build left unresolved: re-decided only in imported
+	// publications (row 7), and only for the old builds' sidecar reasons.
+	for _, f := range []struct {
+		pub          int
+		path, reason string
+	}{
+		{7, "ep.srt", "sidecar with no automatic placement; place or discard it in Resolve"},
+		{7, "ep.nfo", "not media of this item's kind"},
+		{7, "321d96.mkv", "cannot determine episodes from \"321d96.mkv\""},
+		{5, "other.srt", "sidecar with no automatic placement; place or discard it in Resolve"},
+	} {
+		exec(`INSERT INTO publication_files(publication_id,path,bytes,sha256,outcome,reason,updated_at) VALUES(?,?,1,'d','unresolved',?,1)`, f.pub, f.path, f.reason)
+	}
+	exec(`INSERT INTO publication_files(publication_id,path,bytes,sha256,outcome,library_path,placed_sha256,updated_at) VALUES(7,'ep.mkv',1,'d','placed','/lib/ep.mkv','d',1)`)
 	before := time.Now().UnixMilli()
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatal(err)
@@ -70,6 +84,22 @@ func TestMigration0076RequeuesOnlyWedgedImports(t *testing.T) {
 		}
 		if state != r.state || errMsg != r.error || deadline != 2 {
 			t.Errorf("row %d (%s %q) was changed to %s %q deadline %d", i+1, r.state, r.error, state, errMsg, deadline)
+		}
+	}
+	outcome := func(pub int, path string) string {
+		t.Helper()
+		var o string
+		if err := db.R.QueryRowContext(ctx, `SELECT outcome FROM publication_files WHERE publication_id=? AND path=?`, pub, path).Scan(&o); err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	for _, c := range []struct {
+		pub        int
+		path, want string
+	}{{7, "ep.srt", "pending"}, {7, "ep.nfo", "pending"}, {7, "321d96.mkv", "unresolved"}, {7, "ep.mkv", "placed"}, {5, "other.srt", "unresolved"}} {
+		if got := outcome(c.pub, c.path); got != c.want {
+			t.Errorf("publication %d %s = %s, want %s", c.pub, c.path, got, c.want)
 		}
 	}
 	var indexes int

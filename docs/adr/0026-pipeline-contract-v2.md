@@ -175,6 +175,10 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     written), named `<video stem>.<lang>[.forced][.sdh].<ext>`; every other
     non-media file is `discarded{rejected}`. Review #13's "a sidecar is never
     placed automatically" is superseded: no sidecar is `unresolved`.
+    Sidecars earlier builds left unresolved in imported publications become
+    pending (migration 0076) and are decided by the cleanup pass; replacing
+    a video retires the subtitles Curator placed for it, by their `placed`
+    record only.
 22. **Obfuscated single-episode grabs map by the grab record**: one media
     file (samples excluded) and a grab for one episode name it, unless the
     release title names a different episode.

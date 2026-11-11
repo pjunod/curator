@@ -343,15 +343,17 @@ func (s *Service) publicationSidecars(ctx context.Context, item domain.MediaItem
 	} else {
 		return nil, err
 	}
+	fresh := map[string]bool{}
 	for _, o := range result.Files {
 		if !o.Imported {
 			continue
 		}
 		if rel, err := filepath.Rel(pub.Path, o.SourcePath); err == nil && filepath.IsLocal(rel) {
 			placed[filepath.ToSlash(rel)] = o.Path
+			fresh[filepath.ToSlash(rel)] = true
 		}
 	}
-	return s.decidePublicationSidecars(ctx, item, pub, m, placed, done)
+	return s.decidePublicationSidecars(ctx, item, pub, m, placed, done, fresh)
 }
 
 // dlStateOr keeps a salvage's row state; a completed publication's row uses

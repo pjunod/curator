@@ -34,6 +34,19 @@ UPDATE publications
      OR error LIKE '%cannot determine episodes from%'
      OR error LIKE 'stalled: not imported within 6 h of discovery%');
 
+-- Sidecars an earlier build left for Resolve in a publication that already
+-- imported ("sidecar with no automatic placement", "not media of this
+-- item's kind") are re-decided by the new rules: they become pending, and the
+-- hourly cleanup pass places each subtitle beside the video the publication
+-- already placed and discards the rest, so the directory can be retired. The
+-- placed video and every other outcome are untouched.
+UPDATE publication_files
+   SET outcome = 'pending', reason = '', updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000
+ WHERE outcome = 'unresolved' AND removed_at = 0
+   AND (reason = 'sidecar with no automatic placement; place or discard it in Resolve'
+     OR reason = 'not media of this item''s kind')
+   AND publication_id IN (SELECT id FROM publications WHERE state IN ('imported', 'notified'));
+
 -- Publication cleanup decides a library copy by its placement record, looked
 -- up by target.
 CREATE INDEX IF NOT EXISTS import_placements_target ON import_placements(target);

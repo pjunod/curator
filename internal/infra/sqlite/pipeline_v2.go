@@ -736,6 +736,28 @@ func (d *DB) SetPublicationFileOutcome(ctx context.Context, f PublicationFile) e
 	return nil
 }
 
+// PlacedLibraryFilesWithPrefix lists the publication files Curator placed
+// into the library under a path prefix (a video's "<dir>/<stem>."): the
+// record of the subtitles Curator put beside that video. Files Curator did
+// not place have no such row.
+func (d *DB) PlacedLibraryFilesWithPrefix(ctx context.Context, prefix string) ([]PublicationFile, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT publication_id, path, bytes, sha256, library_path, placed_sha256 FROM publication_files
+		WHERE outcome='placed' AND library_path<>'' AND substr(library_path,1,?)=?`, len(prefix), prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []PublicationFile
+	for rows.Next() {
+		f := PublicationFile{Outcome: "placed"}
+		if err := rows.Scan(&f.PublicationID, &f.Path, &f.Bytes, &f.SHA256, &f.LibraryPath, &f.PlacedSHA256); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // PublicationImportWrite is what one finished publication import records,
 // atomically: every file's outcome, the publication's state, the download
 // row's advance, the history row, the outbox rows and the timing end.
@@ -1061,12 +1083,14 @@ func (d *DB) CountHistoricalPublications(ctx context.Context) (int, error) {
 // PublicationsToSweep lists publications the hourly sweep has work for: a
 // finished import (imported or notified) that automatic deletion may touch
 // (live, or historical with its review batch approved), with a file whose
-// outcome is evidence for deletion and that is still on disk, or with every
+// outcome is evidence for deletion and that is still on disk, a file whose
+// outcome is still to be decided (pending: a sidecar an earlier build left
+// for Resolve, re-decided by the cleanup pass), or with every
 // file gone and the directory perhaps left behind. The oldest-touched come
 // first so a publication that keeps failing cannot starve the rest.
 func (d *DB) PublicationsToSweep(ctx context.Context, limit int) ([]Publication, error) {
 	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified') AND (cohort='live' OR cleanup_approved_at>0) AND cleanup_paused_at=0
-		AND (EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0 AND f.outcome IN ('placed','discarded'))
+		AND (EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0 AND f.outcome IN ('placed','discarded','pending'))
 		     OR NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0))
 		ORDER BY updated_at, id LIMIT ?`, limit)
 	if err != nil {

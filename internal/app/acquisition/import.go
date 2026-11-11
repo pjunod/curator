@@ -1382,6 +1382,8 @@ func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem
 		if err := syncPath(filepath.Dir(f.Path)); err != nil {
 			continue
 		}
+		// The subtitles Curator placed for the replaced file go with it.
+		s.removePlacedSubtitles(ctx, f.Path, 0)
 		var deleteErr error
 		if recovery, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
 			deleteErr = s.db.DeleteRecoverySuperseded(ctx, f.ID, recovery.ImportID)

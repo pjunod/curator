@@ -64,10 +64,13 @@ in `publication_subtitles_test.go`.
 Not run: `make test` (other packages), `make test-web`, `make test-e2e` (web
 untouched; the single gate runs once in CI after review).
 
-Not done here: imported publications that already hold `unresolved` sidecars
-from earlier builds are not re-decided (the migration only requeues
-`import_failed` rows); old subtitles are not removed when a later upgrade
-replaces their video.
+Closed after the first report: sidecars earlier builds left `unresolved` in
+imported publications are re-decided by the cleanup pass (migration 0076
+makes them pending; the placed video is not touched), and an upgrade that
+replaces a video removes the subtitles Curator placed for it (by placement
+record and placed digest) and places the new release's. Historical
+publications not yet approved get this when their review batch is approved
+(the sweep does not visit them before).
 
 ## Pipeline contract v2, M6a (curator part): one retry ladder, dead fields out, docs rewritten — 2026-11-08 · v0.42.0
 

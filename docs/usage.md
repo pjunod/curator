@@ -1316,7 +1316,12 @@ The tiles are read from `GET /api/v1/system/pipeline`.
   none is discarded (the reason is on the file). An `.idx` and its `.sub` go
   together. Other sidecars (`.nfo`, images, `.txt`, `.xml`) are discarded
   automatically — nothing in a publication waits in Resolve because of a
-  sidecar.
+  sidecar. Sidecars an earlier version left in Resolve on an imported
+  publication are decided the same way by the next hourly cleanup (the
+  subtitle goes beside the video already placed), and the folder is then
+  removed. When an upgrade replaces a video, the subtitles Monarr placed for
+  it go with it and the new release's are placed; a subtitle Monarr did not
+  place is never deleted.
   Unresolved files are kept and offer **Place**, **Discard** and **Keep**; a
   publication with unresolved media shows *import failed* until each is
   decided. A file whose bytes have left the folder says *removed from the

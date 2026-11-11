@@ -308,6 +308,12 @@ func (s *Service) cleanupPublicationLocked(ctx context.Context, publicationID in
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return res, s.stopCleanup(ctx, pub, fmt.Errorf("publication path is not a plain directory"))
 	}
+	// Sidecars an earlier build left undecided are decided now (subtitles
+	// placed beside the publication's video, the rest discarded), so they
+	// leave with the rest instead of keeping the directory.
+	if err := s.redecideLeftoverSidecars(ctx, pub); err != nil {
+		return res, s.stopCleanup(ctx, pub, fmt.Errorf("leftover sidecars not decided yet: %w", err))
+	}
 	files, err := s.db.ListPublicationFiles(ctx, pub.ID)
 	if err != nil {
 		return res, err

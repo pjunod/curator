@@ -421,7 +421,11 @@ second generation and the historical directories all take the same path.
   their video (`<video>.<lang>[.forced][.sdh].<ext>`; one video takes every
   subtitle, a season pack matches by name prefix or folder, an unmatched one
   is `discarded{rejected}`), and every other non-media file is
-  `discarded{rejected}`. No sidecar is ever `unresolved`. Curator never acknowledges a delivery to Runner and never asks
+  `discarded{rejected}`. No sidecar is ever `unresolved`; ones an earlier
+  build left so in an imported publication are re-decided by the cleanup
+  pass (migration 0076 marks them pending). Replacing a video removes the
+  subtitles Curator placed for it (by their `placed` record, while they hold
+  the placed bytes) and places the new release's. Curator never acknowledges a delivery to Runner and never asks
   Runner to clean its source.
 - **Which attempt wins a destination** is Curator's own record
   (`wantable_attempts`: the download it last chose for each wantable), never
