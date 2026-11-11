@@ -262,7 +262,7 @@ func TestPublicationFileOutcomes(t *testing.T) {
 			t.Fatalf("files = %v, want every manifest file seeded and left for Resolve", out)
 		}
 	})
-	t.Run("a non-media file beside the media is unresolved, the media placed", func(t *testing.T) {
+	t.Run("a non-media file beside the media is discarded, the media placed", func(t *testing.T) {
 		f := setupV2(t, nil)
 		dl := f.grab(1, epOne)
 		pub := f.publish("Test.Show.S01E01.job-101.runner-txt", "txt", map[string]string{epOne + ".mkv": "video", "setup.exe": "hello",
@@ -276,14 +276,14 @@ func TestPublicationFileOutcomes(t *testing.T) {
 		if got[epOne+".mkv"].Outcome != "placed" || got[epOne+".mkv"].PlacedSHA256 == "" {
 			t.Fatalf("media = %+v, want placed with its digest", got[epOne+".mkv"])
 		}
-		if txt := got["setup.exe"]; txt.Outcome != "unresolved" || !strings.Contains(txt.Reason, "not media") {
-			t.Fatalf("readme = %+v, want unresolved as not media", txt)
+		if txt := got["setup.exe"]; txt.Outcome != "discarded" || txt.DiscardReason != "rejected" || !strings.Contains(txt.Reason, "not media") {
+			t.Fatalf("setup.exe = %+v, want discarded{rejected} as not media (never left for Resolve)", txt)
 		}
 		if s := got["sample/"+epOne+"-sample.mkv"]; s.Outcome != "discarded" || s.DiscardReason != "rejected" {
 			t.Fatalf("sample = %+v, want discarded{rejected}", s)
 		}
-		if p.State != "imported" || f.row(dl.ID).State != "imported" {
-			t.Fatalf("publication %s row %s, want imported (non-media does not block)", p.State, f.row(dl.ID).State)
+		if p.State != "removed" || f.row(dl.ID).State != "imported" {
+			t.Fatalf("publication %s row %s, want imported and cleaned up (non-media does not block)", p.State, f.row(dl.ID).State)
 		}
 	})
 	t.Run("a file the library already holds at equal quality is discarded as a duplicate", func(t *testing.T) {
@@ -475,17 +475,20 @@ func TestResolvePublicationFileMatrix(t *testing.T) {
 			t.Fatal("an unknown publication was resolved")
 		}
 	})
-	t.Run("discarding the non-media leaves the media unresolved", func(t *testing.T) {
+	t.Run("the import discards the non-media; the media stays unresolved", func(t *testing.T) {
 		f, dl, p := setupUnresolved(t)
-		if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, "notes.txt", "discard"); err != nil {
-			t.Fatal(err)
+		files, _ := f.db.ListPublicationFiles(f.ctx, p.ID)
+		for _, file := range files {
+			if file.Path == "notes.txt" && (file.Outcome != "discarded" || file.DiscardReason != "rejected") {
+				t.Fatalf("notes.txt = %+v, want discarded{rejected} by the import", file)
+			}
+		}
+		if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, "notes.txt", "discard"); !errors.Is(err, ErrInvalidResolution) {
+			t.Fatalf("discarding an already discarded file: %v, want invalid", err)
 		}
 		p, _ = f.db.GetPublication(f.ctx, p.ID)
 		if p.State != "import_failed" || f.row(dl.ID).State != "failed" {
 			t.Fatalf("publication %s row %s, want still unresolved media", p.State, f.row(dl.ID).State)
-		}
-		if f.count(`SELECT COUNT(*) FROM history_events WHERE type='publication_file_resolved'`) != 1 {
-			t.Fatal("the decision was not recorded in history")
 		}
 	})
 	t.Run("placing the media imports exactly that file", func(t *testing.T) {

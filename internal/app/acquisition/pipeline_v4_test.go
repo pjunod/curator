@@ -518,10 +518,14 @@ func TestApprovedManifestlessHistoricalDeletesWhole(t *testing.T) {
 }
 
 // Review findings 4 and 6: a pass that gets through clears an earlier stop;
-// a Discard whose evidence does not hold says the file stayed.
+// a Discard whose evidence does not hold says the file stayed. A non-media
+// sidecar is discarded by the import itself, never left for Resolve.
 func TestRecoveredPassClearsErrorAndDiscardReportsKept(t *testing.T) {
 	f := setupV2(t, nil)
-	pub := f.importHeld("Test.Show.S01E01.job-308.runner-nfo", "nfo", map[string]string{epOne + ".mkv": "the episode", epOne + ".nfo": "info"})
+	pub := f.importHeld("Test.Show.S01E01.job-308.runner-nfo", "nfo", map[string]string{epOne + ".mkv": "the episode", epOne + ".nfo": "info", "notes.txt": "keep me?"})
+	if _, files := f.publicationFiles(pub.Path); files[epOne+".nfo"].Outcome != "discarded" || files[epOne+".nfo"].DiscardReason != "rejected" {
+		t.Fatalf("sidecar = %+v, want discarded{rejected} by the import", files[epOne+".nfo"])
+	}
 	original := observeStorageIdentity
 	observeStorageIdentity = func(string) (string, error) { return "elsewhere", nil }
 	f.sweep()
@@ -529,18 +533,20 @@ func TestRecoveredPassClearsErrorAndDiscardReportsKept(t *testing.T) {
 	if p, _ := f.publicationFiles(pub.Path); !strings.Contains(p.Error, "storage identity") {
 		t.Fatalf("error = %q", p.Error)
 	}
-	f.sweep()
-	p, files := f.publicationFiles(pub.Path)
-	if files[epOne+".mkv"].RemovedAt.IsZero() || files[epOne+".nfo"].Outcome != "unresolved" || p.Error != "" {
-		t.Fatalf("after recovery: error %q files %+v", p.Error, files)
-	}
-	// The sidecar's bytes changed: discarding it records the decision, keeps
-	// the file and says so.
-	if err := os.WriteFile(filepath.Join(pub.Path, epOne+".nfo"), []byte("INFO"), 0o644); err != nil {
+	// The text file grew after the manifest: its size is no longer the
+	// manifest's, so it stays (demoted to unresolved); everything else goes.
+	if err := os.WriteFile(filepath.Join(pub.Path, "notes.txt"), []byte("keep me? edited"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := f.svc.ResolvePublicationFile(f.ctx, p.DownloadID, p.ID, epOne+".nfo", "discard")
-	if !errors.Is(err, ErrDiscardedButKept) || !exists(filepath.Join(pub.Path, epOne+".nfo")) {
+	f.sweep()
+	p, files := f.publicationFiles(pub.Path)
+	if files[epOne+".mkv"].RemovedAt.IsZero() || files[epOne+".nfo"].RemovedAt.IsZero() || files["notes.txt"].Outcome != "unresolved" ||
+		strings.Contains(p.Error, "storage identity") {
+		t.Fatalf("after recovery: error %q files %+v", p.Error, files)
+	}
+	// Discarding it records the decision, keeps the file and says so.
+	err := f.svc.ResolvePublicationFile(f.ctx, p.DownloadID, p.ID, "notes.txt", "discard")
+	if !errors.Is(err, ErrDiscardedButKept) || !exists(filepath.Join(pub.Path, "notes.txt")) {
 		t.Fatalf("discard = %v: want ErrDiscardedButKept and the file kept", err)
 	}
 }

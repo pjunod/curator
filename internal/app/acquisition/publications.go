@@ -261,7 +261,12 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	if len(selected) == 0 {
 		if len(resolved) > 0 {
 			// Everything importable is already resolved: settle it.
-			return s.completePublication(ctx, dl, cfg, item, pub, m, nil, ImportResult{}, &precedence{dl: dl, decided: map[string]precedenceVerdict{}})
+			sidecars, err := s.publicationSidecars(ctx, item, pub, m, ImportResult{})
+			if err != nil {
+				_ = s.db.SetPublicationState(ctx, pub.ID, "discovered", err.Error())
+				return err
+			}
+			return s.completePublication(ctx, dl, cfg, item, pub, m, nil, ImportResult{}, &precedence{dl: dl, decided: map[string]precedenceVerdict{}}, sidecars)
 		}
 		s.failPublication(ctx, &dl, pub, "the publication holds no importable media (samples and sidecars only)")
 		return ErrNoFilesImported
@@ -309,7 +314,44 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		s.failPublication(ctx, &dl, pub, importErr.Error())
 		return importErr
 	}
-	return s.completePublication(ictx, dl, cfg, item, pub, m, selected, result, prec)
+	// Subtitles go in with their video, in this import, before Cinema is
+	// told (the notification is written by completePublication). A library
+	// that cannot take one leaves the publication discovered; the next poll
+	// retries, reusing the committed media placements.
+	sidecars, err := s.publicationSidecars(ictx, item, pub, m, result)
+	if err != nil {
+		_ = s.db.SetPublicationState(context.WithoutCancel(ctx), pub.ID, "discovered", err.Error())
+		return err
+	}
+	return s.completePublication(ictx, dl, cfg, item, pub, m, selected, result, prec, sidecars)
+}
+
+// publicationSidecars decides the publication's non-media files: subtitles
+// placed beside the video this import (or an earlier attempt) placed, the
+// rest discarded. Files an earlier attempt resolved keep their outcome.
+func (s *Service) publicationSidecars(ctx context.Context, item domain.MediaItem, pub sqlite.Publication, m ports.Manifest, result ImportResult) (map[string]sidecarDecision, error) {
+	done, placed := map[string]bool{}, map[string]string{}
+	if rows, err := s.db.ListPublicationFiles(ctx, pub.ID); err == nil {
+		for _, r := range rows {
+			if r.Outcome == "placed" || r.Outcome == "discarded" {
+				done[r.Path] = true
+			}
+			if r.Outcome == "placed" {
+				placed[r.Path] = r.LibraryPath
+			}
+		}
+	} else {
+		return nil, err
+	}
+	for _, o := range result.Files {
+		if !o.Imported {
+			continue
+		}
+		if rel, err := filepath.Rel(pub.Path, o.SourcePath); err == nil && filepath.IsLocal(rel) {
+			placed[filepath.ToSlash(rel)] = o.Path
+		}
+	}
+	return s.decidePublicationSidecars(ctx, item, pub, m, placed, done)
 }
 
 // dlStateOr keeps a salvage's row state; a completed publication's row uses
@@ -336,7 +378,7 @@ func (s *Service) failPublication(ctx context.Context, dl *sqlite.Download, pub 
 // publication's per-file outcomes and records them, the publication's state,
 // the row's advance, the history row and the notification in one write.
 func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, item domain.MediaItem,
-	pub sqlite.Publication, m ports.Manifest, selected []string, result ImportResult, prec *precedence) error {
+	pub sqlite.Publication, m ports.Manifest, selected []string, result ImportResult, prec *precedence, sidecars map[string]sidecarDecision) error {
 	outcomes := map[string]FileOutcome{}
 	for _, f := range result.Files {
 		outcomes[filepath.Clean(f.SourcePath)] = f
@@ -364,7 +406,15 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		pf.WantableID = verdict.wantable
 		o, attempted := outcomes[abs]
 		before, known := prior[f.Path]
+		side, isSidecar := sidecars[f.Path]
 		switch {
+		case !selectedSet[abs] && isSidecar:
+			// Decided by this import: a subtitle placed with its video, or a
+			// file Curator does not keep (never left for Resolve).
+			pf.Outcome, pf.DiscardReason, pf.Reason, pf.LibraryPath = side.outcome, side.discardReason, side.reason, side.libraryPath
+			if side.outcome == "placed" {
+				pf.PlacedSHA256 = f.SHA256
+			}
 		case !selectedSet[abs] && known && before.Outcome != "pending":
 			pf = before
 			if pf.Outcome == "unresolved" && deliveryImportablePath(item.Kind, f.Path) && !isReleaseSample(f.Path) {
@@ -374,12 +424,10 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 			switch {
 			case isReleaseSample(f.Path):
 				pf.Outcome, pf.DiscardReason, pf.Reason = "discarded", "rejected", "release sample"
-			case knownDeliverySidecar(f.Path):
-				pf.Outcome, pf.Reason = "unresolved", "sidecar with no automatic placement; place or discard it in Resolve"
 			case deliveryImportablePath(item.Kind, f.Path):
 				pf.Outcome, pf.Reason = "unresolved", "not selected for import; place or discard it in Resolve"
 			default:
-				pf.Outcome, pf.Reason = "unresolved", "not media of this item's kind"
+				pf.Outcome, pf.DiscardReason, pf.Reason = "discarded", "rejected", "not media of this item's kind; not kept"
 			}
 		case !attempted:
 			pf.Outcome, pf.Reason = "unresolved", "the importer did not reach this file"

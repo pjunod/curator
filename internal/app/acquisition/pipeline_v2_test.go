@@ -1243,10 +1243,10 @@ func TestManifestShapeBoundary(t *testing.T) {
 	}
 }
 
-// (review #13: sidecar conflict) A sidecar is never placed automatically:
-// the media imports, the sidecar is retained unresolved, and Resolve can
-// discard it but not place it as media.
-func TestSidecarIsUnresolvedNeverPlaced(t *testing.T) {
+// (review #13: sidecar conflict, superseded 2026-11-11) A subtitle is placed
+// with its video by the import; it is never media, so Resolve still cannot
+// place it as one.
+func TestSubtitleIsPlacedWithItsVideoNeverAsMedia(t *testing.T) {
 	f := setupV2(t, nil)
 	dl := f.grab(1, epOne)
 	pub := f.publish("Test.Show.S01E01.job-101.runner-srt", "srt", map[string]string{epOne + ".mkv": "video", epOne + ".en.srt": "subs"})
@@ -1257,22 +1257,18 @@ func TestSidecarIsUnresolvedNeverPlaced(t *testing.T) {
 	for _, file := range files {
 		got[file.Path] = file
 	}
-	if f.row(dl.ID).State != "imported" || p.State != "imported" || got[epOne+".mkv"].Outcome != "placed" {
+	video := got[epOne+".mkv"]
+	if f.row(dl.ID).State != "imported" || video.Outcome != "placed" {
 		t.Fatalf("media did not import: row %s publication %s files %+v", f.row(dl.ID).State, p.State, got)
 	}
-	if srt := got[epOne+".en.srt"]; srt.Outcome != "unresolved" || srt.LibraryPath != "" {
-		t.Fatalf("sidecar = %+v, want retained unresolved, not placed", srt)
+	want := strings.TrimSuffix(video.LibraryPath, filepath.Ext(video.LibraryPath)) + ".en.srt"
+	if srt := got[epOne+".en.srt"]; srt.Outcome != "placed" || srt.LibraryPath != want {
+		t.Fatalf("subtitle = %+v, want placed at %s", srt, want)
 	}
-	if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, epOne+".en.srt", "place"); err == nil {
-		t.Fatal("a sidecar was placed as media")
+	if body, err := os.ReadFile(want); err != nil || string(body) != "subs" {
+		t.Fatalf("library subtitle = %q (%v)", body, err)
 	}
-	if err := f.svc.ResolvePublicationFile(f.ctx, dl.ID, p.ID, epOne+".en.srt", "discard"); err != nil {
-		t.Fatal(err)
-	}
-	files, _ = f.db.ListPublicationFiles(f.ctx, p.ID)
-	for _, file := range files {
-		if file.Path == epOne+".en.srt" && (file.Outcome != "discarded" || file.DiscardReason != "rejected") {
-			t.Fatalf("discarded sidecar = %+v", file)
-		}
+	if f.count(`SELECT COUNT(*) FROM media_files`) != 1 {
+		t.Fatal("a subtitle became a media file")
 	}
 }
