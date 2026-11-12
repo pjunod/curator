@@ -1,5 +1,70 @@
 # Monarr — Project Status
 
+## Overdue downloads exit on their own; sealed plans do not wedge imports — 2026-11-12 · v0.45.2
+
+**Status:** built, targeted tests and lint pass, pushed · owner: Claude Opus
+5.5 session · branch `claude/overdue-exit` from `origin/main` 1b9fa58 (no PR;
+the coordinator reviews and runs CI) · not merged, not deployed.
+
+Live evidence (nuc3 0.45.1, schema 77, read-only; Runner on nuc4):
+
+- 30 rows past their deadline (28 `downloading`, 1 `held`, 1 `downloaded`),
+  45–91 h. Runner's `/api/v1/jobs` queue lists none of them except job 2359
+  (#754) and 2938 (#1335); its request receipts still say `paused` (#249,
+  #255–#344, jobs 1963–2058), `fetching` (#501, #502), `completed` with no
+  publication path (#733, job 2338) or `failed PAR_FAILURE` (#711, whose
+  Runner terminal was recorded but whose row stayed `downloaded`). Job 2359
+  is blocked `storage_unavailable` since 2026-11-08 past Runner's own retry
+  deadline.
+- Root cause: `sweepDeadlines` acted only on `held` rows, and `detectGone`
+  gave up on an absent job only when its receipt was missing too — a stale
+  non-terminal receipt (or a completed one without a publication, which
+  `admissionTerminal` cannot apply) read as "alive" forever; rows of a gone
+  or disabled client are never polled at all. Overdue was only a warning.
+- "cannot determine episodes from <hash>.mkv" (publications 3, 5, 7): each
+  publication holds the real episode plus a ~90 MB obfuscated second video,
+  so the grab-record mapping (one media file, ADR 0026 decision 22) rightly
+  does not apply; the hash file is discarded{rejected} with that reason. It
+  repeated because the imports never finished: their attempt epoch was
+  sealed by an earlier, never-completed attempt with another file set, and
+  every retry failed `import selection changed; explicit retry required` —
+  returned uncounted, so it looped forever. Not a mapping gap; a wedge.
+
+Changes:
+
+- `overdue.go`: `exitOverdue` (every Runner poll, after the deadline sweep)
+  decides each overdue non-terminal row of the client on Runner's word —
+  receipt terminal applied; in queue and moving → deadline extended; Runner
+  holding → waits on Runner's hold deadline; blocked past Runner's own retry
+  deadline, still for 24 h, or not in Runner's queue (unknown or stale
+  receipt) → `FailOverdueDownload`: failed, blameless (no blocklist), reason
+  on the row and in History, replacement grab in the same write. A recorded
+  terminal on a row that never left its state ends it too. Rows whose
+  publication is waiting/importing are left to the publication's exit.
+  `exitOrphanedOverdue` (hourly) ends overdue rows of a gone or disabled
+  client. An unreachable Runner decides nothing.
+- `publications.go`: an import refused with `ErrImportPlanChanged` opens a
+  fresh attempt epoch (the uncommitted plan is scratch, like a stage) and is
+  returned counted, so the attempt cap bounds it.
+- VERSION 0.45.2; `docs/usage.md` (pipeline:overdue section).
+
+Expected on deploy: #249, #255–#344, #501, #502, #711, #733 fail blameless
+with their wants grabbed again on the first poll; #754 fails (blocked past
+Runner's deadline); #1335 (0.6 h overdue, in Runner's queue) waits for
+progress or the stall limit. Publications 3, 5, 7 import on their next
+attempt in a fresh epoch.
+
+Decision for Paul to review: a job Runner still lists but has not moved for
+24 h past its deadline is failed and re-grabbed; Curator does not cancel it
+in Runner (a late completion there is superseded by the precedence rule).
+
+Validation: gofmt, `go vet`, pinned golangci-lint on
+`internal/app/acquisition/...` and `internal/infra/sqlite/...` 0 issues;
+`make gen` no diff; `go test ./internal/infra/sqlite/
+./internal/app/acquisition/` pass (one held-row test re-run alone after the
+held fix, plus the Held/Deadline/Overdue/Gone subset). Not run (by
+instruction): full suite, web, e2e.
+
 ## Unwedge legacy imports + adopt unclaimed Runner publications — 2026-11-12 · v0.45.1
 
 **Status:** built and tested on its packages, pushed · owner: Claude Opus 5.5
