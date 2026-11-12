@@ -373,6 +373,13 @@ type SameJobResumer interface {
 	Resume(context.Context, Handle) error
 }
 
+// QueueCanceller cancels a job only while it is still in the client's queue.
+// Unlike Remove it never falls back to deleting a finished job's history
+// record: a job that already left the queue (HTTP 404) is not an error.
+type QueueCanceller interface {
+	CancelQueued(context.Context, Handle) error
+}
+
 // CompleteInventory is optional evidence that includes all live and retained
 // historical jobs. A bounded history response cannot prove submission absence.
 type CompleteInventory interface {

@@ -4,8 +4,10 @@
 
 **Status:** built, targeted tests and lint run (see the commit report) · branch
 `claude/overdue-cancel` from `origin/main` 9a5821d · no PR · not merged.
-`overdue.go` gains `cancelOverdueInRunner`; test
-`TestOverdueStalledJobGetsOneBestEffortRunnerCancel`; `docs/usage.md`
+`overdue.go` gains `cancelOverdueInRunner`; `ports.QueueCanceller` and
+nzbd `CancelQueued`; tests `TestOverdueStalledJobGetsOneBestEffortRunnerCancel`,
+`TestOverdueCancelOfAJobThatFinishedMeanwhileKeepsItsHistory`,
+`TestCancelQueuedNeverTouchesHistory`; `docs/usage.md`
 (pipeline:overdue). Decision recorded under the v0.45.2 section below.
 
 ## Overdue downloads exit on their own; sealed plans do not wedge imports — 2026-11-12 · v0.45.2
@@ -79,8 +81,9 @@ queue fail after 10 minutes of successful polls; #733 after 15 minutes.
 Decision (Paul, v0.45.3): a job Runner still lists that has not moved for
 24 h past its deadline, or that Runner holds blocked past its own retry
 deadline, is failed and re-grabbed, and then Curator makes one best-effort
-cancel of it in Runner (the client's Remove, data kept, 3 s timeout, fired
-only after the fail is committed). A failed cancel is logged at WARN and
+cancel of it in Runner (a queue-only `CancelQueued`, never the history-delete
+fallback of Remove; 404 is ignored; data kept; 3 s timeout; fired in the
+background after the loop, once the fail is committed). A failed cancel is logged at WARN and
 ignored, never retried; the fail and regrab do not depend on it. No cancel
 for a job absent from Runner's queue or one with a Runner terminal.
 

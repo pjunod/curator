@@ -141,6 +141,10 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 		s.log.Info("overdue exit skipped: Runner's queue came back empty", "client", cfg.Name, "overdue", len(rows))
 		return
 	}
+	var cancels []overdueCancel
+	// Best-effort Runner cancels of the jobs failed below run after the loop,
+	// in the background, so they can never stall the poll.
+	defer func() { s.cancelOverdueInRunner(cfg, cancels) }()
 	for _, dl := range rows {
 		if ctx.Err() != nil {
 			return
@@ -184,7 +188,7 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 			// still lists the job blocked: it is not going to finish it.
 			if s.failOverdue(ctx, dl, fmt.Sprintf("Runner has held it on %s past Runner's own deadline (%s)", st.Control.Cause,
 				time.Unix(*st.Control.DeadlineUnix, 0).UTC().Format(time.RFC3339)), true) {
-				s.cancelOverdueInRunner(ctx, cfg, dl, st)
+				cancels = append(cancels, overdueCancel{dl.ID, overdueHandle(dl, st)})
 			}
 		case inQueue && heldStatus(st):
 			// Runner holds it: its hold is self-clearing and has its own
@@ -196,7 +200,7 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 			}
 			if _, still := s.progressing(cfg.ID, dl.ID, st, now); still >= overdueStallLimit {
 				if s.failOverdue(ctx, dl, fmt.Sprintf("Runner has held it without progress for %s past its deadline", overdueStallLimit), true) {
-					s.cancelOverdueInRunner(ctx, cfg, dl, st)
+					cancels = append(cancels, overdueCancel{dl.ID, overdueHandle(dl, st)})
 				}
 			}
 		case inQueue:
@@ -212,7 +216,7 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 				continue
 			}
 			if s.failOverdue(ctx, dl, fmt.Sprintf("Runner has made no progress on it for %s past its deadline", overdueStallLimit), true) {
-				s.cancelOverdueInRunner(ctx, cfg, dl, st)
+				cancels = append(cancels, overdueCancel{dl.ID, overdueHandle(dl, st)})
 			}
 		case known && adm.Outcome == "completed":
 			// Its publication may still be on its way by the deliveries feed.
@@ -235,29 +239,55 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 	}
 }
 
-// overdueCancelTimeout bounds the best-effort Runner cancel so it cannot
-// stall the poll loop.
+// overdueCancelTimeout bounds the best-effort Runner cancel.
 const overdueCancelTimeout = 3 * time.Second
 
-// cancelOverdueInRunner asks Runner to cancel a job it still lists after
-// Curator has failed the row (the same Remove an operator's cancel uses,
-// without deleting data). It is best effort: it runs only after the fail is
-// committed, a failure is logged and dropped, and it is never retried.
-func (s *Service) cancelOverdueInRunner(ctx context.Context, cfg ports.ClientConfig, dl sqlite.Download, st ports.DownloadStatus) {
-	h := dl.Handle
-	if h == "" {
-		h = string(st.Handle)
+// overdueCancel is a job Curator failed while Runner still listed it.
+type overdueCancel struct {
+	id     int64
+	handle string
+}
+
+func overdueHandle(dl sqlite.Download, st ports.DownloadStatus) string {
+	if dl.Handle != "" {
+		return dl.Handle
 	}
-	if h == "" {
+	return string(st.Handle)
+}
+
+// cancelOverdueInRunner asks Runner, once and in the background, to cancel
+// jobs Curator has already failed (the fail is committed before this runs).
+// It uses the queue-only cancel: a job that finished since the poll answers
+// 404, which is not an error, and its history record is never deleted. A
+// client without that capability is not cancelled at all (no Remove
+// fallback). A handle a live row (such as the replacement) now owns is
+// skipped. Failures are logged and dropped, never retried.
+func (s *Service) cancelOverdueInRunner(cfg ports.ClientConfig, cancels []overdueCancel) {
+	if len(cancels) == 0 {
 		return
 	}
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), overdueCancelTimeout)
-	defer cancel()
-	if err := s.newClient(cfg).Remove(cctx, ports.Handle(h), false); err != nil {
-		s.log.Warn("overdue download failed in Curator; Runner cancel not accepted (not retried)", "download", dl.ID, "client", cfg.Name, "err", err)
-		return
-	}
-	s.log.Info("overdue download failed in Curator; cancelled in Runner", "download", dl.ID, "client", cfg.Name)
+	go func() {
+		client, ok := s.newClient(cfg).(ports.QueueCanceller)
+		if !ok {
+			return
+		}
+		for _, c := range cancels {
+			if c.handle == "" {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), overdueCancelTimeout)
+			if live, found, err := s.db.DownloadByHandle(ctx, cfg.ID, c.handle); err != nil || (found && live.ID != c.id) {
+				cancel()
+				continue
+			}
+			if err := client.CancelQueued(ctx, ports.Handle(c.handle)); err != nil {
+				s.log.Warn("overdue download failed in Curator; Runner cancel not accepted (not retried)", "download", c.id, "client", cfg.Name, "err", err)
+			} else {
+				s.log.Info("overdue download failed in Curator; cancelled in Runner", "download", c.id, "client", cfg.Name)
+			}
+			cancel()
+		}
+	}()
 }
 
 // exitOrphanedOverdue ends overdue rows whose client is gone or disabled:

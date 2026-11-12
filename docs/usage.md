@@ -1373,7 +1373,9 @@ in History. An unreachable Runner decides nothing.
 
 When the failed job is still listed in Runner's queue (stalled, or blocked
 past Runner's own deadline), Curator also asks Runner once to cancel it
-(v0.45.3), after the failure is recorded. That cancel is best effort: if it
+(v0.45.3), in the background after the failure is recorded. The cancel only
+removes the job from Runner's queue: a job that has finished meanwhile is left
+alone, and its history record is never deleted. It is best effort: if it
 fails or times out (3 seconds) it is logged and ignored, never retried, and
 the failure and re-grab stand. A job absent from Runner's queue is not
 cancelled.

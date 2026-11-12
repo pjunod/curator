@@ -28,15 +28,20 @@ import (
 // incarnation, the deliveries feed and request receipts.
 type fakeRunner struct {
 	fakeClient
-	rmu         sync.Mutex
-	history     []ports.RunnerFact // HistorySeq set, ascending
-	incarnation string
-	retainedMin int64
-	deliveries  []ports.RunnerFact
-	admissions  map[string]ports.RequestAdmission
-	admitErr    error
-	nextJob     int
-	adds        []ports.AddOptions
+	// queueCancels records CancelQueued calls (the overdue exit's cancel);
+	// queueCancelErr is what each returns.
+	qmu            sync.Mutex
+	queueCancels   []ports.Handle
+	queueCancelErr error
+	rmu            sync.Mutex
+	history        []ports.RunnerFact // HistorySeq set, ascending
+	incarnation    string
+	retainedMin    int64
+	deliveries     []ports.RunnerFact
+	admissions     map[string]ports.RequestAdmission
+	admitErr       error
+	nextJob        int
+	adds           []ports.AddOptions
 }
 
 func newFakeRunner() *fakeRunner {
@@ -1281,4 +1286,29 @@ func TestDeadCurrentAttemptDoesNotSupersede(t *testing.T) {
 	if len(files) != 1 || files[0].Outcome != "placed" || f.count(`SELECT COUNT(*) FROM media_files`) != 1 {
 		t.Fatalf("files %+v, want placed: the current attempt is dead", files)
 	}
+}
+
+func (r *fakeRunner) CancelQueued(_ context.Context, h ports.Handle) error {
+	r.qmu.Lock()
+	defer r.qmu.Unlock()
+	r.queueCancels = append(r.queueCancels, h)
+	return r.queueCancelErr
+}
+
+// queueCancelCalls waits briefly for the background cancel, then returns what
+// was recorded.
+func (r *fakeRunner) queueCancelCalls(want int) []ports.Handle {
+	for i := 0; i < 100; i++ {
+		r.qmu.Lock()
+		n := len(r.queueCancels)
+		r.qmu.Unlock()
+		if n >= want {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond) // room for an unwanted extra call
+	r.qmu.Lock()
+	defer r.qmu.Unlock()
+	return append([]ports.Handle(nil), r.queueCancels...)
 }
