@@ -889,7 +889,7 @@ func rematchFingerprint(plan *rematchPlan) string {
 		for _, r := range m.Replaces {
 			fmt.Fprintf(h, " r%d", r.FileID)
 		}
-		fmt.Fprintln(h)
+		_, _ = fmt.Fprintln(h)
 	}
 	for _, m := range p.LeftOut {
 		fmt.Fprintf(h, "l %d %s\n", m.FileID, m.From)
