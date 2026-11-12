@@ -45,6 +45,7 @@ import { describeAutoSearch } from '../autosearch'
 import { audioUndeterminedNote } from '../language'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
+import { ImportFileDialog } from '../ImportFileDialog'
 import { ReleaseSearch } from './ReleaseSearch'
 import { Pager, PageSizePicker, clampPage, sliceForPage } from '../Pager'
 import { mapReplacementObservationsByFileID } from '../replacementObservations'
@@ -1199,6 +1200,7 @@ export function MediaDetailPage() {
   const qc = useQueryClient()
   const [confirming, setConfirming] = useState(false)
   const [editing, setEditing] = useState(search.assignFolder === true)
+  const [importing, setImporting] = useState(false)
   // Interactive search target: null = closed. copyId selects an additional
   // quality copy or book edition; zero/absent is the primary target.
   const [searching, setSearching] = useState<{
@@ -1514,6 +1516,7 @@ export function MediaDetailPage() {
             {m.kind === 'movie' && (
               <button onClickCapture={focusActionTrigger} onClick={() => setSearching({})}>Interactive search</button>
             )}
+            <button onClickCapture={focusActionTrigger} onClick={() => setImporting(true)}>Import file…</button>
             <button onClickCapture={focusActionTrigger} onClick={() => setEditing(true)}>Edit</button>
             {m.kind !== 'book' && (
               <button
@@ -1585,6 +1588,8 @@ export function MediaDetailPage() {
       ) : (
         <CopiesPanel item={m} />
       )}
+
+      {importing && <ImportFileDialog item={m} onClose={() => setImporting(false)} />}
 
       {searching && (
         <ReleaseSearch

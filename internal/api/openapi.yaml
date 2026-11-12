@@ -1883,6 +1883,22 @@ paths:
           description: Invalid filter or pagination.
 
   /queue/{id}:
+    get:
+      operationId: getQueueItem
+      summary: One Activity row, whatever its state
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: The row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueueItem" }
+        "404":
+          description: No such row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       operationId: removeQueueItem
       summary: Remove a queue row (optionally from the client too)
@@ -1992,6 +2008,54 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /queue/{id}/publications/{publicationId}/files/place:
+    post:
+      operationId: placePublicationFiles
+      summary: Place one or more files of a runner delivery into an item, as chosen episodes
+      description: >
+        Resolve's place for several files at once (Import file… on the item
+        page): one admission, one import. mediaItemId may name another item
+        only while nothing of this delivery is in the library; the download
+        then follows it. Refused while an import of this delivery runs.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: publicationId, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                mediaItemId: { type: integer, format: int64, description: "Target item; absent = the download's own." }
+                copyId: { type: integer, format: int64, description: Target copy or edition; 0 = the primary. }
+                files:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [path]
+                    properties:
+                      path: { type: string, description: The file's path relative to the publication. }
+                      season: { type: integer }
+                      episodes:
+                        type: array
+                        description: The episode(s) this file is, overriding its name.
+                        items: { type: integer }
+      responses:
+        "204": { description: Recorded and queued for import. }
+        "400":
+          description: A file that is not unresolved, a refused move, a running import, or an unknown episode or copy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown row or publication.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /queue/{id}/cancel-import:
     post:
       operationId: cancelQueueImport
@@ -2055,6 +2119,16 @@ paths:
           in: query
           required: true
           schema: { type: string }
+        - name: depth
+          in: query
+          required: false
+          description: >
+            1 lists only the files directly in path (the item page's Import
+            file… browser), each with its subtitle count and, for a file
+            inside a runner delivery, that delivery, plus an entry with
+            skipped set for each entry it could not offer. Absent walks the
+            whole tree; any other value is refused.
+          schema: { type: integer }
       responses:
         "200":
           description: Files found (empty array means nothing importable there).
@@ -2065,6 +2139,29 @@ paths:
                 items: { $ref: "#/components/schemas/ScannedFile" }
         "400":
           description: Path not accessible.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /import/plan:
+    post:
+      operationId: planImport
+      summary: What importing these files into an item would do (moves nothing)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportPlanRequest" }
+      responses:
+        "200":
+          description: One line per file, in request order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ImportPlanFile" }
+        "400":
+          description: No item, no files, or a copy that is not the item's.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -5079,6 +5176,74 @@ components:
         snapshotIdentity:
           type: string
           description: Stable preview snapshot token used to detect changed files before explicit legacy review import.
+        subtitles:
+          type: integer
+          description: Subtitle files that travel with this video (depth=1 only).
+        publication: { $ref: "#/components/schemas/ScannedPublication" }
+        skipped:
+          type: string
+          description: Why this entry cannot be imported (a symlink, an unreadable file); depth=1 only.
+
+    ScannedPublication:
+      type: object
+      description: The runner delivery a scanned file is part of. Such a file is placed through Resolve, never through /import/manual.
+      required: [downloadId, publicationId, path, outcome]
+      properties:
+        downloadId: { type: integer, format: int64 }
+        publicationId: { type: integer, format: int64 }
+        path: { type: string, description: The file's path relative to the publication. }
+        outcome: { type: string, description: "The file's recorded outcome; empty when the manifest does not name it." }
+
+    EpisodeTarget:
+      type: object
+      required: [path, season, episodes]
+      properties:
+        path: { type: string, description: Absolute path of one selected file. }
+        season: { type: integer }
+        episodes:
+          type: array
+          minItems: 1
+          items: { type: integer }
+
+    ImportPlanRequest:
+      type: object
+      required: [mediaItemId, files]
+      properties:
+        mediaItemId: { type: integer, format: int64 }
+        copyId: { type: integer, format: int64, description: Target copy or edition; 0 = the primary. }
+        removeOriginal: { type: boolean }
+        files:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [path]
+            properties:
+              path: { type: string }
+              season: { type: integer }
+              episodes:
+                type: array
+                items: { type: integer }
+
+    ImportPlanFile:
+      type: object
+      required: [path, quality, season, episodes, subtitles]
+      properties:
+        path: { type: string }
+        quality: { type: string }
+        season: { type: integer, description: "-1 when not a series file" }
+        episodes:
+          type: array
+          items: { type: integer }
+        destination: { type: string, description: Exact library path from the naming template. }
+        action: { type: string, description: "new | replace | beside" }
+        existing: { type: string, description: Quality of the file there now. }
+        reason: { type: string }
+        mode: { type: string, description: "runner | hardlink | copy | rename | copy_remove" }
+        note: { type: string, description: What else placing it does (a runner delivery moved here from another title). }
+        subtitles: { type: integer }
+        publication: { $ref: "#/components/schemas/ScannedPublication" }
+        error: { type: string, description: Why this file cannot be imported as chosen. }
 
     ImportPathDefault:
       type: object
@@ -5211,6 +5376,20 @@ components:
             properties:
               path: { type: string }
               snapshotIdentity: { type: string }
+        episodeTargets:
+          type: array
+          description: >
+            A series file's episode(s), chosen by a person, per selected path.
+            Admitted with the selection: every retry places the file as these
+            episodes whatever its name says.
+          items: { $ref: "#/components/schemas/EpisodeTarget" }
+        removeOriginal:
+          type: boolean
+          description: >
+            Remove each source once its library copy is placed (a rename on
+            one filesystem; copy, verify and remove across volumes).
+            Standalone imports of loose files only; refused for a file inside
+            a runner delivery.
 
     ManualImportAccepted:
       type: object

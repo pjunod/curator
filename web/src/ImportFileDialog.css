@@ -1,0 +1,31 @@
+/* Import file… on the item page. Prefixed ifd- so it never meets the Import
+   queue page's classes. Phone first: every row wraps, nothing scrolls sideways. */
+.ifd .action-dialog-body { display: grid; gap: 12px; }
+.ifd-steps { display: flex; gap: 16px; margin: 0; padding: 0; list-style: none; color: var(--text-muted); font-size: 0.9rem; }
+.ifd-steps [aria-current='step'] { color: var(--text); font-weight: 600; }
+.ifd-shortcuts { display: flex; flex-wrap: wrap; gap: 6px; }
+.ifd-shortcuts button { overflow-wrap: anywhere; }
+.ifd-pathbox { display: flex; gap: 8px; }
+.ifd-pathbox input { flex: 1; min-width: 0; }
+.ifd-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; overflow-wrap: anywhere; font-size: 0.9rem; }
+.ifd-list, .ifd-plan { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 6px; }
+.ifd-list > li + li, .ifd-plan > li + li { border-top: 1px solid var(--border); }
+.ifd-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; text-align: left; background: transparent; border: 0; border-radius: 0; overflow-wrap: anywhere; }
+button.ifd-row:hover, label.ifd-row:hover { background: var(--bg-hover); }
+.ifd-name { min-width: 0; overflow-wrap: anywhere; }
+.ifd-file .ifd-name { flex: 1 1 14rem; }
+.ifd-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.ifd-empty { padding: 10px 12px; }
+.ifd-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.ifd-plan-line { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 8px 16px; padding: 10px 12px; overflow-wrap: anywhere; }
+.ifd-to { display: grid; gap: 4px; justify-items: start; min-width: 0; }
+.ifd-to select { max-width: 100%; }
+.ifd-dest { overflow-wrap: anywhere; }
+.ifd-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ifd-remove { display: flex; align-items: start; gap: 8px; }
+.ifd-started .ifd-plan-line { grid-template-columns: minmax(0, 1fr); }
+.ifd-started button { margin-left: 8px; }
+@media (max-width: 640px) {
+  .ifd-plan-line { grid-template-columns: minmax(0, 1fr); }
+}
+.ifd-skipped { color: var(--text-muted); }

@@ -383,6 +383,39 @@ type HandoffEntry struct {
 	TargetMediaItemID int64                 `json:"targetMediaItemId,omitempty"`
 	TargetCopyID      int64                 `json:"targetCopyId,omitempty"`
 	TargetIdentity    string                `json:"targetIdentity,omitempty"`
+	// EpisodeTargets is a person's episode choice per selected file, keyed
+	// by the file's absolute path (Import file… on the item page). It is
+	// part of the admitted selection, so every retry of this attempt places
+	// each file as the same episode(s) whatever its name says.
+	EpisodeTargets map[string]HandoffEpisodeTarget `json:"episodeTargets,omitempty"`
+	// RemoveOriginal asks a standalone manual import to remove each source
+	// once its library copy is placed and proven. SourceIdentities is each
+	// admitted source's identity (object, size, modification time): a source
+	// is removed only while it is still that object.
+	RemoveOriginal   bool              `json:"removeOriginal,omitempty"`
+	SourceIdentities map[string]string `json:"sourceIdentities,omitempty"`
+	// Placement marks a person's exact placement of runner-delivery files
+	// (Resolve or Import file…): every later attempt of this publication,
+	// approved or not, imports exactly these paths.
+	Placement bool `json:"placement,omitempty"`
+	// Removals is a pending Remove original, written before the import
+	// completes so a restart finishes it: each source, its library copy and
+	// its admitted identity.
+	Removals []HandoffRemoval `json:"removals,omitempty"`
+}
+
+// HandoffRemoval is one source Remove original takes away once its library
+// copy is confirmed.
+type HandoffRemoval struct {
+	Source   string `json:"source"`
+	Library  string `json:"library"`
+	Identity string `json:"identity,omitempty"`
+}
+
+// HandoffEpisodeTarget is the season and episode(s) one file is placed as.
+type HandoffEpisodeTarget struct {
+	Season   int   `json:"season"`
+	Episodes []int `json:"episodes"`
 }
 
 type HandoffFileSnapshot struct {
@@ -890,6 +923,65 @@ func (d *DB) CommitManualImportAdmission(ctx context.Context, dl Download) (Down
 	return downloadFromRow(row), nil
 }
 
+// CommitPublicationPlacement records a person's placement of runner-delivery
+// files in one transaction: the download's target item and copy, its
+// handoff trace (the selection), and the publication offered for import
+// again. Nothing of it is written unless all of it is.
+func (d *DB) CommitPublicationPlacement(ctx context.Context, dl Download, publicationID int64) error {
+	handoff, err := json.Marshal(dl.Handoff)
+	if err != nil {
+		return err
+	}
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	res, err := tx.ExecContext(ctx, `UPDATE downloads SET media_item_id=?,copy_id=?,handoff_log=?,updated_at=? WHERE id=? AND generation_key=?`,
+		dl.MediaItemID, sql.NullInt64{Int64: dl.CopyID, Valid: dl.CopyID != 0}, string(handoff), now, dl.ID, dl.GenerationKey)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		if err == nil {
+			err = ErrNotFound
+		}
+		return err
+	}
+	res, err = tx.ExecContext(ctx, `UPDATE publications SET state='discovered', error='', updated_at=? WHERE id=? AND download_id=?`, now, publicationID, dl.ID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		if err == nil {
+			err = ErrNotFound
+		}
+		return err
+	}
+	return tx.Commit()
+}
+
+// CountCommittedPlacements counts the library placements a download's
+// generation committed, whatever its publications recorded since: a partial
+// or failed attempt's placed files count too.
+func (d *DB) CountCommittedPlacements(ctx context.Context, downloadID int64, generation string) (int, error) {
+	var n int
+	err := d.R.QueryRowContext(ctx, `SELECT count(*) FROM import_placements WHERE state IN ('committed','cleaned') AND json_extract(data,'$.download_id')=? AND json_extract(data,'$.source_generation')=?`, downloadID, generation).Scan(&n)
+	return n, err
+}
+
+// AppendHandoffEntry adds one entry to a download's trace without touching
+// its state.
+func (d *DB) AppendHandoffEntry(ctx context.Context, downloadID int64, entry HandoffEntry) error {
+	dl, err := d.GetDownload(ctx, downloadID)
+	if err != nil {
+		return err
+	}
+	dl.Handoff = append(dl.Handoff, entry)
+	return d.UpdateDownloadHandoff(ctx, dl)
+}
+
 // UpdateDownloadTarget persists the target chosen in a manual-import form.
 // It is deliberately separate from stage transitions: many automatic
 // handoff callers carry only a partial Download and must never erase copy_id.
@@ -1176,4 +1268,22 @@ func (d *DB) HistoryPage(ctx context.Context, item int64, limit, offset int) ([]
 		})
 	}
 	return out, nil
+}
+
+// LibraryFolders lists every item's and every copy's library folder.
+func (d *DB) LibraryFolders(ctx context.Context) ([]string, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT path FROM media_items WHERE path<>'' UNION SELECT path FROM media_copies WHERE path<>''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }

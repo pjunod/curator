@@ -1035,6 +1035,48 @@ export interface ScannedFile {
   season: number // -1 when not a series file
   episodes: number[]
   snapshotIdentity?: string
+  /** Subtitle files that travel with this video (one-level listing only). */
+  subtitles?: number
+  /** The runner delivery this file is part of; placed through Resolve. */
+  publication?: ScannedPublication
+  /** Why this entry cannot be imported (a symlink, an unreadable file). */
+  skipped?: string
+}
+
+export interface ScannedPublication {
+  downloadId: number
+  publicationId: number
+  /** Relative to the publication. */
+  path: string
+  outcome: string
+}
+
+export interface EpisodeTarget { path: string; season: number; episodes: number[] }
+
+export interface ImportPlanRequest {
+  mediaItemId: number
+  copyId?: number
+  removeOriginal?: boolean
+  files: { path: string; season?: number; episodes?: number[] }[]
+}
+
+export type ImportPlanMode = 'runner' | 'hardlink' | 'copy' | 'rename' | 'copy_remove'
+
+export interface ImportPlanFile {
+  path: string
+  quality: string
+  season: number
+  episodes: number[]
+  destination?: string
+  action?: 'new' | 'replace' | 'beside'
+  existing?: string
+  reason?: string
+  mode?: ImportPlanMode
+  /** What else placing it does (a runner delivery moved here from another title). */
+  note?: string
+  subtitles: number
+  publication?: ScannedPublication
+  error?: string
 }
 
 export interface ManualImportRequest {
@@ -1048,6 +1090,10 @@ export interface ManualImportRequest {
   reviewLegacy?: boolean
   reviewLegacyFingerprint?: string
   reviewLegacyFiles?: CompletedFileSelection[]
+  /** A series file's chosen episode(s), per selected path. */
+  episodeTargets?: EpisodeTarget[]
+  /** Remove each loose source once its library copy is placed. */
+  removeOriginal?: boolean
 }
 
 export const getProfiles = () => get<QualityProfile[]>('/profiles')
@@ -1162,6 +1208,10 @@ export const removeLibraryFile = (itemId: number, fileId: number, opts: RemoveFi
 }
 export const scanImportPath = (path: string) =>
   get<ScannedFile[]>(`/import/scan?path=${encodeURIComponent(path)}`)
+/** One folder's own files (no descent), with subtitles and runner delivery. */
+export const scanImportFolder = (path: string) =>
+  get<ScannedFile[]>(`/import/scan?path=${encodeURIComponent(path)}&depth=1`)
+export const planImport = (req: ImportPlanRequest) => send<ImportPlanFile[]>('POST', '/import/plan', req)
 export const getManualImportDefaultPath = () => get<{ path: string }>('/import/default-path')
 export interface ManualImportAccepted {
   downloadId: number
@@ -1908,6 +1958,17 @@ export interface SeasonSelection {
 
 export const resolvePublicationFile = (id: number, publicationId: number, path: string, action: PublicationFileAction) =>
   send<void>('POST', `/queue/${id}/publications/${publicationId}/files/resolve`, { path, action })
+
+export interface PlaceRequest {
+  mediaItemId: number
+  copyId?: number
+  files: { path: string; season?: number; episodes?: number[] }[]
+}
+/** Resolve's place for one or more files of a publication, in one import. */
+export const placePublicationFiles = (id: number, publicationId: number, req: PlaceRequest) =>
+  send<void>('POST', `/queue/${id}/publications/${publicationId}/files/place`, req)
+/** One Activity row in any state (follows an import to its end). */
+export const getQueueItem = (id: number) => get<QueueItem>(`/queue/${id}`)
 
 export const setPublicationCleanup = (publicationId: number, action: 'pause' | 'resume') =>
   send<void>('POST', `/downloads/publications/${publicationId}/cleanup`, { action })

@@ -295,6 +295,8 @@ export interface MatchEvidence {
 }
 
 export interface QueueItem {
+ /** The row's handoff trace (Import file… reads what Remove original did). */
+ handoff?: { step: string; at: number; detail?: string }[]
  importControl?: { generationKey:string;epoch:string;outcome:''|'pending'|'cancelled'|'completed';pendingPublications:number;retainedPublications:number;heldStages:number }
  importState?: 'queued'|'running'
  planId?: number
@@ -443,3 +445,58 @@ export interface AutoSearchResult {
   grabbed: number
   targets: AutoSearchTarget[]
 }
+
+/** Import file… (item page): the server's view of one folder. */
+export interface BrowseResult { path: string; parent: string; dirs: { name: string; path: string; registered: boolean }[] }
+
+export interface ScannedPublication { downloadId: number; publicationId: number; path: string; outcome: string }
+
+export interface ScannedFile {
+  path: string
+  name: string
+  size: number
+  kind: string
+  quality: string
+  season: number
+  episodes: number[]
+  subtitles?: number
+  publication?: ScannedPublication
+  /** Why this entry cannot be imported (a symlink, an unreadable file). */
+  skipped?: string
+}
+
+export interface ImportPlanRequest {
+  mediaItemId: number
+  copyId?: number
+  removeOriginal?: boolean
+  files: { path: string; season?: number; episodes?: number[] }[]
+}
+
+export type ImportPlanMode = 'runner' | 'hardlink' | 'copy' | 'rename' | 'copy_remove'
+
+export interface ImportPlanFile {
+  path: string
+  quality: string
+  season: number
+  episodes: number[]
+  destination?: string
+  action?: 'new' | 'replace' | 'beside'
+  existing?: string
+  reason?: string
+  mode?: ImportPlanMode
+  note?: string
+  subtitles: number
+  publication?: ScannedPublication
+  error?: string
+}
+
+export interface ManualImportRequest {
+  path: string
+  paths: string[]
+  mediaItemId: number
+  copyId?: number
+  removeOriginal?: boolean
+  episodeTargets?: { path: string; season: number; episodes: number[] }[]
+}
+
+export interface PlaceRequest { mediaItemId: number; copyId?: number; files: { path: string; season?: number; episodes?: number[] }[] }
