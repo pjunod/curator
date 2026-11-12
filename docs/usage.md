@@ -1344,6 +1344,12 @@ The tiles are read from `GET /api/v1/system/pipeline`.
   publication with no download (history `publication_orphaned`), its files
   are discarded and the same pass removes it; a folder that names no Curator
   transfer is not Curator's and is left alone.
+  A record with no download, manifest or files (the pre-delivery review
+  backlog) is closed by the same hourly pass when its folder is gone or the
+  path is a completed root or its `completed` folder (history
+  `publication_closed`; nothing is deleted). No publication can sit at a
+  completed root or its `completed` folder, so none can stop another folder
+  from being deleted whole.
   An import that keeps failing on its payload is tried five times (spaced
   out), and one that has not finished six hours after it first started ends
   the same way; what it already placed stays, is recorded and is sent to

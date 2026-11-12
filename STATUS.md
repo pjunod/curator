@@ -4,9 +4,12 @@
 
 **Status:** built and tested on its packages, pushed · owner: Claude Opus 5.5
 session · branch `claude/unwedge-legacy` (no PR; the orchestrator opens it) ·
-not merged, not deployed. **Depends on M6b:** migration 0077 is
-`claude/pipeline-v2-m6b-curator`'s; this branch's is 0078, so merge M6b
-first (goose refuses a missing 0077 applied after 0078).
+not merged, not deployed.
+
+**Merge order (decision, 2026-11-12, coordinator):** this branch ships
+before M6b and owns migration **0077** (`0077_unwedge_legacy_imports.sql`),
+so it applies on main by itself. `claude/pipeline-v2-m6b-curator`'s
+`0077_retire_v1_record.sql` must be renumbered (0078) when M6b is rebased.
 
 Live evidence (nuc3, read-only DB at v0.44.0 / goose 76):
 
@@ -24,77 +27,95 @@ Live evidence (nuc3, read-only DB at v0.44.0 / goose 76):
   publication; a pending salvage has none yet). Runner then delivered the
   committed directories (deliveries 549/550, readyAt 2026-11-11 22:39); the
   feed fact found no row for transfers `t-0-0afae…`/`t-0-faec…`, was
-  dropped as "not Curator's", and the cursor moved on. Nothing else reads
-  the completed roots for unclaimed manifests.
+  dropped as "not Curator's", and the cursor moved on.
+- Publication 344 is a historical record at `/working/monarr/completed` — the
+  storage container under the configured root `/working/monarr`. Root cause:
+  migration 0040 fenced every download's `import_path`; a pre-delivery
+  download whose single-file payload sat directly in the completed directory
+  reported that directory as its import path, and migration 0073 turned each
+  fenced path into a historical publication without asking whether it was a
+  payload directory. Because a publication claims everything inside it,
+  Download storage showed every folder as "inside publication
+  /working/monarr/completed" and refused their whole-folder deletes.
+- The other 248 historical record-only rows (0040 cohort: no download row,
+  no manifest, no files) point at directories that no longer exist
+  (`/working/monarr/…` 147, `/processing/failed/…` 100, `/processing/…` 1;
+  checked on the host through the container's mounts).
 
 Changes:
 
-- **Migration 0078** (`0078_unwedge_legacy_imports.sql`): every
-  import_failed publication with a download row whose error is a legacy
-  wording or that holds unresolved files, and has an undecided file, is
-  re-decided: want already imported elsewhere → files discarded{superseded},
-  publication imported (sweep retires it); otherwise → discovered with fresh
-  limits (attempts 0, no deadline/hold/retry), unresolved → pending, held
-  stages released and pending authorizations disposed (as 0076). Skips a
-  publication a person is deciding (`not selected for import…`, `kept by an
-  operator…`). Unresolved/pending files of *removed* publications → discarded
-  and removed. Idempotent (tested by running the Up twice).
-- **Ended imports decide their media**: `redecideLeftoverSidecars` now
-  discards pending media in an imported/notified/import_failed publication
-  (`its publication's import ended without placing it; not kept`) instead of
-  leaving it forever — covers legacy rows and v0.44's own stall/attempt-limit
-  end (`EndPublicationForRegrab` leaves files pending).
+- **Migration 0077**: every import_failed publication with a download row
+  whose error is a legacy wording or that holds unresolved files, and has an
+  undecided file, is re-decided: want already imported elsewhere → files
+  discarded{superseded}, publication imported (sweep retires it); otherwise →
+  discovered with fresh limits (attempts 0, no deadline/hold/retry),
+  unresolved → pending, held stages released and pending authorizations
+  disposed (as 0076). Skips a publication a person is deciding (`not selected
+  for import…`, `kept by an operator…`). Unresolved/pending files of
+  *removed* publications → discarded and removed. Idempotent (tested).
+- **Ended imports decide their media**: the cleanup pass discards pending
+  media in an imported/notified/import_failed publication (`its publication's
+  import ended without placing it; not kept`) — legacy rows and v0.44's own
+  stall/attempt-limit end, which leaves files pending.
 - **Clear failed / Remove keep a pending-salvage row** (hidden, not deleted)
   until its salvage publication exists.
-- **Adoption** (`publication_adopt.go`, runs first in the hourly
-  `CleanupPayloads`): a top-level directory under a completed root with a
-  valid `.runner-manifest.json` naming a Curator `t-…` transfer and no
-  publication at that path is attributed through `observe` (salvage for a
-  row whose terminal is written, completed terminal otherwise) — exactly once
-  (publication path is unique). No row → recorded as a live publication with
-  no download, files discarded{rejected} with the reason, history
-  `publication_orphaned`, retired by the same pass. No token / no manifest →
-  untouched.
+- **Adoption** (`publication_adopt.go`, hourly in `CleanupPayloads`): each
+  payload directory under a completed root (the root's children, and the
+  children of a working-tree root's `completed` container) with a valid
+  `.runner-manifest.json` naming a Curator `t-…` transfer and no publication
+  is attributed through `observe` exactly once. No row → a live publication
+  with no download, files discarded{rejected}, history
+  `publication_orphaned`, retired by the same pass.
+- **No publication at a root or its container** (`publication_records.go`):
+  `payloadContainer` refuses a completed root, `<root>/completed` or any
+  ancestor — Runner terminals and salvages naming one are refused, adoption
+  and the cutover marking enumerate payloads only, and the inventory fence and
+  `publicationClaiming` ignore such a record, so it can never block another
+  folder's whole-folder delete.
+- **Record-only publications end without a person** (hourly, first in
+  `CleanupPayloads`): a record with no download row, manifest or files is
+  closed (`removed`, reason kept, history `publication_closed`; nothing
+  deleted) when it is a container (344) or its directory is gone while its
+  storage is verifiably present (root storage identity; outside every root,
+  its parent directory). A record whose directory is still there keeps
+  waiting for review (ADR 0026 addendum 10) — none exist live.
 
 **Decision for Paul to review:** an orphan's files are discarded (the
-directory is deleted) rather than held. Curator minted its token, the attempt
-is gone from its records and its want was re-grabbed when the attempt failed,
-so nothing can import it; holding it would wait for a person. Live: job 2707
-(Victor Frankenstein, want movie:922 — library already holds a copy, pub 813)
-and job 2755 (Good Trouble S04E10 — download 1276 imported it).
+directory is deleted) rather than held: Curator minted its token, the attempt
+is gone from its records and its want was re-grabbed when it failed, so
+nothing can import it. Live: job 2707 (Victor Frankenstein; the library holds
+a copy, pub 813) and job 2755 (Good Trouble S04E10; download 1276 imported).
 
 How each live group resolves after deploy:
 
 | Group (live DB) | Resolution |
 |---|---|
-| 37 import_failed legacy, want open (492, 501, 546, 559, 617, 639, 659, 668, 699–701, 704, 706, 710, 713, 715, 716, 719, 725, 728–731, 733–738, 800, 801, 813; historical 6, 10, 12, 29, 68) | 0078 → discovered; the import places or discards every file |
-| 3 legacy, want satisfied (799; historical 14, 236) | 0078 → imported, files discarded{superseded}; sweep retires |
+| 37 import_failed legacy, want open (492, 501, 546, 559, 617, 639, 659, 668, 699–701, 704, 706, 710, 713, 715, 716, 719, 725, 728–731, 733–738, 800, 801, 813; historical 6, 10, 12, 29, 68) | 0077 → discovered; the import places or discards every file |
+| 3 legacy, want satisfied (799; historical 14, 236) | 0077 → imported, files discarded{superseded}; sweep retires |
 | 5 live import_failed, all files already discarded (666, 667, 714, 717, 718) | already sweep candidates; next hourly sweep removes them |
-| pending sidecars in ~40 live imported publications | existing sweep re-decision (0076 path) |
-| pending media in approved historical imported pubs (17, 87, 89, 92–94, 108, 121, 167) | new rule: discarded by the sweep |
-| unresolved sidecars in removed pubs (538–541, 567) | 0078 → discarded, removed |
+| pending sidecars in ~40 live imported publications | existing sweep re-decision |
+| pending media in approved historical imported pubs (17, 87, 89, 92–94, 108, 121, 167) | discarded by the sweep (new rule) |
+| unresolved sidecars in removed pubs (538–541, 567) | 0077 → discarded, removed |
 | unresolved files in discovered pubs (~80) | the pending import decides them |
 | orphan dirs job-2707, job-2755 | adoption → orphan, discarded, removed |
+| pub 344 (container record) | closed by the first hourly pass; stops fencing |
+| 248 historical record-only rows, directory gone | closed by the first hourly pass |
 
-**Conflict to reconcile (not changed here):** the historical cohort still
-waits for a person by design (ADR 0026 / contract 3.4, M7 review): 249
-`pre-delivery acquisition (migration 0040 review cohort)` rows with no
-download row or manifest cannot be imported or cleaned file by file; and
-historical publications without an approved review batch (e.g. 13, and any
-of the requeued historical rows once imported) are never cleaned until
-approved. Also publication **344** is a 0040-cohort row whose path is the
-completed root itself (`/working/monarr/completed`): Download storage shows
-every folder as "inside publication /working/monarr/completed" and refuses
-whole-folder deletes for all of them. Both contradict "nothing waits for a
-person"; Paul decides.
+**Still needs the M7 approval (ADR 0026 addenda 8 and 10 require
+`cleanup_approved_at` before anything in a historical publication is
+deleted; the coordinator runs approve-cleanup after deploy):** historical
+publications with a download row and no approval — **3, 5, 6, 7, 9, 10, 12,
+13, 14, 29, 68, 236**. They import (or are already decided) automatically;
+only their file deletion waits for the approval. After it, the per-file
+sweep retires them with no further step.
 
 Validation (this branch, Go 1.25.7 / pinned tools): gofmt clean; `go vet`
 and pinned golangci-lint v2.12.2 on `internal/app/acquisition/...` and
 `internal/infra/sqlite/...`: 0 issues; `make gen` + `git diff --exit-code --
-internal/infra/sqlite/gen internal/api/gen` clean after commit; `go test
-./internal/infra/sqlite/ ./internal/app/acquisition/` pass; `go test
+internal/infra/sqlite/gen internal/api/gen` clean; `go test
+./internal/infra/sqlite/ ./internal/app/acquisition/` pass; earlier `go test
 ./internal/api/ -run 'Clear|Remove|Dismiss'` pass. Not run: full `make
-test`, `make test-web`, `make test-e2e` (no UI change), adversarial review.
+test`, `make test-web`, `make test-e2e`, adversarial review.
 
 ## No wedge: hash once, scratch stages, background reconcile, 4 workers, subtitles — 2026-11-11 · v0.44.0
 
