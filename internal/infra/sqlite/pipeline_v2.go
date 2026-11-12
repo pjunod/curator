@@ -1340,7 +1340,11 @@ func (d *DB) ExtendDownloadDeadline(ctx context.Context, dl Download, at time.Ti
 // wantables given — a replacement grab in the same write. A Runner terminal
 // already recorded is kept (only an empty or provisional one becomes
 // failed{lost}). Only a row still as read (state and deadline) is ended.
-func (d *DB) FailOverdueDownload(ctx context.Context, dl Download, reason string, regrab []string, entry HandoffEntry) (bool, error) {
+//
+// runnerSilent additionally requires that no Runner terminal landed since
+// the row was read (only an empty or provisional outcome): a decision drawn
+// from Runner's queue never overwrites one.
+func (d *DB) FailOverdueDownload(ctx context.Context, dl Download, reason string, regrab []string, entry HandoffEntry, runnerSilent bool) (bool, error) {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -1348,14 +1352,18 @@ func (d *DB) FailOverdueDownload(ctx context.Context, dl Download, reason string
 	defer func() { _ = tx.Rollback() }()
 	now := time.Now().UnixMilli()
 	raw, _ := json.Marshal(entry)
+	silent := 0
+	if runnerSilent {
+		silent = 1
+	}
 	res, err := tx.ExecContext(ctx, `UPDATE downloads SET state='failed', error=?, deadline_at=0, state_entered_at=?,
 		runner_outcome=CASE WHEN runner_outcome='' OR provisional=1 THEN 'failed' ELSE runner_outcome END,
 		runner_outcome_reason=CASE WHEN runner_outcome='' OR provisional=1 THEN 'lost' ELSE runner_outcome_reason END,
 		runner_outcome_at=CASE WHEN runner_outcome='' OR provisional=1 THEN ? ELSE runner_outcome_at END,
 		runner_blames_release=0, provisional=0,
 		handoff_log=json_insert(handoff_log,'$[#]',json(?)), updated_at=?
-		WHERE id=? AND state=? AND deadline_at=?`,
-		reason, now, now, string(raw), now, dl.ID, dl.State, dl.DeadlineAt.UnixMilli())
+		WHERE id=? AND state=? AND deadline_at=? AND (?=0 OR runner_outcome='' OR provisional=1)`,
+		reason, now, now, string(raw), now, dl.ID, dl.State, dl.DeadlineAt.UnixMilli(), silent)
 	if err != nil {
 		return false, err
 	}

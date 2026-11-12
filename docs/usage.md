@@ -1360,11 +1360,14 @@ Every overdue download leaves on its own (v0.45.2). On each poll Curator asks
 Runner about it: a terminal on Runner's receipt is applied; a job still in
 Runner's queue that is moving (bytes, progress or stage) gets its deadline
 extended; one Runner holds waits on Runner's own hold deadline; a job that
-has not moved for 24 hours past its deadline, that Runner keeps blocked past
-Runner's own retry deadline, or that is no longer in Runner's queue (Runner
-does not know it, or its receipt is stale — for example after Runner moved
-hosts) is failed as *not the release's fault* (no blocklist) and its want is
-grabbed again. A download whose client was deleted or disabled is ended the
+has not moved for 24 hours past its deadline (a hold only when Runner gave
+it no deadline of its own), that Runner keeps blocked past Runner's own
+retry deadline, that has been missing from Runner's queue for 10 minutes of
+successful polls (Runner does not know it, or its receipt is stale — for
+example after Runner moved hosts), or whose receipt says completed with no
+publication arriving within 15 minutes, is failed as *not the release's
+fault* (no blocklist) and its want is grabbed again. An empty queue reply
+decides nothing. A download whose client was deleted or disabled is ended the
 same way by the hourly cleanup. The reason is on the row (`overdue: …`) and
 in History. An unreachable Runner decides nothing.
 

@@ -54,16 +54,29 @@ Runner's deadline); #1335 (0.6 h overdue, in Runner's queue) waits for
 progress or the stall limit. Publications 3, 5, 7 import on their next
 attempt in a fresh epoch.
 
+Adversarial review of this branch — 6 findings, all fixed:
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | "Not in queue" decided on one poll | Per-row absence clock (`overdueAbsent`), fail only after `goneGrace` of continuous absence across successful polls; an empty queue while rows are overdue skips the pass |
+| 2 | Fresh epoch dropped a Resolve selection | Any run honours the newest `stepManualQueued` paths of this publication (not only approved runs) |
+| 3 | Queue-derived failure could overwrite a landed terminal | `FailOverdueDownload(..., runnerSilent)` adds `runner_outcome='' OR provisional=1` |
+| 4 | A hold with Runner's deadline ahead was failed after 24 h | Left to wait; the stall limit applies only to holds with no deadline |
+| 5 | "Completed without publication" failed at once; custody ignored | Waits `overdueCompletedGrace` (15 min) for the deliveries feed; `publicationOwnsExit` also counts held stages and pending/retained authorizations |
+| 6 | Progress compared with `>`; clocks never cleared | Any change is movement; clocks pruned when a row leaves the overdue set |
+
+Expected-on-deploy timings shift accordingly: rows absent from Runner's
+queue fail after 10 minutes of successful polls; #733 after 15 minutes.
+
 Decision for Paul to review: a job Runner still lists but has not moved for
 24 h past its deadline is failed and re-grabbed; Curator does not cancel it
 in Runner (a late completion there is superseded by the precedence rule).
 
-Validation: gofmt, `go vet`, pinned golangci-lint on
-`internal/app/acquisition/...` and `internal/infra/sqlite/...` 0 issues;
+Validation (after the review fixes): gofmt, `go vet`, pinned golangci-lint
+on `internal/app/acquisition/...` and `internal/infra/sqlite/...` 0 issues;
 `make gen` no diff; `go test ./internal/infra/sqlite/
-./internal/app/acquisition/` pass (one held-row test re-run alone after the
-held fix, plus the Held/Deadline/Overdue/Gone subset). Not run (by
-instruction): full suite, web, e2e.
+./internal/app/acquisition/` pass. Not run (by instruction): full suite,
+web, e2e.
 
 ## Unwedge legacy imports + adopt unclaimed Runner publications — 2026-11-12 · v0.45.1
 

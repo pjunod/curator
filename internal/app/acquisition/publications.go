@@ -297,8 +297,9 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		}
 		// An approved run imports exactly the newest selection; so does any
 		// run when that selection is a person's placement of this
-		// publication's files (a pass after a failure or a restart).
-		if approved {
+		// publication's files (a pass after a failure, a restart, or a
+		// fresh attempt epoch after a refused plan).
+		if approved || len(mine) > 0 {
 			selected, manual = mine, true
 		}
 		break
