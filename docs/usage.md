@@ -1451,9 +1451,12 @@ failure at its deadline. A finished import never holds a download's exit
 open, and the half-written stage an earlier import attempt left behind
 (`.monarr-stage-…` next to the library file) is removed automatically. If
 that attempt had already moved the previous library file aside
-(`.monarr-prior-…`), the hourly cleanup removes that copy once the library
-file verifies as the one imported, or puts it back when the library file is
-missing or unrecorded; when neither can be proven it waits for the next pass.
+(`.monarr-prior-…`), the hourly cleanup removes that copy when a library
+file is in place. It never overwrites a file at that path, including one you
+put there yourself. When the library file is missing, it puts the previous
+file back if the copy matches it, and otherwise removes the copy. If the
+folder cannot be checked (for example, an unmounted share), it waits for the
+next pass.
 
 ### Held, provisional and publications in Activity
 

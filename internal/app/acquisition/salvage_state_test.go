@@ -209,27 +209,45 @@ func TestSupersededStageBackupRemovedWhenTheUpgradeLanded(t *testing.T) {
 	}
 }
 
-// Case 2: the target is missing (or holds bytes nothing recorded): the
-// verified backup is renamed back onto it, then the stage is rolled back.
-func TestSupersededStageBackupRestoredWhenTheTargetIsGone(t *testing.T) {
+// Case 2: an existing target is never overwritten. A target someone else
+// put there (bytes nothing recorded) is kept and our backup removed; a
+// missing target gets a backup that is the prior file back; a backup that
+// is not the prior file is removed. Every stage ends rolled_back.
+func TestSupersededStageBackupNeverOverwritesAnExistingTarget(t *testing.T) {
 	f := setupV2(t, nil)
 	f.deferGrabs()
 	dl, target, _ := f.supersededSetup()
-	gone := filepath.Join(filepath.Dir(target), "Test Show - S01E09.mkv")
+	dir := filepath.Dir(target)
 	prior := []byte("the prior episode file")
-	tmp, backup := f.backupStage(dl, "gone0", gone, prior, "")
-	unknown := filepath.Join(filepath.Dir(target), "Test Show - S01E08.mkv")
-	if err := os.WriteFile(unknown, []byte("bytes nothing recorded"), 0o644); err != nil {
+	theirs := []byte("a file someone else put here")
+	unknown := filepath.Join(dir, "Test Show - S01E08.mkv")
+	if err := os.WriteFile(unknown, theirs, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tmp2, backup2 := f.backupStage(dl, "unknown0", unknown, prior, "")
+	gone := filepath.Join(dir, "Test Show - S01E09.mkv")
+	strange := filepath.Join(dir, "Test Show - S01E07.mkv")
+	cases := []struct {
+		id, target string
+		want       []byte // nil: the target stays missing
+		tmp, bak   string
+	}{{id: "theirs0", target: unknown, want: theirs}, {id: "gone0", target: gone, want: prior}, {id: "strange0", target: strange}}
+	for i := range cases {
+		cases[i].tmp, cases[i].bak = f.backupStage(dl, cases[i].id, cases[i].target, prior, "")
+	}
+	if err := os.WriteFile(cases[2].bak, []byte("not the prior file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	f.reconcileAndSweep()
-	for _, c := range []struct{ id, target, tmp, backup string }{{"gone0", gone, tmp, backup}, {"unknown0", unknown, tmp2, backup2}} {
-		if got, err := os.ReadFile(c.target); err != nil || string(got) != string(prior) {
-			t.Fatalf("%s: target = %q (%v), want the prior file restored", c.id, got, err)
+	for _, c := range cases {
+		got, err := os.ReadFile(c.target)
+		switch {
+		case c.want == nil && !os.IsNotExist(err):
+			t.Fatalf("%s: target = %q (%v), want still missing", c.id, got, err)
+		case c.want != nil && (err != nil || string(got) != string(c.want)):
+			t.Fatalf("%s: target = %q (%v), want %q", c.id, got, err, c.want)
 		}
-		if exists(c.tmp) || exists(c.backup) || f.stageState(c.id) != "rolled_back" {
-			t.Fatalf("%s: temporary %v backup %v state %s", c.id, exists(c.tmp), exists(c.backup), f.stageState(c.id))
+		if exists(c.tmp) || exists(c.bak) || f.stageState(c.id) != "rolled_back" {
+			t.Fatalf("%s: temporary %v backup %v state %s, want both removed and rolled_back", c.id, exists(c.tmp), exists(c.bak), f.stageState(c.id))
 		}
 	}
 }

@@ -1535,20 +1535,18 @@ func (s *Service) sweepSupersededStage(ctx context.Context, p sqlite.Placement, 
 	return true
 }
 
-// settleSupersededBackup decides a superseded stage's prior-file backup
-// (decision 2026-11-12, recorded in STATUS.md for review):
+// settleSupersededBackup decides a superseded stage's prior-file backup, a
+// file Curator created, under the title's import lock (decisions 2026-11-12,
+// recorded in STATUS.md for review). An existing target is never
+// overwritten:
 //
-//   - the target verifies — it exists and its digest is the one the newest
-//     committed placement recorded for it: the upgrade landed and the backup
-//     is superseded, so it is removed;
-//   - the target holds the recorded prior file itself: the backup is a
-//     displaced duplicate, removed when its bytes are that prior file;
-//   - the target is missing, or holds bytes nothing committed recorded (this
-//     stage's own unrecorded bytes included): the backup, verified against
-//     the prior file's digest, is renamed back onto the target;
-//   - nothing can be proven (an I/O error, a target directory that is not
-//     the one recorded, a backup whose bytes are not the prior file): false,
-//     and the next pass decides.
+//   - the target exists (it verifies as the committed import, holds the prior
+//     file, or holds bytes someone else put there, which are kept): the backup
+//     is superseded and removed;
+//   - the target is missing: a backup whose bytes are the recorded prior file
+//     is renamed back onto it; any other backup is removed;
+//   - nothing can be proven (an I/O error, a target directory that is not the
+//     one recorded): false, and the next pass decides.
 func (s *Service) settleSupersededBackup(ctx context.Context, p sqlite.Placement) bool {
 	if p.Backup == p.Target || !strings.HasPrefix(filepath.Base(p.Backup), ".monarr-prior-") || filepath.Dir(p.Backup) != filepath.Dir(p.Target) {
 		return false
@@ -1559,19 +1557,6 @@ func (s *Service) settleSupersededBackup(ctx context.Context, p sqlite.Placement
 			return false
 		}
 	}
-	got, _, err := fileDigest(ctx, p.Target)
-	missing := errors.Is(err, os.ErrNotExist)
-	if err != nil && !missing {
-		return false
-	}
-	rec, recorded, err := s.db.CommittedPlacementForTarget(ctx, p.Target, "")
-	if err != nil {
-		return false
-	}
-	backupIsPrior := func() bool {
-		b, _, e := fileDigest(ctx, p.Backup)
-		return e == nil && p.PreviousSHA256 != "" && b == p.PreviousSHA256
-	}
 	removeBackup := func(why string) bool {
 		if e := os.Remove(p.Backup); e != nil && !errors.Is(e, os.ErrNotExist) {
 			return false
@@ -1579,28 +1564,41 @@ func (s *Service) settleSupersededBackup(ctx context.Context, p sqlite.Placement
 		if e := syncPath(filepath.Dir(p.Target)); e != nil {
 			return false
 		}
-		s.log.Info("superseded import stage: prior-file backup removed", "placement", p.ID, "why", why)
+		s.log.Warn("superseded import stage: its prior-file backup removed", "placement", p.ID, "target", p.Target, "why", why)
 		return true
 	}
-	switch {
-	case !missing && recorded && got == rec.SHA256:
-		return removeBackup("the target verifies against its committed placement")
-	case !missing && p.PreviousSHA256 != "" && got == p.PreviousSHA256:
-		return backupIsPrior() && removeBackup("the target holds the prior file")
-	default:
-		if !backupIsPrior() {
-			s.log.Warn("superseded import stage kept for the next pass: its backup is not the recorded prior file", "placement", p.ID)
+	got, _, err := fileDigest(ctx, p.Target)
+	if err == nil {
+		rec, recorded, e := s.db.CommittedPlacementForTarget(ctx, p.Target, "")
+		switch {
+		case e != nil:
 			return false
+		case recorded && got == rec.SHA256:
+			return removeBackup("the target verifies against its committed placement")
+		case p.PreviousSHA256 != "" && got == p.PreviousSHA256:
+			return removeBackup("the target holds the prior file")
+		default:
+			return removeBackup("the target holds a file Curator did not record; it is kept")
 		}
-		if e := os.Rename(p.Backup, p.Target); e != nil {
-			return false
-		}
-		if e := syncPublication(p.Target); e != nil {
-			return false
-		}
-		s.log.Warn("superseded import stage: prior library file restored from its backup", "placement", p.ID, "target", p.Target, "target_missing", missing)
-		return true
 	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	b, _, err := fileDigest(ctx, p.Backup)
+	if err != nil {
+		return false
+	}
+	if p.PreviousSHA256 == "" || b != p.PreviousSHA256 {
+		return removeBackup("the target is missing and the backup is not the recorded prior file")
+	}
+	if e := os.Rename(p.Backup, p.Target); e != nil {
+		return false
+	}
+	if e := syncPublication(p.Target); e != nil {
+		return false
+	}
+	s.log.Warn("superseded import stage: prior library file restored from its backup", "placement", p.ID, "target", p.Target)
+	return true
 }
 
 // sweepSupersededStages ends one download's superseded stages that need no
