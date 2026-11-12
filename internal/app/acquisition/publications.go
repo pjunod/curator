@@ -366,6 +366,23 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		prec = ictx.Value(precedenceKey{}).(*precedence)
 	}
 	result, importErr := s.importDownloadFiles(ictx, dl, pub.Path, selected, manual)
+	if importErr != nil && errors.Is(importErr, sqlite.ErrImportPlanChanged) && !errors.Is(importErr, context.Canceled) {
+		// The attempt epoch was sealed by an earlier attempt that never
+		// completed (an older build's selection, a crash mid-import): its
+		// plan cannot bind this one, and the same epoch would refuse every
+		// retry ("explicit retry required") forever. As a stage is scratch
+		// (ADR 0026 decision 18), so is the uncommitted plan: the next attempt
+		// opens a fresh epoch. The return is counted, so the attempt cap
+		// bounds it.
+		reason := importErr.Error()
+		if _, err := s.db.BeginImportRetry(context.WithoutCancel(ctx), dl.ID, dl.GenerationKey); err != nil {
+			reason += "; a fresh attempt could not be opened yet: " + err.Error()
+		} else {
+			reason += "; the next attempt starts a fresh epoch"
+		}
+		s.returnPublication(ctx, &dl, pub, reason, true)
+		return importErr
+	}
 	if importErr != nil && (errors.Is(importErr, context.Canceled) || errors.Is(importErr, ErrImportControl)) {
 		s.returnPublication(ctx, &dl, pub, importErr.Error(), false)
 		return importErr
