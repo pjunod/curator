@@ -579,7 +579,9 @@ path box opens any other folder. Folders come from the server's filesystem
 browser; the files listed are the media directly in the current folder (not
 in its sub-folders), each with its size, the episode its name says (or *no
 episode in name*), its quality, how many subtitles travel with it, and
-*runner delivery* when it is part of a Runner publication. A folder Curator
+*runner delivery* when it is part of a Runner publication. An entry Curator
+cannot import (a symlink, an unreadable file) is listed with the reason
+instead of being left out. A folder Curator
 cannot read says so by path and names the fix: when the download client
 sees that folder under a different path, add a remote path mapping to the
 client in Settings → Acquisition.
@@ -598,21 +600,38 @@ client in Settings → Acquisition.
   new one is placed); or *kept beside …* when it does not.
 - **How it gets there** — for a runner delivery: placed through Resolve, and
   Curator cleans up the delivery folder under its usual rules (there is no
-  delete option). For loose files: hardlinked (your copy stays) on the same
+  delete option). All the files you pick from one delivery are placed
+  together, in one import. A delivery grabbed for another title is moved to
+  this item when you place it — the confirm step says so — but only while
+  none of it is in the library yet; once any file of it has been placed
+  there, the confirm step refuses the move. Your choice holds for every
+  later attempt of that delivery, after a failure or a restart too. For loose files: hardlinked (your copy stays) on the same
   volume, copied across volumes. Tick **Remove original** (off by default)
   to rename instead on the same volume, or copy, verify and remove the
   original across volumes. Remove original is refused for runner
-  deliveries.
+  deliveries, for files the library tracks, and for anything inside a
+  library item's folder. An original is removed only while it is still the
+  file you chose (same file, size and modification time) and its library
+  copy is the same file (a hard link) or the same bytes (a copy); otherwise
+  it is kept and the dialog and the Activity trace say why. The removal is
+  recorded before the import completes, so a restart finishes it.
 
 Subtitles beside a video, in a `Subs/` folder, or in `Subs/<video name>/`
 travel with it, named after the library file
 (`<name>.<lang>[.forced][.sdh].srt`) by the same rules as a runner
-delivery's subtitles. A subtitle never overwrites a file Curator did not
-place; it takes the next free name.
+delivery's subtitles. Beside the video, only a subtitle whose name starts
+with the video's name travels (a downloads folder holds other releases'
+subtitles too). A subtitle never overwrites a file Curator did not place;
+it takes the next free name. Subtitles placed by an Import file… of loose
+files are not removed when that video is later upgraded or replaced
+(runner deliveries' subtitles are); delete them by hand if they no longer
+fit.
 
-**Started.** The dialog lists each job it started with its Activity row and
-current state. A long copy shows **Stop** (the import's own cancellation:
-the source stays where it was, and the row can be retried from Activity).
+**Started.** The dialog lists each job it started with its Activity row,
+followed until it finishes: its state, why it failed if it did, and what
+Remove original removed or kept. A long copy shows **Stop** (the import's
+own cancellation: the source stays where it was, and the row can be
+retried from Activity).
 
 ## The Files table, and getting rid of a bad file
 
