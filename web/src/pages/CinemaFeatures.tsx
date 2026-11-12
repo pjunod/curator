@@ -20,7 +20,7 @@ export function CinemaFeatures() {
     <p className="muted">Advisory. Nothing is turned off by what is shown here; the Re-match preview says which applies before anything moves.</p>
     {notifiers.isError && <p className="error-text">{(notifiers.error as Error).message}</p>}
     {notifiers.isSuccess && cinemas.length === 0 && <p className="muted">No Cinema notifier is configured.</p>}
-    <ul className="recovery-advisory">
+    {cinemas.length > 0 && <ul className="cinema-features">
       {cinemas.map((n) => {
         const { supported, read } = cinemaFeatureState(n)
         return <li key={n.id}>{n.name}: removed paths{' '}
@@ -28,6 +28,6 @@ export function CinemaFeatures() {
           <span className="muted"> — {read}{supported === false ? '; a move leaves the old entry until cinema’s next reconcile scan' : ''}</span>
         </li>
       })}
-    </ul>
+    </ul>}
   </section>
 }
