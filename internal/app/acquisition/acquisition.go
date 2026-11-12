@@ -210,6 +210,9 @@ type Service struct {
 	// carrying a handle but no token reach a row (review #3).
 	queueTokens   sync.Map // client id -> map[string]string
 	notFoundSince sync.Map // download id -> time.Time
+	// overdueMarks is the overdue exit's progress clock: each overdue row's
+	// last observed progress in its client and when it last moved.
+	overdueMarks sync.Map // download id -> overdueMark
 	// grabKick wakes the replacement grab worker; nil until it starts, and
 	// then a failure's grab runs inline (tests, tools).
 	grabKick     chan struct{}
