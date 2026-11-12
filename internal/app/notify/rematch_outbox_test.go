@@ -59,15 +59,92 @@ func TestMovedDeliveryIsVisibleWhenRemovedPathIsGone(t *testing.T) {
 	}
 }
 
-func TestMovedDeliveryWarnsWhileRemovedPathIsPresent(t *testing.T) {
+// present is a lasting answer: the row is visible for the new files, names
+// the reason, and is not retried.
+func TestMovedDeliveryWarnsWhenRemovedPathIsPresent(t *testing.T) {
+	for reason, words := range map[string]string{
+		"": "it still exists in the library", ports.ReasonStillPresent: "it still exists in the library",
+		ports.ReasonSymlinkInPath: "a symlink is in its path", ports.ReasonCaseOnly: "only the case of its name differs",
+	} {
+		e := newOutboxEnv(t)
+		e.cinema.Set(func(c *cinematest.Cinema) { c.RemovedPaths, c.PresentReason = true, reason })
+		_, old := e.moved("New/Dune (2021).mkv", "Old/Dune (1984).mkv")
+		e.place("Old/Dune (1984).mkv", "still here")
+		e.pass()
+		r := e.rows()[0]
+		if r.VisibleAt == 0 || r.Status != "ok" || !strings.Contains(r.Result, "warning: cinema still has "+old+": "+words) {
+			t.Fatalf("reason %q: row = %+v, want a settled warning naming %q", reason, r, words)
+		}
+	}
+}
+
+// retained: expected_not_placed, prune_bound and conversion_hold are
+// transient (retried on the schedule); root_identity_* is a lasting warning.
+func TestMovedDeliveryRetainedCodes(t *testing.T) {
+	for code, transient := range map[string]bool{
+		ports.RetainedExpectedNotPlaced: true, ports.RetainedPruneBound: true, ports.RetainedConversionHold: true,
+		ports.RetainedRootIdentityUnset: false, ports.RetainedRootIdentityMismatch: false,
+	} {
+		e := newOutboxEnv(t)
+		_, old := e.moved("New/Dune (2021).mkv", "Old/Dune (1984).mkv")
+		e.cinema.Set(func(c *cinematest.Cinema) { c.RemovedPaths, c.Retained = true, map[string]string{old: code} })
+		e.pass()
+		r := e.rows()[0]
+		if transient {
+			if r.VisibleAt != 0 || r.Status != "pending" || !strings.Contains(r.Result, "cinema is holding "+old) {
+				t.Fatalf("%s: row = %+v, want a retry with a warning", code, r)
+			}
+			continue
+		}
+		if r.VisibleAt == 0 || r.Status != "ok" || !strings.Contains(r.Result, "cinema kept "+old) || !strings.Contains(r.Result, "it will drop it at its next full scan") {
+			t.Fatalf("%s: row = %+v, want a settled warning", code, r)
+		}
+	}
+}
+
+// gone and unknown satisfy the removal.
+func TestMovedDeliveryUnknownIsSatisfied(t *testing.T) {
+	e := newOutboxEnv(t)
+	_, old := e.moved("New/Dune (2021).mkv", "Old/Dune (1984).mkv")
+	e.cinema.Set(func(c *cinematest.Cinema) { c.RemovedPaths, c.Unknown = true, map[string]bool{old: true} })
+	e.pass()
+	if r := e.rows()[0]; r.VisibleAt == 0 || strings.Contains(r.Result, "warning") {
+		t.Fatalf("row = %+v, want visible without a warning", r)
+	}
+}
+
+// Every chunk of a moved request is probe-only, including one that carries
+// only expected files.
+func TestMovedRequestsAreProbeOnlyOnEveryChunk(t *testing.T) {
 	e := newOutboxEnv(t)
 	e.cinema.Set(func(c *cinematest.Cinema) { c.RemovedPaths = true })
-	_, old := e.moved("New/Dune (2021).mkv", "Old/Dune (1984).mkv")
-	e.place("Old/Dune (1984).mkv", "still here")
+	placed, _ := e.moved("New/Dune (2021).mkv", "Old/Dune (1984).mkv")
 	e.pass()
-	r := e.rows()[0]
-	if r.VisibleAt != 0 || r.Status != "pending" || !strings.Contains(r.Result, old+" still exists in the library") {
-		t.Fatalf("row = %+v, want a warning naming the path that still exists", r)
+	// A second chunk with expected files and no removed paths.
+	fi, err := os.Stat(placed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []ports.ExpectedFile{{Path: placed, Bytes: fi.Size(), MtimeNs: fi.ModTime().UnixNano()}}
+	n := ports.Notification{Event: "moved", Title: "Re-matched", Import: &ports.ImportInfo{MediaItemID: 2, FromItemID: 1, Kind: "movie",
+		Paths: []string{placed}, Dirs: []string{e.root}, ExpectedFiles: map[string][]ports.ExpectedFile{e.root: expected}}}
+	raw, _ := json.Marshal(n)
+	if err := e.db.EnqueueDeliveries(e.ctx, []sqlite.OutboxWrite{{NotifierID: 1, Directory: e.root, IdempotencyKey: acquisition.RematchDeliveryKey("rm-1", e.root) + "-1",
+		ExpectedFiles: expected, Event: "moved", Payload: string(raw), OperationID: "rm-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if now := time.Now(); now.After(e.clock) {
+		e.clock = now
+	}
+	e.pass()
+	reqs := e.cinema.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %+v, want two chunks", reqs)
+	}
+	for i, q := range reqs {
+		if !q.ProbeOnly || q.Event != "moved" {
+			t.Fatalf("request %d = %+v, want event moved with probe_only", i, q)
+		}
 	}
 }
 
@@ -90,14 +167,14 @@ func TestMovedDeliveryAgainstCinemaWithoutRemovedPaths(t *testing.T) {
 
 // The backstop: an answer with no entry for a removed path means the
 // Cinema does not support them.
-func TestRemovedNotGoneBackstop(t *testing.T) {
-	present, answered := removedNotGone([]string{"/a", "/b"}, []ports.PlacedReport{{Path: "/a", State: "gone"}})
-	if answered || len(present) != 0 {
-		t.Fatalf("answered = %v present = %v, want unanswered", answered, present)
+func TestJudgeRemovedBackstop(t *testing.T) {
+	v := judgeRemoved([]string{"/a", "/b"}, []ports.PlacedReport{{Path: "/a", State: "gone"}})
+	if v.answered || len(v.warn)+len(v.retry) != 0 {
+		t.Fatalf("verdict = %+v, want unanswered", v)
 	}
-	present, answered = removedNotGone([]string{"/a", "/b"}, []ports.PlacedReport{{Path: "/a", State: "unknown"}, {Path: "/b", State: "present"}})
-	if !answered || len(present) != 1 || present[0] != "/b" {
-		t.Fatalf("answered = %v present = %v, want /b present", answered, present)
+	v = judgeRemoved([]string{"/a", "/b"}, []ports.PlacedReport{{Path: "/a", State: "unknown"}, {Path: "/b", State: "present"}})
+	if !v.answered || len(v.warn) != 1 || len(v.retry) != 0 {
+		t.Fatalf("verdict = %+v, want /b a lasting warning", v)
 	}
 }
 

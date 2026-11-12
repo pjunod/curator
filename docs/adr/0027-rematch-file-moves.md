@@ -100,7 +100,7 @@ file between items, and Cinema cannot be told that a path went away
    `moved`, one per library root touched: `path` = common parent, `expected_files`
    = placed files, `removed_paths` = files (and the folder, if removed) that
    left (contract amendment). Done when Cinema reports every expected file
-   `placed` and every removed path `gone` or `unknown`. The panel shows
+   `placed` and every removed path `gone` or `unknown` (or a lasting warning, see below). The panel shows
    "moved, cinema confirming" then "in cinema" from `visible_at`. Chat-shaped
    notifiers receive one `moved` message.
 10. **API.** `POST /library/{id}/rematch/preview`, `POST /library/{id}/rematch`
@@ -187,6 +187,18 @@ file between items, and Cinema cannot be told that a path went away
   a moved request unless read in the last 10 minutes; a stored
   `removed_paths` that cannot be confirmed holds the request (retried), never
   a common-parent request on a stale feature.
+- **`probe_only` on every chunk.** Each moved request, including a chunk of
+  only expected files, sends `"probe_only": true`, so cinema never walks the
+  common parent. Deploy order: every cinema node is upgraded before curator
+  sends `removed_paths`.
+- **Cinema's answer per removed path.** `gone` and `unknown` satisfy. `retained`
+  carries a `code`: `expected_not_placed`, `prune_bound` and `conversion_hold`
+  are transient (the row warns and retries on the delivery schedule);
+  `root_identity_unset` and `root_identity_mismatch` are lasting (`cinema kept
+  <path>: <reason>; it will drop it at its next full scan`, not retried).
+  `present` carries a `reason` (`still_present`, `symlink_in_path`,
+  `case_only`) and is likewise a lasting warning. Lasting warnings ride on the
+  visible row and show in the operation's cinema line.
 - **Replacements cannot be cancelled.** A replacement waiting for a release
   or blocked on cleanup holds the title; the blocker says so instead of
   promising that waiting ends it.

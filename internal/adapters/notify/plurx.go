@@ -78,7 +78,7 @@ func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 	var failures []string
 	permanent := true
 	for _, dir := range n.Import.Dirs {
-		res, err := p.scan(ctx, dir, n.Import, "")
+		res, err := p.scan(ctx, dir, n.Import, "", false)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", dir, err))
 			permanent = permanent && errors.Is(err, ports.ErrNotifyPermanent)
@@ -113,7 +113,7 @@ func (p *Plurx) SendScan(ctx context.Context, n ports.Notification) (ports.Notif
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNever, Msg: "plurx: a sub-delivery names exactly one directory"}
 	}
 	dir := n.Import.Dirs[0]
-	return p.scan(ctx, dir, n.Import, n.IdempotencyKey)
+	return p.scan(ctx, dir, n.Import, n.IdempotencyKey, n.Event == "moved")
 }
 
 // waitMs is how long Cinema may hold a request for its targeted result. It
@@ -138,6 +138,10 @@ type plurxScanRequest struct {
 	// event and the files that left `path`.
 	Event        string   `json:"event,omitempty"`
 	RemovedPaths []string `json:"removed_paths,omitempty"`
+	// ProbeOnly is sent on every chunk of a moved request, including one that
+	// carries only expected files: cinema probes the named paths and never
+	// walks the rest of `path` (contract 4.4).
+	ProbeOnly bool `json:"probe_only,omitempty"`
 }
 
 func (p *Plurx) hasFeature(f string) bool {
@@ -247,7 +251,7 @@ func scanBody(path string, info *ports.ImportInfo) plurxScanRequest {
 // owns is the CLASSIFICATION — whether trying again could possibly help, and
 // whether the next try needs a fresh attempt — because that knowledge lives
 // with the status codes.
-func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, key string) (ports.NotifyResult, error) {
+func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, key string, moved bool) (ports.NotifyResult, error) {
 	req := scanBody(dir, info)
 	sentRemoved := false
 	if key != "" {
@@ -257,9 +261,9 @@ func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, ke
 		if p.Wait > 0 {
 			req.WaitMs = int(p.Wait / time.Millisecond)
 		}
-		if len(info.RemovedPaths) > 0 {
+		if moved || len(info.RemovedPaths) > 0 {
 			if p.hasFeature(ports.FeatureRemovedPaths) {
-				req.Event, req.RemovedPaths, sentRemoved = "moved", info.RemovedPaths, true
+				req.Event, req.RemovedPaths, req.ProbeOnly, sentRemoved = "moved", info.RemovedPaths, true, true
 			} else {
 				// An older Cinema would full-scan the common parent and
 				// cannot drop the old entry: send the new folder as a plain

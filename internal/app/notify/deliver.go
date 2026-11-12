@@ -162,7 +162,7 @@ func (d *Dispatcher) attempt(ctx context.Context, del sqlite.Delivery) {
 	}
 
 	target := d.new(cfg)
-	if n.Event == "moved" && n.Import != nil && len(n.Import.RemovedPaths) > 0 && del.RemoteRequestID == "" {
+	if n.Event == "moved" && n.Import != nil && del.RemoteRequestID == "" {
 		var fresh bool
 		target, fresh = d.refreshFeatures(ctx, cfg, target)
 		if !fresh && cfg.HasFeature(ports.FeatureRemovedPaths) {
@@ -242,11 +242,12 @@ func (d *Dispatcher) attemptSub(ctx context.Context, del sqlite.Delivery, peer s
 	if n.Import != nil {
 		sub.total = len(n.Import.Paths)
 		sub.removed = n.Import.RemovedPaths
+		sub.moved = n.Event == "moved"
 		// A read of a queued request is judged by what its POST sent.
 		sub.sentRemoved = res.RemovedPathsSent
 		if polled {
 			sub.sentRemoved = del.RemovedSent
-		} else if len(sub.removed) > 0 {
+		} else if sub.moved {
 			if err := d.db.SetDeliveryRemovedSent(ctx, del.ID, res.RemovedPathsSent); err != nil {
 				d.log.Warn("notify: cannot record what a moved request sent", "delivery", del.ID, "err", err)
 			}
@@ -270,6 +271,7 @@ type subAttempt struct {
 	// left the directory, and whether Cinema was sent them.
 	notifierID  int64
 	removed     []string
+	moved       bool // a moved request, whether or not this chunk names removed paths
 	sentRemoved bool
 }
 
@@ -315,24 +317,65 @@ func (d *Dispatcher) refreshFeatures(ctx context.Context, cfg ports.NotifierConf
 	return d.new(cfg), true
 }
 
-// removedNotGone lists every removed path Cinema still has, and reports
-// whether it answered for each one at all (an older Cinema does not).
-func removedNotGone(removed []string, files []ports.PlacedReport) (present []string, answered bool) {
+// removedVerdict is what Cinema said of a moved request's removed paths
+// (contract 4.4). gone and unknown satisfy; retry holds the sub-delivery
+// (transient: try again on the schedule); warn is a lasting answer, shown on
+// the row without holding it.
+type removedVerdict struct {
+	retry, warn []string
+	answered    bool // false: some removed path has no entry (an older Cinema)
+}
+
+func presentWords(reason string) string {
+	switch reason {
+	case ports.ReasonSymlinkInPath:
+		return "a symlink is in its path"
+	case ports.ReasonCaseOnly:
+		return "only the case of its name differs"
+	default:
+		return "it still exists in the library"
+	}
+}
+
+func retainedWords(code string) string {
+	switch code {
+	case ports.RetainedRootIdentityUnset:
+		return "its library root has no recorded identity yet"
+	case ports.RetainedRootIdentityMismatch:
+		return "its library root is not the one it indexed"
+	case ports.RetainedPruneBound:
+		return "it is at its prune limit"
+	case ports.RetainedConversionHold:
+		return "the file is held for a conversion"
+	case ports.RetainedExpectedNotPlaced:
+		return "an expected file is not placed yet"
+	}
+	return "code " + code
+}
+
+func judgeRemoved(removed []string, files []ports.PlacedReport) removedVerdict {
 	byPath := map[string]ports.PlacedReport{}
 	for _, f := range files {
 		byPath[f.Path] = f
 	}
-	answered = true
+	v := removedVerdict{answered: true}
 	for _, r := range removed {
 		f, ok := byPath[r]
 		switch {
 		case !ok:
-			answered = false
+			v.answered = false
 		case f.State == "present":
-			present = append(present, r)
+			v.warn = append(v.warn, fmt.Sprintf("cinema still has %s: %s", r, presentWords(f.Reason)))
+		case f.State == "retained":
+			switch f.Code {
+			case ports.RetainedExpectedNotPlaced, ports.RetainedPruneBound, ports.RetainedConversionHold:
+				v.retry = append(v.retry, fmt.Sprintf("cinema is holding %s: %s", r, retainedWords(f.Code)))
+			default:
+				v.warn = append(v.warn, fmt.Sprintf("cinema kept %s: %s; it will drop it at its next full scan", r, retainedWords(f.Code)))
+			}
 		}
 	}
-	return present, answered
+	return v
 }
 
 // noResults is the delivery log's line for a Cinema that accepted the request
@@ -430,20 +473,20 @@ func (d *Dispatcher) settleSub(ctx context.Context, del sqlite.Delivery, sub sub
 		}
 		missing := notPlaced(del.ExpectedFiles, res.Files)
 		compat := ""
+		var warns []string
 		if len(sub.removed) > 0 {
-			present, answered := removedNotGone(sub.removed, res.Files)
+			verdict := judgeRemoved(sub.removed, res.Files)
 			switch {
 			case !sub.sentRemoved:
 				compat = oldCinemaNote
-			case !answered:
+			case !verdict.answered:
 				// The backstop: a Cinema that took the request but did not
 				// answer for each removed path does not support them.
 				compat = oldCinemaNote
 				d.forgetRemovedPaths(ctx, sub.notifierID)
 			default:
-				for _, p := range present {
-					missing = append(missing, p+" still exists in the library")
-				}
+				missing = append(missing, verdict.retry...)
+				warns = verdict.warn
 			}
 		}
 		if len(missing) == 0 {
@@ -455,6 +498,13 @@ func (d *Dispatcher) settleSub(ctx context.Context, del sqlite.Delivery, sub sub
 			}
 			if compat != "" {
 				del.Result += "; " + compat
+			}
+			if len(warns) > 0 {
+				// Lasting answers: shown, not retried forever.
+				del.Result += "; warning: " + warns[0]
+				if len(warns) > 1 {
+					del.Result += fmt.Sprintf(" (and %d more)", len(warns)-1)
+				}
 			}
 			if sub.total > len(del.ExpectedFiles) {
 				// Cinema takes at most 64 expected files a request; the

@@ -216,13 +216,32 @@ type NotifyResult struct {
 
 // PlacedReport is Cinema's word on one expected file.
 type PlacedReport struct {
-	Path    string `json:"path"`
-	State   string `json:"state"` // placed | skipped | missing; gone | unknown | present for a removed path
+	Path  string `json:"path"`
+	State string `json:"state"` // placed | skipped | missing; gone | unknown | present | retained for a removed path
+	// Code is a retained removed path's machine reason (Retained*); Reason is
+	// a present one's (Reason*) or a skipped file's text.
+	Code    string `json:"code,omitempty"`
 	Bytes   int64  `json:"bytes,omitempty"`
 	MtimeNs int64  `json:"mtime_ns,omitempty"`
 	ItemID  int64  `json:"item_id,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 }
+
+// Why Cinema retained a removed path (PlacedReport.Code, contract 4.4).
+const (
+	RetainedRootIdentityUnset    = "root_identity_unset"
+	RetainedRootIdentityMismatch = "root_identity_mismatch"
+	RetainedPruneBound           = "prune_bound"
+	RetainedConversionHold       = "conversion_hold"
+	RetainedExpectedNotPlaced    = "expected_not_placed"
+)
+
+// Why a removed path is still present (PlacedReport.Reason).
+const (
+	ReasonStillPresent  = "still_present"
+	ReasonSymlinkInPath = "symlink_in_path"
+	ReasonCaseOnly      = "case_only"
+)
 
 // FeatureProber re-reads what the far side supports (Cinema's connection
 // test answer, contract amendment 5.3) without starting any work.

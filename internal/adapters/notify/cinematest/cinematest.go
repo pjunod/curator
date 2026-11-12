@@ -37,6 +37,7 @@ type Request struct {
 	Expected      []ports.ExpectedFile
 	Removed       []string // removed_paths (contract amendment), "" event when absent
 	Event         string
+	ProbeOnly     bool   // probe_only
 	State         string // queued | running | done | failed
 	Error         string // a failed request's error
 	Files         []ports.PlacedReport
@@ -60,6 +61,10 @@ type Cinema struct {
 	// Without it the fake is a v2 Cinema that ignores removed_paths.
 	RemovedPaths bool
 	Unknown      map[string]bool
+	// Retained answers a removed path retained with the given code; PresentReason
+	// is the reason a still-present path carries.
+	Retained      map[string]string
+	PresentReason string
 	// Down drops every connection without an answer (a stopped Cinema).
 	Down bool
 	// Unreadable answers 503 path_unreadable (an unmounted share).
@@ -187,6 +192,7 @@ type body struct {
 	ProbePaths    []string             `json:"probe_paths"`
 	RemovedPaths  []string             `json:"removed_paths"`
 	Event         string               `json:"event"`
+	ProbeOnly     bool                 `json:"probe_only"`
 }
 
 func (c *Cinema) serve(w http.ResponseWriter, r *http.Request) {
@@ -293,7 +299,7 @@ func (c *Cinema) scan(w http.ResponseWriter, r *http.Request) {
 	}
 	c.nextID++
 	req := &Request{ID: fmt.Sprintf("sr-%d", c.nextID), Key: key, Path: path, Expected: b.ExpectedFiles, State: "queued",
-		Removed: b.RemovedPaths, Event: b.Event, done: make(chan struct{})}
+		Removed: b.RemovedPaths, Event: b.Event, ProbeOnly: b.ProbeOnly, done: make(chan struct{})}
 	c.requests = append(c.requests, req)
 	if key != "" {
 		c.byKey[key] = req
@@ -418,8 +424,10 @@ func (c *Cinema) finish(req *Request) {
 	}
 	for _, p := range req.Removed {
 		switch _, err := os.Stat(p); {
+		case c.Retained[p] != "":
+			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "retained", Code: c.Retained[p]})
 		case err == nil:
-			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "present"})
+			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "present", Reason: c.PresentReason})
 		case c.Unknown[p]:
 			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "unknown"})
 		default:

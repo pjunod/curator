@@ -666,17 +666,21 @@ Body as today (`source: "monarr"`), plus `"event": "moved"` and:
   different roots, curator sends one request per root, each carrying only
   its own expected and removed paths.
 
-**Probe-only.** When `removed_paths` is present, cinema probes exactly the
-`expected_files` and `removed_paths`; it does **not** walk the rest of `path`
-(this narrows 5.1's "other files under `path` are scanned as today" for these
-requests). The root is never full-scanned.
+**Probe-only.** Curator sends `"probe_only": true` on **every** chunk of a
+moved request, including a chunk that carries only `expected_files` (no
+`removed_paths`). Cinema then probes exactly the `expected_files` and
+`removed_paths`; it does **not** walk the rest of `path` (this narrows 5.1's
+"other files under `path` are scanned as today" for these requests). The
+root is never full-scanned.
 
 **Answer.** `files` gains, one entry per removed path:
 `{"path", "state": "gone", "item_id": N}` (stat says absent, cinema had it,
 file record removed; the item is removed too if it has no files left),
 `{"path", "state": "unknown"}` (absent, cinema never had it),
-`{"path", "state": "present"}` (still exists; nothing removed).
-Existing `placed|skipped|missing` for expected files is unchanged.
+`{"path", "state": "present", "reason": R}` (still exists; nothing removed;
+`R` is `still_present`, `symlink_in_path` or `case_only`),
+`{"path", "state": "retained", "code": C}` (cinema kept the record on purpose;
+`C` is one of the codes below). Existing `placed|skipped|missing` for expected files is unchanged.
 
 **Not `path_unreadable`.** A removed path that does not exist is the
 expected case. `503 path_unreadable` applies only when `path` itself, or the
@@ -684,10 +688,20 @@ chain from `path` down to the removed path, fails with `EIO`, `ENOTCONN` or
 an unmounted mount point; then nothing is removed (an unmounted share must
 not read as "everything gone"). `422 path_outside_roots` is unchanged.
 
-**`visible`** only when every expected file is `placed` with matching bytes
-and `mtime_ns` **and** every removed path is `gone` or `unknown`. A `present`
-removed path is `warning: <path> still exists in the library`, attempt
-advances, retried on the schedule, surfaced after 30 min.
+**Retained codes and what curator does with each answer.**
+
+| Answer | Curator |
+|---|---|
+| `gone`, `unknown` | satisfied |
+| `retained` / `expected_not_placed`, `prune_bound`, `conversion_hold` | transient: `warning`, attempt advances, retried on the schedule, surfaced after 30 min |
+| `retained` / `root_identity_unset`, `root_identity_mismatch` | lasting: delivery `warning: cinema kept <path>: <reason>; it will drop it at its next full scan`; not retried |
+| `present` (any `reason`) | lasting: delivery `warning: cinema still has <path>: <reason in words>`; not retried |
+
+**`visible`** when every expected file is `placed` with matching bytes and
+`mtime_ns` **and** no removed path is held by a transient `retained` code. A
+lasting warning rides on the visible row (`visible; warning: …`); the
+Re-match status panel's cinema line shows the same text. An unrecognised
+`code` is treated as lasting.
 
 #### Notifier event `moved`
 
@@ -710,7 +724,11 @@ send of a session.
 | new | old | `features` absent (or, as a backstop, an answer to a request with `removed_paths` has no `files` entry for each removed path). Curator then **does not send `removed_paths`**: it sends the new folder as a plain import-shaped scan (an old cinema would otherwise full-scan the root) and marks the removal part `warning: cinema does not support removed paths; the old entry stays until its next scan`. The sub-delivery is `visible` for the new files only. Status panel and history show that line; the Re-match preview warns before it runs. Not a failure, no retry loop. |
 | old | new | `removed_paths` never sent; nothing changes |
 
-Rollout: cinema change ships first (or same day); curator 0.47.0 after it.
+Rollout: **every cinema node is upgraded before curator sends
+`removed_paths`.** A cinema without `probe_only` would walk `path` on a chunk
+that carries only expected files; curator gates on the `removed_paths`
+feature, which the upgraded cinema advertises only together with `probe_only`.
+Curator 0.47.0 after it.
 Compat test exercises the real old handler, as 4.3 does.
 
 ---
