@@ -2,16 +2,21 @@ import type {
   AddMediaCopyRequest,
   AutoSearchResult,
   AddMediaRequest,
+  BrowseResult,
   CalendarEntry,
   Connection,
   DiscoverList,
   GrabRequest,
   HealthReport,
   HistoryEvent,
+  ImportPlanFile,
+  ImportPlanRequest,
+  ManualImportRequest,
   MediaItemDetail,
   MediaItemSummary,
   MediaKind,
   MetadataPreview,
+  PlaceTarget,
   QualityProfile,
   QueueItem,
   QueueSummary,
@@ -19,6 +24,7 @@ import type {
   ReleaseSearchResponse,
   ReleaseSearchScope,
   RootFolder,
+  ScannedFile,
   SearchResult,
   SystemStatus,
   UpdateMediaCopyRequest,
@@ -167,6 +173,17 @@ export class MonarrClient {
   resolveQueueReservation = (id: number): Promise<void> => this.send('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})
   clearFailedQueue = (): Promise<{ cleared: number }> => this.send('DELETE', '/queue/failed')
   getHistory = (limit = 40): Promise<HistoryEvent[]> => this.get(`/history?limit=${limit}&offset=0`)
+  // Import file… on the item page: browse, list one folder, plan, start, stop.
+  browseFilesystem = (path: string): Promise<BrowseResult> => this.get(`/filesystem?path=${encodeURIComponent(path)}`)
+  scanImportFolder = (path: string): Promise<ScannedFile[]> =>
+    this.get(`/import/scan?path=${encodeURIComponent(path)}&depth=1`)
+  getManualImportDefaultPath = (): Promise<{ path: string }> => this.get('/import/default-path')
+  planImport = (req: ImportPlanRequest): Promise<ImportPlanFile[]> => this.send('POST', '/import/plan', req)
+  manualImport = (req: ManualImportRequest): Promise<{ downloadId: number }> => this.send('POST', '/import/manual', req)
+  placePublicationFile = (id: number, publicationId: number, path: string, target: PlaceTarget): Promise<void> =>
+    this.send('POST', `/queue/${id}/publications/${publicationId}/files/resolve`, { path, action: 'place', ...target })
+  cancelQueueImport = (id: number, identity: { generationKey: string; epoch: string }): Promise<void> =>
+    this.send('POST', `/queue/${id}/cancel-import`, { generationKey: identity.generationKey, epoch: identity.epoch })
   getCalendar = (start: string, end: string): Promise<CalendarEntry[]> =>
     this.get(`/calendar?start=${start}&end=${end}`)
 }
