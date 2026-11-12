@@ -138,7 +138,7 @@ func (s *Service) adoptDirectory(ctx context.Context, path string) (ok, orphan b
 		return false, false, fmt.Errorf("the client's path mappings do not map %s back to itself", path)
 	}
 	pub := &ports.RunnerPublication{Path: remote, Generation: mf.Generation, ManifestDigest: mf.Digest, Files: len(m.Files),
-		CrossVolume: mf.CrossVolume, Kind: "completed", Manifest: &m}
+		CrossVolume: mf.CrossVolume, Kind: "completed"}
 	if !rowTerminal(dl) {
 		// The row has no terminal yet: only Runner says how the transfer
 		// ended. Its request receipt is asked; nothing is inferred from the
