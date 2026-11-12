@@ -22,6 +22,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          # Self-hosted runners keep ~/go/pkg/mod between jobs; restoring the
+          # tarball over it hits thousands of "File exists" and can time a job out.
+          cache: ${{ vars.CI_RUNNER_MODE == 'github' }}
       - name: make lint (pinned golangci + gofmt sweep)
         run: make lint
