@@ -168,6 +168,9 @@ type MediaItem struct {
 	EpisodeFileCount int
 	// OffloadedEpisodes counts the show's offloaded episodes (list views only).
 	OffloadedEpisodes int
+	// OffloadedSeasons counts seasons flagged offloaded, including ones with no
+	// episode rows (list views only).
+	OffloadedSeasons int
 	FileCount         int
 	// Quality is the WEAKEST quality among the primary copy's files, and
 	// Upgrade is what the item's profile makes of it. The weakest rather

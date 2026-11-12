@@ -365,15 +365,23 @@ export function LibraryPage() {
   const [editing, setEditing] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkProfile, setBulkProfile] = useState<number | ''>('')
+  const [bulkNote, setBulkNote] = useState('')
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles, enabled: editing })
   const selectedHasBook = (items.data ?? []).some((item) => selected.has(item.id) && item.kind === 'book')
   const bulk = useMutation({
     mutationFn: (patch: { monitored?: boolean; qualityProfileId?: number }) =>
       bulkEditLibrary({ ids: [...selected], ...patch }),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ['library'] })
+      if (res.failed && res.failed.length > 0) {
+        // Stay in the editor with just the ones that refused, and say why.
+        setSelected(new Set(res.failed.map((f) => f.id)))
+        setBulkNote(`${res.failed.length} not changed: ${res.failed[0].reason}`)
+        return
+      }
+      setBulkNote('')
       setSelected(new Set())
       setEditing(false)
-      void qc.invalidateQueries({ queryKey: ['library'] })
     },
   })
   const toggle = (id: number) => {
@@ -493,7 +501,7 @@ export function LibraryPage() {
         <CardSizePicker />
         <div className="head-actions">
           <DiskScanControl label="Scan disk" />
-          <button onClick={() => { setEditing(!editing); setSelected(new Set()) }}>
+          <button onClick={() => { setEditing(!editing); setSelected(new Set()); setBulkNote('') }}>
             {editing ? 'Done' : 'Edit'}
           </button>
           <Link to="/add" className="btn-accent">
@@ -502,6 +510,7 @@ export function LibraryPage() {
         </div>
       </header>
 
+      {editing && bulkNote && <div className="banner warning" role="alert">{bulkNote}</div>}
       {editing && (
         <div className="banner">
           <strong>{selected.size}</strong> selected ·{' '}

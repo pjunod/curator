@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -236,6 +237,114 @@ func TestOffloadStopWhileRunningLosesNoDeletedFile(t *testing.T) {
 		}
 		if !gone && got.Seasons[0].Episodes[i].Offloaded() {
 			t.Fatalf("%s is still on disk but its episode is offloaded", p)
+		}
+	}
+}
+
+// What the dialog warned about is part of the preview's fingerprint: if
+// Cinema's features change between the preview and Start, the person
+// confirmed a different warning and Start refuses the stale preview.
+func TestOffloadFingerprintCoversTheCinemaWarning(t *testing.T) {
+	f := newOffloadFixture(t)
+	ctx := context.Background()
+	f.cinema(t) // advertises nothing: the dialog warns the title will be dropped
+	m, _, _ := f.movieWithFiles(t)
+	req := OffloadRequest{ItemID: m.ID, Scope: "item"}
+	warned := f.preview(t, req)
+	if !warned.CinemaWarning {
+		t.Fatalf("expected the warning: %+v", warned)
+	}
+	notifiers, _ := f.db.ListNotifiers(ctx)
+	if err := f.db.SetNotifierFeatures(ctx, notifiers[0].ID, []string{ports.FeatureOffload}); err != nil {
+		t.Fatal(err)
+	}
+	clean := f.preview(t, req)
+	if clean.CinemaWarning || clean.Fingerprint == warned.Fingerprint {
+		t.Fatalf("the warning must change the fingerprint: %q vs %q", warned.Fingerprint, clean.Fingerprint)
+	}
+	req.RequestID, req.PlanFingerprint = "req-stale-warning", warned.Fingerprint
+	if _, err := f.svc.StartOffload(ctx, req); !errors.Is(err, ErrOffloadStalePreview) {
+		t.Fatalf("start with the old warning = %v, want ErrOffloadStalePreview", err)
+	}
+}
+
+// A missing file is believed gone only when the title's own folder lists too:
+// a root that lists while the folder does not is a partly mounted tree.
+func TestOffloadDoesNotTrustENOENTWhenTheTitleFolderIsNotListable(t *testing.T) {
+	f := newOffloadFixture(t)
+	ctx := context.Background()
+	m, video, _ := f.movieWithFiles(t)
+	stored := offloadStored{Roots: []string{f.root.Path}, Folder: m.Path}
+	file := sqlite.OffloadFile{Path: video, Kind: "media"}
+	if err := os.Remove(video); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.offloadDeleteFile(ctx, stored, file); err != nil {
+		t.Fatalf("a missing file in a listable folder is gone: %v", err)
+	}
+	hidden := m.Path + ".away"
+	if err := os.Rename(m.Path, hidden); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.offloadDeleteFile(ctx, stored, file); err == nil || !strings.Contains(err.Error(), "cannot tell whether") {
+		t.Fatalf("ENOENT with an unlistable title folder must not count as deleted: %v", err)
+	}
+	_ = os.Rename(hidden, m.Path)
+}
+
+// bytes_freed counts what the deletes actually released: a hard-linked file
+// (another link keeps its bytes) and an already-missing one free nothing,
+// matching the preview's Freed.
+func TestOffloadBytesFreedCountsOnlyReleasedBytes(t *testing.T) {
+	f := newOffloadFixture(t)
+	m, video, sub := f.movieWithFiles(t)
+	if err := os.Link(video, filepath.Join(f.root.Path, "elsewhere.mkv")); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	req := OffloadRequest{ItemID: m.ID, Scope: "item"}
+	p := f.preview(t, req)
+	st := f.wait(t, f.start(t, req, p).ID)
+	subInfo := int64(len("subs"))
+	if _, err := os.Stat(sub); !os.IsNotExist(err) {
+		t.Fatal("sidecar survived")
+	}
+	if st.BytesFreed != subInfo || st.BytesFreed != p.Freed {
+		t.Fatalf("bytes freed = %d, want only the sidecar's %d (preview Freed %d, total %d)", st.BytesFreed, subInfo, p.Freed, p.Bytes)
+	}
+}
+
+// Copies: Offload covers every copy, and a file attached to ANY copy lifts the
+// item's offloaded state (the store trigger works per item), so every copy is
+// wanted again, as Re-acquire would restore them all. Documented rule (ADR
+// 0028), pinned here.
+func TestAttachingAFileToOneCopyUnoffloadsTheItemAndEveryCopyIsWantedAgain(t *testing.T) {
+	f := newOffloadFixture(t)
+	ctx := context.Background()
+	m, _, _ := f.movieWithFiles(t)
+	cid, err := f.db.AddMediaCopy(ctx, domain.MediaCopy{MediaItemID: m.ID, Name: "for dad", QualityProfileID: 1, Path: t.TempDir(), Monitored: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := OffloadRequest{ItemID: m.ID, Scope: "item"}
+	f.wait(t, f.start(t, req, f.preview(t, req)).ID)
+	item := mustItem(t, f.db, m.ID)
+	cp := item.Copies[0]
+	for _, c := range []*domain.MediaCopy{nil, &cp} {
+		if w, err := f.svc.targetCopy(ctx, item, 0, 0, c); err != nil || w.Monitored() {
+			t.Fatalf("offload must cover every copy: %v %v", w, err)
+		}
+	}
+	if _, err := f.db.UpsertFile(ctx, m.ID, cid, filepath.Join(cp.Path, "Dune (2021).mkv"), 10); err != nil {
+		t.Fatal(err)
+	}
+	item = mustItem(t, f.db, m.ID)
+	if item.Offloaded() {
+		t.Fatal("a file attached to a copy must lift the item's offloaded state")
+	}
+	cp = item.Copies[0]
+	for _, c := range []*domain.MediaCopy{nil, &cp} {
+		if w, err := f.svc.targetCopy(ctx, item, 0, 0, c); err != nil || !w.Monitored() {
+			t.Fatalf("every copy is wanted again after the attach: %v %v", w, err)
 		}
 	}
 }

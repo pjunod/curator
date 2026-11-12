@@ -774,13 +774,15 @@ checks the feature first.
 
 `features` (5.3) gains `"offload"`, advertised only together with
 `probe_only` and `removed_paths`. Curator stores the features on the notifier
-at Test and re-reads them before an Offload's send.
+at Test and re-reads them before an Offload's send. The request is always written as
+event `offload` with `offloaded_paths`; the downgrade below happens at send time from
+the features read then, never from those at Start.
 
 | Curator | Cinema | Behaviour |
 |---|---|---|
 | new | with `offload` | `offloaded_paths`, event `offload`. |
 | new | `removed_paths` only | Curator sends plain `removed_paths`; cinema will drop the title and its watch history. The Offload dialog says so beforehand (advisory, never a gate). |
-| new | neither | Nothing is sent; a full scan would prune the same way. The delivery settles with the old-cinema note. |
+| new | neither | Nothing is sent; a full scan would prune the same way. The delivery settles with a lasting warning, `cinema not told: it supports neither offload nor removed paths; its next full scan drops the title`, and is never reported as visible ("In cinema"). |
 | old | new | Never sent. |
 
 Rollout: upgrade cinema before curator's first Offload; the Dev tab shows
@@ -807,8 +809,12 @@ Cinema's *Get it back* calls `POST /api/v1/webhooks/plurx`:
 - **Idempotent.** Asking again answers where the title stands.
 - Answer: `{"matched": true, "mediaItemId": N, "state": S}` with `S` one of
   `searching`, `downloading`, `importing`, `on_disk`, `not_offloaded`,
-  `not_found`. While the Offload is still deleting its files the answer is
-  `not_offloaded` with a message: nothing came back yet.
+  `offloading`, `offloaded`, `not_found`. While an Offload of that scope is
+  running (deleting or stopping) the answer is `offloading` with a message:
+  nothing came back yet. `offloaded` means still offloaded and the Re-acquire
+  has not started (the title was busy past a short bounded wait: ask again).
+  `not_offloaded` is the title's state when nothing in the scope is offloaded
+  and nothing else applies. The call never hangs on a held title.
 - An old curator answers without `state`; cinema treats that as "asked".
 
 This is the one event that makes curator act. It only brings files back.
@@ -816,8 +822,8 @@ This is the one event that makes curator act. It only brings files back.
 ### 4.7 Reading curator's state — `reacquire_status`
 
 `{"event":"reacquire_status", ...}` with the same ids reads the same answer
-and changes nothing. A still-offloaded scope answers `not_offloaded` ("still
-offloaded"); otherwise `downloading` / `importing` while a grab for the scope
+and changes nothing. A still-offloaded scope answers `offloaded` ("still
+offloaded"), or `offloading` while an Offload of it is running; otherwise `downloading` / `importing` while a grab for the scope
 is in flight, `on_disk` once every episode (or the movie) has a file,
 `searching` while it is wanted. Cinema passes it through.
 

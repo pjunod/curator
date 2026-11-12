@@ -534,10 +534,10 @@ func TestOffloadStopKeepsWhatIsNotYetDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.offloadDeleteFile(ctx, offloadStored{}, sqlite.OffloadFile{Path: e1, Kind: "media", FileID: fileIDOf(t, f, e1)}); err != nil {
+	if _, err := f.svc.offloadDeleteFile(ctx, offloadStored{}, sqlite.OffloadFile{Path: e1, Kind: "media", FileID: fileIDOf(t, f, e1)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.MarkOffloadFile(ctx, op.ID, e1, "deleted", ""); err != nil {
+	if err := f.db.MarkOffloadFile(ctx, op.ID, e1, "deleted", "", 3); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.svc.StopOffload(ctx, op.ID); err != nil {
@@ -680,10 +680,10 @@ func TestOffloadStopIsResumableAndUnoffloadsFilelessEpisodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.offloadDeleteFile(ctx, offloadStored{}, sqlite.OffloadFile{Path: e1, Kind: "media", FileID: fileIDOf(t, f, e1)}); err != nil {
+	if _, err := f.svc.offloadDeleteFile(ctx, offloadStored{}, sqlite.OffloadFile{Path: e1, Kind: "media", FileID: fileIDOf(t, f, e1)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.MarkOffloadFile(ctx, op.ID, e1, "deleted", ""); err != nil {
+	if err := f.db.MarkOffloadFile(ctx, op.ID, e1, "deleted", "", 3); err != nil {
 		t.Fatal(err)
 	}
 	// The process dies right after the flip.

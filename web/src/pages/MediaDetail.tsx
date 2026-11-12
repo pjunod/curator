@@ -50,6 +50,7 @@ import { ImportFileDialog } from '../ImportFileDialog'
 import { RematchDialog } from '../RematchDialog'
 import { OffloadDialog } from '../OffloadDialog'
 import { ItemStatusPanel } from '../ItemStatusPanel'
+import { seasonOffload } from '../libraryPresence'
 import { ReleaseSearch } from './ReleaseSearch'
 import { Pager, PageSizePicker, clampPage, sliceForPage } from '../Pager'
 import { mapReplacementObservationsByFileID } from '../replacementObservations'
@@ -1438,7 +1439,7 @@ export function MediaDetailPage() {
   for (const season of m.seasons) {
     for (const e of season.episodes) {
       allEpisodes++
-      if (e.offloaded || season.offloaded) offloadedEpisodes++
+      if (e.offloaded) offloadedEpisodes++
     }
   }
   const showHasFiles = m.files.length > 0
@@ -1706,7 +1707,9 @@ export function MediaDetailPage() {
               const have = s.episodes.filter((e) => e.hasFile).length
               const open = openSeasons[s.number] ?? s.number === 1
               const label = s.number === 0 ? 'Specials' : `Season ${s.number}`
-              const seasonOffloaded = Boolean(s.offloaded) || (s.episodes.length > 0 && s.episodes.every((e) => e.offloaded))
+              // The season flag only means "new episodes inherit it"; what is offloaded is
+              // each episode's own flag (a re-acquired episode of a flagged season is wanted).
+              const { episodes: episodesOffloaded, fully: seasonOffloaded } = seasonOffload(s)
               return (
                 <div key={s.number} className="season">
                   <div className="season-head">
@@ -1714,7 +1717,7 @@ export function MediaDetailPage() {
                       type="checkbox"
                       className="monitor-box"
                       title={
-                        s.offloaded
+                        seasonOffloaded
                           ? 'Offloaded — Re-acquire to get it back'
                           : s.monitored
                             ? 'Monitored — untick to stop wanting this season'
@@ -1722,7 +1725,7 @@ export function MediaDetailPage() {
                       }
                       aria-label={`Monitor ${label}`}
                       checked={s.monitored}
-                      disabled={Boolean(s.offloaded)}
+                      disabled={seasonOffloaded}
                       onChange={(e) =>
                         monitorSeason.mutate({ season: s.number, monitored: e.target.checked })
                       }
@@ -1754,6 +1757,7 @@ export function MediaDetailPage() {
                         )}
                         <button onClickCapture={focusActionTrigger} onClick={() => setSearching({ season: s.number })}>Search pack</button>
                         {have > 0 && <button onClickCapture={focusActionTrigger} onClick={() => setOffloading({ request: { scope: 'season', season: s.number }, label: `${m.title} · ${label}` })}>Offload…</button>}
+                        {episodesOffloaded > 0 && <button className="btn-accent" disabled={reacq.isPending} onClick={() => reacq.mutate({ request: { scope: 'season', season: s.number }, label })}>Re-acquire {episodesOffloaded}</button>}
                       </>
                     )}
                   </div>
@@ -1776,10 +1780,10 @@ export function MediaDetailPage() {
                               <input
                                 type="checkbox"
                                 className="monitor-box"
-                                title={e.offloaded || s.offloaded ? 'Offloaded — Re-acquire to get it back' : e.monitored ? 'Monitored' : 'Unmonitored'}
+                                title={e.offloaded ? 'Offloaded — Re-acquire to get it back' : e.monitored ? 'Monitored' : 'Unmonitored'}
                                 aria-label={`Monitor episode ${e.seasonNumber}x${e.episodeNumber}`}
                                 checked={e.monitored}
-                                disabled={Boolean(e.offloaded || s.offloaded)}
+                                disabled={Boolean(e.offloaded)}
                                 onChange={(ev) =>
                                   monitorEpisode.mutate({
                                     episodeId: e.id,
@@ -1796,14 +1800,14 @@ export function MediaDetailPage() {
                             <td>
                               {e.hasFile ? (
                                 <span className="pill pill-ok">✓</span>
-                              ) : e.offloaded || s.offloaded ? (
+                              ) : e.offloaded ? (
                                 <span className="pill pill-warning">offloaded</span>
                               ) : (
                                 <span className="muted">—</span>
                               )}
                             </td>
                             <td>
-                              {e.offloaded || s.offloaded ? (
+                              {e.offloaded ? (
                                 <button className="btn-accent" disabled={reacq.isPending}
                                   onClick={() => reacq.mutate({ request: { scope: 'episode', episodeId: e.id }, label: `${e.seasonNumber}x${String(e.episodeNumber).padStart(2, '0')}` })}>Re-acquire</button>
                               ) : (

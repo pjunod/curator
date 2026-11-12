@@ -613,7 +613,7 @@ export interface StatusOffload {
 }
 // Offload (ADR 0028): free the space, keep the title.
 export type OffloadScope = 'item' | 'season' | 'episode'
-export type OffloadState = 'deleting' | 'waiting' | 'retrying' | 'complete' | 'cancelled' | 'failed'
+export type OffloadState = 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
 export interface OffloadRequest { scope: OffloadScope; season?: number; episodeId?: number; requestId?: string; fingerprint?: string }
 export interface OffloadFile { path: string; kind: 'media' | 'sidecar'; bytes: number; shared?: boolean; episodes?: string[] }
 export interface OffloadPreview {
@@ -650,7 +650,7 @@ export interface OffloadOperation {
   stoppable: boolean
   cinemaLine?: string
 }
-export interface ReacquireResult { mediaItemId: number; state: 'searching' | 'downloading' | 'importing' | 'on_disk' | 'not_offloaded'; cleared: boolean; message?: string }
+export interface ReacquireResult { mediaItemId: number; state: 'searching' | 'downloading' | 'importing' | 'on_disk' | 'not_offloaded' | 'offloading' | 'offloaded'; cleared: boolean; message?: string }
 export interface StatusRematch {
   operationId: string
   state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending' | 'complete' | 'cancelled' | 'failed'

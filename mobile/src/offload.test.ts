@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { freeText, isPresence, matchesPresence, offloadText, onDisk } from './offload'
+import { freeText, isPresence, matchesPresence, offloadText, onDisk, seasonOffload } from './offload'
 import type { MediaItemSummary, OffloadOperation } from './types'
 
 const item = (over: Partial<MediaItemSummary>) => ({ kind: 'movie', fileCount: 0, episodeFileCount: 0, ...over }) as MediaItemSummary
@@ -35,5 +35,23 @@ describe('offload progress text', () => {
   })
   it('free space unknown is said, not shown as zero', () => {
     expect(freeText(-1)).toBe('unknown')
+  })
+})
+
+describe('season offload state (the season flag is only inheritance)', () => {
+  it('counts episodes by their own flag, so a re-acquired episode of a flagged season is not offloaded', () => {
+    const s = { offloaded: true, episodes: [{ offloaded: false }, { offloaded: true }] }
+    expect(seasonOffload(s)).toEqual({ episodes: 1, fully: false })
+    expect(seasonOffload({ offloaded: true, episodes: [{ offloaded: true }, { offloaded: true }] })).toEqual({ episodes: 2, fully: true })
+  })
+  it('an episode-less flagged season is fully offloaded; an unflagged one is not', () => {
+    expect(seasonOffload({ offloaded: true, episodes: [] }).fully).toBe(true)
+    expect(seasonOffload({ episodes: [] }).fully).toBe(false)
+  })
+})
+
+describe('stopping', () => {
+  it('reads as stopping and counts as running', () => {
+    expect(offloadText({ state: 'stopping', filesDone: 1, filesTotal: 3, bytesFreed: 0 } as never)).toMatch(/^Stopping/)
   })
 })

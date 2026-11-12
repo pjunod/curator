@@ -469,7 +469,7 @@ func offloadRootOf(roots []domain.RootFolder, path string) string {
 
 func offloadFingerprint(req OffloadRequest, plan *offloadPlan) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%d|%s|%d|%d|%v|%v\n", req.ItemID, plan.preview.Scope, req.Season, req.EpisodeID, plan.movie, plan.seasons)
+	fmt.Fprintf(h, "%d|%s|%d|%d|%v|%v|%v\n", req.ItemID, plan.preview.Scope, req.Season, req.EpisodeID, plan.movie, plan.seasons, plan.preview.CinemaWarning)
 	for _, id := range plan.episodes {
 		fmt.Fprintf(h, "e%d\n", id)
 	}
@@ -829,15 +829,16 @@ func (s *Service) runOffload(ctx context.Context, id string) error {
 			}
 			return err
 		}
-		if err := s.offloadDeleteFile(bg, stored, f); err != nil {
-			_ = s.db.MarkOffloadFile(bg, id, f.Path, "failed", err.Error())
+		freed, err := s.offloadDeleteFile(bg, stored, f)
+		if err != nil {
+			_ = s.db.MarkOffloadFile(bg, id, f.Path, "failed", err.Error(), 0)
 			failed = append(failed, f.Path)
 			if firstErr == "" {
 				firstErr = err.Error()
 			}
 			continue
 		}
-		if err := s.db.MarkOffloadFile(bg, id, f.Path, "deleted", ""); err != nil {
+		if err := s.db.MarkOffloadFile(bg, id, f.Path, "deleted", "", freed); err != nil {
 			return fmt.Errorf("journal %s: %w", f.Path, err)
 		}
 	}
@@ -854,17 +855,32 @@ func (s *Service) runOffload(ctx context.Context, id string) error {
 // offloadDeleteFile removes one journaled file and, for a library file, its
 // row. A file already gone is fine only because the share was verified
 // readable (and non-empty) at the start of this pass.
-func (s *Service) offloadDeleteFile(ctx context.Context, stored offloadStored, f sqlite.OffloadFile) error {
+func (s *Service) offloadDeleteFile(ctx context.Context, stored offloadStored, f sqlite.OffloadFile) (int64, error) {
 	if err := rejectSymlinks(f.Path, true); err != nil {
-		return err
+		return 0, err
+	}
+	// What this delete actually releases: nothing for a file that is already
+	// gone or that other hard links keep alive (the preview's Freed says the same).
+	var freed int64
+	if info, err := os.Lstat(f.Path); err == nil && offloadLinkCount(f.Path) <= 1 {
+		freed = info.Size()
 	}
 	if err := os.Remove(f.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("delete %s: %w", f.Path, err)
+		return 0, fmt.Errorf("delete %s: %w", f.Path, err)
 	} else if errors.Is(err, os.ErrNotExist) {
+		freed = 0
 		// Believed only while the share still lists: it may have gone away
 		// during the pass.
 		if why := s.offloadMountProblem(stored.Roots); why != "" {
-			return fmt.Errorf("cannot tell whether %s is gone: %s", f.Path, why)
+			return 0, fmt.Errorf("cannot tell whether %s is gone: %s", f.Path, why)
+		}
+		// A root that lists proves little when the title's own folder does
+		// not: a share mounted one level too high, or a partly mounted tree,
+		// answers ENOENT for files that are still there.
+		if stored.Folder != "" {
+			if _, err := os.ReadDir(stored.Folder); err != nil {
+				return 0, fmt.Errorf("cannot tell whether %s is gone: the title's folder %s cannot be listed (%v)", f.Path, stored.Folder, err)
+			}
 		}
 	}
 	_ = syncPath(filepath.Dir(f.Path))
@@ -872,7 +888,7 @@ func (s *Service) offloadDeleteFile(ctx context.Context, stored offloadStored, f
 	case "media":
 		if f.FileID != 0 {
 			if err := s.db.DeleteFile(ctx, f.FileID); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
-				return fmt.Errorf("remove the library row of %s: %w", f.Path, err)
+				return 0, fmt.Errorf("remove the library row of %s: %w", f.Path, err)
 			}
 		}
 	default:
@@ -886,7 +902,7 @@ func (s *Service) offloadDeleteFile(ctx context.Context, stored offloadStored, f
 			}
 		}
 	}
-	return nil
+	return freed, nil
 }
 
 // OffloadResult is what a finished Offload says it did.
@@ -909,11 +925,10 @@ func (s *Service) finishOffload(ctx context.Context, id string, stored offloadSt
 	if err != nil {
 		return err
 	}
-	res := offloadResult{Episodes: stored.Labels}
+	res := offloadResult{Episodes: stored.Labels, Bytes: op.BytesFreed}
 	for _, f := range files {
 		if f.State == "deleted" {
 			res.Files++
-			res.Bytes += f.Size
 			if f.Kind == "media" {
 				res.Media++
 			}
@@ -977,12 +992,16 @@ func (s *Service) finishStop(ctx context.Context, op sqlite.OffloadOperation, st
 	if err != nil {
 		return err
 	}
-	res := offloadResult{Episodes: stored.Labels}
+	if cur, err := s.db.GetOffloadOperation(ctx, op.ID); err == nil {
+		op = cur
+	}
+	// Bytes released, not file sizes: a hard-linked or already-missing file
+	// freed nothing (the preview's Freed counts the same way).
+	res := offloadResult{Episodes: stored.Labels, Bytes: op.BytesFreed}
 	var deleted []string
 	for _, f := range files {
 		if f.State == "deleted" {
 			res.Files++
-			res.Bytes += f.Size
 			if f.Kind == "media" {
 				res.Media++
 				deleted = append(deleted, f.Path)

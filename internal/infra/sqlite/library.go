@@ -569,6 +569,7 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 			item.EpisodeFileCount = int(s.HaveEpisodes)
 			item.FileCount = int(s.Files)
 			item.OffloadedEpisodes = int(s.OffloadedEpisodes)
+			item.OffloadedSeasons = int(s.OffloadedSeasons)
 			item.Quality, item.QualityVerified, item.Audio = weakestRecorded(textOf(s.Qualities))
 		}
 		out = append(out, item)

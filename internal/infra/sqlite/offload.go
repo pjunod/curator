@@ -209,8 +209,9 @@ func (d *DB) SetOffloadState(ctx context.Context, id, state, lastError string) e
 }
 
 // MarkOffloadFile records one file's outcome and, for a deleted file, adds
-// its bytes to what the operation freed.
-func (d *DB) MarkOffloadFile(ctx context.Context, id, path, state, errMsg string) error {
+// the bytes it actually released (freed: 0 for a file that was already gone or
+// has other hard links) to what the operation freed.
+func (d *DB) MarkOffloadFile(ctx context.Context, id, path, state, errMsg string, freed int64) error {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -225,7 +226,7 @@ func (d *DB) MarkOffloadFile(ctx context.Context, id, path, state, errMsg string
 		return err
 	}
 	if state == "deleted" && was != "deleted" {
-		if _, err := tx.ExecContext(ctx, `UPDATE offload_operations SET bytes_freed=bytes_freed+?,updated_at=? WHERE operation_id=?`, size, time.Now().UnixMilli(), id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE offload_operations SET bytes_freed=bytes_freed+?,updated_at=? WHERE operation_id=?`, freed, time.Now().UnixMilli(), id); err != nil {
 			return err
 		}
 	}

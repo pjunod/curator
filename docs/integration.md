@@ -867,7 +867,9 @@ searches at the current profile (a season pack-first), answering at once:
 ```
 
 `state` is `searching`, `downloading`, `importing`, `on_disk`, `not_offloaded`
-(still offloaded, or the Offload is still deleting) or `not_found` (with
+(nothing in the scope is offloaded), `offloading` (an Offload of it is
+running), `offloaded` (still offloaded; Re-acquire not started, ask again) or
+`not_found` (with
 `matched:false`: no such title, season or episode). No ids, a `season` or
 `episode` without its numbers, or an unknown kind is a 400. It is idempotent:
 asking again answers where the title stands. `reacquire_status` with the same

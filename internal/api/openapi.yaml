@@ -3367,6 +3367,18 @@ paths:
                 properties:
                   updated:
                     type: integer
+                  failed:
+                    type: array
+                    description: >
+                      Items that were not changed, with the reason (`offloaded`: an
+                      offloaded title cannot be monitored; Re-acquire it instead).
+                    items:
+                      type: object
+                      required: [id, code, reason]
+                      properties:
+                        id: { type: integer, format: int64 }
+                        code: { type: string }
+                        reason: { type: string }
 
   /auth/login:
     post:

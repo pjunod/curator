@@ -10,6 +10,8 @@ import (
 	"time"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 // movieOnDisk adds a movie with one file under its folder and returns the id,
@@ -140,11 +142,29 @@ func TestPlurxWebhookReacquire(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("not deleted")
 	}
-	if code, out := post(`{"event":"reacquire_status","kind":"movie","tmdb":550}`); code != 200 || out["matched"] != true || out["state"] != "not_offloaded" || out["mediaItemId"] != float64(id) {
+	if code, out := post(`{"event":"reacquire_status","kind":"movie","tmdb":550}`); code != 200 || out["matched"] != true || out["state"] != "offloaded" || out["mediaItemId"] != float64(id) {
 		t.Fatalf("status of an offloaded title: %d %v", code, out)
 	}
 	if item, _ := e.db.GetMediaItemFull(ctx, id); !item.Offloaded() {
 		t.Fatal("reacquire_status must not change anything")
+	}
+	// An Offload of the title is running: `offloading`, told apart from
+	// `offloaded`, and nothing is cleared.
+	if _, _, err := e.db.CreateOffloadOperation(ctx, sqlite.OffloadRecord{Op: sqlite.OffloadOperation{
+		ID: "of-open", RequestID: "open", Fingerprint: "z", State: "deleting", ItemID: id, Scope: "item"}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := post(`{"event":"reacquire_status","kind":"movie","tmdb":550}`); code != 200 || out["state"] != "offloading" {
+		t.Fatalf("status during an offload: %d %v", code, out)
+	}
+	if code, out := post(`{"event":"reacquire","kind":"movie","tmdb":550,"user":"paul"}`); code != 200 || out["matched"] != true || out["state"] != "offloading" {
+		t.Fatalf("reacquire during an offload: %d %v", code, out)
+	}
+	if item, _ := e.db.GetMediaItemFull(ctx, id); !item.Offloaded() {
+		t.Fatal("a Re-acquire during an Offload cleared it")
+	}
+	if _, err := e.db.W.ExecContext(ctx, `UPDATE offload_operations SET state='complete' WHERE operation_id='of-open'`); err != nil {
+		t.Fatal(err)
 	}
 	code, out := post(`{"event":"reacquire","kind":"movie","tmdb":550,"user":"paul"}`)
 	if code != 200 || out["matched"] != true || out["state"] != "searching" || out["mediaItemId"] != float64(id) {
@@ -186,4 +206,53 @@ func TestFirstSeasonMonitorModeIsAccepted(t *testing.T) {
 	if rr.Code == http.StatusBadRequest {
 		t.Fatalf("first_season refused: %s", rr.Body.String())
 	}
+}
+
+// The mass editor reports the items it refused (an offloaded title cannot be
+// monitored) with the reason, instead of silently counting them out.
+func TestBulkEditSurfacesTheOffloadedRefusalPerItem(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	id, _ := e.movieOnDisk(t)
+	if _, err := e.db.W.ExecContext(ctx, `UPDATE media_items SET offloaded_at=1 WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Updated int `json:"updated"`
+		Failed  []struct {
+			ID     int64  `json:"id"`
+			Code   string `json:"code"`
+			Reason string `json:"reason"`
+		} `json:"failed"`
+	}
+	e.post(t, "/api/v1/library/bulk", fmt.Sprintf(`{"ids":[%d],"monitored":true}`, id)).expect(t, http.StatusOK).into(t, &out)
+	if out.Updated != 0 || len(out.Failed) != 1 || out.Failed[0].ID != id || out.Failed[0].Code != "offloaded" || out.Failed[0].Reason == "" {
+		t.Fatalf("bulk = %+v", out)
+	}
+}
+
+// A show whose offloaded season has no episode rows still carries the
+// Offloaded flag in the library list.
+func TestLibraryListFlagsAShowWithAnEmptyOffloadedSeason(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	id, err := e.db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindSeries, Title: "Empty", SortTitle: "empty", Year: 2020, IDs: domain.ExternalIDs{TMDB: 9},
+		Seasons: []domain.Season{{Number: 1, Monitored: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.W.ExecContext(ctx, `UPDATE seasons SET offloaded_at=1 WHERE media_item_id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	var list []apigen.MediaItemSummary
+	e.get(t, "/api/v1/library").expect(t, http.StatusOK).into(t, &list)
+	for _, m := range list {
+		if m.Id == id {
+			if m.Offloaded == nil || !*m.Offloaded {
+				t.Fatalf("an empty offloaded season must flag the show: %+v", m)
+			}
+			return
+		}
+	}
+	t.Fatal("show not listed")
 }

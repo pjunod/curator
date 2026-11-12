@@ -124,6 +124,10 @@ SELECT
     -- Offloaded episodes (ADR 0028): the library's Offloaded filter and pill.
     (SELECT COUNT(*) FROM episodes e3
       WHERE e3.media_item_id = m.id AND e3.offloaded_at > 0) AS offloaded_episodes,
+    -- A season flagged offloaded with no episode rows (none known yet) still
+    -- makes the show an Offloaded one.
+    (SELECT COUNT(*) FROM seasons sn
+      WHERE sn.media_item_id = m.id AND sn.offloaded_at > 0) AS offloaded_seasons,
     -- Every file's recorded quality, comma-joined. Ranking happens in Go
     -- (quality.Rank), which SQLite cannot do, and the list view needs the
     -- weakest one: that is what decides whether an item is still being

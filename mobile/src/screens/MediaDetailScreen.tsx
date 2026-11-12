@@ -30,6 +30,7 @@ import type { BookType, MediaCopy, OffloadRequest, QualityProfile, ReleaseSearch
 import { useResource } from '../useResource'
 import { ImportFileSheet } from './ImportFileSheet'
 import { OffloadSheet } from './OffloadSheet'
+import { seasonOffload } from '../offload'
 import { RematchSheet } from './RematchSheet'
 
 export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onOpenActivity }: { client: MonarrClient; id: number; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void; onOpenActivity?: () => void }) {
@@ -228,7 +229,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
   const episodes = item.seasons.flatMap((season) => season.episodes)
   const aired = episodes.filter((episode) => !episode.airDate || new Date(episode.airDate) <= new Date())
   const onDisk = aired.filter((episode) => episode.hasFile).length
-  const offloadedEpisodes = item.seasons.reduce((n, season) => n + season.episodes.filter((episode) => episode.offloaded || season.offloaded).length, 0)
+  const offloadedEpisodes = item.seasons.reduce((n, season) => n + season.episodes.filter((episode) => episode.offloaded).length, 0)
   const copies = item.copies ?? []
   const selectedProfileName = profileName(profiles, item.qualityProfileId)
 
@@ -385,7 +386,8 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
               <Text style={[styles.stat, { color: theme.text }]}>{onDisk} of {aired.length} aired episodes on disk</Text>
               {item.seasons.map((season) => {
                 const present = season.episodes.filter((episode) => episode.hasFile).length
-                const seasonOffloaded = Boolean(season.offloaded) || (season.episodes.length > 0 && season.episodes.every((episode) => episode.offloaded))
+                // The season flag only means "new episodes inherit it"; each episode's own flag says what is offloaded.
+                const { episodes: episodesOffloaded, fully: seasonOffloaded } = seasonOffload(season)
                 const label = season.number === 0 ? 'Specials' : `Season ${season.number}`
                 return (
                   <View key={season.number}>
@@ -396,7 +398,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
                       </View>
                       <Switch
                         accessibilityLabel={`Monitor season ${season.number}`}
-                        disabled={seasonSaving !== null || Boolean(season.offloaded)}
+                        disabled={seasonSaving !== null || seasonOffloaded}
                         value={season.monitored}
                         onValueChange={(value) => void setSeasonMonitored(season.number, value)}
                         trackColor={{ true: theme.accent }}
@@ -409,12 +411,13 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
                         <>
                           <Button compact secondary label="Search pack" onPress={() => onInteractiveSearch({ season: season.number })} />
                           {present > 0 ? <Button compact secondary label="Offload…" onPress={() => setOffloading({ request: { scope: 'season', season: season.number }, label: `${item.title} · ${label}` })} /> : null}
+                          {episodesOffloaded > 0 ? <Button compact label={`Re-acquire ${episodesOffloaded}`} disabled={reacquiring} onPress={() => void reacquire({ scope: 'season', season: season.number }, label)} /> : null}
                         </>
                       )}
                       <Button compact secondary label={openSeason === season.number ? 'Hide episodes' : 'Episodes'} onPress={() => setOpenSeason(openSeason === season.number ? null : season.number)} />
                     </View>
                     {openSeason === season.number ? season.episodes.map((episode) => {
-                      const gone = Boolean(episode.offloaded || season.offloaded)
+                      const gone = Boolean(episode.offloaded)
                       const token = `${episode.seasonNumber}x${String(episode.episodeNumber).padStart(2, '0')}`
                       return (
                         <View key={episode.id} style={[styles.row, { borderTopColor: theme.border }]}>

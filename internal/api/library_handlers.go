@@ -165,7 +165,7 @@ func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 		Author:            m.Author,
 		PosterPath:        m.PosterPath,
 		Monitored:         m.Monitored,
-		Offloaded:         offloadedFlag(m.Offloaded() || m.OffloadedEpisodes > 0),
+		Offloaded:         offloadedFlag(m.Offloaded() || m.OffloadedEpisodes > 0 || m.OffloadedSeasons > 0),
 		OffloadedEpisodes: offloadedCount(m.OffloadedEpisodes),
 		Path:              m.Path,
 		Rating:            float32(m.Rating),

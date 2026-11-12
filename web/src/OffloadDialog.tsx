@@ -152,6 +152,7 @@ export function offloadText(op: OffloadOperation): string {
     case 'failed': return `The Offload failed: ${op.lastError ?? 'unknown error'}.`
     case 'waiting': return `Waiting: ${op.lastError ?? 'the library folder is not readable'}. Nothing was deleted while it waits.`
     case 'retrying': return `${op.failed?.length ?? 0} file(s) could not be deleted; retrying. ${op.lastError ?? ''}`.trim()
+    case 'stopping': return `Stopping… ${op.filesDone} of ${op.filesTotal} files were deleted; the rest stay on disk.`
     default: return `Deleting… ${op.filesDone} of ${op.filesTotal} files.`
   }
 }
