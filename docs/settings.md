@@ -406,7 +406,9 @@ When the failures are no longer useful, **Clear failed** on the Failed
 grouping dismisses all failed Activity rows after confirmation. This cleans
 up the queue view only: it does not delete a payload or library file, change
 a blocklist, or remove anything from a download client. The native app shows
-the same action beneath Activity's filters when Failed is selected.
+the same action beneath Activity's filters when Failed is selected. A failed
+Runner row whose salvage publication is still to come is hidden instead of
+deleted, so that publication still has its download when Runner delivers it.
 
 ### Activity retention
 
@@ -429,6 +431,8 @@ five consecutive failed grabs of one movie inside ten hours looked, from
 the outside, like a quiet evening.
 
 Event types: `grabbed`, `failed`, `imported`, `import_failed`,
+`publication_orphaned` (a committed Runner folder whose download Curator no
+longer has; its files are discarded and the folder removed),
 `import_blocked` (ran out of disk part-way), `import_retried`,
 `regrab_capped` (a replacement search that was deliberately not made:
 three releases' worth of bytes, or twenty failures, spent on one want inside
