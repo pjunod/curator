@@ -558,19 +558,31 @@ notified**, **In cinema**. Each stage has its state (✓ done, ● in progress,
 The headline says the current stage in a sentence. Below it are the live
 download numbers, any earlier attempts (a failed grab, a cancelled one), and
 the actions that apply: **Search now**, **Interactive search**, **Open in
-Activity**, **Cancel download** (asks first, then cancels in Runner),
+Activity**, **Cancel download** (asks first, then cancels in Runner and
+blocklists that release so the next automatic search does not grab it straight
+back; Activity's Remove stays a plain removal, and you can still pick the
+release yourself from interactive search),
 **Retry import**, **Send to cinema again**, and **Ask cinema to confirm**,
 which sends a scan request naming the item's current files so cinema's
 answer confirms them — the way to check an item imported before this record
-existed. Every action shows its result in the panel.
+existed; asking again refreshes the same request rather than adding one.
+Every action shows its result in the panel. Once something is on disk, a later
+search that finds nothing (or is skipped) shows as detail on **Searched**, not
+as a step backwards, and a failed upgrade grab is listed under earlier attempts
+while the panel keeps showing the file you have.
 
 The panel refreshes every 2 seconds while a download is moving and every 30
 seconds otherwise, without moving your scroll position or focus. It never
 hides: once everything is done it collapses to one line (`In cinema,
 confirmed Sep 4`) that opens again on a click. A series shows one line per
 season (`2 of 6 in cinema · 4 in one season pack`), with a season pack's
-download shown once on the season; open a season for a six-segment strip per
-episode, and click an episode for its full track. The phone app shows the
+download shown once on the season (the counts cover monitored episodes that
+have aired, plus any with a file); open a season for a six-segment strip per
+episode, and click an episode for its full track and its own actions —
+**Search now** searches that episode only, and **Retry import**, **Send to
+cinema again** and **Ask cinema to confirm** act on that episode's download and
+files. The panel follows the primary copy; additional quality copies and book
+editions have their own rows in Activity. The phone app shows the
 same panel from the same endpoint (`GET /library/{id}/status`).
 
 **Seasons** and **Files** start collapsed and show their totals in the section
