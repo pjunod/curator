@@ -527,6 +527,52 @@ usual questions at a glance:
 - **Links** — IMDb / TMDB / TVDB / Open Library pages, opening in a new
   tab.
 
+### Where it stands — the status panel
+
+Directly under the title block, above Identity, every item shows where it
+stands from search to cinema, in six stages left to right (stacked on a
+phone): **Searched**, **Downloading**, **Processed**, **Moved**, **Cinema
+notified**, **In cinema**. Each stage has its state (✓ done, ● in progress,
+◷ waiting, ✕ failed, ○ not yet), when it happened, and one line of detail.
+
+- **Searched** names the last search and who ran it — `manual` (you pressed
+  a button), `automatic` (the backlog, auto search on add), `wanted` (a Wanted
+  run), `replacement` (a re-grab after a failure), `rss`, `interactive` (you
+  picked a release) or a season comparison — with what it saw: `11 seen, 0
+  accepted`, and the reason most releases were refused, or why it did not
+  search at all (`downloading`, `unmonitored`, `indexers unavailable`).
+  Curator keeps the newest 20 searches per movie or episode.
+- **Downloading** shows the percentage and Runner's own speed and time left;
+  Curator does not average or guess. Before Runner starts it the stage says
+  `queued in Runner` — Runner has no queue position to report.
+- **Processed** is Runner's post-processing stage (`verifying`,
+  `repairing`, `unpacking`) and since when, or the failure Runner reported.
+- **Moved** counts the files placed into the library, or says the import is
+  waiting or failed.
+- **Cinema notified** and **In cinema** come from the cinema read-back:
+  `scan accepted`, then `confirmed` at the time cinema confirmed every file
+  with matching size and modification time, or what cinema says it is
+  waiting on (a full scan, its queue). Each episode of a season pack gets
+  its own answer.
+
+The headline says the current stage in a sentence. Below it are the live
+download numbers, any earlier attempts (a failed grab, a cancelled one), and
+the actions that apply: **Search now**, **Interactive search**, **Open in
+Activity**, **Cancel download** (asks first, then cancels in Runner),
+**Retry import**, **Send to cinema again**, and **Ask cinema to confirm**,
+which sends a scan request naming the item's current files so cinema's
+answer confirms them — the way to check an item imported before this record
+existed. Every action shows its result in the panel.
+
+The panel refreshes every 2 seconds while a download is moving and every 30
+seconds otherwise, without moving your scroll position or focus. It never
+hides: once everything is done it collapses to one line (`In cinema,
+confirmed Sep 4`) that opens again on a click. A series shows one line per
+season (`2 of 6 in cinema · 4 in one season pack`), with a season pack's
+download shown once on the season; open a season for a six-segment strip per
+episode, and click an episode for its full track. The phone app shows the
+same panel from the same endpoint (`GET /library/{id}/status`).
+
 **Seasons** and **Files** start collapsed and show their totals in the section
 header. Expand Seasons to use the existing season/episode monitoring and search
 controls. Each section keeps your choice while the item refreshes; visiting

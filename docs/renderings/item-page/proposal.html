@@ -1,0 +1,669 @@
+<title>Curator Item Page Proposal</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a single reading column of proposal prose, with full-width mock "screens" drawn in curator's own tokens, each followed by how it works. */
+:root {
+  --bg: #f4f5f8; --raised: #ffffff; --hover: #e9ebf1; --border: #d7dbe4;
+  --text: #1b212b; --muted: #5b6472; --accent: #6a58d8; --on-accent: #ffffff;
+  --accent-soft: rgba(106,88,216,.14); --ok: #1f8e5c; --ok-soft: rgba(31,142,92,.16);
+  --warn: #99660f; --warn-soft: rgba(153,102,15,.14); --err: #c23b3b; --err-soft: rgba(194,59,59,.14);
+  --frame: #e3e6ee;
+  --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --r: 12px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1117; --raised: #151a23; --hover: #1a202c; --border: #232a38;
+  --text: #e6e9ef; --muted: #9aa3b2; --accent: #8b7cf6; --on-accent: #0e1117;
+  --accent-soft: rgba(139,124,246,.16); --ok: #3fb27f; --ok-soft: rgba(63,178,127,.18);
+  --warn: #e5a53d; --warn-soft: rgba(229,165,61,.16); --err: #e05d5d; --err-soft: rgba(224,93,93,.18);
+  --frame: #090b10; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e1117; --raised: #151a23; --hover: #1a202c; --border: #232a38;
+  --text: #e6e9ef; --muted: #9aa3b2; --accent: #8b7cf6; --on-accent: #0e1117;
+  --accent-soft: rgba(139,124,246,.16); --ok: #3fb27f; --ok-soft: rgba(63,178,127,.18);
+  --warn: #e5a53d; --warn-soft: rgba(229,165,61,.16); --err: #e05d5d; --err-soft: rgba(224,93,93,.18);
+  --frame: #090b10; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 32px 64px }
+.wrap { max-width: 1080px; margin: 0 auto; display: grid; gap: 40px }
+.prose { max-width: 70ch }
+h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; text-wrap: balance; letter-spacing: -.01em }
+h2 { font-size: 22px; margin: 0 0 6px; text-wrap: balance }
+h3 { font-size: 16px; margin: 18px 0 6px }
+p { margin: 0 0 10px }
+.lede { color: var(--muted); font-size: 16px }
+.eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); font-weight: 600; margin-bottom: 6px }
+code, .mono { font-family: var(--mono); font-size: .88em }
+section.part { display: grid; gap: 16px }
+.muted { color: var(--muted) }
+.small { font-size: 13px }
+
+/* --- mock frame: a curator screen --- */
+.stage { background: var(--frame); border-radius: 16px; padding: 18px; display: grid; gap: 12px; overflow: hidden }
+.stage-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between }
+.seg { display: inline-flex; flex-wrap: wrap; gap: 4px; background: var(--raised); border: 1px solid var(--border); border-radius: 999px; padding: 3px }
+.seg button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 999px; cursor: pointer }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent) }
+.seg button:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.screen { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: 18px; display: grid; gap: 14px; margin: 0 auto; width: 100%; transition: max-width .25s }
+.screen.phone { max-width: 390px; padding: 12px }
+@media (prefers-reduced-motion: reduce) { .screen { transition: none } }
+
+.head { display: flex; gap: 16px; align-items: flex-start }
+.poster { width: 84px; aspect-ratio: 2/3; border-radius: 8px; flex: none;
+  background: linear-gradient(160deg, var(--accent-soft), var(--hover)); border: 1px solid var(--border) }
+.phone .poster { width: 56px }
+.head h4 { margin: 0; font-size: 22px; line-height: 1.2 }
+.phone .head h4 { font-size: 18px }
+.facts { color: var(--muted); font-size: 13px }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px }
+.btn { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--raised); color: var(--text); cursor: pointer }
+.btn.accent { background: var(--accent); color: var(--on-accent); border-color: var(--accent) }
+.btn.new { box-shadow: 0 0 0 2px var(--accent-soft); border-color: var(--accent) }
+.btn.danger { color: var(--err) }
+.tag-new { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); font-weight: 700; margin-left: 4px }
+
+.panel { background: var(--raised); border: 1px solid var(--border); border-radius: var(--r); padding: 14px 16px; display: grid; gap: 12px; min-width: 0 }
+.panel.highlight { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft) }
+.panel-h { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px }
+.panel-h b { font-size: 16px }
+.panel-dim { opacity: .55 }
+
+/* status track */
+.headline { display: flex; gap: 10px; align-items: flex-start }
+.headline .big { font-size: 15px; font-weight: 600 }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: 6px; background: var(--muted) }
+.s-done { --c: var(--ok); --cs: var(--ok-soft) }
+.s-active { --c: var(--accent); --cs: var(--accent-soft) }
+.s-wait { --c: var(--warn); --cs: var(--warn-soft) }
+.s-fail { --c: var(--err); --cs: var(--err-soft) }
+.s-todo { --c: var(--border); --cs: transparent }
+.dot.s-done, .dot.s-active, .dot.s-wait, .dot.s-fail { background: var(--c) }
+.dot.s-active { animation: pulse 1.6s infinite }
+@keyframes pulse { 50% { box-shadow: 0 0 0 5px var(--accent-soft) } }
+@media (prefers-reduced-motion: reduce) { .dot.s-active { animation: none } }
+
+.track { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 6px }
+.track li { border-top: 4px solid var(--c); padding-top: 8px; min-width: 0 }
+.track .st { font-size: 12px; font-weight: 600; display: flex; gap: 5px; align-items: center }
+.track .st i { font-style: normal; color: var(--c); font-size: 13px }
+.track .when { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums }
+.track .det { font-size: 12px; color: var(--muted); overflow-wrap: anywhere }
+.s-todo .st { color: var(--muted) }
+.phone .track { grid-template-columns: 1fr; gap: 0 }
+.phone .track li { border-top: 0; border-left: 3px solid var(--c); padding: 4px 0 8px 12px; display: grid; grid-template-columns: 1fr auto; column-gap: 8px }
+.phone .track .det { grid-column: 1 / -1 }
+
+.bar { height: 8px; border-radius: 999px; background: var(--hover); overflow: hidden }
+.bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px }
+.numbers { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; font-variant-numeric: tabular-nums }
+.numbers b { font-weight: 600 }
+.callout { border-radius: 8px; padding: 9px 12px; font-size: 13px; background: var(--cs, var(--hover)); border: 1px solid var(--c, var(--border)) }
+.row-actions { display: flex; flex-wrap: wrap; gap: 6px }
+details.attempts summary { cursor: pointer; font-size: 13px; color: var(--muted) }
+.att { font-size: 13px; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin-top: 8px; font-variant-numeric: tabular-nums }
+.att span:nth-child(odd) { color: var(--muted) }
+
+/* series grid */
+.season { border-top: 1px solid var(--border); padding-top: 10px; display: grid; gap: 8px }
+.season-h { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; font-size: 14px }
+.eps { display: grid; gap: 4px }
+.ep { display: grid; grid-template-columns: 54px minmax(0,1fr) auto; gap: 10px; align-items: center; font-size: 13px; padding: 4px 6px; border-radius: 6px }
+.ep.open { background: var(--hover) }
+.pips { display: flex; gap: 3px }
+.pips span { height: 6px; flex: 1; border-radius: 3px; background: var(--c); max-width: 36px }
+.ep .lbl { font-variant-numeric: tabular-nums; color: var(--muted) }
+.ep .say { text-align: right; color: var(--muted); white-space: nowrap }
+.phone .ep { grid-template-columns: 44px minmax(0,1fr) }
+.phone .ep .say { grid-column: 2; text-align: left }
+
+/* dialog mock */
+.dialog { background: var(--raised); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.25); max-width: 760px; width: 100%; margin: 0 auto; display: grid; min-width: 0 }
+.dialog > header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); gap: 8px }
+.dialog > header b { font-size: 16px }
+.dialog .body { padding: 14px 16px; display: grid; gap: 12px; min-width: 0 }
+.dialog > footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border) }
+.steps { display: flex; gap: 14px; font-size: 13px; color: var(--muted) }
+.steps .on { color: var(--text); font-weight: 600 }
+.crumbs { display: flex; flex-wrap: wrap; gap: 4px; font-family: var(--mono); font-size: 13px; align-items: center }
+.crumbs a { color: var(--accent); text-decoration: none }
+.quick { display: flex; flex-wrap: wrap; gap: 6px }
+.chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--text) }
+.chip.ok { color: var(--ok); border-color: var(--ok) }
+.chip.warn { color: var(--warn); border-color: var(--warn) }
+.chip.acc { color: var(--accent); border-color: var(--accent) }
+.list { border: 1px solid var(--border); border-radius: 8px; overflow: hidden }
+.li { display: grid; grid-template-columns: 22px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 8px 10px; border-top: 1px solid var(--border); font-size: 13px }
+.li:first-child { border-top: 0 }
+.li.sel { background: var(--accent-soft) }
+.li .nm { font-family: var(--mono); overflow-wrap: anywhere }
+.li .meta { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end }
+.li .ic { color: var(--muted); text-align: center }
+.box { width: 15px; height: 15px; border: 1.5px solid var(--muted); border-radius: 4px; display: inline-block; vertical-align: -3px }
+.box.on { background: var(--accent); border-color: var(--accent) }
+.phone .li { grid-template-columns: 22px minmax(0,1fr) }
+.phone .li .meta { grid-column: 2; justify-content: flex-start }
+
+.plan { display: grid; gap: 8px }
+.pl { display: grid; grid-template-columns: minmax(0,1.3fr) 24px minmax(0,1fr); gap: 10px; align-items: center; font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px }
+.pl .from, .pl .to { font-family: var(--mono); overflow-wrap: anywhere }
+.pl .arr { color: var(--muted); text-align: center }
+.sel-mock { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text) }
+.phone .pl { grid-template-columns: 1fr }
+.phone .pl .arr { text-align: left }
+.checks { display: grid; gap: 6px; font-size: 13px }
+.cand { display: grid; grid-template-columns: 44px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 10px; font-size: 13px }
+.cand.sel { border-color: var(--accent); background: var(--accent-soft) }
+.cand .pst { width: 44px; aspect-ratio: 2/3; border-radius: 5px; background: var(--hover); border: 1px solid var(--border) }
+.cand b { font-size: 14px }
+.phone .cand { grid-template-columns: 36px minmax(0,1fr) }
+.phone .cand .pst { width: 36px }
+.phone .cand > :last-child { grid-column: 2 }
+.search { display: flex; gap: 6px }
+.search .inp { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; background: var(--bg); font-size: 13px }
+
+/* explanatory tables */
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--raised) }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 640px }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-top: 1px solid var(--border) }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border-top: 0; background: var(--hover) }
+td:first-child { font-weight: 600; white-space: nowrap }
+.have { color: var(--ok); font-weight: 600 }
+.gap { color: var(--warn); font-weight: 600 }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px }
+.two > * { min-width: 0 }
+.note { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px }
+ol.ms { margin: 0; padding-left: 20px; display: grid; gap: 10px }
+ol.ms li b { display: inline-block; min-width: 9ch }
+ul { margin: 0; padding-left: 20px; display: grid; gap: 6px }
+.q { background: var(--raised); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px }
+.q p:last-child { margin: 0 }
+</style>
+
+<div class="wrap">
+
+<header class="prose">
+  <div class="eyebrow">Curator 0.43.0 → proposal, revision 3</div>
+  <h1>Status, import and re-match on the item page</h1>
+  <p class="lede">Revised after Fable's design review. Three additions to a movie or series page in curator: a panel that shows exactly where the item stands from search through to cinema, an Import button that takes you straight to a file browser, and a Re-match action for when something was matched to the wrong title or episode. Nothing is built yet. The mocks below are drawn in curator's own colours and switch between desktop and phone width.</p>
+  <div class="q" style="margin-top:14px">
+    <p><b>What the review changed.</b> Fable checked this against curator's code, its ADRs, the contract v2 docs and runner's source. Verdict: approve with changes; re-match reworked.</p>
+    <ul class="small">
+      <li>Re-match is now one operation, <b>move files to the right item or episode</b>, instead of rewriting an item's identity in place. Rewriting in place would have carried the wrong title's blocklist, history and in-flight grabs onto the right one, and deleted an item you still wanted.</li>
+      <li>Telling cinema to drop the old folder needs a contract change and a cinema change: today a scan of a path that no longer exists retries forever. Both are now in the plan.</li>
+      <li>Moving a wrong file now blocklists the release that produced it, so the vacated episode doesn't grab the same release again.</li>
+      <li>Importing a runner delivery by hand goes through the existing Resolve path, so curator's own cleanup rules handle the original and there is no delete checkbox.</li>
+      <li>ETA and post-processing progress come from runner's own numbers instead of curator recomputing them. Runner has no queue position or unpack progress, so the panel says "queued" and "unpacking" without numbers rather than guessing.</li>
+      <li>The panel never hides itself, and cinema's state reads "confirmed at" a time rather than "available now".</li>
+    </ul>
+  </div>
+</header>
+
+<!-- ============ PART 1 ============ -->
+<section class="part" id="status">
+  <div class="prose">
+    <div class="eyebrow">1 · Where it stands</div>
+    <h2>A status panel at the top of every item</h2>
+    <p>It sits directly under the title block, above Identity and Quality copies. Six stages, left to right, each with its state, when it happened and one line of detail. The current stage expands with live numbers and whatever action applies. Pick a moment in the lifecycle to see how it reads.</p>
+  </div>
+
+  <div class="stage">
+    <div class="stage-bar">
+      <div class="seg" role="group" aria-label="Lifecycle moment" id="momentSeg"></div>
+      <div class="seg" role="group" aria-label="Width" id="widthSeg1">
+        <button type="button" data-w="desk" aria-pressed="true">Desktop</button>
+        <button type="button" data-w="phone" aria-pressed="false">Phone</button>
+      </div>
+    </div>
+    <div class="screen" id="movieScreen">
+      <div class="head">
+        <div class="poster" aria-hidden="true"></div>
+        <div style="min-width:0">
+          <h4>Past Lives <span class="muted" style="font-weight:400">(2023)</span></h4>
+          <div class="facts">Movie · 106 min · Profile: 2160p HDR · /20t/movies</div>
+          <div class="actions">
+            <button class="btn accent" type="button">Auto search</button>
+            <button class="btn" type="button">Interactive search</button>
+            <button class="btn new" type="button">Import file…<span class="tag-new">new</span></button>
+            <button class="btn new" type="button">Re-match…<span class="tag-new">new</span></button>
+            <button class="btn" type="button">Edit</button>
+            <button class="btn" type="button">Refresh metadata</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel highlight" id="movieStatus" aria-live="polite"></div>
+      <div class="panel panel-dim"><div class="panel-h"><b>Identity</b><span class="muted small">unchanged</span></div></div>
+      <div class="panel panel-dim"><div class="panel-h"><b>Files (0)</b><span class="muted small">unchanged</span></div></div>
+    </div>
+  </div>
+
+  <div class="prose">
+    <h3>Series: one line per episode, season packs shown once</h3>
+    <p>A series page gets the same panel per season. Each episode is a compact six-segment strip plus a phrase; clicking one opens the full track for that episode. When a season pack is in flight, the download row appears once on the season header, since it is one runner job covering many episodes. Each episode's strip shows its own share of the later stages (placed, in cinema), which come per file. Seasons load collapsed; episodes load when you open a season.</p>
+  </div>
+
+  <div class="stage">
+    <div class="stage-bar">
+      <span class="small muted">Slow Horses · Season 4 while a season pack is post-processing and two earlier episodes are already in cinema</span>
+      <div class="seg" role="group" aria-label="Width" id="widthSeg2">
+        <button type="button" data-w="desk" aria-pressed="true">Desktop</button>
+        <button type="button" data-w="phone" aria-pressed="false">Phone</button>
+      </div>
+    </div>
+    <div class="screen" id="seriesScreen">
+      <div class="panel highlight">
+        <div class="panel-h"><b>Where it stands</b><span class="muted small">updated 2 s ago</span></div>
+        <div class="season">
+          <div class="season-h"><b>Season 4</b><span class="muted">2 of 6 in cinema · 4 in one season pack</span></div>
+          <div class="callout s-active">
+            <b>Season pack in runner: repairing.</b> Slow.Horses.S04.1080p.WEB-DL.DDP5.1.H.264 · 9.8 GB · repair 3 of 8 files, then unpack.
+            <div class="row-actions" style="margin-top:6px"><button class="btn" type="button">Open in Activity</button></div>
+          </div>
+          <div class="eps" id="eps"></div>
+        </div>
+        <div class="season">
+          <div class="season-h"><b>Season 3</b><span class="muted">6 of 6 in cinema</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="prose">
+    <h3>Where each stage's answer comes from</h3>
+    <p>Most of this is already recorded somewhere in curator, it just never reaches the item page. Two gaps need new data.</p>
+  </div>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Stage</th><th>What it shows</th><th>Source today</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>Searched</td><td>Last search time, who ran it (auto, manual, Wanted run), outcome: grabbed, nothing found, N found but rejected and the main reason, skipped and why. Next scheduled search.</td><td>Only the explicit Wanted runs persist. Auto search returns its result live and throws it away; the background automation writes nothing.</td><td class="gap">new table</td></tr>
+      <tr><td>Downloading</td><td>Release, indexer, size, percent, speed, ETA. Before it starts: queued.</td><td>Runner already publishes per-job <code>rate_bps</code> and <code>remaining_bytes</code>; curator's adapter drops both.</td><td class="gap">carry through</td></tr>
+      <tr><td>Processed</td><td>Runner's post-processing stage (verify, repair, unpack) with progress, or the failure reason and what curator did about it (blocklisted, re-grab scheduled).</td><td><code>runner_stage</code>, <code>runner_outcome</code>, <code>runner_outcome_reason</code>, the re-grab row. Runner reports verify and repair progress; unpack shows its stage and start time.</td><td class="have">have</td></tr>
+      <tr><td>Moved</td><td>Each file placed into the library, with its final path; queued or running import; blocked reasons.</td><td><code>publications</code> and <code>publication_files</code> (outcome, <code>library_path</code>), import worker state.</td><td class="have">have</td></tr>
+      <tr><td>Cinema notified</td><td>Scan request sent, accepted, retried, failed with cinema's typed reason.</td><td><code>notifier_deliveries</code> (0074), but only listed per notifier under Settings, capped at the last 100.</td><td class="have">have, needs a per-item query</td></tr>
+      <tr><td>In cinema</td><td>Confirmed at a time: every expected file placed with matching size and mtime, with a link to the cinema item. Or what cinema is waiting on.</td><td>The M5 read-back: <code>visible_at</code>, <code>item_ids</code>, <code>remote_state</code>, <code>waiting_on</code>. Cinema reports each file, but curator stores only the all-or-nothing result per folder.</td><td class="gap">store per-file results for episode-level status</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="two">
+    <div class="prose">
+      <h3>Backend</h3>
+      <ul>
+        <li><b>One endpoint</b>, <code>GET /library/{id}/status</code>, built as a read projection in acquisition beside the queue and import activity views, since that is where downloads, publications and deliveries live. Series return season summaries; <code>?season=N</code> returns that season's episodes. Mobile uses the same calls. <code>history_events</code> gets an index on the item.</li>
+        <li><b>One search record per movie or episode.</b> Written inside the shared search-and-grab path, so auto search, the background automation, Wanted runs and interactive grabs all land in it: time, trigger, counts seen/matched/accepted, top rejection reason, the download it led to. Wanted runs read their per-target counts from it instead of keeping their own. Newest 20 kept.</li>
+        <li><b>Runner's numbers, relayed.</b> Curator's runner adapter carries <code>rate_bps</code> and <code>remaining_bytes</code> through; ETA is their ratio. Verify and repair progress come from runner's existing fields. Curator never guesses runner's scheduler, so a queued job says "queued".</li>
+        <li><b>Per-file cinema results.</b> Cinema's read-back already reports each expected file as placed, skipped or missing; curator stores that per file, so each episode in a pack gets its own In-cinema state.</li>
+        <li><b>Refresh.</b> The active download polls every 2 s; the rest of the panel every 30 s; neither moves scroll or focus.</li>
+      </ul>
+    </div>
+    <div class="prose">
+      <h3>Behaviour</h3>
+      <ul>
+        <li>Every failure says what went wrong in plain words and offers the one action that fixes it: search again, retry import, send to cinema again, or import a file by hand.</li>
+        <li>When cinema is slow, the panel shows the reason cinema gives (a full scan, the heavy-work lane, an unreadable root, its queue position), so a wait is attributable from inside the product.</li>
+        <li>Earlier attempts (a failed grab, a blocklisted release) fold into an "Earlier attempts" list under the track.</li>
+        <li>The panel never hides. Once everything is done it collapses to one line ("In cinema, confirmed Sep 4"). For items that predate this record, it shows the last known facts and offers <b>Ask cinema to confirm</b>, which sends a scan request with the item's files as expected files.</li>
+        <li>Mobile gets the same visible-result checks as web (every action's result on screen, at 390 px).</li>
+        <li>The Activity page keeps its full lifecycle trace; the item panel links into it for depth.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PART 2 ============ -->
+<section class="part" id="import">
+  <div class="prose">
+    <div class="eyebrow">2 · Import</div>
+    <h2>Import file… from the item page</h2>
+    <p>Today, importing one file for a movie you already have takes about eight actions over two pages: Activity, Resolve, type a path into a box that only completes folders, Scan, tick the file, find the movie in a dropdown of the whole library, Queue. On the item page the target is already known, so it becomes: <b>Import file…</b>, browse, pick, confirm.</p>
+  </div>
+
+  <div class="stage">
+    <div class="stage-bar">
+      <div class="seg" role="group" aria-label="Import step" id="importSeg">
+        <button type="button" data-s="1" aria-pressed="true">1 · Choose</button>
+        <button type="button" data-s="2" aria-pressed="false">2 · Confirm</button>
+      </div>
+      <div class="seg" role="group" aria-label="Width" id="widthSeg3">
+        <button type="button" data-w="desk" aria-pressed="true">Desktop</button>
+        <button type="button" data-w="phone" aria-pressed="false">Phone</button>
+      </div>
+    </div>
+    <div class="screen" id="importScreen">
+      <div class="dialog" role="group" aria-label="Import dialog mock">
+        <header><b>Import into Slow Horses</b><button class="btn" type="button">Close</button></header>
+        <div class="body" id="importBody"></div>
+        <footer id="importFoot"></footer>
+      </div>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="prose">
+      <h3>How it works</h3>
+      <ul>
+        <li><b>Browser.</b> Folders come from <code>/filesystem</code> as today. The files in the current folder come from <code>/import/scan</code> limited to one level, which already returns size, quality, SxxEyy and file identity. It opens at the completed folder, with shortcuts to the item's own folder and the library roots, and a path box for anywhere else. A path curator can't see gives a plain error that says so and names the path-mapping fix.</li>
+        <li><b>Runner deliveries.</b> A file inside a runner delivery goes through the existing Resolve placement, extended with a target item and episode. Its record, cleanup and Resolve listing all stay consistent; curator removes the original under its existing cleanup rules.</li>
+        <li><b>Loose files.</b> Anything else goes through <code>POST /import/manual</code> with the item fixed: the same durable job, identity checks and cinema notification as an automatic import. Hardlinked when kept, so your copy stays; renamed only if you tick Remove original. Copies across volumes show bytes and Stop in the status panel.</li>
+        <li><b>Episodes, copies, editions.</b> Each file gets an episode picker prefilled from its name, which also handles obfuscated names. The choice is sealed into the import attempt by path. Items with quality copies or book editions get a copy or edition picker.</li>
+        <li><b>Subtitles.</b> Sidecar subtitles travel with the file, using the same code the <code>claude/no-wedge</code> branch adds for runner deliveries.</li>
+      </ul>
+    </div>
+    <div class="prose">
+      <h3>What the confirm step tells you</h3>
+      <ul>
+        <li>The exact destination path, built from the naming template.</li>
+        <li>What happens to a file already there: replaced if the new one ranks higher in the item's profile, otherwise kept beside it, with the reason.</li>
+        <li>For runner deliveries: that curator will clean up the original once it is placed, as for automatic imports.</li>
+        <li>For loose files: a Remove original option, off by default, and whether it will be a hardlink, a rename or a copy.</li>
+      </ul>
+      <p class="small muted">Activity's Resolve flow stays for folders that aren't tied to an item yet, and opens this same dialog once you've picked the target.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PART 3 ============ -->
+<section class="part" id="rematch">
+  <div class="prose">
+    <div class="eyebrow">3 · Re-match</div>
+    <h2>Fixing a wrong match</h2>
+    <p>There is no way to do this today short of removing the file from the library and importing it again. Both shapes of a wrong match use one operation: <b>move these files to the right item or episode</b>, adding that item to the library if it isn't there.</p>
+    <ul>
+      <li><b>Re-match…</b> on the item page moves all of the item's files. The folder was adopted as <i>Dune (1984)</i> but it is <i>Dune (2021)</i>: the files go to Dune (2021). For a series, every file gets an episode in the new series.</li>
+      <li><b>Move to…</b> on one file in the Files panel moves just that file, to another episode or another title.</li>
+      <li>The item the files leave keeps its own identity and history. If you added it because you want it, it stays in the library as wanted. If folder adoption created it and it is now empty, it is removed. The preview says which.</li>
+    </ul>
+  </div>
+
+  <div class="stage">
+    <div class="stage-bar">
+      <div class="seg" role="group" aria-label="Re-match case" id="rmSeg">
+        <button type="button" data-c="title" aria-pressed="true">Wrong title</button>
+        <button type="button" data-c="exists" aria-pressed="false">Right title already in library</button>
+        <button type="button" data-c="file" aria-pressed="false">Move one file</button>
+      </div>
+      <div class="seg" role="group" aria-label="Width" id="widthSeg4">
+        <button type="button" data-w="desk" aria-pressed="true">Desktop</button>
+        <button type="button" data-w="phone" aria-pressed="false">Phone</button>
+      </div>
+    </div>
+    <div class="screen" id="rmScreen">
+      <div class="dialog" role="group" aria-label="Re-match dialog mock">
+        <header><b id="rmTitle">Re-match Dune (1984)</b><button class="btn" type="button">Close</button></header>
+        <div class="body" id="rmBody"></div>
+        <footer id="rmFoot"></footer>
+      </div>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="prose">
+      <h3>How it works</h3>
+      <ul>
+        <li><b>Lives beside placement.</b> The operation sits in acquisition next to file removal and import placement, as a new kind of journaled placement operation. A crash halfway resumes from the journal, so nothing is left half-moved.</li>
+        <li><b>Fenced.</b> It takes the title lease on both items and refuses while either has a download in flight, an import running or a replacement operation open, with a message naming which and a way to wait for it.</li>
+        <li><b>Rename or copy.</b> A rename when both folders are on one volume; across volumes (say <code>/20t</code> to <code>/10t</code>) a verified copy that shows bytes and Stop in the status panel, then the original removed.</li>
+        <li><b>Cinema sees both sides.</b> A scan of the new folder with expected files, so the read-back confirms it. Removing the old entry needs new cinema support (below), because today a scan of a folder that no longer exists retries forever.</li>
+        <li><b>One folder per item</b> (ADR 0020): the target folder carries the <code>{tmdb-N}</code> hint, so scanning and adoption keep the new match.</li>
+      </ul>
+    </div>
+    <div class="prose">
+      <h3>Guarding the change</h3>
+      <ul>
+        <li>The preview lists every rename before anything happens. Files that don't fit the new title (an episode number the new series doesn't have) are listed with a picker, or left out; left-out files stay on disk, removed from the library. A file covering two episodes maps to two episodes.</li>
+        <li>The release behind a moved file is blocklisted for the item or episode it left, through the existing replacement path, so the vacated wantable doesn't grab it again.</li>
+        <li>Books move between editions the same way; manual entries can be sources or targets, since nothing here needs a provider.</li>
+        <li>Nothing new remembers the wrong pairing: the blocklist entry and the <code>{tmdb-N}</code> folder hint are what stop the same match recurring. A <code>rematched</code> history event records from, to and every path that moved.</li>
+        <li>Written up as ADR 0027 before code, since it touches placement, scan and the contract-v2 publication records.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PART 4 ============ -->
+<section class="part" id="plan">
+  <div class="prose">
+    <div class="eyebrow">4 · Order of work</div>
+    <h2>Curator in three PRs, plus one contract fix in cinema</h2>
+    <ol class="ms">
+      <li><b>0.44.0</b> Curator status panel: one search record, the adapter carrying runner's rate and remaining bytes, per-file cinema results, <code>GET /library/{id}/status</code>, the panel on web and mobile.</li>
+      <li><b>0.45.0</b> Curator import: one-level browse listing, Resolve placement with a target, loose-file import with episode, copy and edition choice, subtitles, Stop.</li>
+      <li><b>Contract</b> An amendment for files leaving a folder: curator names the removed paths on a scan of the parent and cinema answers each as gone; a sub-delivery keyed by operation instead of by publication.</li>
+      <li><b>Cinema</b> The matching change on cinema's side, in its own pipeline-v2 task PR.</li>
+      <li><b>0.46.0</b> Curator re-match: ADR 0027 first, then the move operation, Re-match… and Move to… on web and mobile.</li>
+    </ol>
+    <p class="note small">Status can start now. Import and re-match touch the import code that the <code>claude/no-wedge</code> branch is rewriting, so they start from main after it merges. Re-match ships after the cinema change, so a move never leaves cinema with a stale entry.</p>
+  </div>
+
+  <div class="prose">
+    <h3>Two calls I made that you may want to change</h3>
+    <div style="display:grid; gap:10px">
+      <div class="q"><p><b>The item files leave behind.</b> It stays as wanted if you added it, and is removed only if folder adoption created it and it is now empty. The alternative is always asking.</p></div>
+      <div class="q"><p><b>Re-match on a series moves every file at once.</b> Splitting a series (some seasons belong to another show) goes through Move to… on each file instead, which is slower but rare.</p></div>
+    </div>
+  </div>
+</section>
+</div>
+
+<script>
+(function () {
+  const STAGES = ['Searched', 'Downloading', 'Processed', 'Moved', 'Cinema notified', 'In cinema']
+  const ICON = { 's-done': '✓', 's-active': '●', 's-wait': '◷', 's-fail': '✕', 's-todo': '○' }
+  const GB = 1e9
+  function eta(remainingBytes, bps) {
+    const s = Math.round(remainingBytes / bps)
+    const m = Math.floor(s / 60), r = s % 60
+    return m ? `${m} min ${String(r).padStart(2, '0')} s` : `${r} s`
+  }
+  const total = 18.4 * GB, done = 0.34 * total, rate = 48.2e6
+  const release = 'Past.Lives.2023.2160p.WEB-DL.DDP5.1.HDR.H.265'
+
+  const M = {
+    searched: {
+      label: 'Searched, nothing yet',
+      head: ['s-wait', 'Waiting for a release', 'Searched 3 indexers at 14:02. 11 releases found, none accepted: 9 below your 2160p cutoff, 2 failed release identity. Next automatic search 20:02.'],
+      st: [['s-wait', '14:02', 'auto · 11 seen, 0 accepted'], ['s-todo'], ['s-todo'], ['s-todo'], ['s-todo'], ['s-todo']],
+      body: `<div class="row-actions"><button class="btn accent" type="button">Search now</button><button class="btn" type="button">See the 11 results</button><button class="btn" type="button">Import file…</button></div>`
+    },
+    queued: {
+      label: 'Queued in runner',
+      head: ['s-active', 'Queued in runner', `Grabbed ${release} from NZBgeek at 18:20. Runner has it queued and will start it when a slot frees.`],
+      st: [['s-done', '18:20', 'grabbed from NZBgeek'], ['s-active', 'queued', 'waiting for runner'], ['s-todo'], ['s-todo'], ['s-todo'], ['s-todo']],
+      body: `<div class="numbers"><span>Size <b>18.4 GB</b></span><span>Runner speed <b>48.2 MB/s</b></span></div>`
+    },
+    downloading: {
+      label: 'Downloading',
+      head: ['s-active', `Downloading, ${eta(total - done, rate)} left`, `${release} · NZBgeek`],
+      st: [['s-done', '18:20', 'grabbed from NZBgeek'], ['s-active', '34%', `${eta(total - done, rate)} left`], ['s-todo'], ['s-todo'], ['s-todo'], ['s-todo']],
+      body: `<div class="bar" role="progressbar" aria-valuenow="34" aria-valuemin="0" aria-valuemax="100" aria-label="Download progress"><span style="width:34%"></span></div>
+        <div class="numbers"><span><b>6.3</b> of 18.4 GB</span><span><b>48.2 MB/s</b> (runner's average)</span><span>Download done about <b>18:31</b></span><span class="muted">then verify and unpack</span></div>
+        <div class="row-actions"><button class="btn" type="button">Open in Activity</button><button class="btn danger" type="button">Cancel and blocklist</button></div>`
+    },
+    processing: {
+      label: 'Repair and unpack',
+      head: ['s-active', 'Runner is unpacking', 'Download finished 18:31 (6 min 21 s). Verify passed, no repair needed. Unpacking since 18:32.'],
+      st: [['s-done', '18:20', 'grabbed from NZBgeek'], ['s-done', '18:31', '18.4 GB in 6 min 21 s'], ['s-active', 'unpacking', 'since 18:32'], ['s-todo'], ['s-todo'], ['s-todo']],
+      body: ``
+    },
+    moving: {
+      label: 'Moving into library',
+      head: ['s-active', 'Curator is moving it into the library', '1 video and 2 subtitles, renamed into place. A copy across volumes shows bytes and a Stop button here.'],
+      st: [['s-done', '18:20', 'grabbed from NZBgeek'], ['s-done', '18:31', '18.4 GB in 6 min 21 s'], ['s-done', '18:33', 'verified, unpacked'], ['s-active', 'placing', '1 of 3 files'], ['s-todo'], ['s-todo']],
+      body: `<div class="numbers mono small" style="font-family:var(--mono)"><span>→ /20t/movies/Past Lives (2023)/Past Lives (2023) [WEBDL-2160p HDR].mkv</span></div>`
+    },
+    cinema: {
+      label: 'Waiting on cinema',
+      head: ['s-wait', 'In the library, cinema hasn’t shown it yet', 'Cinema accepted the scan request at 18:34. It is queued behind a full scan of the Movies library. Curator asks again on its retry schedule.'],
+      st: [['s-done', '18:20', 'grabbed from NZBgeek'], ['s-done', '18:31', '18.4 GB in 6 min 21 s'], ['s-done', '18:33', 'verified, unpacked'], ['s-done', '18:34', '3 files placed'], ['s-done', '18:34', 'scan accepted'], ['s-wait', 'waiting', 'behind full scan of Movies']],
+      body: `<div class="callout s-wait">Cinema says it is waiting on: <b>full scan of Movies</b>. Cinema runs targeted requests as soon as that scan finishes; its Jobs panel lists this request with a Cancel.</div>`
+    },
+    available: {
+      label: 'In cinema',
+      head: ['s-done', 'In cinema, confirmed 18:36', 'Cinema confirmed all 3 files with matching size and modification time, 16 min after the grab.'],
+      st: [['s-done', '18:20', 'grabbed from NZBgeek'], ['s-done', '18:31', '18.4 GB in 6 min 21 s'], ['s-done', '18:33', 'verified, unpacked'], ['s-done', '18:34', '3 files placed'], ['s-done', '18:34', 'scan accepted'], ['s-done', '18:36', 'confirmed · cinema item 81244']],
+      body: `<div class="row-actions"><button class="btn accent" type="button">Open in cinema</button></div>`
+    },
+    failed: {
+      label: 'Failed, re-grabbing',
+      head: ['s-fail', 'Repair failed, trying the next release', 'Runner reported the download as unrepairable (par). Curator blocklisted the release and grabbed the next accepted one at 18:44.'],
+      st: [['s-done', '18:44', 're-grabbed · 2nd release'], ['s-active', '12%', '5 min 50 s left'], ['s-todo'], ['s-todo'], ['s-todo'], ['s-todo']],
+      body: `<details class="attempts" open><summary>Earlier attempts (1)</summary><div class="att">
+          <span>18:20</span><span>${release} · NZBgeek · downloaded 18:31 · <b style="color:var(--err)">repair failed</b> (runner: par) · blocklisted</span>
+        </div></details>`
+    }
+  }
+
+  function trackHTML(st) {
+    return `<ol class="track">${st.map((s, i) => {
+      const [cls, when = '', det = ''] = s
+      return `<li class="${cls}"><span class="st"><i aria-hidden="true">${ICON[cls]}</i>${STAGES[i]}</span><span class="when">${when}</span><span class="det">${det}</span></li>`
+    }).join('')}</ol>`
+  }
+  function renderMovie(key) {
+    const m = M[key]
+    const [hc, title, line] = m.head
+    document.getElementById('movieStatus').innerHTML =
+      `<div class="panel-h"><b>Where it stands</b><span class="muted small">updated 2 s ago</span></div>
+       <div class="headline"><span class="dot ${hc}" aria-hidden="true"></span><div style="min-width:0"><div class="big">${title}</div><div class="muted small">${line}</div></div></div>
+       ${trackHTML(m.st)}${m.body}`
+  }
+  const seg = document.getElementById('momentSeg')
+  Object.keys(M).forEach((k, i) => {
+    const b = document.createElement('button')
+    b.type = 'button'; b.textContent = M[k].label; b.dataset.k = k
+    b.setAttribute('aria-pressed', k === 'downloading' ? 'true' : 'false')
+    seg.appendChild(b)
+  })
+  seg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return
+    seg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)))
+    renderMovie(b.dataset.k)
+  })
+  renderMovie('downloading')
+
+  // series episodes
+  const P = (a) => `<span class="pips">${a.map(c => `<span class="${c}"></span>`).join('')}</span>`
+  const D = 's-done', A = 's-active', T = 's-todo', W = 's-wait'
+  const eps = [
+    ['4×01', [D, D, D, D, D, D], 'in cinema · Sep 4'],
+    ['4×02', [D, D, D, D, D, D], 'in cinema · Sep 11'],
+    ['4×03', [D, D, A, T, T, T], 'in season pack · repairing'],
+    ['4×04', [D, D, A, T, T, T], 'in season pack · repairing'],
+    ['4×05', [D, D, A, T, T, T], 'in season pack · repairing'],
+    ['4×06', [D, D, A, T, T, T], 'in season pack · repairing'],
+  ]
+  document.getElementById('eps').innerHTML = eps.map(([l, p, s], i) =>
+    `<div class="ep${i === 1 ? ' open' : ''}"><span class="lbl">${l}</span>${P(p)}<span class="say">${s}</span></div>` +
+    (i === 1 ? `<div style="padding:4px 6px 10px">${trackHTML([[D, 'Sep 4', 'auto · grabbed'], [D, 'Sep 4', '1.6 GB in 41 s'], [D, 'Sep 4', 'verified'], [D, 'Sep 4', '1 video, 1 subtitle'], [D, 'Sep 4', 'scan accepted'], [D, 'Sep 4', 'confirmed · item 80917']])}</div>` : '')
+  ).join('')
+
+  // import dialog
+  const I1 = {
+    body: `<div class="steps"><span class="on">1 · Choose files</span><span>2 · Confirm</span></div>
+      <div class="quick"><span class="chip acc">Runner completed</span><span class="chip">This show's folder</span><span class="chip">/20t</span><span class="chip">/10t</span><span class="chip">Type a path…</span></div>
+      <div class="crumbs"><a href="#import">/processing</a>/<a href="#import">complete</a>/<span>Slow.Horses.S04E03-E04.1080p.WEB.job-8812.runner-1</span></div>
+      <div class="list">
+        <div class="li"><span class="ic">↰</span><span class="nm">..</span><span></span></div>
+        <div class="li"><span class="ic">▸</span><span class="nm">Subs/</span><span class="meta"><span class="chip">4 subtitles</span></span></div>
+        <div class="li sel"><span><i class="box on"></i></span><span class="nm">Slow.Horses.S04E03.1080p.WEB.h264.mkv</span><span class="meta"><span class="chip">1.7 GB</span><span class="chip ok">S04E03</span><span class="chip">WEBDL-1080p</span><span class="chip acc">2 subs</span></span></div>
+        <div class="li sel"><span><i class="box on"></i></span><span class="nm">a7f3c91e.mkv</span><span class="meta"><span class="chip">1.6 GB</span><span class="chip warn">no episode in name</span><span class="chip">WEBDL-1080p</span></span></div>
+        <div class="li"><span><i class="box"></i></span><span class="nm">sample.mkv</span><span class="meta"><span class="chip">48 MB</span><span class="chip">sample</span></span></div>
+      </div>`,
+    foot: `<span class="small muted">2 files selected</span><div class="row-actions"><button class="btn" type="button">Cancel</button><button class="btn accent" type="button">Next</button></div>`
+  }
+  const I2 = {
+    body: `<div class="steps"><span>1 · Choose files</span><span class="on">2 · Confirm</span></div>
+      <div class="plan">
+        <div class="pl"><span class="from">Slow.Horses.S04E03.1080p.WEB.h264.mkv<br><span class="muted">+ 2 subtitles (en, en.forced)</span></span><span class="arr">→</span>
+          <span class="to"><select class="sel-mock" aria-label="Episode for first file"><option>S04E03</option></select><br>Season 04/Slow Horses - S04E03 [WEBDL-1080p].mkv<br><span class="chip ok">new file</span></span></div>
+        <div class="pl"><span class="from">a7f3c91e.mkv<br><span class="muted">name has no episode</span></span><span class="arr">→</span>
+          <span class="to"><select class="sel-mock" aria-label="Episode for second file"><option>S04E04</option></select><br>Season 04/Slow Horses - S04E04 [WEBDL-1080p].mkv<br><span class="chip warn">replaces HDTV-720p (lower in profile)</span></span></div>
+      </div>
+      <div class="checks">
+        <span class="muted">These files are a runner delivery: curator places them and cleans up the delivery folder under its usual rules. Cinema is told when they land.</span>
+      </div>`,
+    foot: `<span class="small muted">2 videos, 2 subtitles</span><div class="row-actions"><button class="btn" type="button">Back</button><button class="btn accent" type="button">Import 2 files</button></div>`
+  }
+  function renderImport(s) {
+    const d = s === '2' ? I2 : I1
+    document.getElementById('importBody').innerHTML = d.body
+    document.getElementById('importFoot').innerHTML = d.foot
+  }
+  const iseg = document.getElementById('importSeg')
+  iseg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return
+    iseg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)))
+    renderImport(b.dataset.s)
+  })
+  renderImport('1')
+
+  // re-match
+  const cand = (t, y, id, ov, sel, badge) => `<div class="cand${sel ? ' sel' : ''}"><span class="pst" aria-hidden="true"></span><span style="min-width:0"><b>${t}</b> <span class="muted">(${y})</span><br><span class="muted">TMDB ${id} · ${ov}</span></span><span>${badge || ''}</span></div>`
+  const R = {
+    title: {
+      t: 'Re-match Dune (1984)',
+      body: `<div class="search"><span class="inp">Dune</span><button class="btn" type="button">Search TMDB</button></div>
+        ${cand('Dune', 2021, 438631, 'Denis Villeneuve · 155 min', true, '<span class="chip acc">selected</span>')}
+        ${cand('Dune: Part Two', 2024, 693134, 'Denis Villeneuve · 166 min', false)}
+        ${cand('Dune', 1984, 841, 'David Lynch · 137 min', false, '<span class="chip">current</span>')}
+        <b class="small">What will change</b>
+        <div class="plan">
+          <div class="pl"><span class="from">Dune (2021)</span><span class="arr">→</span><span class="to">added to the library at /20t/movies/Dune (2021) {tmdb-438631}/</span></div>
+          <div class="pl"><span class="from">Dune (1984)/Dune (1984) [Bluray-2160p].mkv</span><span class="arr">→</span><span class="to">Dune (2021) {tmdb-438631}/Dune (2021) [Bluray-2160p].mkv</span></div>
+          <div class="pl"><span class="from">Dune (1984) item</span><span class="arr">→</span><span class="to">removed: folder adoption created it and it is now empty</span></div>
+        </div>
+        <span class="small muted">Same volume, so a rename. The release that produced this file is blocklisted for Dune (1984). Cinema scans the new folder and drops the old one. The 155 min runtime matches the file's measured 2 h 35 min.</span>`,
+      foot: `<span class="small muted">3 changes</span><div class="row-actions"><button class="btn" type="button">Cancel</button><button class="btn accent" type="button">Move 1 file</button></div>`
+    },
+    exists: {
+      t: 'Re-match Dune (1984)',
+      body: `<div class="search"><span class="inp">Dune</span><button class="btn" type="button">Search TMDB</button></div>
+        ${cand('Dune', 2021, 438631, 'Denis Villeneuve · 155 min', true, '<span class="chip ok">in your library</span>')}
+        <div class="callout s-wait">Dune (2021) is already in your library at <span class="mono">/20t/movies/Dune (2021)</span> with a WEBDL-1080p file. This file goes into that item.</div>
+        <div class="plan">
+          <div class="pl"><span class="from">Dune (1984) [Bluray-2160p].mkv</span><span class="arr">→</span><span class="to">Dune (2021)/Dune (2021) [Bluray-2160p].mkv<br><span class="chip ok">replaces WEBDL-1080p (higher in profile)</span></span></div>
+          <div class="pl"><span class="from">Dune (1984) item</span><span class="arr">→</span><span class="to">stays in the library as wanted: you added it</span></div>
+        </div>
+        <span class="small muted">The release is blocklisted for Dune (1984), so automatic search looks for a real copy of it.</span>`,
+      foot: `<span class="small muted">1 file</span><div class="row-actions"><button class="btn" type="button">Cancel</button><button class="btn accent" type="button">Move 1 file</button></div>`
+    },
+    file: {
+      t: 'Move Slow Horses - S04E05 [WEBDL-1080p].mkv',
+      body: `<p class="small" style="margin:0">Opened from <b>Move to…</b> on one file in the Files panel.</p>
+        <div class="search"><span class="inp">Slow Horses</span><button class="btn" type="button">Find in library</button></div>
+        <div class="checks"><label><i class="box on"></i> Same show, different episode</label><label><i class="box"></i> A different movie or show</label></div>
+        <div class="plan">
+          <div class="pl"><span class="from">S04E05</span><span class="arr">→</span><span class="to"><select class="sel-mock" aria-label="Target episode"><option>S04E06</option></select></span></div>
+          <div class="pl"><span class="from">Season 04/Slow Horses - S04E05 [WEBDL-1080p].mkv</span><span class="arr">→</span><span class="to">Season 04/Slow Horses - S04E06 [WEBDL-1080p].mkv</span></div>
+        </div>
+        <span class="small muted">S04E06 had no file. The release that produced this file is blocklisted for S04E05 and a replacement is searched for it, the same as reporting a bad file today.</span>`,
+      foot: `<span class="small muted">1 file</span><div class="row-actions"><button class="btn" type="button">Cancel</button><button class="btn accent" type="button">Move</button></div>`
+    }
+  }
+  function renderRM(c) {
+    const d = R[c]
+    document.getElementById('rmTitle').textContent = d.t
+    document.getElementById('rmBody').innerHTML = d.body
+    document.getElementById('rmFoot').innerHTML = d.foot
+  }
+  const rseg = document.getElementById('rmSeg')
+  rseg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return
+    rseg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)))
+    renderRM(b.dataset.c)
+  })
+  renderRM('title')
+
+  // width toggles
+  ;[['widthSeg1', 'movieScreen'], ['widthSeg2', 'seriesScreen'], ['widthSeg3', 'importScreen'], ['widthSeg4', 'rmScreen']].forEach(([s, sc]) => {
+    const el = document.getElementById(s)
+    el.addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return
+      el.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)))
+      document.getElementById(sc).classList.toggle('phone', b.dataset.w === 'phone')
+    })
+  })
+})()
+</script>
