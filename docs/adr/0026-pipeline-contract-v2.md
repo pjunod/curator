@@ -207,7 +207,12 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     sweep never discards pending media. Only typed payload failures
     (`errPlacementConflict`) count toward the attempt cap, spaced on
     `backoff.Retry` (`retry_at`); a malformed manifest (`errManifestInvalid`)
-    or a file that does not match it ends at once. Ending
+    or a file missing or resized against it ends at once; a file whose bytes
+    do not match it (found while it is placed) is that file's outcome, the
+    rest of the payload is still imported, and the publication then ends
+    (v0.46.1: the result no longer depends on manifest order). A multipart
+    audiobook is the exception: all its parts are verified against the
+    manifest before any is placed, and one mismatch places none. Ending
     (`endPublication`) records the publication's committed placements through
     `completePublication` (history, outbox to Cinema), discards the rest and
     writes a replacement grab the worker filters by what is still wanted. A

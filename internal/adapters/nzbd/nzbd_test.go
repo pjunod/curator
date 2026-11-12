@@ -405,6 +405,27 @@ func TestRemoveFallsBackFromQueueToHistory(t *testing.T) {
 	}
 }
 
+// CancelQueued never reaches the history route: a job that finished since the
+// poll answers 404 on the queue and that is the end of it.
+func TestCancelQueuedNeverTouchesHistory(t *testing.T) {
+	var paths []string
+	srv := fake(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+		if !strings.Contains(r.URL.Path, "/actions/") {
+			return false
+		}
+		paths = append(paths, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"no such job"}`))
+		return true
+	})
+	if err := client(t, srv, "", "t").CancelQueued(context.Background(), "7"); err != nil {
+		t.Fatalf("CancelQueued on a 404 = %v, want nil", err)
+	}
+	if fmt.Sprint(paths) != fmt.Sprint([]string{"/api/v1/jobs/7/actions/delete"}) {
+		t.Errorf("tried %v, want only the queue route", paths)
+	}
+}
+
 // When neither route works, the error has to name both attempts: "no such
 // job" twice and "connection refused" twice are very different problems,
 // and reporting only the second hides which one happened.

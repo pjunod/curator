@@ -197,6 +197,66 @@ func TestOverdueRowStillInRunnersQueue(t *testing.T) {
 	}
 }
 
+// A stalled job Runner still lists is failed and regrabbed, then cancelled in
+// Runner once (queue-only, in the background); a failed cancel changes
+// nothing. A job absent from Runner's queue is never cancelled.
+func TestOverdueStalledJobGetsOneBestEffortRunnerCancel(t *testing.T) {
+	f := setupV2(t, nil)
+	f.deferGrabs()
+	f.runner.queueCancelErr = errFake
+	bytes := int64(100)
+	dl := f.overdue(f.grab(1, epOne), "downloading")
+	f.runner.admissions[dl.Transfer] = ports.RequestAdmission{RequestToken: dl.Transfer, JobID: dl.Handle, Outcome: "fetching"}
+	queue := map[string]ports.DownloadStatus{dl.Transfer: {Transfer: dl.Transfer, Handle: ports.Handle(dl.Handle), State: ports.StateDownloading, BytesCompleted: &bytes}}
+	f.svc.overdueMarks.Store(dl.ID, overdueMark{client: f.cfg.ID, bytes: bytes, state: ports.StateDownloading, since: time.Now().Add(-overdueStallLimit - time.Minute)})
+	f.svc.exitOverdue(f.ctx, f.cfg, f.runner, queue, map[string]ports.DownloadStatus{})
+	if got := f.row(dl.ID); got.State != "failed" || f.regrabFor(dl.ID) != 1 {
+		t.Fatalf("cancel error: row = %s regrab=%d, want failed and regrabbed", got.State, f.regrabFor(dl.ID))
+	}
+	if calls := f.runner.queueCancelCalls(1); len(calls) != 1 || calls[0] != ports.Handle(dl.Handle) {
+		t.Fatalf("cancel calls = %v, want one queue cancel of %q", calls, dl.Handle)
+	}
+	// A later sweep does not retry it.
+	f.svc.exitOverdue(f.ctx, f.cfg, f.runner, queue, map[string]ports.DownloadStatus{})
+
+	gone := f.overdue(f.grab(2, epTwo), "downloading")
+	f.absentLong(gone.ID)
+	f.svc.exitOverdue(f.ctx, f.cfg, f.runner, otherJob, map[string]ports.DownloadStatus{})
+	if got := f.row(gone.ID); got.State != "failed" {
+		t.Fatalf("absent job: row = %s, want failed", got.State)
+	}
+	if calls := f.runner.queueCancelCalls(2); len(calls) != 1 {
+		t.Fatalf("cancel calls = %v after an absent job, want still 1", calls)
+	}
+}
+
+// The job finished between the poll and the cancel: Runner's queue cancel
+// answers "already gone" (nil: the adapter maps its 404), the failure stands,
+// and Curator never falls back to Remove, which would delete the finished
+// job's history record.
+func TestOverdueCancelOfAJobThatFinishedMeanwhileKeepsItsHistory(t *testing.T) {
+	f := setupV2(t, nil)
+	f.deferGrabs()
+	bytes := int64(100)
+	dl := f.overdue(f.grab(1, epOne), "downloading")
+	f.runner.admissions[dl.Transfer] = ports.RequestAdmission{RequestToken: dl.Transfer, JobID: dl.Handle, Outcome: "fetching"}
+	queue := map[string]ports.DownloadStatus{dl.Transfer: {Transfer: dl.Transfer, Handle: ports.Handle(dl.Handle), State: ports.StateDownloading, BytesCompleted: &bytes}}
+	f.svc.overdueMarks.Store(dl.ID, overdueMark{client: f.cfg.ID, bytes: bytes, state: ports.StateDownloading, since: time.Now().Add(-overdueStallLimit - time.Minute)})
+	f.svc.exitOverdue(f.ctx, f.cfg, f.runner, queue, map[string]ports.DownloadStatus{})
+	if calls := f.runner.queueCancelCalls(1); len(calls) != 1 {
+		t.Fatalf("queue cancels = %v, want 1", calls)
+	}
+	if got := f.row(dl.ID); got.State != "failed" || f.regrabFor(dl.ID) != 1 {
+		t.Fatalf("row = %s regrab=%d, want failed and regrabbed", got.State, f.regrabFor(dl.ID))
+	}
+	f.runner.mu.Lock()
+	removes := len(f.runner.removed)
+	f.runner.mu.Unlock()
+	if removes != 0 {
+		t.Fatalf("Remove (history-deleting fallback) called %d times, want 0", removes)
+	}
+}
+
 // A row whose client is gone or disabled is ended by the hourly pass.
 func TestOverdueRowOfADisabledClientEnds(t *testing.T) {
 	f := setupV2(t, nil)

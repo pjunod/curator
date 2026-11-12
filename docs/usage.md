@@ -1429,6 +1429,15 @@ decides nothing. A download whose client was deleted or disabled is ended the
 same way by the hourly cleanup. The reason is on the row (`overdue: …`) and
 in History. An unreachable Runner decides nothing.
 
+When the failed job is still listed in Runner's queue (stalled, or blocked
+past Runner's own deadline), Curator also asks Runner once to cancel it
+(v0.46.1), in the background after the failure is recorded. The cancel only
+removes the job from Runner's queue: a job that has finished meanwhile is left
+alone, and its history record is never deleted. It is best effort: if it
+fails or times out (3 seconds) it is logged and ignored, never retried, and
+the failure and re-grab stand. A job absent from Runner's queue is not
+cancelled.
+
 ### Held, provisional and publications in Activity
 
 - **Held by Runner** is its own section. The row says what Runner is waiting
@@ -1469,8 +1478,14 @@ in History. An unreachable Runner decides nothing.
   Nothing an automatic import does is left *unresolved*: a file the importer
   cannot place (an episode it cannot identify, a file of another attempt) is
   discarded with its reason, and a publication that gave the library nothing
-  ends *import failed* with its want grabbed again. A file that does not
-  match Runner's manifest (missing, resized, different bytes) does the same.
+  ends *import failed* with its want grabbed again. A file that is missing
+  or resized against Runner's manifest ends the publication before anything
+  is placed. A file whose bytes differ from the manifest is discarded with
+  that reason while the rest of a season pack (or a movie's other files) is
+  still imported; the publication then ends, keeping what it placed, and the
+  rest of the want is grabbed again (v0.46.1). A multipart audiobook is
+  placed whole or not at all: every part is checked against the manifest
+  first, and one bad part places nothing and grabs the book again.
   Publications an earlier version failed with a reason this one no longer
   has (*N file(s) unresolved: …*, *holds no importable media*) are decided
   again by v0.45.1: imported again with fresh limits when their want is still

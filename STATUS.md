@@ -1,5 +1,37 @@
 # Monarr — Project Status
 
+## Overdue exit cancels a still-listed stalled job in Runner — 2026-11-12 · v0.46.1
+
+**Status:** built, targeted tests and lint run (see the commit report) · branch
+`claude/overdue-cancel` from `origin/main` 9a5821d · no PR · not merged.
+`overdue.go` gains `cancelOverdueInRunner`; `ports.QueueCanceller` and
+nzbd `CancelQueued`; tests `TestOverdueStalledJobGetsOneBestEffortRunnerCancel`,
+`TestOverdueCancelOfAJobThatFinishedMeanwhileKeepsItsHistory`,
+`TestCancelQueuedNeverTouchesHistory`; `docs/usage.md`
+(pipeline:overdue). Decision recorded under the v0.45.2 section below.
+
+**CI race-shard failure fixed (2026-11-12):** `TestEndedPackRecordsWhatItPlaced`
+failed ~10% of runs (with or without `-race`) on main since 0.45.x. Root
+cause, not a cleanup race: `importDownloadFiles` returned at the first file
+that did not match its manifest, so the outcome depended on manifest order
+(the fixture builds it from a Go map; forcing E02 first fails 5/5). The good
+file after a mismatch was never placed, and the mismatched file never got an
+attempt outcome, so the attempt's plan stayed pending ("import selection
+changed; explicit retry required"). The cleanup runs only after the import
+completes. Fix: a payload mismatch is that file's outcome (recorded in the
+attempt), the rest of the payload is still tried, then the publication ends
+keeping what was placed. Regression test
+`TestPayloadMismatchListedFirstStillPlacesTheRest` (fails without the fix).
+`go test -race -run '^TestEndedPackRecordsWhatItPlaced$' -count=50`: 0 failures.
+Review of 8d42eec: a multipart audiobook is all or nothing —
+`verifyBookParts` checks every manifest-constrained part (size and digest)
+before any part is placed; one mismatch places nothing, the publication ends
+import_failed and the book is grabbed again (blameless; still wanted). Test
+`TestAudiobookWithACorruptPartPlacesNothing`. Residual: a part that changes
+on disk between that check and its own copy still stops the import after the
+parts before it (the old behaviour for books). `docs/usage.md` documents the
+partial-keep rule for series/movie packs.
+
 ## Overdue downloads exit on their own; sealed plans do not wedge imports — 2026-11-12 · v0.45.2
 
 **Status:** built, targeted tests and lint pass, pushed · owner: Claude Opus
@@ -68,9 +100,14 @@ Adversarial review of this branch — 6 findings, all fixed:
 Expected-on-deploy timings shift accordingly: rows absent from Runner's
 queue fail after 10 minutes of successful polls; #733 after 15 minutes.
 
-Decision for Paul to review: a job Runner still lists but has not moved for
-24 h past its deadline is failed and re-grabbed; Curator does not cancel it
-in Runner (a late completion there is superseded by the precedence rule).
+Decision (Paul, v0.46.1): a job Runner still lists that has not moved for
+24 h past its deadline, or that Runner holds blocked past its own retry
+deadline, is failed and re-grabbed, and then Curator makes one best-effort
+cancel of it in Runner (a queue-only `CancelQueued`, never the history-delete
+fallback of Remove; 404 is ignored; data kept; 3 s timeout; fired in the
+background after the loop, once the fail is committed). A failed cancel is logged at WARN and
+ignored, never retried; the fail and regrab do not depend on it. No cancel
+for a job absent from Runner's queue or one with a Runner terminal.
 
 Validation (after the review fixes): gofmt, `go vet`, pinned golangci-lint
 on `internal/app/acquisition/...` and `internal/infra/sqlite/...` 0 issues;

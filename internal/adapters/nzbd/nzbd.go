@@ -548,6 +548,22 @@ func (c *Client) Remove(ctx context.Context, h ports.Handle, deleteData bool) er
 	return nil
 }
 
+// CancelQueued deletes a job from the queue only, keeping its payload. A job
+// that already left the queue (404: finished or removed meanwhile) is not an
+// error, and, unlike Remove, its history record is never touched.
+func (c *Client) CancelQueued(ctx context.Context, h ports.Handle) error {
+	id, err := strconv.ParseInt(string(h), 10, 64)
+	if err != nil {
+		return fmt.Errorf("nzbd: bad handle %q", h)
+	}
+	err = c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/actions/delete", id), nil)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return err
+}
+
 // statusDto is the slice of `GET /api/v1/status` Monarr reads: the version
 // (which is also how Test knows it is talking to nzbd) and the queue-hold
 // reasons.
