@@ -30,6 +30,11 @@ type ScannedFile struct {
 	Season           int    `json:"season"`   // -1 when not a series file
 	Episodes         []int  `json:"episodes"` // empty for movies/books
 	SnapshotIdentity string `json:"snapshotIdentity,omitempty"`
+	// Subtitles and Publication are filled by the one-level folder listing
+	// (ScanImportFolder): the subtitles that would travel with the file, and
+	// the runner delivery it is part of.
+	Subtitles   int                 `json:"subtitles,omitempty"`
+	Publication *ScannedPublication `json:"publication,omitempty"`
 }
 
 // ScanImportPath lists the media files Monarr can see under a path — the
@@ -103,6 +108,13 @@ type ManualImportRequest struct {
 	ReviewLegacy            bool  // explicit per-file approval for a fenced pre-delivery payload
 	ReviewLegacyFingerprint string
 	ReviewLegacyFiles       []CompletedFileSelection
+	// EpisodeTargets is the episode a person chose for each selected file,
+	// keyed by its path (a series only). It is admitted with the selection.
+	EpisodeTargets map[string]sqlite.HandoffEpisodeTarget
+	// RemoveOriginal removes each source once its library copy is placed
+	// (a standalone import of loose files only; a runner delivery is
+	// cleaned up by its own rules).
+	RemoveOriginal bool
 }
 
 func legacyReviewTargetIdentity(ctx context.Context, db *sqlite.DB, itemID, copyID int64) (string, error) {
@@ -313,6 +325,23 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 			return 0, err
 		}
 	}
+	targets, err := s.admitEpisodeTargets(ctx, item, admittedPaths, req.EpisodeTargets)
+	if err != nil {
+		return 0, err
+	}
+	if req.RemoveOriginal {
+		if id != 0 || req.ReviewLegacy {
+			return 0, fmt.Errorf("remove original applies only to a standalone import of loose files")
+		}
+		for _, path := range admittedPaths {
+			if _, claimed, claimErr := s.publicationClaiming(ctx, path); claimErr != nil || claimed {
+				if claimErr != nil {
+					return 0, claimErr
+				}
+				return 0, fmt.Errorf("%s is part of a runner delivery; place it through Resolve, which cleans it up under its own rules", path)
+			}
+		}
+	}
 	admittedGenerations := make(map[string]string, len(admittedPaths))
 	for _, path := range admittedPaths {
 		info, statErr := os.Lstat(path)
@@ -465,6 +494,7 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 		ReviewPath:        req.Path,
 		ReviewFiles:       handoffReviewFiles(req.ReviewLegacyFiles),
 		TargetMediaItemID: req.MediaItemID, TargetCopyID: req.CopyID, TargetIdentity: targetIdentity,
+		EpisodeTargets: targets, RemoveOriginal: req.RemoveOriginal,
 	})
 	dl, err = s.db.CommitManualImportAdmission(ctx, dl)
 	if err != nil {

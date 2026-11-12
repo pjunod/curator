@@ -383,6 +383,20 @@ type HandoffEntry struct {
 	TargetMediaItemID int64                 `json:"targetMediaItemId,omitempty"`
 	TargetCopyID      int64                 `json:"targetCopyId,omitempty"`
 	TargetIdentity    string                `json:"targetIdentity,omitempty"`
+	// EpisodeTargets is a person's episode choice per selected file, keyed
+	// by the file's absolute path (Import file… on the item page). It is
+	// part of the admitted selection, so every retry of this attempt places
+	// each file as the same episode(s) whatever its name says.
+	EpisodeTargets map[string]HandoffEpisodeTarget `json:"episodeTargets,omitempty"`
+	// RemoveOriginal asks a standalone manual import to remove each source
+	// once its library copy is placed and proven.
+	RemoveOriginal bool `json:"removeOriginal,omitempty"`
+}
+
+// HandoffEpisodeTarget is the season and episode(s) one file is placed as.
+type HandoffEpisodeTarget struct {
+	Season   int   `json:"season"`
+	Episodes []int `json:"episodes"`
 }
 
 type HandoffFileSnapshot struct {

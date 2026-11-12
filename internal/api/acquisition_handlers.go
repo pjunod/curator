@@ -1058,7 +1058,11 @@ func (s *Server) BlocklistQueueItem(w http.ResponseWriter, r *http.Request, id i
 // ScanImportPath implements GET /import/scan: list the media files Monarr
 // can see under a path (the manual-import preview).
 func (s *Server) ScanImportPath(w http.ResponseWriter, r *http.Request, params apigen.ScanImportPathParams) {
-	files, err := s.deps.Acquisition.ScanImportPath(r.Context(), params.Path)
+	scan := s.deps.Acquisition.ScanImportPath
+	if params.Depth != nil && *params.Depth == 1 {
+		scan = s.deps.Acquisition.ScanImportFolder
+	}
+	files, err := scan(r.Context(), params.Path)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1073,9 +1077,57 @@ func (s *Server) ScanImportPath(w http.ResponseWriter, r *http.Request, params a
 		out = append(out, apigen.ScannedFile{
 			Path: f.Path, Name: f.Name, Size: f.Size, Kind: f.Kind,
 			Quality: f.Quality, Season: f.Season, Episodes: eps, SnapshotIdentity: &snapshotIdentity,
+			Publication: scannedPublicationDTO(f.Publication),
 		})
+		if f.Subtitles > 0 {
+			n := f.Subtitles
+			out[len(out)-1].Subtitles = &n
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func scannedPublicationDTO(p *acquisition.ScannedPublication) *apigen.ScannedPublication {
+	if p == nil {
+		return nil
+	}
+	return &apigen.ScannedPublication{DownloadId: p.DownloadID, PublicationId: p.PublicationID, Path: p.Path, Outcome: p.Outcome}
+}
+
+// PlanImport implements POST /import/plan: the Import file… confirm step.
+func (s *Server) PlanImport(w http.ResponseWriter, r *http.Request) {
+	var in apigen.ImportPlanRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req := acquisition.ItemImportPlanRequest{MediaItemID: in.MediaItemId}
+	if in.CopyId != nil {
+		req.CopyID = *in.CopyId
+	}
+	if in.RemoveOriginal != nil {
+		req.RemoveOriginal = *in.RemoveOriginal
+	}
+	for _, f := range in.Files {
+		file := acquisition.ItemImportFile{Path: f.Path, Season: -1}
+		if f.Season != nil {
+			file.Season = *f.Season
+		}
+		if f.Episodes != nil {
+			file.Episodes = *f.Episodes
+		}
+		req.Files = append(req.Files, file)
+	}
+	plan, err := s.deps.Acquisition.PlanItemImport(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, acquisition.ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
 }
 
 // GetManualImportDefaultPath implements GET /import/default-path.
@@ -1117,6 +1169,15 @@ func (s *Server) ManualImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.DownloadId != nil {
 		req.DownloadID = *in.DownloadId
+	}
+	if in.EpisodeTargets != nil {
+		req.EpisodeTargets = make(map[string]sqlite.HandoffEpisodeTarget, len(*in.EpisodeTargets))
+		for _, t := range *in.EpisodeTargets {
+			req.EpisodeTargets[t.Path] = sqlite.HandoffEpisodeTarget{Season: t.Season, Episodes: t.Episodes}
+		}
+	}
+	if in.RemoveOriginal != nil {
+		req.RemoveOriginal = *in.RemoveOriginal
 	}
 	id, err := s.deps.Acquisition.QueueManualImport(r.Context(), req)
 	if err != nil {
@@ -2388,7 +2449,20 @@ func (s *Server) ResolvePublicationFile(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, "path and action are required")
 		return
 	}
-	if err := s.deps.Acquisition.ResolvePublicationFile(r.Context(), id, publicationId, in.Path, in.Action); err != nil {
+	target := acquisition.PlaceTarget{Season: -1}
+	if in.MediaItemId != nil {
+		target.MediaItemID = *in.MediaItemId
+	}
+	if in.CopyId != nil {
+		target.CopyID = *in.CopyId
+	}
+	if in.Season != nil {
+		target.Season = *in.Season
+	}
+	if in.Episodes != nil {
+		target.Episodes = *in.Episodes
+	}
+	if err := s.deps.Acquisition.ResolvePublicationFileTo(r.Context(), id, publicationId, in.Path, in.Action, target); err != nil {
 		if errors.Is(err, acquisition.ErrInvalidResolution) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

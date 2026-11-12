@@ -70,6 +70,9 @@ type ImportResult struct {
 	// than finishing: the remaining files were never attempted, and the
 	// download must not be treated as done.
 	Blocked error
+	// Sidecars lists the subtitle sources a standalone manual import placed
+	// beside its videos (they leave with them when Remove original is set).
+	Sidecars []string
 }
 
 // ErrImportBlocked marks an import that stopped on something about the
@@ -537,7 +540,13 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 				p.Episodes = target.Episodes
 			}
 		}
-		if item.Kind == domain.KindSeries {
+		chosen := false
+		if target, ok := manualEpisodeTargets(ctx)[filepath.Clean(src)]; ok && item.Kind == domain.KindSeries && len(target.Episodes) > 0 {
+			// A person said which episode this file is: that is the answer,
+			// whatever the name or the grabbed release says.
+			p.Season, p.Episodes, chosen = target.Season, append([]int(nil), target.Episodes...), true
+		}
+		if item.Kind == domain.KindSeries && !chosen {
 			if fromRelease, ok := releaseEpisodeIdentity(p, src, dl.ReleaseTitle, payloadMedia, grabbedSeason, grabbedEpisodes); ok {
 				p = fromRelease
 				s.log.Info("import: file name carries no episode; using the grabbed release",
@@ -695,6 +704,11 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		return result, fmt.Errorf("%w from %s — %s", ErrNoFilesImported, savePath, result.reasons(5))
 	}
 
+	if dl.Protocol == "manual" && item.Kind != domain.KindBook && !publicationImport(ctx) {
+		// Subtitles travel with a manual import as they do with a runner
+		// delivery: placed beside their video, named after it.
+		result.Sidecars = s.placeManualSubtitles(ctx, result)
+	}
 	if publicationImport(ctx) {
 		// A publication import writes its history and its notification in
 		// its own completing transaction (pipeline v2, contract section 3.4).

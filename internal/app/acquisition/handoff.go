@@ -185,10 +185,13 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	// person selected, even after a process restart.
 	var selected []string
 	manual := dl.Intent == GrabIntentManualAdditional
+	removeOriginal := false
 	for i := len(dl.Handoff) - 1; i >= 0; i-- {
 		if dl.Handoff[i].Step == stepManualQueued || (dl.Handoff[i].Step == stepLegacyReviewImportQueued && legacyReviewApproved) {
 			selected = dl.Handoff[i].Paths
 			manual = true
+			ctx = withManualEpisodeTargets(ctx, dl.Handoff[i].EpisodeTargets)
+			removeOriginal = dl.Handoff[i].RemoveOriginal && dl.Protocol == "manual"
 			break
 		}
 	}
@@ -227,6 +230,9 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 		s.advance(ctx, &dl, "imported", 1, "", stepImported, detail)
 	}
 	s.timings.End(ctx, pipeline.RunnerDoneToImport, pipeline.Key(dl.Transfer, dl.ID))
+	if removeOriginal {
+		s.removeManualOriginals(ctx, dl, result)
+	}
 	// The library has the files now, so the client's copy is just occupying a
 	// disk. Inline rather than left to the hourly sweep: a night of 60 GB
 	// remuxes is several hundred gigabytes of "we will get to it".

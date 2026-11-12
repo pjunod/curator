@@ -276,10 +276,12 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		}
 	}
 	manual := dl.Intent == GrabIntentManualAdditional
+	var episodeTargets map[string]sqlite.HandoffEpisodeTarget
 	if approved {
 		for i := len(dl.Handoff) - 1; i >= 0; i-- {
 			if dl.Handoff[i].Step == stepManualQueued && len(dl.Handoff[i].Paths) > 0 {
 				selected, manual = nil, true
+				episodeTargets = dl.Handoff[i].EpisodeTargets
 				for _, p := range dl.Handoff[i].Paths {
 					if _, ok := byAbs[filepath.Clean(p)]; ok {
 						selected = append(selected, filepath.Clean(p))
@@ -323,6 +325,7 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		return err
 	}
 	ictx = context.WithValue(ictx, publicationImportKey{}, true)
+	ictx = withManualEpisodeTargets(ictx, episodeTargets)
 	// Placements record which Runner generation they came from, so a resumed
 	// import reuses only its own publication's committed placements.
 	ictx = withAcceptedPublicationGeneration(ictx, pub.Generation)
@@ -1211,6 +1214,25 @@ func (s *Service) publicationClaiming(ctx context.Context, path string) (sqlite.
 // place it (import exactly that file), discard it (discarded{rejected}; the
 // bytes leave only through the per-file cleanup), or keep it as it is.
 func (s *Service) ResolvePublicationFile(ctx context.Context, downloadID, publicationID int64, relPath, action string) error {
+	return s.ResolvePublicationFileTo(ctx, downloadID, publicationID, relPath, action, PlaceTarget{})
+}
+
+// PlaceTarget is where a Resolve "place" puts the file when a person chose
+// it (Import file… on an item page): the item and copy, and the episode(s)
+// a series file is. Zero values keep the download's own target and let the
+// file's name decide the episode.
+type PlaceTarget struct {
+	MediaItemID int64
+	CopyID      int64
+	Season      int
+	Episodes    []int
+}
+
+// ResolvePublicationFileTo is ResolvePublicationFile with a chosen target
+// for "place". A publication of which nothing is placed yet may be placed
+// into another item (the download follows it); once any of its media is in
+// the library, its files stay with that item.
+func (s *Service) ResolvePublicationFileTo(ctx context.Context, downloadID, publicationID int64, relPath, action string, target PlaceTarget) error {
 	pub, err := s.db.GetPublication(ctx, publicationID)
 	if err != nil {
 		return err
@@ -1239,16 +1261,50 @@ func (s *Service) ResolvePublicationFile(ctx context.Context, downloadID, public
 	}
 	switch action {
 	case "place":
-		item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
+		itemID, copyID := dl.MediaItemID, dl.CopyID
+		if target.MediaItemID != 0 {
+			itemID, copyID = target.MediaItemID, target.CopyID
+		}
+		item, err := s.db.GetMediaItemFull(ctx, itemID)
 		if err != nil {
 			return err
 		}
 		if !deliveryImportablePath(item.Kind, relPath) {
 			return fmt.Errorf("%w: only media of this item's kind can be placed; keep or discard %q", ErrInvalidResolution, relPath)
 		}
+		if itemID != dl.MediaItemID {
+			for _, f := range files {
+				if f.Outcome == "placed" && isPublicationMedia(f.Path) {
+					return fmt.Errorf("%w: this runner delivery already placed %s into another title; its files stay with that title", ErrInvalidResolution, f.Path)
+				}
+			}
+		}
+		if copyID != 0 {
+			if _, err := s.db.GetMediaCopy(ctx, itemID, copyID); err != nil {
+				return fmt.Errorf("%w: copy %d is not a copy of this item", ErrInvalidResolution, copyID)
+			}
+		}
 		abs := filepath.Clean(filepath.Join(pub.Path, filepath.FromSlash(relPath)))
-		dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(),
-			Detail: "operator placed " + relPath + " from Resolve", Paths: []string{abs}})
+		entry := sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(),
+			Detail: "operator placed " + relPath + " from Resolve", Paths: []string{abs},
+			TargetMediaItemID: itemID, TargetCopyID: copyID}
+		if len(target.Episodes) > 0 {
+			if item.Kind != domain.KindSeries {
+				return fmt.Errorf("%w: episodes apply only to a series", ErrInvalidResolution)
+			}
+			if err := s.knownEpisodes(ctx, item.ID, target.Season, target.Episodes); err != nil {
+				return fmt.Errorf("%w: %w", ErrInvalidResolution, err)
+			}
+			entry.Detail = fmt.Sprintf("operator placed %s as %s", relPath, episodeToken(target.Season, target.Episodes))
+			entry.EpisodeTargets = map[string]sqlite.HandoffEpisodeTarget{abs: {Season: target.Season, Episodes: append([]int(nil), target.Episodes...)}}
+		}
+		if itemID != dl.MediaItemID || copyID != dl.CopyID {
+			dl.MediaItemID, dl.CopyID = itemID, copyID
+			if err := s.db.UpdateDownloadTarget(ctx, dl); err != nil {
+				return err
+			}
+		}
+		dl.Handoff = append(dl.Handoff, entry)
 		if err := s.db.UpdateDownloadHandoff(ctx, dl); err != nil {
 			return err
 		}
