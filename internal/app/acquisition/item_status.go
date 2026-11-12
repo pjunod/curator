@@ -163,6 +163,8 @@ type ItemStatus struct {
 	Attempts    []StatusAttempt `json:"attempts,omitempty"`
 	Seasons     []StatusSeason  `json:"seasons,omitempty"`
 	Episodes    []StatusEpisode `json:"episodes,omitempty"`
+	// Rematch is the open Re-match moving files out of or into this item.
+	Rematch *StatusRematch `json:"rematch,omitempty"`
 }
 
 // statusFacts is everything one item's projection reads, once, and the
@@ -182,6 +184,7 @@ type statusFacts struct {
 	dlEps      map[int64]int    // download id → episodes it covers
 	epFiles    map[int64][]domain.MediaFile
 	files      []domain.MediaFile // primary-copy files
+	rematch    *rematchFacts      // the open Re-match touching this item, if any
 }
 
 // ItemStatus projects where an item stands. For a series, season < 0 returns
@@ -244,6 +247,9 @@ func (s *Service) statusFacts(ctx context.Context, itemID int64, season int) (st
 		return f, err
 	}
 	if f.imported, err = s.db.LastHistoryAt(ctx, itemID, "imported"); err != nil {
+		return f, err
+	}
+	if f.rematch, err = s.rematchFacts(ctx, itemID, f.item); err != nil {
 		return f, err
 	}
 	return f, nil
@@ -324,6 +330,7 @@ func downloadEpisodes(dl sqlite.Download, byNumber map[[2]int]int64) []int64 {
 func (f statusFacts) project(season int) ItemStatus {
 	f.index()
 	out := ItemStatus{MediaItemID: f.item.ID, Kind: string(f.item.Kind), GeneratedAt: f.now.UnixMilli()}
+	out.Rematch = f.rematchBlock()
 	if f.item.Kind != domain.KindSeries {
 		cands := make([]*sqlite.Download, 0, len(f.downloads))
 		for i := range f.downloads {
@@ -345,6 +352,7 @@ func (f statusFacts) project(season int) ItemStatus {
 			}
 			out.Attempts = append(out.Attempts, attemptOf(*a))
 		}
+		out.Active, out.Done = out.Active || out.Rematch.running(), out.Done && !out.Rematch.running()
 		return out
 	}
 	for _, sn := range f.item.Seasons {
@@ -363,6 +371,7 @@ func (f statusFacts) project(season int) ItemStatus {
 		out.Headline = seriesHeadline(out.Seasons)
 	}
 	out.Done = out.Headline.State == StatusDone
+	out.Active, out.Done = out.Active || out.Rematch.running(), out.Done && !out.Rematch.running()
 	return out
 }
 

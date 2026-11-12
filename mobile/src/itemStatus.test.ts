@@ -15,4 +15,10 @@ describe('item status helpers', () => {
     expect(stageActions([{ key: 'searched', state: 'waiting', actions: ['search'] }, { key: 'in_cinema', state: 'todo', actions: ['confirm_cinema', 'search'] }]))
       .toEqual(['search', 'confirm_cinema'])
   })
+
+  it('words an open Re-match counts', async () => {
+    const { rematchCounts } = await import('./itemStatus')
+    expect(rematchCounts({ filesDone: 1, filesTotal: 2, bytesDone: 0, bytesTotal: 0 })).toBe('1 of 2 files')
+    expect(rematchCounts({ filesDone: 0, filesTotal: 1, bytesDone: 5e6, bytesTotal: 10e6 })).toMatch(/^0 of 1 file · .* of /)
+  })
 })

@@ -8,12 +8,14 @@ import {
   getItemStatus,
   importQueueItem,
   cancelAndBlocklist,
+  cancelRematch,
   retryDelivery,
   type ItemStatus,
   type StatusAction,
   type StatusAttempt,
   type StatusDownload,
   type StatusEpisode,
+  type StatusRematch,
   type StatusSeason,
   type StatusStage,
 } from './api'
@@ -28,6 +30,8 @@ import {
   fmtDuration,
   fmtRate,
   fmtWhen,
+  REMATCH_STATE,
+  rematchCounts,
   stageActions,
   stateClass,
   statusPollMs,
@@ -57,6 +61,9 @@ export function ItemStatusPanel({ itemId, kind, onInteractiveSearch }: {
   const [collapsed, setCollapsed] = useState<boolean | null>(null)
   const now = useNow()
   const s = status.data
+  // The Stop result lives here, not in the block: once the move is stopped
+  // the block is gone, and the answer must still be on screen.
+  const [stopNotice, setStopNotice] = useState({ message: '', warning: false, revision: 0 })
   useEffect(() => {
     if (s && collapsed === null) setCollapsed(s.done)
   }, [s, collapsed])
@@ -69,6 +76,10 @@ export function ItemStatusPanel({ itemId, kind, onInteractiveSearch }: {
       </div>
       {status.isError && !s && <p className="muted">Status unavailable: {(status.error as Error).message}</p>}
       {!s && !status.isError && <p className="muted">Loading…</p>}
+      {(s?.rematch || stopNotice.message) && (
+        <MovingFiles itemId={itemId} r={s?.rematch} notice={stopNotice}
+          say={(message, warning = false) => setStopNotice((n) => ({ message, warning, revision: n.revision + 1 }))} />
+      )}
       {s && s.done && collapsed ? (
         <button type="button" className="item-status-oneline" aria-expanded="false" onClick={() => setCollapsed(false)}>
           <span className="dot s-done" aria-hidden="true" /> {s.headline.title}
@@ -90,6 +101,65 @@ export function ItemStatusPanel({ itemId, kind, onInteractiveSearch }: {
         </>
       ) : null}
     </section>
+  )
+}
+
+/** The open Re-match: where its files are going, how far it is, and Stop. */
+function MovingFiles({ itemId, r, notice, say }: {
+  itemId: number
+  r?: StatusRematch
+  notice: { message: string; warning: boolean; revision: number }
+  say: (message: string, warning?: boolean) => void
+}) {
+  const qc = useQueryClient()
+  const stop = useMutation({
+    mutationFn: () => cancelRematch(r!.operationId),
+    onSuccess: () => {
+      say('Stopping the move; every moved file is put back where it was.')
+      void qc.invalidateQueries({ queryKey: ['item-status', itemId] })
+      void qc.invalidateQueries({ queryKey: ['library-item', String(itemId)] })
+    },
+    onError: (e) => say(`✕ ${(e as Error).message}`, true),
+  })
+  return (
+    <div className="item-moving" data-testid="item-moving">
+      {r && (
+        <>
+          <h3>Moving files</h3>
+          <div className="item-moving-head">
+            <b>{r.headline}</b>
+            <span className="muted"> · {REMATCH_STATE[r.state]}</span>
+          </div>
+          <div className="item-numbers">
+            {rematchCounts(r).map((c) => <span key={c}>{c}</span>)}
+          </div>
+          {r.bytesTotal > 0 && (
+            <progress max={r.bytesTotal} value={r.bytesDone} aria-label="Bytes moved" />
+          )}
+          {(r.moves ?? []).length > 0 && (
+            <ul className="item-moves">
+              {r.moves!.map((m) => (
+                <li key={m.from}>
+                  <span className="mono">{m.from}</span> → <span className="mono">{m.to}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {r.cinemaLine && <p className="muted small">{r.cinemaLine}</p>}
+          {(r.warnings ?? []).map((w) => <p key={w} className="warning-text small">{w}</p>)}
+          {r.error && <p className="warning-text small">{r.error}</p>}
+          {r.stoppable && (
+            <div className="item-status-actions">
+              <button type="button" className="btn-danger" disabled={stop.isPending} onClickCapture={focusActionTrigger}
+                onClick={() => stop.mutate()}>
+                {stop.isPending ? 'Stopping…' : 'Stop'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      {notice.message && <ActionNotice warning={notice.warning} revision={notice.revision}>{notice.message}</ActionNotice>}
+    </div>
   )
 }
 

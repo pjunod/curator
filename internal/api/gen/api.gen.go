@@ -1256,6 +1256,51 @@ func (e StatusHeadlineState) Valid() bool {
 	}
 }
 
+// Defines values for StatusRematchRole.
+const (
+	StatusRematchRoleSource StatusRematchRole = "source"
+	StatusRematchRoleTarget StatusRematchRole = "target"
+)
+
+// Valid indicates whether the value is a known member of the StatusRematchRole enum.
+func (e StatusRematchRole) Valid() bool {
+	switch e {
+	case StatusRematchRoleSource:
+		return true
+	case StatusRematchRoleTarget:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusRematchState.
+const (
+	StatusRematchStateCancelPending StatusRematchState = "cancel_pending"
+	StatusRematchStateCommitted     StatusRematchState = "committed"
+	StatusRematchStateMoved         StatusRematchState = "moved"
+	StatusRematchStateMoving        StatusRematchState = "moving"
+	StatusRematchStatePlanned       StatusRematchState = "planned"
+)
+
+// Valid indicates whether the value is a known member of the StatusRematchState enum.
+func (e StatusRematchState) Valid() bool {
+	switch e {
+	case StatusRematchStateCancelPending:
+		return true
+	case StatusRematchStateCommitted:
+		return true
+	case StatusRematchStateMoved:
+		return true
+	case StatusRematchStateMoving:
+		return true
+	case StatusRematchStatePlanned:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StatusStageActions.
 const (
 	CancelDownload    StatusStageActions = "cancel_download"
@@ -2578,12 +2623,15 @@ type ItemStatus struct {
 	Episodes *[]StatusEpisode `json:"episodes,omitempty"`
 
 	// GeneratedAt Unix ms.
-	GeneratedAt int64           `json:"generatedAt"`
-	Headline    StatusHeadline  `json:"headline"`
-	Kind        string          `json:"kind"`
-	MediaItemId int64           `json:"mediaItemId"`
-	Seasons     *[]StatusSeason `json:"seasons,omitempty"`
-	Stages      *[]StatusStage  `json:"stages,omitempty"`
+	GeneratedAt int64          `json:"generatedAt"`
+	Headline    StatusHeadline `json:"headline"`
+	Kind        string         `json:"kind"`
+	MediaItemId int64          `json:"mediaItemId"`
+
+	// Rematch The open Re-match moving files out of or into this item (the panel's "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
+	Rematch *StatusRematch  `json:"rematch,omitempty"`
+	Seasons *[]StatusSeason `json:"seasons,omitempty"`
+	Stages  *[]StatusStage  `json:"stages,omitempty"`
 }
 
 // LanguageOption defines model for LanguageOption.
@@ -4070,6 +4118,53 @@ type StatusHeadline struct {
 
 // StatusHeadlineState defines model for StatusHeadline.State.
 type StatusHeadlineState string
+
+// StatusRematch The open Re-match moving files out of or into this item (the panel's "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
+type StatusRematch struct {
+	BytesDone  int64 `json:"bytesDone"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory string  `json:"directory"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    string  `json:"status"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CinemaLine *string `json:"cinemaLine,omitempty"`
+	Error      *string `json:"error,omitempty"`
+	FilesDone  int     `json:"filesDone"`
+	FilesTotal int     `json:"filesTotal"`
+
+	// Headline For this item's side, e.g. Files moving here from Dune (1984).
+	Headline string `json:"headline"`
+	Moves    *[]struct {
+		Bytes int64  `json:"bytes"`
+		From  string `json:"from"`
+		State string `json:"state"`
+		To    string `json:"to"`
+	} `json:"moves,omitempty"`
+	OperationId string `json:"operationId"`
+
+	// Role Which side of the move this item is.
+	Role         StatusRematchRole  `json:"role"`
+	SourceItemId int64              `json:"sourceItemId"`
+	SourceTitle  string             `json:"sourceTitle"`
+	State        StatusRematchState `json:"state"`
+
+	// Stoppable False once the files are committed.
+	Stoppable    bool   `json:"stoppable"`
+	TargetItemId int64  `json:"targetItemId"`
+	TargetTitle  string `json:"targetTitle"`
+
+	// Warnings Cinema's retained and present lines.
+	Warnings *[]string `json:"warnings,omitempty"`
+}
+
+// StatusRematchRole Which side of the move this item is.
+type StatusRematchRole string
+
+// StatusRematchState defines model for StatusRematch.State.
+type StatusRematchState string
 
 // StatusSeason defines model for StatusSeason.
 type StatusSeason struct {

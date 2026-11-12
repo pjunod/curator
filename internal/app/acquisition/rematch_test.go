@@ -769,3 +769,34 @@ func TestRematchOutboxProbesEveryFileOfALargeMove(t *testing.T) {
 		t.Fatalf("probed %d expected and %d removed of 150 each over %d requests", len(seenExp), len(seenRem), len(rows))
 	}
 }
+
+// The item page's status panel shows the open Re-match on both titles.
+func TestItemStatusShowsOpenRematchOnBothSides(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	src := f.movie(t, "Dune", 1984, 841, "")
+	f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), "dune", "")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID, req.SourceRevision, req.TargetRevision, req.PlanFingerprint = "panel", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	op, err := f.svc.startRematchLocked(ctx, req, p.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	on, err := f.svc.ItemStatus(ctx, dst.ID, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on.Rematch == nil || on.Rematch.OperationID != op.ID || on.Rematch.Role != "target" || on.Rematch.Headline != "Files moving here from Dune (1984)" ||
+		on.Rematch.FilesTotal != 1 || !on.Active || !on.Rematch.Stoppable {
+		t.Fatalf("target rematch = %+v active=%v", on.Rematch, on.Active)
+	}
+	off, err := f.svc.ItemStatus(ctx, src.ID, -1)
+	if err != nil || off.Rematch == nil || off.Rematch.Role != "source" || off.Rematch.Headline != "Files moving from here to Dune (2021)" {
+		t.Fatalf("source rematch = %+v err=%v", off.Rematch, err)
+	}
+}

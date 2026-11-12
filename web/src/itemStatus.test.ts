@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { doneAbout, fmtBytes, fmtDuration, fmtRate, stageActions, statusPollMs, updatedAgo } from './itemStatus'
+import { REMATCH_STATE, doneAbout, fmtBytes, fmtDuration, fmtRate, rematchCounts, stageActions, statusPollMs, updatedAgo } from './itemStatus'
 import type { ItemStatus } from './api'
 
 describe('item status display', () => {
@@ -31,5 +31,12 @@ describe('item status display', () => {
   it('says how fresh the panel is', () => {
     expect(updatedAgo(10_000, 12_000)).toBe('updated 2 s ago')
     expect(updatedAgo(0, 180_000)).toBe('updated 3 min ago')
+  })
+
+  it('words an open Re-match: counts, bytes, state', () => {
+    expect(rematchCounts({ filesDone: 1, filesTotal: 2, bytesDone: 5e6, bytesTotal: 10e6 })).toEqual(['1 of 2 files', '5 MB of 10 MB'])
+    expect(rematchCounts({ filesDone: 0, filesTotal: 1, bytesDone: 0, bytesTotal: 0 })).toEqual(['0 of 1 file'])
+    expect(REMATCH_STATE.cancel_pending).toContain('putting the moved files back')
+    expect(statusPollMs({ active: true, rematch: { state: 'moving' } } as ItemStatus)).toBe(2_000)
   })
 })

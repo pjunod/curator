@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { describeAutoSearch } from '../autosearch'
-import { ACTION_LABELS, STAGE_NAMES, STATE_ICON, downloadLine, fmtWhen, stageActions, statusPollMs } from '../itemStatus'
+import { ACTION_LABELS, REMATCH_STATE, STAGE_NAMES, STATE_ICON, downloadLine, fmtWhen, rematchCounts, stageActions, statusPollMs } from '../itemStatus'
 import { useTheme, type Theme } from '../theme'
-import type { ItemStatus, ReleaseSearchScope, StatusAction, StatusCinema, StatusEpisode, StatusStage, StatusState } from '../types'
+import type { ItemStatus, ReleaseSearchScope, StatusAction, StatusCinema, StatusEpisode, StatusRematch, StatusStage, StatusState } from '../types'
 import { Button, Panel, SectionTitle } from './UI'
 
 // "Where it stands" on the phone: the same GET /library/{id}/status the web
@@ -73,6 +73,7 @@ export function ItemStatusPanel({ client, id, kind, onInteractiveSearch, onOpenA
     <>
       <SectionTitle>Where it stands</SectionTitle>
       <Panel style={styles.panel}>
+        <MovingFiles client={client} r={s?.rematch} onChanged={status.refresh} />
         {!s ? (
           <Text style={{ color: theme.muted }}>{status.error || 'Loading…'}</Text>
         ) : s.done && collapsed ? (
@@ -108,6 +109,48 @@ export function ItemStatusPanel({ client, id, kind, onInteractiveSearch, onOpenA
         )}
       </Panel>
     </>
+  )
+}
+
+/** The open Re-match, with Stop. Its answer stays under the button, also after the block is gone. */
+function MovingFiles({ client, r, onChanged }: { client: MonarrClient; r?: StatusRematch; onChanged: () => Promise<void> }) {
+  const theme = useTheme()
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState({ text: '', error: false })
+  const stop = async () => {
+    setBusy(true)
+    setMessage({ text: '', error: false })
+    try {
+      await client.cancelRematch(r!.operationId)
+      setMessage({ text: 'Stopping the move; every moved file is put back where it was.', error: false })
+      await onChanged()
+    } catch (cause) {
+      setMessage({ text: cause instanceof Error ? cause.message : 'That did not work.', error: true })
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (!r && !message.text) return null
+  return (
+    <View style={[styles.moving, { borderColor: theme.accent }]} accessibilityLabel="Moving files">
+      {r ? (
+        <>
+          <Text style={[styles.stageName, { color: theme.muted }]}>MOVING FILES</Text>
+          <Text style={[styles.title, { color: theme.text }]}>{r.headline}</Text>
+          <Text style={[styles.small, { color: theme.muted }]}>{REMATCH_STATE[r.state]} · {rematchCounts(r)}</Text>
+          {(r.moves ?? []).map((m) => (
+            <Text key={m.from} style={[styles.small, { color: theme.text }]}>{m.from} → {m.to}</Text>
+          ))}
+          {r.cinemaLine ? <Text style={[styles.small, { color: theme.muted }]}>{r.cinemaLine}</Text> : null}
+          {(r.warnings ?? []).map((w) => <Text key={w} style={[styles.small, { color: theme.warning }]}>{w}</Text>)}
+          {r.error ? <Text style={[styles.small, { color: theme.warning }]}>{r.error}</Text> : null}
+          {r.stoppable ? <Button compact secondary disabled={busy} label={busy ? 'Stopping…' : 'Stop'} onPress={() => void stop()} /> : null}
+        </>
+      ) : null}
+      {message.text ? (
+        <Text accessibilityLiveRegion="polite" style={[styles.small, { color: message.error ? theme.error : theme.ok }]}>{message.text}</Text>
+      ) : null}
+    </View>
   )
 }
 
@@ -276,6 +319,7 @@ function Actions({ client, id, episode, download, cinema, actions, onChanged, on
 
 const styles = StyleSheet.create({
   panel: { gap: 8 },
+  moving: { borderWidth: 1, borderRadius: 8, padding: 10, gap: 4 },
   title: { fontSize: 15, fontWeight: '700' },
   small: { fontSize: 12, lineHeight: 17 },
   track: { gap: 2 },

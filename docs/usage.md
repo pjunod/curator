@@ -712,6 +712,13 @@ item or episode**, adding that item to the library if it is not there
   *Same show, different episode* or *A different show*. On the phone app the
   Re-match sheet does both: *All files* or one file.
 
+While a move runs, **Where it stands** on both items (the one the files
+leave and the one they go to) shows a **Moving files** block: the direction
+("Files moving here from Dune (1984)"), state, files and bytes done, each
+`from → to`, what cinema said (including files it still has or kept) and
+**Stop** until the files are committed. It refreshes every 2 s without
+moving the page; Stop's answer appears beside the button.
+
 Nothing moves until you have read the preview. It lists:
 
 - every rename, `from → to`, with the target's naming rules. A folder the

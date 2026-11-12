@@ -250,3 +250,37 @@ func TestProjectionSeries(t *testing.T) {
 		}
 	})
 }
+
+func TestProjectionOpenRematchBlock(t *testing.T) {
+	cin := []RematchCinema{{Directory: "/lib/Dune (1984)", Status: "ok", Result: "cinema still has /old/Dune.mkv: it is still listed; cinema kept /x.mkv: held", VisibleAt: 0}}
+	facts := func(itemID int64, state string) statusFacts {
+		f := projMovie(domain.KindMovie, []domain.MediaFile{movieFile()})
+		f.item.ID = itemID
+		f.rematch = &rematchFacts{itemID: itemID, sourceTitle: "Dune (1984)", targetTitle: "Dune (2021)",
+			op:    RematchStatus{RematchOperation: sqlite.RematchOperation{ID: "op1", State: state, SourceItemID: 1, TargetItemID: 2, BytesDone: 5, BytesTotal: 10}, Cinema: cin},
+			moves: []sqlite.RematchMove{{Source: "/a", Target: "/b", Size: 5, State: "rematch_moved"}, {Source: "/c", Target: "/d", Size: 5, State: "rematch_planned"}}}
+		return f
+	}
+	t.Run("the source side moves out, polls fast and can stop", func(t *testing.T) {
+		st := facts(1, "moving").project(-1)
+		r := st.Rematch
+		if r == nil || r.Role != "source" || r.Headline != "Files moving from here to Dune (2021)" || !st.Active || !r.Stoppable ||
+			r.FilesDone != 1 || r.FilesTotal != 2 || r.BytesDone != 5 || len(r.Warnings) != 2 || !strings.HasPrefix(r.CinemaLine, "Cinema is being told.") {
+			t.Fatalf("rematch = %+v active=%v", r, st.Active)
+		}
+	})
+	t.Run("the target side says where the files come from", func(t *testing.T) {
+		r := facts(2, "moving").project(-1).Rematch
+		if r.Role != "target" || r.Headline != "Files moving here from Dune (1984)" {
+			t.Fatalf("rematch = %+v", r)
+		}
+	})
+	t.Run("committed cannot be stopped; no open operation shows nothing", func(t *testing.T) {
+		if r := facts(1, "committed").project(-1).Rematch; r.Stoppable {
+			t.Fatalf("committed rematch stoppable: %+v", r)
+		}
+		if r := projMovie(domain.KindMovie, nil).project(-1).Rematch; r != nil {
+			t.Fatalf("rematch = %+v, want none", r)
+		}
+	})
+}

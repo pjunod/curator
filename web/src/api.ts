@@ -2199,6 +2199,27 @@ export interface ItemStatus {
   attempts?: StatusAttempt[]
   seasons?: StatusSeason[]
   episodes?: StatusEpisode[]
+  rematch?: StatusRematch
+}
+export interface StatusRematch {
+  operationId: string
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending'
+  role: 'source' | 'target'
+  sourceItemId: number
+  targetItemId: number
+  sourceTitle: string
+  targetTitle: string
+  headline: string
+  bytesDone: number
+  bytesTotal: number
+  filesDone: number
+  filesTotal: number
+  moves?: { from: string; to: string; state: string; bytes: number }[]
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+  cinemaLine?: string
+  warnings?: string[]
+  error?: string
+  stoppable: boolean
 }
 
 export const getItemStatus = (id: number, season?: number) =>

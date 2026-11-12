@@ -241,8 +241,8 @@ type Delivery struct {
 	ItemIDs         []int64              `json:"itemIds,omitempty"`
 	OperationID     string               `json:"operationId,omitempty"`
 	// RemovedSent: the last POST of this moved request carried removed_paths.
-	RemovedSent bool `json:"removedSent,omitempty"`
-	MediaItemID     int64                `json:"mediaItemId,omitempty"`
+	RemovedSent bool  `json:"removedSent,omitempty"`
+	MediaItemID int64 `json:"mediaItemId,omitempty"`
 	// FileResults is Cinema's answer for each expected file at the last
 	// read-back, so an episode of a season pack has its own in-cinema state.
 	FileResults []DeliveryFileResult `json:"fileResults,omitempty"`

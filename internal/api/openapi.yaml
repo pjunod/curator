@@ -5482,6 +5482,52 @@ components:
         episodes:
           type: array
           items: { $ref: "#/components/schemas/StatusEpisode" }
+        rematch: { $ref: "#/components/schemas/StatusRematch" }
+
+    StatusRematch:
+      type: object
+      description: >
+        The open Re-match moving files out of or into this item (the panel's
+        "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
+      required: [operationId, state, role, sourceItemId, targetItemId, sourceTitle, targetTitle, headline, bytesDone, bytesTotal, filesDone, filesTotal, stoppable]
+      properties:
+        operationId: { type: string }
+        state: { type: string, enum: [planned, moving, moved, committed, cancel_pending] }
+        role: { type: string, enum: [source, target], description: Which side of the move this item is. }
+        sourceItemId: { type: integer, format: int64 }
+        targetItemId: { type: integer, format: int64 }
+        sourceTitle: { type: string }
+        targetTitle: { type: string }
+        headline: { type: string, description: "For this item's side, e.g. Files moving here from Dune (1984)." }
+        bytesDone: { type: integer, format: int64 }
+        bytesTotal: { type: integer, format: int64 }
+        filesDone: { type: integer }
+        filesTotal: { type: integer }
+        moves:
+          type: array
+          items:
+            type: object
+            required: [from, to, state, bytes]
+            properties:
+              from: { type: string }
+              to: { type: string }
+              state: { type: string }
+              bytes: { type: integer, format: int64 }
+        cinema:
+          type: array
+          items:
+            type: object
+            required: [directory, status]
+            properties:
+              directory: { type: string }
+              status: { type: string }
+              result: { type: string }
+              lastError: { type: string }
+              visibleAt: { type: integer, format: int64 }
+        cinemaLine: { type: string }
+        warnings: { type: array, items: { type: string }, description: Cinema's retained and present lines. }
+        error: { type: string }
+        stoppable: { type: boolean, description: False once the files are committed. }
 
     StatusHeadline:
       type: object

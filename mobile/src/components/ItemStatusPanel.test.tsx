@@ -110,4 +110,27 @@ describe('ItemStatusPanel (mobile)', () => {
     expect(client.retryImport).toHaveBeenCalledWith(702)
     expect(text()).toContain('Import started again.')
   })
+
+  it('shows the open Re-match as Moving files with progress and warnings, and Stop reports under the button', async () => {
+    vi.useFakeTimers()
+    const moving = status({
+      active: true, done: false,
+      rematch: { operationId: 'op1', state: 'moving', role: 'target', sourceItemId: 1, targetItemId: 7, sourceTitle: 'Dune (1984)', targetTitle: 'Dune (2021)',
+        headline: 'Files moving here from Dune (1984)', bytesDone: 5e6, bytesTotal: 10e6, filesDone: 1, filesTotal: 2, stoppable: true,
+        moves: [{ from: '/a/Dune.mkv', to: '/b/Dune.mkv', state: 'moved', bytes: 5e6 }],
+        cinemaLine: 'Cinema is being told.', warnings: ['cinema still has /a/Dune.mkv: it is listed'] },
+    })
+    const stopped = status({ active: false, done: false })
+    const client = { getItemStatus: vi.fn().mockResolvedValueOnce(moving).mockResolvedValue(stopped), cancelRematch: vi.fn().mockResolvedValue(undefined) }
+    await act(async () => { renderer = create(<ItemStatusPanel client={client as unknown as MonarrClient} id={7} kind="movie" onInteractiveSearch={vi.fn()} />) })
+    expect(text()).toContain('Files moving here from Dune (1984)')
+    expect(text()).toContain('1 of 2 files')
+    expect(text()).toContain('/a/Dune.mkv → /b/Dune.mkv')
+    expect(text()).toContain('Cinema is being told.')
+    expect(text()).toContain('cinema still has /a/Dune.mkv')
+    await act(async () => { labelled('Stop')[0]!.props.onPress() })
+    expect(client.cancelRematch).toHaveBeenCalledWith('op1')
+    expect(text()).toContain('Stopping the move')
+    expect(text()).not.toContain('Files moving here')
+  })
 })

@@ -4168,3 +4168,8 @@ a.pill-info:hover {
   .item-ep { grid-template-columns: 44px minmax(0, 1fr); }
   .item-ep .say { grid-column: 2; text-align: left; }
 }
+
+.item-moving { display: grid; gap: 8px; border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; min-width: 0; }
+.item-moving h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.item-moving progress { width: 100%; }
+.item-moves { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12px; overflow-wrap: anywhere; }
