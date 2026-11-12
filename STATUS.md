@@ -10,6 +10,10 @@ not merged, not deployed.
 before M6b and owns migration **0077** (`0077_unwedge_legacy_imports.sql`),
 so it applies on main by itself. `claude/pipeline-v2-m6b-curator`'s
 `0077_retire_v1_record.sql` must be renumbered (0078) when M6b is rebased.
+The M6b build was never deployed, so no live database is at goose 77 from
+it (nuc3 is at 76); this branch's 0077 is the first 0077 any database sees.
+Older notes in the v0.44.0 section that call M6b's migration 0077 are
+superseded by this.
 
 Live evidence (nuc3, read-only DB at v0.44.0 / goose 76):
 
@@ -42,64 +46,72 @@ Live evidence (nuc3, read-only DB at v0.44.0 / goose 76):
   (`/working/monarr/…` 147, `/processing/failed/…` 100, `/processing/…` 1;
   checked on the host through the container's mounts).
 
-Changes:
+Changes (after the Fable adversarial review of this branch; every finding
+fixed — see the review table below):
 
 - **Migration 0077**: every import_failed publication with a download row
   whose error is a legacy wording or that holds unresolved files, and has an
-  undecided file, is re-decided: want already imported elsewhere → files
-  discarded{superseded}, publication imported (sweep retires it); otherwise →
+  undecided file, is re-decided. Owned by an enabled Runner client →
   discovered with fresh limits (attempts 0, no deadline/hold/retry),
   unresolved → pending, held stages released and pending authorizations
-  disposed (as 0076). Skips a publication a person is deciding (`not selected
-  for import…`, `kept by an operator…`). Unresolved/pending files of
+  disposed (as 0076); the import decides each file's want (no inference
+  from a download's state). Any other client → files discarded{rejected},
+  a replacement grab for a completed publication, the sweep retires it.
+  Skips a publication a person is deciding. Unresolved/pending files of
   *removed* publications → discarded and removed. Idempotent (tested).
-- **Ended imports decide their media**: the cleanup pass discards pending
-  media in an imported/notified/import_failed publication (`its publication's
-  import ended without placing it; not kept`) — legacy rows and v0.44's own
-  stall/attempt-limit end, which leaves files pending.
-- **Clear failed / Remove keep a pending-salvage row** (hidden, not deleted)
-  until its salvage publication exists.
-- **Adoption** (`publication_adopt.go`, hourly in `CleanupPayloads`): each
-  payload directory under a completed root (the root's children, and the
-  children of a working-tree root's `completed` container) with a valid
-  `.runner-manifest.json` naming a Curator `t-…` transfer and no publication
-  is attributed through `observe` exactly once. No row → a live publication
-  with no download, files discarded{rejected}, history
+- **Every waiting publication has an exit** (`offerWaitingPublications`,
+  hourly): each discovered/importing publication is offered to the import
+  workers when its client is an enabled Runner (deadline and attempt cap
+  then bound it), ended by `endPublication` otherwise.
+- **Pending media of an ended import** (ADR 0026 decision 27): discarded
+  only when the want is filled or a replacement imported it; otherwise the
+  publication is requeued (the requeue counts as an attempt; out of
+  attempts → discarded). Writes are conditional on the publication as read.
+- **Pending-salvage rows**: Clear failed, Remove and retention hide rather
+  than delete a failed row whose salvage is pending; the hourly pass settles
+  it from Runner's receipt (unknown, no longer pending, or seven days).
+- **Adoption** (`publication_adopt.go`, hourly): each payload directory
+  (the root's children, and its `completed` container's children) with a
+  valid manifest naming a Curator `t-…` transfer and no publication is
+  attributed exactly once, on Runner's word (row terminal → salvage; open
+  row → Runner's receipt terminal, waiting while unreachable or running).
+  No row → an orphan only after 24 h and with every enabled Runner client
+  reporting the token unknown or ended: files discarded, history
   `publication_orphaned`, retired by the same pass.
 - **No publication at a root or its container** (`publication_records.go`):
-  `payloadContainer` refuses a completed root, `<root>/completed` or any
-  ancestor — Runner terminals and salvages naming one are refused, adoption
-  and the cutover marking enumerate payloads only, and the inventory fence and
-  `publicationClaiming` ignore such a record, so it can never block another
-  folder's whole-folder delete.
-- **Record-only publications end without a person** (hourly, first in
-  `CleanupPayloads`): a record with no download row, manifest or files is
-  closed (`removed`, reason kept, history `publication_closed`; nothing
-  deleted) when it is a container (344) or its directory is gone while its
-  storage is verifiably present (root storage identity; outside every root,
-  its parent directory). A record whose directory is still there keeps
-  waiting for review (ADR 0026 addendum 10) — none exist live.
+  refused at discovery, salvage, adoption and cutover marking — also through
+  bind-mount aliases (`storagePath`), fail closed when roots are unreadable —
+  and ignored by the inventory fence and `publicationClaiming`.
+- **Record-only publications end** (hourly): deleted (freeing the path;
+  history `publication_closed`; nothing on disk touched) when the path is a
+  container (344) or the directory is gone with its storage verified before
+  and after the check (root storage identity; outside every root, the
+  mount of a verified completed root — otherwise never). A different payload
+  (another generation) later published at a removed publication's path gets
+  a new publication.
+- **ADR 0026** addendum decisions 27–30; stale "unresolved files remain
+  available in Resolve" texts fixed (inventory reasons, `docs/settings.md`).
 
-**Decision for Paul to review:** an orphan's files are discarded (the
-directory is deleted) rather than held: Curator minted its token, the attempt
-is gone from its records and its want was re-grabbed when it failed, so
-nothing can import it. Live: job 2707 (Victor Frankenstein; the library holds
-a copy, pub 813) and job 2755 (Good Trouble S04E10; download 1276 imported).
+**Decision for Paul to review:** an orphan's files are discarded (its
+directory deleted) rather than held — only after 24 h and Runner confirming
+the token unknown or ended; Curator minted the token, the attempt is gone
+from its records and its want was re-grabbed when it failed. Live: job 2707
+(Victor Frankenstein; library holds a copy via pub 813) and job 2755 (Good
+Trouble S04E10; download 1276 imported it).
 
 How each live group resolves after deploy:
 
 | Group (live DB) | Resolution |
 |---|---|
-| 37 import_failed legacy, want open (492, 501, 546, 559, 617, 639, 659, 668, 699–701, 704, 706, 710, 713, 715, 716, 719, 725, 728–731, 733–738, 800, 801, 813; historical 6, 10, 12, 29, 68) | 0077 → discovered; the import places or discards every file |
-| 3 legacy, want satisfied (799; historical 14, 236) | 0077 → imported, files discarded{superseded}; sweep retires |
+| 40 import_failed legacy (492, 501, 546, 559, 617, 639, 659, 668, 699–701, 704, 706, 710, 713, 715, 716, 719, 725, 728–731, 733–738, 799–801, 813; historical 6, 10, 12, 14, 29, 68, 236) — all owned by the enabled Runner client 3 | 0077 → discovered; the import places or discards every file (a want already filled → duplicate) |
 | 5 live import_failed, all files already discarded (666, 667, 714, 717, 718) | already sweep candidates; next hourly sweep removes them |
 | pending sidecars in ~40 live imported publications | existing sweep re-decision |
-| pending media in approved historical imported pubs (17, 87, 89, 92–94, 108, 121, 167) | discarded by the sweep (new rule) |
+| pending media in approved historical imported pubs (17, 87, 89, 92–94, 108, 121, 167) | sweep: discarded where the want is filled, else requeued (bounded) |
 | unresolved sidecars in removed pubs (538–541, 567) | 0077 → discarded, removed |
 | unresolved files in discovered pubs (~80) | the pending import decides them |
-| orphan dirs job-2707, job-2755 | adoption → orphan, discarded, removed |
-| pub 344 (container record) | closed by the first hourly pass; stops fencing |
-| 248 historical record-only rows, directory gone | closed by the first hourly pass |
+| orphan dirs job-2707, job-2755 (manifests from 2026-11-10; Runner's receipts say failed) | adoption → orphan, discarded, removed |
+| pub 344 (container record) | record deleted by the first hourly pass; never fenced anything after deploy |
+| 248 historical record-only rows, directory gone (147 under `/working/monarr`, 101 under `/processing`) | record deleted once storage is verified (`/processing/…` through the `/processing` mount shared with the `/processing/completed` root) |
 
 **Still needs the M7 approval (ADR 0026 addenda 8 and 10 require
 `cleanup_approved_at` before anything in a historical publication is
@@ -109,13 +121,30 @@ publications with a download row and no approval — **3, 5, 6, 7, 9, 10, 12,
 only their file deletion waits for the approval. After it, the per-file
 sweep retires them with no further step.
 
-Validation (this branch, Go 1.25.7 / pinned tools): gofmt clean; `go vet`
-and pinned golangci-lint v2.12.2 on `internal/app/acquisition/...` and
-`internal/infra/sqlite/...`: 0 issues; `make gen` + `git diff --exit-code --
-internal/infra/sqlite/gen internal/api/gen` clean; `go test
-./internal/infra/sqlite/ ./internal/app/acquisition/` pass; earlier `go test
-./internal/api/ -run 'Clear|Remove|Dismiss'` pass. Not run: full `make
-test`, `make test-web`, `make test-e2e`, adversarial review.
+Fable adversarial review of this branch — 8 findings, all fixed:
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 H | Requeued rows only offered by an enabled Runner client's poll | 0077 requeues only those; others end with a regrab; hourly offer/end of every waiting publication |
+| 2 H | Record-only rows closed on weak evidence; closed path still reserved | Storage verified before and after `Lstat`; outside roots only on a verified root's mount; record deleted; new payload at a removed path gets a new publication |
+| 3 M | Sweep discarded pending media against ADR 25 | Discard only when the want is filled/replaced; else requeue (bounded); CAS on the publication; ADR decision 27 |
+| 4 M | Adoption forged a completed terminal | Runner's receipt decides; wait when unreachable or running |
+| 5 M | Container refusal lexical only | `storagePath` aliases; fail closed when roots unreadable |
+| 6 M | Weak orphan test; retention ignored pending salvage; `pending` never settled | 24 h + Runner confirms unknown/ended; retention guard; settle pass |
+| 7 L | "Satisfied" inferred from download state | Removed: the import decides each want |
+| 8 L | Docs, ADR, STATUS contradictions | ADR decisions 27–30; stale texts; superseded 0077 notes; M6b never deployed |
+
+Known residue: SQLite may reuse a deleted publication's rowid; a
+`notifier_deliveries.publication_id` (no FK) of a long-removed publication
+could then name the new row. Display only; noted for Paul.
+
+Validation (after the review fixes; Go 1.25.7 / pinned tools): gofmt
+clean; `go vet` and pinned golangci-lint v2.12.2 on
+`internal/app/acquisition/...` and `internal/infra/sqlite/...`; `make gen` +
+`git diff --exit-code -- internal/infra/sqlite/gen internal/api/gen`
+clean; lint 0 issues; `go test ./internal/infra/sqlite/
+./internal/app/acquisition/` pass. Not run (by instruction): full `make test`, `make
+test-web`, `make test-e2e`.
 
 ## No wedge: hash once, scratch stages, background reconcile, 4 workers, subtitles — 2026-11-11 · v0.44.0
 
@@ -164,7 +193,7 @@ Decisions taken without Paul (for review):
 - Migration 0076 also requeues "cannot determine episodes" failures (E makes
   most of them importable; one that still is not fails again once, normally).
 - Migration number 0076: `claude/pipeline-v2-m6b-curator` had claimed 0075;
-  it is now 0077 on that branch (`d61ea59`), so the two merge in either order.
+  it is now 0077 on that branch (`d61ea59`), so the two merge in either order. *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbers to 0078 when rebased.)*
 - Manual and approval-held imports keep the files the person did not select
   as `unresolved` (the person asked to decide); every automatic path decides.
 
@@ -187,7 +216,7 @@ the last token only; 10 placed-subtitle lookup is a byte range on an
 indexed column; 11 0076 retires (discarded{superseded}) wedged rows whose
 want a later import satisfied and releases the custody rows of requeued
 ones; 12 `claude/pipeline-v2-m6b-curator` renumbered its migration to 0077
-(`d61ea59`).
+(`d61ea59`). *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbers to 0078 when rebased.)*
 
 Adversarial re-review r2 (Fable, of `032720d`) — 8 findings, all fixed:
 1 environmental stops (blocked/full library, storage identity, a manifest
@@ -216,7 +245,7 @@ the configured completed roots is a hold. Web: `tsc --noEmit` and
 
 **Merge order: merge `claude/no-wedge` first, then
 `claude/pipeline-v2-m6b-curator`** (rebased onto this branch; its migration
-is 0077 after this branch's 0076).
+is 0077 after this branch's 0076). *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbers to 0078 when rebased.)*
 
 **Deploy order:** a same-filesystem placement hard-links Runner's file,
 which moves its ctime: deploy this curator only after the Runner build whose

@@ -991,8 +991,9 @@ Off by default.
 
 Native Runner downloads are imported and cleaned up by publication (pipeline
 contract v2): a file of the publication is removed only when it was placed and
-the library copy still matches its manifest digest, or when it was discarded;
-unresolved files remain available in Resolve. This per-file cleanup always
+the library copy still matches its manifest digest, or when it was discarded.
+Every file of an automatic import ends placed or discarded (only a manual or
+approval-held import leaves a file for Resolve). This per-file cleanup always
 applies to Runner publications and is not controlled by the legacy **Clean up
 after import** setting used for other clients.
 

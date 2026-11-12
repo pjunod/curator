@@ -227,3 +227,58 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     sweep re-reads the publication under the row's lock, and
     `endPublication` holds instead of ending when it cannot read the
     manifest or check a placement.
+
+## Addendum — v0.44.1, nothing waits on a lost fact (claude/unwedge-legacy, 2026-11-12)
+
+27. **Media an ended import left pending is imported, not kept and not
+    discarded blindly** (amends decision 25's "the sweep never discards
+    pending media"). Every v0.44 ending decides each manifest file, so
+    pending media in an imported, notified or import_failed publication was
+    left by an earlier build. The cleanup pass discards it only when every
+    want of its download is filled in the library at its profile's standard
+    (or no longer monitored) or a replacement download imported it;
+    otherwise it returns the publication to `discovered` so the import
+    decides the file. The requeue counts as an attempt, so the attempt cap
+    bounds it: with no attempt left the media is discarded. Both writes are
+    conditional on the publication being exactly as read, so a person's
+    Retry import wins the race.
+28. **Every waiting publication has an exit.** The hourly cleanup offers
+    every `discovered`/`importing` publication to the import workers when
+    its client is an enabled Runner, independently of that client's poll,
+    and ends it otherwise (`endPublication`: committed placements recorded,
+    the rest discarded, the want grabbed again). Migration 0077 re-decides
+    the publications earlier builds failed with reasons this one no longer
+    has: requeued with fresh limits where an enabled Runner client owns
+    them (the import, not the download's state, decides whether each want
+    is still open), ended with a replacement grab otherwise.
+29. **The completed roots are read for unclaimed publications** (adoption).
+    A payload directory with a valid `.runner-manifest.json` naming a Curator
+    transfer token and no publication is attributed to its row exactly once,
+    on Runner's word: a row whose terminal is written adopts it as a
+    salvage; a row without one asks Runner's request receipt and records the
+    terminal it gives (completed when it names this directory, otherwise the
+    directory is a salvage), waiting while Runner is unreachable or the
+    transfer is still running. A token with no row is an **orphan** only once
+    its manifest is 24 h old and every enabled Runner client reports it
+    unknown or ended: it is recorded as a live publication with no download,
+    its files `discarded{rejected}` with the reason, and retired by the
+    per-file cleanup (the attempt is gone from Curator's records and its
+    want was grabbed again when it failed). A failed row whose salvage is
+    pending is hidden, not deleted, by Clear failed, Remove and retention
+    until Runner settles it (a receipt it no longer has, a salvage no longer
+    pending, or seven days pending).
+30. **A publication is one payload directory; record-only rows end.** A
+    completed root, its `completed` container or an ancestor (also through
+    the roots' bind-mount aliases) is refused as a publication path, fail
+    closed when the roots cannot be read, and ignored as a claim. A
+    record-only publication (no download row, manifest or files: the
+    migration-0040 cohort and cutover-frozen directories) at such a path, or
+    whose directory is gone while its storage is verified present before and
+    after the check (inside a root, the root's storage identity; outside,
+    the mount of a verified completed root), is deleted — freeing its path,
+    with a `publication_closed` history event — and nothing on disk is
+    touched. This does not change decision 10: a historical publication's
+    files are deleted only after its review batch is approved. A different
+    payload published at a removed publication's path is a new publication,
+    never attached to the removed one.
+
