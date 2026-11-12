@@ -53,6 +53,25 @@ func (d *DB) DownloadByTransfer(ctx context.Context, clientID int64, transfer st
 	return dl, err == nil, err
 }
 
+// DownloadByTransferAnyClient finds the newest row carrying an exact
+// transfer token, on any client: a publication directory names its transfer
+// but not the client that submitted it.
+func (d *DB) DownloadByTransferAnyClient(ctx context.Context, transfer string) (Download, bool, error) {
+	if transfer == "" {
+		return Download{}, false, nil
+	}
+	var id int64
+	err := d.R.QueryRowContext(ctx, `SELECT id FROM downloads WHERE transfer=? ORDER BY id DESC LIMIT 1`, transfer).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Download{}, false, nil
+	}
+	if err != nil {
+		return Download{}, false, err
+	}
+	dl, err := d.GetDownload(ctx, id)
+	return dl, err == nil, err
+}
+
 // DownloadByHandle is the legacy fallback for an event that carried no
 // transfer token: the newest row of the client with that handle whose
 // terminal is still open (or provisional).
@@ -517,6 +536,44 @@ func insertPublicationTx(ctx context.Context, tx *sql.Tx, p PublicationWrite, no
 		}
 	}
 	return id, nil
+}
+
+// RecordOrphanPublication records, in one write, a committed Runner
+// publication Curator has no download row for: the publication (live, no
+// row), each manifest file discarded{rejected} with reason, and the state
+// import_failed, so the per-file cleanup retires the directory. inserted is
+// false when a publication already claims the directory (nothing changes).
+func (d *DB) RecordOrphanPublication(ctx context.Context, p PublicationWrite, files []PublicationFile, reason string) (int64, bool, error) {
+	if p.DownloadID != 0 {
+		return 0, false, fmt.Errorf("an orphan publication has no download row")
+	}
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE path=?`, p.Path).Scan(&existing); err != nil {
+		return 0, false, err
+	}
+	if existing > 0 {
+		return 0, false, nil
+	}
+	now := time.Now().UnixMilli()
+	id, err := insertPublicationTx(ctx, tx, p, now)
+	if err != nil {
+		return 0, false, err
+	}
+	for _, f := range files {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO publication_files (publication_id, path, bytes, sha256, outcome, discard_reason, reason, updated_at) VALUES (?,?,?,?,'discarded','rejected',?,?)`,
+			id, f.Path, f.Bytes, f.SHA256, reason, now); err != nil {
+			return 0, false, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET state='import_failed', error=?, updated_at=? WHERE id=?`, reason, now, id); err != nil {
+		return 0, false, err
+	}
+	return id, true, tx.Commit()
 }
 
 // PublicationPathClaimedError is a publication whose directory another

@@ -133,3 +133,70 @@ func TestClearFailedSoftDismissesRowWithLiveSalvage(t *testing.T) {
 		t.Fatalf("a failed row with a live salvage was not kept hidden: count=%d dismissed=%d err=%v", count, dismissed, err)
 	}
 }
+
+// Field data 2026-11-12: a failed Runner row whose salvage was still pending
+// was deleted by "Clear failed"; Runner's publication then arrived for a
+// transfer Curator had no row for, and nothing ever imported or cleaned it.
+// Clear failed and Remove hide such a row; once its salvage publication
+// exists it follows the ordinary rule.
+func TestClearFailedKeepsRowWhoseSalvageIsPending(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.W.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	exec(`INSERT INTO media_items(id,kind,title,sort_title,quality_profile_id,added_at,updated_at) VALUES(93,'movie','M','m',1,1,1)`)
+	for _, r := range []struct {
+		id      int
+		salvage string
+	}{{93, "pending"}, {94, "none"}, {95, "pending"}} {
+		exec(`INSERT INTO downloads(id,media_item_id,release_title,client_id,protocol,handle,transfer,state,added_at,updated_at,generation_key,runner_salvage) VALUES(?,93,'M',3,'usenet',?,?,'failed',1,1,?,?)`,
+			r.id, r.id, "t-"+string(rune('a'+r.id-93)), "g-"+string(rune('a'+r.id-93)), r.salvage)
+	}
+	if _, err := db.ClearFailedDownloads(ctx); err != nil {
+		t.Fatal(err)
+	}
+	present := func(id int) (bool, bool) {
+		var n, dismissed int
+		if err := db.R.QueryRowContext(ctx, `SELECT count(*), COALESCE(max(activity_dismissed),0) FROM downloads WHERE id=?`, id).Scan(&n, &dismissed); err != nil {
+			t.Fatal(err)
+		}
+		return n == 1, dismissed == 1
+	}
+	if ok, hidden := present(93); !ok || !hidden {
+		t.Fatalf("pending-salvage row: present=%v hidden=%v, want kept hidden", ok, hidden)
+	}
+	if ok, _ := present(94); ok {
+		t.Fatal("a failed row with no salvage coming was not cleared")
+	}
+	if err := db.DeleteDownload(ctx, 95); err != nil {
+		t.Fatal(err)
+	}
+	if ok, hidden := present(95); !ok || !hidden {
+		t.Fatalf("removed pending-salvage row: present=%v hidden=%v, want kept hidden", ok, hidden)
+	}
+	// The salvage arrived and its publication is gone: the row is ordinary.
+	pubID, err := db.InsertPublication(ctx, PublicationWrite{DownloadID: 93, Generation: "s", Kind: "salvage", Path: "/completed/s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkPublicationRemoved(ctx, pubID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClearFailedDownloads(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := present(93); ok {
+		t.Fatal("a row whose salvage publication came and went was kept")
+	}
+}
