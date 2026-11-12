@@ -4115,7 +4115,7 @@ a.pill-info:hover {
 .lifecycle-clock-lane > p { margin: .3rem 0; }
 .lifecycle-clock-lane ol { margin: .5rem 0; padding-left: 1.3rem; }
 
-/* ---- item status panel (0.44.0) ---- */
+/* ---- item status panel (0.46.0) ---- */
 .item-status { display: grid; gap: 12px; }
 .item-status .small { font-size: 12px; }
 .item-status-h { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px; }

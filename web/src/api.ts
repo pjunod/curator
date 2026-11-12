@@ -2003,7 +2003,7 @@ export interface ImportActivityPage {
 export const getImportActivity = (filter: 'all' | ImportCategory, q: string, limit: number, offset: number) =>
   get<ImportActivityPage>(`/imports?${new URLSearchParams({ filter, q, limit: String(limit), offset: String(offset) })}`)
 
-// ---- item status panel (0.44.0) ----
+// ---- item status panel (0.46.0) ----
 
 export type StatusState = 'done' | 'active' | 'waiting' | 'failed' | 'todo'
 export type StatusStageKey = 'searched' | 'downloading' | 'processed' | 'moved' | 'cinema_notified' | 'in_cinema'

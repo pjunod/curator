@@ -501,7 +501,7 @@ export interface ManualImportRequest {
 
 export interface PlaceRequest { mediaItemId: number; copyId?: number; files: { path: string; season?: number; episodes?: number[] }[] }
 
-// ---- item status panel (GET /library/{id}/status, 0.44.0) ----
+// ---- item status panel (GET /library/{id}/status, 0.46.0) ----
 export type StatusState = 'done' | 'active' | 'waiting' | 'failed' | 'todo'
 export type StatusStageKey = 'searched' | 'downloading' | 'processed' | 'moved' | 'cinema_notified' | 'in_cinema'
 export type StatusAction = 'search' | 'interactive_search' | 'open_activity' | 'cancel_download' | 'retry_import' | 'resend_cinema' | 'confirm_cinema'
