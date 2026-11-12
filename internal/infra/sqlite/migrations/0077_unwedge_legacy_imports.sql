@@ -35,7 +35,7 @@
 -- publication whose files are all already placed or discarded needs nothing:
 -- the hourly sweep retires it. Running this again changes nothing (every
 -- matched row has left import_failed).
-CREATE TEMP TABLE legacy_0078 AS
+CREATE TEMP TABLE legacy_0077 AS
 SELECT p.id AS publication_id, p.download_id, d.generation_key,
        (json_array_length(d.wantables) > 0 AND NOT EXISTS (
           SELECT 1 FROM json_each(d.wantables) w
@@ -61,35 +61,35 @@ UPDATE publication_files
        reason = 'a later import satisfied every want of this download',
        updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000
  WHERE removed_at = 0 AND outcome IN ('pending', 'unresolved')
-   AND publication_id IN (SELECT publication_id FROM legacy_0078 WHERE satisfied);
+   AND publication_id IN (SELECT publication_id FROM legacy_0077 WHERE satisfied);
 UPDATE publications
    SET state = 'imported', error = 'superseded: a later import satisfied every want of this download',
        updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000
- WHERE id IN (SELECT publication_id FROM legacy_0078 WHERE satisfied);
+ WHERE id IN (SELECT publication_id FROM legacy_0077 WHERE satisfied);
 
 -- The rest are imported again. Custody an interrupted attempt left would
 -- make the retry refuse silently: the stage is scratch, and the
 -- authorization of a placement that never committed is disposed of, so the
 -- retry starts a fresh epoch (as 0076).
 UPDATE import_attempt_stages SET state = 'released'
- WHERE state = 'held' AND EXISTS (SELECT 1 FROM legacy_0078 w
+ WHERE state = 'held' AND EXISTS (SELECT 1 FROM legacy_0077 w
    WHERE NOT w.satisfied AND w.download_id = import_attempt_stages.download_id AND w.generation_key = import_attempt_stages.generation_key);
 UPDATE import_publication_authorizations
    SET outcome = 'reconciled', resolution = 'operator_disposed', resolved_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000
  WHERE (outcome = 'pending' OR resolution = 'retained_for_review')
-   AND EXISTS (SELECT 1 FROM legacy_0078 w
+   AND EXISTS (SELECT 1 FROM legacy_0077 w
    WHERE NOT w.satisfied AND w.download_id = import_publication_authorizations.download_id AND w.generation_key = import_publication_authorizations.generation_key);
 UPDATE publication_files
    SET outcome = 'pending', discard_reason = '', reason = '',
        updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000
  WHERE removed_at = 0 AND outcome = 'unresolved'
-   AND publication_id IN (SELECT publication_id FROM legacy_0078 WHERE NOT satisfied);
+   AND publication_id IN (SELECT publication_id FROM legacy_0077 WHERE NOT satisfied);
 UPDATE publications
    SET state = 'discovered', error = '', deadline_at = 0, import_attempts = 0,
        last_stop = '', retry_at = 0, hold_since = 0, holds = 0,
        updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000
- WHERE id IN (SELECT publication_id FROM legacy_0078 WHERE NOT satisfied);
-DROP TABLE legacy_0078;
+ WHERE id IN (SELECT publication_id FROM legacy_0077 WHERE NOT satisfied);
+DROP TABLE legacy_0077;
 
 -- A removed publication's directory is gone: a file an older build left
 -- unresolved or pending in it is not there to decide. It is recorded as

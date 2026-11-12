@@ -8,14 +8,14 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-// Migration 0078: publications an older build failed with a reason the
+// Migration 0077: publications an older build failed with a reason the
 // current rules no longer have ("N file(s) unresolved: ...", "holds no
 // importable media") are decided again — requeued with fresh limits, or
 // retired as superseded when a later import satisfied their want — and a
 // removed publication's undecided files are closed. A person's decision in
 // Resolve, a publication already fully decided and every non-failed row are
 // untouched, and running it again changes nothing.
-func TestMigration0078RedecidesLegacyFailedImports(t *testing.T) {
+func TestMigration0077RedecidesLegacyFailedImports(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(t.TempDir())
 	if err != nil {
@@ -174,7 +174,7 @@ func TestMigration0078RedecidesLegacyFailedImports(t *testing.T) {
 	}
 
 	// Idempotent: the same statements a second time change nothing.
-	raw, err := migrationsFS.ReadFile("migrations/0078_unwedge_legacy_imports.sql")
+	raw, err := migrationsFS.ReadFile("migrations/0077_unwedge_legacy_imports.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
