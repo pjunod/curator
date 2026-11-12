@@ -174,6 +174,11 @@ type DownloadStatus struct {
 	// repairing a damaged archive was reported as "downloading" — not a
 	// summary of what was happening, a different claim about it.
 	Stage string
+	// RateBps and RemainingBytes are the client's own per-job transfer
+	// numbers (Runner's rate_bps and remaining_bytes), relayed unchanged so an
+	// ETA is the client's arithmetic, not Curator's. Nil = not reported.
+	RateBps        *int64
+	RemainingBytes *int64
 	// Blameless marks a StateFailed the RELEASE is not responsible for, so
 	// it must not be blocklisted.
 	//

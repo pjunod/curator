@@ -854,7 +854,7 @@ func ImportOutbox(notifiers []ports.NotifierConfig, e ImportCompleted, generatio
 			continue
 		}
 		if !ports.QueuedNotifier(cfg) {
-			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, PublicationID: e.PublicationID,
+			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, MediaItemID: e.MediaItemID, PublicationID: e.PublicationID,
 				Event: "import", Payload: string(wholePayload)})
 			continue
 		}
@@ -865,7 +865,7 @@ func ImportOutbox(notifiers []ports.NotifierConfig, e ImportCompleted, generatio
 			if err != nil {
 				return nil, nil, err
 			}
-			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, PublicationID: e.PublicationID,
+			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, MediaItemID: e.MediaItemID, PublicationID: e.PublicationID,
 				Directory: dir, IdempotencyKey: SubDeliveryKey(transfer, generation, dir), ExpectedFiles: expected,
 				Event: "import", Payload: string(payload)})
 			subs = true

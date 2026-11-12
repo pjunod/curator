@@ -135,6 +135,9 @@ type Download struct {
 	DeadlineAt                    int64
 	StateEnteredAt                int64
 	RunnerStage                   string
+	RateBps                       int64
+	RemainingBytes                int64
+	RunnerStageAt                 int64
 }
 
 type DownloadClient struct {
@@ -486,6 +489,8 @@ type NotifierDelivery struct {
 	WaitingOn         string
 	VisibleAt         int64
 	ItemIdsJson       string
+	MediaItemID       int64
+	FileResultsJson   string
 }
 
 type PipelineTiming struct {
@@ -833,6 +838,25 @@ type ScheduledTask struct {
 	LastError       sql.NullString
 	NextRunAt       sql.NullInt64
 	UpdatedAt       int64
+}
+
+type SearchRecord struct {
+	ID           int64
+	MediaItemID  int64
+	CopyID       int64
+	WantableID   string
+	Season       int64
+	Episode      int64
+	At           int64
+	Trigger      string
+	Seen         int64
+	Matched      int64
+	Accepted     int64
+	TopRejection string
+	Grabbed      string
+	DownloadID   int64
+	Skipped      string
+	Error        string
 }
 
 type Season struct {
