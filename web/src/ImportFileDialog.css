@@ -28,3 +28,4 @@ button.ifd-row:hover, label.ifd-row:hover { background: var(--bg-hover); }
 @media (max-width: 640px) {
   .ifd-plan-line { grid-template-columns: minmax(0, 1fr); }
 }
+.ifd-skipped { color: var(--text-muted); }

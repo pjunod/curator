@@ -1,20 +1,21 @@
 import { useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ActionDialog } from './ActionDialog'
 import {
   browseFilesystem,
   cancelQueueImport,
   fmtBytes,
   getManualImportDefaultPath,
-  getQueue,
+  getQueueItem,
   getRootFolders,
   manualImport,
-  placePublicationFile,
+  placePublicationFiles,
   planImport,
   scanImportFolder,
   type ImportPlanFile,
   type ImportPlanMode,
   type MediaItemDetail,
+  type QueueItem,
   type ScannedFile,
 } from './api'
 import './ImportFileDialog.css'
@@ -131,21 +132,32 @@ export function ImportFileDialog({ item, onClose }: { item: MediaItemDetail; onC
     mutationFn: async () => {
       const out: Started[] = []
       const byFolder = new Map<string, ScannedFile[]>()
+      // A runner delivery's files go together: one placement, one import.
+      const byPublication = new Map<number, ScannedFile[]>()
       for (const f of chosen) {
-        const c = parseChoice(choiceFor(f))
         if (f.publication) {
-          try {
-            await placePublicationFile(f.publication.downloadId, f.publication.publicationId, f.publication.path, {
-              mediaItemId: item.id, copyId: copyId || undefined, season: c?.season, episodes: c?.episodes,
-            })
-            out.push({ downloadId: f.publication.downloadId, label: f.name })
-          } catch (e) {
-            out.push({ label: f.name, error: (e as Error).message })
-          }
+          byPublication.set(f.publication.publicationId, [...(byPublication.get(f.publication.publicationId) ?? []), f])
           continue
         }
         const dir = f.path.slice(0, f.path.lastIndexOf('/')) || '/'
         byFolder.set(dir, [...(byFolder.get(dir) ?? []), f])
+      }
+      for (const [publicationId, group] of byPublication) {
+        const label = group.length === 1 ? group[0].name : `${group.length} files of a runner delivery`
+        const downloadId = group[0].publication!.downloadId
+        try {
+          await placePublicationFiles(downloadId, publicationId, {
+            mediaItemId: item.id,
+            copyId: copyId || undefined,
+            files: group.map((f) => {
+              const c = parseChoice(choiceFor(f))
+              return { path: f.publication!.path, season: c?.season, episodes: c?.episodes }
+            }),
+          })
+          out.push({ downloadId, label })
+        } catch (e) {
+          out.push({ label, error: (e as Error).message })
+        }
       }
       for (const [dir, group] of byFolder) {
         const label = group.length === 1 ? group[0].name : `${group.length} files from ${dir}`
@@ -216,7 +228,12 @@ export function ImportFileDialog({ item, onClose }: { item: MediaItemDetail; onC
             {(dirs.data?.dirs ?? []).map((d) => (
               <li key={d.path}><button type="button" className="ifd-row" onClick={() => go(d.path)}><span aria-hidden="true">▸</span> {d.name}/</button></li>
             ))}
-            {(files.data ?? []).map((f) => (
+            {(files.data ?? []).map((f) => f.skipped ? (
+              <li key={f.path} className="ifd-row ifd-skipped">
+                <span className="ifd-name">{f.name}</span>
+                <span className="muted">{f.skipped}</span>
+              </li>
+            ) : (
               <li key={f.path}>
                 <label className="ifd-row ifd-file">
                   <input type="checkbox" checked={!!selected[f.path]} onChange={() => toggle(f)} />
@@ -291,6 +308,7 @@ export function ImportFileDialog({ item, onClose }: { item: MediaItemDetail; onC
                           {line.action === 'replace' ? `replaces ${line.existing}` : line.action === 'beside' ? `kept beside ${line.existing}` : 'new file'}
                         </span>
                         {line.reason && <span className="muted">{line.reason}</span>}
+                        {line.note && <span className="warning-text">{line.note}</span>}
                         {line.mode && <span className="muted">{MODE_TEXT[line.mode]}</span>}
                       </>
                     )}
@@ -326,36 +344,60 @@ export function ImportFileDialog({ item, onClose }: { item: MediaItemDetail; onC
   )
 }
 
-/** The jobs an import started, live: what each is doing, and Stop. */
+const TERMINAL = new Set(['imported', 'failed'])
+
+/** What a row's trace says Remove original did, or is doing. */
+function originalsNote(row: QueueItem): string {
+  const trace = row.handoff ?? []
+  for (let i = trace.length - 1; i >= 0; i--) {
+    if (trace[i].step === 'originals_removal_done') return trace[i].detail ?? ''
+    if (trace[i].step === 'originals_removal_pending') return 'Removing the originals…'
+  }
+  return ''
+}
+
+/** The jobs an import started, live through completion: state, Stop, and what happened to the originals. */
 function ImportStarted({ started, onClose }: { started: Started[]; onClose: () => void }) {
   const ids = started.flatMap((s) => (s.downloadId ? [s.downloadId] : []))
-  const queue = useQuery({ queryKey: ['queue'], queryFn: getQueue, refetchInterval: 2000, enabled: ids.length > 0 })
+  const rows = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ['queue-item', id],
+      queryFn: () => getQueueItem(id),
+      refetchInterval: (query: { state: { data?: QueueItem } }) => {
+        const row = query.state.data
+        return row && TERMINAL.has(row.state) && !originalsNote(row).endsWith('…') ? false : 2000
+      },
+    })),
+  })
+  const byId = new Map(ids.map((id, i) => [id, rows[i]?.data]))
   const [stopMsg, setStopMsg] = useState('')
   const stop = useMutation({
     mutationFn: ({ id, generationKey, epoch }: { id: number; generationKey: string; epoch: string }) =>
       cancelQueueImport(id, { generationKey, epoch }),
-    onSuccess: () => { setStopMsg('Stopped. The files that were copying stay where they were; retry from Activity.'); void queue.refetch() },
+    onSuccess: () => { setStopMsg('Stopped. The files stay where they were; retry from Activity.'); rows.forEach((r) => void r.refetch()) },
     onError: (e) => setStopMsg(`✕ ${(e as Error).message}`),
   })
   return (
     <div className="ifd-started" role="status">
       <ul className="ifd-plan">
         {started.map((s, i) => {
-          const row = queue.data?.find((q) => q.id === s.downloadId)
+          const row = s.downloadId ? byId.get(s.downloadId) : undefined
           const running = row && (row.state === 'importing' || row.importState)
+          const originals = row ? originalsNote(row) : ''
           return (
             <li key={i} className="ifd-plan-line">
               <span className="ifd-name">{s.label}</span>
               {s.error ? <span className="error-text">✕ {s.error}</span> : (
                 <span>
                   Activity #{s.downloadId}:{' '}
-                  {row ? (row.state === 'imported' ? 'imported' : `${row.state}${row.bytes ? ` · ${fmtBytes(row.bytes)}` : ''}`) : 'queued'}
+                  {row ? `${row.state}${row.bytes && !TERMINAL.has(row.state) ? ` · ${fmtBytes(row.bytes)}` : ''}${row.state === 'failed' && row.error ? ` — ${row.error}` : ''}` : 'queued'}
                   {running && row.importControl && (
                     <button type="button" disabled={stop.isPending}
                       onClick={() => stop.mutate({ id: row.id, generationKey: row.importControl!.generationKey, epoch: row.importControl!.epoch })}>
                       Stop
                     </button>
                   )}
+                  {originals && <><br /><span className="muted">{originals}</span></>}
                 </span>
               )}
             </li>

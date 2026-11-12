@@ -8,7 +8,7 @@ const obfuscated = `${folder}/a7f3c91e.mkv`
 const loose = '/downloads/Slow.Horses.S04E05.mkv'
 
 async function fixture(page: Page) {
-  const calls: { plan: unknown[]; manual: unknown[]; place: unknown[] } = { plan: [], manual: [], place: [] }
+  const calls: { plan: unknown[]; manual: unknown[]; place: unknown[]; cancel: unknown[] } = { plan: [], manual: [], place: [], cancel: [] }
   await page.route('**/api/v1/library/4242', route => route.fulfill({ json: {
     id: 4242, kind: 'series', title: 'Slow Horses', monitored: true, path: '/20t/tv/Slow Horses',
     genres: [], ratings: [], ids: {}, files: [], copies: [], aliases: [], countries: [], identitySources: [],
@@ -48,7 +48,7 @@ async function fixture(page: Page) {
           mode: f.path === loose ? (body.removeOriginal ? 'rename' : 'hardlink') : 'runner',
           publication: f.path === loose ? undefined : { downloadId: 77, publicationId: 5, path: f.path.split('/').pop(), outcome: 'unresolved' } }) })
   })
-  await page.route('**/api/v1/queue/77/publications/5/files/resolve', async route => {
+  await page.route('**/api/v1/queue/77/publications/5/files/place', async route => {
     calls.place.push(route.request().postDataJSON())
     await route.fulfill({ status: 204 })
   })
@@ -56,9 +56,18 @@ async function fixture(page: Page) {
     calls.manual.push(route.request().postDataJSON())
     await route.fulfill({ status: 202, json: { downloadId: 91 } })
   })
-  await page.route('**/api/v1/queue', route => route.fulfill({ json: [
-    { id: 77, state: 'importing', importState: 'running', progress: 1, bytes: 900_000_000, importControl: { generationKey: 'g77', epoch: '1', outcome: '', pendingPublications: 0, retainedPublications: 0, heldStages: 0 } },
-  ] }))
+  let stopped = false
+  await page.route('**/api/v1/queue/77/cancel-import', async route => {
+    calls.cancel.push(route.request().postDataJSON())
+    stopped = true
+    await route.fulfill({ status: 204 })
+  })
+  await page.route('**/api/v1/queue/77', route => route.fulfill({ json: stopped
+    ? { id: 77, state: 'downloaded', progress: 1, handoff: [] }
+    : { id: 77, state: 'importing', importState: 'running', progress: 1, bytes: 900_000_000, handoff: [],
+        importControl: { generationKey: 'g77', epoch: '1', outcome: '', pendingPublications: 0, retainedPublications: 0, heldStages: 0 } } }))
+  await page.route('**/api/v1/queue/91', route => route.fulfill({ json: { id: 91, state: 'imported', progress: 1, handoff: [
+    { step: 'originals_removal_done', at: 1, detail: 'Remove original: removed 1 original(s)' }] } }))
   return calls
 }
 
@@ -107,12 +116,20 @@ for (const width of [390, 1280]) {
     await page.screenshot({ path: test.info().outputPath(`item-import-confirm-${width}.png`) })
     await go.click()
 
-    await expect.poll(() => calls.place.length).toBe(2)
-    expect(calls.place).toContainEqual({ path: 'a7f3c91e.mkv', action: 'place', mediaItemId: 4242, season: 4, episodes: [4] })
-    expect(calls.place).toContainEqual({ path: 'Slow.Horses.S04E03.1080p.WEB.h264.mkv', action: 'place', mediaItemId: 4242, season: 4, episodes: [3] })
+    // One placement for both files of the delivery: one admission, one import.
+    await expect.poll(() => calls.place.length).toBe(1)
+    expect(calls.place[0]).toEqual({ mediaItemId: 4242, files: [
+      { path: 'Slow.Horses.S04E03.1080p.WEB.h264.mkv', season: 4, episodes: [3] },
+      { path: 'a7f3c91e.mkv', season: 4, episodes: [4] },
+    ] })
     // Started: the job is attributable and stoppable from here.
-    const stop = dialog.getByRole('button', { name: 'Stop' }).first()
+    const stop = dialog.getByRole('button', { name: 'Stop' })
     await inViewport(page, stop)
+    await stop.click()
+    await expect.poll(() => calls.cancel).toEqual([{ generationKey: 'g77', epoch: '1' }])
+    await inViewport(page, dialog.getByText(/Stopped\. The files stay where they were/))
+    await expect(dialog.getByText(/Activity #77: downloaded/)).toBeVisible()
+    await expect(stop).toHaveCount(0)
     const done = dialog.getByRole('button', { name: 'Done' })
     await done.click()
     await expect(dialog).toHaveCount(0)
@@ -146,6 +163,7 @@ for (const width of [390, 1280]) {
     await expect.poll(() => calls.manual.length).toBe(1)
     expect(calls.manual[0]).toMatchObject({ path: '/downloads', paths: [loose], mediaItemId: 4242, removeOriginal: true,
       episodeTargets: [{ path: loose, season: 4, episodes: [5] }] })
-    await inViewport(page, dialog.getByText(/Activity #91/))
+    await inViewport(page, dialog.getByText(/Activity #91: imported/))
+    await inViewport(page, dialog.getByText('Remove original: removed 1 original(s)'))
   })
 }

@@ -1039,6 +1039,8 @@ export interface ScannedFile {
   subtitles?: number
   /** The runner delivery this file is part of; placed through Resolve. */
   publication?: ScannedPublication
+  /** Why this entry cannot be imported (a symlink, an unreadable file). */
+  skipped?: string
 }
 
 export interface ScannedPublication {
@@ -1070,6 +1072,8 @@ export interface ImportPlanFile {
   existing?: string
   reason?: string
   mode?: ImportPlanMode
+  /** What else placing it does (a runner delivery moved here from another title). */
+  note?: string
   subtitles: number
   publication?: ScannedPublication
   error?: string
@@ -1955,10 +1959,16 @@ export interface SeasonSelection {
 export const resolvePublicationFile = (id: number, publicationId: number, path: string, action: PublicationFileAction) =>
   send<void>('POST', `/queue/${id}/publications/${publicationId}/files/resolve`, { path, action })
 
-export interface PlaceTarget { mediaItemId: number; copyId?: number; season?: number; episodes?: number[] }
-/** Resolve's place, into a chosen item, copy and episode(s). */
-export const placePublicationFile = (id: number, publicationId: number, path: string, target: PlaceTarget) =>
-  send<void>('POST', `/queue/${id}/publications/${publicationId}/files/resolve`, { path, action: 'place', ...target })
+export interface PlaceRequest {
+  mediaItemId: number
+  copyId?: number
+  files: { path: string; season?: number; episodes?: number[] }[]
+}
+/** Resolve's place for one or more files of a publication, in one import. */
+export const placePublicationFiles = (id: number, publicationId: number, req: PlaceRequest) =>
+  send<void>('POST', `/queue/${id}/publications/${publicationId}/files/place`, req)
+/** One Activity row in any state (follows an import to its end). */
+export const getQueueItem = (id: number) => get<QueueItem>(`/queue/${id}`)
 
 export const setPublicationCleanup = (publicationId: number, action: 'pause' | 'resume') =>
   send<void>('POST', `/downloads/publications/${publicationId}/cleanup`, { action })
