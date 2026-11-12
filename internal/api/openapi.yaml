@@ -3020,6 +3020,26 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /rematch/{operationId}/dismiss:
+    post:
+      operationId: dismissRematch
+      summary: Hide a finished Re-match from the item pages' status panels
+      parameters:
+        - { name: operationId, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Dismissed.
+        "404":
+          description: No such operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: It is still running; Stop it instead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/{id}/seasons/{season}:
     patch:
       operationId: setSeasonMonitored
@@ -5489,10 +5509,19 @@ components:
       description: >
         The open Re-match moving files out of or into this item (the panel's
         "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
-      required: [operationId, state, role, sourceItemId, targetItemId, sourceTitle, targetTitle, headline, bytesDone, bytesTotal, filesDone, filesTotal, stoppable]
+      required: [operationId, state, ended, role, sourceItemId, targetItemId, sourceTitle, targetTitle, headline, bytesDone, bytesTotal, filesDone, filesTotal, stoppable]
       properties:
         operationId: { type: string }
-        state: { type: string, enum: [planned, moving, moved, committed, cancel_pending] }
+        state: { type: string, enum: [planned, moving, moved, committed, cancel_pending, complete, cancelled, failed] }
+        ended: { type: boolean, description: The operation is over (failed, or complete with files that could not move); shown 24 h or until dismissed. }
+        failedMoves:
+          type: array
+          items:
+            type: object
+            required: [from, reason]
+            properties:
+              from: { type: string }
+              reason: { type: string }
         role: { type: string, enum: [source, target], description: Which side of the move this item is. }
         sourceItemId: { type: integer, format: int64 }
         targetItemId: { type: integer, format: int64 }
@@ -5583,6 +5612,7 @@ components:
           type: array
           items: { type: integer, format: int64 }
         error: { type: string }
+        warnings: { type: array, items: { type: string }, description: Cinema's lasting answers about files that left (a Re-match). }
 
     StatusAttempt:
       type: object

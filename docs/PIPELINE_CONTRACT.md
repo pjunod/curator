@@ -678,9 +678,9 @@ root is never full-scanned.
 file record removed; the item is removed too if it has no files left),
 `{"path", "state": "unknown"}` (absent, cinema never had it),
 `{"path", "state": "present", "reason": R}` (still exists; nothing removed;
-`R` is `still_present`, `symlink_in_path` or `case_only`),
-`{"path", "state": "retained", "code": C}` (cinema kept the record on purpose;
-`C` is one of the codes below). Existing `placed|skipped|missing` for expected files is unchanged.
+`R` is `exists`, `symlink_in_chain`, `case_variant` or `reappeared_before_removal`),
+`{"path", "state": "retained", "item_id", "reason", "code": C, "retryable"}`
+(cinema kept the record on purpose; `C` is one of the codes below). Existing `placed|skipped|missing` for expected files is unchanged.
 
 **Not `path_unreadable`.** A removed path that does not exist is the
 expected case. `503 path_unreadable` applies only when `path` itself, or the
@@ -695,13 +695,18 @@ not read as "everything gone"). `422 path_outside_roots` is unchanged.
 | `gone`, `unknown` | satisfied |
 | `retained` / `expected_not_placed`, `prune_bound`, `conversion_hold` | transient: `warning`, attempt advances, retried on the schedule, surfaced after 30 min |
 | `retained` / `root_identity_unset`, `root_identity_mismatch` | lasting: delivery `warning: cinema kept <path>: <reason>; it will drop it at its next full scan`; not retried |
-| `present` (any `reason`) | lasting: delivery `warning: cinema still has <path>: <reason in words>`; not retried |
+| `retained` / `record_kept` | lasting: delivery `warning: cinema kept the record of <path>: <cinema's reason>`; not retried (no promise about a later scan) |
+| `retained` / any other code | `retryable: true` retries like a transient code; otherwise lasting, with cinema's `reason` text |
+| `present` / `exists`, `symlink_in_chain`, `case_variant` | lasting: delivery warning in plain words (`cinema still has <path>`, `cinema found a symlink on the path ... and kept the entry`, `the path ... differs only in case on cinema's filesystem`); not retried |
+| `present` / `reappeared_before_removal` | transient: retried on the schedule |
 
 **`visible`** when every expected file is `placed` with matching bytes and
 `mtime_ns` **and** no removed path is held by a transient `retained` code. A
 lasting warning rides on the visible row (`visible; warning: …`); the
 Re-match status panel's cinema line shows the same text. An unrecognised
-`code` is treated as lasting.
+`code` is retried only when cinema marks it `retryable`. Lasting warnings are
+stored structurally on the sub-delivery (`file_results_json`, entries with
+`state` present or retained and a `warning`); the panel reads them from there.
 
 #### Notifier event `moved`
 

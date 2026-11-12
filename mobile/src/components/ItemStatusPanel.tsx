@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { describeAutoSearch } from '../autosearch'
-import { ACTION_LABELS, REMATCH_STATE, STAGE_NAMES, STATE_ICON, downloadLine, fmtWhen, rematchCounts, stageActions, statusPollMs } from '../itemStatus'
+import { ACTION_LABELS, REMATCH_STATE, noticeBelongsTo, STAGE_NAMES, STATE_ICON, downloadLine, fmtWhen, rematchCounts, stageActions, statusPollMs } from '../itemStatus'
 import { useTheme, type Theme } from '../theme'
 import type { ItemStatus, ReleaseSearchScope, StatusAction, StatusCinema, StatusEpisode, StatusRematch, StatusStage, StatusState } from '../types'
 import { Button, Panel, SectionTitle } from './UI'
@@ -112,42 +112,46 @@ export function ItemStatusPanel({ client, id, kind, onInteractiveSearch, onOpenA
   )
 }
 
-/** The open Re-match, with Stop. Its answer stays under the button, also after the block is gone. */
+/** The open (or badly ended) Re-match, with Stop or Dismiss. Its answer stays under the button, also after the block is gone, until another operation shows. */
 function MovingFiles({ client, r, onChanged }: { client: MonarrClient; r?: StatusRematch; onChanged: () => Promise<void> }) {
   const theme = useTheme()
   const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState({ text: '', error: false })
-  const stop = async () => {
+  const [message, setMessage] = useState({ text: '', error: false, op: '' })
+  const act = async (kind: 'stop' | 'dismiss') => {
     setBusy(true)
-    setMessage({ text: '', error: false })
+    setMessage({ text: '', error: false, op: r!.operationId })
     try {
-      await client.cancelRematch(r!.operationId)
-      setMessage({ text: 'Stopping the move; every moved file is put back where it was.', error: false })
+      if (kind === 'stop') await client.cancelRematch(r!.operationId)
+      else await client.dismissRematch(r!.operationId)
+      setMessage({ text: kind === 'stop' ? 'Stopping the move; every moved file is put back where it was.' : 'Dismissed.', error: false, op: r!.operationId })
       await onChanged()
     } catch (cause) {
-      setMessage({ text: cause instanceof Error ? cause.message : 'That did not work.', error: true })
+      setMessage({ text: cause instanceof Error ? cause.message : 'That did not work.', error: true, op: r!.operationId })
     } finally {
       setBusy(false)
     }
   }
-  if (!r && !message.text) return null
+  const shown = message.text && noticeBelongsTo(message.op, r?.operationId)
+  if (!r && !shown) return null
   return (
     <View style={[styles.moving, { borderColor: theme.accent }]} accessibilityLabel="Moving files">
       {r ? (
         <>
-          <Text style={[styles.stageName, { color: theme.muted }]}>MOVING FILES</Text>
+          <Text style={[styles.stageName, { color: theme.muted }]}>{r.ended ? 'MOVING FILES ENDED' : 'MOVING FILES'}</Text>
           <Text style={[styles.title, { color: theme.text }]}>{r.headline}</Text>
-          <Text style={[styles.small, { color: theme.muted }]}>{REMATCH_STATE[r.state]} · {rematchCounts(r)}</Text>
+          {!r.ended ? <Text style={[styles.small, { color: theme.muted }]}>{REMATCH_STATE[r.state]} · {rematchCounts(r)}</Text> : null}
+          {(r.failedMoves ?? []).map((f) => <Text key={f.from} style={[styles.small, { color: theme.warning }]}>{f.from}: {f.reason}</Text>)}
           {(r.moves ?? []).map((m) => (
             <Text key={m.from} style={[styles.small, { color: theme.text }]}>{m.from} → {m.to}</Text>
           ))}
           {r.cinemaLine ? <Text style={[styles.small, { color: theme.muted }]}>{r.cinemaLine}</Text> : null}
           {(r.warnings ?? []).map((w) => <Text key={w} style={[styles.small, { color: theme.warning }]}>{w}</Text>)}
           {r.error ? <Text style={[styles.small, { color: theme.warning }]}>{r.error}</Text> : null}
-          {r.stoppable ? <Button compact secondary disabled={busy} label={busy ? 'Stopping…' : 'Stop'} onPress={() => void stop()} /> : null}
+          {r.ended ? <Button compact secondary disabled={busy} label={busy ? 'Dismissing…' : 'Dismiss'} onPress={() => void act('dismiss')} /> : null}
+          {r.stoppable ? <Button compact secondary disabled={busy} label={busy ? 'Stopping…' : 'Stop'} onPress={() => void act('stop')} /> : null}
         </>
       ) : null}
-      {message.text ? (
+      {shown ? (
         <Text accessibilityLiveRegion="polite" style={[styles.small, { color: message.error ? theme.error : theme.ok }]}>{message.text}</Text>
       ) : null}
     </View>

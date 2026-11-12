@@ -9,6 +9,7 @@ import {
   importQueueItem,
   cancelAndBlocklist,
   cancelRematch,
+  dismissRematch,
   retryDelivery,
   type ItemStatus,
   type StatusAction,
@@ -31,6 +32,7 @@ import {
   fmtRate,
   fmtWhen,
   REMATCH_STATE,
+  noticeBelongsTo,
   rematchCounts,
   stageActions,
   stateClass,
@@ -63,7 +65,7 @@ export function ItemStatusPanel({ itemId, kind, onInteractiveSearch }: {
   const s = status.data
   // The Stop result lives here, not in the block: once the move is stopped
   // the block is gone, and the answer must still be on screen.
-  const [stopNotice, setStopNotice] = useState({ message: '', warning: false, revision: 0 })
+  const [stopNotice, setStopNotice] = useState({ message: '', warning: false, revision: 0, op: '' })
   useEffect(() => {
     if (s && collapsed === null) setCollapsed(s.done)
   }, [s, collapsed])
@@ -76,9 +78,9 @@ export function ItemStatusPanel({ itemId, kind, onInteractiveSearch }: {
       </div>
       {status.isError && !s && <p className="muted">Status unavailable: {(status.error as Error).message}</p>}
       {!s && !status.isError && <p className="muted">Loading…</p>}
-      {(s?.rematch || stopNotice.message) && (
-        <MovingFiles itemId={itemId} r={s?.rematch} notice={stopNotice}
-          say={(message, warning = false) => setStopNotice((n) => ({ message, warning, revision: n.revision + 1 }))} />
+      {(s?.rematch || (stopNotice.message && noticeBelongsTo(stopNotice.op, s?.rematch?.operationId))) && (
+        <MovingFiles itemId={itemId} r={s?.rematch} notice={noticeBelongsTo(stopNotice.op, s?.rematch?.operationId) ? stopNotice : { ...stopNotice, message: '' }}
+          say={(message, warning = false, op = '') => setStopNotice((n) => ({ message, warning, revision: n.revision + 1, op }))} />
       )}
       {s && s.done && collapsed ? (
         <button type="button" className="item-status-oneline" aria-expanded="false" onClick={() => setCollapsed(false)}>
@@ -109,30 +111,43 @@ function MovingFiles({ itemId, r, notice, say }: {
   itemId: number
   r?: StatusRematch
   notice: { message: string; warning: boolean; revision: number }
-  say: (message: string, warning?: boolean) => void
+  say: (message: string, warning?: boolean, op?: string) => void
 }) {
   const qc = useQueryClient()
   const stop = useMutation({
     mutationFn: () => cancelRematch(r!.operationId),
     onSuccess: () => {
-      say('Stopping the move; every moved file is put back where it was.')
+      say('Stopping the move; every moved file is put back where it was.', false, r!.operationId)
       void qc.invalidateQueries({ queryKey: ['item-status', itemId] })
       void qc.invalidateQueries({ queryKey: ['library-item', String(itemId)] })
     },
-    onError: (e) => say(`✕ ${(e as Error).message}`, true),
+    onError: (e) => say(`✕ ${(e as Error).message}`, true, r?.operationId),
+  })
+  const dismiss = useMutation({
+    mutationFn: () => dismissRematch(r!.operationId),
+    onSuccess: () => {
+      say('Dismissed.', false, r!.operationId)
+      void qc.invalidateQueries({ queryKey: ['item-status', itemId] })
+    },
+    onError: (e) => say(`✕ ${(e as Error).message}`, true, r?.operationId),
   })
   return (
     <div className="item-moving" data-testid="item-moving">
       {r && (
         <>
-          <h3>Moving files</h3>
+          <h3>{r.ended ? 'Moving files ended' : 'Moving files'}</h3>
           <div className="item-moving-head">
             <b>{r.headline}</b>
-            <span className="muted"> · {REMATCH_STATE[r.state]}</span>
+            {!r.ended && <span className="muted"> · {REMATCH_STATE[r.state]}</span>}
           </div>
-          <div className="item-numbers">
-            {rematchCounts(r).map((c) => <span key={c}>{c}</span>)}
-          </div>
+          {!r.ended && (
+            <div className="item-numbers">
+              {rematchCounts(r).map((c) => <span key={c}>{c}</span>)}
+            </div>
+          )}
+          {(r.failedMoves ?? []).map((f) => (
+            <p key={f.from} className="warning-text small"><span className="mono">{f.from}</span>: {f.reason}</p>
+          ))}
           {r.bytesTotal > 0 && (
             <progress max={r.bytesTotal} value={r.bytesDone} aria-label="Bytes moved" />
           )}
@@ -148,6 +163,13 @@ function MovingFiles({ itemId, r, notice, say }: {
           {r.cinemaLine && <p className="muted small">{r.cinemaLine}</p>}
           {(r.warnings ?? []).map((w) => <p key={w} className="warning-text small">{w}</p>)}
           {r.error && <p className="warning-text small">{r.error}</p>}
+          {r.ended && (
+            <div className="item-status-actions">
+              <button type="button" disabled={dismiss.isPending} onClickCapture={focusActionTrigger} onClick={() => dismiss.mutate()}>
+                {dismiss.isPending ? 'Dismissing…' : 'Dismiss'}
+              </button>
+            </div>
+          )}
           {r.stoppable && (
             <div className="item-status-actions">
               <button type="button" className="btn-danger" disabled={stop.isPending} onClickCapture={focusActionTrigger}

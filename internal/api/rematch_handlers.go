@@ -237,3 +237,17 @@ func (s *Server) CancelRematch(w http.ResponseWriter, r *http.Request, operation
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
+
+// DismissRematch implements POST /rematch/{operationId}/dismiss: a finished
+// operation leaves the item pages' status panels.
+func (s *Server) DismissRematch(w http.ResponseWriter, r *http.Request, operationID string) {
+	if err := s.deps.Acquisition.DismissRematch(r.Context(), operationID); err != nil {
+		if errors.Is(err, acquisition.ErrInvalidRematch) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		s.rematchErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

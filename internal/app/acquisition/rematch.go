@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1168,6 +1169,22 @@ func (s *Service) CancelRematch(ctx context.Context, id string) error {
 	return nil
 }
 
+// DismissRematch hides a finished operation from the item pages' status
+// panels. A running operation cannot be dismissed.
+func (s *Service) DismissRematch(ctx context.Context, id string) error {
+	ok, err := s.db.DismissRematch(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		if _, err := s.db.GetRematchOperation(ctx, id); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: it is still running; Stop it instead", ErrInvalidRematch)
+	}
+	return nil
+}
+
 // RematchStatus is GET /rematch/{id}: the operation and what Cinema said.
 type RematchStatus struct {
 	sqlite.RematchOperation
@@ -1181,6 +1198,25 @@ type RematchCinema struct {
 	Result    string `json:"result,omitempty"`
 	LastError string `json:"lastError,omitempty"`
 	VisibleAt int64  `json:"visibleAt,omitempty"`
+	// Warnings are cinema's lasting answers about removed paths, read from
+	// the delivery's structured file results.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// RematchCinemaOf is the operation's view of one cinema sub-delivery.
+func RematchCinemaOf(d sqlite.Delivery) RematchCinema {
+	return RematchCinema{Directory: d.Directory, Status: d.Status, Result: d.Result, LastError: d.LastError, VisibleAt: d.VisibleAt, Warnings: deliveryWarnings(d)}
+}
+
+// deliveryWarnings are the lasting removed-path warnings stored on a row.
+func deliveryWarnings(d sqlite.Delivery) []string {
+	var out []string
+	for _, f := range d.FileResults {
+		if f.Warning != "" && (f.State == "present" || f.State == "retained") {
+			out = append(out, f.Warning)
+		}
+	}
+	return out
 }
 
 // GetRematch reads one operation.
@@ -1198,7 +1234,7 @@ func (s *Service) GetRematch(ctx context.Context, id string) (RematchStatus, err
 		if d.IdempotencyKey == "" {
 			continue
 		}
-		out.Cinema = append(out.Cinema, RematchCinema{Directory: d.Directory, Status: d.Status, Result: d.Result, LastError: d.LastError, VisibleAt: d.VisibleAt})
+		out.Cinema = append(out.Cinema, RematchCinemaOf(d))
 	}
 	return out, nil
 }
@@ -1253,6 +1289,12 @@ func (s *Service) driveRematches(ctx context.Context) {
 		leaseCtx, release, err := s.lockImportTargets(workCtx, 2*time.Second, op.SourceItemID, op.TargetItemID)
 		if err != nil {
 			releaseWork()
+			// A move just started is still inside StartRematch's own lease
+			// wait; saying "waiting" now would be noise. runRematch clears
+			// the line when the move first runs.
+			if op.State == "planned" && time.Since(time.UnixMilli(op.CreatedAt)) < rematchLeaseWait {
+				continue
+			}
 			_ = s.db.SetRematchError(ctx, op.ID, "waiting for its titles: "+err.Error())
 			continue
 		}
@@ -1343,6 +1385,11 @@ func (s *Service) runRematch(ctx context.Context, id string) error {
 		}
 		if current.State == "cancel_pending" {
 			return s.rollbackRematch(bg, current, moves, "cancelled", "")
+		}
+		if errors.Is(err, sqlite.ErrRematchStale) {
+			// The library changed under the move (a scan, an import): say
+			// so, rather than a bare "failed".
+			return s.rollbackRematch(bg, current, moves, "failed", "a library scan or import changed this title while the files moved ("+err.Error()+"); every file is back where it was; review and run it again")
 		}
 		return s.rollbackRematch(bg, current, moves, "failed", err.Error())
 	}
@@ -1694,8 +1741,12 @@ func (s *Service) commitRematch(ctx context.Context, op sqlite.RematchOperation,
 	}
 	commit := sqlite.RematchCommit{OperationID: op.ID, SourceItemID: source.ID, TargetItemID: target.ID, TargetPath: stored.TargetPath, RemoveSource: stored.RemoveSource}
 	result := rematchResult{Moved: []rematchMoved{}, LeftOut: []string{}, Failed: []RematchPair{}, Blocklisted: []RematchRelease{}, SourceRemoved: stored.RemoveSource, CinemaNote: p.Cinema}
-	var placed []ports.ExpectedFile
-	var removed []string
+	var placed []rematchPlaced
+	var strays []string
+	// Blocklisting is for an item that stays: decided from the commit's own
+	// outcome (a failed move keeps the source), once every move is read.
+	var blocks []sqlite.RematchBlocklist
+	var blocked []RematchRelease
 	for _, mv := range moves {
 		line := lines[mv.FileID]
 		if mv.State == "rematch_failed" {
@@ -1713,17 +1764,22 @@ func (s *Service) commitRematch(ctx context.Context, op sqlite.RematchOperation,
 		}
 		commit.Files = append(commit.Files, fc)
 		result.Moved = append(result.Moved, rematchMoved{From: mv.Source, To: mv.Target, Episodes: line.Episodes, Mode: mv.Mode})
-		if info, err := os.Stat(mv.Target); err == nil {
-			placed = append(placed, ports.ExpectedFile{Path: mv.Target, Bytes: info.Size(), MtimeNs: info.ModTime().UnixNano()})
-		}
+		// A move's removed paths travel with its expected file: Cinema's
+		// expected_not_placed guard is per request.
+		var gone []string
 		if mv.Source != mv.Target {
-			removed = append(removed, mv.Source)
+			gone = append(gone, mv.Source)
 		}
 		for _, r := range line.Replaces {
-			removed = append(removed, r.Path)
+			gone = append(gone, r.Path)
 			result.Replaced = append(result.Replaced, r.Path)
 		}
-		if p.BlocklistOn && !stored.RemoveSource && f.SourceGUID != "" && f.SourceIndexerID != 0 {
+		if info, err := os.Stat(mv.Target); err == nil {
+			placed = append(placed, rematchPlaced{File: ports.ExpectedFile{Path: mv.Target, Bytes: info.Size(), MtimeNs: info.ModTime().UnixNano()}, Removed: gone})
+		} else {
+			strays = append(strays, gone...)
+		}
+		if p.BlocklistOn && f.SourceGUID != "" && f.SourceIndexerID != 0 {
 			for _, r := range p.Blocklist {
 				if r.FileID != f.ID {
 					continue
@@ -1732,12 +1788,12 @@ func (s *Service) commitRematch(ctx context.Context, op sqlite.RematchOperation,
 				if source.Kind == domain.KindSeries {
 					scope, eps = "episodes", f.EpisodeIDs
 				}
-				commit.Blocklist = append(commit.Blocklist, sqlite.RematchBlocklist{
+				blocks = append(blocks, sqlite.RematchBlocklist{
 					OperationID: op.ID + "/blocklist/" + strconv.FormatInt(f.ID, 10), MediaItemID: source.ID, CopyID: f.CopyID,
 					Scope: scope, EpisodeIDs: eps, SourceGeneration: f.SourceGeneration, SourceTransfer: f.SourceTransfer,
 					SourceRelease: f.SourceRelease, SourceIndexer: f.SourceIndexer, SourceGUID: f.SourceGUID, SourceIndexerID: f.SourceIndexerID,
 					Reason: "re-matched to " + target.Title})
-				result.Blocklisted = append(result.Blocklisted, r)
+				blocked = append(blocked, r)
 			}
 		}
 	}
@@ -1748,6 +1804,9 @@ func (s *Service) commitRematch(ctx context.Context, op sqlite.RematchOperation,
 		commit.LeftOut = append(commit.LeftOut, l.FileID)
 		result.LeftOut = append(result.LeftOut, l.From)
 	}
+	if !commit.RemoveSource {
+		commit.Blocklist, result.Blocklisted = blocks, append(result.Blocklisted, blocked...)
+	}
 	result.SourceRemoved = commit.RemoveSource
 	data := map[string]any{"failed": result.Failed, "operation": op.ID, "from": source.ID, "fromTitle": source.Title, "to": target.ID, "toTitle": target.Title,
 		"moved": result.Moved, "blocklisted": result.Blocklisted, "leftOut": result.LeftOut, "sourceRemoved": commit.RemoveSource}
@@ -1755,8 +1814,8 @@ func (s *Service) commitRematch(ctx context.Context, op sqlite.RematchOperation,
 	if source.ID != target.ID {
 		commit.History = append(commit.History, sqlite.HistoryWrite{Type: HistoryRematched, MediaItemID: source.ID, Data: data})
 	}
-	if len(placed) > 0 || len(removed) > 0 {
-		if commit.Outbox, err = s.rematchOutbox(ctx, op.ID, source, target, placed, removed); err != nil {
+	if len(placed) > 0 || len(strays) > 0 {
+		if commit.Outbox, err = s.rematchOutbox(ctx, op.ID, source, target, placed, strays); err != nil {
 			return err
 		}
 	}
@@ -1772,6 +1831,10 @@ func (s *Service) commitRematch(ctx context.Context, op sqlite.RematchOperation,
 // HistoryRematched records a Re-match on both items: from, to and every
 // path that moved.
 const HistoryRematched = "rematched"
+
+// rematchSourceChanged marks a committed copy whose source was not the file
+// that was copied, so it was left alone.
+const rematchSourceChanged = "the original changed since the copy and was left in place"
 
 // finishRematch removes what a copy left at the source, removes what a move
 // replaces (import's removeExistingFiles), and an emptied adopted item's
@@ -1801,6 +1864,10 @@ func (s *Service) finishRematch(ctx context.Context, op sqlite.RematchOperation,
 					problems = append(problems, fmt.Sprintf("the original %s could not be removed (the library copy is at %s): %v", mv.Source, mv.Target, err))
 					continue
 				}
+			} else if err == nil {
+				// Something else stands at the source now (changed since the
+				// copy): never removed, and reported rather than called done.
+				mv.Error = rematchSourceChanged
 			}
 			sidecarsLeft := false
 			for _, sc := range mv.Sidecars {
@@ -1852,6 +1919,13 @@ func (s *Service) finishRematch(ctx context.Context, op sqlite.RematchOperation,
 	if result.SourceRemoved && stored.Preview.Source.Folder != "" {
 		result.LeftBehind = removeEmptyDirs(stored.Preview.Source.Folder)
 	}
+	// A copy's source that changed after the copy is never removed; the
+	// journal remembers it across passes.
+	for _, mv := range moves {
+		if mv.Error == rematchSourceChanged && !slices.Contains(result.LeftBehind, mv.Source) {
+			result.LeftBehind = append(result.LeftBehind, mv.Source)
+		}
+	}
 	raw, _ := json.Marshal(result)
 	if err := s.db.SetRematchState(ctx, op.ID, "complete", "", raw); err != nil {
 		return err
@@ -1895,11 +1969,25 @@ func removeEmptyDirs(dir string) []string {
 	return left
 }
 
+// rematchPlaced is one file a move placed and the paths that left because of
+// it (its source, what it replaced).
+type rematchPlaced struct {
+	File    ports.ExpectedFile
+	Removed []string
+}
+
+// rematchPair is the unit of a Cinema request: an expected file with its
+// removed paths (exp nil: removed paths whose file could not be probed).
+type rematchPair struct {
+	exp *ports.ExpectedFile
+	rem []string
+}
+
 // rematchOutbox writes the move's notifications (ADR 0027 item 9). Cinema
 // gets one sub-delivery per library root touched, keyed by operation, whose
 // path is the common parent of the files placed and the files that left;
 // every other notifier gets one moved message.
-func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target domain.MediaItem, placed []ports.ExpectedFile, removed []string) ([]sqlite.OutboxWrite, error) {
+func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target domain.MediaItem, placed []rematchPlaced, strays []string) ([]sqlite.OutboxWrite, error) {
 	notifiers, err := s.db.ListNotifiers(ctx)
 	if err != nil {
 		return nil, err
@@ -1908,10 +1996,12 @@ func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target
 	if err != nil {
 		return nil, err
 	}
-	var paths []string
+	var paths, removed []string
 	for _, f := range placed {
-		paths = append(paths, f.Path)
+		paths = append(paths, f.File.Path)
+		removed = append(removed, f.Removed...)
 	}
+	removed = append(removed, strays...)
 	whole := ports.Notification{Event: "moved", Title: "Re-matched: " + target.Title,
 		Body:   fmt.Sprintf("%d file%s moved from %s to %s", len(placed), pluralS(len(placed)), source.Title, target.Title),
 		Fields: map[string]string{"from": source.Title, "to": target.Title},
@@ -1921,12 +2011,9 @@ func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target
 	if err != nil {
 		return nil, err
 	}
-	// Group by library root: one request per root.
-	type group struct {
-		expected []ports.ExpectedFile
-		removed  []string
-	}
-	groups := map[string]*group{}
+	// Group by library root: one request per root (a removed path under
+	// another root than its file's is its own pair there).
+	groups := map[string][]rematchPair{}
 	rootOf := func(path string) string {
 		best := ""
 		for _, r := range roots {
@@ -1934,24 +2021,23 @@ func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target
 				best = r.Path
 			}
 		}
-		if best == "" {
-			best = filepath.Dir(path)
-		}
 		return best
 	}
-	get := func(root string) *group {
-		if groups[root] == nil {
-			groups[root] = &group{}
-		}
-		return groups[root]
-	}
 	for _, f := range placed {
-		g := get(rootOf(f.Path))
-		g.expected = append(g.expected, f)
+		f := f
+		root := rootOf(f.File.Path)
+		pair := rematchPair{exp: &f.File}
+		for _, r := range f.Removed {
+			if rr := rootOf(r); rr != root {
+				groups[rr] = append(groups[rr], rematchPair{rem: []string{r}})
+				continue
+			}
+			pair.rem = append(pair.rem, r)
+		}
+		groups[root] = append(groups[root], pair)
 	}
-	for _, r := range removed {
-		g := get(rootOf(r))
-		g.removed = append(g.removed, r)
+	for _, r := range strays {
+		groups[rootOf(r)] = append(groups[rootOf(r)], rematchPair{rem: []string{r}})
 	}
 	var keys []string
 	for k := range groups {
@@ -1964,33 +2050,33 @@ func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target
 			continue
 		}
 		if !ports.QueuedNotifier(cfg) {
-			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, Event: "moved", Payload: string(wholePayload), OperationID: opID})
+			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, MediaItemID: target.ID, Event: "moved", Payload: string(wholePayload), OperationID: opID})
 			continue
 		}
 		for _, root := range keys {
-			g := groups[root]
 			var all []string
-			for _, f := range g.expected {
-				all = append(all, f.Path)
+			for _, pr := range groups[root] {
+				if pr.exp != nil {
+					all = append(all, pr.exp.Path)
+				}
+				all = append(all, pr.rem...)
 			}
-			all = append(all, g.removed...)
 			dir := commonParent(all)
 			if dir == "" || !strings.HasPrefix(dir+"/", strings.TrimSuffix(root, "/")+"/") {
 				dir = root
 			}
 			// Every expected file is probed: a request with removed_paths is
 			// probe-only (contract 4.4), so a file left off it would never be
-			// confirmed. Both lists are split into requests Cinema accepts.
-			expChunks, remChunks := chunkExpected(g.expected), chunkPaths(g.removed)
-			chunks := max(len(expChunks), len(remChunks), 1)
-			for chunk := 0; chunk < chunks; chunk++ {
+			// confirmed. A file and the paths that left because of it share
+			// a request, and every request is one Cinema accepts.
+			for chunk, pairs := range chunkPairs(groups[root]) {
 				var exp []ports.ExpectedFile
 				var part []string
-				if chunk < len(expChunks) {
-					exp = expChunks[chunk]
-				}
-				if chunk < len(remChunks) {
-					part = remChunks[chunk]
+				for _, pr := range pairs {
+					if pr.exp != nil {
+						exp = append(exp, *pr.exp)
+					}
+					part = append(part, pr.rem...)
 				}
 				n := whole
 				info := *whole.Import
@@ -2010,7 +2096,7 @@ func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target
 				if chunk > 0 {
 					key += "-" + strconv.Itoa(chunk)
 				}
-				out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, Directory: dir, IdempotencyKey: key, ExpectedFiles: exp,
+				out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, MediaItemID: target.ID, Directory: dir, IdempotencyKey: key, ExpectedFiles: exp,
 					Event: "moved", Payload: string(payload), OperationID: opID})
 			}
 		}
@@ -2018,18 +2104,34 @@ func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target
 	return out, nil
 }
 
-// chunkExpected splits expected files into requests Cinema accepts: at most
-// ports.MaxExpectedFiles each, within ports.MaxExpectedFileBytes as JSON.
-func chunkExpected(files []ports.ExpectedFile) [][]ports.ExpectedFile {
-	var out [][]ports.ExpectedFile
-	var cur []ports.ExpectedFile
-	for _, f := range files {
-		next := append(append([]ports.ExpectedFile(nil), cur...), f)
-		if len(cur) > 0 && (len(next) > ports.MaxExpectedFiles || expectedJSONSize(next) > ports.MaxExpectedFileBytes) {
-			out, cur = append(out, cur), []ports.ExpectedFile{f}
-			continue
+// chunkPairs splits pairs into requests Cinema accepts: at most
+// ports.MaxExpectedFiles expected files and as many removed paths each, each
+// list within ports.MaxExpectedFileBytes as JSON. A pair is never split.
+func chunkPairs(pairs []rematchPair) [][]rematchPair {
+	var out [][]rematchPair
+	var cur []rematchPair
+	var exp []ports.ExpectedFile
+	var rem []string
+	fits := func(e []ports.ExpectedFile, r []string) bool {
+		if len(e) > ports.MaxExpectedFiles || len(r) > ports.MaxExpectedFiles {
+			return false
 		}
-		cur = next
+		return expectedJSONSize(e) <= ports.MaxExpectedFileBytes && pathsJSONSize(r) <= ports.MaxExpectedFileBytes
+	}
+	for _, p := range pairs {
+		ne := exp
+		if p.exp != nil {
+			ne = append(append([]ports.ExpectedFile(nil), exp...), *p.exp)
+		}
+		nr := append(append([]string(nil), rem...), p.rem...)
+		if len(cur) > 0 && !fits(ne, nr) {
+			out, cur = append(out, cur), nil
+			ne, nr = nil, p.rem
+			if p.exp != nil {
+				ne = []ports.ExpectedFile{*p.exp}
+			}
+		}
+		cur, exp, rem = append(cur, p), ne, nr
 	}
 	if len(cur) > 0 {
 		out = append(out, cur)
@@ -2037,23 +2139,13 @@ func chunkExpected(files []ports.ExpectedFile) [][]ports.ExpectedFile {
 	return out
 }
 
-// chunkPaths splits removed paths the same way.
-func chunkPaths(paths []string) [][]string {
-	var out [][]string
-	var cur []string
+func pathsJSONSize(paths []string) int {
 	size := 2
 	for _, p := range paths {
 		raw, _ := json.Marshal(p)
-		n := len(raw) + 1
-		if len(cur) > 0 && (len(cur) == ports.MaxExpectedFiles || size+n > ports.MaxExpectedFileBytes) {
-			out, cur, size = append(out, cur), nil, 2
-		}
-		cur, size = append(cur, p), size+n
+		size += len(raw) + 1
 	}
-	if len(cur) > 0 {
-		out = append(out, cur)
-	}
-	return out
+	return size
 }
 
 // RematchDeliveryKey is a move's sub-delivery key: op/<operation-id>/<dir-hash>

@@ -717,7 +717,10 @@ leave and the one they go to) shows a **Moving files** block: the direction
 ("Files moving here from Dune (1984)"), state, files and bytes done, each
 `from → to`, what cinema said (including files it still has or kept) and
 **Stop** until the files are committed. It refreshes every 2 s without
-moving the page; Stop's answer appears beside the button.
+moving the page; Stop's answer appears beside the button. A move that ends
+badly (failed, or complete with files that could not move) stays there for
+24 hours with its reason and the files that did not move, until you press
+**Dismiss**.
 
 Nothing moves until you have read the preview. It lists:
 

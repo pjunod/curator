@@ -319,38 +319,59 @@ func (d *Dispatcher) refreshFeatures(ctx context.Context, cfg ports.NotifierConf
 
 // removedVerdict is what Cinema said of a moved request's removed paths
 // (contract 4.4). gone and unknown satisfy; retry holds the sub-delivery
-// (transient: try again on the schedule); warn is a lasting answer, shown on
-// the row without holding it.
+// (transient: try again on the schedule); warn is a lasting answer, kept on
+// the row as a structured entry without holding it.
 type removedVerdict struct {
-	retry, warn []string
-	answered    bool // false: some removed path has no entry (an older Cinema)
+	retry    []string
+	warn     []sqlite.DeliveryFileResult
+	answered bool // false: some removed path has no entry (an older Cinema)
 }
 
-func presentWords(reason string) string {
+// presentVerdict words a present answer. transient says the file only
+// reappeared before cinema removed it, so asking again will find it gone.
+func presentVerdict(path, reason string) (words string, transient bool) {
 	switch reason {
 	case ports.ReasonSymlinkInPath:
-		return "a symlink is in its path"
-	case ports.ReasonCaseOnly:
-		return "only the case of its name differs"
-	default:
-		return "it still exists in the library"
+		return fmt.Sprintf("cinema found a symlink on the path of %s and kept the entry", path), false
+	case ports.ReasonCaseVariant:
+		return fmt.Sprintf("the path of %s differs only in case on cinema's filesystem", path), false
+	case ports.ReasonReappeared:
+		return fmt.Sprintf("cinema is holding %s: it reappeared before cinema removed it", path), true
+	case ports.ReasonExists, "":
+		return fmt.Sprintf("cinema still has %s", path), false
 	}
+	return fmt.Sprintf("cinema still has %s: %s", path, reason), false
 }
 
-func retainedWords(code string) string {
-	switch code {
-	case ports.RetainedRootIdentityUnset:
-		return "its library root has no recorded identity yet"
-	case ports.RetainedRootIdentityMismatch:
-		return "its library root is not the one it indexed"
-	case ports.RetainedPruneBound:
-		return "it is at its prune limit"
-	case ports.RetainedConversionHold:
-		return "the file is held for a conversion"
-	case ports.RetainedExpectedNotPlaced:
-		return "an expected file is not placed yet"
+// retainedVerdict words a retained answer and says whether to ask again.
+func retainedVerdict(path string, f ports.PlacedReport) (words string, retry bool) {
+	why := f.Reason
+	if why == "" {
+		why = "code " + f.Code
 	}
-	return "code " + code
+	switch f.Code {
+	case ports.RetainedExpectedNotPlaced:
+		return fmt.Sprintf("cinema is holding %s: an expected file is not placed yet", path), true
+	case ports.RetainedPruneBound:
+		return fmt.Sprintf("cinema is holding %s: it is at its prune limit", path), true
+	case ports.RetainedConversionHold:
+		return fmt.Sprintf("cinema is holding %s: the file is held for a conversion", path), true
+	case ports.RetainedRootIdentityUnset:
+		return fmt.Sprintf("cinema kept %s: its library root has no recorded identity yet; it will drop it at its next full scan", path), false
+	case ports.RetainedRootIdentityMismatch:
+		return fmt.Sprintf("cinema kept %s: its library root is not the one it indexed; it will drop it at its next full scan", path), false
+	case ports.RetainedRecordKept:
+		if f.Reason == "" {
+			why = "it kept the record on purpose"
+		}
+		return fmt.Sprintf("cinema kept the record of %s: %s", path, why), false
+	}
+	// A code this curator does not know: cinema's own word on retrying, and
+	// its own reason text.
+	if f.Retryable {
+		return fmt.Sprintf("cinema is holding %s: %s", path, why), true
+	}
+	return fmt.Sprintf("cinema kept %s: %s", path, why), false
 }
 
 func judgeRemoved(removed []string, files []ports.PlacedReport) removedVerdict {
@@ -365,14 +386,19 @@ func judgeRemoved(removed []string, files []ports.PlacedReport) removedVerdict {
 		case !ok:
 			v.answered = false
 		case f.State == "present":
-			v.warn = append(v.warn, fmt.Sprintf("cinema still has %s: %s", r, presentWords(f.Reason)))
-		case f.State == "retained":
-			switch f.Code {
-			case ports.RetainedExpectedNotPlaced, ports.RetainedPruneBound, ports.RetainedConversionHold:
-				v.retry = append(v.retry, fmt.Sprintf("cinema is holding %s: %s", r, retainedWords(f.Code)))
-			default:
-				v.warn = append(v.warn, fmt.Sprintf("cinema kept %s: %s; it will drop it at its next full scan", r, retainedWords(f.Code)))
+			words, transient := presentVerdict(r, f.Reason)
+			if transient {
+				v.retry = append(v.retry, words)
+				break
 			}
+			v.warn = append(v.warn, sqlite.DeliveryFileResult{Path: r, State: "present", Reason: f.Reason, Warning: words})
+		case f.State == "retained":
+			words, retry := retainedVerdict(r, f)
+			if retry {
+				v.retry = append(v.retry, words)
+				break
+			}
+			v.warn = append(v.warn, sqlite.DeliveryFileResult{Path: r, State: "retained", Code: f.Code, Reason: f.Reason, ItemID: f.ItemID, Warning: words})
 		}
 	}
 	return v
@@ -487,7 +513,10 @@ func (d *Dispatcher) settleSub(ctx context.Context, del sqlite.Delivery, sub sub
 				d.forgetRemovedPaths(ctx, sub.notifierID)
 			default:
 				missing = append(missing, verdict.retry...)
-				warns = verdict.warn
+				for _, w := range verdict.warn {
+					warns = append(warns, w.Warning)
+				}
+				del.FileResults = append(del.FileResults, verdict.warn...)
 			}
 		}
 		if len(missing) == 0 {

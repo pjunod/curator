@@ -2106,6 +2106,7 @@ export const startRematch = (itemId: number, req: RematchRequest) =>
 /** The open Re-match for an item; undefined when there is none (204). */
 export const getLibraryRematch = (itemId: number) => send<RematchOperation | undefined>('GET', `/library/${itemId}/rematch`).then((op) => op ?? null)
 export const getRematch = (operationId: string) => get<RematchOperation>(`/rematch/${encodeURIComponent(operationId)}`)
+export const dismissRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/dismiss`)
 export const cancelRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)
 // ---- item status panel (0.46.0) ----
 
@@ -2144,6 +2145,8 @@ export interface StatusDownload {
 }
 
 export interface StatusCinema {
+  /** Cinema's lasting answers about files that left (a Re-match). */
+  warnings?: string[]
   deliveryId: number
   notifierId: number
   status: string
@@ -2203,7 +2206,10 @@ export interface ItemStatus {
 }
 export interface StatusRematch {
   operationId: string
-  state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending'
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending' | 'complete' | 'cancelled' | 'failed'
+  /** Over, but ended badly: shown for 24 h or until dismissed. */
+  ended: boolean
+  failedMoves?: { from: string; reason: string }[]
   role: 'source' | 'target'
   sourceItemId: number
   targetItemId: number

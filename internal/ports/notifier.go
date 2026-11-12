@@ -225,6 +225,8 @@ type PlacedReport struct {
 	MtimeNs int64  `json:"mtime_ns,omitempty"`
 	ItemID  int64  `json:"item_id,omitempty"`
 	Reason  string `json:"reason,omitempty"`
+	// Retryable is a retained path's own word on whether waiting helps.
+	Retryable bool `json:"retryable,omitempty"`
 }
 
 // Why Cinema retained a removed path (PlacedReport.Code, contract 4.4).
@@ -234,13 +236,15 @@ const (
 	RetainedPruneBound           = "prune_bound"
 	RetainedConversionHold       = "conversion_hold"
 	RetainedExpectedNotPlaced    = "expected_not_placed"
+	RetainedRecordKept           = "record_kept"
 )
 
-// Why a removed path is still present (PlacedReport.Reason).
+// Why Cinema says a removed path is still present (PlacedReport.Reason).
 const (
-	ReasonStillPresent  = "still_present"
-	ReasonSymlinkInPath = "symlink_in_path"
-	ReasonCaseOnly      = "case_only"
+	ReasonExists        = "exists"
+	ReasonSymlinkInPath = "symlink_in_chain"
+	ReasonCaseVariant   = "case_variant"
+	ReasonReappeared    = "reappeared_before_removal"
 )
 
 // FeatureProber re-reads what the far side supports (Cinema's connection

@@ -192,6 +192,7 @@ export class MonarrClient {
   startRematch = (itemId: number, req: RematchRequest): Promise<RematchOperation> => this.send('POST', `/library/${itemId}/rematch`, req)
   getLibraryRematch = async (itemId: number): Promise<RematchOperation | null> => (await this.get<RematchOperation | undefined>(`/library/${itemId}/rematch`)) ?? null
   getRematch = (operationId: string): Promise<RematchOperation> => this.get(`/rematch/${encodeURIComponent(operationId)}`)
+  dismissRematch = (operationId: string): Promise<void> => this.send('POST', `/rematch/${encodeURIComponent(operationId)}/dismiss`)
   cancelRematch = (operationId: string): Promise<void> => this.send('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)
   // Import file… on the item page: browse, list one folder, plan, start, stop.
   browseFilesystem = (path: string): Promise<BrowseResult> => this.get(`/filesystem?path=${encodeURIComponent(path)}`)

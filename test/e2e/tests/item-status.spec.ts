@@ -287,5 +287,28 @@ for (const width of [390, 1280]) {
       expect(cancelled).toBe(1)
       await noSideScroll(page)
     })
+
+    test('a Re-match that failed stays on the panel with its reason until dismissed', async ({ page }) => {
+      let dismissed = 0
+      const failed = () => ({
+        ...unconfirmed(),
+        rematch: {
+          operationId: 'rm-f', state: 'failed', ended: true, role: 'target', sourceItemId: 41, targetItemId: ITEM, sourceTitle: 'Dune (1984)', targetTitle: 'Past Lives (2023)',
+          headline: 'Moving files from Dune (1984) to Past Lives (2023) failed; every file is back where it was', bytesDone: 0, bytesTotal: 0, filesDone: 0, filesTotal: 0,
+          error: 'the target disk is full', failedMoves: [{ from: '/20t/movies/Dune (1984)/Dune.mkv', reason: 'no space left' }], stoppable: false,
+        },
+      })
+      await page.route('**/api/v1/rematch/rm-f/dismiss', route => { dismissed++; return route.fulfill({ status: 204 }) })
+      await movie(page, () => (dismissed ? unconfirmed() : failed()))
+      const block = page.getByTestId('item-moving')
+      await expect(block).toContainText('the target disk is full')
+      await expect(block).toContainText('no space left')
+      await expect(block.getByRole('button', { name: 'Stop' })).toHaveCount(0)
+      await block.getByRole('button', { name: 'Dismiss' }).scrollIntoViewIfNeeded()
+      await block.getByRole('button', { name: 'Dismiss' }).click()
+      await inViewport(page, page.getByTestId('item-moving').getByRole('status').filter({ hasText: 'Dismissed.' }))
+      expect(dismissed).toBe(1)
+      await noSideScroll(page)
+    })
   })
 }

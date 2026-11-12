@@ -63,6 +63,9 @@ export const REMATCH_STATE: Record<StatusRematch['state'], string> = {
   moved: 'Files moved; committing',
   committed: 'Files in place; finishing',
   cancel_pending: 'Stopping; putting the moved files back',
+  complete: 'Complete',
+  cancelled: 'Stopped',
+  failed: 'Failed',
 }
 
 /** "1 of 2 files · 5 MB of 10 MB" (bytes only when known). */
@@ -71,3 +74,6 @@ export function rematchCounts(r: Pick<StatusRematch, 'filesDone' | 'filesTotal' 
   if (r.bytesTotal > 0) parts.push(`${formatBytes(r.bytesDone)} of ${formatBytes(r.bytesTotal)}`)
   return parts.join(' · ')
 }
+
+/** A Stop/Dismiss answer belongs to the operation it was given for: once a different one opens, it goes. */
+export const noticeBelongsTo = (noticeOp: string, currentOp: string | undefined) => !currentOp || !noticeOp || currentOp === noticeOp

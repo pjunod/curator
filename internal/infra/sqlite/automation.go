@@ -259,6 +259,11 @@ type DeliveryFileResult struct {
 	MtimeNs int64  `json:"mtimeNs,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	Matched bool   `json:"matched"`
+	// Code and Warning are set on the entry of a removed path (State
+	// present or retained) that cinema answered with a lasting warning: the
+	// panel and the delivery log read the verdict from here, not from text.
+	Code    string `json:"code,omitempty"`
+	Warning string `json:"warning,omitempty"`
 }
 
 // RequestKey is the key Cinema sees for this attempt: "<key>/<attempt>".

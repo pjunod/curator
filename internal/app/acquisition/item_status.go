@@ -111,6 +111,8 @@ type StatusCinema struct {
 	VisibleAt  int64   `json:"visibleAt,omitempty"`
 	ItemIDs    []int64 `json:"itemIds,omitempty"`
 	Error      string  `json:"error,omitempty"`
+	// Warnings are cinema's lasting answers about files that left (a Re-match).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // StatusHeadline is the one line at the top of the panel; At is the time
@@ -722,14 +724,17 @@ func cinemaStages(st []StatusStage, dels []sqlite.Delivery, files []domain.Media
 	var lastVisible int64
 	var refusal string
 	var itemID int64
+	var warnings []string
 	pick := dels[0]
 	for _, d := range dels {
 		if d.Status == "failed" && pick.Status != "failed" {
 			pick = d
 		}
 		if len(d.FileResults) > 0 {
+			warnings = append(warnings, deliveryWarnings(d)...)
 			for _, r := range d.FileResults {
-				if !mine(r.Path) {
+				// A removed path's entry is a warning, not a file of this item.
+				if (r.State == "present" || r.State == "retained") || !mine(r.Path) {
 					continue
 				}
 				switch {
@@ -772,7 +777,7 @@ func cinemaStages(st []StatusStage, dels []sqlite.Delivery, files []domain.Media
 		}
 	}
 	c := &StatusCinema{DeliveryID: pick.ID, NotifierID: pick.NotifierID, Status: pick.Status, WaitingOn: pick.WaitingOn,
-		VisibleAt: pick.VisibleAt, ItemIDs: pick.ItemIDs, Error: pick.LastError}
+		VisibleAt: pick.VisibleAt, ItemIDs: pick.ItemIDs, Error: pick.LastError, Warnings: warnings}
 
 	// Cinema notified.
 	switch {
@@ -798,6 +803,12 @@ func cinemaStages(st []StatusStage, dels []sqlite.Delivery, files []domain.Media
 		d := "confirmed"
 		if itemID != 0 {
 			d += " · cinema item " + strconv.FormatInt(itemID, 10)
+		}
+		if len(warnings) > 0 {
+			d += "; warning: " + warnings[0]
+			if len(warnings) > 1 {
+				d += " (and " + strconv.Itoa(len(warnings)-1) + " more)"
+			}
 		}
 		st[5] = StatusStage{Key: StageInCinema, State: StatusDone, At: lastVisible, Detail: d}
 	case pick.Status == "failed":

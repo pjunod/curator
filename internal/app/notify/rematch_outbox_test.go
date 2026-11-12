@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,45 +60,99 @@ func TestMovedDeliveryIsVisibleWhenRemovedPathIsGone(t *testing.T) {
 	}
 }
 
-// present is a lasting answer: the row is visible for the new files, names
-// the reason, and is not retried.
-func TestMovedDeliveryWarnsWhenRemovedPathIsPresent(t *testing.T) {
-	for reason, words := range map[string]string{
-		"": "it still exists in the library", ports.ReasonStillPresent: "it still exists in the library",
-		ports.ReasonSymlinkInPath: "a symlink is in its path", ports.ReasonCaseOnly: "only the case of its name differs",
+// present: exists, symlink_in_chain and case_variant are lasting answers (the
+// row is visible for the new files, names the reason in plain words, is not
+// retried, and keeps the verdict structurally); reappeared_before_removal is
+// transient.
+func TestMovedDeliveryPresentReasons(t *testing.T) {
+	for _, tc := range []struct {
+		reason, words string
+		transient     bool
+	}{
+		{"", "cinema still has %s", false},
+		{ports.ReasonExists, "cinema still has %s", false},
+		{ports.ReasonSymlinkInPath, "cinema found a symlink on the path of %s and kept the entry", false},
+		{ports.ReasonCaseVariant, "the path of %s differs only in case on cinema's filesystem", false},
+		{ports.ReasonReappeared, "cinema is holding %s: it reappeared before cinema removed it", true},
 	} {
 		e := newOutboxEnv(t)
-		e.cinema.Set(func(c *cinematest.Cinema) { c.RemovedPaths, c.PresentReason = true, reason })
+		e.cinema.Set(func(c *cinematest.Cinema) { c.RemovedPaths, c.PresentReason = true, tc.reason })
 		_, old := e.moved("New/Dune (2021).mkv", "Old/Dune (1984).mkv")
 		e.place("Old/Dune (1984).mkv", "still here")
 		e.pass()
 		r := e.rows()[0]
-		if r.VisibleAt == 0 || r.Status != "ok" || !strings.Contains(r.Result, "warning: cinema still has "+old+": "+words) {
-			t.Fatalf("reason %q: row = %+v, want a settled warning naming %q", reason, r, words)
+		words := fmt.Sprintf(tc.words, old)
+		if tc.transient {
+			if r.VisibleAt != 0 || r.Status != "pending" || !strings.Contains(r.Result, words) {
+				t.Fatalf("reason %q: row = %+v, want a retry saying %q", tc.reason, r, words)
+			}
+			continue
+		}
+		if r.VisibleAt == 0 || r.Status != "ok" || !strings.Contains(r.Result, "warning: "+words) {
+			t.Fatalf("reason %q: row = %+v, want a settled warning %q", tc.reason, r, words)
+		}
+		if w := structuredWarnings(r); len(w) != 1 || w[0].Warning != words || w[0].State != "present" || w[0].Path != old {
+			t.Fatalf("reason %q: stored warnings = %+v, want %q", tc.reason, w, words)
 		}
 	}
 }
 
+func structuredWarnings(d sqlite.Delivery) []sqlite.DeliveryFileResult {
+	var out []sqlite.DeliveryFileResult
+	for _, f := range d.FileResults {
+		if f.Warning != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // retained: expected_not_placed, prune_bound and conversion_hold are
-// transient (retried on the schedule); root_identity_* is a lasting warning.
+// transient (retried on the schedule); root_identity_* and record_kept are
+// lasting; an unknown code follows cinema's retryable flag and reason text.
 func TestMovedDeliveryRetainedCodes(t *testing.T) {
-	for code, transient := range map[string]bool{
-		ports.RetainedExpectedNotPlaced: true, ports.RetainedPruneBound: true, ports.RetainedConversionHold: true,
-		ports.RetainedRootIdentityUnset: false, ports.RetainedRootIdentityMismatch: false,
+	for _, tc := range []struct {
+		code, reason string
+		retryable    bool
+		transient    bool
+		words        string
+	}{
+		{ports.RetainedExpectedNotPlaced, "", false, true, "cinema is holding %s: an expected file is not placed yet"},
+		{ports.RetainedPruneBound, "", false, true, "cinema is holding %s: it is at its prune limit"},
+		{ports.RetainedConversionHold, "", false, true, "cinema is holding %s: the file is held for a conversion"},
+		{ports.RetainedRootIdentityUnset, "", false, false, "cinema kept %s: its library root has no recorded identity yet; it will drop it at its next full scan"},
+		{ports.RetainedRootIdentityMismatch, "", false, false, "cinema kept %s: its library root is not the one it indexed; it will drop it at its next full scan"},
+		{ports.RetainedRecordKept, "an operator pinned it", false, false, "cinema kept the record of %s: an operator pinned it"},
+		{"future_code", "cinema is busy", true, true, "cinema is holding %s: cinema is busy"},
+		{"future_code", "cinema wants it", false, false, "cinema kept %s: cinema wants it"},
 	} {
 		e := newOutboxEnv(t)
 		_, old := e.moved("New/Dune (2021).mkv", "Old/Dune (1984).mkv")
-		e.cinema.Set(func(c *cinematest.Cinema) { c.RemovedPaths, c.Retained = true, map[string]string{old: code} })
+		e.cinema.Set(func(c *cinematest.Cinema) {
+			c.RemovedPaths, c.Retained = true, map[string]string{old: tc.code}
+			c.RetainedReason, c.RetainedRetryable = map[string]string{old: tc.reason}, map[string]bool{old: tc.retryable}
+		})
 		e.pass()
 		r := e.rows()[0]
-		if transient {
-			if r.VisibleAt != 0 || r.Status != "pending" || !strings.Contains(r.Result, "cinema is holding "+old) {
-				t.Fatalf("%s: row = %+v, want a retry with a warning", code, r)
+		words := fmt.Sprintf(tc.words, old)
+		if tc.transient {
+			if r.VisibleAt != 0 || r.Status != "pending" || !strings.Contains(r.Result, words) {
+				t.Fatalf("%s: row = %+v, want a retry with %q", tc.code, r, words)
 			}
 			continue
 		}
-		if r.VisibleAt == 0 || r.Status != "ok" || !strings.Contains(r.Result, "cinema kept "+old) || !strings.Contains(r.Result, "it will drop it at its next full scan") {
-			t.Fatalf("%s: row = %+v, want a settled warning", code, r)
+		if r.VisibleAt == 0 || r.Status != "ok" || !strings.Contains(r.Result, "warning: "+words) {
+			t.Fatalf("%s: row = %+v, want a settled warning %q", tc.code, r, words)
+		}
+		if tc.code == ports.RetainedRecordKept && strings.Contains(r.Result, "full scan") {
+			t.Fatalf("record_kept promised a later scan: %q", r.Result)
+		}
+		if w := structuredWarnings(r); len(w) != 1 || w[0].Warning != words || w[0].State != "retained" || w[0].Code != tc.code {
+			t.Fatalf("%s: stored warnings = %+v", tc.code, w)
+		}
+		// The panel reads the structured verdict of the real settled row.
+		if c := acquisition.RematchCinemaOf(r); len(c.Warnings) != 1 || c.Warnings[0] != words {
+			t.Fatalf("%s: operation cinema warnings = %+v, want %q", tc.code, c.Warnings, words)
 		}
 	}
 }

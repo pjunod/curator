@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { REMATCH_STATE, doneAbout, fmtBytes, fmtDuration, fmtRate, rematchCounts, stageActions, statusPollMs, updatedAgo } from './itemStatus'
+import { REMATCH_STATE, noticeBelongsTo, doneAbout, fmtBytes, fmtDuration, fmtRate, rematchCounts, stageActions, statusPollMs, updatedAgo } from './itemStatus'
 import type { ItemStatus } from './api'
 
 describe('item status display', () => {
@@ -38,5 +38,12 @@ describe('item status display', () => {
     expect(rematchCounts({ filesDone: 0, filesTotal: 1, bytesDone: 0, bytesTotal: 0 })).toEqual(['0 of 1 file'])
     expect(REMATCH_STATE.cancel_pending).toContain('putting the moved files back')
     expect(statusPollMs({ active: true, rematch: { state: 'moving' } } as ItemStatus)).toBe(2_000)
+  })
+
+  it('keeps a Stop or Dismiss answer only for the operation it was given for', () => {
+    expect(noticeBelongsTo('op1', undefined)).toBe(true) // the block is gone: the answer stays
+    expect(noticeBelongsTo('op1', 'op1')).toBe(true)
+    expect(noticeBelongsTo('op1', 'op2')).toBe(false) // a new operation opened
+    expect(REMATCH_STATE.failed).toBe('Failed')
   })
 })

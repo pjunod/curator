@@ -575,7 +575,7 @@ export interface StatusDownload {
   id: number; release: string; indexer?: string; state: string; bytes: number; total: number; progress: number
   rateBps?: number; etaSeconds?: number; stage?: string; stageSince?: number; episodes?: number
 }
-export interface StatusCinema { deliveryId: number; notifierId: number; status: string; waitingOn?: string; visibleAt?: number; itemIds?: number[]; error?: string }
+export interface StatusCinema { deliveryId: number; notifierId: number; status: string; waitingOn?: string; visibleAt?: number; itemIds?: number[]; error?: string; warnings?: string[] }
 export interface StatusSeason { season: number; episodes: number; inCinema: number; onDisk: number; active: boolean; summary: string; download?: StatusDownload }
 export interface StatusEpisode {
   episodeId: number; season: number; episode: number; title?: string; wantableId: string; summary: string; at?: number
@@ -591,7 +591,9 @@ export interface ItemStatus {
 }
 export interface StatusRematch {
   operationId: string
-  state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending'
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending' | 'complete' | 'cancelled' | 'failed'
+  ended: boolean
+  failedMoves?: { from: string; reason: string }[]
   role: 'source' | 'target'
   sourceItemId: number
   targetItemId: number

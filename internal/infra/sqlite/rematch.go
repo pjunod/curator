@@ -260,6 +260,27 @@ func (d *DB) OpenRematchForItem(ctx context.Context, itemID int64) (string, erro
 	return id, err
 }
 
+// LatestEndedRematchForItem is the newest finished operation (complete,
+// cancelled or failed) that moved files out of or into the item, not
+// dismissed and ended since `since` (unix ms).
+func (d *DB) LatestEndedRematchForItem(ctx context.Context, itemID, since int64) (RematchOperation, bool, error) {
+	op, err := scanRematch(d.R.QueryRowContext(ctx, rematchSelect+` WHERE (source_item_id=? OR target_item_id=?) AND state IN ('complete','cancelled','failed') AND dismissed_at=0 AND updated_at>=? ORDER BY created_at DESC LIMIT 1`, itemID, itemID, since))
+	if errors.Is(err, sql.ErrNoRows) {
+		return RematchOperation{}, false, nil
+	}
+	return op, err == nil, err
+}
+
+// DismissRematch hides a finished operation from the status panel.
+func (d *DB) DismissRematch(ctx context.Context, id string) (bool, error) {
+	res, err := d.W.ExecContext(ctx, `UPDATE rematch_operations SET dismissed_at=? WHERE operation_id=? AND state IN ('complete','cancelled','failed')`, time.Now().UnixMilli(), id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
 // SetRematchProgress records bytes copied so far.
 func (d *DB) SetRematchProgress(ctx context.Context, id string, done int64) error {
 	_, err := d.W.ExecContext(ctx, `UPDATE rematch_operations SET bytes_done=?,updated_at=? WHERE operation_id=?`, done, time.Now().UnixMilli(), id)

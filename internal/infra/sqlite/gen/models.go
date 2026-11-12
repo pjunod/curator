@@ -618,6 +618,7 @@ type RematchOperation struct {
 	LastError    string
 	CreatedAt    int64
 	UpdatedAt    int64
+	DismissedAt  int64
 }
 
 type ReplacementFileObservation struct {

@@ -252,7 +252,8 @@ func TestProjectionSeries(t *testing.T) {
 }
 
 func TestProjectionOpenRematchBlock(t *testing.T) {
-	cin := []RematchCinema{{Directory: "/lib/Dune (1984)", Status: "ok", Result: "cinema still has /old/Dune.mkv: it is still listed; cinema kept /x.mkv: held", VisibleAt: 0}}
+	cin := []RematchCinema{{Directory: "/lib/Dune (1984)", Status: "ok", VisibleAt: 0,
+		Warnings: []string{"cinema still has /old/Dune.mkv", "cinema kept the record of /x.mkv: pinned"}}}
 	facts := func(itemID int64, state string) statusFacts {
 		f := projMovie(domain.KindMovie, []domain.MediaFile{movieFile()})
 		f.item.ID = itemID

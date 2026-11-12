@@ -196,8 +196,9 @@ file between items, and Cinema cannot be told that a path went away
   are transient (the row warns and retries on the delivery schedule);
   `root_identity_unset` and `root_identity_mismatch` are lasting (`cinema kept
   <path>: <reason>; it will drop it at its next full scan`, not retried).
-  `present` carries a `reason` (`still_present`, `symlink_in_path`,
-  `case_only`) and is likewise a lasting warning. Lasting warnings ride on the
+  `present` carries a `reason` (`exists`, `symlink_in_chain`,
+  `case_variant` are lasting warnings; `reappeared_before_removal` retries).
+  `record_kept` is a lasting warning in cinema's words. Lasting warnings ride on the
   visible row and show in the operation's cinema line.
 - **Replacements cannot be cancelled.** A replacement waiting for a release
   or blocked on cleanup holds the title; the blocker says so instead of

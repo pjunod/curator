@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -634,6 +635,15 @@ func TestRematchDriverWaitsForABusyTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, release := f.svc.lockImportTarget(ctx, dst.ID)
+	// A move younger than the lease wait is still inside StartRematch's own
+	// wait: no "waiting" noise on it yet.
+	f.svc.driveRematches(ctx)
+	if st, _ := f.svc.GetRematch(ctx, op.ID); st.LastError != "" {
+		t.Fatalf("a fresh planned move says %q, want nothing", st.LastError)
+	}
+	if _, err := f.db.W.ExecContext(ctx, `UPDATE rematch_operations SET created_at=created_at-?`, int64(time.Minute/time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
 	f.svc.driveRematches(ctx)
 	st, _ := f.svc.GetRematch(ctx, op.ID)
 	if st.State != "planned" || !strings.Contains(st.LastError, "waiting for its titles") {
@@ -736,13 +746,13 @@ func TestRematchOutboxProbesEveryFileOfALargeMove(t *testing.T) {
 	if _, err := f.db.AddNotifier(ctx, ports.NotifierConfig{Type: "plurx", Name: "cinema", Settings: map[string]string{"url": "http://c", "apiKey": "k"}, OnImport: true, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	var placed []ports.ExpectedFile
-	var removed []string
+	var placed []rematchPlaced
 	for i := 0; i < 150; i++ {
-		placed = append(placed, ports.ExpectedFile{Path: filepath.Join(f.root.Path, "New Show", "Season 01", "New Show - S01E"+strconv.Itoa(i)+" - A Long Episode Title For Size [WEBDL-1080p].mkv"), Bytes: 1, MtimeNs: 1})
-		removed = append(removed, filepath.Join(f.root.Path, "Old Show", "Season 01", "Old Show - S01E"+strconv.Itoa(i)+" [WEBDL-1080p].mkv"))
+		placed = append(placed, rematchPlaced{
+			File:    ports.ExpectedFile{Path: filepath.Join(f.root.Path, "New Show", "Season 01", "New Show - S01E"+strconv.Itoa(i)+" - A Long Episode Title For Size [WEBDL-1080p].mkv"), Bytes: 1, MtimeNs: 1},
+			Removed: []string{filepath.Join(f.root.Path, "Old Show", "Season 01", "Old Show - S01E"+strconv.Itoa(i)+" [WEBDL-1080p].mkv")}})
 	}
-	rows, err := f.svc.rematchOutbox(ctx, "rm-big", domain.MediaItem{ID: 1, Title: "Old Show"}, domain.MediaItem{ID: 2, Kind: domain.KindSeries, Title: "New Show"}, placed, removed)
+	rows, err := f.svc.rematchOutbox(ctx, "rm-big", domain.MediaItem{ID: 1, Title: "Old Show"}, domain.MediaItem{ID: 2, Kind: domain.KindSeries, Title: "New Show"}, placed, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -763,6 +773,26 @@ func TestRematchOutboxProbesEveryFileOfALargeMove(t *testing.T) {
 		}
 		for _, p := range n.Import.RemovedPaths {
 			seenRem[p] = true
+		}
+	}
+	pairOf := map[string]string{}
+	for _, p := range placed {
+		pairOf[p.Removed[0]] = p.File.Path
+	}
+	for _, r := range rows {
+		var n ports.Notification
+		_ = json.Unmarshal([]byte(r.Payload), &n)
+		inReq := map[string]bool{}
+		for _, e := range n.Import.ExpectedFiles[r.Directory] {
+			inReq[e.Path] = true
+		}
+		for _, p := range n.Import.RemovedPaths {
+			if !inReq[pairOf[p]] {
+				t.Fatalf("removed %s travels without its expected file %s", p, pairOf[p])
+			}
+		}
+		if r.MediaItemID != 2 {
+			t.Fatalf("outbox row media item = %d, want the target (2)", r.MediaItemID)
 		}
 	}
 	if len(seenExp) != 150 || len(seenRem) != 150 {
@@ -798,5 +828,162 @@ func TestItemStatusShowsOpenRematchOnBothSides(t *testing.T) {
 	off, err := f.svc.ItemStatus(ctx, src.ID, -1)
 	if err != nil || off.Rematch == nil || off.Rematch.Role != "source" || off.Rematch.Headline != "Files moving from here to Dune (2021)" {
 		t.Fatalf("source rematch = %+v err=%v", off.Rematch, err)
+	}
+}
+
+// The moved sub-delivery carries the target's media_item_id, so the target's
+// status panel shows it in the in-cinema stage with cinema's lasting warnings.
+func TestItemStatusShowsMovedDeliveryWithCinemaWarnings(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	if _, err := f.db.AddNotifier(ctx, ports.NotifierConfig{Type: "plurx", Name: "cinema", Settings: map[string]string{"url": "http://c", "apiKey": "k"}, OnImport: true, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	src := f.movie(t, "Dune", 1984, 841, "")
+	f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), "dune", "")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := f.run(t, req, p)
+	if st.State != "complete" {
+		t.Fatalf("state = %s", st.State)
+	}
+	dels, err := f.db.OperationDeliveries(ctx, st.ID)
+	if err != nil || len(dels) != 1 || dels[0].MediaItemID != dst.ID {
+		t.Fatalf("deliveries = %+v %v, want one carrying the target's id %d", dels, err, dst.ID)
+	}
+	d := dels[0]
+	d.Status, d.VisibleAt, d.Result = "ok", time.Now().UnixMilli(), "visible"
+	d.FileResults = []sqlite.DeliveryFileResult{
+		{Path: d.ExpectedFiles[0].Path, State: "placed", ItemID: 77, Bytes: d.ExpectedFiles[0].Bytes, MtimeNs: d.ExpectedFiles[0].MtimeNs, Matched: true},
+		{Path: filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), State: "retained", Code: "record_kept", Warning: "cinema kept the record of the old file: pinned"},
+	}
+	if err := f.db.SettleDelivery(ctx, d, sqlite.DeliveryTiming{}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := f.svc.ItemStatus(ctx, dst.ID, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := stageOf(t, status, StageInCinema)
+	if in.State != StatusDone || !strings.Contains(in.Detail, "warning: cinema kept the record of the old file: pinned") {
+		t.Fatalf("in cinema = %+v, want done with cinema's lasting warning", in)
+	}
+	if status.Cinema == nil || len(status.Cinema.Warnings) != 1 {
+		t.Fatalf("cinema = %+v", status.Cinema)
+	}
+}
+
+// A Re-match that ended badly stays on the panel until dismissed.
+func TestItemStatusKeepsAnEndedRematchUntilDismissed(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	src := f.movie(t, "Dune", 1984, 841, "")
+	f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), "dune", "")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, _ := f.svc.PreviewRematch(ctx, req)
+	req.RequestID, req.SourceRevision, req.TargetRevision, req.PlanFingerprint = "ended", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	op, err := f.svc.startRematchLocked(ctx, req, p.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.SetRematchState(ctx, op.ID, "failed", "the target disk is full", json.RawMessage(`{"failed":[{"from":"/a.mkv","to":"no space left"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	st, err := f.svc.ItemStatus(ctx, dst.ID, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := st.Rematch
+	if r == nil || !r.Ended || r.State != "failed" || r.Error != "the target disk is full" || len(r.FailedMoves) != 1 || r.FailedMoves[0].Reason != "no space left" || r.Stoppable || st.Active {
+		t.Fatalf("rematch = %+v active=%v, want the failed operation with its reason and failed list", r, st.Active)
+	}
+	if err := f.svc.DismissRematch(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ = f.svc.ItemStatus(ctx, dst.ID, -1); st.Rematch != nil {
+		t.Fatalf("dismissed rematch still shown: %+v", st.Rematch)
+	}
+}
+
+// A copy whose source changed after the copy is never removed, and the result
+// says it was left behind.
+func TestRematchCopyWithChangedSourceIsLeftBehind(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	old := sameStorage
+	sameStorage = func(string, string) bool { return false }
+	t.Cleanup(func() { sameStorage = old; rematchRemove = os.Remove })
+	src := f.movie(t, "Dune", 1984, 841, "")
+	orig := filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv")
+	f.file(t, src.ID, orig, "4k bytes", "")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID, req.SourceRevision, req.TargetRevision, req.PlanFingerprint = "changed", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	op, err := f.svc.startRematchLocked(ctx, req, p.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rematchRemove = func(string) error { return errors.New("read-only file system") }
+	if err := f.svc.runRematch(ctx, op.ID); err == nil {
+		t.Fatal("expected the finish to be retried")
+	}
+	rematchRemove = os.Remove
+	// Someone puts a different file at the source after the copy.
+	if err := os.Remove(orig); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orig, []byte("something else entirely"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.driveRematches(ctx)
+	st := f.wait(t, op.ID)
+	var res rematchResult
+	_ = json.Unmarshal(st.Result, &res)
+	if st.State != "complete" || !slices.Contains(res.LeftBehind, orig) {
+		t.Fatalf("state %s, result %+v, want complete with %s left behind", st.State, res, orig)
+	}
+	if b, err := os.ReadFile(orig); err != nil || string(b) != "something else entirely" {
+		t.Fatal("the changed source was removed")
+	}
+}
+
+// A scan that pruned the file's row while it moved makes the commit stale:
+// every file goes back, and the operation says why instead of a bare failed.
+func TestRematchLosingToAScanSaysSo(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	src := f.movie(t, "Dune", 1984, 841, "")
+	orig := filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv")
+	id := f.file(t, src.ID, orig, "dune", "")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID, req.SourceRevision, req.TargetRevision, req.PlanFingerprint = "scan-race", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	op, err := f.svc.startRematchLocked(ctx, req, p.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.DeleteFile(ctx, id); err != nil { // the scan's prune
+		t.Fatal(err)
+	}
+	_ = f.svc.runRematch(ctx, op.ID)
+	st, _ := f.svc.GetRematch(ctx, op.ID)
+	if st.State != "failed" || !strings.Contains(st.LastError, "library scan or import changed this title") || !strings.Contains(st.LastError, "run it again") {
+		t.Fatalf("status = %s %q, want failed saying a scan changed the title", st.State, st.LastError)
+	}
+	if _, err := os.Stat(orig); err != nil {
+		t.Fatal("the file did not go back")
 	}
 }

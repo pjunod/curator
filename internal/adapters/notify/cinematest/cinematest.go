@@ -65,6 +65,10 @@ type Cinema struct {
 	// is the reason a still-present path carries.
 	Retained      map[string]string
 	PresentReason string
+	// RetainedReason and RetainedRetryable are the reason text and the
+	// retryable flag a retained path carries.
+	RetainedReason    map[string]string
+	RetainedRetryable map[string]bool
 	// Down drops every connection without an answer (a stopped Cinema).
 	Down bool
 	// Unreadable answers 503 path_unreadable (an unmounted share).
@@ -425,7 +429,8 @@ func (c *Cinema) finish(req *Request) {
 	for _, p := range req.Removed {
 		switch _, err := os.Stat(p); {
 		case c.Retained[p] != "":
-			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "retained", Code: c.Retained[p]})
+			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "retained", Code: c.Retained[p],
+				Reason: c.RetainedReason[p], Retryable: c.RetainedRetryable[p], ItemID: c.itemID(p)})
 		case err == nil:
 			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "present", Reason: c.PresentReason})
 		case c.Unknown[p]:

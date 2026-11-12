@@ -1277,7 +1277,10 @@ func (e StatusRematchRole) Valid() bool {
 // Defines values for StatusRematchState.
 const (
 	StatusRematchStateCancelPending StatusRematchState = "cancel_pending"
+	StatusRematchStateCancelled     StatusRematchState = "cancelled"
 	StatusRematchStateCommitted     StatusRematchState = "committed"
+	StatusRematchStateComplete      StatusRematchState = "complete"
+	StatusRematchStateFailed        StatusRematchState = "failed"
 	StatusRematchStateMoved         StatusRematchState = "moved"
 	StatusRematchStateMoving        StatusRematchState = "moving"
 	StatusRematchStatePlanned       StatusRematchState = "planned"
@@ -1288,7 +1291,13 @@ func (e StatusRematchState) Valid() bool {
 	switch e {
 	case StatusRematchStateCancelPending:
 		return true
+	case StatusRematchStateCancelled:
+		return true
 	case StatusRematchStateCommitted:
+		return true
+	case StatusRematchStateComplete:
+		return true
+	case StatusRematchStateFailed:
 		return true
 	case StatusRematchStateMoved:
 		return true
@@ -4061,6 +4070,9 @@ type StatusCinema struct {
 	Status     string   `json:"status"`
 	VisibleAt  *int64   `json:"visibleAt,omitempty"`
 	WaitingOn  *string  `json:"waitingOn,omitempty"`
+
+	// Warnings Cinema's lasting answers about files that left (a Re-match).
+	Warnings *[]string `json:"warnings,omitempty"`
 }
 
 // StatusDownload defines model for StatusDownload.
@@ -4131,9 +4143,16 @@ type StatusRematch struct {
 		VisibleAt *int64  `json:"visibleAt,omitempty"`
 	} `json:"cinema,omitempty"`
 	CinemaLine *string `json:"cinemaLine,omitempty"`
-	Error      *string `json:"error,omitempty"`
-	FilesDone  int     `json:"filesDone"`
-	FilesTotal int     `json:"filesTotal"`
+
+	// Ended The operation is over (failed
+	Ended       bool    `json:"ended"`
+	Error       *string `json:"error,omitempty"`
+	FailedMoves *[]struct {
+		From   string `json:"from"`
+		Reason string `json:"reason"`
+	} `json:"failedMoves,omitempty"`
+	FilesDone  int `json:"filesDone"`
+	FilesTotal int `json:"filesTotal"`
 
 	// Headline For this item's side, e.g. Files moving here from Dune (1984).
 	Headline string `json:"headline"`
@@ -5347,6 +5366,9 @@ type ServerInterface interface {
 	// CancelRematch Stop a Re-match that has not committed (a copy's temp file is removed, sources untouched)
 	// (POST /rematch/{operationId}/cancel)
 	CancelRematch(w http.ResponseWriter, r *http.Request, operationId string)
+	// DismissRematch Hide a finished Re-match from the item pages' status panels
+	// (POST /rematch/{operationId}/dismiss)
+	DismissRematch(w http.ResponseWriter, r *http.Request, operationId string)
 	// GetReplacementFileObservation Read a prepared file observation
 	// (GET /replacement-observations/{observationId})
 	GetReplacementFileObservation(w http.ResponseWriter, r *http.Request, observationId string)
@@ -8931,6 +8953,32 @@ func (siw *ServerInterfaceWrapper) CancelRematch(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// DismissRematch operation middleware
+func (siw *ServerInterfaceWrapper) DismissRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DismissRematch(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReplacementFileObservation operation middleware
 func (siw *ServerInterfaceWrapper) GetReplacementFileObservation(w http.ResponseWriter, r *http.Request) {
 
@@ -9644,6 +9692,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/rematch", wrapper.StartRematch)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rematch/{operationId}", wrapper.GetRematch)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rematch/{operationId}/cancel", wrapper.CancelRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rematch/{operationId}/dismiss", wrapper.DismissRematch)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/seasons/{season}", wrapper.SetSeasonMonitored)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/episodes/{episodeId}", wrapper.SetEpisodeMonitored)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)

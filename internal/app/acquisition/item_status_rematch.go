@@ -2,9 +2,11 @@ package acquisition
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -37,9 +39,23 @@ type StatusRematch struct {
 	CinemaLine string          `json:"cinemaLine,omitempty"`
 	Warnings   []string        `json:"warnings,omitempty"`
 	Error      string          `json:"error,omitempty"`
+	// Ended: the operation is over but ended badly (failed, or complete with
+	// files that could not move); it shows for rematchEndedFor or until
+	// dismissed. FailedMoves are the files that did not move and why.
+	Ended       bool                `json:"ended"`
+	FailedMoves []StatusRematchFail `json:"failedMoves,omitempty"`
 	// Stoppable is true until the files are committed (POST /rematch/{id}/cancel).
 	Stoppable bool `json:"stoppable"`
 }
+
+// StatusRematchFail is a file that did not move.
+type StatusRematchFail struct {
+	From   string `json:"from"`
+	Reason string `json:"reason"`
+}
+
+// rematchEndedFor is how long a badly ended Re-match stays on the panel.
+const rematchEndedFor = 24 * time.Hour
 
 // StatusRematchMove is one file's from → to and where it is.
 type StatusRematchMove struct {
@@ -56,9 +72,11 @@ type rematchFacts struct {
 	sourceTitle string
 	targetTitle string
 	itemID      int64
+	ended       bool
+	failed      []RematchPair
 }
 
-func (r *StatusRematch) running() bool { return r != nil && rematchRunning(r.State) }
+func (r *StatusRematch) running() bool { return r != nil && !r.Ended && rematchRunning(r.State) }
 
 func rematchRunning(state string) bool {
 	switch state {
@@ -78,8 +96,24 @@ func titleWithYear(it domain.MediaItem) string {
 // rematchFacts reads the open operation for the item, nil when there is none.
 func (s *Service) rematchFacts(ctx context.Context, itemID int64, item domain.MediaItem) (*rematchFacts, error) {
 	id, err := s.db.OpenRematchForItem(ctx, itemID)
-	if err != nil || id == "" {
+	if err != nil {
 		return nil, err
+	}
+	ended := false
+	if id == "" {
+		// No open operation: the newest finished one still speaks when it
+		// ended badly, until dismissed or a day old.
+		done, ok, err := s.db.LatestEndedRematchForItem(ctx, itemID, time.Now().Add(-rematchEndedFor).UnixMilli())
+		if err != nil || !ok {
+			return nil, err
+		}
+		var res rematchResult
+		_ = json.Unmarshal(done.Result, &res)
+		badly := done.State == "failed" || (done.State == "complete" && len(res.Failed) > 0) || (done.State == "cancelled" && done.LastError != "")
+		if !badly {
+			return nil, nil
+		}
+		id, ended = done.ID, true
 	}
 	op, err := s.GetRematch(ctx, id)
 	if errors.Is(err, sqlite.ErrNotFound) {
@@ -92,7 +126,12 @@ func (s *Service) rematchFacts(ctx context.Context, itemID int64, item domain.Me
 	if err != nil {
 		return nil, err
 	}
-	rf := &rematchFacts{op: op, moves: moves, itemID: itemID}
+	rf := &rematchFacts{op: op, moves: moves, itemID: itemID, ended: ended}
+	if ended {
+		var res rematchResult
+		_ = json.Unmarshal(op.Result, &res)
+		rf.failed = res.Failed
+	}
 	title := func(other int64) string {
 		if other == itemID {
 			return titleWithYear(item)
@@ -105,24 +144,6 @@ func (s *Service) rematchFacts(ctx context.Context, itemID int64, item domain.Me
 	}
 	rf.sourceTitle, rf.targetTitle = title(op.SourceItemID), title(op.TargetItemID)
 	return rf, nil
-}
-
-// cinemaWarnings picks the retained/present lines out of Cinema's answers.
-func cinemaWarnings(c []RematchCinema) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, d := range c {
-		for _, raw := range []string{d.Result, d.LastError} {
-			for _, part := range strings.Split(raw, "; ") {
-				p := strings.TrimSpace(part)
-				if (strings.HasPrefix(p, "cinema still has") || strings.HasPrefix(p, "cinema kept") || strings.HasPrefix(p, "cinema is holding")) && !seen[p] {
-					seen[p] = true
-					out = append(out, p)
-				}
-			}
-		}
-	}
-	return out
 }
 
 func (f statusFacts) rematchBlock() *StatusRematch {
@@ -145,6 +166,20 @@ func (f statusFacts) rematchBlock() *StatusRematch {
 	} else {
 		r.Headline = "Files moving from here to " + rf.targetTitle
 	}
+	if rf.ended {
+		r.Ended, r.Stoppable = true, false
+		for _, f := range rf.failed {
+			r.FailedMoves = append(r.FailedMoves, StatusRematchFail{From: f.From, Reason: f.To})
+		}
+		switch op.State {
+		case "failed":
+			r.Headline = "Moving files from " + rf.sourceTitle + " to " + rf.targetTitle + " failed; every file is back where it was"
+		case "cancelled":
+			r.Headline = "Moving files from " + rf.sourceTitle + " to " + rf.targetTitle + " was stopped"
+		default:
+			r.Headline = fmt.Sprintf("Files moved from %s to %s; %d could not be moved", rf.sourceTitle, rf.targetTitle, len(rf.failed))
+		}
+	}
 	for _, m := range rf.moves {
 		st := strings.TrimPrefix(m.State, "rematch_")
 		r.Moves = append(r.Moves, StatusRematchMove{From: m.Source, To: m.Target, State: st, Bytes: m.Size})
@@ -155,11 +190,17 @@ func (f statusFacts) rematchBlock() *StatusRematch {
 		}
 	}
 	if len(op.Cinema) > 0 {
-		r.Warnings = cinemaWarnings(op.Cinema)
 		confirmed := true
+		seen := map[string]bool{}
 		var said []string
 		for _, c := range op.Cinema {
 			confirmed = confirmed && c.VisibleAt > 0
+			for _, w := range c.Warnings {
+				if !seen[w] {
+					seen[w] = true
+					r.Warnings = append(r.Warnings, w)
+				}
+			}
 			if c.Result != "" {
 				said = append(said, c.Result)
 			}
