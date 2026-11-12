@@ -307,8 +307,8 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     file while files remain. Curator no longer asks Runner for a v1 delivery
     record. A publication that already carries a stored body (`v1_record`,
     written by v0.45.x and earlier) falls back to it when its file is gone and
-    drains through its import and cleanup. Migration 0078 (after 0077,
-    unwedge) refuses nothing; it normalises only `removed` `v1_record` rows
+    drains through its import and cleanup. Migration 0079 (after 0077,
+    unwedge, and 0078, item status) refuses nothing; it normalises only `removed` `v1_record` rows
     to `none`.
 33. **Not done in M6b**: dropping `runner_delivery_receipts` and
     `runner_delivery_file_outcomes`. The receipts lifecycle

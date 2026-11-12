@@ -9,12 +9,12 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-// Migration 0078 (pipeline contract v2, M6b): nothing writes the v1_record
+// Migration 0079 (pipeline contract v2, M6b): nothing writes the v1_record
 // source any more, and nothing is refused. A database at goose 77 — what
 // v0.45.x leaves, with v1_record stamped on live publications — migrates; a
 // live (imported) v1_record row keeps its stored manifest so it drains
 // through its cleanup, and only a removed one is normalised.
-func TestMigration0078MigratesLiveV1RecordRowsAndNormalisesOnlyRemoved(t *testing.T) {
+func TestMigration0079MigratesLiveV1RecordRowsAndNormalisesOnlyRemoved(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(t.TempDir())
 	if err != nil {
@@ -90,6 +90,6 @@ func TestMigration0078MigratesLiveV1RecordRowsAndNormalisesOnlyRemoved(t *testin
 	}
 	var version int64
 	if err := db.R.QueryRowContext(ctx, `SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil || version < retireV1RecordVersion {
-		t.Fatalf("goose version = %d (%v), want 0078 applied", version, err)
+		t.Fatalf("goose version = %d (%v), want 0079 applied", version, err)
 	}
 }

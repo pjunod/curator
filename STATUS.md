@@ -1,20 +1,24 @@
 # Monarr — Project Status
 
-## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.46.0 (rebased onto main 9a5821d, 2026-11-12)
+## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.46.0 (rebased onto main 0ab7d0d, 2026-11-12)
 
 **Status:** branch `claude/pipeline-v2-m6b-curator`, rebased onto `origin/main`
-9a5821d (v0.45.2: overdue exits, adoption, completed-root guard, record
-closure, historical approvals all kept) · owner: Claude (Sonnet builder) · pushed,
+0ab7d0d (item status, which also carries VERSION 0.46.0 — see the version
+note below; overdue exits, adoption, completed-root guard, record closure,
+historical approvals all kept) · owner: Claude (Sonnet builder) · pushed,
 **no PR** (by instruction), not reviewed, not merged, not deployed.
 
 **Merge after runner M6b is deployed** (Curator now reads only typed
-terminals). Migration 0078 refuses nothing: live `v1_record` publications
+terminals). Migration 0079 refuses nothing: live `v1_record` publications
 (v0.45.x stamps nearly every new one) keep their stored manifest and drain;
 only removed ones are normalised.
 
 **Migration renumbered 2026-11-12:** main took `0077_unwedge_legacy_imports.sql`, so
-this branch's `retire_v1_record` is now **0078** (`migration0078.go`,
-`retireV1RecordVersion = 78`). Version is 0.46.0 (minor over main's 0.45.2).
+this branch's `retire_v1_record` became **0078**, and is now **0079**
+(`migration0079.go`, `retireV1RecordVersion = 79`) because main's
+`claude/item-status` took `0078_item_status.sql`. VERSION stays 0.46.0 by
+instruction, although main is already 0.46.0 (item status): **conflict for
+Paul** — CLAUDE.md wants a bump for a user-visible change (0.47.0).
 
 Built (plan M6 curator item 1, IMPL_CURATOR section 9):
 
@@ -26,7 +30,7 @@ Built (plan M6 curator item 1, IMPL_CURATOR section 9):
   no `kind` is a completed terminal.
 - **`v1_record` manifest source retired.** `publicationManifest` reads only
   `.runner-manifest.json`; `attachManifest`, `AttachPublicationManifest` and
-  the delivery lookup port are gone. Migration 0078 normalises removed
+  the delivery lookup port are gone. Migration 0079 normalises removed
   `v1_record` rows to `none`; it refuses nothing (Fable review, 2026-11-12:
   the refusal would have stopped Curator on the live DB). A publication with a
   stored body falls back to it; one whose manifest an import or adoption
@@ -37,11 +41,11 @@ Fable review of this branch (2026-11-12), all fixed:
 
 | # | Finding | Fix |
 |---|---|---|
-| 1 B | 0078 refused on the live DB (v0.45.x stamps v1_record on nearly every publication) | Refusal and preflight removed; v1 writers and the GetDelivery lookup stay gone; `publicationManifest` falls back to a stored body; only removed rows normalised. Test at goose 77 with a live imported v1_record row whose manifest file is on disk |
+| 1 B | The retire migration refused on the live DB (v0.45.x stamps v1_record on nearly every publication) | Refusal and preflight removed; v1 writers and the GetDelivery lookup stay gone; `publicationManifest` falls back to a stored body; only removed rows normalised. Test at goose 77 with a live imported v1_record row whose manifest file is on disk |
 | 2 B | Feed publications had source `none`, disabling the cleanup's missing-manifest guard; inventory called every live one manifestless | The import (at seeding) and adoption record the file's manifest as `file`; the "no manifest… delete it from here" label is for record-only publications only |
 | 3 | Legacy receipt status without a typed reason mapped to io, unblamed | Prefix map (health, fetch, par, unpack, script: blamed); otherwise io, not blamed |
 | 4 | Stale docs | integration.md upgrade section, usage.md upgrade note, ADR 0026 decisions 31–32, these STATUS notes |
-| 5 | No live-row migration test | `TestMigration0078MigratesLiveV1RecordRowsAndNormalisesOnlyRemoved` |
+| 5 | No live-row migration test | `TestMigration0079MigratesLiveV1RecordRowsAndNormalisesOnlyRemoved` |
 | 6 | Manifest reads followed symlinks, unbounded | `readManifestFile`: `openDeliveryFileNoSymlinks`, 8 MiB cap, in `publicationManifest` and adoption |
 
 **Not done, and why (decision for Paul):** `runner_delivery_receipts` and
@@ -257,7 +261,7 @@ not merged, not deployed.
 **Merge order (decision, 2026-11-12, coordinator):** this branch ships
 before M6b and owns migration **0077** (`0077_unwedge_legacy_imports.sql`),
 so it applies on main by itself. `claude/pipeline-v2-m6b-curator`'s
-`0077_retire_v1_record.sql` must be renumbered (done on rebase: `0078_retire_v1_record.sql`).
+`0077_retire_v1_record.sql` must be renumbered (done on rebase: now `0079_retire_v1_record.sql`, after main's `0078_item_status.sql`).
 The M6b build was never deployed, so no live database is at goose 77 from
 it (nuc3 is at 76); this branch's 0077 is the first 0077 any database sees.
 Older notes in the v0.44.0 section that call M6b's migration 0077 are
@@ -441,7 +445,7 @@ Decisions taken without Paul (for review):
 - Migration 0076 also requeues "cannot determine episodes" failures (E makes
   most of them importable; one that still is not fails again once, normally).
 - Migration number 0076: `claude/pipeline-v2-m6b-curator` had claimed 0075;
-  it is now 0077 on that branch (`d61ea59`), so the two merge in either order. *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbers to 0078 when rebased.)*
+  it is now 0077 on that branch (`d61ea59`), so the two merge in either order. *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbered to 0079 on rebase, after main's `0078_item_status.sql`.)*
 - Manual and approval-held imports keep the files the person did not select
   as `unresolved` (the person asked to decide); every automatic path decides.
 
@@ -464,7 +468,7 @@ the last token only; 10 placed-subtitle lookup is a byte range on an
 indexed column; 11 0076 retires (discarded{superseded}) wedged rows whose
 want a later import satisfied and releases the custody rows of requeued
 ones; 12 `claude/pipeline-v2-m6b-curator` renumbered its migration to 0077
-(`d61ea59`). *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbers to 0078 when rebased.)*
+(`d61ea59`). *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbered to 0079 on rebase, after main's `0078_item_status.sql`.)*
 
 Adversarial re-review r2 (Fable, of `032720d`) — 8 findings, all fixed:
 1 environmental stops (blocked/full library, storage identity, a manifest
@@ -493,7 +497,7 @@ the configured completed roots is a hold. Web: `tsc --noEmit` and
 
 **Merge order: merge `claude/no-wedge` first, then
 `claude/pipeline-v2-m6b-curator`** (rebased onto this branch; its migration
-is 0077 after this branch's 0076). *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbers to 0078 when rebased.)*
+is 0077 after this branch's 0076). *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbered to 0079 on rebase, after main's `0078_item_status.sql`.)*
 
 **Deploy order:** a same-filesystem placement hard-links Runner's file,
 which moves its ctime: deploy this curator only after the Runner build whose
