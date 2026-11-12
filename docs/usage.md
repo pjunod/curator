@@ -1371,6 +1371,13 @@ decides nothing. A download whose client was deleted or disabled is ended the
 same way by the hourly cleanup. The reason is on the row (`overdue: …`) and
 in History. An unreachable Runner decides nothing.
 
+When the failed job is still listed in Runner's queue (stalled, or blocked
+past Runner's own deadline), Curator also asks Runner once to cancel it
+(v0.45.3), after the failure is recorded. That cancel is best effort: if it
+fails or times out (3 seconds) it is logged and ignored, never retried, and
+the failure and re-grab stand. A job absent from Runner's queue is not
+cancelled.
+
 ### Held, provisional and publications in Activity
 
 - **Held by Runner** is its own section. The row says what Runner is waiting

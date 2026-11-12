@@ -1,5 +1,13 @@
 # Monarr — Project Status
 
+## Overdue exit cancels a still-listed stalled job in Runner — 2026-11-12 · v0.45.3
+
+**Status:** built, targeted tests and lint run (see the commit report) · branch
+`claude/overdue-cancel` from `origin/main` 9a5821d · no PR · not merged.
+`overdue.go` gains `cancelOverdueInRunner`; test
+`TestOverdueStalledJobGetsOneBestEffortRunnerCancel`; `docs/usage.md`
+(pipeline:overdue). Decision recorded under the v0.45.2 section below.
+
 ## Overdue downloads exit on their own; sealed plans do not wedge imports — 2026-11-12 · v0.45.2
 
 **Status:** built, targeted tests and lint pass, pushed · owner: Claude Opus
@@ -68,9 +76,13 @@ Adversarial review of this branch — 6 findings, all fixed:
 Expected-on-deploy timings shift accordingly: rows absent from Runner's
 queue fail after 10 minutes of successful polls; #733 after 15 minutes.
 
-Decision for Paul to review: a job Runner still lists but has not moved for
-24 h past its deadline is failed and re-grabbed; Curator does not cancel it
-in Runner (a late completion there is superseded by the precedence rule).
+Decision (Paul, v0.45.3): a job Runner still lists that has not moved for
+24 h past its deadline, or that Runner holds blocked past its own retry
+deadline, is failed and re-grabbed, and then Curator makes one best-effort
+cancel of it in Runner (the client's Remove, data kept, 3 s timeout, fired
+only after the fail is committed). A failed cancel is logged at WARN and
+ignored, never retried; the fail and regrab do not depend on it. No cancel
+for a job absent from Runner's queue or one with a Runner terminal.
 
 Validation (after the review fixes): gofmt, `go vet`, pinned golangci-lint
 on `internal/app/acquisition/...` and `internal/infra/sqlite/...` 0 issues;

@@ -35,6 +35,10 @@ import (
 //     says completed and no publication arrived within overdueCompletedGrace:
 //     failed (an empty queue decides nothing);
 //
+// When the job is still listed in Runner's queue (stalled or blocked), the
+// failure is followed by one best-effort cancel in Runner; its outcome never
+// changes the failure or the regrab.
+//
 // "Failed" is blameless (no blocklist) with the want grabbed again
 // (FailOverdueDownload). An unreachable Runner decides nothing. A row whose
 // client is gone or disabled is ended by exitOrphanedOverdue.
@@ -178,8 +182,10 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 		case inQueue && st.Control != nil && st.Control.Cause != "" && st.Control.DeadlineUnix != nil && now.Unix() > *st.Control.DeadlineUnix:
 			// Runner's own retry deadline for what blocks it has passed and it
 			// still lists the job blocked: it is not going to finish it.
-			s.failOverdue(ctx, dl, fmt.Sprintf("Runner has held it on %s past Runner's own deadline (%s)", st.Control.Cause,
-				time.Unix(*st.Control.DeadlineUnix, 0).UTC().Format(time.RFC3339)), true)
+			if s.failOverdue(ctx, dl, fmt.Sprintf("Runner has held it on %s past Runner's own deadline (%s)", st.Control.Cause,
+				time.Unix(*st.Control.DeadlineUnix, 0).UTC().Format(time.RFC3339)), true) {
+				s.cancelOverdueInRunner(ctx, cfg, dl, st)
+			}
 		case inQueue && heldStatus(st):
 			// Runner holds it: its hold is self-clearing and has its own
 			// deadline (hold_expired), and the row stays held (stale)
@@ -189,7 +195,9 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 				continue
 			}
 			if _, still := s.progressing(cfg.ID, dl.ID, st, now); still >= overdueStallLimit {
-				s.failOverdue(ctx, dl, fmt.Sprintf("Runner has held it without progress for %s past its deadline", overdueStallLimit), true)
+				if s.failOverdue(ctx, dl, fmt.Sprintf("Runner has held it without progress for %s past its deadline", overdueStallLimit), true) {
+					s.cancelOverdueInRunner(ctx, cfg, dl, st)
+				}
 			}
 		case inQueue:
 			moved, still := s.progressing(cfg.ID, dl.ID, st, now)
@@ -203,7 +211,9 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 			if still < overdueStallLimit {
 				continue
 			}
-			s.failOverdue(ctx, dl, fmt.Sprintf("Runner has made no progress on it for %s past its deadline", overdueStallLimit), true)
+			if s.failOverdue(ctx, dl, fmt.Sprintf("Runner has made no progress on it for %s past its deadline", overdueStallLimit), true) {
+				s.cancelOverdueInRunner(ctx, cfg, dl, st)
+			}
 		case known && adm.Outcome == "completed":
 			// Its publication may still be on its way by the deliveries feed.
 			if heldFor(&s.overdueCompleted, cfg.ID, dl.ID, now) < overdueCompletedGrace {
@@ -223,6 +233,31 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 			}
 		}
 	}
+}
+
+// overdueCancelTimeout bounds the best-effort Runner cancel so it cannot
+// stall the poll loop.
+const overdueCancelTimeout = 3 * time.Second
+
+// cancelOverdueInRunner asks Runner to cancel a job it still lists after
+// Curator has failed the row (the same Remove an operator's cancel uses,
+// without deleting data). It is best effort: it runs only after the fail is
+// committed, a failure is logged and dropped, and it is never retried.
+func (s *Service) cancelOverdueInRunner(ctx context.Context, cfg ports.ClientConfig, dl sqlite.Download, st ports.DownloadStatus) {
+	h := dl.Handle
+	if h == "" {
+		h = string(st.Handle)
+	}
+	if h == "" {
+		return
+	}
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), overdueCancelTimeout)
+	defer cancel()
+	if err := s.newClient(cfg).Remove(cctx, ports.Handle(h), false); err != nil {
+		s.log.Warn("overdue download failed in Curator; Runner cancel not accepted (not retried)", "download", dl.ID, "client", cfg.Name, "err", err)
+		return
+	}
+	s.log.Info("overdue download failed in Curator; cancelled in Runner", "download", dl.ID, "client", cfg.Name)
 }
 
 // exitOrphanedOverdue ends overdue rows whose client is gone or disabled:
