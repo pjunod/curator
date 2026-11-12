@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -550,5 +551,61 @@ func TestCancelledRetryOfAHeldPublicationEndsTheHold(t *testing.T) {
 	}
 	if n := f.count(`SELECT COUNT(*) FROM history_events WHERE type='import_hold_cleared'`); n != 1 {
 		t.Fatalf("import_hold_cleared rows = %d, want 1", n)
+	}
+}
+
+// Review of 8d42eec (blocking): a multipart audiobook is all or nothing. One
+// part that does not match its manifest places no part: the publication ends
+// import_failed, the book is grabbed again, and it is still wanted (nothing
+// of it is in the library).
+func TestAudiobookWithACorruptPartPlacesNothing(t *testing.T) {
+	runner := newFakeRunner()
+	svc, db, bookID := bookSetup(t, nil, &runner.fakeClient)
+	ctx := context.Background()
+	if _, err := db.W.ExecContext(ctx, `UPDATE media_items SET book_type='audiobook', quality_profile_id=? WHERE id=?`, quality.AudiobookProfileID, bookID); err != nil {
+		t.Fatal(err)
+	}
+	f := setupV2On(t, runner, svc, db, bookID)
+	f.deferGrabs()
+	want := fmt.Sprintf("book:%d", bookID)
+	now := time.Now().UnixMilli()
+	res, err := db.W.ExecContext(ctx, `INSERT INTO downloads(media_item_id,protocol,release_title,state,added_at,updated_at,transfer,generation_key,wantables,client_id,handle,submission_phase)
+		VALUES(?,'usenet','Andy Weir - Project Hail Mary MP3','downloading',?,?,'t-1-book','g-book',?,1,'77','submitted')`, bookID, now, now, `["`+want+`"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	dl := f.row(id)
+	pub := f.publish("Project.Hail.Mary.job-77.runner-ab", "ab", map[string]string{"01-opening.mp3": "one", "02-middle.mp3": "two", "03-ending.mp3": "end"})
+	if err := os.WriteFile(filepath.Join(pub.Path, "02-middle.mp3"), []byte("TWO"), 0o644); err != nil { // same size, other bytes
+		t.Fatal(err)
+	}
+	pub.CrossVolume = true
+	f.complete(dl, pub)
+	if n := f.count(`SELECT COUNT(*) FROM media_files WHERE media_item_id=?`, bookID); n != 0 {
+		t.Fatalf("library files = %d, want no part of a corrupt audiobook placed", n)
+	}
+	p, files := f.publicationFiles(pub.Path)
+	for path, file := range files {
+		if file.Outcome == "placed" {
+			t.Fatalf("%s placed: %+v", path, file)
+		}
+	}
+	if p.State != "import_failed" && p.State != "removed" {
+		t.Fatalf("publication = %s (%s), want ended", p.State, p.Error)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs WHERE download_id=?`, dl.ID); n != 1 {
+		t.Fatalf("replacement grabs = %d, want the book grabbed again", n)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM blocklist`); n != 0 {
+		t.Fatalf("blocklist = %d, want a blameless regrab", n)
+	}
+	w, err := svc.wantableFromID(ctx, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := db.GetProfile(ctx, w.ProfileID())
+	if err != nil || !wants(profile, w) {
+		t.Fatalf("book still wanted = %v (%v), want the regrab to go ahead", err == nil && wants(profile, w), err)
 	}
 }

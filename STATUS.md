@@ -23,6 +23,14 @@ attempt), the rest of the payload is still tried, then the publication ends
 keeping what was placed. Regression test
 `TestPayloadMismatchListedFirstStillPlacesTheRest` (fails without the fix).
 `go test -race -run '^TestEndedPackRecordsWhatItPlaced$' -count=50`: 0 failures.
+Review of 8d42eec: a multipart audiobook is all or nothing —
+`verifyBookParts` checks every manifest-constrained part (size and digest)
+before any part is placed; one mismatch places nothing, the publication ends
+import_failed and the book is grabbed again (blameless; still wanted). Test
+`TestAudiobookWithACorruptPartPlacesNothing`. Residual: a part that changes
+on disk between that check and its own copy still stops the import after the
+parts before it (the old behaviour for books). `docs/usage.md` documents the
+partial-keep rule for series/movie packs.
 
 ## Overdue downloads exit on their own; sealed plans do not wedge imports — 2026-11-12 · v0.45.2
 
