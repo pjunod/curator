@@ -121,6 +121,7 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 	if _, err := s.exitOrphanedOverdue(ctx); err != nil {
 		s.log.Warn("cleanup: ending overdue rows of gone clients failed", "err", err)
 	}
+	s.sweepAllSupersededStages(ctx)
 	if _, err := s.settlePendingSalvages(ctx); err != nil {
 		s.log.Warn("cleanup: settling pending salvages failed", "err", err)
 	}

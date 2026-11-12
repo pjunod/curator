@@ -36,9 +36,25 @@ the "Runner's terminal is recorded" branch.
    epoch below the attempt's current one (or of a completed attempt) with no
    authorization is swept: `reconcilePlacement` and every import retry remove
    only its `.monarr-stage-` temporary and mark it `rolled_back`. The target is
-   never touched (not `rollbackPlacement`). A stage whose prior-file backup is
-   on disk is kept and logged: that backup may be the only copy of the
-   previous library file. This residual is recorded for review.
+   never touched (not `rollbackPlacement`).
+   **Decision (the coordinator's, 2026-11-12, for Paul's review): a stage
+   whose prior-file backup is on disk.** Its backup is settled under the
+   title's import lock by reconciliation and by a new hourly pass
+   (`sweepAllSupersededStages` in `CleanupPayloads`). Reconciliation alone
+   runs only at start, so without the hourly pass "the next pass" would not be
+   bounded. Import retries leave these stages to those two passes.
+   - **Target verifies** (its digest is the newest committed placement's for
+     it): the upgrade landed. The backup and the temporary are removed.
+   - **Target holds the recorded prior file:** the backup is a duplicate and
+     is removed only if its bytes are that file.
+   - **Target is missing or holds bytes nothing committed recorded:** the
+     backup, verified against the prior file's digest, is renamed back onto
+     the target. **Unrecorded bytes at the target are overwritten.** That
+     follows the decision; flagged for review.
+   - **Nothing provable** (an I/O error, a target directory whose identity is
+     not the recorded one, a backup that is not the prior file): left for the
+     next hourly pass. A backup that is persistently not the prior file would
+     stay until a person removes it.
 3. The salvage guard swallowed `completeImportAttempt`, so a successful manual
    import left the row failed. The guard now applies only to the
    `import_queued` and `import_cancelled` writes. `imported` is always written.
@@ -52,7 +68,10 @@ shape), `TestOverdueSalvageImportRetryKeepsTheRowFailed`,
 `TestSalvageAfterAnImportedCompletedKeepsTheRowImported`,
 `TestSupersededStageIsSweptWithoutTouchingTheLibrary`,
 `TestCompletingAnImportOfASalvageOnlyRowWritesImported`,
-`TestImportNowOnAFailedRowKeepsItFailedUntilTheImportMovesIt`. After a
+`TestImportNowOnAFailedRowKeepsItFailedUntilTheImportMovesIt`,
+`TestSupersededStageBackupRemovedWhenTheUpgradeLanded`,
+`TestSupersededStageBackupRestoredWhenTheTargetIsGone`,
+`TestSupersededStageBackupLeftWhenNothingCanBeProven`. After a
 deploy, 1196 exits at the next poll as `failed{publish}` (blameless). Its
 re-grab is filtered because the episode is in the library. Its epoch 0 stage
 is swept.

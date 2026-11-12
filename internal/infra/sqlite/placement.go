@@ -540,9 +540,10 @@ const supersededStageWhere = `p.state='prepared' AND COALESCE(json_extract(p.dat
 		AND (c.outcome='completed' OR (json_extract(p.data,'$.import_attempt_epoch') IS NOT NULL AND json_extract(p.data,'$.import_attempt_epoch')<c.attempt_epoch)))
 	AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.placement_id=p.id)`
 
-// SupersededStages lists one download's superseded stages.
+// SupersededStages lists one download's superseded stages (every download's
+// for 0).
 func (d *DB) SupersededStages(ctx context.Context, downloadID int64) ([]Placement, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT p.data FROM import_placements p WHERE json_extract(p.data,'$.download_id')=? AND `+supersededStageWhere, downloadID)
+	rows, err := d.R.QueryContext(ctx, `SELECT p.data FROM import_placements p WHERE (?=0 OR json_extract(p.data,'$.download_id')=?) AND `+supersededStageWhere+` ORDER BY p.updated_at`, downloadID, downloadID)
 	if err != nil {
 		return nil, err
 	}
