@@ -4,9 +4,10 @@ import { Link } from '@tanstack/react-router'
 import {
   autoSearchItem,
   confirmItemInCinema,
+  createWantedSearch,
   getItemStatus,
   importQueueItem,
-  removeQueueItem,
+  cancelAndBlocklist,
   retryDelivery,
   type ItemStatus,
   type StatusAction,
@@ -50,9 +51,15 @@ export function ItemStatusPanel({ itemId, kind, onInteractiveSearch }: {
     queryFn: () => getItemStatus(itemId),
     refetchInterval: (q) => statusPollMs(q.state.data),
   })
-  const [expanded, setExpanded] = useState(false)
+  // Collapsed is decided once, on the first answer, and then only by the
+  // viewer: a background poll that finds the item done never folds the panel
+  // away under someone reading it (CLAUDE.md §5).
+  const [collapsed, setCollapsed] = useState<boolean | null>(null)
   const now = useNow()
   const s = status.data
+  useEffect(() => {
+    if (s && collapsed === null) setCollapsed(s.done)
+  }, [s, collapsed])
 
   return (
     <section className="panel item-status" aria-labelledby="item-status-title" data-testid="item-status">
@@ -62,9 +69,10 @@ export function ItemStatusPanel({ itemId, kind, onInteractiveSearch }: {
       </div>
       {status.isError && !s && <p className="muted">Status unavailable: {(status.error as Error).message}</p>}
       {!s && !status.isError && <p className="muted">Loading…</p>}
-      {s && s.done && !expanded ? (
-        <button type="button" className="item-status-oneline" aria-expanded="false" onClick={() => setExpanded(true)}>
+      {s && s.done && collapsed ? (
+        <button type="button" className="item-status-oneline" aria-expanded="false" onClick={() => setCollapsed(false)}>
           <span className="dot s-done" aria-hidden="true" /> {s.headline.title}
+          {s.headline.at ? ` ${fmtWhen(s.headline.at)}` : ''}
         </button>
       ) : s ? (
         <>
@@ -75,7 +83,7 @@ export function ItemStatusPanel({ itemId, kind, onInteractiveSearch }: {
             <MovieTrack itemId={itemId} s={s} onInteractiveSearch={onInteractiveSearch} />
           )}
           {s.done && (
-            <button type="button" className="link-button small" aria-expanded="true" onClick={() => setExpanded(false)}>
+            <button type="button" className="link-button small" aria-expanded="true" onClick={() => setCollapsed(true)}>
               Collapse
             </button>
           )}
@@ -100,7 +108,10 @@ function Headline({ s }: { s: ItemStatus }) {
     <div className="item-status-headline">
       <span className={`dot ${stateClass(s.headline.state)}`} aria-hidden="true" />
       <div>
-        <div className="item-status-title">{s.headline.title}</div>
+        <div className="item-status-title">
+          {s.headline.title}
+          {s.headline.at ? <span className="muted"> · {fmtWhen(s.headline.at)}</span> : null}
+        </div>
         {s.headline.detail && <div className="muted small">{s.headline.detail}</div>}
       </div>
     </div>
@@ -270,12 +281,14 @@ function EpisodeRow({ itemId, e, open, onToggle, onInteractiveSearch }: {
         <span className="item-pips" aria-hidden="true">
           {e.stages.map((st) => <span key={st.key} className={stateClass(st.state)} />)}
         </span>
-        <span className="say">{e.summary}</span>
+        <span className="say">{e.summary}{e.at ? ` · ${fmtWhen(e.at)}` : ''}</span>
       </button>
       {open && (
         <div className="item-ep-track">
           <Track stages={e.stages} label={`Stages for ${label}`} />
-          <StatusActions itemId={itemId} actions={stageActions(e.stages).filter((a) => a !== 'cancel_download')}
+          <StatusActions itemId={itemId} episode={e}
+            actions={stageActions(e.stages).filter((a) => a !== 'cancel_download' || !e.inPack)}
+            download={e.downloadId ? { id: e.downloadId } : undefined} cinema={e.cinema}
             onInteractiveSearch={() => onInteractiveSearch({ season: e.season, episode: e.episode })} />
         </div>
       )}
@@ -283,10 +296,12 @@ function EpisodeRow({ itemId, e, open, onToggle, onInteractiveSearch }: {
   )
 }
 
-function StatusActions({ itemId, actions, download, cinema, onInteractiveSearch }: {
+function StatusActions({ itemId, episode, actions, download, cinema, onInteractiveSearch }: {
   itemId: number
+  /** Set for an episode's track: search, confirm and cancel act on it alone. */
+  episode?: StatusEpisode
   actions: StatusAction[]
-  download?: StatusDownload
+  download?: Pick<StatusDownload, 'id'> & Partial<StatusDownload>
   cinema?: ItemStatus['cinema']
   onInteractiveSearch: () => void
 }) {
@@ -303,10 +318,14 @@ function StatusActions({ itemId, actions, download, cinema, onInteractiveSearch 
     mutationFn: async (action: StatusAction): Promise<string> => {
       switch (action) {
         case 'search':
+          if (episode) {
+            const run = await createWantedSearch({ scope: 'target', wantableId: episode.wantableId })
+            return `Searching ${run.scopeLabel}; the panel shows what it finds.`
+          }
           return describeAutoSearch(await autoSearchItem(itemId))
         case 'cancel_download':
-          await removeQueueItem(download!.id, true)
-          return 'Download cancelled in Runner.'
+          await cancelAndBlocklist(download!.id)
+          return 'Download cancelled in Runner; the release is blocklisted.'
         case 'retry_import':
           await importQueueItem(download!.id)
           return 'Import started again.'
@@ -314,7 +333,7 @@ function StatusActions({ itemId, actions, download, cinema, onInteractiveSearch 
           await retryDelivery(cinema!.notifierId, cinema!.deliveryId)
           return 'Sent to cinema again; the panel shows its answer.'
         case 'confirm_cinema': {
-          const r = await confirmItemInCinema(itemId)
+          const r = await confirmItemInCinema(itemId, episode?.episodeId)
           return `Asked cinema to confirm ${r.queued} folder${r.queued === 1 ? '' : 's'}; the panel shows its answer.`
         }
         default:
@@ -354,7 +373,10 @@ function StatusActions({ itemId, actions, download, cinema, onInteractiveSearch 
       {notice.message && <ActionNotice warning={notice.warning} revision={notice.revision}>{notice.message}</ActionNotice>}
       {confirmCancel && download && (
         <ActionDialog title="Cancel download" onClose={() => setConfirmCancel(false)}>
-          <p>Cancel <span className="mono">{download.release}</span> in Runner? The item stays wanted.</p>
+          <p>
+            Cancel {download.release ? <span className="mono">{download.release}</span> : 'this download'} in Runner? The item
+            stays wanted, and this release is blocklisted so automation does not grab it again.
+          </p>
           <div className="head-actions">
             <button type="button" className="btn-danger" onClick={() => { setConfirmCancel(false); run.mutate('cancel_download') }}>
               Cancel download

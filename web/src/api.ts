@@ -1171,6 +1171,8 @@ export const getHistory = (mediaItemId?: number, limit = 100, offset = 0) => {
 }
 export const removeQueueItem = (id: number, fromClient: boolean) =>
   send('DELETE', `/queue/${id}?fromClient=${fromClient}`)
+/** The item page's Cancel download: cancel in the client and blocklist the release. */
+export const cancelAndBlocklist = (id: number) => send('DELETE', `/queue/${id}?fromClient=true&blocklist=true`)
 export const resumeQueueItem = (id: number) => send('POST', `/queue/${id}/resume`)
 export const importQueueItem = (id: number) => send('POST', `/queue/${id}/import`)
 export const cancelQueueImport = (id: number, identity: ImportAttemptIdentity) => send('POST', `/queue/${id}/cancel-import`,{generationKey:identity.generationKey,epoch:identity.epoch})
@@ -2071,8 +2073,12 @@ export interface StatusEpisode {
   season: number
   episode: number
   title?: string
+  wantableId: string
   summary: string
+  at?: number
   inPack: boolean
+  downloadId?: number
+  cinema?: StatusCinema
   stages: StatusStage[]
 }
 
@@ -2082,7 +2088,7 @@ export interface ItemStatus {
   generatedAt: number
   active: boolean
   done: boolean
-  headline: { state: StatusState; title: string; detail?: string }
+  headline: { state: StatusState; title: string; detail?: string; at?: number }
   stages?: StatusStage[]
   download?: StatusDownload
   cinema?: StatusCinema
@@ -2093,5 +2099,5 @@ export interface ItemStatus {
 
 export const getItemStatus = (id: number, season?: number) =>
   get<ItemStatus>(`/library/${id}/status${season === undefined ? '' : `?season=${season}`}`)
-export const confirmItemInCinema = (id: number) =>
-  send<{ queued: number }>('POST', `/library/${id}/status/confirm`)
+export const confirmItemInCinema = (id: number, episodeId?: number) =>
+  send<{ queued: number }>('POST', `/library/${id}/status/confirm${episodeId ? `?episode=${episodeId}` : ''}`)
