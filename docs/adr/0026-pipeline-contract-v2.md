@@ -287,20 +287,20 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     payload published at a removed publication's path is a new publication,
     never attached to the removed one.
 
-## Addendum — M6b, the v1 strings and the v1 manifest source go (v0.45.0)
+## Addendum — M6b, the v1 strings and the v1 manifest source go (v0.46.0)
 
-27. **Curator reads Runner's typed terminal only.** The `translate()` branch for
+31. **Curator reads Runner's typed terminal only.** The `translate()` branch for
     `job_pp_finished`, the ordered history reader and the receipt lookup no
     longer fall back to the v1 `pp_status` / `final_dir` strings
     (`ports.LegacyTerminal` is deleted); a row without `outcome`, or a
     completed row without its publication, is not a terminal. A `/deliveries`
     row with no `kind` is a completed terminal.
-28. **The `v1_record` manifest source is retired.** A publication's manifest is
-    its `.runner-manifest.json`. Migration 0078 refuses while a publication
+32. **The `v1_record` manifest source is retired.** A publication's manifest is
+    its `.runner-manifest.json`. Migration 0078 (after 0077, unwedge) refuses while a publication
     that is not `removed` still has `manifest_source = 'v1_record'`, then
     normalises the removed ones. It is merged only after Runner's M6b is
     deployed and the M7 review has resolved the historical cohort.
-29. **Not done in M6b**: dropping `runner_delivery_receipts` and
+33. **Not done in M6b**: dropping `runner_delivery_receipts` and
     `runner_delivery_file_outcomes`. The receipts lifecycle
     (`/downloads/deliveries*`, the Activity delivery panel, the joined
     timeline, Completed folders) still reads them and has no replacement in

@@ -1,5 +1,50 @@
 # Monarr — Project Status
 
+## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.46.0 (rebased onto main 9a5821d, 2026-11-12)
+
+**Status:** branch `claude/pipeline-v2-m6b-curator`, rebased onto `origin/main`
+9a5821d (v0.45.2: overdue exits, adoption, completed-root guard, record
+closure, historical approvals all kept) · owner: Claude (Sonnet builder) · pushed,
+**no PR** (by instruction), not reviewed, not merged, not deployed.
+
+**DO NOT MERGE EARLY: merge only after runner M6b is deployed and M7 has
+cleared v1_record publications.** Migration 0078 refuses to start otherwise
+(`migration 0078 refused: publications still on a v1_record manifest`), so an
+early merge stops the upgrade rather than corrupting anything.
+
+**Migration renumbered 2026-11-12:** main took `0077_unwedge_legacy_imports.sql`, so
+this branch's `retire_v1_record` is now **0078** (`migration0078.go`,
+`retireV1RecordVersion = 78`). Version is 0.46.0 (minor over main's 0.45.2).
+
+Built (plan M6 curator item 1, IMPL_CURATOR section 9):
+
+- **Typed terminals only.** `translate()`, the history reader and
+  `ppFinishedFact` no longer read `pp_status` / `final_dir`;
+  `ports.LegacyTerminal`, `LegacyPPStatus`, `LegacyFinalDir` and
+  `ManifestFromRunnerFiles` are deleted. A row with no `outcome`, or a
+  completed one with no publication, makes no fact. A `/deliveries` row with
+  no `kind` is a completed terminal.
+- **`v1_record` manifest source retired.** `publicationManifest` reads only
+  `.runner-manifest.json`; `attachManifest`, `AttachPublicationManifest` and
+  the delivery lookup port are gone. Migration 0078 normalises removed
+  `v1_record` rows to `none` and, in `Migrate`, refuses (named error, count and
+  up to 5 rows) while any non-removed one exists. A database older than 0072
+  stops after 0074, because 0072 itself creates `v1_record` rows.
+- Docs: integration.md, ADR 0026 addendum decisions 31-33, OpenAPI `manifestSource`.
+
+**Not done, and why (decision for Paul):** `runner_delivery_receipts` and
+`runner_delivery_file_outcomes` are **not dropped**. The receipt lifecycle
+(`/downloads/deliveries*`, `delivery_lifecycle.go`, `delivery_receipts.go`,
+the Activity delivery panel, joined timeline, Completed folders, four e2e
+specs) still reads them: about 1,900 non-test Go lines plus UI. The plan has
+no replacement for that screen, so dropping the tables would retire it
+silently. The `manifest_source` CHECK is also left as is (narrowing it means
+rebuilding `publications` with its cascading FKs).
+
+Verified (fast lane only): see the builder report. `make test`, `make
+test-web`, `make test-e2e` and the coverage floor were not run, by
+instruction.
+
 ## A salvage import never strands its download in downloaded — 2026-11-12 · v0.46.2
 
 **Status:** built, targeted tests and lint run (see the commit report) · branch
@@ -352,46 +397,6 @@ test-web`, `make test-e2e`.
 > is 0.44.0). The v1 adapter's lookup tests went with the v1_record source;
 > no-wedge's environmental hold for an unreadable manifest now covers only
 > the manifest file.
-
-## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.45.0 (rebased onto no-wedge 2026-11-11)
-
-**Status:** branch `claude/pipeline-v2-m6b-curator`, stacked on
-`claude/pipeline-v2-m6a-curator` · owner: Claude (Sonnet builder) · pushed,
-**no PR** (by instruction), not reviewed, not merged, not deployed.
-
-**DO NOT MERGE EARLY: merge only after runner M6b is deployed and M7 has
-cleared v1_record publications.** Migration 0077 refuses to start otherwise
-(`migration 0077 refused: publications still on a v1_record manifest`), so an
-early merge stops the upgrade rather than corrupting anything.
-
-Built (plan M6 curator item 1, IMPL_CURATOR section 9):
-
-- **Typed terminals only.** `translate()`, the history reader and
-  `ppFinishedFact` no longer read `pp_status` / `final_dir`;
-  `ports.LegacyTerminal`, `LegacyPPStatus`, `LegacyFinalDir` and
-  `ManifestFromRunnerFiles` are deleted. A row with no `outcome`, or a
-  completed one with no publication, makes no fact. A `/deliveries` row with
-  no `kind` is a completed terminal.
-- **`v1_record` manifest source retired.** `publicationManifest` reads only
-  `.runner-manifest.json`; `attachManifest`, `AttachPublicationManifest` and
-  the delivery lookup port are gone. Migration 0077 normalises removed
-  `v1_record` rows to `none` and, in `Migrate`, refuses (named error, count and
-  up to 5 rows) while any non-removed one exists. A database older than 0072
-  stops after 0074, because 0072 itself creates `v1_record` rows.
-- Docs: integration.md, ADR 0026 addendum 17-19, OpenAPI `manifestSource`.
-
-**Not done, and why (decision for Paul):** `runner_delivery_receipts` and
-`runner_delivery_file_outcomes` are **not dropped**. The receipt lifecycle
-(`/downloads/deliveries*`, `delivery_lifecycle.go`, `delivery_receipts.go`,
-the Activity delivery panel, joined timeline, Completed folders, four e2e
-specs) still reads them: about 1,900 non-test Go lines plus UI. The plan has
-no replacement for that screen, so dropping the tables would retire it
-silently. The `manifest_source` CHECK is also left as is (narrowing it means
-rebuilding `publications` with its cascading FKs).
-
-Verified (fast lane only): see the builder report. `make test`, `make
-test-web`, `make test-e2e` and the coverage floor were not run, by
-instruction.
 
 ## No wedge: hash once, scratch stages, background reconcile, 4 workers, subtitles — 2026-11-11 · v0.44.0
 
