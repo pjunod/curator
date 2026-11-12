@@ -1439,6 +1439,10 @@ export interface NotifierInput {
 
 export interface Notifier extends NotifierInput {
   id: number
+  /** What the far side's Test said it supports (Cinema: removed_paths). Advisory. */
+  features?: string[]
+  /** When features were last read, Unix ms; absent = never. */
+  featuresReadAt?: number
 }
 
 export interface BackupInfo {

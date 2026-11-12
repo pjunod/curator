@@ -25,3 +25,13 @@ describe('episodeToken', () => {
     expect(episodeToken(1, [])).toBe('')
   })
 })
+
+describe('cinemaFeatureState', () => {
+  it('reads removed_paths support and when it was read', async () => {
+    const { cinemaFeatureState } = await import('./pages/CinemaFeatures')
+    const base = { id: 1, type: 'plurx', name: 'cinema' } as never
+    expect(cinemaFeatureState(base).supported).toBeNull()
+    expect(cinemaFeatureState({ ...(base as object), features: ['removed_paths'], featuresReadAt: 1 } as never).supported).toBe(true)
+    expect(cinemaFeatureState({ ...(base as object), features: [], featuresReadAt: 1 } as never).supported).toBe(false)
+  })
+})

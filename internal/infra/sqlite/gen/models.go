@@ -453,16 +453,17 @@ type MediaItem struct {
 }
 
 type Notifier struct {
-	ID       int64
-	Type     string
-	Name     string
-	Settings string
-	OnGrab   int64
-	OnImport int64
-	OnFailed int64
-	OnHealth int64
-	Enabled  int64
-	Features string
+	ID         int64
+	Type       string
+	Name       string
+	Settings   string
+	OnGrab     int64
+	OnImport   int64
+	OnFailed   int64
+	OnHealth   int64
+	Enabled    int64
+	Features   string
+	FeaturesAt int64
 }
 
 type NotifierDelivery struct {

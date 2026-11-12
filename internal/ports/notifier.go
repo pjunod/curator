@@ -29,6 +29,8 @@ type NotifierConfig struct {
 	// Features is what the far side's connection test said it supports
 	// (Cinema: "removed_paths", contract amendment 5.3). Stored at Test.
 	Features []string
+	// FeaturesAt is when Features were last read (Unix ms; 0 = never).
+	FeaturesAt int64
 }
 
 // FeatureRemovedPaths is Cinema's support for a scan request naming the

@@ -5605,6 +5605,16 @@ components:
             id:
               type: integer
               format: int64
+            features:
+              type: array
+              items: { type: string }
+              description: >
+                What the far side's connection test said it supports (Cinema:
+                removed_paths, contract 4.4). Advisory; nothing is gated on it.
+            featuresReadAt:
+              type: integer
+              format: int64
+              description: When features were last read (Unix ms); absent = never.
 
     PlurxWatchedEvent:
       type: object

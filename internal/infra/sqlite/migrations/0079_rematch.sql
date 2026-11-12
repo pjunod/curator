@@ -24,7 +24,7 @@
 --    publication.
 -- 5. notifiers.features is what Cinema's connection test said it supports
 --    (["removed_paths"]), stored at Test and re-read before a session's first
---    moved send.
+--    moved send; features_at is when they were last read (0 = never).
 PRAGMA foreign_keys = OFF;
 
 -- +goose StatementBegin
@@ -87,6 +87,7 @@ ALTER TABLE notifier_deliveries ADD COLUMN operation_id TEXT NOT NULL DEFAULT ''
 CREATE INDEX notifier_deliveries_operation ON notifier_deliveries(operation_id) WHERE operation_id != '';
 
 ALTER TABLE notifiers ADD COLUMN features TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE notifiers ADD COLUMN features_at INTEGER NOT NULL DEFAULT 0;
 
 COMMIT;
 -- +goose StatementEnd
@@ -99,6 +100,7 @@ PRAGMA foreign_keys = OFF;
 -- +goose StatementBegin
 BEGIN;
 
+ALTER TABLE notifiers DROP COLUMN features_at;
 ALTER TABLE notifiers DROP COLUMN features;
 DROP INDEX notifier_deliveries_operation;
 ALTER TABLE notifier_deliveries DROP COLUMN operation_id;

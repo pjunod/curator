@@ -140,7 +140,7 @@ func (q *Queries) DueDeliveries(ctx context.Context, arg DueDeliveriesParams) ([
 }
 
 const getNotifier = `-- name: GetNotifier :one
-SELECT id, type, name, settings, on_grab, on_import, on_failed, on_health, enabled, features FROM notifiers WHERE id = ?
+SELECT id, type, name, settings, on_grab, on_import, on_failed, on_health, enabled, features, features_at FROM notifiers WHERE id = ?
 `
 
 func (q *Queries) GetNotifier(ctx context.Context, id int64) (Notifier, error) {
@@ -157,6 +157,7 @@ func (q *Queries) GetNotifier(ctx context.Context, id int64) (Notifier, error) {
 		&i.OnHealth,
 		&i.Enabled,
 		&i.Features,
+		&i.FeaturesAt,
 	)
 	return i, err
 }
@@ -576,7 +577,7 @@ func (q *Queries) ListItemsReleasedBetween(ctx context.Context, arg ListItemsRel
 }
 
 const listNotifiers = `-- name: ListNotifiers :many
-SELECT id, type, name, settings, on_grab, on_import, on_failed, on_health, enabled, features FROM notifiers ORDER BY name
+SELECT id, type, name, settings, on_grab, on_import, on_failed, on_health, enabled, features, features_at FROM notifiers ORDER BY name
 `
 
 func (q *Queries) ListNotifiers(ctx context.Context) ([]Notifier, error) {
@@ -599,6 +600,7 @@ func (q *Queries) ListNotifiers(ctx context.Context) ([]Notifier, error) {
 			&i.OnHealth,
 			&i.Enabled,
 			&i.Features,
+			&i.FeaturesAt,
 		); err != nil {
 			return nil, err
 		}

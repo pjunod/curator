@@ -2821,13 +2821,19 @@ type MonitorRequest struct {
 
 // Notifier defines model for Notifier.
 type Notifier struct {
-	Enabled  *bool  `json:"enabled,omitempty"`
-	Id       int64  `json:"id"`
-	Name     string `json:"name"`
-	OnFailed *bool  `json:"onFailed,omitempty"`
-	OnGrab   *bool  `json:"onGrab,omitempty"`
-	OnHealth *bool  `json:"onHealth,omitempty"`
-	OnImport *bool  `json:"onImport,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Features What the far side's connection test said it supports (Cinema: removed_paths, contract 4.4). Advisory; nothing is gated on it.
+	Features *[]string `json:"features,omitempty"`
+
+	// FeaturesReadAt When features were last read (Unix ms); absent = never.
+	FeaturesReadAt *int64 `json:"featuresReadAt,omitempty"`
+	Id             int64  `json:"id"`
+	Name           string `json:"name"`
+	OnFailed       *bool  `json:"onFailed,omitempty"`
+	OnGrab         *bool  `json:"onGrab,omitempty"`
+	OnHealth       *bool  `json:"onHealth,omitempty"`
+	OnImport       *bool  `json:"onImport,omitempty"`
 
 	// Settings Type-specific: webhook/discord {url}; plex {url, token}; jellyfin and plurx {url, apiKey} — for plurx a scoped plx_ key with scan:trigger, never an admin token.
 	Settings *map[string]string `json:"settings,omitempty"`

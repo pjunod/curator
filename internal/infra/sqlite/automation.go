@@ -133,7 +133,7 @@ func notifierToPort(r sqlitegen.Notifier) ports.NotifierConfig {
 		ID: r.ID, Type: r.Type, Name: r.Name, Settings: settings,
 		OnGrab: r.OnGrab != 0, OnImport: r.OnImport != 0,
 		OnFailed: r.OnFailed != 0, OnHealth: r.OnHealth != 0,
-		Enabled: r.Enabled != 0, Features: features,
+		Enabled: r.Enabled != 0, Features: features, FeaturesAt: r.FeaturesAt,
 	}
 }
 
@@ -147,7 +147,7 @@ func (d *DB) SetNotifierFeatures(ctx context.Context, id int64, features []strin
 	if err != nil {
 		return err
 	}
-	_, err = d.W.ExecContext(ctx, `UPDATE notifiers SET features=? WHERE id=?`, string(raw), id)
+	_, err = d.W.ExecContext(ctx, `UPDATE notifiers SET features=?, features_at=? WHERE id=?`, string(raw), time.Now().UnixMilli(), id)
 	return err
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // Re-match over HTTP: a preview of a title not in the library moves nothing
@@ -75,4 +76,26 @@ func TestRematchHTTP(t *testing.T) {
 	e.get(t, "/api/v1/rematch/rm-missing").expect(t, http.StatusNotFound)
 	e.post(t, "/api/v1/rematch/rm-missing/cancel", "").expect(t, http.StatusNotFound)
 	e.post(t, "/api/v1/rematch/"+op.OperationId+"/cancel", "").expect(t, http.StatusConflict)
+}
+
+// The Dev tab's advisory reads each notifier's stored features and when.
+func TestNotifierFeaturesHTTP(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	id, err := e.db.AddNotifier(ctx, ports.NotifierConfig{Type: "plurx", Name: "cinema", Enabled: true, Settings: map[string]string{"url": "http://c", "apiKey": "k"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []apigen.Notifier
+	e.get(t, "/api/v1/notifiers").expect(t, http.StatusOK).into(t, &list)
+	if len(list) != 1 || list[0].FeaturesReadAt != nil {
+		t.Fatalf("notifiers = %+v, want features never read", list)
+	}
+	if err := e.db.SetNotifierFeatures(ctx, id, []string{"removed_paths"}); err != nil {
+		t.Fatal(err)
+	}
+	e.get(t, "/api/v1/notifiers").expect(t, http.StatusOK).into(t, &list)
+	if list[0].Features == nil || len(*list[0].Features) != 1 || list[0].FeaturesReadAt == nil || *list[0].FeaturesReadAt == 0 {
+		t.Fatalf("notifiers = %+v, want removed_paths and a read time", list)
+	}
 }

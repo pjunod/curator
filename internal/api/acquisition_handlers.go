@@ -1516,12 +1516,17 @@ func notifierDTO(cfg ports.NotifierConfig) apigen.Notifier {
 	if settings == nil {
 		settings = map[string]string{}
 	}
-	return apigen.Notifier{
+	out := apigen.Notifier{
 		Id: cfg.ID, Type: apigen.NotifierType(cfg.Type), Name: cfg.Name,
 		Settings: &settings,
 		OnGrab:   &cfg.OnGrab, OnImport: &cfg.OnImport,
 		OnFailed: &cfg.OnFailed, OnHealth: &cfg.OnHealth, Enabled: &cfg.Enabled,
 	}
+	if cfg.FeaturesAt != 0 {
+		features, at := append([]string{}, cfg.Features...), cfg.FeaturesAt
+		out.Features, out.FeaturesReadAt = &features, &at
+	}
+	return out
 }
 
 // ListNotifiers implements GET /notifiers.
