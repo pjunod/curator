@@ -252,7 +252,10 @@ func (s *Service) scanCompletedLocked(ctx context.Context) error {
 	}
 	publications := make(map[string]sqlite.Publication, len(pubPaths))
 	for _, p := range pubPaths {
-		if p.State != "removed" {
+		// A record at a root or its storage container is not a payload's
+		// (payloadContainer): it claims nothing, so it cannot fence every
+		// folder beside it.
+		if p.State != "removed" && !payloadContainer(p.Path, roots) {
 			publications[storagePath(filepath.Clean(p.Path), roots)] = p
 		}
 	}

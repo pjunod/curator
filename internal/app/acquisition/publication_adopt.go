@@ -25,7 +25,7 @@ import (
 // publication, imported and cleaned by nothing.
 //
 // The completed roots are the ground truth, so the hourly pass reads them:
-// a top-level directory no publication claims, whose manifest is valid and
+// a payload directory (payloadDirs) no publication claims, whose manifest is valid and
 // names a Curator transfer token, is attributed by that token exactly as the
 // feed would have attributed it (the row's publication, completed or
 // salvage), and a publication row is unique per directory, so a replay or a
@@ -61,21 +61,17 @@ func (s *Service) adoptUnclaimedPublications(ctx context.Context) (adopted, orph
 		return 0, 0, err
 	}
 	for _, root := range roots {
-		entries, err := os.ReadDir(root)
+		dirs, err := payloadDirs(root)
 		if err != nil {
 			// An unreadable or unmounted root is not evidence that anything
 			// is missing: the next pass reads it again.
 			s.log.Debug("adoption: completed root unreadable", "root", root, "err", err)
 			continue
 		}
-		for _, e := range entries {
+		for _, path := range dirs {
 			if ctx.Err() != nil {
 				return adopted, orphaned, ctx.Err()
 			}
-			if !e.IsDir() {
-				continue
-			}
-			path := filepath.Join(root, e.Name())
 			if claimed[path] {
 				continue
 			}

@@ -107,7 +107,12 @@ type downloadRef struct {
 // unresolved siblings. Attempts rotate so a blocked row cannot starve later
 // payloads, and the batch is capped to avoid overwhelming a client.
 func (s *Service) CleanupPayloads(ctx context.Context) error {
-	// Adoption first: a committed directory no publication claims gets one
+	// Records of a path that is gone, or that was never a payload's, end
+	// first, so they claim nothing below.
+	if _, err := s.closeRecordOnlyPublications(ctx); err != nil {
+		s.log.Warn("cleanup: closing record-only publications failed", "err", err)
+	}
+	// Adoption next: a committed directory no publication claims gets one
 	// (attributed, or orphaned and discarded), and the sweep below retires
 	// an orphan in the same pass.
 	if _, _, err := s.adoptUnclaimedPublications(ctx); err != nil {

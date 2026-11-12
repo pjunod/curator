@@ -167,3 +167,94 @@ func TestSweepDiscardsMediaAnEndedImportLeftPending(t *testing.T) {
 		}
 	}
 }
+
+// Production shape: the configured root is the working tree, and payloads
+// sit in its completed container. Adoption reads the container's children.
+func TestAdoptionReadsTheCompletedContainer(t *testing.T) {
+	f := setupV2(t, nil)
+	if err := os.MkdirAll(filepath.Join(f.root, "completed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := f.runnerDir(filepath.Join("completed", "Good.Trouble.S04E10.job-2755.runner-98b8"), "98b8", "t-0-faec6d5a", 2755, map[string]string{"g.mkv": "video"})
+	adopted, orphaned, err := f.svc.adoptUnclaimedPublications(f.ctx)
+	if err != nil || adopted != 0 || orphaned != 1 {
+		t.Fatalf("adoption = %d, %d, %v; want the container's payload orphaned", adopted, orphaned, err)
+	}
+	if _, ok, _ := f.db.PublicationByPath(f.ctx, dir); !ok {
+		t.Fatal("payload inside the completed container was not adopted")
+	}
+	if _, ok, _ := f.db.PublicationByPath(f.ctx, filepath.Join(f.root, "completed")); ok {
+		t.Fatal("the completed container itself was recorded as a publication")
+	}
+}
+
+// Publication 344 (field data 2026-11-12): a record-only historical
+// publication at the completed container claimed every folder beside it. It
+// claims nothing and is closed; a record whose directory is gone is closed;
+// a record whose directory is still there keeps waiting for its review.
+// Nothing is deleted.
+func TestRecordOnlyPublicationsEndWhenTheEvidenceAllows(t *testing.T) {
+	f := setupV2(t, nil)
+	container := filepath.Join(f.root, "completed")
+	sibling := filepath.Join(container, "Some.Payload.job-1.runner-aa")
+	kept := filepath.Join(f.root, "Old.Payload")
+	writeCompleted(t, filepath.Join(sibling, "a.mkv"), 3)
+	writeCompleted(t, filepath.Join(kept, "b.mkv"), 3)
+	gone := filepath.Join(f.root, "Gone.Payload")
+	outside := filepath.Join(t.TempDir(), "failed", "Gone.Elsewhere")
+	if err := os.MkdirAll(filepath.Dir(outside), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.ScanCompleted(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]int64{}
+	for _, p := range []string{container, kept, gone, outside} {
+		id, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{Kind: "completed", Path: p, Cohort: "historical", Source: "none"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.db.SetPublicationState(f.ctx, id, "import_failed", "pre-delivery acquisition (migration 0040 review cohort): no manifest and no download row"); err != nil {
+			t.Fatal(err)
+		}
+		ids[p] = id
+	}
+	if _, claimed, err := f.svc.publicationClaiming(f.ctx, sibling); err != nil || claimed {
+		t.Fatalf("the container record claims its sibling: claimed=%v err=%v", claimed, err)
+	}
+	closed, err := f.svc.closeRecordOnlyPublications(f.ctx)
+	if err != nil || closed != 3 {
+		t.Fatalf("closed = %d (%v), want the container, the gone and the outside records", closed, err)
+	}
+	for p, id := range ids {
+		pub, err := f.db.GetPublication(f.ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "removed"
+		if p == kept {
+			want = "import_failed"
+		}
+		if pub.State != want {
+			t.Errorf("%s = %s (%s), want %s", p, pub.State, pub.Error, want)
+		}
+	}
+	for _, p := range []string{sibling, kept} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("%s was touched: %v", p, err)
+		}
+	}
+	if n := f.count(`SELECT COUNT(*) FROM history_events WHERE type='publication_closed'`); n != 3 {
+		t.Fatalf("publication_closed events = %d, want 3", n)
+	}
+	// A Runner fact naming the container is refused, never a publication.
+	dl := f.grab(1, epOne)
+	pub := ports.RunnerPublication{Path: container, Generation: "zz", Kind: "completed"}
+	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 1"))
+	if p, ok, _ := f.db.PublicationByPath(f.ctx, container); ok && p.State != "removed" {
+		t.Fatalf("a terminal reopened a publication at the container: %+v", p)
+	}
+	if got := f.row(dl.ID); got.State == "downloaded" || got.State == "imported" {
+		t.Fatalf("row = %s: a terminal naming the container was accepted", got.State)
+	}
+}

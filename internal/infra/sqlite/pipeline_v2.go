@@ -1428,6 +1428,29 @@ func (d *DB) MarkPublicationRemoved(ctx context.Context, id int64) error {
 	return tx.Commit()
 }
 
+// RecordOnlyPublications lists the publications that are only a record of a
+// path: no download row, no manifest and no file — the migration-0040 review
+// cohort and directories the cutover froze. Nothing can import or clean them
+// file by file; they end when their directory is gone or the path was never
+// a payload directory.
+func (d *DB) RecordOnlyPublications(ctx context.Context) ([]Publication, error) {
+	return d.publicationsWhere(ctx, `download_id IS NULL AND manifest_source='none' AND state IN ('discovered','import_failed')
+		AND NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id)`)
+}
+
+// ClosePublicationRecord ends a record-only publication (removed, with the
+// reason kept as its error). ok is false when it is no longer record-only.
+func (d *DB) ClosePublicationRecord(ctx context.Context, id int64, reason string) (bool, error) {
+	res, err := d.W.ExecContext(ctx, `UPDATE publications SET state='removed', error=?, updated_at=? WHERE id=? AND download_id IS NULL AND manifest_source='none'
+		AND state IN ('discovered','import_failed') AND NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id)`,
+		reason, time.Now().UnixMilli(), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // ApprovePublicationCleanup is the M7 approval of a review batch: it lets the
 // per-file rule delete the named historical publications' evidenced files.
 // Live publications, and ones already approved, are untouched.

@@ -312,6 +312,13 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 			return false, nil
 		}
 		mapped := ports.MapRemotePath(cfg.PathMappings, pub.Path)
+		if s.isPayloadContainer(ctx, mapped) {
+			// A completed root or its storage container is never one
+			// payload: refused, like a completion without its publication;
+			// the real path arrives with history or the deliveries feed.
+			s.log.Warn("runner publication path refused: it is a completed root or its storage container", "download", dl.ID, "path", mapped, "source", source)
+			return false, nil
+		}
 		w.State, w.Progress, w.SavePath, w.ImportPath = "downloaded", 1, pub.Path, mapped
 		w.Publication = s.publicationWrite(dl.ID, mapped, *pub, "completed")
 		detail := fmt.Sprintf("%s finished; publication at %s", clientLabel(cfg), pub.Path)
@@ -497,6 +504,10 @@ func (s *Service) attachManifest(ctx context.Context, downloadID int64, mapped s
 func (s *Service) recordSalvage(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, pub ports.RunnerPublication, source string) error {
 	mapped := ports.MapRemotePath(cfg.PathMappings, pub.Path)
 	if strings.TrimSpace(mapped) == "" {
+		return nil
+	}
+	if s.isPayloadContainer(ctx, mapped) {
+		s.log.Warn("runner salvage path refused: it is a completed root or its storage container", "download", dl.ID, "path", mapped, "source", source)
 		return nil
 	}
 	if existing, ok, err := s.db.PublicationByPath(ctx, mapped); err != nil {
