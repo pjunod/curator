@@ -1098,3 +1098,21 @@ func (s *Service) offloadOutbox(ctx context.Context, opID string, item domain.Me
 	}
 	return out, nil
 }
+
+// OffloadForItem is the operation the item page follows: the open one, else
+// the newest finished one that was not dismissed and is still recent.
+func (s *Service) OffloadForItem(ctx context.Context, itemID int64) (OffloadStatus, bool, error) {
+	id, err := s.db.OpenOffloadForItem(ctx, itemID)
+	if err != nil {
+		return OffloadStatus{}, false, err
+	}
+	if id == "" {
+		done, ok, err := s.db.LatestEndedOffloadForItem(ctx, itemID, time.Now().Add(-rematchEndedFor).UnixMilli())
+		if err != nil || !ok {
+			return OffloadStatus{}, false, err
+		}
+		id = done.ID
+	}
+	st, err := s.GetOffload(ctx, id)
+	return st, err == nil, err
+}

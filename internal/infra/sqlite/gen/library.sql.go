@@ -1489,6 +1489,9 @@ SELECT
       WHERE e2.media_item_id = m.id AND e2.monitored = 1 AND e2.offloaded_at = 0
         AND e2.air_date != '' AND e2.air_date <= ?1) AS have_episodes,
     (SELECT COUNT(*) FROM media_files f WHERE f.media_item_id = m.id) AS files,
+    -- Offloaded episodes (ADR 0028): the library's Offloaded filter and pill.
+    (SELECT COUNT(*) FROM episodes e3
+      WHERE e3.media_item_id = m.id AND e3.offloaded_at > 0) AS offloaded_episodes,
     -- Every file's recorded quality, comma-joined. Ranking happens in Go
     -- (quality.Rank), which SQLite cannot do, and the list view needs the
     -- weakest one: that is what decides whether an item is still being
@@ -1516,11 +1519,12 @@ FROM media_items m
 `
 
 type ListMediaItemStatsRow struct {
-	ID            int64
-	AiredEpisodes int64
-	HaveEpisodes  int64
-	Files         int64
-	Qualities     interface{}
+	ID                int64
+	AiredEpisodes     int64
+	HaveEpisodes      int64
+	Files             int64
+	OffloadedEpisodes int64
+	Qualities         interface{}
 }
 
 // Completeness per item for list views: monitored aired episodes vs the
@@ -1539,6 +1543,7 @@ func (q *Queries) ListMediaItemStats(ctx context.Context, today string) ([]ListM
 			&i.AiredEpisodes,
 			&i.HaveEpisodes,
 			&i.Files,
+			&i.OffloadedEpisodes,
 			&i.Qualities,
 		); err != nil {
 			return nil, err

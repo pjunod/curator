@@ -453,6 +453,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            `offloaded`: the row is offloaded (ADR 0028), so it cannot be
+            monitored until Re-acquire (POST /library/{id}/reacquire).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404":
           description: No such item.
           content:
@@ -3040,6 +3047,194 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /library/{id}/offload/preview:
+    post:
+      operationId: previewOffload
+      summary: What an Offload would delete (ADR 0028); no side effects
+      description: >
+        Offload frees the space and keeps the title: it deletes every file of
+        the scope (video, subtitles, every quality copy) and marks the scope
+        offloaded, so nothing searches for it again until Re-acquire. The
+        preview lists the files including sidecars and untracked subtitles,
+        the bytes freed, the library volume's free space before and after,
+        what is blocking it (`blocked`; retry to wait), a line on what Cinema
+        will do (advisory, never a gate) and, when a file covers several
+        episodes, the episodes the scope widens to (`widened`).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OffloadRequest" }
+      responses:
+        "200":
+          description: The preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OffloadPreview" }
+        "400":
+          description: A scope that does not exist, or a title that is already offloaded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /library/{id}/offload:
+    get:
+      operationId: getLibraryOffload
+      summary: The open Offload of this title
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: >
+            The operation to follow: the open one, else the latest finished
+            one that has not been dismissed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OffloadOperation" }
+        "204":
+          description: No open or recent operation for this item.
+    post:
+      operationId: startOffload
+      summary: Execute a previewed Offload (idempotent by requestId)
+      description: >
+        Takes the title's lease and its per-copy reservations, refuses a stale
+        preview (409 `stale`) or work in flight (409 `offload_blocked`), then
+        in one transaction records the scope and the file list, marks it
+        offloaded and writes Cinema's sub-deliveries; the deletes follow in
+        the background and survive a restart. Follow it with GET
+        /offload/{operationId}.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OffloadRequest" }
+      responses:
+        "202":
+          description: The operation, started (or the one this requestId already started).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OffloadOperation" }
+        "400":
+          description: Invalid request (no requestId or fingerprint, no such scope).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: >
+            `stale` (preview again), `offload_blocked` (work in flight, or the
+            share is not mounted; the body carries `blocked`),
+            `request_conflict` (requestId reused) or `busy` (the title is being
+            imported). 503 `maintenance` while a deployment drain pauses new work.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OffloadConflict" }
+
+  /library/{id}/reacquire:
+    post:
+      operationId: reacquireLibraryItem
+      summary: Get an offloaded title, season or episode back (ADR 0028)
+      description: >
+        Clears offloaded inside the scope, monitors it, cancels the Offload's
+        unconfirmed Cinema requests and searches at the current profile (a
+        season is searched pack-first). Answers at once with `searching`; the
+        search runs in the background. Asking again is harmless. The same
+        service backs the plurx webhook's `reacquire` event.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OffloadRequest" }
+      responses:
+        "200":
+          description: Where the title is now.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReacquireResult" }
+        "400":
+          description: A scope that does not exist.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The Offload is still deleting files (`busy`); wait for it or Stop it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /offload/{operationId}:
+    get:
+      operationId: getOffload
+      summary: An Offload's state, files deleted, bytes freed and Cinema confirmation
+      parameters:
+        - { name: operationId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OffloadOperation" }
+        "404":
+          description: No such operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /offload/{operationId}/cancel:
+    post:
+      operationId: cancelOffload
+      summary: Stop an Offload; what is already deleted stays deleted
+      parameters:
+        - { name: operationId, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          description: Stopped; the remaining files stay on disk and their titles are no longer offloaded.
+        "404":
+          description: No such operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: It has already finished.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /offload/{operationId}/dismiss:
+    post:
+      operationId: dismissOffload
+      summary: Hide a finished Offload from the item page's status panel
+      parameters:
+        - { name: operationId, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Dismissed.
+        "404":
+          description: No such operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: It is still running; Stop it instead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/{id}/seasons/{season}:
     patch:
       operationId: setSeasonMonitored
@@ -3064,6 +3259,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MediaItemDetail" }
+        "409":
+          description: >
+            `offloaded`: the row is offloaded (ADR 0028), so it cannot be
+            monitored until Re-acquire (POST /library/{id}/reacquire).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404":
           description: No such item or season.
           content:
@@ -3094,6 +3296,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MediaItemDetail" }
+        "409":
+          description: >
+            `offloaded`: the row is offloaded (ADR 0028), so it cannot be
+            monitored until Re-acquire (POST /library/{id}/reacquire).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404":
           description: No such item or episode.
           content:
@@ -3437,7 +3646,11 @@ paths:
         The one thing another application tells Monarr to record (master plan
         §11.1). Matched by external id only — never by title — so a
         notification for something Monarr does not have is accepted and
-        ignored rather than guessed at. Nothing here can cause a deletion.
+        ignored rather than guessed at. `watched` records and nothing more.
+        `reacquire` is the one acting event: an admin in plurx asked for an
+        offloaded title back, so Monarr clears offloaded inside the scope and
+        searches (ADR 0028); `reacquire_status` reads where that stands. Both
+        answer `{matched, mediaItemId, state}`.
       requestBody:
         required: true
         content:
@@ -3457,6 +3670,11 @@ paths:
                 properties:
                   matched: { type: boolean }
                   mediaItemId: { type: integer, format: int64 }
+                  state:
+                    type: string
+                    enum: [searching, downloading, importing, on_disk, not_offloaded, not_found]
+                    description: reacquire and reacquire_status only.
+                  message: { type: string }
         "400":
           description: Unusable payload.
           content:
@@ -4071,6 +4289,14 @@ components:
           type: string
         monitored:
           type: boolean
+        offloaded:
+          type: boolean
+          description: >
+            Offloaded (ADR 0028): a movie whose files were deleted on purpose,
+            or a show with any offloaded episode (see offloadedEpisodes).
+        offloadedEpisodes:
+          type: integer
+          description: Shows only; the number of offloaded episodes.
         path:
           type: string
         source:
@@ -4171,6 +4397,9 @@ components:
           type: string
         monitored:
           type: boolean
+        offloaded:
+          type: boolean
+          description: Offloaded (ADR 0028); Re-acquire is the way back.
         hasFile:
           type: boolean
 
@@ -4182,6 +4411,9 @@ components:
           type: integer
         monitored:
           type: boolean
+        offloaded:
+          type: boolean
+          description: Offloaded (ADR 0028); Re-acquire is the way back.
         episodes:
           type: array
           items:
@@ -4379,6 +4611,9 @@ components:
           $ref: "#/components/schemas/SeriesMonitorMode"
         monitored:
           type: boolean
+        offloaded:
+          type: boolean
+          description: A movie that is offloaded (ADR 0028). Seasons and episodes carry their own.
         qualityProfileId:
           type: integer
           format: int64
@@ -5914,25 +6149,32 @@ components:
 
     PlurxWatchedEvent:
       type: object
-      required: [event, kind, watched_at]
+      required: [event, kind]
       properties:
         event:
           type: string
-          description: "\"watched\" today; the field exists so the route can grow others."
+          description: >
+            `watched` (the default), `reacquire`, or `reacquire_status`. An
+            event this build does not know is accepted and dropped.
         kind:
           type: string
-          enum: [movie, episode]
+          enum: [movie, episode, show, season]
+          description: >
+            watched: movie or episode. reacquire / reacquire_status: movie,
+            show, season or episode (ids as for watched: movie tmdb/imdb;
+            show, season and episode use the SHOW's tmdb plus season and
+            episode).
         tmdb:
           type: integer
           format: int64
-          description: For an episode this is the SHOW's id, not the episode's.
+          description: For an episode, season or show this is the SHOW's id, not the episode's.
         imdb: { type: string }
         season: { type: integer }
         episode: { type: integer }
         watched_at:
           type: integer
           format: int64
-          description: Unix seconds.
+          description: Unix seconds. Required for `watched`.
         user:
           type: string
           description: >
@@ -7116,6 +7358,116 @@ components:
               result: { type: string }
               lastError: { type: string }
               visibleAt: { type: integer, format: int64 }
+
+    OffloadRequest:
+      type: object
+      required: [scope]
+      properties:
+        scope:
+          type: string
+          enum: [item, season, episode]
+          description: item is the whole movie or show.
+        season: { type: integer, description: "Scope season: the season number." }
+        episodeId: { type: integer, format: int64, description: "Scope episode: the episode's id." }
+        requestId: { type: string, description: "Execution only: idempotency key." }
+        fingerprint: { type: string, description: "Execution only: the preview's fingerprint; a library that changed since refuses with 409 stale." }
+
+    OffloadFile:
+      type: object
+      required: [path, kind, bytes]
+      properties:
+        path: { type: string }
+        kind: { type: string, enum: [media, sidecar] }
+        bytes: { type: integer, format: int64 }
+        shared: { type: boolean, description: "Another hard link keeps the bytes allocated (a seeding copy)." }
+        episodes: { type: array, items: { type: string }, description: "S01E02 labels." }
+
+    OffloadBlocked:
+      type: object
+      required: [reason, message, retry]
+      properties:
+        reason: { type: string, enum: [download, import, replacement, rematch, offload, unmounted] }
+        ref: { type: string }
+        message: { type: string }
+        retry: { type: boolean }
+
+    OffloadPreview:
+      type: object
+      required: [item, scope, label, files, bytes, freed, freeBefore, freeAfter, fingerprint, summary]
+      properties:
+        item: { type: object, description: "{id, kind, title, year}." }
+        scope: { type: string, enum: [item, season, episode] }
+        label: { type: string }
+        files: { type: array, items: { $ref: "#/components/schemas/OffloadFile" } }
+        bytes: { type: integer, format: int64, description: Every byte deleted. }
+        freed: { type: integer, format: int64, description: What returns to the volume now (hard-linked bytes are not counted until the other link goes). }
+        freeBefore: { type: integer, format: int64, description: "Library volume free bytes; -1 unknown." }
+        freeAfter: { type: integer, format: int64 }
+        root: { type: string }
+        episodes: { type: array, items: { type: string }, description: What becomes offloaded, in order. }
+        widened: { type: array, items: { type: string }, description: "Episodes the request did not name but a multi-episode file takes with it." }
+        cinema: { type: string, description: What Cinema will do. Advisory. }
+        cinemaWarning: { type: boolean, description: "True when Cinema will drop the title and its watch history (it does not advertise offload)." }
+        blocked: { $ref: "#/components/schemas/OffloadBlocked" }
+        fingerprint: { type: string }
+        summary: { type: string }
+
+    OffloadConflict:
+      type: object
+      required: [message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        blocked: { $ref: "#/components/schemas/OffloadBlocked" }
+
+    OffloadOperation:
+      type: object
+      required: [operationId, requestId, state, itemId, scope, filesTotal, filesDone, bytesTotal, bytesFreed, stoppable, createdAt, updatedAt]
+      properties:
+        operationId: { type: string }
+        requestId: { type: string }
+        state:
+          type: string
+          enum: [deleting, waiting, retrying, complete, cancelled, failed]
+          description: >
+            waiting = the share is not mounted (nothing is marked deleted);
+            retrying = an unlink failed (see failed); both resume by themselves.
+        itemId: { type: integer, format: int64 }
+        scope: { type: string, enum: [item, season, episode] }
+        label: { type: string }
+        plan: { type: object, description: The stored request and preview. }
+        result: { type: object }
+        filesTotal: { type: integer }
+        filesDone: { type: integer }
+        failed: { type: array, items: { type: string } }
+        bytesTotal: { type: integer, format: int64 }
+        bytesFreed: { type: integer, format: int64 }
+        lastError: { type: string }
+        stoppable: { type: boolean }
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
+        cinemaLine: { type: string }
+        cinema:
+          type: array
+          items:
+            type: object
+            properties:
+              directory: { type: string }
+              status: { type: string }
+              result: { type: string }
+              lastError: { type: string }
+              visibleAt: { type: integer, format: int64 }
+
+    ReacquireResult:
+      type: object
+      required: [mediaItemId, state, cleared]
+      properties:
+        mediaItemId: { type: integer, format: int64 }
+        state:
+          type: string
+          enum: [searching, downloading, importing, on_disk, not_offloaded]
+        cleared: { type: boolean, description: This call cleared offloaded. }
+        message: { type: string }
 
     DefaultProfilesUpdate:
       type: object

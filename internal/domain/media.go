@@ -166,7 +166,9 @@ type MediaItem struct {
 	// file count for movies/books.
 	EpisodeCount     int
 	EpisodeFileCount int
-	FileCount        int
+	// OffloadedEpisodes counts the show's offloaded episodes (list views only).
+	OffloadedEpisodes int
+	FileCount         int
 	// Quality is the WEAKEST quality among the primary copy's files, and
 	// Upgrade is what the item's profile makes of it. The weakest rather
 	// than the best because that is the one deciding whether the item is
