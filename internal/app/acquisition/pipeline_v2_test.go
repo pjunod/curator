@@ -565,8 +565,6 @@ func TestProvisionalSubmitReopensOnDeliveryRow(t *testing.T) {
 	}
 	// The POST had landed after all: Runner published it.
 	pub := f.publish("Test.Show.S01E01.job-777.runner-ccc", "ccc", map[string]string{epOne + ".mkv": "video"})
-	m := ports.Manifest{Generation: "ccc", Digest: pub.ManifestDigest}
-	pub.Manifest = &m
 	f.runner.deliveries = append(f.runner.deliveries, ports.RunnerFact{Kind: ports.FactTerminal, Transfer: dl.Transfer, Handle: "777",
 		Terminal: &ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, Source: "deliveries 1"})
 	if err := f.svc.RefreshQueue(f.ctx); err != nil {
@@ -609,36 +607,7 @@ func TestHeldLocalExpiryIsStaleNotFailed(t *testing.T) {
 	}
 }
 
-// (j) A publication with only a v1 delivery record imports through the
-// adapter, in a real nuc3-shaped directory.
-func TestV1RecordManifestImports(t *testing.T) {
-	f := setupV2(t, nil)
-	dl := f.grab(1, epOne)
-	name := epOne + ".job-2333-url-fabba0b486c9.runner-29c89841a6c050b662dc794671e52708"
-	pub := f.publish(name, "29c89841a6c050b662dc794671e52708", map[string]string{epOne + ".mkv": "video", "sample/" + epOne + "-sample.mkv": "s"})
-	raw, _ := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
-	_ = os.Remove(filepath.Join(pub.Path, ports.ManifestFileName)) // a pre-M3 Runner writes no manifest file
-	var m ports.Manifest
-	_ = json.Unmarshal(raw, &m)
-	m.Source = "v1_record"
-	pub.Manifest = &m
-	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "deliveries 12"))
-	got := f.row(dl.ID)
-	if got.State != "imported" {
-		t.Fatalf("state = %s (%s), want imported through the v1 record", got.State, got.Error)
-	}
-	p, _, _ := f.db.PublicationByPath(f.ctx, pub.Path)
-	files, _ := f.db.ListPublicationFiles(f.ctx, p.ID)
-	outcomes := map[string]string{}
-	for _, file := range files {
-		outcomes[file.Path] = file.Outcome + "/" + file.DiscardReason
-	}
-	if outcomes[epOne+".mkv"] != "placed/" || outcomes["sample/"+epOne+"-sample.mkv"] != "discarded/rejected" || p.ManifestSource != "v1_record" {
-		t.Fatalf("outcomes = %v source %s", outcomes, p.ManifestSource)
-	}
-}
-
-// (j) A directory with neither a manifest file nor a v1 record is not a
+// (j) A directory without its manifest file is not a
 // publication yet: skipped, retried on the next poll.
 func TestManifestlessDirectoryIsSkipped(t *testing.T) {
 	f := setupV2(t, nil)
@@ -817,7 +786,6 @@ func TestHistoricalPartiallyPlacedPublicationImportsTheRest(t *testing.T) {
 	}
 	pub := f.publish("Test.Show.S01.job-55.runner-v1gen", "v1gen", map[string]string{"Test.Show.S01E01.mkv": "e1", "Test.Show.S01E02.mkv": "e2"})
 	raw, _ := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
-	_ = os.Remove(filepath.Join(pub.Path, ports.ManifestFileName))
 	id, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{DownloadID: dl.ID, Generation: "v1gen", Kind: "completed", Path: pub.Path,
 		ManifestJSON: string(raw), Source: "v1_record", Cohort: "historical"})
 	if err != nil {

@@ -129,12 +129,6 @@ type RequestAdmissionProtocol interface {
 	GetRequestAdmission(ctx context.Context, transferToken string) (RequestAdmission, bool, error)
 }
 
-// DeliveryLookupProtocol exposes the immutable delivery and mutable cleanup
-// progress after it leaves the pending collection endpoint.
-type DeliveryLookupProtocol interface {
-	GetDelivery(ctx context.Context, deliveryID string) (RunnerDelivery, error)
-}
-
 // DeliverySourceCleanupRetryProtocol asks Runner to retry deletion of its
 // retained processing source. Publication cleanup remains Curator-owned.
 type DeliverySourceCleanupRetryProtocol interface {

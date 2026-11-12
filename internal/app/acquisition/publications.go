@@ -26,13 +26,18 @@ import (
 // lifecycle and a per-file outcome. A download row may have several (the
 // completed one, a salvage, a late one).
 
-// publicationManifest is the v1 adapter (contract section 6): the manifest
-// from the publication's own .runner-manifest.json when it has one, else from
-// Runner's v1 delivery record (stored on the publication when the deliveries
-// feed carried it, or looked up by its delivery id). A directory with neither
-// is not a publication yet: ok=false, and the next poll checks again.
-func (s *Service) publicationManifest(ctx context.Context, cfg ports.ClientConfig, pub sqlite.Publication) (ports.Manifest, bool, error) {
-	if raw, err := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName)); err == nil {
+// publicationManifest reads the manifest from the publication's own
+// .runner-manifest.json, the commit marker of a publication directory (read
+// without following a symlink, size-capped). A publication an earlier build
+// recorded with a stored manifest body (a v1 delivery record, or the file as
+// first read) falls back to that body when the file is gone, so it drains
+// through its import and cleanup; nothing asks Runner for a v1 record any
+// more. A directory with neither is not a publication yet: ok=false, and
+// the next poll checks again.
+func (s *Service) publicationManifest(pub sqlite.Publication) (ports.Manifest, bool, error) {
+	raw, err := readManifestFile(pub.Path)
+	switch {
+	case err == nil:
 		var m ports.Manifest
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return m, false, fmt.Errorf("%w: %s is not a manifest: %v", errManifestInvalid, ports.ManifestFileName, err)
@@ -42,30 +47,15 @@ func (s *Service) publicationManifest(ctx context.Context, cfg ports.ClientConfi
 			return m, false, fmt.Errorf("%w: %v", errManifestInvalid, err)
 		}
 		return m, true, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	case errors.Is(err, errManifestTooLarge):
+		return ports.Manifest{}, false, fmt.Errorf("%w: %v", errManifestInvalid, err)
+	case !errors.Is(err, os.ErrNotExist):
 		return ports.Manifest{}, false, err
 	}
 	if pub.ManifestSource == "v1_record" || pub.ManifestSource == "file" {
 		var m ports.Manifest
 		if err := json.Unmarshal([]byte(pub.ManifestJSON), &m); err == nil && len(m.Files) > 0 {
-			m.Source = "v1_record"
-			if err := verifyManifestShape(m, pub.Generation); err != nil {
-				return m, false, fmt.Errorf("%w: %v", errManifestInvalid, err)
-			}
-			return m, true, nil
-		}
-	}
-	// The record may exist on Runner without having reached the feed cache:
-	// look it up by the delivery id the stored manifest names, when it does.
-	var stored ports.Manifest
-	_ = json.Unmarshal([]byte(pub.ManifestJSON), &stored)
-	if stored.DeliveryID != "" {
-		if lookup, ok := s.newClient(cfg).(ports.DeliveryLookupProtocol); ok {
-			d, err := lookup.GetDelivery(ctx, stored.DeliveryID)
-			if err != nil {
-				return ports.Manifest{}, false, err
-			}
-			m := ports.ManifestFromRunnerFiles(d.PublicationGeneration, d.ManifestDigest, d.DeliveryID, d.Files)
+			m.Source = pub.ManifestSource
 			if err := verifyManifestShape(m, pub.Generation); err != nil {
 				return m, false, fmt.Errorf("%w: %v", errManifestInvalid, err)
 			}
@@ -73,6 +63,24 @@ func (s *Service) publicationManifest(ctx context.Context, cfg ports.ClientConfi
 		}
 	}
 	return ports.Manifest{}, false, nil
+}
+
+// recordFileManifest stores the manifest an import or adoption read from
+// the directory's .runner-manifest.json on a publication that had none
+// (manifest_source 'none'), so the per-file cleanup's guard knows the
+// directory must still carry it: a missing manifest file then stops the
+// cleanup instead of letting it decide placed files without proof.
+func (s *Service) recordFileManifest(ctx context.Context, pub sqlite.Publication, m ports.Manifest) {
+	if pub.ManifestSource != "none" || m.Source != "file" {
+		return
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return
+	}
+	if err := s.db.RecordPublicationFileManifest(ctx, pub.ID, string(raw), m.CrossVolume); err != nil {
+		s.log.Warn("publication manifest could not be recorded", "publication", pub.ID, "err", err)
+	}
 }
 
 // errManifestInvalid is a manifest that says something impossible about
@@ -184,7 +192,7 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		s.holdPublication(ctx, &dl, pub, err.Error())
 		return err
 	}
-	m, ok, err := s.publicationManifest(ctx, cfg, pub)
+	m, ok, err := s.publicationManifest(pub)
 	if err != nil {
 		if errors.Is(err, errManifestInvalid) {
 			s.endPublication(ctx, dl, cfg, pub, nil, err.Error())
@@ -213,6 +221,7 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	for _, f := range m.Files {
 		files = append(files, sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256})
 	}
+	s.recordFileManifest(ctx, pub, m)
 	if err := s.db.SeedPublicationFiles(ctx, pub.ID, files); err != nil {
 		return err
 	}
@@ -532,7 +541,7 @@ func (s *Service) returnPublication(ctx context.Context, dl *sqlite.Download, pu
 func (s *Service) endPublication(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, pub sqlite.Publication, m *ports.Manifest, reason string) {
 	ctx = context.WithoutCancel(ctx)
 	if m == nil {
-		mm, ok, err := s.publicationManifest(ctx, cfg, pub)
+		mm, ok, err := s.publicationManifest(pub)
 		switch {
 		case err != nil && !errors.Is(err, errManifestInvalid):
 			// Not knowing what it placed is not a reason to forget it: wait.
@@ -557,6 +566,7 @@ func (s *Service) endPublication(ctx context.Context, dl sqlite.Download, cfg po
 	for _, f := range m.Files {
 		files = append(files, sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256})
 	}
+	s.recordFileManifest(ctx, pub, *m)
 	if err := s.db.SeedPublicationFiles(ctx, pub.ID, files); err != nil {
 		s.log.Warn("publication could not be ended", "publication", pub.ID, "err", err)
 		return
