@@ -16,7 +16,7 @@ import type {
   MediaItemSummary,
   MediaKind,
   MetadataPreview,
-  PlaceTarget,
+  PlaceRequest,
   QualityProfile,
   QueueItem,
   QueueSummary,
@@ -180,8 +180,9 @@ export class MonarrClient {
   getManualImportDefaultPath = (): Promise<{ path: string }> => this.get('/import/default-path')
   planImport = (req: ImportPlanRequest): Promise<ImportPlanFile[]> => this.send('POST', '/import/plan', req)
   manualImport = (req: ManualImportRequest): Promise<{ downloadId: number }> => this.send('POST', '/import/manual', req)
-  placePublicationFile = (id: number, publicationId: number, path: string, target: PlaceTarget): Promise<void> =>
-    this.send('POST', `/queue/${id}/publications/${publicationId}/files/resolve`, { path, action: 'place', ...target })
+  placePublicationFiles = (id: number, publicationId: number, req: PlaceRequest): Promise<void> =>
+    this.send('POST', `/queue/${id}/publications/${publicationId}/files/place`, req)
+  getQueueItem = (id: number): Promise<QueueItem> => this.get(`/queue/${id}`)
   cancelQueueImport = (id: number, identity: { generationKey: string; epoch: string }): Promise<void> =>
     this.send('POST', `/queue/${id}/cancel-import`, { generationKey: identity.generationKey, epoch: identity.epoch })
   getCalendar = (start: string, end: string): Promise<CalendarEntry[]> =>

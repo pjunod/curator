@@ -41,6 +41,19 @@ export function planRequest(item: MediaItemDetail, files: ScannedFile[], choices
 
 export interface StartedImport { downloadId?: number; label: string; error?: string }
 
+/** What a row's trace says Remove original did, or is doing. */
+export function originalsNote(row: { handoff?: { step: string; detail?: string }[] }): string {
+  const trace = row.handoff ?? []
+  for (let i = trace.length - 1; i >= 0; i--) {
+    if (trace[i]!.step === 'originals_removal_done') return trace[i]!.detail ?? ''
+    if (trace[i]!.step === 'originals_removal_pending') return 'Removing the originals…'
+  }
+  return ''
+}
+
+export const isTerminal = (row: { state: string; handoff?: { step: string; detail?: string }[] }) =>
+  (row.state === 'imported' || row.state === 'failed') && !originalsNote(row).endsWith('…')
+
 /**
  * Start the confirmed import: a runner delivery's file through Resolve's
  * placement, loose files through one queued manual import per folder.
@@ -48,21 +61,32 @@ export interface StartedImport { downloadId?: number; label: string; error?: str
 export async function startImport(client: MonarrClient, item: MediaItemDetail, files: ScannedFile[], choices: Record<string, EpisodeChoice>, copyId: number, removeOriginal: boolean): Promise<StartedImport[]> {
   const out: StartedImport[] = []
   const byFolder = new Map<string, ScannedFile[]>()
+  // A runner delivery's files go together: one placement, one import.
+  const byPublication = new Map<number, ScannedFile[]>()
   for (const f of files) {
-    const c = parseChoice(choices[f.path] ?? '')
     if (f.publication) {
-      try {
-        await client.placePublicationFile(f.publication.downloadId, f.publication.publicationId, f.publication.path, {
-          mediaItemId: item.id, copyId: copyId || undefined, season: c?.season, episodes: c?.episodes,
-        })
-        out.push({ downloadId: f.publication.downloadId, label: f.name })
-      } catch (cause) {
-        out.push({ label: f.name, error: cause instanceof Error ? cause.message : 'Could not place this file.' })
-      }
+      byPublication.set(f.publication.publicationId, [...(byPublication.get(f.publication.publicationId) ?? []), f])
       continue
     }
     const dir = f.path.slice(0, f.path.lastIndexOf('/')) || '/'
     byFolder.set(dir, [...(byFolder.get(dir) ?? []), f])
+  }
+  for (const [publicationId, group] of byPublication) {
+    const label = group.length === 1 ? group[0]!.name : `${group.length} files of a runner delivery`
+    const downloadId = group[0]!.publication!.downloadId
+    try {
+      await client.placePublicationFiles(downloadId, publicationId, {
+        mediaItemId: item.id,
+        copyId: copyId || undefined,
+        files: group.map((f) => {
+          const c = parseChoice(choices[f.path] ?? '')
+          return { path: f.publication!.path, season: c?.season, episodes: c?.episodes }
+        }),
+      })
+      out.push({ downloadId, label })
+    } catch (cause) {
+      out.push({ label, error: cause instanceof Error ? cause.message : 'Could not place these files.' })
+    }
   }
   for (const [dir, group] of byFolder) {
     const label = group.length === 1 ? group[0]!.name : `${group.length} files from ${dir}`

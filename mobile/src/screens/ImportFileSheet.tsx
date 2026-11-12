@@ -4,7 +4,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import type { MonarrClient } from '../api'
 import { AppScreen, Badge, Button, Chip, Field, Header, IconButton, InlineError, LoadingState, Panel, SectionTitle } from '../components/UI'
 import { formatBytes } from '../format'
-import { MODE_TEXT, choiceOf, episodeLabel, planRequest, startImport, type EpisodeChoice, type StartedImport } from '../itemImport'
+import { MODE_TEXT, choiceOf, episodeLabel, isTerminal, originalsNote, planRequest, startImport, type EpisodeChoice, type StartedImport } from '../itemImport'
 import { useTheme } from '../theme'
 import type { BrowseResult, ImportPlanFile, MediaItemDetail, QueueItem, RootFolder, ScannedFile } from '../types'
 
@@ -113,7 +113,14 @@ export function ImportFileSheet({ client, item, onClose }: { client: MonarrClien
               <Panel style={styles.list}>
                 {listing.dirs?.parent && listing.dirs.parent !== path ? <Row label="↰ .." onPress={() => go(listing.dirs!.parent)} /> : null}
                 {(listing.dirs?.dirs ?? []).map((d) => <Row key={d.path} label={`▸ ${d.name}/`} onPress={() => go(d.path)} />)}
-                {listing.files.map((f) => (
+                {listing.files.map((f) => f.skipped ? (
+                  <View key={f.path} style={[styles.file, { borderColor: theme.border }]}>
+                    <View style={styles.flex}>
+                      <Text style={{ color: theme.muted }}>{f.name}</Text>
+                      <Text style={{ color: theme.muted }}>{f.skipped}</Text>
+                    </View>
+                  </View>
+                ) : (
                   <View key={f.path} style={[styles.file, { borderColor: theme.border }]}>
                     <Switch accessibilityLabel={`Select ${f.name}`} value={!!selected[f.path]} onValueChange={() => toggle(f)} />
                     <View style={styles.flex}>
@@ -161,6 +168,7 @@ export function ImportFileSheet({ client, item, onClose }: { client: MonarrClien
                       </View>
                       {line.reason ? <Text style={{ color: theme.muted }}>{line.reason}</Text> : null}
                       {line.mode ? <Text style={{ color: theme.muted }}>{MODE_TEXT[line.mode]}</Text> : null}
+                      {line.note ? <Text style={{ color: theme.warning }}>{line.note}</Text> : null}
                     </> : null}
                   </Panel>
                 )
@@ -195,23 +203,38 @@ function Row({ label, onPress }: { label: string; onPress: () => void }) {
   )
 }
 
-/** The jobs an import started: live state, and Stop for a running copy. */
+/** The jobs an import started, live through completion: state, Stop, and what happened to the originals. */
 function StartedJobs({ client, started }: { client: MonarrClient; started: StartedImport[] }) {
   const theme = useTheme()
-  const [queue, setQueue] = useState<QueueItem[]>([])
+  const [rows, setRows] = useState<Record<number, QueueItem>>({})
   const [message, setMessage] = useState('')
   useEffect(() => {
     let live = true
-    const poll = () => client.getQueue('active', 100).then((rows) => { if (live) setQueue(rows) }).catch(() => undefined)
+    const ids = started.flatMap((s) => (s.downloadId ? [s.downloadId] : []))
+    const done = new Set<number>()
+    const poll = async () => {
+      for (const id of ids) {
+        if (done.has(id)) continue
+        try {
+          const row = await client.getQueueItem(id)
+          if (!live) return
+          setRows((prev) => ({ ...prev, [id]: row }))
+          if (isTerminal(row)) done.add(id)
+        } catch {
+          /* the next poll tries again */
+        }
+      }
+    }
     void poll()
-    const timer = setInterval(() => void poll(), 2000)
+    const timer = setInterval(() => { if (done.size < ids.length) void poll() }, 2000)
     return () => { live = false; clearInterval(timer) }
-  }, [client])
+  }, [client, started])
   const stop = async (row: QueueItem) => {
     if (!row.importControl) return
     try {
       await client.cancelQueueImport(row.id, row.importControl)
       setMessage('Stopped. The files stay where they were; retry from Activity.')
+      setRows((prev) => ({ ...prev, [row.id]: { ...row, importState: undefined } }))
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Could not stop this import.')
     }
@@ -220,13 +243,17 @@ function StartedJobs({ client, started }: { client: MonarrClient; started: Start
     <>
       {message ? <Text style={{ color: theme.text }}>{message}</Text> : null}
       {started.map((s, i) => {
-        const row = queue.find((q) => q.id === s.downloadId)
+        const row = s.downloadId ? rows[s.downloadId] : undefined
+        const originals = row ? originalsNote(row) : ''
         return (
           <Panel key={i} style={styles.planLine}>
             <Text style={{ color: theme.text }}>{s.label}</Text>
             {s.error ? <InlineError message={s.error} /> : (
-              <Text style={{ color: theme.muted }}>Activity #{s.downloadId}: {row ? row.state : 'queued or finished — see Activity'}</Text>
+              <Text style={{ color: theme.muted }}>
+                Activity #{s.downloadId}: {row ? `${row.state}${row.state === 'failed' && row.error ? ` — ${row.error}` : ''}` : 'queued'}
+              </Text>
             )}
+            {originals ? <Text style={{ color: theme.muted }}>{originals}</Text> : null}
             {row && (row.state === 'importing' || row.importState) && row.importControl ? <Button secondary compact label="Stop" onPress={() => void stop(row)} /> : null}
           </Panel>
         )

@@ -35,7 +35,7 @@ describe('ImportFileSheet', () => {
       planImport: vi.fn().mockResolvedValue([{ path: loose, quality: 'WEBDL-1080p', season: 4, episodes: [5], subtitles: 0,
         destination: '/tv/Slow Horses/Season 04/Slow Horses - S04E05 [WEBDL-1080p].mkv', action: 'new', reason: 'nothing is there yet', mode: 'hardlink' }]),
       manualImport: vi.fn().mockResolvedValue({ downloadId: 91 }),
-      getQueue: vi.fn().mockResolvedValue([]),
+      getQueueItem: vi.fn().mockResolvedValue({ id: 91, state: 'imported', handoff: [{ step: 'originals_removal_done', at: 1, detail: 'Remove original: removed 1 original(s)' }] }),
     }
     await act(async () => { renderer = create(<ImportFileSheet client={client as unknown as MonarrClient} item={item} onClose={vi.fn()} />) })
     await flush()
@@ -51,5 +51,10 @@ describe('ImportFileSheet', () => {
     await flush()
     expect(client.manualImport).toHaveBeenCalledWith(expect.objectContaining({ path: '/downloads', paths: [loose], removeOriginal: false }))
     expect(button('Done')).toBeTruthy()
+    await flush()
+    expect(client.getQueueItem).toHaveBeenCalledWith(91)
+    const texts = renderer!.root.findAll((n) => n.type === ('text' as never)).map((n) => [].concat(n.props.children).join(''))
+    expect(texts).toContain('Activity #91: imported')
+    expect(texts).toContain('Remove original: removed 1 original(s)')
   })
 })

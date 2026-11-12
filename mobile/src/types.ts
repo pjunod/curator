@@ -295,6 +295,8 @@ export interface MatchEvidence {
 }
 
 export interface QueueItem {
+ /** The row's handoff trace (Import file… reads what Remove original did). */
+ handoff?: { step: string; at: number; detail?: string }[]
  importControl?: { generationKey:string;epoch:string;outcome:''|'pending'|'cancelled'|'completed';pendingPublications:number;retainedPublications:number;heldStages:number }
  importState?: 'queued'|'running'
  planId?: number
@@ -459,6 +461,8 @@ export interface ScannedFile {
   episodes: number[]
   subtitles?: number
   publication?: ScannedPublication
+  /** Why this entry cannot be imported (a symlink, an unreadable file). */
+  skipped?: string
 }
 
 export interface ImportPlanRequest {
@@ -480,6 +484,7 @@ export interface ImportPlanFile {
   existing?: string
   reason?: string
   mode?: ImportPlanMode
+  note?: string
   subtitles: number
   publication?: ScannedPublication
   error?: string
@@ -494,4 +499,4 @@ export interface ManualImportRequest {
   episodeTargets?: { path: string; season: number; episodes: number[] }[]
 }
 
-export interface PlaceTarget { mediaItemId: number; copyId?: number; season?: number; episodes?: number[] }
+export interface PlaceRequest { mediaItemId: number; copyId?: number; files: { path: string; season?: number; episodes?: number[] }[] }
