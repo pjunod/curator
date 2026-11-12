@@ -512,10 +512,13 @@ export interface StatusDownload {
 }
 export interface StatusCinema { deliveryId: number; notifierId: number; status: string; waitingOn?: string; visibleAt?: number; itemIds?: number[]; error?: string }
 export interface StatusSeason { season: number; episodes: number; inCinema: number; onDisk: number; active: boolean; summary: string; download?: StatusDownload }
-export interface StatusEpisode { episodeId: number; season: number; episode: number; title?: string; summary: string; inPack: boolean; stages: StatusStage[] }
+export interface StatusEpisode {
+  episodeId: number; season: number; episode: number; title?: string; wantableId: string; summary: string; at?: number
+  inPack: boolean; downloadId?: number; cinema?: StatusCinema; stages: StatusStage[]
+}
 export interface ItemStatus {
   mediaItemId: number; kind: string; generatedAt: number; active: boolean; done: boolean
-  headline: { state: StatusState; title: string; detail?: string }
+  headline: { state: StatusState; title: string; detail?: string; at?: number }
   stages?: StatusStage[]; download?: StatusDownload; cinema?: StatusCinema
   attempts?: { downloadId: number; release: string; indexer?: string; at: number; outcome: string; reason?: string }[]
   seasons?: StatusSeason[]; episodes?: StatusEpisode[]

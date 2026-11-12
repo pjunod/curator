@@ -173,8 +173,11 @@ export class MonarrClient {
   getQueueSummary = (): Promise<QueueSummary> => this.get('/queue/summary')
   getItemStatus = (id: number, season?: number): Promise<ItemStatus> =>
     this.get(`/library/${id}/status${season === undefined ? '' : `?season=${season}`}`)
-  confirmItemInCinema = (id: number): Promise<{ queued: number }> => this.send('POST', `/library/${id}/status/confirm`)
-  cancelDownload = (id: number): Promise<void> => this.send('DELETE', `/queue/${id}?fromClient=true`)
+  confirmItemInCinema = (id: number, episodeId?: number): Promise<{ queued: number }> =>
+    this.send('POST', `/library/${id}/status/confirm${episodeId ? `?episode=${episodeId}` : ''}`)
+  searchWantable = (wantableId: string): Promise<{ scopeLabel: string }> =>
+    this.send('POST', '/wanted/searches', { scope: 'target', wantableId })
+  cancelDownload = (id: number): Promise<void> => this.send('DELETE', `/queue/${id}?fromClient=true&blocklist=true`)
   retryImport = (id: number): Promise<void> => this.send('POST', `/queue/${id}/import`)
   retryDelivery = (notifierId: number, deliveryId: number): Promise<void> =>
     this.send('POST', `/notifiers/${notifierId}/deliveries/${deliveryId}/retry`)
