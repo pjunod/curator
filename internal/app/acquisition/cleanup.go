@@ -118,6 +118,9 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 	if _, _, err := s.offerWaitingPublications(ctx); err != nil {
 		s.log.Warn("cleanup: offering waiting publications failed", "err", err)
 	}
+	if _, err := s.exitOrphanedOverdue(ctx); err != nil {
+		s.log.Warn("cleanup: ending overdue rows of gone clients failed", "err", err)
+	}
 	if _, err := s.settlePendingSalvages(ctx); err != nil {
 		s.log.Warn("cleanup: settling pending salvages failed", "err", err)
 	}

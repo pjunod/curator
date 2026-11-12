@@ -639,6 +639,8 @@ func (s *Service) reconcileRunnerClient(ctx context.Context, cfg ports.ClientCon
 	s.detectGone(ctx, cfg, feeds, rows, seen)
 	s.confirmAdmissions(ctx, cfg, feeds, rows, seen)
 	s.sweepDeadlines(ctx, cfg, feeds)
+	// (f) every other overdue row exits on Runner's word.
+	s.exitOverdue(ctx, cfg, feeds, byTransfer, byHandle)
 	// Waiting publications (a directory not yet carrying its manifest) are
 	// re-checked on every poll.
 	if pubs, err := s.db.ImportablePublications(ctx, cfg.ID); err == nil {
