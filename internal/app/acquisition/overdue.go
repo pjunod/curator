@@ -315,9 +315,9 @@ func (s *Service) exitOrphanedOverdue(ctx context.Context) (int, error) {
 
 // publicationOwnsExit reports a row whose import owns its exit: a
 // publication waiting for or in its import (the publication's own deadline
-// and attempt cap end it), or import custody still open — a held stage or a
-// pending or retained authorization, which the import's reconciliation
-// settles.
+// and attempt cap end it), or import custody still open on an unfinished
+// attempt — a held stage or a pending or retained authorization, which the
+// import's reconciliation settles.
 func (s *Service) publicationOwnsExit(ctx context.Context, dl sqlite.Download) bool {
 	pubs, err := s.db.ListPublicationsForDownload(ctx, dl.ID)
 	if err != nil {
@@ -329,8 +329,14 @@ func (s *Service) publicationOwnsExit(ctx context.Context, dl sqlite.Download) b
 		}
 	}
 	if dl.GenerationKey != "" {
+		// A finished attempt (outcome completed) owns nothing: no import will
+		// move the row again. A stage an earlier epoch left prepared is the
+		// placement journal's to end (sweepSupersededStage removes its
+		// temporary), never a reason to pin the row's state (download 1196:
+		// salvage imported in epoch 1, epoch 0's stage left prepared, the row
+		// held in downloaded past its deadline for ever).
 		a, err := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey)
-		if err == nil && (a.HeldStages > 0 || a.PendingPublications > 0 || a.RetainedPublications > 0) {
+		if err == nil && a.Outcome != "completed" && (a.HeldStages > 0 || a.PendingPublications > 0 || a.RetainedPublications > 0) {
 			return true
 		}
 	}

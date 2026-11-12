@@ -291,7 +291,7 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	if a, e := s.db.GetImportAttempt(ctx, id, dl.GenerationKey); e == nil && a.Outcome == "pending" {
 		s.finishCancelledImport(ctx, a.ImportAttemptKey)
 	}
-	a, err := s.db.BeginImportRetry(ctx, id, dl.GenerationKey)
+	a, err := s.beginImportRetry(ctx, dl, "")
 	if err != nil {
 		return importControlError(err)
 	}

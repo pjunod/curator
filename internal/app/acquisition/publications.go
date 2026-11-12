@@ -132,12 +132,16 @@ func (s *Service) enqueuePublicationImportApproved(ctx context.Context, dl sqlit
 		}
 	}
 	if a, err := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey); err == nil && (a.Outcome == "completed" || approved) {
+		pub, err := s.db.GetPublication(ctx, pubID)
+		if err != nil {
+			return false
+		}
 		// A row that already imported one publication (a salvage arriving
 		// after the completed one, or the reverse) imports the next in a
 		// fresh attempt epoch. So does a person's Resolve selection: it is an
 		// explicit retry, and the epoch that left the file unresolved may
 		// still hold that file's stage.
-		if _, err := s.db.BeginImportRetry(ctx, dl.ID, dl.GenerationKey); err != nil {
+		if _, err := s.beginImportRetry(ctx, dl, pub.Kind); err != nil {
 			s.log.Debug("publication import could not open a new attempt", "download", dl.ID, "err", err)
 			return false
 		}
@@ -376,7 +380,7 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		// opens a fresh epoch. The return is counted, so the attempt cap
 		// bounds it.
 		reason := importErr.Error()
-		if _, err := s.db.BeginImportRetry(context.WithoutCancel(ctx), dl.ID, dl.GenerationKey); err != nil {
+		if _, err := s.beginImportRetry(context.WithoutCancel(ctx), dl, pub.Kind); err != nil {
 			reason += "; a fresh attempt could not be opened yet: " + err.Error()
 		} else {
 			reason += "; the next attempt starts a fresh epoch"

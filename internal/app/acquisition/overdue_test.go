@@ -347,3 +347,87 @@ func TestFreshEpochHonoursAResolveSelection(t *testing.T) {
 		t.Fatalf("a file the person did not choose = %s, want left as the person's manual import leaves it (unresolved, not selected)", o)
 	}
 }
+
+// salvageStranded builds download 1196's shape (field data 2026-11-12):
+// Runner failed the job at publish with salvage pending; the salvage
+// publication was imported and removed in attempt epoch 1 (completed); epoch
+// 0 left its stage prepared; the row sits in downloaded past its deadline.
+func (f *v2Fixture) salvageStranded(dl sqlite.Download) sqlite.Download {
+	f.t.Helper()
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET runner_outcome='failed', runner_outcome_reason='publish',
+		runner_salvage='pending', runner_blames_release=0, provisional=0, runner_outcome_at=1, delivery_expected=1 WHERE id=?`, dl.ID); err != nil {
+		f.t.Fatal(err)
+	}
+	pub, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{DownloadID: dl.ID, Generation: "2070c8f5", Kind: "salvage",
+		Path: filepath.Join(f.root, "salvage-1196"), Source: "v1_record", Cohort: "live"})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := f.db.SetPublicationState(f.ctx, pub, "removed", ""); err != nil {
+		f.t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO import_attempt_controls(download_id,generation_key,attempt_epoch,outcome,finalized_at,plan_sealed) VALUES(?,?,1,'completed',1,1)`,
+		`INSERT INTO import_placements(id,target,state,data,updated_at) VALUES('epoch0','/lib/S01E10.avi','prepared',json_object('download_id',?,'source_generation',?,'import_attempt_epoch',0,'state','prepared'),0)`,
+		`INSERT INTO import_placements(id,target,state,data,updated_at) VALUES('epoch1','/lib/S01E10.avi','cleaned',json_object('download_id',?,'source_generation',?,'import_attempt_epoch',1,'state','committed'),0)`,
+	} {
+		if _, err := f.db.W.ExecContext(f.ctx, q, dl.ID, dl.GenerationKey); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	return f.overdue(dl, "downloaded")
+}
+
+// Download 1196 (2026-11-12): a salvage import retry moved a Runner-failed
+// row to downloaded; the salvage imported but only a completed publication
+// decides the row, so it stayed there, and the overdue exit deferred to the
+// earlier epoch's prepared stage for ever. A finished attempt owns no exit:
+// Runner's failed terminal is applied, its reason kept, blamelessly.
+func TestOverdueDownloadedSalvageRowTakesRunnersTerminal(t *testing.T) {
+	f := setupV2(t, nil)
+	f.deferGrabs()
+	dl := f.salvageStranded(f.grab(1, epOne))
+	if !f.svc.publicationOwnsExit(f.ctx, dl) {
+		a, _ := f.db.GetImportAttempt(f.ctx, dl.ID, dl.GenerationKey)
+		if a.HeldStages == 0 {
+			t.Fatalf("fixture: attempt %+v, want epoch 0's stage still counted as held", a)
+		}
+	} else {
+		t.Fatal("a completed attempt's leftover stage still owns the row's exit")
+	}
+	blames := false
+	f.runner.admissions[dl.Transfer] = ports.RequestAdmission{RequestToken: dl.Transfer, JobID: dl.Handle, Outcome: "failed",
+		FailureReason: "publish", BlamesRelease: &blames, Salvage: "pending"}
+	f.svc.exitOverdue(f.ctx, f.cfg, f.runner, otherJob, map[string]ports.DownloadStatus{})
+	got := f.row(dl.ID)
+	if got.State != "failed" || got.RunnerOutcome != "failed" || got.RunnerOutcomeReason != "publish" || got.RunnerBlamesRelease || !got.DeadlineAt.IsZero() {
+		t.Fatalf("row = %s/%s/%s blames=%v deadline=%v, want Runner's failed{publish} applied", got.State, got.RunnerOutcome, got.RunnerOutcomeReason, got.RunnerBlamesRelease, got.DeadlineAt)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM blocklist`); n != 0 {
+		t.Fatalf("blocklist = %d, want none", n)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM import_placements WHERE id='epoch0' AND state='prepared'`); n != 1 {
+		t.Fatal("the leftover stage's custody was touched; it belongs to the placement journal")
+	}
+}
+
+// The root of 1196: an import retry of a salvage-only row records its step
+// but leaves the row failed (contract section 3.1), so it is never stranded.
+func TestOverdueSalvageImportRetryKeepsTheRowFailed(t *testing.T) {
+	f := setupV2(t, nil)
+	f.deferGrabs()
+	dl := f.salvageStranded(f.grab(1, epOne))
+	if _, err := f.db.W.ExecContext(f.ctx, `UPDATE downloads SET state='failed', error='download failed: publish' WHERE id=?`, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.BeginImportRetry(f.ctx, dl.ID, dl.GenerationKey); err != nil {
+		t.Fatal(err)
+	}
+	got := f.row(dl.ID)
+	if got.State != "failed" || got.Error != "download failed: publish" || got.Handoff[len(got.Handoff)-1].Step != "import_queued" {
+		t.Fatalf("salvage retry: row = %s (%q) last step %q, want failed kept with the step recorded", got.State, got.Error, got.Handoff[len(got.Handoff)-1].Step)
+	}
+	if n, err := f.svc.exitOrphanedOverdue(f.ctx); err != nil || n != 0 {
+		t.Fatalf("a failed row is never overdue: ended %d (%v)", n, err)
+	}
+}

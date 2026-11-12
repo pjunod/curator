@@ -1438,6 +1438,26 @@ fails or times out (3 seconds) it is logged and ignored, never retried, and
 the failure and re-grab stand. A job absent from Runner's queue is not
 cancelled.
 
+A salvage import never changes its download's state (v0.46.2). When Runner
+fails a job but offers what it could save (salvage), the download stays
+failed while Curator imports the salvage, including on a retry, and a salvage
+arriving after the download was imported leaves it imported; History and the
+handoff trace show the import. Retrying the import of a failed download
+records the retry and leaves the download failed until the import itself
+moves it (importing, then imported or failed). Until v0.46.2 a retry put the
+download back in *downloaded*, where a salvage import left it past its
+deadline for good. A download stranded that way now takes Runner's recorded
+failure at its deadline. A finished import never holds a download's exit
+open, and the half-written stage an earlier import attempt left behind
+(`.monarr-stage-…` next to the library file) is removed automatically. If
+that attempt had already moved the previous library file aside
+(`.monarr-prior-…`), the hourly cleanup removes that copy when a library
+file is in place. It never overwrites a file at that path, including one you
+put there yourself. When the library file is missing, it puts the previous
+file back if the copy matches it, and otherwise removes the copy. If the
+folder cannot be checked (for example, an unmounted share), it waits for the
+next pass.
+
 ### Held, provisional and publications in Activity
 
 - **Held by Runner** is its own section. The row says what Runner is waiting

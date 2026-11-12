@@ -1,5 +1,81 @@
 # Monarr — Project Status
 
+## A salvage import never strands its download in downloaded — 2026-11-12 · v0.46.2
+
+**Status:** built, targeted tests and lint run (see the commit report) · branch
+`claude/overdue-downloaded` from `origin/main` d3b351a · no PR · not merged,
+not deployed.
+
+**Field case:** download 1196 (Strangers.With.Candy.S01E10, Runner job 2799 on
+nuc4) sat in `downloaded` about 7 h past its deadline. Runner had failed it
+`failed{publish}` with salvage pending, and its receipt still says so. The job
+is no longer in Runner's queue. The salvage publication (737) was imported
+and removed, and Cinema shows it. Runner job 2710 is a different transfer (the
+season pack), and no Curator row points at it. Nothing waits on Runner here.
+
+**Root cause:** (1) The salvage import hit a sealed plan from epoch 0 and
+reopened the attempt with `BeginImportRetry`. Its `writeImportState` moved the
+Runner-failed row to `downloaded` (a 6 h deadline). The salvage then imported
+in epoch 1, but only a completed publication sets the row's state (contract
+3.1), so nothing ever moved the row again. (2) The overdue exit's
+`publicationOwnsExit` counted epoch 0's stage as open custody. That stage is
+still `prepared` because placement reconciliation leaves it for the title's
+next import or for disposal. So every poll skipped the row before it reached
+the "Runner's terminal is recorded" branch.
+
+**Fix (5d173a7):** `publicationOwnsExit` no longer lets a finished attempt
+(outcome completed) own the exit.
+
+**Review findings (Fable review of 5d173a7, 4 blocking), fixed:**
+1. A salvage arriving after an imported completed publication still wedged
+   the row, and the overdue exit then failed it. Now the kind of the
+   publication being imported decides: a salvage retry
+   (`BeginSalvageImportRetry`, publications.go enqueue and the sealed-plan
+   path) records only the step.
+2. The leftover `prepared` stage was a permanent manual item. A stage of an
+   epoch below the attempt's current one (or of a completed attempt) with no
+   authorization is swept: `reconcilePlacement` and every import retry remove
+   only its `.monarr-stage-` temporary and mark it `rolled_back`. The target is
+   never touched (not `rollbackPlacement`).
+   **Decision (the coordinator's, 2026-11-12, for Paul's review): a stage
+   whose prior-file backup is on disk.** Its backup is settled under the
+   title's import lock by reconciliation and by a new hourly pass
+   (`sweepAllSupersededStages` in `CleanupPayloads`). Reconciliation alone
+   runs only at start, so without the hourly pass "the next pass" would not be
+   bounded. Import retries leave these stages to those two passes.
+   - **An existing target is never overwritten** (revised 2026-11-12). Our
+     backup is removed whether the target verifies as the committed import,
+     holds the prior file, or holds bytes nothing recorded. In the last case
+     someone else put a file there, and it is kept and logged.
+   - **Target missing:** a backup whose bytes are the recorded prior file is
+     renamed back onto the target. Any other backup is a Curator-created file
+     in a closed scope under the title's lock, so it is removed and logged.
+   - **Nothing provable** (an I/O error, or a target directory whose identity
+     is not the recorded one): left for the next hourly pass. That is bounded
+     and is not a terminal state.
+   - In every case the temporary is removed and the stage is marked
+     `rolled_back`. Nothing waits on a person.
+3. The salvage guard swallowed `completeImportAttempt`, so a successful manual
+   import left the row failed. The guard now applies only to the
+   `import_queued` and `import_cancelled` writes. `imported` is always written.
+4. `ImportNow` moved a failed row with no publications to `downloaded`. An
+   `import_queued` or `import_cancelled` step on a terminal row (failed,
+   imported, notified) or a salvage-only row now writes only the step. The
+   import moves the state itself (importing, then imported or failed).
+
+Tests: `TestOverdueDownloadedSalvageRowTakesRunnersTerminal` (1196's exact
+shape), `TestOverdueSalvageImportRetryKeepsTheRowFailed`,
+`TestSalvageAfterAnImportedCompletedKeepsTheRowImported`,
+`TestSupersededStageIsSweptWithoutTouchingTheLibrary`,
+`TestCompletingAnImportOfASalvageOnlyRowWritesImported`,
+`TestImportNowOnAFailedRowKeepsItFailedUntilTheImportMovesIt`,
+`TestSupersededStageBackupRemovedWhenTheUpgradeLanded`,
+`TestSupersededStageBackupNeverOverwritesAnExistingTarget`,
+`TestSupersededStageBackupLeftWhenNothingCanBeProven`. After a
+deploy, 1196 exits at the next poll as `failed{publish}` (blameless). Its
+re-grab is filtered because the episode is in the library. Its epoch 0 stage
+is swept.
+
 ## Overdue exit cancels a still-listed stalled job in Runner — 2026-11-12 · v0.46.1
 
 **Status:** built, targeted tests and lint run (see the commit report) · branch

@@ -412,7 +412,24 @@ func TestManualImportRetryRereadsChosenEpisode(t *testing.T) {
 	}
 	// The failed worker lets go of the row just after recording the failure.
 	waitFor(t, func() bool { return svc.ImportNow(ctx, id) == nil })
-	dl := waitState(t, db, id, "imported", "failed")
+	// The retry leaves the row failed until the import moves it (v0.46.2):
+	// wait for the retry's own outcome, after its import_queued step.
+	var dl sqlite.Download
+	waitFor(t, func() bool {
+		dl, _ = db.GetDownload(ctx, id)
+		if dl.State == "imported" {
+			return true
+		}
+		n := len(dl.Handoff)
+		return dl.State == "failed" && n > 0 && dl.Handoff[n-1].Step == "failed" && func() bool {
+			for i := n - 1; i >= 0; i-- {
+				if dl.Handoff[i].Step == "import_queued" {
+					return true
+				}
+			}
+			return false
+		}()
+	})
 	files, _ := db.ListFilesForItem(ctx, itemID)
 	if dl.State != "imported" || len(files) != 1 || !strings.Contains(files[0].Path, "S01E02") {
 		t.Fatalf("row %s (%s), files %+v: want the retry to place S01E02 as chosen, not S01E01 from the name", dl.State, dl.Error, files)
