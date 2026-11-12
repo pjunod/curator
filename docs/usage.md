@@ -541,6 +541,8 @@ Actions up top:
 - **Re-measure files** — read the files again and record what is actually in
   them. Use it after fixing a permission or a mount that made a probe fail;
   a routine scan skips files it has already measured at the same size.
+- **Import file…** — put a file you already have into this item without
+  going through Activity. See [Import file… from the item page](#import-file-from-the-item-page).
 - **Edit** — change monitoring, quality profile, download priority, root
   folder, or the folder path itself. Choose **Profile default** to inherit,
   or one of six explicit levels from Very low through Force. Changing the
@@ -564,6 +566,53 @@ provider recovers.
 The same completeness pill, rating, and ↓ badge appear on every library
 card, so the grid shows at a glance what's complete, what's partial, and
 what's moving right now.
+
+### Import file… from the item page
+
+The target is already known on an item page, so importing a file you have
+is: **Import file…**, browse, pick, confirm. The same button is on the
+item screen of the iOS and Android app.
+
+**1 · Choose files.** The browser opens at the completed-download folder.
+Shortcuts take you to this item's own folder and to each library root; the
+path box opens any other folder. Folders come from the server's filesystem
+browser; the files listed are the media directly in the current folder (not
+in its sub-folders), each with its size, the episode its name says (or *no
+episode in name*), its quality, how many subtitles travel with it, and
+*runner delivery* when it is part of a Runner publication. A folder Curator
+cannot read says so by path and names the fix: when the download client
+sees that folder under a different path, add a remote path mapping to the
+client in Settings → Acquisition.
+
+**2 · Confirm.** One line per file:
+
+- **Episode** (series) — prefilled from the name. A file whose name has no
+  episode (an obfuscated `a7f3c91e.mkv`) must be given one before Import
+  is offered. Your choice is stored with the import's file selection, by
+  path, so a retry places the file as the same episode whatever its name.
+- **Copy / Edition** — shown when the item has quality copies or book
+  editions.
+- **Destination** — the exact library path from the naming template.
+- **What happens to what is there** — *new file*; *replaces …* when the new
+  file ranks higher in the item's profile (the old one is removed once the
+  new one is placed); or *kept beside …* when it does not.
+- **How it gets there** — for a runner delivery: placed through Resolve, and
+  Curator cleans up the delivery folder under its usual rules (there is no
+  delete option). For loose files: hardlinked (your copy stays) on the same
+  volume, copied across volumes. Tick **Remove original** (off by default)
+  to rename instead on the same volume, or copy, verify and remove the
+  original across volumes. Remove original is refused for runner
+  deliveries.
+
+Subtitles beside a video, in a `Subs/` folder, or in `Subs/<video name>/`
+travel with it, named after the library file
+(`<name>.<lang>[.forced][.sdh].srt`) by the same rules as a runner
+delivery's subtitles. A subtitle never overwrites a file Curator did not
+place; it takes the next free name.
+
+**Started.** The dialog lists each job it started with its Activity row and
+current state. A long copy shows **Stop** (the import's own cancellation:
+the source stays where it was, and the row can be retried from Activity).
 
 ## The Files table, and getting rid of a bad file
 
