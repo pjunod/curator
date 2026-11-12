@@ -185,13 +185,17 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	// person selected, even after a process restart.
 	var selected []string
 	manual := dl.Intent == GrabIntentManualAdditional
+	var selection sqlite.HandoffEntry
 	for i := len(dl.Handoff) - 1; i >= 0; i-- {
 		if dl.Handoff[i].Step == stepManualQueued || (dl.Handoff[i].Step == stepLegacyReviewImportQueued && legacyReviewApproved) {
-			selected = dl.Handoff[i].Paths
+			selection = dl.Handoff[i]
+			selected = selection.Paths
 			manual = true
+			ctx = withManualEpisodeTargets(ctx, selection.EpisodeTargets)
 			break
 		}
 	}
+	removeOriginal := selection.RemoveOriginal && dl.Protocol == "manual"
 	if legacyReviewApproved {
 		ctx = withReviewedSourceSnapshots(ctx, reviewedSnapshots)
 	}
@@ -219,6 +223,13 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	if skipped := result.Skipped(); len(skipped) > 0 {
 		detail += fmt.Sprintf("; %d skipped — %s", len(skipped), result.reasons(3))
 	}
+	if removeOriginal {
+		// Journaled before completion: a restart between the two finishes it.
+		if err := s.recordPendingRemoval(ctx, &dl, selection, result); err != nil {
+			s.log.Warn("manual import: Remove original could not be journaled; originals kept", "download", dl.ID, "err", err)
+			removeOriginal = false
+		}
+	}
 	if _, bound := importAttemptFrom(ctx); bound {
 		if err := s.completeBoundImport(ctx, detail); err != nil {
 			return err
@@ -227,6 +238,9 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 		s.advance(ctx, &dl, "imported", 1, "", stepImported, detail)
 	}
 	s.timings.End(ctx, pipeline.RunnerDoneToImport, pipeline.Key(dl.Transfer, dl.ID))
+	if removeOriginal {
+		s.finishOriginalRemoval(ctx, dl.ID)
+	}
 	// The library has the files now, so the client's copy is just occupying a
 	// disk. Inline rather than left to the hourly sweep: a night of 60 GB
 	// remuxes is several hundred gigabytes of "we will get to it".

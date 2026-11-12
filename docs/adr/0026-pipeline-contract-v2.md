@@ -228,7 +228,7 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     `endPublication` holds instead of ending when it cannot read the
     manifest or check a placement.
 
-## Addendum — v0.44.1, nothing waits on a lost fact (claude/unwedge-legacy, 2026-11-12)
+## Addendum — v0.45.1, nothing waits on a lost fact (claude/unwedge-legacy, 2026-11-12)
 
 27. **Media an ended import left pending is imported, not kept and not
     discarded blindly** (amends decision 25's "the sweep never discards

@@ -27,6 +27,7 @@ import {
 import { useTheme } from '../theme'
 import type { BookType, MediaCopy, QualityProfile, ReleaseSearchScope, UpdateMediaItemRequest } from '../types'
 import { useResource } from '../useResource'
+import { ImportFileSheet } from './ImportFileSheet'
 
 export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: { client: MonarrClient; id: number; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void }) {
   const theme = useTheme()
@@ -37,6 +38,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
   const [actionMessage, setActionMessage] = useState('')
   const [saving, setSaving] = useState(false)
   const [searching, setSearching] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [seasonSaving, setSeasonSaving] = useState<number | null>(null)
   const [draftMonitored, setDraftMonitored] = useState(false)
   const [draftProfileId, setDraftProfileId] = useState(0)
@@ -237,6 +239,8 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
               onPress={() => onInteractiveSearch(item.kind === 'series' ? { season: firstSeason(item.seasons) } : {})}
             />
           ) : null}
+          <Button secondary label="Import file…" onPress={() => setImporting(true)} />
+          {importing ? <ImportFileSheet client={client} item={item} onClose={() => { setImporting(false); void resource.refresh() }} /> : null}
           <Text style={[styles.actionHint, { color: theme.muted }]}>
             Search now grabs the best accepted release in the background. Interactive search lists every release the indexers return so you pick.
             {item.kind === 'series' && item.seasons.length === 0 ? ' Interactive search appears once this series has seasons.' : ''}

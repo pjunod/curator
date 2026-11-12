@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-## Unwedge legacy imports + adopt unclaimed Runner publications — 2026-11-12 · v0.44.1
+## Unwedge legacy imports + adopt unclaimed Runner publications — 2026-11-12 · v0.45.1
 
 **Status:** built and tested on its packages, pushed · owner: Claude Opus 5.5
 session · branch `claude/unwedge-legacy` (no PR; the orchestrator opens it) ·

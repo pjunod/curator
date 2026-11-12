@@ -2070,6 +2070,15 @@ type EpisodeInfo struct {
 	Title         string `json:"title"`
 }
 
+// EpisodeTarget defines model for EpisodeTarget.
+type EpisodeTarget struct {
+	Episodes []int `json:"episodes"`
+
+	// Path Absolute path of one selected file.
+	Path   string `json:"path"`
+	Season int    `json:"season"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	// Code Stable machine-readable classification when available.
@@ -2262,6 +2271,51 @@ type ImportPathDefault struct {
 	Path string `json:"path"`
 }
 
+// ImportPlanFile defines model for ImportPlanFile.
+type ImportPlanFile struct {
+	// Action new | replace | beside
+	Action *string `json:"action,omitempty"`
+
+	// Destination Exact library path from the naming template.
+	Destination *string `json:"destination,omitempty"`
+	Episodes    []int   `json:"episodes"`
+
+	// Error Why this file cannot be imported as chosen.
+	Error *string `json:"error,omitempty"`
+
+	// Existing Quality of the file there now.
+	Existing *string `json:"existing,omitempty"`
+
+	// Mode runner | hardlink | copy | rename | copy_remove
+	Mode *string `json:"mode,omitempty"`
+
+	// Note What else placing it does (a runner delivery moved here from another title).
+	Note *string `json:"note,omitempty"`
+	Path string  `json:"path"`
+
+	// Publication The runner delivery a scanned file is part of. Such a file is placed through Resolve, never through /import/manual.
+	Publication *ScannedPublication `json:"publication,omitempty"`
+	Quality     string              `json:"quality"`
+	Reason      *string             `json:"reason,omitempty"`
+
+	// Season -1 when not a series file
+	Season    int `json:"season"`
+	Subtitles int `json:"subtitles"`
+}
+
+// ImportPlanRequest defines model for ImportPlanRequest.
+type ImportPlanRequest struct {
+	// CopyId Target copy or edition; 0 = the primary.
+	CopyId *int64 `json:"copyId,omitempty"`
+	Files  []struct {
+		Episodes *[]int `json:"episodes,omitempty"`
+		Path     string `json:"path"`
+		Season   *int   `json:"season,omitempty"`
+	} `json:"files"`
+	MediaItemId    int64 `json:"mediaItemId"`
+	RemoveOriginal *bool `json:"removeOriginal,omitempty"`
+}
+
 // Indexer defines model for Indexer.
 type Indexer struct {
 	ApiKey     *string `json:"apiKey,omitempty"`
@@ -2346,12 +2400,18 @@ type ManualImportRequest struct {
 	CopyId *int64 `json:"copyId,omitempty"`
 
 	// DownloadId Tie the import to a stuck queue row so it's marked imported (or failed) by this attempt. 0 = a standalone import.
-	DownloadId  *int64 `json:"downloadId,omitempty"`
-	MediaItemId int64  `json:"mediaItemId"`
-	Path        string `json:"path"`
+	DownloadId *int64 `json:"downloadId,omitempty"`
+
+	// EpisodeTargets A series file's episode(s), chosen by a person, per selected path. Admitted with the selection: every retry places the file as these episodes whatever its name says.
+	EpisodeTargets *[]EpisodeTarget `json:"episodeTargets,omitempty"`
+	MediaItemId    int64            `json:"mediaItemId"`
+	Path           string           `json:"path"`
 
 	// Paths Exact files selected from the scan. Every path must be a media file under path. Absent imports the whole path for backwards compatibility; an explicit selection must contain a file.
 	Paths *[]string `json:"paths,omitempty"`
+
+	// RemoveOriginal Remove each source once its library copy is placed (a rename on one filesystem; copy, verify and remove across volumes). Standalone imports of loose files only; refused for a file inside a runner delivery.
+	RemoveOriginal *bool `json:"removeOriginal,omitempty"`
 
 	// ReviewLegacy Explicitly approve only the selected files from a fenced legacy payload for this manual import.
 	ReviewLegacy *bool `json:"reviewLegacy,omitempty"`
@@ -3389,17 +3449,38 @@ type ScannedFile struct {
 	Episodes []int `json:"episodes"`
 
 	// Kind video | book
-	Kind    string `json:"kind"`
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Quality string `json:"quality"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+
+	// Publication The runner delivery a scanned file is part of. Such a file is placed through Resolve, never through /import/manual.
+	Publication *ScannedPublication `json:"publication,omitempty"`
+	Quality     string              `json:"quality"`
 
 	// Season -1 when not a series file
 	Season int   `json:"season"`
 	Size   int64 `json:"size"`
 
+	// Skipped Why this entry cannot be imported (a symlink, an unreadable file); depth=1 only.
+	Skipped *string `json:"skipped,omitempty"`
+
 	// SnapshotIdentity Stable preview snapshot token used to detect changed files before explicit legacy review import.
 	SnapshotIdentity *string `json:"snapshotIdentity,omitempty"`
+
+	// Subtitles Subtitle files that travel with this video (depth=1 only).
+	Subtitles *int `json:"subtitles,omitempty"`
+}
+
+// ScannedPublication The runner delivery a scanned file is part of. Such a file is placed through Resolve, never through /import/manual.
+type ScannedPublication struct {
+	DownloadId int64 `json:"downloadId"`
+
+	// Outcome The file's recorded outcome; empty when the manifest does not name it.
+	Outcome string `json:"outcome"`
+
+	// Path The file's path relative to the publication.
+	Path          string `json:"path"`
+	PublicationId int64  `json:"publicationId"`
 }
 
 // SearchResult defines model for SearchResult.
@@ -3827,6 +3908,9 @@ type PlanRetainedRecoveryJSONBody = []map[string]interface{}
 // ScanImportPathParams defines parameters for ScanImportPath.
 type ScanImportPathParams struct {
 	Path string `form:"path" json:"path"`
+
+	// Depth 1 lists only the files directly in path (the item page's Import file… browser), each with its subtitle count and, for a file inside a runner delivery, that delivery, plus an entry with skipped set for each entry it could not offer. Absent walks the whole tree; any other value is refused.
+	Depth *int `form:"depth,omitempty" json:"depth,omitempty"`
 }
 
 // ListImportActivityParams defines parameters for ListImportActivity.
@@ -3987,6 +4071,23 @@ type RemoveQueueItemParams struct {
 	FromClient *bool `form:"fromClient,omitempty" json:"fromClient,omitempty"`
 }
 
+// PlacePublicationFilesJSONBody defines parameters for PlacePublicationFiles.
+type PlacePublicationFilesJSONBody struct {
+	// CopyId Target copy or edition; 0 = the primary.
+	CopyId *int64 `json:"copyId,omitempty"`
+	Files  []struct {
+		// Episodes The episode(s) this file is, overriding its name.
+		Episodes *[]int `json:"episodes,omitempty"`
+
+		// Path The file's path relative to the publication.
+		Path   string `json:"path"`
+		Season *int   `json:"season,omitempty"`
+	} `json:"files"`
+
+	// MediaItemId Target item; absent = the download's own.
+	MediaItemId *int64 `json:"mediaItemId,omitempty"`
+}
+
 // ResolvePublicationFileJSONBody defines parameters for ResolvePublicationFile.
 type ResolvePublicationFileJSONBody struct {
 	// Action place | discard | keep
@@ -4070,6 +4171,9 @@ type GrabReleaseJSONRequestBody = GrabRequest
 
 // ManualImportJSONRequestBody defines body for ManualImport for application/json ContentType.
 type ManualImportJSONRequestBody = ManualImportRequest
+
+// PlanImportJSONRequestBody defines body for PlanImport for application/json ContentType.
+type PlanImportJSONRequestBody = ImportPlanRequest
 
 // QueueRecoveryImportJSONRequestBody defines body for QueueRecoveryImport for application/json ContentType.
 type QueueRecoveryImportJSONRequestBody = RecoveryImportRequest
@@ -4166,6 +4270,9 @@ type UpdateProfileJSONRequestBody = ProfileInput
 
 // CancelQueueImportJSONRequestBody defines body for CancelQueueImport for application/json ContentType.
 type CancelQueueImportJSONRequestBody = ImportAttemptIdentity
+
+// PlacePublicationFilesJSONRequestBody defines body for PlacePublicationFiles for application/json ContentType.
+type PlacePublicationFilesJSONRequestBody PlacePublicationFilesJSONBody
 
 // ResolvePublicationFileJSONRequestBody defines body for ResolvePublicationFile for application/json ContentType.
 type ResolvePublicationFileJSONRequestBody ResolvePublicationFileJSONBody
@@ -4301,6 +4408,9 @@ type ServerInterface interface {
 	// ManualImport Import files from a path into a chosen item/copy
 	// (POST /import/manual)
 	ManualImport(w http.ResponseWriter, r *http.Request)
+	// PlanImport What importing these files into an item would do (moves nothing)
+	// (POST /import/plan)
+	PlanImport(w http.ResponseWriter, r *http.Request)
 
 	// (GET /import/recovery)
 	ListRecoveries(w http.ResponseWriter, r *http.Request)
@@ -4553,6 +4663,9 @@ type ServerInterface interface {
 	// RemoveQueueItem Remove a queue row (optionally from the client too)
 	// (DELETE /queue/{id})
 	RemoveQueueItem(w http.ResponseWriter, r *http.Request, id int64, params RemoveQueueItemParams)
+	// GetQueueItem One Activity row, whatever its state
+	// (GET /queue/{id})
+	GetQueueItem(w http.ResponseWriter, r *http.Request, id int64)
 	// BlocklistQueueItem Declare the release bad — blocklist it and search a replacement
 	// (POST /queue/{id}/blocklist)
 	BlocklistQueueItem(w http.ResponseWriter, r *http.Request, id int64)
@@ -4568,6 +4681,9 @@ type ServerInterface interface {
 	// ResolveImportReview Record explicit fencing or retained-byte disposition
 	// (POST /queue/{id}/import-review)
 	ResolveImportReview(w http.ResponseWriter, r *http.Request, id int64)
+	// PlacePublicationFiles Place one or more files of a runner delivery into an item, as chosen episodes
+	// (POST /queue/{id}/publications/{publicationId}/files/place)
+	PlacePublicationFiles(w http.ResponseWriter, r *http.Request, id int64, publicationId int64)
 	// ResolvePublicationFile Decide an unresolved publication file - place it, discard it, or keep it for later
 	// (POST /queue/{id}/publications/{publicationId}/files/resolve)
 	ResolvePublicationFile(w http.ResponseWriter, r *http.Request, id int64, publicationId int64)
@@ -5455,6 +5571,20 @@ func (siw *ServerInterfaceWrapper) ManualImport(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// PlanImport operation middleware
+func (siw *ServerInterfaceWrapper) PlanImport(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlanImport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRecoveries operation middleware
 func (siw *ServerInterfaceWrapper) ListRecoveries(w http.ResponseWriter, r *http.Request) {
 
@@ -5649,6 +5779,19 @@ func (siw *ServerInterfaceWrapper) ScanImportPath(w http.ResponseWriter, r *http
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "depth" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "depth", r.URL.Query(), &params.Depth, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "depth"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "depth", Err: err})
 		}
 		return
 	}
@@ -7629,6 +7772,32 @@ func (siw *ServerInterfaceWrapper) RemoveQueueItem(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetQueueItem operation middleware
+func (siw *ServerInterfaceWrapper) GetQueueItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetQueueItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // BlocklistQueueItem operation middleware
 func (siw *ServerInterfaceWrapper) BlocklistQueueItem(w http.ResponseWriter, r *http.Request) {
 
@@ -7750,6 +7919,41 @@ func (siw *ServerInterfaceWrapper) ResolveImportReview(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ResolveImportReview(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PlacePublicationFiles operation middleware
+func (siw *ServerInterfaceWrapper) PlacePublicationFiles(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "publicationId" -------------
+	var publicationId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publicationId", r.PathValue("publicationId"), &publicationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publicationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlacePublicationFiles(w, r, id, publicationId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8509,15 +8713,18 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/imports", wrapper.ListImportActivity)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue/{id}", wrapper.GetQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resolve-reservation", wrapper.ResolveQueueReservation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resume", wrapper.ResumeQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/publications/{publicationId}/files/resolve", wrapper.ResolvePublicationFile)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/publications/{publicationId}/files/place", wrapper.PlacePublicationFiles)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/cancel-import", wrapper.CancelQueueImport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue/{id}/import-review", wrapper.GetImportReview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import-review", wrapper.ResolveImportReview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/blocklist", wrapper.BlocklistQueueItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/scan", wrapper.ScanImportPath)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/plan", wrapper.PlanImport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/default-path", wrapper.GetManualImportDefaultPath)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/settings", wrapper.GetRecoverySettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/import/recovery/settings", wrapper.PutRecoverySettings)
