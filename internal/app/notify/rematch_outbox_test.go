@@ -1,0 +1,102 @@
+package notify
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/pjunod/monarr/internal/adapters/notify/cinematest"
+	"github.com/pjunod/monarr/internal/app/acquisition"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
+)
+
+// A Re-match's moved sub-delivery (contract amendment): keyed by operation,
+// path the common parent, expected the placed files, removed_paths the files
+// that left. Visible only when every expected file is placed and every
+// removed path is gone or unknown.
+func (e *outboxEnv) moved(newRel, oldRel string) (string, string) {
+	e.t.Helper()
+	placed := e.place(newRel, "moved bytes")
+	old := filepath.Join(e.root, filepath.FromSlash(oldRel))
+	fi, err := os.Stat(placed)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	expected := []ports.ExpectedFile{{Path: placed, Bytes: fi.Size(), MtimeNs: fi.ModTime().UnixNano()}}
+	n := ports.Notification{Event: "moved", Title: "Re-matched", Import: &ports.ImportInfo{MediaItemID: 2, FromItemID: 1, Kind: "movie", TmdbID: 438631,
+		Paths: []string{placed}, Dirs: []string{e.root}, ExpectedFiles: map[string][]ports.ExpectedFile{e.root: expected}, RemovedPaths: []string{old}}}
+	raw, _ := json.Marshal(n)
+	if err := e.db.EnqueueDeliveries(e.ctx, []sqlite.OutboxWrite{{NotifierID: 1, Directory: e.root, IdempotencyKey: acquisition.RematchDeliveryKey("rm-1", e.root),
+		ExpectedFiles: expected, Event: "moved", Payload: string(raw), OperationID: "rm-1"}}); err != nil {
+		e.t.Fatal(err)
+	}
+	if now := time.Now(); now.After(e.clock) {
+		e.clock = now
+	}
+	return placed, old
+}
+
+func TestMovedDeliveryIsVisibleWhenRemovedPathIsGone(t *testing.T) {
+	e := newOutboxEnv(t)
+	e.cinema.Set(func(c *cinematest.Cinema) { c.RemovedPaths = true })
+	placed, old := e.moved("Dune (2021) {tmdb-438631}/Dune (2021).mkv", "Dune (1984)/Dune (1984).mkv")
+	e.pass()
+	rows := e.rows()
+	if len(rows) != 1 || rows[0].VisibleAt == 0 || rows[0].Status != "ok" || strings.Contains(rows[0].Result, "warning") {
+		t.Fatalf("rows = %+v, want visible with no warning", rows)
+	}
+	reqs := e.cinema.Requests()
+	if len(reqs) != 1 || reqs[0].Event != "moved" || len(reqs[0].Removed) != 1 || reqs[0].Removed[0] != old || reqs[0].Path != e.root || reqs[0].Expected[0].Path != placed {
+		t.Fatalf("requests = %+v, want one moved request at the common parent naming the removed path", reqs)
+	}
+	cfg, _ := e.db.GetNotifier(e.ctx, 1)
+	if !cfg.HasFeature(ports.FeatureRemovedPaths) {
+		t.Fatalf("features = %v, want removed_paths re-read before the first moved send", cfg.Features)
+	}
+}
+
+func TestMovedDeliveryWarnsWhileRemovedPathIsPresent(t *testing.T) {
+	e := newOutboxEnv(t)
+	e.cinema.Set(func(c *cinematest.Cinema) { c.RemovedPaths = true })
+	_, old := e.moved("New/Dune (2021).mkv", "Old/Dune (1984).mkv")
+	e.place("Old/Dune (1984).mkv", "still here")
+	e.pass()
+	r := e.rows()[0]
+	if r.VisibleAt != 0 || r.Status != "pending" || !strings.Contains(r.Result, old+" still exists in the library") {
+		t.Fatalf("row = %+v, want a warning naming the path that still exists", r)
+	}
+}
+
+// Against a Cinema without the feature: the new folder only, as a plain
+// scan (no full scan of the root), visible for the new files, with the line
+// that the old entry stays. Not a failure, no retry loop.
+func TestMovedDeliveryAgainstCinemaWithoutRemovedPaths(t *testing.T) {
+	e := newOutboxEnv(t)
+	placed, _ := e.moved("New Folder/Dune (2021).mkv", "Old/Dune (1984).mkv")
+	e.pass()
+	r := e.rows()[0]
+	if r.VisibleAt == 0 || r.Status != "ok" || !strings.Contains(r.Result, "the old entry stays until its next scan") {
+		t.Fatalf("row = %+v, want visible with the old-cinema line", r)
+	}
+	reqs := e.cinema.Requests()
+	if len(reqs) != 1 || reqs[0].Path != filepath.Dir(placed) || len(reqs[0].Removed) != 0 || reqs[0].Event != "" {
+		t.Fatalf("requests = %+v, want only the new folder, without removed paths", reqs)
+	}
+}
+
+// The backstop: an answer with no entry for a removed path means the
+// Cinema does not support them.
+func TestRemovedNotGoneBackstop(t *testing.T) {
+	present, answered := removedNotGone([]string{"/a", "/b"}, []ports.PlacedReport{{Path: "/a", State: "gone"}})
+	if answered || len(present) != 0 {
+		t.Fatalf("answered = %v present = %v, want unanswered", answered, present)
+	}
+	present, answered = removedNotGone([]string{"/a", "/b"}, []ports.PlacedReport{{Path: "/a", State: "unknown"}, {Path: "/b", State: "present"}})
+	if !answered || len(present) != 1 || present[0] != "/b" {
+		t.Fatalf("answered = %v present = %v, want /b present", answered, present)
+	}
+}

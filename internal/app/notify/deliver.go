@@ -162,6 +162,9 @@ func (d *Dispatcher) attempt(ctx context.Context, del sqlite.Delivery) {
 	}
 
 	target := d.new(cfg)
+	if n.Event == "moved" && n.Import != nil && len(n.Import.RemovedPaths) > 0 {
+		target = d.refreshFeatures(ctx, cfg, target)
+	}
 	if scanner, ok := target.(ports.ScanSender); ok && del.IdempotencyKey != "" {
 		d.attemptSub(ctx, del, cfg.Type, n, target, scanner)
 		return
@@ -227,9 +230,13 @@ func (d *Dispatcher) attemptSub(ctx context.Context, del sqlite.Delivery, peer s
 		n.IdempotencyKey = del.RequestKey()
 		res, err = scanner.SendScan(cctx, n)
 	}
-	sub := subAttempt{peer: peer, polled: polled}
+	sub := subAttempt{peer: peer, polled: polled, notifierID: del.NotifierID}
 	if n.Import != nil {
 		sub.total = len(n.Import.Paths)
+		sub.removed = n.Import.RemovedPaths
+		// A queued request was posted with removed paths when the post
+		// said so; a read of it carries the same.
+		sub.sentRemoved = res.RemovedPathsSent || (polled && strings.Contains(del.Result, "removed paths sent"))
 		if del.DownloadID != 0 {
 			sub.transfer = pipeline.Key(n.Import.Transfer, del.DownloadID)
 		}
@@ -245,6 +252,69 @@ type subAttempt struct {
 	polled   bool
 	transfer string
 	total    int
+	// A Re-match's moved request (contract amendment 4.2): the paths that
+	// left the directory, and whether Cinema was sent them.
+	notifierID  int64
+	removed     []string
+	sentRemoved bool
+}
+
+// oldCinemaNote is what a move against a Cinema without removed_paths says
+// on the delivery (contract amendment 6). Not a failure, no retry loop.
+const oldCinemaNote = "warning: cinema does not support removed paths; the old entry stays until its next scan"
+
+// refreshFeatures re-reads what Cinema supports before this session's first
+// moved send to it (contract amendment 5.3), stores it and rebuilds the
+// notifier with it. A probe that fails keeps what is stored.
+func (d *Dispatcher) refreshFeatures(ctx context.Context, cfg ports.NotifierConfig, target ports.Notifier) ports.Notifier {
+	prober, ok := target.(ports.FeatureProber)
+	if !ok {
+		return target
+	}
+	d.mu.Lock()
+	if d.featuresRead == nil {
+		d.featuresRead = map[int64]bool{}
+	}
+	done := d.featuresRead[cfg.ID]
+	d.mu.Unlock()
+	if done {
+		return target
+	}
+	pctx, cancel := context.WithTimeout(ctx, d.sendTimeout)
+	features, err := prober.ProbeFeatures(pctx)
+	cancel()
+	if err != nil {
+		d.log.Info("notify: cinema features not re-read; using the stored ones", "notifier", cfg.ID, "err", err)
+		return target
+	}
+	d.mu.Lock()
+	d.featuresRead[cfg.ID] = true
+	d.mu.Unlock()
+	if err := d.db.SetNotifierFeatures(ctx, cfg.ID, features); err != nil {
+		d.log.Warn("notify: cannot store cinema features", "notifier", cfg.ID, "err", err)
+	}
+	cfg.Features = features
+	return d.new(cfg)
+}
+
+// removedNotGone lists every removed path Cinema still has, and reports
+// whether it answered for each one at all (an older Cinema does not).
+func removedNotGone(removed []string, files []ports.PlacedReport) (present []string, answered bool) {
+	byPath := map[string]ports.PlacedReport{}
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+	answered = true
+	for _, r := range removed {
+		f, ok := byPath[r]
+		switch {
+		case !ok:
+			answered = false
+		case f.State == "present":
+			present = append(present, r)
+		}
+	}
+	return present, answered
 }
 
 // noResults is the delivery log's line for a Cinema that accepted the request
@@ -322,6 +392,9 @@ func (d *Dispatcher) settleSub(ctx context.Context, del sqlite.Delivery, sub sub
 		if res.WaitingOn != "" {
 			del.Result += ", waiting on " + res.WaitingOn
 		}
+		if sub.sentRemoved {
+			del.Result += " (removed paths sent)"
+		}
 		pending()
 	case res.State == "failed":
 		del.LastError = "cinema could not complete the scan"
@@ -341,12 +414,32 @@ func (d *Dispatcher) settleSub(ctx context.Context, del sqlite.Delivery, sub sub
 			break
 		}
 		missing := notPlaced(del.ExpectedFiles, res.Files)
+		compat := ""
+		if len(sub.removed) > 0 {
+			present, answered := removedNotGone(sub.removed, res.Files)
+			switch {
+			case !sub.sentRemoved:
+				compat = oldCinemaNote
+			case !answered:
+				// The backstop: a Cinema that took the request but did not
+				// answer for each removed path does not support them.
+				compat = oldCinemaNote
+				d.forgetRemovedPaths(ctx, sub.notifierID)
+			default:
+				for _, p := range present {
+					missing = append(missing, p+" still exists in the library")
+				}
+			}
+		}
 		if len(missing) == 0 {
 			del.Status, del.NextAt, del.LastError = "ok", 0, ""
 			del.VisibleAt = now.UnixMilli()
 			del.Result = "visible"
 			if ids := itemList(res.ItemIDs); ids != "" {
 				del.Result += " → plurx item " + ids
+			}
+			if compat != "" {
+				del.Result += "; " + compat
 			}
 			if sub.total > len(del.ExpectedFiles) {
 				// Cinema takes at most 64 expected files a request; the
@@ -366,6 +459,24 @@ func (d *Dispatcher) settleSub(ctx context.Context, del sqlite.Delivery, sub sub
 		pending()
 	}
 	d.store(ctx, del, sub.peer, timing, errors.New(del.LastError))
+}
+
+// forgetRemovedPaths drops removed_paths from a notifier's stored features
+// after an answer showed it does not support them.
+func (d *Dispatcher) forgetRemovedPaths(ctx context.Context, id int64) {
+	cfg, err := d.db.GetNotifier(ctx, id)
+	if err != nil {
+		return
+	}
+	var kept []string
+	for _, f := range cfg.Features {
+		if f != ports.FeatureRemovedPaths {
+			kept = append(kept, f)
+		}
+	}
+	if err := d.db.SetNotifierFeatures(ctx, id, kept); err != nil {
+		d.log.Warn("notify: cannot store cinema features", "notifier", id, "err", err)
+	}
 }
 
 // notPlaced lists, in the delivery log's words, every expected file Cinema

@@ -1016,6 +1016,108 @@ func (e RecommendationStatusModelState) Valid() bool {
 	}
 }
 
+// Defines values for RematchBlockedReason.
+const (
+	RematchBlockedReasonDownload    RematchBlockedReason = "download"
+	RematchBlockedReasonImport      RematchBlockedReason = "import"
+	RematchBlockedReasonRematch     RematchBlockedReason = "rematch"
+	RematchBlockedReasonReplacement RematchBlockedReason = "replacement"
+)
+
+// Valid indicates whether the value is a known member of the RematchBlockedReason enum.
+func (e RematchBlockedReason) Valid() bool {
+	switch e {
+	case RematchBlockedReasonDownload:
+		return true
+	case RematchBlockedReasonImport:
+		return true
+	case RematchBlockedReasonRematch:
+		return true
+	case RematchBlockedReasonReplacement:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RematchMoveMode.
+const (
+	Copy   RematchMoveMode = "copy"
+	Relink RematchMoveMode = "relink"
+	Rename RematchMoveMode = "rename"
+)
+
+// Valid indicates whether the value is a known member of the RematchMoveMode enum.
+func (e RematchMoveMode) Valid() bool {
+	switch e {
+	case Copy:
+		return true
+	case Relink:
+		return true
+	case Rename:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RematchOperationState.
+const (
+	RematchOperationStateCancelPending RematchOperationState = "cancel_pending"
+	RematchOperationStateCancelled     RematchOperationState = "cancelled"
+	RematchOperationStateCommitted     RematchOperationState = "committed"
+	RematchOperationStateComplete      RematchOperationState = "complete"
+	RematchOperationStateFailed        RematchOperationState = "failed"
+	RematchOperationStateMoved         RematchOperationState = "moved"
+	RematchOperationStateMoving        RematchOperationState = "moving"
+	RematchOperationStateNotified      RematchOperationState = "notified"
+	RematchOperationStatePlanned       RematchOperationState = "planned"
+)
+
+// Valid indicates whether the value is a known member of the RematchOperationState enum.
+func (e RematchOperationState) Valid() bool {
+	switch e {
+	case RematchOperationStateCancelPending:
+		return true
+	case RematchOperationStateCancelled:
+		return true
+	case RematchOperationStateCommitted:
+		return true
+	case RematchOperationStateComplete:
+		return true
+	case RematchOperationStateFailed:
+		return true
+	case RematchOperationStateMoved:
+		return true
+	case RematchOperationStateMoving:
+		return true
+	case RematchOperationStateNotified:
+		return true
+	case RematchOperationStatePlanned:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RematchPreviewSourceOutcome.
+const (
+	Removed RematchPreviewSourceOutcome = "removed"
+	Stays   RematchPreviewSourceOutcome = "stays"
+)
+
+// Valid indicates whether the value is a known member of the RematchPreviewSourceOutcome enum.
+func (e RematchPreviewSourceOutcome) Valid() bool {
+	switch e {
+	case Removed:
+		return true
+	case Stays:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReplacementRequestIntent.
 const (
 	ReplaceBad     ReplacementRequestIntent = "replace_bad"
@@ -1036,16 +1138,16 @@ func (e ReplacementRequestIntent) Valid() bool {
 
 // Defines values for ReplacementRequestScope.
 const (
-	Download ReplacementRequestScope = "download"
-	Episodes ReplacementRequestScope = "episodes"
+	ReplacementRequestScopeDownload ReplacementRequestScope = "download"
+	ReplacementRequestScopeEpisodes ReplacementRequestScope = "episodes"
 )
 
 // Valid indicates whether the value is a known member of the ReplacementRequestScope enum.
 func (e ReplacementRequestScope) Valid() bool {
 	switch e {
-	case Download:
+	case ReplacementRequestScopeDownload:
 		return true
-	case Episodes:
+	case ReplacementRequestScopeEpisodes:
 		return true
 	default:
 		return false
@@ -3280,6 +3382,172 @@ type ReleaseCandidate struct {
 	Warning *string `json:"warning,omitempty"`
 }
 
+// RematchBlocked defines model for RematchBlocked.
+type RematchBlocked struct {
+	ItemId  int64                `json:"itemId"`
+	Message string               `json:"message"`
+	Reason  RematchBlockedReason `json:"reason"`
+	Ref     string               `json:"ref"`
+	Retry   bool                 `json:"retry"`
+}
+
+// RematchBlockedReason defines model for RematchBlocked.Reason.
+type RematchBlockedReason string
+
+// RematchConflict defines model for RematchConflict.
+type RematchConflict struct {
+	Blocked *RematchBlocked `json:"blocked,omitempty"`
+	Code    *string         `json:"code,omitempty"`
+	Message string          `json:"message"`
+}
+
+// RematchItemRef defines model for RematchItemRef.
+type RematchItemRef struct {
+	Folder       *string `json:"folder,omitempty"`
+	FolderChosen *bool   `json:"folderChosen,omitempty"`
+	Id           int64   `json:"id"`
+	InLibrary    bool    `json:"inLibrary"`
+	Kind         string  `json:"kind"`
+	Title        string  `json:"title"`
+	Year         *int    `json:"year,omitempty"`
+}
+
+// RematchMove defines model for RematchMove.
+type RematchMove struct {
+	Bytes     int64            `json:"bytes"`
+	Episodes  []int            `json:"episodes"`
+	FileId    int64            `json:"fileId"`
+	From      string           `json:"from"`
+	Label     *string          `json:"label,omitempty"`
+	Mode      *RematchMoveMode `json:"mode,omitempty"`
+	NeedsPick *bool            `json:"needsPick,omitempty"`
+	Note      *string          `json:"note,omitempty"`
+
+	// Problem Why it is left out (stays on disk, leaves the library).
+	Problem  *string `json:"problem,omitempty"`
+	Quality  *string `json:"quality,omitempty"`
+	Season   int     `json:"season"`
+	Sidecars *[]struct {
+		From *string `json:"from,omitempty"`
+		To   *string `json:"to,omitempty"`
+	} `json:"sidecars,omitempty"`
+	To *string `json:"to,omitempty"`
+}
+
+// RematchMoveMode defines model for RematchMove.Mode.
+type RematchMoveMode string
+
+// RematchOperation defines model for RematchOperation.
+type RematchOperation struct {
+	BytesDone  int64 `json:"bytesDone"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory *string `json:"directory,omitempty"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    *string `json:"status,omitempty"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CreatedAt   int64   `json:"createdAt"`
+	LastError   *string `json:"lastError,omitempty"`
+	OperationId string  `json:"operationId"`
+
+	// Plan The stored request and preview.
+	Plan      *map[string]interface{} `json:"plan,omitempty"`
+	RequestId string                  `json:"requestId"`
+
+	// Result moved [{from,to,episodes,mode}], leftOut, failed, blocklisted, sourceRemoved, leftBehind, cinemaNote.
+	Result       *map[string]interface{} `json:"result,omitempty"`
+	SourceItemId int64                   `json:"sourceItemId"`
+	State        RematchOperationState   `json:"state"`
+	TargetItemId int64                   `json:"targetItemId"`
+	UpdatedAt    int64                   `json:"updatedAt"`
+}
+
+// RematchOperationState defines model for RematchOperation.State.
+type RematchOperationState string
+
+// RematchPreview defines model for RematchPreview.
+type RematchPreview struct {
+	Blocked   *RematchBlocked `json:"blocked,omitempty"`
+	Blocklist []struct {
+		FileId  *int64  `json:"fileId,omitempty"`
+		Indexer *string `json:"indexer,omitempty"`
+		Release *string `json:"release,omitempty"`
+	} `json:"blocklist"`
+	BlocklistNote *string `json:"blocklistNote,omitempty"`
+	BlocklistOn   bool    `json:"blocklistOn"`
+	Cinema        *string `json:"cinema,omitempty"`
+	Copies        *[]struct {
+		BookType *string `json:"bookType,omitempty"`
+		Id       *int64  `json:"id,omitempty"`
+		Name     *string `json:"name,omitempty"`
+	} `json:"copies,omitempty"`
+	Episodes *[]struct {
+		Episode *int    `json:"episode,omitempty"`
+		HasFile *bool   `json:"hasFile,omitempty"`
+		Season  *int    `json:"season,omitempty"`
+		Title   *string `json:"title,omitempty"`
+	} `json:"episodes,omitempty"`
+	Fingerprint    string                      `json:"fingerprint"`
+	LeftOut        []RematchMove               `json:"leftOut"`
+	Moves          []RematchMove               `json:"moves"`
+	Source         RematchItemRef              `json:"source"`
+	SourceOutcome  RematchPreviewSourceOutcome `json:"sourceOutcome"`
+	SourceReason   string                      `json:"sourceReason"`
+	SourceRevision int64                       `json:"sourceRevision"`
+	Summary        string                      `json:"summary"`
+	Target         RematchItemRef              `json:"target"`
+	TargetCopyId   *int64                      `json:"targetCopyId,omitempty"`
+	TargetRevision int64                       `json:"targetRevision"`
+}
+
+// RematchPreviewSourceOutcome defines model for RematchPreview.SourceOutcome.
+type RematchPreviewSourceOutcome string
+
+// RematchRequest defines model for RematchRequest.
+type RematchRequest struct {
+	// Blocklist Blocklist the moved files' releases for this item (default true).
+	Blocklist *bool `json:"blocklist,omitempty"`
+	Choices   *[]struct {
+		Episodes *[]int `json:"episodes,omitempty"`
+		FileId   int64  `json:"fileId"`
+
+		// Leave Leave it out: it stays on disk and leaves the library.
+		Leave  *bool `json:"leave,omitempty"`
+		Season *int  `json:"season,omitempty"`
+	} `json:"choices,omitempty"`
+
+	// CopyId Target copy or edition; 0 = primary.
+	CopyId *int64 `json:"copyId,omitempty"`
+
+	// FileIds Move to… these files; absent = every file of the item (Re-match…).
+	FileIds *[]int64 `json:"fileIds,omitempty"`
+
+	// Fingerprint Execute only: the preview's.
+	Fingerprint *string `json:"fingerprint,omitempty"`
+
+	// RequestId Execute only.
+	RequestId *string `json:"requestId,omitempty"`
+
+	// SourceRevision Execute only: the preview's.
+	SourceRevision *int64 `json:"sourceRevision,omitempty"`
+
+	// Target A library item (itemId), or a title by provider id.
+	Target *struct {
+		HydrationSource *string    `json:"hydrationSource,omitempty"`
+		ImdbId          *string    `json:"imdbId,omitempty"`
+		ItemId          *int64     `json:"itemId,omitempty"`
+		Kind            *MediaKind `json:"kind,omitempty"`
+		Olid            *string    `json:"olid,omitempty"`
+		TmdbId          *int64     `json:"tmdbId,omitempty"`
+		TvdbId          *int64     `json:"tvdbId,omitempty"`
+	} `json:"target,omitempty"`
+
+	// TargetRevision Execute only: the preview's (0 for a new title).
+	TargetRevision *int64 `json:"targetRevision,omitempty"`
+}
+
 // RemoveFileResult defines model for RemoveFileResult.
 type RemoveFileResult struct {
 	// Blocklisted The release title that was blocklisted; empty if none was.
@@ -4238,6 +4506,12 @@ type StartReplacementFileObservationJSONRequestBody = ReplacementObservationRequ
 // ReportLibraryFileJSONRequestBody defines body for ReportLibraryFile for application/json ContentType.
 type ReportLibraryFileJSONRequestBody = LibraryFileReportRequest
 
+// StartRematchJSONRequestBody defines body for StartRematch for application/json ContentType.
+type StartRematchJSONRequestBody = RematchRequest
+
+// PreviewRematchJSONRequestBody defines body for PreviewRematch for application/json ContentType.
+type PreviewRematchJSONRequestBody = RematchRequest
+
 // RepairLibraryFolderJSONRequestBody defines body for RepairLibraryFolder for application/json ContentType.
 type RepairLibraryFolderJSONRequestBody RepairLibraryFolderJSONBody
 
@@ -4573,6 +4847,12 @@ type ServerInterface interface {
 	// SearchReleases Interactive search for one item target or book edition
 	// (GET /library/{id}/releases)
 	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
+	// StartRematch Execute a previewed Re-match (idempotent by requestId)
+	// (POST /library/{id}/rematch)
+	StartRematch(w http.ResponseWriter, r *http.Request, id int64)
+	// PreviewRematch What a Re-match would do (ADR 0027); no side effects
+	// (POST /library/{id}/rematch/preview)
+	PreviewRematch(w http.ResponseWriter, r *http.Request, id int64)
 	// RepairLibraryFolder Reconnect an item to an existing media folder and scan it
 	// (POST /library/{id}/repair-folder)
 	RepairLibraryFolder(w http.ResponseWriter, r *http.Request, id int64)
@@ -4693,6 +4973,12 @@ type ServerInterface interface {
 	// ResumeQueueItem Resume the retained Runner job after resource admission
 	// (POST /queue/{id}/resume)
 	ResumeQueueItem(w http.ResponseWriter, r *http.Request, id int64)
+	// GetRematch A Re-match's state, bytes copied, result and Cinema confirmation
+	// (GET /rematch/{operationId})
+	GetRematch(w http.ResponseWriter, r *http.Request, operationId string)
+	// CancelRematch Stop a Re-match that has not committed (a copy's temp file is removed, sources untouched)
+	// (POST /rematch/{operationId}/cancel)
+	CancelRematch(w http.ResponseWriter, r *http.Request, operationId string)
 	// GetReplacementFileObservation Read a prepared file observation
 	// (GET /replacement-observations/{observationId})
 	GetReplacementFileObservation(w http.ResponseWriter, r *http.Request, observationId string)
@@ -6981,6 +7267,58 @@ func (siw *ServerInterfaceWrapper) SearchReleases(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// StartRematch operation middleware
+func (siw *ServerInterfaceWrapper) StartRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartRematch(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewRematch operation middleware
+func (siw *ServerInterfaceWrapper) PreviewRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewRematch(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RepairLibraryFolder operation middleware
 func (siw *ServerInterfaceWrapper) RepairLibraryFolder(w http.ResponseWriter, r *http.Request) {
 
@@ -8050,6 +8388,58 @@ func (siw *ServerInterfaceWrapper) ResumeQueueItem(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetRematch operation middleware
+func (siw *ServerInterfaceWrapper) GetRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRematch(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelRematch operation middleware
+func (siw *ServerInterfaceWrapper) CancelRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelRematch(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReplacementFileObservation operation middleware
 func (siw *ServerInterfaceWrapper) GetReplacementFileObservation(w http.ResponseWriter, r *http.Request) {
 
@@ -8756,6 +9146,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/replacement-operations", wrapper.GetLibraryLifecycleReview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/replacement-operations", wrapper.CreateReplacementOperation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/replacement-operations/{operationId}", wrapper.GetReplacementOperation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/rematch/preview", wrapper.PreviewRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/rematch", wrapper.StartRematch)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rematch/{operationId}", wrapper.GetRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rematch/{operationId}/cancel", wrapper.CancelRematch)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/seasons/{season}", wrapper.SetSeasonMonitored)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/episodes/{episodeId}", wrapper.SetEpisodeMonitored)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)
