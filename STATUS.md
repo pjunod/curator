@@ -23,14 +23,39 @@ still `prepared` because placement reconciliation leaves it for the title's
 next import or for disposal. So every poll skipped the row before it reached
 the "Runner's terminal is recorded" branch.
 
-**Fix:** `writeImportState` records only the handoff step for a row whose
-publications are all salvage, and keeps the row's state and error.
-`publicationOwnsExit` no longer lets a finished attempt (outcome completed)
-own the exit. The leftover stage stays in the placement journal. Tests
-`TestOverdueDownloadedSalvageRowTakesRunnersTerminal` (the row's exact shape)
-and `TestOverdueSalvageImportRetryKeepsTheRowFailed` both fail without the fix.
-After a deploy, 1196 exits at the next poll as `failed{publish}` (blameless).
-Its re-grab is filtered because the episode is in the library.
+**Fix (5d173a7):** `publicationOwnsExit` no longer lets a finished attempt
+(outcome completed) own the exit.
+
+**Review findings (Fable review of 5d173a7, 4 blocking), fixed:**
+1. A salvage arriving after an imported completed publication still wedged
+   the row, and the overdue exit then failed it. Now the kind of the
+   publication being imported decides: a salvage retry
+   (`BeginSalvageImportRetry`, publications.go enqueue and the sealed-plan
+   path) records only the step.
+2. The leftover `prepared` stage was a permanent manual item. A stage of an
+   epoch below the attempt's current one (or of a completed attempt) with no
+   authorization is swept: `reconcilePlacement` and every import retry remove
+   only its `.monarr-stage-` temporary and mark it `rolled_back`. The target is
+   never touched (not `rollbackPlacement`). A stage whose prior-file backup is
+   on disk is kept and logged: that backup may be the only copy of the
+   previous library file. This residual is recorded for review.
+3. The salvage guard swallowed `completeImportAttempt`, so a successful manual
+   import left the row failed. The guard now applies only to the
+   `import_queued` and `import_cancelled` writes. `imported` is always written.
+4. `ImportNow` moved a failed row with no publications to `downloaded`. An
+   `import_queued` or `import_cancelled` step on a terminal row (failed,
+   imported, notified) or a salvage-only row now writes only the step. The
+   import moves the state itself (importing, then imported or failed).
+
+Tests: `TestOverdueDownloadedSalvageRowTakesRunnersTerminal` (1196's exact
+shape), `TestOverdueSalvageImportRetryKeepsTheRowFailed`,
+`TestSalvageAfterAnImportedCompletedKeepsTheRowImported`,
+`TestSupersededStageIsSweptWithoutTouchingTheLibrary`,
+`TestCompletingAnImportOfASalvageOnlyRowWritesImported`,
+`TestImportNowOnAFailedRowKeepsItFailedUntilTheImportMovesIt`. After a
+deploy, 1196 exits at the next poll as `failed{publish}` (blameless). Its
+re-grab is filtered because the episode is in the library. Its epoch 0 stage
+is swept.
 
 ## Overdue exit cancels a still-listed stalled job in Runner — 2026-11-12 · v0.46.1
 

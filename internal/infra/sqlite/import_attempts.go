@@ -104,20 +104,35 @@ func (d *DB) GetImportAttempt(ctx context.Context, id int64, generation string) 
 	return readImportAttempt(ctx, d.R, id, generation)
 }
 
+// BeginImportRetry opens a fresh attempt epoch and records import_queued. A
+// row in a terminal state, or one whose publications are all salvage, keeps
+// its state: the import's completion decides it.
 func (d *DB) BeginImportRetry(ctx context.Context, id int64, generation string) (ImportAttempt, error) {
+	return d.beginImportRetry(ctx, id, generation, false)
+}
+
+// BeginSalvageImportRetry is BeginImportRetry for a salvage publication's
+// import: it records only the step, whatever the row's state, since a salvage
+// never decides the row (contract section 3.1) — for example one arriving
+// after the row's completed publication was imported.
+func (d *DB) BeginSalvageImportRetry(ctx context.Context, id int64, generation string) (ImportAttempt, error) {
+	return d.beginImportRetry(ctx, id, generation, true)
+}
+
+func (d *DB) beginImportRetry(ctx context.Context, id int64, generation string, keepState bool) (ImportAttempt, error) {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return ImportAttempt{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	a, err := beginImportRetry(ctx, tx, id, generation, true)
+	a, err := beginImportRetry(ctx, tx, id, generation, true, keepState)
 	if err != nil {
 		return a, err
 	}
 	return a, tx.Commit()
 }
 
-func beginImportRetry(ctx context.Context, tx *sql.Tx, id int64, generation string, recordStep bool) (ImportAttempt, error) {
+func beginImportRetry(ctx context.Context, tx *sql.Tx, id int64, generation string, recordStep, keepState bool) (ImportAttempt, error) {
 	a, err := ensureImportAttempt(ctx, tx, id, generation)
 	if err != nil {
 		return a, err
@@ -143,7 +158,7 @@ func beginImportRetry(ctx context.Context, tx *sql.Tx, id int64, generation stri
 	a.Outcome = ""
 	a.PlanSealed = false
 	if recordStep {
-		if err = writeImportState(ctx, tx, a.ImportAttemptKey, "downloaded", "import_queued", "waiting for an import worker"); err != nil {
+		if err = writeImportQueuedOrCancelled(ctx, tx, a.ImportAttemptKey, keepState, "import_queued", "waiting for an import worker"); err != nil {
 			return a, err
 		}
 	}
@@ -265,38 +280,72 @@ func importPlanComplete(ctx context.Context, tx *sql.Tx, a ImportAttempt) (bool,
 
 // writeImportState reads handoff JSON on W inside the same transaction as the
 // control transition; it never overwrites it with a worker's stale snapshot.
-//
-// Only a completed publication decides the row (contract section 3.1): a row
-// whose publications are all salvage (Runner failed it and it was replaced)
-// keeps its state — failed — and its error, and gets only the handoff step.
-// Until v0.46.2 an import retry of a salvage moved such a row to downloaded,
-// where nothing ever moved it again (download 1196, 2026-11-12).
 func writeImportState(ctx context.Context, tx *sql.Tx, key ImportAttemptKey, state, step, detail string) error {
-	var raw string
-	var salvageOnly bool
-	if err := tx.QueryRowContext(ctx, `SELECT handoff_log,
-		EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id) AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.kind='completed')
-		FROM downloads d WHERE id=? AND generation_key=?`, key.DownloadID, key.GenerationKey).Scan(&raw, &salvageOnly); err != nil {
+	data, now, err := appendImportStep(ctx, tx, key, step, detail)
+	if err != nil {
 		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE downloads SET state=?,progress=CASE WHEN ?='imported' THEN 1 ELSE progress END,error='',handoff_log=?,updated_at=? WHERE id=? AND generation_key=?`, state, state, data, now, key.DownloadID, key.GenerationKey)
+	return err
+}
+
+// writeImportStep records an import step in the row's handoff trace and
+// leaves its state, error and deadline as they are.
+func writeImportStep(ctx context.Context, tx *sql.Tx, key ImportAttemptKey, step, detail string) error {
+	data, now, err := appendImportStep(ctx, tx, key, step, detail)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE downloads SET handoff_log=?,updated_at=? WHERE id=? AND generation_key=?`, data, now, key.DownloadID, key.GenerationKey)
+	return err
+}
+
+func appendImportStep(ctx context.Context, tx *sql.Tx, key ImportAttemptKey, step, detail string) (string, int64, error) {
+	var raw string
+	if err := tx.QueryRowContext(ctx, `SELECT handoff_log FROM downloads WHERE id=? AND generation_key=?`, key.DownloadID, key.GenerationKey).Scan(&raw); err != nil {
+		return "", 0, err
 	}
 	var handoff []HandoffEntry
 	if err := json.Unmarshal([]byte(raw), &handoff); err != nil {
-		return err
+		return "", 0, err
 	}
 	now := time.Now().UnixMilli()
 	if len(handoff) == 0 || handoff[len(handoff)-1].Step != step {
 		handoff = append(handoff, HandoffEntry{Step: step, Detail: detail, At: now})
 	}
 	data, err := json.Marshal(handoff)
-	if err != nil {
-		return err
+	return string(data), now, err
+}
+
+// importKeepsRowState reports a row that an import being queued or cancelled
+// must not move to downloaded: one in a terminal state (failed, imported,
+// notified: the import's completion decides it), or one whose publications
+// are all salvage (only a completed publication decides the row, contract
+// section 3.1). Until v0.46.2 such a row was moved to downloaded and nothing
+// ever moved it again (download 1196, 2026-11-12).
+func importKeepsRowState(ctx context.Context, tx *sql.Tx, key ImportAttemptKey) (bool, error) {
+	var keep bool
+	err := tx.QueryRowContext(ctx, `SELECT d.state IN ('failed','imported','notified') OR
+		(EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id) AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.kind='completed'))
+		FROM downloads d WHERE id=? AND generation_key=?`, key.DownloadID, key.GenerationKey).Scan(&keep)
+	return keep, err
+}
+
+// writeImportQueuedOrCancelled writes an import_queued or import_cancelled
+// step: the row goes back to downloaded unless importKeepsRowState (or the
+// caller, importing a salvage) keeps its state.
+func writeImportQueuedOrCancelled(ctx context.Context, tx *sql.Tx, key ImportAttemptKey, keepState bool, step, detail string) error {
+	if !keepState {
+		keep, err := importKeepsRowState(ctx, tx, key)
+		if err != nil {
+			return err
+		}
+		keepState = keep
 	}
-	if salvageOnly {
-		_, err = tx.ExecContext(ctx, `UPDATE downloads SET handoff_log=?,updated_at=? WHERE id=? AND generation_key=?`, string(data), now, key.DownloadID, key.GenerationKey)
-		return err
+	if keepState {
+		return writeImportStep(ctx, tx, key, step, detail)
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE downloads SET state=?,progress=CASE WHEN ?='imported' THEN 1 ELSE progress END,error='',handoff_log=?,updated_at=? WHERE id=? AND generation_key=?`, state, state, string(data), now, key.DownloadID, key.GenerationKey)
-	return err
+	return writeImportState(ctx, tx, key, "downloaded", step, detail)
 }
 
 func completeImportAttempt(ctx context.Context, tx *sql.Tx, a ImportAttempt, details ...string) error {
@@ -377,7 +426,7 @@ func (d *DB) FinalizeImportCancellation(ctx context.Context, key ImportAttemptKe
 	if err != nil {
 		return a, err
 	}
-	if err = writeImportState(ctx, tx, key, "downloaded", "import_cancelled", "import cancelled; source, committed files and uncertain bytes kept"); err != nil {
+	if err = writeImportQueuedOrCancelled(ctx, tx, key, false, "import_cancelled", "import cancelled; source, committed files and uncertain bytes kept"); err != nil {
 		return a, err
 	}
 	a.Outcome = "cancelled"

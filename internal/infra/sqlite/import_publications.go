@@ -244,7 +244,7 @@ func (d *DB) RetainUncertainImport(ctx context.Context, key ImportAttemptKey, id
 	if _, err = tx.ExecContext(ctx, `UPDATE import_attempt_controls SET outcome='cancelled',finalized_at=? WHERE download_id=? AND generation_key=? AND attempt_epoch=? AND outcome='pending'`, now, key.DownloadID, key.GenerationKey, key.Epoch); err != nil {
 		return a, err
 	}
-	if err = writeImportState(ctx, tx, key, "downloaded", "import_cancelled", "cancelled after explicit fencing review; uncertain source/stage/publication custody retained"); err != nil {
+	if err = writeImportQueuedOrCancelled(ctx, tx, key, false, "import_cancelled", "cancelled after explicit fencing review; uncertain source/stage/publication custody retained"); err != nil {
 		return a, err
 	}
 	a.Outcome = "cancelled"

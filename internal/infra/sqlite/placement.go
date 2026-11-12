@@ -527,3 +527,56 @@ func (d *DB) DeleteRecoverySuperseded(ctx context.Context, fileID int64, importI
 	}
 	return tx.Commit()
 }
+
+// supersededStageWhere selects a prepared stage no import will ever use
+// again: a download's placement from an attempt epoch below the attempt's
+// current one, or of an attempt that has completed, that no publication
+// authorization names. Placement ids carry their epoch, so a later attempt
+// writes its own stage and never adopts this one; reconciliation would keep
+// it prepared for ever (download 1196, 2026-11-12).
+const supersededStageWhere = `p.state='prepared' AND COALESCE(json_extract(p.data,'$.recovery_import'),'')=''
+	AND COALESCE(json_extract(p.data,'$.download_id'),0)!=0
+	AND EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=json_extract(p.data,'$.download_id') AND c.generation_key=json_extract(p.data,'$.source_generation')
+		AND (c.outcome='completed' OR (json_extract(p.data,'$.import_attempt_epoch') IS NOT NULL AND json_extract(p.data,'$.import_attempt_epoch')<c.attempt_epoch)))
+	AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.placement_id=p.id)`
+
+// SupersededStages lists one download's superseded stages.
+func (d *DB) SupersededStages(ctx context.Context, downloadID int64) ([]Placement, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT p.data FROM import_placements p WHERE json_extract(p.data,'$.download_id')=? AND `+supersededStageWhere, downloadID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Placement
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var p Placement
+		if err = json.Unmarshal([]byte(raw), &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// IsSupersededStage reports whether placement id is a superseded stage.
+func (d *DB) IsSupersededStage(ctx context.Context, id string) (bool, error) {
+	var ok bool
+	err := d.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM import_placements p WHERE p.id=? AND `+supersededStageWhere+`)`, id).Scan(&ok)
+	return ok, err
+}
+
+// RollBackSupersededStage marks a superseded stage rolled back, only while it
+// still is one. The caller has removed its temporary file.
+func (d *DB) RollBackSupersededStage(ctx context.Context, id string) (bool, error) {
+	res, err := d.W.ExecContext(ctx, `UPDATE import_placements SET state='rolled_back',data=json_set(data,'$.state','rolled_back'),updated_at=?
+		WHERE id IN (SELECT p.id FROM import_placements p WHERE p.id=? AND `+supersededStageWhere+`)`, time.Now().UnixMilli(), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
