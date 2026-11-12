@@ -16,6 +16,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -72,11 +73,11 @@ func (m runtimeMemo) of(ctx context.Context, s *Service, w domain.Wantable) int 
 
 // autoGrab sends an accepted release to a client on behalf of a wantable —
 // the unattended twin of the interactive grab.
-func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Release, evidence domain.MatchEvidence) error {
+func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Release, evidence domain.MatchEvidence) (int64, error) {
 	if _, book := w.(domain.BookWantable); !book {
 		index, err := s.allIdentity(ctx, time.Now())
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if work, ok := index.Works[w.MediaItemID()]; ok {
 			w = wantableWithIdentity(w, work.Identity)
@@ -84,12 +85,12 @@ func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Relea
 		parsed := parser.Parse(r.Title)
 		match := releaseMatch(r, parsed, w, index)
 		if !match.Matched {
-			return fmt.Errorf("identity changed before grab: %s", match.Reason)
+			return 0, fmt.Errorf("identity changed before grab: %s", match.Reason)
 		}
 		evidence = matchEvidence(parsed, w, r, match)
 	}
 	season, episode := wantableGrabTarget(w)
-	_, err := s.Grab(ctx, GrabRequest{
+	return s.Grab(ctx, GrabRequest{
 		MediaItemID: w.MediaItemID(), CopyID: domain.WantableCopy(w),
 		Season: season, Episode: episode,
 		Title: r.Title, DownloadURL: r.DownloadURL, Indexer: r.Indexer,
@@ -97,7 +98,6 @@ func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Relea
 		Protocol: r.Protocol, Size: r.Size,
 		MatchEvidence: &evidence,
 	})
-	return err
 }
 
 // SyncRSS is the Phase 3 automation heart: pull each enabled indexer's
@@ -226,12 +226,14 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 					continue
 				}
 				evidence := matchEvidence(p, fresh, r, match)
-				if err := s.autoGrab(ctx, fresh, r, evidence); err != nil {
+				id, err := s.autoGrab(ctx, fresh, r, evidence)
+				if err != nil {
 					unlock()
 					s.log.Warn("rss: grab failed", "release", r.Title, "err", err)
 					continue
 				}
 				unlock()
+				s.recordSearch(ctx, fresh, "rss", searchTally{Seen: 1, Matched: 1, Accepted: 1, Grabbed: r.Title, DownloadID: id}, nil)
 				grabbed[string(w.ID())] = true
 				s.log.Info("rss: grabbed", "release", r.Title, "wantable", w.ID())
 			}
@@ -355,6 +357,84 @@ type searchTally struct {
 	// Seen is 0 either way — and the person is told there are no releases
 	// when nobody was asked.
 	Incomplete []string
+	// TopRejection is the commonest reason a seen release was refused, with
+	// its count ("below the profile's cutoff (9 of 11)"); Skipped is set when
+	// the wantable was not searched at all, and why. DownloadID is the grab.
+	TopRejection string
+	Skipped      string
+	DownloadID   int64
+}
+
+// rejections counts why seen releases were refused, by code, keeping the
+// first wording seen for each so the record reads as a sentence.
+type rejections struct {
+	count map[string]int
+	words map[string]string
+	order []string
+}
+
+func (r *rejections) add(code, reason string) {
+	if r.count == nil {
+		r.count, r.words = map[string]int{}, map[string]string{}
+	}
+	if _, ok := r.count[code]; !ok {
+		r.order = append(r.order, code)
+		r.words[code] = reason
+	}
+	r.count[code]++
+}
+
+func (r *rejections) top(seen int) string {
+	best := ""
+	for _, code := range r.order {
+		if best == "" || r.count[code] > r.count[best] {
+			best = code
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s (%d of %d)", r.words[best], r.count[best], seen)
+}
+
+type searchTriggerKey struct{}
+
+// withSearchTrigger names who ran a search, for its search record: wanted,
+// replacement. Unset, a manual search is "manual" and anything else
+// "automatic".
+func withSearchTrigger(ctx context.Context, trigger string) context.Context {
+	return context.WithValue(ctx, searchTriggerKey{}, trigger)
+}
+
+func searchTrigger(ctx context.Context) string {
+	if t, _ := ctx.Value(searchTriggerKey{}).(string); t != "" {
+		return t
+	}
+	if manualSearch(ctx) {
+		return "manual"
+	}
+	return "automatic"
+}
+
+// recordSearch writes one search record for the item page's Searched stage.
+// It is a record of what happened, never a reason to fail the search: a
+// write error is logged and dropped.
+func (s *Service) recordSearch(ctx context.Context, w domain.Wantable, trigger string, t searchTally, err error) {
+	season, episode := wantableGrabTarget(w)
+	r := sqlite.SearchRecord{MediaItemID: w.MediaItemID(), CopyID: domain.WantableCopy(w), WantableID: string(w.ID()),
+		Season: season, Episode: episode, Trigger: trigger, Seen: t.Seen, Matched: t.Matched, Accepted: t.Accepted,
+		TopRejection: t.TopRejection, Grabbed: t.Grabbed, DownloadID: t.DownloadID, Skipped: t.Skipped}
+	if r.Skipped == "" && t.Seen == 0 && t.Grabbed == "" && len(t.Incomplete) > 0 {
+		r.Skipped, r.Error = SkipIndexersUnavailable, strings.Join(t.Incomplete, "; ")
+	}
+	if err != nil {
+		r.Error = err.Error()
+	}
+	// Detached from the caller's cancellation: a cancelled Wanted run still
+	// searched, and the record of it is what the item page shows.
+	if e := s.db.RecordSearch(context.WithoutCancel(ctx), r); e != nil {
+		s.log.Warn("search record: write failed", "wantable", w.ID(), "err", e)
+	}
 }
 
 type manualSearchKey struct{}
@@ -418,10 +498,17 @@ func (s *Service) searchAndGrabBestWhere(ctx context.Context, w domain.Wantable,
 }
 
 func (s *Service) searchAndGrabBestScoped(ctx context.Context, w domain.Wantable,
-	enabled []ports.IndexerConfig, allowed candidatePredicate, beforeGrab func() error) (searchTally, error) {
+	enabled []ports.IndexerConfig, allowed candidatePredicate, beforeGrab func() error) (tally searchTally, err error) {
 	if pack, ok := w.(domain.SeasonWantable); ok {
+		// The season comparison writes its own record when it runs.
 		return searchTally{}, s.enqueueSeason(ctx, pack.Item, pack.Copy, pack.Season, "automatic", true)
 	}
+	defer func() { s.recordSearch(ctx, w, searchTrigger(ctx), tally, err) }()
+	return s.searchAndGrabBestUnrecorded(ctx, w, enabled, allowed, beforeGrab)
+}
+
+func (s *Service) searchAndGrabBestUnrecorded(ctx context.Context, w domain.Wantable,
+	enabled []ports.IndexerConfig, allowed candidatePredicate, beforeGrab func() error) (searchTally, error) {
 	// Refuse an invalid caller snapshot explicitly. Re-resolving below is for
 	// freshness after reservation wait, not permission to silently substitute a
 	// different profile for a malformed or stale request.
@@ -442,15 +529,21 @@ func (s *Service) searchAndGrabBestScoped(ctx context.Context, w domain.Wantable
 	// item-copy. Re-resolve after acquiring, because that predecessor may have
 	// satisfied the target or put it in flight while this caller waited.
 	fresh, err := s.wantableFromID(ctx, string(w.ID()))
-	if err != nil || !fresh.Monitored() {
-		return searchTally{}, nil
+	if err != nil {
+		return searchTally{Skipped: "no_longer_wanted"}, nil
+	}
+	if !fresh.Monitored() {
+		return searchTally{Skipped: SkipUnmonitored}, nil
 	}
 	profile, err := s.db.GetProfile(ctx, fresh.ProfileID())
 	if err != nil {
 		return searchTally{}, err
 	}
-	if !wants(profile, fresh) || len(s.notInFlight(ctx, []domain.Wantable{fresh})) == 0 {
-		return searchTally{}, nil
+	if !wants(profile, fresh) {
+		return searchTally{Skipped: "no_longer_wanted"}, nil
+	}
+	if len(s.notInFlight(ctx, []domain.Wantable{fresh})) == 0 {
+		return searchTally{Skipped: SkipInFlight}, nil
 	}
 	w = fresh
 	return s.searchAndGrabBestReserved(ctx, w, enabled, allowed, beforeGrab)
@@ -568,26 +661,34 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 		return a.r.Seeders > b.r.Seeders
 	}
 	var best *scored
+	var refused rejections
 	for _, r := range deduplicateReleases(releases) {
 		tally.Seen++
 
 		if s.skipCandidateFor(ctx, w.MediaItemID(), r) {
+			refused.add("blocklisted", "blocklisted or already tried")
 			continue
 		}
 		p := parser.Parse(r.Title)
 		if allowed != nil && !allowed(p) {
+			refused.add("scope", "a pack or multi-episode release")
 			continue
 		}
 		match := releaseMatch(r, p, w, identityIndex)
 		if !match.Matched {
+			refused.add("identity", "failed release identity")
 			continue
 		}
 		tally.Matched++
 		if d := decision.Decide(releaseOf(p), w, profile); !d.Accepted {
+			if len(d.Rejections) > 0 {
+				refused.add(d.Rejections[0].Code, d.Rejections[0].Reason)
+			}
 			continue
 		}
 		if why, bad := sizeImplausible(p.Quality, r, runtime); bad {
 			s.log.Info("auto search: declined on size", "release", r.Title, "why", why.Reason)
+			refused.add(why.Code, why.Reason)
 			continue
 		}
 		tally.Accepted++
@@ -596,6 +697,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 			best = cand
 		}
 	}
+	tally.TopRejection = refused.top(tally.Seen)
 	if best == nil {
 		return tally, nil
 	}
@@ -605,16 +707,19 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 		}
 	} else {
 		if capped, _ := s.regrabCapped(ctx, w); capped {
+			tally.Skipped = "regrab_capped"
 			return tally, nil
 		}
 		if len(s.notInFlight(ctx, []domain.Wantable{w})) == 0 {
+			tally.Skipped = SkipInFlight
 			return tally, nil
 		}
 	}
-	if err := s.autoGrab(ctx, w, best.r, best.evidence); err != nil {
+	id, err := s.autoGrab(ctx, w, best.r, best.evidence)
+	if err != nil {
 		return tally, fmt.Errorf("grab %q: %w", best.r.Title, err)
 	}
-	tally.Grabbed = best.r.Title
+	tally.Grabbed, tally.DownloadID = best.r.Title, id
 	s.log.Info("auto search: grabbed", "release", best.r.Title, "wantable", w.ID())
 	return tally, nil
 }

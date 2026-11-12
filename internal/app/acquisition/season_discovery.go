@@ -630,7 +630,7 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 							return e
 						}
 						if p.IntrinsicPartial && p.Stage == "episodes" {
-							if e := s.admitSeasonCandidates(ctx, p, item, pack, profile, targets, false); e != nil {
+							if _, e := s.admitSeasonCandidates(ctx, p, item, pack, profile, targets, false); e != nil {
 								return e
 							}
 						}
@@ -739,7 +739,8 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	err = s.admitSeasonCandidates(ctx, p, item, pack, profile, targets, allowPacks)
+	tally, err := s.admitSeasonCandidates(ctx, p, item, pack, profile, targets, allowPacks)
+	s.recordSearch(ctx, pack, seasonRecordTrigger(p), tally, err)
 	if err == nil {
 		incomplete := p.IntrinsicPartial
 		for _, sc := range p.Scopes {
@@ -799,14 +800,30 @@ type seasonDecision struct {
 	Reason             string                                   `json:"reason"`
 }
 
-func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint, item domain.MediaItem, pack domain.SeasonWantable, profile quality.Profile, targets []domain.EpisodeWantable, allowPacks bool) error {
+// seasonRecordTrigger names who asked for a season comparison, for its
+// search record: a person (manual) or the scheduler (the job's own trigger).
+func seasonRecordTrigger(p seasonCheckpoint) string {
+	if p.Manual {
+		return "manual"
+	}
+	if p.Trigger == "" {
+		return "automatic"
+	}
+	return p.Trigger
+}
+
+// admitSeasonCandidates plans and admits the season's grabs. The tally it
+// returns is the comparison's funnel for the season's search record: releases
+// seen, the ones tied to this show, and the ones the plan could use.
+func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint, item domain.MediaItem, pack domain.SeasonWantable, profile quality.Profile, targets []domain.EpisodeWantable, allowPacks bool) (tally searchTally, err error) {
+	tally.Seen = len(deduplicateReleases(p.Releases))
 	index, err := s.allIdentity(ctx, time.Now())
 	if err != nil {
-		return err
+		return tally, err
 	}
 	formats, err := s.db.ListCustomFormats(ctx)
 	if err != nil {
-		return err
+		return tally, err
 	}
 	runtime := s.db.ItemRuntime(ctx, item.ID)
 	in := acquisitionplan.Input{AllowPacks: allowPacks}
@@ -863,6 +880,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 		if !match.Matched {
 			continue
 		}
+		tally.Matched++
 		if _, bad := sizeImplausible(parsed.Quality, r, runtime); bad {
 			continue
 		}
@@ -931,12 +949,17 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 		evidence[key] = matchEvidence(parsed, w, r, match)
 		titles[key] = r.Title
 	}
+	tally.Accepted = len(in.Candidates)
 	plan, err := acquisitionplan.Build(in)
 	if err != nil {
-		return err
+		return tally, err
 	}
 	if len(plan.Releases) == 0 {
-		return nil
+		return tally, nil
+	}
+	var grabbed []string
+	for _, key := range plan.Releases {
+		grabbed = append(grabbed, titles[key])
 	}
 	decisionFacts := seasonDecision{Version: 1, OriginalDownloadID: p.OriginalDownloadID, Trigger: p.Trigger, Target: profile.Target.Display(), Partial: partial, Scopes: p.Scopes, Plan: plan, Candidates: in.Candidates, Titles: titles, ImportAllowlists: map[acquisitionplan.CandidateKey][]int64{}, Reason: "Compared attainable episode outcomes up to your target, then torrent health and full transfer cost; protected existing files are kept."}
 	decisionFacts.Reason = selectionReason(plan, in.Candidates, partial, packIncomplete)
@@ -950,11 +973,11 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	}
 	clients, err := s.db.ListDownloadClients(ctx)
 	if err != nil {
-		return err
+		return tally, err
 	}
 	priority, err := s.downloadPriority(ctx, item, p.CopyID)
 	if err != nil {
-		return err
+		return tally, err
 	}
 	var intents []sqlite.Download
 	for _, key := range plan.Releases {
@@ -967,7 +990,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 			}
 		}
 		if cfg == nil {
-			return ErrNoClient
+			return tally, ErrNoClient
 		}
 		exec, _ := json.Marshal(plannedExecution{URL: r.DownloadURL, Category: cfg.Category, Priority: priority, ClientFingerprint: clientFingerprint(*cfg)})
 		dl := sqlite.Download{MediaItemID: item.ID, CopyID: p.CopyID, Season: p.Season, ReleaseTitle: r.Title, Indexer: r.Indexer, Protocol: r.Protocol, Quality: parser.Parse(r.Title).Quality, Size: r.Size, ClientID: cfg.ID, CandidateKey: string(key), ExecutionPayload: string(exec), ReservedEpisodes: decisionFacts.ImportAllowlists[key], MatchEvidence: evidence[key], SourceGUID: r.GUID, SourceIndexerID: r.IndexerID}
@@ -980,17 +1003,17 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	if p.CopyID != 0 {
 		cp, e := s.db.GetMediaCopy(ctx, item.ID, p.CopyID)
 		if e != nil {
-			return e
+			return tally, e
 		}
 		if cp.Path != "" {
 			dest = cp.Path
 		}
 	}
 	if dest == "" {
-		return ErrNoLibraryFolder
+		return tally, ErrNoLibraryFolder
 	}
 	if plan.Cost.KnownBytes > (1<<62)-1 {
-		return fmt.Errorf("plan staging size overflow")
+		return tally, fmt.Errorf("plan staging size overflow")
 	}
 	// checkStorageIdentity verifies configured completed-storage roots. A
 	// library destination is not a completed root; applying that cleanup guard
@@ -998,7 +1021,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	// staging. Placement and the library's own path/root checks remain the
 	// authority for this destination.
 	if err = recoveryCapacity(dest, 2*plan.Cost.KnownBytes); err != nil {
-		return err
+		return tally, err
 	}
 	// The import lock serializes live file reread and durable admission with
 	// publication/fallback. Conditional revision catches non-import edits.
@@ -1015,9 +1038,10 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	}
 	releaseTarget()
 	if err != nil {
-		return err
+		return tally, err
 	}
-	return s.dispatchPlan(ctx, id)
+	tally.Grabbed = strings.Join(grabbed, " + ")
+	return tally, s.dispatchPlan(ctx, id)
 }
 
 func missingFirst(ws []domain.Wantable) []domain.Wantable {

@@ -993,7 +993,37 @@ func (s *Service) GrabManual(ctx context.Context, req GrabRequest) (int64, error
 		return 0, fmt.Errorf("requestId is required for a manual additional copy")
 	}
 	req.Intent = GrabIntentManualAdditional
-	return s.grab(ctx, req, true)
+	id, err := s.grab(ctx, req, true)
+	if err == nil {
+		s.recordInteractiveGrab(ctx, req, id)
+	}
+	return id, err
+}
+
+// recordInteractiveGrab writes the search record for a release a person
+// picked from interactive search, so the item page's Searched stage names
+// it. The candidate list's own counts belong to the search screen.
+func (s *Service) recordInteractiveGrab(ctx context.Context, req GrabRequest, id int64) {
+	item, err := s.db.GetMediaItemFull(ctx, req.MediaItemID)
+	if err != nil {
+		return
+	}
+	var episodes []int
+	if req.Episode > 0 {
+		episodes = []int{req.Episode}
+	}
+	keys, primary := wantableKeys(item, req.CopyID, req.Season, episodes)
+	if primary == "" && len(keys) > 0 {
+		primary = keys[len(keys)-1] // a season pack
+	}
+	r := sqlite.SearchRecord{MediaItemID: item.ID, CopyID: req.CopyID, WantableID: primary, Season: req.Season,
+		Episode: req.Episode, Trigger: "interactive", Seen: 1, Matched: 1, Accepted: 1, Grabbed: req.Title, DownloadID: id}
+	if item.Kind != domain.KindSeries {
+		r.Season, r.Episode = -1, 0
+	}
+	if e := s.db.RecordSearch(context.WithoutCancel(ctx), r); e != nil {
+		s.log.Warn("search record: write failed", "item", item.ID, "err", e)
+	}
 }
 
 func (s *Service) existingManualRequest(ctx context.Context, requestID, fingerprint string) (int64, bool, error) {
