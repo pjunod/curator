@@ -1,9 +1,12 @@
 # Monarr — Project Status
 
-## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.47.0 (rebased onto main d3b351a, 2026-11-12)
+## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.47.0 (rebased onto main 53fc80c, 2026-11-12)
 
 **Status:** branch `claude/pipeline-v2-m6b-curator`, rebased onto `origin/main`
-d3b351a (v0.46.1: item status, the overdue queue-only cancel, the
+53fc80c (v0.46.2: salvage retries leave the row's state alone, finished
+attempts do not hold the overdue exit, superseded stages settle themselves
+— with backup handling — at startup, retry and the hourly pass; v0.46.1:
+item status, the overdue queue-only cancel, the
 payload-mismatch continue for series/movie packs and audiobook
 all-or-nothing, plus overdue exits, adoption, completed-root guard, record
 closure and historical approvals, all kept) · owner: Claude (Sonnet builder) · pushed,
@@ -24,7 +27,9 @@ Manifest source check after the rebase: `verifyBookParts` (audiobook
 all-or-nothing) and the placement digest checks read the expected digests
 and sizes the publication import binds from `publicationManifest` — the
 directory's `.runner-manifest.json` through `readManifestFile`, or a stored
-body when the file is gone — so every check agrees on one manifest.
+body when the file is gone — so every check agrees on one manifest. The v0.46.2 superseded-stage sweep
+works on placement records and library stages only and reads no manifest,
+so it is unaffected by the manifest-source change.
 
 Built (plan M6 curator item 1, IMPL_CURATOR section 9):
 
