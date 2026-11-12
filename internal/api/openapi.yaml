@@ -3672,8 +3672,12 @@ paths:
                   mediaItemId: { type: integer, format: int64 }
                   state:
                     type: string
-                    enum: [searching, downloading, importing, on_disk, not_offloaded, not_found]
-                    description: reacquire and reacquire_status only.
+                    enum: [searching, downloading, importing, on_disk, not_offloaded, offloading, offloaded, not_found]
+                    description: >
+                      reacquire and reacquire_status only. `offloading`: an Offload of
+                      that scope is running (deleting or stopping), nothing came back
+                      yet. `offloaded`: still offloaded and the Re-acquire has not started
+                      (a status read, or the title was busy; ask again).
                   message: { type: string }
         "400":
           description: Unusable payload.
@@ -5752,7 +5756,7 @@ components:
       required: [operationId, state, scope, label, headline, filesDone, filesTotal, bytesTotal, bytesFreed, ended, stoppable]
       properties:
         operationId: { type: string }
-        state: { type: string, enum: [deleting, waiting, retrying, complete, cancelled, failed] }
+        state: { type: string, enum: [deleting, waiting, retrying, stopping, complete, cancelled, failed] }
         scope: { type: string, enum: [item, season, episode] }
         label: { type: string }
         headline: { type: string }
@@ -7464,7 +7468,7 @@ components:
         requestId: { type: string }
         state:
           type: string
-          enum: [deleting, waiting, retrying, complete, cancelled, failed]
+          enum: [deleting, waiting, retrying, stopping, complete, cancelled, failed]
           description: >
             waiting = the share is not mounted (nothing is marked deleted);
             retrying = an unlink failed (see failed); both resume by themselves.
@@ -7501,7 +7505,7 @@ components:
         mediaItemId: { type: integer, format: int64 }
         state:
           type: string
-          enum: [searching, downloading, importing, on_disk, not_offloaded]
+          enum: [searching, downloading, importing, on_disk, not_offloaded, offloading, offloaded]
         cleared: { type: boolean, description: This call cleared offloaded. }
         message: { type: string }
 

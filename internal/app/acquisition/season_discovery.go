@@ -1070,7 +1070,7 @@ func (s *Service) enqueueItemSeasons(ctx context.Context, item domain.MediaItem)
 	}
 	for _, copyID := range copies {
 		for _, season := range item.Seasons {
-			if !season.Monitored || season.Offloaded() {
+			if !season.Monitored || season.FullyOffloaded() {
 				continue
 			}
 			p := seasonCheckpoint{ItemID: item.ID, CopyID: copyID, Season: season.Number}

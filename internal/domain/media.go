@@ -248,8 +248,24 @@ type Episode struct {
 // its season.
 func (e Episode) Offloaded() bool { return e.OffloadedAt != 0 }
 
-// Offloaded reports whether the season as a whole is offloaded.
+// Offloaded reports whether the season flag is set. The flag only means "new
+// episodes inherit it" and "a season pack is not eligible"; whether an
+// episode is wanted depends on its own flag (see FullyOffloaded).
 func (s Season) Offloaded() bool { return s.OffloadedAt != 0 }
+
+// FullyOffloaded reports whether the season has episodes and every one of
+// them is offloaded: nothing in it is wanted.
+func (s Season) FullyOffloaded() bool {
+	if len(s.Episodes) == 0 {
+		return s.Offloaded()
+	}
+	for _, e := range s.Episodes {
+		if !e.Offloaded() {
+			return false
+		}
+	}
+	return true
+}
 
 // Offloaded reports whether a movie is offloaded.
 func (m MediaItem) Offloaded() bool { return m.OffloadedAt != 0 }

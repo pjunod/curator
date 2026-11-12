@@ -743,7 +743,7 @@ const retryDelivery = `-- name: RetryDelivery :one
 UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
        attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = '', file_results_json = '[]'
- WHERE id = ? AND notifier_id = ? AND status = 'failed'
+ WHERE id = ? AND notifier_id = ? AND status = 'failed' AND last_error NOT LIKE 'cancelled%'
 RETURNING id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at, publication_id, directory, idempotency_key, attempt, expected_files_json, remote_request_id, remote_state, waiting_on, visible_at, item_ids_json, media_item_id, file_results_json, operation_id, removed_sent
 `
 
@@ -800,7 +800,7 @@ const retryFailedDeliveries = `-- name: RetryFailedDeliveries :execrows
 UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
        attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = '', file_results_json = '[]'
- WHERE notifier_id = ? AND status = 'failed'
+ WHERE notifier_id = ? AND status = 'failed' AND last_error NOT LIKE 'cancelled%'
 `
 
 type RetryFailedDeliveriesParams struct {
@@ -809,6 +809,8 @@ type RetryFailedDeliveriesParams struct {
 	NotifierID int64
 }
 
+// A delivery cancelled by Re-acquire or Stop (last_error 'cancelled: ...') is
+// never revived: its files are on disk again, or never left.
 func (q *Queries) RetryFailedDeliveries(ctx context.Context, arg RetryFailedDeliveriesParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, retryFailedDeliveries, arg.NextAt, arg.UpdatedAt, arg.NotifierID)
 	if err != nil {

@@ -145,22 +145,22 @@ func (e DeliveryStatus) Valid() bool {
 
 // Defines values for DeploymentDrainStatusPhase.
 const (
-	Accepting DeploymentDrainStatusPhase = "accepting"
-	Drained   DeploymentDrainStatusPhase = "drained"
-	Draining  DeploymentDrainStatusPhase = "draining"
-	Stopping  DeploymentDrainStatusPhase = "stopping"
+	DeploymentDrainStatusPhaseAccepting DeploymentDrainStatusPhase = "accepting"
+	DeploymentDrainStatusPhaseDrained   DeploymentDrainStatusPhase = "drained"
+	DeploymentDrainStatusPhaseDraining  DeploymentDrainStatusPhase = "draining"
+	DeploymentDrainStatusPhaseStopping  DeploymentDrainStatusPhase = "stopping"
 )
 
 // Valid indicates whether the value is a known member of the DeploymentDrainStatusPhase enum.
 func (e DeploymentDrainStatusPhase) Valid() bool {
 	switch e {
-	case Accepting:
+	case DeploymentDrainStatusPhaseAccepting:
 		return true
-	case Drained:
+	case DeploymentDrainStatusPhaseDrained:
 		return true
-	case Draining:
+	case DeploymentDrainStatusPhaseDraining:
 		return true
-	case Stopping:
+	case DeploymentDrainStatusPhaseStopping:
 		return true
 	default:
 		return false
@@ -750,6 +750,7 @@ const (
 	OffloadOperationStateDeleting  OffloadOperationState = "deleting"
 	OffloadOperationStateFailed    OffloadOperationState = "failed"
 	OffloadOperationStateRetrying  OffloadOperationState = "retrying"
+	OffloadOperationStateStopping  OffloadOperationState = "stopping"
 	OffloadOperationStateWaiting   OffloadOperationState = "waiting"
 )
 
@@ -765,6 +766,8 @@ func (e OffloadOperationState) Valid() bool {
 	case OffloadOperationStateFailed:
 		return true
 	case OffloadOperationStateRetrying:
+		return true
+	case OffloadOperationStateStopping:
 		return true
 	case OffloadOperationStateWaiting:
 		return true
@@ -949,6 +952,8 @@ const (
 	ReacquireResultStateDownloading  ReacquireResultState = "downloading"
 	ReacquireResultStateImporting    ReacquireResultState = "importing"
 	ReacquireResultStateNotOffloaded ReacquireResultState = "not_offloaded"
+	ReacquireResultStateOffloaded    ReacquireResultState = "offloaded"
+	ReacquireResultStateOffloading   ReacquireResultState = "offloading"
 	ReacquireResultStateOnDisk       ReacquireResultState = "on_disk"
 	ReacquireResultStateSearching    ReacquireResultState = "searching"
 )
@@ -961,6 +966,10 @@ func (e ReacquireResultState) Valid() bool {
 	case ReacquireResultStateImporting:
 		return true
 	case ReacquireResultStateNotOffloaded:
+		return true
+	case ReacquireResultStateOffloaded:
+		return true
+	case ReacquireResultStateOffloading:
 		return true
 	case ReacquireResultStateOnDisk:
 		return true
@@ -1464,6 +1473,7 @@ const (
 	StatusOffloadStateDeleting  StatusOffloadState = "deleting"
 	StatusOffloadStateFailed    StatusOffloadState = "failed"
 	StatusOffloadStateRetrying  StatusOffloadState = "retrying"
+	StatusOffloadStateStopping  StatusOffloadState = "stopping"
 	StatusOffloadStateWaiting   StatusOffloadState = "waiting"
 )
 
@@ -1479,6 +1489,8 @@ func (e StatusOffloadState) Valid() bool {
 	case StatusOffloadStateFailed:
 		return true
 	case StatusOffloadStateRetrying:
+		return true
+	case StatusOffloadStateStopping:
 		return true
 	case StatusOffloadStateWaiting:
 		return true
@@ -1982,6 +1994,8 @@ const (
 	PlurxWebhook200JSONResponseBodyStateImporting    PlurxWebhook200JSONResponseBodyState = "importing"
 	PlurxWebhook200JSONResponseBodyStateNotFound     PlurxWebhook200JSONResponseBodyState = "not_found"
 	PlurxWebhook200JSONResponseBodyStateNotOffloaded PlurxWebhook200JSONResponseBodyState = "not_offloaded"
+	PlurxWebhook200JSONResponseBodyStateOffloaded    PlurxWebhook200JSONResponseBodyState = "offloaded"
+	PlurxWebhook200JSONResponseBodyStateOffloading   PlurxWebhook200JSONResponseBodyState = "offloading"
 	PlurxWebhook200JSONResponseBodyStateOnDisk       PlurxWebhook200JSONResponseBodyState = "on_disk"
 	PlurxWebhook200JSONResponseBodyStateSearching    PlurxWebhook200JSONResponseBodyState = "searching"
 )
@@ -1996,6 +2010,10 @@ func (e PlurxWebhook200JSONResponseBodyState) Valid() bool {
 	case PlurxWebhook200JSONResponseBodyStateNotFound:
 		return true
 	case PlurxWebhook200JSONResponseBodyStateNotOffloaded:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateOffloaded:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateOffloading:
 		return true
 	case PlurxWebhook200JSONResponseBodyStateOnDisk:
 		return true

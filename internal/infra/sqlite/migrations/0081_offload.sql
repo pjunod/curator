@@ -61,8 +61,10 @@ CREATE TABLE offload_operations (
     fingerprint   TEXT NOT NULL,
     -- deleting: the files are being deleted; waiting: the share is not
     -- listable (nothing was marked deleted); retrying: a delete failed and
-    -- is retried; complete; cancelled (Stop); failed (unreadable plan).
-    state         TEXT NOT NULL CHECK (state IN ('deleting','waiting','retrying','complete','cancelled','failed')),
+    -- is retried; stopping: Stop was asked and the worker is finishing it
+    -- (runner out, flags and Cinema rewritten in one transaction, resumable
+    -- after a crash); complete; cancelled (Stop); failed (unreadable plan).
+    state         TEXT NOT NULL CHECK (state IN ('deleting','waiting','retrying','stopping','complete','cancelled','failed')),
     media_item_id INTEGER NOT NULL,
     scope         TEXT NOT NULL CHECK (scope IN ('item','season','episode')),
     plan          TEXT NOT NULL DEFAULT '{}',

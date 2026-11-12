@@ -115,7 +115,7 @@ func (s *Server) PlurxWebhook(w http.ResponseWriter, r *http.Request) {
 // what is already back answers where it stands, and never errors.
 //
 //	{matched, mediaItemId, state}   state: searching | downloading | importing |
-//	                                on_disk | not_offloaded | not_found
+//	                                on_disk | not_offloaded | offloading | offloaded | not_found
 func (s *Server) plurxReacquire(w http.ResponseWriter, r *http.Request, body apigen.PlurxWatchedEvent) {
 	kind, scope := domain.KindSeries, "item"
 	switch body.Kind {
@@ -184,9 +184,13 @@ func (s *Server) plurxReacquire(w http.ResponseWriter, r *http.Request, body api
 	}
 	switch {
 	case errors.Is(err, acquisition.ErrOffloadBusy):
-		// The Offload is still deleting: nothing came back yet, and the
-		// sender should read it as still offloaded, not as a failure.
-		writeJSON(w, http.StatusOK, map[string]any{"matched": true, "mediaItemId": itemID, "state": acquisition.ReacquireNotOffloaded, "message": err.Error()})
+		// An Offload of the title is running: nothing came back yet, and the
+		// sender should read it as `offloading`, not as a failure.
+		state := res.State
+		if state == "" {
+			state = acquisition.ReacquireOffloading
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"matched": true, "mediaItemId": itemID, "state": state, "message": err.Error()})
 		return
 	case errors.Is(err, acquisition.ErrNotFound):
 		notFound(itemID)

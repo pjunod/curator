@@ -446,7 +446,7 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 		st := epStates[e.ID]
 		return domain.EpisodeWantable{
 			Item: item.ID, EpisodeID: e.ID, Profile: profileID,
-			Mon: item.Monitored && e.Monitored && copyMon && !e.Offloaded() && !seasonObj.Offloaded(), Title: item.Title, Year: item.Year,
+			Mon: item.Monitored && e.Monitored && copyMon && !e.Offloaded(), Title: item.Title, Year: item.Year,
 			Identity: mediaIdentity(item),
 			Season:   e.SeasonNumber, Episode: e.EpisodeNumber,
 			Have: st.Have, Files: st.HasFile, Verified: st.Verified, Audio: st.Audio,

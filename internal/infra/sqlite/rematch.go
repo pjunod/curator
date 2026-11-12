@@ -251,7 +251,7 @@ func (d *DB) OpenRematchScope(ctx context.Context) (map[int64]bool, []string, er
 	}
 	// An Offload mid-delete owns its title the same way (ADR 0028): a scan
 	// neither prunes the rows of files being deleted nor adopts what is left.
-	off, err := d.R.QueryContext(ctx, `SELECT media_item_id FROM offload_operations WHERE state IN ('deleting','waiting','retrying')`)
+	off, err := d.R.QueryContext(ctx, `SELECT media_item_id FROM offload_operations WHERE state IN ('deleting','waiting','retrying','stopping')`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -355,7 +355,7 @@ func (d *DB) RematchBlockers(ctx context.Context, itemIDs ...int64) ([]RematchBl
 			 WHERE (source_item_id=? OR target_item_id=?) AND state NOT IN ('complete','cancelled','failed')
 			UNION ALL
 			SELECT 'offload', operation_id, state FROM offload_operations
-			 WHERE media_item_id=? AND state IN ('deleting','waiting','retrying')`, id, id, id, id, id, id)
+			 WHERE media_item_id=? AND state IN ('deleting','waiting','retrying','stopping')`, id, id, id, id, id, id)
 		if err != nil {
 			return nil, err
 		}

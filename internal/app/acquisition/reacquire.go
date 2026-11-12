@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -25,7 +27,18 @@ const (
 	ReacquireImporting    = "importing"
 	ReacquireOnDisk       = "on_disk"
 	ReacquireNotOffloaded = "not_offloaded"
+	// ReacquireOffloading: an Offload of that title is running (deleting or
+	// stopping), so nothing can come back yet.
+	ReacquireOffloading = "offloading"
+	// ReacquireOffloaded: the scope is still offloaded and a Re-acquire has
+	// not started (it was only read, or it could not take the title in time).
+	ReacquireOffloaded = "offloaded"
 )
+
+// reacquireReserveWait bounds how long a Re-acquire waits for the title's
+// reservation (an automatic grab holds it for a moment): Cinema's call is
+// synchronous, so it is answered rather than left hanging.
+var reacquireReserveWait = 2 * time.Second
 
 // ReacquireRequest names the scope: item (the movie, or every offloaded
 // season and episode of a show), season (Season) or episode (EpisodeID).
@@ -130,18 +143,36 @@ func (s *Service) Reacquire(ctx context.Context, req ReacquireRequest) (Reacquir
 	if open, err := s.db.OpenOffloadForItem(ctx, req.ItemID); err != nil {
 		return ReacquireResult{}, err
 	} else if open != "" && sc.offloadedIn() {
-		return ReacquireResult{MediaItemID: req.ItemID, State: ReacquireNotOffloaded}, ErrOffloadBusy
+		return ReacquireResult{MediaItemID: req.ItemID, State: ReacquireOffloading, Message: ErrOffloadBusy.Error()}, ErrOffloadBusy
 	}
 	// Serialised with Offload, and with an automatic grab, on the item's
-	// per-copy reservations.
-	unlock, err := s.reserveItem(ctx, req.ItemID)
+	// per-copy reservations. Bounded: a held title is answered, not awaited.
+	rctx, stop := context.WithTimeout(ctx, reacquireReserveWait)
+	unlock, err := s.reserveItem(rctx, req.ItemID)
+	stop()
 	if err != nil {
+		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			res, serr := s.reacquireState(ctx, sc)
+			if serr == nil && res.State == ReacquireOffloaded {
+				res.Message = "the title is busy; Re-acquire was not started, ask again"
+			}
+			return res, serr
+		}
 		return ReacquireResult{}, err
 	}
 	sc, err = s.reacquireScope(ctx, req)
 	if err != nil {
 		unlock()
 		return ReacquireResult{}, err
+	}
+	// An Offload can start between the first check and the reservation: look
+	// again now that nothing else can start one.
+	if open, err := s.db.OpenOffloadForItem(ctx, req.ItemID); err != nil {
+		unlock()
+		return ReacquireResult{}, err
+	} else if open != "" && sc.offloadedIn() {
+		unlock()
+		return ReacquireResult{MediaItemID: req.ItemID, State: ReacquireOffloading, Message: ErrOffloadBusy.Error()}, ErrOffloadBusy
 	}
 	if !sc.offloadedIn() {
 		unlock()
@@ -165,19 +196,31 @@ func (s *Service) Reacquire(ctx context.Context, req ReacquireRequest) (Reacquir
 // HistoryReacquired records a Re-acquire: the scope that was brought back.
 const HistoryReacquired = "reacquired"
 
-// cancelOffloadDeliveries ends the unconfirmed Cinema requests of Offloads
+// cancelOffloadDeliveries narrows the unconfirmed Cinema requests of Offloads
 // that overlap the scope: Cinema must not be told a path left that is coming
-// back.
+// back, but is still told about every path that stays gone. A request whose
+// paths are all re-acquired is cancelled; one that has others is rewritten
+// without the re-acquired paths (as Stop rewrites it).
 func (s *Service) cancelOffloadDeliveries(ctx context.Context, sc reacquireScope) {
+	const why = "cancelled: re-acquired before cinema confirmed it"
 	ops, err := s.db.PendingOffloadOperationsForItem(ctx, sc.item.ID)
 	if err != nil {
 		s.log.Warn("re-acquire: pending offload requests unreadable", "err", err)
 		return
 	}
-	var cancel []string
+	stillOffloaded := map[int64]bool{}
+	for _, sn := range sc.item.Seasons {
+		for _, e := range sn.Episodes {
+			stillOffloaded[e.ID] = e.Offloaded()
+		}
+	}
 	for _, op := range ops {
 		var stored offloadStored
 		if json.Unmarshal(op.Plan, &stored) != nil {
+			continue
+		}
+		files, err := s.db.ListOffloadFiles(ctx, op.ID)
+		if err != nil {
 			continue
 		}
 		overlap := sc.clear == "movie" || stored.Movie
@@ -186,12 +229,37 @@ func (s *Service) cancelOffloadDeliveries(ctx context.Context, sc reacquireScope
 				overlap = true
 			}
 		}
-		if overlap {
-			cancel = append(cancel, op.ID)
+		if !overlap {
+			continue
 		}
-	}
-	if _, err := s.db.CancelOffloadDeliveries(ctx, cancel, "cancelled: re-acquired before cinema confirmed it"); err != nil {
-		s.log.Warn("re-acquire: could not cancel offload requests", "err", err)
+		var keepPaths []string
+		if !(sc.clear == "movie" || stored.Movie) {
+			for _, f := range files {
+				if f.Kind != "media" || f.State != "deleted" {
+					continue
+				}
+				// A path is back when any of its episodes is in this scope or
+				// was already brought back (its flag is clear in the
+				// snapshot taken before this clear).
+				back := false
+				for _, id := range stored.FileEpisodes[f.Path] {
+					back = back || sc.episodes[id] || !stillOffloaded[id]
+				}
+				if !back {
+					keepPaths = append(keepPaths, f.Path)
+				}
+			}
+		}
+		var keep []sqlite.OutboxWrite
+		if len(keepPaths) > 0 {
+			if keep, err = s.offloadOutbox(ctx, op.ID, sc.item, keepPaths, false); err != nil {
+				s.log.Warn("re-acquire: cannot narrow the offload requests", "err", err)
+				continue
+			}
+		}
+		if err := s.db.RewriteOffloadOutbox(ctx, op.ID, why, keep); err != nil {
+			s.log.Warn("re-acquire: could not cancel offload requests", "err", err)
+		}
 	}
 }
 
@@ -281,7 +349,12 @@ func (s *Service) ReacquireStatus(ctx context.Context, req ReacquireRequest) (Re
 func (s *Service) reacquireState(ctx context.Context, sc reacquireScope) (ReacquireResult, error) {
 	out := ReacquireResult{MediaItemID: sc.item.ID, State: ReacquireNotOffloaded}
 	if sc.offloadedIn() {
-		out.Message = "still offloaded"
+		out.State, out.Message = ReacquireOffloaded, "still offloaded"
+		if open, err := s.db.OpenOffloadForItem(ctx, sc.item.ID); err != nil {
+			return out, err
+		} else if open != "" {
+			out.State, out.Message = ReacquireOffloading, "an offload of this title is running"
+		}
 		return out, nil
 	}
 	downloads, err := s.db.ListDownloadReservations(ctx)

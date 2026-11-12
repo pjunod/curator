@@ -222,6 +222,10 @@ type NotifyResult struct {
 	// RemovedPathsSent says the request carried removed_paths; false for a
 	// moved event sent to a Cinema without the feature (its new folder only).
 	RemovedPathsSent bool
+	// NotTold is a lasting reason Cinema was deliberately not told (an
+	// Offload sent to a Cinema that supports neither offload nor removed
+	// paths): settled as a warning, never as visible in Cinema.
+	NotTold string
 }
 
 // PlacedReport is Cinema's word on one expected file.

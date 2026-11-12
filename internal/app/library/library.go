@@ -986,10 +986,9 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	// and NEW episodes appearing in them inherit it (existing episodes keep
 	// their own flag via the upsert). Brand-new seasons follow the series.
 	storedSeason := map[int]bool{}
-	wholeShowOffloaded := len(stored.Seasons) > 0
+	wholeShowOffloaded := stored.Offloaded() // the stored item-scope intent, never inferred
 	for _, s := range stored.Seasons {
 		storedSeason[s.Number] = s.Monitored
-		wholeShowOffloaded = wholeShowOffloaded && s.Offloaded()
 	}
 	for i := range fresh.Seasons {
 		mon, known := storedSeason[fresh.Seasons[i].Number]
@@ -1144,7 +1143,7 @@ func (s *Service) SetSeasonMonitored(ctx context.Context, itemID int64, season i
 			return domain.MediaItem{}, err
 		}
 		for _, sn := range item.Seasons {
-			if sn.Number == season && sn.Offloaded() {
+			if sn.Number == season && sn.FullyOffloaded() {
 				return domain.MediaItem{}, fmt.Errorf("%w: season %d is offloaded; Re-acquire it to download it again", ErrOffloaded, season)
 			}
 		}
@@ -1166,7 +1165,7 @@ func (s *Service) SetEpisodeMonitored(ctx context.Context, itemID, episodeID int
 		}
 		for _, sn := range item.Seasons {
 			for _, e := range sn.Episodes {
-				if e.ID == episodeID && (e.Offloaded() || sn.Offloaded()) {
+				if e.ID == episodeID && e.Offloaded() {
 					return domain.MediaItem{}, fmt.Errorf("%w: that episode is offloaded; Re-acquire it to download it again", ErrOffloaded)
 				}
 			}

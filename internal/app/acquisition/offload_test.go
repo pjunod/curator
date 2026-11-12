@@ -21,7 +21,16 @@ type offloadFixture struct {
 
 func newOffloadFixture(t *testing.T) offloadFixture {
 	t.Helper()
-	return offloadFixture{newRematchFixture(t)}
+	f := offloadFixture{newRematchFixture(t)}
+	// Background work (the Re-acquire search, a resumed delete) stops with the
+	// test and is waited for before the database closes: no "database is
+	// closed" noise from a search that outlives it.
+	ctx, cancel := context.WithCancel(context.Background())
+	f.svc.rematchMu.Lock()
+	f.svc.rematchCtx = ctx
+	f.svc.rematchMu.Unlock()
+	t.Cleanup(func() { cancel(); f.svc.importWG.Wait() })
+	return f
 }
 
 func (f offloadFixture) cinema(t *testing.T, features ...string) {
@@ -190,7 +199,7 @@ func TestOffloadMovieDeletesFilesKeepsTitleAndTellsCinemaLast(t *testing.T) {
 
 // Without the offload feature, Cinema is sent plain removed paths and the
 // dialog said beforehand it will drop the title (advisory, never a gate).
-func TestOffloadWithoutCinemaFeatureSendsRemovedPathsAndWarnsBeforehand(t *testing.T) {
+func TestOffloadAlwaysWritesTheOffloadEventAndWarnsBeforehand(t *testing.T) {
 	f := newOffloadFixture(t)
 	ctx := context.Background()
 	f.cinema(t, ports.FeatureRemovedPaths)
@@ -202,7 +211,10 @@ func TestOffloadWithoutCinemaFeatureSendsRemovedPathsAndWarnsBeforehand(t *testi
 	op := f.start(t, OffloadRequest{ItemID: m.ID, Scope: "item"}, p)
 	f.wait(t, op.ID)
 	dels, _ := f.db.OperationDeliveries(ctx, op.ID)
-	if len(dels) != 1 || dels[0].Event != "moved" || !strings.Contains(dels[0].Payload, `"removedPaths"`) || strings.Contains(dels[0].Payload, "offloadedPaths") {
+	// The event is fixed (offload + offloadedPaths); the adapter downgrades at
+	// send time from the features it re-reads then, so a Cinema that changes
+	// between Start and send is still told the right way.
+	if len(dels) != 1 || dels[0].Event != "offload" || !strings.Contains(dels[0].Payload, `"offloadedPaths"`) || strings.Contains(dels[0].Payload, `"removedPaths"`) {
 		t.Fatalf("deliveries: %+v", dels)
 	}
 }
@@ -256,6 +268,15 @@ func TestOffloadStateFoldsIntoWantedForMovieSeasonAndEpisode(t *testing.T) {
 	got = mustItem(t, f.db, show.ID)
 	if got.Seasons[0].Episodes[0].Offloaded() || !got.Seasons[0].Offloaded() || !got.Seasons[0].Episodes[1].Offloaded() {
 		t.Fatalf("partial re-acquire: %+v", got.Seasons[0])
+	}
+	// B1: the re-acquired episode is WANTED again while its sibling stays
+	// offloaded under the (still flagged) season.
+	ids = wantedIDs(t, f.svc)
+	if !hasID(ids, "episode:"+itoa(show.ID)+":1:1") || hasID(ids, "episode:"+itoa(show.ID)+":1:2") {
+		t.Fatalf("partial re-acquire wantedness: %v", ids)
+	}
+	if w, err := f.svc.target(ctx, mustItem(t, f.db, show.ID), 1, 1); err != nil || !w.Monitored() {
+		t.Fatalf("episode Mon after partial re-acquire: %v %v", w, err)
 	}
 	// Re-acquire the season clears whatever is left inside it (partly offloaded works).
 	res, err = f.svc.Reacquire(ctx, ReacquireRequest{ItemID: show.ID, Scope: "season", Season: 1})
@@ -637,5 +658,72 @@ func TestOffloadShowsInTheStatusPanel(t *testing.T) {
 	}
 	if st, _ = f.svc.ItemStatus(ctx, m.ID, -1); st.Offload != nil {
 		t.Fatalf("a dismissed Offload is still on the panel: %+v", st.Offload)
+	}
+}
+
+// Stop is a state the worker finishes: a crash after the flip leaves a
+// `stopping` operation that the next pass completes (flags, history and the
+// Cinema outbox in one transaction), and episodes that had no file (nothing of
+// them was deleted) are un-offloaded.
+func TestOffloadStopIsResumableAndUnoffloadsFilelessEpisodes(t *testing.T) {
+	f := newOffloadFixture(t)
+	ctx := context.Background()
+	f.cinema(t, ports.FeatureRemovedPaths, ports.FeatureOffload)
+	show := mustItem(t, f.db, f.show)
+	ep1, ep2 := show.Seasons[0].Episodes[0].ID, show.Seasons[0].Episodes[1].ID
+	e1 := filepath.Join(show.Path, "Season 1", "e1.mkv")
+	f.file(t, show.ID, e1, "one", "", ep1)
+	req := OffloadRequest{ItemID: show.ID, Scope: "season", Season: 1}
+	p := f.preview(t, req)
+	req.RequestID, req.PlanFingerprint = "req-stop2", p.Fingerprint
+	op, err := f.svc.startOffloadLocked(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.offloadDeleteFile(ctx, offloadStored{}, sqlite.OffloadFile{Path: e1, Kind: "media", FileID: fileIDOf(t, f, e1)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.MarkOffloadFile(ctx, op.ID, e1, "deleted", ""); err != nil {
+		t.Fatal(err)
+	}
+	// The process dies right after the flip.
+	if ok, err := f.db.RequestStopOffload(ctx, op.ID); err != nil || !ok {
+		t.Fatalf("flip: %v %v", ok, err)
+	}
+	if id, _ := f.db.OpenOffloadForItem(ctx, show.ID); id != op.ID {
+		t.Fatalf("a stopping operation still holds the title: %q", id)
+	}
+	f.svc.driveOffloads(ctx)
+	st := f.wait(t, op.ID)
+	if st.State != "cancelled" {
+		t.Fatalf("resumed stop: %+v", st)
+	}
+	got := mustItem(t, f.db, show.ID)
+	if !got.Seasons[0].Episodes[0].Offloaded() {
+		t.Fatalf("the episode whose file was deleted must stay offloaded: %+v", got.Seasons[0])
+	}
+	if got.Seasons[0].Episodes[1].Offloaded() || got.Seasons[0].Episodes[1].ID != ep2 {
+		t.Fatalf("a fileless episode must be un-offloaded by Stop: %+v", got.Seasons[0])
+	}
+	hist, _ := f.db.ListHistory(ctx)
+	found := false
+	for _, h := range hist {
+		found = found || h.Type == HistoryOffloaded
+	}
+	if !found {
+		t.Fatalf("a stop that deleted a file writes its history: %+v", hist)
+	}
+	dels, _ := f.db.OperationDeliveries(ctx, op.ID)
+	pending := 0
+	for _, d := range dels {
+		if d.Status == "pending" {
+			pending++
+			if d.NextAt >= 1<<59 {
+				t.Fatalf("the kept delivery must be released: %+v", d)
+			}
+		}
+	}
+	if pending != 1 {
+		t.Fatalf("deliveries: %+v", dels)
 	}
 }

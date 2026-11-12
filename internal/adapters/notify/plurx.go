@@ -248,6 +248,11 @@ func scanBody(path string, info *ports.ImportInfo) plurxScanRequest {
 	return req
 }
 
+// NotToldNoOffload is the lasting word on an Offload that was not sent: the
+// Cinema supports neither offload nor removed paths, so any request would be
+// answered by a full scan that drops the title.
+const NotToldNoOffload = "cinema not told: it supports neither offload nor removed paths; its next full scan drops the title"
+
 // scan posts one directory.
 //
 // No retry loop here: retrying is the delivery queue's job, and it does it
@@ -276,7 +281,7 @@ func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, ke
 			default:
 				// Not even removed paths: a full scan would prune it the
 				// same way, so nothing is sent (settled with the old-cinema note).
-				return ports.NotifyResult{State: "done", FilesReported: true}, nil
+				return ports.NotifyResult{State: "done", FilesReported: true, NotTold: NotToldNoOffload}, nil
 			}
 		} else if moved || len(info.RemovedPaths) > 0 {
 			if p.hasFeature(ports.FeatureRemovedPaths) {

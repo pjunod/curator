@@ -73,6 +73,10 @@ func TestOffloadedRowsRefuseMonitoringAndNewSeasonsArriveUnmonitored(t *testing.
 	if _, err := db.W.ExecContext(ctx, `UPDATE episodes SET offloaded_at=1 WHERE media_item_id=?`, item.ID); err != nil {
 		t.Fatal(err)
 	}
+	// The whole-show intent is stored (item scope), never inferred.
+	if _, err := db.W.ExecContext(ctx, `UPDATE media_items SET offloaded_at=1 WHERE id=?`, item.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.SetSeasonMonitored(ctx, item.ID, 1, true); !errors.Is(err, ErrOffloaded) {
 		t.Fatalf("season toggle = %v, want ErrOffloaded", err)
 	}
@@ -116,5 +120,59 @@ func TestOffloadedMovieRefusesMonitoredTrue(t *testing.T) {
 	off := false
 	if _, err := svc.UpdateItem(ctx, mid, UpdateRequest{Monitored: &off}); err != nil {
 		t.Fatalf("monitored=false: %v", err)
+	}
+}
+
+// Offloading every existing season of a continuing show is not a whole-show
+// Offload (that is the item-scope intent): a season that appears later still
+// follows the monitor mode.
+func TestSeasonOffloadOfAllSeasonsIsNotWholeShow(t *testing.T) {
+	ctx := context.Background()
+	svc, db, prov := offloadLib(t)
+	item, err := svc.Add(ctx, AddRequest{Kind: domain.KindSeries, TMDBID: 100, Monitored: true, Monitor: "new_seasons"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{`UPDATE seasons SET offloaded_at=1 WHERE media_item_id=?`, `UPDATE episodes SET offloaded_at=1 WHERE media_item_id=?`} {
+		if _, err := db.W.ExecContext(ctx, q, item.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prov.series.Seasons = append(prov.series.Seasons, domain.Season{Number: 3, Episodes: []domain.Episode{
+		{SeasonNumber: 3, EpisodeNumber: 1, AirDate: "2999-02-01"},
+	}})
+	got, err := svc.RefreshItem(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := got.Seasons[len(got.Seasons)-1]
+	if last.Number != 3 || !last.Monitored {
+		t.Fatalf("season arriving after a season-scope offload must follow the monitor mode: %+v", last)
+	}
+}
+
+// B1: a re-acquired episode of a still-flagged season can be monitored; only
+// an offloaded episode is refused.
+func TestEpisodeOfFlaggedSeasonIsMonitorableOnceItsOwnFlagIsClear(t *testing.T) {
+	ctx := context.Background()
+	svc, db, _ := offloadLib(t)
+	item, err := svc.Add(ctx, AddRequest{Kind: domain.KindSeries, TMDBID: 100, Monitored: true, Monitor: "new_seasons"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `UPDATE seasons SET offloaded_at=1 WHERE media_item_id=? AND number=1`, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	eps := item.Seasons[0].Episodes
+	if _, err := db.W.ExecContext(ctx, `UPDATE episodes SET offloaded_at=1 WHERE id=?`, eps[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(eps) > 1 {
+		if _, err := svc.SetEpisodeMonitored(ctx, item.ID, eps[1].ID, true); err != nil {
+			t.Fatalf("episode with its own flag clear refused: %v", err)
+		}
+	}
+	if _, err := svc.SetEpisodeMonitored(ctx, item.ID, eps[0].ID, true); !errors.Is(err, ErrOffloaded) {
+		t.Fatalf("offloaded episode = %v, want ErrOffloaded", err)
 	}
 }

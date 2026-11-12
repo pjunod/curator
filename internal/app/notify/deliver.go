@@ -493,6 +493,17 @@ func (d *Dispatcher) settleSub(ctx context.Context, del sqlite.Delivery, sub sub
 		}
 		del.Result = ""
 		freshAttempt()
+	case res.State == "done" && res.NotTold != "":
+		// Deliberately not sent: a lasting warning, not a confirmation (no
+		// VisibleAt, so no surface says the title is in Cinema).
+		del.RemoteState, del.WaitingOn = "done", ""
+		del.Status, del.NextAt, del.LastError, del.VisibleAt = "ok", 0, "", 0
+		del.Result = "warning: " + res.NotTold
+		del.FileResults = nil
+		for _, r := range sub.removed {
+			del.FileResults = append(del.FileResults, sqlite.DeliveryFileResult{Path: r, State: "retained", Code: "not_told", Warning: res.NotTold})
+		}
+		timing.Discard = true
 	case res.State == "done":
 		del.ItemIDs = res.ItemIDs
 		del.RemoteState, del.WaitingOn = "done", ""

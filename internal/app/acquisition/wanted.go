@@ -175,7 +175,7 @@ func (s *Service) wantedEpisodes(item domain.MediaItem, profile quality.Profile,
 	today := time.Now().UTC().Format(time.DateOnly)
 	var out []domain.Wantable
 	for _, season := range item.Seasons {
-		if !season.Monitored || season.Offloaded() {
+		if !season.Monitored || season.FullyOffloaded() {
 			continue
 		}
 		for _, e := range season.Episodes {
