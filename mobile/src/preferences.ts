@@ -1,4 +1,6 @@
 export type ThemePreference = 'auto' | 'light' | 'dark'
+import { isPresence, type LibraryPresence } from './offload'
+
 export type ItemSize = 'small' | 'medium' | 'large'
 export type LayoutPreference = 'classic' | 'plex' | 'theater'
 export type PalettePreference =
@@ -45,6 +47,8 @@ export interface AppPreferences {
   itemSize: ItemSize
   layout: LayoutPreference
   palette: PalettePreference
+  /** Library filter: On disk · Offloaded · Everything (ADR 0028). */
+  libraryPresence: LibraryPresence
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
@@ -52,6 +56,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   itemSize: 'medium',
   layout: 'classic',
   palette: 'classic',
+  libraryPresence: 'all',
 }
 
 export function sanitizePreferences(value: unknown): AppPreferences {
@@ -68,6 +73,7 @@ export function sanitizePreferences(value: unknown): AppPreferences {
     palette: PALETTE_OPTIONS.some((option) => option.id === candidate.palette)
       ? candidate.palette as PalettePreference
       : 'classic',
+    libraryPresence: isPresence(candidate.libraryPresence) ? candidate.libraryPresence : 'all',
   }
 }
 

@@ -20,6 +20,10 @@ import type {
   QualityProfile,
   QueueItem,
   QueueSummary,
+  OffloadOperation,
+  OffloadPreview,
+  OffloadRequest,
+  ReacquireResult,
   RematchOperation,
   RematchPreview,
   RematchRequest,
@@ -194,6 +198,14 @@ export class MonarrClient {
   getRematch = (operationId: string): Promise<RematchOperation> => this.get(`/rematch/${encodeURIComponent(operationId)}`)
   dismissRematch = (operationId: string): Promise<void> => this.send('POST', `/rematch/${encodeURIComponent(operationId)}/dismiss`)
   cancelRematch = (operationId: string): Promise<void> => this.send('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)
+  // Offload… and Re-acquire (ADR 0028).
+  previewOffload = (itemId: number, req: OffloadRequest): Promise<OffloadPreview> => this.send('POST', `/library/${itemId}/offload/preview`, req)
+  startOffload = (itemId: number, req: OffloadRequest): Promise<OffloadOperation> => this.send('POST', `/library/${itemId}/offload`, req)
+  getLibraryOffload = async (itemId: number): Promise<OffloadOperation | null> => (await this.get<OffloadOperation | undefined>(`/library/${itemId}/offload`)) ?? null
+  getOffload = (operationId: string): Promise<OffloadOperation> => this.get(`/offload/${encodeURIComponent(operationId)}`)
+  cancelOffload = (operationId: string): Promise<void> => this.send('POST', `/offload/${encodeURIComponent(operationId)}/cancel`)
+  dismissOffload = (operationId: string): Promise<void> => this.send('POST', `/offload/${encodeURIComponent(operationId)}/dismiss`)
+  reacquire = (itemId: number, req: OffloadRequest): Promise<ReacquireResult> => this.send('POST', `/library/${itemId}/reacquire`, req)
   // Import file… on the item page: browse, list one folder, plan, start, stop.
   browseFilesystem = (path: string): Promise<BrowseResult> => this.get(`/filesystem?path=${encodeURIComponent(path)}`)
   scanImportFolder = (path: string): Promise<ScannedFile[]> =>

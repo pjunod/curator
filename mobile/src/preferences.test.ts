@@ -8,6 +8,7 @@ describe('app preferences', () => {
       itemSize: 'medium',
       layout: 'classic',
       palette: 'classic',
+      libraryPresence: 'all',
     })
     expect(sanitizePreferences(null)).toEqual(DEFAULT_PREFERENCES)
     expect(sanitizePreferences({ theme: 'sepia', itemSize: 'huge' })).toEqual(DEFAULT_PREFERENCES)
@@ -19,13 +20,18 @@ describe('app preferences', () => {
       itemSize: 'small',
       layout: 'classic',
       palette: 'classic',
+      libraryPresence: 'all',
     })
     expect(sanitizePreferences({ theme: 'dark', itemSize: 'large', layout: 'theater', palette: 'tide' })).toEqual({
       theme: 'dark',
       itemSize: 'large',
       layout: 'theater',
       palette: 'tide',
+      libraryPresence: 'all',
     })
+    // The library filter is remembered, and only the three values are kept.
+    expect(sanitizePreferences({ libraryPresence: 'offloaded' }).libraryPresence).toBe('offloaded')
+    expect(sanitizePreferences({ libraryPresence: 'missing' }).libraryPresence).toBe('all')
   })
 
   it('ships the shared display catalogue with Classic as the safe fallback', () => {

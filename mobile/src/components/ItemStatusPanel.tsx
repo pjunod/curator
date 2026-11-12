@@ -4,7 +4,7 @@ import type { MonarrClient } from '../api'
 import { describeAutoSearch } from '../autosearch'
 import { ACTION_LABELS, REMATCH_STATE, noticeBelongsTo, STAGE_NAMES, STATE_ICON, downloadLine, fmtWhen, rematchCounts, stageActions, statusPollMs } from '../itemStatus'
 import { useTheme, type Theme } from '../theme'
-import type { ItemStatus, ReleaseSearchScope, StatusAction, StatusCinema, StatusEpisode, StatusRematch, StatusStage, StatusState } from '../types'
+import type { ItemStatus, ReleaseSearchScope, StatusAction, StatusCinema, StatusEpisode, StatusOffload, StatusRematch, StatusStage, StatusState } from '../types'
 import { Button, Panel, SectionTitle } from './UI'
 
 // "Where it stands" on the phone: the same GET /library/{id}/status the web
@@ -74,6 +74,7 @@ export function ItemStatusPanel({ client, id, kind, onInteractiveSearch, onOpenA
       <SectionTitle>Where it stands</SectionTitle>
       <Panel style={styles.panel}>
         <MovingFiles client={client} r={s?.rematch} onChanged={status.refresh} />
+        <OffloadingFiles client={client} o={s?.offload} onChanged={status.refresh} />
         {!s ? (
           <Text style={{ color: theme.muted }}>{status.error || 'Loading…'}</Text>
         ) : s.done && collapsed ? (
@@ -149,6 +150,48 @@ function MovingFiles({ client, r, onChanged }: { client: MonarrClient; r?: Statu
           {r.error ? <Text style={[styles.small, { color: theme.warning }]}>{r.error}</Text> : null}
           {r.ended ? <Button compact secondary disabled={busy} label={busy ? 'Dismissing…' : 'Dismiss'} onPress={() => void act('dismiss')} /> : null}
           {r.stoppable ? <Button compact secondary disabled={busy} label={busy ? 'Stopping…' : 'Stop'} onPress={() => void act('stop')} /> : null}
+        </>
+      ) : null}
+      {shown ? (
+        <Text accessibilityLiveRegion="polite" style={[styles.small, { color: message.error ? theme.error : theme.ok }]}>{message.text}</Text>
+      ) : null}
+    </View>
+  )
+}
+
+/** The Offload (ADR 0028): what it is deleting, Stop while it runs, and once over "Offloaded <date> · <bytes> freed". */
+function OffloadingFiles({ client, o, onChanged }: { client: MonarrClient; o?: StatusOffload; onChanged: () => Promise<void> }) {
+  const theme = useTheme()
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState({ text: '', error: false, op: '' })
+  const act = async (kind: 'stop' | 'dismiss') => {
+    setBusy(true)
+    setMessage({ text: '', error: false, op: o!.operationId })
+    try {
+      if (kind === 'stop') await client.cancelOffload(o!.operationId)
+      else await client.dismissOffload(o!.operationId)
+      setMessage({ text: kind === 'stop' ? 'Stopped. What is already deleted stays deleted; the rest stays on disk.' : 'Dismissed.', error: false, op: o!.operationId })
+      await onChanged()
+    } catch (cause) {
+      setMessage({ text: cause instanceof Error ? cause.message : 'That did not work.', error: true, op: o!.operationId })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const shown = message.text && noticeBelongsTo(message.op, o?.operationId)
+  if (!o && !shown) return null
+  return (
+    <View style={[styles.moving, { borderColor: theme.accent }]} accessibilityLabel="Offloading files">
+      {o ? (
+        <>
+          <Text style={[styles.stageName, { color: theme.muted }]}>{o.ended ? 'OFFLOAD' : 'OFFLOADING FILES'}</Text>
+          <Text style={[styles.title, { color: theme.text }]}>{o.headline}</Text>
+          {!o.ended ? <Text style={[styles.small, { color: theme.muted }]}>{o.filesDone} of {o.filesTotal} files</Text> : null}
+          {(o.failed ?? []).map((f) => <Text key={f} style={[styles.small, { color: theme.warning }]}>{f}</Text>)}
+          {o.error ? <Text style={[styles.small, { color: theme.warning }]}>{o.error}</Text> : null}
+          {o.cinemaLine ? <Text style={[styles.small, { color: theme.muted }]}>{o.cinemaLine}</Text> : null}
+          {o.ended ? <Button compact secondary disabled={busy} label={busy ? 'Dismissing…' : 'Dismiss'} onPress={() => void act('dismiss')} /> : null}
+          {o.stoppable ? <Button compact secondary disabled={busy} label={busy ? 'Stopping…' : 'Stop'} onPress={() => void act('stop')} /> : null}
         </>
       ) : null}
       {shown ? (
