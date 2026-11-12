@@ -341,7 +341,8 @@ The **All** tab shows everything, grouped into Movies / TV / Ebooks /
 Audiobooks (never interleaved); those tabs show flat grids. **Each
 section carries its own controls** in its header bar: a title/author
 text filter, a state filter (monitored, unmonitored, missing,
-incomplete, complete), and a sort (title, year, recently added, rating —
+incomplete, complete), **On disk · Offloaded · Everything** (default
+Everything; see [Offload](#offload-free-the-space-keep-the-title)), and a sort (title, year, recently added, rating —
 books also sort by author) with an ascending/descending toggle. The same
 per-section settings drive that section's flat tab, and everything but the
 text filter is remembered per browser. Every card carries the rating star,
@@ -772,6 +773,58 @@ library scan leaves both titles alone while a move runs. Both items' history sho
 path that moved, and the dialog shows *Moved, cinema confirming* until
 cinema reports the new files placed and the old paths gone.
 
+## Offload: free the space, keep the title
+
+**Offload…** deletes the files of a movie, a show, one season or one
+episode and **keeps the title**: its identity, profile, quality copies,
+history and blocklist stay, and so does Cinema's watch history. The scope is
+marked **Offloaded**, its own state rather than just *unmonitored*: automatic
+search, RSS, upgrades and season discovery never grab it, and ticking
+*Monitored* is refused (the box is disabled; **Re-acquire** is offered
+instead). Find it on the item page (beside Re-match…), on a season row and on
+an episode row (the phone app has the same buttons; its episodes sit under
+each season's **Episodes**).
+
+The dialog says exactly what happens before anything is deleted:
+
+- every file, with its sidecars and any untracked subtitle, and what each
+  frees. A file another hard link keeps (a seeding copy) frees nothing until
+  that link goes too, and says so.
+- **bytes freed**, and the library volume's free space before and after.
+- a file that covers several episodes takes them all: offloading `S01E02`
+  of an `S01E01-E02` file offloads both, and the dialog says it.
+- what Cinema will do: keep the title greyed out with **Get it back**, or, if
+  its Cinema does not advertise `offload` yet, **drop the title and its watch
+  history** (said before, never a gate; upgrade Cinema first to keep them).
+- what blocks it: a download, import, re-match or replacement in flight for
+  that scope, with **Wait for it**.
+
+**Offload** enables once you tick that the files are deleted, not moved to a
+trash. After it the dialog shows files deleted and **Stop**; close it and the
+item's **Where it stands** shows an **Offloading files** block (files done,
+Stop, Cinema's answer) that ends as *Offloaded 12 Nov 2026 · 38.2 GB freed*
+until you **Dismiss** it. A restart mid-way resumes. A share that is not
+mounted makes the operation **wait** with that reason and nothing is deleted
+until the folder is back; a file that cannot be unlinked is named with its
+reason and **retried** every 30 seconds. **Stop** ends the remaining deletes:
+what is gone stays gone, and a title that still has a file stops being
+offloaded. The item folder is kept so its path stays stable. History records
+`offloaded` with the files and bytes.
+
+**Re-acquire** (the item, season or episode, or **Get it back** in Cinema)
+clears Offloaded inside that scope, monitors it and searches at its current
+profile, a season as a pack first; the answer shows at once and the status
+panel follows the grab through to Cinema. A file that lands on an offloaded
+season or episode by any route also clears it, and an episode that appears in
+an offloaded season arrives offloaded. A season that appears on a show you
+offloaded whole arrives **unmonitored**, not offloaded.
+
+The Library's **On disk · Offloaded · Everything** control is remembered per
+browser (and per phone), defaults to Everything, and an offloaded card carries
+an *offloaded* pill. Cinema's own search always includes offloaded titles. The
+**Dev** settings tab lists each Cinema notifier and whether it advertises
+`offload`, and when that was read: advice only, nothing is turned off by it.
+
 ## The Files table, and getting rid of a bad file
 
 Expand **Files** to see 25 files per page. **Files per page** offers 25, 50,
@@ -1063,6 +1116,7 @@ checkboxes; **Keep selections** leaves them alone. Specials start unselected.
 | Latest and future seasons | The latest known season when applied, plus later seasons. Older selected seasons are not cleared by subsequent refreshes. |
 | Future episodes | Episodes airing today or later, using the UTC date when the mode is applied. Newly discovered older episodes remain unselected. |
 | New seasons | Seasons after the last season that began before today, plus later seasons. |
+| First season only | Selects the first season (the lowest above 0, or season 1 until one exists). Later seasons arrive unmonitored; each offers **Monitor and search** when you get there. |
 | Manual selection | Clears existing selections; new seasons remain unselected. Use season and episode checkboxes to choose what to acquire. |
 
 Refresh preserves existing checkboxes. New episodes inherit the season's
