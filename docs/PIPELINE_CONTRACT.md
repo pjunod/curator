@@ -636,6 +636,81 @@ checking needs a newer cinema; the compat test exercises the real old
 handler, not a stub. Today the mismatch is found one import at a time, as a
 permanent 422.
 
+### 4.4 Moves — `removed_paths`, `gone`, operation-keyed sub-deliveries (amendment, 2026-11-11)
+
+Needed by curator [ADR 0027](adr/0027-rematch-file-moves.md) (Re-match). A
+Re-match moves files between folders; cinema must drop the old entry, but a
+scan of a folder that no longer exists is `503 path_unreadable`, retried
+forever, and a full scan to find it is not acceptable.
+
+#### Sub-delivery keyed by operation (amends 4.1)
+A move writes one `notifier_deliveries` row per `(notifier, operation,
+request path)` with key `op/<operation-id>/<dir-hash>` (`dir-hash` of the
+request path), in the commit transaction. Publication sub-deliveries are
+unchanged (`<transfer>/<generation>/<dir-hash>`). Backoff, attempt and
+`request_key` rules are the same. No publication id (`publication_id = 0`,
+`operation_id` column added).
+
+#### Request
+
+Body as today (`source: "monarr"`), plus `"event": "moved"` and:
+
+- `"removed_paths": ["/lib/movies/Dune (1984)/Dune.1984.mkv", …]` — files
+  (or a folder, once emptied and removed) that no longer exist. Each must be
+  under `path`. Max 64 per request (as `expected_files`), then more requests.
+- `"expected_files"` as today, the files now at the destination.
+- `path` is the **common parent** of every expected and removed path, which
+  must be a library root or below one. If the old and new folders sit under
+  different roots, curator sends one request per root, each carrying only
+  its own expected and removed paths.
+
+**Probe-only.** When `removed_paths` is present, cinema probes exactly the
+`expected_files` and `removed_paths`; it does **not** walk the rest of `path`
+(this narrows 5.1's "other files under `path` are scanned as today" for these
+requests). The root is never full-scanned.
+
+**Answer.** `files` gains, one entry per removed path:
+`{"path", "state": "gone", "item_id": N}` (stat says absent, cinema had it,
+file record removed; the item is removed too if it has no files left),
+`{"path", "state": "unknown"}` (absent, cinema never had it),
+`{"path", "state": "present"}` (still exists; nothing removed).
+Existing `placed|skipped|missing` for expected files is unchanged.
+
+**Not `path_unreadable`.** A removed path that does not exist is the
+expected case. `503 path_unreadable` applies only when `path` itself, or the
+chain from `path` down to the removed path, fails with `EIO`, `ENOTCONN` or
+an unmounted mount point; then nothing is removed (an unmounted share must
+not read as "everything gone"). `422 path_outside_roots` is unchanged.
+
+**`visible`** only when every expected file is `placed` with matching bytes
+and `mtime_ns` **and** every removed path is `gone` or `unknown`. A `present`
+removed path is `warning: <path> still exists in the library`, attempt
+advances, retried on the schedule, surfaced after 30 min.
+
+#### Notifier event `moved`
+
+`ports.Notification.Event` gains `moved`. `ImportInfo` gains `RemovedPaths
+[]string` and `FromItemID`; `ExpectedFiles`, `Dirs`, `Kind`, `TmdbID`
+describe the target. Chat notifiers render one message; plurx maps it to the
+request above. The `ids`/`series` hint applies to the folders holding
+`expected_files` only. Governed by the notifier's `OnImport` flag.
+
+#### Capability (amends 5.3)
+
+The connection-test answer adds `"features": ["removed_paths"]`. Curator
+stores it on the notifier at Test and re-reads it before the first `moved`
+send of a session.
+
+#### Compatibility (amends 6)
+
+| Curator | Cinema | Behaviour |
+|---|---|---|
+| new | old | `features` absent (or, as a backstop, an answer to a request with `removed_paths` has no `files` entry for each removed path). Curator then **does not send `removed_paths`**: it sends the new folder as a plain import-shaped scan (an old cinema would otherwise full-scan the root) and marks the removal part `warning: cinema does not support removed paths; the old entry stays until its next scan`. The sub-delivery is `visible` for the new files only. Status panel and history show that line; the Re-match preview warns before it runs. Not a failure, no retry loop. |
+| old | new | `removed_paths` never sent; nothing changes |
+
+Rollout: cinema change ships first (or same day); curator 0.47.0 after it.
+Compat test exercises the real old handler, as 4.3 does.
+
 ---
 
 ## 5. Cinema
@@ -699,7 +774,8 @@ recommend preserve-and-opt-in over a silent migration.)*
 `200 {"roots": [...], "visible": [...], "missing": [...]}`; needs
 `scan:trigger`. Probe paths are accepted only when each is a configured
 library root or a descendant of one; anything else is reported as
-`outside_roots`, never `stat`ed.
+`outside_roots`, never `stat`ed. The answer adds `"features": [...]`
+(`removed_paths`, §4.4); an empty `probe_paths` reads the features alone.
 
 ### 5.4 Not in this contract
 
@@ -747,6 +823,7 @@ accepted, partially placed publication.
 |---|---|---|
 | new | old | `wait_ms`, `request_key` and `probe_paths` are ignored by old cinema; 202 is handled; the status poll gets 403 and the sub-delivery shows `queued (cinema does not report results)`; the Test falls back to the legacy probe (§4.3); old cinema's single 422 is treated as permanent as today |
 | old | new | nothing changes for old curator |
+| new (0.47.0+) | without `removed_paths` | a move sends the new folder only and says the old entry stays until cinema's next scan (§4.4) |
 
 Order: runner M1 → curator M2 (same day) → runner M3 → curator M4 → curator
 M5 + cinema M5 → M6 deletions (see the plan). Nothing is feature-gated in

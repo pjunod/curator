@@ -543,6 +543,11 @@ Actions up top:
   a routine scan skips files it has already measured at the same size.
 - **Import file…** — put a file you already have into this item without
   going through Activity. See [Import file… from the item page](#import-file-from-the-item-page).
+- **Re-match…** — the item was matched to the wrong title (a folder adopted
+  as *Dune (1984)* that is *Dune (2021)*): move its files to the right one.
+  **Move to…** on a file in the Files panel does the same for one file, for
+  example an episode filed under the wrong episode. See
+  [Re-match and Move to…](#re-match-and-move-to).
 - **Edit** — change monitoring, quality profile, download priority, root
   folder, or the folder path itself. Choose **Profile default** to inherit,
   or one of six explicit levels from Very low through Force. Changing the
@@ -632,6 +637,62 @@ followed until it finishes: its state, why it failed if it did, and what
 Remove original removed or kept. A long copy shows **Stop** (the import's
 own cancellation: the source stays where it was, and the row can be
 retried from Activity).
+
+### Re-match and Move to…
+
+Two shapes of a wrong match, one operation: **move these files to the right
+item or episode**, adding that item to the library if it is not there
+(ADR 0027).
+
+- **Re-match…** (item page, beside Import file…) moves all of the item's
+  files. Search for the right title: titles already in your library are
+  listed first (that is how you reach a manual entry), then the provider's,
+  which are added to the library (default profile, a root of that kind) when
+  you move. For a series every file keeps its episode numbers in the new
+  series; a file whose episode the new series lacks needs a pick.
+- **Move to…** (a file's row in the Files panel) moves one file: on a series,
+  *Same show, different episode* or *A different show*. On the phone app the
+  Re-match sheet does both: *All files* or one file.
+
+Nothing moves until you have read the preview. It lists:
+
+- every rename, `from → to`, with the target's naming rules. A folder the
+  move chooses (a title with no folder on disk yet) always carries the
+  provider hint, `Dune (2021) {tmdb-438631}`, so the next scan and cinema
+  keep the new match. Subtitles and other files with the video's stem
+  travel with it.
+- how the bytes get there: a **rename** on one volume; across volumes a
+  **copy**, verified (size and SHA-256) and published, then the original
+  removed. A file already at a destination is never overwritten: that file
+  is listed as left out, with a picker on a series.
+- files that do not fit, with an episode picker, or *Leave it out*. A left-out
+  file stays on disk and leaves the library. A file covering two episodes
+  maps to two episodes, never split.
+- what happens to the item the files leave: it **stays** (wanted) if you
+  added it or it still has files or downloads; it is **removed** only when
+  folder adoption created it and it is now empty, along with its emptied
+  folder (anything else in it is left and listed).
+- the release that produced each moved file, **blocklisted** for the item it
+  left (checkbox, on by default), so automatic search does not grab it for
+  that wantable again. Files adopted from disk have no release to blocklist.
+  Moving into a title that already has a file keeps both; remove the one you
+  do not want from the Files panel afterwards.
+- what cinema will do: scan the new folder and drop the old entry, or — a
+  cinema without removed-path support — scan the new folder only; the old
+  entry then stays in cinema until its next reconcile scan.
+
+The preview refuses while either title has a download in flight, an import
+running, a replacement open or another move running, and names which;
+**Wait for it** previews again. A preview that the library has since moved
+past is refused when you press Move: preview again.
+
+After **Move**, the dialog shows bytes copied and **Stop**. Stop before the
+files are committed puts every moved file back (a copy's partial file is
+removed, the original never touched). A restart mid-move resumes from the
+journal; a file that changed on disk since the preview is not moved and is
+listed for review. Both items' history show a `rematched` entry with every
+path that moved, and the dialog shows *Moved, cinema confirming* until
+cinema reports the new files placed and the old paths gone.
 
 ## The Files table, and getting rid of a bad file
 

@@ -764,6 +764,30 @@ broken.
 
 ---
 
+### Moves (Re-match, 0.47.0)
+
+A Re-match ([ADR 0027](adr/0027-rematch-file-moves.md), contract §4.4) writes
+one sub-delivery per notifier **per library root touched**, keyed
+`op/<operation-id>/<dir-hash>` (no publication; `operation_id` on the row),
+event `moved`. `path` is the common parent of the files placed and the files
+that left; the body adds `"event":"moved"` and
+`"removed_paths":["…/Dune (1984)/Dune (1984) [Bluray-2160p].mkv"]` beside the
+usual `expected_files`. Cinema probes exactly those paths (no walk, no full
+scan) and answers each removed path `gone`, `unknown` or `present`. The row is
+visible when every expected file is `placed` and every removed path is `gone`
+or `unknown`; a `present` path is `warning: <path> still exists in the
+library`, retried on the schedule.
+
+Whether Cinema supports this is its connection test's
+`"features":["removed_paths"]`, stored on the notifier at **Test** and re-read
+before a session's first `moved` send. Without it (or when an answer carries
+no entry for a removed path — the backstop, which also drops the stored
+feature) Curator sends the **new folder only**, as a plain scan, and the
+delivery reads `visible …; warning: cinema does not support removed paths; the
+old entry stays until its next scan`. Not a failure; nothing retries. Chat
+notifiers get one `moved` message. `GET /api/v1/rematch/{id}` lists the
+operation's sub-deliveries with their results.
+
 ## 7. plurx watch webhook — the only inbound push Monarr accepts
 
 **What it does.** plurx tells Monarr what was watched, and by whom. Monarr
