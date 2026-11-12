@@ -500,3 +500,61 @@ export interface ManualImportRequest {
 }
 
 export interface PlaceRequest { mediaItemId: number; copyId?: number; files: { path: string; season?: number; episodes?: number[] }[] }
+
+// Re-match (ADR 0027): the same shapes the web uses.
+export interface RematchTarget { itemId?: number; kind?: MediaKind; tmdbId?: number; tvdbId?: number; imdbId?: string; olid?: string; hydrationSource?: string }
+export interface RematchChoice { fileId: number; season?: number; episodes?: number[]; leave?: boolean }
+export interface RematchRequest {
+  target: RematchTarget
+  copyId?: number
+  fileIds?: number[]
+  choices?: RematchChoice[]
+  blocklist?: boolean
+  requestId?: string
+  sourceRevision?: number
+  targetRevision?: number
+  fingerprint?: string
+}
+export interface RematchMove {
+  fileId: number
+  from: string
+  to?: string
+  season: number
+  episodes: number[]
+  label?: string
+  mode?: 'rename' | 'copy' | 'relink'
+  bytes: number
+  sidecars?: { from: string; to: string }[]
+  note?: string
+  problem?: string
+  needsPick?: boolean
+}
+export interface RematchItemRef { id: number; kind: string; title: string; year?: number; inLibrary: boolean; folder?: string; folderChosen?: boolean }
+export interface RematchPreview {
+  source: RematchItemRef
+  target: RematchItemRef
+  moves: RematchMove[]
+  leftOut: RematchMove[]
+  sourceOutcome: 'stays' | 'removed'
+  sourceReason: string
+  blocklist: { fileId: number; release: string }[]
+  blocklistOn: boolean
+  blocklistNote?: string
+  cinema?: string
+  episodes?: { season: number; episode: number; title?: string; hasFile: boolean }[]
+  copies?: { id: number; name: string; bookType?: string }[]
+  blocked?: { reason: string; ref: string; itemId: number; message: string; retry: boolean }
+  sourceRevision: number
+  targetRevision: number
+  fingerprint: string
+  summary: string
+}
+export interface RematchOperation {
+  operationId: string
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'notified' | 'complete' | 'cancel_pending' | 'cancelled' | 'failed'
+  bytesDone: number
+  bytesTotal: number
+  lastError?: string
+  result?: { moved?: { from: string; to: string }[]; leftOut?: string[]; failed?: { from: string; to: string }[]; blocklisted?: { release: string }[] }
+  cinema?: { directory: string; status: string; result?: string; visibleAt?: number }[]
+}

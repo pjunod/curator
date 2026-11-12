@@ -20,6 +20,9 @@ import type {
   QualityProfile,
   QueueItem,
   QueueSummary,
+  RematchOperation,
+  RematchPreview,
+  RematchRequest,
   ReleaseCandidate,
   ReleaseSearchResponse,
   ReleaseSearchScope,
@@ -173,6 +176,11 @@ export class MonarrClient {
   resolveQueueReservation = (id: number): Promise<void> => this.send('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})
   clearFailedQueue = (): Promise<{ cleared: number }> => this.send('DELETE', '/queue/failed')
   getHistory = (limit = 40): Promise<HistoryEvent[]> => this.get(`/history?limit=${limit}&offset=0`)
+  // Re-match… and Move to… (ADR 0027).
+  previewRematch = (itemId: number, req: RematchRequest): Promise<RematchPreview> => this.send('POST', `/library/${itemId}/rematch/preview`, req)
+  startRematch = (itemId: number, req: RematchRequest): Promise<RematchOperation> => this.send('POST', `/library/${itemId}/rematch`, req)
+  getRematch = (operationId: string): Promise<RematchOperation> => this.get(`/rematch/${encodeURIComponent(operationId)}`)
+  cancelRematch = (operationId: string): Promise<void> => this.send('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)
   // Import file… on the item page: browse, list one folder, plan, start, stop.
   browseFilesystem = (path: string): Promise<BrowseResult> => this.get(`/filesystem?path=${encodeURIComponent(path)}`)
   scanImportFolder = (path: string): Promise<ScannedFile[]> =>
