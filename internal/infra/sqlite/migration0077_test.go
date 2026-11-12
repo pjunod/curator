@@ -10,8 +10,9 @@ import (
 
 // Migration 0077: publications an older build failed with a reason the
 // current rules no longer have ("N file(s) unresolved: ...", "holds no
-// importable media") are decided again — requeued with fresh limits, or
-// retired as superseded when a later import satisfied their want — and a
+// importable media") are decided again — requeued with fresh limits when an
+// enabled Runner client owns them (the import decides each file's want), or
+// ended with their want grabbed again when no client can import them — and a
 // removed publication's undecided files are closed. A person's decision in
 // Resolve, a publication already fully decided and every non-failed row are
 // untouched, and running it again changes nothing.
@@ -37,11 +38,13 @@ func TestMigration0077RedecidesLegacyFailedImports(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO media_items(id,kind,title,sort_title,added_at,updated_at) VALUES(1,'series','S','s',0,0)`)
+	exec(`INSERT INTO download_clients(id,type,name,url,category,added_at,enabled) VALUES(1,'nzbd','runner','http://r','tv',0,1)`)
+	exec(`INSERT INTO download_clients(id,type,name,url,category,added_at,enabled) VALUES(2,'nzbd','old runner','http://o','tv',0,0)`)
 	type file struct{ path, outcome, discard, reason string }
 	rows := []struct {
 		state, cohort, error string
 		files                []file
-		want                 string // requeue | retire | keep
+		want                 string // requeue | end | keep
 	}{
 		// 1: the live wedge (pub 735): a superseded file left unresolved
 		// with a sidecar.
@@ -69,26 +72,26 @@ func TestMigration0077RedecidesLegacyFailedImports(t *testing.T) {
 		// 8: imported rows are never re-opened.
 		{"imported", "live", "1 file(s) unresolved: z.mkv: superseded by download 4 which has not imported yet",
 			[]file{{"z.mkv", "unresolved", "", "superseded by download 4 which has not imported yet"}}, "keep"},
-		// 9: a want a later import satisfied (download 10 below).
+		// 9: owned by a disabled client: nothing can import it, so it ends
+		// and its want is grabbed again.
 		{"import_failed", "live", "1 file(s) unresolved: e.mkv: superseded by download 10 which has not imported yet",
-			[]file{{"e.mkv", "unresolved", "", "superseded by download 10 which has not imported yet"}}, "retire"},
+			[]file{{"e.mkv", "unresolved", "", "superseded by download 10 which has not imported yet"}}, "end"},
 	}
 	for i, r := range rows {
 		id := i + 1
-		wantables := `[]`
+		wantables, client, kind := `[]`, 1, "salvage"
 		if id == 9 {
-			wantables = `["episode:1:1:9"]`
+			wantables, client, kind = `["episode:1:1:9"]`, 2, "completed"
 		}
-		exec(`INSERT INTO downloads(id,media_item_id,protocol,release_title,state,added_at,updated_at,transfer,generation_key,wantables) VALUES(?,1,'usenet','r','failed',1,1,?,?,?)`,
-			id, "t-"+string(rune('a'+i)), "g-"+string(rune('a'+i)), wantables)
+		exec(`INSERT INTO downloads(id,media_item_id,protocol,release_title,state,added_at,updated_at,transfer,generation_key,wantables,client_id) VALUES(?,1,'usenet','r','failed',1,1,?,?,?,?)`,
+			id, "t-"+string(rune('a'+i)), "g-"+string(rune('a'+i)), wantables, client)
 		exec(`INSERT INTO publications(id,download_id,generation,kind,path,state,cohort,error,discovered_at,deadline_at,updated_at,import_attempts,last_stop,retry_at,hold_since,holds)
-			VALUES(?,?,'gen','salvage',?,?,?,?,1,2,1,3,'payload',99,7,2)`,
-			id, id, "/completed/p"+string(rune('a'+i)), r.state, r.cohort, r.error)
+			VALUES(?,?,'gen',?,?,?,?,?,1,2,1,3,'payload',99,7,2)`,
+			id, id, kind, "/completed/p"+string(rune('a'+i)), r.state, r.cohort, r.error)
 		for _, f := range r.files {
 			exec(`INSERT INTO publication_files(publication_id,path,bytes,sha256,outcome,discard_reason,reason,updated_at) VALUES(?,?,1,'d',?,?,?,1)`, id, f.path, f.outcome, f.discard, f.reason)
 		}
 	}
-	exec(`INSERT INTO downloads(id,media_item_id,protocol,release_title,state,added_at,updated_at,transfer,generation_key,wantables) VALUES(10,1,'usenet','r2','imported',2,2,'t-10','g-10','["episode:1:1:9"]')`)
 	// A removed publication's leftover unresolved sidecar (pub 538).
 	exec(`INSERT INTO downloads(id,media_item_id,protocol,release_title,state,added_at,updated_at,transfer,generation_key) VALUES(20,1,'usenet','r','imported',1,1,'t-20','g-20')`)
 	exec(`INSERT INTO publications(id,download_id,generation,kind,path,state,discovered_at,updated_at) VALUES(20,20,'gen','completed','/completed/gone','removed',1,1)`)
@@ -150,9 +153,13 @@ func TestMigration0077RedecidesLegacyFailedImports(t *testing.T) {
 					t.Errorf("row %d file %s = %s, want %s", id, f.path, s.files[f.path], want)
 				}
 			}
-		case "retire":
-			if s.state != "imported" || !strings.Contains(s.error, "superseded") || s.files["e.mkv"] != "discarded/superseded/" {
-				t.Errorf("satisfied row %d = %+v, want retired as superseded", id, s)
+		case "end":
+			if s.state != "import_failed" || !strings.Contains(s.error, "download client") || s.files["e.mkv"] != "discarded/rejected/" {
+				t.Errorf("clientless row %d = %+v, want ended with its files discarded", id, s)
+			}
+			var grabs int
+			if err := db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM replacement_grabs WHERE download_id=? AND wantable_ids='["episode:1:1:9"]'`, id).Scan(&grabs); err != nil || grabs != 1 {
+				t.Errorf("clientless row %d: replacement grabs = %d (%v), want its want grabbed again", id, grabs, err)
 			}
 		case "keep":
 			if s.state != r.state || s.error != r.error || s.attempts != 3 || s.retry != 99 {
