@@ -55,13 +55,12 @@ func TestRunShutsDownWithConnectedEventStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port // served on this listener: no port race
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan error, 1)
 	dataDir := shutdownTestDataDir(t)
 	go func() {
-		finished <- run(ctx, config.Config{Host: "127.0.0.1", Port: port, DataDir: dataDir}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		finished <- serve(ctx, config.Config{Host: "127.0.0.1", Port: port, DataDir: dataDir}, slog.New(slog.NewTextHandler(io.Discard, nil)), listener)
 	}()
 	var body io.ReadCloser
 	joined := false
