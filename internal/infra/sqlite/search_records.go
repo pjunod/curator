@@ -8,7 +8,7 @@ import (
 // SearchRecordsKept is how many search records one wantable keeps.
 const SearchRecordsKept = 20
 
-// SearchRecord is one search of one wantable (migration 0077): who ran it,
+// SearchRecord is one search of one wantable (migration 0078): who ran it,
 // what the indexers returned, why the matched releases were refused, and
 // what it led to. Skipped is set when the wantable was not searched.
 type SearchRecord struct {

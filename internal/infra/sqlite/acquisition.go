@@ -1043,6 +1043,19 @@ func (d *DB) DeleteDownload(ctx context.Context, id int64) error {
 	if n, err := d.Write.DismissImportedDownload(ctx, id); err != nil || n > 0 {
 		return err
 	}
+	if dl.State == "failed" && dl.RunnerSalvage == "pending" {
+		// Runner has said a salvage publication is coming for this row; the
+		// row is how it is attributed when it arrives, so it is hidden, not
+		// deleted (a publication arriving for a deleted row has no owner).
+		var salvage int
+		if err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE download_id=? AND kind='salvage'`, id).Scan(&salvage); err != nil {
+			return err
+		}
+		if salvage == 0 {
+			_, err := d.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1 WHERE id=?`, id)
+			return err
+		}
+	}
 	n, err := d.Write.DeleteDownload(ctx, id)
 	if err == nil && n == 0 {
 		return fmt.Errorf("download retains unresolved placement custody")

@@ -53,6 +53,25 @@ func (d *DB) DownloadByTransfer(ctx context.Context, clientID int64, transfer st
 	return dl, err == nil, err
 }
 
+// DownloadByTransferAnyClient finds the newest row carrying an exact
+// transfer token, on any client: a publication directory names its transfer
+// but not the client that submitted it.
+func (d *DB) DownloadByTransferAnyClient(ctx context.Context, transfer string) (Download, bool, error) {
+	if transfer == "" {
+		return Download{}, false, nil
+	}
+	var id int64
+	err := d.R.QueryRowContext(ctx, `SELECT id FROM downloads WHERE transfer=? ORDER BY id DESC LIMIT 1`, transfer).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Download{}, false, nil
+	}
+	if err != nil {
+		return Download{}, false, err
+	}
+	dl, err := d.GetDownload(ctx, id)
+	return dl, err == nil, err
+}
+
 // DownloadByHandle is the legacy fallback for an event that carried no
 // transfer token: the newest row of the client with that handle whose
 // terminal is still open (or provisional).
@@ -510,6 +529,25 @@ func insertPublicationTx(ctx context.Context, tx *sql.Tx, p PublicationWrite, no
 		}
 		return id, err
 	}
+	if inserted == 0 {
+		// A removed publication's directory is gone: a different payload —
+		// another generation — published at the same path later is a new
+		// publication, never attached to the removed one. A replay of the
+		// removed publication itself (same generation) still finds it, so it
+		// is not resurrected, and another download naming that generation is
+		// a collision, refused below. The removed row and its file records
+		// go; the history events keep what it was.
+		var state, generation string
+		if err := tx.QueryRowContext(ctx, `SELECT state, generation FROM publications WHERE id=?`, id).Scan(&state, &generation); err != nil {
+			return 0, err
+		}
+		if state == "removed" && p.Generation != "" && generation != p.Generation {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM publications WHERE id=? AND state='removed'`, id); err != nil {
+				return 0, err
+			}
+			return insertPublicationTx(ctx, tx, p, now)
+		}
+	}
 	if inserted == 0 && p.DownloadID != 0 {
 		switch {
 		case !owner.Valid:
@@ -523,6 +561,44 @@ func insertPublicationTx(ctx context.Context, tx *sql.Tx, p PublicationWrite, no
 		}
 	}
 	return id, nil
+}
+
+// RecordOrphanPublication records, in one write, a committed Runner
+// publication Curator has no download row for: the publication (live, no
+// row), each manifest file discarded{rejected} with reason, and the state
+// import_failed, so the per-file cleanup retires the directory. inserted is
+// false when a publication already claims the directory (nothing changes).
+func (d *DB) RecordOrphanPublication(ctx context.Context, p PublicationWrite, files []PublicationFile, reason string) (int64, bool, error) {
+	if p.DownloadID != 0 {
+		return 0, false, fmt.Errorf("an orphan publication has no download row")
+	}
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE path=?`, p.Path).Scan(&existing); err != nil {
+		return 0, false, err
+	}
+	if existing > 0 {
+		return 0, false, nil
+	}
+	now := time.Now().UnixMilli()
+	id, err := insertPublicationTx(ctx, tx, p, now)
+	if err != nil {
+		return 0, false, err
+	}
+	for _, f := range files {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO publication_files (publication_id, path, bytes, sha256, outcome, discard_reason, reason, updated_at) VALUES (?,?,?,?,'discarded','rejected',?,?)`,
+			id, f.Path, f.Bytes, f.SHA256, reason, now); err != nil {
+			return 0, false, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET state='import_failed', error=?, updated_at=? WHERE id=?`, reason, now, id); err != nil {
+		return 0, false, err
+	}
+	return id, true, tx.Commit()
 }
 
 // PublicationPathClaimedError is a publication whose directory another
@@ -1375,6 +1451,116 @@ func (d *DB) MarkPublicationRemoved(ctx context.Context, id int64) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// DiscardPendingPublicationFile records a pending file discarded, only while
+// its publication is still exactly as read (state and updated_at): a
+// person's retry or an import that moved the publication on wins.
+func (d *DB) DiscardPendingPublicationFile(ctx context.Context, pub Publication, path, reason string) (bool, error) {
+	now := time.Now().UnixMilli()
+	res, err := d.W.ExecContext(ctx, `UPDATE publication_files SET outcome='discarded', discard_reason='rejected', library_path='', placed_sha256='', reason=?, updated_at=?
+		WHERE publication_id=? AND path=? AND outcome='pending' AND removed_at=0
+		  AND EXISTS (SELECT 1 FROM publications p WHERE p.id=? AND p.state=? AND p.updated_at=?)`,
+		reason, now, pub.ID, path, pub.ID, pub.State, pub.UpdatedAt.UnixMilli())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// RequeuePublicationForPendingMedia puts an ended publication that still
+// holds pending media back to discovered so the import decides it, only
+// while the publication is exactly as read and has attempts left. The
+// requeue counts as an attempt, so it is bounded: the import's own attempt
+// cap ends the publication (deciding every file) when they run out.
+func (d *DB) RequeuePublicationForPendingMedia(ctx context.Context, pub Publication) (bool, error) {
+	res, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error='', deadline_at=0, last_stop='', retry_at=0, hold_since=0, holds=0,
+		import_attempts=import_attempts+1, updated_at=?
+		WHERE id=? AND state=? AND updated_at=? AND import_attempts<?`,
+		time.Now().UnixMilli(), pub.ID, pub.State, pub.UpdatedAt.UnixMilli(), MaxPublicationImportAttempts)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// PublicationImportAttempts reads a publication's counted attempts.
+func (d *DB) PublicationImportAttempts(ctx context.Context, id int64) (int, error) {
+	var n int
+	err := d.R.QueryRowContext(ctx, `SELECT import_attempts FROM publications WHERE id=?`, id).Scan(&n)
+	return n, err
+}
+
+// OfferablePublications lists every publication with a download row waiting
+// for, or stuck in, an import, whatever its client: the hourly pass offers
+// each one (or ends it when no client can import it), so none waits on the
+// poll alone.
+func (d *DB) OfferablePublications(ctx context.Context) ([]Publication, error) {
+	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND retry_at<=? AND download_id IS NOT NULL`, time.Now().UnixMilli())
+}
+
+// SettleRunnerSalvage records what became of a salvage Runner had reported
+// pending (none: it will not come). Only a row still pending is changed.
+func (d *DB) SettleRunnerSalvage(ctx context.Context, downloadID int64, salvage string) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE downloads SET runner_salvage=? WHERE id=? AND runner_salvage='pending'`, salvage, downloadID)
+	return err
+}
+
+// PendingSalvageDownloads lists failed rows whose salvage Runner reported
+// pending and that have no salvage publication yet.
+func (d *DB) PendingSalvageDownloads(ctx context.Context) ([]Download, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT id FROM downloads WHERE state='failed' AND runner_salvage='pending'
+		AND NOT EXISTS (SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.kind='salvage') ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]Download, 0, len(ids))
+	for _, id := range ids {
+		dl, err := d.GetDownload(ctx, id)
+		if err != nil {
+			continue
+		}
+		out = append(out, dl)
+	}
+	return out, nil
+}
+
+// RecordOnlyPublications lists the publications that are only a record of a
+// path: no download row, no manifest and no file — the migration-0040 review
+// cohort and directories the cutover froze. Nothing can import or clean them
+// file by file; they end when their directory is gone or the path was never
+// a payload directory.
+func (d *DB) RecordOnlyPublications(ctx context.Context) ([]Publication, error) {
+	return d.publicationsWhere(ctx, `download_id IS NULL AND manifest_source='none' AND state IN ('discovered','import_failed')
+		AND NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id)`)
+}
+
+// DeleteRecordOnlyPublication deletes a record-only publication, freeing
+// its path; the caller keeps a history event of what it was. ok is false
+// when it is no longer record-only.
+func (d *DB) DeleteRecordOnlyPublication(ctx context.Context, id int64) (bool, error) {
+	res, err := d.W.ExecContext(ctx, `DELETE FROM publications WHERE id=? AND download_id IS NULL AND manifest_source='none'
+		AND state IN ('discovered','import_failed') AND NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id)`, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // ApprovePublicationCleanup is the M7 approval of a review batch: it lets the
