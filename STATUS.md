@@ -10,6 +10,20 @@ nzbd `CancelQueued`; tests `TestOverdueStalledJobGetsOneBestEffortRunnerCancel`,
 `TestCancelQueuedNeverTouchesHistory`; `docs/usage.md`
 (pipeline:overdue). Decision recorded under the v0.45.2 section below.
 
+**CI race-shard failure fixed (2026-11-12):** `TestEndedPackRecordsWhatItPlaced`
+failed ~10% of runs (with or without `-race`) on main since 0.45.x. Root
+cause, not a cleanup race: `importDownloadFiles` returned at the first file
+that did not match its manifest, so the outcome depended on manifest order
+(the fixture builds it from a Go map; forcing E02 first fails 5/5). The good
+file after a mismatch was never placed, and the mismatched file never got an
+attempt outcome, so the attempt's plan stayed pending ("import selection
+changed; explicit retry required"). The cleanup runs only after the import
+completes. Fix: a payload mismatch is that file's outcome (recorded in the
+attempt), the rest of the payload is still tried, then the publication ends
+keeping what was placed. Regression test
+`TestPayloadMismatchListedFirstStillPlacesTheRest` (fails without the fix).
+`go test -race -run '^TestEndedPackRecordsWhatItPlaced$' -count=50`: 0 failures.
+
 ## Overdue downloads exit on their own; sealed plans do not wedge imports — 2026-11-12 · v0.45.2
 
 **Status:** built, targeted tests and lint pass, pushed · owner: Claude Opus

@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -241,6 +242,50 @@ func TestEndedPackRecordsWhatItPlaced(t *testing.T) {
 	}
 	if n := f.count(`SELECT COUNT(*) FROM media_files`); n != 1 {
 		t.Fatalf("library files = %d", n)
+	}
+}
+
+// CI race shard, 2026-11-12: the outcome of TestEndedPackRecordsWhatItPlaced
+// depended on manifest order. A file that did not match its manifest ended
+// the import loop at once, so when it was listed first the good file after
+// it was never placed (and the attempt's plan stayed unsettled: "import
+// selection changed; explicit retry required"). Listed first on purpose
+// here: the mismatch is that file's outcome, the rest is still placed, and
+// the attempt closes.
+func TestPayloadMismatchListedFirstStillPlacesTheRest(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(0, seasonPack)
+	{
+		pub := f.publish("Test.Show.S01.job-610.runner-order", "order", map[string]string{"Test.Show.S01E01.mkv": "one", "Test.Show.S01E02.mkv": "two"})
+		// Rewrite the manifest with E02 listed first, then corrupt E02.
+		raw, err := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m ports.Manifest
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		if m.Files[0].Path != "Test.Show.S01E02.mkv" {
+			m.Files[0], m.Files[1] = m.Files[1], m.Files[0]
+		}
+		raw, _ = json.Marshal(m)
+		if err := os.WriteFile(filepath.Join(pub.Path, ports.ManifestFileName), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pub.Path, "Test.Show.S01E02.mkv"), []byte("TWO"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pub.CrossVolume = true
+		f.complete(dl, pub)
+		_, files := f.publicationFiles(pub.Path)
+		if files["Test.Show.S01E01.mkv"].Outcome != "placed" || files["Test.Show.S01E02.mkv"].Outcome != "discarded" {
+			t.Fatalf("files %+v, want E01 placed and E02 discarded whatever the manifest order", files)
+		}
+		a, err := f.db.GetImportAttempt(f.ctx, dl.ID, dl.GenerationKey)
+		if err != nil || a.Outcome == "" {
+			t.Fatalf("attempt = %+v (%v), want it closed (no pending file left in its plan)", a, err)
+		}
 	}
 }
 

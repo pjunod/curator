@@ -529,6 +529,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	}
 	grabbedSeason, grabbedEpisodes := grabbedEpisodeTargets(dl.WantableIDs, item.ID)
 	result := ImportResult{Files: make([]FileOutcome, 0, len(videos))}
+	var mismatch error // the first file that did not match its manifest
 	for fileIndex, src := range videos {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -628,6 +629,25 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			if errors.Is(err, context.Canceled) || errors.Is(err, ErrImportControl) {
 				return result, err
 			}
+			if errors.Is(err, errPayloadMismatch) {
+				// This file is not the bytes Runner's manifest names: its own
+				// outcome, recorded in the attempt like any other refusal,
+				// and the rest of the payload is still tried. Stopping here
+				// made the result depend on manifest order: a mismatch listed
+				// first left every good file after it unplaced (and the
+				// attempt's plan unsettled, so it refused every retry). The
+				// publication still ends below, keeping what was placed.
+				outcome.Reason = err.Error()
+				if e := s.recordSkippedImportFile(ctx, src); e != nil {
+					return result, e
+				}
+				if mismatch == nil {
+					mismatch = err
+				}
+				s.log.Warn("import: file does not match its manifest; the rest of the payload is still imported", "file", outcome.Name, "reason", err)
+				result.Files = append(result.Files, outcome)
+				continue
+			}
 			if !retryableIO(err) && !isImportPolicyRefusal(err) {
 				return result, err
 			}
@@ -696,6 +716,11 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			"remaining", len(videos)-result.Imported)
 		return result, fmt.Errorf("%w: %d of %d files placed from %s before it stopped: %v",
 			ErrImportBlocked, result.Imported, len(videos), savePath, result.Blocked)
+	}
+	if mismatch != nil {
+		// Every file was tried; the publication cannot be imported whole.
+		// The caller ends it, recording what this attempt placed.
+		return result, mismatch
 	}
 	if result.Imported == 0 {
 		// Say WHY, per file. This is the message a user actually reads when
