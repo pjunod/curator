@@ -1436,6 +1436,57 @@ func (e StatusHeadlineState) Valid() bool {
 	}
 }
 
+// Defines values for StatusOffloadScope.
+const (
+	StatusOffloadScopeEpisode StatusOffloadScope = "episode"
+	StatusOffloadScopeItem    StatusOffloadScope = "item"
+	StatusOffloadScopeSeason  StatusOffloadScope = "season"
+)
+
+// Valid indicates whether the value is a known member of the StatusOffloadScope enum.
+func (e StatusOffloadScope) Valid() bool {
+	switch e {
+	case StatusOffloadScopeEpisode:
+		return true
+	case StatusOffloadScopeItem:
+		return true
+	case StatusOffloadScopeSeason:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusOffloadState.
+const (
+	StatusOffloadStateCancelled StatusOffloadState = "cancelled"
+	StatusOffloadStateComplete  StatusOffloadState = "complete"
+	StatusOffloadStateDeleting  StatusOffloadState = "deleting"
+	StatusOffloadStateFailed    StatusOffloadState = "failed"
+	StatusOffloadStateRetrying  StatusOffloadState = "retrying"
+	StatusOffloadStateWaiting   StatusOffloadState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the StatusOffloadState enum.
+func (e StatusOffloadState) Valid() bool {
+	switch e {
+	case StatusOffloadStateCancelled:
+		return true
+	case StatusOffloadStateComplete:
+		return true
+	case StatusOffloadStateDeleting:
+		return true
+	case StatusOffloadStateFailed:
+		return true
+	case StatusOffloadStateRetrying:
+		return true
+	case StatusOffloadStateWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StatusRematchRole.
 const (
 	StatusRematchRoleSource StatusRematchRole = "source"
@@ -2849,6 +2900,9 @@ type ItemStatus struct {
 	Headline    StatusHeadline `json:"headline"`
 	Kind        string         `json:"kind"`
 	MediaItemId int64          `json:"mediaItemId"`
+
+	// Offload The open Offload deleting this title's files (the panel's "Offloading files" block), and once it is over its final stage "Offloaded <date> · <bytes> freed" until dismissed. Stop is POST /offload/{operationId}/cancel, dismiss POST /offload/{operationId}/dismiss.
+	Offload *StatusOffload `json:"offload,omitempty"`
 
 	// Rematch The open Re-match moving files out of or into this item (the panel's "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
 	Rematch *StatusRematch  `json:"rematch,omitempty"`
@@ -4502,6 +4556,40 @@ type StatusHeadline struct {
 
 // StatusHeadlineState defines model for StatusHeadline.State.
 type StatusHeadlineState string
+
+// StatusOffload The open Offload deleting this title's files (the panel's "Offloading files" block), and once it is over its final stage "Offloaded <date> · <bytes> freed" until dismissed. Stop is POST /offload/{operationId}/cancel, dismiss POST /offload/{operationId}/dismiss.
+type StatusOffload struct {
+	BytesFreed int64 `json:"bytesFreed"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory *string `json:"directory,omitempty"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    *string `json:"status,omitempty"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CinemaLine *string `json:"cinemaLine,omitempty"`
+	Ended      bool    `json:"ended"`
+
+	// Error The plain reason it is waiting or retrying.
+	Error       *string            `json:"error,omitempty"`
+	Failed      *[]string          `json:"failed,omitempty"`
+	FilesDone   int                `json:"filesDone"`
+	FilesTotal  int                `json:"filesTotal"`
+	FinishedAt  *int64             `json:"finishedAt,omitempty"`
+	Headline    string             `json:"headline"`
+	Label       string             `json:"label"`
+	OperationId string             `json:"operationId"`
+	Scope       StatusOffloadScope `json:"scope"`
+	State       StatusOffloadState `json:"state"`
+	Stoppable   bool               `json:"stoppable"`
+}
+
+// StatusOffloadScope defines model for StatusOffload.Scope.
+type StatusOffloadScope string
+
+// StatusOffloadState defines model for StatusOffload.State.
+type StatusOffloadState string
 
 // StatusRematch The open Re-match moving files out of or into this item (the panel's "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
 type StatusRematch struct {

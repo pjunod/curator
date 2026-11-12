@@ -613,3 +613,29 @@ func TestReacquireCancelsUnconfirmedOffloadRequests(t *testing.T) {
 		t.Fatalf("after re-acquire: %+v", got)
 	}
 }
+
+// The status panel shows the Offload as a block, ending in the final stage
+// "Offloaded <date> · <bytes> freed", and Done does not claim the panel can
+// collapse while it is deleting.
+func TestOffloadShowsInTheStatusPanel(t *testing.T) {
+	f := newOffloadFixture(t)
+	ctx := context.Background()
+	m, _, _ := f.movieWithFiles(t)
+	p := f.preview(t, OffloadRequest{ItemID: m.ID, Scope: "item"})
+	op := f.start(t, OffloadRequest{ItemID: m.ID, Scope: "item"}, p)
+	f.wait(t, op.ID)
+	st, err := f.svc.ItemStatus(ctx, m.ID, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Offload == nil || !st.Offload.Ended || st.Offload.State != "complete" ||
+		!strings.HasPrefix(st.Offload.Headline, "Offloaded ") || !strings.HasSuffix(st.Offload.Headline, " freed") {
+		t.Fatalf("status block = %+v", st.Offload)
+	}
+	if err := f.svc.DismissOffload(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ = f.svc.ItemStatus(ctx, m.ID, -1); st.Offload != nil {
+		t.Fatalf("a dismissed Offload is still on the panel: %+v", st.Offload)
+	}
+}

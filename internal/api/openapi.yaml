@@ -5740,6 +5740,42 @@ components:
           type: array
           items: { $ref: "#/components/schemas/StatusEpisode" }
         rematch: { $ref: "#/components/schemas/StatusRematch" }
+        offload: { $ref: "#/components/schemas/StatusOffload" }
+
+    StatusOffload:
+      type: object
+      description: >
+        The open Offload deleting this title's files (the panel's "Offloading
+        files" block), and once it is over its final stage "Offloaded <date> ·
+        <bytes> freed" until dismissed. Stop is POST /offload/{operationId}/cancel,
+        dismiss POST /offload/{operationId}/dismiss.
+      required: [operationId, state, scope, label, headline, filesDone, filesTotal, bytesTotal, bytesFreed, ended, stoppable]
+      properties:
+        operationId: { type: string }
+        state: { type: string, enum: [deleting, waiting, retrying, complete, cancelled, failed] }
+        scope: { type: string, enum: [item, season, episode] }
+        label: { type: string }
+        headline: { type: string }
+        filesDone: { type: integer }
+        filesTotal: { type: integer }
+        bytesTotal: { type: integer, format: int64 }
+        bytesFreed: { type: integer, format: int64 }
+        failed: { type: array, items: { type: string } }
+        error: { type: string, description: The plain reason it is waiting or retrying. }
+        cinemaLine: { type: string }
+        cinema:
+          type: array
+          items:
+            type: object
+            properties:
+              directory: { type: string }
+              status: { type: string }
+              result: { type: string }
+              lastError: { type: string }
+              visibleAt: { type: integer, format: int64 }
+        ended: { type: boolean }
+        stoppable: { type: boolean }
+        finishedAt: { type: integer, format: int64 }
 
     StatusRematch:
       type: object
