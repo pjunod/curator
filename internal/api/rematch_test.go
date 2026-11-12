@@ -52,6 +52,11 @@ func TestRematchHTTP(t *testing.T) {
 	stale, _ := json.Marshal(map[string]any{"target": map[string]any{"kind": "movie", "tmdbId": 551}, "requestId": "r-stale",
 		"sourceRevision": preview.SourceRevision, "fingerprint": "not-the-preview"})
 	e.post(t, fmt.Sprintf("/api/v1/library/%d/rematch", itemID), string(stale)).expect(t, http.StatusConflict)
+	// The title added for the refused move does not stay behind.
+	if id, _ := e.db.GetMediaItemByKindTmdb(ctx, "movie", 551); id != 0 {
+		t.Fatal("a refused move left the title it added in the library")
+	}
+	e.get(t, fmt.Sprintf("/api/v1/library/%d/rematch", itemID)).expect(t, http.StatusNoContent)
 
 	exec, _ := json.Marshal(map[string]any{"target": map[string]any{"kind": "movie", "tmdbId": 551}, "requestId": "r-1",
 		"sourceRevision": preview.SourceRevision, "fingerprint": preview.Fingerprint})
@@ -72,6 +77,14 @@ func TestRematchHTTP(t *testing.T) {
 	target, _ := e.db.GetMediaItemFull(ctx, targetID)
 	if len(target.Files) != 1 || target.Files[0].Path != *preview.Moves[0].To {
 		t.Fatalf("target files = %+v", target.Files)
+	}
+	if _, err := e.db.W.ExecContext(ctx, `INSERT INTO rematch_operations(operation_id,request_id,fingerprint,state,source_item_id,target_item_id,created_at,updated_at) VALUES('rm-open','r-open','f','moving',?,?,1,1)`, itemID, targetID); err != nil {
+		t.Fatal(err)
+	}
+	var open apigen.RematchOperation
+	e.get(t, fmt.Sprintf("/api/v1/library/%d/rematch", targetID)).expect(t, http.StatusOK).into(t, &open)
+	if open.OperationId != "rm-open" {
+		t.Fatalf("open operation = %+v", open)
 	}
 	e.get(t, "/api/v1/rematch/rm-missing").expect(t, http.StatusNotFound)
 	e.post(t, "/api/v1/rematch/rm-missing/cancel", "").expect(t, http.StatusNotFound)

@@ -16,7 +16,9 @@
 --    a transaction, so this file manages its own.
 -- 3. rematch_operations is the operation record: request id + fingerprint
 --    (idempotent like replacement creation), state, the plan it executes and
---    the per-file result. Its file moves are journaled in import_placements
+--    the per-file result (states planned → moving → moved → committed →
+--    complete, or cancel_pending → cancelled | failed). Its file moves are
+--    journaled in import_placements
 --    (kind rematch_move, states rematch_*), which the import reconciler never
 --    reads.
 -- 4. notifier_deliveries.operation_id keys a sub-delivery by operation
@@ -64,11 +66,18 @@ DROP TABLE replacement_operations;
 ALTER TABLE replacement_operations_new RENAME TO replacement_operations;
 CREATE INDEX replacement_operation_state ON replacement_operations(state, updated_at);
 
+-- The rebuild must leave every child row pointing at its operation: a
+-- violation aborts the migration rather than leaving it to a later DELETE.
+CREATE TEMP TABLE fk_guard_0079 (ok INTEGER NOT NULL CHECK (ok = 1));
+INSERT INTO fk_guard_0079 SELECT CASE WHEN EXISTS (SELECT 1 FROM pragma_foreign_key_check('replacement_operation_files'))
+    OR EXISTS (SELECT 1 FROM pragma_foreign_key_check('replacement_operation_steps')) THEN 0 ELSE 1 END;
+DROP TABLE fk_guard_0079;
+
 CREATE TABLE rematch_operations (
     operation_id   TEXT PRIMARY KEY,
     request_id     TEXT NOT NULL UNIQUE,
     fingerprint    TEXT NOT NULL,
-    state          TEXT NOT NULL CHECK (state IN ('planned','moving','moved','committed','notified','complete','cancel_pending','cancelled','failed')),
+    state          TEXT NOT NULL CHECK (state IN ('planned','moving','moved','committed','complete','cancel_pending','cancelled','failed')),
     source_item_id INTEGER NOT NULL,
     target_item_id INTEGER NOT NULL,
     plan           TEXT NOT NULL DEFAULT '{}',
@@ -84,6 +93,11 @@ CREATE INDEX rematch_operations_source ON rematch_operations(source_item_id, cre
 CREATE INDEX rematch_operations_target ON rematch_operations(target_item_id, created_at DESC);
 
 ALTER TABLE notifier_deliveries ADD COLUMN operation_id TEXT NOT NULL DEFAULT '';
+-- A moved request was posted with removed_paths (1) or as the new folder
+-- only (0); a later read of the request is judged by what was sent.
+ALTER TABLE notifier_deliveries ADD COLUMN removed_sent INTEGER NOT NULL DEFAULT 0;
+-- An operation's journaled moves, read by operation.
+CREATE INDEX import_placements_rematch ON import_placements(json_extract(data,'$.operation_id')) WHERE json_extract(data,'$.kind') = 'rematch_move';
 CREATE INDEX notifier_deliveries_operation ON notifier_deliveries(operation_id) WHERE operation_id != '';
 
 ALTER TABLE notifiers ADD COLUMN features TEXT NOT NULL DEFAULT '[]';
@@ -100,6 +114,10 @@ PRAGMA foreign_keys = OFF;
 -- +goose StatementBegin
 BEGIN;
 
+DELETE FROM import_placements WHERE json_extract(data,'$.kind') = 'rematch_move';
+DROP INDEX import_placements_rematch;
+DELETE FROM notifier_deliveries WHERE operation_id != '';
+ALTER TABLE notifier_deliveries DROP COLUMN removed_sent;
 ALTER TABLE notifiers DROP COLUMN features_at;
 ALTER TABLE notifiers DROP COLUMN features;
 DROP INDEX notifier_deliveries_operation;

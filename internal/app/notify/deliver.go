@@ -162,8 +162,16 @@ func (d *Dispatcher) attempt(ctx context.Context, del sqlite.Delivery) {
 	}
 
 	target := d.new(cfg)
-	if n.Event == "moved" && n.Import != nil && len(n.Import.RemovedPaths) > 0 {
-		target = d.refreshFeatures(ctx, cfg, target)
+	if n.Event == "moved" && n.Import != nil && len(n.Import.RemovedPaths) > 0 && del.RemoteRequestID == "" {
+		var fresh bool
+		target, fresh = d.refreshFeatures(ctx, cfg, target)
+		if !fresh && cfg.HasFeature(ports.FeatureRemovedPaths) {
+			// A common-parent request is never sent on a stored feature that
+			// could not be confirmed: a downgraded Cinema would full-scan it.
+			d.settleSub(ctx, del, subAttempt{peer: cfg.Type, notifierID: del.NotifierID}, ports.NotifyResult{},
+				&ports.NotifyError{Retry: ports.RetrySameAttempt, Msg: "cinema's features could not be re-read before a moved request; trying again"})
+			return
+		}
 	}
 	if scanner, ok := target.(ports.ScanSender); ok && del.IdempotencyKey != "" {
 		d.attemptSub(ctx, del, cfg.Type, n, target, scanner)
@@ -234,9 +242,15 @@ func (d *Dispatcher) attemptSub(ctx context.Context, del sqlite.Delivery, peer s
 	if n.Import != nil {
 		sub.total = len(n.Import.Paths)
 		sub.removed = n.Import.RemovedPaths
-		// A queued request was posted with removed paths when the post
-		// said so; a read of it carries the same.
-		sub.sentRemoved = res.RemovedPathsSent || (polled && strings.Contains(del.Result, "removed paths sent"))
+		// A read of a queued request is judged by what its POST sent.
+		sub.sentRemoved = res.RemovedPathsSent
+		if polled {
+			sub.sentRemoved = del.RemovedSent
+		} else if len(sub.removed) > 0 {
+			if err := d.db.SetDeliveryRemovedSent(ctx, del.ID, res.RemovedPathsSent); err != nil {
+				d.log.Warn("notify: cannot record what a moved request sent", "delivery", del.ID, "err", err)
+			}
+		}
 		if del.DownloadID != 0 {
 			sub.transfer = pipeline.Key(n.Import.Transfer, del.DownloadID)
 		}
@@ -263,38 +277,42 @@ type subAttempt struct {
 // on the delivery (contract amendment 6). Not a failure, no retry loop.
 const oldCinemaNote = "warning: cinema does not support removed paths; the old entry stays until its next scan"
 
-// refreshFeatures re-reads what Cinema supports before this session's first
-// moved send to it (contract amendment 5.3), stores it and rebuilds the
-// notifier with it. A probe that fails keeps what is stored.
-func (d *Dispatcher) refreshFeatures(ctx context.Context, cfg ports.NotifierConfig, target ports.Notifier) ports.Notifier {
+// featuresFresh is how long a feature read is trusted for a moved request.
+const featuresFresh = 10 * time.Minute
+
+// refreshFeatures re-reads what Cinema supports before a moved request
+// (contract amendment 5.3) unless this session read it within featuresFresh,
+// stores it and rebuilds the notifier with it. fresh is false when the probe
+// failed: the stored features are unconfirmed.
+func (d *Dispatcher) refreshFeatures(ctx context.Context, cfg ports.NotifierConfig, target ports.Notifier) (ports.Notifier, bool) {
 	prober, ok := target.(ports.FeatureProber)
 	if !ok {
-		return target
+		return target, true
 	}
 	d.mu.Lock()
 	if d.featuresRead == nil {
-		d.featuresRead = map[int64]bool{}
+		d.featuresRead = map[int64]time.Time{}
 	}
-	done := d.featuresRead[cfg.ID]
+	last := d.featuresRead[cfg.ID]
 	d.mu.Unlock()
-	if done {
-		return target
+	if !last.IsZero() && d.now().Sub(last) < featuresFresh {
+		return target, true
 	}
 	pctx, cancel := context.WithTimeout(ctx, d.sendTimeout)
 	features, err := prober.ProbeFeatures(pctx)
 	cancel()
 	if err != nil {
-		d.log.Info("notify: cinema features not re-read; using the stored ones", "notifier", cfg.ID, "err", err)
-		return target
+		d.log.Info("notify: cinema features not re-read", "notifier", cfg.ID, "err", err)
+		return target, false
 	}
 	d.mu.Lock()
-	d.featuresRead[cfg.ID] = true
+	d.featuresRead[cfg.ID] = d.now()
 	d.mu.Unlock()
 	if err := d.db.SetNotifierFeatures(ctx, cfg.ID, features); err != nil {
 		d.log.Warn("notify: cannot store cinema features", "notifier", cfg.ID, "err", err)
 	}
 	cfg.Features = features
-	return d.new(cfg)
+	return d.new(cfg), true
 }
 
 // removedNotGone lists every removed path Cinema still has, and reports
@@ -391,9 +409,6 @@ func (d *Dispatcher) settleSub(ctx context.Context, del sqlite.Delivery, sub sub
 		del.Result = res.State + " as " + del.RemoteRequestID
 		if res.WaitingOn != "" {
 			del.Result += ", waiting on " + res.WaitingOn
-		}
-		if sub.sentRemoved {
-			del.Result += " (removed paths sent)"
 		}
 		pending()
 	case res.State == "failed":

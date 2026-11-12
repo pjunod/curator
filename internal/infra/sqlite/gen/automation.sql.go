@@ -81,7 +81,7 @@ func (q *Queries) DeleteNotifier(ctx context.Context, id int64) error {
 }
 
 const dueDeliveries = `-- name: DueDeliveries :many
-SELECT id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at, publication_id, directory, idempotency_key, attempt, expected_files_json, remote_request_id, remote_state, waiting_on, visible_at, item_ids_json, operation_id FROM notifier_deliveries
+SELECT id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at, publication_id, directory, idempotency_key, attempt, expected_files_json, remote_request_id, remote_state, waiting_on, visible_at, item_ids_json, operation_id, removed_sent FROM notifier_deliveries
  WHERE status = 'pending' AND next_at <= ?
  ORDER BY next_at, id
  LIMIT ?
@@ -125,6 +125,7 @@ func (q *Queries) DueDeliveries(ctx context.Context, arg DueDeliveriesParams) ([
 			&i.VisibleAt,
 			&i.ItemIdsJson,
 			&i.OperationID,
+			&i.RemovedSent,
 		); err != nil {
 			return nil, err
 		}
@@ -340,7 +341,7 @@ func (q *Queries) ListCustomFormats(ctx context.Context) ([]CustomFormat, error)
 }
 
 const listDeliveries = `-- name: ListDeliveries :many
-SELECT id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at, publication_id, directory, idempotency_key, attempt, expected_files_json, remote_request_id, remote_state, waiting_on, visible_at, item_ids_json, operation_id FROM notifier_deliveries
+SELECT id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at, publication_id, directory, idempotency_key, attempt, expected_files_json, remote_request_id, remote_state, waiting_on, visible_at, item_ids_json, operation_id, removed_sent FROM notifier_deliveries
  WHERE notifier_id = ?
  ORDER BY id DESC
  LIMIT ?
@@ -384,6 +385,7 @@ func (q *Queries) ListDeliveries(ctx context.Context, arg ListDeliveriesParams) 
 			&i.VisibleAt,
 			&i.ItemIdsJson,
 			&i.OperationID,
+			&i.RemovedSent,
 		); err != nil {
 			return nil, err
 		}
@@ -616,7 +618,7 @@ func (q *Queries) ListNotifiers(ctx context.Context) ([]Notifier, error) {
 }
 
 const listOperationDeliveries = `-- name: ListOperationDeliveries :many
-SELECT id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at, publication_id, directory, idempotency_key, attempt, expected_files_json, remote_request_id, remote_state, waiting_on, visible_at, item_ids_json, operation_id FROM notifier_deliveries WHERE operation_id = ? ORDER BY id
+SELECT id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at, publication_id, directory, idempotency_key, attempt, expected_files_json, remote_request_id, remote_state, waiting_on, visible_at, item_ids_json, operation_id, removed_sent FROM notifier_deliveries WHERE operation_id = ? ORDER BY id
 `
 
 // Every delivery a Re-match wrote (ADR 0027), oldest first.
@@ -653,6 +655,7 @@ func (q *Queries) ListOperationDeliveries(ctx context.Context, operationID strin
 			&i.VisibleAt,
 			&i.ItemIdsJson,
 			&i.OperationID,
+			&i.RemovedSent,
 		); err != nil {
 			return nil, err
 		}
@@ -672,7 +675,7 @@ UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
        attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = ''
  WHERE id = ? AND notifier_id = ? AND status = 'failed'
-RETURNING id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at, publication_id, directory, idempotency_key, attempt, expected_files_json, remote_request_id, remote_state, waiting_on, visible_at, item_ids_json, operation_id
+RETURNING id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at, publication_id, directory, idempotency_key, attempt, expected_files_json, remote_request_id, remote_state, waiting_on, visible_at, item_ids_json, operation_id, removed_sent
 `
 
 type RetryDeliveryParams struct {
@@ -717,6 +720,7 @@ func (q *Queries) RetryDelivery(ctx context.Context, arg RetryDeliveryParams) (N
 		&i.VisibleAt,
 		&i.ItemIdsJson,
 		&i.OperationID,
+		&i.RemovedSent,
 	)
 	return i, err
 }

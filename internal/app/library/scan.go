@@ -92,6 +92,17 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 		return report, err
 	}
 	claimed := map[string]bool{}
+	// A Re-match moving files holds both titles' leases, which a scan does
+	// not take; it leaves those titles, and the folder the move chose, alone
+	// until the move is over (ADR 0027), so a file mid-move is neither pruned
+	// nor adopted twice. The next scan picks them up.
+	moving, movingFolders, err := s.db.OpenRematchScope(ctx)
+	if err != nil {
+		return report, err
+	}
+	for _, f := range movingFolders {
+		claimed[filepath.Clean(f)] = true
+	}
 	for _, item := range items {
 		// Copies with their own folders are claimed and scanned too.
 		copies, err := s.db.ListMediaCopies(ctx, item.ID)
@@ -116,6 +127,10 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 				report.MissingPaths = append(report.MissingPaths, item.Path)
 				report.MissingItems = append(report.MissingItems, *missing)
 			}
+			continue
+		}
+		if moving[item.ID] {
+			s.log.Info("scan: skipping a title a re-match is moving files for", "title", item.Title)
 			continue
 		}
 		linked, removed, err := s.scanItem(ctx, item, copies)

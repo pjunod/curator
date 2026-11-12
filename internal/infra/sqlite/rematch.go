@@ -69,6 +69,7 @@ type RematchMove struct {
 	Replace    bool    `json:"replace,omitempty"`
 	CopyID     int64   `json:"copy_id,omitempty"`
 	EpisodeIDs []int64 `json:"episode_ids,omitempty"`
+	ReplaceIDs []int64 `json:"replace_ids,omitempty"`
 	State      string  `json:"state"` // rematch_planned | rematch_moved | rematch_committed | rematch_done | rematch_rolled_back | rematch_failed
 	Error      string  `json:"error,omitempty"`
 }
@@ -210,6 +211,55 @@ func (d *DB) RequestRematchCancel(ctx context.Context, id string) (bool, error) 
 	return n == 1, nil
 }
 
+// SetRematchError records why an operation is not moving on (waiting for a
+// title, a file it could not remove) without changing its state; "" clears it.
+func (d *DB) SetRematchError(ctx context.Context, id, msg string) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE rematch_operations SET last_error=?,updated_at=? WHERE operation_id=? AND last_error!=?`, msg, time.Now().UnixMilli(), id, msg)
+	return err
+}
+
+// PruneRematchMoves drops a finished operation's journal rows; the operation
+// row keeps the result.
+func (d *DB) PruneRematchMoves(ctx context.Context, operationID string) error {
+	_, err := d.W.ExecContext(ctx, `DELETE FROM import_placements WHERE json_extract(data,'$.kind')='rematch_move' AND json_extract(data,'$.operation_id')=?`, operationID)
+	return err
+}
+
+// OpenRematchScope is what a library scan leaves alone while a Re-match
+// runs: the titles of every open operation and the folders it chose.
+func (d *DB) OpenRematchScope(ctx context.Context) (map[int64]bool, []string, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT source_item_id,target_item_id,COALESCE(json_extract(plan,'$.targetPath'),'') FROM rematch_operations WHERE state NOT IN ('complete','cancelled','failed')`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	items := map[int64]bool{}
+	var folders []string
+	for rows.Next() {
+		var src, dst int64
+		var folder string
+		if err := rows.Scan(&src, &dst, &folder); err != nil {
+			return nil, nil, err
+		}
+		items[src], items[dst] = true, true
+		if folder != "" {
+			folders = append(folders, folder)
+		}
+	}
+	return items, folders, rows.Err()
+}
+
+// OpenRematchForItem is the newest operation not yet finished that moves
+// files out of or into the item ("" when there is none).
+func (d *DB) OpenRematchForItem(ctx context.Context, itemID int64) (string, error) {
+	var id string
+	err := d.R.QueryRowContext(ctx, `SELECT operation_id FROM rematch_operations WHERE (source_item_id=? OR target_item_id=?) AND state NOT IN ('complete','cancelled','failed') ORDER BY created_at DESC LIMIT 1`, itemID, itemID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
 // SetRematchProgress records bytes copied so far.
 func (d *DB) SetRematchProgress(ctx context.Context, id string, done int64) error {
 	_, err := d.W.ExecContext(ctx, `UPDATE rematch_operations SET bytes_done=?,updated_at=? WHERE operation_id=?`, done, time.Now().UnixMilli(), id)
@@ -335,7 +385,7 @@ type RematchCommit struct {
 
 // CommitRematch moves the file rows and their episode links to the target,
 // removes left-out rows, writes the blocklist, history and Cinema outbox,
-// removes an emptied adopted source and marks the operation notified, all at
+// removes an emptied adopted source and marks the operation committed, all at
 // once. A file row that no longer stands at its planned old path refuses the
 // whole commit (ErrRematchStale).
 func (d *DB) CommitRematch(ctx context.Context, c RematchCommit) error {
@@ -427,7 +477,7 @@ func (d *DB) CommitRematch(ctx context.Context, c RematchCommit) error {
 	if len(c.Result) > 0 {
 		result = string(c.Result)
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE rematch_operations SET state='notified',target_item_id=?,result=?,updated_at=? WHERE operation_id=? AND state IN ('moving','moved')`, c.TargetItemID, result, now, c.OperationID)
+	res, err := tx.ExecContext(ctx, `UPDATE rematch_operations SET state='committed',last_error='',target_item_id=?,result=?,updated_at=? WHERE operation_id=? AND state IN ('moving','moved')`, c.TargetItemID, result, now, c.OperationID)
 	if err != nil {
 		return err
 	}

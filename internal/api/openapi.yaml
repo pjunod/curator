@@ -2850,6 +2850,19 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
 
   /library/{id}/rematch:
+    get:
+      operationId: getLibraryRematch
+      summary: The open Re-match moving files out of or into this item
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: The operation (progress, Stop, cinema confirmation).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RematchOperation" }
+        "204":
+          description: No open operation for this item.
     post:
       operationId: startRematch
       summary: Execute a previewed Re-match (idempotent by requestId)
@@ -2880,7 +2893,8 @@ paths:
           description: >
             `stale` (preview again), `rematch_blocked` (work in flight; the
             body carries `blocked`), `request_conflict` (requestId reused), or
-            `busy` (a title is being imported).
+            `busy` (a title is being imported). 503 `maintenance` while a
+            deployment drain pauses new work.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RematchConflict" }
@@ -6798,7 +6812,7 @@ components:
         requestId: { type: string }
         state:
           type: string
-          enum: [planned, moving, moved, committed, notified, complete, cancel_pending, cancelled, failed]
+          enum: [planned, moving, moved, committed, complete, cancel_pending, cancelled, failed]
         sourceItemId: { type: integer, format: int64 }
         targetItemId: { type: integer, format: int64 }
         plan: { type: object, description: "The stored request and preview." }

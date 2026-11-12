@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // Re-match (ADR 0027): POST /library/{id}/rematch/preview, POST
@@ -107,6 +109,8 @@ func (s *Server) rematchErr(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusConflict, "stale", err.Error())
 	case errors.Is(err, sqlite.ErrRematchRequestConflict):
 		writeCodedError(w, http.StatusConflict, "request_conflict", err.Error())
+	case errors.Is(err, ports.ErrMaintenance):
+		writeCodedError(w, http.StatusServiceUnavailable, "maintenance", err.Error())
 	case errors.Is(err, acquisition.ErrImportTargetBusy):
 		writeCodedError(w, http.StatusConflict, "busy", err.Error())
 	case errors.Is(err, acquisition.ErrInvalidRematch):
@@ -163,19 +167,27 @@ func (s *Server) StartRematch(w http.ResponseWriter, r *http.Request, id int64) 
 		writeError(w, http.StatusBadRequest, "requestId and the preview's fingerprint are required")
 		return
 	}
+	added := int64(0)
 	if add != nil {
 		// The title is added through the normal add path, then the
-		// operation runs against it; the fingerprint check below refuses
-		// the move if what was added is not what was previewed.
+		// operation runs against it; the fingerprint check refuses the move
+		// if what was added is not what was previewed.
 		item, err := s.deps.Library.Add(r.Context(), *add)
 		if err != nil {
 			s.libraryErr(w, err)
 			return
 		}
-		req.TargetItemID, req.TargetRevision = item.ID, 0
+		req.TargetItemID, req.TargetRevision, added = item.ID, 0, item.ID
 	}
 	op, err := s.deps.Acquisition.StartRematch(r.Context(), req)
 	if err != nil {
+		if added != 0 {
+			// Refused (blocked, stale, no room): the title was added only for
+			// this move, so it does not stay behind as an item nobody asked for.
+			if derr := s.deps.Store.DeleteMediaItem(context.WithoutCancel(r.Context()), added); derr != nil {
+				s.deps.Log.Warn("re-match: could not remove the title added for a refused move", "item", added, "err", derr)
+			}
+		}
 		s.rematchErr(w, err)
 		return
 	}
@@ -185,6 +197,22 @@ func (s *Server) StartRematch(w http.ResponseWriter, r *http.Request, id int64) 
 		return
 	}
 	writeJSON(w, http.StatusAccepted, status)
+}
+
+// GetLibraryRematch implements GET /library/{id}/rematch: the open
+// operation moving files out of or into the item (204 when there is none),
+// for the item page to follow after its dialog closed.
+func (s *Server) GetLibraryRematch(w http.ResponseWriter, r *http.Request, id int64) {
+	opID, err := s.deps.Store.OpenRematchForItem(r.Context(), id)
+	if err != nil {
+		s.rematchErr(w, err)
+		return
+	}
+	if opID == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.GetRematch(w, r, opID)
 }
 
 // GetRematch implements GET /rematch/{operationId}.

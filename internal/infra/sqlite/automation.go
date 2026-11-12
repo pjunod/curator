@@ -137,6 +137,13 @@ func notifierToPort(r sqlitegen.Notifier) ports.NotifierConfig {
 	}
 }
 
+// SetDeliveryRemovedSent records whether a moved request's POST carried
+// removed_paths, so a later read of the request is judged by what was sent.
+func (d *DB) SetDeliveryRemovedSent(ctx context.Context, id int64, sent bool) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE notifier_deliveries SET removed_sent=? WHERE id=?`, boolInt(sent), id)
+	return err
+}
+
 // SetNotifierFeatures stores what the notifier's far side said it supports
 // (contract amendment 5.3).
 func (d *DB) SetNotifierFeatures(ctx context.Context, id int64, features []string) error {
@@ -233,6 +240,8 @@ type Delivery struct {
 	VisibleAt       int64                `json:"visibleAt,omitempty"`
 	ItemIDs         []int64              `json:"itemIds,omitempty"`
 	OperationID     string               `json:"operationId,omitempty"`
+	// RemovedSent: the last POST of this moved request carried removed_paths.
+	RemovedSent bool `json:"removedSent,omitempty"`
 }
 
 // RequestKey is the key Cinema sees for this attempt: "<key>/<attempt>".
@@ -251,7 +260,7 @@ func deliveryFrom(r sqlitegen.NotifierDelivery) Delivery {
 		NextAt: r.NextAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		PublicationID: r.PublicationID, Directory: r.Directory, IdempotencyKey: r.IdempotencyKey,
 		Attempt: r.Attempt, RemoteRequestID: r.RemoteRequestID, RemoteState: r.RemoteState,
-		WaitingOn: r.WaitingOn, VisibleAt: r.VisibleAt, OperationID: r.OperationID,
+		WaitingOn: r.WaitingOn, VisibleAt: r.VisibleAt, OperationID: r.OperationID, RemovedSent: r.RemovedSent != 0,
 	}
 	_ = json.Unmarshal([]byte(r.ExpectedFilesJson), &d.ExpectedFiles)
 	_ = json.Unmarshal([]byte(r.ItemIdsJson), &d.ItemIDs)

@@ -490,6 +490,7 @@ type NotifierDelivery struct {
 	VisibleAt         int64
 	ItemIdsJson       string
 	OperationID       string
+	RemovedSent       int64
 }
 
 type PipelineTiming struct {

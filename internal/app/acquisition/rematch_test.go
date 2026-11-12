@@ -256,6 +256,9 @@ func TestRematchMergesIntoExistingItemAndBlocklistsVacatedRelease(t *testing.T) 
 	if err != nil || len(source.Files) != 0 {
 		t.Fatalf("source = %+v %v, want it kept, with no files", source.Files, err)
 	}
+	if listed, _ := f.db.ListReplacementOperationsForItem(ctx, src.ID, 10); len(listed) != 0 {
+		t.Fatalf("replacement panel lists %+v, want the re-match's blocklist record kept out of it", listed)
+	}
 	var blocked, ops int
 	_ = f.db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM release_blacklist_identity WHERE media_item_id=? AND guid='guid-1'`, src.ID).Scan(&blocked)
 	_ = f.db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM replacement_operations WHERE intent='rematch' AND state='complete' AND media_item_id=?`, src.ID).Scan(&ops)
@@ -331,8 +334,14 @@ func TestRematchSeriesEpisodeMapAndPicker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Moves) != 0 || len(p.LeftOut) != 1 || !p.LeftOut[0].NeedsPick || !strings.Contains(p.LeftOut[0].Problem, "S01E02") || len(p.Episodes) != 3 {
-		t.Fatalf("preview = %+v, want the double file left out with a picker of 3 episodes", p)
+	if len(p.Moves) != 0 || len(p.LeftOut) != 1 || !p.LeftOut[0].NeedsPick || !strings.Contains(p.LeftOut[0].Problem, "S01E02") || len(p.Episodes) != 3 || p.Unresolved != 1 {
+		t.Fatalf("preview = %+v, want the double file unresolved with a picker of 3 episodes", p)
+	}
+	// Unresolved is not left out: nothing moves and no row leaves.
+	blockedReq := req
+	blockedReq.RequestID, blockedReq.SourceRevision, blockedReq.TargetRevision, blockedReq.PlanFingerprint = "unresolved", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	if _, err := f.svc.StartRematch(ctx, blockedReq); !errors.Is(err, ErrInvalidRematch) || !strings.Contains(err.Error(), "need a choice") {
+		t.Fatalf("err = %v, want Move refused until the file is picked or left out", err)
 	}
 	req.Choices = []RematchChoice{{FileID: double, Season: 1, Episodes: []int{3, 4}}}
 	p, err = f.svc.PreviewRematch(ctx, req)
@@ -450,7 +459,9 @@ func TestRematchCrossVolumeCopyAndStop(t *testing.T) {
 	if err := f.svc.CancelRematch(ctx, op.ID); err != nil {
 		t.Fatal(err)
 	}
-	f.svc.runRematch(ctx, op.ID)
+	if err := f.svc.runRematch(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
 	got, _ := f.svc.GetRematch(ctx, op.ID)
 	if got.State != "cancelled" {
 		t.Fatalf("state = %s, want cancelled", got.State)
@@ -505,8 +516,8 @@ func TestRematchResumesAfterCrash(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	writeFile(t, moveB.Source, "b changed")
 
-	f.svc.resumeRematches(ctx)
-	st, _ := f.svc.GetRematch(ctx, op.ID)
+	f.svc.driveRematches(ctx)
+	st := f.wait(t, op.ID)
 	if st.State != "complete" {
 		t.Fatalf("state = %s (%s), want complete", st.State, st.LastError)
 	}
@@ -550,5 +561,211 @@ func TestLockImportTargetsSortedAllOrNone(t *testing.T) {
 	defer releaseBoth()
 	if h, ok := heldTarget(both); !ok || !h.covers(7) || !h.covers(9) || h.covers(8) {
 		t.Fatalf("held = %+v, want both titles covered", h)
+	}
+}
+
+// A move is not complete until every step after the commit is done: an
+// original that cannot be removed keeps the operation committed, with the
+// reason, and the next pass finishes it (the crash between commit and
+// finish is the same state). A replaced file goes the same way.
+func TestRematchFinishRetriesUntilEveryMoveIsDone(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	old := sameStorage
+	sameStorage = func(string, string) bool { return false }
+	t.Cleanup(func() { sameStorage = old })
+	src := f.movie(t, "Dune", 1984, 841, "")
+	orig := filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv")
+	f.file(t, src.ID, orig, "4k bytes", "")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	worse := filepath.Join(dst.Path, "Dune (2021) [WEBDL-1080p].mkv")
+	w := f.file(t, dst.ID, worse, "1080", "")
+	_ = f.db.SetFileQuality(ctx, w, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080})
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil || p.Moves[0].Action != "replace" || p.Moves[0].Mode != "copy" {
+		t.Fatalf("preview = %+v %v", p.Moves, err)
+	}
+	req.RequestID, req.SourceRevision, req.TargetRevision, req.PlanFingerprint = "finish", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	op, err := f.svc.startRematchLocked(ctx, req, p.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rematchRemove = func(string) error { return errors.New("read-only file system") }
+	if err := f.svc.runRematch(ctx, op.ID); err == nil {
+		t.Fatal("a finish that could not remove the original reported done")
+	}
+	rematchRemove = os.Remove
+	st, _ := f.svc.GetRematch(ctx, op.ID)
+	if st.State != "committed" || !strings.Contains(st.LastError, orig) || !strings.Contains(st.LastError, "retrying") {
+		t.Fatalf("status = %s %q, want committed with the original named", st.State, st.LastError)
+	}
+	if _, err := os.Stat(orig); err != nil {
+		t.Fatal("the original went although its removal failed")
+	}
+	f.svc.driveRematches(ctx)
+	st = f.wait(t, op.ID)
+	if st.State != "complete" {
+		t.Fatalf("state = %s (%s), want complete on the next pass", st.State, st.LastError)
+	}
+	for _, gone := range []string{orig, worse} {
+		if _, err := os.Stat(gone); !os.IsNotExist(err) {
+			t.Fatalf("%s is still on disk", gone)
+		}
+	}
+	if moves, _ := f.db.ListRematchMoves(ctx, op.ID); len(moves) != 0 {
+		t.Fatalf("journal = %+v, want it pruned once complete", moves)
+	}
+}
+
+// An operation whose titles are busy waits, says so, and runs on a later
+// pass: resume is not one-shot.
+func TestRematchDriverWaitsForABusyTitle(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	src := f.movie(t, "Dune", 1984, 841, "")
+	f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), "x", "")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, _ := f.svc.PreviewRematch(ctx, req)
+	req.RequestID, req.SourceRevision, req.TargetRevision, req.PlanFingerprint = "busy", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	op, err := f.svc.startRematchLocked(ctx, req, p.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, release := f.svc.lockImportTarget(ctx, dst.ID)
+	f.svc.driveRematches(ctx)
+	st, _ := f.svc.GetRematch(ctx, op.ID)
+	if st.State != "planned" || !strings.Contains(st.LastError, "waiting for its titles") {
+		t.Fatalf("status = %s %q, want it waiting, and saying so", st.State, st.LastError)
+	}
+	release()
+	f.svc.driveRematches(ctx)
+	if st = f.wait(t, op.ID); st.State != "complete" {
+		t.Fatalf("state = %s (%s)", st.State, st.LastError)
+	}
+}
+
+// Stop rolls back; a copy that cannot be removed keeps the operation
+// stopping, says what is where, and the next pass finishes it. A copy
+// published before its digest reached the journal is still recognised as
+// ours (by the source's bytes) and removed.
+func TestRematchRollbackRetriesAndRecognisesAnUnjournaledCopy(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	old := sameStorage
+	sameStorage = func(string, string) bool { return false }
+	t.Cleanup(func() { sameStorage = old; rematchRemove = os.Remove })
+	src := f.movie(t, "Arrival", 2016, 329865, "")
+	a := filepath.Join(src.Path, "Arrival (2016) [Bluray-2160p].mkv")
+	f.file(t, src.ID, a, "arrival", "")
+	dst := f.movie(t, "Arrival", 2017, 999, "")
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, _ := f.svc.PreviewRematch(ctx, req)
+	req.RequestID, req.SourceRevision, req.TargetRevision, req.PlanFingerprint = "rb", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	op, err := f.svc.startRematchLocked(ctx, req, p.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moves, _ := f.db.ListRematchMoves(ctx, op.ID)
+	if err := f.svc.moveRematchFile(ctx, &moves[0], &rematchProgress{s: f.svc, id: op.ID}); err != nil {
+		t.Fatal(err)
+	}
+	moves[0].State, moves[0].SHA256 = "rematch_moved", "" // the crash: digest never journaled
+	_ = f.db.PutRematchMove(ctx, moves[0])
+	if err := f.svc.CancelRematch(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	rematchRemove = func(string) error { return errors.New("device busy") }
+	if err := f.svc.runRematch(ctx, op.ID); err == nil {
+		t.Fatal("a rollback that left a copy behind reported done")
+	}
+	st, _ := f.svc.GetRematch(ctx, op.ID)
+	if st.State != "cancel_pending" || !strings.Contains(st.LastError, moves[0].Target) {
+		t.Fatalf("status = %s %q, want still stopping, naming the copy", st.State, st.LastError)
+	}
+	rematchRemove = os.Remove
+	f.svc.driveRematches(ctx)
+	if st = f.wait(t, op.ID); st.State != "cancelled" {
+		t.Fatalf("state = %s (%s)", st.State, st.LastError)
+	}
+	if _, err := os.Stat(moves[0].Target); !os.IsNotExist(err) {
+		t.Fatal("the unjournaled copy was left in the library folder")
+	}
+	if b, _ := os.ReadFile(a); string(b) != "arrival" {
+		t.Fatal("the source was touched")
+	}
+}
+
+// Files sharing a video's stem are sidecars only when they are not media
+// themselves (or library files).
+func TestRematchSidecarsExcludeMediaSharingTheStem(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	src := f.movie(t, "Dune", 1984, 841, "")
+	main := filepath.Join(src.Path, "Dune (1984).mkv")
+	f.file(t, src.ID, main, "main", "")
+	writeFile(t, filepath.Join(src.Path, "Dune (1984).1080p.mkv"), "another cut")
+	writeFile(t, filepath.Join(src.Path, "Dune (1984).en.srt"), "subs")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	p, err := f.svc.PreviewRematch(ctx, RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID, FileIDs: []int64{f.fileID(t, main)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := p.Moves[0].Sidecars
+	if len(sc) != 1 || !strings.HasSuffix(sc[0].From, ".en.srt") {
+		t.Fatalf("sidecars = %+v, want the subtitle only", sc)
+	}
+}
+
+func (f rematchFixture) fileID(t *testing.T, path string) int64 {
+	t.Helper()
+	var id int64
+	if err := f.db.R.QueryRowContext(context.Background(), `SELECT id FROM media_files WHERE path=?`, path).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// More files than Cinema takes in one request: every expected file is in
+// some request (requests with removed_paths are probe-only), and so is
+// every removed path.
+func TestRematchOutboxProbesEveryFileOfALargeMove(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	if _, err := f.db.AddNotifier(ctx, ports.NotifierConfig{Type: "plurx", Name: "cinema", Settings: map[string]string{"url": "http://c", "apiKey": "k"}, OnImport: true, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	var placed []ports.ExpectedFile
+	var removed []string
+	for i := 0; i < 150; i++ {
+		placed = append(placed, ports.ExpectedFile{Path: filepath.Join(f.root.Path, "New Show", "Season 01", "New Show - S01E"+strconv.Itoa(i)+" - A Long Episode Title For Size [WEBDL-1080p].mkv"), Bytes: 1, MtimeNs: 1})
+		removed = append(removed, filepath.Join(f.root.Path, "Old Show", "Season 01", "Old Show - S01E"+strconv.Itoa(i)+" [WEBDL-1080p].mkv"))
+	}
+	rows, err := f.svc.rematchOutbox(ctx, "rm-big", domain.MediaItem{ID: 1, Title: "Old Show"}, domain.MediaItem{ID: 2, Kind: domain.KindSeries, Title: "New Show"}, placed, removed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenExp, seenRem := map[string]bool{}, map[string]bool{}
+	for _, r := range rows {
+		var n ports.Notification
+		_ = json.Unmarshal([]byte(r.Payload), &n)
+		exp := n.Import.ExpectedFiles[r.Directory]
+		if len(exp) > ports.MaxExpectedFiles || len(n.Import.RemovedPaths) > ports.MaxExpectedFiles || len(exp) != len(r.ExpectedFiles) {
+			t.Fatalf("a request carries %d expected, %d removed", len(exp), len(n.Import.RemovedPaths))
+		}
+		raw, _ := json.Marshal(exp)
+		if len(raw) > ports.MaxExpectedFileBytes {
+			t.Fatalf("a request's expected files take %d bytes", len(raw))
+		}
+		for _, e := range exp {
+			seenExp[e.Path] = true
+		}
+		for _, p := range n.Import.RemovedPaths {
+			seenRem[p] = true
+		}
+	}
+	if len(seenExp) != 150 || len(seenRem) != 150 {
+		t.Fatalf("probed %d expected and %d removed of 150 each over %d requests", len(seenExp), len(seenRem), len(rows))
 	}
 }

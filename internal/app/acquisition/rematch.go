@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/filename"
 	"github.com/pjunod/monarr/internal/domain/naming"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -112,6 +113,10 @@ type RematchMovePlan struct {
 	// A left-out file stays on disk and leaves the library.
 	Problem   string `json:"problem,omitempty"`
 	NeedsPick bool   `json:"needsPick,omitempty"`
+	// Leave: the person left it out; only such a file leaves the library.
+	// Any other line under leftOut is unresolved: it stays where it is and
+	// Move waits until it is picked or left out.
+	Leave bool `json:"leave,omitempty"`
 }
 
 // RematchReplaced is a target file a move replaces.
@@ -181,7 +186,10 @@ type RematchPreview struct {
 	SourceRevision int64             `json:"sourceRevision"`
 	TargetRevision int64             `json:"targetRevision"`
 	Fingerprint    string            `json:"fingerprint"`
-	Summary        string            `json:"summary"`
+	// Unresolved counts leftOut lines that need a choice; Move refuses
+	// while it is not 0.
+	Unresolved int    `json:"unresolved"`
+	Summary    string `json:"summary"`
 }
 
 // rematchPlan is a preview plus what execution needs that the page does not.
@@ -329,7 +337,8 @@ func (s *Service) planRematch(ctx context.Context, req RematchRequest) (*rematch
 		line := RematchMovePlan{FileID: f.ID, From: f.Path, Season: -1, Episodes: []int{}, Bytes: f.Size, Quality: f.Quality.Display()}
 		choice, chosen := choices[f.ID]
 		if chosen && choice.Leave {
-			line.Problem = "left out: it stays on disk and leaves the library"
+			line.Leave = true
+			line.Problem = "left out: it stays on disk at " + f.Path + " and leaves the library"
 			p.LeftOut = append(p.LeftOut, line)
 			continue
 		}
@@ -407,8 +416,14 @@ func (s *Service) planRematch(ctx context.Context, req RematchRequest) (*rematch
 		default:
 			line.Mode = "copy"
 		}
-		line.Sidecars = rematchSidecars(f.Path, line.To)
+		line.Sidecars = s.rematchSidecars(ctx, f.Path, line.To)
 		p.Moves = append(p.Moves, line)
+	}
+	for i := range p.LeftOut {
+		if l := &p.LeftOut[i]; !l.Leave {
+			p.Unresolved++
+			l.Problem += "; until you choose, it stays where it is and nothing moves"
+		}
 	}
 	if target.Kind == domain.KindSeries {
 		for _, se := range target.Seasons {
@@ -690,7 +705,7 @@ func (s *Service) rematchDestinationProblem(ctx context.Context, f domain.MediaF
 
 // rematchSidecars lists the files beside src that share its stem (subtitles,
 // .nfo): they travel with it, renamed to the new stem.
-func rematchSidecars(src, dest string) []RematchPair {
+func (s *Service) rematchSidecars(ctx context.Context, src, dest string) []RematchPair {
 	if src == dest {
 		return nil
 	}
@@ -707,9 +722,24 @@ func rematchSidecars(src, dest string) []RematchPair {
 		if !e.Type().IsRegular() || name == filepath.Base(src) || !strings.HasPrefix(name, stem+".") {
 			continue
 		}
+		// Another video or book that shares the stem ("Dune (1984).1080p.mkv"
+		// beside "Dune (1984).mkv") is media in its own right, never a
+		// sidecar; so is anything the library holds as a file.
+		full := filepath.Join(dir, name)
+		if filename.IsVideo(name) || filename.IsBook(name) || s.libraryHasPath(ctx, full) {
+			continue
+		}
 		out = append(out, RematchPair{From: filepath.Join(dir, name), To: filepath.Join(filepath.Dir(dest), newStem+strings.TrimPrefix(name, stem))})
 	}
 	return out
+}
+
+func (s *Service) libraryHasPath(ctx context.Context, path string) bool {
+	var n int
+	if err := s.db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_files WHERE path=?`, path).Scan(&n); err != nil {
+		return true // unknown: do not carry it along
+	}
+	return n > 0
 }
 
 // rematchRank is what the replace-or-beside rule reads about the target,
@@ -870,6 +900,12 @@ func rematchBlockedText(b sqlite.RematchBlocker, source, target domain.MediaItem
 	case "import":
 		return fmt.Sprintf("%s is being imported (Activity %s); wait for it to finish", title, b.Ref)
 	case "replacement":
+		switch b.State {
+		case "waiting_for_release", "cleanup_blocked", "searching":
+			// These can last indefinitely, and replacements have no cancel:
+			// say so rather than promise that waiting ends it.
+			return fmt.Sprintf("%s has a replacement %s (%s); it holds the title until it completes or fails, and a replacement cannot be cancelled — wait for it, or move the files once it is done", title, strings.ReplaceAll(b.State, "_", " "), b.Ref)
+		}
 		return fmt.Sprintf("%s has a replacement in progress (%s); wait for it to finish", title, b.State)
 	default:
 		return fmt.Sprintf("%s has another re-match in progress; wait for it to finish", title)
@@ -889,16 +925,20 @@ func rematchFingerprint(plan *rematchPlan) string {
 		for _, r := range m.Replaces {
 			fmt.Fprintf(h, " r%d", r.FileID)
 		}
+		for _, sc := range m.Sidecars {
+			fmt.Fprintf(h, " s%s>%s", sc.From, sc.To)
+		}
 		_, _ = fmt.Fprintln(h)
 	}
 	for _, m := range p.LeftOut {
-		fmt.Fprintf(h, "l %d %s\n", m.FileID, m.From)
+		fmt.Fprintf(h, "l %d %s %v\n", m.FileID, m.From, m.Leave)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 
 // StartRematch executes a previewed Re-match. It returns once the operation
-// is recorded; the moves run in the background (GET /rematch/{id}).
+// is recorded; the moves run in the background (GET /rematch/{id}), admitted
+// as work so a deployment drain sees and waits for them.
 func (s *Service) StartRematch(ctx context.Context, req RematchRequest) (sqlite.RematchOperation, error) {
 	if req.RequestID == "" || req.PlanFingerprint == "" {
 		return sqlite.RematchOperation{}, fmt.Errorf("%w: requestId and the preview's fingerprint are required", ErrInvalidRematch)
@@ -915,33 +955,76 @@ func (s *Service) StartRematch(ctx context.Context, req RematchRequest) (sqlite.
 		}
 		return op, nil
 	}
-	leaseCtx, release, err := s.lockImportTargets(context.WithoutCancel(ctx), rematchLeaseWait, req.SourceItemID, req.TargetItemID)
+	workCtx, releaseWork, err := ports.TryWork(s.rematchBase(), s.admission, "rematch")
 	if err != nil {
+		return sqlite.RematchOperation{}, err
+	}
+	leaseCtx, release, err := s.lockImportTargets(workCtx, rematchLeaseWait, req.SourceItemID, req.TargetItemID)
+	if err != nil {
+		releaseWork()
 		return sqlite.RematchOperation{}, err
 	}
 	op, err := s.startRematchLocked(leaseCtx, req, requestFingerprint)
 	if err != nil {
 		release()
+		releaseWork()
 		return sqlite.RematchOperation{}, err
 	}
-	runCtx, cancel := context.WithCancel(leaseCtx)
+	s.launchRematch(leaseCtx, op.ID, func() { release(); releaseWork() })
+	return op, nil
+}
+
+// rematchBase is the context background moves run under: the importers'
+// lifetime once they started (a shutdown stops a copy; the journal resumes
+// it), else the process's.
+func (s *Service) rematchBase() context.Context {
+	s.rematchMu.Lock()
+	defer s.rematchMu.Unlock()
+	if s.rematchCtx != nil {
+		return s.rematchCtx
+	}
+	return context.Background()
+}
+
+// launchRematch drives one operation in the background, once: an operation
+// this process is already driving is left to that goroutine. release frees
+// the titles and the admission token when it ends.
+func (s *Service) launchRematch(ctx context.Context, id string, release func()) bool {
 	s.rematchMu.Lock()
 	if s.rematchCancels == nil {
 		s.rematchCancels = map[string]context.CancelFunc{}
 	}
-	s.rematchCancels[op.ID] = cancel
+	if _, running := s.rematchCancels[id]; running {
+		s.rematchMu.Unlock()
+		release()
+		return false
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	s.rematchCancels[id] = cancel
 	s.rematchMu.Unlock()
+	s.importWG.Add(1)
 	go func() {
+		defer s.importWG.Done()
 		defer release()
 		defer func() {
 			s.rematchMu.Lock()
-			delete(s.rematchCancels, op.ID)
+			delete(s.rematchCancels, id)
 			s.rematchMu.Unlock()
 			cancel()
 		}()
-		s.runRematch(runCtx, op.ID)
+		if err := s.runRematch(runCtx, id); err != nil {
+			s.log.Warn("re-match is not finished; it is retried", "operation", id, "err", err)
+			_ = s.db.SetRematchError(context.WithoutCancel(runCtx), id, err.Error())
+		}
 	}()
-	return op, nil
+	return true
+}
+
+func (s *Service) rematchRunning(id string) bool {
+	s.rematchMu.Lock()
+	defer s.rematchMu.Unlock()
+	_, ok := s.rematchCancels[id]
+	return ok
 }
 
 func (s *Service) rematchByRequest(ctx context.Context, requestID string) (sqlite.RematchOperation, error) {
@@ -964,7 +1047,10 @@ func (s *Service) startRematchLocked(ctx context.Context, req RematchRequest, fi
 	if p.SourceRevision != req.SourceRevision || (req.TargetRevision != 0 && p.TargetRevision != req.TargetRevision) || p.Fingerprint != req.PlanFingerprint {
 		return sqlite.RematchOperation{}, ErrRematchStalePreview
 	}
-	if len(p.Moves) == 0 && len(p.LeftOut) == 0 {
+	if p.Unresolved > 0 {
+		return sqlite.RematchOperation{}, fmt.Errorf("%w: %d file(s) need a choice (an episode, or Leave it out) before anything moves", ErrInvalidRematch, p.Unresolved)
+	}
+	if len(p.Moves) == 0 {
 		return sqlite.RematchOperation{}, fmt.Errorf("%w: nothing to move", ErrInvalidRematch)
 	}
 	var copyBytes int64
@@ -995,6 +1081,9 @@ func (s *Service) startRematchLocked(ctx context.Context, req RematchRequest, fi
 		mv := sqlite.RematchMove{ID: fmt.Sprintf("rematch:%s:%03d", opID, i), OperationID: opID, FileID: f.ID, ItemID: plan.source.ID,
 			Source: f.Path, Target: m.To, Mode: m.Mode, Identity: identity, Size: f.Size, State: "rematch_planned",
 			Replace: m.Action == "replace", CopyID: p.TargetCopyID, EpisodeIDs: plan.epIDs[f.ID]}
+		for _, r := range m.Replaces {
+			mv.ReplaceIDs = append(mv.ReplaceIDs, r.FileID)
+		}
 		if m.Mode == "copy" {
 			mv.Temporary = filepath.Join(filepath.Dir(m.To), "."+filepath.Base(m.To)+".rematch-"+opID+".partial")
 		}
@@ -1114,56 +1203,90 @@ func (s *Service) GetRematch(ctx context.Context, id string) (RematchStatus, err
 	return out, nil
 }
 
-// resumeRematches finishes, or rolls back, every operation a restart
-// interrupted, by what the journal and the disk say.
-func (s *Service) resumeRematches(ctx context.Context) {
+// rematchDriveEvery is how often open operations are driven on: a restart's
+// interrupted move, a finish that could not remove a file, a rollback that
+// could not put one back, an operation whose titles were busy.
+var rematchDriveEvery = 30 * time.Second
+
+// startRematchWorker drives every open operation until it is terminal: now,
+// for what a restart interrupted, then on every tick.
+func (s *Service) startRematchWorker(ctx context.Context) {
+	s.rematchMu.Lock()
+	s.rematchCtx = ctx
+	s.rematchMu.Unlock()
+	s.importWG.Add(1)
+	go func() {
+		defer s.importWG.Done()
+		tick := time.NewTicker(rematchDriveEvery)
+		defer tick.Stop()
+		for {
+			s.driveRematches(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+}
+
+// driveRematches starts every open operation this process is not already
+// driving. Titles busy with an import are waited for (and the operation says
+// so); the next pass tries again.
+func (s *Service) driveRematches(ctx context.Context) {
 	ops, err := s.db.OpenRematchOperations(ctx)
 	if err != nil {
-		s.log.Warn("re-match resume unavailable", "err", err)
+		s.log.Warn("re-match operations unreadable; retried on the next pass", "err", err)
 		return
 	}
 	for _, op := range ops {
 		if ctx.Err() != nil {
 			return
 		}
-		leaseCtx, release, err := s.lockImportTargets(ctx, time.Minute, op.SourceItemID, op.TargetItemID)
-		if err != nil {
-			s.log.Warn("re-match resume waits for its titles", "operation", op.ID, "err", err)
+		if s.rematchRunning(op.ID) {
 			continue
 		}
-		s.runRematch(leaseCtx, op.ID)
-		release()
+		workCtx, releaseWork, err := ports.TryWork(ctx, s.admission, "rematch")
+		if err != nil {
+			return // paused for a drain: resumed after it
+		}
+		leaseCtx, release, err := s.lockImportTargets(workCtx, 2*time.Second, op.SourceItemID, op.TargetItemID)
+		if err != nil {
+			releaseWork()
+			_ = s.db.SetRematchError(ctx, op.ID, "waiting for its titles: "+err.Error())
+			continue
+		}
+		s.launchRematch(leaseCtx, op.ID, func() { release(); releaseWork() })
 	}
 }
 
 // runRematch drives one operation from wherever it stands; the caller holds
-// both titles.
-func (s *Service) runRematch(ctx context.Context, id string) {
+// both titles. An error leaves the operation where it is, for the next pass.
+func (s *Service) runRematch(ctx context.Context, id string) error {
 	bg := context.WithoutCancel(ctx)
 	op, err := s.db.GetRematchOperation(bg, id)
 	if err != nil {
-		return
+		return fmt.Errorf("read operation: %w", err)
 	}
 	var stored rematchStored
 	if err := json.Unmarshal(op.Plan, &stored); err != nil {
-		_ = s.db.SetRematchState(bg, id, "failed", "unreadable plan: "+err.Error(), nil)
-		return
+		return s.db.SetRematchState(bg, id, "failed", "unreadable plan: "+err.Error(), nil)
 	}
 	moves, err := s.db.ListRematchMoves(bg, id)
 	if err != nil {
-		return
+		return fmt.Errorf("read journal: %w", err)
 	}
 	switch op.State {
 	case "cancel_pending":
-		s.rollbackRematch(bg, op, moves, "cancelled", "")
-		return
-	case "notified", "committed":
-		s.finishRematch(bg, op, stored, moves)
-		return
+		return s.rollbackRematch(bg, op, moves, "", "")
+	case "committed":
+		return s.finishRematch(bg, op, stored, moves)
 	case "complete", "cancelled", "failed":
-		return
+		return nil
 	}
-	_ = s.db.SetRematchState(bg, id, "moving", "", nil)
+	if err := s.db.SetRematchState(bg, id, "moving", "", nil); err != nil {
+		return err
+	}
 	progress := &rematchProgress{s: s, id: id, done: op.BytesDone}
 	for i := range moves {
 		mv := &moves[i]
@@ -1173,7 +1296,9 @@ func (s *Service) runRematch(ctx context.Context, id string) {
 		err := s.moveRematchFile(ctx, mv, progress)
 		if err == nil {
 			mv.State = "rematch_moved"
-			_ = s.db.PutRematchMove(bg, *mv)
+			if err := s.db.PutRematchMove(bg, *mv); err != nil {
+				return fmt.Errorf("journal %s: %w", mv.Source, err)
+			}
 			continue
 		}
 		var review *rematchReviewError
@@ -1181,40 +1306,53 @@ func (s *Service) runRematch(ctx context.Context, id string) {
 			// Resume never moves a file whose source changed: that file is
 			// failed for review, the rest go on.
 			mv.State, mv.Error = "rematch_failed", review.msg
-			_ = s.db.PutRematchMove(bg, *mv)
+			if err := s.db.PutRematchMove(bg, *mv); err != nil {
+				return fmt.Errorf("journal %s: %w", mv.Source, err)
+			}
 			s.log.Warn("re-match file needs review", "operation", id, "file", mv.Source, "reason", review.msg)
 			continue
 		}
-		current, _ := s.db.GetRematchOperation(bg, id)
+		current, readErr := s.db.GetRematchOperation(bg, id)
+		if readErr != nil {
+			return fmt.Errorf("read operation: %w", readErr)
+		}
 		if ctx.Err() != nil && current.State != "cancel_pending" {
-			return // shutting down: the journal resumes it
+			return nil // shutting down: the journal resumes it
 		}
 		if current.State == "cancel_pending" {
-			s.rollbackRematch(bg, current, moves, "cancelled", "")
-			return
+			return s.rollbackRematch(bg, current, moves, "cancelled", "")
 		}
-		s.rollbackRematch(bg, current, moves, "failed", err.Error())
-		return
+		return s.rollbackRematch(bg, current, moves, "failed", err.Error())
 	}
 	_ = s.db.SetRematchProgress(bg, id, progress.done)
-	if current, _ := s.db.GetRematchOperation(bg, id); current.State == "cancel_pending" {
-		s.rollbackRematch(bg, current, moves, "cancelled", "")
-		return
+	current, err := s.db.GetRematchOperation(bg, id)
+	if err != nil {
+		return fmt.Errorf("read operation: %w", err)
 	}
-	_ = s.db.SetRematchState(bg, id, "moved", "", nil)
+	if current.State == "cancel_pending" {
+		return s.rollbackRematch(bg, current, moves, "cancelled", "")
+	}
+	if err := s.db.SetRematchState(bg, id, "moved", "", nil); err != nil {
+		return err
+	}
 	if err := s.commitRematch(bg, op, stored, moves); err != nil {
 		s.log.Error("re-match commit failed; rolling back", "operation", id, "err", err)
-		current, _ := s.db.GetRematchOperation(bg, id)
-		if current.State == "cancel_pending" {
-			s.rollbackRematch(bg, current, moves, "cancelled", "")
-			return
+		current, readErr := s.db.GetRematchOperation(bg, id)
+		if readErr != nil {
+			return fmt.Errorf("read operation: %w", readErr)
 		}
-		s.rollbackRematch(bg, current, moves, "failed", err.Error())
-		return
+		if current.State == "cancel_pending" {
+			return s.rollbackRematch(bg, current, moves, "cancelled", "")
+		}
+		return s.rollbackRematch(bg, current, moves, "failed", err.Error())
 	}
-	op, _ = s.db.GetRematchOperation(bg, id)
-	moves, _ = s.db.ListRematchMoves(bg, id)
-	s.finishRematch(bg, op, stored, moves)
+	if op, err = s.db.GetRematchOperation(bg, id); err != nil {
+		return fmt.Errorf("read operation: %w", err)
+	}
+	if moves, err = s.db.ListRematchMoves(bg, id); err != nil {
+		return fmt.Errorf("read journal: %w", err)
+	}
+	return s.finishRematch(bg, op, stored, moves)
 }
 
 type rematchReviewError struct{ msg string }
@@ -1292,7 +1430,7 @@ func (s *Service) moveRematchFile(ctx context.Context, mv *sqlite.RematchMove, p
 		}
 	}
 	for _, sc := range mv.Sidecars {
-		if err := moveSidecar(ctx, sc[0], sc[1], mv.Mode); err != nil {
+		if err := moveSidecar(ctx, sc[0], sc[1], mv.Mode, mv.OperationID); err != nil {
 			s.log.Warn("re-match sidecar not moved", "from", sc[0], "err", err)
 		}
 	}
@@ -1375,8 +1513,9 @@ func copyVerified(ctx context.Context, src, temp, dest string, progress func(int
 }
 
 // moveSidecar moves one sidecar the same way its video went; already moved
-// or missing is fine.
-func moveSidecar(ctx context.Context, from, to, mode string) error {
+// or missing is fine. A copy goes through a hidden temp name beside it, which
+// a restart or rollback removes.
+func moveSidecar(ctx context.Context, from, to, mode, opID string) error {
 	if _, err := os.Lstat(from); err != nil {
 		return nil
 	}
@@ -1386,52 +1525,134 @@ func moveSidecar(ctx context.Context, from, to, mode string) error {
 	if mode == "rename" {
 		return os.Rename(from, to)
 	}
-	_, err := copyVerified(ctx, from, to+".partial", to, nil)
+	_, err := copyVerified(ctx, from, sidecarTemp(to, opID), to, nil)
 	return err
 }
 
+func sidecarTemp(to, opID string) string {
+	return filepath.Join(filepath.Dir(to), "."+filepath.Base(to)+".rematch-"+opID+".partial")
+}
+
+// rematchRemove is os.Remove; tests stand in a failing one.
+var rematchRemove = os.Remove
+
 // rollbackRematch puts every moved file back (a rename reversed, a copy's
-// destination removed) and ends the operation cancelled or failed.
-func (s *Service) rollbackRematch(ctx context.Context, op sqlite.RematchOperation, moves []sqlite.RematchMove, state, reason string) {
+// destination removed) and ends the operation cancelled or failed. A file it
+// cannot put back keeps the operation cancel_pending, saying what is where,
+// and the next pass tries again. state "" reads the end it was rolling back
+// to from the operation's result.
+func (s *Service) rollbackRematch(ctx context.Context, op sqlite.RematchOperation, moves []sqlite.RematchMove, state, reason string) error {
+	var pending struct {
+		Rollback string `json:"rollback"`
+		Reason   string `json:"reason"`
+	}
+	_ = json.Unmarshal(op.Result, &pending)
+	if state == "" {
+		state, reason = pending.Rollback, pending.Reason
+		if state == "" {
+			state = "cancelled"
+		}
+	}
+	var problems []string
 	for i := len(moves) - 1; i >= 0; i-- {
 		mv := &moves[i]
 		if mv.Temporary != "" {
 			_ = os.Remove(mv.Temporary)
 		}
+		for _, sc := range mv.Sidecars {
+			_ = os.Remove(sidecarTemp(sc[1], mv.OperationID))
+		}
 		if mv.State != "rematch_moved" && mv.State != "rematch_planned" {
 			continue
 		}
 		if mv.Mode != "relink" {
-			for _, sc := range mv.Sidecars {
-				if mv.Mode == "rename" {
-					if _, err := os.Lstat(sc[0]); err != nil {
-						_ = os.Rename(sc[1], sc[0])
-					}
-				} else if _, err := os.Lstat(sc[0]); err == nil {
-					_ = os.Remove(sc[1])
-				}
-			}
-			if info, err := os.Lstat(mv.Target); err == nil {
-				if mv.Mode == "rename" && inodeOf(fileIdentityString(info)) == inodeOf(mv.Identity) {
-					if _, e := os.Lstat(mv.Source); e != nil {
-						if e := os.Rename(mv.Target, mv.Source); e != nil {
-							s.log.Error("re-match rollback could not put a file back", "from", mv.Target, "to", mv.Source, "err", e)
-							continue
-						}
-					}
-				} else if mv.Mode == "copy" && mv.SHA256 != "" {
-					if _, e := os.Lstat(mv.Source); e == nil {
-						_ = os.Remove(mv.Target)
-					}
-				}
+			if err := s.putBack(ctx, mv); err != nil {
+				problems = append(problems, err.Error())
+				continue
 			}
 			_ = os.Remove(filepath.Dir(mv.Target)) // only if empty
 		}
 		mv.State = "rematch_rolled_back"
-		_ = s.db.PutRematchMove(ctx, *mv)
+		if err := s.db.PutRematchMove(ctx, *mv); err != nil {
+			problems = append(problems, fmt.Sprintf("journal %s: %v", mv.Source, err))
+		}
 	}
-	_ = s.db.SetRematchState(ctx, op.ID, state, reason, nil)
+	if len(problems) > 0 {
+		raw, _ := json.Marshal(map[string]string{"rollback": state, "reason": reason})
+		_ = s.db.SetRematchState(ctx, op.ID, "cancel_pending", "", raw)
+		msg := "putting files back is not finished; retrying: " + strings.Join(problems, "; ")
+		_ = s.db.SetRematchError(ctx, op.ID, msg)
+		return errors.New(msg)
+	}
+	if err := s.db.SetRematchState(ctx, op.ID, state, reason, nil); err != nil {
+		return err
+	}
+	_ = s.db.PruneRematchMoves(ctx, op.ID)
 	s.log.Info("re-match ended without moving", "operation", op.ID, "state", state, "reason", reason)
+	return nil
+}
+
+// putBack undoes one move that has not committed: a rename is reversed, a
+// copy's destination removed once it is known to be ours (by its recorded
+// digest, or — published before the digest reached the journal — by
+// matching the source's bytes). The source is never touched.
+func (s *Service) putBack(ctx context.Context, mv *sqlite.RematchMove) error {
+	for _, sc := range mv.Sidecars {
+		if mv.Mode == "rename" {
+			if _, err := os.Lstat(sc[0]); err != nil {
+				if _, e := os.Lstat(sc[1]); e == nil {
+					if err := os.Rename(sc[1], sc[0]); err != nil {
+						return fmt.Errorf("%s is still at %s: %v", sc[0], sc[1], err)
+					}
+				}
+			}
+		} else if _, err := os.Lstat(sc[0]); err == nil {
+			if err := rematchRemove(sc[1]); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("the copy %s could not be removed: %v", sc[1], err)
+			}
+		}
+	}
+	info, err := os.Lstat(mv.Target)
+	if err != nil {
+		return nil // nothing was placed
+	}
+	switch mv.Mode {
+	case "rename":
+		if inodeOf(fileIdentityString(info)) != inodeOf(mv.Identity) {
+			return nil // not ours
+		}
+		if _, e := os.Lstat(mv.Source); e == nil {
+			return fmt.Errorf("%s and %s both exist; review which to keep", mv.Source, mv.Target)
+		}
+		if err := os.Rename(mv.Target, mv.Source); err != nil {
+			return fmt.Errorf("%s is still at %s: %v", mv.Source, mv.Target, err)
+		}
+	case "copy":
+		if _, e := os.Lstat(mv.Source); e != nil {
+			return fmt.Errorf("the original %s is gone; the copy stays at %s", mv.Source, mv.Target)
+		}
+		ours := false
+		got, _, derr := fileDigest(ctx, mv.Target)
+		switch {
+		case derr != nil:
+			return fmt.Errorf("the copy %s cannot be read: %v", mv.Target, derr)
+		case mv.SHA256 != "":
+			ours = got == mv.SHA256
+		default:
+			want, _, serr := fileDigest(ctx, mv.Source)
+			if serr != nil {
+				return fmt.Errorf("the original %s cannot be read: %v", mv.Source, serr)
+			}
+			ours = got == want
+		}
+		if !ours {
+			return nil
+		}
+		if err := rematchRemove(mv.Target); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("the copy %s could not be removed: %v", mv.Target, err)
+		}
+	}
+	return nil
 }
 
 // rematchResult is the operation's record of what happened.
@@ -1521,10 +1742,14 @@ func (s *Service) commitRematch(ctx context.Context, op sqlite.RematchOperation,
 		}
 	}
 	for _, l := range p.LeftOut {
+		if !l.Leave {
+			continue // never reached: execution refuses unresolved lines
+		}
 		commit.LeftOut = append(commit.LeftOut, l.FileID)
 		result.LeftOut = append(result.LeftOut, l.From)
 	}
-	data := map[string]any{"operation": op.ID, "from": source.ID, "fromTitle": source.Title, "to": target.ID, "toTitle": target.Title,
+	result.SourceRemoved = commit.RemoveSource
+	data := map[string]any{"failed": result.Failed, "operation": op.ID, "from": source.ID, "fromTitle": source.Title, "to": target.ID, "toTitle": target.Title,
 		"moved": result.Moved, "blocklisted": result.Blocklisted, "leftOut": result.LeftOut, "sourceRemoved": commit.RemoveSource}
 	commit.History = append(commit.History, sqlite.HistoryWrite{Type: HistoryRematched, MediaItemID: target.ID, Data: data})
 	if source.ID != target.ID {
@@ -1548,9 +1773,12 @@ func (s *Service) commitRematch(ctx context.Context, op sqlite.RematchOperation,
 // path that moved.
 const HistoryRematched = "rematched"
 
-// finishRematch removes what a copy left at the source and an emptied
-// adopted item's folders, then completes the operation.
-func (s *Service) finishRematch(ctx context.Context, op sqlite.RematchOperation, stored rematchStored, moves []sqlite.RematchMove) {
+// finishRematch removes what a copy left at the source, removes what a move
+// replaces (import's removeExistingFiles), and an emptied adopted item's
+// folders. The operation completes only when every move is done; anything
+// left undone stays on the operation as its reason, and the next pass tries
+// again.
+func (s *Service) finishRematch(ctx context.Context, op sqlite.RematchOperation, stored rematchStored, moves []sqlite.RematchMove) error {
 	// Every file this operation placed is kept by a replacement, so two
 	// moved files into one title never remove each other.
 	var keep []string
@@ -1561,6 +1789,7 @@ func (s *Service) finishRematch(ctx context.Context, op sqlite.RematchOperation,
 	}
 	var target domain.MediaItem
 	targetRead := false
+	var problems []string
 	for i := range moves {
 		mv := &moves[i]
 		if mv.State != "rematch_committed" {
@@ -1568,25 +1797,32 @@ func (s *Service) finishRematch(ctx context.Context, op sqlite.RematchOperation,
 		}
 		if mv.Mode == "copy" {
 			if info, err := os.Lstat(mv.Source); err == nil && fileIdentityString(info) == mv.Identity {
-				if err := os.Remove(mv.Source); err != nil {
-					s.log.Warn("re-match could not remove the copied original", "path", mv.Source, "err", err)
+				if err := rematchRemove(mv.Source); err != nil && !os.IsNotExist(err) {
+					problems = append(problems, fmt.Sprintf("the original %s could not be removed (the library copy is at %s): %v", mv.Source, mv.Target, err))
 					continue
 				}
 			}
+			sidecarsLeft := false
 			for _, sc := range mv.Sidecars {
 				if _, err := os.Lstat(sc[1]); err == nil {
-					_ = os.Remove(sc[0])
+					if err := rematchRemove(sc[0]); err != nil && !os.IsNotExist(err) {
+						problems = append(problems, fmt.Sprintf("the original %s could not be removed: %v", sc[0], err))
+						sidecarsLeft = true
+					}
 				}
+			}
+			if sidecarsLeft {
+				continue
 			}
 		}
 		if mv.Replace {
 			// The moved file is committed; what it replaces leaves now, by
 			// import's own path (bytes, row, placed subtitles). Journaled:
-			// a restart before rematch_done repeats it, and it is idempotent.
+			// it is repeated until every replaced file is gone.
 			if !targetRead {
 				t, err := s.db.GetMediaItemFull(ctx, op.TargetItemID)
 				if err != nil {
-					s.log.Warn("re-match replacement waits for its title", "operation", op.ID, "err", err)
+					problems = append(problems, "read the target: "+err.Error())
 					continue
 				}
 				target, targetRead = t, true
@@ -1596,9 +1832,20 @@ func (s *Service) finishRematch(ctx context.Context, op sqlite.RematchOperation,
 				eps = append([]int64{}, mv.EpisodeIDs...)
 			}
 			s.removeExistingFiles(ctx, target, mv.CopyID, eps, keep...)
+			if left := s.replacedLeft(ctx, mv.ReplaceIDs); len(left) > 0 {
+				problems = append(problems, "the replaced file(s) "+strings.Join(left, ", ")+" could not be removed")
+				continue
+			}
 		}
 		mv.State = "rematch_done"
-		_ = s.db.PutRematchMove(ctx, *mv)
+		if err := s.db.PutRematchMove(ctx, *mv); err != nil {
+			problems = append(problems, fmt.Sprintf("journal %s: %v", mv.Source, err))
+		}
+	}
+	if len(problems) > 0 {
+		msg := "finishing: " + strings.Join(problems, "; ") + "; retrying"
+		_ = s.db.SetRematchError(ctx, op.ID, msg)
+		return errors.New(msg)
 	}
 	var result rematchResult
 	_ = json.Unmarshal(op.Result, &result)
@@ -1606,8 +1853,24 @@ func (s *Service) finishRematch(ctx context.Context, op sqlite.RematchOperation,
 		result.LeftBehind = removeEmptyDirs(stored.Preview.Source.Folder)
 	}
 	raw, _ := json.Marshal(result)
-	_ = s.db.SetRematchState(ctx, op.ID, "complete", "", raw)
+	if err := s.db.SetRematchState(ctx, op.ID, "complete", "", raw); err != nil {
+		return err
+	}
+	_ = s.db.PruneRematchMoves(ctx, op.ID)
 	s.log.Info("re-match complete", "operation", op.ID, "moved", len(result.Moved), "left out", len(result.LeftOut))
+	return nil
+}
+
+// replacedLeft lists the replaced files still in the library.
+func (s *Service) replacedLeft(ctx context.Context, ids []int64) []string {
+	var left []string
+	for _, id := range ids {
+		var path string
+		if err := s.db.R.QueryRowContext(ctx, `SELECT path FROM media_files WHERE id=?`, id).Scan(&path); err == nil {
+			left = append(left, path)
+		}
+	}
+	return left
 }
 
 // removeEmptyDirs removes dir and its empty subfolders, bottom up, and lists
@@ -1715,20 +1978,28 @@ func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target
 			if dir == "" || !strings.HasPrefix(dir+"/", strings.TrimSuffix(root, "/")+"/") {
 				dir = root
 			}
-			expected := CapExpected(g.expected)
-			for chunk := 0; chunk == 0 || chunk*ports.MaxExpectedFiles < len(g.removed); chunk++ {
-				end := min((chunk+1)*ports.MaxExpectedFiles, len(g.removed))
-				part := g.removed[min(chunk*ports.MaxExpectedFiles, end):end]
+			// Every expected file is probed: a request with removed_paths is
+			// probe-only (contract 4.4), so a file left off it would never be
+			// confirmed. Both lists are split into requests Cinema accepts.
+			expChunks, remChunks := chunkExpected(g.expected), chunkPaths(g.removed)
+			chunks := max(len(expChunks), len(remChunks), 1)
+			for chunk := 0; chunk < chunks; chunk++ {
+				var exp []ports.ExpectedFile
+				var part []string
+				if chunk < len(expChunks) {
+					exp = expChunks[chunk]
+				}
+				if chunk < len(remChunks) {
+					part = remChunks[chunk]
+				}
 				n := whole
 				info := *whole.Import
 				info.Dirs, info.Paths, info.RemovedPaths, info.ExpectedFiles = []string{dir}, nil, part, nil
-				for _, f := range g.expected {
+				for _, f := range exp {
 					info.Paths = append(info.Paths, f.Path)
 				}
-				var exp []ports.ExpectedFile
-				if chunk == 0 && len(expected) > 0 {
-					exp = expected
-					info.ExpectedFiles = map[string][]ports.ExpectedFile{dir: expected}
+				if len(exp) > 0 {
+					info.ExpectedFiles = map[string][]ports.ExpectedFile{dir: exp}
 				}
 				n.Import = &info
 				payload, err := json.Marshal(n)
@@ -1745,6 +2016,44 @@ func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target
 		}
 	}
 	return out, nil
+}
+
+// chunkExpected splits expected files into requests Cinema accepts: at most
+// ports.MaxExpectedFiles each, within ports.MaxExpectedFileBytes as JSON.
+func chunkExpected(files []ports.ExpectedFile) [][]ports.ExpectedFile {
+	var out [][]ports.ExpectedFile
+	var cur []ports.ExpectedFile
+	for _, f := range files {
+		next := append(append([]ports.ExpectedFile(nil), cur...), f)
+		if len(cur) > 0 && (len(next) > ports.MaxExpectedFiles || expectedJSONSize(next) > ports.MaxExpectedFileBytes) {
+			out, cur = append(out, cur), []ports.ExpectedFile{f}
+			continue
+		}
+		cur = next
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// chunkPaths splits removed paths the same way.
+func chunkPaths(paths []string) [][]string {
+	var out [][]string
+	var cur []string
+	size := 2
+	for _, p := range paths {
+		raw, _ := json.Marshal(p)
+		n := len(raw) + 1
+		if len(cur) > 0 && (len(cur) == ports.MaxExpectedFiles || size+n > ports.MaxExpectedFileBytes) {
+			out, cur, size = append(out, cur), nil, 2
+		}
+		cur, size = append(cur, p), size+n
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
 }
 
 // RematchDeliveryKey is a move's sub-delivery key: op/<operation-id>/<dir-hash>

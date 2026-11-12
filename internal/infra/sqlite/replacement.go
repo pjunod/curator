@@ -415,7 +415,9 @@ func (d *DB) ListReplacementOperationsForItem(ctx context.Context, itemID int64,
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	rows, err := d.R.QueryContext(ctx, replacementSelect+` WHERE media_item_id=? ORDER BY updated_at DESC,created_at DESC LIMIT ?`, itemID, limit)
+	// A Re-match's blocklist record (intent rematch) is history of the move,
+	// not a replacement anybody can act on: it is not listed here.
+	rows, err := d.R.QueryContext(ctx, replacementSelect+` WHERE media_item_id=? AND intent!='rematch' ORDER BY updated_at DESC,created_at DESC LIMIT ?`, itemID, limit)
 	if err != nil {
 		return nil, err
 	}

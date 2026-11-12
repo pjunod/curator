@@ -1070,7 +1070,6 @@ const (
 	RematchOperationStateFailed        RematchOperationState = "failed"
 	RematchOperationStateMoved         RematchOperationState = "moved"
 	RematchOperationStateMoving        RematchOperationState = "moving"
-	RematchOperationStateNotified      RematchOperationState = "notified"
 	RematchOperationStatePlanned       RematchOperationState = "planned"
 )
 
@@ -1090,8 +1089,6 @@ func (e RematchOperationState) Valid() bool {
 	case RematchOperationStateMoved:
 		return true
 	case RematchOperationStateMoving:
-		return true
-	case RematchOperationStateNotified:
 		return true
 	case RematchOperationStatePlanned:
 		return true
@@ -4853,6 +4850,9 @@ type ServerInterface interface {
 	// SearchReleases Interactive search for one item target or book edition
 	// (GET /library/{id}/releases)
 	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
+	// GetLibraryRematch The open Re-match moving files out of or into this item
+	// (GET /library/{id}/rematch)
+	GetLibraryRematch(w http.ResponseWriter, r *http.Request, id int64)
 	// StartRematch Execute a previewed Re-match (idempotent by requestId)
 	// (POST /library/{id}/rematch)
 	StartRematch(w http.ResponseWriter, r *http.Request, id int64)
@@ -7273,6 +7273,32 @@ func (siw *ServerInterfaceWrapper) SearchReleases(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetLibraryRematch operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryRematch(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StartRematch operation middleware
 func (siw *ServerInterfaceWrapper) StartRematch(w http.ResponseWriter, r *http.Request) {
 
@@ -9153,6 +9179,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/replacement-operations", wrapper.CreateReplacementOperation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/replacement-operations/{operationId}", wrapper.GetReplacementOperation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/rematch/preview", wrapper.PreviewRematch)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/rematch", wrapper.GetLibraryRematch)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/rematch", wrapper.StartRematch)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rematch/{operationId}", wrapper.GetRematch)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rematch/{operationId}/cancel", wrapper.CancelRematch)

@@ -100,3 +100,39 @@ func TestRemovedNotGoneBackstop(t *testing.T) {
 		t.Fatalf("answered = %v present = %v, want /b present", answered, present)
 	}
 }
+
+// A queued moved request is judged, when read back, by what its POST sent
+// (stored on the row), not by its result text.
+func TestQueuedMovedRequestIsReadBackByWhatWasSent(t *testing.T) {
+	e := newOutboxEnv(t)
+	e.cinema.Set(func(c *cinematest.Cinema) { c.RemovedPaths, c.Queue = true, true })
+	e.moved("New/Dune (2021).mkv", "Old/Dune (1984).mkv")
+	e.pass()
+	r := e.rows()[0]
+	if r.Status != "pending" || r.RemoteRequestID == "" || !r.RemovedSent {
+		t.Fatalf("row = %+v, want queued with removed paths recorded as sent", r)
+	}
+	e.cinema.Release()
+	e.clock = e.clock.Add(time.Hour)
+	e.pass()
+	r = e.rows()[0]
+	if r.VisibleAt == 0 || strings.Contains(r.Result, "warning") {
+		t.Fatalf("row = %+v, want visible once the read shows the removed path gone", r)
+	}
+}
+
+// A stored removed_paths feature that cannot be confirmed is not trusted
+// with a common-parent request: nothing is posted, and it is tried again.
+func TestMovedRequestWaitsWhenFeaturesCannotBeReRead(t *testing.T) {
+	e := newOutboxEnv(t)
+	if err := e.db.SetNotifierFeatures(e.ctx, 1, []string{ports.FeatureRemovedPaths}); err != nil {
+		t.Fatal(err)
+	}
+	e.moved("New/Dune (2021).mkv", "Old/Dune (1984).mkv")
+	e.cinema.Set(func(c *cinematest.Cinema) { c.Down = true })
+	e.pass()
+	r := e.rows()[0]
+	if r.Status != "pending" || !strings.Contains(r.LastError, "could not be re-read") || len(e.cinema.Posts()) != 0 {
+		t.Fatalf("row = %+v posts = %v, want nothing posted and a retry", r, e.cinema.Posts())
+	}
+}

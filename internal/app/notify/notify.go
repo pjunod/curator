@@ -49,7 +49,7 @@ type Dispatcher struct {
 	lanes   map[int64]int
 	wg      sync.WaitGroup
 	// featuresRead marks notifiers whose features this session re-read.
-	featuresRead map[int64]bool
+	featuresRead map[int64]time.Time
 }
 
 // WithRegistry reports deliveries on the in-flight data-plane view.
